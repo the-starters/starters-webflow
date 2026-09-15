@@ -102,7 +102,7 @@ test('native adapter routes both to chooser and single types directly, with no b
       }
     }
     const button=node(),trigger=node(),wrapper=node({'data-messages-call-hidden':''}),chooser=node(),popup=node()
-    const opened=[], clicked=[]
+    const opened=[], clicked=[], installed=[]
     const registry={
       'popup-booking-main':{el:chooser,open(){chooser.open=true;opened.push('chooser')},close(){chooser.open=false}},
       'popup-booking':{el:popup,open(){popup.open=true},close(){popup.open=false}},
@@ -127,13 +127,13 @@ test('native adapter routes both to chooser and single types directly, with no b
         if(typeof scenario==='string') throw Object.assign(Error('lookup'),{status:scenario==='offline'?503:404,data:{message:scenario==='no-calendar'?'Bookable Starter calendar not found':'Starter not found'}})
         return path==='/starter'?({id:1,nylas_grant_id:'grant'}):types.map(type=>({config_id:type,is_paid:type==='paid',active:true,data_environment:'production',payment_environment:'live',currency:'USD',price_cents:type==='paid'?10000:0,duration:type==='paid'?60:30}))},
       selectBookableConfigurations:records=>selectBookableConfigurations(records,'www.thestarters.com'),
-      installFreeBookingController(){return true},getNearestSlot:async()=>null,
+      installFreeBookingController(settings){installed.push(settings);return true},getNearestSlot:async()=>null,
     }
-    global.StartersPaidCallBrandPayment={installPaidBookingController(){return true}}
+    global.StartersPaidCallBrandPayment={installPaidBookingController(settings){installed.push(settings);return true}}
     global.fetch=async()=>({ok:true,json:async()=>({starter_id:1,slug:'starter',items:types.map(type=>({type,public_available:true}))})})
     try {
       const controller=adapter.install({inbox:{onConversationSelected(fn){selected=fn}},member:{...brand,auth:{email:'brand@example.com'}},identity:{prefetch:async()=> 'starter'}})
-      await selected(event())
+      await selected({...event(),others:[{id:'mem_a',name:'Alex Chen'}]})
       assert.equal(wrapper.getAttribute('data-messages-call-hidden'),visible?null:'')
       assert.equal(button.getAttribute('aria-disabled'),visible&&!types.length ? 'true' : null)
       if (visible&&!types.length) {
@@ -144,6 +144,7 @@ test('native adapter routes both to chooser and single types directly, with no b
         assert.equal(global.document.body.child.style.display,'none')
       }
       await controller.open();await new Promise(r=>setTimeout(r,20))
+      assert.deepEqual(installed.map(settings=>settings.starterName),types.map(()=> 'Alex Chen'))
       assert.deepEqual(opened,types.length?['chooser']:[])
       assert.deepEqual(clicked,types.length===1?types:[])
       if(types.length) assert.equal(popup.getAttribute('data-booking-entry'),types.length===1?'direct':'chooser')
@@ -173,4 +174,13 @@ test('late unavailable result cannot replace a ready conversation',async()=>{
   pending.resolve(result([]));await first
   assert.equal(calls.unavailable.length,0)
   assert.deepEqual(calls.shown.map(x=>x.memberId),['mem_b'])
+})
+
+test('selection keeps the selected Starter name across participant representations', () => {
+  for (const data of [
+    { ...event(), others: [{ id: 'mem_brand', name: 'Brand' }, { id: 'mem_a', name: ' Alex Chen ' }] },
+    { conversation: { id: 'a', participants: { mem_brand: { name: 'Brand' }, mem_a: { name: 'Alex Chen' } } } },
+    { conversation: { id: 'a', participants: [{ id: 'mem_a', name: 'Alex Chen' }] } },
+  ]) assert.deepEqual(selection(data, brand.id), { conversationId: 'a', memberId: 'mem_a', starterName: 'Alex Chen' })
+  assert.deepEqual(selection({ ...event(), others: [{ id: 'mem_a', name: ' ' }] }, brand.id), { conversationId: 'a', memberId: 'mem_a' })
 })

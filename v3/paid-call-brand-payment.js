@@ -1508,6 +1508,9 @@
       // ---- from the site's tablet breakpoint up ----
       '@media (min-width:768px){',
       role + '"shell"]{',
+      // The fallback date list can be shorter than the timezone control.
+      // Size the grid itself so its times row gets the mount's minimum space.
+      'min-height:' + CALENDAR_MIN_HEIGHT + ';',
       // More air between the month and the times than between the stacked
       // rows on the right. Rem, so it tracks the site's responsive root font
       // size rather than pinning a pixel width.
@@ -1886,25 +1889,6 @@
     return { wrapper, select }
   }
 
-  function createCallSummary(config) {
-    const summary = applyStyles(global.document.createElement('div'), {
-      paddingBottom: '16px', marginBottom: '16px', borderBottom: '1px solid #e5e5e5',
-    })
-    summary.setAttribute('data-paid-calendar-element', 'call-summary')
-    const title = applyStyles(global.document.createElement('p'), {
-      margin: '0 0 6px', fontSize: '16px', fontWeight: '500',
-    })
-    title.textContent = config.is_paid === true ? 'Paid consultation call' : 'Free consultation call'
-    const details = applyStyles(global.document.createElement('p'), {
-      margin: '0', fontSize: '13px',
-    })
-    const price = config.is_paid === true ? canonicalPaidPrice(config) : ''
-    details.textContent = String(config.duration) + ' minutes' + (price ? ' · ' + price + ' USD' : '')
-    summary.appendChild(title)
-    summary.appendChild(details)
-    return summary
-  }
-
   function createBookingDetails(settings) {
     const document = global.document
     function element(tag, role, styles) {
@@ -1958,26 +1942,29 @@
     email.type = 'email'
     const guestInputs = []
     const guestControls = []
+    let guestAddControl = null
     if (settings.generateGuests) {
       const guestGroup = element('div', 'guests', { display: 'grid', gap: '0.75rem' })
       fields.appendChild(guestGroup)
-      const add = element('button', 'guest-add', {
-        padding: '0.75rem', border: '1px solid #1f211d', background: '#fff',
-        borderRadius: '0.25rem', font: 'inherit', cursor: 'pointer',
-      })
-      add.type = 'button'
-      add.textContent = 'Add another guest +'
+      const addControl = buildSiteButton(document, 'Add another guest +', 'secondary')
+      guestAddControl = addControl
+      const add = addControl.button
+      add.setAttribute('data-paid-calendar-element', 'guest-add')
       function updateGuests() {
-        add.disabled = guestInputs.every(function (input) { return !input.disabled })
+        setSiteButtonDisabled(addControl, guestInputs.every(function (input) { return !input.disabled }))
       }
       for (let index = 0; index < MAX_GUEST_EMAILS; index += 1) {
-        const row = element('div', 'guest-row', { display: index ? 'none' : 'flex', gap: '0.5rem', alignItems: 'end' })
+        const row = element('div', 'guest-row', { display: index ? 'none' : 'flex', position: 'relative' })
         const input = field(index ? 'Guest email ' + (index + 1) : 'Guest email (optional)', 'guest-email', 'input', row)
         input.type = 'email'
         input.disabled = index !== 0
         input.parentElement.style.flex = '1'
+        input.style.paddingRight = '3rem'
+        input.style.lineHeight = '1.5'
         const remove = element('button', 'guest-remove', {
-          padding: '0.75rem', color: '#b42318', background: '#fff1f0',
+          position: 'absolute', right: '1px', bottom: '1px',
+          width: '2.75rem', height: 'calc(1.5em + 1.5rem)', padding: '0',
+          color: '#1f211d', background: 'transparent', font: 'inherit',
           border: '0', borderRadius: '0.25rem', cursor: 'pointer',
         })
         remove.type = 'button'
@@ -2002,7 +1989,7 @@
         updateGuests()
         if (typeof input.focus === 'function') input.focus()
       })
-      guestGroup.appendChild(add)
+      guestGroup.appendChild(addControl.wrap)
       guestControls.push(add)
     }
     const context = settings.generateContext ? field('Call Context (optional)', 'context', 'textarea') : null
@@ -2059,7 +2046,7 @@
       setBusy: function (busy) {
         guestInputs.forEach(function (input) { input.readOnly = busy })
         guestControls.forEach(function (control) { control.disabled = busy })
-        if (!busy && guestControls.length) guestControls[guestControls.length - 1].disabled = guestInputs.every(function (input) { return !input.disabled })
+        if (guestAddControl) setSiteButtonDisabled(guestAddControl, busy || guestInputs.every(function (input) { return !input.disabled }))
         if (context) context.readOnly = busy
       },
       reset: function () {
@@ -2258,11 +2245,6 @@
     }
 
     if (!slots.length) {
-      if (onBookingSurface) {
-        const summary = createCallSummary(config)
-        applyStyles(summary, { padding: CALENDAR_FRAME })
-        container.appendChild(summary)
-      }
       container.appendChild(status)
       if (bookingError) status.setAttribute('role', 'alert')
       setStatus(bookingError || 'No available times were found in the next 14 days.', bookingError ? 'error' : 'empty')
@@ -2653,7 +2635,6 @@
     if (onBookingSurface) {
       const month = global.document.createElement('div')
       month.setAttribute('data-paid-calendar-element', 'month')
-      month.appendChild(createCallSummary(config))
       month.appendChild(calendarHost)
       calendarPanel.appendChild(month)
       calendarPanel.appendChild(timezoneControl.wrapper)
@@ -2993,6 +2974,8 @@
     let activePaidGeneration = 0
     let queuedPaidGeneration = 0
     let activeSurfaceType = ''
+    const receiptFields = new Map()
+    const receiptGroups = new Map()
 
     function ownsSurface(generation) {
       return bookingSurfaceOwnership.owns(container, generation)
@@ -3122,7 +3105,19 @@
       clearPendingPaidSelection()
     }
 
+    function restoreReceipt() {
+      receiptFields.forEach(function (content, field) { field.innerHTML = content })
+      receiptFields.clear()
+      receiptGroups.forEach(function (state, group) {
+        group.style.display = state.display
+        if (state.ariaHidden == null) group.removeAttribute('aria-hidden')
+        else group.setAttribute('aria-hidden', state.ariaHidden)
+      })
+      receiptGroups.clear()
+    }
+
     function resetBookingUi(generation, nextType) {
+      restoreReceipt()
       activePaidGeneration = generation
       activeSurfaceType = nextType || ''
       queuedPaidGeneration = 0
@@ -3196,7 +3191,32 @@
       if (paidCallMessage) paidCallMessage.textContent = 'We could not book this call. Please try again.'
     }
 
-    function showPaidSuccess() {
+    function showPaidSuccess(input) {
+      const timezone = input.timezone || 'UTC'
+      const date = new Date(input.start)
+      const fields = {
+        'start-date': new Intl.DateTimeFormat('en-US', {
+          month: 'long', day: 'numeric', year: 'numeric', timeZone: timezone,
+        }).format(date),
+        'start-time': new Intl.DateTimeFormat('en-US', {
+          hour: 'numeric', minute: '2-digit', hour12: true, timeZoneName: 'short', timeZone: timezone,
+        }).format(date),
+        'starter-name': String(settings.starterName || '').trim() || 'the Starter',
+        context: input.context || '',
+        price: priceText,
+      }
+      Object.keys(fields).forEach(function (name) {
+        popup.querySelectorAll('[schedule-step="success"] [booking-element="' + name + '"]').forEach(function (field) {
+          if (!receiptFields.has(field)) receiptFields.set(field, field.innerHTML)
+          field.textContent = fields[name]
+          if (name === 'starter-name') return
+          const group = field.closest('[booking-element-wrap]')
+          if (!group) return
+          if (!receiptGroups.has(group)) receiptGroups.set(group, { display: group.style.display, ariaHidden: group.getAttribute('aria-hidden') })
+          group.style.display = fields[name] ? (group.hasAttribute('display-flex') ? 'flex' : 'block') : 'none'
+          group.setAttribute('aria-hidden', fields[name] ? 'false' : 'true')
+        })
+      })
       popup.querySelectorAll('[success-call-buttons]').forEach(function (element) {
         element.style.display = element.getAttribute('data-type') === 'paid' ? 'flex' : 'none'
       })
@@ -3309,7 +3329,7 @@
         pendingPaidSlot = null
         pendingPaidSlotGeneration = 0
         pendingPaidConfirmation = 0
-        showPaidSuccess()
+        showPaidSuccess(bookingInput)
         return result
       } finally {
         bookingLocks.delete(generation)
@@ -3563,6 +3583,8 @@
 
     if (!bookingSurfaceLifecycle.register(popup, container, resetBookingUi, 'paid')) return false
     paidBookingInstallations.set(popup, function () {
+      restoreReceipt()
+      if (paidCallMessage) paidCallMessage.textContent = authoredPaidCallText
       disposed = true
       cancelPaymentUi()
       listeners.forEach(remove => remove())

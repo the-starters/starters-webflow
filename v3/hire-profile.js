@@ -3412,6 +3412,11 @@
           return;
       }
 
+      const starterIdentity = Array.from(qsa('[messages-profile-message][messages-profile-name]')).find(function (element) {
+          return element.getAttribute('messages-profile-message') === freelancerId;
+      });
+      const starterName = starterIdentity ? starterIdentity.getAttribute('messages-profile-name') : '';
+
       // GET STARTER
       const starter = await freeCallBooking.getStarterByMemberId(freelancerId);
       const grant_id = starter ? starter['nylas_grant_id'] : null;
@@ -3458,6 +3463,7 @@
                           brandName: brand_name,
                           brandEmail: brand_email,
                           starterEmail: starter.nylas_grant_email,
+                          starterName,
                       });
                   freeInstalled = installed === true;
                   bookingSurfaceAvailable = freeInstalled;
@@ -3493,6 +3499,7 @@
                           brandName: brand_name,
                           brandEmail: brand_email,
                           starterEmail: starter.nylas_grant_email,
+                          starterName,
                       });
                   bookingSurfaceAvailable = bookingSurfaceAvailable || installed === true;
                   if (installed === true) installedConfigs.push(paidConfig);

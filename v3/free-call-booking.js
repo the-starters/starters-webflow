@@ -24,7 +24,7 @@
   const PRODUCTION_MIN_BOOKING_NOTICE_MINUTES = 24 * 60
   const STAGING_MIN_BOOKING_NOTICE_MINUTES = 5
   const chooserBindings = new WeakMap()
-  const freeReceiptPriceStates = new WeakMap()
+  const freeReceiptVisibilityStates = new WeakMap()
   const freeReceiptFieldStates = new WeakMap()
   const bookingSurfaceOwnership = getBookingSurfaceOwnership()
   const bookingSurfaceLifecycle = getBookingSurfaceLifecycle()
@@ -428,6 +428,7 @@
     const fields = {
       'start-date': date.year ? date.month + ' ' + date.day + ', ' + date.year : '',
       'start-time': date.hour ? date.hour + ':' + date.minute + ' ' + date.dayPeriod + ' ' + date.timeZoneName : '',
+      'starter-name': clean(input && input.starterName) || 'the Starter',
       context: clean(input && input.context),
     }
     Object.keys(fields).forEach(function (name) {
@@ -439,14 +440,26 @@
         }
         if (!states.has(element)) states.set(element, element.innerHTML)
         element.textContent = fields[name]
+        if (name === 'starter-name') return
+        const wrap = element.closest('[booking-element-wrap]')
+        if (wrap) {
+          let visibility = freeReceiptVisibilityStates.get(popup)
+          if (!visibility) {
+            visibility = new Map()
+            freeReceiptVisibilityStates.set(popup, visibility)
+          }
+          if (!visibility.has(wrap)) visibility.set(wrap, { display: wrap.style.display, ariaHidden: wrap.getAttribute('aria-hidden') })
+          wrap.style.display = fields[name] ? (wrap.hasAttribute('display-flex') ? 'flex' : 'block') : 'none'
+          wrap.setAttribute('aria-hidden', fields[name] ? 'false' : 'true')
+        }
       })
     })
     popup.querySelectorAll('[schedule-step="success"] [booking-element="price"]').forEach(function (element) {
       const wrap = element.closest('[booking-element-wrap]') || element
-      let states = freeReceiptPriceStates.get(popup)
+      let states = freeReceiptVisibilityStates.get(popup)
       if (!states) {
         states = new Map()
-        freeReceiptPriceStates.set(popup, states)
+        freeReceiptVisibilityStates.set(popup, states)
       }
       if (!states.has(wrap)) states.set(wrap, { display: wrap.style.display, ariaHidden: wrap.getAttribute('aria-hidden') })
       wrap.style.display = 'none'
@@ -553,6 +566,7 @@
       brandName: clean(settings.brandName),
       brandEmail: clean(settings.brandEmail),
       starterEmail: clean(settings.starterEmail),
+      starterName: clean(settings.starterName),
       popup,
       cta: ctas[0],
     }
@@ -575,14 +589,14 @@
         })
         freeReceiptFieldStates.delete(popup)
       }
-      const priceStates = freeReceiptPriceStates.get(popup)
+      const priceStates = freeReceiptVisibilityStates.get(popup)
       if (priceStates) {
         priceStates.forEach(function (state, wrap) {
           wrap.style.display = state.display
           if (state.ariaHidden == null) wrap.removeAttribute('aria-hidden')
           else wrap.setAttribute('aria-hidden', state.ariaHidden)
         })
-        freeReceiptPriceStates.delete(popup)
+        freeReceiptVisibilityStates.delete(popup)
       }
       if (clearFreeCalendarSelection) clearFreeCalendarSelection()
       clearFreeCalendarSelection = null
@@ -679,7 +693,7 @@
                   },
                 )
                 if (!bookingSurfaceOwnership.owns(container, generation)) return result
-                showFreeSuccess(current.popup, input)
+                showFreeSuccess(current.popup, Object.assign({}, input, { starterName: current.starterName }))
                 guestUi.hide()
                 if (calendarDetails) calendarDetails.resetDetails()
                 return result

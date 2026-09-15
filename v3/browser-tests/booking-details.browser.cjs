@@ -87,9 +87,31 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
       await fs.writeFile(path.join(evidence, label + '.png'), Buffer.from(shot.data, 'base64'))
       observations.push(label)
     }
-    const openDetails = async type => {
+    const openDetails = async (type, captureCalendar = false) => {
       await click('#' + type)
       await waitFor(`!!document.querySelector('[data-paid-calendar-slot]')`)
+      if (captureCalendar) {
+        await screenshot(type + '-calendar')
+        assert.deepEqual(await evaluate(`(() => {
+          const shell = document.querySelector('[data-paid-calendar-element="shell"]');
+          const style = getComputedStyle(shell), bounds = shell.getBoundingClientRect();
+          const footer = shell.querySelector('[data-paid-calendar-element="footer"]').getBoundingClientRect();
+          const times = shell.querySelector('[data-paid-calendar-element="times"]').getBoundingClientRect();
+          return {
+            columnGapRem: parseFloat(style.columnGap) / parseFloat(getComputedStyle(document.documentElement).fontSize),
+            rowGap: parseFloat(style.rowGap),
+            footerSpansShell: Math.abs(footer.left - bounds.left) < 1 && Math.abs(footer.right - bounds.right) < 1,
+            footerBelowTimes: footer.top >= times.bottom - 1,
+          };
+        })()`), { columnGapRem: 2, rowGap: 0, footerSpansShell: true, footerBelowTimes: true },
+        type + ' desktop calendar keeps its spacing and footer below both columns')
+        assert.equal(await evaluate(`(() => {
+          const slot = document.querySelector('[data-paid-calendar-slot]');
+          const rect = slot.getBoundingClientRect();
+          const target = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+          return slot === target || slot.contains(target);
+        })()`), true, type + ' calendar time button must be clickable at its visible center')
+      }
       await click('[data-paid-calendar-slot]')
       assert.match(await evaluate(`document.querySelector('${role('confirm')}').textContent`), /Continue/)
       const before = await evaluate('fixture.bookings.length')
@@ -101,8 +123,14 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
     for (const type of ['free', 'paid']) {
       await navigate()
       assert.deepEqual(await evaluate('fixture.installs'), { free: true, paid: true })
-      await openDetails(type)
+      await openDetails(type, true)
       await screenshot(type + '-desktop-initial')
+      const guestLayout = await evaluate(`(() => {
+        const input=document.querySelector('${guests}').getBoundingClientRect(), remove=document.querySelector('${role('guest-remove')}').getBoundingClientRect();
+        const add=document.querySelector('${role('guest-add')}');
+        return {inside:remove.x>=input.x && remove.right<=input.right && remove.y>=input.y && remove.bottom<=input.bottom,secondary:!!add.closest('[data-button-style="secondary"]')};
+      })()`)
+
       await fill(context, 'Discuss the launch plan')
       await fill(guests, 'invalid')
       await click(confirm)
@@ -145,8 +173,30 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
         payloads,
       }, null, 2))
       await waitFor(`getComputedStyle(document.querySelector('[schedule-step="success"]')).display !== 'none'`)
+      const receipt = await evaluate(`(() => {
+        const step = document.querySelector('[schedule-step="success"]');
+        return Object.fromEntries(['start-date','start-time','starter-name','context','price'].map(name => [name,
+          [...step.querySelectorAll('[booking-element="'+name+'"]')].map(el => ({text:el.textContent, groupVisible:getComputedStyle(el.closest('[booking-element-wrap]')).display !== 'none'}))]));
+      })()`)
+      for (const name of ['start-date', 'start-time', 'context']) {
+        assert.ok(receipt[name].length, 'receipt has authored ' + name)
+        assert.ok(receipt[name].every(field => field.groupVisible), type + ' receipt reveals ' + name)
+      }
+      assert.ok(receipt.context.every(field => field.text === 'Discuss the launch plan'))
+      assert.ok(receipt['starter-name'].every(field => field.text === 'Starter Fixture' && field.groupVisible))
+      const receiptDate = new Date(payloads[0].start)
+      const receiptDay = new Intl.DateTimeFormat('en-US', {day:'numeric',timeZone:payloads[0].timezone}).format(receiptDate)
+      assert.ok(Number(receiptDay) < 10, 'receipt regression must exercise a single-digit day')
+      const expectedDate = new Intl.DateTimeFormat('en-US', {month:'long',day:type === 'free' ? '2-digit' : 'numeric',year:'numeric',timeZone:payloads[0].timezone}).format(receiptDate)
+      assert.ok(receipt['start-date'].every(field => field.text === expectedDate))
+      assert.ok(receipt['start-time'].every(field => field.text !== '3:00PM EST'))
+      assert.ok(receipt.price.every(field => type === 'paid' ? field.groupVisible && field.text === '$250' : !field.groupVisible))
       await screenshot(type + '-request-success')
+      assert.deepEqual(guestLayout, {inside:true,secondary:true})
+      assert.equal(await evaluate(`document.querySelectorAll('${role('call-summary')}').length`), 0)
       await click('#close')
+      await waitFor(`[...document.querySelectorAll('[schedule-step="success"] [booking-element-wrap]')].every(el => getComputedStyle(el).display === 'none')`)
+      assert.equal(await evaluate(`document.querySelector('[booking-element="starter-name"]').textContent`), '[Starter]')
       await openDetails(type)
       assert.equal(await evaluate(`document.querySelector('${context}').value`), '')
       assert.equal(await evaluate(`document.querySelector('${guests}').value`), '')
@@ -161,6 +211,16 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
       await openDetails(type)
       assert.deepEqual(await evaluate(`(() => {const a=document.querySelector('${role('selected-event')}').getBoundingClientRect(),b=document.querySelector('${role('details-fields')}').getBoundingClientRect();return {stacked:b.y>=a.bottom-1,overflow:document.documentElement.scrollWidth>innerWidth}})()`), { stacked: true, overflow: false })
       await screenshot(type + '-mobile-details')
+      assert.equal(await evaluate(`(() => {const input=document.querySelector('${guests}').getBoundingClientRect(),remove=document.querySelector('${role('guest-remove')}').getBoundingClientRect();return remove.x>=input.x && remove.right<=input.right && remove.y>=input.y && remove.bottom<=input.bottom})()`), true)
+      await click(confirm)
+      await waitFor(`getComputedStyle(document.querySelector('[schedule-step="success"]')).display !== 'none'`)
+      assert.equal(await evaluate(`(() => {
+        const step=document.querySelector('[schedule-step="success"]');
+        return [...step.querySelectorAll('[booking-element="start-date"]')].some(el=>el.getBoundingClientRect().width>0) &&
+          [...step.querySelectorAll('[booking-element="start-time"]')].some(el=>el.getBoundingClientRect().width>0) &&
+          getComputedStyle(step.querySelector('[booking-element="context"]').closest('[booking-element-wrap]')).display==='none' && document.documentElement.scrollWidth<=innerWidth;
+      })()`), true, type + ' mobile receipt shows date/time and hides empty context without overflow')
+      await screenshot(type + '-mobile-receipt')
     }
     for (const type of ['free', 'paid']) {
       await navigate('legacy=1')

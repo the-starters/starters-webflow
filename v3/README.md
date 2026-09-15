@@ -3781,14 +3781,10 @@ flowchart TD
    columns. A narrow mount uses the document order: calendar, timezone, time
    buttons, then confirmation. The selected slot is advisory only.
 
-   In the Hire and Messages booking modals, the selected call's summary sits
-   above the month: `Free consultation call` or `Paid consultation call`, followed
-   by its duration in minutes and, for paid calls, the canonical USD price from
-   `canonicalPaidPrice(config)`. The `data-paid-calendar-element="month"`
-   wrapper contains this `call-summary` and the `month-dates` host. The summary
-   remains visible when availability is empty and is replaced on each current
-   remount. Dashboard rescheduling does not render this summary and retains its
-   existing `month` host and controls.
+   Hire and Messages calendars begin with the month selector, without a repeated
+   call title or duration block. The `data-paid-calendar-element="month"` wrapper
+   contains the `month-dates` host. Dashboard rescheduling retains its existing
+   month host and controls.
 
    The timezone dropdown defaults to the visitor's browser timezone.
    Changing it clears the selected slot, regroups slots by local date and
@@ -4054,6 +4050,34 @@ The shared Free/Paid controllers opt into `mountPaidCalendar({ bookingDetails })
 for new bookings in Hire and Messages. Other callers, including dashboard
 rescheduling, keep their existing single calendar confirmation. An empty calendar
 shows its existing availability notice and does not create a details form.
+
+Generated guest rows place their accessible remove button inside the input's
+right edge. Add another guest uses the shared secondary button component,
+including its disabled theme at the five-guest limit and during submission.
+
+After canonical success, both controllers populate every `start-date`,
+`start-time`, and `context` field with a `booking-element` attribute inside
+`[schedule-step="success"]`. Desktop and mobile copies use the submitted start
+and selected timezone. Free uses `formatWithTimezone`, with UTC fallback for an
+absent or invalid timezone; Paid uses `Intl.DateTimeFormat`, defaulting to UTC
+when absent. Free preserves its two-digit day; Paid uses a numeric day.
+
+The authored receipt's `[booking-element-wrap]` groups start hidden: filling
+their text alone does not reveal the table. Each populated date/time or context
+field reveals its nearest group as `flex` when marked `display-flex`, otherwise
+`block`, with `aria-hidden="false"`. Trimmed empty context clears the field and
+hides its group. The `starter-name` field uses the matching Hire
+`messages-profile-name` or selected Messages participant name, with `the Starter`
+as the fallback. It does not independently reveal the optional message group.
+
+Paid populates `booking-element="price"` with the canonical per-call price and
+reveals its group. Free hides each price field's nearest group (or the field
+itself without a group), labels the receipt `Free Call`, shows only Free actions,
+and hides the legacy card-charge notice. Close, call-type handoff, and controller
+reinstallation restore the populated fields' original HTML and the groups'
+inline display and `aria-hidden` values before reuse. The Free and Paid unit
+suites use [the shared authored receipt fixture](test-helpers/authored-booking-receipt.cjs)
+to cover these restoration boundaries.
 
 **Continue** opens the selected date/time/timezone summary beside the fields on
 wide screens; narrow containers stack the summary above them. Name and Email
