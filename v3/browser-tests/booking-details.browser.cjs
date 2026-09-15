@@ -127,8 +127,9 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
       await screenshot(type + '-desktop-initial')
       const guestLayout = await evaluate(`(() => {
         const input=document.querySelector('${guests}').getBoundingClientRect(), remove=document.querySelector('${role('guest-remove')}').getBoundingClientRect();
-        const add=document.querySelector('${role('guest-add')}');
-        return {inside:remove.x>=input.x && remove.right<=input.right && remove.y>=input.y && remove.bottom<=input.bottom,secondary:!!add.closest('[data-button-style="secondary"]')};
+        const add=document.querySelector('${role('guest-add')}'), style=getComputedStyle(document.querySelector('${role('guest-remove')}'));
+        const icon=document.querySelector('${role('guest-remove-icon')}').getBoundingClientRect();
+        return {width:remove.width,height:remove.height,iconWidth:icon.width,iconHeight:icon.height,background:style.backgroundColor,color:style.color,radius:style.borderRadius,inside:remove.x>=input.x && remove.right<=input.right && remove.y>=input.y && remove.bottom<=input.bottom,secondary:!!add.closest('[data-button-style="secondary"]')};
       })()`)
 
       await fill(context, 'Discuss the launch plan')
@@ -183,16 +184,16 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
         assert.ok(receipt[name].every(field => field.groupVisible), type + ' receipt reveals ' + name)
       }
       assert.ok(receipt.context.every(field => field.text === 'Discuss the launch plan'))
-      assert.ok(receipt['starter-name'].every(field => field.text === 'Starter Fixture' && field.groupVisible))
+      assert.ok(receipt['starter-name'].every(field => field.text === 'Starter' && field.groupVisible))
       const receiptDate = new Date(payloads[0].start)
       const receiptDay = new Intl.DateTimeFormat('en-US', {day:'numeric',timeZone:payloads[0].timezone}).format(receiptDate)
       assert.ok(Number(receiptDay) < 10, 'receipt regression must exercise a single-digit day')
       const expectedDate = new Intl.DateTimeFormat('en-US', {month:'long',day:type === 'free' ? '2-digit' : 'numeric',year:'numeric',timeZone:payloads[0].timezone}).format(receiptDate)
       assert.ok(receipt['start-date'].every(field => field.text === expectedDate))
       assert.ok(receipt['start-time'].every(field => field.text !== '3:00PM EST'))
-      assert.ok(receipt.price.every(field => type === 'paid' ? field.groupVisible && field.text === '$250' : !field.groupVisible))
+      assert.ok(receipt.price.every(field => field.groupVisible && field.text === (type === 'paid' ? '$250' : '$0')))
       await screenshot(type + '-request-success')
-      assert.deepEqual(guestLayout, {inside:true,secondary:true})
+      assert.deepEqual(guestLayout, {width:36,height:36,iconWidth:12,iconHeight:12,background:'rgba(221, 85, 85, 0.1)',color:'rgb(221, 85, 85)',radius:'2px',inside:true,secondary:true})
       assert.equal(await evaluate(`document.querySelectorAll('${role('call-summary')}').length`), 0)
       await click('#close')
       await waitFor(`[...document.querySelectorAll('[schedule-step="success"] [booking-element-wrap]')].every(el => getComputedStyle(el).display === 'none')`)
@@ -218,8 +219,8 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
         const step=document.querySelector('[schedule-step="success"]');
         return [...step.querySelectorAll('[booking-element="start-date"]')].some(el=>el.getBoundingClientRect().width>0) &&
           [...step.querySelectorAll('[booking-element="start-time"]')].some(el=>el.getBoundingClientRect().width>0) &&
-          getComputedStyle(step.querySelector('[booking-element="context"]').closest('[booking-element-wrap]')).display==='none' && document.documentElement.scrollWidth<=innerWidth;
-      })()`), true, type + ' mobile receipt shows date/time and hides empty context without overflow')
+          step.querySelector('[booking-element="context"]').textContent==='No message provided.' && document.documentElement.scrollWidth<=innerWidth;
+      })()`), true, type + ' mobile receipt shows date/time and an empty-message label without overflow')
       await screenshot(type + '-mobile-receipt')
     }
     for (const type of ['free', 'paid']) {

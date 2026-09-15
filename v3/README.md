@@ -4052,7 +4052,8 @@ rescheduling, keep their existing single calendar confirmation. An empty calenda
 shows its existing availability notice and does not create a details form.
 
 Generated guest rows place their accessible remove button inside the input's
-right edge. Add another guest uses the shared secondary button component,
+right edge, with a 36px light red button, 2px corner radius, and the 12px red cross
+from Figma. Add another guest uses the shared secondary button component,
 including its disabled theme at the five-guest limit and during submission.
 
 After canonical success, both controllers populate every `start-date`,
@@ -4065,16 +4066,20 @@ when absent. Free preserves its two-digit day; Paid uses a numeric day.
 The authored receipt's `[booking-element-wrap]` groups start hidden: filling
 their text alone does not reveal the table. Each populated date/time or context
 field reveals its nearest group as `flex` when marked `display-flex`, otherwise
-`block`, with `aria-hidden="false"`. Trimmed empty context clears the field and
-hides its group. The `starter-name` field uses the matching Hire
-`messages-profile-name` or selected Messages participant name, with `the Starter`
-as the fallback. It does not independently reveal the optional message group.
+`block`, with `aria-hidden="false"`. Empty context displays `No message provided.`
+so the message row remains visible. The `starter-name` field uses the first name
+from the matching Hire `messages-profile-name` or selected Messages participant,
+with `the Starter` as the fallback. The confirmation sentence uses the full name
+and the design's typical 48-hour confirmation wording.
 
 Paid populates `booking-element="price"` with the canonical per-call price and
-reveals its group. Free hides each price field's nearest group (or the field
-itself without a group), labels the receipt `Free Call`, shows only Free actions,
-and hides the legacy card-charge notice. Close, call-type handoff, and controller
-reinstallation restore the populated fields' original HTML and the groups'
+reveals its group. Free displays `$0`. Both use the authored blue payment tile
+(`.table-price_layout.is-consult`) and label the receipt `Free` or `Paid`.
+Free shows only Free actions and hides the legacy
+card-charge notice. Paid retains the shared Close button component and hides
+obsolete payment-method actions; its card notice uses generic copy because the
+readiness response does not supply card digits. Close, call-type handoff, and
+controller reinstallation restore the populated fields' original HTML and the groups'
 inline display and `aria-hidden` values before reuse. The Free and Paid unit
 suites use [the shared authored receipt fixture](test-helpers/authored-booking-receipt.cjs)
 to cover these restoration boundaries.

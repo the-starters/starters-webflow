@@ -1962,13 +1962,17 @@
         input.style.paddingRight = '3rem'
         input.style.lineHeight = '1.5'
         const remove = element('button', 'guest-remove', {
-          position: 'absolute', right: '1px', bottom: '1px',
-          width: '2.75rem', height: 'calc(1.5em + 1.5rem)', padding: '0',
-          color: '#1f211d', background: 'transparent', font: 'inherit',
-          border: '0', borderRadius: '0.25rem', cursor: 'pointer',
+          position: 'absolute', right: '7px', bottom: 'calc((1.5em + 1.5rem + 2px - 36px) / 2)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          width: '36px', height: '36px', padding: '12px',
+          color: STATUS_ERROR_BACKGROUND, background: 'rgba(221, 85, 85, 0.1)', font: 'inherit',
+          border: '0', borderRadius: '2px', cursor: 'pointer',
         })
         remove.type = 'button'
-        remove.textContent = '×'
+        const removeIcon = element('span', 'guest-remove-icon', { width: '12px', height: '12px', flexShrink: '0' })
+        removeIcon.setAttribute('aria-hidden', 'true')
+        removeIcon.innerHTML = '<svg preserveAspectRatio="none" overflow="visible" style="display: block;" width="12.1641" height="12" viewBox="0 0 12.1641 12" fill="none" xmlns="http://www.w3.org/2000/svg"><g><path d="M1.49172 12L0.164062 10.6723L4.83641 6L0.164062 1.32766L1.49172 0L6.16406 4.67234L10.8364 0L12.1641 1.32766L7.49172 6L12.1641 10.6723L10.8364 12L6.16406 7.32765L1.49172 12Z" fill="#DD5555"/></g></svg>'
+        remove.appendChild(removeIcon)
         remove.setAttribute('aria-label', 'Remove guest ' + (index + 1))
         remove.addEventListener('click', function () {
           input.value = ''
@@ -3201,8 +3205,8 @@
         'start-time': new Intl.DateTimeFormat('en-US', {
           hour: 'numeric', minute: '2-digit', hour12: true, timeZoneName: 'short', timeZone: timezone,
         }).format(date),
-        'starter-name': String(settings.starterName || '').trim() || 'the Starter',
-        context: input.context || '',
+        'starter-name': String(settings.starterName || '').trim().split(/\s+/)[0] || 'the Starter',
+        context: String(input.context || '').trim() || 'No message provided.',
         price: priceText,
       }
       Object.keys(fields).forEach(function (name) {
@@ -3226,18 +3230,20 @@
       // buttons belonged to the retired two-phase flow. Its Confirm handler
       // expects a legacy unique ID, then hides every step when that ID is not
       // present. Keep the native button, but make it a safe Close action and
-      // hide the obsolete payment-method change action.
+      // hide the obsolete payment-method add/change actions.
       popup.querySelectorAll(
-        '[success-call-buttons][data-type="paid"] [booking-pm-action]',
+        '[success-call-buttons][data-type="paid"] [booking-pm-action], [success-call-buttons][data-type="paid"] [data-btn-payment="no-cards"]',
       ).forEach(function (control) {
         const action = control.getAttribute('booking-pm-action')
-        if (action === 'change') {
+        if (action === 'change' || control.getAttribute('data-btn-payment') === 'no-cards') {
           control.style.display = 'none'
           control.setAttribute('aria-hidden', 'true')
           return
         }
         if (action !== 'confirm') return
-        control.textContent = 'Close'
+        const label = control.querySelector && control.querySelector('.button_main-text')
+        if (label) label.textContent = 'Close'
+        else control.textContent = 'Close'
         control.style.display = ''
         control.setAttribute('aria-hidden', 'false')
         control.setAttribute('data-paid-call-success-action', 'close')
@@ -3262,7 +3268,7 @@
         }
       })
       popup.querySelectorAll('[schedule-step="success"] [booking-element="paid-meeting"]').forEach(function (element) {
-        element.textContent = 'Paid Call'
+        element.textContent = 'Paid'
       })
       // Do not display the Designer placeholder card digits. The canonical
       // readiness contract intentionally returns no card details, so generic
@@ -3276,7 +3282,7 @@
       }
       const successText = popup.querySelector('[booking-success-text]')
       if (successText) {
-        successText.textContent = 'Your paid call request was sent. We will notify you when the Starter confirms it.'
+        successText.textContent = "We'll share your call request with " + (String(settings.starterName || '').trim() || 'the Starter') + " and reach out when it's been confirmed, typically within 48 hours"
       }
       switchStep(popup, 'success')
     }
