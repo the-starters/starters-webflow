@@ -17,7 +17,7 @@ query "test-harness/control" verb=POST {
         "upsert"
       ]
     }
-  
+
     text run_id filters=trim
     json? payload?
   }
@@ -27,61 +27,61 @@ query "test-harness/control" verb=POST {
       value = $env.$http_headers["X-Paid-Call-Harness"]
         |first_notempty:($env.$http_headers["x-paid-call-harness"]|first_notempty:"")
     }
-  
+
     precondition ($env.paid_call_harness_enabled == "isolated-paid-call-20260915" && ($env.paid_call_harness_key|strlen) >= 32 && $control_key == $env.paid_call_harness_key) {
       error_type = "accessdenied"
       error = "Isolated harness access required"
     }
-  
+
     precondition ("/^[a-z0-9]{12}$/"|regex_matches:$input.run_id) {
       error_type = "inputerror"
       error = "Invalid synthetic run identity"
     }
-  
+
     var $brand_member {
       value = "mem_sb_pc_brand_"|concat:$input.run_id:""
     }
-  
+
     var $starter_member {
       value = "mem_sb_pc_starter_"|concat:$input.run_id:""
     }
-  
+
     var $customer {
       value = "cus_pc_"|concat:$input.run_id:""
     }
-  
+
     var $card_a {
       value = "pm_pc_a_"|concat:$input.run_id:""
     }
-  
+
     var $config_id {
       value = "pc_paid_"|concat:$input.run_id:""
     }
-  
+
     var $grant {
       value = "pc_grant_"|concat:$input.run_id:""
     }
-  
+
     var $slug {
       value = "pc-starter-"|concat:$input.run_id:""
     }
-  
+
     var $result {
       value = null
     }
-  
+
     db.get user_v3 {
       field_name = "memberstack_member_id"
       field_value = $brand_member
     } as $user
-  
+
     conditional {
       if ($input.action == "seed") {
         precondition ($user == null) {
           error_type = "inputerror"
           error = "Use a fresh synthetic run; fixture reset is not supported"
         }
-      
+
         db.add user_v3 {
           data = {
             name                 : "Synthetic Brand"
@@ -92,7 +92,7 @@ query "test-harness/control" verb=POST {
             data_environment     : "test"
           }
         } as $brand_user
-      
+
         db.add user_v3 {
           data = {
             name                 : "Synthetic Starter"
@@ -103,7 +103,7 @@ query "test-harness/control" verb=POST {
             data_environment     : "test"
           }
         } as $starter_user
-      
+
         db.add brands_v3 {
           data = {
             full_name                         : "Synthetic Brand"
@@ -115,7 +115,7 @@ query "test-harness/control" verb=POST {
             stripe_payment_last_synced_at_test: now
           }
         } as $brand
-      
+
         db.add freelancers_v3 {
           data = {
             Name                         : "Synthetic Starter"
@@ -127,7 +127,7 @@ query "test-harness/control" verb=POST {
             stripe_connect_synced_at_test: now
           }
         } as $starter
-      
+
         db.add availability_v3 {
           data = {
             memberstack_id  : $starter_member
@@ -138,7 +138,7 @@ query "test-harness/control" verb=POST {
             data_environment: "test"
           }
         } as $availability
-      
+
         db.add nylas_configurations_v3 {
           data = {
             config_id             : $config_id
@@ -158,7 +158,7 @@ query "test-harness/control" verb=POST {
             sync_status           : "ready"
           }
         } as $paid
-      
+
         db.add nylas_configurations_v3 {
           data = {
             config_id             : "pc_free_"|concat:$input.run_id:""
@@ -178,14 +178,14 @@ query "test-harness/control" verb=POST {
             sync_status           : "ready"
           }
         } as $free
-      
+
         security.create_auth_token {
           table = "user_v3"
           extras = {}
           expiration = 3600
           id = $brand_user.id
         } as $token
-      
+
         var.update $result {
           value = {
             token         : $token
@@ -202,37 +202,37 @@ query "test-harness/control" verb=POST {
           }
         }
       }
-    
+
       else {
         precondition ($user != null) {
           error_type = "notfound"
           error = "Synthetic fixture does not exist"
         }
-      
+
         db.get brands_v3 {
           field_name = "memberstack_id"
           field_value = $brand_member
         } as $fixture_brand
-      
+
         precondition ($fixture_brand != null && $fixture_brand.stripe_customer_id_test == $customer) {
           error_type = "accessdenied"
           error = "Synthetic customer mismatch"
         }
-      
+
         conditional {
           if ($input.action == "default") {
             precondition (($input.payload|get:"card":""|starts_with:"pm_pc_") && ($input.payload|get:"card":""|ends_with:$input.run_id)) {
               error_type = "inputerror"
               error = "Synthetic card required"
             }
-          
+
             db.edit brands_v3 {
               field_name = "id"
               field_value = $fixture_brand.id
               data = {stripe_payment_method_test: $input.payload.card}
             } as $updated
           }
-        
+
           elseif ($input.action == "user-environment") {
             db.edit user_v3 {
               field_name = "id"
@@ -240,7 +240,7 @@ query "test-harness/control" verb=POST {
               data = {data_environment: $input.payload.environment}
             } as $updated
           }
-        
+
           elseif ($input.action == "readiness") {
             db.edit brands_v3 {
               field_name = "id"
@@ -251,7 +251,7 @@ query "test-harness/control" verb=POST {
               }
             } as $updated
           }
-        
+
           elseif ($input.action == "configuration-patch") {
             db.get nylas_configurations_v3 {
               field_name = "config_id"
@@ -273,43 +273,43 @@ query "test-harness/control" verb=POST {
               field_name = "booking_id"
               field_value = $input.payload.booking_id
             } as $fixture_target
-          
+
             precondition ($fixture_target != null && ($fixture_target.unique_id|starts_with:($input.run_id|concat:"-":""))) {
               error_type = "accessdenied"
               error = "Synthetic booking required"
             }
-          
+
             db.patch nylas_bookings_v3 {
               field_name = "id"
               field_value = $fixture_target.id
               data = $input.payload.patch
             } as $updated
           }
-        
+
           elseif ($input.action == "command-patch") {
             db.get adminops_booking_commands_v3 {
               field_name = "idempotency_key"
               field_value = $input.payload.key
             } as $fixture_target
-          
+
             precondition ($fixture_target != null && ($fixture_target.idempotency_key|starts_with:($input.run_id|concat:"-":""))) {
               error_type = "accessdenied"
               error = "Synthetic command required"
             }
-          
+
             db.patch adminops_booking_commands_v3 {
               field_name = "id"
               field_value = $fixture_target.id
               data = $input.payload.patch
             } as $updated
           }
-        
+
           elseif ($input.action == "command-add") {
             precondition (($input.payload.idempotency_key|starts_with:($input.run_id|concat:"-":"")) && $input.payload.actor_memberstack_id == $brand_member) {
               error_type = "accessdenied"
               error = "Synthetic command required"
             }
-          
+
             db.add adminops_booking_commands_v3 {
               data = {
                 idempotency_key     : $input.payload.idempotency_key
@@ -325,13 +325,13 @@ query "test-harness/control" verb=POST {
               }
             } as $updated
           }
-        
+
           elseif ($input.action == "upsert") {
             precondition ($input.payload.brand_memberstack_id == $brand_member && $input.payload.starter_memberstack_id == $starter_member && ($input.payload.booking_id|starts_with:($input.run_id|concat:"-":""))) {
               error_type = "accessdenied"
               error = "Synthetic upsert required"
             }
-          
+
             function.run "Bookings/upsert_from_nylas_v3" {
               input = {
                 booking_id                     : $input.payload.booking_id
@@ -357,35 +357,35 @@ query "test-harness/control" verb=POST {
                 expected_payment_method_id     : $input.payload.expected_payment_method_id
               }
             } as $upsert_result
-          
+
             var.update $result {
               value = $upsert_result
             }
           }
         }
-      
+
         conditional {
           if ($input.action != "upsert") {
             db.get brands_v3 {
               field_name = "id"
               field_value = $fixture_brand.id
             } as $current_brand
-          
+
             db.query adminops_booking_commands_v3 {
               where = $db.adminops_booking_commands_v3.idempotency_key includes $input.run_id
               return = {type: "list"}
             } as $commands
-          
+
             db.query nylas_bookings_v3 {
               where = $db.nylas_bookings_v3.unique_id includes $input.run_id
               return = {type: "list"}
             } as $bookings
-          
+
             // Explicit synthetic-only projection keeps private DB fields inspectable for assertions.
             var $booking_summaries {
               value = []
             }
-          
+
             foreach ($bookings) {
               each as $row {
                 array.push $booking_summaries {
@@ -401,7 +401,7 @@ query "test-harness/control" verb=POST {
                 }
               }
             }
-          
+
             var.update $result {
               value = {
                 default_card: $current_brand.stripe_payment_method_test
