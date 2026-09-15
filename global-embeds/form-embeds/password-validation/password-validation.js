@@ -15,15 +15,8 @@
 // nearest <form> ancestor; the password input (data-ms-member="password") and
 // the submit button (ms-code-submit-button) are Memberstack's own hooks.
 //
-// Enabled rule semantics (the checklist is opt-in; these are not a site-wide policy):
-// - characters: at least character-count UTF-16 code units (default 8).
-// - capitalization: at least one ASCII lowercase and one ASCII uppercase letter.
-// - numbers: at least one ASCII digit (0-9).
-// - special: at least one of ! @ # $ % ^ & * ( ) , . ? " : { } | < >.
-// Spaces, Unicode symbols, hyphens, underscores and other unlisted characters
-// may appear in a password, but do not satisfy the special rule by themselves.
-// These predicates run in this script, not in an HTML pattern attribute. Keep
-// login forms free of a complexity checklist so existing passwords still work.
+// Rule semantics and login compatibility guidance:
+// ../../../README.md#password-checklist-rules
 //
 // One validated instance per form, however many wrappers it holds — Webflow's
 // way to vary a component per breakpoint is two instances in one form, so all
