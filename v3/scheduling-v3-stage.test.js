@@ -130,7 +130,7 @@ function loadStage(options = {}) {
   }
 
   vm.runInNewContext(source, {
-    console: { info() {}, warn() {} },
+    console: options.console || { info() {}, warn() {} },
     document,
     MutationObserver: options.withMutationObserver ? MutationObserver : undefined,
     Object,
@@ -152,6 +152,20 @@ function loadStage(options = {}) {
     window,
   }
 }
+
+test('installation logs stay on staging while production still initializes', () => {
+  for (const hostname of ['the-starters-3-0.webflow.io', 'thestarters.com', 'www.thestarters.com']) {
+    const messages = []
+    const options = {
+      hostname,
+      pathname: '/hire/test-starter',
+      console: { info: (message) => messages.push(message), warn() {} },
+    }
+    const result = loadStage(options)
+    assert.equal(result.attributes['data-scheduling-v3-stage'], 'ready')
+    assert.deepEqual(messages, hostname === 'the-starters-3-0.webflow.io' ? ['[scheduling-v3-stage] installed'] : [])
+  }
+})
 
 test('detaches the Nylas element only after the authored success step is ready', () => {
   let removed = false
