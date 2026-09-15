@@ -60,6 +60,18 @@ direct synchronous head tag as the final Webflow install; the runtime loader
 prevents the current missing-tag state from disabling Free and Paid discovery
 while the shared component cleanup is still pending.
 
+Also in that same **Head**, after the scheduling tags:
+
+```html
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/hire-profile-taxonomy.css">
+```
+
+This one stylesheet is not part of the owned scheduling embed above and has no
+ordering requirement against it, but it must stay in the **Head**: in the footer
+the rule would arrive after first paint and every empty taxonomy group would
+flash visible before collapsing. See
+[Taxonomy empty groups stay hidden](#taxonomy-empty-groups-stay-hidden).
+
 Webflow → hire template → Page Settings → Custom Code → **Footer**:
 
 ```html
@@ -76,7 +88,7 @@ remain deferred (`paid-call-brand-payment.js`,
 
 | Area | Audience | Owner / source |
 | --- | --- | --- |
-| Notable Experience | everyone, incl. logged out | Webflow-authored `starter-work-histories` wf-xano wrapper / public Xano endpoint `#5860` |
+| Notable Experience | everyone, incl. logged out | Webflow-authored `starter-work-histories` wf-xano wrapper / public Xano endpoint `#5860`; cards bind the preformatted `date_range` value (`Month Year`) |
 | Clients ("also worked with") | everyone, incl. logged out | Webflow-authored `starter-clients` wf-xano wrapper / public Xano endpoint `#5860` |
 | Call projections (hero, sticky header, Services, and chooser) | owner: live connection state with no booking action · anonymous: public-projection Free/Paid touts plus signup-only Book Call; chooser closed · brand: [readiness contract](#signed-in-brand-readiness) | this file / public compatibility projections for anonymous display; authenticated Xano, Nylas, and Stripe for booking |
 | Free and Paid call cards (hero tout and Services card) | same audiences and states as the row above | `starter-call-offers-services` plus the Header call projection read the dedicated public Xano endpoint `profile/starter/calls/v3`; superseded CMS call cards stay hidden as rollback markup — see [The Free and Paid call cards render from one wf-xano template per surface](#the-free-and-paid-call-cards-render-from-one-wf-xano-template-per-surface) |
@@ -709,6 +721,39 @@ unpriced canonical profile cannot leave a stale Retainer card or create a
 duplicate. Logged-out clicks open `signup-modal` with Retainer attribution.
 Eligible signed-in Brands open `generate-contract` with `Monthly retainer`
 selected. Talent, the profile owner, and unknown roles stay inert.
+
+## Taxonomy empty groups stay hidden
+
+[`hire-profile-taxonomy.css`](../../v3/hire-profile-taxonomy.css) hides each authored
+`[xwf-empty-check]` group until its wf-xano list contains a rendered
+`[wf-xano-item]`. Hiding the ancestor also hides its contents visually, but leaves
+the wf-xano wrapper and template in the DOM for initialization, fetching, and
+clone insertion. When wf-xano inserts the first rendered item, this rule stops
+matching and the group's existing display styles apply again. The
+`display: none` is `!important` so that a normal inline `display`
+written on the group — by an IX2 initial state or by a wf-xano state projection
+— cannot defeat it. Other hiding styles still apply independently. Removing the
+last rendered item makes this rule match again.
+
+The marker is per list, not per section. Three separate
+`profile-content_artifacts` groups already carry it in the published Designer,
+one each for **Tools & Platforms**, **Skills**, and **Industry Experience**:
+
+| Attribute | Value | Authored on |
+| --- | --- | --- |
+| `xwf-empty-check` | (empty) | the Tools & Platforms `profile-content_artifacts` group |
+| `xwf-empty-check` | (empty) | the Skills `profile-content_artifacts` group |
+| `xwf-empty-check` | (empty) | the Industry Experience `profile-content_artifacts` group |
+
+Each marked group must contain exactly **one** wf-xano wrapper — its own list —
+because `:has([wf-xano-item])` tests that group's whole subtree. A single marker
+on a shared parent above all three lists would reveal all three the moment any
+one of them renders an item, which is the defect this rule exists to remove.
+Keep the marker on the group that directly holds one wrapper: never move it up
+to a common ancestor, and never author it twice on nested elements around the
+same list.
+
+For stylesheet placement and the first-paint requirement, see [Install](#install).
 
 ## The Free and Paid call cards render from one wf-xano template per surface
 

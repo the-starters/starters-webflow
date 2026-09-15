@@ -1944,6 +1944,16 @@ Run the focused test with:
 node v3/scheduling-auth.test.js
 ```
 
+### Scheduling diagnostics
+
+`scheduling-auth.js` and `scheduling-v3-stage.js` emit their installation
+`console.info` messages only on `the-starters-3-0.webflow.io`, after their
+respective installation gates pass. Approved production routes still initialize
+without those messages. `STARTERS_DEBUG` does not override this exact-host gate.
+Warnings remain available on every route where the scripts install, including
+production: token acquisition failures, unclassified scheduling routes, and
+unparseable scheduler booking identity still warn when encountered.
+
 ## Scheduling V3 stage adapter
 
 `scheduling-v3-stage.js` is the compatibility layer for the existing Webflow

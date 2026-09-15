@@ -46,15 +46,16 @@ Do not discard local changes unless the user explicitly asks.
 ## Staging-only console diagnostics
 
 Almost every script here narrates itself to the console on staging and says
-nothing in production. The predicate is the same in all of them, and this section
-owns it — module docs point here rather than respelling it.
+nothing in production. This section owns the shared diagnostic predicate;
+module docs point here rather than respelling it. The scheduling scripts use
+the separate [scheduling diagnostics contract](v3/README.md#scheduling-diagnostics).
 
 A page counts as staging when `window.location.hostname` is `localhost`,
 `127.0.0.1`, or matches `*.webflow.io` or `*.trycloudflare.com` (the
 `./dev-tunnel.sh` quick tunnel). Setting `window.STARTERS_DEBUG = true` turns
 diagnostics on anywhere, production included.
 
-Two rules hold in every implementation:
+Two rules hold in implementations of this shared gate:
 
 - The host patterns are anchored (`/(\.|^)webflow\.io$/`), so a lookalike such as
   `notwebflow.io` or `evil-trycloudflare.com` cannot read as staging.
@@ -102,6 +103,7 @@ tighter predicate that `STARTERS_DEBUG` cannot unlock, and says so where it live
   [`docs/wiring/AI-RECRUITER-WIRING.md`](docs/wiring/AI-RECRUITER-WIRING.md)
 - `v3/saved-starters-roles.js` — `/favorites` saved-list roles chips: one cloned paragraph per delimited role, so the wf-xano list matches the Algolia browse cards; authoritative behavior and constraints live in [`v3/README.md`](v3/README.md#saved-starters-roles-chips)
 - `v3/hire-profile.js` — `/hire/<slug>` runtime controller for booking, Services, rate cards, Company-link safety, and page utilities; the authoritative ownership, wiring, dependencies, and verification contract is in [`docs/wiring/HIRE-PROFILE-WIRING.md`](docs/wiring/HIRE-PROFILE-WIRING.md)
+- `v3/hire-profile-taxonomy.css` — `/hire/<slug>` taxonomy-group empty states; behavior, marker placement, and installation live in [`docs/wiring/HIRE-PROFILE-WIRING.md`](docs/wiring/HIRE-PROFILE-WIRING.md#taxonomy-empty-groups-stay-hidden)
 - `v3/free-call-booking.js` — GitHub-owned `/hire/<slug>` Free Call namespace for authenticated booking-profile/config reads, one-request chooser previews, the shared authored calendar, and canonical Xano booking-command submission inside native Designer modals; cutover scope and exclusions live in [`docs/wiring/HIRE-PROFILE-WIRING.md`](docs/wiring/HIRE-PROFILE-WIRING.md#inline-global-code-cutover-boundary)
 - `v3/profile-portfolio.js` — sole `/hire/<slug>` portfolio / case-study renderer for the section labelled "Highlights"; reads approved public Xano Portfolios (#28) via `Get_approved_portfolios`. It renders the card list and fills the Highlights modal with data only — the lumos modal system owns the dialog's presentation. The ownership split, attribute contract, and cutover live in [`docs/wiring/PROFILE-PORTFOLIO-WIRING.md`](docs/wiring/PROFILE-PORTFOLIO-WIRING.md)
 - `v3/agency-profile.js` — `/hire/<slug>` Agency section: agency name, team size, contract type, and average project size, read from the public Xano endpoint `profile/starter/agency/v1`; intro-video handling is implemented, but its Designer row remains dormant by product choice. `wf-xano` owns the fetch, text binds, and declarative card/row visibility; this script supplies the URL-path slug, fills the video row when present, and owns the section wrapper's hidden state so a collapsed section consumes no flex/grid gap. Because the authored loading spinner lives inside that wrapper, every profile, agency or not, briefly shows it before the section renders or collapses; keep the spinner short so the layout shifts little. The authoritative behavior, attribute contract, markup, install, and verification live in [`docs/wiring/AGENCY-PROFILE-WIRING.md`](docs/wiring/AGENCY-PROFILE-WIRING.md)
@@ -334,6 +336,23 @@ node --test global-embeds/modal/modal.test.js
 - `global-embeds/form-embeds/form-input-filter/form-input-filter.js` — input filtering and normalization ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/form-embeds/form-input-filter))
 - `global-embeds/form-embeds/input-preview.js` — echoes an input's value into a preview element ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/form-embeds/input-preview))
 
+### Password checklist rules
+
+The password checklist is opt-in per wrapper, not a site-wide password policy.
+Its `starters-password-validation-*` rule toggles enforce these predicates:
+
+- `characters`: at least `starters-password-validation-character-count` UTF-16
+  code units (default 8).
+- `capitalization`: at least one ASCII lowercase and one ASCII uppercase letter.
+- `numbers`: at least one ASCII digit (`0`–`9`).
+- `special`: at least one of `! @ # $ % ^ & * ( ) , . ? " : { } | < >`.
+
+Spaces, Unicode symbols, hyphens, underscores, and other unlisted characters
+may appear in a password, but do not satisfy the special rule by themselves.
+The [component](global-embeds/form-embeds/password-validation/password-validation.js)
+runs these predicates in JavaScript; they are not an HTML `pattern` recipe.
+Keep login forms free of a complexity checklist so existing passwords still work.
+
 ### Starters-list filters (`starters-list-filter/`)
 
 Algolia filter chrome for the Starters browse list; each carries its `// Docs:` URL.
@@ -382,7 +401,7 @@ These two scripts have no Docs URL and no owner doc. The event plan named below
 owns the shared event vocabulary, not the browser-script wiring.
 
 - `utils/posthog-identity.js` — Memberstack to PostHog identity bridge: `posthog.identify(<memberstack id>)` with persona labels derived from the same customFields `opportunities-3.0.js` gates on, and `posthog.reset()` on logout when the previous identity was a member id so a shared browser cannot chain new anonymous events to the old member. Account ids and capability labels only, never email or name. Load sitewide with `defer`; the head snippet's stub queues calls, so it may run before array.js arrives
-- `utils/posthog-track.js` — the shared `StartersTrack.track(name, props)` funnel-event helper: stamps a consistent `platform` (`v2` / `v3`) property and makes a missing or blocked PostHog unable to break page logic. It also captures uncaught errors and unhandled promise rejections; object rejection reasons expose only bounded `message`, `code`, `status`, and `name` diagnostics so arbitrary request or member data is not sent. Event names and properties are defined in `platform-ops/architecture/posthog-funnel-events-plan.md`; renames need a migration note there
+- `utils/posthog-track.js` — the shared `StartersTrack.track(name, props)` funnel-event helper: stamps a consistent `platform` (`v2` / `v3`) property and makes a missing or blocked PostHog unable to break page logic. It also captures uncaught errors and unhandled promise rejections; object rejection reasons expose only bounded `message`, `code`, `status`, and `name` diagnostics so arbitrary request or member data is not sent. Browser source filename, line, and column are retained when available; detail-free cross-origin errors are dropped. Its scoped PostHog `before_send` hook marks the root of forwarded exceptions as unhandled, preserves manual captures and nested causes, and runs existing hooks afterward so privacy filtering and event drops still apply. The snippet queue installs the hook before replaying captures. Event names and properties are defined in `platform-ops/architecture/posthog-funnel-events-plan.md`; renames need a migration note there
 
 ### Other page scripts
 
