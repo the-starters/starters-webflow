@@ -77,8 +77,11 @@
       existing &&
       typeof existing.register === 'function' &&
       typeof existing.reset === 'function' &&
-      typeof existing.runBooking === 'function'
+      typeof existing.runBooking === 'function' &&
+      typeof existing.getBookingRecovery === 'function' &&
+      typeof existing.acknowledgeBooking === 'function'
     ) return existing
+    const previousRun = existing && typeof existing.runBooking === 'function' ? existing.runBooking.bind(existing) : null
     const bindings = new WeakMap()
     const bookingStates = new WeakMap()
     const lifecycle = {
@@ -171,14 +174,29 @@
           state.active = entry
         }
         if (!entry.inFlight) {
-          entry.inFlight = entry.attempt.run().then(function (result) {
+          const runAttempt = function () {
+            if (!previousRun) return entry.attempt.run()
+            try {
+              return previousRun(container, fingerprint, function () {
+                return { run: function () { return state.attempts.get(fingerprint).attempt.run() } }
+              }, validateResult)
+            } catch (error) {
+              return Promise.reject(Object.assign(error, { bookingNotSubmitted: true, retrySameBooking: false }))
+            }
+          }
+          entry.inFlight = runAttempt().then(function (result) {
             if (validateResult) validateResult(result)
             if (entry.attempt.review) entry.result = result
             else if (state.attempts.get(fingerprint) === entry) state.attempts.delete(fingerprint)
             entry.uncertain = false
             return result
           }).catch(function (error) {
-            if (typeof entry.attempt.isDefinitiveRejection === 'function') {
+            if (error.bookingNotSubmitted) {
+              if (!entry.uncertain) {
+                state.attempts.delete(fingerprint)
+                if (state.recovery === entry) state.recovery = null
+              }
+            } else if (typeof entry.attempt.isDefinitiveRejection === 'function') {
               entry.uncertain = !entry.attempt.isDefinitiveRejection(error, entry.uncertain)
               error.retrySameBooking = entry.uncertain
               if (!entry.uncertain) {
@@ -194,6 +212,12 @@
         }
         return entry.inFlight
       },
+    }
+    if (previousRun && typeof existing.register === 'function' && typeof existing.reset === 'function') {
+      existing.runBooking = lifecycle.runBooking
+      existing.getBookingRecovery = lifecycle.getBookingRecovery
+      existing.acknowledgeBooking = lifecycle.acknowledgeBooking
+      return existing
     }
     global.StartersBookingSurfaceLifecycle = lifecycle
     return lifecycle

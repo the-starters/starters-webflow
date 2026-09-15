@@ -4001,6 +4001,32 @@ test('shared owner recovers original Paid identity without blocking Free or mark
   } finally { global.xanoAuthFetch = previousFetch }
 })
 
+test('adopting an older Free owner retains its active request and adds Paid recovery', async () => {
+  const scope = {location:{hostname:'www.thestarters.com',search:'?legacy-owner=1'}}
+  vm.runInNewContext(fs.readFileSync(require.resolve('./browser-tests/legacy-free-booking-owner.js'), 'utf8'), {window:scope,URLSearchParams})
+  const legacy = scope.StartersBookingSurfaceLifecycle
+  const container = {}
+  let finishFree
+  const free = legacy.runBooking(container, 'free-active', () => ({run:() => new Promise(resolve => {finishFree = resolve})}))
+  runIsolated(scope)
+  assert.equal(scope.StartersBookingSurfaceLifecycle, legacy, 'adoption preserves the existing owner object')
+  let paidRuns = 0
+  const createPaid = () => ({review:{input:{context:'original'},card:{last4:'0042'}},isDefinitiveRejection:() => false,
+    run:async () => {paidRuns += 1; if (paidRuns === 1) throw new Error('Lost response'); return {booking:{booking_id:'paid',row_id:2}}}})
+  await assert.rejects(legacy.runBooking(container, 'paid-original', createPaid), error => error.bookingNotSubmitted === true && error.retrySameBooking === false)
+  assert.equal(paidRuns, 0, 'the older owner still blocks overlap with its preexisting Free request')
+  assert.equal(legacy.getBookingRecovery(container), null, 'an unsent Paid request is not uncertain')
+  finishFree({booking:{booking_id:'free',row_id:1}})
+  await free
+  await assert.rejects(legacy.runBooking(container, 'paid-original', createPaid), /Lost response/)
+  assert.equal(legacy.getBookingRecovery(container).review.input.context, 'original')
+  assert.throws(() => legacy.runBooking(container, 'paid-replacement', createPaid), error => error.bookingNotSubmitted === true)
+  const result = await legacy.runBooking(container, 'paid-original', () => {throw new Error('New command forbidden')})
+  assert.equal(result.booking.row_id, 2)
+  assert.equal(paidRuns, 2)
+  legacy.acknowledgeBooking(container, 'paid-original')
+})
+
 test('a reset booking blocks a changed command while one is in flight', async () => {
   let bookingCount = 0
   let resolveStaleBooking

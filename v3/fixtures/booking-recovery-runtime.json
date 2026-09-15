@@ -1,0 +1,16 @@
+{
+  "run_id": "433bafeef5c6",
+  "cases": [
+    "past fresh request rejected before command creation",
+    "completed Paid command replays after start with original card",
+    "past reconciliation preserves original Paid snapshot after default changes",
+    "fingerprint, actor, Origin, auth and command/booking environment guards retained"
+  ],
+  "status": "passed",
+  "date": "2026-09-16",
+  "workspace": 6,
+  "branch": "v1",
+  "candidate_sha256": "f18d5df4869c54bf970b6a9137557d734a9dca416e78b6c5456d28e25b19fdaf",
+  "boundary": "Real authenticated HTTP to isolated Xano; synthetic records and existing fixture controls; no real provider requests",
+  "direct_push_enabled_after_verification": false
+}

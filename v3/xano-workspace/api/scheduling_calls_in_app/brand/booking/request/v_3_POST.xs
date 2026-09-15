@@ -104,7 +104,7 @@ query "brand/booking/request/v3" verb=POST {
       error = "Booking timezone is invalid"
     }
   
-    precondition ($input.start > now && ($input.starter_slug|strlen) > 0 && ($input.starter_slug|strlen) <= 200 && ($input.config_id|strlen) > 0 && ($input.config_id|strlen) <= 200 && (($input.topic|first_notempty:"")|strlen) <= 200 && (($input.context|first_notempty:"")|strlen) <= 2000) {
+    precondition (($input.starter_slug|strlen) > 0 && ($input.starter_slug|strlen) <= 200 && ($input.config_id|strlen) > 0 && ($input.config_id|strlen) <= 200 && (($input.topic|first_notempty:"")|strlen) <= 200 && (($input.context|first_notempty:"")|strlen) <= 2000) {
       error_type = "inputerror"
       error = "Booking details are invalid"
     }
@@ -424,6 +424,11 @@ query "brand/booking/request/v3" verb=POST {
   
     conditional {
       if ($duplicate == false && $recovered == false) {
+        precondition ($input.start > now) {
+          error_type = "inputerror"
+          error = "Booking details are invalid"
+        }
+
         // A public Brand booking must not depend on the Starter opening their dashboard within the
         // previous 24 hours. Refresh stale Connect evidence from Stripe at the booking boundary, then
         // keep the existing fail-closed readiness gate below.
