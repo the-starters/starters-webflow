@@ -36,8 +36,16 @@ function "Bookings/read_owned_card_v3" {
           value = $provider_method.response.result
         }
 
+        // Keep comparison operands separate so the importer preserves the mode check.
+        var $provider_livemode {
+          value = $card|get:"livemode":null
+        }
+        var $expected_livemode {
+          value = $input.payment_environment == "live"
+        }
+
         conditional {
-          if ($provider_method.response.status == 200 && ($card|get:"id":"") == $input.payment_method_id && ($card|get:"customer":"") == $input.customer_id && ($card|get:"livemode":null) == ($input.payment_environment == "live") && ($card|get:"type":"") == "card" && (($card|get:"card.last4":null)|is_text) && ("/^[0-9]{4}$/"|regex_matches:($card|get:"card.last4":""))) {
+          if ($provider_method.response.status == 200 && ($card|get:"id":"") == $input.payment_method_id && ($card|get:"customer":"") == $input.customer_id && ($provider_livemode|is_bool) && $provider_livemode == $expected_livemode && ($card|get:"type":"") == "card" && (($card|get:"card.last4":null)|is_text) && ("/^[0-9]{4}$/"|regex_matches:($card|get:"card.last4":""))) {
             var.update $summary {
               value = {id: $input.payment_method_id, last4: $card.card.last4, brand: $card.card.brand}
             }

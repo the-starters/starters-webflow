@@ -355,7 +355,10 @@ query "brand/booking/request/v3" verb=POST {
       
         conditional {
           if ($configuration.is_paid) {
-            precondition ($recovery_booking.payment_status == "waiting_for_intent" && $recovery_booking.stripe_destination_account == $starter_connect_id && $recovery_booking.stripe_customer_id_snapshot == $brand_customer && $recovery_booking.stripe_payment_method_id_snapshot == ($reviewed_payment_method != "" ? $reviewed_payment_method : $brand_payment_method)) {
+            var $recovery_expected_payment_method {
+              value = $reviewed_payment_method != "" ? $reviewed_payment_method : $brand_payment_method
+            }
+            precondition ($recovery_booking.payment_status == "waiting_for_intent" && $recovery_booking.stripe_destination_account == $starter_connect_id && $recovery_booking.stripe_customer_id_snapshot == $brand_customer && $recovery_booking.stripe_payment_method_id_snapshot == $recovery_expected_payment_method) {
               error_type = "accessdenied"
               error = "Paid booking reconciliation snapshot does not match"
             }

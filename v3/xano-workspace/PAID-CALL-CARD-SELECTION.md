@@ -1,12 +1,12 @@
 # Paid Call card selection: backend deployment candidate
 
-Status: local source prepared; Xano runtime verification and publication pending.
+Status: all ten isolated Xano runtime groups passed on 2026-09-15; production publication remains pending.
 
 These files are backend source, not browser scripts. Shipping them through GitHub/jsDelivr does not install them in Xano. Deploy and verify this contract before releasing the frontend that sends a reviewed card. The older endpoint ignores the additional request field and cannot provide its guarantee.
 
 ## Source and changes
 
-The existing endpoint and upsert were read from workspace 2, branch `v1`, on 2026-09-15. The configured `staging` branch does not contain these canonical V3 endpoints. Published source backups were kept locally; no Xano source, database records, bookings, or Stripe objects were modified by this implementation task.
+The existing endpoint and upsert were read from workspace 2, branch `v1`, on 2026-09-15. The configured `staging` branch does not contain these canonical V3 endpoints. Published source backups were kept locally. The later runtime verification installed a scoped instrumented copy and synthetic records in workspace 6/v1; production workspace 2 remains unchanged.
 
 - `api/scheduling_calls_in_app/brand/booking/request/v_3_POST.xs`: existing authenticated `POST brand/booking/request/v3` in Scheduling Calls In-App; adds optional `expected_payment_method_id`, verifies the owned card through Stripe, locks the Brand row while claiming the reviewed payment identity, and caches receipt metadata with the completed command.
 - `function/bookings/upsert_from_nylas_v_3.xs`: existing `Bookings/upsert_from_nylas_v3`; consumes a trusted payment claim only when command actor, environment, configuration, provider booking ID, phase, customer and payment method agree. A later default change cannot substitute its card. Callers without this server-created claim retain existing default/readiness checks.
@@ -30,7 +30,7 @@ Before calling Nylas, the command checks the card under the Brand row lock and s
 
 ## Required backend runtime checks
 
-Run the approved focused tests through the real booking command using isolated test records and mocked provider responses. All cases below are pending; XanoScript syntax validation is not runtime evidence.
+Run the approved focused tests through the real booking command using isolated test records and mocked provider responses. All ten groups below passed in isolated workspace 6/v1 using real authenticated HTTP requests and simulated providers. The dashboard portion of case 10 separately passed 100 Node tests. See [runtime evidence and importer fixes](../fixtures/PAYMENT-VERIFICATION.md#isolated-xano-runtime-execution-and-importer-fixes). This does not establish production or real-provider behavior.
 
 1. Select default card A, request with `expected_payment_method_id=A`, receive booking A and last4 `0042`; repeat identical request and require the original booking and card, with no second Nylas booking.
 2. Confirm saved card B as default, submit B and verify the canonical payment snapshot and receipt both identify B.
@@ -44,6 +44,10 @@ Run the approved focused tests through the real booking command using isolated t
 10. Regression-check Free Call submission and existing dashboard payment recovery.
 
 Use the existing role-based staging harness for any authenticated browser checks. Do not run real provider booking/charge mutations as a substitute for isolated command tests.
+
+## Import readback requirement
+
+Runtime verification found that the importer dropped the left operand when comparing against a nested boolean expression or ternary. The card adapter now calculates actual/expected mode separately (requiring a boolean provider mode); the request endpoint calculates the expected reconciliation card separately. Both comparisons survived isolated import/readback and passed runtime checks. Verify these comparisons in the target's source readback during the eventual approved publication; syntax validation alone did not catch the original loss.
 
 ## Deployment and rollback
 
