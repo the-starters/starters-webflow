@@ -74,7 +74,7 @@ function loadBridge(nativeFetch, options = {}) {
     Request,
     Response,
     URL,
-    console: { info() {}, warn() {} },
+    console: options.console || { info() {}, warn() {} },
     window,
   })
   return {
@@ -83,6 +83,20 @@ function loadBridge(nativeFetch, options = {}) {
     window,
   }
 }
+
+test('installation logs stay on staging while production still initializes', () => {
+  for (const hostname of ['the-starters-3-0.webflow.io', 'thestarters.com', 'www.thestarters.com']) {
+    const messages = []
+    const options = {
+      hostname,
+      pathname: '/hire/test-starter',
+      console: { info: (message) => messages.push(message), warn() {} },
+    }
+    const result = loadBridge(async () => response({}), options)
+    assert.equal(result.window.__tsSchedulingAuthBridgeOwner, 'scheduling-auth')
+    assert.deepEqual(messages, hostname === 'the-starters-3-0.webflow.io' ? ['[scheduling-auth] installed on V3 Webflow staging'] : [])
+  }
+})
 
 test('installs immediately and takes ownership from the opportunities bridge', () => {
   const nativeFetch = async () => response({})
