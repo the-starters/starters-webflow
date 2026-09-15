@@ -1,10 +1,161 @@
+    function canonicalMirrorValue(value) {
+        if (Array.isArray(value)) return value.join(',');
+        if (typeof value === 'number') return String(value);
+        if (typeof value === 'boolean') return value ? 'yes' : 'no';
+        return String(value ?? '').trim();
+    }
+
+    function canonicalRequiredMirrors(profile) {
+        function firstValue(primary, fallback) {
+            return canonicalMirrorValue(primary) || canonicalMirrorValue(fallback);
+        }
+
+        return {
+            step_1: {
+                'function-required': firstValue(profile?.Category_ID, profile?.Category),
+                'roles-required': firstValue(profile?.Roles_IDs, profile?.Roles),
+                'subcategories-required': firstValue(profile?.Subcategories_IDs, profile?.Subcategories),
+            },
+            step_5: {
+                'skills-required': firstValue(profile?.Skills_IDs, profile?.Skills),
+                'tools-required': firstValue(profile?.Tools_IDs, profile?.Tool),
+            },
+            step_6: {
+                'availability-required': firstValue(profile?.Availability_ID, profile?.Availability),
+            },
+        };
+    }
+
+    function restoreCanonicalProfileFields(profile, steps, getStepIndex, findFields, applyValue) {
+        steps.forEach((step) => {
+            const stepIndex = getStepIndex(step);
+            if (!stepIndex) return;
+
+            const stepData = profile?.data?.[`step_${stepIndex}`];
+            if (!stepData) return;
+
+            const fields = findFields('[data-input-capture], [ms-code-select="input-required"]', step);
+            fields.forEach((field) => {
+                const fieldName = field.name;
+                if (!fieldName || !(fieldName in stepData)) return;
+
+                applyValue(field, stepData[fieldName]);
+            });
+        });
+    }
+
+    window.StartersCanonicalProfileLoader = Object.assign(window.StartersCanonicalProfileLoader || {}, {
+        canonicalRequiredMirrors,
+        restoreCanonicalProfileFields,
+    });
 
     var profileFormControllers = window.__tsProfileFormControllers || (window.__tsProfileFormControllers = {});
     if (!profileFormControllers.canonicalProfileLoader) {
     profileFormControllers.canonicalProfileLoader = true;
+    var profileDirtyState = window.__tsProfileDirtyState;
+    if (!profileDirtyState) {
+    profileDirtyState = (function () {
+        var hydrating = true;
+        var dirtySteps = new Set();
+        var dirtyRevisions = new Map();
+        var savingSteps = new Map();
+        var hydrationSyncDepth = 0;
+
+        function stepKey(value) {
+            var normalized = String(value ?? '').trim();
+            return normalized || 'profile';
+        }
+
+        function stepFromTarget(target) {
+            var step = target && typeof target.closest === 'function'
+                ? target.closest('[data-form="step"][data-index]')
+                : null;
+            return step?.getAttribute?.('data-index') || null;
+        }
+
+        function isDirty() {
+            return dirtySteps.size > 0 || savingSteps.size > 0;
+        }
+
+        var state = {
+            finishHydration: function () {
+                hydrating = false;
+                dirtySteps.clear();
+                dirtyRevisions.clear();
+            },
+            markDirty: function (stepIndex) {
+                if (hydrating) return;
+                var key = stepKey(stepIndex);
+                dirtyRevisions.set(key, (dirtyRevisions.get(key) || 0) + 1);
+                dirtySteps.add(key);
+            },
+            setDirty: function (stepIndex, dirty) {
+                if (dirty) {
+                    state.markDirty(stepIndex);
+                    return;
+                }
+                dirtySteps.delete(stepKey(stepIndex));
+            },
+            runHydrationSync: function (callback) {
+                hydrationSyncDepth += 1;
+                try {
+                    return callback();
+                } finally {
+                    hydrationSyncDepth -= 1;
+                }
+            },
+            beginSave: function (stepIndex) {
+                var key = stepKey(stepIndex);
+                var token = { key: key, revision: dirtyRevisions.get(key) || 0 };
+                var saves = savingSteps.get(key) || new Set();
+                saves.add(token);
+                savingSteps.set(key, saves);
+                return token;
+            },
+            sealSave: function (token) {
+                if (!token || !token.key) return token;
+                token.revision = dirtyRevisions.get(token.key) || 0;
+                return token;
+            },
+            captureRevision: function (stepIndex) {
+                var key = stepKey(stepIndex);
+                return { key: key, revision: dirtyRevisions.get(key) || 0 };
+            },
+            discardRevision: function (stepIndex, token, hasOtherChanges) {
+                var key = stepKey(stepIndex);
+                if (hasOtherChanges || !token || token.key !== key) return;
+                if ((dirtyRevisions.get(key) || 0) === token.revision) dirtySteps.delete(key);
+            },
+            finishSave: function (stepIndex, saved, token) {
+                var key = stepKey(stepIndex);
+                var saves = savingSteps.get(key);
+                var completedSave = token;
+                if (!completedSave && saves) completedSave = saves.values().next().value;
+                if (saves && completedSave) saves.delete(completedSave);
+                if (saves && !saves.size) savingSteps.delete(key);
+                var savedRevision = completedSave ? completedSave.revision : dirtyRevisions.get(key) || 0;
+                if (saved && (dirtyRevisions.get(key) || 0) === savedRevision) dirtySteps.delete(key);
+                else dirtySteps.add(key);
+            },
+            isDirty: isDirty,
+        };
+
+        function recordEdit(event) {
+            if (hydrating || hydrationSyncDepth > 0) return;
+            var stepIndex = stepFromTarget(event.target);
+            if (stepIndex) state.markDirty(stepIndex);
+        }
+
+        document.addEventListener('input', recordEdit, true);
+        document.addEventListener('change', recordEdit, true);
+        return state;
+    })();
+    window.__tsProfileDirtyState = profileDirtyState;
+    }
     window.addEventListener('beforeunload', (event) => {
+        if (!profileDirtyState.isDirty()) return;
         event.preventDefault();
-        event.returnValue = '';
+        event.returnValue = true;
     });
 
     document.addEventListener('DOMContentLoaded', function () {
@@ -55,6 +206,7 @@
                             ensureStepsInProfile(activeProfile, steps);
                             restoreFieldsData(activeProfile);
                             updateCounterFields();
+                            profileDirtyState.finishHydration();
 
                             setTimeout(() => {
                                 setLoader(false);
@@ -67,24 +219,7 @@
             }
 
             function restoreFieldsData(profile) {
-                const steps = getSteps();
-                steps.forEach((step) => {
-                    const stepIndex = getStepIndex(step);
-                    if (!stepIndex) return;
-
-                    const stepKey = `step_${stepIndex}`;
-                    const stepData = profile?.data?.[stepKey];
-
-                    if (!stepData) return;
-
-                    const fields = qsa('[data-input-capture]', step);
-                    fields.forEach((field) => {
-                        const fieldName = field.name;
-                        if (!fieldName || !(fieldName in stepData)) return;
-
-                        setFieldValue(field, stepData[fieldName]);
-                    });
-                });
+                restoreCanonicalProfileFields(profile, getSteps(), getStepIndex, qsa, setFieldValue);
             }
 
             function getFieldValue(field) {
@@ -288,6 +423,7 @@
                     if (value) reviewersData[field] = JSON.stringify(value);
                 }
 
+                const requiredMirrors = canonicalRequiredMirrors(xanoProfile);
                 const profile = {
                     type: getXanoValue(xanoProfile, 'Profile_Type') || PROFILE_TYPE,
                     type_id: getXanoValue(xanoProfile, 'Profile_Type_ID') || PROFILE_TYPE_ID,
@@ -308,6 +444,7 @@
                             'subcategories-option': getXanoValue(xanoProfile, 'Subcategories'),
                             subcategories: getXanoValue(xanoProfile, 'Subcategories_IDs'),
                             'profile-photo-url': getXanoValue(xanoProfile, 'Profile_Photo'),
+                            ...requiredMirrors.step_1,
                         },
                         step_2: {
                             tagline: getXanoValue(xanoProfile, 'Tagline'),
@@ -328,6 +465,7 @@
                             tools: getXanoValue(xanoProfile, 'Tools_IDs'),
                             'industries-option': getXanoValue(xanoProfile, 'Industry_Experience'),
                             industries: getXanoValue(xanoProfile, 'Industry_Experience_IDs'),
+                            ...requiredMirrors.step_5,
                         },
                         step_6: {
                             rate: getXanoValue(xanoProfile, 'Hourly_Rate'),
@@ -342,6 +480,7 @@
                             'offer-monthly-retainers': getXanoValue(xanoProfile, 'Retainer_Enabled'),
                             'description-retainer': getXanoValue(xanoProfile, 'Retainer_Description'),
                             'rate-retainer': getXanoValue(xanoProfile, 'Retainer_Rate'),
+                            ...requiredMirrors.step_6,
                             ...servicesData,
                         },
                         step_7: { ...reviewersData },

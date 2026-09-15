@@ -101,7 +101,7 @@
  * Install: one deferred page-level tag on /complete-profile, after the sitewide
  * route guard. Diagnostics are staging-only (`*.webflow.io`, localhost,
  * 127.0.0.1, `*.trycloudflare.com`, or `window.STARTERS_DEBUG === true`);
- * production is silent. Wiring: see v3/COMPLETE-PROFILE-REDIRECT-WIRING.md.
+ * production is silent. Wiring: see docs/wiring/COMPLETE-PROFILE-REDIRECT-WIRING.md.
  */
 ;(function () {
   'use strict'

@@ -147,6 +147,7 @@ test('installs on valid Hire profiles and canonical dashboards across both produ
       '/hire/sabina-rahaman',
       '/starter-dashboard',
       '/brand-dashboard',
+      '/messages',
     ]) {
       const nativeFetch = async () => response({})
       const { window } = loadBridge(nativeFetch, { hostname, pathname })

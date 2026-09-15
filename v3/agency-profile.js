@@ -7,7 +7,7 @@
  * owns the fetch, the text binds, and every per-field show/hide decision. This
  * module exists only to close the gaps wf-xano cannot cover on this page.
  *
- * Authoritative contract, markup, and install: `v3/AGENCY-PROFILE-WIRING.md`.
+ * Authoritative contract, markup, and install: `docs/wiring/AGENCY-PROFILE-WIRING.md`.
  *
  * Vocabulary on the page, all Designer-authored: `wf-xano-bind` for the four
  * text fields (with `wf-xano-prefix` where a row reads as one sentence),
@@ -65,7 +65,7 @@
  * one-shot cap would leave a second stalled request spinning forever.
  *
  * The complete Designer attribute contract has one owner:
- * `v3/AGENCY-PROFILE-WIRING.md`. Do not infer or copy it from this local intent
+ * `docs/wiring/AGENCY-PROFILE-WIRING.md`. Do not infer or copy it from this local intent
  * comment.
  *
  * Staging-only console diagnostics, per the predicate documented in

@@ -33,7 +33,7 @@ Edit Profile Work Highlights controls. Do not replace it with a DOM marker or a
 first-loader-wins flag because Build and Edit intentionally share the same
 Designer selectors.
 
-`bio-editor.js`, `field-counters.js`, `company-autocomplete.js`, and
+`bio-editor.js`, `field-counters.js`, `company-autocomplete.js`, `work-dates.js`, and
 `company-experience-crud.js` have
 deliberately diverged from the inline bodies they were captured from. The bio limit is
 now 1500 **characters** rather than 300 words, the editor owns its counter group, and
@@ -61,7 +61,14 @@ the legacy Memberstack/local draft initializes, it reads the canonical
 `starter/get` profile through the authenticated browser fetch, verifies the
 stable Memberstack ID before and after that read, maps the canonical
 fields to the seven-step draft shape, and fills only keys that are absent from
-the active draft. Existing draft keys always win, including intentional empty
+the active draft. It also replaces a legacy array-shaped `also-worked-with`
+draft with the canonical `Also_Worked_With_Picker` object. For an object-shaped
+company-picker draft, it preserves the selected set and enriches only matching
+entries with canonical company identity, source, and logo fields. Matching uses
+the entity ID first, then the domain, then a normalized name with a compatible
+source (the same source when the draft provides one); unmatched entries stay
+unchanged, and omitted canonical companies are not restored. Outside those
+company enrichment fields, existing draft keys win, including intentional empty
 or false values. Canonical reviewer fields are adapted to the native draft
 aliases (`fname`, `lname`, and `job`). At submit, the writer accepts those draft
 aliases, the canonical aliases (`first-name`, `last-name`, and `position`), or a
@@ -179,8 +186,24 @@ These live blocks stay unchanged while Elvin owns availability, booking, and pai
 
 The extracted final submit writer is now a declared behavior-change candidate. It
 keeps the existing normalized profile payload, availability fields, and paid-call
-fields. A positive member-entered paid-call rate enables the paid consult in the
-payload even when fallback hydration left the hidden paid-call radio on `no`.
+fields. On Consult, a member-entered paid-call rate that already satisfies the
+contract enables the paid consult in the payload even when fallback hydration
+left the hidden paid-call radio on `no`; a blank, zero, malformed, or
+out-of-range rate behind that hidden radio keeps the no-paid-consult
+compatibility state instead of blocking a submit the member cannot repair. It
+also treats the monthly-retainer section as profile-type-inapplicable on
+Consult: hidden hydrated radio/rate values always submit `retainer: false` and
+`retainer_rate: 0`. The hidden hourly rate is inapplicable on Consult in the same
+way: an in-contract value is persisted, and a malformed, unsafe, or out-of-range
+one submits `hourly_rate: 0` rather than blocking. Full Profile continues to
+validate an enabled retainer and its required hourly rate. It enforces the
+[whole-dollar price contract](../profile-form/README.md#whole-dollar-price-contract)
+on the hourly, retainer, paid-call, and service prices before it builds the
+request, instead of rounding a parsed number, and reveals the authored error
+block when a submit does not complete. Every failure — a rejected price, a
+rejected request, a non-ok response, a malformed success body, or a failed photo
+commit — clears the step loader as it reveals that block, so the error state is
+never left behind a spinner.
 Its other behavior changes are the reviewer-alias compatibility described above
 and the profile-save and pending-photo commit gate described in
 [Profile-photo upload contract](#profile-photo-upload-contract). The separate
@@ -207,3 +230,46 @@ This exclusion is a release boundary, not proof that the remaining inline code i
 7. Confirm each loaded response is a non-cached current release, then publish production and repeat the safe checks.
 8. With an approved Talent canary on each Build Profile route, use a human-like click to submit the native form. Confirm one writer request and clean authored success copy that stays put with no automatic navigation, then click the authored "Start onboarding" CTA and confirm it lands on `/starter-onboarding`; verify the canonical Xano record and its projection after each submit.
 9. Scan both published domains for Airtable, Make, and PAT exposure patterns.
+
+### Photo upload during profile sync
+
+On Build Profile and Starter Edit Profile, HTTP 500 with the exact message
+`PROFILE_IMAGE_CAS_RETRY_EXHAUSTED` triggers automatic retries. A background
+projection can hold the image commit lease longer than the backend's short retry
+loop. The controller preserves the same encoded file and `source_mutation_id`,
+shows a syncing message, and applies only a complete successful response.
+
+Retries use exponential delays capped at 20 seconds, at most 12 retries, and a
+three-minute scheduling budget. A request already in flight may finish after the
+budget. Removing or replacing the photo cancels further retries for the old
+intent. Other errors keep the existing manual retry path; the auth shim retains
+its own single token-refresh retry. Backend lease, transaction, and idempotency
+guards remain unchanged. This extends the existing shared photo controller and
+its authored upload contract; no new page script or Webflow markup is required.
+
+On either Build Profile route, removing or replacing a photo while
+`commitPending()` is waiting causes that commit to reject when it resumes, so
+the submit writer cannot show success for the obsolete selection. Submit the
+profile again to commit a replacement; it remains prepared until then. An
+already-sent request is not aborted, but its obsolete response is not applied
+to the page.
+
+Run `node v3/build-profile/profile-photo-upload-intent.test.js` to exercise busy
+responses followed by success, stable mutation/file identity, all three page
+paths, bounded exhaustion, terminal errors, and cancellation/replacement.
+
+### Counted-field paste ownership
+
+The profile counter and shared `wf-validate` limiter both handle paste. Each must
+return when `event.defaultPrevented` is already set, so the first handler owns the
+insertion and sends a bubbling input notification when it inserts text. This
+applies to keyboard and context-menu paste. The second handler must not insert
+again. The counter lives in `v3/build-profile/field-counters.js` for Build Profile
+and in `starter-edit-profile.js` (Inline block 2) for Edit Profile.
+`wf-validate.test.js` executes each actual counter with the shared validator in
+both registration orders, covering character/word limits, production word-limit
+attributes, full replacement, counters, caret, and one input notification. Run
+`node --test wf-validate.test.js` after changing any of these handlers.
+
+See the [shared validator reference](../../README.md#utilswf-validatejs) for
+profile word caps, defaults, and their interaction with validator and native limits.

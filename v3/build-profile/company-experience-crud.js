@@ -42,6 +42,16 @@ function starterProfileCompanyDatepickerValue(value) {
     }
   }
 
+  const nativeMonthMatch = text.match(/^(\d{4})-(\d{2})$/);
+  if (nativeMonthMatch) {
+    return localCalendarDate(Number(nativeMonthMatch[1]), Number(nativeMonthMatch[2]) - 1, 1);
+  }
+
+  const numericDateMatch = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (numericDateMatch) {
+    return localCalendarDate(Number(numericDateMatch[3]), Number(numericDateMatch[1]) - 1, Number(numericDateMatch[2]));
+  }
+
   const monthDayYearMatch = text.match(/^([A-Za-z]+)\s+(\d{1,2}),?\s+(\d{4})$/);
   if (monthDayYearMatch) {
     const monthIndex = monthIndexForName(monthDayYearMatch[1]);
@@ -83,6 +93,11 @@ function starterProfileCompanyDatepickerDate(input, value) {
 }
 
 function setStarterProfileCompanyDatepickerDate(input, value) {
+  if (input && input._starterProfileCompanyMonthPicker) {
+    input._starterProfileCompanyMonthPicker.setValue(value);
+    return;
+  }
+
   if (!input || typeof jQuery === 'undefined' || !jQuery.fn.datepicker || !jQuery(input).data('datepicker')) return;
   if (isStarterProfileCompanyPresentDate(value)) return;
 
@@ -90,6 +105,293 @@ function setStarterProfileCompanyDatepickerDate(input, value) {
     jQuery(input).datepicker('setDate', starterProfileCompanyDatepickerDate(input, value));
   } catch (error) {
     // The value may not match the widget's configured dateFormat.
+  }
+}
+
+function attachStarterProfileCompanyMonthPicker(input) {
+  if (!input || input._starterProfileCompanyMonthPicker || !document.body) return;
+
+  const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  let visibleYear = new Date().getFullYear();
+  let minimumDate = null;
+  let minimumRefreshTimer = null;
+  let open = false;
+
+  if (!document.getElementById('starter-profile-company-month-picker-style')) {
+    const style = document.createElement('style');
+    style.id = 'starter-profile-company-month-picker-style';
+    style.textContent = '.sp-company-month-picker{position:fixed;z-index:100000;box-sizing:border-box;width:min(17.5rem,calc(100vw - 1rem));max-height:calc(100vh - 1rem);overflow:auto;padding:.75rem;border:1px solid #d8d8d8;border-radius:.5rem;background:#fff;box-shadow:0 .5rem 1.5rem rgba(0,0,0,.16);font:inherit}.sp-company-month-picker[hidden]{display:none}.sp-company-month-picker__header{display:grid;grid-template-columns:2.5rem 1fr 2.5rem;align-items:center;margin-bottom:.5rem}.sp-company-month-picker__year{text-align:center;font-weight:600}.sp-company-month-picker button{min-height:2.5rem;border:1px solid transparent;border-radius:.4rem;background:transparent;color:inherit;font:inherit;cursor:pointer}.sp-company-month-picker button:hover,.sp-company-month-picker button:focus-visible{border-color:#9badff;outline:none;background:#f4f6ff}.sp-company-month-picker button:disabled{cursor:not-allowed;opacity:.38}.sp-company-month-picker button:disabled:hover{border-color:transparent;background:transparent}.sp-company-month-picker__months{display:grid;grid-template-columns:repeat(3,1fr);gap:.25rem}.sp-company-month-picker__month[aria-pressed="true"]{border-color:#7691ff;background:#eef1ff}.sp-company-month-picker__footer{display:grid;grid-template-columns:1fr 1fr;gap:.5rem;margin-top:.75rem;padding-top:.6rem;border-top:1px solid #eee}.sp-company-month-picker__footer button{border-color:#ddd;background:#fafafa}';
+    (document.head || document.body).appendChild(style);
+  }
+
+  const popup = document.createElement('div');
+  attachStarterProfileCompanyMonthPicker.nextId = (attachStarterProfileCompanyMonthPicker.nextId || 0) + 1;
+  popup.id = `starter-profile-company-month-picker-${attachStarterProfileCompanyMonthPicker.nextId}`;
+  popup.className = 'sp-company-month-picker';
+  popup.hidden = true;
+  popup.setAttribute('role', 'dialog');
+  popup.setAttribute('aria-label', 'Choose month and year');
+
+  const header = document.createElement('div');
+  header.className = 'sp-company-month-picker__header';
+  const previousYear = document.createElement('button');
+  previousYear.type = 'button';
+  previousYear.setAttribute('aria-label', 'Previous year');
+  previousYear.textContent = '‹';
+  const yearLabel = document.createElement('div');
+  yearLabel.className = 'sp-company-month-picker__year';
+  yearLabel.setAttribute('aria-live', 'polite');
+  const nextYear = document.createElement('button');
+  nextYear.type = 'button';
+  nextYear.setAttribute('aria-label', 'Next year');
+  nextYear.textContent = '›';
+  header.append(previousYear, yearLabel, nextYear);
+
+  const monthGrid = document.createElement('div');
+  monthGrid.className = 'sp-company-month-picker__months';
+  const monthButtons = monthNames.map(function (name, monthIndex) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'sp-company-month-picker__month';
+    button.textContent = name;
+    button.addEventListener('click', function () {
+      refreshMinimum();
+      const candidate = new Date(visibleYear, monthIndex, 1);
+      if (button.disabled || isBeforeMinimum(candidate)) {
+        if (minimumDate && visibleYear < minimumDate.getFullYear()) visibleYear = minimumDate.getFullYear();
+        render();
+        return;
+      }
+      input.value = `${name} ${visibleYear}`;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      closePicker();
+      if (typeof input.focus === 'function') input.focus({ preventScroll: true });
+    });
+    monthGrid.appendChild(button);
+    return { button, monthIndex };
+  });
+
+  const footer = document.createElement('div');
+  footer.className = 'sp-company-month-picker__footer';
+  const todayButton = document.createElement('button');
+  todayButton.type = 'button';
+  todayButton.textContent = 'Today';
+  const clearButton = document.createElement('button');
+  clearButton.type = 'button';
+  clearButton.textContent = 'Clear';
+  footer.append(todayButton, clearButton);
+  popup.append(header, monthGrid, footer);
+  const popupHost = input.closest('[data-input-datepicker-modal]') || input.closest('.modal_dialog') || document.body;
+  popupHost.appendChild(popup);
+
+  function selectedDate() {
+    return starterProfileCompanyDatepickerValue(input.value);
+  }
+
+  function refreshMinimum() {
+    if (typeof input._starterProfileCompanyMinimumResolver !== 'function') return false;
+    const previousMinimum = minimumDate ? minimumDate.getTime() : null;
+    const resolvedMinimum = input._starterProfileCompanyMinimumResolver();
+    const resolvedDate = resolvedMinimum instanceof Date
+      ? resolvedMinimum
+      : starterProfileCompanyDatepickerValue(resolvedMinimum);
+    minimumDate = resolvedDate
+      ? new Date(resolvedDate.getFullYear(), resolvedDate.getMonth(), 1)
+      : null;
+    return previousMinimum !== (minimumDate ? minimumDate.getTime() : null);
+  }
+
+  function isBeforeMinimum(candidate) {
+    return !!minimumDate && candidate < minimumDate;
+  }
+
+  function render() {
+    const selected = selectedDate();
+    yearLabel.textContent = String(visibleYear);
+    previousYear.disabled = !!minimumDate && visibleYear <= minimumDate.getFullYear();
+    monthButtons.forEach(function (entry) {
+      const candidate = new Date(visibleYear, entry.monthIndex, 1);
+      entry.button.disabled = isBeforeMinimum(candidate);
+      entry.button.setAttribute('aria-pressed', String(!!selected && selected.getFullYear() === visibleYear && selected.getMonth() === entry.monthIndex));
+      entry.button.setAttribute('aria-label', `${monthNames[entry.monthIndex]} ${visibleYear}`);
+    });
+    const today = new Date();
+    todayButton.disabled = !!minimumDate && new Date(today.getFullYear(), today.getMonth(), 1) < minimumDate;
+  }
+
+  function positionPicker() {
+    const rect = input.getBoundingClientRect();
+    const width = popup.offsetWidth || 280;
+    const height = popup.offsetHeight || 360;
+    const viewport = window.visualViewport;
+    const viewportLeft = viewport ? viewport.offsetLeft : 0;
+    const viewportTop = viewport ? viewport.offsetTop : 0;
+    const viewportWidth = viewport ? viewport.width : (window.innerWidth || document.documentElement.clientWidth);
+    const viewportHeight = viewport ? viewport.height : (window.innerHeight || document.documentElement.clientHeight);
+    popup.style.maxWidth = `${Math.max(0, viewportWidth - 16)}px`;
+    popup.style.maxHeight = `${Math.max(0, viewportHeight - 16)}px`;
+    const maxLeft = viewportLeft + viewportWidth - width - 8;
+    const maxTop = viewportTop + viewportHeight - Math.min(height, viewportHeight - 16) - 8;
+    popup.style.left = `${Math.max(viewportLeft + 8, Math.min(rect.left, maxLeft))}px`;
+    popup.style.top = `${rect.bottom + height + 8 <= viewportTop + viewportHeight ? rect.bottom + 6 : Math.max(viewportTop + 8, Math.min(rect.top - height - 6, maxTop))}px`;
+  }
+
+  function openPicker() {
+    if (input.disabled) return;
+    refreshMinimum();
+    const selected = selectedDate();
+    visibleYear = selected ? selected.getFullYear() : new Date().getFullYear();
+    if (minimumDate && visibleYear < minimumDate.getFullYear()) visibleYear = minimumDate.getFullYear();
+    render();
+    popup.hidden = false;
+    input.setAttribute('aria-expanded', 'true');
+    open = true;
+    if (!minimumRefreshTimer) {
+      minimumRefreshTimer = setInterval(function () {
+        if (!open || !refreshMinimum()) return;
+        if (minimumDate && visibleYear < minimumDate.getFullYear()) visibleYear = minimumDate.getFullYear();
+        render();
+      }, 100);
+    }
+    positionPicker();
+    const selectedButton = monthButtons.find(function (entry) {
+      return !entry.button.disabled && selected && selected.getFullYear() === visibleYear && selected.getMonth() === entry.monthIndex;
+    });
+    const firstEnabledButton = monthButtons.find(function (entry) { return !entry.button.disabled; });
+    const focusTarget = selectedButton ? selectedButton.button : (firstEnabledButton && firstEnabledButton.button);
+    if (focusTarget && typeof focusTarget.focus === 'function') focusTarget.focus({ preventScroll: true });
+  }
+
+  function closePicker() {
+    popup.hidden = true;
+    input.setAttribute('aria-expanded', 'false');
+    open = false;
+    if (minimumRefreshTimer) {
+      clearInterval(minimumRefreshTimer);
+      minimumRefreshTimer = null;
+    }
+  }
+
+  previousYear.addEventListener('click', function () {
+    refreshMinimum();
+    if (previousYear.disabled || (minimumDate && visibleYear - 1 < minimumDate.getFullYear())) {
+      if (minimumDate && visibleYear < minimumDate.getFullYear()) visibleYear = minimumDate.getFullYear();
+      render();
+      return;
+    }
+    visibleYear -= 1;
+    render();
+  });
+  nextYear.addEventListener('click', function () { visibleYear += 1; render(); });
+  todayButton.addEventListener('click', function () {
+    refreshMinimum();
+    const today = new Date();
+    if (todayButton.disabled || isBeforeMinimum(new Date(today.getFullYear(), today.getMonth(), 1))) {
+      if (minimumDate && visibleYear < minimumDate.getFullYear()) visibleYear = minimumDate.getFullYear();
+      render();
+      return;
+    }
+    visibleYear = today.getFullYear();
+    input.value = `${monthNames[today.getMonth()]} ${visibleYear}`;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    closePicker();
+    if (typeof input.focus === 'function') input.focus({ preventScroll: true });
+  });
+  clearButton.addEventListener('click', function () {
+    input.value = '';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    closePicker();
+    if (typeof input.focus === 'function') input.focus({ preventScroll: true });
+  });
+  input.addEventListener('click', openPicker);
+  ['beforeinput', 'paste', 'drop'].forEach(function (type) {
+    input.addEventListener(type, function (event) { event.preventDefault(); });
+  });
+  input.addEventListener('keydown', function (event) {
+    if (event.key === 'Escape') closePicker();
+    if (event.key === 'Enter' || event.key === ' ' || event.key === 'ArrowDown') {
+      event.preventDefault();
+      openPicker();
+    }
+  });
+  popup.addEventListener('keydown', function (event) {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      closePicker();
+      if (typeof input.focus === 'function') input.focus({ preventScroll: true });
+      return;
+    }
+    if (event.key !== 'Tab') return;
+    const controls = [previousYear, nextYear].concat(monthButtons.map(function (entry) { return entry.button; }), [todayButton, clearButton]).filter(function (control) { return !control.disabled; });
+    const currentIndex = controls.indexOf(document.activeElement);
+    const nextIndex = event.shiftKey
+      ? (currentIndex <= 0 ? controls.length - 1 : currentIndex - 1)
+      : (currentIndex < 0 || currentIndex === controls.length - 1 ? 0 : currentIndex + 1);
+    event.preventDefault();
+    controls[nextIndex].focus({ preventScroll: true });
+  });
+  document.addEventListener('mousedown', function (event) {
+    if (open && event.target !== input && !popup.contains(event.target)) closePicker();
+  });
+  window.addEventListener('resize', function () { if (open) positionPicker(); });
+  window.addEventListener('scroll', function () { if (open) positionPicker(); }, true);
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', function () { if (open) positionPicker(); });
+    window.visualViewport.addEventListener('scroll', function () { if (open) positionPicker(); });
+  }
+
+  input._starterProfileCompanyMonthPicker = {
+    popup,
+    open: openPicker,
+    setValue(value) {
+      if (isStarterProfileCompanyPresentDate(value)) return;
+      const date = starterProfileCompanyDatepickerValue(value);
+      input.value = date ? `${monthNames[date.getMonth()]} ${date.getFullYear()}` : '';
+      if (open) render();
+    },
+    setMinimum(value) {
+      const date = value instanceof Date ? value : starterProfileCompanyDatepickerValue(value);
+      minimumDate = date ? new Date(date.getFullYear(), date.getMonth(), 1) : null;
+      if (open && minimumDate && visibleYear < minimumDate.getFullYear()) visibleYear = minimumDate.getFullYear();
+      if (open) render();
+    },
+  };
+}
+
+function enableStarterProfileCompanyMonthInput(input, labelText) {
+  if (!input) return;
+
+  if (typeof jQuery !== 'undefined' && jQuery.fn && jQuery.fn.datepicker && jQuery(input).data('datepicker')) {
+    try { jQuery(input).datepicker('destroy'); } catch (error) { /* already detached */ }
+  }
+
+  input.removeAttribute('data-input-datepicker');
+  input.removeAttribute('data-input-datepicker-role');
+  input.removeAttribute('data-format');
+  input.removeAttribute('data-input-datepicker-format');
+  input.type = 'text';
+  input.readOnly = false;
+  input.setAttribute('aria-readonly', 'true');
+  input.setAttribute('autocomplete', 'off');
+  input.setAttribute('placeholder', 'Select a month');
+  input.setAttribute('role', 'combobox');
+  input.setAttribute('aria-haspopup', 'dialog');
+  input.setAttribute('aria-expanded', 'false');
+  input.setAttribute('aria-label', labelText);
+
+  const label = document.querySelector(`label[for="${input.id}"]`) || input.closest('[form-group]')?.querySelector('label');
+  if (label) {
+    label.htmlFor = input.id;
+    label.textContent = labelText;
+  }
+
+  attachStarterProfileCompanyMonthPicker(input);
+  if (input._starterProfileCompanyMonthPicker) {
+    input.setAttribute('aria-controls', input._starterProfileCompanyMonthPicker.popup.id);
   }
 }
 
@@ -102,7 +404,88 @@ function starterProfileCompanyDateBaseline(input, rawValue) {
 function serializeStarterProfileCompanyDate(input, baseline) {
   const currentValue = input ? input.value.trim() : '';
   if (baseline && currentValue === baseline.pickerValue) return baseline.rawValue;
-  return currentValue;
+  if (!currentValue) return '';
+
+  const date = starterProfileCompanyDatepickerValue(currentValue);
+  return date
+    ? `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
+    : currentValue;
+}
+
+const STARTER_PROFILE_COMPANY_MONTH_RANGE_MESSAGE =
+  'End month must be the same as or later than the start month.';
+
+function setStarterProfileCompanyMonthRangeError(startInput, endInput, isInvalid) {
+  const message = isInvalid ? STARTER_PROFILE_COMPANY_MONTH_RANGE_MESSAGE : '';
+
+  [startInput, endInput].forEach(function (input) {
+    if (input && typeof input.setCustomValidity === 'function') input.setCustomValidity(message);
+  });
+}
+
+function reportStarterProfileCompanyMonthRangeError(endInput) {
+  if (endInput && typeof endInput.reportValidity === 'function') endInput.reportValidity();
+}
+
+function syncStarterProfileCompanyMonthRange(startInput, endInput, isCurrent) {
+  if (!startInput || !endInput) return;
+
+  // Constrain only the end picker. A reciprocal maximum on the start picker can
+  // trap an existing inverted range, while a one-way minimum always leaves both
+  // fields able to repair the range.
+  const startDate = isCurrent ? null : starterProfileCompanyDatepickerValue(startInput.value);
+  if (startDate) {
+    endInput.setAttribute('min', `${startDate.getFullYear()}-${String(startDate.getMonth() + 1).padStart(2, '0')}`);
+  } else {
+    endInput.removeAttribute('min');
+  }
+  if (endInput._starterProfileCompanyMonthPicker) {
+    endInput._starterProfileCompanyMonthPicker.setMinimum(startDate);
+  }
+  startInput.removeAttribute('max');
+  setStarterProfileCompanyMonthRangeError(
+    startInput,
+    endInput,
+    !isStarterProfileCompanyMonthRangeValid(startInput, endInput, isCurrent)
+  );
+}
+
+function isStarterProfileCompanyMonthRangeValid(startInput, endInput, isCurrent) {
+  if (isCurrent || !startInput || !endInput) return true;
+
+  const startValue = startInput.value.trim();
+  const endValue = endInput.value.trim();
+  if (!startValue || !endValue) return true;
+
+  const startDate = starterProfileCompanyDatepickerValue(startValue);
+  const endDate = starterProfileCompanyDatepickerValue(endValue);
+  return !startDate || !endDate ||
+    (startDate.getFullYear() * 12 + startDate.getMonth()) <=
+      (endDate.getFullYear() * 12 + endDate.getMonth());
+}
+
+function bindStarterProfileCompanyMonthRange(startInput, endInput, currentCheckbox) {
+  if (!startInput || !endInput) return;
+
+  endInput._starterProfileCompanyMinimumResolver = function () {
+    return currentCheckbox && currentCheckbox.checked ? null : startInput.value;
+  };
+
+  const syncRange = function () {
+    syncStarterProfileCompanyMonthRange(
+      startInput,
+      endInput,
+      !!(currentCheckbox && currentCheckbox.checked)
+    );
+  };
+
+  startInput.addEventListener('input', syncRange);
+  startInput.addEventListener('change', syncRange);
+  endInput.addEventListener('input', syncRange);
+  endInput.addEventListener('change', syncRange);
+  endInput.addEventListener('starter:work-date-value-restored', syncRange);
+  if (currentCheckbox) currentCheckbox.addEventListener('change', syncRange);
+  syncRange();
 }
 
 function starterProfileCompanyMonthYearLabel(value) {
@@ -127,7 +510,10 @@ function starterProfileCompanyMonthYearLabel(value) {
  * Captured read-only from /build-profile/consult on 2026-08-12.
  */
   // Loads, renders, and creates company experience records from Xano.
-  document.addEventListener('DOMContentLoaded', function () {
+  let starterProfileCompanyControllerBooted = false;
+  function bootStarterProfileCompanyController() {
+    if (starterProfileCompanyControllerBooted) return;
+    starterProfileCompanyControllerBooted = true;
     waitForMember(async () => {
       if (!MEMBER.id) return;
       
@@ -158,6 +544,13 @@ function starterProfileCompanyMonthYearLabel(value) {
       const editStartDateInput = qs('#edit-company-start');
       const editEndDateInput = qs('#edit-company-end');
       const editCurrentWorkCheckbox = qs('#edit-company-current');
+
+      enableStarterProfileCompanyMonthInput(startDateInput, 'Start month and year');
+      enableStarterProfileCompanyMonthInput(endDateInput, 'End month and year');
+      enableStarterProfileCompanyMonthInput(editStartDateInput, 'Start month and year');
+      enableStarterProfileCompanyMonthInput(editEndDateInput, 'End month and year');
+      bindStarterProfileCompanyMonthRange(startDateInput, endDateInput, currentWorkCheckbox);
+      bindStarterProfileCompanyMonthRange(editStartDateInput, editEndDateInput, editCurrentWorkCheckbox);
 
       const modalEdit = qs('[data-modal-target="company-edit"]');
       const modalEditTrigger = qs('[data-modal-trigger="company-edit"]');
@@ -310,6 +703,7 @@ function starterProfileCompanyMonthYearLabel(value) {
 
       function isEditCompanyDatepickerReady(input) {
         if (!input) return true;
+        if (input._starterProfileCompanyMonthPicker) return true;
         if (typeof jQuery === 'undefined' || !jQuery.fn || !jQuery.fn.datepicker) return false;
 
         return !!jQuery(input).data('datepicker');
@@ -319,6 +713,7 @@ function starterProfileCompanyMonthYearLabel(value) {
       // the shared embed pairs these inputs with its own `onSelect`, fires neither `input` nor
       // `change`. Chain onto that callback so a picked date still counts as user input.
       function guardEditCompanyDateSelection(input, markChanged) {
+        if (input && input._starterProfileCompanyMonthPicker) return true;
         if (!input || !isEditCompanyDatepickerReady(input)) return false;
 
         try {
@@ -725,6 +1120,7 @@ function starterProfileCompanyMonthYearLabel(value) {
           headers: {
             'Content-Type': 'application/json',
           },
+          body: JSON.stringify({ defer_projection: true }),
         });
         const diagnostics = window.StartersNativeFormDiagnostics;
         const response = await (diagnostics
@@ -790,6 +1186,9 @@ function starterProfileCompanyMonthYearLabel(value) {
           }
         }
 
+        if (endDateInput) endDateInput.dispatchEvent(new Event('starter:work-date-operation-reset'));
+        syncStarterProfileCompanyMonthRange(startDateInput, endDateInput);
+
         updateAddCompanyButtonState();
       }
 
@@ -809,6 +1208,7 @@ function starterProfileCompanyMonthYearLabel(value) {
       function openEditCompany(company) {
         if (!editCompanyWrapper || !company) return;
 
+        if (editEndDateInput) editEndDateInput.dispatchEvent(new Event('starter:work-date-operation-reset'));
         editCompanyWrapper.dataset.id = company.id || '';
         const rawStartDate = company.start_date || '';
         const rawEndDate = company.current_work ? 'Present' : (company.end_date || '');
@@ -827,11 +1227,7 @@ function starterProfileCompanyMonthYearLabel(value) {
             editEndDateInput.value = rawEndDate;
             resetDatepickerBounds(editEndDateInput);
 
-            if (company.end_date && !company.current_work) {
-              setDatepickerDate(editEndDateInput, company.end_date);
-            } else {
-              setDatepickerDate(editEndDateInput, null);
-            }
+            setDatepickerDate(editEndDateInput, rawEndDate);
 
             if (company.current_work) {
               editEndDateInput.setAttribute('disabled', 'disabled');
@@ -842,6 +1238,8 @@ function starterProfileCompanyMonthYearLabel(value) {
             editEndDateInput.classList.toggle('is-disabled', !!company.current_work);
             editEndDateBaseline = starterProfileCompanyDateBaseline(editEndDateInput, rawEndDate);
           }
+
+          syncStarterProfileCompanyMonthRange(editStartDateInput, editEndDateInput, !!company.current_work);
         }
 
         if (editCompanyInput) {
@@ -908,6 +1306,8 @@ function starterProfileCompanyMonthYearLabel(value) {
           }
 
           setCheckboxState(editCurrentWorkCheckbox, false);
+          if (editEndDateInput) editEndDateInput.dispatchEvent(new Event('starter:work-date-operation-reset'));
+          syncStarterProfileCompanyMonthRange(editStartDateInput, editEndDateInput);
 
           editStartDateBaseline = null;
           editEndDateBaseline = null;
@@ -1015,6 +1415,7 @@ function starterProfileCompanyMonthYearLabel(value) {
 
           const payload = {
             freelancers_id: starter_xano_id,
+            defer_projection: true,
             company_name: getValue(editCompanyInput),
             job_title: getValue(editJobTitleInput),
             start_date: serializeStarterProfileCompanyDate(editStartDateInput, editStartDateBaseline),
@@ -1040,6 +1441,14 @@ function starterProfileCompanyMonthYearLabel(value) {
 
           if (!payload.job_title) {
             showFieldError(editJobTitleInput.closest('[form-group]'));
+            isValid = false;
+          }
+
+          if (!isStarterProfileCompanyMonthRangeValid(editStartDateInput, editEndDateInput, payload.current_work)) {
+            showFieldError(editStartDateInput.closest('[form-group]'));
+            showFieldError(editEndDateInput.closest('[form-group]'));
+            setStarterProfileCompanyMonthRangeError(editStartDateInput, editEndDateInput, true);
+            reportStarterProfileCompanyMonthRangeError(editEndDateInput);
             isValid = false;
           }
 
@@ -1100,10 +1509,14 @@ function starterProfileCompanyMonthYearLabel(value) {
 
           const payload = {
             freelancers_id: starter_xano_id,
+            // Build Profile commits the complete profile, including Work History, on
+            // the final submit. Do not block this draft-stage card save on a live
+            // Hire-page projection worker claim.
+            defer_projection: true,
             company_name: getValue(companyInput),
             job_title: getValue(jobTitleInput),
-            start_date: getValue(startDateInput),
-            end_date: currentWorkCheckbox && currentWorkCheckbox.checked ? "Present" : getValue(endDateInput),
+            start_date: serializeStarterProfileCompanyDate(startDateInput, null),
+            end_date: currentWorkCheckbox && currentWorkCheckbox.checked ? "Present" : serializeStarterProfileCompanyDate(endDateInput, null),
             current_work: currentWorkCheckbox ? currentWorkCheckbox.checked : false,
             company_domain: selectedAddCompany ? selectedAddCompany.domain : '',
             company_logo_url: selectedAddCompany ? selectedAddCompany.logo_url : '',
@@ -1128,6 +1541,15 @@ function starterProfileCompanyMonthYearLabel(value) {
             isValid = false;
           }
 
+          const isAddMonthRangeInvalid = !isStarterProfileCompanyMonthRangeValid(startDateInput, endDateInput, payload.current_work);
+
+          if (isAddMonthRangeInvalid) {
+            showFieldError(startDateInput.closest('[form-group]'));
+            showFieldError(endDateInput.closest('[form-group]'));
+            setStarterProfileCompanyMonthRangeError(startDateInput, endDateInput, true);
+            isValid = false;
+          }
+
           if (!isValid) {
             const currentAccordion = addCompanyButton.previousElementSibling;
             if (currentAccordion && currentAccordion.classList.contains("profile-dropdown")) {
@@ -1140,6 +1562,8 @@ function starterProfileCompanyMonthYearLabel(value) {
             } else {
               console.warn("Current accordion not found");
             }
+
+            if (isAddMonthRangeInvalid) reportStarterProfileCompanyMonthRangeError(endDateInput);
 
             return;
           }
@@ -1187,4 +1611,10 @@ function starterProfileCompanyMonthYearLabel(value) {
       updateAddCompanyButtonState();
       openAddCompanyAccordionIfEmpty();
     });
-  });
+  }
+
+  if (!document.readyState || document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', bootStarterProfileCompanyController, { once: true });
+  } else {
+    bootStarterProfileCompanyController();
+  }

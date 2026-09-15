@@ -56,7 +56,7 @@
   const PRODUCTION_MIN_BOOKING_NOTICE_MINUTES = 24 * 60
   const STAGING_MIN_BOOKING_NOTICE_MINUTES = 5
   // Canonical Paid Call duration, owned by paid-call-settings.js
-  // (FIXED_DURATION_MINUTES) and PAID-CALL-SETTINGS-WIRING.md.
+  // (FIXED_DURATION_MINUTES) and docs/wiring/PAID-CALL-SETTINGS-WIRING.md.
   const PAID_DURATION_MINUTES = 60
   const FREE_DURATION_MINUTES = 30
   const SYNC_READY_STATES = ['ready', 'ok', 'synced', 'active', 'complete', 'completed', 'true']
@@ -69,6 +69,8 @@
   const NOTIFICATION_MODAL_ID = 'availability-notification'
   const ERROR_TEXT_ITEM_SAVE =
     "We couldn't save this availability window. Please try again or contact support."
+  const ERROR_TEXT_ITEM_TIME =
+    'Enter a valid start and end time. The end time must be later than the start time.'
   const ERROR_TEXT_ITEM_REMOVE =
     "We couldn't remove this availability window. Please try again or contact support."
   const ERROR_TEXT_CONNECT_PLATFORM =
@@ -77,6 +79,13 @@
     "We couldn't connect your Google calendar. Please try again or contact support."
   const ERROR_TEXT_DISCONNECT_GOOGLE =
     "We couldn't disconnect your Google calendar. Please try again or contact support."
+  // A stored paid-call rate the whole-dollar contract rejects stops the transition
+  // before the irreversible provider request. That is a repairable Call Settings
+  // problem, not a connection failure, so it must name the rate instead of leaving
+  // the member with generic calendar copy they cannot act on.
+  const ERROR_TEXT_PAID_CALL_RATE =
+    'Your paid call rate must be a whole-dollar amount from $1 to $1,000. Update it in Call Settings, then switch calendars again.'
+  const PAID_CALL_RATE_UNSUPPORTED = 'PAID_CALL_RATE_UNSUPPORTED'
   const PRE_OAUTH_GOOGLE_COPY = "You’ll be taken to connect your Google calendar."
   const PRE_OAUTH_GOOGLE_COPY_STALE =
     PRE_OAUTH_GOOGLE_COPY + ' Your availability settings have been saved.'
@@ -113,6 +122,9 @@
   let timezonePersisted = false
   let connectionError = false
   let connectBusy = false
+  // Carries the last calendar-transition failure to the modal that reports it, so
+  // a repairable paid-call rate can replace the generic connection copy.
+  let calendarTransitionErrorText = null
   let cachedItemTemplate = null
   let creatingDraft = false
   let selectedPreviewConfigId = null
@@ -218,6 +230,24 @@
 
   function qsa(selector, scope) {
     return (scope || document).querySelectorAll(selector)
+  }
+
+  function normalizeAvailabilityTime(value) {
+    const match = String(value == null ? '' : value).trim().match(/^(\d{1,2})(?::(\d{2}))?$/)
+    if (!match) return null
+    const hours = Number(match[1])
+    const minutes = match[2] == null ? 0 : Number(match[2])
+    if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return null
+    return String(hours).padStart(2, '0') + ':' + String(minutes).padStart(2, '0')
+  }
+
+  function availabilityTimeMinutes(value) {
+    const parts = value.split(':')
+    return Number(parts[0]) * 60 + Number(parts[1])
+  }
+
+  function setTimeInputValidity(input, message) {
+    if (input && typeof input.setCustomValidity === 'function') input.setCustomValidity(message || '')
   }
 
   function elSel(name) {
@@ -372,6 +402,15 @@
   function publishCalendarConnectionError() {
     connectionError = true
     return publishCalendarConnectionState('error')
+  }
+
+  function noteCalendarTransitionError(error) {
+    calendarTransitionErrorText =
+      error && error.code === PAID_CALL_RATE_UNSUPPORTED ? ERROR_TEXT_PAID_CALL_RATE : null
+  }
+
+  function calendarTransitionErrorCopy(fallback) {
+    return calendarTransitionErrorText || fallback
   }
 
   // Repaints this section's own chrome whenever ANY code path (including a
@@ -670,10 +709,15 @@
     const avails = availability.items
     for (const id in avails) {
       if (!Object.prototype.hasOwnProperty.call(avails, id)) continue
+      const avail = avails[id]
+      // `general` is retained canonically when overrides cover every base day
+      // so an override removal can restore its original schedule. Nylas open
+      // hours cannot contain an empty window, so omit only that special item.
+      if (id === 'general' && avail.days.length === 0) continue
       availabilityArray.push({
-        days: avails[id].days,
-        start: avails[id].start,
-        end: avails[id].end,
+        days: avail.days,
+        start: avail.start,
+        end: avail.end,
       })
     }
     return availabilityArray
@@ -707,6 +751,16 @@
       })
     }
     return claimed
+  }
+
+  function reconcileGeneralDays() {
+    const general = availability.items.general
+    if (!general) return
+    const baseDays = Array.isArray(general.defaultDays) ? general.defaultDays : general.days
+    const claimed = computeOverrides()
+    general.days = baseDays.filter(function (day) {
+      return claimed.indexOf(day) === -1
+    })
   }
 
   function writeAvailabilityCache() {
@@ -838,11 +892,17 @@
       duration_minutes: Number(service.duration),
     }
     if (
-      intent.title.length < 3 ||
       !Number.isInteger(intent.price_cents) ||
       intent.price_cents < 100 ||
-      [15, 30, 45, 60].indexOf(intent.duration_minutes) === -1
+      intent.price_cents > 100000 ||
+      intent.price_cents % 100 !== 0
     ) {
+      throw Object.assign(
+        new Error('Canonical paid-call rate is outside the whole-dollar contract'),
+        { code: PAID_CALL_RATE_UNSUPPORTED },
+      )
+    }
+    if (intent.title.length < 3 || [15, 30, 45, 60].indexOf(intent.duration_minutes) === -1) {
       throw new Error('Canonical paid-call service cannot be preserved')
     }
     return intent
@@ -1161,6 +1221,7 @@
     // calendar is not a connection, so rebuilding over it is still valid.
     if (connectBusy || !platformConnectAvailable()) return
     connectBusy = true
+    calendarTransitionErrorText = null
     setRequestBusy(true)
     publishCalendarConnectionState('loading')
     let memberId = null
@@ -1209,6 +1270,7 @@
         console.warn('[scheduling-section] connect-platform recovery failed:', recoveryError && recoveryError.message)
       }
       publishCalendarConnectionError()
+      noteCalendarTransitionError(error)
       console.warn('[scheduling-section] connect-platform failed:', error && error.message)
       return false
     } finally {
@@ -1220,6 +1282,7 @@
   async function activateGoogleManager() {
     if (connectBusy) return
     connectBusy = true
+    calendarTransitionErrorText = null
     setRequestBusy(true)
     publishCalendarConnectionState('loading')
     let memberId = null
@@ -1256,6 +1319,7 @@
         console.warn('[scheduling-section] connect-google recovery failed:', recoveryError && recoveryError.message)
       }
       publishCalendarConnectionError()
+      noteCalendarTransitionError(error)
       console.warn('[scheduling-section] connect-google failed:', error && error.message)
       connectBusy = false
       setRequestBusy(false)
@@ -1266,6 +1330,7 @@
   async function disconnectGoogleManager() {
     if (connectBusy) return
     connectBusy = true
+    calendarTransitionErrorText = null
     setRequestBusy(true)
     publishCalendarConnectionState('loading')
     let memberId = null
@@ -1309,6 +1374,7 @@
         console.warn('[scheduling-section] disconnect-google recovery failed:', recoveryError && recoveryError.message)
       }
       publishCalendarConnectionError()
+      noteCalendarTransitionError(error)
       console.warn('[scheduling-section] disconnect-google failed:', error && error.message)
       return false
     } finally {
@@ -1521,7 +1587,7 @@
         } else if (action === 'open-oauth-redirect') {
           switchNotification('oauth-redirect')
           activateGoogleManager().then(function (ok) {
-            if (ok === false) showNotificationError(ERROR_TEXT_CONNECT_GOOGLE)
+            if (ok === false) showNotificationError(calendarTransitionErrorCopy(ERROR_TEXT_CONNECT_GOOGLE))
           })
         } else if (action === 'disconnect-google') {
           // Google disconnect deletes the provider-backed grant and replaces
@@ -1530,7 +1596,7 @@
           disconnectGoogleManager()
             .then(function (ok) {
               if (ok) switchNotification('calendar-disconnected')
-              else showNotificationError(ERROR_TEXT_DISCONNECT_GOOGLE)
+              else showNotificationError(calendarTransitionErrorCopy(ERROR_TEXT_DISCONNECT_GOOGLE))
             })
             .finally(function () {
               setNotificationBusy(target, false)
@@ -1705,7 +1771,7 @@
         }
         openNotification('virtual-connect')
         activatePlatformManager().then(function (ok) {
-          if (ok === false) showNotificationError(ERROR_TEXT_CONNECT_PLATFORM)
+          if (ok === false) showNotificationError(calendarTransitionErrorCopy(ERROR_TEXT_CONNECT_PLATFORM))
           else if (ok) switchNotification('virtual-connected')
         })
       } else if (action === 'open-connect-google') {
@@ -2122,25 +2188,37 @@
       return
     }
 
+    const startTime = normalizeAvailabilityTime(startInput.value)
+    const endTime = normalizeAvailabilityTime(endInput.value)
+    const timesAreValid =
+      Boolean(startTime && endTime) && availabilityTimeMinutes(startTime) < availabilityTimeMinutes(endTime)
+    if (!timesAreValid) {
+      setTimeInputValidity(startInput, ERROR_TEXT_ITEM_TIME)
+      setTimeInputValidity(endInput, ERROR_TEXT_ITEM_TIME)
+      showNotificationError(ERROR_TEXT_ITEM_TIME)
+      console.warn('[scheduling-section] valid ascending start and end times required')
+      return
+    }
+    setTimeInputValidity(startInput, '')
+    setTimeInputValidity(endInput, '')
+    startInput.value = startTime
+    endInput.value = endTime
+
     const availId = form.dataset.availabilityId || id || 'general'
-    const avail = { days: selectedDays, start: startInput.value, end: endInput.value }
+    const avail = { days: selectedDays, start: startTime, end: endTime }
+    const previousAvailability = JSON.parse(JSON.stringify(availability))
+    let canonicalSaved = false
 
     setRequestBusy(true)
     try {
-      if (availId !== 'general') {
-        const general = availability.items.general
-        if (general) {
-          general.days = general.days.filter(function (day) {
-            return avail.days.indexOf(day) === -1
-          })
-          availability.items.general = general
-        }
-      } else {
+      if (availId === 'general') {
         avail.defaultDays = avail.days
       }
 
       availability.items[availId] = avail
+      if (availId !== 'general') reconcileGeneralDays()
       await updateAvail()
+      canonicalSaved = true
 
       if (grantId) {
         const updated = await updateConfigs()
@@ -2158,6 +2236,11 @@
       console.log('[scheduling-section] availability saved', { id: availId, avail: avail })
       openNotification('availability-saved')
     } catch (error) {
+      if (!canonicalSaved) {
+        availability = previousAvailability
+        window.STARTER_AVAILABILITY = previousAvailability
+        renderAvailabilityItems()
+      }
       publishCalendarConnectionError()
       console.warn('[scheduling-section] availability save failed:', error && error.message)
       showNotificationError(ERROR_TEXT_ITEM_SAVE)
@@ -2174,17 +2257,15 @@
     const removed = availability.items[id]
     const general = availability.items.general
     if (!removed || !general) return false
-    removed.days.forEach(function (day) {
-      if (general.defaultDays && general.defaultDays.indexOf(day) > -1) {
-        general.days.push(day)
-      }
-    })
-    availability.items.general = general
+    const previousAvailability = JSON.parse(JSON.stringify(availability))
+    let canonicalSaved = false
     delete availability.items[id]
+    reconcileGeneralDays()
 
     setRequestBusy(true)
     try {
       await updateAvail()
+      canonicalSaved = true
       if (grantId) {
         const updated = await updateConfigs()
         if (!updated) {
@@ -2200,6 +2281,11 @@
       console.log('[scheduling-section] availability removed', { id: id })
       return true
     } catch (error) {
+      if (!canonicalSaved) {
+        availability = previousAvailability
+        window.STARTER_AVAILABILITY = previousAvailability
+        renderAvailabilityItems()
+      }
       publishCalendarConnectionError()
       console.warn('[scheduling-section] availability remove failed:', error && error.message)
       return false
@@ -2568,6 +2654,8 @@
     return Boolean(
       Number.isInteger(Number(config.price_cents)) &&
         Number(config.price_cents) >= 100 &&
+        Number(config.price_cents) <= 100000 &&
+        Number(config.price_cents) % 100 === 0 &&
         previewSyncReady(config),
     )
   }

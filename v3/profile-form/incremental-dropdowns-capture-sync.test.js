@@ -94,6 +94,8 @@ function boot({ captureValue = '{}', requiredTitle = true } = {}) {
   wrapper.closest = (selector) => (selector === "[data-form='step']" ? step : null)
 
   const domReady = []
+  const documentListeners = new Map()
+  const windowListeners = new Map()
   const context = {
     JSON,
     Math,
@@ -109,6 +111,7 @@ function boot({ captureValue = '{}', requiredTitle = true } = {}) {
     document: {
       addEventListener(type, listener) {
         if (type === 'DOMContentLoaded') domReady.push(listener)
+        else documentListeners.set(type, [...(documentListeners.get(type) || []), listener])
       },
     },
     formatRateInputs() {},
@@ -127,15 +130,31 @@ function boot({ captureValue = '{}', requiredTitle = true } = {}) {
     waitProfileData: (callback) => callback(),
   }
   context.window = context
+  context.addEventListener = (type, listener) => windowListeners.set(type, listener)
   vm.createContext(context)
   new vm.Script(fs.readFileSync(SOURCE, 'utf8'), { filename: SOURCE }).runInContext(context)
   for (const listener of domReady) listener()
+  // Execute the actual dirty guard, but not its separate network hydration callback.
+  const guard = path.join(__dirname, '../starter-edit-profile/canonical-profile-loader.js')
+  new vm.Script(fs.readFileSync(guard, 'utf8'), { filename: guard }).runInContext(context)
+  captureField.closest = () => ({ getAttribute: () => '6' })
+  captureField.addEventListener('change', event => {
+    event.target = captureField
+    for (const listener of documentListeners.get('change') || []) listener(event)
+  })
+  context.__tsProfileDirtyState.finishHydration()
 
   return {
     addButton,
     captureField,
     descriptionField,
     titleField,
+    state: context.__tsProfileDirtyState,
+    prompts() {
+      const event = { preventDefault() { this.prevented = true } }
+      windowListeners.get('beforeunload')(event)
+      return event.prevented === true
+    },
     capturedData() { return JSON.parse(captureField.value || '{}') },
     fire(field, type) {
       captureField.dispatched.length = 0
@@ -152,6 +171,51 @@ test('a Custom Service field syncs its value into the hidden capture JSON while 
 
   assert.deepEqual(harness.capturedData(), { title: 'Design audit' })
   assert.deepEqual(harness.captureField.dispatched, ['change'])
+})
+
+test('unchanged saved service blur stays clean through the real dirty guard', () => {
+  const harness = boot({ captureValue: '{"title":"Design audit","description":"Weekly"}' })
+  harness.titleField.value = 'Design audit'
+  harness.fire(harness.titleField, 'blur')
+  assert.deepEqual(harness.captureField.dispatched, [])
+  assert.equal(harness.prompts(), false)
+  assert.equal(harness.addButton.style.pointerEvents, '')
+  harness.titleField.value = 'Changed audit'
+  harness.fire(harness.titleField, 'input')
+  assert.deepEqual(harness.captureField.dispatched, ['change'])
+  assert.equal(harness.prompts(), true, 'real synthetic custom-control edits remain protected')
+})
+
+test('late canonical capture replacement is current truth and siblings survive edits', () => {
+  const harness = boot({ captureValue: '{"title":"Old","description":"Old sibling"}' })
+  harness.captureField.value = '{"title":"Hydrated","description":"New sibling","price":100}'
+  harness.titleField.value = 'Hydrated'
+  harness.fire(harness.titleField, 'blur')
+  assert.equal(harness.prompts(), false)
+  harness.titleField.value = 'New title'
+  harness.fire(harness.titleField, 'change')
+  assert.deepEqual(harness.capturedData(), { title: 'New title', description: 'New sibling', price: 100 })
+  assert.equal(harness.prompts(), true)
+})
+
+test('an empty capture normalizes missing fields and refreshes button state', () => {
+  for (const captureValue of ['', '{}', '{"title":null}']) {
+    const harness = boot({ captureValue })
+    harness.fire(harness.titleField, 'blur')
+    assert.deepEqual(harness.capturedData(), { title: '' })
+    assert.equal(harness.addButton.style.pointerEvents, 'none')
+    assert.equal(harness.prompts(), false)
+    assert.deepEqual(harness.captureField.dispatched, [])
+  }
+})
+
+test('numeric canonical values survive unchanged blur without a synthetic edit', () => {
+  const harness = boot({ captureValue: '{"title":100,"description":"Sibling"}' })
+  harness.titleField.value = '100'
+  harness.fire(harness.titleField, 'blur')
+  assert.equal(harness.capturedData().title, 100)
+  assert.equal(harness.prompts(), false)
+  assert.deepEqual(harness.captureField.dispatched, [])
 })
 
 test('clearing a Custom Service field syncs the empty value instead of leaving stale JSON', () => {

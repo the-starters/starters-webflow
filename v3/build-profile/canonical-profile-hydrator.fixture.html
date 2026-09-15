@@ -22,6 +22,10 @@
     .metric { border-left: 4px solid #1d7d50; background: #f2faf5; padding: 12px 14px; border-radius: 6px; }
     .metric strong { display: block; }
     .metric span { color: #4e6258; font-size: 14px; }
+    .company { display: flex; gap: 12px; align-items: center; padding: 14px; border: 1px solid #cbd7d0; border-radius: 10px; background: #f7fbf8; }
+    .company-logo { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 9px; background: #dcece3; color: #216843; font-weight: 800; }
+    .company strong, .company span { display: block; }
+    .company span { color: #68766f; font-size: 13px; }
     #status { display: inline-block; padding: 7px 11px; border-radius: 999px; background: #e4f5ea; color: #165c3b; font-weight: 750; }
   </style>
 </head>
@@ -55,6 +59,13 @@
             <span class="hint">The existing draft value must win.</span>
           </label>
         </section>
+        <section data-form="step" data-index="3">
+          <h2>Step 3 · Also worked with</h2>
+          <div class="company" id="company-card">
+            <div class="company-logo">PC</div>
+            <div><strong id="company-name">Company pending</strong><span id="company-details">Picker data pending</span></div>
+          </div>
+        </section>
       </form>
       <aside class="card">
         <h2>Observed result</h2>
@@ -62,6 +73,7 @@
           <div class="metric"><strong id="identity">Identity pending</strong><span>Stable Memberstack ID matched canonical readback.</span></div>
           <div class="metric"><strong id="empty">Empty draft pending</strong><span>Canonical email did not overwrite an owned empty key.</span></div>
           <div class="metric"><strong id="false">False draft pending</strong><span>Canonical true did not overwrite an owned false key.</span></div>
+          <div class="metric"><strong id="company">Company picker pending</strong><span>A legacy ID-array draft must yield to the canonical picker object.</span></div>
           <div class="metric"><strong id="network">Network pending</strong><span>Read-only browser-code boundary.</span></div>
         </div>
       </aside>
@@ -76,6 +88,7 @@
       data: {
         step_1: { email: '' },
         step_2: { tagline: 'Draft-owned tagline' },
+        step_3: { 'also-worked-with': '[99]' },
         step_6: { 'free-consulting-calls': false }
       }
     }
@@ -94,6 +107,17 @@
             Email: 'canonical@example.test',
             City: 'Canonical City',
             Tagline: 'Canonical tagline',
+            Also_Worked_With: [99],
+            Also_Worked_With_Picker: {
+              'client-7': {
+                name: 'Private QA Company',
+                domain: '',
+                logo_url: '',
+                client_row_id: 7,
+                company_entity_id: 88,
+                source: 'custom'
+              }
+            },
             Free_Call_Enabled: true
           }
         }
@@ -112,6 +136,9 @@
       var stable = profile.data.step_1['first-name'] === 'Canonical Starter'
       var emptyOwned = profile.data.step_1.email === ''
       var falseOwned = profile.data.step_6['free-consulting-calls'] === false
+      var companies = JSON.parse(profile.data.step_3['also-worked-with'])
+      var companyRecord = companies['client-7']
+      var companyHydrated = !Array.isArray(companies) && companyRecord && companyRecord.name === 'Private QA Company' && companyRecord.company_entity_id === 88 && companyRecord.source === 'custom'
       var reads = window.__fixtureRequests.filter(function (request) {
         return request.method === 'POST' && /\/starter\/get$/.test(request.url)
       }).length
@@ -121,15 +148,20 @@
       var emails = window.__fixtureRequests.filter(function (request) {
         return /email|mailchimp|sendgrid/i.test(request.url)
       }).length
-      document.querySelector('#status').textContent = stable && emptyOwned && falseOwned ? '✓ Hydration verified' : '✕ Verification failed'
+      document.querySelector('#status').textContent = stable && emptyOwned && falseOwned && companyHydrated ? '✓ Hydration verified' : '✕ Verification failed'
       document.querySelector('#identity').textContent = stable ? 'Identity matched' : 'Identity failed'
       document.querySelector('#empty').textContent = emptyOwned ? 'Empty draft preserved' : 'Empty draft overwritten'
       document.querySelector('#false').textContent = falseOwned ? 'False draft preserved' : 'False draft overwritten'
+      document.querySelector('#company').textContent = companyHydrated ? 'Full company object restored' : 'Legacy company IDs retained'
+      document.querySelector('#company-name').textContent = companyRecord ? companyRecord.name : 'Company missing'
+      document.querySelector('#company-details').textContent = companyRecord ? 'Custom company · Entity ' + companyRecord.company_entity_id + ' · Domainless' : 'Picker data missing'
       document.querySelector('#network').textContent = reads + ' canonical read · ' + mutations + ' mutations · ' + emails + ' emails'
       window.__fixtureResult = {
         stableIdentity: stable,
         emptyDraftPreserved: emptyOwned,
         falseDraftPreserved: falseOwned,
+        companyObjectHydrated: companyHydrated,
+        companies: companies,
         firstName: profile.data.step_1['first-name'],
         email: profile.data.step_1.email,
         city: profile.data.step_1.city,

@@ -1,0 +1,19 @@
+{
+  "common": {
+    "file": "inter-common-3746698b07b8.woff2",
+    "sha256": "3746698b07b83170fd4885c8ae743edbe692c7fca22c8d239473ae0ead9d4bda",
+    "bytes": 99160,
+    "codepoints": 275
+  },
+  "extended": {
+    "file": "inter-extended-88d7c4a59b76.woff2",
+    "sha256": "88d7c4a59b762c031f2677f853e86b4107d4b104b1fa1ed7760167cb15a30cba",
+    "bytes": 129492,
+    "codepoints": 745
+  },
+  "source": {
+    "url": "https://cdn.prod.website-files.com/69c573f20f82bd0f3384032c/6a9be2f67d467a1616bfaccd_InterVariablelatin.woff2",
+    "sha256": "51e1ebf03f776eeae63e9135ef0612e2d23fef330dc2baa29eded375c2dc98fe",
+    "bytes": 209292
+  }
+}

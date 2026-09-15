@@ -56,7 +56,7 @@
 
           saveProfileToLocalStorage(activeProfile);
 
-          if ((localProfile?.last_update || 0) > (memberProfile?.last_update || 0)) {
+          if (activeProfile === localProfile && (localProfile?.last_update || 0) > (memberProfile?.last_update || 0)) {
             await saveProfileToMemberJSON(activeProfile, memberJSON);
           }
 
@@ -285,14 +285,24 @@
         const memberLastUpdate = Number(memberProfile?.last_update || 0);
         const localLastUpdate = Number(localProfile?.last_update || 0);
 
-        if (localLastUpdate > memberLastUpdate) {
+        // The identity guard seeds only route/type metadata in a new browser.
+        // Its fresh clock is not an authored edit and must not erase saved answers.
+        // A captured blank field still counts as an edit, preserving intentional clears.
+        const hasCapturedFields = (profile) => Object.values(profile?.data || {}).some(
+          (step) => step && typeof step === 'object' && Object.keys(step).length > 0,
+        );
+        if (localLastUpdate > memberLastUpdate && (hasCapturedFields(localProfile) || !hasCapturedFields(memberProfile))) {
           console.log('Using local profile as the newest profile');
           return localProfile;
         }
 
         if (memberLastUpdate > 0) {
           console.log('Using member profile as the newest profile');
-          return memberProfile;
+          return {
+            ...memberProfile,
+            type: localProfile?.type || memberProfile.type,
+            type_id: localProfile?.type_id || memberProfile.type_id,
+          };
         }
 
         return createEmptyProfile(PROFILE_TYPE, PROFILE_TYPE_ID, Date.now());
