@@ -59,6 +59,8 @@ document.addEventListener('DOMContentLoaded', function () {
         const brandSearch = document.querySelector('input#brand-search');
         const brandList = document.querySelector('#brand-list');
         const brandsEmpty = document.querySelector('[brands-empty]');
+        const contractForm = brandContractInput?.closest('form') || brandSearch?.closest('form');
+        const BRAND_REQUIRED_MESSAGE = 'Select a Brand from the list before starting the project.';
         const BRAND_CACHE_TTL_MS = 10 * 60 * 1000;
         const brandCacheKey = `thestarters:fsp:eligible-brands:${memid}`;
         const optionEmptyState = document.createElement('div');
@@ -82,7 +84,30 @@ document.addEventListener('DOMContentLoaded', function () {
             brandSearch.addEventListener('focus', searchOnFocus, true);
             brandSearch.addEventListener('keyup', searchOnKeyUp, true);
             brandSearch.addEventListener('blur', searchOnBlur, true);
+            brandSearch.addEventListener('input', function () {
+                const selectedName = brandNameInput ? brandNameInput.value.trim() : '';
+                if (brandSearch.value.trim() !== selectedName) {
+                    if (brandContractInput) brandContractInput.value = '';
+                    if (brandNameContractInput) brandNameContractInput.value = '';
+                }
+                brandSearch.setCustomValidity('');
+            }, true);
             brandSearch.classList.add('loaded');
+        }
+
+        if (contractForm && brandSearch && brandContractInput) {
+            contractForm.addEventListener('submit', function (event) {
+                if (brandContractInput.value.trim()) {
+                    brandSearch.setCustomValidity('');
+                    return;
+                }
+
+                event.preventDefault();
+                event.stopImmediatePropagation();
+                brandSearch.setCustomValidity(BRAND_REQUIRED_MESSAGE);
+                brandSearch.reportValidity();
+                brandSearch.focus();
+            }, true);
         }
 
         document.addEventListener('mousedown', function (event) {
@@ -100,7 +125,10 @@ document.addEventListener('DOMContentLoaded', function () {
             if (brandHiringManagerName) brandHiringManagerName.value = fullName;
             if (brandCompanyName) brandCompanyName.value = companyName;
             if (brandEmail) brandEmail.value = email;
-            if (brandSearch) brandSearch.value = fullName;
+            if (brandSearch) {
+                brandSearch.value = fullName;
+                brandSearch.setCustomValidity('');
+            }
         }, true);
 
         const cachedPayload = getCachedEligibleBrands();
