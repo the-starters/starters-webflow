@@ -77,8 +77,11 @@
       existing &&
       typeof existing.register === 'function' &&
       typeof existing.reset === 'function' &&
-      typeof existing.runBooking === 'function'
+      typeof existing.runBooking === 'function' &&
+      typeof existing.getBookingRecovery === 'function' &&
+      typeof existing.acknowledgeBooking === 'function'
     ) return existing
+    const previousRun = existing && typeof existing.runBooking === 'function' ? existing.runBooking.bind(existing) : null
     const bindings = new WeakMap()
     const bookingStates = new WeakMap()
     const lifecycle = {
@@ -132,29 +135,76 @@
         binding.resets.forEach(function (reset) { reset(generation, nextType || '') })
         return generation
       },
+      getBookingRecovery: function (container) {
+        const state = bookingStates.get(container)
+        const entry = state && state.recovery
+        if (!entry || (!entry.uncertain && !entry.result)) return null
+        return { fingerprint: entry.fingerprint, review: JSON.parse(JSON.stringify(entry.attempt.review)) }
+      },
+      acknowledgeBooking: function (container, fingerprint) {
+        const state = bookingStates.get(container)
+        if (!state || !state.recovery || state.recovery.fingerprint !== fingerprint) return
+        state.attempts.delete(fingerprint)
+        state.recovery = null
+      },
       runBooking: function (container, fingerprint, createAttempt, validateResult) {
         let state = bookingStates.get(container)
         if (!state) {
-          state = { active: null, attempts: new Map() }
+          state = { active: null, recovery: null, attempts: new Map() }
           bookingStates.set(container, state)
         }
         let entry = state.active
         if (entry && entry.fingerprint !== fingerprint) {
-          throw new Error('Another booking request is still being processed')
+          throw Object.assign(new Error('Another booking request is still being processed'), { retrySameBooking: false, bookingNotSubmitted: true })
         }
         if (!entry) {
           entry = state.attempts.get(fingerprint)
           if (!entry) {
-            entry = { attempt: createAttempt(), fingerprint, inFlight: null }
+            const attempt = createAttempt()
+            if (attempt.review && state.recovery) {
+              throw Object.assign(new Error('Check your previous Paid Call request before requesting another.'), {
+                retrySameBooking: false, bookingNotSubmitted: true,
+              })
+            }
+            entry = { attempt, fingerprint, inFlight: null, uncertain: false, result: null }
             state.attempts.set(fingerprint, entry)
+            if (attempt.review) state.recovery = entry
           }
+          if (entry.result) return Promise.resolve(entry.result)
           state.active = entry
         }
         if (!entry.inFlight) {
-          entry.inFlight = entry.attempt.run().then(function (result) {
+          const runAttempt = function () {
+            if (!previousRun) return entry.attempt.run()
+            try {
+              return previousRun(container, fingerprint, function () {
+                return { run: function () { return state.attempts.get(fingerprint).attempt.run() } }
+              }, validateResult)
+            } catch (error) {
+              return Promise.reject(Object.assign(error, { bookingNotSubmitted: true, retrySameBooking: false }))
+            }
+          }
+          entry.inFlight = runAttempt().then(function (result) {
             if (validateResult) validateResult(result)
-            if (state.attempts.get(fingerprint) === entry) state.attempts.delete(fingerprint)
+            if (entry.attempt.review) entry.result = result
+            else if (state.attempts.get(fingerprint) === entry) state.attempts.delete(fingerprint)
+            entry.uncertain = false
             return result
+          }).catch(function (error) {
+            if (error.bookingNotSubmitted) {
+              if (!entry.uncertain) {
+                state.attempts.delete(fingerprint)
+                if (state.recovery === entry) state.recovery = null
+              }
+            } else if (typeof entry.attempt.isDefinitiveRejection === 'function') {
+              entry.uncertain = !entry.attempt.isDefinitiveRejection(error, entry.uncertain)
+              error.retrySameBooking = entry.uncertain
+              if (!entry.uncertain) {
+                state.attempts.delete(fingerprint)
+                if (state.recovery === entry) state.recovery = null
+              }
+            }
+            throw error
           }).finally(function () {
             if (state.active === entry) state.active = null
             entry.inFlight = null
@@ -162,6 +212,12 @@
         }
         return entry.inFlight
       },
+    }
+    if (previousRun && typeof existing.register === 'function' && typeof existing.reset === 'function') {
+      existing.runBooking = lifecycle.runBooking
+      existing.getBookingRecovery = lifecycle.getBookingRecovery
+      existing.acknowledgeBooking = lifecycle.acknowledgeBooking
+      return existing
     }
     global.StartersBookingSurfaceLifecycle = lifecycle
     return lifecycle

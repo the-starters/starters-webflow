@@ -1,0 +1,19 @@
+{
+  "run_id": "33f967ddc927",
+  "cases": [
+    "past fresh request rejected before command creation",
+    "completed Paid command replays after start with original card",
+    "past reconciliation preserves original Paid snapshot after default changes",
+    "accepted booking reconciles at original price and duration after service changes",
+    "foreign actor, customer, card and slot snapshots are rejected",
+    "fresh requests retain current duration, price and active-service validation",
+    "fingerprint, actor, Origin, auth and command/booking environment guards retained"
+  ],
+  "status": "passed",
+  "date": "2026-09-16",
+  "workspace": 6,
+  "branch": "v1",
+  "candidate_sha256": "248dff100db1dfd2ce30f7be5a1f8e42d5972f152719e6afdec5440a9dfddeb6",
+  "boundary": "Real authenticated HTTP to isolated Xano; synthetic canonical rows and commands; no provider booking or charge",
+  "direct_push_enabled_after_verification": false
+}

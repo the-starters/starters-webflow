@@ -208,6 +208,9 @@ const NON_BROWSER_SCRIPTS = new Set([
   // Synthetic booking responses and DOM setup for the local booking-details
   // browser fixture, never installed on Webflow.
   'v3/browser-tests/booking-details-fixture.js',
+  // Legacy booking owner for lifecycle-adoption regression tests and the local
+  // booking-details browser fixture, never installed on Webflow.
+  'v3/browser-tests/legacy-free-booking-owner.js',
   // Read-only Slater.app exports kept as the readable reference for
   // v2/contract.js. Generated artifacts, never edited and never loaded.
   'slater/4885.readable.js',
