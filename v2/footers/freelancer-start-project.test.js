@@ -41,11 +41,11 @@ class FakeElement {
   }
 
   reportValidity() {
-    this.reported = true;
+    this.reported = !this.disabled;
   }
 
   focus() {
-    this.focused = true;
+    this.focused = !this.disabled;
   }
 
   insertAdjacentElement() {}
@@ -62,7 +62,7 @@ function submitEvent() {
   };
 }
 
-async function boot() {
+async function boot({ artifact = 'freelancer-start-project.js', memberState = 'resolved' } = {}) {
   const documentListeners = new Map();
   const form = new FakeElement();
   const brandSearch = new FakeElement();
@@ -70,6 +70,12 @@ async function boot() {
   const brandName = new FakeElement();
   const brandNameContract = new FakeElement();
   const brandList = new FakeElement();
+  const editButton = new FakeElement();
+  let editing = false;
+  editButton.click = () => {
+    editing = true;
+    brandSearch.disabled = false;
+  };
   brandSearch.form = form;
   brandContract.form = form;
 
@@ -79,6 +85,7 @@ async function boot() {
     ['input#brand-name', brandName],
     ['input#brand-name-contract', brandNameContract],
     ['#brand-list', brandList],
+    ['[dx-button="edit"]', editButton],
   ]);
 
   const document = {
@@ -103,20 +110,21 @@ async function boot() {
       location: { href: '', replace() {} },
       scrollTo() {},
       $memberstackDom: {
-        getCurrentMember: async () => ({
+        getCurrentMember: () => memberState === 'pending' ? new Promise(() => {}) : Promise.resolve({
           data: { id: 'mem_live_fixture', customFields: { 'completed-starter-profile': true } },
         }),
       },
     },
   };
 
-  const source = fs.readFileSync(path.join(__dirname, 'freelancer-start-project.js'), 'utf8');
+  const artifactSource = fs.readFileSync(path.join(__dirname, artifact), 'utf8');
+  const source = artifact.endsWith('.html') ? artifactSource.match(/<script>([\s\S]*?)<\/script>/)[1] : artifactSource;
   vm.runInNewContext(source, context);
   for (const listener of documentListeners.get('DOMContentLoaded') || []) listener();
   await Promise.resolve();
   await Promise.resolve();
 
-  return { documentListeners, form, brandSearch, brandContract, brandName, brandNameContract };
+  return { documentListeners, form, brandSearch, brandContract, brandName, brandNameContract, isEditing: () => editing };
 }
 
 test('requires a selected Brand and clears stale hidden identity', async () => {
@@ -157,3 +165,39 @@ test('requires a selected Brand and clears stale hidden identity', async () => {
   await ui.form.dispatch('submit', selectedSubmit);
   assert.equal(selectedSubmit.prevented, false);
 });
+
+for (const artifact of ['freelancer-start-project.js', 'freelancer-start-project-footer.html']) {
+  for (const memberState of ['pending', 'resolved']) {
+    test(`${artifact}: guards Review and submit with Memberstack ${memberState}`, async () => {
+      const ui = await boot({ artifact, memberState });
+      ui.brandSearch.value = 'Unselected Brand';
+      const review = submitEvent();
+      review.target = { closest: () => ({}) };
+      for (const listener of ui.documentListeners.get('click') || []) await listener(review);
+      assert.equal(review.prevented, true);
+      assert.equal(review.stopped, true);
+      assert.equal(ui.brandSearch.customValidity, 'Select a Brand from the list before starting the project.');
+
+      ui.brandSearch.disabled = true;
+      const submit = submitEvent();
+      await ui.form.dispatch('submit', submit);
+      assert.equal(submit.prevented, true);
+      assert.equal(ui.isEditing(), true);
+      assert.equal(ui.brandSearch.disabled, false);
+      assert.equal(ui.brandSearch.focused, true);
+      assert.equal(ui.brandSearch.reported, true);
+
+      ui.brandContract.value = 'stable-brand-id';
+      ui.brandName.value = ui.brandSearch.value;
+      const valid = submitEvent();
+      await ui.form.dispatch('submit', valid);
+      assert.equal(valid.prevented, false);
+      assert.equal(valid.stopped, false);
+      assert.equal(ui.brandSearch.customValidity, '');
+
+      ui.brandSearch.value = 'Changed text';
+      await ui.brandSearch.dispatch('input');
+      assert.equal(ui.brandContract.value, '');
+    });
+  }
+}
