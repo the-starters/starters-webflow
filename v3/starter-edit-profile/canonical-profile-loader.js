@@ -83,6 +83,9 @@
                 dirtySteps.clear();
                 dirtyRevisions.clear();
             },
+            isHydrating: function () {
+                return hydrating || hydrationSyncDepth > 0;
+            },
             markDirty: function (stepIndex) {
                 if (hydrating) return;
                 var key = stepKey(stepIndex);
@@ -141,7 +144,7 @@
         };
 
         function recordEdit(event) {
-            if (hydrating || hydrationSyncDepth > 0) return;
+            if (state.isHydrating()) return;
             var stepIndex = stepFromTarget(event.target);
             if (stepIndex) state.markDirty(stepIndex);
         }

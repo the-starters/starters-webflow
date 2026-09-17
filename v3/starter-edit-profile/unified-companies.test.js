@@ -43,6 +43,9 @@ async function mount({ companies = [], fail = null, minimum = true, withRow = tr
   // The live reader lives in company-autocomplete.js. Loading it here exercises the real
   // failure handling instead of a stub that can only ever look healthy.
   const windowStub = { matchMedia: () => ({ matches: false }) }
+  if (!liveAssociationReader) windowStub.fetchAlsoWorkedWithCompanies = async () => {
+    try { return storedOther ? JSON.parse(storedOther) : {} } catch (error) { return {} }
+  }
   if (liveAssociationReader) windowStub.xanoAuthFetch = async () => associationReadStatus === 200
     ? { ok: true, json: async () => {
       let parsed = {}
@@ -62,9 +65,6 @@ async function mount({ companies = [], fail = null, minimum = true, withRow = tr
     qs: (selector, scope) => scope ? scope.querySelector(selector) : selector === '[profile-unified-items="companies"]' ? section : section.querySelector(selector),
     qsa: (selector, scope = section) => scope.querySelectorAll(selector),
     console: { warn(...args) { warnings.push(args) }, error() {}, log() {} },
-    ...(liveAssociationReader ? {} : { fetchAlsoWorkedWithCompanies: async () => {
-      try { return storedOther ? JSON.parse(storedOther) : {} } catch (error) { return {} }
-    } }),
     setTimeout, clearTimeout,
     fetch: async (url, init = {}) => {
       const body = init.body ? JSON.parse(init.body) : null
@@ -102,6 +102,8 @@ async function mount({ companies = [], fail = null, minimum = true, withRow = tr
   for (const file of files) {
     vm.runInContext(fs.readFileSync(__dirname + '/' + file, 'utf8'), context, { filename: file })
   }
+  // A classic script's top-level declarations are window properties on the published page.
+  if (liveAssociationReader) windowStub.fetchAlsoWorkedWithCompanies = context.fetchAlsoWorkedWithCompanies
   function hydrateOther(value) {
     other.value = value
     other.dispatchEvent(makeEvent('starter:also-worked-with-hydrated', other, { bubbles: true }))
@@ -210,6 +212,23 @@ test('retained company rows participate when cleared and Remove, Undo, Discard r
   page.click(page.section.querySelector('[profile-item-remove]'))
   page.click(page.discard)
   assert.equal(page.field('company_name').value, 'Acme')
+})
+
+test('clearing "I currently work here" saves an empty End month instead of the Present sentinel', async () => {
+  const page = await mount({ companies: [{ id: 1, company_name: 'Acme', company_source: 'custom',
+    job_title: 'Designer', start_date: '2024-01-01', end_date: 'Present', current_work: true }] })
+  assert.equal(page.field('end_date').value, '')
+  assert.equal(page.field('end_date').disabled, true)
+  page.field('current_work').checked = false
+  page.field('current_work').dispatchEvent(makeEvent('change', null, { bubbles: true }))
+  assert.equal(page.field('end_date').disabled, false)
+  await page.submit()
+  assert.equal(page.mutations().length, 1)
+  assert.equal(page.mutations()[0].method, 'PATCH')
+  assert.equal(page.mutations()[0].body.current_work, false)
+  assert.equal(page.mutations()[0].body.end_date, '')
+  assert.equal(page.status(), 'Changes saved.')
+  assert.equal(page.field('end_date').value, '')
 })
 
 test('partial company saves keep confirmed entries and pause an unknown create without replay', async () => {

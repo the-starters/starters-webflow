@@ -83,7 +83,10 @@
       status.textContent = 'We could not confirm the save yet. Your draft is kept. You can check again; Save remains paused.'
     })
     function dirty() {
-      if (restoring) return
+      // Pickers and legacy toggles inside this section replay input and change events while
+      // the profile hydrates. Those are not Starter edits, so the shared hydration window -
+      // the same one the canonical dirty state uses - decides what counts as a draft change.
+      if (restoring || window.__tsProfileDirtyState?.isHydrating?.()) return
       section.setAttribute('profile-items-dirty', 'true')
       window.__tsProfileDirtyState?.markDirty(6)
       if (!saving && !uncertain && !misconfiguredForm) status.textContent = 'Unsaved changes.'

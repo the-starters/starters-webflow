@@ -75,7 +75,11 @@
       const value = Object.fromEntries(names.map(key => [key, key === 'current_work' ? !!input(record.row, key)?.checked
         : String(input(record.row, key)?.value || '').trim()]))
       for (const key of ['start_date', 'end_date']) {
-        if (record.dates?.[key]?.display === value[key]) value[key] = record.dates[key].raw
+        // Only a real saved date can be restored from its displayed month. The 'Present'
+        // sentinel displays as an empty field, so restoring it would turn a cleared End
+        // month into a literal end date the Starter never entered.
+        const saved = record.dates?.[key]
+        if (saved && saved.display === value[key] && writer.parseDate(saved.raw)) value[key] = saved.raw
       }
       if (value.current_work) value.end_date = 'Present'
       return { ...value, ...(selection(record.row) || { company_domain: '', company_logo_url: '', company_entity_id: 0, company_source: '' }) }

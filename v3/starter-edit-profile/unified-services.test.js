@@ -6,7 +6,8 @@ const { h, makeEvent } = require('../test-helpers/form-dom.cjs')
 const { createEnvironment, deferred, submit } = require('../test-helpers/edit-profile-controller.cjs')
 
 function mount(fetchImpl, { rates = false, services = null, readback = null, picker = false, profileType = 'full', hourlyRequired = true,
-  rows = true, pickerSearch = false, backendRequired = false, deferProfile = false, saveControl = true } = {}) {
+  rows = true, pickerSearch = false, backendRequired = false, deferProfile = false, saveControl = true,
+  dirtyState = null } = {}) {
   const readRequests = []
   const timers = []
   const elapsed = { ms: 0 }
@@ -46,6 +47,7 @@ function mount(fetchImpl, { rates = false, services = null, readback = null, pic
     stepIndex: 6,
     profileType,
     profileReady: true,
+    dirtyState,
     setupSection({ context, window, document, step, stepFields }) {
       context.Event = class {
         constructor(type, options) { Object.assign(this, makeEvent(type, null, options)) }
@@ -100,6 +102,36 @@ function mount(fetchImpl, { rates = false, services = null, readback = null, pic
     },
   }
 }
+
+// The published dirty state owns the hydration window every profile script writes through.
+function loadDirtyState() {
+  const target = () => ({ addEventListener() {} })
+  const windowStub = target()
+  windowStub.window = windowStub
+  const context = vm.createContext({ window: windowStub, document: target() })
+  vm.runInContext(fs.readFileSync(__dirname + '/canonical-profile-loader.js', 'utf8'), context)
+  return windowStub.__tsProfileDirtyState
+}
+
+test('picker hydration inside the shared hydration window never reports unsaved changes', () => {
+  const dirtyState = loadDirtyState()
+  const page = mount(undefined, { picker: true, dirtyState })
+  const status = page.root.querySelector('[profile-items-status]')
+  dirtyState.finishHydration()
+  // The availability picker replays its saved selection as bubbling change and input events.
+  dirtyState.runHydrationSync(() => {
+    page.availabilityRequired.value = '1'
+    page.availabilityRequired.dispatchEvent(makeEvent('change', page.availabilityRequired, { bubbles: true }))
+    page.availability.value = 'Available'
+    page.availability.dispatchEvent(makeEvent('input', page.availability, { bubbles: true }))
+  })
+  assert.equal(status.textContent, '')
+  assert.equal(page.step.getAttribute('profile-items-dirty'), null)
+  assert.equal(dirtyState.isDirty(), false)
+  page.type(page.name, 'Design audit')
+  assert.equal(status.textContent, 'Unsaved changes.')
+  assert.equal(page.step.getAttribute('profile-items-dirty'), 'true')
+})
 
 test('Save includes the open service and never drops a started row with an empty required price', async () => {
   const page = mount()

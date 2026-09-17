@@ -92,7 +92,7 @@ const EXPECTED_CANDIDATE_ASSETS = Object.freeze({
     restoreTrailingWhitespace: Object.freeze({ 4: '  ' }), terminalNewlinesRemoved: 0,
   }),
   'v3/starter-edit-profile/canonical-profile-loader.js': Object.freeze({
-    characters: 25233, sha256: '0987ddd56267c76c39fcb9a7b06dd17d50df6d69958ae69dcc2af37d091ff661',
+    characters: 25331, sha256: '916e8702ac16aac6000d893364bf14bcb58a65e13e2a2f2a1e6cb662a12c7dc8',
     guardKey: 'canonicalProfileLoader',
     liveCaptureAsset: 'v3/profile-form/edit-canonical-profile-loader-published.capture.txt',
     restoreTrailingWhitespace: Object.freeze({}), terminalNewlinesRemoved: 0,

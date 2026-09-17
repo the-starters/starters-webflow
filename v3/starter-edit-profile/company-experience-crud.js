@@ -498,18 +498,11 @@ function starterProfileCompanyMonthYearLabel(value) {
 
 async function starterProfileCompanyErrorBody(response) {
     // A refusal can answer with JSON, with HTML, or with nothing at all. Read it defensively
-    // so a parse failure never turns a received refusal into an unknown write. A non-JSON body
-    // is kept for diagnostics only; it never becomes a message shown to a Starter.
+    // so a parse failure never turns a received refusal into an unknown write.
     if (response && typeof response.json === 'function') {
         try {
             return await response.json();
         } catch (error) { /* the body is not JSON */ }
-    }
-    if (response && typeof response.text === 'function') {
-        try {
-            const text = await response.text();
-            return text ? { body: String(text).slice(0, 200) } : null;
-        } catch (error) { /* the body was already consumed */ }
     }
     return null;
 }
@@ -1415,11 +1408,9 @@ function createStarterEditCompanyDraftDirtyController(options) {
             // through the same loader the picker hydrates from, so a lost save can be resolved
             // against server state instead of blocking the section for the page session.
             function alsoWorkedWithLoader() {
-                if (typeof fetchAlsoWorkedWithCompanies === 'function') return fetchAlsoWorkedWithCompanies;
-                if (typeof window !== 'undefined' && typeof window.fetchAlsoWorkedWithCompanies === 'function') {
-                    return window.fetchAlsoWorkedWithCompanies;
-                }
-                return null;
+                return typeof window.fetchAlsoWorkedWithCompanies === 'function'
+                    ? window.fetchAlsoWorkedWithCompanies
+                    : null;
             }
 
             async function matchSavedAlsoWorkedWith(value) {
