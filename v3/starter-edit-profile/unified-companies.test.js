@@ -7,10 +7,13 @@ const tick = () => new Promise(resolve => setImmediate(resolve))
 const BASELINE_ASSOCIATIONS = '{"client-1":{"name":"Acme","domain":"acme.example","logo_url":"","client_row_id":1,"company_entity_id":0,"source":"custom"}}'
 const EDITED_ASSOCIATIONS = '{"client-1":{"name":"Acme","domain":"acme.example","logo_url":"","client_row_id":1,"company_entity_id":0,"source":"custom"},"client-2":{"name":"Beta","domain":"beta.example","logo_url":"","client_row_id":0,"company_entity_id":0,"source":"custom"}}'
 
+// `fail` returns 'lose' for a lost response, 'unreadable' for a received 2xx whose body the
+// page cannot parse, or { status, body } for a received refusal. `stale` answers the canonical
+// read from a replica that has not caught up with the writes the server already acknowledged.
 async function mount({ companies = [], fail = null, minimum = true, withRow = true, withSave = true,
   required = ['company_name', 'job_title'], xanoRequired = [], hydrate = true, initialOther = '{}',
   liveAssociationReader = false, associationReadStatus = 200, claim = true, normalize = null,
-  answer = null, picker = true } = {}) {
+  answer = null, picker = true, stale = null, strayXanoRequired = false } = {}) {
   const fields = ['company_name', 'job_title', 'start_date', 'end_date', 'current_work'].map(key => h('input', {
     'profile-company-field': key, name: key, id: key,
     ...(key === 'current_work' ? { type: 'checkbox' } : {}),
@@ -29,8 +32,12 @@ async function mount({ companies = [], fail = null, minimum = true, withRow = tr
   // does on the page. `claim: false` is the page where no picker owns the field at all.
   const other = h('input', { id: 'also-worked-with',
     ...(claim ? { 'data-starter-also-worked-with-state': 'pending' } : {}) })
+  // A backend-required marker on a control this section never submits: authored inside the
+  // section, owned by another script.
+  const stray = h('input', { name: 'stray-outside-rows', 'form-xano-required': '' })
   const section = h('section', { 'profile-unified-items': 'companies' },
-    [h('div', {}, withRow ? [row] : []), ...(withSave ? [save] : []), add, discard, presence, other])
+    [h('div', {}, withRow ? [row] : []), ...(withSave ? [save] : []), add, discard, presence, other,
+      ...(strayXanoRequired ? [stray] : [])])
   const requests = []
   const warnings = []
   let nextId = 10
@@ -89,7 +96,7 @@ async function mount({ companies = [], fail = null, minimum = true, withRow = tr
         json: async () => { if (result.text !== undefined) throw new SyntaxError('Unexpected token <'); return result.body },
         text: async () => result.text !== undefined ? result.text : JSON.stringify(result.body ?? null),
       }
-      if (request.method === 'GET') return { ok: true, json: async () => ({ companies: structuredClone(stored), starter_id: 7 }) }
+      if (request.method === 'GET') return { ok: true, json: async () => ({ companies: structuredClone(stale?.(stored) || stored), starter_id: 7 }) }
       let value
       if (request.method === 'POST') {
         stored = stored.filter(item => Number(item.id) !== Number(body.replace_companies_id))
@@ -101,8 +108,12 @@ async function mount({ companies = [], fail = null, minimum = true, withRow = tr
         const storedValue = normalize ? normalize(value) : value
         stored = stored.map(item => item.id === storedValue.id ? storedValue : item)
       } else stored = stored.filter(item => item.id !== Number(url.split('/').at(-1)))
-      // Xano decides how much of the row its answer carries; `answer` is that choice.
-      return { ok: true, json: async () => value ? (answer ? answer(value) : value) : { deleted: true } }
+      // Xano decides how much of the row its answer carries; `answer` is that choice. A
+      // received 2xx whose body is not JSON resolves the request and throws only on read.
+      return { ok: true, json: async () => {
+        if (result === 'unreadable') throw new SyntaxError('Unexpected token <')
+        return value ? (answer ? answer(value) : value) : { deleted: true }
+      } }
     },
   })
   // Both the Edit and the Build copies publish a picker initializer; these rows must reach the
@@ -156,7 +167,7 @@ async function mount({ companies = [], fail = null, minimum = true, withRow = tr
     other.dispatchEvent(makeEvent('change', other, { bubbles: true }))
   }
   return { section, save, add, discard, click, field, type, company, requests, context, warnings,
-    other, hydrateOther, failOther, editOther, pickerCalls,
+    other, hydrateOther, failOther, editOther, pickerCalls, stray,
     otherRequests: () => requests.filter(item => String(item.url).includes('set_also_worked_with')),
     errors: () => section.querySelectorAll('[profile-validation-error]').map(node => node.textContent),
     checkSave: () => section.querySelector('[profile-items-check-save]'),
@@ -705,4 +716,144 @@ test('Work Experience fails closed when the Edit company picker script never loa
   assert.equal(page.requests.length, 0, 'a section that cannot pick a company never reads or writes')
   await page.submit()
   assert.equal(page.mutations().length, 0)
+})
+
+test('a company create answered with a body the page could not read stays unknown, never unsaved', async () => {
+  // The server answered 2xx, so the row was written; only its body could not be read, and the
+  // canonical list has not caught up yet. That is a lag behind a received answer, never proof.
+  let lagging = true
+  const page = await mount({
+    fail: request => request.method === 'POST' ? 'unreadable' : null,
+    stale: stored => lagging ? stored.filter(item => item.company_name !== 'Acme') : null,
+  })
+  page.company('Acme'); page.type('job_title', 'Designer')
+  await page.submit()
+  assert.equal(page.mutations().length, 1)
+  assert.match(page.status(), /could not be confirmed/)
+  assert.equal(page.checkSave().hidden, false, 'the outcome can be checked')
+  await page.submit()
+  assert.equal(page.mutations().length, 1, 'a write the server answered is never re-sent')
+  lagging = false
+  page.click(page.checkSave()); await tick()
+  assert.match(page.status(), /is confirmed/)
+  assert.equal(page.checkSave().hidden, true)
+})
+
+test('a company update answered with an unreadable body keeps Check saved state retryable', async () => {
+  let lagging = true
+  const page = await mount({
+    companies: [{ id: 1, company_name: 'Acme', job_title: 'Designer', company_source: 'custom' }],
+    fail: request => request.method === 'PATCH' ? 'unreadable' : null,
+    stale: stored => lagging ? stored.map(item => ({ ...item, job_title: 'Designer' })) : null,
+  })
+  page.type('job_title', 'Engineer')
+  await page.submit()
+  assert.match(page.status(), /could not be confirmed/)
+  assert.equal(page.checkSave().hidden, false)
+  page.click(page.checkSave()); await tick()
+  assert.equal(page.status(), 'The save is still unconfirmed. Your draft is kept; Save remains paused.')
+  assert.equal(page.checkSave().hidden, false, 'the check stays available for a later attempt')
+  lagging = false
+  page.click(page.checkSave()); await tick()
+  assert.match(page.status(), /is confirmed/)
+  assert.equal(page.checkSave().hidden, true)
+})
+
+test('a company removal the server answered is confirmed by that answer, not by a lagging read', async () => {
+  const companies = [{ id: 1, company_name: 'Acme', job_title: 'Designer', company_source: 'custom' },
+    { id: 2, company_name: 'Beta', job_title: 'Engineer', company_source: 'custom' }]
+  let deleted = false
+  const page = await mount({ companies,
+    fail: request => { if (request.method === 'DELETE') deleted = true; return null },
+    // The replica still lists the removed row after the deletion was acknowledged.
+    stale: () => deleted ? structuredClone(companies) : null })
+  page.click(page.section.querySelector('[profile-item-remove]'))
+  await page.submit()
+  assert.equal(page.status(), 'Changes saved.')
+  assert.equal(page.checkSave().hidden, true)
+  assert.equal(page.section.querySelectorAll('[profile-item-row]').length, 1)
+  await page.submit()
+  assert.equal(page.mutations().filter(request => request.method === 'DELETE').length, 1,
+    'the confirmed removal is never re-sent')
+})
+
+test('a lost current-role toggle the server partly applied stays unknown, not unsaved', async () => {
+  // The write was lost, and the stored row now carries the flag the update sent while the end
+  // date it also sent is still the old sentinel. The row is not what it was before the write,
+  // so nothing is proved and the outcome stays unknown.
+  const page = await mount({
+    companies: [{ id: 1, company_name: 'Acme', job_title: 'Designer', company_source: 'custom',
+      start_date: '2024-01', end_date: 'Present', current_work: true }],
+    fail: (request, { stored, setStored }) => {
+      if (request.method !== 'PATCH') return null
+      setStored(stored.map(item => Number(item.id) === 1 ? { ...item, current_work: false } : item))
+      return 'lose'
+    },
+  })
+  page.field('current_work').checked = false
+  page.field('current_work').dispatchEvent(makeEvent('change', null, { bubbles: true }))
+  page.type('end_date', '2025-06')
+  await page.submit()
+  assert.equal(page.mutations().length, 1)
+  assert.match(page.status(), /could not be confirmed/)
+  assert.equal(page.checkSave().hidden, false)
+  await page.submit()
+  assert.equal(page.mutations().length, 1, 'an unknown write is never replayed')
+})
+
+test('a backend-required marker outside the Work Experience rows never pauses this section', async () => {
+  const page = await mount({ strayXanoRequired: true })
+  assert.equal(page.status(), '', 'a control this section does not submit is not its mismatch to report')
+  assert.equal(page.warnings.length, 0)
+  page.company('Acme'); page.type('job_title', 'Designer')
+  await page.submit()
+  assert.equal(page.status(), 'Changes saved.')
+  assert.equal(page.mutations().length, 1)
+})
+
+test('a Work Experience writer without a month-range message still blocks a reversed range', async () => {
+  // `monthRangeMessage` is part of the writer contract, but a writer that omits it must not
+  // turn the range rule off: the section falls back to the wording the legacy form uses.
+  const created = []
+  const writer = {
+    async read() { return [] },
+    parseDate(value) {
+      const match = /^(\d{4})-(\d{2})$/.exec(String(value || ''))
+      return match ? new Date(Number(match[1]), Number(match[2]) - 1, 1) : null
+    },
+    dispatches: () => 0,
+    hasOtherChanges: () => false,
+    async create(value) { created.push(value); return { ...value, id: 1 } },
+  }
+  const fields = ['company_name', 'job_title', 'start_date', 'end_date', 'current_work'].map(key => h('input', {
+    'profile-company-field': key, name: key, id: key, ...(key === 'current_work' ? { type: 'checkbox' } : {}),
+  }))
+  const row = h('div', { 'profile-item-row': '' }, [
+    h('button', { 'profile-item-toggle': '', type: 'button' }, [h('span', { 'profile-items-summary': '' })]),
+    h('div', { 'profile-item-content': '' }, fields), h('button', { 'profile-item-remove': '', type: 'button' })])
+  const save = h('button', { 'data-edit-submit': 'companies' })
+  const section = h('section', { 'profile-unified-items': 'companies' }, [h('div', {}, [row]), save])
+  const windowStub = { matchMedia: () => ({ matches: false }), StarterEditLogoSearchInit() {} }
+  const context = vm.createContext({
+    window: windowStub, document: { createElement: tag => h(tag) },
+    Event: class { constructor(type, options) { Object.assign(this, makeEvent(type, null, options)) } },
+    console: { warn() {}, error() {}, log() {} },
+  })
+  for (const file of ['profile-section-validation.js', 'unified-companies.js']) {
+    vm.runInContext(fs.readFileSync(__dirname + '/' + file, 'utf8'), context, { filename: file })
+  }
+  await windowStub.StarterProfileCompanies.bind(section, writer)
+  const live = section.querySelectorAll('[profile-item-row]')[0]
+  const input = key => live.querySelector('[profile-company-field="' + key + '"]')
+  input('company_name').value = 'Acme'
+  Object.assign(input('company_name').dataset, { selectedCompanyName: 'Acme', selectedCompanySource: 'custom',
+    selectedCompanyDomain: '', selectedCompanyLogoUrl: '', selectedCompanyEntityId: '0' })
+  input('job_title').value = 'Designer'
+  input('start_date').value = '2025-06'
+  input('end_date').value = '2024-06'
+  save.dispatchEvent(makeEvent('click', save, { bubbles: true }))
+  await tick()
+  assert.deepEqual(created, [], 'a reversed month range is never written')
+  assert.ok(section.querySelectorAll('[profile-validation-error]')
+    .map(node => node.textContent).includes('End month must be the same as or later than the start month.'))
 })

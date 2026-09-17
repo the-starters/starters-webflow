@@ -57,7 +57,10 @@
     // Starter submit a blank value the Xano writer refuses. Requiredness still comes only from
     // Required; this pauses Save on the mismatch instead of inventing a JavaScript requirement.
     function checkMisconfigured() {
-      const fields = window.StarterProfileValidation.misconfigured?.(section) || []
+      // Only the row fields this section submits. A marker on anything else authored inside the
+      // section belongs to the script that writes it, not to Work Experience.
+      const fields = window.StarterProfileValidation.misconfigured(section,
+        { applies: field => field.hasAttribute('profile-company-field') })
       misconfigured = fields.length > 0
       if (misconfigured) {
         status.textContent = 'This form is misconfigured. Saving is paused until it is fixed.'
@@ -236,7 +239,9 @@
           const start = writer.parseDate(input(record.row, 'start_date')?.value)
           const end = writer.parseDate(value)
           if (start && end && start.getFullYear() * 12 + start.getMonth() > end.getFullYear() * 12 + end.getMonth()) {
-            return writer.monthRangeMessage
+            // The writer publishes the wording so the unified rows and the legacy company form
+            // read the same. A writer that omits it never turns the rule off.
+            return writer.monthRangeMessage || 'End month must be the same as or later than the start month.'
           }
         }
         return ''
@@ -311,6 +316,20 @@
         return String(actual[key] || '') === String(expected[key] || '')
       })
     }
+    // "The row still holds exactly what it held before the write" is a claim about the stored
+    // row, not about an answer, so it is judged field by field with no tolerance at all: a
+    // server that applied part of the update - the current-role flag without the end date it
+    // was sent with - has already changed the row, and that is not proof of nothing landing.
+    function identical(actual, expected) {
+      return [...names, 'company_entity_id', 'company_domain'].every(key => {
+        if (key === 'current_work') return !!actual[key] === !!expected[key]
+        if (key === 'company_entity_id') return (Number(actual[key]) || 0) === (Number(expected[key]) || 0)
+        if (key === 'company_domain') {
+          return String(actual[key] || '').toLowerCase() === String(expected[key] || '').toLowerCase()
+        }
+        return String(actual[key] || '') === String(expected[key] || '')
+      })
+    }
     // A canonical read can settle a write three ways: it landed (the confirmed row), it
     // never landed, or neither. Only the last keeps Save paused - a write proved not to have
     // landed leaves the Starter where a refusal would, with the draft intact and Save usable.
@@ -340,7 +359,7 @@
         // not to have landed rather than merely unconfirmed.
         const stored = current.find(item => String(item.id) === String(operation.id))
         const before = baseline.find(item => String(item.id) === String(operation.id))
-        return stored && before && same(stored, before) ? NOT_LANDED : null
+        return stored && before && identical(stored, before) ? NOT_LANDED : null
       }
       // A create leaves no id to look up. An unmatched new row leaves the outcome unknown.
       if (current.some(item => !operation.beforeIds.includes(String(item.id)))) return null
@@ -420,16 +439,20 @@
           } catch (error) {
             // A received non-2xx answer is a known refusal, and a throw before the request
             // left the browser never reached the server at all: both wrote nothing, so the
-            // loop stops with the draft intact. Only a lost response stays unknown.
-            if (error?.known || !dispatchedSince(sent)) throw error
-            lost = true
+            // loop stops with the draft intact. A 2xx whose body the writer could not read is
+            // still an answer the section received, so that write landed and is not lost.
+            // Only a lost response stays unknown.
+            if (error?.known) throw error
+            if (!error?.received) {
+              if (!dispatchedSince(sent)) throw error
+              lost = true
+            }
           }
-          // A create and an update answer with the row they wrote. That answer is the write's
-          // own confirmation, so a canonical read that has not caught up cannot contradict it.
-          // The confirmed row is what was sent, with whatever columns the answer carries over
-          // it: an answer that returns only an id must never become a blank baseline row.
-          const answered = !lost && operation.kind !== 'remove' && answer && !Array.isArray(answer) && answer.id != null
-            ? { ...operation.value, ...answer } : null
+          // A create and an update answer with the row they wrote, and any answer at all to a
+          // removal is that removal's own confirmation. An answer is the write's confirmation,
+          // so a canonical read that has not caught up cannot contradict it.
+          const answered = lost ? null : operation.kind === 'remove' ? { removed: true }
+            : window.StarterProfileValidation.answeredRow(answer, operation.value)
           if (answered) { confirm(operation, answered); unknown = null; continue }
           operation.lost = lost
           unknown = operation
@@ -448,7 +471,11 @@
           try {
             await writer.saveOther()
           } catch (error) {
-            if (!error?.known && dispatchedSince(sent)) unknown = { kind: 'other', lost: true, value: writer.otherValue?.() ?? '' }
+            // A received answer whose body could not be read still reached the server, so the
+            // association write is unknown rather than lost: no read can prove it never landed.
+            if (!error?.known && (error?.received || dispatchedSince(sent))) {
+              unknown = { kind: 'other', lost: !error?.received, value: writer.otherValue?.() ?? '' }
+            }
             throw error
           }
         }

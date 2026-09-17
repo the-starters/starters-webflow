@@ -96,7 +96,12 @@
     // blank value reach a writer that rejects it. Report the mismatch and pause Save; never
     // treat the attribute as requiredness, and never name a value in the diagnostic.
     function misconfiguredFields() {
-      const offenders = window.StarterProfileValidation.misconfigured?.(section) || []
+      // Only the fields this section submits: the scalar controls `prepare()` reads and the row
+      // fields Save sends. A marker on a Free or Paid Call control, or on a picker's own search
+      // box, belongs to the script that writes it and is not this section's to refuse.
+      const submitted = new Set([...scalarFields(), ...rows().flatMap(row => fields(row))])
+      const offenders = window.StarterProfileValidation.misconfigured(section,
+        { applies: field => submitted.has(field) })
       if (offenders.length && !misconfiguredForm) {
         console.warn('[unified-services] form-xano-required without required:',
           offenders.map(field => field.getAttribute('data-name') || field.getAttribute('name') || ''))
@@ -397,11 +402,13 @@
         if (!saved) {
           uncertain = dispatched
           checkSave.hidden = !uncertain || !readbackCheck
-          // The same sentence the other unified sections use for "nothing was written, keep
-          // editing", so one outcome reads the same wherever a Starter meets it.
+          // A save the page abandoned before sending it never left the browser, which is the
+          // same outcome - and the same sentence - the other unified sections report for a
+          // write nobody dispatched. "Not saved" is reserved for a write that was sent and a
+          // canonical read then proved never landed.
           status.textContent = uncertain
             ? 'We could not confirm whether your changes were saved. Your draft is kept. Save is paused until the server state can be checked.'
-            : window.StarterProfileValidation.notLanded.MESSAGE
+            : 'That change was not submitted. Your draft is kept; you can save again.'
           return
         }
         uncertain = false

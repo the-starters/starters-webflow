@@ -120,12 +120,28 @@
   // Starter to leave blank a value the writer refuses, whichever type is active, and the README
   // declares it invalid. So the same page reports the same fields for every type, whenever the
   // check runs.
-  function misconfigured(section) {
+  //
+  // `applies(field)` is the calling section's ownership filter: it answers whether the section
+  // submits that field. A section reports only its own fields, because a marker on a control
+  // another script writes — a Free or Paid Call setting, a picker's own input — belongs to the
+  // script that writes it and must never pause this section's Save. Without a filter every
+  // field in the section is judged.
+  function misconfigured(section, options = {}) {
     return Array.from(section.querySelectorAll(FIELD)).filter(field => {
       if (!field.hasAttribute('form-xano-required')) return false
+      if (options.applies && !options.applies(field)) return false
       if (field.hasAttribute('data-non-required')) return true
       return !field.hasAttribute('required')
     })
+  }
+  // One definition of "this write answered with the row it wrote", shared by the sections that
+  // reconcile their own writes. A received 2xx carrying the row is the write's own confirmation,
+  // so no canonical read can contradict it. The confirmed row is what was sent with whatever
+  // columns the answer carries over it: an answer that returns only an id must never become a
+  // blank baseline row, and a list is not a row.
+  function answeredRow(answer, sent) {
+    return answer && typeof answer === 'object' && !Array.isArray(answer) && answer.id != null
+      ? { ...sent, ...answer } : null
   }
   // One definition of "the canonical read proved this write never landed", shared by the
   // sections that reconcile their own writes. `NOT_LANDED` is the reconciler's verdict,
@@ -138,5 +154,5 @@
     failure.notLanded = true
     return failure
   }
-  window.StarterProfileValidation = { bind, misconfigured, notLanded: Object.freeze({ NOT_LANDED, error, MESSAGE }) }
+  window.StarterProfileValidation = { bind, misconfigured, answeredRow, notLanded: Object.freeze({ NOT_LANDED, error, MESSAGE }) }
 })()

@@ -219,7 +219,7 @@ it keeps the step 7 rules above.
 ### Globals and ownership
 
 `profile-section-validation.js` publishes
-`window.StarterProfileValidation = { bind, misconfigured }`. It was derived
+`window.StarterProfileValidation = { bind, misconfigured, answeredRow, notLanded }`. It was derived
 independently from `utils/wf-validate.js` at v1.59.549 and keeps that validator's
 native-constraint messages, blur and correction timing, and inline alerts. Unlike
 the sitewide validator, a field belongs to a section and to its own DOM identity
@@ -269,6 +269,17 @@ requests handed to `fetch`. A section compares it across a write, so a call that
 before sending anything is reported as not submitted rather than left in doubt.
 It is a required part of the writer
 contract, not an optional one.
+
+The Work Experience writer also publishes `monthRangeMessage`, the sentence shown when an end
+month is earlier than its start month. It is published so the unified rows and the legacy
+company form say the same thing; the section falls back to that same wording if a writer omits
+it, so the rule itself can never be switched off by a missing property.
+
+Both writers mark the answers they receive. A mutation refused with a non-2xx answer throws an
+error carrying `known`; a mutation the server answered 2xx whose body could not be read throws
+one carrying `received`. A section treats `received` as an answer that arrived — the write
+landed — so it is never mistaken for a lost response. The thrown error keeps the message and
+status the legacy callers on the same page already handle.
 
 ### Load order
 
@@ -337,13 +348,20 @@ Webflow authors put `form-xano-required` (empty value) on a field whose blank
 value the Xano backend rejects. It never makes a field required. Requiredness
 comes only from the Webflow Required checkbox.
 
-`misconfigured(section)` returns the fields that carry `form-xano-required`
+`misconfigured(section, { applies })` returns the fields that carry `form-xano-required`
 without authored requiredness. Each section script runs that check at bind and load time and
 again on Save. On a mismatch it pauses Save with
 `This form is misconfigured. Saving is paused until it is fixed.` and logs one
 `console.warn` naming the field attribute — never a field value. Discard stays
 available, so a member is never trapped with edits they cannot clear, and a later
 draft edit does not overwrite the diagnostic with `Unsaved changes.`
+
+**A section reports only the fields it submits.** `applies(field)` is the calling section's
+ownership filter: Services passes the scalar controls `prepare()` reads plus its row fields,
+Work Experience passes `[profile-company-field]`, and Highlights passes
+`[profile-highlight-field]`. A `form-xano-required` marker on anything else authored inside the
+section — a Free or Paid Call control the dashboard writers own, a picker's own search box —
+belongs to the script that writes that field and never pauses this section's Save.
 
 `data-non-required="<profile type>"` is the authored way to say a field is not asked of that
 profile type, and `starter-edit-profile.js` clears `required` on those fields for the active
@@ -353,14 +371,15 @@ profile type, and `starter-edit-profile.js` clears `required` on those fields fo
 `starter-edit-profile.js` rewrites at runtime are the ones carrying `data-non-required`, and
 those are reported whatever `required` currently says (below). Every other field keeps the
 attribute Webflow authored, so the same page reports the same fields for every Starter and
-whenever the check runs. Inside `[profile-unified-items]`, `starter-edit-profile.js` remembers
-the authored value so it is restored when the type changes back.
+whenever the check runs. Inside `[profile-unified-items]`, `starter-edit-profile.js` records the
+authored value once per page load before it rewrites `required` for the active type.
 
 **The two markers must not disagree:** a field is never both `form-xano-required` and
 `data-non-required`, because that would ask a Starter to leave blank a value the writer
 refuses. `misconfigured()` reports that pairing for **every** profile type, whatever `required`
 currently says, so QA meets the authoring error on the first profile it opens rather than on
-the one type that happens to expose it.
+the one type that happens to expose it. That rule applies within the fields the section
+submits, like every other part of this report.
 
 ### Save-state semantics
 
@@ -384,8 +403,13 @@ request nobody made.
 
 **A response the section received is the write's own answer.** Where the server replies with
 the row it wrote — a Work Experience create or update, a Highlight create — that answer
-confirms the save on the spot, and no canonical read can contradict it. The canonical read is
-the fallback: for a lost response, and for a write whose answer carries no row.
+confirms the save on the spot, and no canonical read can contradict it. A removal is confirmed
+by any answer at all, since a 2xx delete is its own proof. The canonical read is the fallback:
+for a lost response, and for a write whose answer carries no row.
+
+A 2xx the section could not parse is still an answer it received: the write landed, so the
+outcome is unknown at worst — Save pauses and "Check saved state" settles it — and never
+"not saved".
 
 A canonical read can also settle a **lost** write the other way. In Work Experience, a create
 with no new row, a removal whose id the server still holds, and an update whose row still holds
@@ -405,14 +429,24 @@ stays unknown, Save stays paused, and "Check saved state" settles it once the re
 A reconciler only reports; nothing it reads reaches the baseline unless the write is confirmed.
 Only a read that proves neither keeps the pause.
 
-`That change was not saved. Your draft is kept; you can save again.` is the one sentence all
-three sections use for "nothing was written, keep editing", including a Services save the page
-abandoned before sending it.
+Two sentences, two different outcomes, and all three sections use them the same way:
+
+- `That change was not submitted. Your draft is kept; you can save again.` — the write never
+  left the browser. Nothing reached the server, including a Services save the page abandoned
+  before sending it.
+- `That change was not saved. Your draft is kept; you can save again.` — the write was sent,
+  its response was lost, and a canonical read then proved it never landed. Only the lost path
+  can end this way.
 
 Saved state that cannot be *read* is never a write in doubt. A malformed stored Services slot
 fails the section closed the way a missing row template does: `Saved services could not be
 read. Reload the page before editing.`, Save disabled, no "Check saved state" control, and
 Discard still usable. Save is never left live over entries nobody could read.
+
+Proving a *lost* update never landed is stricter than matching an answer: the stored row must
+still hold exactly what it held before the write, field for field, with the current-role flag
+and the end date each compared as they are. A server that applied part of the update has
+already changed the row, so the outcome stays unknown instead of reading as nothing saved.
 
 Matching a canonical read against what was sent tolerates fields the server leaves
 out of its answer, but never a field it returns with a different value. An

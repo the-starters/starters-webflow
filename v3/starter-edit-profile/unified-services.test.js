@@ -7,7 +7,7 @@ const { createEnvironment, deferred, submit } = require('../test-helpers/edit-pr
 
 function mount(fetchImpl, { rates = false, services = null, readback = null, picker = false, profileType = 'full', hourlyRequired = true,
   rows = true, pickerSearch = false, backendRequired = false, deferProfile = false, saveControl = true,
-  dirtyState = null, retainersOff = false, memberReads = null } = {}) {
+  dirtyState = null, retainersOff = false, memberReads = null, callControls = false } = {}) {
   const readRequests = []
   const timers = []
   const elapsed = { ms: 0 }
@@ -35,6 +35,10 @@ function mount(fetchImpl, { rates = false, services = null, readback = null, pic
   if (typeof backendRequired === 'string') backendOnly.dataset = { nonRequired: backendRequired }
   backendOnly.value = 'Retainer copy a Starter typed'
   if (backendRequired) root.appendChild(backendOnly)
+  // A Free Call control authored inside this section: the dashboard call-settings writer owns
+  // it, this section never submits it, and the page controller omits it from the payload.
+  const freeCall = h('textarea', { name: 'free-call-description', 'form-xano-required': '' })
+  if (callControls) root.appendChild(freeCall)
   // The published markup disables the retainer description while retainers are switched off.
   const retainerChoice = h('input', { name: 'offer-monthly-retainers', type: 'radio' })
   retainerChoice.value = 'no'
@@ -106,7 +110,7 @@ function mount(fetchImpl, { rates = false, services = null, readback = null, pic
     },
   })
   return { ...environment, name, price, description, row, root, add, remove, discard, hourly, retainer, readRequests, availability, availabilityRequired,
-    search, backendOnly, retainerChoice, retainerDescription,
+    search, backendOnly, retainerChoice, retainerDescription, freeCall,
     controller: () => environment.window.StarterProfileSections?.get(environment.step),
     flushTimers: () => timers.splice(0).forEach(callback => callback()),
     pendingTimers: () => timers.length,
@@ -724,8 +728,25 @@ test('a services save that never reached the server reports nothing saved and ke
   await submit(page)
   assert.equal(page.requests.length, 0, 'nothing reached the server')
   assert.equal(page.root.querySelector('[profile-items-status]').textContent,
-    'That change was not saved. Your draft is kept; you can save again.')
+    'That change was not submitted. Your draft is kept; you can save again.')
   assert.equal(page.root.querySelector('[profile-items-check-save]').hidden, true,
     'a write nobody sent leaves nothing to check')
   assert.equal(page.name.value, 'Audit', 'the draft is kept')
+})
+
+test('a backend-required marker on a call control this section never submits does not pause Services', async () => {
+  const warnings = []
+  const original = console.warn
+  console.warn = (...args) => warnings.push(args)
+  try {
+    const page = mount(undefined, { callControls: true })
+    assert.notEqual(page.root.querySelector('[profile-items-status]').textContent,
+      'This form is misconfigured. Saving is paused until it is fixed.')
+    assert.deepEqual(warnings, [], 'a control owned by another writer is not this section to report')
+    page.type(page.name, 'Audit')
+    page.type(page.price, '500')
+    await submit(page)
+    assert.equal(page.requests.length, 1, 'Services still saves')
+    assert.equal(page.controller().validate().valid, true)
+  } finally { console.warn = original }
 })

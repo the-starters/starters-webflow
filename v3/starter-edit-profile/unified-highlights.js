@@ -229,7 +229,10 @@
     // a Starter submit a blank the writer rejects. Pause Save on the mismatch instead of
     // inventing a JavaScript requirement. Field names only; never a Starter's values.
     function checkMisconfigured() {
-      const fields = window.StarterProfileValidation.misconfigured?.(section) || []
+      // Only the row fields this section submits. A marker on anything else authored inside the
+      // section belongs to the script that writes it, not to Highlights.
+      const fields = window.StarterProfileValidation.misconfigured(section,
+        { applies: input => input.hasAttribute('profile-highlight-field') })
       misconfigured = fields.length > 0
       if (misconfigured) {
         status.textContent = 'This form is misconfigured. Saving is paused until it is fixed.'
@@ -259,6 +262,13 @@
       baseline = baseline.filter(item => String(item.id) !== String(record.id))
       if (canonical) baseline.push(clone(canonical))
     }
+    // A deletion the server answered is confirmed by that answer alone, with no canonical read
+    // behind it, so the baseline drops exactly the media entry the server removed and keeps the
+    // rest of the record as it was last confirmed.
+    function dropMedia(record, kind, id) {
+      const known = baseline.find(item => String(item.id) === String(record.id))
+      if (known && Array.isArray(known[kind])) known[kind] = known[kind].filter(media => String(media.id) !== String(id))
+    }
     async function canonical(record) {
       return (await writer.read(record.id))[0] || null
     }
@@ -286,12 +296,17 @@
       // A received non-2xx answer is a known refusal: the server replied and wrote nothing. A
       // throw before the request left the browser never reached the server at all. Both stop
       // the save with the draft intact; only a lost response stays unknown until a read.
+      // A 2xx whose body the writer could not read is still an answer the section received, so
+      // that write landed and is not lost.
       try {
         answer = await run()
       } catch (error) {
-        if (error?.known || !dispatchedSince(sent)) throw error
-        // The response was lost. Never replay the mutation; reconcile it instead.
-        lost = true
+        if (error?.known) throw error
+        if (!error?.received) {
+          if (!dispatchedSince(sent)) throw error
+          // The response was lost. Never replay the mutation; reconcile it instead.
+          lost = true
+        }
       }
       const answered = lost ? null : respond?.(answer)
       if (answered) { confirm(answered); unknown = null; return }
@@ -342,8 +357,10 @@
         // A fresh record holds no media yet, which is what the empty lists record, and the
         // confirmed details are the ones that were sent: an answer carrying only an id must
         // never become a blank baseline row.
-        answer => answer && !Array.isArray(answer) && answer.id != null
-          ? { images: [], videos: [], ...value, ...answer } : null)
+        answer => {
+          const row = window.StarterProfileValidation.answeredRow(answer, value)
+          return row && { images: [], videos: [], ...row }
+        })
       }
       for (const [kind, items] of [['images', images], ['videos', videos]]) {
         const singular = kind === 'images' ? 'Image' : 'Video'
@@ -352,15 +369,20 @@
           await operation(() => writer['remove' + singular](item.ref.id), async () => {
             const current = await canonical(record)
             if (!current) return null
-            return current[kind].some(media => String(media.id) === String(item.ref.id)) ? NOT_LANDED : current
-          }, current => {
-            advance(record, current)
+            return current[kind].some(media => String(media.id) === String(item.ref.id)) ? NOT_LANDED : { current }
+          }, resolution => {
+            // The canonical read is the fallback: an answer the section received confirms the
+            // deletion on its own, and the baseline then drops just that media entry.
+            if (resolution.current) advance(record, resolution.current)
+            else dropMedia(record, kind, item.ref.id)
             // The stored file is gone and no local file remains, so the entry cannot be
             // restored. Drop it instead of leaving an Undo that would upload nothing.
             record[kind] = record[kind].filter(entry => entry !== item.ref)
             releaseMedia(item.ref)
             renderMedia(record, kind)
-          }, 'Removing highlight media…')
+          }, 'Removing highlight media…',
+          // Any answer to a deletion is that deletion's own confirmation.
+          () => ({ removed: true }))
         }
         for (const item of items.filter(item => !item.removed && !item.ref.id)) {
           if (!item.ref.uploaded) {
@@ -445,7 +467,10 @@
             // A reconciler only reports. The baseline advances in confirm(), never here, so a
             // read taken while the outcome is still open can never rewrite a confirmed record.
             return await canonical(record) ? NOT_LANDED : { removed: true }
-          }, () => { advance(record, null); release(record) }, 'Removing highlight…')
+          }, () => { advance(record, null); release(record) }, 'Removing highlight…',
+          // Any answer to a deletion is that deletion's own confirmation, so a list read that
+          // has not caught up cannot turn a removal the server took into a lost one.
+          () => ({ removed: true }))
         }
         for (const item of submitted) await persistRecord(item)
         saved = true

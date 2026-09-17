@@ -5,11 +5,13 @@ const test = require('node:test')
 const { h, makeEvent } = require('../test-helpers/form-dom.cjs')
 const { deferred } = require('../test-helpers/edit-profile-controller.cjs')
 const tick = () => new Promise(resolve => setImmediate(resolve))
-// `fail` returns 'lose' for a lost response, or { status, body } for a received refusal.
+// `fail` returns 'lose' for a lost response, 'unreadable' for a received 2xx whose body the
+// page cannot parse, or { status, body } for a received refusal.
 // `hold` returns a promise the fake endpoint waits on, so a save can be observed mid-flight.
-// `stale` answers the canonical list read from a replica that has not caught up with the
-// writes already acknowledged, which is what a lagging read looks like to the section.
-async function mount({ portfolios = [], fail = null, required = false, hold = null, stray = false, presence = false, xanoRequired = false, rows = true, saveControl = true, stale = null, answer = null } = {}) {
+// `stale` answers the canonical list read, and `staleMedia` the canonical media reads, from a
+// replica that has not caught up with the writes already acknowledged, which is what a lagging
+// read looks like to the section.
+async function mount({ portfolios = [], fail = null, required = false, hold = null, stray = false, presence = false, xanoRequired = false, rows = true, saveControl = true, stale = null, staleMedia = null, answer = null, strayXanoRequired = false } = {}) {
   const fields = ['title', 'description', 'images', 'videos'].map(key => h(key === 'description' ? 'textarea' : 'input', {
     'profile-highlight-field': key, name: key, id: key,
     ...(['images', 'videos'].includes(key) ? { type: 'file', multiple: '' } : {}),
@@ -27,9 +29,12 @@ async function mount({ portfolios = [], fail = null, required = false, hold = nu
   const discard = h('button', { 'profile-items-discard': '' })
   const marker = h('input', { 'profile-items-presence': '', name: 'first-portfolio', ...(presence ? { required: '' } : {}) })
   const strayOutside = h('input', { name: 'stray-outside', required: '' })
+  // A backend-required marker on a control this section never submits: authored inside the
+  // section, owned by another script.
+  const strayBackend = h('input', { name: 'stray-backend', 'form-xano-required': '' })
   const section = h('section', { 'profile-unified-items': 'highlights' }, [h('div', {}, rows ? [row] : []),
     ...(saveControl ? [save] : []), add, discard,
-    ...(presence ? [marker] : []), ...(stray ? [strayOutside] : [])])
+    ...(presence ? [marker] : []), ...(stray ? [strayOutside] : []), ...(strayXanoRequired ? [strayBackend] : [])])
   let stored = structuredClone(portfolios)
   let nextId = 100, nextAsset = 1, boot
   const requests = [], readyHandlers = [], warnings = [], revoked = []
@@ -58,8 +63,8 @@ async function mount({ portfolios = [], fail = null, required = false, hold = nu
       let value
       const id = Number(new globalThis.URL(url).searchParams.get('portfolio_id'))
       if (endpoint === 'Get_my_portfolios') value = (stale?.(stored) || stored).map(({ images, videos, ...row }) => row)
-      else if (endpoint === 'Get_portfolio_images') value = stored.find(row => row.id === id)?.images || []
-      else if (endpoint === 'Get_portfolio_videos') value = stored.find(row => row.id === id)?.videos || []
+      else if (endpoint === 'Get_portfolio_images') value = (staleMedia?.(stored) || stored).find(row => row.id === id)?.images || []
+      else if (endpoint === 'Get_portfolio_videos') value = (staleMedia?.(stored) || stored).find(row => row.id === id)?.videos || []
       else if (endpoint.startsWith('upload-')) value = { path: '/uploads/' + nextAsset++, size: (body.image || body.video).size }
       else if (endpoint === 'Create_portfolio') { value = { ...body, id: nextId++, images: [], videos: [] }; stored.push(value) }
       else if (endpoint === 'Update_portfolio') {
@@ -73,8 +78,12 @@ async function mount({ portfolios = [], fail = null, required = false, hold = nu
         const kind = endpoint.endsWith('image') ? 'images' : 'videos'
         stored.forEach(row => { row[kind] = row[kind].filter(item => item.id !== (body.image_id || body.video_id)) }); value = true
       }
-      // Xano decides how much of the row its answer carries; `answer` is that choice.
-      return { ok: true, json: async () => structuredClone(answer?.(request, value) ?? value) }
+      // Xano decides how much of the row its answer carries; `answer` is that choice. A
+      // received 2xx whose body is not JSON resolves the request and throws only on read.
+      return { ok: true, json: async () => {
+        if (outcome === 'unreadable') throw new SyntaxError('Unexpected token <')
+        return structuredClone(answer?.(request, value) ?? value)
+      } }
     },
   })
   for (const file of ['profile-section-validation.js', 'unified-highlights.js', 'portfolio-crud.js']) {
@@ -83,7 +92,7 @@ async function mount({ portfolios = [], fail = null, required = false, hold = nu
   readyHandlers.forEach(callback => callback()); await boot
   const click = element => element.dispatchEvent(makeEvent('click', element, { bubbles: true }))
   const field = (key, index = 0) => section.querySelectorAll('[profile-item-row]')[index].querySelector('[profile-highlight-field="' + key + '"]')
-  return { section, save, add, discard, click, field, requests, warnings, marker, strayOutside, context, revoked,
+  return { section, save, add, discard, click, field, requests, warnings, marker, strayOutside, strayBackend, context, revoked,
     media: (kind, index = 0) => section.querySelectorAll('[profile-items-media="' + kind + '"]')[index]
       .querySelectorAll('[profile-media-item]'),
     mutations: () => requests.filter(request => request.method !== 'GET'),
@@ -648,4 +657,64 @@ test('a lost highlight deletion the server still holds leaves the confirmed base
   const titles = page.section.querySelectorAll('[profile-highlight-field="title"]').map(node => node.value)
   assert.deepEqual(titles, ['Saved', 'Kept'],
     'the reconciler that proved nothing landed never rewrote the confirmed baseline')
+})
+
+test('a highlight create answered with a body the page could not read stays unknown, never unsaved', async () => {
+  // The server answered 2xx, so the record exists; only its body could not be read, and the
+  // list read has not caught up. That is a lag behind a received answer, never proof.
+  const page = await mount({ fail: request => request.endpoint === 'Create_portfolio' ? 'unreadable' : null,
+    stale: () => [] })
+  page.type('title', 'Campaign')
+  await page.submit()
+  assert.match(page.status(), /could not be confirmed/)
+  assert.equal(page.section.querySelector('[profile-items-check-save]').hidden, false)
+  const count = page.mutations().length
+  await page.submit()
+  assert.equal(page.mutations().length, count, 'a write the server answered is never re-sent')
+})
+
+test('a highlight removal the server answered is confirmed by that answer, not by a lagging read', async () => {
+  const saved = { id: 1, title: 'Saved', description: '', images: [], videos: [] }
+  let deleted = false
+  const page = await mount({
+    portfolios: [saved, { id: 2, title: 'Kept', description: '', images: [], videos: [] }],
+    fail: request => { if (request.endpoint === 'Delete_portfolio') deleted = true; return null },
+    // The replica still lists the removed record after the deletion was acknowledged.
+    stale: stored => deleted ? [structuredClone(saved), ...stored] : null,
+  })
+  page.click(page.section.querySelector('[profile-item-remove]'))
+  await page.submit()
+  assert.equal(page.status(), 'Changes saved.')
+  assert.equal(page.section.querySelector('[profile-items-check-save]').hidden, true)
+  assert.equal(page.section.querySelectorAll('[profile-item-row]').length, 1)
+  await page.submit()
+  assert.equal(page.mutations().filter(request => request.endpoint === 'Delete_portfolio').length, 1,
+    'the confirmed removal is never re-sent')
+})
+
+test('a highlight media removal the server answered is confirmed by that answer, not by a lagging read', async () => {
+  const photo = { id: 2, image_url: 'https://example.test/photo.png', is_cover: true, image: { size: 1000 } }
+  let deleted = false
+  const page = await mount({
+    portfolios: [{ id: 1, title: 'Saved', description: '', images: [structuredClone(photo)], videos: [] }],
+    fail: request => { if (request.endpoint === 'Delete_portfolio_image') deleted = true; return null },
+    // The media read still answers with the photo the server has already dropped.
+    staleMedia: stored => deleted ? stored.map(row => ({ ...row, images: [structuredClone(photo)] })) : null,
+  })
+  page.click(page.media('images')[0].querySelector('[profile-media-remove]'))
+  await page.submit()
+  assert.equal(page.status(), 'Changes saved.')
+  assert.equal(page.media('images').length, 0, 'the confirmed deletion leaves no entry behind')
+  await page.submit()
+  assert.equal(page.mutations().filter(request => request.endpoint === 'Delete_portfolio_image').length, 1,
+    'the confirmed deletion is never re-sent')
+})
+
+test('a backend-required marker outside the Highlight rows never pauses this section', async () => {
+  const page = await mount({ strayXanoRequired: true })
+  assert.equal(page.status(), '', 'a control this section does not submit is not its mismatch to report')
+  assert.equal(page.warnings.length, 0)
+  page.type('title', 'Campaign')
+  await page.submit()
+  assert.equal(page.status(), 'Changes saved.')
 })

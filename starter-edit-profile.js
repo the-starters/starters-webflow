@@ -670,8 +670,8 @@ onDomReady(function () {
 				if (input.closest?.('[profile-unified-items]')) {
 					if (!authoredProfileRequirements.has(input)) authoredProfileRequirements.set(input, input.required);
 					const authored = authoredProfileRequirements.get(input);
-					// The live `required` attribute follows the signed-in Starter's profile type, so the
-					// authored value is remembered here and restored whenever the type changes back.
+					// The map records what Webflow authored, once per page load, before the active
+					// profile type rewrites the live `required` attribute.
 					input.required = checkForType === type ? false : authored;
 				} else input.required = checkForType === type ? false : true;
 			});

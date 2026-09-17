@@ -588,6 +588,18 @@ function starterProfileCompanyResponseError(response, data, fallback) {
     return error;
 }
 
+function starterProfileCompanyReceivedError(response, cause) {
+    // The server answered 2xx, so the write landed - only its body could not be read. The error
+    // keeps the message and status the caller would have seen before, so legacy callers that
+    // catch it behave exactly as they did; `received` tells a unified section this is an answer
+    // it received, never a lost response a canonical read could disprove.
+    const error = new Error((cause && cause.message) || 'The server answer could not be read');
+    error.status = response && response.status;
+    error.received = true;
+    error.cause = cause;
+    return error;
+}
+
 function hasStarterEditCompanyPendingChanges(createDrafts, updateDrafts, deleteDraftIds, alsoWorkedWithChanged) {
     return Boolean(createDrafts.length || updateDrafts.size || deleteDraftIds.size || alsoWorkedWithChanged);
 }
@@ -1350,7 +1362,11 @@ function createStarterEditCompanyDraftDirtyController(options) {
                     throw starterProfileCompanyResponseError(response, error, 'Company creation failed');
                 }
 
-                return await response.json();
+                try {
+                    return await response.json();
+                } catch (parseError) {
+                    throw starterProfileCompanyReceivedError(response, parseError);
+                }
             }
 
             async function updateCompany(companyId, payload) {
@@ -1372,7 +1388,11 @@ function createStarterEditCompanyDraftDirtyController(options) {
                     throw starterProfileCompanyResponseError(response, error, 'Company update failed');
                 }
 
-                return await response.json();
+                try {
+                    return await response.json();
+                } catch (parseError) {
+                    throw starterProfileCompanyReceivedError(response, parseError);
+                }
             }
 
             async function deleteCompany(companyId) {

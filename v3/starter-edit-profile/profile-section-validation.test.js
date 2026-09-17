@@ -121,3 +121,47 @@ test('the sections share one definition of a write the read proved never landed'
   assert.equal(error.notLanded, true)
   assert.equal(error.message, notLanded.MESSAGE)
 })
+
+test('a section only reports the backend-required fields it submits', () => {
+  const owned = h('input', { name: 'description-retainer', 'form-xano-required': '' })
+  const ownedPair = h('input', { name: 'rate', 'form-xano-required': '', 'data-non-required': 'consult', required: '' })
+  const other = h('input', { name: 'free-call-description', 'form-xano-required': '' })
+  const section = h('section', {}, [owned, ownedPair, other])
+  const window = { matchMedia: () => ({ matches: true }) }
+  vm.runInNewContext(fs.readFileSync(__dirname + '/profile-section-validation.js', 'utf8'), {
+    window, document: { createElement: tag => h(tag) },
+  })
+  const { misconfigured } = window.StarterProfileValidation
+  // The module runs in its own realm, so the reported fields are compared by identity.
+  const names = fields => Array.from(fields).map(field => field.getAttribute('name'))
+  assert.deepEqual(names(misconfigured(section)),
+    ['description-retainer', 'rate', 'free-call-description'], 'without a filter every field is judged')
+  const submitted = new Set([owned, ownedPair])
+  const owns = { applies: field => submitted.has(field) }
+  assert.deepEqual(names(misconfigured(section, owns)), ['description-retainer', 'rate'],
+    'a marker on a control the section never submits belongs to its own writer')
+  ownedPair.removeAttribute('required')
+  assert.deepEqual(names(misconfigured(section, owns)), ['description-retainer', 'rate'],
+    'the invalid pairing is still reported once the active type has cleared Required')
+  owned.setAttribute('required', '')
+  assert.deepEqual(names(misconfigured(section, owns)), ['rate'],
+    'the authored Required checkbox settles a plain mismatch')
+})
+
+test('a write answers for itself when its response carries the row it wrote', () => {
+  const window = { matchMedia: () => ({ matches: true }) }
+  vm.runInNewContext(fs.readFileSync(__dirname + '/profile-section-validation.js', 'utf8'), {
+    window, document: { createElement: tag => h(tag) },
+  })
+  const { answeredRow } = window.StarterProfileValidation
+  const sent = { title: 'Campaign', description: 'Work' }
+  // The module runs in its own realm, so the returned row is compared through JSON.
+  const row = (answer, expected, message) => assert.equal(JSON.stringify(answeredRow(answer, sent)), expected, message)
+  row({ id: 7 }, '{"title":"Campaign","description":"Work","id":7}',
+    'an answer carrying only an id keeps the details that were sent')
+  row({ id: 7, title: 'Campaign (edited)' }, '{"title":"Campaign (edited)","description":"Work","id":7}',
+    'the answer wins over what was sent')
+  assert.equal(answeredRow(null, sent), null)
+  assert.equal(answeredRow([{ id: 7 }], sent), null, 'a list is not the row a write answered with')
+  assert.equal(answeredRow({ deleted: true }, sent), null, 'an answer without an id carries no row')
+})

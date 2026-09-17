@@ -146,6 +146,18 @@ function portfolioResponseError(response, data, fallback) {
   return error;
 }
 
+function portfolioReceivedError(response, cause) {
+  // The server answered 2xx, so the write landed - only its body could not be read. The error
+  // keeps the message and status the caller would have seen before, so legacy callers that catch
+  // it behave exactly as they did; `received` tells a unified section this is an answer it
+  // received, never a lost response a canonical read could disprove.
+  const error = new Error((cause && cause.message) || 'The server answer could not be read');
+  error.status = response && response.status;
+  error.received = true;
+  error.cause = cause;
+  return error;
+}
+
 async function commitStarterEditPortfolioDrafts(options) {
   for (const draft of options.createDrafts) {
     await options.commitCreateDraft(draft);
@@ -499,8 +511,9 @@ async function commitStarterEditPortfolioDrafts(options) {
           ? diagnostics.observeMutation(workflow, request)
           : request());
         let data = null;
-        // An error body that is not JSON must still report the refusal, not a parse failure.
-        try { data = await response.json(); } catch (parseError) { if (response.ok) throw parseError; }
+        // An error body that is not JSON must still report the refusal, not a parse failure. A
+        // 2xx body that cannot be read is an answer the caller received, so it is marked as one.
+        try { data = await response.json(); } catch (parseError) { if (response.ok) throw portfolioReceivedError(response, parseError); }
         if (!response.ok) {
           console.error(`${errorLabel}:`, data);
           // Only a refused mutation is a known outcome. A failed read leaves the mutation it
