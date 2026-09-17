@@ -240,8 +240,8 @@
           const end = writer.parseDate(value)
           if (start && end && start.getFullYear() * 12 + start.getMonth() > end.getFullYear() * 12 + end.getMonth()) {
             // The writer publishes the wording so the unified rows and the legacy company form
-            // read the same. A writer that omits it never turns the rule off.
-            return writer.monthRangeMessage || 'End month must be the same as or later than the start month.'
+            // read the same.
+            return writer.monthRangeMessage
           }
         }
         return ''
@@ -302,12 +302,22 @@
     // the draft, but a field it returns with a different value proves the write never landed —
     // switching a saved company to a same-name custom one is exactly that case.
     const omitted = (actual, key) => !(key in actual) || actual[key] === undefined
+    // A month input sends `YYYY-MM` while the canonical row stores a full date, so the same
+    // month reaches this comparison in two textual forms. Only a pair the writer cannot resolve
+    // to a month falls back to comparing the text.
+    function sameMonth(actual, expected) {
+      const stored = writer.parseDate(actual), sent = writer.parseDate(expected)
+      return stored && sent
+        ? stored.getFullYear() === sent.getFullYear() && stored.getMonth() === sent.getMonth()
+        : String(actual || '') === String(expected || '')
+    }
     function same(actual, expected) {
       return [...names, 'company_entity_id', 'company_domain'].every(key => {
         if (omitted(actual, key)) return true
         if (key === 'current_work') return !!actual[key] === !!expected[key] || endsNow(actual) === endsNow(expected)
+        if (key === 'start_date') return sameMonth(actual[key], expected[key])
         if (key === 'end_date') {
-          return String(actual[key] || '') === String(expected[key] || '') || (endsNow(actual) && endsNow(expected))
+          return sameMonth(actual[key], expected[key]) || (endsNow(actual) && endsNow(expected))
         }
         if (key === 'company_entity_id') return (Number(actual[key]) || 0) === (Number(expected[key]) || 0)
         if (key === 'company_domain') {

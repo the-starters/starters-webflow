@@ -272,8 +272,7 @@ contract, not an optional one.
 
 The Work Experience writer also publishes `monthRangeMessage`, the sentence shown when an end
 month is earlier than its start month. It is published so the unified rows and the legacy
-company form say the same thing; the section falls back to that same wording if a writer omits
-it, so the rule itself can never be switched off by a missing property.
+company form say the same thing, and it is a required part of the writer contract.
 
 Both writers mark the answers they receive. A mutation refused with a non-2xx answer throws an
 error carrying `known`; a mutation the server answered 2xx whose body could not be read throws
@@ -453,7 +452,10 @@ out of its answer, but never a field it returns with a different value. An
 unchanged `company_entity_id` or `company_domain` is proof that a switch to a
 same-name custom company was lost, not proof that it landed. The tolerance covers every
 compared field, not only those two, and a current role reads the same whether the answer
-carries `current_work` or the `'Present'` end-date sentinel.
+carries `current_work` or the `'Present'` end-date sentinel. `start_date` and `end_date` are
+compared by month rather than by text, because a row sends the `YYYY-MM` its month input holds
+while Xano stores a full date: the same month written two ways is the same month, and a lost
+write that landed is confirmed by it instead of locking the section on Save.
 
 The "Also worked with" reader answers with the saved set or with nothing at all;
 a failed request never reads as "this member has none". So a failed canonical read

@@ -17,10 +17,8 @@
   function starterAlsoWorkedWithClaim(valueInput) {
     if (!valueInput) return null;
     if (valueInput._starterAlsoWorkedWithReady) return valueInput._starterAlsoWorkedWithReady;
-    let settleReady = null;
     const claim = {
       state: 'pending',
-      promise: new Promise(function (resolve) { settleReady = resolve; }),
       settle: function (hydrated) {
         if (claim.state !== 'pending') return;
         claim.state = hydrated ? 'hydrated' : 'failed';
@@ -28,7 +26,6 @@
         valueInput.dispatchEvent(new Event(hydrated
           ? 'starter:also-worked-with-hydrated'
           : 'starter:also-worked-with-hydration-failed', { bubbles: true }));
-        settleReady(hydrated);
       },
     };
     valueInput._starterAlsoWorkedWithReady = claim;

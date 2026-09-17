@@ -811,49 +811,40 @@ test('a backend-required marker outside the Work Experience rows never pauses th
   assert.equal(page.mutations().length, 1)
 })
 
-test('a Work Experience writer without a month-range message still blocks a reversed range', async () => {
-  // `monthRangeMessage` is part of the writer contract, but a writer that omits it must not
-  // turn the range rule off: the section falls back to the wording the legacy form uses.
-  const created = []
-  const writer = {
-    async read() { return [] },
-    parseDate(value) {
-      const match = /^(\d{4})-(\d{2})$/.exec(String(value || ''))
-      return match ? new Date(Number(match[1]), Number(match[2]) - 1, 1) : null
+test('a lost create is confirmed against a server that stores the month as a full date', async () => {
+  // Xano stores a month as a full date, so the canonical row states in `YYYY-MM-DD` the month
+  // the row sent as `YYYY-MM`. That is the same month, and the lost write is confirmed by it.
+  const page = await mount({
+    fail: (request, { stored, setStored }) => {
+      if (request.method !== 'POST') return null
+      setStored([...stored, { ...request.body, id: 99, start_date: request.body.start_date + '-01' }])
+      return 'lose'
     },
-    dispatches: () => 0,
-    hasOtherChanges: () => false,
-    async create(value) { created.push(value); return { ...value, id: 1 } },
-  }
-  const fields = ['company_name', 'job_title', 'start_date', 'end_date', 'current_work'].map(key => h('input', {
-    'profile-company-field': key, name: key, id: key, ...(key === 'current_work' ? { type: 'checkbox' } : {}),
-  }))
-  const row = h('div', { 'profile-item-row': '' }, [
-    h('button', { 'profile-item-toggle': '', type: 'button' }, [h('span', { 'profile-items-summary': '' })]),
-    h('div', { 'profile-item-content': '' }, fields), h('button', { 'profile-item-remove': '', type: 'button' })])
-  const save = h('button', { 'data-edit-submit': 'companies' })
-  const section = h('section', { 'profile-unified-items': 'companies' }, [h('div', {}, [row]), save])
-  const windowStub = { matchMedia: () => ({ matches: false }), StarterEditLogoSearchInit() {} }
-  const context = vm.createContext({
-    window: windowStub, document: { createElement: tag => h(tag) },
-    Event: class { constructor(type, options) { Object.assign(this, makeEvent(type, null, options)) } },
-    console: { warn() {}, error() {}, log() {} },
   })
-  for (const file of ['profile-section-validation.js', 'unified-companies.js']) {
-    vm.runInContext(fs.readFileSync(__dirname + '/' + file, 'utf8'), context, { filename: file })
-  }
-  await windowStub.StarterProfileCompanies.bind(section, writer)
-  const live = section.querySelectorAll('[profile-item-row]')[0]
-  const input = key => live.querySelector('[profile-company-field="' + key + '"]')
-  input('company_name').value = 'Acme'
-  Object.assign(input('company_name').dataset, { selectedCompanyName: 'Acme', selectedCompanySource: 'custom',
-    selectedCompanyDomain: '', selectedCompanyLogoUrl: '', selectedCompanyEntityId: '0' })
-  input('job_title').value = 'Designer'
-  input('start_date').value = '2025-06'
-  input('end_date').value = '2024-06'
-  save.dispatchEvent(makeEvent('click', save, { bubbles: true }))
-  await tick()
-  assert.deepEqual(created, [], 'a reversed month range is never written')
-  assert.ok(section.querySelectorAll('[profile-validation-error]')
-    .map(node => node.textContent).includes('End month must be the same as or later than the start month.'))
+  page.company('Acme'); page.type('job_title', 'Designer'); page.type('start_date', '2020-01')
+  await page.submit()
+  assert.equal(page.mutations().length, 1)
+  assert.equal(page.mutations()[0].body.start_date, '2020-01')
+  assert.equal(page.status(), 'Changes saved.')
+  assert.equal(page.checkSave().hidden, true)
+  await page.submit()
+  assert.equal(page.mutations().length, 1, 'the confirmed row is never written a second time')
+})
+
+test('a lost update is confirmed against a server that stores the month as a full date', async () => {
+  const page = await mount({
+    companies: [{ id: 1, company_name: 'Acme', company_source: 'custom', job_title: 'Designer', start_date: '2020-01-01' }],
+    fail: (request, { stored, setStored }) => {
+      if (request.method !== 'PATCH') return null
+      setStored(stored.map(item => Number(item.id) === 1
+        ? { ...item, ...request.body, start_date: request.body.start_date + '-01' } : item))
+      return 'lose'
+    },
+  })
+  page.type('start_date', '2021-03')
+  await page.submit()
+  assert.equal(page.mutations().length, 1)
+  assert.equal(page.mutations()[0].body.start_date, '2021-03')
+  assert.equal(page.status(), 'Changes saved.')
+  assert.equal(page.checkSave().hidden, true)
 })
