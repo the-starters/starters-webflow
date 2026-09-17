@@ -133,6 +133,19 @@ function removeCommittedPortfolioDrafts(pending, committed) {
   return { createDrafts, updateDrafts, deleteDraftIds };
 }
 
+function portfolioResponseError(response, data, fallback) {
+  // A received non-2xx answer is a known refusal: the server replied and wrote nothing.
+  // `known` lets a section save tell it apart from a lost response, which stays unknown
+  // until a canonical read resolves it. `serverMessage` is set only when the body carries
+  // a usable message, so a Starter never sees an internal fallback string.
+  const serverMessage = data && typeof data.message === 'string' && data.message.trim() ? data.message.trim() : '';
+  const error = new Error(serverMessage || fallback);
+  error.status = response && response.status;
+  error.known = true;
+  if (serverMessage) error.serverMessage = serverMessage;
+  return error;
+}
+
 async function commitStarterEditPortfolioDrafts(options) {
   for (const draft of options.createDrafts) {
     await options.commitCreateDraft(draft);
@@ -155,7 +168,7 @@ async function commitStarterEditPortfolioDrafts(options) {
       if (!MEMBER.id) return;
 
       const XANO_BASE = 'https://x08a-5ko8-jj1r.n7c.xano.io';
-      ((XANO_GET_URL = `${XANO_BASE}/api:PmBJV0AG/Get_my_portfolios`), (XANO_CREATE_URL = `${XANO_BASE}/api:PmBJV0AG/Create_portfolio`), (XANO_UPDATE_URL = `${XANO_BASE}/api:PmBJV0AG/Update_portfolio`), (XANO_DELETE_URL = `${XANO_BASE}/api:PmBJV0AG/Delete_portfolio`), (XANO_UPLOAD_URL = `${XANO_BASE}/api:PmBJV0AG/upload-image`), (XANO_ADD_IMAGE_URL = `${XANO_BASE}/api:PmBJV0AG/Add_portfolio_image`), (XANO_GET_IMAGES_URL = `${XANO_BASE}/api:PmBJV0AG/Get_portfolio_images`), (XANO_UPLOAD_VIDEO_URL = `${XANO_BASE}/api:PmBJV0AG/upload-video`), (XANO_ADD_VIDEO_URL = `${XANO_BASE}/api:PmBJV0AG/Add_portfolio_video`), (XANO_GET_VIDEOS_URL = `${XANO_BASE}/api:PmBJV0AG/Get_portfolio_videos`), (XANO_DELETE_IMAGE_URL = `${XANO_BASE}/api:PmBJV0AG/Delete_portfolio_image`), (XANO_DELETE_VIDEO_URL = `${XANO_BASE}/api:PmBJV0AG/Delete_portfolio_video`), (PLACEHOLDER_IMAGE = 'https://cdn.prod.website-files.com/plugins/Basic/assets/placeholder.60f9b1840c.svg'), (MAX_IMAGE_SIZE = 4 * 1024 * 1024), (MAX_VIDEO_SIZE = 50 * 1024 * 1024), (MAX_PORTFOLIOS = 9), (grid = qs('[data-highlights]')), (template = grid ? qs('.portfolio_card', grid) : null), (editModal = qs('[data-modal-target="portfolio-edit"]')), (editModalTrigger = qs('[data-modal-trigger="portfolio-edit"]')), (editModalClose = qs('[data-modal-close]', editModal)), (removeModal = qs('[data-modal-target="portfolio-remove"]')), (removeModalTrigger = qs('[data-modal-trigger="portfolio-remove"]')), (removeModalClose = qs('[data-modal-close]', removeModal)), (notifyModal = qs('[data-modal-target="portfolio-notification"]')), (notifyModalTrigger = qs('[data-modal-trigger="portfolio-notification"]')), (notifyModalClose = qs('[data-modal-close]', notifyModal)), (notificationText = notifyModal ? qs('[notification-text]', notifyModal) : null), (openSuccess = qs("[data-modal-trigger='edit-form-success']")), (createSubmit = qs('#add-highlight')), (editForm = qs('#wf-form-Portfolio-update')), (editSubmit = qs('[free-edit-submit]')), (portfolioSubmit = qs('[data-edit-submit="portfolio"]')), (titleInp = qs('#portfolio-title')), (descInp = qs('#portfolio-description')), (editTitleInp = qs('#portfolio-title-edit')), (editDescInp = qs('#portfolio-description-edit')), (imagesInp = qs('#portfolio-images')), (previewWrap = qs('#portfolio-images-preview')), (coverIndexInput = qs('#portfolio-cover-index')), (editImagesInp = qs('#portfolio-images-edit')), (editPreviewWrap = qs('#portfolio-images-edit-preview')), (videosInp = qs('#portfolio-videos')), (videosPreviewWrap = qs('#portfolio-videos-preview')), (editVideosInp = qs('#portfolio-videos-edit')), (editVideosPreviewWrap = qs('#portfolio-videos-edit-preview')), (firstPortfolioInp = qs('#first-portfolio')), (profileDrop = qs('#profile-dropdown')), (highlightDropdownLabel = qs('[highlight-dropdown-label]')), (skipBlock = qs('[skip-highlights]')));
+      ((XANO_GET_URL = `${XANO_BASE}/api:PmBJV0AG/Get_my_portfolios`), (XANO_CREATE_URL = `${XANO_BASE}/api:PmBJV0AG/Create_portfolio`), (XANO_UPDATE_URL = `${XANO_BASE}/api:PmBJV0AG/Update_portfolio`), (XANO_DELETE_URL = `${XANO_BASE}/api:PmBJV0AG/Delete_portfolio`), (XANO_UPLOAD_URL = `${XANO_BASE}/api:PmBJV0AG/upload-image`), (XANO_ADD_IMAGE_URL = `${XANO_BASE}/api:PmBJV0AG/Add_portfolio_image`), (XANO_GET_IMAGES_URL = `${XANO_BASE}/api:PmBJV0AG/Get_portfolio_images`), (XANO_UPLOAD_VIDEO_URL = `${XANO_BASE}/api:PmBJV0AG/upload-video`), (XANO_ADD_VIDEO_URL = `${XANO_BASE}/api:PmBJV0AG/Add_portfolio_video`), (XANO_GET_VIDEOS_URL = `${XANO_BASE}/api:PmBJV0AG/Get_portfolio_videos`), (XANO_DELETE_IMAGE_URL = `${XANO_BASE}/api:PmBJV0AG/Delete_portfolio_image`), (XANO_DELETE_VIDEO_URL = `${XANO_BASE}/api:PmBJV0AG/Delete_portfolio_video`), (PLACEHOLDER_IMAGE = 'https://cdn.prod.website-files.com/plugins/Basic/assets/placeholder.60f9b1840c.svg'), (MAX_IMAGE_SIZE = 4 * 1024 * 1024), (MAX_VIDEO_SIZE = 40 * 1024 * 1024), (MAX_PORTFOLIOS = 9), (grid = qs('[data-highlights]')), (template = grid ? qs('.portfolio_card', grid) : null), (editModal = qs('[data-modal-target="portfolio-edit"]')), (editModalTrigger = qs('[data-modal-trigger="portfolio-edit"]')), (editModalClose = qs('[data-modal-close]', editModal)), (removeModal = qs('[data-modal-target="portfolio-remove"]')), (removeModalTrigger = qs('[data-modal-trigger="portfolio-remove"]')), (removeModalClose = qs('[data-modal-close]', removeModal)), (notifyModal = qs('[data-modal-target="portfolio-notification"]')), (notifyModalTrigger = qs('[data-modal-trigger="portfolio-notification"]')), (notifyModalClose = qs('[data-modal-close]', notifyModal)), (notificationText = notifyModal ? qs('[notification-text]', notifyModal) : null), (openSuccess = qs("[data-modal-trigger='edit-form-success']")), (createSubmit = qs('#add-highlight')), (editForm = qs('#wf-form-Portfolio-update')), (editSubmit = qs('[free-edit-submit]')), (portfolioSubmit = qs('[data-edit-submit="portfolio"]')), (titleInp = qs('#portfolio-title')), (descInp = qs('#portfolio-description')), (editTitleInp = qs('#portfolio-title-edit')), (editDescInp = qs('#portfolio-description-edit')), (imagesInp = qs('#portfolio-images')), (previewWrap = qs('#portfolio-images-preview')), (coverIndexInput = qs('#portfolio-cover-index')), (editImagesInp = qs('#portfolio-images-edit')), (editPreviewWrap = qs('#portfolio-images-edit-preview')), (videosInp = qs('#portfolio-videos')), (videosPreviewWrap = qs('#portfolio-videos-preview')), (editVideosInp = qs('#portfolio-videos-edit')), (editVideosPreviewWrap = qs('#portfolio-videos-edit-preview')), (firstPortfolioInp = qs('#first-portfolio')), (profileDrop = qs('#profile-dropdown')), (highlightDropdownLabel = qs('[highlight-dropdown-label]')), (skipBlock = qs('[skip-highlights]')));
 
       const successModal = qs('[data-modal-target="edit-form-success"]');
       const successHeading = successModal ? qs('.heading-style-h1', successModal) : null;
@@ -168,6 +181,52 @@ async function commitStarterEditPortfolioDrafts(options) {
         closeEventTarget: window,
       });
 
+      const unifiedSection = qs('[profile-unified-items="highlights"]');
+      if (unifiedSection) {
+        if (!window.StarterProfileHighlights || !window.StarterProfileValidation) {
+          if (portfolioSubmit) portfolioSubmit.setAttribute('disabled', '');
+          return;
+        }
+        const memberId = MEMBER.id;
+        function checkMember() {
+          if (MEMBER.id !== memberId) throw new Error('Signed-in member changed');
+        }
+        function scoped(operation) {
+          return async function (...args) {
+            checkMember();
+            const result = await operation(...args);
+            checkMember();
+            return result;
+          };
+        }
+        async function readIndex() {
+          const rows = await requestJson(`${XANO_GET_URL}?memberstack_id=${encodeURIComponent(memberId)}`, { cache: 'no-store' }, 'Failed to load portfolios');
+          if (!Array.isArray(rows)) throw new Error('Invalid portfolio collection');
+          return rows;
+        }
+        await window.StarterProfileHighlights.bind(unifiedSection, {
+          memberId,
+          assetUrl: value => XANO_BASE + value.path,
+          readIndex: scoped(readIndex),
+          read: scoped(async function (id) {
+            const index = await readIndex();
+            const rows = id == null ? index : index.filter(row => String(row.id) === String(id));
+            return Promise.all(rows.map(async function (row) {
+              const [images, videos] = await Promise.all([
+                requestJson(`${XANO_GET_IMAGES_URL}?portfolio_id=${encodeURIComponent(row.id)}&memberstack_id=${encodeURIComponent(memberId)}`, { cache: 'no-store' }, 'Failed to load portfolio images'),
+                requestJson(`${XANO_GET_VIDEOS_URL}?portfolio_id=${encodeURIComponent(row.id)}&memberstack_id=${encodeURIComponent(memberId)}`, { cache: 'no-store' }, 'Failed to load portfolio videos'),
+              ]);
+              if (!Array.isArray(images) || !Array.isArray(videos)) throw new Error('Invalid portfolio media');
+              return { ...row, images, videos };
+            }));
+          }),
+          create: scoped(createPortfolio), update: scoped(updatePortfolio), remove: scoped(deletePortfolio),
+          uploadImage: scoped(uploadImage), uploadVideo: scoped(uploadVideo),
+          addImage: scoped(addPortfolioImage), addVideo: scoped(addPortfolioVideo),
+          removeImage: scoped(deletePortfolioImage), removeVideo: scoped(deletePortfolioVideo),
+        });
+        return;
+      }
       if (!grid || !template) return;
       let selectedFiles = [],
         selectedVideos = [],
@@ -431,10 +490,12 @@ async function commitStarterEditPortfolioDrafts(options) {
         const response = await (workflow && diagnostics
           ? diagnostics.observeMutation(workflow, request)
           : request());
-        const data = await response.json();
+        let data = null;
+        // An error body that is not JSON must still report the refusal, not a parse failure.
+        try { data = await response.json(); } catch (parseError) { if (response.ok) throw parseError; }
         if (!response.ok) {
           console.error(`${errorLabel}:`, data);
-          throw new Error(data.message || errorLabel);
+          throw portfolioResponseError(response, data, errorLabel);
         }
         return data;
       }
@@ -1437,7 +1498,7 @@ async function commitStarterEditPortfolioDrafts(options) {
           });
 
           if (oversizedFiles.length) {
-            openNotifyModal('Video exceeds 50MB upload size limit');
+            openNotifyModal('Video exceeds 40MB upload size limit');
             videosInp.value = '';
             selectedVideos = [];
             if (videosPreviewWrap) videosPreviewWrap.innerHTML = '';
@@ -1502,7 +1563,7 @@ async function commitStarterEditPortfolioDrafts(options) {
           });
 
           if (oversizedFiles.length) {
-            openNotifyModal('Video exceeds 50MB upload size limit');
+            openNotifyModal('Video exceeds 40MB upload size limit');
             editVideosInp.value = '';
             return;
           }

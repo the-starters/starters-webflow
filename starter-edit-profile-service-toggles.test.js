@@ -46,6 +46,8 @@ function boot({
   retainerDescription = 'Ongoing advisory retainer',
   freeCallDescription = 'A free intro call',
   paidCallDescription = 'A paid deep dive',
+  unifiedServices = false,
+  retainerRequired = false,
 } = {}) {
   const retainerDescriptionField = control(retainerDescription)
   const retainerRateField = control('2500')
@@ -54,6 +56,10 @@ function boot({
 
   const retainerDesc = group({ required: true, fields: [retainerDescriptionField] })
   const retainerRate = group({ required: true, fields: [retainerRateField] })
+  retainerRateField.required = retainerRequired
+  if (unifiedServices) {
+    for (const wrapper of [retainerDesc, retainerRate]) wrapper.closest = selector => selector === '[profile-unified-items="services"]' ? {} : null
+  }
   const paidCallGroup = group({ required: true, fields: [paidCallDescriptionField] })
   const freeCallGroup = group({ required: true, fields: [freeCallDescriptionField] })
 
@@ -169,6 +175,22 @@ test('hydrating a profile that declined every service keeps its stored descripti
   assert.equal(harness.fields.retainerRate.value, '2500')
   assert.equal(harness.fields.paidCallDescription.value, 'A paid deep dive')
   assert.equal(harness.fields.freeCallDescription.value, 'A free intro call')
+})
+
+test('migrated retainers preserve authored Required and exclude disabled fields', () => {
+  for (const retainerRequired of [false, true]) {
+    const harness = boot({ unifiedServices: true, retainerRequired })
+    harness.hydrate()
+    assert.equal(harness.fields.retainerRate.required, retainerRequired)
+    assert.equal(harness.fields.retainerDescription.required, false)
+    assert.equal(harness.fields.retainerRate.disabled, false)
+    harness.chooseRetainers('no')
+    assert.equal(harness.fields.retainerRate.required, retainerRequired)
+    assert.equal(harness.fields.retainerRate.disabled, true)
+    harness.chooseRetainers('yes')
+    assert.equal(harness.fields.retainerRate.required, retainerRequired)
+    assert.equal(harness.fields.retainerRate.disabled, false)
+  }
 })
 
 test('hydration hides and un-requires the declined service groups', () => {

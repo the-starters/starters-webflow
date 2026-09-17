@@ -205,6 +205,138 @@ and [Paid Call settings contract](../../docs/wiring/PAID-CALL-SETTINGS-WIRING.md
 [Current Scripts](../../README.md#current-scripts) entry owns the profile endpoint's
 canonical-save and asynchronous-projection response contract.
 
+## Unified rows (Services, Work Experience, Highlights)
+
+Three Edit Profile sections share one row pattern: an expandable list of entries
+with Add, Remove, Undo, Discard, and a single Save. The behavior contract lives in
+`/Users/standarduser/Documents/starters-git/.scratch/starter-edit-profile-unified-items/spec.md`
+in this workspace. Review Requests deliberately stays out of this pattern
+(spec decision 18); it keeps the step 7 rules above.
+
+### Globals and ownership
+
+`profile-section-validation.js` publishes
+`window.StarterProfileValidation = { bind, misconfigured }`. It was derived
+independently from `utils/wf-validate.js` at v1.59.549 and keeps that validator's
+native-constraint messages, blur and correction timing, and inline alerts. Unlike
+the sitewide validator, a field belongs to a section and to its own DOM identity
+rather than to a page-wide name group, and this module installs no submit gate.
+The global `utils/wf-validate.js` is unchanged.
+
+`unified-services.js` publishes
+`window.StarterProfileSections = { bindServices, get }` and binds itself. It
+prefers `window.waitProfileData` when that page embed has run; otherwise it polls
+`window.activeProfile` for 10 seconds and, if the profile never arrives, stays
+unbound rather than binding against missing data. It is keyed to
+`[profile-unified-items="services"]`.
+
+`unified-companies.js` and `unified-highlights.js` publish
+`window.StarterProfileCompanies` and `window.StarterProfileHighlights`. They do
+not self-bind: `company-experience-crud.js` and `portfolio-crud.js` bind them and
+stay the writers. Each of those two controllers disables its own Save and returns
+if the global (or the validator) is missing, so a half-loaded page cannot present
+a live Save that writes nothing.
+
+### Load order
+
+- `profile-section-validation.js` before all three section scripts.
+- `unified-services.js` before or alongside `starter-edit-profile.js`. If the
+  `[profile-unified-items="services"]` marker exists but no controller registered
+  for the step, the main controller fails closed with a "This section could not
+  load" message rather than submitting.
+- `unified-companies.js` before `company-experience-crud.js`.
+- `unified-highlights.js` before `portfolio-crud.js`.
+
+### Authored markers
+
+These must exist in Webflow:
+
+| Attribute | Where | Notes |
+| --- | --- | --- |
+| `profile-unified-items="services\|companies\|highlights"` | Section | Opts the section in |
+| `profile-items-add` | Section | Add-entry control |
+| `profile-items-discard` | Section | Discard-changes control |
+| `profile-items-presence` | Section | Optional; gates Save only when it carries `required` |
+| `profile-items-media="images\|videos"` | Row | Highlights only |
+| `profile-items-summary` | Row | Authored for companies and highlights; created by the script for services |
+
+The scripts create `profile-items-status`, `profile-items-check-save`,
+`profile-items-undo`, `profile-items-removed`, and `profile-items-dirty`.
+
+Row grammars differ by section. Services reuses the existing
+`[increment-dropdown]` row with `[increment-dropdown-toggle]`,
+`[increment-dropdown-content]`, and `[increment-dropdown-remove]`, and reads its
+fields by `data-name`. Companies and highlights use `[profile-item-row]` with
+`[profile-item-toggle]`, `[profile-item-content]`, and `[profile-item-remove]`,
+read their fields by `[profile-company-field="…"]` and
+`[profile-highlight-field="…"]`, and save through the authored
+`[data-edit-submit="companies"]` and `[data-edit-submit="portfolio"]` buttons.
+Companies also reads the authored `[profile-company-search-results]` container for
+its autocomplete results.
+
+### The `form-xano-required` contract
+
+Webflow authors put `form-xano-required` (empty value) on a field whose blank
+value the Xano backend rejects. It never makes a field required. Requiredness
+comes only from the Webflow Required checkbox.
+
+`misconfigured(section)` returns the fields that carry `form-xano-required`
+without `required`. Each section script runs that check at bind and load time and
+again on Save. On a mismatch it pauses Save with
+`This form is misconfigured. Saving is paused until it is fixed.` and logs one
+`console.warn` naming the field attribute — never a field value. Discard stays
+available, so a member is never trapped with edits they cannot clear.
+
+### Save-state semantics
+
+A received non-2xx response is a **known refusal**: the server message is shown,
+the draft is kept, and Save and Discard stay enabled. A thrown or lost response is
+**unknown**: the write may or may not have landed, so Save is paused until the
+"Check saved state" control reconciles the section against a canonical read.
+
+A failed initial load leaves the section readable rather than inert. Save and
+Discard are refused until the page is reloaded.
+
+### Limits
+
+Services allows three entries. Work Experience allows three entries. Highlights
+allows five photos at 4 MB each and three videos at 40 MB each, which is the
+endpoint limit; the UI allowed 50 MB before 2026-09-17.
+
+### Test page state
+
+The Designer page "Starter Edit Profile Test" (`/starter-edit-profile-test`,
+unpublished) has Required set on `company-name`, `company-position`,
+`edit-company-name`, `edit-company-position`, `service-name`, `service-price`, and
+`rate-retainer`, and `form-xano-required` on the same seven fields. The markers
+and the script loaders are not installed on it yet.
+
+Focused tests:
+
+```sh
+node --test v3/starter-edit-profile/profile-section-validation.test.js \
+  v3/starter-edit-profile/unified-*.test.js \
+  v3/starter-edit-profile/unified-section-switching.test.js \
+  starter-edit-profile.test.js
+```
+
+### Open items
+
+- The status node and the "Check saved state" button are created by the scripts
+  with no class hooks, so both are unstyled until they are authored or classed in
+  Webflow.
+- `v3/build-profile/portfolio-crud.js` still states a 50 MB video limit. That is a
+  separate page and was not changed here.
+- `renderMedia` in `unified-highlights.js` has no fallback for a stored media row
+  that arrives without a URL.
+
+### Test helpers
+
+`v3/test-helpers/edit-profile-controller.cjs` and `v3/test-helpers/form-dom.cjs`
+are Node-only harnesses shared by these tests. Like
+`v3/test-helpers/authored-booking-receipt.cjs`, they are never served to a
+browser and are not part of the repository script inventory.
+
 ## Release verification
 
 Implementation, automated, and live evidence for the in-flight reliability

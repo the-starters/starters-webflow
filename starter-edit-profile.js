@@ -26,6 +26,9 @@ const WORKFLOW_DIAGNOSTICS_TIMEOUT_MS = 2000;
 let memberAuthGeneration = 0;
 let observedMemberstackClient = null;
 const personalDetailsReplayProofs = new WeakMap();
+// Remembers the Webflow-authored Required state the first time a profile-type rule touches a
+// control, so later type switches restore that authored value instead of a script-set one.
+const authoredProfileRequirements = new WeakMap();
 
 function memberFromResult(result) {
 	return result?.data || result?.member || result || null;
@@ -660,7 +663,10 @@ onDomReady(function () {
 
 			qsa('[data-non-required]').forEach(input => {
 				const checkForType = input.dataset.nonRequired;
-				input.required = checkForType === type ? false : true;
+				if (input.closest?.('[profile-unified-items]')) {
+					if (!authoredProfileRequirements.has(input)) authoredProfileRequirements.set(input, input.required);
+					input.required = checkForType === type ? false : authoredProfileRequirements.get(input);
+				} else input.required = checkForType === type ? false : true;
 			});
 
 			syncSelectionGroupBounds(type);
@@ -668,6 +674,7 @@ onDomReady(function () {
 
 		/* SUBMIT METHODS */
 		const PATCH_ENDPOINT = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/edit_profile/update/';
+		const READBACK_ENDPOINT = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/starter/get';
 		const STEP_PAYLOAD_MAP = {
 			1: {
 				First_Name: 'first-name',
@@ -885,7 +892,14 @@ onDomReady(function () {
 					let canonicalSaveAccepted = false;
 					try {
 						if (stepIndex === 6) clearStepSixPriceValidity();
-						const validation = validateOwnedStep(stepIndex, { report: true });
+						const sectionController = window.StarterProfileSections?.get(step);
+						if (step.hasAttribute('profile-unified-items') && !sectionController) {
+							openProfileFeedback('edit-form-error', openErrorModal, 'This section could not load. Your changes have not been submitted. Reload the page before editing.');
+							return;
+						}
+						const validation = sectionController
+							? sectionController.validate()
+							: validateOwnedStep(stepIndex, { report: true });
 						if (!validation.valid) {
 							await workflowDiagnosticsReady;
 							recordProfileDiagnostic(null, {
@@ -897,11 +911,13 @@ onDomReady(function () {
 							return;
 						}
 
+						if (sectionController && !sectionController.begin()) return;
 						saveToken = window.__tsProfileDirtyState?.beginSave(stepIndex);
 						saveStarted = true;
 						canonicalSaveAccepted = await submitStep(stepIndex, submitButton, replayProof, saveToken);
 					} finally {
 						if (saveStarted) window.__tsProfileDirtyState?.finishSave(stepIndex, canonicalSaveAccepted, saveToken);
+						if (saveStarted) window.StarterProfileSections?.get(step)?.finish(canonicalSaveAccepted);
 						rejectReplayProof(replayProof);
 					}
 				});
@@ -955,7 +971,10 @@ onDomReady(function () {
 			// Services. Real FormData always carries the `service` capture field, so the
 			// price contract is owned by the step itself instead of by that field having
 			// a value. Otherwise a blank capture field skips every price check.
-			if (stepIndex === 6) {
+			const sectionController = window.StarterProfileSections?.get(stepElement(stepIndex));
+			if (stepIndex === 6 && sectionController) {
+				sectionController.prepare(payload);
+			} else if (stepIndex === 6) {
 				const serviceFormData = getFormDataObject();
 				const service1 = parseJson(serviceFormData.service);
 				const service2 = parseJson(serviceFormData["service-2"]);
@@ -1094,9 +1113,22 @@ onDomReady(function () {
 			}
 
 			let canonicalSaveAccepted = false;
+			async function checkSavedSection() {
+				if (!sectionController || typeof window.xanoAuthFetch !== 'function') return false;
+				await revalidateMemberScope(memberScope);
+				const readback = await window.xanoAuthFetch(READBACK_ENDPOINT, {
+					method: 'POST', headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ member_id: memberScope.member.id }),
+				});
+				if (!readback.ok) return false;
+				const data = await readback.json();
+				await revalidateMemberScope(memberScope);
+				return sectionController.matchesSaved(Array.isArray(data) ? data[0] : data);
+			}
 			try {
 				acceptReplayProof(replayProof);
 				requestStarted = true;
+				sectionController?.requestStarted(payload, checkSavedSection);
 				const response = await fetch(`${PATCH_ENDPOINT}${memberScope.member.id}`, {
 					method: 'PATCH',
 					headers: { 'Content-Type': 'application/json' },
@@ -1159,6 +1191,22 @@ onDomReady(function () {
 				);
 			} catch (error) {
 				const authChanged = error?.code === 'MEMBER_SCOPE_CHANGED';
+				if (sectionController && requestStarted && !authChanged && typeof window.xanoAuthFetch === 'function') {
+					try {
+						if (await checkSavedSection()) {
+							diagnostic = recordProfileDiagnostic(diagnostic, {
+								result: 'success', stage: 'reconciliation', request_started: true,
+								duration_ms: Date.now() - startedAt,
+							});
+							decorateProfileFeedback('edit-form-success', diagnostic);
+							openProfileFeedback('edit-form-success', openSuccessModal, 'Your saved profile contains these changes.');
+							return true;
+						}
+					} catch (_) {
+						// A failed or mismatching read cannot prove the original request stopped.
+						// Preserve the unknown outcome; never replay the PATCH automatically.
+					}
+				}
 				diagnostic = recordProfileDiagnostic(diagnostic, {
 					result: 'failed',
 					stage: authChanged ? 'auth' : responseStatus === null ? 'network' : 'response',
@@ -1996,7 +2044,9 @@ onDomReady(() => {
 				if (!state && clearDisabledValues) el.value = '';
 
 				// toggle required attribute
-				if (wrap.hasAttribute('data-required')) {
+				if (wrap.closest?.('[profile-unified-items="services"]')) {
+					el.disabled = !state;
+				} else if (wrap.hasAttribute('data-required')) {
 					el.required = state;
 				}
 

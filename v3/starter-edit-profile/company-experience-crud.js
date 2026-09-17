@@ -496,6 +496,19 @@ function starterProfileCompanyMonthYearLabel(value) {
   return `${parts[0]} ${parts[parts.length - 1]}`;
 }
 
+function starterProfileCompanyResponseError(response, data, fallback) {
+    // A received non-2xx answer is a known refusal: the server replied and wrote nothing.
+    // `known` lets a section save distinguish it from a lost response, which stays unknown
+    // until a canonical read resolves it. `serverMessage` is only set when the body carries
+    // a usable message, so callers never show an internal fallback string to a Starter.
+    const serverMessage = data && typeof data.message === 'string' && data.message.trim() ? data.message.trim() : '';
+    const error = new Error(serverMessage || fallback);
+    error.status = response && response.status;
+    error.known = true;
+    if (serverMessage) error.serverMessage = serverMessage;
+    return error;
+}
+
 function hasStarterEditCompanyPendingChanges(createDrafts, updateDrafts, deleteDraftIds, alsoWorkedWithChanged) {
     return Boolean(createDrafts.length || updateDrafts.size || deleteDraftIds.size || alsoWorkedWithChanged);
 }
@@ -550,6 +563,7 @@ function createStarterEditCompanyDraftDirtyController(options) {
             const MAX = 3;
 
             let starter_xano_id = null;
+            const unifiedSection = qs('[profile-unified-items="companies"]');
 
             const companyList = qs('.company-list');
             const companyTemplate = companyList ? qs('.company-card', companyList) : null;
@@ -570,12 +584,14 @@ function createStarterEditCompanyDraftDirtyController(options) {
             const editEndDateInput = qs('#edit-company-end');
             const editCurrentWorkCheckbox = qs('#edit-company-current');
 
-            enableStarterProfileCompanyMonthInput(startDateInput, 'Start month and year');
-            enableStarterProfileCompanyMonthInput(endDateInput, 'End month and year');
-            enableStarterProfileCompanyMonthInput(editStartDateInput, 'Start month and year');
-            enableStarterProfileCompanyMonthInput(editEndDateInput, 'End month and year');
-            bindStarterProfileCompanyMonthRange(startDateInput, endDateInput, currentWorkCheckbox);
-            bindStarterProfileCompanyMonthRange(editStartDateInput, editEndDateInput, editCurrentWorkCheckbox);
+            if (!unifiedSection) {
+                enableStarterProfileCompanyMonthInput(startDateInput, 'Start month and year');
+                enableStarterProfileCompanyMonthInput(endDateInput, 'End month and year');
+                enableStarterProfileCompanyMonthInput(editStartDateInput, 'Start month and year');
+                enableStarterProfileCompanyMonthInput(editEndDateInput, 'End month and year');
+                bindStarterProfileCompanyMonthRange(startDateInput, endDateInput, currentWorkCheckbox);
+                bindStarterProfileCompanyMonthRange(editStartDateInput, editEndDateInput, editCurrentWorkCheckbox);
+            }
 
             const modalEdit = qs('[data-modal-target="company-edit"]');
             const modalEditTrigger = qs('[data-modal-trigger="company-edit"]');
@@ -600,6 +616,40 @@ function createStarterEditCompanyDraftDirtyController(options) {
             // populate isn't mistaken for a pending change.
             let alsoWorkedWithBaseline = alsoWorkedWithInput ? alsoWorkedWithInput.value : '';
             let alsoWorkedWithBaselineReady = !alsoWorkedWithInput;
+
+            if (unifiedSection) {
+                const memberId = MEMBER.id;
+                function checkMember() {
+                    if (MEMBER.id !== memberId) throw new Error('Signed-in member changed');
+                }
+                if (!window.StarterProfileCompanies || !window.StarterProfileValidation) {
+                    if (companySubmit) companySubmit.setAttribute('disabled', '');
+                    return;
+                }
+                if (alsoWorkedWithInput) {
+                    alsoWorkedWithInput.addEventListener('starter:also-worked-with-hydrated', function () {
+                        alsoWorkedWithBaseline = alsoWorkedWithInput.value;
+                        alsoWorkedWithBaselineReady = true;
+                    });
+                }
+                await window.StarterProfileCompanies.bind(unifiedSection, {
+                    async read() {
+                        checkMember();
+                        const result = await getCompanies();
+                        checkMember();
+                        if (!result.starter_id || !Array.isArray(result.companies)) throw new Error('Companies could not be read');
+                        starter_xano_id = result.starter_id;
+                        return result.companies;
+                    },
+                    async create(value, replaceId) { checkMember(); return commitCreateCompanyDraft(value, replaceId); },
+                    async update(id, value) { checkMember(); return commitUpdateCompanyDraft(id, value); },
+                    async remove(id) { checkMember(); return deleteCompany(id); },
+                    async saveOther() { checkMember(); return commitAlsoWorkedWith(); },
+                    hasOtherChanges: hasAlsoWorkedWithChanges,
+                    parseDate: starterProfileCompanyDatepickerValue,
+                });
+                return;
+            }
 
             let editStartDateBaseline = null;
             let editEndDateBaseline = null;
@@ -885,7 +935,7 @@ function createStarterEditCompanyDraftDirtyController(options) {
 
             async function getCompanies() {
                 const url = `${XANO_GET_COMPANIES_URL}?member_id=${encodeURIComponent(MEMBER.id)}`;
-                const response = await fetch(url);
+                const response = await fetch(url, unifiedSection ? { cache: 'no-store' } : undefined);
                 const data = await response.json();
 
                 if (!response.ok) {
@@ -1192,7 +1242,7 @@ function createStarterEditCompanyDraftDirtyController(options) {
 
                 if (!response.ok) {
                     console.error('[Companies] create error:', data);
-                    throw new Error(data.message || 'Company creation failed');
+                    throw starterProfileCompanyResponseError(response, data, 'Company creation failed');
                 }
 
                 return data;
@@ -1215,7 +1265,7 @@ function createStarterEditCompanyDraftDirtyController(options) {
 
                 if (!response.ok) {
                     console.error('[Companies] update error:', data);
-                    throw new Error(data.message || 'Company update failed');
+                    throw starterProfileCompanyResponseError(response, data, 'Company update failed');
                 }
 
                 return data;
@@ -1243,7 +1293,7 @@ function createStarterEditCompanyDraftDirtyController(options) {
 
                 if (!response.ok) {
                     console.error('[Companies] delete error:', data);
-                    throw new Error((data && data.message) || 'Company delete failed');
+                    throw starterProfileCompanyResponseError(response, data, 'Company delete failed');
                 }
 
                 return data;
@@ -1296,7 +1346,7 @@ function createStarterEditCompanyDraftDirtyController(options) {
                     }
 
                     console.error('[setAlsoWorkedWith] XANO error:', response.status, data);
-                    throw new Error((data && data.message) || `Also worked with save failed (${response.status})`);
+                    throw starterProfileCompanyResponseError(response, data, `Also worked with save failed (${response.status})`);
                 }
 
                 alsoWorkedWithBaseline = submittedAlsoWorkedWith;

@@ -67,6 +67,7 @@
 
   function logoSearchInit(input, isMulti = false) {
     if (!input) return;
+    if (input._starterCompanySearch) return input._starterCompanySearch;
 
     const group = input.closest('[form-group]');
     if (!group) return;
@@ -83,6 +84,7 @@
 
     const dropdown = document.createElement('div');
     dropdown.className = 'company-search-box';
+    dropdown.setAttribute?.('profile-company-search-results', '');
     searchGroup.appendChild(dropdown);
 
     let timer;
@@ -118,6 +120,7 @@
 
     let tagTemplate = null;
     let tagWrapper = null;
+    const tagDeleteListeners = [];
     if (isMulti) {
       tagTemplate = qs('[also-worked-tag].is_template', group);
       tagWrapper = qs('[also-worked-wrapper]', group);
@@ -283,11 +286,12 @@
       }
     }
 
-    input.addEventListener('focus', function () {
+    function handleFocus() {
       searchCompanies(input.value);
-    });
+    }
+    input.addEventListener('focus', handleFocus);
 
-    input.addEventListener('input', function () {
+    function handleInput() {
       if (selectingCompany) return;
 
       clearStaleSingleSelection();
@@ -298,7 +302,8 @@
       timer = setTimeout(function () {
         searchCompanies(input.value);
       }, 250);
-    });
+    }
+    input.addEventListener('input', handleInput);
 
     function companyFromTag(tag) {
       return {
@@ -374,7 +379,8 @@
       newTag.dataset.companySource = source || item?.dataset?.source || '';
       qs('[also-worked-tag-name]', newTag).textContent = selectedName;
       qs('[also-worked-tag-domain]', newTag).textContent = selectedDomain;
-      qs('[also-worked-tag-delete]', newTag).addEventListener('click', function () {
+      const tagDelete = qs('[also-worked-tag-delete]', newTag);
+      const handleTagDelete = function () {
         newTag.remove();
 
         // remove item from the list
@@ -387,7 +393,12 @@
         for (const company of existingItems) {
           if (isSameCompany(removedCompany, companyFromItem(company))) company.classList.remove('is-added');
         }
-      });
+
+        const index = tagDeleteListeners.findIndex(function (entry) { return entry.node === tagDelete; });
+        if (index !== -1) tagDeleteListeners.splice(index, 1);
+      };
+      tagDelete.addEventListener('click', handleTagDelete);
+      tagDeleteListeners.push({ node: tagDelete, handler: handleTagDelete });
 
       tagWrapper.appendChild(newTag);
       input.value = "";
@@ -402,7 +413,7 @@
       input.focus();
     }
 
-    dropdown.addEventListener('click', function (event) {
+    function handleDropdownSelect(event) {
       const item = event.target.closest('.company-search-item');
       if (!item) return;
 
@@ -425,6 +436,12 @@
         renderedQuery = selectedName;
         storeSingleSelection(selectedName, selectedDomain, selectedLogoUrl, selectedCompanyEntityId, selectedSource);
         closeDropdown();
+        // Unified rows listen for this to mark their section dirty. On the legacy Edit Profile
+        // and Build Profile markup the canonical loader captures `change` and arms the
+        // unsaved-changes warning, so a selection there must stay silent.
+        if (input.closest('[profile-unified-items]')) {
+          input.dispatchEvent(new Event('change', { bubbles: true }));
+        }
       }
 
       if (outOfCapacity) {
@@ -434,9 +451,10 @@
       setTimeout(function () {
         selectingCompany = false;
       }, 0);
-    });
+    }
+    dropdown.addEventListener('click', handleDropdownSelect);
 
-    dropdown.addEventListener('click', function (event) {
+    function handleDropdownDelete(event) {
       const companyDelete = event.target.closest('.company-search-delete');
       if (!companyDelete) return;
 
@@ -456,9 +474,29 @@
       }
 
       syncValue();
-    });
+    }
+    dropdown.addEventListener('click', handleDropdownDelete);
 
-    document.addEventListener('click', function (event) {
+    function handleOutsideClick(event) {
       if (!searchGroup.contains(event.target)) closeDropdown();
-    });
+    }
+    document.addEventListener('click', handleOutsideClick);
+    input._starterCompanySearch = {
+      destroy() {
+        clearTimeout(timer);
+        searchSequence += 1;
+        cancelActiveSearch();
+        input.removeEventListener('focus', handleFocus);
+        input.removeEventListener('input', handleInput);
+        document.removeEventListener('click', handleOutsideClick);
+        dropdown.removeEventListener('click', handleDropdownSelect);
+        dropdown.removeEventListener('click', handleDropdownDelete);
+        tagDeleteListeners.splice(0).forEach(function (entry) {
+          entry.node.removeEventListener('click', entry.handler);
+        });
+        dropdown.remove();
+        delete input._starterCompanySearch;
+      },
+    };
+    return input._starterCompanySearch;
   }

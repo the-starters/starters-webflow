@@ -48,7 +48,8 @@ function element(overrides = {}) {
   return Object.assign(node, overrides)
 }
 
-function boot({ captureValue = '{}', requiredTitle = true } = {}) {
+function boot({ captureValue = '{}', requiredTitle = true, unifiedServices = false, unifiedSection = null } = {}) {
+  const unified = unifiedSection || (unifiedServices ? 'services' : null)
   const step = element()
   step.dataset.index = '6'
 
@@ -91,7 +92,13 @@ function boot({ captureValue = '{}', requiredTitle = true } = {}) {
     '[increment-dropdown="1"]': dropdown,
   }
   wrapper.selectorAllMap = { '[increment-dropdown]': [dropdown] }
-  wrapper.closest = (selector) => (selector === "[data-form='step']" ? step : null)
+  // Mirrors a real ancestor lookup: an opted-in section answers both the bare
+  // `[profile-unified-items]` selector and its own `="<name>"` form, never another's.
+  wrapper.closest = (selector) => {
+    if (selector === "[data-form='step']") return step
+    if (!unified) return null
+    return selector === '[profile-unified-items]' || selector === '[profile-unified-items="' + unified + '"]' ? step : null
+  }
 
   const domReady = []
   const documentListeners = new Map()
@@ -171,6 +178,22 @@ test('a Custom Service field syncs its value into the hidden capture JSON while 
 
   assert.deepEqual(harness.capturedData(), { title: 'Design audit' })
   assert.deepEqual(harness.captureField.dispatched, ['change'])
+})
+
+test('the legacy repeater leaves an opted-in Services section to its new coordinator', () => {
+  const harness = boot({ unifiedServices: true })
+  harness.titleField.value = 'Draft owned by the new coordinator'
+  harness.fire(harness.titleField, 'input')
+  assert.deepEqual(harness.capturedData(), {})
+  assert.deepEqual(harness.captureField.dispatched, [])
+})
+
+test('the legacy repeater also leaves an opted-in Highlights section to its own coordinator', () => {
+  const harness = boot({ unifiedSection: 'highlights' })
+  harness.titleField.value = 'Draft owned by the unified section'
+  harness.fire(harness.titleField, 'input')
+  assert.deepEqual(harness.capturedData(), {})
+  assert.deepEqual(harness.captureField.dispatched, [])
 })
 
 test('unchanged saved service blur stays clean through the real dirty guard', () => {

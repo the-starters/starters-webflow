@@ -6,7 +6,7 @@ const path = require('node:path')
 const test = require('node:test')
 const vm = require('node:vm')
 
-function createHarness(file, companies, { isMulti = true, companyFetch } = {}) {
+function createHarness(file, companies, { isMulti = true, companyFetch, unified = false } = {}) {
   let domReady
   let dropdown
   let nextId = 0
@@ -47,12 +47,21 @@ function createHarness(file, companies, { isMulti = true, companyFetch } = {}) {
     appendChild() {},
     contains() { return false },
   }
+  // Only a unified Edit Profile row sits inside [profile-unified-items]; the legacy Edit
+  // Profile and Build Profile fields do not.
+  const unifiedSection = {}
+  const dispatched = []
   const input = {
     value: '',
     dataset: {},
     hasAttribute(name) { return name === 'data-multiple' && isMulti },
-    closest(selector) { return selector === '[form-group]' ? group : searchGroup },
+    closest(selector) {
+      if (selector === '[form-group]') return group
+      if (selector === '[profile-unified-items]') return unified ? unifiedSection : null
+      return searchGroup
+    },
     addEventListener(name, callback) { inputListeners[name] = callback },
+    dispatchEvent(event) { dispatched.push(event.type); inputListeners[event.type]?.(event); return true },
     focus() {},
   }
   const document = {
@@ -133,6 +142,7 @@ function createHarness(file, companies, { isMulti = true, companyFetch } = {}) {
   return {
     input,
     valueInput,
+    dispatchedEvents() { return dispatched },
     getDirtyEvents() { return dirtyEvents },
     clickResult(selection, { deleteResult = false } = {}) {
       let isAdded = deleteResult
@@ -335,6 +345,31 @@ for (const [label, file] of [
     assert.equal(harness.input.dataset.selectedCompanySource, undefined)
   })
 }
+
+const EDIT_AUTOCOMPLETE = path.join(__dirname, '../starter-edit-profile/company-autocomplete.js')
+const QA_WOLF = {
+  name: 'QA Wolf',
+  domain: 'qawolf.com',
+  logo_url: 'https://img.logo.dev/qawolf.com',
+  company_entity_id: 73,
+  source: 'platform',
+}
+
+test('a legacy Edit Profile company selection fires no change event on the field', async () => {
+  const harness = createHarness(EDIT_AUTOCOMPLETE, {}, { isMulti: false })
+  harness.selectCompany(QA_WOLF)
+
+  assert.equal(harness.input.dataset.selectedCompanyName, 'QA Wolf')
+  assert.deepEqual(harness.dispatchedEvents(), [])
+})
+
+test('a unified-row company selection fires change so its section can mark itself unsaved', async () => {
+  const harness = createHarness(EDIT_AUTOCOMPLETE, {}, { isMulti: false, unified: true })
+  harness.selectCompany(QA_WOLF)
+
+  assert.equal(harness.input.dataset.selectedCompanyName, 'QA Wolf')
+  assert.deepEqual(harness.dispatchedEvents(), ['change'])
+})
 
 function createCrudHarness(file, { deferredWrites = false, alsoWorkedWithStatuses = [], companyCreateStatuses = [], companyGetStatuses = [], initialCompanies = [] } = {}) {
   let readyPromise

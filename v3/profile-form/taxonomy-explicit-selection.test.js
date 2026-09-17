@@ -419,6 +419,24 @@ test('late taxonomy hydration does not arm Edit Profile dirty state', () => {
   assert.deepEqual(harness.selectedTagNames(), ['Figma'])
 })
 
+test('a migrated section can restore its picker baseline without retaining stale selected tags', () => {
+  const harness = boot({ initialValue: 'skill-1', options: [
+    { id: 'skill-1', name: 'Research' }, { id: 'skill-2', name: 'Design' },
+  ] })
+  harness.root.attrs.set('profile-unified-items', 'services')
+  harness.flushProfileHydration()
+  harness.renderedOption('Design').dispatchEvent('click')
+  assert.deepEqual(harness.selectedTagNames(), ['Research', 'Design'])
+  harness.inputValue.value = 'skill-1'
+  harness.wrapper.dispatchEvent('starter:profile-restore')
+  assert.deepEqual(harness.selectedTagNames(), ['Research'])
+  assert.equal(harness.inputValue.value, 'skill-1')
+  harness.inputValue.value = ''
+  harness.wrapper.dispatchEvent('starter:profile-restore')
+  assert.deepEqual(harness.selectedTagNames(), [])
+  assert.equal(harness.inputRequired.value, '')
+})
+
 test('hydration keeps saved taxonomy ids that no longer have a rendered option', () => {
   const harness = boot({
     initialValue: 'skill-a, skill-retired, skill-c',
