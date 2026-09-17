@@ -8,7 +8,7 @@ const vm = require('node:vm')
 const SOURCE = require.resolve('./starter-edit-profile.js')
 
 function control(value = '') {
-  return { value, required: false, tagName: 'INPUT' }
+  return { value, required: false, tagName: 'INPUT', setAttribute() {} }
 }
 
 function group({ required = false, fields = [] } = {}) {
@@ -48,6 +48,7 @@ function boot({
   paidCallDescription = 'A paid deep dive',
   unifiedServices = false,
   retainerRequired = false,
+  callSettingsStep = false,
 } = {}) {
   const retainerDescriptionField = control(retainerDescription)
   const retainerRateField = control('2500')
@@ -62,6 +63,11 @@ function boot({
   }
   const paidCallGroup = group({ required: true, fields: [paidCallDescriptionField] })
   const freeCallGroup = group({ required: true, fields: [freeCallDescriptionField] })
+  if (unifiedServices) {
+    for (const wrapper of [paidCallGroup, freeCallGroup]) {
+      wrapper.closest = selector => selector === '[profile-unified-items="services"]' ? {} : null
+    }
+  }
 
   const retainerRadios = [radio('offer-monthly-retainers', 'yes'), radio('offer-monthly-retainers', 'no')]
   const paidCallRadios = [radio('paid-consulting-calls', 'yes'), radio('paid-consulting-calls', 'no')]
@@ -76,9 +82,17 @@ function boot({
     radios.forEach((option) => { option.checked = option.value === checkedValue })
   }
 
+  // The dashboard owns Free and Paid Call settings; step 6 only carries the locked controls.
+  const canonicalCallControls = [paidCallDescriptionField, freeCallDescriptionField]
+  const stepSix = {
+    querySelector(selector) { return selector === '[data-paid-call-profile-notice]' ? {} : null },
+    querySelectorAll() { return canonicalCallControls },
+    appendChild() {},
+  }
   const selectors = {
     '[data-monthly-retainers-description]': retainerDesc,
     '[data-monthly-retainers-rate]': retainerRate,
+    ...(callSettingsStep ? { '[data-form="step"][data-index="6"]': stepSix } : {}),
   }
   const selectorsAll = {
     'input[name="offer-monthly-retainers"]': retainerRadios,
@@ -258,4 +272,20 @@ test('a second hydration pass after a reload still preserves declined descriptio
   assert.equal(harness.fields.paidCallDescription.value, 'A paid deep dive')
   assert.equal(harness.groups.retainerDesc.style.display, 'none')
   assert.equal(harness.fields.retainerDescription.required, false)
+})
+
+test('a unified services section never hands Free or Paid Call settings back to this form', () => {
+  const harness = boot({ unifiedServices: true, callSettingsStep: true, paidCalls: 'no', freeCalls: 'no' })
+  harness.hydrate()
+  assert.equal(harness.fields.paidCallDescription.disabled, true)
+  assert.equal(harness.fields.freeCallDescription.disabled, true)
+
+  // Showing a call group enables the controls inside it, which would take these settings back
+  // from the dashboard. They stay locked whichever way the toggle goes.
+  harness.choosePaidCalls('yes')
+  assert.equal(harness.fields.paidCallDescription.disabled, true)
+  harness.chooseFreeCalls('yes')
+  assert.equal(harness.fields.freeCallDescription.disabled, true)
+  assert.equal(harness.fields.paidCallDescription.required, false)
+  assert.equal(harness.fields.freeCallDescription.required, false)
 })

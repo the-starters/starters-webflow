@@ -181,6 +181,9 @@ async function commitStarterEditPortfolioDrafts(options) {
         closeEventTarget: window,
       });
 
+      // Counted the moment a request is handed to fetch, never before: a section that compares
+      // the count across a write learns whether anything was submitted at all.
+      let portfolioRequestDispatches = 0;
       const unifiedSection = qs('[profile-unified-items="highlights"]');
       if (unifiedSection) {
         if (!window.StarterProfileHighlights || !window.StarterProfileValidation) {
@@ -224,6 +227,8 @@ async function commitStarterEditPortfolioDrafts(options) {
           uploadImage: scoped(uploadImage), uploadVideo: scoped(uploadVideo),
           addImage: scoped(addPortfolioImage), addVideo: scoped(addPortfolioVideo),
           removeImage: scoped(deletePortfolioImage), removeVideo: scoped(deletePortfolioVideo),
+          // Lets the section tell a lost response from a call that threw before it sent anything.
+          dispatches: function () { return portfolioRequestDispatches; },
         });
         return;
       }
@@ -486,7 +491,10 @@ async function commitStarterEditPortfolioDrafts(options) {
 
       async function requestJson(url, options, errorLabel, workflow) {
         const diagnostics = window.StartersNativeFormDiagnostics;
-        const request = () => fetch(url, options);
+        const request = () => {
+          portfolioRequestDispatches += 1;
+          return fetch(url, options);
+        };
         const response = await (workflow && diagnostics
           ? diagnostics.observeMutation(workflow, request)
           : request());

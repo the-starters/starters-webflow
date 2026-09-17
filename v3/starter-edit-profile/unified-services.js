@@ -56,6 +56,7 @@
     let saving = false
     let restoring = false
     let uncertain = false
+    let unreadable = false
     let misconfiguredForm = false
     let dispatched = false
     let snapshot = null
@@ -89,7 +90,7 @@
       if (restoring || window.__tsProfileDirtyState?.isHydrating?.()) return
       section.setAttribute('profile-items-dirty', 'true')
       window.__tsProfileDirtyState?.markDirty(6)
-      if (!saving && !uncertain && !misconfiguredForm) status.textContent = 'Unsaved changes.'
+      if (!saving && !uncertain && !misconfiguredForm && !unreadable) status.textContent = 'Unsaved changes.'
     }
     // A field authored `form-xano-required` without the Webflow Required checkbox would let a
     // blank value reach a writer that rejects it. Report the mismatch and pause Save; never
@@ -262,8 +263,11 @@
             throw new Error('Invalid service shape')
           }
         } catch (_) {
-          uncertain = true
-          status.textContent = 'Saved services could not be read. Save is paused to protect the existing entries.'
+          // A saved slot that cannot be read is a load failure, not a write in doubt: there is
+          // no server state to reconcile and no check that could settle it. Fail closed the way
+          // a missing row template does - disable Save and say the page must be reloaded -
+          // rather than leave a live Save that would quietly overwrite the unreadable entries.
+          unreadable = true
           continue
         }
         if (!entry) continue
@@ -276,6 +280,10 @@
         summary(row)
       }
       baseline = rows().map(row => ({ values: valuesFor(row), retained: retained.has(row) }))
+    }
+    if (unreadable) {
+      status.textContent = 'Saved services could not be read. Reload the page before editing.'
+      save.setAttribute('disabled', '')
     }
     section.addEventListener('input', dirty)
     section.addEventListener('change', dirty)
@@ -316,10 +324,18 @@
       validation.reset()
       section.removeAttribute('profile-items-dirty')
       window.__tsProfileDirtyState?.setDirty(6, false)
-      status.textContent = 'Changes discarded.'
+      // Discard stays usable when the saved collection could not be read, so a Starter is
+      // never trapped with edits they cannot clear - but the standing block is restated.
+      status.textContent = unreadable
+        ? 'Changes discarded. Saved services could not be read; reload the page before editing.'
+        : 'Changes discarded.'
     })
     const controller = {
       validate() {
+        if (unreadable) {
+          status.textContent = 'Saved services could not be read. Reload the page before editing.'
+          return { valid: false, failures: [{ code: 'SAVED_STATE_UNREADABLE' }] }
+        }
         if (misconfiguredFields()) return { valid: false, failures: [{ code: 'FORM_MISCONFIGURED' }] }
         // The legacy step-6 check this path replaces refused to write before the profile type
         // resolved; without the same gate an unresolved type would submit a null Profile_Type.
@@ -329,7 +345,7 @@
         return validation.validate()
       },
       begin() {
-        if (saving || uncertain || misconfiguredForm) return false
+        if (saving || uncertain || misconfiguredForm || unreadable) return false
         snapshot = {}
         controller.prepare(snapshot)
         submittedRows = rowSnapshot()
@@ -390,7 +406,7 @@
         checkSave.hidden = true
         const laterEdits = JSON.stringify(rowSnapshot()) !== JSON.stringify(submittedRows)
           || JSON.stringify(scalarValues(scalars())) !== JSON.stringify(scalarValues(submittedScalars))
-        status.textContent = laterEdits ? 'Changes saved. Later edits are still unsaved.' : 'Changes saved.'
+        status.textContent = 'Changes saved.'
         scalarBaseline = submittedScalars
         baseline = submittedRows
         remaining().filter(meaningful).forEach(row => retained.add(row))
@@ -422,7 +438,15 @@
           payload[key] = key === 'Retainer_Enabled' || key === 'Open_to_Full_Time' ? raw === 'yes'
             : (key === 'Hourly_Rate' || key === 'Retainer_Rate') && raw !== '' ? Number(raw) : field.value
         })
-        if (payload.Retainer_Enabled === false) payload.Retainer_Rate = 0
+        if (payload.Retainer_Enabled === false) {
+          payload.Retainer_Rate = 0
+          // Turning retainers off disables the description control, so the loop above skips it
+          // and the stored description would survive a Save that says retainers are off. This
+          // section owns that value, so send the cleared one whenever it owns the control.
+          if (scalarFields().some(field => field.getAttribute('name') === 'description-retainer')) {
+            payload.Retainer_Description = ''
+          }
+        }
         const values = remaining().filter(row => retained.has(row) || meaningful(row)).map(row => {
           const entry = {}
           fields(row).forEach(field => {
@@ -436,6 +460,10 @@
         })
       },
     }
+    // The main controller marks Save as not yet usable while this section is still waiting
+    // for the saved profile. It is usable from here on.
+    save.removeAttribute('aria-disabled')
+    save.removeAttribute('data-profile-section-loading')
     sections.set(section, controller)
     return controller
   }

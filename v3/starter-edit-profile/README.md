@@ -230,6 +230,12 @@ prefers `window.waitProfileData` when that page embed has run; otherwise it poll
 unbound rather than binding against missing data. It is keyed to
 `[profile-unified-items="services"]`.
 
+Inside a unified section the retainer toggle *disables* the controls it hides rather than
+un-requiring them, and `prepare()` skips disabled controls. The retainer description is a value
+this section owns, so switching retainers off sends `Retainer_Description: ''` alongside
+`Retainer_Rate: 0`; otherwise the stored description would survive a save that says retainers
+are off.
+
 `unified-companies.js` and `unified-highlights.js` publish
 `window.StarterProfileCompanies` and `window.StarterProfileHighlights`. They do
 not self-bind: `company-experience-crud.js` and `portfolio-crud.js` bind them and
@@ -237,13 +243,42 @@ stay the writers. Each of those two controllers disables its own Save and return
 if the global (or the validator) is missing, so a half-loaded page cannot present
 a live Save that writes nothing.
 
+`company-autocomplete.js` publishes `window.StarterEditLogoSearchInit`. Both this file
+and `v3/build-profile/company-autocomplete.js` declare a top-level `logoSearchInit`, so on a
+page that loads both, whichever runs last owns the bare `window.logoSearchInit`. Work
+Experience rows need the Edit picker specifically - it publishes `_starterCompanySearch` and
+renders into the authored `[profile-company-search-results]` container - so `unified-companies.js`
+calls `window.StarterEditLogoSearchInit` and falls back to `window.logoSearchInit`.
+`logoSearchInit` stays declared for the legacy callers on the page.
+
+The writers also publish a `dispatches()` counter: the number of mutation requests handed to
+`fetch`. A section compares it across a write, so a call that threw before sending anything is
+reported as not submitted rather than left in doubt.
+
 ### Load order
 
+**Rollout order: publish the profile-form inline cutover first.** The atomic cutover that
+replaces the inline `shared-foundation.js` and `incremental-dropdowns.js` bodies with the
+GitHub-owned assets (see `v3/profile-form/inline-extraction-cutover-candidate.json`) must be
+published *before* any `[profile-unified-items]` marker is installed in Webflow. Installing a
+marker first breaks the page two ways:
+
+- **Double-owned rows.** `incremental-dropdowns.js` skips any wrapper inside
+  `[profile-unified-items]`. The still-inline copy on the published page has no such check, so
+  it and `unified-services.js` would both clone, renumber and open the same
+  `[increment-dropdown]` rows.
+- **No `starter:profile-restore` listener.** Discard in `unified-services.js` dispatches
+  `starter:profile-restore` on every `[ms-code-select-wrapper]` so the pickers re-render their
+  restored values. Only `shared-foundation.js` listens for it, so until that body is the
+  published asset a Discard leaves the picker showing the discarded selection.
+
 - `profile-section-validation.js` before all three section scripts.
-- `unified-services.js` before or alongside `starter-edit-profile.js`. If the
-  `[profile-unified-items="services"]` marker exists but no controller registered
-  for the step, the main controller fails closed with a "This section could not
-  load" message rather than submitting.
+- `unified-services.js` before or alongside `starter-edit-profile.js`. The section registers
+  its controller only once the saved profile lands, which is after the submit handlers are
+  installed, so `starter-edit-profile.js` marks that Save `aria-disabled` from page load and
+  clears it when the section binds. A Save clicked in that window is answered as "This section
+  is still loading", never silently ignored. Only a missing section script, or a wait that has
+  run out, gives the unrecoverable "This section could not load … Reload the page" message.
 - All three sections make the same check at bind time: a section missing its row
   template or its Save control registers a halted state, shows the same "This
   section could not load. Reload the page before editing." message, and disables
@@ -289,7 +324,15 @@ without `required`. Each section script runs that check at bind and load time an
 again on Save. On a mismatch it pauses Save with
 `This form is misconfigured. Saving is paused until it is fixed.` and logs one
 `console.warn` naming the field attribute — never a field value. Discard stays
-available, so a member is never trapped with edits they cannot clear.
+available, so a member is never trapped with edits they cannot clear, and a later
+draft edit does not overwrite the diagnostic with `Unsaved changes.`
+
+`data-non-required="<profile type>"` is the authored way to say a field is not asked of that
+profile type, and `starter-edit-profile.js` clears `required` on those fields for the active
+`window.activeProfile.type`. That is authored intent, not a mismatch, so `misconfigured()`
+reads the same source and skips those fields. **The two markers must not disagree:** a field
+is never both `form-xano-required` and `data-non-required` for the same profile type, because
+that would ask a Starter to leave blank a value the writer refuses.
 
 ### Save-state semantics
 
@@ -305,10 +348,29 @@ upload is matched against the canonical media list by file name and size). Disca
 in Work Experience also restores the "Also worked with" picker to its last saved
 state.
 
+A write is only in doubt once it has been sent. The writers count the mutation requests they
+hand to `fetch`, so a call that threw before sending anything — a changed signed-in member, a
+broken wrapper — reports `The next change was not submitted.` with the draft kept and Save
+still usable, rather than pausing the section over a request nobody made.
+
+A canonical read can also settle a write the other way. In Work Experience, a create with no
+new row, a removal whose id the server still holds, and an update whose row still holds exactly
+what it held before the write are each **proof that the write never landed**. That ends the
+save where a refusal would — `That change was not saved. Your draft is kept; you can save
+again.` — instead of pausing Save over an outcome the read has already settled. Only a read
+that proves neither keeps the pause.
+
+Saved state that cannot be *read* is never a write in doubt. A malformed stored Services slot
+fails the section closed the way a missing row template does: `Saved services could not be
+read. Reload the page before editing.`, Save disabled, no "Check saved state" control, and
+Discard still usable. Save is never left live over entries nobody could read.
+
 Matching a canonical read against what was sent tolerates fields the server leaves
 out of its answer, but never a field it returns with a different value. An
 unchanged `company_entity_id` or `company_domain` is proof that a switch to a
-same-name custom company was lost, not proof that it landed.
+same-name custom company was lost, not proof that it landed. The tolerance covers every
+compared field, not only those two, and a current role reads the same whether the answer
+carries `current_work` or the `'Present'` end-date sentinel.
 
 The "Also worked with" reader answers with the saved set or with nothing at all;
 a failed request never reads as "this member has none". So a failed canonical read
@@ -321,15 +383,40 @@ Discard are refused until the page is reloaded.
 ### Work Experience section readiness
 
 The "Also worked with" picker in `company-autocomplete.js` hydrates from Xano on
-its own schedule, and its field belongs to the Work Experience draft. The section
-therefore stays in its loading state until the picker announces a baseline
-(`starter:also-worked-with-hydrated`), which normalizes an empty saved set to the
-same serialized form Discard restores, so a discarded draft leaves nothing pending.
-If the picker reports `starter:also-worked-with-hydration-failed`, or says nothing
-for ten seconds, the section fails closed exactly like a failed company read: the
-rows stay readable and Save and Discard are refused until the page is reloaded.
+its own schedule, and its field belongs to the Work Experience draft. Readiness is a single
+latched claim on the field itself, not a timer:
+
+- The picker **claims** `#also-worked-with` as it initializes, before the member lookup. The
+  claim sets `data-starter-also-worked-with-state="pending"` and dispatches
+  `starter:also-worked-with-claimed`, so a section that starts waiting either before or after
+  the claim reads the same signal.
+- The claim **settles exactly once**, as `hydrated` or `failed`, writing the state attribute
+  and dispatching `starter:also-worked-with-hydrated` or
+  `starter:also-worked-with-hydration-failed`. A later report cannot re-baseline a draft.
+- Hydration normalizes an empty saved set to the same serialized form Discard restores, so a
+  discarded draft leaves nothing pending.
+- Every path that leaves the field unhydrated settles the claim as failed: an unreadable saved
+  set, a missing `[company-search-group]`, a missing tag template or wrapper, a throw while
+  rendering the saved set, a signed-out member, and a picker that could not initialize at all.
+  The section then fails closed exactly like a failed company read: the rows stay readable and
+  Save and Discard are refused until the page is reloaded.
+- **No picker claims the field** — a page with no "Also worked with" picker — is ready with
+  the value already in the field as its baseline. A blind wait there would fail the whole
+  section closed over a picker that does not exist.
+- The ten-second timeout is the last resort only, for a picker that claimed the field and then
+  never answered.
+
 Without this gate a tag added before hydration was skipped by Save, reported as
 saved, and then adopted into the baseline as if the server already held it.
+
+### Confirmed media and local files
+
+A Highlight photo or video a Starter selects is held as a `File` with an object URL for its
+preview. Once a write is confirmed — an attachment that landed, or a deletion the canonical
+read no longer shows — the entry switches to the stored media: the object URL is revoked, the
+`File` is dropped, and the list re-renders from the stored URL. A save that ends on a refusal
+or an unknown outcome keeps its rows, so this matters: without it those rows would go on
+rendering from a revoked object URL and holding the file in memory for the page session.
 
 ### Limits
 

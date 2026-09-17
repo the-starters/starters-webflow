@@ -21,6 +21,10 @@ const onDomReady = (callback) => {
 const PROFILE_WORKFLOW = 'starter_profile_edit';
 const PROFILE_CONTROLLER_VERSION = 'starter-edit-profile-v3';
 const PAID_CALL_SETTINGS_URL = '/starter-dashboard#calendar';
+// A unified section registers its controller only once the saved profile lands, which is
+// after the submit handlers are installed. Inside this window a Save click is early, not
+// unrecoverable. Matches the profile-wait budget the section scripts themselves use.
+const UNIFIED_SECTION_BIND_GRACE_MS = 10000;
 const workflowDiagnosticsControllerScript = document.currentScript;
 const WORKFLOW_DIAGNOSTICS_TIMEOUT_MS = 2000;
 let memberAuthGeneration = 0;
@@ -884,6 +888,15 @@ onDomReady(function () {
 				const submitButton = qs('[data-edit-submit]', step);
 				if (!submitButton) return;
 
+				const unified = step.hasAttribute('profile-unified-items');
+				const handlersBoundAt = Date.now();
+				if (unified && !window.StarterProfileSections?.get(step)) {
+					// Say so from page load rather than presenting a Save that cannot write yet. The
+					// section clears these when it binds; a click meanwhile is answered, never ignored.
+					submitButton.setAttribute('aria-disabled', 'true');
+					submitButton.setAttribute('data-profile-section-loading', '');
+				}
+
 				submitButton.addEventListener('click', async (event) => {
 					event.preventDefault();
 					const replayProof = stepIndex === 1 ? takePersonalDetailsReplay(form) : null;
@@ -896,8 +909,15 @@ onDomReady(function () {
 					try {
 						if (stepIndex === 6) clearStepSixPriceValidity();
 						const sectionController = window.StarterProfileSections?.get(step);
-						if (step.hasAttribute('profile-unified-items') && !sectionController) {
-							openProfileFeedback('edit-form-error', openErrorModal, 'This section could not load. Your changes have not been submitted. Reload the page before editing.');
+						if (unified && !sectionController) {
+							// The section script is present and still waiting for the saved profile, so the
+							// click is early. Only a missing script, or a wait that has run out, is
+							// unrecoverable and needs a reload.
+							const binding = Boolean(window.StarterProfileSections)
+								&& Date.now() - handlersBoundAt < UNIFIED_SECTION_BIND_GRACE_MS;
+							openProfileFeedback('edit-form-error', openErrorModal, binding
+								? 'This section is still loading. Your changes have not been submitted. Try again in a moment.'
+								: 'This section could not load. Your changes have not been submitted. Reload the page before editing.');
 							return;
 						}
 						const validation = sectionController
@@ -2039,6 +2059,9 @@ onDomReady(() => {
 				group.style.display = isCallRateYes ? '' : 'none';
 				toggleInputs(group, isCallRateYes, clearDisabledValues);
 			});
+			// Inside a unified section `toggleInputs` enables the controls it shows, which would
+			// hand Paid Call settings back to this form. The dashboard owns them, so lock them again.
+			configureCanonicalCallSettings();
 		};
 
 		function freeCallToggle(clearDisabledValues = false) {
@@ -2050,6 +2073,8 @@ onDomReady(() => {
 				group.style.display = isFreeCallYes ? '' : 'none';
 				toggleInputs(group, isFreeCallYes, clearDisabledValues);
 			});
+			// Same for Free Call settings: showing the group must not re-enable its controls.
+			configureCanonicalCallSettings();
 		};
 
 		function toggleInputs(wrap, state = null, clearDisabledValues = false) {

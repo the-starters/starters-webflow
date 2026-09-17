@@ -31,6 +31,11 @@
     let records = [], baseline = [], active = null, loading = true, saving = false, unknown = null
     let misconfigured = false, warned = false
     const clone = value => JSON.parse(JSON.stringify(value))
+    // Only a request that actually left the browser can leave an outcome in doubt, so the
+    // writer counts its dispatches. A writer that does not count keeps the cautious reading
+    // in which any throw after the call started may have been received.
+    const dispatches = () => typeof writer.dispatches === 'function' ? writer.dispatches() : null
+    const dispatchedSince = count => count === null || dispatches() !== count
     const remaining = () => records.filter(record => !record.removed)
     const keptMedia = (record, kind) => record[kind].filter(item => !item.removed)
     const present = record => record.id || field(record, 'title')?.value.trim() || field(record, 'description')?.value.trim()
@@ -55,8 +60,15 @@
       if (summary) summary.textContent = textValues(record).title || 'Highlight'
       if (open) active = record
     }
+    // A confirmed write ends a selected file's life in the page: revoke its object URL and
+    // drop the File handle so the entry renders from the stored media and holds no memory.
+    function releaseMedia(item) {
+      if (item.preview?.startsWith('blob:')) URL.revokeObjectURL(item.preview)
+      item.preview = null
+      item.file = null
+    }
     function release(record) {
-      for (const item of [...record.images, ...record.videos]) if (item.preview?.startsWith('blob:')) URL.revokeObjectURL(item.preview)
+      for (const item of [...record.images, ...record.videos]) releaseMedia(item)
       record.row.remove()
       records = records.filter(item => item !== record)
     }
@@ -157,7 +169,7 @@
         record.removed = true; setOpen(record, false)
         if (toggle) toggle.hidden = true
         remove.hidden = true; undo.hidden = false
-        active = remaining().at(-1) || null
+        if (active === record) active = remaining().at(-1) || null
         if (!remaining().length) addRow({}, true)
         dirty()
       })
@@ -243,8 +255,7 @@
       if (canonical) baseline.push(clone(canonical))
     }
     async function canonical(record) {
-      const current = await writer.read(record.id)
-      return current.find(item => String(item.id) === String(record.id)) || null
+      return (await writer.read(record.id))[0] || null
     }
     // Storage exposes no lookup by client request or file identity, so a lost upload response is
     // resolved against this highlight's canonical media instead: an attached item that no other
@@ -262,12 +273,17 @@
     }
     async function operation(run, reconcile, confirm, label) {
       status.textContent = label
-      unknown = { reconcile, confirm }
-      // A received non-2xx answer is a known refusal: the server replied and wrote nothing, so
-      // the save stops with the draft intact. Only a lost response stays unknown until a read.
-      try { await run() } catch (error) {
-        if (error?.known) { unknown = null; throw error }
-        /* Do not replay an uncertain mutation. */
+      const sent = dispatches()
+      // A received non-2xx answer is a known refusal: the server replied and wrote nothing. A
+      // throw before the request left the browser never reached the server at all. Both stop
+      // the save with the draft intact; only a lost response stays unknown until a read.
+      try {
+        await run()
+        unknown = { reconcile, confirm }
+      } catch (error) {
+        if (error?.known || !dispatchedSince(sent)) throw error
+        // The response was lost. Never replay the mutation; reconcile it instead.
+        unknown = { reconcile, confirm }
       }
       const result = await reconcile()
       if (!result) throw new Error('Unconfirmed mutation')
@@ -305,13 +321,14 @@
             // The stored file is gone and no local file remains, so the entry cannot be
             // restored. Drop it instead of leaving an Undo that would upload nothing.
             record[kind] = record[kind].filter(entry => entry !== item.ref)
+            releaseMedia(item.ref)
             renderMedia(record, kind)
           }, 'Removing highlight media…')
         }
         for (const item of items.filter(item => !item.removed && !item.ref.id)) {
           if (!item.ref.uploaded) {
             status.textContent = 'Uploading highlight media…'
-            unknown = {
+            const pending = {
               reconcile: () => reconcileUpload(record, kind, item.ref),
               confirm: resolution => {
                 if (resolution.media) {
@@ -324,8 +341,14 @@
                 renderMedia(record, kind)
               },
             }
+            const sent = dispatches()
             const uploaded = await writer['upload' + singular](item.ref.file)
-              .catch(error => { if (error?.known) unknown = null; throw error })
+              .then(result => { unknown = pending; return result })
+              .catch(error => {
+                // A refusal, and a throw before the upload left the browser, both wrote nothing.
+                if (!error?.known && dispatchedSince(sent)) unknown = pending
+                throw error
+              })
             if (!uploaded || typeof uploaded.path !== 'string' || !uploaded.path.startsWith('/')) throw new Error('Invalid upload response')
             item.ref.uploaded = uploaded; unknown = null
           }
@@ -335,7 +358,12 @@
             const current = await canonical(record)
             const matches = current?.[kind].filter(media => media[payloadKey + '_url'] === url) || []
             return matches.length === 1 ? { current, media: matches[0] } : null
-          }, ({ current, media }) => { item.ref.id = media.id; item.ref.url = url; item.ref.stored = media; advance(record, current) }, 'Attaching highlight media…')
+          }, ({ current, media }) => {
+            item.ref.id = media.id; item.ref.url = url; item.ref.stored = media
+            // The stored file is now the entry's source, so the local one is released and
+            // the list re-rendered off it rather than off a revoked object URL.
+            releaseMedia(item.ref); renderMedia(record, kind); advance(record, current)
+          }, 'Attaching highlight media…')
         }
       }
       const cover = images.find(item => !item.removed && item.cover)

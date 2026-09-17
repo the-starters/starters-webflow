@@ -30,7 +30,7 @@ async function mount({ portfolios = [], fail = null, required = false, hold = nu
     ...(presence ? [marker] : []), ...(stray ? [strayOutside] : [])])
   let stored = structuredClone(portfolios)
   let nextId = 100, nextAsset = 1, boot
-  const requests = [], readyHandlers = [], warnings = []
+  const requests = [], readyHandlers = [], warnings = [], revoked = []
   const context = vm.createContext({
     window: { addEventListener() {}, matchMedia: () => ({ matches: false }) },
     document: { readyState: 'loading', createElement: tag => h(tag), addEventListener(type, callback) { if (type === 'DOMContentLoaded') readyHandlers.push(callback) } },
@@ -38,7 +38,7 @@ async function mount({ portfolios = [], fail = null, required = false, hold = nu
     qs: (selector, scope) => scope ? scope.querySelector(selector) : selector === '[profile-unified-items="highlights"]' ? section : section.querySelector(selector),
     qsa: (selector, scope = section) => scope.querySelectorAll(selector),
     Event: class { constructor(type, options) { Object.assign(this, makeEvent(type, null, options)) } },
-    URL: { createObjectURL: file => 'blob:' + file.name, revokeObjectURL() {} },
+    URL: { createObjectURL: file => 'blob:' + file.name, revokeObjectURL: value => revoked.push(value) },
     FormData: class { constructor() { this.entries = {} } append(key, value) { this.entries[key] = value } },
     console: { warn: (...args) => warnings.push(args), error() {}, log() {} },
     fetch: async (url, init = {}) => {
@@ -80,7 +80,9 @@ async function mount({ portfolios = [], fail = null, required = false, hold = nu
   readyHandlers.forEach(callback => callback()); await boot
   const click = element => element.dispatchEvent(makeEvent('click', element, { bubbles: true }))
   const field = (key, index = 0) => section.querySelectorAll('[profile-item-row]')[index].querySelector('[profile-highlight-field="' + key + '"]')
-  return { section, save, add, discard, click, field, requests, warnings, marker, strayOutside,
+  return { section, save, add, discard, click, field, requests, warnings, marker, strayOutside, context, revoked,
+    media: (kind, index = 0) => section.querySelectorAll('[profile-items-media="' + kind + '"]')[index]
+      .querySelectorAll('[profile-media-item]'),
     mutations: () => requests.filter(request => request.method !== 'GET'),
     type(key, value, index = 0) { const target = field(key, index); target.value = value; target.dispatchEvent(makeEvent('input', target, { bubbles: true })) },
     files(kind, files, index = 0) { const target = field(kind, index); target.files = files; target.dispatchEvent(makeEvent('change', target, { bubbles: true })) },
@@ -439,4 +441,72 @@ test('a failed canonical read after a successful write keeps the unconfirmed pat
   assert.equal(page.mutations().filter(request => request.endpoint === 'Create_portfolio').length, 1)
   await page.submit()
   assert.equal(page.mutations().filter(request => request.endpoint === 'Create_portfolio').length, 1, 'Save stays paused rather than replaying the write')
+})
+
+test('a confirmed attachment renders from the stored file and frees the local one', async () => {
+  // The second row is refused, so the save ends without the reset that Discard-style restore
+  // would do. The first row's confirmed photo must already be living off its stored URL.
+  const page = await mount({
+    fail: request => request.endpoint === 'Create_portfolio' && request.body.title === 'Second'
+      ? { status: 400, body: { message: 'That title is taken' } } : null,
+  })
+  page.type('title', 'First')
+  page.files('images', [{ name: 'photo.png', type: 'image/png', size: 1000 }])
+  page.click(page.add)
+  page.type('title', 'Second', 1)
+  await page.submit()
+  assert.equal(page.status(), 'That title is taken')
+  assert.deepEqual(page.revoked, ['blob:photo.png'], 'the object URL is released once the file is stored')
+  const entry = page.media('images')[0]
+  const source = entry.querySelector('img').getAttribute('src')
+  assert.equal(source.startsWith('blob:'), false, 'the confirmed photo renders from storage')
+  assert.ok(source.includes('/uploads/'))
+})
+
+test('a confirmed media deletion frees the local file it dropped', async () => {
+  const page = await mount({
+    portfolios: [{ id: 1, title: 'Saved', description: '', images: [], videos: [] }],
+    fail: request => request.endpoint === 'Update_portfolio' ? { status: 400, body: { message: 'Nope' } } : null,
+  })
+  page.files('images', [{ name: 'photo.png', type: 'image/png', size: 1000 }])
+  await page.submit()
+  assert.deepEqual(page.revoked, ['blob:photo.png'])
+  page.revoked.length = 0
+  // Remove the photo that is now stored, and let the record update fail afterwards so the
+  // section keeps its rows instead of rebuilding them.
+  page.click(page.media('images')[0].querySelector('[profile-media-remove]'))
+  page.type('title', 'Renamed')
+  await page.submit()
+  assert.equal(page.media('images').length, 0, 'the entry is dropped, not left as an empty Undo')
+})
+
+test('a highlight write that never left the browser reports nothing submitted and keeps Save usable', async () => {
+  const page = await mount()
+  page.context.window.StartersNativeFormDiagnostics = {
+    observeMutation() { throw new TypeError('observeMutation is not a function') },
+  }
+  page.type('title', 'Campaign')
+  await page.submit()
+  assert.equal(page.mutations().length, 0, 'nothing reached the server')
+  assert.equal(page.status(),
+    'The next change was not submitted. Confirmed changes are kept; you can save the remaining draft or discard it.')
+  assert.equal(page.section.querySelector('[profile-items-check-save]').hidden, true)
+  delete page.context.window.StartersNativeFormDiagnostics
+  await page.submit()
+  assert.equal(page.mutations().length, 1)
+  assert.equal(page.status(), 'Changes saved.')
+})
+
+test('removing a collapsed highlight leaves the open one active', async () => {
+  const portfolios = ['First', 'Second', 'Third'].map((title, index) => ({
+    id: index + 1, title, description: '', images: [], videos: [],
+  }))
+  const page = await mount({ portfolios })
+  const rows = page.section.querySelectorAll('[profile-item-row]')
+  page.click(rows[0].querySelector('[profile-item-toggle]'))
+  assert.equal(rows[0].querySelector('[profile-item-content]').hidden, false)
+  page.click(rows[2].querySelector('[profile-item-remove]'))
+  page.click(page.add)
+  assert.equal(rows[0].querySelector('[profile-item-content]').hidden, true,
+    'Add collapses the row that was open, not whichever row happens to be last')
 })

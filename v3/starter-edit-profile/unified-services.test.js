@@ -7,7 +7,7 @@ const { createEnvironment, deferred, submit } = require('../test-helpers/edit-pr
 
 function mount(fetchImpl, { rates = false, services = null, readback = null, picker = false, profileType = 'full', hourlyRequired = true,
   rows = true, pickerSearch = false, backendRequired = false, deferProfile = false, saveControl = true,
-  dirtyState = null } = {}) {
+  dirtyState = null, retainersOff = false } = {}) {
   const readRequests = []
   const timers = []
   const elapsed = { ms: 0 }
@@ -27,9 +27,20 @@ function mount(fetchImpl, { rates = false, services = null, readback = null, pic
   const search = h('input', { name: 'availability-search', required: '' })
   if (pickerSearch) root.appendChild(search)
   // Authored as backend-required while Webflow leaves the Required checkbox unchecked.
-  const backendOnly = h('input', { name: 'description-retainer', 'form-xano-required': '' })
+  // `backendRequired: '<profile type>'` is the authored pair a Starter of that type is not
+  // asked for: backend-required, and marked non-required for this profile type.
+  const backendOnly = h('input', { name: 'description-retainer', 'form-xano-required': '',
+    ...(typeof backendRequired === 'string' ? { 'data-non-required': backendRequired } : {}) })
   backendOnly.value = 'Retainer copy a Starter typed'
   if (backendRequired) root.appendChild(backendOnly)
+  // The published markup disables the retainer description while retainers are switched off.
+  const retainerChoice = h('input', { name: 'offer-monthly-retainers', type: 'radio' })
+  retainerChoice.value = 'no'
+  retainerChoice.checked = true
+  const retainerDescription = h('textarea', { name: 'description-retainer' })
+  retainerDescription.value = 'Ongoing advisory retainer'
+  retainerDescription.disabled = true
+  if (retainersOff) { root.appendChild(retainerChoice); root.appendChild(retainerDescription) }
   const hourly = h('input', { name: 'rate', 'data-input-capture': '', required: '' })
   hourly.required = hourlyRequired
   hourly.setAttribute('data-non-required', 'consult')
@@ -90,7 +101,7 @@ function mount(fetchImpl, { rates = false, services = null, readback = null, pic
     },
   })
   return { ...environment, name, price, description, row, root, add, remove, discard, hourly, retainer, readRequests, availability, availabilityRequired,
-    search, backendOnly,
+    search, backendOnly, retainerChoice, retainerDescription,
     controller: () => environment.window.StarterProfileSections?.get(environment.step),
     flushTimers: () => timers.splice(0).forEach(callback => callback()),
     pendingTimers: () => timers.length,
@@ -630,4 +641,69 @@ test('a Services section missing its rows or its Save control halts and disables
   assert.equal(missingSave.root.querySelector('[profile-items-status]').textContent, unusable)
   assert.equal(missingSave.controller().validate().valid, false,
     'without a Save control the section registers a halted controller')
+})
+
+test('switching retainers off clears the stored retainer description it owns', async () => {
+  const page = mount(undefined, { retainersOff: true })
+  page.type(page.name, 'Audit')
+  page.type(page.price, '500')
+  await submit(page)
+  assert.equal(page.requests.length, 1)
+  const payload = JSON.parse(page.requests[0][1].body)
+  assert.equal(payload.Retainer_Enabled, false)
+  assert.equal(payload.Retainer_Rate, 0)
+  assert.equal(payload.Retainer_Description, '',
+    'the description control is disabled, but this section still owns the value')
+})
+
+test('a saved service slot that cannot be read disables Save with a terminal message', async () => {
+  const unreadable = 'Saved services could not be read. Reload the page before editing.'
+  const page = mount(undefined, { services: { service: '{"price":{"amount":500}}' } })
+  const status = page.root.querySelector('[profile-items-status]')
+  assert.equal(status.textContent, unreadable)
+  assert.equal(page.button.getAttribute('disabled'), '', 'Save is never left live over entries nobody can read')
+  assert.equal(page.controller().validate().valid, false)
+  assert.equal(page.controller().validate().failures[0].code, 'SAVED_STATE_UNREADABLE')
+  assert.equal(page.controller().begin(), false)
+  page.type(page.name, 'Draft')
+  assert.equal(status.textContent, unreadable, 'an edit never hides the reason Save is refused')
+  await submit(page)
+  assert.equal(page.requests.length, 0)
+  assert.equal(page.root.querySelector('[profile-items-check-save]').hidden, true,
+    'a failed read is not a write in doubt, so there is nothing to check')
+  page.click(page.discard)
+  assert.match(page.root.querySelector('[profile-items-status]').textContent, /reload the page/i,
+    'Discard stays usable and restates the block')
+})
+
+test('Save clicked before the section binds reports a section still loading, not a reload', async () => {
+  const page = mount(undefined, { deferProfile: true })
+  assert.equal(page.controller(), undefined, 'the section has not bound yet')
+  assert.equal(page.button.getAttribute('aria-disabled'), 'true', 'Save says so from page load')
+  await submit(page)
+  assert.equal(page.requests.length, 0)
+  assert.match(page.errorFeedback.textContent, /still loading/i)
+  assert.equal(/reload the page/i.test(page.errorFeedback.textContent), false)
+  page.window.activeProfile = { type: 'full', type_id: 1, last_update: 1758067200000, data: {} }
+  page.flushTimers()
+  assert.ok(page.controller(), 'the controller registers once the saved profile arrives')
+  assert.equal(page.button.getAttribute('aria-disabled'), null, 'and Save becomes usable')
+})
+
+test('a field this profile type is not asked for is not a form misconfiguration', async () => {
+  const consult = mount(undefined, { backendRequired: 'consult', profileType: 'consult' })
+  consult.type(consult.name, 'Audit')
+  consult.type(consult.price, '500')
+  await submit(consult)
+  assert.equal(consult.requests.length, 1, 'the two markers agree for this profile type')
+  assert.notEqual(consult.root.querySelector('[profile-items-status]').textContent,
+    'This form is misconfigured. Saving is paused until it is fixed.')
+
+  const full = mount(undefined, { backendRequired: 'consult', profileType: 'full' })
+  full.type(full.name, 'Audit')
+  full.type(full.price, '500')
+  await submit(full)
+  assert.equal(full.requests.length, 0, 'for any other profile type the two markers still disagree')
+  assert.equal(full.root.querySelector('[profile-items-status]').textContent,
+    'This form is misconfigured. Saving is paused until it is fixed.')
 })

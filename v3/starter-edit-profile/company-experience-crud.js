@@ -507,9 +507,51 @@ async function starterProfileCompanyErrorBody(response) {
     return null;
 }
 
-// How long the unified Work Experience section waits for the Also Worked With picker to report
-// its saved set before it gives up and fails closed. Matches the profile-wait budget elsewhere.
+// How long the unified Work Experience section waits for a picker that claimed the Also Worked
+// With field and then never answered. Last resort only: a picker that hydrates, fails, or never
+// claims the field settles this at once. Matches the profile-wait budget elsewhere.
 const ALSO_WORKED_WITH_HYDRATION_TIMEOUT_MS = 10000;
+
+// The Also Worked With field belongs to the Work Experience draft, and the picker in
+// company-autocomplete.js hydrates it on its own schedule, so the section cannot read a
+// baseline until the picker has published one. Readiness is latched on the field itself:
+// a picker claims it as it initializes (`data-starter-also-worked-with-state`) and settles
+// the claim exactly once, through the hydrated / hydration-failed events. A field no picker
+// ever claims has no hydration to wait for, so the value already in it is the baseline; a
+// blind wait there would fail the whole section closed over a picker that does not exist.
+function starterProfileAlsoWorkedWithReadiness(input) {
+    return new Promise(function (resolve) {
+        let settled = false;
+        let unclaimedTimer = null;
+        let hydrationTimer = null;
+        function settle(ready) {
+            if (settled) return;
+            settled = true;
+            clearTimeout(unclaimedTimer);
+            clearTimeout(hydrationTimer);
+            resolve(ready);
+        }
+        input.addEventListener('starter:also-worked-with-hydrated', function () { settle(true); });
+        input.addEventListener('starter:also-worked-with-hydration-failed', function () { settle(false); });
+        function follow() {
+            clearTimeout(unclaimedTimer);
+            const state = input.getAttribute('data-starter-also-worked-with-state');
+            if (state === 'hydrated') { settle(true); return; }
+            if (state === 'failed') { settle(false); return; }
+            // Claimed and still hydrating. A picker that never answers must not hold the
+            // section open for the rest of the page session.
+            hydrationTimer = setTimeout(function () { settle(false); }, ALSO_WORKED_WITH_HYDRATION_TIMEOUT_MS);
+        }
+        if (input.getAttribute('data-starter-also-worked-with-state')) { follow(); return; }
+        input.addEventListener('starter:also-worked-with-claimed', follow);
+        // Pickers claim their field as they initialize, which has already happened by the
+        // time this section binds. One more macrotask covers a picker that starts late.
+        unclaimedTimer = setTimeout(function () {
+            if (input.getAttribute('data-starter-also-worked-with-state')) { follow(); return; }
+            settle(true);
+        }, 0);
+    });
+}
 
 // Identity of one Also Worked With association, ignoring order, keys, logos and the row ids
 // the server assigns on write, so a draft can be compared with what the server actually holds.
@@ -643,6 +685,14 @@ function createStarterEditCompanyDraftDirtyController(options) {
             const cancelCompanyEditButton = qs('[cancel-company-edit]');
             const companySubmit = qs('[data-edit-submit="companies"]');
 
+            // Counted the moment a mutation is handed to fetch, never before: a section that
+            // compares the count across a write learns whether anything was submitted at all.
+            let companyMutationDispatches = 0;
+            function dispatchCompanyMutation(url, options) {
+                companyMutationDispatches += 1;
+                return fetch(url, options);
+            }
+
             const alsoWorkedWithInput = qs('#also-worked-with');
             const editFormSuccessTrigger = qs("[data-modal-trigger='edit-form-success']");
             const editFormErrorTrigger = qs("[data-modal-trigger='edit-form-error']");
@@ -665,25 +715,19 @@ function createStarterEditCompanyDraftDirtyController(options) {
                 }
                 // The picker hydrates the "Also worked with" field on its own schedule, and that
                 // field is part of this section's draft. Hold the section in its loading state
-                // until the picker reports a baseline: a tag added in the gap would otherwise be
-                // skipped by Save and then adopted as already-saved when hydration lands.
+                // until the picker that claimed the field reports a baseline: a tag added in the
+                // gap would otherwise be skipped by Save and then adopted as already-saved when
+                // hydration lands. A field no picker claims is ready with the value it already has.
                 let alsoWorkedWithReady = Promise.resolve(true);
                 if (alsoWorkedWithInput) {
-                    let settleAlsoWorkedWith = null;
-                    alsoWorkedWithReady = new Promise(function (resolve) { settleAlsoWorkedWith = resolve; });
-                    // A picker that never reports at all must not hold the section open forever.
-                    const hydrationTimer = setTimeout(function () { settleAlsoWorkedWith(false); },
-                        ALSO_WORKED_WITH_HYDRATION_TIMEOUT_MS);
-                    alsoWorkedWithInput.addEventListener('starter:also-worked-with-hydrated', function () {
-                        alsoWorkedWithBaseline = alsoWorkedWithInput.value;
-                        alsoWorkedWithBaselineReady = true;
-                        clearTimeout(hydrationTimer);
-                        settleAlsoWorkedWith(true);
-                    });
-                    alsoWorkedWithInput.addEventListener('starter:also-worked-with-hydration-failed', function () {
-                        clearTimeout(hydrationTimer);
-                        settleAlsoWorkedWith(false);
-                    });
+                    alsoWorkedWithReady = starterProfileAlsoWorkedWithReadiness(alsoWorkedWithInput)
+                        .then(function (ready) {
+                            if (ready) {
+                                alsoWorkedWithBaseline = alsoWorkedWithInput.value;
+                                alsoWorkedWithBaselineReady = true;
+                            }
+                            return ready;
+                        });
                 }
                 await window.StarterProfileCompanies.bind(unifiedSection, {
                     async read() {
@@ -705,6 +749,10 @@ function createStarterEditCompanyDraftDirtyController(options) {
                     restoreOther() { restoreAlsoWorkedWith(); },
                     hasOtherChanges: hasAlsoWorkedWithChanges,
                     parseDate: starterProfileCompanyDatepickerValue,
+                    // Counts the mutations that actually reached the network, so the section can
+                    // tell a lost response from a call that threw before it sent anything.
+                    dispatches: function () { return companyMutationDispatches; },
+                    monthRangeMessage: STARTER_PROFILE_COMPANY_MONTH_RANGE_MESSAGE,
                 });
                 return;
             }
@@ -1284,7 +1332,7 @@ function createStarterEditCompanyDraftDirtyController(options) {
             }
 
             async function createCompany(payload) {
-                const request = () => fetch(XANO_CREATE_COMPANY_URL, {
+                const request = () => dispatchCompanyMutation(XANO_CREATE_COMPANY_URL, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -1306,7 +1354,7 @@ function createStarterEditCompanyDraftDirtyController(options) {
             }
 
             async function updateCompany(companyId, payload) {
-                const request = () => fetch(`${XANO_UPDATE_COMPANY_URL}/${encodeURIComponent(companyId)}`, {
+                const request = () => dispatchCompanyMutation(`${XANO_UPDATE_COMPANY_URL}/${encodeURIComponent(companyId)}`, {
                     method: 'PATCH',
                     headers: {
                         'Content-Type': 'application/json',
@@ -1328,7 +1376,7 @@ function createStarterEditCompanyDraftDirtyController(options) {
             }
 
             async function deleteCompany(companyId) {
-                const request = () => fetch(`${XANO_DELETE_COMPANY_URL}/${encodeURIComponent(companyId)}`, {
+                const request = () => dispatchCompanyMutation(`${XANO_DELETE_COMPANY_URL}/${encodeURIComponent(companyId)}`, {
                     method: 'DELETE',
                     headers: {
                         'Content-Type': 'application/json',
@@ -1381,7 +1429,7 @@ function createStarterEditCompanyDraftDirtyController(options) {
                 if (!hasAlsoWorkedWithChanges()) return;
                 const submittedAlsoWorkedWith = alsoWorkedWithInput.value;
 
-                const request = () => fetch(XANO_SET_ALSO_WORKED_WITH_URL, {
+                const request = () => dispatchCompanyMutation(XANO_SET_ALSO_WORKED_WITH_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({

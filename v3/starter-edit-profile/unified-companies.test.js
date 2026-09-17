@@ -9,7 +9,7 @@ const EDITED_ASSOCIATIONS = '{"client-1":{"name":"Acme","domain":"acme.example",
 
 async function mount({ companies = [], fail = null, minimum = true, withRow = true, withSave = true,
   required = ['company_name', 'job_title'], xanoRequired = [], hydrate = true, initialOther = '{}',
-  liveAssociationReader = false, associationReadStatus = 200 } = {}) {
+  liveAssociationReader = false, associationReadStatus = 200, claim = true, normalize = null } = {}) {
   const fields = ['company_name', 'job_title', 'start_date', 'end_date', 'current_work'].map(key => h('input', {
     'profile-company-field': key, name: key, id: key,
     ...(key === 'current_work' ? { type: 'checkbox' } : {}),
@@ -24,7 +24,10 @@ async function mount({ companies = [], fail = null, minimum = true, withRow = tr
   const add = h('button', { 'profile-items-add': '' })
   const discard = h('button', { 'profile-items-discard': '' })
   const presence = h('input', { 'profile-items-presence': '', ...(minimum ? { required: '' } : {}) })
-  const other = h('input', { id: 'also-worked-with' })
+  // The picker claims the shared field as it initializes, exactly as company-autocomplete.js
+  // does on the page. `claim: false` is the page where no picker owns the field at all.
+  const other = h('input', { id: 'also-worked-with',
+    ...(claim ? { 'data-starter-also-worked-with-state': 'pending' } : {}) })
   const section = h('section', { 'profile-unified-items': 'companies' },
     [h('div', {}, withRow ? [row] : []), ...(withSave ? [save] : []), add, discard, presence, other])
   const requests = []
@@ -89,10 +92,13 @@ async function mount({ companies = [], fail = null, minimum = true, withRow = tr
       let value
       if (request.method === 'POST') {
         stored = stored.filter(item => Number(item.id) !== Number(body.replace_companies_id))
-        value = { ...body, id: nextId++ }; stored.push(value)
+        value = { ...body, id: nextId++ }
+        // Xano answers with the columns it stores, which need not echo the request field for field.
+        stored.push(normalize ? normalize(value) : value)
       } else if (request.method === 'PATCH') {
         value = { ...body, id: Number(url.split('/').at(-1)) }
-        stored = stored.map(item => item.id === value.id ? value : item)
+        const storedValue = normalize ? normalize(value) : value
+        stored = stored.map(item => item.id === storedValue.id ? storedValue : item)
       } else stored = stored.filter(item => item.id !== Number(url.split('/').at(-1)))
       return { ok: true, json: async () => value || { deleted: true } }
     },
@@ -104,6 +110,11 @@ async function mount({ companies = [], fail = null, minimum = true, withRow = tr
   }
   // A classic script's top-level declarations are window properties on the published page.
   if (liveAssociationReader) windowStub.fetchAlsoWorkedWithCompanies = context.fetchAlsoWorkedWithCompanies
+  // Both the Edit and the Build copies publish a picker initializer; these rows must reach the
+  // Edit one. Installed after the scripts load and before the first row is rendered.
+  const pickerCalls = { edit: [], legacy: [] }
+  windowStub.StarterEditLogoSearchInit = field => { pickerCalls.edit.push(field) }
+  windowStub.logoSearchInit = field => { pickerCalls.legacy.push(field) }
   function hydrateOther(value) {
     other.value = value
     other.dispatchEvent(makeEvent('starter:also-worked-with-hydrated', other, { bubbles: true }))
@@ -135,7 +146,7 @@ async function mount({ companies = [], fail = null, minimum = true, withRow = tr
     other.dispatchEvent(makeEvent('change', other, { bubbles: true }))
   }
   return { section, save, add, discard, click, field, type, company, requests, context, warnings,
-    other, hydrateOther, failOther, editOther,
+    other, hydrateOther, failOther, editOther, pickerCalls,
     otherRequests: () => requests.filter(item => String(item.url).includes('set_also_worked_with')),
     errors: () => section.querySelectorAll('[profile-validation-error]').map(node => node.textContent),
     checkSave: () => section.querySelector('[profile-items-check-save]'),
@@ -231,16 +242,21 @@ test('clearing "I currently work here" saves an empty End month instead of the P
   assert.equal(page.field('end_date').value, '')
 })
 
-test('partial company saves keep confirmed entries and pause an unknown create without replay', async () => {
+test('partial company saves keep confirmed entries and release a create the server never took', async () => {
   const page = await mount({ fail: request => request.method === 'POST' && request.body.company_name === 'Beta' ? 'lose' : null })
   page.company('Acme'); page.type('job_title', 'Designer'); page.click(page.add)
   page.company('Beta', 1); page.type('job_title', 'Engineer', 1)
   await page.submit()
   assert.equal(page.mutations().length, 2)
-  assert.match(page.status(), /could not be confirmed/)
+  // The canonical read holds Acme and no second row at all, so the lost Beta answer is not
+  // merely unconfirmed: that create is proved not to have landed.
+  assert.equal(page.status(), 'That change was not saved. Your draft is kept; you can save again.')
+  assert.equal(page.checkSave().hidden, true, 'there is nothing left to check')
+  assert.equal(page.field('company_name', 1).value, 'Beta', 'the draft survives')
   await page.submit()
-  assert.equal(page.mutations().length, 2)
-  assert.equal(page.field('company_name', 1).value, 'Beta')
+  assert.equal(page.mutations().length, 3, 'Save is usable again and re-sends only the lost create')
+  assert.equal(page.mutations()[2].method, 'POST')
+  assert.equal(page.mutations()[2].body.company_name, 'Beta')
 })
 
 test('an atomic company replacement preserves the three-entry limit and last-entry removal follows authored presence', async () => {
@@ -325,17 +341,30 @@ test('a refused company save keeps the draft and leaves Save and Discard availab
   assert.equal(silent.status(), 'The server rejected this change. Check the entry and try again.')
 })
 
-test('a lost company response still pauses Save until the saved state can be checked', async () => {
-  const page = await mount({ fail: request => request.method === 'POST' ? 'lose' : null })
-  page.company('Acme'); page.type('job_title', 'Designer')
+test('a company response the canonical read cannot settle still pauses Save', async () => {
+  // The update reached the server, the answer was lost, and the row now holds neither what
+  // was sent nor what it held before. Nothing is proved either way, so Save stays paused.
+  const page = await mount({
+    companies: [{ id: 1, company_name: 'Acme', job_title: 'Designer', company_source: 'custom' }],
+    fail: (request, { stored, setStored }) => {
+      if (request.method !== 'PATCH') return null
+      setStored(stored.map(item => Number(item.id) === 1 ? { ...item, job_title: 'Engineer (in review)' } : item))
+      return 'lose'
+    },
+  })
+  page.type('job_title', 'Engineer')
   await page.submit()
   assert.equal(page.mutations().length, 1)
   assert.match(page.status(), /could not be confirmed/)
   assert.equal(page.checkSave().hidden, false)
   await page.submit()
-  assert.equal(page.mutations().length, 1)
+  assert.equal(page.mutations().length, 1, 'an unknown write is never replayed')
+  page.click(page.checkSave())
+  await tick()
+  assert.equal(page.status(), 'The save is still unconfirmed. Your draft is kept; Save remains paused.')
+  assert.equal(page.checkSave().hidden, false)
   page.click(page.discard)
-  assert.equal(page.field('company_name').value, 'Acme')
+  assert.equal(page.field('job_title').value, 'Engineer', 'Discard is refused while the outcome is unknown')
 })
 
 test('a malformed month blocks the company save and clears once a real month is entered', async () => {
@@ -400,9 +429,8 @@ test('a refused company save with a non-JSON body still reads as a known refusal
 })
 
 test('a lost Also Worked With response is resolved by Check saved state instead of blocking the section', async () => {
-  const page = await mount({ minimum: false,
+  const page = await mount({ minimum: false, initialOther: BASELINE_ASSOCIATIONS,
     fail: request => String(request.url).includes('set_also_worked_with') ? 'lose' : null })
-  page.hydrateOther(BASELINE_ASSOCIATIONS)
   page.editOther(EDITED_ASSOCIATIONS)
   await page.submit()
   assert.equal(page.otherRequests().length, 1)
@@ -432,7 +460,7 @@ test('switching a saved platform company to a same-name custom company sends the
   assert.equal(page.field('company_name').dataset.selectedCompanyEntityId, '0')
 })
 
-test('a lost company switch is not confirmed by the unchanged company the server still holds', async () => {
+test('a lost company switch the server never took releases Save instead of pausing it', async () => {
   const page = await mount({
     companies: [{ id: 1, company_name: 'Acme', job_title: 'Designer', company_domain: 'acme.example',
       company_entity_id: 73, company_source: 'platform' }],
@@ -441,18 +469,21 @@ test('a lost company switch is not confirmed by the unchanged company the server
   page.company('Acme')
   await page.submit()
   assert.equal(page.mutations().length, 1)
-  assert.equal(page.checkSave().hidden, false)
-  page.click(page.checkSave())
-  await tick()
-  assert.equal(page.status(), 'The save is still unconfirmed. Your draft is kept; Save remains paused.')
-  assert.equal(page.checkSave().hidden, false, 'the platform company the server kept cannot confirm the switch')
+  // The row still holds exactly what it held before the write, so the switch is proved not to
+  // have landed. It is never mistaken for a confirmation, and it is not left in doubt either.
+  assert.equal(page.status(), 'That change was not saved. Your draft is kept; you can save again.')
+  assert.equal(page.checkSave().hidden, true, 'there is nothing left to check')
   assert.equal(page.field('company_name').dataset.selectedCompanySource, 'custom', 'the draft survives')
+  await page.submit()
+  assert.equal(page.mutations().length, 2, 'Save was never paused')
+  assert.equal(page.mutations()[1].method, 'PATCH')
+  assert.equal(page.mutations()[1].body.company_entity_id, 0)
 })
 
 test('a lost Also Worked With write stays unconfirmed when the saved set cannot be read', async () => {
   const page = await mount({ minimum: false, liveAssociationReader: true, associationReadStatus: 500,
+    initialOther: BASELINE_ASSOCIATIONS,
     fail: request => String(request.url).includes('set_also_worked_with') ? 'lose' : null })
-  page.hydrateOther(BASELINE_ASSOCIATIONS)
   page.editOther('{}')
   await page.submit()
   assert.equal(page.otherRequests().length, 1)
@@ -495,8 +526,7 @@ test('a failed Also Worked With hydration leaves Work Experience readable with S
 })
 
 test('Discard restores the Also Worked With draft and the next Save leaves it alone', async () => {
-  const page = await mount({ minimum: false })
-  page.hydrateOther(BASELINE_ASSOCIATIONS)
+  const page = await mount({ minimum: false, initialOther: BASELINE_ASSOCIATIONS })
   page.editOther(EDITED_ASSOCIATIONS)
   page.click(page.discard)
   assert.equal(page.other.value, BASELINE_ASSOCIATIONS)
@@ -529,4 +559,80 @@ test('the presence message opens a usable row instead of the one being removed',
   assert.equal(rows[0].querySelector('[profile-items-undo]').hidden, false)
   assert.equal(rows[1].querySelector('[profile-item-content]').hidden, false)
   assert.ok(page.field('company_name', 1).focusCalls.length >= 1)
+})
+
+test('a canonical read that normalizes what it stores still confirms the save', async () => {
+  // Xano answers with the columns it owns: the current-role flag without the 'Present'
+  // sentinel, and no job title at all. Neither contradicts the draft, so the write is confirmed.
+  const page = await mount({ normalize: value => {
+    const { job_title, ...rest } = value
+    return { ...rest, end_date: '' }
+  } })
+  page.company('Acme'); page.type('job_title', 'Designer')
+  page.field('current_work').checked = true
+  page.field('current_work').dispatchEvent(makeEvent('change', null, { bubbles: true }))
+  await page.submit()
+  assert.equal(page.mutations().length, 1)
+  assert.equal(page.mutations()[0].body.end_date, 'Present')
+  assert.equal(page.status(), 'Changes saved.')
+  assert.equal(page.checkSave().hidden, true)
+})
+
+test('a company write that never left the browser reports nothing submitted and keeps Save usable', async () => {
+  const page = await mount()
+  // A broken diagnostics wrapper throws before it ever calls the request.
+  page.context.window.StartersNativeFormDiagnostics = {
+    observeMutation() { throw new TypeError('observeMutation is not a function') },
+  }
+  page.company('Acme'); page.type('job_title', 'Designer')
+  await page.submit()
+  assert.equal(page.mutations().length, 0, 'nothing reached the server')
+  assert.equal(page.status(),
+    'The next change was not submitted. Confirmed changes are kept; you can save the remaining draft or discard it.')
+  assert.equal(page.checkSave().hidden, true, 'an unsent write leaves nothing to check')
+  delete page.context.window.StartersNativeFormDiagnostics
+  await page.submit()
+  assert.equal(page.mutations().length, 1, 'Save was never paused')
+  assert.equal(page.status(), 'Changes saved.')
+})
+
+test('a field no picker claims is ready with the value it already has', async () => {
+  // No Also Worked With picker on the page: there is no hydration to wait for, so the section
+  // must load rather than fail closed after a blind wait.
+  const page = await mount({ minimum: false, claim: false, hydrate: false })
+  for (let turn = 0; turn < 50 && page.status() !== ''; turn += 1) {
+    await new Promise(resolve => setTimeout(resolve, 1))
+  }
+  assert.equal(page.status(), '', 'the section finished loading')
+  page.company('Acme'); page.type('job_title', 'Designer')
+  await page.submit()
+  assert.equal(page.status(), 'Changes saved.')
+  assert.equal(page.otherRequests().length, 0, 'an unclaimed field is its own baseline')
+  page.editOther(EDITED_ASSOCIATIONS)
+  await page.submit()
+  assert.equal(page.otherRequests().length, 1, 'a later edit is still a change against that baseline')
+})
+
+test('Work Experience rows use the Edit picker, not whichever copy loaded last', async () => {
+  const page = await mount()
+  assert.equal(page.pickerCalls.edit.length, 1)
+  assert.equal(page.pickerCalls.edit[0], page.field('company_name'))
+  assert.equal(page.pickerCalls.legacy.length, 0, 'the bare global is only the fallback')
+})
+
+test('a misconfigured form keeps saying so while the draft changes', async () => {
+  const page = await mount({ required: ['company_name'], xanoRequired: ['job_title'] })
+  const misconfigured = 'This form is misconfigured. Saving is paused until it is fixed.'
+  assert.equal(page.status(), misconfigured)
+  page.type('job_title', 'Designer')
+  assert.equal(page.status(), misconfigured, 'an edit never hides the reason Save is paused')
+})
+
+test('the month-range message matches the wording the legacy company form uses', async () => {
+  const page = await mount()
+  page.company('Acme'); page.type('job_title', 'Designer')
+  page.type('start_date', '2025-06'); page.type('end_date', '2024-06')
+  await page.submit()
+  assert.equal(page.mutations().length, 0)
+  assert.ok(page.errors().includes('End month must be the same as or later than the start month.'))
 })

@@ -64,6 +64,11 @@
     const present = record => !!record.id || names.some(key => key === 'current_work'
       ? input(record.row, key)?.checked : String(input(record.row, key)?.value || '').trim())
     const copy = value => JSON.parse(JSON.stringify(value))
+    // Only a request that actually left the browser can leave an outcome in doubt, so the
+    // writer counts its dispatches. A writer that does not count keeps the cautious reading
+    // in which any throw after the call started may have been received.
+    const dispatches = () => typeof writer.dispatches === 'function' ? writer.dispatches() : null
+    const dispatchedSince = count => count === null || dispatches() !== count
     function selection(row) {
       const field = input(row, 'company_name')
       const data = field?.dataset || {}
@@ -97,7 +102,7 @@
       if (loading) return
       section.setAttribute('profile-items-dirty', 'true')
       window.__tsProfileDirtyState?.markDirty(3)
-      if (!saving && !unknown) status.textContent = 'Unsaved changes.'
+      if (!saving && !unknown && !misconfigured) status.textContent = 'Unsaved changes.'
     }
     function syncCurrent(record) {
       const end = input(record.row, 'end_date')
@@ -192,7 +197,10 @@
       row.addEventListener('focusin', () => { active = record })
       input(row, 'current_work')?.addEventListener('change', () => syncCurrent(record))
       syncCurrent(record)
-      window.logoSearchInit?.(company)
+      // Both Edit and Build declare a top-level `logoSearchInit`, so on a page that loads
+      // both the later script wins `window.logoSearchInit`. These rows need the Edit picker,
+      // which is published under its own name; the bare global stays the legacy fallback.
+      ;(window.StarterEditLogoSearchInit || window.logoSearchInit)?.(company)
       setOpen(record, !record.id)
       if (focus) company?.focus()
       return record
@@ -215,7 +223,9 @@
         if (key === 'end_date' && !input(record.row, 'current_work')?.checked) {
           const start = writer.parseDate(input(record.row, 'start_date')?.value)
           const end = writer.parseDate(value)
-          if (start && end && start.getFullYear() * 12 + start.getMonth() > end.getFullYear() * 12 + end.getMonth()) return 'End month must be the same as or after the start month.'
+          if (start && end && start.getFullYear() * 12 + start.getMonth() > end.getFullYear() * 12 + end.getMonth()) {
+            return writer.monthRangeMessage || 'End month must be the same as or after the start month.'
+          }
         }
         return ''
       },
@@ -270,27 +280,58 @@
     // the draft, but a field it returns with a different value proves the write never landed —
     // switching a saved company to a same-name custom one is exactly that case.
     const omitted = (actual, key) => !(key in actual) || actual[key] === undefined
+    // A current role stores 'Present' as its end date and also carries the flag. A server that
+    // answers with one and not the other is describing the same state, not a different one.
+    const endsNow = value => !!value.current_work || String(value.end_date || '') === 'Present'
     function same(actual, expected) {
-      const equal = names.every(key => key === 'current_work' ? !!actual[key] === expected[key]
-        : String(actual[key] || '') === String(expected[key] || ''))
-      return equal
-        && (omitted(actual, 'company_entity_id')
-          || (Number(actual.company_entity_id) || 0) === (Number(expected.company_entity_id) || 0))
-        && (omitted(actual, 'company_domain')
-          || String(actual.company_domain || '').toLowerCase() === String(expected.company_domain || '').toLowerCase())
+      return [...names, 'company_entity_id', 'company_domain'].every(key => {
+        if (omitted(actual, key)) return true
+        if (key === 'current_work') return !!actual[key] === !!expected[key] || endsNow(actual) === endsNow(expected)
+        if (key === 'end_date') {
+          return String(actual[key] || '') === String(expected[key] || '') || (endsNow(actual) && endsNow(expected))
+        }
+        if (key === 'company_entity_id') return (Number(actual[key]) || 0) === (Number(expected[key]) || 0)
+        if (key === 'company_domain') {
+          return String(actual[key] || '').toLowerCase() === String(expected[key] || '').toLowerCase()
+        }
+        return String(actual[key] || '') === String(expected[key] || '')
+      })
+    }
+    // A canonical read can settle a write three ways: it landed (the confirmed row), it
+    // never landed, or neither. Only the last keeps Save paused - a write proved not to have
+    // landed leaves the Starter where a refusal would, with the draft intact and Save usable.
+    const NOT_LANDED = Object.freeze({ landed: false })
+    function notLanded() {
+      const error = new Error('The change was not saved')
+      error.notLanded = true
+      return error
     }
     async function reconcile(operation) {
       if (operation.kind === 'other') {
         // The association has no id to look up: compare the saved state with what was sent.
+        // A saved set that differs can equally be the state before the write, so a mismatch
+        // proves nothing and the outcome stays unknown.
         if (!writer.matchOther) throw new Error('Association state cannot be read')
         return await writer.matchOther(operation.value) ? { other: true } : null
       }
       const current = await writer.read()
-      if (operation.kind === 'remove') return current.some(item => String(item.id) === String(operation.id)) ? null : { removed: true }
-      if (operation.replaceId && current.some(item => String(item.id) === String(operation.replaceId))) return null
+      if (operation.kind === 'remove') {
+        return current.some(item => String(item.id) === String(operation.id)) ? NOT_LANDED : { removed: true }
+      }
+      if (operation.replaceId && current.some(item => String(item.id) === String(operation.replaceId))) return NOT_LANDED
       const matches = current.filter(item => operation.kind === 'update' ? String(item.id) === String(operation.id) && same(item, operation.value)
         : !operation.beforeIds.includes(String(item.id)) && same(item, operation.value))
-      return matches.length === 1 ? matches[0] : null
+      if (matches.length === 1) return matches[0]
+      if (operation.kind === 'update') {
+        // The row still holds exactly what it held before the write, so the update is proved
+        // not to have landed rather than merely unconfirmed.
+        const stored = current.find(item => String(item.id) === String(operation.id))
+        const before = baseline.find(item => String(item.id) === String(operation.id))
+        return stored && before && same(stored, before) ? NOT_LANDED : null
+      }
+      // A create leaves no id to look up. No row at all outside the pre-write set is proof
+      // that nothing was created; an unmatched new row leaves the outcome unknown.
+      return current.some(item => !operation.beforeIds.includes(String(item.id))) ? null : NOT_LANDED
     }
     function confirm(operation, confirmed) {
       if (operation.kind === 'other') {
@@ -311,6 +352,11 @@
       check.disabled = true
       try {
         const confirmed = await reconcile(unknown)
+        if (confirmed === NOT_LANDED) {
+          unknown = null; check.hidden = true
+          status.textContent = 'That change was not saved. Your draft is kept; you can save again.'
+          return
+        }
         if (!confirmed) throw new Error('Save not confirmed')
         confirm(unknown, confirmed); unknown = null; check.hidden = true
         status.textContent = 'That change is confirmed. Save the section to finish the remaining draft changes.'
@@ -347,29 +393,32 @@
           // A read failure here is known not to have sent this mutation.
           const before = await writer.read()
           operation.beforeIds = before.map(item => String(item.id))
-          unknown = operation
+          const sent = dispatches()
           try {
             if (operation.kind === 'create') await writer.create(operation.value, operation.replaceId)
             else if (operation.kind === 'update') await writer.update(operation.id, operation.value)
             else await writer.remove(operation.id)
+            unknown = operation
           } catch (error) {
-            // A received non-2xx answer is a known refusal: nothing was written, so the loop
-            // stops with the draft intact. Only a lost response stays unknown until a read.
-            if (error?.known) { unknown = null; throw error }
+            // A received non-2xx answer is a known refusal, and a throw before the request
+            // left the browser never reached the server at all: both wrote nothing, so the
+            // loop stops with the draft intact. Only a lost response stays unknown.
+            if (error?.known || !dispatchedSince(sent)) throw error
+            unknown = operation
           }
           const confirmed = await reconcile(operation)
+          if (confirmed === NOT_LANDED) { unknown = null; throw notLanded() }
           if (!confirmed) throw new Error('Save not confirmed')
           confirm(operation, confirmed); unknown = null
         }
         if (writer.hasOtherChanges()) {
-          unknown = { kind: 'other', value: writer.otherValue?.() ?? '' }
+          const sent = dispatches()
           try {
             await writer.saveOther()
           } catch (error) {
-            if (error?.known) unknown = null
+            if (!error?.known && dispatchedSince(sent)) unknown = { kind: 'other', value: writer.otherValue?.() ?? '' }
             throw error
           }
-          unknown = null
         }
         saved = true
         const laterEdits = submitted.some(({ record, value }) => record.removed || JSON.stringify(values(record)) !== JSON.stringify(value))
@@ -384,6 +433,9 @@
         if (error?.known) {
           // The server refused this change, so Save and Discard stay available for the draft.
           status.textContent = error.serverMessage || 'The server rejected this change. Check the entry and try again.'
+        } else if (error?.notLanded) {
+          // The canonical read proved this write never landed, so nothing is in doubt.
+          status.textContent = 'That change was not saved. Your draft is kept; you can save again.'
         } else {
           status.textContent = unknown ? 'A save could not be confirmed. Your draft and confirmed changes are kept. Save is paused until the server state can be checked.'
             : 'The next change was not submitted. Confirmed changes are kept; you can save the remaining draft or discard it.'
@@ -394,6 +446,7 @@
       }
     })
     section.inert = true
+    section.setAttribute('aria-busy', 'true')
     status.textContent = 'Loading work experience…'
     try {
       baseline = copy(await writer.read())

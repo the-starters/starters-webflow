@@ -3,16 +3,65 @@
  * Original live inline body SHA-256: 24702eef9717e717f266be3f7f1b22f84609acf486c20042fb7f6a8d7d3b427f
  * Captured read-only from /starter-edit-profile on 2026-08-12.
  */
+  // The Work Experience section's draft includes the shared "Also worked with" field, so it
+  // cannot read a baseline until this picker has published one. A claim is latched on the
+  // field itself: it is made as the picker initializes, settles exactly once, and records the
+  // outcome in `data-starter-also-worked-with-state` as well as the two hydration events, so a
+  // section that starts waiting later still learns what happened. A field no picker claims is
+  // a field with no hydration to wait for.
+  function starterAlsoWorkedWithField(input) {
+    const group = input && typeof input.closest === 'function' ? input.closest('[form-group]') : null;
+    return group ? qs('#also-worked-with', group) : null;
+  }
+
+  function starterAlsoWorkedWithClaim(valueInput) {
+    if (!valueInput) return null;
+    if (valueInput._starterAlsoWorkedWithReady) return valueInput._starterAlsoWorkedWithReady;
+    let settleReady = null;
+    const claim = {
+      state: 'pending',
+      promise: new Promise(function (resolve) { settleReady = resolve; }),
+      settle: function (hydrated) {
+        if (claim.state !== 'pending') return;
+        claim.state = hydrated ? 'hydrated' : 'failed';
+        valueInput.setAttribute('data-starter-also-worked-with-state', claim.state);
+        valueInput.dispatchEvent(new Event(hydrated
+          ? 'starter:also-worked-with-hydrated'
+          : 'starter:also-worked-with-hydration-failed', { bubbles: true }));
+        settleReady(hydrated);
+      },
+    };
+    valueInput._starterAlsoWorkedWithReady = claim;
+    valueInput.setAttribute('data-starter-also-worked-with-state', 'pending');
+    valueInput.dispatchEvent(new Event('starter:also-worked-with-claimed', { bubbles: true }));
+    return claim;
+  }
+
   // Handles company autocomplete via Xano and Logo.dev.
   document.addEventListener('DOMContentLoaded', function () {
+    const inputs = qsa('[logo-search-input]');
+    // Claim before the member lookup: a section that binds while that lookup is still running
+    // must be able to tell "a picker owns this field" from "no picker owns it".
+    const claims = [];
+    for (let index = 0; index < inputs.length; index += 1) {
+      claims.push(inputs[index].hasAttribute('data-multiple')
+        ? starterAlsoWorkedWithClaim(starterAlsoWorkedWithField(inputs[index]))
+        : null);
+    }
     waitForMember(() => {
-      if (!MEMBER.id) return;
-      
-      const inputs = qsa('[logo-search-input]');
-      inputs.forEach(function (input) {
+      if (!MEMBER.id) {
+        // Signed out: nothing will hydrate the field, so release every section waiting on it.
+        claims.forEach(function (claim) { if (claim) claim.settle(false); });
+        return;
+      }
+
+      for (let index = 0; index < inputs.length; index += 1) {
+        const input = inputs[index];
         const isMulti = input.hasAttribute('data-multiple');
-        logoSearchInit(input, isMulti);
-      });
+        const search = logoSearchInit(input, isMulti);
+        // A picker that could not initialize leaves the field exactly as authored.
+        if (!search && claims[index]) claims[index].settle(false);
+      }
     });
   });
 
@@ -73,10 +122,14 @@
     if (input._starterCompanySearch) return input._starterCompanySearch;
 
     const group = input.closest('[form-group]');
+    // Without the form group there is no field to claim, so nothing is left waiting.
     if (!group) return;
 
     const searchGroup = input.closest('[company-search-group]');
-    if (!searchGroup) return;
+    if (!searchGroup) {
+      if (isMulti) starterAlsoWorkedWithClaim(qs('#also-worked-with', group))?.settle(false);
+      return;
+    }
 
     const SEARCH_ENDPOINT = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:SYL06lUR/logo-search';
     const PLACEHOLDER_LOGO_URL = 'https://cdn.prod.website-files.com/69c573f20f82bd0f3384032c/6a21517ca6c1caa51f014026_company-placeholder.svg';
@@ -125,9 +178,18 @@
     let tagWrapper = null;
     let restoringTags = false;
     const tagDeleteListeners = [];
+    const alsoWorkedWithClaim = isMulti ? starterAlsoWorkedWithClaim(valueInput) : null;
     if (isMulti) {
       tagTemplate = qs('[also-worked-tag].is_template', group);
       tagWrapper = qs('[also-worked-wrapper]', group);
+
+      if (!tagTemplate || !tagWrapper) {
+        // Without the tag template or its wrapper the saved set cannot be rendered at all, so
+        // the field stays as authored. Report that rather than leave a section waiting.
+        console.warn('[logoSearchInit] also-worked-with tag template or wrapper missing');
+        alsoWorkedWithClaim?.settle(false);
+        return;
+      }
 
       // Section-level Discard has to put the rendered tags back to the last saved set, and only
       // this closure can render one. Narrow handle: it renders a serialized value, nothing else.
@@ -161,7 +223,7 @@
         if (!selectedCompanies) {
           // The saved set could not be read. Say so instead of hydrating an empty picker, so
           // the section can refuse Save rather than adopt "no companies" as the saved state.
-          valueInput.dispatchEvent(new Event('starter:also-worked-with-hydration-failed', { bubbles: true }));
+          alsoWorkedWithClaim?.settle(false);
           return;
         }
         const hydrateSelections = function () {
@@ -174,9 +236,10 @@
           // A saved set with no companies renders no tag and so would leave the field at its
           // authored empty string, while Discard later re-serializes the same empty set as
           // `{}`. Write the serialized form here so the captured baseline and every later
-          // comparison speak one representation. No event: hydration is not an edit.
-          valueInput.value = serializeTags();
-          valueInput.dispatchEvent(new Event('starter:also-worked-with-hydrated', { bubbles: true }));
+          // comparison speak one representation. The claim settles as hydrated here; the
+          // event it carries reports a baseline, never an edit.
+          if (valueInput) valueInput.value = serializeTags();
+          alsoWorkedWithClaim?.settle(true);
         };
         const dirtyState = window.__tsProfileDirtyState;
         if (dirtyState && typeof dirtyState.runHydrationSync === 'function') {
@@ -184,6 +247,11 @@
         } else {
           hydrateSelections();
         }
+      }).catch(function (error) {
+        // Rendering the saved set threw. The field is left part-hydrated at best, so the
+        // section must not adopt what is in it as the saved state.
+        console.error('[logoSearchInit] Also worked with hydration failed:', error);
+        alsoWorkedWithClaim?.settle(false);
       })
     }
 
@@ -206,6 +274,7 @@
     }
 
     function syncValue() {
+      if (!valueInput) return;
       valueInput.value = serializeTags();
       valueInput.dispatchEvent(new Event('input', { bubbles: true }));
       valueInput.dispatchEvent(new Event('change', { bubbles: true }));
@@ -549,3 +618,10 @@
     };
     return input._starterCompanySearch;
   }
+
+  // Both this controller and the Build Profile copy declare `logoSearchInit` at the top level,
+  // so on a page that loads both, the one that runs last wins `window.logoSearchInit`. The Edit
+  // Profile rows need this picker specifically - it publishes `_starterCompanySearch` and renders
+  // into the authored `[profile-company-search-results]` container - so publish it under its own
+  // name too. The bare `logoSearchInit` stays declared for the legacy callers on this page.
+  window.StarterEditLogoSearchInit = logoSearchInit;

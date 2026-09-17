@@ -29,6 +29,8 @@ function element(overrides = {}) {
       for (const listener of listeners.get(type) || []) listener({ type, ...event })
     },
     hasAttribute() { return false },
+    setAttribute() {},
+    getAttribute() { return null },
     appendChild() {},
     contains() { return false },
     closest() { return null },
@@ -43,6 +45,9 @@ function boot(source = SOURCE, { multi = false, nodeListTags = false } = {}) {
   const searchGroup = element()
   const valueInput = element()
   const tagWrapper = element()
+  // A multi picker renders its selections as tags, so the template and its wrapper are part
+  // of the authored markup it needs before it will initialize.
+  const tagTemplate = element()
   const input = element({
     hasAttribute(name) { return multi && name === 'data-multiple' },
   })
@@ -113,6 +118,7 @@ function boot(source = SOURCE, { multi = false, nodeListTags = false } = {}) {
     },
     qs(selector, root) {
       if (root === group && selector === '#also-worked-with') return valueInput
+      if (root === group && selector === '[also-worked-tag].is_template') return tagTemplate
       if (root === group && selector === '[also-worked-wrapper]') return tagWrapper
       return null
     },
