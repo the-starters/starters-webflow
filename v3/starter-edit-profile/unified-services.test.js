@@ -690,20 +690,20 @@ test('Save clicked before the section binds reports a section still loading, not
   assert.equal(page.button.getAttribute('aria-disabled'), null, 'and Save becomes usable')
 })
 
-test('a field this profile type is not asked for is not a form misconfiguration', async () => {
+test('a backend-required field marked not required for a profile type pauses Save for every type', async () => {
   const consult = mount(undefined, { backendRequired: 'consult', profileType: 'consult' })
   consult.type(consult.name, 'Audit')
   consult.type(consult.price, '500')
   await submit(consult)
-  assert.equal(consult.requests.length, 1, 'the two markers agree for this profile type')
-  assert.notEqual(consult.root.querySelector('[profile-items-status]').textContent,
+  assert.equal(consult.requests.length, 0, 'the markers disagree, so nothing is submitted blank')
+  assert.equal(consult.root.querySelector('[profile-items-status]').textContent,
     'This form is misconfigured. Saving is paused until it is fixed.')
 
   const full = mount(undefined, { backendRequired: 'consult', profileType: 'full' })
   full.type(full.name, 'Audit')
   full.type(full.price, '500')
   await submit(full)
-  assert.equal(full.requests.length, 0, 'for any other profile type the two markers still disagree')
+  assert.equal(full.requests.length, 0, 'and the pause does not depend on the active profile type')
   assert.equal(full.root.querySelector('[profile-items-status]').textContent,
     'This form is misconfigured. Saving is paused until it is fixed.')
 })

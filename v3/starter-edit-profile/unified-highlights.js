@@ -32,10 +32,18 @@
     let misconfigured = false, warned = false
     const clone = value => JSON.parse(JSON.stringify(value))
     // Only a request that actually left the browser can leave an outcome in doubt, so the
-    // writer counts its dispatches. A writer that does not count keeps the cautious reading
-    // in which any throw after the call started may have been received.
-    const dispatches = () => typeof writer.dispatches === 'function' ? writer.dispatches() : null
-    const dispatchedSince = count => count === null || dispatches() !== count
+    // writer counts its dispatches.
+    const dispatches = () => writer.dispatches()
+    const dispatchedSince = count => dispatches() !== count
+    // A canonical read can settle a write three ways: it landed (the confirmed record), it
+    // never landed, or neither. Only the last keeps Save paused - a write proved not to have
+    // landed leaves the Starter where a refusal would, with the draft intact and Save usable.
+    const NOT_LANDED = Object.freeze({ landed: false })
+    function notLanded() {
+      const error = new Error('The change was not saved')
+      error.notLanded = true
+      return error
+    }
     const remaining = () => records.filter(record => !record.removed)
     const keptMedia = (record, kind) => record[kind].filter(item => !item.removed)
     const present = record => record.id || field(record, 'title')?.value.trim() || field(record, 'description')?.value.trim()
@@ -286,6 +294,7 @@
         unknown = { reconcile, confirm }
       }
       const result = await reconcile()
+      if (result === NOT_LANDED) { unknown = null; throw notLanded() }
       if (!result) throw new Error('Unconfirmed mutation')
       confirm(result); unknown = null
     }
@@ -294,6 +303,11 @@
       check.disabled = true
       try {
         const result = await unknown.reconcile()
+        if (result === NOT_LANDED) {
+          unknown = null; check.hidden = true
+          status.textContent = 'That change was not saved. Your draft is kept; you can save again.'
+          return
+        }
         if (!result) throw new Error('Still unknown')
         unknown.confirm(result); unknown = null; check.hidden = true
         status.textContent = 'That change is confirmed. Save the section to finish the remaining draft changes.'
@@ -305,8 +319,12 @@
       if (!record.id) {
         const before = await writer.readIndex(), beforeIds = before.map(item => String(item.id))
         await operation(() => writer.create({ memberstack_id: writer.memberId, ...value, thumbnail_url: '' }), async () => {
-          const matches = (await writer.readIndex()).filter(item => !beforeIds.includes(String(item.id)) && item.title === value.title && (item.description || '') === value.description)
-          return matches.length === 1 ? (await writer.read(matches[0].id))[0] : null
+          const after = await writer.readIndex()
+          const matches = after.filter(item => !beforeIds.includes(String(item.id)) && item.title === value.title && (item.description || '') === value.description)
+          if (matches.length === 1) return (await writer.read(matches[0].id))[0]
+          // No row at all outside the pre-write set is proof that nothing was created; an
+          // unmatched new row leaves the outcome unknown.
+          return after.some(item => !beforeIds.includes(String(item.id))) ? null : NOT_LANDED
         }, result => { record.id = result.id; advance(record, result) }, 'Creating highlight…')
       }
       for (const [kind, items] of [['images', images], ['videos', videos]]) {
@@ -315,7 +333,8 @@
         for (const item of items.filter(item => item.removed && item.ref.id)) {
           await operation(() => writer['remove' + singular](item.ref.id), async () => {
             const current = await canonical(record)
-            return current && !current[kind].some(media => String(media.id) === String(item.ref.id)) ? current : null
+            if (!current) return null
+            return current[kind].some(media => String(media.id) === String(item.ref.id)) ? NOT_LANDED : current
           }, current => {
             advance(record, current)
             // The stored file is gone and no local file remains, so the entry cannot be
@@ -356,6 +375,8 @@
           await operation(() => writer['add' + singular]({ memberstack_id: writer.memberId, portfolio_id: Number(record.id),
             [payloadKey]: item.ref.uploaded, [payloadKey + '_url']: url, ...(kind === 'images' ? { is_cover: false } : {}), sort_order: items.indexOf(item) }), async () => {
             const current = await canonical(record)
+            // An attachment the read cannot find is never declared not-landed: a second Save
+            // would attach the same upload twice. It stays unknown until a read finds it.
             const matches = current?.[kind].filter(media => media[payloadKey + '_url'] === url) || []
             return matches.length === 1 ? { current, media: matches[0] } : null
           }, ({ current, media }) => {
@@ -369,13 +390,17 @@
       const cover = images.find(item => !item.removed && item.cover)
       const coverId = cover?.ref.id || null
       const thumbnail = cover ? cover.ref.url : ''
-      const current = baseline.find(item => String(item.id) === String(record.id))
-      if (current && current.title === value.title && (current.description || '') === value.description
-        && (current.cover_image_id || null) === coverId && (current.thumbnail_url || '') === thumbnail) return
+      const details = row => JSON.stringify([row.title, row.description || '', row.cover_image_id || null, row.thumbnail_url || ''])
+      const sent = JSON.stringify([value.title, value.description, coverId, thumbnail])
+      const known = baseline.find(item => String(item.id) === String(record.id))
+      if (known && details(known) === sent) return
       await operation(() => writer.update({ id: record.id, memberstack_id: writer.memberId, ...value, cover_image_id: coverId, thumbnail_url: thumbnail }), async () => {
         const current = await canonical(record)
-        return current && current.title === value.title && (current.description || '') === value.description
-          && (current.cover_image_id || null) === coverId && (current.thumbnail_url || '') === thumbnail ? current : null
+        if (!current) return null
+        if (details(current) === sent) return current
+        // The record still holds exactly what it held before the write, so the update is
+        // proved not to have landed rather than merely unconfirmed.
+        return known && details(current) === details(known) ? NOT_LANDED : null
       }, current => advance(record, current), 'Saving highlight details…')
     }
     save?.addEventListener('click', async event => {
@@ -399,7 +424,7 @@
         for (const record of deletions) {
           await operation(() => writer.remove({ id: record.id, memberstack_id: writer.memberId }), async () => {
             const current = await canonical(record)
-            if (current) { advance(record, current); return null }
+            if (current) { advance(record, current); return NOT_LANDED }
             return { removed: true }
           }, () => { advance(record, null); release(record) }, 'Removing highlight…')
         }
@@ -414,6 +439,9 @@
         if (error?.known) {
           // The server refused this change, so Save and Discard stay available for the draft.
           status.textContent = error.serverMessage || 'The server rejected this change. Check the entry and try again.'
+        } else if (error?.notLanded) {
+          // The canonical read proved this write never landed, so nothing is in doubt.
+          status.textContent = 'That change was not saved. Your draft is kept; you can save again.'
         } else {
           status.textContent = unknown
             ? 'A save could not be confirmed. Your files, draft, and confirmed changes are kept. Save is paused.'

@@ -112,18 +112,12 @@
   // Backend-required contract: a field authored with `form-xano-required` names a
   // value the Xano writer rejects when blank. Requiredness still comes only from the
   // Webflow Required checkbox; this only reports fields where the two disagree so a
-  // section can refuse to save a form that would fail server-side.
-  //
-  // `data-non-required="<profile type>"` is the authored way to say a field is not required
-  // for that profile type, and the main controller clears `required` on those fields for the
-  // active type. That is the authored intent, not a mismatch, so it is not reported. The two
-  // markers must still agree: a field is never both backend-required and non-required for the
-  // same profile type.
+  // section can refuse to save a form that would fail server-side. A field the active profile
+  // type is not asked for is reported too: `data-non-required` clearing `required` on a
+  // backend-required field is exactly the authoring mismatch this pause exists to catch.
   function misconfigured(section) {
-    const profileType = String(window.activeProfile?.type || '')
     return Array.from(section.querySelectorAll(FIELD))
-      .filter(field => field.hasAttribute('form-xano-required') && !field.hasAttribute('required')
-        && !(profileType && field.getAttribute('data-non-required') === profileType))
+      .filter(field => field.hasAttribute('form-xano-required') && !field.hasAttribute('required'))
   }
   window.StarterProfileValidation = { bind, misconfigured }
 })()

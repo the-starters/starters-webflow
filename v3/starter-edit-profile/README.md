@@ -248,12 +248,15 @@ and `v3/build-profile/company-autocomplete.js` declare a top-level `logoSearchIn
 page that loads both, whichever runs last owns the bare `window.logoSearchInit`. Work
 Experience rows need the Edit picker specifically - it publishes `_starterCompanySearch` and
 renders into the authored `[profile-company-search-results]` container - so `unified-companies.js`
-calls `window.StarterEditLogoSearchInit` and falls back to `window.logoSearchInit`.
-`logoSearchInit` stays declared for the legacy callers on the page.
+calls `window.StarterEditLogoSearchInit` only, never the bare global. A row whose picker script
+has not loaded stays a plain text field rather than binding the Build Profile copy, which
+publishes no `_starterCompanySearch` handle to destroy and no results container to strip from a
+cloned row. `logoSearchInit` stays declared for the legacy callers on the page.
 
-The writers also publish a `dispatches()` counter: the number of mutation requests handed to
+Every writer publishes a `dispatches()` counter: the number of mutation requests handed to
 `fetch`. A section compares it across a write, so a call that threw before sending anything is
-reported as not submitted rather than left in doubt.
+reported as not submitted rather than left in doubt. It is a required part of the writer
+contract, not an optional one.
 
 ### Load order
 
@@ -329,10 +332,10 @@ draft edit does not overwrite the diagnostic with `Unsaved changes.`
 
 `data-non-required="<profile type>"` is the authored way to say a field is not asked of that
 profile type, and `starter-edit-profile.js` clears `required` on those fields for the active
-`window.activeProfile.type`. That is authored intent, not a mismatch, so `misconfigured()`
-reads the same source and skips those fields. **The two markers must not disagree:** a field
-is never both `form-xano-required` and `data-non-required` for the same profile type, because
-that would ask a Starter to leave blank a value the writer refuses.
+`window.activeProfile.type`. **The two markers must not disagree:** a field is never both
+`form-xano-required` and `data-non-required`, because that would ask a Starter to leave blank
+a value the writer refuses. `misconfigured()` reports such a field like any other mismatch,
+so the pause catches the authoring error instead of submitting the blank value.
 
 ### Save-state semantics
 
@@ -355,10 +358,14 @@ still usable, rather than pausing the section over a request nobody made.
 
 A canonical read can also settle a write the other way. In Work Experience, a create with no
 new row, a removal whose id the server still holds, and an update whose row still holds exactly
-what it held before the write are each **proof that the write never landed**. That ends the
-save where a refusal would — `That change was not saved. Your draft is kept; you can save
-again.` — instead of pausing Save over an outcome the read has already settled. Only a read
-that proves neither keeps the pause.
+what it held before the write are each **proof that the write never landed**. Highlights
+applies the same rule to the writes it owns: a create with no new record, a removal the server
+still answers with, a media removal whose id is still attached, an attachment absent from the
+record's canonical media, and an update whose record still holds its pre-write details. That
+ends the save where a refusal would — `That change was not saved. Your draft is kept; you can
+save again.` — instead of pausing Save over an outcome the read has already settled, and the
+same answer from "Check saved state" releases Save and Discard. Only a read that proves
+neither keeps the pause.
 
 Saved state that cannot be *read* is never a write in doubt. A malformed stored Services slot
 fails the section closed the way a missing row template does: `Saved services could not be

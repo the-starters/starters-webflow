@@ -510,3 +510,65 @@ test('removing a collapsed highlight leaves the open one active', async () => {
   assert.equal(rows[0].querySelector('[profile-item-content]').hidden, true,
     'Add collapses the row that was open, not whichever row happens to be last')
 })
+
+test('a lost highlight deletion the server still holds releases Save instead of pausing it', async () => {
+  let lose = true
+  const page = await mount({ portfolios: [
+    { id: 1, title: 'Saved', description: '', images: [], videos: [] },
+    { id: 2, title: 'Kept', description: '', images: [], videos: [] },
+  ], fail: request => request.endpoint === 'Delete_portfolio' && lose ? 'lose' : null })
+  page.click(page.section.querySelector('[profile-item-remove]'))
+  await page.submit()
+  assert.equal(page.status(), 'That change was not saved. Your draft is kept; you can save again.')
+  assert.equal(page.section.querySelector('[profile-items-check-save]').hidden, true)
+  assert.equal(page.section.querySelectorAll('[profile-item-row]').length, 2, 'the pending removal is still a draft')
+  lose = false
+  await page.submit()
+  assert.equal(page.status(), 'Changes saved.')
+  assert.equal(page.mutations().filter(request => request.endpoint === 'Delete_portfolio').length, 2)
+  assert.equal(page.section.querySelectorAll('[profile-item-row]').length, 1)
+})
+
+test('a lost highlight deletion can be settled as not saved from Check saved state', async () => {
+  let loseDelete = true, readFails = false
+  const page = await mount({
+    portfolios: [{ id: 1, title: 'Saved', description: '', images: [], videos: [] }],
+    fail: request => {
+      if (request.endpoint === 'Delete_portfolio' && loseDelete) return 'lose'
+      if (request.endpoint === 'Get_my_portfolios' && readFails) return { status: 503, body: { message: 'Service unavailable' } }
+      return null
+    },
+  })
+  page.click(page.section.querySelector('[profile-item-remove]'))
+  readFails = true
+  await page.submit()
+  // The canonical read itself failed, so the outcome is genuinely unknown and Save stays paused.
+  assert.match(page.status(), /could not be confirmed/)
+  assert.equal(page.section.querySelector('[profile-items-check-save]').hidden, false)
+  readFails = false
+  page.click(page.section.querySelector('[profile-items-check-save]')); await tick()
+  assert.equal(page.status(), 'That change was not saved. Your draft is kept; you can save again.')
+  assert.equal(page.section.querySelector('[profile-items-check-save]').hidden, true)
+  loseDelete = false
+  await page.submit()
+  assert.equal(page.status(), 'Changes saved.')
+  assert.equal(page.mutations().filter(request => request.endpoint === 'Delete_portfolio').length, 2)
+  assert.equal(page.section.querySelectorAll('[profile-item-row]').length, 1, 'the emptied section keeps one blank row')
+})
+
+test('a lost highlight update the server never applied releases Save', async () => {
+  let lose = true
+  const page = await mount({
+    portfolios: [{ id: 1, title: 'Saved', description: '', images: [], videos: [] }],
+    fail: request => request.endpoint === 'Update_portfolio' && lose ? 'lose' : null,
+  })
+  page.type('title', 'Renamed')
+  await page.submit()
+  assert.equal(page.status(), 'That change was not saved. Your draft is kept; you can save again.')
+  assert.equal(page.section.querySelector('[profile-items-check-save]').hidden, true)
+  assert.equal(page.field('title').value, 'Renamed', 'the draft is kept')
+  lose = false
+  await page.submit()
+  assert.equal(page.status(), 'Changes saved.')
+  assert.equal(page.mutations().filter(request => request.endpoint === 'Update_portfolio').length, 2)
+})

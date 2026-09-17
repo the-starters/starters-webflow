@@ -65,10 +65,9 @@
       ? input(record.row, key)?.checked : String(input(record.row, key)?.value || '').trim())
     const copy = value => JSON.parse(JSON.stringify(value))
     // Only a request that actually left the browser can leave an outcome in doubt, so the
-    // writer counts its dispatches. A writer that does not count keeps the cautious reading
-    // in which any throw after the call started may have been received.
-    const dispatches = () => typeof writer.dispatches === 'function' ? writer.dispatches() : null
-    const dispatchedSince = count => count === null || dispatches() !== count
+    // writer counts its dispatches.
+    const dispatches = () => writer.dispatches()
+    const dispatchedSince = count => dispatches() !== count
     function selection(row) {
       const field = input(row, 'company_name')
       const data = field?.dataset || {}
@@ -199,8 +198,8 @@
       syncCurrent(record)
       // Both Edit and Build declare a top-level `logoSearchInit`, so on a page that loads
       // both the later script wins `window.logoSearchInit`. These rows need the Edit picker,
-      // which is published under its own name; the bare global stays the legacy fallback.
-      ;(window.StarterEditLogoSearchInit || window.logoSearchInit)?.(company)
+      // which is published under its own name, so only that name is called here.
+      window.StarterEditLogoSearchInit?.(company)
       setOpen(record, !record.id)
       if (focus) company?.focus()
       return record
