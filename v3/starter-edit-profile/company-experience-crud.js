@@ -514,6 +514,10 @@ async function starterProfileCompanyErrorBody(response) {
     return null;
 }
 
+// How long the unified Work Experience section waits for the Also Worked With picker to report
+// its saved set before it gives up and fails closed. Matches the profile-wait budget elsewhere.
+const ALSO_WORKED_WITH_HYDRATION_TIMEOUT_MS = 10000;
+
 // Identity of one Also Worked With association, ignoring order, keys, logos and the row ids
 // the server assigns on write, so a draft can be compared with what the server actually holds.
 function starterProfileAlsoWorkedWithSignature(companies) {
@@ -666,15 +670,32 @@ function createStarterEditCompanyDraftDirtyController(options) {
                     if (companySubmit) companySubmit.setAttribute('disabled', '');
                     return;
                 }
+                // The picker hydrates the "Also worked with" field on its own schedule, and that
+                // field is part of this section's draft. Hold the section in its loading state
+                // until the picker reports a baseline: a tag added in the gap would otherwise be
+                // skipped by Save and then adopted as already-saved when hydration lands.
+                let alsoWorkedWithReady = Promise.resolve(true);
                 if (alsoWorkedWithInput) {
+                    let settleAlsoWorkedWith = null;
+                    alsoWorkedWithReady = new Promise(function (resolve) { settleAlsoWorkedWith = resolve; });
+                    // A picker that never reports at all must not hold the section open forever.
+                    const hydrationTimer = setTimeout(function () { settleAlsoWorkedWith(false); },
+                        ALSO_WORKED_WITH_HYDRATION_TIMEOUT_MS);
                     alsoWorkedWithInput.addEventListener('starter:also-worked-with-hydrated', function () {
                         alsoWorkedWithBaseline = alsoWorkedWithInput.value;
                         alsoWorkedWithBaselineReady = true;
+                        clearTimeout(hydrationTimer);
+                        settleAlsoWorkedWith(true);
+                    });
+                    alsoWorkedWithInput.addEventListener('starter:also-worked-with-hydration-failed', function () {
+                        clearTimeout(hydrationTimer);
+                        settleAlsoWorkedWith(false);
                     });
                 }
                 await window.StarterProfileCompanies.bind(unifiedSection, {
                     async read() {
                         checkMember();
+                        if (!await alsoWorkedWithReady) throw new Error('Also worked with could not be read');
                         const result = await getCompanies();
                         checkMember();
                         if (!result.starter_id || !Array.isArray(result.companies)) throw new Error('Companies could not be read');
@@ -1405,6 +1426,9 @@ function createStarterEditCompanyDraftDirtyController(options) {
                 const loader = alsoWorkedWithLoader();
                 if (!loader) throw new Error('Also worked with state could not be read');
                 const saved = await loader(MEMBER.id);
+                // A failed read answers with no set at all. Treating that as "no companies"
+                // would confirm a cleared association that may never have been written.
+                if (!saved) throw new Error('Also worked with state could not be read');
                 return starterProfileAlsoWorkedWithSignature(saved) === starterProfileAlsoWorkedWithSignature(value);
             }
 

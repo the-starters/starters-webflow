@@ -16,6 +16,9 @@
     });
   });
 
+  // Returns the saved associations keyed by row, or `null` when the saved state could not be
+  // read at all. An empty object means "the member has none"; callers must never read a failed
+  // request as that, or a lost write would look confirmed against a set nobody could see.
   async function fetchAlsoWorkedWithCompanies(memberId) {
     try {
       const response = await window.xanoAuthFetch('https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/edit_profile/starter/get_also_worked_with', {
@@ -28,13 +31,13 @@
 
       if (!response.ok) {
         console.warn('[fetchAlsoWorkedWithCompanies] XANO error:', response.status);
-        return {};
+        return null;
       }
 
       const companies = await response.json();
       if (!Array.isArray(companies)) {
         console.warn('[fetchAlsoWorkedWithCompanies] Companies is not array:', companies);
-        return {};
+        return null;
       }
 
       return companies.reduce((acc, company) => {
@@ -61,7 +64,7 @@
       }, {});
     } catch (error) {
       console.error('[fetchAlsoWorkedWithCompanies] Failed:', error);
-      return {};
+      return null;
     }
   }
 
@@ -155,6 +158,12 @@
       }
 
       fetchAlsoWorkedWithCompanies(MEMBER.id).then(function (selectedCompanies) {
+        if (!selectedCompanies) {
+          // The saved set could not be read. Say so instead of hydrating an empty picker, so
+          // the section can refuse Save rather than adopt "no companies" as the saved state.
+          valueInput.dispatchEvent(new Event('starter:also-worked-with-hydration-failed', { bubbles: true }));
+          return;
+        }
         const hydrateSelections = function () {
           for (const uniqueId of Object.keys(selectedCompanies)) {
             const company = selectedCompanies[uniqueId];
@@ -162,6 +171,11 @@
               renderNewTag(company.name, company.domain || '', null, uniqueId, company.logo_url || '', company.client_row_id, company.company_entity_id, company.source);
             }
           }
+          // A saved set with no companies renders no tag and so would leave the field at its
+          // authored empty string, while Discard later re-serializes the same empty set as
+          // `{}`. Write the serialized form here so the captured baseline and every later
+          // comparison speak one representation. No event: hydration is not an edit.
+          valueInput.value = serializeTags();
           valueInput.dispatchEvent(new Event('starter:also-worked-with-hydrated', { bubbles: true }));
         };
         const dirtyState = window.__tsProfileDirtyState;
@@ -173,7 +187,8 @@
       })
     }
 
-    function syncValue() {
+    // One serialization for the rendered tags, used for hydration, edits and Discard alike.
+    function serializeTags() {
       let companies = {};
 
       qsa("[also-worked-tag]", tagWrapper).forEach(function (tag) {
@@ -187,7 +202,11 @@
         }
       });
 
-      valueInput.value = JSON.stringify(companies);
+      return JSON.stringify(companies);
+    }
+
+    function syncValue() {
+      valueInput.value = serializeTags();
       valueInput.dispatchEvent(new Event('input', { bubbles: true }));
       valueInput.dispatchEvent(new Event('change', { bubbles: true }));
     }

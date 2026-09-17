@@ -17,12 +17,16 @@
     status.setAttribute('role', 'status')
     status.setAttribute('profile-items-status', '')
     section.appendChild(status)
-    if (!rows().length) {
-      // The row is also the template for every added row. Without one, binding would throw
-      // inside the profile-data callback and the page would be left with no controller at
-      // all, so register a halted controller that reports the markup gap on Save instead.
-      console.warn('[unified-services] missing [increment-dropdown] row in section')
+    const save = section.querySelector('[data-edit-submit]')
+    if (!rows().length || !save) {
+      // The row is also the template for every added row, and Save is the only route to the
+      // writer. Without either, binding would throw inside the profile-data callback and the
+      // page would be left with no controller at all, so register a halted controller that
+      // reports the markup gap, and disable Save rather than leave a live control that
+      // silently does nothing.
+      console.warn('[unified-services] missing [increment-dropdown] row or Save control in section')
       status.textContent = 'This section could not load. Reload the page before editing.'
+      save?.setAttribute('disabled', '')
       const halted = {
         validate: () => ({ valid: false, failures: [{ code: 'MARKUP_CONTRACT_MISSING' }] }),
         begin: () => false,

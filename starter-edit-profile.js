@@ -1202,7 +1202,11 @@ onDomReady(function () {
 				);
 			} catch (error) {
 				const authChanged = error?.code === 'MEMBER_SCOPE_CHANGED';
-				if (sectionController && requestStarted && !authChanged && typeof window.xanoAuthFetch === 'function') {
+				// A refusal the server already answered is not in doubt, and an unchanged
+				// submission would read back as a match. Reconciling it would report success
+				// for a write that never happened, so only unknown outcomes are reconciled.
+				const refused = saveOutcome?.known === true;
+				if (sectionController && requestStarted && !authChanged && !refused && typeof window.xanoAuthFetch === 'function') {
 					try {
 						if (await checkSavedSection()) {
 							diagnostic = recordProfileDiagnostic(diagnostic, {

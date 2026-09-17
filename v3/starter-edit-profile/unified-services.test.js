@@ -6,7 +6,7 @@ const { h, makeEvent } = require('../test-helpers/form-dom.cjs')
 const { createEnvironment, deferred, submit } = require('../test-helpers/edit-profile-controller.cjs')
 
 function mount(fetchImpl, { rates = false, services = null, readback = null, picker = false, profileType = 'full', hourlyRequired = true,
-  rows = true, pickerSearch = false, backendRequired = false, deferProfile = false } = {}) {
+  rows = true, pickerSearch = false, backendRequired = false, deferProfile = false, saveControl = true } = {}) {
   const readRequests = []
   const timers = []
   const elapsed = { ms: 0 }
@@ -71,7 +71,8 @@ function mount(fetchImpl, { rates = false, services = null, readback = null, pic
       } else stepFields['[name="rate-retainer"]'].disabled = true
       const query = step.querySelector.bind(step)
       const queryAll = step.querySelectorAll.bind(step)
-      step.querySelector = selector => root.querySelector(selector) || query(selector)
+      step.querySelector = selector => !saveControl && selector === '[data-edit-submit]'
+        ? null : root.querySelector(selector) || query(selector)
       step.querySelectorAll = selector => [...root.querySelectorAll(selector), ...queryAll(selector)]
       step.addEventListener = root.addEventListener.bind(root)
       step.appendChild = root.appendChild.bind(root)
@@ -442,7 +443,7 @@ test('a section authored without a row fails closed instead of leaving the page 
   let page
   try { page = mount(undefined, { rows: false }) } finally { console.warn = original }
   assert.equal(warnings.length, 1)
-  assert.equal(warnings[0][0], '[unified-services] missing [increment-dropdown] row in section')
+  assert.equal(warnings[0][0], '[unified-services] missing [increment-dropdown] row or Save control in section')
   assert.equal(page.root.querySelector('[profile-items-status]').textContent,
     'This section could not load. Reload the page before editing.')
   const controller = page.controller()
@@ -543,4 +544,37 @@ test('a lost response still leaves the outcome unknown and pauses Save', async (
   assert.equal(page.name.value, 'Audit')
   await submit(page)
   assert.equal(page.requests.length, 1, 'an unknown write is never replayed')
+})
+
+test('a refusal is reported even when the saved profile already matches the submission', async () => {
+  const page = mount(async () => ({ ok: false, status: 403,
+    json: async () => ({ message: 'Your plan does not allow this change' }) }), {
+    readback: { Hourly_Rate: 125, Availability: 'Available', Availability_ID: '1',
+      Services: { 'service-1': { name: 'Audit', description: '', price: 500 }, 'service-2': null, 'service-3': null } },
+  })
+  page.type(page.name, 'Audit')
+  page.type(page.price, '500')
+  await submit(page)
+  assert.equal(page.requests.length, 1)
+  assert.equal(page.readRequests.length, 0, 'a received refusal needs no canonical read')
+  assert.equal(page.modalEvents.success, 0, 'a refusal is never dressed up as a save')
+  assert.equal(page.root.querySelector('[profile-items-status]').textContent,
+    'Your plan does not allow this change')
+  assert.equal(page.root.querySelector('[profile-items-check-save]').hidden, true)
+  await submit(page)
+  assert.equal(page.requests.length, 2, 'Save stays usable after a refusal')
+})
+
+test('a Services section missing its rows or its Save control halts and disables Save', async () => {
+  const unusable = 'This section could not load. Reload the page before editing.'
+  const missingRows = mount(null, { rows: false })
+  assert.equal(missingRows.root.querySelector('[profile-items-status]').textContent, unusable)
+  assert.equal(missingRows.button.getAttribute('disabled'), '', 'a halted section must not leave Save live')
+  await submit(missingRows)
+  assert.equal(missingRows.requests.length, 0)
+
+  const missingSave = mount(null, { saveControl: false })
+  assert.equal(missingSave.root.querySelector('[profile-items-status]').textContent, unusable)
+  assert.equal(missingSave.controller().validate().valid, false,
+    'without a Save control the section registers a halted controller')
 })

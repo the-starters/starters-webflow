@@ -262,11 +262,18 @@
         && (Number(saved.company_entity_id) || 0) === (Number(value.company_entity_id) || 0)
         && String(saved.company_domain || '').toLowerCase() === String(value.company_domain || '').toLowerCase()
     }
+    // Tolerant only where the server stays silent. A field the answer omits cannot contradict
+    // the draft, but a field it returns with a different value proves the write never landed —
+    // switching a saved company to a same-name custom one is exactly that case.
+    const omitted = (actual, key) => !(key in actual) || actual[key] === undefined
     function same(actual, expected) {
       const equal = names.every(key => key === 'current_work' ? !!actual[key] === expected[key]
         : String(actual[key] || '') === String(expected[key] || ''))
-      return equal && (!expected.company_entity_id || Number(actual.company_entity_id) === expected.company_entity_id)
-        && (!expected.company_domain || String(actual.company_domain || '').toLowerCase() === expected.company_domain.toLowerCase())
+      return equal
+        && (omitted(actual, 'company_entity_id')
+          || (Number(actual.company_entity_id) || 0) === (Number(expected.company_entity_id) || 0))
+        && (omitted(actual, 'company_domain')
+          || String(actual.company_domain || '').toLowerCase() === String(expected.company_domain || '').toLowerCase())
     }
     async function reconcile(operation) {
       if (operation.kind === 'other') {

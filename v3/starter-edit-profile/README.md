@@ -244,6 +244,10 @@ a live Save that writes nothing.
   `[profile-unified-items="services"]` marker exists but no controller registered
   for the step, the main controller fails closed with a "This section could not
   load" message rather than submitting.
+- All three sections make the same check at bind time: a section missing its row
+  template or its Save control registers a halted state, shows the same "This
+  section could not load. Reload the page before editing." message, and disables
+  the Save control if one is present.
 - `unified-companies.js` before `company-experience-crud.js`.
 - `unified-highlights.js` before `portfolio-crud.js`.
 
@@ -290,7 +294,9 @@ available, so a member is never trapped with edits they cannot clear.
 ### Save-state semantics
 
 A received non-2xx response is a **known refusal**: the server message is shown,
-the draft is kept, and Save and Discard stay enabled. A thrown or lost response is
+the draft is kept, and Save and Discard stay enabled. A refusal is never sent
+through reconciliation — an unchanged submission would read back as a match and
+report a save that never happened. A thrown or lost response is
 **unknown**: the write may or may not have landed, so Save is paused until the
 "Check saved state" control reconciles the section against a canonical read.
 This covers every write the section owns: row creates, updates and removals, the
@@ -299,8 +305,31 @@ upload is matched against the canonical media list by file name and size). Disca
 in Work Experience also restores the "Also worked with" picker to its last saved
 state.
 
+Matching a canonical read against what was sent tolerates fields the server leaves
+out of its answer, but never a field it returns with a different value. An
+unchanged `company_entity_id` or `company_domain` is proof that a switch to a
+same-name custom company was lost, not proof that it landed.
+
+The "Also worked with" reader answers with the saved set or with nothing at all;
+a failed request never reads as "this member has none". So a failed canonical read
+cannot confirm a cleared association, and a failed hydration does not let the
+picker publish an empty baseline.
+
 A failed initial load leaves the section readable rather than inert. Save and
 Discard are refused until the page is reloaded.
+
+### Work Experience section readiness
+
+The "Also worked with" picker in `company-autocomplete.js` hydrates from Xano on
+its own schedule, and its field belongs to the Work Experience draft. The section
+therefore stays in its loading state until the picker announces a baseline
+(`starter:also-worked-with-hydrated`), which normalizes an empty saved set to the
+same serialized form Discard restores, so a discarded draft leaves nothing pending.
+If the picker reports `starter:also-worked-with-hydration-failed`, or says nothing
+for ten seconds, the section fails closed exactly like a failed company read: the
+rows stay readable and Save and Discard are refused until the page is reloaded.
+Without this gate a tag added before hydration was skipped by Save, reported as
+saved, and then adopted into the baseline as if the server already held it.
 
 ### Limits
 

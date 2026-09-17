@@ -372,6 +372,20 @@ test('the picker restores its Also Worked With tags to a discarded draft baselin
   assert.equal(harness.valueInput.value, '{}')
 })
 
+test('an empty saved association hydrates to the value Discard restores', async () => {
+  const harness = createHarness(EDIT_AUTOCOMPLETE, [])
+  await new Promise((resolve) => setImmediate(resolve))
+  const baseline = harness.valueInput.value
+  assert.equal(baseline, '{}', 'an empty saved set is captured in the same serialized form')
+  assert.equal(harness.getDirtyEvents(), 0, 'capturing it does not look like an edit')
+
+  harness.selectCompany({ name: 'Beta', domain: 'beta.example', logo_url: '', company_entity_id: 0, source: 'custom' })
+  assert.equal(Object.keys(JSON.parse(harness.valueInput.value)).length, 1)
+
+  harness.valueInput._starterAlsoWorkedWithTags.restore(baseline)
+  assert.equal(harness.valueInput.value, baseline, 'Discard leaves nothing for the next Save to send')
+})
+
 test('a legacy Edit Profile company selection fires no change event on the field', async () => {
   const harness = createHarness(EDIT_AUTOCOMPLETE, {}, { isMulti: false })
   harness.selectCompany(QA_WOLF)

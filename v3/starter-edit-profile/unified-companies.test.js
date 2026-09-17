@@ -8,7 +8,8 @@ const BASELINE_ASSOCIATIONS = '{"client-1":{"name":"Acme","domain":"acme.example
 const EDITED_ASSOCIATIONS = '{"client-1":{"name":"Acme","domain":"acme.example","logo_url":"","client_row_id":1,"company_entity_id":0,"source":"custom"},"client-2":{"name":"Beta","domain":"beta.example","logo_url":"","client_row_id":0,"company_entity_id":0,"source":"custom"}}'
 
 async function mount({ companies = [], fail = null, minimum = true, withRow = true, withSave = true,
-  required = ['company_name', 'job_title'], xanoRequired = [] } = {}) {
+  required = ['company_name', 'job_title'], xanoRequired = [], hydrate = true, initialOther = '{}',
+  liveAssociationReader = false, associationReadStatus = 200 } = {}) {
   const fields = ['company_name', 'job_title', 'start_date', 'end_date', 'current_work'].map(key => h('input', {
     'profile-company-field': key, name: key, id: key,
     ...(key === 'current_work' ? { type: 'checkbox' } : {}),
@@ -29,6 +30,7 @@ async function mount({ companies = [], fail = null, minimum = true, withRow = tr
   const requests = []
   const warnings = []
   let nextId = 10
+  let nextUuid = 0
   let storedOther = ''
   let stored = structuredClone(companies)
   let boot
@@ -38,17 +40,31 @@ async function mount({ companies = [], fail = null, minimum = true, withRow = tr
     querySelectorAll: selector => section.querySelectorAll(selector),
     addEventListener() {},
   }
+  // The live reader lives in company-autocomplete.js. Loading it here exercises the real
+  // failure handling instead of a stub that can only ever look healthy.
+  const windowStub = { matchMedia: () => ({ matches: false }) }
+  if (liveAssociationReader) windowStub.xanoAuthFetch = async () => associationReadStatus === 200
+    ? { ok: true, json: async () => {
+      let parsed = {}
+      try { parsed = storedOther ? JSON.parse(storedOther) : {} } catch (error) { parsed = {} }
+      return Object.values(parsed).map((company, index) => ({
+        id: index + 1, company_name: company.name, company_domain: company.domain,
+        company_entity_id: company.company_entity_id || 0, company_source: company.source || '',
+      }))
+    } }
+    : { ok: false, status: associationReadStatus }
   const context = vm.createContext({
-    window: { matchMedia: () => ({ matches: false }) }, document,
+    window: windowStub, document,
     Event: class { constructor(type, options) { Object.assign(this, makeEvent(type, null, options)) } },
     MEMBER: { id: 'test-member' },
+    crypto: { randomUUID: () => 'generated-' + ++nextUuid },
     waitForMember(callback) { boot = callback() },
     qs: (selector, scope) => scope ? scope.querySelector(selector) : selector === '[profile-unified-items="companies"]' ? section : section.querySelector(selector),
     qsa: (selector, scope = section) => scope.querySelectorAll(selector),
     console: { warn(...args) { warnings.push(args) }, error() {}, log() {} },
-    fetchAlsoWorkedWithCompanies: async () => {
+    ...(liveAssociationReader ? {} : { fetchAlsoWorkedWithCompanies: async () => {
       try { return storedOther ? JSON.parse(storedOther) : {} } catch (error) { return {} }
-    },
+    } }),
     setTimeout, clearTimeout,
     fetch: async (url, init = {}) => {
       const body = init.body ? JSON.parse(init.body) : null
@@ -81,10 +97,23 @@ async function mount({ companies = [], fail = null, minimum = true, withRow = tr
       return { ok: true, json: async () => value || { deleted: true } }
     },
   })
-  for (const file of ['profile-section-validation.js', 'unified-companies.js', 'company-experience-crud.js']) {
+  const files = ['profile-section-validation.js', 'unified-companies.js', 'company-experience-crud.js']
+  if (liveAssociationReader) files.unshift('company-autocomplete.js')
+  for (const file of files) {
     vm.runInContext(fs.readFileSync(__dirname + '/' + file, 'utf8'), context, { filename: file })
   }
-  await boot
+  function hydrateOther(value) {
+    other.value = value
+    other.dispatchEvent(makeEvent('starter:also-worked-with-hydrated', other, { bubbles: true }))
+  }
+  function failOther() {
+    other.dispatchEvent(makeEvent('starter:also-worked-with-hydration-failed', other, { bubbles: true }))
+  }
+  // The picker hydrates on its own, after the section has started loading.
+  if (hydrate) {
+    setImmediate(() => hydrateOther(initialOther))
+    await boot
+  } else await tick()
   const click = element => element.dispatchEvent(makeEvent('click', element, { bubbles: true }))
   const field = (key, index = 0) => section.querySelectorAll('[profile-item-row]')[index].querySelector('[profile-company-field="' + key + '"]')
   function type(key, value, index = 0) {
@@ -98,17 +127,13 @@ async function mount({ companies = [], fail = null, minimum = true, withRow = tr
       selectedCompanyDomain: '', selectedCompanyLogoUrl: '', selectedCompanyEntityId: '0' })
     field('company_name', index).dispatchEvent(makeEvent('change', field('company_name', index), { bubbles: true }))
   }
-  function hydrateOther(value) {
-    other.value = value
-    other.dispatchEvent(makeEvent('starter:also-worked-with-hydrated', other, { bubbles: true }))
-  }
   function editOther(value) {
     other.value = value
     other.dispatchEvent(makeEvent('input', other, { bubbles: true }))
     other.dispatchEvent(makeEvent('change', other, { bubbles: true }))
   }
   return { section, save, add, discard, click, field, type, company, requests, context, warnings,
-    other, hydrateOther, editOther,
+    other, hydrateOther, failOther, editOther,
     otherRequests: () => requests.filter(item => String(item.url).includes('set_also_worked_with')),
     errors: () => section.querySelectorAll('[profile-validation-error]').map(node => node.textContent),
     checkSave: () => section.querySelector('[profile-items-check-save]'),
@@ -386,6 +411,68 @@ test('switching a saved platform company to a same-name custom company sends the
   assert.equal(page.status(), 'Changes saved.')
   assert.equal(page.field('company_name').dataset.selectedCompanySource, 'custom')
   assert.equal(page.field('company_name').dataset.selectedCompanyEntityId, '0')
+})
+
+test('a lost company switch is not confirmed by the unchanged company the server still holds', async () => {
+  const page = await mount({
+    companies: [{ id: 1, company_name: 'Acme', job_title: 'Designer', company_domain: 'acme.example',
+      company_entity_id: 73, company_source: 'platform' }],
+    fail: request => request.method === 'PATCH' ? 'lose' : null,
+  })
+  page.company('Acme')
+  await page.submit()
+  assert.equal(page.mutations().length, 1)
+  assert.equal(page.checkSave().hidden, false)
+  page.click(page.checkSave())
+  await tick()
+  assert.equal(page.status(), 'The save is still unconfirmed. Your draft is kept; Save remains paused.')
+  assert.equal(page.checkSave().hidden, false, 'the platform company the server kept cannot confirm the switch')
+  assert.equal(page.field('company_name').dataset.selectedCompanySource, 'custom', 'the draft survives')
+})
+
+test('a lost Also Worked With write stays unconfirmed when the saved set cannot be read', async () => {
+  const page = await mount({ minimum: false, liveAssociationReader: true, associationReadStatus: 500,
+    fail: request => String(request.url).includes('set_also_worked_with') ? 'lose' : null })
+  page.hydrateOther(BASELINE_ASSOCIATIONS)
+  page.editOther('{}')
+  await page.submit()
+  assert.equal(page.otherRequests().length, 1)
+  assert.equal(page.checkSave().hidden, false)
+  page.click(page.checkSave())
+  await tick()
+  assert.equal(page.status(), 'The save is still unconfirmed. Your draft is kept; Save remains paused.')
+  assert.equal(page.checkSave().hidden, false, 'a failed canonical read never confirms a cleared association')
+  await page.submit()
+  assert.equal(page.otherRequests().length, 1, 'Save stays paused while the saved state is unknown')
+})
+
+test('Work Experience refuses to save until the Also Worked With baseline exists', async () => {
+  const page = await mount({ minimum: false, hydrate: false })
+  assert.equal(page.status(), 'Loading work experience…')
+  page.editOther(EDITED_ASSOCIATIONS)
+  await page.submit()
+  assert.equal(page.otherRequests().length, 0, 'nothing is written before the picker baseline exists')
+  assert.notEqual(page.status(), 'Changes saved.', 'a skipped association is never reported as saved')
+
+  page.hydrateOther(BASELINE_ASSOCIATIONS)
+  await tick()
+  assert.equal(page.status(), '')
+  page.editOther(EDITED_ASSOCIATIONS)
+  await page.submit()
+  assert.equal(page.otherRequests().length, 1, 'the edit is still pending and now reaches the server')
+  assert.equal(page.otherRequests()[0].body.also_worked_with, EDITED_ASSOCIATIONS)
+  assert.equal(page.status(), 'Changes saved.')
+})
+
+test('a failed Also Worked With hydration leaves Work Experience readable with Save refused', async () => {
+  const page = await mount({ minimum: false, hydrate: false })
+  page.failOther()
+  await tick()
+  assert.equal(page.status(), 'Work experience could not be loaded. Save is paused to protect existing entries.')
+  assert.equal(page.section.inert, false, 'the section stays readable')
+  page.editOther(EDITED_ASSOCIATIONS)
+  await page.submit()
+  assert.equal(page.otherRequests().length, 0)
 })
 
 test('Discard restores the Also Worked With draft and the next Save leaves it alone', async () => {
