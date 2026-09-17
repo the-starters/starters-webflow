@@ -91,25 +91,11 @@ test('a backend-required field reports a mismatch only while Webflow leaves it o
   assert.equal(misconfigured(h('section', {}, [hidden])).length, 0, 'hidden inputs are not authored controls')
 })
 
-test('the backend-required report follows authored requiredness, not the active profile type', () => {
-  // `data-authored-required` is what starter-edit-profile.js recorded before it cleared
-  // `required` for the active profile type. The report has to read the authoring, or the same
-  // page would pause Save for one Starter and not for another.
-  const cleared = h('input', { name: 'rate', 'form-xano-required': '', 'data-authored-required': '' })
-  const optional = h('input', { name: 'description-retainer', 'form-xano-required': '' })
-  const section = h('section', {}, [cleared, optional])
-  const window = { matchMedia: () => ({ matches: true }) }
-  vm.runInNewContext(fs.readFileSync(__dirname + '/profile-section-validation.js', 'utf8'), {
-    window, document: { createElement: tag => h(tag) },
-  })
-  const reported = window.StarterProfileValidation.misconfigured(section)
-  assert.equal(reported.length, 1, 'only the field Webflow authored as optional is reported')
-  assert.equal(reported[0], optional)
-})
-
 test('a field authored both backend-required and not-required for a type is always a mismatch', () => {
-  // The two markers contradict each other in every profile type, so the conflict is reported
-  // whatever the active type left on the element.
+  // The two markers contradict each other in every profile type, and the only field whose
+  // `required` the active type clears is one carrying `data-non-required`, so the same page
+  // reports the same fields for every Starter.
+  // The conflict is reported whatever the active type left on the element.
   const paired = h('input', { name: 'description-retainer', 'form-xano-required': '',
     'data-non-required': 'consult', required: '' })
   const section = h('section', {}, [paired])

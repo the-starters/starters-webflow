@@ -698,10 +698,9 @@ test('Save clicked before the section binds reports a section still loading, not
 test('a backend-required field marked not required for a profile type pauses Save for every type', async () => {
   const misconfigured = 'This form is misconfigured. Saving is paused until it is fixed.'
   const consult = mount(undefined, { backendRequired: 'consult', profileType: 'consult' })
-  // The active type cleared the authored Required checkbox, and the authored value was recorded
-  // on the element so the report never depends on which type is signed in.
+  // The active type cleared the authored Required checkbox, and the field still carries the
+  // `data-non-required` marker that makes the pairing a mismatch for every type.
   assert.equal(consult.backendOnly.required, false)
-  assert.equal(consult.backendOnly.hasAttribute('data-authored-required'), true)
   consult.type(consult.name, 'Audit')
   consult.type(consult.price, '500')
   await submit(consult)

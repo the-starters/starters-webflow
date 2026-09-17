@@ -349,13 +349,12 @@ draft edit does not overwrite the diagnostic with `Unsaved changes.`
 profile type, and `starter-edit-profile.js` clears `required` on those fields for the active
 `window.activeProfile.type`.
 
-**The report reads the authoring, not the live attribute.** Because the active profile type
-rewrites `required` at runtime, judging the live attribute would make the same page pause Save
-for one Starter and not another, and would depend on whether the check ran before or after the
-type was applied. So inside `[profile-unified-items]`, `starter-edit-profile.js` records the
-authored value once as `data-authored-required` before it clears `required` for the active
-type, and `misconfigured()` treats a field as required when **either** the live `required`
-attribute or `data-authored-required` says so.
+**The report does not depend on the active profile type.** The only fields whose `required`
+`starter-edit-profile.js` rewrites at runtime are the ones carrying `data-non-required`, and
+those are reported whatever `required` currently says (below). Every other field keeps the
+attribute Webflow authored, so the same page reports the same fields for every Starter and
+whenever the check runs. Inside `[profile-unified-items]`, `starter-edit-profile.js` remembers
+the authored value so it is restored when the type changes back.
 
 **The two markers must not disagree:** a field is never both `form-xano-required` and
 `data-non-required`, because that would ask a Starter to leave blank a value the writer

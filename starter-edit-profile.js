@@ -670,12 +670,8 @@ onDomReady(function () {
 				if (input.closest?.('[profile-unified-items]')) {
 					if (!authoredProfileRequirements.has(input)) authoredProfileRequirements.set(input, input.required);
 					const authored = authoredProfileRequirements.get(input);
-					// The live `required` attribute follows the signed-in Starter's profile type, so a
-					// section reading it would report a different form for a different Starter, and a
-					// different answer depending on when it looked. Publish what Webflow authored so
-					// the backend-required check can judge the authoring instead of the moment.
-					if (authored) input.setAttribute('data-authored-required', '');
-					else input.removeAttribute('data-authored-required');
+					// The live `required` attribute follows the signed-in Starter's profile type, so the
+					// authored value is remembered here and restored whenever the type changes back.
 					input.required = checkForType === type ? false : authored;
 				} else input.required = checkForType === type ? false : true;
 			});

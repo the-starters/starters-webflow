@@ -339,9 +339,11 @@
         }, result => { record.id = result.id; advance(record, result) }, 'Creating highlight…',
         // The create answers with the new record, id included: that answer is the confirmation,
         // so a list read that has not caught up cannot turn a landed create into a lost one.
-        // A fresh record holds no media yet, which is what the empty lists record.
+        // A fresh record holds no media yet, which is what the empty lists record, and the
+        // confirmed details are the ones that were sent: an answer carrying only an id must
+        // never become a blank baseline row.
         answer => answer && !Array.isArray(answer) && answer.id != null
-          ? { images: [], videos: [], ...answer } : null)
+          ? { images: [], videos: [], ...value, ...answer } : null)
       }
       for (const [kind, items] of [['images', images], ['videos', videos]]) {
         const singular = kind === 'images' ? 'Image' : 'Video'

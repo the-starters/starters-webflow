@@ -114,18 +114,17 @@
   // Webflow Required checkbox; this only reports fields where the two disagree so a
   // section can refuse to save a form that would fail server-side.
   //
-  // The report reads what Webflow authored, never what the active profile type left on the
-  // element. `starter-edit-profile.js` clears `required` on the `data-non-required` fields of
-  // the signed-in Starter's type and records the authored value as `data-authored-required`,
-  // so the same page reports the same fields for every type, whenever the check runs.
-  // A field carrying both `form-xano-required` and `data-non-required` is always reported:
-  // that pairing asks a Starter to leave blank a value the writer refuses, whichever type is
-  // active, and the README declares it invalid.
+  // The report does not depend on the active profile type. `starter-edit-profile.js` only ever
+  // clears `required` on `data-non-required` fields, and a field carrying both
+  // `form-xano-required` and `data-non-required` is always reported: that pairing asks a
+  // Starter to leave blank a value the writer refuses, whichever type is active, and the README
+  // declares it invalid. So the same page reports the same fields for every type, whenever the
+  // check runs.
   function misconfigured(section) {
     return Array.from(section.querySelectorAll(FIELD)).filter(field => {
       if (!field.hasAttribute('form-xano-required')) return false
       if (field.hasAttribute('data-non-required')) return true
-      return !field.hasAttribute('required') && !field.hasAttribute('data-authored-required')
+      return !field.hasAttribute('required')
     })
   }
   // One definition of "the canonical read proved this write never landed", shared by the

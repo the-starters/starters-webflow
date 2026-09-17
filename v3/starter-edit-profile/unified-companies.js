@@ -74,6 +74,9 @@
     const present = record => !!record.id || names.some(key => key === 'current_work'
       ? input(record.row, key)?.checked : String(input(record.row, key)?.value || '').trim())
     const copy = value => JSON.parse(JSON.stringify(value))
+    // A current role stores 'Present' as its end date and also carries the flag. A row that
+    // carries one and not the other is describing the same state, not a different one.
+    const endsNow = value => !!value.current_work || String(value.end_date || '') === 'Present'
     // Only a request that actually left the browser can leave an outcome in doubt, so the
     // writer counts its dispatches.
     const dispatches = () => writer.dispatches()
@@ -141,7 +144,7 @@
         const field = input(row, key)
         if (!field) return
         field.setAttribute('name', key + '--company-' + uid)
-        if (key === 'current_work') { field.checked = !!value[key]; return }
+        if (key === 'current_work') { field.checked = endsNow(value); return }
         field.value = value[key] || ''
         if (key === 'start_date' || key === 'end_date') {
           const raw = value[key] || ''
@@ -233,7 +236,7 @@
           const start = writer.parseDate(input(record.row, 'start_date')?.value)
           const end = writer.parseDate(value)
           if (start && end && start.getFullYear() * 12 + start.getMonth() > end.getFullYear() * 12 + end.getMonth()) {
-            return writer.monthRangeMessage || 'End month must be the same as or after the start month.'
+            return writer.monthRangeMessage
           }
         }
         return ''
@@ -278,10 +281,15 @@
     section.addEventListener('change', dirty)
     // Deciding whether to send an update is strict in both directions: clearing a canonical
     // company's entity id or domain (switching it to a same-name custom company) is a real
-    // change. `same()` below stays lenient, because it matches what the server wrote back.
+    // change. The one exception is the current-role pair, which is a single state written two
+    // ways: a saved row carrying only one of them is not a change the Starter made.
+    // `same()` below stays lenient, because it matches what the server wrote back.
     function unchanged(saved, value) {
-      return names.every(key => key === 'current_work' ? !!saved[key] === !!value[key]
-        : String(saved[key] || '') === String(value[key] || ''))
+      const ends = endsNow(value)
+      return names.filter(key => key !== 'current_work' && key !== 'end_date')
+        .every(key => String(saved[key] || '') === String(value[key] || ''))
+        && endsNow(saved) === ends
+        && (ends || String(saved.end_date || '') === String(value.end_date || ''))
         && (Number(saved.company_entity_id) || 0) === (Number(value.company_entity_id) || 0)
         && String(saved.company_domain || '').toLowerCase() === String(value.company_domain || '').toLowerCase()
     }
@@ -289,9 +297,6 @@
     // the draft, but a field it returns with a different value proves the write never landed —
     // switching a saved company to a same-name custom one is exactly that case.
     const omitted = (actual, key) => !(key in actual) || actual[key] === undefined
-    // A current role stores 'Present' as its end date and also carries the flag. A server that
-    // answers with one and not the other is describing the same state, not a different one.
-    const endsNow = value => !!value.current_work || String(value.end_date || '') === 'Present'
     function same(actual, expected) {
       return [...names, 'company_entity_id', 'company_domain'].every(key => {
         if (omitted(actual, key)) return true
@@ -421,8 +426,10 @@
           }
           // A create and an update answer with the row they wrote. That answer is the write's
           // own confirmation, so a canonical read that has not caught up cannot contradict it.
+          // The confirmed row is what was sent, with whatever columns the answer carries over
+          // it: an answer that returns only an id must never become a blank baseline row.
           const answered = !lost && operation.kind !== 'remove' && answer && !Array.isArray(answer) && answer.id != null
-            ? answer : null
+            ? { ...operation.value, ...answer } : null
           if (answered) { confirm(operation, answered); unknown = null; continue }
           operation.lost = lost
           unknown = operation

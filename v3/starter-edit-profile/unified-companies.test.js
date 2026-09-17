@@ -10,7 +10,7 @@ const EDITED_ASSOCIATIONS = '{"client-1":{"name":"Acme","domain":"acme.example",
 async function mount({ companies = [], fail = null, minimum = true, withRow = true, withSave = true,
   required = ['company_name', 'job_title'], xanoRequired = [], hydrate = true, initialOther = '{}',
   liveAssociationReader = false, associationReadStatus = 200, claim = true, normalize = null,
-  picker = true } = {}) {
+  answer = null, picker = true } = {}) {
   const fields = ['company_name', 'job_title', 'start_date', 'end_date', 'current_work'].map(key => h('input', {
     'profile-company-field': key, name: key, id: key,
     ...(key === 'current_work' ? { type: 'checkbox' } : {}),
@@ -101,7 +101,8 @@ async function mount({ companies = [], fail = null, minimum = true, withRow = tr
         const storedValue = normalize ? normalize(value) : value
         stored = stored.map(item => item.id === storedValue.id ? storedValue : item)
       } else stored = stored.filter(item => item.id !== Number(url.split('/').at(-1)))
-      return { ok: true, json: async () => value || { deleted: true } }
+      // Xano decides how much of the row its answer carries; `answer` is that choice.
+      return { ok: true, json: async () => value ? (answer ? answer(value) : value) : { deleted: true } }
     },
   })
   // Both the Edit and the Build copies publish a picker initializer; these rows must reach the
@@ -587,6 +588,33 @@ test('a canonical read that normalizes what it stores still confirms the save', 
   assert.equal(page.mutations()[0].body.end_date, 'Present')
   assert.equal(page.status(), 'Changes saved.')
   assert.equal(page.checkSave().hidden, true)
+})
+
+test('a saved current role is not rewritten when the server stores only one of its two markers', async () => {
+  const saved = { id: 1, company_name: 'Acme', company_source: 'custom', job_title: 'Designer', start_date: '2020-01-01' }
+  const flagOnly = await mount({ companies: [{ ...saved, end_date: '', current_work: true }] })
+  assert.equal(flagOnly.field('current_work').checked, true)
+  await flagOnly.submit()
+  assert.equal(flagOnly.mutations().length, 0, 'the draft matches the saved role, so nothing is written')
+  assert.equal(flagOnly.status(), 'Changes saved.')
+
+  const sentinelOnly = await mount({ companies: [{ ...saved, end_date: 'Present', current_work: false }] })
+  assert.equal(sentinelOnly.field('current_work').checked, true, 'the sentinel renders as the current role it is')
+  assert.equal(sentinelOnly.field('end_date').value, '')
+  await sentinelOnly.submit()
+  assert.equal(sentinelOnly.mutations().length, 0, 'and the role is never quietly given no end date at all')
+})
+
+test('a create answered with only an id keeps the entry it saved instead of a blank baseline', async () => {
+  // The answer proves the write landed, but the row it landed is the one that was sent.
+  const page = await mount({ answer: value => ({ id: value.id }) })
+  page.company('Acme'); page.type('job_title', 'Designer')
+  await page.submit()
+  assert.equal(page.status(), 'Changes saved.')
+  assert.equal(page.field('company_name').value, 'Acme', 'the saved entry is still on the page')
+  assert.equal(page.field('job_title').value, 'Designer')
+  await page.submit()
+  assert.equal(page.mutations().length, 1, 'and no follow-up write pushes blanks over the server row')
 })
 
 test('a company write that never left the browser reports nothing submitted and keeps Save usable', async () => {

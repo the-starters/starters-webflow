@@ -9,7 +9,7 @@ const tick = () => new Promise(resolve => setImmediate(resolve))
 // `hold` returns a promise the fake endpoint waits on, so a save can be observed mid-flight.
 // `stale` answers the canonical list read from a replica that has not caught up with the
 // writes already acknowledged, which is what a lagging read looks like to the section.
-async function mount({ portfolios = [], fail = null, required = false, hold = null, stray = false, presence = false, xanoRequired = false, rows = true, saveControl = true, stale = null } = {}) {
+async function mount({ portfolios = [], fail = null, required = false, hold = null, stray = false, presence = false, xanoRequired = false, rows = true, saveControl = true, stale = null, answer = null } = {}) {
   const fields = ['title', 'description', 'images', 'videos'].map(key => h(key === 'description' ? 'textarea' : 'input', {
     'profile-highlight-field': key, name: key, id: key,
     ...(['images', 'videos'].includes(key) ? { type: 'file', multiple: '' } : {}),
@@ -73,7 +73,8 @@ async function mount({ portfolios = [], fail = null, required = false, hold = nu
         const kind = endpoint.endsWith('image') ? 'images' : 'videos'
         stored.forEach(row => { row[kind] = row[kind].filter(item => item.id !== (body.image_id || body.video_id)) }); value = true
       }
-      return { ok: true, json: async () => structuredClone(value) }
+      // Xano decides how much of the row its answer carries; `answer` is that choice.
+      return { ok: true, json: async () => structuredClone(answer?.(request, value) ?? value) }
     },
   })
   for (const file of ['profile-section-validation.js', 'unified-highlights.js', 'portfolio-crud.js']) {
@@ -613,6 +614,18 @@ test('a created highlight is confirmed by the answer that created it, not by a l
   await page.submit()
   assert.equal(page.mutations().filter(request => request.endpoint === 'Create_portfolio').length, 1,
     'the confirmed highlight is never created twice')
+})
+
+test('a created highlight answered with only an id keeps the details the create sent', async () => {
+  // The answer proves the create landed; the record it created holds what was sent, so nothing
+  // has to be written again to put the title back.
+  const page = await mount({ answer: (request, value) => request.endpoint === 'Create_portfolio' ? { id: value.id } : value })
+  page.type('title', 'Campaign')
+  await page.submit()
+  assert.equal(page.status(), 'Changes saved.')
+  assert.equal(page.field('title').value, 'Campaign')
+  assert.equal(page.mutations().filter(request => request.endpoint === 'Update_portfolio').length, 0,
+    'the confirmed baseline already carries the details, so no second write is needed')
 })
 
 test('a lost highlight deletion the server still holds leaves the confirmed baseline untouched', async () => {
