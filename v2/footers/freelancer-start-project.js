@@ -1,6 +1,6 @@
 /* freelancer-start-project.js — extracted from V2 secure footer (freelancer-start-project-footer.html).
    Load via: <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v2/footers/freelancer-start-project.js"></script>
-   Source of truth: product-workflows/opportunities/webflow/v2/webflow-footer-code/secure/freelancer-start-project-footer.html */
+   Source of truth: sibling freelancer-start-project-footer.html; see README.md for extraction rules. */
 
 document.addEventListener('DOMContentLoaded', function () {
     const XANO_LEGACY_BASE = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:ZihCUE3Z';
@@ -22,6 +22,66 @@ document.addEventListener('DOMContentLoaded', function () {
         }
         return data;
     };
+
+    const brandNameInput = document.querySelector('input#brand-name');
+    const brandContractInput = document.querySelector('input#brand-contract');
+    const brandNameContractInput = document.querySelector('input#brand-name-contract');
+    const brandSearch = document.querySelector('input#brand-search');
+    const contractForm = brandContractInput?.closest('form') || brandSearch?.closest('form');
+    const BRAND_REQUIRED_MESSAGE = 'Select a Brand from the list before starting the project.';
+
+    let brandSelectionError;
+    function setBrandValidity(message) {
+        brandSearch.setCustomValidity(message);
+        if (message && !brandSelectionError) {
+            brandSelectionError = document.createElement('div');
+            brandSelectionError.id = 'brand-selection-error';
+            brandSelectionError.role = 'alert';
+            brandSearch.insertAdjacentElement('afterend', brandSelectionError);
+        }
+        if (brandSelectionError) {
+            brandSelectionError.textContent = message;
+            brandSelectionError.hidden = !message;
+        }
+    }
+
+
+    if (brandSearch) {
+        brandSearch.addEventListener('input', function () {
+            const selectedName = brandNameInput ? brandNameInput.value.trim() : '';
+            if (brandSearch.value.trim() !== selectedName) {
+                if (brandContractInput) brandContractInput.value = '';
+                if (brandNameContractInput) brandNameContractInput.value = '';
+            }
+            setBrandValidity('');
+        }, true);
+    }
+
+    function guardBrandSelection(event) {
+        if (brandContractInput?.value.trim() && brandSearch?.value.trim() === brandNameInput?.value.trim()) {
+            setBrandValidity('');
+            return;
+        }
+
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        if (!brandSearch) return;
+        if (brandSearch.disabled) {
+            const editButton = document.querySelector('[dx-button="edit"]') || document.getElementById('edit-btn');
+            editButton?.click();
+        }
+        brandSearch.disabled = false;
+        setBrandValidity(BRAND_REQUIRED_MESSAGE);
+        brandSearch.focus();
+        brandSearch.reportValidity();
+    }
+
+    contractForm?.addEventListener('submit', guardBrandSelection, true);
+    document.addEventListener('click', function (event) {
+        if (event.target.closest('[dx-button="review"], #review-btn')) {
+            guardBrandSelection(event);
+        }
+    }, true);
 
     window.$memberstackDom.getCurrentMember().then(async ({ data: member }) => {
         if (!member || !member.id) {
@@ -49,14 +109,10 @@ document.addEventListener('DOMContentLoaded', function () {
         const freeEmailInput = document.querySelector('input#FreeEmail');
         const freeMemIDInput = document.querySelector('input#pushMemID');
 
-        const brandNameInput = document.querySelector('input#brand-name');
-        const brandContractInput = document.querySelector('input#brand-contract');
-        const brandNameContractInput = document.querySelector('input#brand-name-contract');
         const brandHiringManagerName = document.querySelector('input#Hiring-manager-name');
         const brandCompanyName = document.querySelector('input#Company-name');
         const brandEmail = document.querySelector('input#Email');
 
-        const brandSearch = document.querySelector('input#brand-search');
         const brandList = document.querySelector('#brand-list');
         const brandsEmpty = document.querySelector('[brands-empty]');
         const BRAND_CACHE_TTL_MS = 10 * 60 * 1000;
@@ -100,7 +156,10 @@ document.addEventListener('DOMContentLoaded', function () {
             if (brandHiringManagerName) brandHiringManagerName.value = fullName;
             if (brandCompanyName) brandCompanyName.value = companyName;
             if (brandEmail) brandEmail.value = email;
-            if (brandSearch) brandSearch.value = fullName;
+            if (brandSearch) {
+                brandSearch.value = fullName;
+                setBrandValidity('');
+            }
         }, true);
 
         const cachedPayload = getCachedEligibleBrands();

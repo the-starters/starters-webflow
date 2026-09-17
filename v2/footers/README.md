@@ -28,6 +28,29 @@ This page still has a documented legacy exception: the deferred CDN tag above **
 
 **`freelancer-start-project-contract.js`** is a GitHub-managed, readable mirror of that Slater contract logic (captured verbatim from the Slater build for version control / review). It is **not loaded live** — the page still loads the Slater copy via the loader above, so behavior is unchanged. To eventually take the code off Slater: serve this file from jsDelivr, swap the Slater loader for a `<script defer src=…freelancer-start-project-contract.js>` tag, and **staging-test first** (the mirror is Slater build `v=815454`; prod runs `v=339605` — same functions, different build). A related-but-stale earlier migration also exists at repo root as `v2/contract.js`; leave it untouched.
 
+### `/freelancer-start-project` — Brand selection
+
+Select a Brand from the eligible list before choosing Review Details or submitting.
+Typing a name alone is insufficient: the selected Brand must have a stable ID in
+`#brand-contract`, and the trimmed search text must match `#brand-name`. Editing
+the search text away from the selected name clears `#brand-contract` and
+`#brand-name-contract`; select an option again to restore the selection.
+
+The footer registers the Review and submit guards at DOM initialization, before
+waiting for Memberstack. An invalid selection blocks the action and displays
+“Select a Brand from the list before starting the project.” If Review has already
+disabled the fields, the guard invokes Edit, enables and focuses the Brand search,
+and displays the same message. Valid selections continue through native Webflow
+submission. Keep this guard aligned in the inline fallback and CDN artifact.
+
+Regression coverage lives in `freelancer-start-project.test.js` and
+`freelancer-start-project.browser.cjs`. Run the browser check explicitly with
+`node --test v2/footers/freelancer-start-project.browser.cjs` using Playwright and
+an installed Chrome; like the other `.browser.cjs` checks, it is separate from
+the dependency-free Node CI suite. The browser fixture uses the contract
+script mirror and sanitized form markup with minimal CSS; it intercepts submission
+and does not prove production Webflow delivery.
+
 ## Rules
 
 - **Public repo — no secrets, ever.** Content is already browser-facing (served in each page's published source). Identity resolution + Airtable/Make calls happen server-side in the Xano bridge (`api:ZihCUE3Z`). Zero-tolerance scan before committing:
