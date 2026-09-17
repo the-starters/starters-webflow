@@ -1,5 +1,7 @@
-# Use Codex for repository review and validation.
-agent: codex
+# Use Claude for repository review and validation. Codex is over its usage
+# limit on this machine; switch back once it resets. no-mistakes reads this
+# file from the default branch, so the change has to land on main to apply.
+agent: claude
 
 ignore_patterns:
   - "*.min.js"
