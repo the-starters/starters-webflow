@@ -86,7 +86,7 @@ section owns that shared loader contract.
 ## Validation and submit ownership
 
 After the approved whole-block cutover, `starter-edit-profile.js` is the only
-profile-validation owner for its main section-submit buttons. It owns steps 1,
+profile-validation owner for its legacy main section-submit buttons. It owns steps 1,
 2, 5, 6, and 7 through an explicit published-markup contract. The Companies
 controller owns step 3 and the Portfolio controller owns step 4. The configured
 `v3/brand-account-controller.js` identity guard may capture a real changed-email
@@ -95,6 +95,10 @@ can only authorize one replay after Memberstack confirms the same member ID and
 normalized login email. It does not add a second profile validator or Xano
 writer. No other controller may disable, intercept, or validate the same submit
 path.
+
+Opted-in [unified rows](#unified-rows-services-work-experience-highlights) delegate
+validation to their section coordinator and `StarterProfileValidation`; the
+existing controllers retain persistence ownership.
 
 The main form must not opt into sitewide `utils/wf-validate.js`. Its capture-phase
 submit gate can run before the page controller. The live inline validator must be
@@ -208,10 +212,9 @@ canonical-save and asynchronous-projection response contract.
 ## Unified rows (Services, Work Experience, Highlights)
 
 Three Edit Profile sections share one row pattern: an expandable list of entries
-with Add, Remove, Undo, Discard, and a single Save. The behavior contract lives in
-`/Users/standarduser/Documents/starters-git/.scratch/starter-edit-profile-unified-items/spec.md`
-in this workspace. Review Requests deliberately stays out of this pattern
-(spec decision 18); it keeps the step 7 rules above.
+with Add, Remove, Undo, Discard, and a single Save. This section owns their wiring
+and behavior contract. Review Requests deliberately stays out of this pattern;
+it keeps the step 7 rules above.
 
 ### Globals and ownership
 
@@ -226,7 +229,8 @@ The global `utils/wf-validate.js` is unchanged.
 `unified-services.js` publishes
 `window.StarterProfileSections = { bindServices, get }` and binds itself. It
 prefers `window.waitProfileData` when that page embed has run; otherwise it polls
-`window.activeProfile` for 10 seconds and, if the profile never arrives, stays
+`window.activeProfile` for 10 seconds until `last_update` is neither null nor
+undefined and, if the saved profile never arrives, stays
 unbound rather than binding against missing data. It is keyed to
 `[profile-unified-items="services"]`.
 
@@ -247,15 +251,16 @@ a live Save that writes nothing.
 and `v3/build-profile/company-autocomplete.js` declare a top-level `logoSearchInit`, so on a
 page that loads both, whichever runs last owns the bare `window.logoSearchInit`. Work
 Experience rows need the Edit picker specifically - it publishes `_starterCompanySearch` and
-renders into the authored `[profile-company-search-results]` container - so `unified-companies.js`
+creates a `[profile-company-search-results]` container - so `unified-companies.js`
 calls `window.StarterEditLogoSearchInit` only, never the bare global. A row whose picker script
 has not loaded stays a plain text field rather than binding the Build Profile copy, which
 publishes no `_starterCompanySearch` handle to destroy and no results container to strip from a
 cloned row. `logoSearchInit` stays declared for the legacy callers on the page.
 
-Every writer publishes a `dispatches()` counter: the number of mutation requests handed to
-`fetch`. A section compares it across a write, so a call that threw before sending anything is
-reported as not submitted rather than left in doubt. It is a required part of the writer
+The Work Experience and Highlights writers publish a `dispatches()` counter to track
+requests handed to `fetch`. A section compares it across a write, so a call that threw
+before sending anything is reported as not submitted rather than left in doubt.
+It is a required part of the writer
 contract, not an optional one.
 
 ### Load order
@@ -313,8 +318,8 @@ fields by `data-name`. Companies and highlights use `[profile-item-row]` with
 read their fields by `[profile-company-field="…"]` and
 `[profile-highlight-field="…"]`, and save through the authored
 `[data-edit-submit="companies"]` and `[data-edit-submit="portfolio"]` buttons.
-Companies also reads the authored `[profile-company-search-results]` container for
-its autocomplete results.
+The company picker creates its `[profile-company-search-results]` container;
+cloned company rows discard copied containers before initializing their picker.
 
 ### The `form-xano-required` contract
 
@@ -389,6 +394,17 @@ Discard are refused until the page is reloaded.
 
 ### Work Experience section readiness
 
+Unified Work Experience saves row creates, updates, and removals before the
+"Also worked with" association. A failure stops the sequence and keeps the
+remaining draft. A create paired with a removed row uses `replace_companies_id`
+to replace it atomically at the three-entry cap.
+
+Unified rows use native month inputs instead of the legacy modal month picker.
+Valid saved dates display as `YYYY-MM`; untouched dates retain their original
+stored string on save. Unparseable saved dates remain visible in a text input
+for correction. A current role disables the end input and saves `Present`;
+otherwise the end month must be the same as or after the start month.
+
 The "Also worked with" picker in `company-autocomplete.js` hydrates from Xano on
 its own schedule, and its field belongs to the Work Experience draft. Readiness is a single
 latched claim on the field itself, not a timer:
@@ -428,8 +444,8 @@ rendering from a revoked object URL and holding the file in memory for the page 
 ### Limits
 
 Services allows three entries. Work Experience allows three entries. Highlights
-allows five photos at 4 MB each and three videos at 40 MB each, which is the
-endpoint limit; the UI allowed 50 MB before 2026-09-17.
+allows nine entries, each with five photos at 4 MB each and three videos at 40 MB
+each, which is the endpoint limit; the UI allowed 50 MB before 2026-09-17.
 
 ### Test page state
 

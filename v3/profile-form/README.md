@@ -268,7 +268,7 @@ canonical hydration accepts the API's `company_logo_url` field and the
 compatible `logo_url` field. An explicitly selected custom company has an empty
 `logo_url`. The shared placeholder is presentation-only and is never persisted.
 
-Starter Edit Profile saves Also Worked With before pending Work Experience
+Legacy Starter Edit Profile saves Also Worked With before pending Work Experience
 creates, updates, and deletes. A rejected mutation stops the sequence, shows the
 authored error state, and does not show success. Completed mutations leave their
 pending queue as they succeed, while uncommitted mutations remain queued for a
@@ -277,6 +277,9 @@ rows and retains only the unsaved local drafts. When a save includes both a
 create and a deletion, the create sends the deleted row as
 `replace_companies_id` so Xano can replace it atomically at the three-company
 limit; the browser does not send a separate delete for that paired row.
+
+Opted-in unified sections use the save order documented in
+[Work Experience section readiness](../starter-edit-profile/README.md#work-experience-section-readiness).
 
 The single-company Work History picker stores the selected `name`, `domain`,
 `logo_url`, `company_entity_id`, and `source` on its authored input. The Build
@@ -324,6 +327,10 @@ Both route copies of the company-experience controller
 `../starter-edit-profile/company-experience-crud.js`) share one date contract, so the
 Full Profile, Consult, and Edit Profile work-experience modals hydrate and save
 identically.
+
+This modal contract does not apply to opted-in unified Edit Profile rows; their
+[date controls](../starter-edit-profile/README.md#work-experience-section-readiness)
+are documented with the section that owns them.
 
 The controllers convert the four existing Webflow date inputs to text controls backed
 by a purpose-built month-only picker. It shows year arrows, a 3-by-4 grid of month
