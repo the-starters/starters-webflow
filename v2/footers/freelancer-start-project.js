@@ -30,6 +30,22 @@ document.addEventListener('DOMContentLoaded', function () {
     const contractForm = brandContractInput?.closest('form') || brandSearch?.closest('form');
     const BRAND_REQUIRED_MESSAGE = 'Select a Brand from the list before starting the project.';
 
+    let brandSelectionError;
+    function setBrandValidity(message) {
+        brandSearch.setCustomValidity(message);
+        if (message && !brandSelectionError) {
+            brandSelectionError = document.createElement('div');
+            brandSelectionError.id = 'brand-selection-error';
+            brandSelectionError.role = 'alert';
+            brandSearch.insertAdjacentElement('afterend', brandSelectionError);
+        }
+        if (brandSelectionError) {
+            brandSelectionError.textContent = message;
+            brandSelectionError.hidden = !message;
+        }
+    }
+
+
     if (brandSearch) {
         brandSearch.addEventListener('input', function () {
             const selectedName = brandNameInput ? brandNameInput.value.trim() : '';
@@ -37,13 +53,13 @@ document.addEventListener('DOMContentLoaded', function () {
                 if (brandContractInput) brandContractInput.value = '';
                 if (brandNameContractInput) brandNameContractInput.value = '';
             }
-            brandSearch.setCustomValidity('');
+            setBrandValidity('');
         }, true);
     }
 
     function guardBrandSelection(event) {
         if (brandContractInput?.value.trim() && brandSearch?.value.trim() === brandNameInput?.value.trim()) {
-            brandSearch.setCustomValidity('');
+            setBrandValidity('');
             return;
         }
 
@@ -55,7 +71,7 @@ document.addEventListener('DOMContentLoaded', function () {
             editButton?.click();
         }
         brandSearch.disabled = false;
-        brandSearch.setCustomValidity(BRAND_REQUIRED_MESSAGE);
+        setBrandValidity(BRAND_REQUIRED_MESSAGE);
         brandSearch.focus();
         brandSearch.reportValidity();
     }
@@ -142,7 +158,7 @@ document.addEventListener('DOMContentLoaded', function () {
             if (brandEmail) brandEmail.value = email;
             if (brandSearch) {
                 brandSearch.value = fullName;
-                brandSearch.setCustomValidity('');
+                setBrandValidity('');
             }
         }, true);
 
