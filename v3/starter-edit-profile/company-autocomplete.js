@@ -120,10 +120,39 @@
 
     let tagTemplate = null;
     let tagWrapper = null;
+    let restoringTags = false;
     const tagDeleteListeners = [];
     if (isMulti) {
       tagTemplate = qs('[also-worked-tag].is_template', group);
       tagWrapper = qs('[also-worked-wrapper]', group);
+
+      // Section-level Discard has to put the rendered tags back to the last saved set, and only
+      // this closure can render one. Narrow handle: it renders a serialized value, nothing else.
+      if (valueInput) {
+        valueInput._starterAlsoWorkedWithTags = {
+          restore: function (serialized) {
+            let companies = {};
+            try {
+              companies = serialized ? JSON.parse(serialized) : {};
+            } catch (error) {
+              companies = {};
+            }
+            Array.from(qsa('[also-worked-tag]', tagWrapper)).forEach(function (tag) { tag.remove(); });
+            restoringTags = true;
+            try {
+              for (const uniqueId of Object.keys(companies)) {
+                const company = companies[uniqueId] || {};
+                if (company.name) {
+                  renderNewTag(company.name, company.domain || '', null, uniqueId, company.logo_url || '', company.client_row_id, company.company_entity_id, company.source);
+                }
+              }
+            } finally {
+              restoringTags = false;
+            }
+            syncValue();
+          },
+        };
+      }
 
       fetchAlsoWorkedWithCompanies(MEMBER.id).then(function (selectedCompanies) {
         const hydrateSelections = function () {
@@ -410,7 +439,8 @@
       syncValue();
 
       closeDropdown();
-      input.focus();
+      // Restoring a discarded draft must not pull focus into the picker.
+      if (!restoringTags) input.focus();
     }
 
     function handleDropdownSelect(event) {

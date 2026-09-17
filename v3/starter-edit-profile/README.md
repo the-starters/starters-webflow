@@ -293,6 +293,11 @@ A received non-2xx response is a **known refusal**: the server message is shown,
 the draft is kept, and Save and Discard stay enabled. A thrown or lost response is
 **unknown**: the write may or may not have landed, so Save is paused until the
 "Check saved state" control reconciles the section against a canonical read.
+This covers every write the section owns: row creates, updates and removals, the
+Work Experience "Also worked with" association, and Highlight media uploads (a lost
+upload is matched against the canonical media list by file name and size). Discard
+in Work Experience also restores the "Also worked with" picker to its last saved
+state.
 
 A failed initial load leaves the section readable rather than inert. Save and
 Discard are refused until the page is reloaded.

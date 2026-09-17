@@ -496,6 +496,46 @@ function starterProfileCompanyMonthYearLabel(value) {
   return `${parts[0]} ${parts[parts.length - 1]}`;
 }
 
+async function starterProfileCompanyErrorBody(response) {
+    // A refusal can answer with JSON, with HTML, or with nothing at all. Read it defensively
+    // so a parse failure never turns a received refusal into an unknown write. A non-JSON body
+    // is kept for diagnostics only; it never becomes a message shown to a Starter.
+    if (response && typeof response.json === 'function') {
+        try {
+            return await response.json();
+        } catch (error) { /* the body is not JSON */ }
+    }
+    if (response && typeof response.text === 'function') {
+        try {
+            const text = await response.text();
+            return text ? { body: String(text).slice(0, 200) } : null;
+        } catch (error) { /* the body was already consumed */ }
+    }
+    return null;
+}
+
+// Identity of one Also Worked With association, ignoring order, keys, logos and the row ids
+// the server assigns on write, so a draft can be compared with what the server actually holds.
+function starterProfileAlsoWorkedWithSignature(companies) {
+    let source = companies;
+    if (typeof source === 'string') {
+        try {
+            source = source ? JSON.parse(source) : {};
+        } catch (error) {
+            return '';
+        }
+    }
+    if (!source || typeof source !== 'object') return '[]';
+    return JSON.stringify(Object.keys(source).map(function (key) {
+        const company = source[key] || {};
+        return [
+            String(company.name || company.company_name || '').trim().toLowerCase(),
+            String(company.domain || company.company_domain || '').trim().toLowerCase(),
+            Number(company.company_entity_id) || 0,
+        ].join('|');
+    }).sort());
+}
+
 function starterProfileCompanyResponseError(response, data, fallback) {
     // A received non-2xx answer is a known refusal: the server replied and wrote nothing.
     // `known` lets a section save distinguish it from a lost response, which stays unknown
@@ -645,6 +685,10 @@ function createStarterEditCompanyDraftDirtyController(options) {
                     async update(id, value) { checkMember(); return commitUpdateCompanyDraft(id, value); },
                     async remove(id) { checkMember(); return deleteCompany(id); },
                     async saveOther() { checkMember(); return commitAlsoWorkedWith(); },
+                    otherValue() { return alsoWorkedWithInput ? alsoWorkedWithInput.value : ''; },
+                    async matchOther(value) { checkMember(); return matchSavedAlsoWorkedWith(value); },
+                    acceptOther(value) { acceptAlsoWorkedWith(value); },
+                    restoreOther() { restoreAlsoWorkedWith(); },
                     hasOtherChanges: hasAlsoWorkedWithChanges,
                     parseDate: starterProfileCompanyDatepickerValue,
                 });
@@ -1238,14 +1282,13 @@ function createStarterEditCompanyDraftDirtyController(options) {
                     ? diagnostics.observeMutation('company_experience_create', request)
                     : request());
 
-                const data = await response.json();
-
                 if (!response.ok) {
-                    console.error('[Companies] create error:', data);
-                    throw starterProfileCompanyResponseError(response, data, 'Company creation failed');
+                    const error = await starterProfileCompanyErrorBody(response);
+                    console.error('[Companies] create error:', error);
+                    throw starterProfileCompanyResponseError(response, error, 'Company creation failed');
                 }
 
-                return data;
+                return await response.json();
             }
 
             async function updateCompany(companyId, payload) {
@@ -1261,14 +1304,13 @@ function createStarterEditCompanyDraftDirtyController(options) {
                     ? diagnostics.observeMutation('company_experience_update', request)
                     : request());
 
-                const data = await response.json();
-
                 if (!response.ok) {
-                    console.error('[Companies] update error:', data);
-                    throw starterProfileCompanyResponseError(response, data, 'Company update failed');
+                    const error = await starterProfileCompanyErrorBody(response);
+                    console.error('[Companies] update error:', error);
+                    throw starterProfileCompanyResponseError(response, error, 'Company update failed');
                 }
 
-                return data;
+                return await response.json();
             }
 
             async function deleteCompany(companyId) {
@@ -1283,17 +1325,18 @@ function createStarterEditCompanyDraftDirtyController(options) {
                     ? diagnostics.observeMutation('company_experience_delete', request)
                     : request());
 
+                if (!response.ok) {
+                    const error = await starterProfileCompanyErrorBody(response);
+                    console.error('[Companies] delete error:', error);
+                    throw starterProfileCompanyResponseError(response, error, 'Company delete failed');
+                }
+
                 let data = null;
 
                 try {
                     data = await response.json();
                 } catch (error) {
                     data = null;
-                }
-
-                if (!response.ok) {
-                    console.error('[Companies] delete error:', data);
-                    throw starterProfileCompanyResponseError(response, data, 'Company delete failed');
                 }
 
                 return data;
@@ -1338,18 +1381,44 @@ function createStarterEditCompanyDraftDirtyController(options) {
                     : request());
 
                 if (!response.ok) {
-                    let data = null;
-                    try {
-                        data = await response.json();
-                    } catch (error) {
-                        data = null;
-                    }
+                    const data = await starterProfileCompanyErrorBody(response);
 
                     console.error('[setAlsoWorkedWith] XANO error:', response.status, data);
                     throw starterProfileCompanyResponseError(response, data, `Also worked with save failed (${response.status})`);
                 }
 
                 alsoWorkedWithBaseline = submittedAlsoWorkedWith;
+            }
+
+            // The Also Worked With picker owns the tags; this reads the saved association back
+            // through the same loader the picker hydrates from, so a lost save can be resolved
+            // against server state instead of blocking the section for the page session.
+            function alsoWorkedWithLoader() {
+                if (typeof fetchAlsoWorkedWithCompanies === 'function') return fetchAlsoWorkedWithCompanies;
+                if (typeof window !== 'undefined' && typeof window.fetchAlsoWorkedWithCompanies === 'function') {
+                    return window.fetchAlsoWorkedWithCompanies;
+                }
+                return null;
+            }
+
+            async function matchSavedAlsoWorkedWith(value) {
+                const loader = alsoWorkedWithLoader();
+                if (!loader) throw new Error('Also worked with state could not be read');
+                const saved = await loader(MEMBER.id);
+                return starterProfileAlsoWorkedWithSignature(saved) === starterProfileAlsoWorkedWithSignature(value);
+            }
+
+            function acceptAlsoWorkedWith(value) {
+                if (!alsoWorkedWithInput) return;
+                alsoWorkedWithBaseline = typeof value === 'string' ? value : alsoWorkedWithInput.value;
+                alsoWorkedWithBaselineReady = true;
+            }
+
+            function restoreAlsoWorkedWith() {
+                if (!alsoWorkedWithInput) return;
+                alsoWorkedWithInput.value = alsoWorkedWithBaseline;
+                const picker = alsoWorkedWithInput._starterAlsoWorkedWithTags;
+                if (picker && typeof picker.restore === 'function') picker.restore(alsoWorkedWithBaseline);
             }
 
             function triggerFieldEvents(input) {

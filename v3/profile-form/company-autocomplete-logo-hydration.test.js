@@ -355,6 +355,23 @@ const QA_WOLF = {
   source: 'platform',
 }
 
+test('the picker restores its Also Worked With tags to a discarded draft baseline', async () => {
+  const harness = createHarness(EDIT_AUTOCOMPLETE,
+    [{ id: 42, company_entity_id: 9, company_name: 'Acme', company_domain: 'acme.example' }])
+  await new Promise((resolve) => setImmediate(resolve))
+  const baseline = harness.valueInput.value
+  assert.equal(Object.keys(JSON.parse(baseline)).length, 1)
+
+  harness.selectCompany({ name: 'Beta', domain: 'beta.example', logo_url: '', company_entity_id: 0, source: 'custom' })
+  assert.equal(Object.keys(JSON.parse(harness.valueInput.value)).length, 2)
+
+  harness.valueInput._starterAlsoWorkedWithTags.restore(baseline)
+  assert.equal(harness.valueInput.value, baseline)
+
+  harness.valueInput._starterAlsoWorkedWithTags.restore('')
+  assert.equal(harness.valueInput.value, '{}')
+})
+
 test('a legacy Edit Profile company selection fires no change event on the field', async () => {
   const harness = createHarness(EDIT_AUTOCOMPLETE, {}, { isMulti: false })
   harness.selectCompany(QA_WOLF)

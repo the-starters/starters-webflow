@@ -890,6 +890,9 @@ onDomReady(function () {
 					let saveStarted = false;
 					let saveToken = null;
 					let canonicalSaveAccepted = false;
+					// Filled in only when the server answered with a refusal, so the section can
+					// tell a known "no" apart from a response it never received.
+					const saveOutcome = {};
 					try {
 						if (stepIndex === 6) clearStepSixPriceValidity();
 						const sectionController = window.StarterProfileSections?.get(step);
@@ -914,17 +917,17 @@ onDomReady(function () {
 						if (sectionController && !sectionController.begin()) return;
 						saveToken = window.__tsProfileDirtyState?.beginSave(stepIndex);
 						saveStarted = true;
-						canonicalSaveAccepted = await submitStep(stepIndex, submitButton, replayProof, saveToken);
+						canonicalSaveAccepted = await submitStep(stepIndex, submitButton, replayProof, saveToken, saveOutcome);
 					} finally {
 						if (saveStarted) window.__tsProfileDirtyState?.finishSave(stepIndex, canonicalSaveAccepted, saveToken);
-						if (saveStarted) window.StarterProfileSections?.get(step)?.finish(canonicalSaveAccepted);
+						if (saveStarted) window.StarterProfileSections?.get(step)?.finish(canonicalSaveAccepted, saveOutcome.known ? saveOutcome : null);
 						rejectReplayProof(replayProof);
 					}
 				});
 			});
 		}
 
-		async function submitStep(stepIndex, submitButton, replayProof = null, saveToken = null) {
+		async function submitStep(stepIndex, submitButton, replayProof = null, saveToken = null, saveOutcome = null) {
 			setSubmitLoading(submitButton, true);
 			let memberScope;
 			try {
@@ -1141,6 +1144,14 @@ onDomReady(function () {
 				const hasProjectionState = typeof result?.projection_pending === 'boolean';
 				if (!response.ok && !canonicalSaved) {
 					failureCode = 'HTTP_ERROR';
+					// The server answered: this write was refused, not lost. Hand the section a
+					// known outcome so it keeps the draft editable instead of pausing Save.
+					if (saveOutcome) {
+						saveOutcome.known = true;
+						saveOutcome.message = typeof result?.message === 'string' && result.message.trim()
+							? result.message.trim()
+							: 'The server rejected this change. Check the entry and try again.';
+					}
 					throw new Error(result?.message || result?.error || `Profile update failed (${response.status})`);
 				}
 				if (!canonicalSaved || !hasProjectionState) {

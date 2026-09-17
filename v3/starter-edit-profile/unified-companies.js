@@ -10,9 +10,23 @@
   async function bind(section, writer) {
     if (bound.has(section)) return
     bound.add(section)
-    const template = section.querySelector(ROW)?.cloneNode(true)
-    const parent = section.querySelector(ROW)?.parentElement
-    if (!template || !parent) return
+    const save = section.querySelector('[data-edit-submit="companies"]')
+    const status = document.createElement('div')
+    status.setAttribute('role', 'status')
+    status.setAttribute('profile-items-status', '')
+    section.appendChild(status)
+    const original = section.querySelector(ROW)
+    const template = original?.cloneNode(true)
+    const parent = original?.parentElement
+    if (!template || !parent || !save) {
+      // The row is also the template for every added row, and Save is the only route to the
+      // writer. Without either, report the markup gap and disable Save instead of leaving a
+      // live control that silently does nothing.
+      console.warn('[unified-companies] missing [profile-item-row] or Save control in section')
+      status.textContent = 'This section could not load. Reload the page before editing.'
+      save?.setAttribute('disabled', '')
+      return
+    }
     let records = []
     let baseline = []
     let active = null
@@ -21,13 +35,8 @@
     let unknown = null
     let misconfigured = false
     let warned = false
-    const save = section.querySelector('[data-edit-submit="companies"]')
     const add = section.querySelector('[profile-items-add]')
     const discard = section.querySelector('[profile-items-discard]')
-    const status = document.createElement('div')
-    status.setAttribute('role', 'status')
-    status.setAttribute('profile-items-status', '')
-    section.appendChild(status)
     const check = document.createElement('button')
     check.setAttribute('type', 'button')
     check.setAttribute('profile-items-check-save', '')
@@ -239,10 +248,20 @@
     discard?.addEventListener('click', event => {
       event.preventDefault()
       if (saving || loading || unknown) return
-      restore(); updateCleanState(); status.textContent = 'Changes discarded.'
+      // Also Worked With is part of this section's draft, so Discard has to put it back too.
+      restore(); writer.restoreOther?.(); updateCleanState(); status.textContent = 'Changes discarded.'
     })
     section.addEventListener('input', dirty)
     section.addEventListener('change', dirty)
+    // Deciding whether to send an update is strict in both directions: clearing a canonical
+    // company's entity id or domain (switching it to a same-name custom company) is a real
+    // change. `same()` below stays lenient, because it matches what the server wrote back.
+    function unchanged(saved, value) {
+      return names.every(key => key === 'current_work' ? !!saved[key] === !!value[key]
+        : String(saved[key] || '') === String(value[key] || ''))
+        && (Number(saved.company_entity_id) || 0) === (Number(value.company_entity_id) || 0)
+        && String(saved.company_domain || '').toLowerCase() === String(value.company_domain || '').toLowerCase()
+    }
     function same(actual, expected) {
       const equal = names.every(key => key === 'current_work' ? !!actual[key] === expected[key]
         : String(actual[key] || '') === String(expected[key] || ''))
@@ -250,6 +269,11 @@
         && (!expected.company_domain || String(actual.company_domain || '').toLowerCase() === expected.company_domain.toLowerCase())
     }
     async function reconcile(operation) {
+      if (operation.kind === 'other') {
+        // The association has no id to look up: compare the saved state with what was sent.
+        if (!writer.matchOther) throw new Error('Association state cannot be read')
+        return await writer.matchOther(operation.value) ? { other: true } : null
+      }
       const current = await writer.read()
       if (operation.kind === 'remove') return current.some(item => String(item.id) === String(operation.id)) ? null : { removed: true }
       if (operation.replaceId && current.some(item => String(item.id) === String(operation.replaceId))) return null
@@ -258,7 +282,10 @@
       return matches.length === 1 ? matches[0] : null
     }
     function confirm(operation, confirmed) {
-      if (operation.kind === 'remove') {
+      if (operation.kind === 'other') {
+        // The write landed, so the association baseline advances and Save stops resending it.
+        writer.acceptOther?.(operation.value)
+      } else if (operation.kind === 'remove') {
         baseline = baseline.filter(item => String(item.id) !== String(operation.id))
         removeRecord(operation.record)
       } else {
@@ -269,7 +296,7 @@
       }
     }
     check.addEventListener('click', async () => {
-      if (!unknown || saving || check.disabled || unknown.kind === 'other') return
+      if (!unknown || saving || check.disabled) return
       check.disabled = true
       try {
         const confirmed = await reconcile(unknown)
@@ -288,15 +315,17 @@
       const submitted = kept.map(record => ({ record, value: copy(values(record)) }))
       const presence = section.querySelector('[profile-items-presence]')
       if (presence?.required && !kept.length) {
+        // Never reopen a row the Starter is removing: point at a usable row, adding one if needed.
+        const target = remaining()[0] || addRow({}, true)
         status.textContent = 'Add at least one work experience entry.'
-        setOpen(records[0], true); input(records[0].row, 'company_name')?.focus(); return
+        setOpen(target, true); input(target.row, 'company_name')?.focus(); return
       }
       const deletions = records.filter(record => record.removed && record.id)
       const operations = []
       kept.forEach(record => {
         const value = values(record)
         if (!record.id) operations.push({ kind: 'create', record, value, replaceId: deletions.shift()?.id })
-        else if (!same(baseline.find(item => String(item.id) === String(record.id)) || {}, value)) operations.push({ kind: 'update', record, id: record.id, value })
+        else if (!unchanged(baseline.find(item => String(item.id) === String(record.id)) || {}, value)) operations.push({ kind: 'update', record, id: record.id, value })
       })
       deletions.forEach(record => operations.push({ kind: 'remove', record, id: record.id }))
       saving = true; section.inert = true; section.setAttribute('aria-busy', 'true'); status.textContent = 'Saving changes…'
@@ -322,7 +351,7 @@
           confirm(operation, confirmed); unknown = null
         }
         if (writer.hasOtherChanges()) {
-          unknown = { kind: 'other' }
+          unknown = { kind: 'other', value: writer.otherValue?.() ?? '' }
           try {
             await writer.saveOther()
           } catch (error) {
@@ -340,7 +369,7 @@
           restore(); updateCleanState(); status.textContent = 'Changes saved.'
         }
       } catch (error) {
-        check.hidden = !unknown || unknown.kind === 'other'
+        check.hidden = !unknown
         if (error?.known) {
           // The server refused this change, so Save and Discard stay available for the draft.
           status.textContent = error.serverMessage || 'The server rejected this change. Check the entry and try again.'

@@ -502,3 +502,45 @@ test('a backend-required field Webflow leaves optional pauses Save with a value-
     assert.equal(page.root.querySelector('[data-name="service-name"]').value, '', 'Discard stays available')
   } finally { console.warn = original }
 })
+
+test('a refused write reports the server reason and leaves Save and Discard usable', async () => {
+  const page = mount(async () => ({ ok: false, status: 400, json: async () => ({ message: 'Price is required' }) }))
+  const status = page.root.querySelector('[profile-items-status]')
+  page.type(page.name, 'Audit')
+  page.type(page.price, '500')
+  await submit(page)
+  assert.equal(page.requests.length, 1)
+  assert.equal(status.textContent, 'Price is required', 'the server explains its own refusal')
+  assert.equal(page.root.querySelector('[profile-items-check-save]').hidden, true,
+    'a received refusal leaves nothing to check')
+  assert.equal(page.name.value, 'Audit', 'the draft survives')
+  await submit(page)
+  assert.equal(page.requests.length, 2, 'Save is not paused by a refusal the server already answered')
+  page.click(page.discard)
+  assert.equal(page.root.querySelector('[data-name="service-name"]').value, '')
+  assert.equal(status.textContent, 'Changes discarded.')
+})
+
+test('a refusal without a readable body falls back to plain wording and still frees Save', async () => {
+  const page = mount(async () => ({ ok: false, status: 500, json: async () => { throw new Error('Empty body') } }))
+  page.type(page.name, 'Audit')
+  page.type(page.price, '500')
+  await submit(page)
+  assert.equal(page.root.querySelector('[profile-items-status]').textContent,
+    'The server rejected this change. Check the entry and try again.')
+  assert.equal(page.root.querySelector('[profile-items-check-save]').hidden, true)
+  await submit(page)
+  assert.equal(page.requests.length, 2)
+})
+
+test('a lost response still leaves the outcome unknown and pauses Save', async () => {
+  const page = mount(async () => { throw new Error('Connection lost') })
+  page.type(page.name, 'Audit')
+  page.type(page.price, '500')
+  await submit(page)
+  assert.equal(page.requests.length, 1)
+  assert.match(page.root.querySelector('[profile-items-status]').textContent, /could not confirm/i)
+  assert.equal(page.name.value, 'Audit')
+  await submit(page)
+  assert.equal(page.requests.length, 1, 'an unknown write is never replayed')
+})

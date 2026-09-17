@@ -36,9 +36,11 @@
     const present = record => record.id || field(record, 'title')?.value.trim() || field(record, 'description')?.value.trim()
       || keptMedia(record, 'images').length || keptMedia(record, 'videos').length
     const textValues = record => ({ title: field(record, 'title')?.value.trim() || '', description: field(record, 'description')?.value.trim() || '' })
+    // Kept media only: a confirmed deletion drops its entry, which must not look like a
+    // later edit, while any removal or Undo still changes what is kept.
     const signature = record => JSON.stringify({ ...textValues(record), removed: record.removed,
-      images: record.images.map(item => [item.key, item.removed, item.cover]),
-      videos: record.videos.map(item => [item.key, item.removed]) })
+      images: keptMedia(record, 'images').map(item => [item.key, item.cover]),
+      videos: keptMedia(record, 'videos').map(item => [item.key]) })
     function dirty() {
       if (loading) return
       section.setAttribute('profile-items-dirty', 'true')
@@ -244,6 +246,20 @@
       const current = await writer.read(record.id)
       return current.find(item => String(item.id) === String(record.id)) || null
     }
+    // Storage exposes no lookup by client request or file identity, so a lost upload response is
+    // resolved against this highlight's canonical media instead: an attached item that no other
+    // draft entry already claims and that carries the same file name and size means the work
+    // landed and is adopted. No match means nothing was attached, so the selected file stays a
+    // draft and the next Save uploads it again. A null result leaves the outcome unknown.
+    async function reconcileUpload(record, kind, ref) {
+      const current = await canonical(record)
+      if (!current) return null
+      const payloadKey = kind === 'images' ? 'image' : 'video'
+      const claimed = new Set(record[kind].filter(item => item !== ref && item.id).map(item => String(item.id)))
+      const matches = (current[kind] || []).filter(media => !claimed.has(String(media.id))
+        && media[payloadKey]?.name === ref.file?.name && Number(media[payloadKey]?.size) === Number(ref.file?.size))
+      return { current, media: matches.length === 1 ? matches[0] : null }
+    }
     async function operation(run, reconcile, confirm, label) {
       status.textContent = label
       unknown = { reconcile, confirm }
@@ -284,14 +300,30 @@
           await operation(() => writer['remove' + singular](item.ref.id), async () => {
             const current = await canonical(record)
             return current && !current[kind].some(media => String(media.id) === String(item.ref.id)) ? current : null
-          }, current => { advance(record, current); item.ref.id = null }, 'Removing highlight media…')
+          }, current => {
+            advance(record, current)
+            // The stored file is gone and no local file remains, so the entry cannot be
+            // restored. Drop it instead of leaving an Undo that would upload nothing.
+            record[kind] = record[kind].filter(entry => entry !== item.ref)
+            renderMedia(record, kind)
+          }, 'Removing highlight media…')
         }
         for (const item of items.filter(item => !item.removed && !item.ref.id)) {
           if (!item.ref.uploaded) {
             status.textContent = 'Uploading highlight media…'
-            // The storage endpoints expose no lookup by client request/file identity.
-            // A lost upload response cannot be reconciled or safely replayed here.
-            unknown = { reconcile: null }
+            unknown = {
+              reconcile: () => reconcileUpload(record, kind, item.ref),
+              confirm: resolution => {
+                if (resolution.media) {
+                  item.ref.id = resolution.media.id
+                  item.ref.url = resolution.media[payloadKey + '_url']
+                  item.ref.stored = resolution.media
+                  item.ref.uploaded = resolution.media[payloadKey]
+                }
+                advance(record, resolution.current)
+                renderMedia(record, kind)
+              },
+            }
             const uploaded = await writer['upload' + singular](item.ref.file)
               .catch(error => { if (error?.known) unknown = null; throw error })
             if (!uploaded || typeof uploaded.path !== 'string' || !uploaded.path.startsWith('/')) throw new Error('Invalid upload response')

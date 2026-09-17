@@ -185,11 +185,11 @@ test('a delayed media attachment can be checked, then the remaining save avoids 
   assert.equal(page.mutations().filter(request => request.endpoint === 'Add_portfolio_image').length, 1)
 })
 
-test('a lost upload response stops without offering an unsafe upload retry', async () => {
+test('a lost upload response pauses Save and offers a check instead of a blind retry', async () => {
   const page = await mount({ fail: request => request.endpoint === 'upload-image' ? 'lose' : null })
   page.type('title', 'Campaign'); page.files('images', [{ name: 'photo.png', type: 'image/png', size: 1000 }])
   await page.submit()
-  assert.equal(page.section.querySelector('[profile-items-check-save]').hidden, true)
+  assert.equal(page.section.querySelector('[profile-items-check-save]').hidden, false)
   await page.submit()
   assert.equal(page.mutations().filter(request => request.endpoint === 'upload-image').length, 1)
   assert.match(page.status(), /could not be confirmed/)
@@ -367,4 +367,76 @@ test('the presence message opens a usable row when the only entry is pending rem
   assert.equal(rows[0].querySelector('[profile-highlight-field="title"]').focusCalls.length, 0)
   assert.equal(rows[1].querySelector('[profile-item-content]').hidden, false)
   assert.ok(rows[1].querySelector('[profile-highlight-field="title"]').focusCalls.length > 0)
+})
+
+test('a lost upload response that did land is confirmed from the canonical media and not repeated', async () => {
+  let lose = true, storedRows
+  const page = await mount({ fail: (request, stored) => {
+    storedRows = stored
+    if (request.endpoint === 'upload-image' && lose) { lose = false; return 'lose' }
+  } })
+  page.type('title', 'Campaign')
+  page.files('images', [{ name: 'photo.png', type: 'image/png', size: 1000 }])
+  await page.submit()
+  assert.equal(page.section.querySelector('[profile-items-check-save]').hidden, false)
+  // The upload and its attachment landed after the response was lost.
+  storedRows[0].images.push({ id: 200, image: { name: 'photo.png', size: 1000 }, image_url: 'https://example.test/photo.png', is_cover: false })
+  page.click(page.section.querySelector('[profile-items-check-save]')); await tick()
+  assert.match(page.status(), /That change is confirmed/)
+  await page.submit()
+  assert.equal(page.status(), 'Changes saved.')
+  assert.equal(page.mutations().filter(request => request.endpoint === 'upload-image').length, 1, 'the confirmed upload is not repeated')
+  assert.equal(page.mutations().filter(request => request.endpoint === 'Add_portfolio_image').length, 0, 'the attached photo is not added twice')
+  assert.equal(page.mutations().find(request => request.endpoint === 'Update_portfolio').body.cover_image_id, 200)
+})
+
+test('a lost upload response that never attached leaves the file as a draft and releases Save', async () => {
+  let lose = true
+  const page = await mount({ fail: request => request.endpoint === 'upload-image' && lose ? 'lose' : null })
+  page.type('title', 'Campaign')
+  page.files('images', [{ name: 'photo.png', type: 'image/png', size: 1000 }])
+  await page.submit()
+  assert.equal(page.section.querySelector('[profile-items-check-save]').hidden, false)
+  page.click(page.section.querySelector('[profile-items-check-save]')); await tick()
+  assert.equal(page.section.querySelector('[profile-items-check-save]').hidden, true)
+  assert.equal(page.section.querySelectorAll('[profile-media-item]').length, 1, 'the selected file is still held')
+  lose = false
+  await page.submit()
+  assert.equal(page.status(), 'Changes saved.')
+  assert.equal(page.mutations().filter(request => request.endpoint === 'upload-image').length, 2, 'nothing was attached, so the file is uploaded again')
+  assert.equal(page.mutations().filter(request => request.endpoint === 'Add_portfolio_image').length, 1)
+  assert.equal(page.mutations().filter(request => request.endpoint === 'Create_portfolio').length, 1)
+})
+
+test('a confirmed media deletion cannot be undone into an empty upload after a later failure', async () => {
+  let refuse = true
+  const page = await mount({
+    portfolios: [{ id: 1, title: 'Saved', description: '', cover_image_id: 2, thumbnail_url: 'https://example.test/a.png', images: [
+      { id: 2, image_url: 'https://example.test/a.png', is_cover: true, image: { name: 'a.png', size: 100 } },
+      { id: 3, image_url: 'https://example.test/b.png', is_cover: false, image: { name: 'b.png', size: 100 } }], videos: [] }],
+    fail: request => request.endpoint === 'Update_portfolio' && refuse ? { status: 400, body: { message: 'Those details were refused.' } } : null,
+  })
+  page.click(page.section.querySelectorAll('[profile-media-remove]')[0])
+  page.files('images', [{ name: 'new.png', type: 'image/png', size: 500 }])
+  await page.submit()
+  assert.equal(page.status(), 'Those details were refused.')
+  assert.equal(page.mutations().filter(request => request.endpoint === 'Delete_portfolio_image').length, 1)
+  assert.equal(page.section.querySelectorAll('[profile-media-undo]').length, 0, 'the deleted photo offers no Undo')
+  assert.equal(page.section.querySelectorAll('[profile-media-item]').length, 2)
+  refuse = false
+  await page.submit()
+  assert.equal(page.status(), 'Changes saved.')
+  assert.equal(page.mutations().filter(request => request.endpoint === 'upload-image').length, 1, 'the deleted photo is never uploaded')
+  assert.equal(page.mutations().filter(request => request.endpoint === 'Delete_portfolio_image').length, 1)
+})
+
+test('a failed canonical read after a successful write keeps the unconfirmed path, not a refusal', async () => {
+  const page = await mount({ fail: request => request.endpoint === 'Get_portfolio_images' ? { status: 503, body: { message: 'Service unavailable' } } : null })
+  page.type('title', 'Campaign')
+  await page.submit()
+  assert.match(page.status(), /could not be confirmed/)
+  assert.equal(page.section.querySelector('[profile-items-check-save]').hidden, false)
+  assert.equal(page.mutations().filter(request => request.endpoint === 'Create_portfolio').length, 1)
+  await page.submit()
+  assert.equal(page.mutations().filter(request => request.endpoint === 'Create_portfolio').length, 1, 'Save stays paused rather than replaying the write')
 })

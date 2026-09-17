@@ -4,8 +4,10 @@ const vm = require('node:vm')
 const test = require('node:test')
 const { h, makeEvent } = require('../test-helpers/form-dom.cjs')
 const tick = () => new Promise(resolve => setImmediate(resolve))
+const BASELINE_ASSOCIATIONS = '{"client-1":{"name":"Acme","domain":"acme.example","logo_url":"","client_row_id":1,"company_entity_id":0,"source":"custom"}}'
+const EDITED_ASSOCIATIONS = '{"client-1":{"name":"Acme","domain":"acme.example","logo_url":"","client_row_id":1,"company_entity_id":0,"source":"custom"},"client-2":{"name":"Beta","domain":"beta.example","logo_url":"","client_row_id":0,"company_entity_id":0,"source":"custom"}}'
 
-async function mount({ companies = [], fail = null, minimum = true,
+async function mount({ companies = [], fail = null, minimum = true, withRow = true, withSave = true,
   required = ['company_name', 'job_title'], xanoRequired = [] } = {}) {
   const fields = ['company_name', 'job_title', 'start_date', 'end_date', 'current_work'].map(key => h('input', {
     'profile-company-field': key, name: key, id: key,
@@ -21,10 +23,13 @@ async function mount({ companies = [], fail = null, minimum = true,
   const add = h('button', { 'profile-items-add': '' })
   const discard = h('button', { 'profile-items-discard': '' })
   const presence = h('input', { 'profile-items-presence': '', ...(minimum ? { required: '' } : {}) })
-  const section = h('section', { 'profile-unified-items': 'companies' }, [h('div', {}, [row]), save, add, discard, presence])
+  const other = h('input', { id: 'also-worked-with' })
+  const section = h('section', { 'profile-unified-items': 'companies' },
+    [h('div', {}, withRow ? [row] : []), ...(withSave ? [save] : []), add, discard, presence, other])
   const requests = []
   const warnings = []
   let nextId = 10
+  let storedOther = ''
   let stored = structuredClone(companies)
   let boot
   const document = {
@@ -41,14 +46,29 @@ async function mount({ companies = [], fail = null, minimum = true,
     qs: (selector, scope) => scope ? scope.querySelector(selector) : selector === '[profile-unified-items="companies"]' ? section : section.querySelector(selector),
     qsa: (selector, scope = section) => scope.querySelectorAll(selector),
     console: { warn(...args) { warnings.push(args) }, error() {}, log() {} },
+    fetchAlsoWorkedWithCompanies: async () => {
+      try { return storedOther ? JSON.parse(storedOther) : {} } catch (error) { return {} }
+    },
     setTimeout, clearTimeout,
     fetch: async (url, init = {}) => {
       const body = init.body ? JSON.parse(init.body) : null
       const request = { url, method: init.method || 'GET', body }
       requests.push(request)
       const result = fail?.(request, { stored, setStored: value => { stored = value } })
+      if (String(url).includes('set_also_worked_with')) {
+        // The association write lands before the answer can be lost.
+        storedOther = body.also_worked_with
+        if (result === 'lose') throw new Error('Response lost')
+        if (result && result.status) return { ok: false, status: result.status, json: async () => result.body }
+        return { ok: true, json: async () => [1] }
+      }
       if (result === 'lose') throw new Error('Response lost')
-      if (result && result.status) return { ok: false, status: result.status, json: async () => result.body }
+      if (result && result.status) return {
+        ok: false, status: result.status,
+        // A non-JSON refusal answers exactly as fetch does: json() throws, text() has the body.
+        json: async () => { if (result.text !== undefined) throw new SyntaxError('Unexpected token <'); return result.body },
+        text: async () => result.text !== undefined ? result.text : JSON.stringify(result.body ?? null),
+      }
       if (request.method === 'GET') return { ok: true, json: async () => ({ companies: structuredClone(stored), starter_id: 7 }) }
       let value
       if (request.method === 'POST') {
@@ -71,12 +91,25 @@ async function mount({ companies = [], fail = null, minimum = true,
     const input = field(key, index); input.value = value
     input.dispatchEvent(makeEvent('input', input, { bubbles: true }))
   }
+  // A custom pick in the real picker clears the canonical identity it replaces.
   function company(name, index = 0) {
     type('company_name', name, index)
-    Object.assign(field('company_name', index).dataset, { selectedCompanyName: name, selectedCompanySource: 'custom' })
+    Object.assign(field('company_name', index).dataset, { selectedCompanyName: name, selectedCompanySource: 'custom',
+      selectedCompanyDomain: '', selectedCompanyLogoUrl: '', selectedCompanyEntityId: '0' })
     field('company_name', index).dispatchEvent(makeEvent('change', field('company_name', index), { bubbles: true }))
   }
+  function hydrateOther(value) {
+    other.value = value
+    other.dispatchEvent(makeEvent('starter:also-worked-with-hydrated', other, { bubbles: true }))
+  }
+  function editOther(value) {
+    other.value = value
+    other.dispatchEvent(makeEvent('input', other, { bubbles: true }))
+    other.dispatchEvent(makeEvent('change', other, { bubbles: true }))
+  }
   return { section, save, add, discard, click, field, type, company, requests, context, warnings,
+    other, hydrateOther, editOther,
+    otherRequests: () => requests.filter(item => String(item.url).includes('set_also_worked_with')),
     errors: () => section.querySelectorAll('[profile-validation-error]').map(node => node.textContent),
     checkSave: () => section.querySelector('[profile-items-check-save]'),
     mutations: () => requests.filter(item => item.method !== 'GET'),
@@ -305,4 +338,89 @@ test('a failed work experience load leaves the section usable while Save and Dis
   assert.equal(page.status(), unreadable)
   page.click(page.add)
   assert.equal(page.section.querySelectorAll('[profile-item-row]').length, 1)
+})
+
+test('a refused company save with a non-JSON body still reads as a known refusal', async () => {
+  const page = await mount({ fail: request => request.method === 'POST'
+    ? { status: 400, text: '<html><body>Bad Request</body></html>' } : null })
+  page.company('Acme'); page.type('job_title', 'Designer')
+  await page.submit()
+  assert.equal(page.mutations().length, 1)
+  assert.equal(page.status(), 'The server rejected this change. Check the entry and try again.')
+  assert.equal(page.checkSave().hidden, true)
+  await page.submit()
+  assert.equal(page.mutations().length, 2)
+  page.click(page.discard)
+  assert.equal(page.status(), 'Changes discarded.')
+  assert.equal(page.field('company_name').value, '')
+})
+
+test('a lost Also Worked With response is resolved by Check saved state instead of blocking the section', async () => {
+  const page = await mount({ minimum: false,
+    fail: request => String(request.url).includes('set_also_worked_with') ? 'lose' : null })
+  page.hydrateOther(BASELINE_ASSOCIATIONS)
+  page.editOther(EDITED_ASSOCIATIONS)
+  await page.submit()
+  assert.equal(page.otherRequests().length, 1)
+  assert.match(page.status(), /could not be confirmed/)
+  assert.equal(page.checkSave().hidden, false)
+  page.click(page.checkSave())
+  await tick()
+  assert.equal(page.checkSave().hidden, true)
+  assert.match(page.status(), /confirmed/)
+  await page.submit()
+  assert.equal(page.otherRequests().length, 1)
+  assert.equal(page.status(), 'Changes saved.')
+})
+
+test('switching a saved platform company to a same-name custom company sends the update', async () => {
+  const page = await mount({ companies: [{ id: 1, company_name: 'Acme', company_domain: 'acme.example',
+    company_entity_id: 73, company_source: 'platform', job_title: 'Designer' }] })
+  page.company('Acme')
+  await page.submit()
+  assert.equal(page.mutations().length, 1)
+  assert.equal(page.mutations()[0].method, 'PATCH')
+  assert.equal(page.mutations()[0].body.company_source, 'custom')
+  assert.equal(page.mutations()[0].body.company_entity_id, 0)
+  assert.equal(page.mutations()[0].body.company_domain, '')
+  assert.equal(page.status(), 'Changes saved.')
+  assert.equal(page.field('company_name').dataset.selectedCompanySource, 'custom')
+  assert.equal(page.field('company_name').dataset.selectedCompanyEntityId, '0')
+})
+
+test('Discard restores the Also Worked With draft and the next Save leaves it alone', async () => {
+  const page = await mount({ minimum: false })
+  page.hydrateOther(BASELINE_ASSOCIATIONS)
+  page.editOther(EDITED_ASSOCIATIONS)
+  page.click(page.discard)
+  assert.equal(page.other.value, BASELINE_ASSOCIATIONS)
+  assert.equal(page.status(), 'Changes discarded.')
+  await page.submit()
+  assert.equal(page.otherRequests().length, 0)
+})
+
+test('a section missing its row template or Save control reports the gap and disables Save', async () => {
+  const unusable = 'This section could not load. Reload the page before editing.'
+  const missingRow = await mount({ withRow: false })
+  assert.equal(missingRow.status(), unusable)
+  assert.ok(missingRow.warnings.some(args => args[0] === '[unified-companies] missing [profile-item-row] or Save control in section'))
+  assert.equal(missingRow.save.getAttribute('disabled'), '')
+  assert.equal(missingRow.requests.length, 0)
+  const missingSave = await mount({ withSave: false })
+  assert.equal(missingSave.status(), unusable)
+  assert.equal(missingSave.section.querySelectorAll('[profile-item-row]').length, 1)
+})
+
+test('the presence message opens a usable row instead of the one being removed', async () => {
+  const page = await mount({ companies: [{ id: 1, company_name: 'Acme', company_source: 'custom', job_title: 'Designer' }] })
+  page.click(page.section.querySelector('[profile-item-remove]'))
+  const rows = page.section.querySelectorAll('[profile-item-row]')
+  assert.equal(rows.length, 2)
+  await page.submit()
+  assert.equal(page.mutations().length, 0)
+  assert.equal(page.status(), 'Add at least one work experience entry.')
+  assert.equal(rows[0].querySelector('[profile-item-content]').hidden, true)
+  assert.equal(rows[0].querySelector('[profile-items-undo]').hidden, false)
+  assert.equal(rows[1].querySelector('[profile-item-content]').hidden, false)
+  assert.ok(page.field('company_name', 1).focusCalls.length >= 1)
 })

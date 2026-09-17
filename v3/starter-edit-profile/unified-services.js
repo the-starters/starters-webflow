@@ -357,11 +357,19 @@
             .every(key => String(actual[slot][key] ?? '') === String(expected[slot][key] ?? ''))
         })
       },
-      finish(saved) {
+      finish(saved, outcome) {
         saving = false
         section.inert = false
         section.removeAttribute('aria-busy')
         snapshot = null
+        if (!saved && outcome?.known) {
+          // The server answered and refused the write, so nothing was saved and nothing is
+          // in doubt. Keep the draft and the baseline, and leave Save and Discard usable.
+          uncertain = false
+          checkSave.hidden = true
+          status.textContent = outcome.message || 'The server rejected this change. Check the entry and try again.'
+          return
+        }
         if (!saved) {
           uncertain = dispatched
           checkSave.hidden = !uncertain || !readbackCheck

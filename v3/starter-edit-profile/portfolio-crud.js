@@ -495,6 +495,10 @@ async function commitStarterEditPortfolioDrafts(options) {
         try { data = await response.json(); } catch (parseError) { if (response.ok) throw parseError; }
         if (!response.ok) {
           console.error(`${errorLabel}:`, data);
+          // Only a refused mutation is a known outcome. A failed read leaves the mutation it
+          // was meant to confirm unestablished, so it stays an unknown outcome for the caller.
+          const method = String((options && options.method) || 'GET').toUpperCase();
+          if (method === 'GET') throw new Error((data && data.message) || errorLabel);
           throw portfolioResponseError(response, data, errorLabel);
         }
         return data;
