@@ -7,7 +7,9 @@ const { deferred } = require('../test-helpers/edit-profile-controller.cjs')
 const tick = () => new Promise(resolve => setImmediate(resolve))
 // `fail` returns 'lose' for a lost response, or { status, body } for a received refusal.
 // `hold` returns a promise the fake endpoint waits on, so a save can be observed mid-flight.
-async function mount({ portfolios = [], fail = null, required = false, hold = null, stray = false, presence = false, xanoRequired = false, rows = true, saveControl = true } = {}) {
+// `stale` answers the canonical list read from a replica that has not caught up with the
+// writes already acknowledged, which is what a lagging read looks like to the section.
+async function mount({ portfolios = [], fail = null, required = false, hold = null, stray = false, presence = false, xanoRequired = false, rows = true, saveControl = true, stale = null } = {}) {
   const fields = ['title', 'description', 'images', 'videos'].map(key => h(key === 'description' ? 'textarea' : 'input', {
     'profile-highlight-field': key, name: key, id: key,
     ...(['images', 'videos'].includes(key) ? { type: 'file', multiple: '' } : {}),
@@ -55,7 +57,7 @@ async function mount({ portfolios = [], fail = null, required = false, hold = nu
       if (held) await held
       let value
       const id = Number(new globalThis.URL(url).searchParams.get('portfolio_id'))
-      if (endpoint === 'Get_my_portfolios') value = stored.map(({ images, videos, ...row }) => row)
+      if (endpoint === 'Get_my_portfolios') value = (stale?.(stored) || stored).map(({ images, videos, ...row }) => row)
       else if (endpoint === 'Get_portfolio_images') value = stored.find(row => row.id === id)?.images || []
       else if (endpoint === 'Get_portfolio_videos') value = stored.find(row => row.id === id)?.videos || []
       else if (endpoint.startsWith('upload-')) value = { path: '/uploads/' + nextAsset++, size: (body.image || body.video).size }
@@ -433,14 +435,24 @@ test('a confirmed media deletion cannot be undone into an empty upload after a l
 })
 
 test('a failed canonical read after a successful write keeps the unconfirmed path, not a refusal', async () => {
-  const page = await mount({ fail: request => request.endpoint === 'Get_portfolio_images' ? { status: 503, body: { message: 'Service unavailable' } } : null })
-  page.type('title', 'Campaign')
+  // The update is answered 2xx, then the read that would confirm it fails. A read nobody could
+  // make settles nothing, so the outcome stays unknown instead of reading as a refusal.
+  let written = false
+  const page = await mount({
+    portfolios: [{ id: 1, title: 'Saved', description: '', images: [], videos: [] }],
+    fail: request => {
+      if (request.endpoint === 'Update_portfolio') { written = true; return null }
+      return written && request.endpoint === 'Get_portfolio_images'
+        ? { status: 503, body: { message: 'Service unavailable' } } : null
+    },
+  })
+  page.type('title', 'Renamed')
   await page.submit()
   assert.match(page.status(), /could not be confirmed/)
   assert.equal(page.section.querySelector('[profile-items-check-save]').hidden, false)
-  assert.equal(page.mutations().filter(request => request.endpoint === 'Create_portfolio').length, 1)
+  assert.equal(page.mutations().filter(request => request.endpoint === 'Update_portfolio').length, 1)
   await page.submit()
-  assert.equal(page.mutations().filter(request => request.endpoint === 'Create_portfolio').length, 1, 'Save stays paused rather than replaying the write')
+  assert.equal(page.mutations().filter(request => request.endpoint === 'Update_portfolio').length, 1, 'Save stays paused rather than replaying the write')
 })
 
 test('a confirmed attachment renders from the stored file and frees the local one', async () => {
@@ -489,7 +501,7 @@ test('a highlight write that never left the browser reports nothing submitted an
   await page.submit()
   assert.equal(page.mutations().length, 0, 'nothing reached the server')
   assert.equal(page.status(),
-    'The next change was not submitted. Confirmed changes are kept; you can save the remaining draft or discard it.')
+    'That change was not submitted. Your draft is kept; you can save again.')
   assert.equal(page.section.querySelector('[profile-items-check-save]').hidden, true)
   delete page.context.window.StartersNativeFormDiagnostics
   await page.submit()
@@ -571,4 +583,56 @@ test('a lost highlight update the server never applied releases Save', async () 
   await page.submit()
   assert.equal(page.status(), 'Changes saved.')
   assert.equal(page.mutations().filter(request => request.endpoint === 'Update_portfolio').length, 2)
+})
+
+test('a received highlight update the canonical read has not caught up with stays unknown, not unsaved', async () => {
+  let updated = false
+  const page = await mount({
+    portfolios: [{ id: 1, title: 'Saved', description: '', images: [], videos: [] }],
+    fail: request => { if (request.endpoint === 'Update_portfolio') updated = true; return null },
+    // The server answered the update, so it landed. The canonical read simply has not caught up.
+    stale: stored => updated ? stored.map(row => ({ ...row, title: 'Saved' })) : null,
+  })
+  page.type('title', 'Renamed')
+  await page.submit()
+  assert.match(page.status(), /could not be confirmed/)
+  assert.equal(page.section.querySelector('[profile-items-check-save]').hidden, false, 'the lag can be checked again')
+  assert.equal(page.field('title').value, 'Renamed', 'the draft is kept')
+  await page.submit()
+  assert.equal(page.mutations().filter(request => request.endpoint === 'Update_portfolio').length, 1,
+    'Save stays paused rather than repeating a write the server received')
+})
+
+test('a created highlight is confirmed by the answer that created it, not by a lagging list read', async () => {
+  // The create is answered with the new row while the list read still serves the pre-write set.
+  const page = await mount({ stale: () => [] })
+  page.type('title', 'Campaign')
+  await page.submit()
+  assert.equal(page.status(), 'Changes saved.')
+  assert.equal(page.mutations().filter(request => request.endpoint === 'Create_portfolio').length, 1)
+  await page.submit()
+  assert.equal(page.mutations().filter(request => request.endpoint === 'Create_portfolio').length, 1,
+    'the confirmed highlight is never created twice')
+})
+
+test('a lost highlight deletion the server still holds leaves the confirmed baseline untouched', async () => {
+  let lose = true, held = false
+  const page = await mount({
+    portfolios: [{ id: 1, title: 'Saved', description: '', images: [], videos: [] },
+      { id: 2, title: 'Kept', description: '', images: [], videos: [] }],
+    fail: request => {
+      if (request.endpoint !== 'Delete_portfolio' || !lose) return null
+      held = true
+      return 'lose'
+    },
+    // Another session renamed the row while the deletion answer was in flight.
+    stale: stored => held ? stored.map(row => row.id === 1 ? { ...row, title: 'Renamed elsewhere' } : row) : null,
+  })
+  page.click(page.section.querySelector('[profile-item-remove]'))
+  await page.submit()
+  assert.equal(page.status(), 'That change was not saved. Your draft is kept; you can save again.')
+  page.click(page.discard)
+  const titles = page.section.querySelectorAll('[profile-highlight-field="title"]').map(node => node.value)
+  assert.deepEqual(titles, ['Saved', 'Kept'],
+    'the reconciler that proved nothing landed never rewrote the confirmed baseline')
 })

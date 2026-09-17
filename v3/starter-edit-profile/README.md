@@ -252,10 +252,17 @@ and `v3/build-profile/company-autocomplete.js` declare a top-level `logoSearchIn
 page that loads both, whichever runs last owns the bare `window.logoSearchInit`. Work
 Experience rows need the Edit picker specifically - it publishes `_starterCompanySearch` and
 creates a `[profile-company-search-results]` container - so `unified-companies.js`
-calls `window.StarterEditLogoSearchInit` only, never the bare global. A row whose picker script
-has not loaded stays a plain text field rather than binding the Build Profile copy, which
-publishes no `_starterCompanySearch` handle to destroy and no results container to strip from a
-cloned row. `logoSearchInit` stays declared for the legacy callers on the page.
+calls `window.StarterEditLogoSearchInit` only, never the bare global, and never falls back to
+the Build Profile copy, which publishes no `_starterCompanySearch` handle to destroy and no
+results container to strip from a cloned row. `logoSearchInit` stays declared for the legacy
+callers on the page.
+
+The picker is a **hard prerequisite**, not an enhancement: a company row only acquires the
+identity Save requires by picking, so without it every Save would stop on "Choose a company
+from the list" with nothing a Starter could do. If `window.StarterEditLogoSearchInit` is not a
+function when `unified-companies.js` binds, the section registers the same halted state as
+missing row markup — `This section could not load. Reload the page before editing.`, Save
+disabled, one `console.warn` naming the missing script — and reads and writes nothing.
 
 The Work Experience and Highlights writers publish a `dispatches()` counter to track
 requests handed to `fetch`. A section compares it across a write, so a call that threw
@@ -291,6 +298,9 @@ marker first breaks the page two ways:
   template or its Save control registers a halted state, shows the same "This
   section could not load. Reload the page before editing." message, and disables
   the Save control if one is present.
+- `company-autocomplete.js` before `unified-companies.js` and `company-experience-crud.js`. It
+  publishes `window.StarterEditLogoSearchInit`, which Work Experience treats as a hard
+  prerequisite: a section that binds without it registers the halted state above.
 - `unified-companies.js` before `company-experience-crud.js`.
 - `unified-highlights.js` before `portfolio-crud.js`.
 
@@ -328,7 +338,7 @@ value the Xano backend rejects. It never makes a field required. Requiredness
 comes only from the Webflow Required checkbox.
 
 `misconfigured(section)` returns the fields that carry `form-xano-required`
-without `required`. Each section script runs that check at bind and load time and
+without authored requiredness. Each section script runs that check at bind and load time and
 again on Save. On a mismatch it pauses Save with
 `This form is misconfigured. Saving is paused until it is fixed.` and logs one
 `console.warn` naming the field attribute — never a field value. Discard stays
@@ -337,10 +347,21 @@ draft edit does not overwrite the diagnostic with `Unsaved changes.`
 
 `data-non-required="<profile type>"` is the authored way to say a field is not asked of that
 profile type, and `starter-edit-profile.js` clears `required` on those fields for the active
-`window.activeProfile.type`. **The two markers must not disagree:** a field is never both
-`form-xano-required` and `data-non-required`, because that would ask a Starter to leave blank
-a value the writer refuses. `misconfigured()` reports such a field like any other mismatch,
-so the pause catches the authoring error instead of submitting the blank value.
+`window.activeProfile.type`.
+
+**The report reads the authoring, not the live attribute.** Because the active profile type
+rewrites `required` at runtime, judging the live attribute would make the same page pause Save
+for one Starter and not another, and would depend on whether the check ran before or after the
+type was applied. So inside `[profile-unified-items]`, `starter-edit-profile.js` records the
+authored value once as `data-authored-required` before it clears `required` for the active
+type, and `misconfigured()` treats a field as required when **either** the live `required`
+attribute or `data-authored-required` says so.
+
+**The two markers must not disagree:** a field is never both `form-xano-required` and
+`data-non-required`, because that would ask a Starter to leave blank a value the writer
+refuses. `misconfigured()` reports that pairing for **every** profile type, whatever `required`
+currently says, so QA meets the authoring error on the first profile it opens rather than on
+the one type that happens to expose it.
 
 ### Save-state semantics
 
@@ -358,19 +379,36 @@ state.
 
 A write is only in doubt once it has been sent. The writers count the mutation requests they
 hand to `fetch`, so a call that threw before sending anything — a changed signed-in member, a
-broken wrapper — reports `The next change was not submitted.` with the draft kept and Save
-still usable, rather than pausing the section over a request nobody made.
+broken wrapper — reports `That change was not submitted. Your draft is kept; you can save
+again.` with the draft kept and Save still usable, rather than pausing the section over a
+request nobody made.
 
-A canonical read can also settle a write the other way. In Work Experience, a create with no
-new row, a removal whose id the server still holds, and an update whose row still holds exactly
-what it held before the write are each **proof that the write never landed**. Highlights
-applies the same rule to the writes it owns: a create with no new record, a removal the server
-still answers with, a media removal whose id is still attached, an attachment absent from the
-record's canonical media, and an update whose record still holds its pre-write details. That
-ends the save where a refusal would — `That change was not saved. Your draft is kept; you can
-save again.` — instead of pausing Save over an outcome the read has already settled, and the
-same answer from "Check saved state" releases Save and Discard. Only a read that proves
-neither keeps the pause.
+**A response the section received is the write's own answer.** Where the server replies with
+the row it wrote — a Work Experience create or update, a Highlight create — that answer
+confirms the save on the spot, and no canonical read can contradict it. The canonical read is
+the fallback: for a lost response, and for a write whose answer carries no row.
+
+A canonical read can also settle a **lost** write the other way. In Work Experience, a create
+with no new row, a removal whose id the server still holds, and an update whose row still holds
+exactly what it held before the write are each **proof that the write never landed**.
+Highlights applies the same rule to the writes it owns: a create with no new record, a removal
+the server still answers with, a media removal whose id is still attached, and an update whose
+record still holds its pre-write details. A lost media attachment is never settled this way: an
+attachment a read cannot find stays unknown until a read finds it, because a second Save would
+otherwise attach the same upload twice. Proof ends the save where a refusal would — `That
+change was not saved. Your draft is kept; you can save again.` — instead of pausing Save over
+an outcome the read has already settled, and the same answer from "Check saved state" releases
+Save and Discard.
+
+**Only a lost response can be proved not to have landed.** After a received 2xx the write is
+already the server's, so a canonical read that disagrees is read lag, never proof: the outcome
+stays unknown, Save stays paused, and "Check saved state" settles it once the read catches up.
+A reconciler only reports; nothing it reads reaches the baseline unless the write is confirmed.
+Only a read that proves neither keeps the pause.
+
+`That change was not saved. Your draft is kept; you can save again.` is the one sentence all
+three sections use for "nothing was written, keep editing", including a Services save the page
+abandoned before sending it.
 
 Saved state that cannot be *read* is never a write in doubt. A malformed stored Services slot
 fails the section closed the way a missing row template does: `Saved services could not be

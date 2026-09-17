@@ -122,7 +122,10 @@ async function mountCompanies(guard) {
   const requests = []
   let stored = [], boot
   const context = vm.createContext({
-    window: { matchMedia: () => ({ matches: false }), __tsProfileDirtyState: guard.state },
+    // `company-autocomplete.js` publishes the Edit picker before the section loads on the page;
+    // without it the section fails closed, so the harness stands it up the same way.
+    window: { matchMedia: () => ({ matches: false }), __tsProfileDirtyState: guard.state,
+      StarterEditLogoSearchInit() {} },
     document: {
       readyState: 'complete', createElement: tag => h(tag),
       querySelector: selector => section.querySelector(selector),

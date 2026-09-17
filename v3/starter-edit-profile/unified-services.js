@@ -397,9 +397,11 @@
         if (!saved) {
           uncertain = dispatched
           checkSave.hidden = !uncertain || !readbackCheck
+          // The same sentence the other unified sections use for "nothing was written, keep
+          // editing", so one outcome reads the same wherever a Starter meets it.
           status.textContent = uncertain
             ? 'We could not confirm whether your changes were saved. Your draft is kept. Save is paused until the server state can be checked.'
-            : 'Your changes were not saved. Your draft is kept; you can try again.'
+            : window.StarterProfileValidation.notLanded.MESSAGE
           return
         }
         uncertain = false

@@ -27,6 +27,16 @@
       save?.setAttribute('disabled', '')
       return
     }
+    // The company picker is how a row acquires the identity Save requires: without it
+    // `selection()` never matches what was typed, so every Save would stop on
+    // "Choose a company from the list" with nothing a Starter could do about it. Report the
+    // missing script the same way as missing row markup rather than failing open.
+    if (typeof window.StarterEditLogoSearchInit !== 'function') {
+      console.warn('[unified-companies] missing company-autocomplete.js: window.StarterEditLogoSearchInit is not a function')
+      status.textContent = 'This section could not load. Reload the page before editing.'
+      save.setAttribute('disabled', '')
+      return
+    }
     let records = []
     let baseline = []
     let active = null
@@ -299,12 +309,9 @@
     // A canonical read can settle a write three ways: it landed (the confirmed row), it
     // never landed, or neither. Only the last keeps Save paused - a write proved not to have
     // landed leaves the Starter where a refusal would, with the draft intact and Save usable.
-    const NOT_LANDED = Object.freeze({ landed: false })
-    function notLanded() {
-      const error = new Error('The change was not saved')
-      error.notLanded = true
-      return error
-    }
+    // One definition of that verdict, its error and its message is shared with the other
+    // unified sections through the validator this section already depends on.
+    const { NOT_LANDED, error: notLanded, MESSAGE: NOT_LANDED_MESSAGE } = window.StarterProfileValidation.notLanded
     async function reconcile(operation) {
       if (operation.kind === 'other') {
         // The association has no id to look up: compare the saved state with what was sent.
@@ -317,7 +324,9 @@
       if (operation.kind === 'remove') {
         return current.some(item => String(item.id) === String(operation.id)) ? NOT_LANDED : { removed: true }
       }
-      if (operation.replaceId && current.some(item => String(item.id) === String(operation.replaceId))) return NOT_LANDED
+      // The row the write created is positive proof, so it is looked for first: an atomic
+      // replacement whose insert landed before the replaced row was dropped reads as confirmed,
+      // not as a write that never happened.
       const matches = current.filter(item => operation.kind === 'update' ? String(item.id) === String(operation.id) && same(item, operation.value)
         : !operation.beforeIds.includes(String(item.id)) && same(item, operation.value))
       if (matches.length === 1) return matches[0]
@@ -328,9 +337,12 @@
         const before = baseline.find(item => String(item.id) === String(operation.id))
         return stored && before && same(stored, before) ? NOT_LANDED : null
       }
-      // A create leaves no id to look up. No row at all outside the pre-write set is proof
-      // that nothing was created; an unmatched new row leaves the outcome unknown.
-      return current.some(item => !operation.beforeIds.includes(String(item.id))) ? null : NOT_LANDED
+      // A create leaves no id to look up. An unmatched new row leaves the outcome unknown.
+      if (current.some(item => !operation.beforeIds.includes(String(item.id)))) return null
+      // No new row at all. For a plain create that is proof nothing was written; for an atomic
+      // replacement it is proof only while the row it would have replaced is still there.
+      if (operation.replaceId && !current.some(item => String(item.id) === String(operation.replaceId))) return null
+      return NOT_LANDED
     }
     function confirm(operation, confirmed) {
       if (operation.kind === 'other') {
@@ -352,8 +364,10 @@
       try {
         const confirmed = await reconcile(unknown)
         if (confirmed === NOT_LANDED) {
+          // A lag behind a received answer is not proof; only a lost response can be settled here.
+          if (!unknown.lost) throw new Error('Save not confirmed')
           unknown = null; check.hidden = true
-          status.textContent = 'That change was not saved. Your draft is kept; you can save again.'
+          status.textContent = NOT_LANDED_MESSAGE
           return
         }
         if (!confirmed) throw new Error('Save not confirmed')
@@ -393,20 +407,32 @@
           const before = await writer.read()
           operation.beforeIds = before.map(item => String(item.id))
           const sent = dispatches()
+          let lost = false, answer = null
           try {
-            if (operation.kind === 'create') await writer.create(operation.value, operation.replaceId)
-            else if (operation.kind === 'update') await writer.update(operation.id, operation.value)
-            else await writer.remove(operation.id)
-            unknown = operation
+            if (operation.kind === 'create') answer = await writer.create(operation.value, operation.replaceId)
+            else if (operation.kind === 'update') answer = await writer.update(operation.id, operation.value)
+            else answer = await writer.remove(operation.id)
           } catch (error) {
             // A received non-2xx answer is a known refusal, and a throw before the request
             // left the browser never reached the server at all: both wrote nothing, so the
             // loop stops with the draft intact. Only a lost response stays unknown.
             if (error?.known || !dispatchedSince(sent)) throw error
-            unknown = operation
+            lost = true
           }
+          // A create and an update answer with the row they wrote. That answer is the write's
+          // own confirmation, so a canonical read that has not caught up cannot contradict it.
+          const answered = !lost && operation.kind !== 'remove' && answer && !Array.isArray(answer) && answer.id != null
+            ? answer : null
+          if (answered) { confirm(operation, answered); unknown = null; continue }
+          operation.lost = lost
+          unknown = operation
           const confirmed = await reconcile(operation)
-          if (confirmed === NOT_LANDED) { unknown = null; throw notLanded() }
+          // Only a lost response can be proved never to have landed. After a received answer the
+          // write is already the server's, so a read that disagrees is lag rather than proof.
+          if (confirmed === NOT_LANDED) {
+            if (!lost) throw new Error('Save not confirmed')
+            unknown = null; throw notLanded()
+          }
           if (!confirmed) throw new Error('Save not confirmed')
           confirm(operation, confirmed); unknown = null
         }
@@ -415,7 +441,7 @@
           try {
             await writer.saveOther()
           } catch (error) {
-            if (!error?.known && dispatchedSince(sent)) unknown = { kind: 'other', value: writer.otherValue?.() ?? '' }
+            if (!error?.known && dispatchedSince(sent)) unknown = { kind: 'other', lost: true, value: writer.otherValue?.() ?? '' }
             throw error
           }
         }
@@ -434,10 +460,10 @@
           status.textContent = error.serverMessage || 'The server rejected this change. Check the entry and try again.'
         } else if (error?.notLanded) {
           // The canonical read proved this write never landed, so nothing is in doubt.
-          status.textContent = 'That change was not saved. Your draft is kept; you can save again.'
+          status.textContent = NOT_LANDED_MESSAGE
         } else {
           status.textContent = unknown ? 'A save could not be confirmed. Your draft and confirmed changes are kept. Save is paused until the server state can be checked.'
-            : 'The next change was not submitted. Confirmed changes are kept; you can save the remaining draft or discard it.'
+            : 'That change was not submitted. Your draft is kept; you can save again.'
         }
       } finally {
         saving = false; section.inert = false; section.removeAttribute('aria-busy')

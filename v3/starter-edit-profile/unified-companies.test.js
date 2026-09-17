@@ -9,7 +9,8 @@ const EDITED_ASSOCIATIONS = '{"client-1":{"name":"Acme","domain":"acme.example",
 
 async function mount({ companies = [], fail = null, minimum = true, withRow = true, withSave = true,
   required = ['company_name', 'job_title'], xanoRequired = [], hydrate = true, initialOther = '{}',
-  liveAssociationReader = false, associationReadStatus = 200, claim = true, normalize = null } = {}) {
+  liveAssociationReader = false, associationReadStatus = 200, claim = true, normalize = null,
+  picker = true } = {}) {
   const fields = ['company_name', 'job_title', 'start_date', 'end_date', 'current_work'].map(key => h('input', {
     'profile-company-field': key, name: key, id: key,
     ...(key === 'current_work' ? { type: 'checkbox' } : {}),
@@ -103,6 +104,18 @@ async function mount({ companies = [], fail = null, minimum = true, withRow = tr
       return { ok: true, json: async () => value || { deleted: true } }
     },
   })
+  // Both the Edit and the Build copies publish a picker initializer; these rows must reach the
+  // Edit one. `company-autocomplete.js` loads before the section on the page, so the spies are
+  // in place before the section binds; installing them again after the files load lets the spy
+  // stand in for whichever copy the loaded scripts published. `picker: false` is the page that
+  // never loaded the Edit picker at all.
+  const pickerCalls = { edit: [], legacy: [] }
+  function installPicker() {
+    if (!picker) return
+    windowStub.StarterEditLogoSearchInit = field => { pickerCalls.edit.push(field) }
+    windowStub.logoSearchInit = field => { pickerCalls.legacy.push(field) }
+  }
+  installPicker()
   const files = ['profile-section-validation.js', 'unified-companies.js', 'company-experience-crud.js']
   if (liveAssociationReader) files.unshift('company-autocomplete.js')
   for (const file of files) {
@@ -110,11 +123,7 @@ async function mount({ companies = [], fail = null, minimum = true, withRow = tr
   }
   // A classic script's top-level declarations are window properties on the published page.
   if (liveAssociationReader) windowStub.fetchAlsoWorkedWithCompanies = context.fetchAlsoWorkedWithCompanies
-  // Both the Edit and the Build copies publish a picker initializer; these rows must reach the
-  // Edit one. Installed after the scripts load and before the first row is rendered.
-  const pickerCalls = { edit: [], legacy: [] }
-  windowStub.StarterEditLogoSearchInit = field => { pickerCalls.edit.push(field) }
-  windowStub.logoSearchInit = field => { pickerCalls.legacy.push(field) }
+  installPicker()
   function hydrateOther(value) {
     other.value = value
     other.dispatchEvent(makeEvent('starter:also-worked-with-hydrated', other, { bubbles: true }))
@@ -279,13 +288,15 @@ test('an atomic company replacement preserves the three-entry limit and last-ent
 })
 
 test('a read failure before the next mutation preserves a confirmed baseline without repeating its create', async () => {
+  // Reads in order: the section load, the pre-write read for Acme, then the pre-write read for
+  // Beta, which fails before that create is ever sent.
   let reads = 0
-  const page = await mount({ fail: request => request.method === 'GET' && ++reads === 4 ? 'lose' : null })
+  const page = await mount({ fail: request => request.method === 'GET' && ++reads === 3 ? 'lose' : null })
   page.company('Acme'); page.type('job_title', 'Designer'); page.click(page.add)
   page.company('Beta', 1); page.type('job_title', 'Engineer', 1)
   await page.submit()
   assert.equal(page.mutations().length, 1)
-  assert.match(page.status(), /next change was not submitted/)
+  assert.match(page.status(), /was not submitted/)
   await page.submit()
   assert.equal(page.mutations().length, 2)
   assert.deepEqual(page.mutations().map(request => request.body.company_name), ['Acme', 'Beta'])
@@ -588,7 +599,7 @@ test('a company write that never left the browser reports nothing submitted and 
   await page.submit()
   assert.equal(page.mutations().length, 0, 'nothing reached the server')
   assert.equal(page.status(),
-    'The next change was not submitted. Confirmed changes are kept; you can save the remaining draft or discard it.')
+    'That change was not submitted. Your draft is kept; you can save again.')
   assert.equal(page.checkSave().hidden, true, 'an unsent write leaves nothing to check')
   delete page.context.window.StartersNativeFormDiagnostics
   await page.submit()
@@ -635,4 +646,35 @@ test('the month-range message matches the wording the legacy company form uses',
   await page.submit()
   assert.equal(page.mutations().length, 0)
   assert.ok(page.errors().includes('End month must be the same as or later than the start month.'))
+})
+
+test('a lost atomic replacement is confirmed by the row it created, not refused by the row it replaces', async () => {
+  const companies = ['Acme', 'Beta', 'Gamma'].map((company_name, index) => ({ id: index + 1, company_name, company_source: 'custom', job_title: 'Designer' }))
+  const page = await mount({ companies, fail: (request, { stored, setStored }) => {
+    if (request.method !== 'POST') return null
+    // The insert landed; the row it was told to replace is still there when the read runs.
+    setStored([...stored, { ...request.body, id: 99 }])
+    return 'lose'
+  } })
+  page.click(page.add)
+  page.click(page.section.querySelector('[profile-item-remove]'))
+  page.click(page.add)
+  page.company('Delta', 3); page.type('job_title', 'Engineer', 3)
+  await page.submit()
+  assert.equal(page.mutations().length, 1)
+  assert.equal(page.mutations()[0].body.replace_companies_id, 1)
+  assert.equal(page.status(), 'Changes saved.')
+  assert.equal(page.checkSave().hidden, true)
+  assert.equal(page.section.querySelectorAll('[profile-item-row]').length, 3)
+})
+
+test('Work Experience fails closed when the Edit company picker script never loaded', async () => {
+  const page = await mount({ picker: false })
+  assert.equal(page.status(), 'This section could not load. Reload the page before editing.')
+  assert.equal(page.save.getAttribute('disabled'), '')
+  assert.ok(page.warnings.some(args => String(args[0]).includes('StarterEditLogoSearchInit')),
+    'the missing script is named once in the console')
+  assert.equal(page.requests.length, 0, 'a section that cannot pick a company never reads or writes')
+  await page.submit()
+  assert.equal(page.mutations().length, 0)
 })

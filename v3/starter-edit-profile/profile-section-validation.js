@@ -112,12 +112,32 @@
   // Backend-required contract: a field authored with `form-xano-required` names a
   // value the Xano writer rejects when blank. Requiredness still comes only from the
   // Webflow Required checkbox; this only reports fields where the two disagree so a
-  // section can refuse to save a form that would fail server-side. A field the active profile
-  // type is not asked for is reported too: `data-non-required` clearing `required` on a
-  // backend-required field is exactly the authoring mismatch this pause exists to catch.
+  // section can refuse to save a form that would fail server-side.
+  //
+  // The report reads what Webflow authored, never what the active profile type left on the
+  // element. `starter-edit-profile.js` clears `required` on the `data-non-required` fields of
+  // the signed-in Starter's type and records the authored value as `data-authored-required`,
+  // so the same page reports the same fields for every type, whenever the check runs.
+  // A field carrying both `form-xano-required` and `data-non-required` is always reported:
+  // that pairing asks a Starter to leave blank a value the writer refuses, whichever type is
+  // active, and the README declares it invalid.
   function misconfigured(section) {
-    return Array.from(section.querySelectorAll(FIELD))
-      .filter(field => field.hasAttribute('form-xano-required') && !field.hasAttribute('required'))
+    return Array.from(section.querySelectorAll(FIELD)).filter(field => {
+      if (!field.hasAttribute('form-xano-required')) return false
+      if (field.hasAttribute('data-non-required')) return true
+      return !field.hasAttribute('required') && !field.hasAttribute('data-authored-required')
+    })
   }
-  window.StarterProfileValidation = { bind, misconfigured }
+  // One definition of "the canonical read proved this write never landed", shared by the
+  // sections that reconcile their own writes. `NOT_LANDED` is the reconciler's verdict,
+  // `error()` carries it out of a save loop, and `MESSAGE` is the single sentence every
+  // section shows for it. Both section scripts already hard-depend on this global.
+  const NOT_LANDED = Object.freeze({ landed: false })
+  const MESSAGE = 'That change was not saved. Your draft is kept; you can save again.'
+  function error() {
+    const failure = new Error(MESSAGE)
+    failure.notLanded = true
+    return failure
+  }
+  window.StarterProfileValidation = { bind, misconfigured, notLanded: Object.freeze({ NOT_LANDED, error, MESSAGE }) }
 })()

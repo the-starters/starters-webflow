@@ -38,12 +38,9 @@
     // A canonical read can settle a write three ways: it landed (the confirmed record), it
     // never landed, or neither. Only the last keeps Save paused - a write proved not to have
     // landed leaves the Starter where a refusal would, with the draft intact and Save usable.
-    const NOT_LANDED = Object.freeze({ landed: false })
-    function notLanded() {
-      const error = new Error('The change was not saved')
-      error.notLanded = true
-      return error
-    }
+    // One definition of that verdict, its error and its message is shared with the other
+    // unified sections through the validator this section already depends on.
+    const { NOT_LANDED, error: notLanded, MESSAGE: NOT_LANDED_MESSAGE } = window.StarterProfileValidation.notLanded
     const remaining = () => records.filter(record => !record.removed)
     const keptMedia = (record, kind) => record[kind].filter(item => !item.removed)
     const present = record => record.id || field(record, 'title')?.value.trim() || field(record, 'description')?.value.trim()
@@ -279,22 +276,34 @@
         && media[payloadKey]?.name === ref.file?.name && Number(media[payloadKey]?.size) === Number(ref.file?.size))
       return { current, media: matches.length === 1 ? matches[0] : null }
     }
-    async function operation(run, reconcile, confirm, label) {
+    // `respond` reads the mutation's own answer. A received 2xx that carries the written row is
+    // the write's own confirmation, so the canonical read is only the fallback: for a lost
+    // response, or for a write whose answer does not carry the row.
+    async function operation(run, reconcile, confirm, label, respond) {
       status.textContent = label
       const sent = dispatches()
+      let lost = false, answer = null
       // A received non-2xx answer is a known refusal: the server replied and wrote nothing. A
       // throw before the request left the browser never reached the server at all. Both stop
       // the save with the draft intact; only a lost response stays unknown until a read.
       try {
-        await run()
-        unknown = { reconcile, confirm }
+        answer = await run()
       } catch (error) {
         if (error?.known || !dispatchedSince(sent)) throw error
         // The response was lost. Never replay the mutation; reconcile it instead.
-        unknown = { reconcile, confirm }
+        lost = true
       }
+      const answered = lost ? null : respond?.(answer)
+      if (answered) { confirm(answered); unknown = null; return }
+      unknown = { reconcile, confirm, lost }
       const result = await reconcile()
-      if (result === NOT_LANDED) { unknown = null; throw notLanded() }
+      // Only a lost response can be proved never to have landed. After a received 2xx the write
+      // is already the server's, so a read that disagrees is lag rather than proof: the outcome
+      // stays unknown and "Check saved state" settles it once the read catches up.
+      if (result === NOT_LANDED) {
+        if (!lost) throw new Error('Unconfirmed mutation')
+        unknown = null; throw notLanded()
+      }
       if (!result) throw new Error('Unconfirmed mutation')
       confirm(result); unknown = null
     }
@@ -304,8 +313,10 @@
       try {
         const result = await unknown.reconcile()
         if (result === NOT_LANDED) {
+          // A lag behind a received answer is not proof; only a lost response can be settled here.
+          if (!unknown.lost) throw new Error('Still unknown')
           unknown = null; check.hidden = true
-          status.textContent = 'That change was not saved. Your draft is kept; you can save again.'
+          status.textContent = NOT_LANDED_MESSAGE
           return
         }
         if (!result) throw new Error('Still unknown')
@@ -325,7 +336,12 @@
           // No row at all outside the pre-write set is proof that nothing was created; an
           // unmatched new row leaves the outcome unknown.
           return after.some(item => !beforeIds.includes(String(item.id))) ? null : NOT_LANDED
-        }, result => { record.id = result.id; advance(record, result) }, 'Creating highlight…')
+        }, result => { record.id = result.id; advance(record, result) }, 'Creating highlight…',
+        // The create answers with the new record, id included: that answer is the confirmation,
+        // so a list read that has not caught up cannot turn a landed create into a lost one.
+        // A fresh record holds no media yet, which is what the empty lists record.
+        answer => answer && !Array.isArray(answer) && answer.id != null
+          ? { images: [], videos: [], ...answer } : null)
       }
       for (const [kind, items] of [['images', images], ['videos', videos]]) {
         const singular = kind === 'images' ? 'Image' : 'Video'
@@ -393,14 +409,15 @@
       const details = row => JSON.stringify([row.title, row.description || '', row.cover_image_id || null, row.thumbnail_url || ''])
       const sent = JSON.stringify([value.title, value.description, coverId, thumbnail])
       const known = baseline.find(item => String(item.id) === String(record.id))
-      if (known && details(known) === sent) return
+      const knownDetails = known ? details(known) : null
+      if (knownDetails === sent) return
       await operation(() => writer.update({ id: record.id, memberstack_id: writer.memberId, ...value, cover_image_id: coverId, thumbnail_url: thumbnail }), async () => {
         const current = await canonical(record)
         if (!current) return null
         if (details(current) === sent) return current
         // The record still holds exactly what it held before the write, so the update is
         // proved not to have landed rather than merely unconfirmed.
-        return known && details(current) === details(known) ? NOT_LANDED : null
+        return knownDetails !== null && details(current) === knownDetails ? NOT_LANDED : null
       }, current => advance(record, current), 'Saving highlight details…')
     }
     save?.addEventListener('click', async event => {
@@ -423,9 +440,9 @@
         // Deletions free capacity before any ninth-entry replacement is created.
         for (const record of deletions) {
           await operation(() => writer.remove({ id: record.id, memberstack_id: writer.memberId }), async () => {
-            const current = await canonical(record)
-            if (current) { advance(record, current); return NOT_LANDED }
-            return { removed: true }
+            // A reconciler only reports. The baseline advances in confirm(), never here, so a
+            // read taken while the outcome is still open can never rewrite a confirmed record.
+            return await canonical(record) ? NOT_LANDED : { removed: true }
           }, () => { advance(record, null); release(record) }, 'Removing highlight…')
         }
         for (const item of submitted) await persistRecord(item)
@@ -441,11 +458,11 @@
           status.textContent = error.serverMessage || 'The server rejected this change. Check the entry and try again.'
         } else if (error?.notLanded) {
           // The canonical read proved this write never landed, so nothing is in doubt.
-          status.textContent = 'That change was not saved. Your draft is kept; you can save again.'
+          status.textContent = NOT_LANDED_MESSAGE
         } else {
           status.textContent = unknown
             ? 'A save could not be confirmed. Your files, draft, and confirmed changes are kept. Save is paused.'
-            : 'The next change was not submitted. Confirmed changes are kept; you can save the remaining draft or discard it.'
+            : 'That change was not submitted. Your draft is kept; you can save again.'
         }
       } finally {
         saving = false; section.inert = false; section.removeAttribute('aria-busy')

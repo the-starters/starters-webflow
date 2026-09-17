@@ -90,3 +90,48 @@ test('a backend-required field reports a mismatch only while Webflow leaves it o
   assert.equal(misconfigured(section).length, 0, 'the authored Required checkbox settles the mismatch')
   assert.equal(misconfigured(h('section', {}, [hidden])).length, 0, 'hidden inputs are not authored controls')
 })
+
+test('the backend-required report follows authored requiredness, not the active profile type', () => {
+  // `data-authored-required` is what starter-edit-profile.js recorded before it cleared
+  // `required` for the active profile type. The report has to read the authoring, or the same
+  // page would pause Save for one Starter and not for another.
+  const cleared = h('input', { name: 'rate', 'form-xano-required': '', 'data-authored-required': '' })
+  const optional = h('input', { name: 'description-retainer', 'form-xano-required': '' })
+  const section = h('section', {}, [cleared, optional])
+  const window = { matchMedia: () => ({ matches: true }) }
+  vm.runInNewContext(fs.readFileSync(__dirname + '/profile-section-validation.js', 'utf8'), {
+    window, document: { createElement: tag => h(tag) },
+  })
+  const reported = window.StarterProfileValidation.misconfigured(section)
+  assert.equal(reported.length, 1, 'only the field Webflow authored as optional is reported')
+  assert.equal(reported[0], optional)
+})
+
+test('a field authored both backend-required and not-required for a type is always a mismatch', () => {
+  // The two markers contradict each other in every profile type, so the conflict is reported
+  // whatever the active type left on the element.
+  const paired = h('input', { name: 'description-retainer', 'form-xano-required': '',
+    'data-non-required': 'consult', required: '' })
+  const section = h('section', {}, [paired])
+  const window = { matchMedia: () => ({ matches: true }) }
+  vm.runInNewContext(fs.readFileSync(__dirname + '/profile-section-validation.js', 'utf8'), {
+    window, document: { createElement: tag => h(tag) },
+  })
+  assert.equal(window.StarterProfileValidation.misconfigured(section)[0], paired)
+  paired.removeAttribute('required')
+  assert.equal(window.StarterProfileValidation.misconfigured(section)[0], paired,
+    'and the same pairing is reported once the active type has cleared Required')
+})
+
+test('the sections share one definition of a write the read proved never landed', () => {
+  const window = { matchMedia: () => ({ matches: true }) }
+  vm.runInNewContext(fs.readFileSync(__dirname + '/profile-section-validation.js', 'utf8'), {
+    window, document: { createElement: tag => h(tag) },
+  })
+  const { notLanded } = window.StarterProfileValidation
+  assert.equal(notLanded.MESSAGE, 'That change was not saved. Your draft is kept; you can save again.')
+  assert.equal(notLanded.NOT_LANDED, notLanded.NOT_LANDED)
+  const error = notLanded.error()
+  assert.equal(error.notLanded, true)
+  assert.equal(error.message, notLanded.MESSAGE)
+})

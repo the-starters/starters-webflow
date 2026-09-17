@@ -7,7 +7,7 @@ const { createEnvironment, deferred, submit } = require('../test-helpers/edit-pr
 
 function mount(fetchImpl, { rates = false, services = null, readback = null, picker = false, profileType = 'full', hourlyRequired = true,
   rows = true, pickerSearch = false, backendRequired = false, deferProfile = false, saveControl = true,
-  dirtyState = null, retainersOff = false } = {}) {
+  dirtyState = null, retainersOff = false, memberReads = null } = {}) {
   const readRequests = []
   const timers = []
   const elapsed = { ms: 0 }
@@ -27,10 +27,12 @@ function mount(fetchImpl, { rates = false, services = null, readback = null, pic
   const search = h('input', { name: 'availability-search', required: '' })
   if (pickerSearch) root.appendChild(search)
   // Authored as backend-required while Webflow leaves the Required checkbox unchecked.
-  // `backendRequired: '<profile type>'` is the authored pair a Starter of that type is not
-  // asked for: backend-required, and marked non-required for this profile type.
+  // `backendRequired: '<profile type>'` is instead the authored pair the README forbids: the
+  // Required checkbox is ticked and the field is also marked not-required for that profile
+  // type, so the page asks a Starter of that type to leave blank a value the writer refuses.
   const backendOnly = h('input', { name: 'description-retainer', 'form-xano-required': '',
-    ...(typeof backendRequired === 'string' ? { 'data-non-required': backendRequired } : {}) })
+    ...(typeof backendRequired === 'string' ? { 'data-non-required': backendRequired, required: '' } : {}) })
+  if (typeof backendRequired === 'string') backendOnly.dataset = { nonRequired: backendRequired }
   backendOnly.value = 'Retainer copy a Starter typed'
   if (backendRequired) root.appendChild(backendOnly)
   // The published markup disables the retainer description while retainers are switched off.
@@ -59,6 +61,7 @@ function mount(fetchImpl, { rates = false, services = null, readback = null, pic
     profileType,
     profileReady: true,
     dirtyState,
+    memberReadSequence: memberReads,
     setupSection({ context, window, document, step, stepFields }) {
       context.Event = class {
         constructor(type, options) { Object.assign(this, makeEvent(type, null, options)) }
@@ -93,7 +96,9 @@ function mount(fetchImpl, { rates = false, services = null, readback = null, pic
       root.setAttribute('profile-unified-items', 'services')
       const documentQuery = document.querySelectorAll.bind(document)
       document.querySelectorAll = selector => selector === '[profile-unified-items="services"]' ? [step]
-        : selector === '[data-non-required]' && rates ? [hourly] : documentQuery(selector)
+        : selector === '[data-non-required]'
+          ? [...(rates ? [hourly] : []), ...(typeof backendRequired === 'string' ? [backendOnly] : [])]
+          : documentQuery(selector)
       document.createElement = tag => h(tag)
       for (const file of ['profile-section-validation.js', 'unified-services.js']) {
         vm.runInContext(fs.readFileSync(__dirname + '/' + file, 'utf8'), context)
@@ -691,19 +696,37 @@ test('Save clicked before the section binds reports a section still loading, not
 })
 
 test('a backend-required field marked not required for a profile type pauses Save for every type', async () => {
+  const misconfigured = 'This form is misconfigured. Saving is paused until it is fixed.'
   const consult = mount(undefined, { backendRequired: 'consult', profileType: 'consult' })
+  // The active type cleared the authored Required checkbox, and the authored value was recorded
+  // on the element so the report never depends on which type is signed in.
+  assert.equal(consult.backendOnly.required, false)
+  assert.equal(consult.backendOnly.hasAttribute('data-authored-required'), true)
   consult.type(consult.name, 'Audit')
   consult.type(consult.price, '500')
   await submit(consult)
   assert.equal(consult.requests.length, 0, 'the markers disagree, so nothing is submitted blank')
-  assert.equal(consult.root.querySelector('[profile-items-status]').textContent,
-    'This form is misconfigured. Saving is paused until it is fixed.')
+  assert.equal(consult.root.querySelector('[profile-items-status]').textContent, misconfigured)
 
   const full = mount(undefined, { backendRequired: 'consult', profileType: 'full' })
+  assert.equal(full.backendOnly.required, true, 'another type keeps the authored Required checkbox')
   full.type(full.name, 'Audit')
   full.type(full.price, '500')
   await submit(full)
   assert.equal(full.requests.length, 0, 'and the pause does not depend on the active profile type')
-  assert.equal(full.root.querySelector('[profile-items-status]').textContent,
-    'This form is misconfigured. Saving is paused until it is fixed.')
+  assert.equal(full.root.querySelector('[profile-items-status]').textContent, misconfigured)
+})
+
+test('a services save that never reached the server reports nothing saved and keeps the draft', async () => {
+  // The signed-in member cannot be confirmed, so the write is abandoned before it is sent.
+  const page = mount(undefined, { memberReads: [null] })
+  page.type(page.name, 'Audit')
+  page.type(page.price, '500')
+  await submit(page)
+  assert.equal(page.requests.length, 0, 'nothing reached the server')
+  assert.equal(page.root.querySelector('[profile-items-status]').textContent,
+    'That change was not saved. Your draft is kept; you can save again.')
+  assert.equal(page.root.querySelector('[profile-items-check-save]').hidden, true,
+    'a write nobody sent leaves nothing to check')
+  assert.equal(page.name.value, 'Audit', 'the draft is kept')
 })
