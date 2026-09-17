@@ -402,6 +402,21 @@ test('three services are retained at the limit, and explicit removal clears the 
   })
 })
 
+test('Add another reports the three-service cap instead of doing nothing', () => {
+  const page = mount()
+  const status = page.root.querySelector('[profile-items-status]')
+  for (let index = 0; index < 3; index += 1) {
+    const row = page.root.querySelectorAll('[increment-dropdown]')[index]
+    page.type(row.querySelector('[data-name="service-name"]'), 'Service ' + (index + 1))
+    page.type(row.querySelector('[data-name="service-price"]'), String((index + 1) * 100))
+    page.click(page.add)
+  }
+  assert.equal(page.root.querySelectorAll('[increment-dropdown]').length, 3)
+  page.click(page.add)
+  assert.equal(page.root.querySelectorAll('[increment-dropdown]').length, 3, 'the cap still holds')
+  assert.equal(status.textContent, 'You can keep up to three services.')
+})
+
 test('Add validates then collapses a completed service and focuses one new blank row without saving', async () => {
   const page = mount()
   page.click(page.add)
@@ -450,14 +465,20 @@ test('services bind from the profile alone when no page embed defines waitProfil
   assert.equal(page.controller(), undefined, 'binding waits for the profile')
   page.flushTimers()
   assert.equal(page.controller(), undefined, 'and keeps waiting while the profile is unset')
-  page.window.activeProfile = { type: 'full', data: {} }
+  // The page embed publishes an empty placeholder profile before it fetches the saved one.
+  page.window.activeProfile = { type: 'full', type_id: 1, last_update: null, data: {} }
   page.flushTimers()
-  assert.ok(page.controller(), 'the controller registers once the profile arrives')
+  assert.equal(page.controller(), undefined, 'a placeholder profile is not the saved profile')
+  page.window.activeProfile = { type: 'full', type_id: 1, last_update: 1758067200000, data: {} }
+  page.flushTimers()
+  assert.ok(page.controller(), 'the controller registers once the saved profile arrives')
   assert.equal(page.root.querySelectorAll('[profile-items-status]').length, 1, 'one status region, bound once')
 })
 
 test('a profile that never arrives leaves the section unbound rather than binding it empty', () => {
   const page = mount(undefined, { deferProfile: true })
+  page.flushTimers()
+  page.window.activeProfile = { type: 'full', type_id: 1, last_update: null, data: {} }
   page.flushTimers()
   page.advanceClock(10000)
   page.flushTimers()

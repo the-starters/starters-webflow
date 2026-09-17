@@ -284,7 +284,8 @@
       if (saving) return
       if (!remaining().length) { newRow(); return }
       if (!active || !meaningful(active)) { fields(active || rows()[0])[0]?.focus(); return }
-      if (!validation.validate(active).valid || remaining().length >= 3) return
+      if (!validation.validate(active).valid) return
+      if (remaining().length >= 3) { status.textContent = 'You can keep up to three services.'; return }
       summary(active)
       setOpen(active, false)
       newRow()
@@ -445,14 +446,17 @@
       window.waitProfileData(bindAll)
       return
     }
-    // `waitProfileData` comes from a page embed that may not have run yet, so mirror the main
-    // controller's fallback and wait for the profile itself. Binding is not hydration, so it
-    // stays outside runHydrationSync. Never bind without the profile: the saved services would
-    // hydrate as no rows, and a late profile would then let Save clear them. Giving up leaves
-    // the section without a controller, which the main controller already reports as unloadable.
+    // `waitProfileData` comes from a page embed that may not have run yet, so wait for the
+    // profile itself on the same signal that embed waits on: `createEmptyProfile()` publishes
+    // `window.activeProfile` as a placeholder with a null `last_update` long before the saved
+    // profile is fetched. Binding is not hydration, so it stays outside runHydrationSync. Never
+    // bind without the saved profile: the services would hydrate as no rows, and a late profile
+    // would then let Save clear them. Giving up leaves the section without a controller, which
+    // the main controller already reports as unloadable.
     const startedAt = Date.now()
     const poll = () => {
-      if (window.activeProfile) {
+      const profile = window.activeProfile
+      if (profile && profile.last_update !== null && profile.last_update !== undefined) {
         bindAll()
         return
       }
