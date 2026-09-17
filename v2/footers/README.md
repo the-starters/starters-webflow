@@ -44,7 +44,10 @@ and displays the same message. Valid selections continue through native Webflow
 submission. Keep this guard aligned in the inline fallback and CDN artifact.
 
 Regression coverage lives in `freelancer-start-project.test.js` and
-`freelancer-start-project.browser.test.js`. The browser fixture uses the contract
+`freelancer-start-project.browser.cjs`. Run the browser check explicitly with
+`node --test v2/footers/freelancer-start-project.browser.cjs` using Playwright and
+an installed Chrome; like the other `.browser.cjs` checks, it is separate from
+the dependency-free Node CI suite. The browser fixture uses the contract
 script mirror and sanitized form markup with minimal CSS; it intercepts submission
 and does not prove production Webflow delivery.
 

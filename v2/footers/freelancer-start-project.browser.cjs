@@ -1,4 +1,4 @@
-// Focused browser check: node --test v2/footers/freelancer-start-project.browser.test.js
+// Focused browser check: node --test v2/footers/freelancer-start-project.browser.cjs
 // Requires Playwright and an installed Chrome. All provider requests are isolated.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
