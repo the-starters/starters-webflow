@@ -1,6 +1,6 @@
 /* freelancer-start-project.js — extracted from V2 secure footer (freelancer-start-project-footer.html).
    Load via: <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v2/footers/freelancer-start-project.js"></script>
-   Source of truth: product-workflows/opportunities/webflow/v2/webflow-footer-code/secure/freelancer-start-project-footer.html */
+   Source of truth: sibling freelancer-start-project-footer.html; see README.md for extraction rules. */
 
 document.addEventListener('DOMContentLoaded', function () {
     const XANO_LEGACY_BASE = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:ZihCUE3Z';
