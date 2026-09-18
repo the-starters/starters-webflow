@@ -25,13 +25,13 @@ const EXPECTED_CAPTURE = {
   },
 }
 const EXPECTED_CANDIDATES = {
-  sourceCommit: 'working-tree@fa560ed66349681801f8cc7042911fc34bb1499f',
+  sourceCommit: 'working-tree@cf0b85367d17dfaef069720dfb0cea739f0dec45',
   files: {
     'profile-photo.js': { path: 'v3/build-profile/profile-photo.js', bytes: 16563, sha256: '988c84c6391241f2aa3969f4acdeb77258831bd7332e5137046e2a8f4440fcf5' },
-    'portfolio-crud.js': { path: 'v3/starter-edit-profile/portfolio-crud.js', bytes: 59243, sha256: 'da21df429b9daad20bd5fac4522e05c462eed1c1fa42de3642a0559f67983c92' },
+    'portfolio-crud.js': { path: 'v3/starter-edit-profile/portfolio-crud.js', bytes: 64244, sha256: 'a58367e0ec99b75b018f319a7d1b490f8571d39c82e73d9f63e47625b946d600' },
     'portfolio-list.js': { path: 'v3/starter-edit-profile/portfolio-list.js', bytes: 4013, sha256: 'f559928f524705d1fcce022a1213b0a637c233cbd55f4973dc376457e0ab74ff' },
-    'company-autocomplete.js': { path: 'v3/starter-edit-profile/company-autocomplete.js', bytes: 17306, sha256: 'eeadcf42be5c4388fa8cd5aa7ec0fe74e648d13b6ae64386d3446d3c9c97b94b' },
-    'company-experience-crud.js': { path: 'v3/starter-edit-profile/company-experience-crud.js', bytes: 86045, sha256: '873981f2bb50b183b084118df606d330377e30fb8be03e081b2954370077e21e' },
+    'company-autocomplete.js': { path: 'v3/starter-edit-profile/company-autocomplete.js', bytes: 25596, sha256: 'bf32125ed4c18825016209a5c20da4bfe0fb93842913f3069e0c66234eed354e' },
+    'company-experience-crud.js': { path: 'v3/starter-edit-profile/company-experience-crud.js', bytes: 97854, sha256: '997eb67429c971d467602391d26081876eb0c5314f504c3bfa1ed1ad35b0996e' },
     'work-dates.js': { path: 'v3/build-profile/work-dates.js', bytes: 2700, sha256: '4bf43605286b1f6dd796f8227a3f72e7c43aea5f41131f21bd78c283473002b6' },
   },
 }

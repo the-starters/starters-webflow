@@ -6,7 +6,8 @@ const path = require('node:path')
 const test = require('node:test')
 const vm = require('node:vm')
 
-function createHarness(file, companies, { isMulti = true, companyFetch } = {}) {
+function createHarness(file, companies, { isMulti = true, companyFetch, unified = false,
+  searchGroup: hasSearchGroup = true, tagMarkup = true, valueField = true, memberId = 'member-1' } = {}) {
   let domReady
   let dropdown
   let nextId = 0
@@ -15,9 +16,15 @@ function createHarness(file, companies, { isMulti = true, companyFetch } = {}) {
   const dropdownListeners = {}
   let hydrationSyncDepth = 0
   let dirtyEvents = 0
+  const valueAttributes = new Map()
+  const valueEvents = []
   const valueInput = {
     value: '',
+    setAttribute(name, value) { valueAttributes.set(name, String(value)) },
+    getAttribute(name) { return valueAttributes.has(name) ? valueAttributes.get(name) : null },
+    addEventListener() {},
     dispatchEvent(event) {
+      valueEvents.push(event.type)
       if (hydrationSyncDepth === 0 && (event.type === 'input' || event.type === 'change')) dirtyEvents += 1
     },
   }
@@ -47,12 +54,22 @@ function createHarness(file, companies, { isMulti = true, companyFetch } = {}) {
     appendChild() {},
     contains() { return false },
   }
+  // Only a unified Edit Profile row sits inside [profile-unified-items]; the legacy Edit
+  // Profile and Build Profile fields do not.
+  const unifiedSection = {}
+  const dispatched = []
   const input = {
     value: '',
     dataset: {},
     hasAttribute(name) { return name === 'data-multiple' && isMulti },
-    closest(selector) { return selector === '[form-group]' ? group : searchGroup },
+    closest(selector) {
+      if (selector === '[form-group]') return group
+      if (selector === '[profile-unified-items]') return unified ? unifiedSection : null
+      if (selector === '[company-search-group]') return hasSearchGroup ? searchGroup : null
+      return searchGroup
+    },
     addEventListener(name, callback) { inputListeners[name] = callback },
+    dispatchEvent(event) { dispatched.push(event.type); inputListeners[event.type]?.(event); return true },
     focus() {},
   }
   const document = {
@@ -86,7 +103,7 @@ function createHarness(file, companies, { isMulti = true, companyFetch } = {}) {
     Event: class Event {
       constructor(type) { this.type = type }
     },
-    MEMBER: { id: 'member-1' },
+    MEMBER: { id: memberId },
     qsa(selector, root) {
       if (selector === '[logo-search-input]') return [input]
       if (selector === '[also-worked-tag]' && root === tagWrapper) return tags
@@ -94,9 +111,9 @@ function createHarness(file, companies, { isMulti = true, companyFetch } = {}) {
     },
     qs(selector, root) {
       if (root === group) {
-        if (selector === '[also-worked-tag].is_template') return tagTemplate
-        if (selector === '[also-worked-wrapper]') return tagWrapper
-        if (selector === '#also-worked-with') return valueInput
+        if (selector === '[also-worked-tag].is_template') return tagMarkup ? tagTemplate : null
+        if (selector === '[also-worked-wrapper]') return tagMarkup ? tagWrapper : null
+        if (selector === '#also-worked-with') return valueField ? valueInput : null
         return null
       }
       if (selector === '[also-worked-tag-name]') return root.name
@@ -133,6 +150,11 @@ function createHarness(file, companies, { isMulti = true, companyFetch } = {}) {
   return {
     input,
     valueInput,
+    valueEvents() { return valueEvents },
+    valueState() { return valueInput.getAttribute('data-starter-also-worked-with-state') },
+    tagCount() { return tags.length },
+    context,
+    dispatchedEvents() { return dispatched },
     getDirtyEvents() { return dirtyEvents },
     clickResult(selection, { deleteResult = false } = {}) {
       let isAdded = deleteResult
@@ -335,6 +357,62 @@ for (const [label, file] of [
     assert.equal(harness.input.dataset.selectedCompanySource, undefined)
   })
 }
+
+const EDIT_AUTOCOMPLETE = path.join(__dirname, '../starter-edit-profile/company-autocomplete.js')
+const QA_WOLF = {
+  name: 'QA Wolf',
+  domain: 'qawolf.com',
+  logo_url: 'https://img.logo.dev/qawolf.com',
+  company_entity_id: 73,
+  source: 'platform',
+}
+
+test('the picker restores its Also Worked With tags to a discarded draft baseline', async () => {
+  const harness = createHarness(EDIT_AUTOCOMPLETE,
+    [{ id: 42, company_entity_id: 9, company_name: 'Acme', company_domain: 'acme.example' }])
+  await new Promise((resolve) => setImmediate(resolve))
+  const baseline = harness.valueInput.value
+  assert.equal(Object.keys(JSON.parse(baseline)).length, 1)
+
+  harness.selectCompany({ name: 'Beta', domain: 'beta.example', logo_url: '', company_entity_id: 0, source: 'custom' })
+  assert.equal(Object.keys(JSON.parse(harness.valueInput.value)).length, 2)
+
+  harness.valueInput._starterAlsoWorkedWithTags.restore(baseline)
+  assert.equal(harness.valueInput.value, baseline)
+
+  harness.valueInput._starterAlsoWorkedWithTags.restore('')
+  assert.equal(harness.valueInput.value, '{}')
+})
+
+test('an empty saved association hydrates to the value Discard restores', async () => {
+  const harness = createHarness(EDIT_AUTOCOMPLETE, [])
+  await new Promise((resolve) => setImmediate(resolve))
+  const baseline = harness.valueInput.value
+  assert.equal(baseline, '{}', 'an empty saved set is captured in the same serialized form')
+  assert.equal(harness.getDirtyEvents(), 0, 'capturing it does not look like an edit')
+
+  harness.selectCompany({ name: 'Beta', domain: 'beta.example', logo_url: '', company_entity_id: 0, source: 'custom' })
+  assert.equal(Object.keys(JSON.parse(harness.valueInput.value)).length, 1)
+
+  harness.valueInput._starterAlsoWorkedWithTags.restore(baseline)
+  assert.equal(harness.valueInput.value, baseline, 'Discard leaves nothing for the next Save to send')
+})
+
+test('a legacy Edit Profile company selection fires no change event on the field', async () => {
+  const harness = createHarness(EDIT_AUTOCOMPLETE, {}, { isMulti: false })
+  harness.selectCompany(QA_WOLF)
+
+  assert.equal(harness.input.dataset.selectedCompanyName, 'QA Wolf')
+  assert.deepEqual(harness.dispatchedEvents(), [])
+})
+
+test('a unified-row company selection fires change so its section can mark itself unsaved', async () => {
+  const harness = createHarness(EDIT_AUTOCOMPLETE, {}, { isMulti: false, unified: true })
+  harness.selectCompany(QA_WOLF)
+
+  assert.equal(harness.input.dataset.selectedCompanyName, 'QA Wolf')
+  assert.deepEqual(harness.dispatchedEvents(), ['change'])
+})
 
 function createCrudHarness(file, { deferredWrites = false, alsoWorkedWithStatuses = [], companyCreateStatuses = [], companyGetStatuses = [], initialCompanies = [] } = {}) {
   let readyPromise
@@ -831,4 +909,68 @@ test('Build Profile defers projection when deleting Company experience', async (
   const deleteRequest = harness.requests.find(({ options }) => options.method === 'DELETE')
   assert.equal(deleteRequest.url.endsWith('/7'), true)
   assert.deepEqual(JSON.parse(deleteRequest.options.body), { defer_projection: true })
+})
+
+// The Work Experience section cannot read its own baseline until the picker that owns the
+// shared "Also worked with" field has published one. These lock the latched claim the section
+// keys off: it exists before hydration lands, and every exit that leaves the field unhydrated
+// settles it as failed instead of leaving the section waiting.
+const EDIT_PICKER = path.join(__dirname, '../starter-edit-profile/company-autocomplete.js')
+
+test('Edit Profile claims the Also Worked With field before the saved set arrives', async () => {
+  const harness = createHarness(EDIT_PICKER, [{ id: 42, company_name: 'Acme', company_domain: 'acme.example' }])
+  assert.equal(harness.valueState(), 'pending', 'a picker owns this field and has not answered yet')
+  assert.ok(harness.valueEvents().includes('starter:also-worked-with-claimed'))
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(harness.valueState(), 'hydrated')
+  assert.equal(harness.valueEvents().filter((type) => type === 'starter:also-worked-with-hydrated').length, 1)
+})
+
+test('the claim settles once, so a later report cannot re-baseline a draft', async () => {
+  const harness = createHarness(EDIT_PICKER, [{ id: 42, company_name: 'Acme', company_domain: 'acme.example' }])
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(harness.valueState(), 'hydrated')
+  harness.valueInput._starterAlsoWorkedWithReady.settle(false)
+  harness.valueInput._starterAlsoWorkedWithReady.settle(true)
+  assert.equal(harness.valueState(), 'hydrated', 'the first answer is the only answer')
+  assert.equal(harness.valueEvents().filter((type) => type.startsWith('starter:also-worked-with-hydrat')).length, 1)
+})
+
+test('a picker that cannot read the saved set reports hydration failed', async () => {
+  const harness = createHarness(EDIT_PICKER, [], { companyFetch: 'not-an-array' })
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(harness.valueState(), 'failed')
+  assert.ok(harness.valueEvents().includes('starter:also-worked-with-hydration-failed'))
+})
+
+test('a picker with no company search group reports hydration failed instead of going silent', () => {
+  const harness = createHarness(EDIT_PICKER, [{ id: 42, company_name: 'Acme' }], { searchGroup: false })
+  assert.equal(harness.valueState(), 'failed')
+  assert.ok(harness.valueEvents().includes('starter:also-worked-with-hydration-failed'))
+})
+
+test('a picker with no tag template or wrapper reports hydration failed', () => {
+  const harness = createHarness(EDIT_PICKER, [{ id: 42, company_name: 'Acme' }], { tagMarkup: false })
+  assert.equal(harness.valueState(), 'failed')
+  assert.ok(harness.valueEvents().includes('starter:also-worked-with-hydration-failed'))
+})
+
+test('a signed-out member releases every section waiting on the picker', () => {
+  const harness = createHarness(EDIT_PICKER, [{ id: 42, company_name: 'Acme' }], { memberId: '' })
+  assert.equal(harness.valueState(), 'failed')
+  assert.ok(harness.valueEvents().includes('starter:also-worked-with-hydration-failed'))
+})
+
+test('a multi picker without its value field hydrates its tags without throwing', async () => {
+  const harness = createHarness(EDIT_PICKER, [{ id: 42, company_name: 'Acme', company_domain: 'acme.example' }],
+    { valueField: false })
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(harness.tagCount(), 1, 'the picker still renders the saved set')
+  assert.equal(harness.valueEvents().length, 0, 'there is no field to report a baseline on')
+})
+
+test('Edit Profile publishes its picker under a name the Build copy cannot take', () => {
+  const harness = createHarness(EDIT_PICKER, [])
+  assert.equal(typeof harness.context.window.StarterEditLogoSearchInit, 'function')
+  assert.equal(harness.context.window.StarterEditLogoSearchInit, harness.context.logoSearchInit)
 })

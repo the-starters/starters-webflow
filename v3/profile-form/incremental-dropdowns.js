@@ -9,6 +9,9 @@
       waitProfileData(() => {
         const wrappers = qsa('[increment-dropdowns]');
         wrappers.forEach((wrapper) => {
+          // Every opted-in unified section (services, companies, highlights) owns its own
+          // rows. Binding the legacy repeater inside one would stack a second controller.
+          if (wrapper.closest('[profile-unified-items]')) return;
           const addButton = qs('.dropdowns-button .button', wrapper);
           if (!addButton) return;
 

@@ -3,19 +3,68 @@
  * Original live inline body SHA-256: 24702eef9717e717f266be3f7f1b22f84609acf486c20042fb7f6a8d7d3b427f
  * Captured read-only from /starter-edit-profile on 2026-08-12.
  */
+  // The Work Experience section's draft includes the shared "Also worked with" field, so it
+  // cannot read a baseline until this picker has published one. A claim is latched on the
+  // field itself: it is made as the picker initializes, settles exactly once, and records the
+  // outcome in `data-starter-also-worked-with-state` as well as the two hydration events, so a
+  // section that starts waiting later still learns what happened. A field no picker claims is
+  // a field with no hydration to wait for.
+  function starterAlsoWorkedWithField(input) {
+    const group = input && typeof input.closest === 'function' ? input.closest('[form-group]') : null;
+    return group ? qs('#also-worked-with', group) : null;
+  }
+
+  function starterAlsoWorkedWithClaim(valueInput) {
+    if (!valueInput) return null;
+    if (valueInput._starterAlsoWorkedWithReady) return valueInput._starterAlsoWorkedWithReady;
+    const claim = {
+      state: 'pending',
+      settle: function (hydrated) {
+        if (claim.state !== 'pending') return;
+        claim.state = hydrated ? 'hydrated' : 'failed';
+        valueInput.setAttribute('data-starter-also-worked-with-state', claim.state);
+        valueInput.dispatchEvent(new Event(hydrated
+          ? 'starter:also-worked-with-hydrated'
+          : 'starter:also-worked-with-hydration-failed', { bubbles: true }));
+      },
+    };
+    valueInput._starterAlsoWorkedWithReady = claim;
+    valueInput.setAttribute('data-starter-also-worked-with-state', 'pending');
+    valueInput.dispatchEvent(new Event('starter:also-worked-with-claimed', { bubbles: true }));
+    return claim;
+  }
+
   // Handles company autocomplete via Xano and Logo.dev.
   document.addEventListener('DOMContentLoaded', function () {
+    const inputs = qsa('[logo-search-input]');
+    // Claim before the member lookup: a section that binds while that lookup is still running
+    // must be able to tell "a picker owns this field" from "no picker owns it".
+    const claims = [];
+    for (let index = 0; index < inputs.length; index += 1) {
+      claims.push(inputs[index].hasAttribute('data-multiple')
+        ? starterAlsoWorkedWithClaim(starterAlsoWorkedWithField(inputs[index]))
+        : null);
+    }
     waitForMember(() => {
-      if (!MEMBER.id) return;
-      
-      const inputs = qsa('[logo-search-input]');
-      inputs.forEach(function (input) {
+      if (!MEMBER.id) {
+        // Signed out: nothing will hydrate the field, so release every section waiting on it.
+        claims.forEach(function (claim) { if (claim) claim.settle(false); });
+        return;
+      }
+
+      for (let index = 0; index < inputs.length; index += 1) {
+        const input = inputs[index];
         const isMulti = input.hasAttribute('data-multiple');
-        logoSearchInit(input, isMulti);
-      });
+        const search = logoSearchInit(input, isMulti);
+        // A picker that could not initialize leaves the field exactly as authored.
+        if (!search && claims[index]) claims[index].settle(false);
+      }
     });
   });
 
+  // Returns the saved associations keyed by row, or `null` when the saved state could not be
+  // read at all. An empty object means "the member has none"; callers must never read a failed
+  // request as that, or a lost write would look confirmed against a set nobody could see.
   async function fetchAlsoWorkedWithCompanies(memberId) {
     try {
       const response = await window.xanoAuthFetch('https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/edit_profile/starter/get_also_worked_with', {
@@ -28,13 +77,13 @@
 
       if (!response.ok) {
         console.warn('[fetchAlsoWorkedWithCompanies] XANO error:', response.status);
-        return {};
+        return null;
       }
 
       const companies = await response.json();
       if (!Array.isArray(companies)) {
         console.warn('[fetchAlsoWorkedWithCompanies] Companies is not array:', companies);
-        return {};
+        return null;
       }
 
       return companies.reduce((acc, company) => {
@@ -61,18 +110,23 @@
       }, {});
     } catch (error) {
       console.error('[fetchAlsoWorkedWithCompanies] Failed:', error);
-      return {};
+      return null;
     }
   }
 
   function logoSearchInit(input, isMulti = false) {
     if (!input) return;
+    if (input._starterCompanySearch) return input._starterCompanySearch;
 
     const group = input.closest('[form-group]');
+    // Without the form group there is no field to claim, so nothing is left waiting.
     if (!group) return;
 
     const searchGroup = input.closest('[company-search-group]');
-    if (!searchGroup) return;
+    if (!searchGroup) {
+      if (isMulti) starterAlsoWorkedWithClaim(qs('#also-worked-with', group))?.settle(false);
+      return;
+    }
 
     const SEARCH_ENDPOINT = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:SYL06lUR/logo-search';
     const PLACEHOLDER_LOGO_URL = 'https://cdn.prod.website-files.com/69c573f20f82bd0f3384032c/6a21517ca6c1caa51f014026_company-placeholder.svg';
@@ -83,6 +137,7 @@
 
     const dropdown = document.createElement('div');
     dropdown.className = 'company-search-box';
+    dropdown.setAttribute?.('profile-company-search-results', '');
     searchGroup.appendChild(dropdown);
 
     let timer;
@@ -118,11 +173,56 @@
 
     let tagTemplate = null;
     let tagWrapper = null;
+    let restoringTags = false;
+    const tagDeleteListeners = [];
+    const alsoWorkedWithClaim = isMulti ? starterAlsoWorkedWithClaim(valueInput) : null;
     if (isMulti) {
       tagTemplate = qs('[also-worked-tag].is_template', group);
       tagWrapper = qs('[also-worked-wrapper]', group);
 
+      if (!tagTemplate || !tagWrapper) {
+        // Without the tag template or its wrapper the saved set cannot be rendered at all, so
+        // the field stays as authored. Report that rather than leave a section waiting.
+        console.warn('[logoSearchInit] also-worked-with tag template or wrapper missing');
+        alsoWorkedWithClaim?.settle(false);
+        return;
+      }
+
+      // Section-level Discard has to put the rendered tags back to the last saved set, and only
+      // this closure can render one. Narrow handle: it renders a serialized value, nothing else.
+      if (valueInput) {
+        valueInput._starterAlsoWorkedWithTags = {
+          restore: function (serialized) {
+            let companies = {};
+            try {
+              companies = serialized ? JSON.parse(serialized) : {};
+            } catch (error) {
+              companies = {};
+            }
+            Array.from(qsa('[also-worked-tag]', tagWrapper)).forEach(function (tag) { tag.remove(); });
+            restoringTags = true;
+            try {
+              for (const uniqueId of Object.keys(companies)) {
+                const company = companies[uniqueId] || {};
+                if (company.name) {
+                  renderNewTag(company.name, company.domain || '', null, uniqueId, company.logo_url || '', company.client_row_id, company.company_entity_id, company.source);
+                }
+              }
+            } finally {
+              restoringTags = false;
+            }
+            syncValue();
+          },
+        };
+      }
+
       fetchAlsoWorkedWithCompanies(MEMBER.id).then(function (selectedCompanies) {
+        if (!selectedCompanies) {
+          // The saved set could not be read. Say so instead of hydrating an empty picker, so
+          // the section can refuse Save rather than adopt "no companies" as the saved state.
+          alsoWorkedWithClaim?.settle(false);
+          return;
+        }
         const hydrateSelections = function () {
           for (const uniqueId of Object.keys(selectedCompanies)) {
             const company = selectedCompanies[uniqueId];
@@ -130,7 +230,13 @@
               renderNewTag(company.name, company.domain || '', null, uniqueId, company.logo_url || '', company.client_row_id, company.company_entity_id, company.source);
             }
           }
-          valueInput.dispatchEvent(new Event('starter:also-worked-with-hydrated', { bubbles: true }));
+          // A saved set with no companies renders no tag and so would leave the field at its
+          // authored empty string, while Discard later re-serializes the same empty set as
+          // `{}`. Write the serialized form here so the captured baseline and every later
+          // comparison speak one representation. The claim settles as hydrated here; the
+          // event it carries reports a baseline, never an edit.
+          if (valueInput) valueInput.value = serializeTags();
+          alsoWorkedWithClaim?.settle(true);
         };
         const dirtyState = window.__tsProfileDirtyState;
         if (dirtyState && typeof dirtyState.runHydrationSync === 'function') {
@@ -138,10 +244,16 @@
         } else {
           hydrateSelections();
         }
+      }).catch(function (error) {
+        // Rendering the saved set threw. The field is left part-hydrated at best, so the
+        // section must not adopt what is in it as the saved state.
+        console.error('[logoSearchInit] Also worked with hydration failed:', error);
+        alsoWorkedWithClaim?.settle(false);
       })
     }
 
-    function syncValue() {
+    // One serialization for the rendered tags, used for hydration, edits and Discard alike.
+    function serializeTags() {
       let companies = {};
 
       qsa("[also-worked-tag]", tagWrapper).forEach(function (tag) {
@@ -155,7 +267,12 @@
         }
       });
 
-      valueInput.value = JSON.stringify(companies);
+      return JSON.stringify(companies);
+    }
+
+    function syncValue() {
+      if (!valueInput) return;
+      valueInput.value = serializeTags();
       valueInput.dispatchEvent(new Event('input', { bubbles: true }));
       valueInput.dispatchEvent(new Event('change', { bubbles: true }));
     }
@@ -283,11 +400,12 @@
       }
     }
 
-    input.addEventListener('focus', function () {
+    function handleFocus() {
       searchCompanies(input.value);
-    });
+    }
+    input.addEventListener('focus', handleFocus);
 
-    input.addEventListener('input', function () {
+    function handleInput() {
       if (selectingCompany) return;
 
       clearStaleSingleSelection();
@@ -298,7 +416,8 @@
       timer = setTimeout(function () {
         searchCompanies(input.value);
       }, 250);
-    });
+    }
+    input.addEventListener('input', handleInput);
 
     function companyFromTag(tag) {
       return {
@@ -374,7 +493,8 @@
       newTag.dataset.companySource = source || item?.dataset?.source || '';
       qs('[also-worked-tag-name]', newTag).textContent = selectedName;
       qs('[also-worked-tag-domain]', newTag).textContent = selectedDomain;
-      qs('[also-worked-tag-delete]', newTag).addEventListener('click', function () {
+      const tagDelete = qs('[also-worked-tag-delete]', newTag);
+      const handleTagDelete = function () {
         newTag.remove();
 
         // remove item from the list
@@ -387,7 +507,12 @@
         for (const company of existingItems) {
           if (isSameCompany(removedCompany, companyFromItem(company))) company.classList.remove('is-added');
         }
-      });
+
+        const index = tagDeleteListeners.findIndex(function (entry) { return entry.node === tagDelete; });
+        if (index !== -1) tagDeleteListeners.splice(index, 1);
+      };
+      tagDelete.addEventListener('click', handleTagDelete);
+      tagDeleteListeners.push({ node: tagDelete, handler: handleTagDelete });
 
       tagWrapper.appendChild(newTag);
       input.value = "";
@@ -399,10 +524,11 @@
       syncValue();
 
       closeDropdown();
-      input.focus();
+      // Restoring a discarded draft must not pull focus into the picker.
+      if (!restoringTags) input.focus();
     }
 
-    dropdown.addEventListener('click', function (event) {
+    function handleDropdownSelect(event) {
       const item = event.target.closest('.company-search-item');
       if (!item) return;
 
@@ -425,6 +551,12 @@
         renderedQuery = selectedName;
         storeSingleSelection(selectedName, selectedDomain, selectedLogoUrl, selectedCompanyEntityId, selectedSource);
         closeDropdown();
+        // Unified rows listen for this to mark their section dirty. On the legacy Edit Profile
+        // and Build Profile markup the canonical loader captures `change` and arms the
+        // unsaved-changes warning, so a selection there must stay silent.
+        if (input.closest('[profile-unified-items]')) {
+          input.dispatchEvent(new Event('change', { bubbles: true }));
+        }
       }
 
       if (outOfCapacity) {
@@ -434,9 +566,10 @@
       setTimeout(function () {
         selectingCompany = false;
       }, 0);
-    });
+    }
+    dropdown.addEventListener('click', handleDropdownSelect);
 
-    dropdown.addEventListener('click', function (event) {
+    function handleDropdownDelete(event) {
       const companyDelete = event.target.closest('.company-search-delete');
       if (!companyDelete) return;
 
@@ -456,9 +589,36 @@
       }
 
       syncValue();
-    });
+    }
+    dropdown.addEventListener('click', handleDropdownDelete);
 
-    document.addEventListener('click', function (event) {
+    function handleOutsideClick(event) {
       if (!searchGroup.contains(event.target)) closeDropdown();
-    });
+    }
+    document.addEventListener('click', handleOutsideClick);
+    input._starterCompanySearch = {
+      destroy() {
+        clearTimeout(timer);
+        searchSequence += 1;
+        cancelActiveSearch();
+        input.removeEventListener('focus', handleFocus);
+        input.removeEventListener('input', handleInput);
+        document.removeEventListener('click', handleOutsideClick);
+        dropdown.removeEventListener('click', handleDropdownSelect);
+        dropdown.removeEventListener('click', handleDropdownDelete);
+        tagDeleteListeners.splice(0).forEach(function (entry) {
+          entry.node.removeEventListener('click', entry.handler);
+        });
+        dropdown.remove();
+        delete input._starterCompanySearch;
+      },
+    };
+    return input._starterCompanySearch;
   }
+
+  // Both this controller and the Build Profile copy declare `logoSearchInit` at the top level,
+  // so on a page that loads both, the one that runs last wins `window.logoSearchInit`. The Edit
+  // Profile rows need this picker specifically - it publishes `_starterCompanySearch` and renders
+  // into the authored `[profile-company-search-results]` container - so publish it under its own
+  // name too. The bare `logoSearchInit` stays declared for the legacy callers on this page.
+  window.StarterEditLogoSearchInit = logoSearchInit;

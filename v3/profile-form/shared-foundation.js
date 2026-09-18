@@ -828,6 +828,24 @@
         }
       });
 
+      $wrapper[0].addEventListener('starter:profile-restore', function () {
+        if (!$wrapper[0].closest('[profile-unified-items="services"]')) return;
+        const restore = function () {
+          selectedOptions = [];
+          preservedUnmatchedValues = [];
+          $selectedWrapper.empty();
+          initializeWithValue();
+          updateInput();
+          checkOnMin();
+          filterOptions();
+          settleSelectionState();
+          toggleList(false);
+        };
+        const dirtyState = window.__tsProfileDirtyState;
+        if (dirtyState?.runHydrationSync) dirtyState.runHydrationSync(restore);
+        else restore();
+      });
+
       toggleList(false);
     });
   }

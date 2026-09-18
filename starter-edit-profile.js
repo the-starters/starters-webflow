@@ -21,11 +21,18 @@ const onDomReady = (callback) => {
 const PROFILE_WORKFLOW = 'starter_profile_edit';
 const PROFILE_CONTROLLER_VERSION = 'starter-edit-profile-v3';
 const PAID_CALL_SETTINGS_URL = '/starter-dashboard#calendar';
+// A unified section registers its controller only once the saved profile lands, which is
+// after the submit handlers are installed. Inside this window a Save click is early, not
+// unrecoverable. Matches the profile-wait budget the section scripts themselves use.
+const UNIFIED_SECTION_BIND_GRACE_MS = 10000;
 const workflowDiagnosticsControllerScript = document.currentScript;
 const WORKFLOW_DIAGNOSTICS_TIMEOUT_MS = 2000;
 let memberAuthGeneration = 0;
 let observedMemberstackClient = null;
 const personalDetailsReplayProofs = new WeakMap();
+// Remembers the Webflow-authored Required state the first time a profile-type rule touches a
+// control, so later type switches restore that authored value instead of a script-set one.
+const authoredProfileRequirements = new WeakMap();
 
 function memberFromResult(result) {
 	return result?.data || result?.member || result || null;
@@ -660,7 +667,13 @@ onDomReady(function () {
 
 			qsa('[data-non-required]').forEach(input => {
 				const checkForType = input.dataset.nonRequired;
-				input.required = checkForType === type ? false : true;
+				if (input.closest?.('[profile-unified-items]')) {
+					if (!authoredProfileRequirements.has(input)) authoredProfileRequirements.set(input, input.required);
+					const authored = authoredProfileRequirements.get(input);
+					// The map records what Webflow authored, once per page load, before the active
+					// profile type rewrites the live `required` attribute.
+					input.required = checkForType === type ? false : authored;
+				} else input.required = checkForType === type ? false : true;
 			});
 
 			syncSelectionGroupBounds(type);
@@ -668,6 +681,7 @@ onDomReady(function () {
 
 		/* SUBMIT METHODS */
 		const PATCH_ENDPOINT = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/edit_profile/update/';
+		const READBACK_ENDPOINT = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/starter/get';
 		const STEP_PAYLOAD_MAP = {
 			1: {
 				First_Name: 'first-name',
@@ -877,15 +891,41 @@ onDomReady(function () {
 				const submitButton = qs('[data-edit-submit]', step);
 				if (!submitButton) return;
 
+				const unified = step.hasAttribute('profile-unified-items');
+				const handlersBoundAt = Date.now();
+				if (unified && !window.StarterProfileSections?.get(step)) {
+					// Say so from page load rather than presenting a Save that cannot write yet. The
+					// section clears these when it binds; a click meanwhile is answered, never ignored.
+					submitButton.setAttribute('aria-disabled', 'true');
+					submitButton.setAttribute('data-profile-section-loading', '');
+				}
+
 				submitButton.addEventListener('click', async (event) => {
 					event.preventDefault();
 					const replayProof = stepIndex === 1 ? takePersonalDetailsReplay(form) : null;
 					let saveStarted = false;
 					let saveToken = null;
 					let canonicalSaveAccepted = false;
+					// Filled in only when the server answered with a refusal, so the section can
+					// tell a known "no" apart from a response it never received.
+					const saveOutcome = {};
 					try {
 						if (stepIndex === 6) clearStepSixPriceValidity();
-						const validation = validateOwnedStep(stepIndex, { report: true });
+						const sectionController = window.StarterProfileSections?.get(step);
+						if (unified && !sectionController) {
+							// The section script is present and still waiting for the saved profile, so the
+							// click is early. Only a missing script, or a wait that has run out, is
+							// unrecoverable and needs a reload.
+							const binding = Boolean(window.StarterProfileSections)
+								&& Date.now() - handlersBoundAt < UNIFIED_SECTION_BIND_GRACE_MS;
+							openProfileFeedback('edit-form-error', openErrorModal, binding
+								? 'This section is still loading. Your changes have not been submitted. Try again in a moment.'
+								: 'This section could not load. Your changes have not been submitted. Reload the page before editing.');
+							return;
+						}
+						const validation = sectionController
+							? sectionController.validate()
+							: validateOwnedStep(stepIndex, { report: true });
 						if (!validation.valid) {
 							await workflowDiagnosticsReady;
 							recordProfileDiagnostic(null, {
@@ -897,18 +937,20 @@ onDomReady(function () {
 							return;
 						}
 
+						if (sectionController && !sectionController.begin()) return;
 						saveToken = window.__tsProfileDirtyState?.beginSave(stepIndex);
 						saveStarted = true;
-						canonicalSaveAccepted = await submitStep(stepIndex, submitButton, replayProof, saveToken);
+						canonicalSaveAccepted = await submitStep(stepIndex, submitButton, replayProof, saveToken, saveOutcome);
 					} finally {
 						if (saveStarted) window.__tsProfileDirtyState?.finishSave(stepIndex, canonicalSaveAccepted, saveToken);
+						if (saveStarted) window.StarterProfileSections?.get(step)?.finish(canonicalSaveAccepted, saveOutcome.known ? saveOutcome : null);
 						rejectReplayProof(replayProof);
 					}
 				});
 			});
 		}
 
-		async function submitStep(stepIndex, submitButton, replayProof = null, saveToken = null) {
+		async function submitStep(stepIndex, submitButton, replayProof = null, saveToken = null, saveOutcome = null) {
 			setSubmitLoading(submitButton, true);
 			let memberScope;
 			try {
@@ -955,7 +997,10 @@ onDomReady(function () {
 			// Services. Real FormData always carries the `service` capture field, so the
 			// price contract is owned by the step itself instead of by that field having
 			// a value. Otherwise a blank capture field skips every price check.
-			if (stepIndex === 6) {
+			const sectionController = window.StarterProfileSections?.get(stepElement(stepIndex));
+			if (stepIndex === 6 && sectionController) {
+				sectionController.prepare(payload);
+			} else if (stepIndex === 6) {
 				const serviceFormData = getFormDataObject();
 				const service1 = parseJson(serviceFormData.service);
 				const service2 = parseJson(serviceFormData["service-2"]);
@@ -1094,9 +1139,22 @@ onDomReady(function () {
 			}
 
 			let canonicalSaveAccepted = false;
+			async function checkSavedSection() {
+				if (!sectionController || typeof window.xanoAuthFetch !== 'function') return false;
+				await revalidateMemberScope(memberScope);
+				const readback = await window.xanoAuthFetch(READBACK_ENDPOINT, {
+					method: 'POST', headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ member_id: memberScope.member.id }),
+				});
+				if (!readback.ok) return false;
+				const data = await readback.json();
+				await revalidateMemberScope(memberScope);
+				return sectionController.matchesSaved(Array.isArray(data) ? data[0] : data);
+			}
 			try {
 				acceptReplayProof(replayProof);
 				requestStarted = true;
+				sectionController?.requestStarted(payload, checkSavedSection);
 				const response = await fetch(`${PATCH_ENDPOINT}${memberScope.member.id}`, {
 					method: 'PATCH',
 					headers: { 'Content-Type': 'application/json' },
@@ -1109,6 +1167,14 @@ onDomReady(function () {
 				const hasProjectionState = typeof result?.projection_pending === 'boolean';
 				if (!response.ok && !canonicalSaved) {
 					failureCode = 'HTTP_ERROR';
+					// The server answered: this write was refused, not lost. Hand the section a
+					// known outcome so it keeps the draft editable instead of pausing Save.
+					if (saveOutcome) {
+						saveOutcome.known = true;
+						saveOutcome.message = typeof result?.message === 'string' && result.message.trim()
+							? result.message.trim()
+							: 'The server rejected this change. Check the entry and try again.';
+					}
 					throw new Error(result?.message || result?.error || `Profile update failed (${response.status})`);
 				}
 				if (!canonicalSaved || !hasProjectionState) {
@@ -1159,6 +1225,26 @@ onDomReady(function () {
 				);
 			} catch (error) {
 				const authChanged = error?.code === 'MEMBER_SCOPE_CHANGED';
+				// A refusal the server already answered is not in doubt, and an unchanged
+				// submission would read back as a match. Reconciling it would report success
+				// for a write that never happened, so only unknown outcomes are reconciled.
+				const refused = saveOutcome?.known === true;
+				if (sectionController && requestStarted && !authChanged && !refused && typeof window.xanoAuthFetch === 'function') {
+					try {
+						if (await checkSavedSection()) {
+							diagnostic = recordProfileDiagnostic(diagnostic, {
+								result: 'success', stage: 'reconciliation', request_started: true,
+								duration_ms: Date.now() - startedAt,
+							});
+							decorateProfileFeedback('edit-form-success', diagnostic);
+							openProfileFeedback('edit-form-success', openSuccessModal, 'Your saved profile contains these changes.');
+							return true;
+						}
+					} catch (_) {
+						// A failed or mismatching read cannot prove the original request stopped.
+						// Preserve the unknown outcome; never replay the PATCH automatically.
+					}
+				}
 				diagnostic = recordProfileDiagnostic(diagnostic, {
 					result: 'failed',
 					stage: authChanged ? 'auth' : responseStatus === null ? 'network' : 'response',
@@ -1976,6 +2062,9 @@ onDomReady(() => {
 				group.style.display = isCallRateYes ? '' : 'none';
 				toggleInputs(group, isCallRateYes, clearDisabledValues);
 			});
+			// Inside a unified section `toggleInputs` enables the controls it shows, which would
+			// hand Paid Call settings back to this form. The dashboard owns them, so lock them again.
+			configureCanonicalCallSettings();
 		};
 
 		function freeCallToggle(clearDisabledValues = false) {
@@ -1987,6 +2076,8 @@ onDomReady(() => {
 				group.style.display = isFreeCallYes ? '' : 'none';
 				toggleInputs(group, isFreeCallYes, clearDisabledValues);
 			});
+			// Same for Free Call settings: showing the group must not re-enable its controls.
+			configureCanonicalCallSettings();
 		};
 
 		function toggleInputs(wrap, state = null, clearDisabledValues = false) {
@@ -1996,7 +2087,9 @@ onDomReady(() => {
 				if (!state && clearDisabledValues) el.value = '';
 
 				// toggle required attribute
-				if (wrap.hasAttribute('data-required')) {
+				if (wrap.closest?.('[profile-unified-items="services"]')) {
+					el.disabled = !state;
+				} else if (wrap.hasAttribute('data-required')) {
 					el.required = state;
 				}
 

@@ -21,11 +21,16 @@ function element(overrides = {}) {
     addEventListener(type, listener) {
       listeners.set(type, [...(listeners.get(type) || []), listener])
     },
+    removeEventListener(type, listener) {
+      listeners.set(type, (listeners.get(type) || []).filter(item => item !== listener))
+    },
     dispatchEvent() { return true },
     fire(type, event = {}) {
       for (const listener of listeners.get(type) || []) listener({ type, ...event })
     },
     hasAttribute() { return false },
+    setAttribute() {},
+    getAttribute() { return null },
     appendChild() {},
     contains() { return false },
     closest() { return null },
@@ -40,6 +45,9 @@ function boot(source = SOURCE, { multi = false, nodeListTags = false } = {}) {
   const searchGroup = element()
   const valueInput = element()
   const tagWrapper = element()
+  // A multi picker renders its selections as tags, so the template and its wrapper are part
+  // of the authored markup it needs before it will initialize.
+  const tagTemplate = element()
   const input = element({
     hasAttribute(name) { return multi && name === 'data-multiple' },
   })
@@ -66,6 +74,9 @@ function boot(source = SOURCE, { multi = false, nodeListTags = false } = {}) {
       addEventListener(type, listener) {
         if (type === 'DOMContentLoaded') domReady.push(listener)
         if (type === 'click') documentClicks.push(listener)
+      },
+      removeEventListener(type, listener) {
+        if (type === 'click') documentClicks.splice(documentClicks.indexOf(listener), 1)
       },
       createElement() {
         dropdown = element()
@@ -107,6 +118,7 @@ function boot(source = SOURCE, { multi = false, nodeListTags = false } = {}) {
     },
     qs(selector, root) {
       if (root === group && selector === '#also-worked-with') return valueInput
+      if (root === group && selector === '[also-worked-tag].is_template') return tagTemplate
       if (root === group && selector === '[also-worked-wrapper]') return tagWrapper
       return null
     },
@@ -136,6 +148,7 @@ function boot(source = SOURCE, { multi = false, nodeListTags = false } = {}) {
 
   return {
     input,
+    initializeAgain() { context.logoSearchInit(input, multi) },
     fetchedQueries,
     abortedQueries,
     get dropdown() { return dropdown },
@@ -185,6 +198,37 @@ function boot(source = SOURCE, { multi = false, nodeListTags = false } = {}) {
 }
 
 const ACME = [{ name: 'Acme Corp', domain: 'acme.example', logo_url: '' }]
+
+test('repeat initialization keeps one search, and removing a row cancels its pending search and listeners', async () => {
+  const harness = boot()
+  const dropdown = harness.dropdown
+  harness.initializeAgain()
+  assert.equal(harness.dropdown, dropdown)
+  await harness.search('acme')
+  harness.input._starterCompanySearch.destroy()
+  assert.deepEqual(harness.abortedQueries, ['acme'])
+  await harness.resolveSearch('acme', ACME)
+  assert.doesNotMatch(dropdown.innerHTML, /Acme Corp/)
+  await harness.search('another')
+  assert.deepEqual(harness.fetchedQueries, ['acme'])
+})
+
+test('destroying a company search releases its input, dropdown, and document listeners', async () => {
+  const harness = boot()
+  const dropdown = harness.dropdown
+
+  await harness.search('acme')
+  await harness.resolveSearch('acme', ACME)
+  harness.input._starterCompanySearch.destroy()
+
+  // Any surviving dropdown listener would reach into this target and throw.
+  const detonator = { closest() { throw new Error('a dropdown listener survived destroy()') } }
+  dropdown.fire('click', { target: detonator })
+  await harness.clickOutside()
+  await harness.search('another')
+
+  assert.deepEqual(harness.fetchedQueries, ['acme'])
+})
 
 test('a slow company search reports progress while it is still the active search', async () => {
   const harness = await boot()

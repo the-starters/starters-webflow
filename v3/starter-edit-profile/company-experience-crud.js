@@ -496,6 +496,110 @@ function starterProfileCompanyMonthYearLabel(value) {
   return `${parts[0]} ${parts[parts.length - 1]}`;
 }
 
+async function starterProfileCompanyErrorBody(response) {
+    // A refusal can answer with JSON, with HTML, or with nothing at all. Read it defensively
+    // so a parse failure never turns a received refusal into an unknown write.
+    if (response && typeof response.json === 'function') {
+        try {
+            return await response.json();
+        } catch (error) { /* the body is not JSON */ }
+    }
+    return null;
+}
+
+// How long the unified Work Experience section waits for a picker that claimed the Also Worked
+// With field and then never answered. Last resort only: a picker that hydrates, fails, or never
+// claims the field settles this at once. Matches the profile-wait budget elsewhere.
+const ALSO_WORKED_WITH_HYDRATION_TIMEOUT_MS = 10000;
+
+// The Also Worked With field belongs to the Work Experience draft, and the picker in
+// company-autocomplete.js hydrates it on its own schedule, so the section cannot read a
+// baseline until the picker has published one. Readiness is latched on the field itself:
+// a picker claims it as it initializes (`data-starter-also-worked-with-state`) and settles
+// the claim exactly once, through the hydrated / hydration-failed events. A field no picker
+// ever claims has no hydration to wait for, so the value already in it is the baseline; a
+// blind wait there would fail the whole section closed over a picker that does not exist.
+function starterProfileAlsoWorkedWithReadiness(input) {
+    return new Promise(function (resolve) {
+        let settled = false;
+        let unclaimedTimer = null;
+        let hydrationTimer = null;
+        function settle(ready) {
+            if (settled) return;
+            settled = true;
+            clearTimeout(unclaimedTimer);
+            clearTimeout(hydrationTimer);
+            resolve(ready);
+        }
+        input.addEventListener('starter:also-worked-with-hydrated', function () { settle(true); });
+        input.addEventListener('starter:also-worked-with-hydration-failed', function () { settle(false); });
+        function follow() {
+            clearTimeout(unclaimedTimer);
+            const state = input.getAttribute('data-starter-also-worked-with-state');
+            if (state === 'hydrated') { settle(true); return; }
+            if (state === 'failed') { settle(false); return; }
+            // Claimed and still hydrating. A picker that never answers must not hold the
+            // section open for the rest of the page session.
+            hydrationTimer = setTimeout(function () { settle(false); }, ALSO_WORKED_WITH_HYDRATION_TIMEOUT_MS);
+        }
+        if (input.getAttribute('data-starter-also-worked-with-state')) { follow(); return; }
+        input.addEventListener('starter:also-worked-with-claimed', follow);
+        // Pickers claim their field as they initialize, which has already happened by the
+        // time this section binds. One more macrotask covers a picker that starts late.
+        unclaimedTimer = setTimeout(function () {
+            if (input.getAttribute('data-starter-also-worked-with-state')) { follow(); return; }
+            settle(true);
+        }, 0);
+    });
+}
+
+// Identity of one Also Worked With association, ignoring order, keys, logos and the row ids
+// the server assigns on write, so a draft can be compared with what the server actually holds.
+function starterProfileAlsoWorkedWithSignature(companies) {
+    let source = companies;
+    if (typeof source === 'string') {
+        try {
+            source = source ? JSON.parse(source) : {};
+        } catch (error) {
+            return '';
+        }
+    }
+    if (!source || typeof source !== 'object') return '[]';
+    return JSON.stringify(Object.keys(source).map(function (key) {
+        const company = source[key] || {};
+        return [
+            String(company.name || company.company_name || '').trim().toLowerCase(),
+            String(company.domain || company.company_domain || '').trim().toLowerCase(),
+            Number(company.company_entity_id) || 0,
+        ].join('|');
+    }).sort());
+}
+
+function starterProfileCompanyResponseError(response, data, fallback) {
+    // A received non-2xx answer is a known refusal: the server replied and wrote nothing.
+    // `known` lets a section save distinguish it from a lost response, which stays unknown
+    // until a canonical read resolves it. `serverMessage` is only set when the body carries
+    // a usable message, so callers never show an internal fallback string to a Starter.
+    const serverMessage = data && typeof data.message === 'string' && data.message.trim() ? data.message.trim() : '';
+    const error = new Error(serverMessage || fallback);
+    error.status = response && response.status;
+    error.known = true;
+    if (serverMessage) error.serverMessage = serverMessage;
+    return error;
+}
+
+function starterProfileCompanyReceivedError(response, cause) {
+    // The server answered 2xx, so the write landed - only its body could not be read. The error
+    // keeps the message and status the caller would have seen before, so legacy callers that
+    // catch it behave exactly as they did; `received` tells a unified section this is an answer
+    // it received, never a lost response a canonical read could disprove.
+    const error = new Error((cause && cause.message) || 'The server answer could not be read');
+    error.status = response && response.status;
+    error.received = true;
+    error.cause = cause;
+    return error;
+}
+
 function hasStarterEditCompanyPendingChanges(createDrafts, updateDrafts, deleteDraftIds, alsoWorkedWithChanged) {
     return Boolean(createDrafts.length || updateDrafts.size || deleteDraftIds.size || alsoWorkedWithChanged);
 }
@@ -550,6 +654,7 @@ function createStarterEditCompanyDraftDirtyController(options) {
             const MAX = 3;
 
             let starter_xano_id = null;
+            const unifiedSection = qs('[profile-unified-items="companies"]');
 
             const companyList = qs('.company-list');
             const companyTemplate = companyList ? qs('.company-card', companyList) : null;
@@ -570,12 +675,14 @@ function createStarterEditCompanyDraftDirtyController(options) {
             const editEndDateInput = qs('#edit-company-end');
             const editCurrentWorkCheckbox = qs('#edit-company-current');
 
-            enableStarterProfileCompanyMonthInput(startDateInput, 'Start month and year');
-            enableStarterProfileCompanyMonthInput(endDateInput, 'End month and year');
-            enableStarterProfileCompanyMonthInput(editStartDateInput, 'Start month and year');
-            enableStarterProfileCompanyMonthInput(editEndDateInput, 'End month and year');
-            bindStarterProfileCompanyMonthRange(startDateInput, endDateInput, currentWorkCheckbox);
-            bindStarterProfileCompanyMonthRange(editStartDateInput, editEndDateInput, editCurrentWorkCheckbox);
+            if (!unifiedSection) {
+                enableStarterProfileCompanyMonthInput(startDateInput, 'Start month and year');
+                enableStarterProfileCompanyMonthInput(endDateInput, 'End month and year');
+                enableStarterProfileCompanyMonthInput(editStartDateInput, 'Start month and year');
+                enableStarterProfileCompanyMonthInput(editEndDateInput, 'End month and year');
+                bindStarterProfileCompanyMonthRange(startDateInput, endDateInput, currentWorkCheckbox);
+                bindStarterProfileCompanyMonthRange(editStartDateInput, editEndDateInput, editCurrentWorkCheckbox);
+            }
 
             const modalEdit = qs('[data-modal-target="company-edit"]');
             const modalEditTrigger = qs('[data-modal-trigger="company-edit"]');
@@ -590,6 +697,14 @@ function createStarterEditCompanyDraftDirtyController(options) {
             const cancelCompanyEditButton = qs('[cancel-company-edit]');
             const companySubmit = qs('[data-edit-submit="companies"]');
 
+            // Counted the moment a mutation is handed to fetch, never before: a section that
+            // compares the count across a write learns whether anything was submitted at all.
+            let companyMutationDispatches = 0;
+            function dispatchCompanyMutation(url, options) {
+                companyMutationDispatches += 1;
+                return fetch(url, options);
+            }
+
             const alsoWorkedWithInput = qs('#also-worked-with');
             const editFormSuccessTrigger = qs("[data-modal-trigger='edit-form-success']");
             const editFormErrorTrigger = qs("[data-modal-trigger='edit-form-error']");
@@ -600,6 +715,59 @@ function createStarterEditCompanyDraftDirtyController(options) {
             // populate isn't mistaken for a pending change.
             let alsoWorkedWithBaseline = alsoWorkedWithInput ? alsoWorkedWithInput.value : '';
             let alsoWorkedWithBaselineReady = !alsoWorkedWithInput;
+
+            if (unifiedSection) {
+                const memberId = MEMBER.id;
+                function checkMember() {
+                    if (MEMBER.id !== memberId) throw new Error('Signed-in member changed');
+                }
+                if (!window.StarterProfileCompanies || !window.StarterProfileValidation) {
+                    if (companySubmit) companySubmit.setAttribute('disabled', '');
+                    return;
+                }
+                // The picker hydrates the "Also worked with" field on its own schedule, and that
+                // field is part of this section's draft. Hold the section in its loading state
+                // until the picker that claimed the field reports a baseline: a tag added in the
+                // gap would otherwise be skipped by Save and then adopted as already-saved when
+                // hydration lands. A field no picker claims is ready with the value it already has.
+                let alsoWorkedWithReady = Promise.resolve(true);
+                if (alsoWorkedWithInput) {
+                    alsoWorkedWithReady = starterProfileAlsoWorkedWithReadiness(alsoWorkedWithInput)
+                        .then(function (ready) {
+                            if (ready) {
+                                alsoWorkedWithBaseline = alsoWorkedWithInput.value;
+                                alsoWorkedWithBaselineReady = true;
+                            }
+                            return ready;
+                        });
+                }
+                await window.StarterProfileCompanies.bind(unifiedSection, {
+                    async read() {
+                        checkMember();
+                        if (!await alsoWorkedWithReady) throw new Error('Also worked with could not be read');
+                        const result = await getCompanies();
+                        checkMember();
+                        if (!result.starter_id || !Array.isArray(result.companies)) throw new Error('Companies could not be read');
+                        starter_xano_id = result.starter_id;
+                        return result.companies;
+                    },
+                    async create(value, replaceId) { checkMember(); return commitCreateCompanyDraft(value, replaceId); },
+                    async update(id, value) { checkMember(); return commitUpdateCompanyDraft(id, value); },
+                    async remove(id) { checkMember(); return deleteCompany(id); },
+                    async saveOther() { checkMember(); return commitAlsoWorkedWith(); },
+                    otherValue() { return alsoWorkedWithInput ? alsoWorkedWithInput.value : ''; },
+                    async matchOther(value) { checkMember(); return matchSavedAlsoWorkedWith(value); },
+                    acceptOther(value) { acceptAlsoWorkedWith(value); },
+                    restoreOther() { restoreAlsoWorkedWith(); },
+                    hasOtherChanges: hasAlsoWorkedWithChanges,
+                    parseDate: starterProfileCompanyDatepickerValue,
+                    // Counts the mutations that actually reached the network, so the section can
+                    // tell a lost response from a call that threw before it sent anything.
+                    dispatches: function () { return companyMutationDispatches; },
+                    monthRangeMessage: STARTER_PROFILE_COMPANY_MONTH_RANGE_MESSAGE,
+                });
+                return;
+            }
 
             let editStartDateBaseline = null;
             let editEndDateBaseline = null;
@@ -885,7 +1053,7 @@ function createStarterEditCompanyDraftDirtyController(options) {
 
             async function getCompanies() {
                 const url = `${XANO_GET_COMPANIES_URL}?member_id=${encodeURIComponent(MEMBER.id)}`;
-                const response = await fetch(url);
+                const response = await fetch(url, unifiedSection ? { cache: 'no-store' } : undefined);
                 const data = await response.json();
 
                 if (!response.ok) {
@@ -1176,7 +1344,7 @@ function createStarterEditCompanyDraftDirtyController(options) {
             }
 
             async function createCompany(payload) {
-                const request = () => fetch(XANO_CREATE_COMPANY_URL, {
+                const request = () => dispatchCompanyMutation(XANO_CREATE_COMPANY_URL, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -1188,18 +1356,21 @@ function createStarterEditCompanyDraftDirtyController(options) {
                     ? diagnostics.observeMutation('company_experience_create', request)
                     : request());
 
-                const data = await response.json();
-
                 if (!response.ok) {
-                    console.error('[Companies] create error:', data);
-                    throw new Error(data.message || 'Company creation failed');
+                    const error = await starterProfileCompanyErrorBody(response);
+                    console.error('[Companies] create error:', error);
+                    throw starterProfileCompanyResponseError(response, error, 'Company creation failed');
                 }
 
-                return data;
+                try {
+                    return await response.json();
+                } catch (parseError) {
+                    throw starterProfileCompanyReceivedError(response, parseError);
+                }
             }
 
             async function updateCompany(companyId, payload) {
-                const request = () => fetch(`${XANO_UPDATE_COMPANY_URL}/${encodeURIComponent(companyId)}`, {
+                const request = () => dispatchCompanyMutation(`${XANO_UPDATE_COMPANY_URL}/${encodeURIComponent(companyId)}`, {
                     method: 'PATCH',
                     headers: {
                         'Content-Type': 'application/json',
@@ -1211,18 +1382,21 @@ function createStarterEditCompanyDraftDirtyController(options) {
                     ? diagnostics.observeMutation('company_experience_update', request)
                     : request());
 
-                const data = await response.json();
-
                 if (!response.ok) {
-                    console.error('[Companies] update error:', data);
-                    throw new Error(data.message || 'Company update failed');
+                    const error = await starterProfileCompanyErrorBody(response);
+                    console.error('[Companies] update error:', error);
+                    throw starterProfileCompanyResponseError(response, error, 'Company update failed');
                 }
 
-                return data;
+                try {
+                    return await response.json();
+                } catch (parseError) {
+                    throw starterProfileCompanyReceivedError(response, parseError);
+                }
             }
 
             async function deleteCompany(companyId) {
-                const request = () => fetch(`${XANO_DELETE_COMPANY_URL}/${encodeURIComponent(companyId)}`, {
+                const request = () => dispatchCompanyMutation(`${XANO_DELETE_COMPANY_URL}/${encodeURIComponent(companyId)}`, {
                     method: 'DELETE',
                     headers: {
                         'Content-Type': 'application/json',
@@ -1233,17 +1407,18 @@ function createStarterEditCompanyDraftDirtyController(options) {
                     ? diagnostics.observeMutation('company_experience_delete', request)
                     : request());
 
+                if (!response.ok) {
+                    const error = await starterProfileCompanyErrorBody(response);
+                    console.error('[Companies] delete error:', error);
+                    throw starterProfileCompanyResponseError(response, error, 'Company delete failed');
+                }
+
                 let data = null;
 
                 try {
                     data = await response.json();
                 } catch (error) {
                     data = null;
-                }
-
-                if (!response.ok) {
-                    console.error('[Companies] delete error:', data);
-                    throw new Error((data && data.message) || 'Company delete failed');
                 }
 
                 return data;
@@ -1274,7 +1449,7 @@ function createStarterEditCompanyDraftDirtyController(options) {
                 if (!hasAlsoWorkedWithChanges()) return;
                 const submittedAlsoWorkedWith = alsoWorkedWithInput.value;
 
-                const request = () => fetch(XANO_SET_ALSO_WORKED_WITH_URL, {
+                const request = () => dispatchCompanyMutation(XANO_SET_ALSO_WORKED_WITH_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -1288,18 +1463,45 @@ function createStarterEditCompanyDraftDirtyController(options) {
                     : request());
 
                 if (!response.ok) {
-                    let data = null;
-                    try {
-                        data = await response.json();
-                    } catch (error) {
-                        data = null;
-                    }
+                    const data = await starterProfileCompanyErrorBody(response);
 
                     console.error('[setAlsoWorkedWith] XANO error:', response.status, data);
-                    throw new Error((data && data.message) || `Also worked with save failed (${response.status})`);
+                    throw starterProfileCompanyResponseError(response, data, `Also worked with save failed (${response.status})`);
                 }
 
                 alsoWorkedWithBaseline = submittedAlsoWorkedWith;
+            }
+
+            // The Also Worked With picker owns the tags; this reads the saved association back
+            // through the same loader the picker hydrates from, so a lost save can be resolved
+            // against server state instead of blocking the section for the page session.
+            function alsoWorkedWithLoader() {
+                return typeof window.fetchAlsoWorkedWithCompanies === 'function'
+                    ? window.fetchAlsoWorkedWithCompanies
+                    : null;
+            }
+
+            async function matchSavedAlsoWorkedWith(value) {
+                const loader = alsoWorkedWithLoader();
+                if (!loader) throw new Error('Also worked with state could not be read');
+                const saved = await loader(MEMBER.id);
+                // A failed read answers with no set at all. Treating that as "no companies"
+                // would confirm a cleared association that may never have been written.
+                if (!saved) throw new Error('Also worked with state could not be read');
+                return starterProfileAlsoWorkedWithSignature(saved) === starterProfileAlsoWorkedWithSignature(value);
+            }
+
+            function acceptAlsoWorkedWith(value) {
+                if (!alsoWorkedWithInput) return;
+                alsoWorkedWithBaseline = typeof value === 'string' ? value : alsoWorkedWithInput.value;
+                alsoWorkedWithBaselineReady = true;
+            }
+
+            function restoreAlsoWorkedWith() {
+                if (!alsoWorkedWithInput) return;
+                alsoWorkedWithInput.value = alsoWorkedWithBaseline;
+                const picker = alsoWorkedWithInput._starterAlsoWorkedWithTags;
+                if (picker && typeof picker.restore === 'function') picker.restore(alsoWorkedWithBaseline);
             }
 
             function triggerFieldEvents(input) {
