@@ -50,6 +50,8 @@ function load(overrides = {}, pathname = '/build-profile/full', { respond = null
   const step = new Element()
   submit.closest = () => step
   const success = new Element()
+  const successCTA = new Element()
+  successCTA.href = '/starter-onboarding'
   const error = new Element()
   // Mirrors the authored Webflow error state: a `.w-form-fail` wrapper whose
   // single child div carries the copy the member reads.
@@ -77,6 +79,8 @@ function load(overrides = {}, pathname = '/build-profile/full', { respond = null
       'free-user': values['first-name'],
       'last-name': values['last-name'],
       phone: values.phone,
+      'freelancer-dashboard-url': '/starter-dashboard',
+      'freelancer-profile-url': '/starter/test-starter',
     },
   }
   const qs = (selector, scope) => {
@@ -89,6 +93,7 @@ function load(overrides = {}, pathname = '/build-profile/full', { respond = null
     }
     if (scope === form && selector === '[form-submit]') return submit
     if (scope === form && inputs[selector]) return inputs[selector]
+    if (scope === success && selector === '[dashboard-button-wrap] .button') return successCTA
     if (scope === error && selector === 'p, div') return errorMessage
     return null
   }
@@ -112,6 +117,7 @@ function load(overrides = {}, pathname = '/build-profile/full', { respond = null
     qs,
     FormData,
     setLoader(state, wrapper) { loaderStates.push({ state, wrapper }) },
+    setTimeout,
     xanoAuthFetch: async (url, init) => {
       requests.push({ url, body: JSON.parse(init.body) })
       if (respond) return respond(url, init)
@@ -126,8 +132,70 @@ function load(overrides = {}, pathname = '/build-profile/full', { respond = null
   }
   vm.runInNewContext(SOURCE, context, { filename: 'submit-writer.js' })
   domReady.forEach((callback) => callback())
-  return { form, submit, step, success, error, errorMessage, errorPanelIcon, inputs, requests, loaderStates }
+  return { form, submit, step, success, successCTA, error, errorMessage, errorPanelIcon, inputs, requests, loaderStates }
 }
+
+test('retries one rejected canonical request with the identical payload', async () => {
+  let attempt = 0
+  const result = load({}, '/build-profile/full-profile', {
+    respond: async () => {
+      attempt += 1
+      if (attempt === 1) throw new TypeError('Failed to fetch')
+      return { ok: true, status: 200, json: async () => ({ saved: true }) }
+    },
+  })
+
+  await result.submit.click()
+
+  assert.equal(result.requests.length, 2)
+  assert.deepEqual(result.requests[0].body, result.requests[1].body)
+  assert.equal(result.error.style.display, 'none')
+  assert.equal(result.success.style.display, 'block')
+})
+
+test('shows an ambiguous-save recovery message after two rejected requests', async () => {
+  const result = load({}, '/build-profile/full-profile', {
+    respond: async () => { throw new TypeError('Failed to fetch') },
+  })
+
+  await result.submit.click()
+
+  assert.equal(result.requests.length, 2)
+  assert.equal(result.error.style.display, 'block')
+  assert.equal(
+    result.errorMessage.textContent,
+    'We could not confirm your profile was saved. Please wait a moment, then submit again.',
+  )
+})
+
+// WebKit raises these once the connection drops with the POST already out, which is
+// the ambiguous case the recovery copy exists for. Treating them as deterministic
+// would tell a member on a flaky phone that the submit simply failed.
+test('retries and reports an unconfirmed save for each WebKit transport message', async () => {
+  for (const message of ['The network connection was lost.', 'cancelled', 'Load failed']) {
+    const result = load({}, '/build-profile/full-profile', {
+      respond: () => { throw new TypeError(message) },
+    })
+
+    await result.submit.click()
+
+    assert.equal(result.requests.length, 2, message)
+    assert.equal(
+      result.errorMessage.textContent,
+      'We could not confirm your profile was saved. Please wait a moment, then submit again.',
+      message,
+    )
+  }
+})
+
+test('preserves the authored onboarding CTA after a successful save', async () => {
+  const result = load()
+
+  await result.submit.click()
+
+  assert.equal(result.success.style.display, 'block')
+  assert.equal(result.successCTA.href, '/starter-onboarding')
+})
 
 test('sets native whole-dollar constraints on each direct price input', () => {
   const result = load()
@@ -431,7 +499,11 @@ test('a later non-price failure restores the authored error copy', async () => {
   const result = load(
     { service: JSON.stringify({ name: 'Audit', price: '500.50' }) },
     '/build-profile/full',
-    { respond: () => { throw new Error('offline') } },
+    {
+      respond: () => {
+        throw Object.assign(new Error('Member session changed during request'), { code: 'MEMBER_SCOPE_CHANGED' })
+      },
+    },
   )
   await result.submit.click()
   assert.match(result.errorMessage.textContent, /whole-dollar service price/)
@@ -564,16 +636,62 @@ test('an error panel holding nested markup is revealed without being flattened',
 
 test('a rejected canonical request clears the loader behind the authored error state', async () => {
   const result = load({}, '/build-profile/full', {
-    respond: () => { throw new Error('offline') },
+    respond: () => { throw new TypeError('Failed to fetch') },
   })
   await result.submit.click()
-  assert.equal(result.requests.length, 1)
+  assert.equal(result.requests.length, 2)
   assert.equal(result.error.style.display, 'block')
   assert.equal(result.success.style.display, 'none')
   assert.deepEqual(result.loaderStates, [
     { state: true, wrapper: result.step },
     { state: false, wrapper: result.step },
   ])
+})
+
+test('does not retry a non-transport client error', async () => {
+  const result = load({}, '/build-profile/full', {
+    respond: () => { throw Object.assign(new Error('Member scope changed'), { code: 'MEMBER_SCOPE_CHANGED' }) },
+  })
+
+  await result.submit.click()
+
+  assert.equal(result.requests.length, 1)
+  assert.equal(result.error.style.display, 'block')
+  assert.equal(result.errorMessage.textContent, 'Something went wrong. Please try again.')
+})
+
+// A TypeError thrown before the request reaches the network - a replaced
+// xanoAuthFetch bridge - is deterministic: issuing it twice and reporting it as an
+// unconfirmed save would tell the member to resubmit a save that never happened.
+test('does not retry a TypeError raised before the request reaches the network', async () => {
+  const result = load({}, '/build-profile/full', {
+    respond: () => { throw new TypeError('xanoAuthFetch is not a function') },
+  })
+
+  await result.submit.click()
+
+  assert.equal(result.requests.length, 1)
+  assert.equal(result.error.style.display, 'block')
+  assert.equal(result.errorMessage.textContent, 'Something went wrong. Please try again.')
+})
+
+// The second attempt has its own cause. Relabelling it as an unconfirmed save
+// would erase a live auth failure and send the member back into a doomed retry.
+test('a non-transport failure during the retry keeps its own cause', async () => {
+  let attempt = 0
+  const result = load({}, '/build-profile/full', {
+    respond: () => {
+      attempt += 1
+      if (attempt === 1) throw new TypeError('Failed to fetch')
+      throw Object.assign(new Error('Member session changed during request'), { code: 'MEMBER_SCOPE_CHANGED' })
+    },
+  })
+
+  await result.submit.click()
+
+  assert.equal(result.requests.length, 2)
+  assert.equal(result.error.style.display, 'block')
+  assert.equal(result.errorMessage.textContent, 'Something went wrong. Please try again.')
 })
 
 test('a malformed success body clears the loader behind the authored error state', async () => {

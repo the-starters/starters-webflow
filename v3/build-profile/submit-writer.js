@@ -74,6 +74,48 @@
         priceFeedback.forEach((feedback, field) => clearPriceFeedback(field));
       }
 
+      // A CORS/preflight or transport failure rejects with no response delivered,
+      // which does not prove the request never reached the server. Chrome reports
+      // "Failed to fetch", Firefox "NetworkError when attempting to fetch resource",
+      // WebKit "Load failed", "The network connection was lost." or "cancelled" - the
+      // last two are what a dropped mobile connection raises once the POST is already
+      // out. A TypeError raised before the request leaves the page - a replaced
+      // xanoAuthFetch bridge, say - is a deterministic failure, so it owns its own
+      // cause instead of an unconfirmed-save recovery.
+      const TRANSPORT_RETRY_DELAY_MS = 400;
+      const TRANSPORT_FAILURE_RE =
+        /failed to fetch|networkerror|load failed|network connection was lost|cancelled/i;
+      const isTransportFailure = (candidate) => candidate?.code === 'NETWORK_ERROR'
+        || (candidate?.name === 'TypeError' && TRANSPORT_FAILURE_RE.test(candidate?.message || ''));
+
+      async function saveCanonicalProfile(endpointUrl, payload) {
+        const request = () => xanoAuthFetch(endpointUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+
+        try {
+          return await request();
+        } catch (firstError) {
+          if (!isTransportFailure(firstError)) throw firstError;
+          // The profile write is an upsert and its projection intent is versioned, so
+          // replaying the identical payload once is safe. Wait briefly first so the
+          // second attempt does not land inside the same transient condition. Retry
+          // the payload once, and never retry an HTTP response.
+          await new Promise((resolve) => { setTimeout(resolve, TRANSPORT_RETRY_DELAY_MS); });
+          try {
+            return await request();
+          } catch (retryError) {
+            if (!isTransportFailure(retryError)) throw retryError;
+            throw Object.assign(retryError, {
+              code: 'PROFILE_SAVE_NETWORK_ERROR',
+              panelMessage: 'We could not confirm your profile was saved. Please wait a moment, then submit again.',
+            });
+          }
+        }
+      }
+
       // custom form submission handler
       formSubmit.addEventListener('click', async function (e) {
         e.preventDefault();
@@ -355,11 +397,7 @@
           setLoader(true, step);
 
           if (!savedBuildResult) {
-            const response = await xanoAuthFetch(ENDPOINT_URL, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(payload),
-            });
+            const response = await saveCanonicalProfile(ENDPOINT_URL, payload);
 
             if (!response.ok) {
               const errorText = await response.text();
@@ -412,12 +450,6 @@
 
           const successName = qs('[data-value="first-name"]', success);
           if (successName) successName.textContent = committedPayload.first_name || '';
-
-          const successCTA = qs('[dashboard-button-wrap] .button', success);
-          if (successCTA) {
-            const redirectUrl = MEMBER.customFields?.['freelancer-dashboard-url'] || MEMBER.customFields?.['freelancer-profile-url'] || '/starter-dashboard';
-            successCTA.href = redirectUrl;
-          }
 
           setLoader(false, step);
           form.style.display = 'none';

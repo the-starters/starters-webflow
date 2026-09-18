@@ -220,20 +220,77 @@ function extractHandlerBody(html, fromIndex) {
   return null
 }
 
-function clickBodyWritesAuthoritativeEndpoint(body, html) {
+// Names bound to the authoritative endpoint literal anywhere in the owner source.
+// The click path reaches the endpoint through whichever of these a `xanoAuthFetch`
+// call is handed, so resolution is a name lookup rather than a per-call rescan.
+const ENDPOINT_BINDING_RE =
+  /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*['"`][^'"`]*build_profile\/starter\/update/g
+
+// The writer delegates: the click handler calls the submit builder, which calls
+// the canonical-save helper and passes the endpoint in. Following one level would
+// stop at the builder and report a wrong verdict on a page whose click owner is
+// intact, so the walk is transitive, bounded, and tracks which parameter of each
+// callee received an endpoint-bearing argument.
+const MAX_CLICK_HELPER_DEPTH = 4
+
+function endpointBindings(html) {
+  const names = new Set()
+  const re = new RegExp(ENDPOINT_BINDING_RE.source, 'g')
+  let match
+  while ((match = re.exec(html))) names.add(match[1])
+  return names
+}
+
+function parenthesizedList(source, openParenIndex) {
+  if (source[openParenIndex] !== '(') return null
+  let depth = 0
+  for (let index = openParenIndex; index < source.length; index += 1) {
+    const char = source[index]
+    if (char === '(') depth += 1
+    else if (char === ')') {
+      depth -= 1
+      if (depth === 0) return source.slice(openParenIndex + 1, index)
+    }
+  }
+  return null
+}
+
+function splitTopLevel(list) {
+  const parts = []
+  let depth = 0
+  let current = ''
+  for (const char of list || '') {
+    if ('([{'.indexOf(char) !== -1) depth += 1
+    else if (')]}'.indexOf(char) !== -1) depth -= 1
+    if (char === ',' && depth === 0) {
+      parts.push(current.trim())
+      current = ''
+      continue
+    }
+    current += char
+  }
+  parts.push(current.trim())
+  return parts
+}
+
+function resolvesToEndpoint(expression, endpointNames) {
+  if (!expression) return false
+  if (/['"`]/.test(expression)) return AUTHORITATIVE_ENDPOINT_RE.test(expression)
+  return endpointNames.has(expression)
+}
+
+function callsEndpointDirectly(body, endpointNames) {
   const callRe = /xanoAuthFetch\(\s*([^\s,)]+)/g
   let call
   while ((call = callRe.exec(body))) {
-    const arg = call[1]
-    if (/['"`]/.test(arg)) {
-      if (AUTHORITATIVE_ENDPOINT_RE.test(arg)) return true
-      continue
-    }
-    const assignRe = new RegExp(
-      `(?:const|let|var)\\s+${escapeRegExp(arg)}\\s*=\\s*['"\`][^'"\`]*build_profile\\/starter\\/update`,
-    )
-    if (assignRe.test(html)) return true
+    if (resolvesToEndpoint(call[1], endpointNames)) return true
   }
+  return false
+}
+
+function bodyReachesAuthoritativeEndpoint(body, html, endpointNames, depth, visited) {
+  if (callsEndpointDirectly(body, endpointNames)) return true
+  if (depth <= 0) return false
 
   const helperCallRe = /\b([A-Za-z_$][\w$]*)\s*\(/g
   let helperCall
@@ -245,23 +302,42 @@ function clickBodyWritesAuthoritativeEndpoint(body, html) {
     )
     const declaration = declarationRe.exec(html)
     if (!declaration) continue
+
+    const parameterEnd = declaration.index + declaration[0].length - 1
+    const parameters = splitTopLevel(parenthesizedList(html, parameterEnd))
+    const args = splitTopLevel(parenthesizedList(body, helperCall.index + helperCall[0].length - 1))
+    // A parameter shadows the caller's binding of the same name, so what the callee
+    // holds is decided by the argument alone: bound when it resolves to the
+    // endpoint, unbound otherwise, never inherited from an outer constant.
+    const calleeNames = new Set(endpointNames)
+    parameters.forEach((parameter, position) => {
+      if (resolvesToEndpoint(args[position], endpointNames)) calleeNames.add(parameter)
+      else calleeNames.delete(parameter)
+    })
+
+    const key = `${helperName}|${[...calleeNames].sort().join(',')}`
+    // Memoized per remaining budget, not per helper: a helper first reached down a
+    // long path can exhaust the budget and prove nothing, and a later shorter path
+    // to it must still be explored or an intact click owner is reported broken.
+    const exploredAtDepth = visited.get(key)
+    if (exploredAtDepth !== undefined && exploredAtDepth >= depth) continue
+    visited.set(key, depth)
+
     const helperBody = extractHandlerBody(html, declaration.index + declaration[0].length)
     if (!helperBody) continue
-
-    callRe.lastIndex = 0
-    while ((call = callRe.exec(helperBody))) {
-      const arg = call[1]
-      if (/['"`]/.test(arg)) {
-        if (AUTHORITATIVE_ENDPOINT_RE.test(arg)) return true
-        continue
-      }
-      const assignRe = new RegExp(
-        `(?:const|let|var)\\s+${escapeRegExp(arg)}\\s*=\\s*['"\`][^'"\`]*build_profile\\/starter\\/update`,
-      )
-      if (assignRe.test(html)) return true
-    }
+    if (bodyReachesAuthoritativeEndpoint(helperBody, html, calleeNames, depth - 1, visited)) return true
   }
   return false
+}
+
+function clickBodyWritesAuthoritativeEndpoint(body, html) {
+  return bodyReachesAuthoritativeEndpoint(
+    body,
+    html,
+    endpointBindings(html),
+    MAX_CLICK_HELPER_DEPTH,
+    new Map(),
+  )
 }
 
 function ownsAuthoritativeClickSubmit(html) {

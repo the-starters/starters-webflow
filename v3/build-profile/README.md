@@ -204,10 +204,24 @@ block when a submit does not complete. Every failure — a rejected price, a
 rejected request, a non-ok response, a malformed success body, or a failed photo
 commit — clears the step loader as it reveals that block, so the error state is
 never left behind a spinner.
-Its other behavior changes are the reviewer-alias compatibility described above
-and the profile-save and pending-photo commit gate described in
-[Profile-photo upload contract](#profile-photo-upload-contract). The separate
-outcome observer still does not change its request or payload.
+Its other behavior changes are the reviewer-alias compatibility described above,
+the profile-save and pending-photo commit gate described in
+[Profile-photo upload contract](#profile-photo-upload-contract), and a single
+retry of the canonical write. Only a transport rejection - one that names a
+browser fetch failure, so no response was received - is retried, once, after a
+short wait and with the identical payload; every other rejection, including one
+raised during the retry, keeps its own cause and the authored error copy. When
+both attempts fail on transport the panel says the save could not be confirmed,
+because a transport rejection does not prove the request never reached Xano. That
+same ambiguity is why the retry depends on the server-side idempotency gate in
+[Release verification](#release-verification).
+The candidate also stops rewriting the authored success-state CTA. The live inline
+body overrode that link with `freelancer-dashboard-url`, `freelancer-profile-url`,
+or `/starter-dashboard`; the candidate leaves the authored `/starter-onboarding`
+link the audit already requires in place, so the success state navigates where the
+page author wired it and an already-onboarded member is forwarded on by
+`v3/onboarding-done-redirect.js` instead of by the writer.
+The separate outcome observer still does not change its request or payload.
 
 The extracted shared foundation and incremental-dropdown candidates are declared
 behavior-change candidates too, so the first two bullets above describe the *live*
@@ -221,7 +235,10 @@ This exclusion is a release boundary, not proof that the remaining inline code i
 1. Verify every file passes `node --check` and the exposure scan.
 2. Confirm the Xano writer's server-side idempotency gates have passed; until
    then, stop after GitHub candidate validation with no semver release,
-   jsDelivr purge, or Webflow publish.
+   jsDelivr purge, or Webflow publish. These gates are what makes the client's
+   single transport retry safe: the retried attempt may be a replay of a POST
+   that already landed, so the writer must collapse the duplicate reviewer and
+   projection side effects rather than repeat them.
 3. After those gates pass and the cutover has separate approval, release
    through no-mistakes, semver, and jsDelivr purge.
 4. Back up every exact Webflow Code Embed block before replacement.

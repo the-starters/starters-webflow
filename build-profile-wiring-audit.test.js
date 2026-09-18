@@ -504,6 +504,7 @@ test('a page that loads the writer from the CDN passes when the module owns the 
     // and against the real repo module, which is what the page executes
     const withRepo = auditBuildProfileHtml(pagePath, pageHtml({ submitOwner: 'cdn' }))
     assert.deepEqual(withRepo.findings, [])
+    assert.equal(withRepo.submitOwnerSource, 'cdn')
   }
 })
 
@@ -516,6 +517,145 @@ test('a CDN writer that lost the endpoint or the click owner still fails', () =>
     submitWriterSource: cdnWriterStub.replace("addEventListener('click'", "addEventListener('submit'"),
   })
   assert.ok(nativeOnly.findings.some((f) => f.startsWith('authoritative Xano submit must be owned by the [form-submit] click path')))
+})
+
+// A helper parameter shadows a module constant of the same name, so the endpoint it
+// holds is whatever the call site passed. Inheriting the outer binding would pass a
+// click path that writes to a different endpoint entirely.
+test('a helper parameter shadowing the endpoint constant is judged by its argument', () => {
+  const writer = (argument) => `
+  const form = document.querySelector('[build-profile-form]')
+  const formSubmit = form ? qs('[form-submit]', form) : null
+  const ENDPOINT_URL = "https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/build_profile/starter/update"
+  const DRAFT_URL = "https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/build_profile/draft"
+
+  function saveIt(ENDPOINT_URL) { return xanoAuthFetch(ENDPOINT_URL, { method: 'POST' }) }
+
+  formSubmit.addEventListener('click', async function (e) {
+    await saveIt(${argument})
+  })
+`
+  const misrouted = auditBuildProfileHtml('/build-profile/consult', pageHtml({ submitOwner: 'cdn' }), {
+    submitWriterSource: writer('DRAFT_URL'),
+  })
+  assert.ok(misrouted.findings.some((f) => f.startsWith('authoritative Xano submit must be owned by the [form-submit] click path')))
+
+  const routed = auditBuildProfileHtml('/build-profile/consult', pageHtml({ submitOwner: 'cdn' }), {
+    submitWriterSource: writer('ENDPOINT_URL'),
+  })
+  assert.deepEqual(routed.findings, [])
+})
+
+// The writer's click handler does not call the endpoint itself: it calls the submit
+// builder, which hands the endpoint to the canonical-save helper. The click-owner
+// check has to follow that whole chain, or it fails a page whose owner is intact.
+test('a click owner that reaches the endpoint through a delegating helper passes', () => {
+  const delegating = `
+  const form = document.querySelector('[build-profile-form]')
+  const formSubmit = form ? qs('[form-submit]', form) : null
+
+  async function saveCanonicalProfile(endpointUrl, payload) {
+    return xanoAuthFetch(endpointUrl, { method: 'POST', body: JSON.stringify(payload) })
+  }
+
+  async function submitFreelancerData(formData) {
+    const ENDPOINT_URL = "https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/build_profile/starter/update"
+    return saveCanonicalProfile(ENDPOINT_URL, formData)
+  }
+
+  formSubmit.addEventListener('click', async function (e) {
+    await submitFreelancerData({})
+  })
+`
+  const result = auditBuildProfileHtml('/build-profile/consult', pageHtml({ submitOwner: 'cdn' }), {
+    submitWriterSource: delegating,
+  })
+  assert.deepEqual(result.findings, [])
+  assert.equal(result.submitOwnerSource, 'cdn')
+})
+
+// Following the chain must not degrade into "some helper somewhere calls
+// xanoAuthFetch": the click path has to reach the authoritative endpoint itself.
+test('a click owner that hands a delegating helper a different endpoint still fails', () => {
+  const misrouted = `
+  const form = document.querySelector('[build-profile-form]')
+  const formSubmit = form ? qs('[form-submit]', form) : null
+  const ENDPOINT_URL = "https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/build_profile/starter/update"
+  const DRAFT_URL = "https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/build_profile/draft"
+
+  async function saveCanonicalProfile(endpointUrl, payload) {
+    return xanoAuthFetch(endpointUrl, { method: 'POST' })
+  }
+
+  async function submitFreelancerData(formData) {
+    return saveCanonicalProfile(DRAFT_URL, formData)
+  }
+
+  formSubmit.addEventListener('click', async function (e) {
+    await submitFreelancerData({})
+  })
+`
+  const result = auditBuildProfileHtml('/build-profile/consult', pageHtml({ submitOwner: 'cdn' }), {
+    submitWriterSource: misrouted,
+  })
+  assert.ok(result.findings.some((f) => f.startsWith('authoritative Xano submit must be owned by the [form-submit] click path')))
+})
+
+// Exploring a helper down a long path proves nothing once the budget runs out, so
+// that visit must not stand in for a later shorter path to the same helper. An
+// unrelated deep call ahead of the submit call is the cheapest way to hit this.
+test('an unrelated deep call before the submit call does not hide the click owner', () => {
+  const writer = (prelude) => `
+  const form = document.querySelector('[build-profile-form]')
+  const formSubmit = form ? qs('[form-submit]', form) : null
+  const ENDPOINT_URL = "https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/build_profile/starter/update"
+
+  function post(payload) { return xanoAuthFetch(ENDPOINT_URL, { method: 'POST' }) }
+  function saveCanonicalProfile(payload) { return post(payload) }
+  function trackStep(payload) { return saveCanonicalProfile(payload) }
+  function measure(payload) { return trackStep(payload) }
+  function prepare(payload) { return measure(payload) }
+  function submitFreelancerData(payload) { return saveCanonicalProfile(payload) }
+
+  formSubmit.addEventListener('click', async function (e) {
+    ${prelude}
+    await submitFreelancerData({})
+  })
+`
+  for (const prelude of ['prepare({});', '']) {
+    const result = auditBuildProfileHtml('/build-profile/consult', pageHtml({ submitOwner: 'cdn' }), {
+      submitWriterSource: writer(prelude),
+    })
+    assert.deepEqual(result.findings, [], `prelude: ${JSON.stringify(prelude)}`)
+  }
+})
+
+// The walk is still budgeted: re-exploring on a larger budget must not turn the
+// bound into an unbounded crawl of every named call in the source.
+test('a delegation chain past the helper budget still fails the click-owner check', () => {
+  const chain = (hops) => {
+    const helpers = []
+    for (let hop = 1; hop <= hops; hop += 1) {
+      helpers.push(hop === hops
+        ? `function h${hop}(p) { return xanoAuthFetch(ENDPOINT_URL, { method: 'POST' }) }`
+        : `function h${hop}(p) { return h${hop + 1}(p) }`)
+    }
+    return `
+  const form = document.querySelector('[build-profile-form]')
+  const formSubmit = form ? qs('[form-submit]', form) : null
+  const ENDPOINT_URL = "https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/build_profile/starter/update"
+  ${helpers.join('\n  ')}
+  formSubmit.addEventListener('click', async function (e) { await h1({}) })
+`
+  }
+  const withinBudget = auditBuildProfileHtml('/build-profile/consult', pageHtml({ submitOwner: 'cdn' }), {
+    submitWriterSource: chain(4),
+  })
+  assert.deepEqual(withinBudget.findings, [])
+  const pastBudget = auditBuildProfileHtml('/build-profile/consult', pageHtml({ submitOwner: 'cdn' }), {
+    submitWriterSource: chain(5),
+  })
+  assert.ok(pastBudget.findings.some((f) => f.startsWith('authoritative Xano submit must be owned by the [form-submit] click path')))
 })
 
 test('a CDN writer from outside the Starters repo, or an unresolvable one, fails', () => {
