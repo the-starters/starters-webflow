@@ -214,8 +214,14 @@ raised during the retry, keeps its own cause and the authored error copy. When
 both attempts fail on transport the panel says the save could not be confirmed,
 because a transport rejection does not prove the request never reached Xano. That
 same ambiguity is why the retry depends on the server-side idempotency gate in
-[Release verification](#release-verification). The separate outcome observer still
-does not change its request or payload.
+[Release verification](#release-verification).
+The candidate also stops rewriting the authored success-state CTA. The live inline
+body overrode that link with `freelancer-dashboard-url`, `freelancer-profile-url`,
+or `/starter-dashboard`; the candidate leaves the authored `/starter-onboarding`
+link the audit already requires in place, so the success state navigates where the
+page author wired it and an already-onboarded member is forwarded on by
+`v3/onboarding-done-redirect.js` instead of by the writer.
+The separate outcome observer still does not change its request or payload.
 
 The extracted shared foundation and incremental-dropdown candidates are declared
 behavior-change candidates too, so the first two bullets above describe the *live*
