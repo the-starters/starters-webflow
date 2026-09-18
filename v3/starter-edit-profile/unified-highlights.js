@@ -21,6 +21,19 @@
       status.setAttribute('profile-items-status', ''); section.appendChild(status)
     }
     status.setAttribute('role', 'status')
+    // Same for the check control: adopt the authored one, keeping the label its author wrote.
+    // Adopted before any early return so a halted section never leaves a live check control.
+    let check = section.querySelector('[profile-items-check-save]')
+    if (!check) {
+      check = document.createElement('button')
+      check.setAttribute('profile-items-check-save', ''); section.appendChild(check)
+    }
+    if (check.tagName === 'BUTTON') check.setAttribute('type', 'button')
+    // Authored children are the label, so only a wholly empty control gets the default copy.
+    if (!check.children.length && !check.textContent.trim()) check.textContent = 'Check saved state'
+    // A Webflow class can set `display`, which beats the [hidden] rule, so write both.
+    const showCheck = visible => { check.hidden = !visible; check.style.display = visible ? '' : 'none' }
+    showCheck(false)
     const original = section.querySelector(ROW)
     const template = original?.cloneNode(true), parent = original?.parentElement
     if (!template || !parent || !save) {
@@ -33,15 +46,6 @@
       return
     }
     const field = (record, key) => record.row.querySelector('[profile-highlight-field="' + key + '"]')
-    // Same for the check control: adopt the authored one, keeping the label its author wrote.
-    let check = section.querySelector('[profile-items-check-save]')
-    if (!check) {
-      check = document.createElement('button')
-      check.setAttribute('profile-items-check-save', ''); section.appendChild(check)
-    }
-    if (check.tagName === 'BUTTON') check.setAttribute('type', 'button')
-    if (!String(check.textContent || '').trim()) check.textContent = 'Check saved state'
-    check.hidden = true
     let records = [], baseline = [], active = null, loading = true, saving = false, unknown = null
     let misconfigured = false, warned = false
     const clone = value => JSON.parse(JSON.stringify(value))
@@ -352,12 +356,12 @@
         if (result === NOT_LANDED) {
           // A lag behind a received answer is not proof; only a lost response can be settled here.
           if (!unknown.lost) throw new Error('Still unknown')
-          unknown = null; check.hidden = true
+          unknown = null; showCheck(false)
           status.textContent = NOT_LANDED_MESSAGE
           return
         }
         if (!result) throw new Error('Still unknown')
-        unknown.confirm(result); unknown = null; check.hidden = true
+        unknown.confirm(result); unknown = null; showCheck(false)
         status.textContent = 'That change is confirmed. Save the section to finish the remaining draft changes.'
       } catch (_) { status.textContent = 'The save is still unconfirmed. Your draft is kept; Save remains paused.' }
       finally { check.disabled = false }
@@ -524,7 +528,7 @@
         if (later) { dirty(); status.textContent = 'Changes saved. Later edits are still unsaved.' }
         else { restore(); clean(); status.textContent = 'Changes saved.' }
       } catch (error) {
-        check.hidden = !unknown?.reconcile
+        showCheck(!!unknown?.reconcile)
         if (error?.known) {
           // The server refused this change, so Save and Discard stay available for the draft.
           status.textContent = error.serverMessage || 'The server rejected this change. Check the entry and try again.'

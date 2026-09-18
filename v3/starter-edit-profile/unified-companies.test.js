@@ -912,10 +912,13 @@ test('Work Experience reveals the authored check element when a save cannot be c
   assert.equal(page.authoredCheck.getAttribute('type'), 'button')
   assert.equal(page.authoredCheck.textContent, 'Check saved state', 'an empty authored label falls back to the script copy')
   assert.equal(page.authoredCheck.hidden, true)
+  // A Webflow class can set `display`, so the inline style is what actually hides it.
+  assert.equal(page.authoredCheck.style.display, 'none')
   page.type('job_title', 'Engineer')
   await page.submit()
   assert.match(page.status(), /could not be confirmed/)
   assert.equal(page.authoredCheck.hidden, false)
+  assert.equal(page.authoredCheck.style.display, '')
   assert.equal(page.section.querySelectorAll('[profile-items-check-save]').length, 1)
   // Clicking the authored control runs the same canonical check the created one runs.
   page.click(page.authoredCheck)

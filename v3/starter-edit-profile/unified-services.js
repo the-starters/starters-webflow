@@ -26,6 +26,20 @@
       section.appendChild(status)
     }
     status.setAttribute('role', 'status')
+    // Same for the check control: adopt the authored one, keeping the label its author wrote.
+    // Adopted before any early return so a halted section never leaves a live check control.
+    let checkSave = section.querySelector('[profile-items-check-save]')
+    if (!checkSave) {
+      checkSave = document.createElement('button')
+      checkSave.setAttribute('profile-items-check-save', '')
+      section.appendChild(checkSave)
+    }
+    if (checkSave.tagName === 'BUTTON') checkSave.setAttribute('type', 'button')
+    // Authored children are the label, so only a wholly empty control gets the default copy.
+    if (!checkSave.children.length && !checkSave.textContent.trim()) checkSave.textContent = 'Check saved state'
+    // A Webflow class can set `display`, which beats the [hidden] rule, so write both.
+    const showCheck = visible => { checkSave.hidden = !visible; checkSave.style.display = visible ? '' : 'none' }
+    showCheck(false)
     const save = section.querySelector('[data-edit-submit]')
     if (!rows().length || !save) {
       // The row is also the template for every added row, and Save is the only route to the
@@ -76,16 +90,6 @@
     const rowSnapshot = () => remaining().filter(row => retained.has(row) || meaningful(row))
       .map(row => ({ values: valuesFor(row), retained: true }))
     const scalarValues = records => records.map(({ value, checked }) => [value, checked])
-    // Same for the check control: adopt the authored one, keeping the label its author wrote.
-    let checkSave = section.querySelector('[profile-items-check-save]')
-    if (!checkSave) {
-      checkSave = document.createElement('button')
-      checkSave.setAttribute('profile-items-check-save', '')
-      section.appendChild(checkSave)
-    }
-    if (checkSave.tagName === 'BUTTON') checkSave.setAttribute('type', 'button')
-    if (!String(checkSave.textContent || '').trim()) checkSave.textContent = 'Check saved state'
-    checkSave.hidden = true
     checkSave.addEventListener('click', async () => {
       if (!uncertain || saving || checkSave.disabled || !readbackCheck) return
       checkSave.disabled = true
@@ -412,13 +416,13 @@
           // The server answered and refused the write, so nothing was saved and nothing is
           // in doubt. Keep the draft and the baseline, and leave Save and Discard usable.
           uncertain = false
-          checkSave.hidden = true
+          showCheck(false)
           status.textContent = outcome.message || 'The server rejected this change. Check the entry and try again.'
           return
         }
         if (!saved) {
           uncertain = dispatched
-          checkSave.hidden = !uncertain || !readbackCheck
+          showCheck(uncertain && !!readbackCheck)
           // A save the page abandoned before sending it never left the browser, which is the
           // same outcome - and the same sentence - the other unified sections report for a
           // write nobody dispatched. "Not saved" is reserved for a write that was sent and a
@@ -429,7 +433,7 @@
           return
         }
         uncertain = false
-        checkSave.hidden = true
+        showCheck(false)
         const laterEdits = JSON.stringify(rowSnapshot()) !== JSON.stringify(submittedRows)
           || JSON.stringify(scalarValues(scalars())) !== JSON.stringify(scalarValues(submittedScalars))
         status.textContent = 'Changes saved.'

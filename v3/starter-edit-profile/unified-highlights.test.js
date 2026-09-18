@@ -35,7 +35,9 @@ async function mount({ portfolios = [], fail = null, required = false, hold = nu
   // Designer-authored status and check elements, ahead of the rows so position cannot be
   // what the script matches on.
   const authoredStatus = h('div', { 'profile-items-status': '', class: 'form_status' })
-  const authoredCheck = h('button', { 'profile-items-check-save': '', class: 'button is-secondary' })
+  // An icon-only authored check: children but no text, which must survive the label fallback.
+  const authoredCheckIcon = h('span', { class: 'icon-embed' })
+  const authoredCheck = h('button', { 'profile-items-check-save': '', class: 'button is-secondary' }, [authoredCheckIcon])
   const section = h('section', { 'profile-unified-items': 'highlights' }, [
     ...(authored ? [authoredStatus, authoredCheck] : []), h('div', {}, rows ? [row] : []),
     ...(saveControl ? [save] : []), add, discard,
@@ -103,7 +105,7 @@ async function mount({ portfolios = [], fail = null, required = false, hold = nu
   const click = element => element.dispatchEvent(makeEvent('click', element, { bubbles: true }))
   const field = (key, index = 0) => section.querySelectorAll('[profile-item-row]')[index].querySelector('[profile-highlight-field="' + key + '"]')
   return { section, save, add, discard, click, field, requests, warnings, marker, strayOutside, strayBackend, context, revoked,
-    authoredStatus, authoredCheck,
+    authoredStatus, authoredCheck, authoredCheckIcon,
     media: (kind, index = 0) => section.querySelectorAll('[profile-items-media="' + kind + '"]')[index]
       .querySelectorAll('[profile-media-item]'),
     mutations: () => requests.filter(request => request.method !== 'GET'),
@@ -806,12 +808,15 @@ test('Highlights reveals the authored check element when a save cannot be confir
   assert.equal(page.section.querySelectorAll('[profile-items-check-save]').length, 1)
   assert.equal(page.section.querySelector('[profile-items-check-save]'), page.authoredCheck)
   assert.equal(page.authoredCheck.getAttribute('type'), 'button')
-  assert.equal(page.authoredCheck.textContent, 'Check saved state', 'an empty authored label falls back to the script copy')
+  assert.equal(page.authoredCheck.firstChild, page.authoredCheckIcon, 'authored children survive the label fallback')
   assert.equal(page.authoredCheck.hidden, true)
+  // A Webflow class can set `display`, so the inline style is what actually hides it.
+  assert.equal(page.authoredCheck.style.display, 'none')
   page.type('title', 'Campaign'); page.files('images', [{ name: 'photo.png', type: 'image/png', size: 1000 }])
   await page.submit()
   assert.match(page.status(), /could not be confirmed/)
   assert.equal(page.authoredCheck.hidden, false)
+  assert.equal(page.authoredCheck.style.display, '')
   assert.equal(page.section.querySelectorAll('[profile-items-check-save]').length, 1)
   // Clicking the authored control runs the same canonical check the created one runs.
   storedRows[0].images.push({ id: 200, image: { name: 'photo.png', size: 1000 }, image_url: 'https://example.test/photo.png', is_cover: false })

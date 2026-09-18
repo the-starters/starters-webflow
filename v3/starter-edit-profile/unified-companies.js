@@ -24,6 +24,20 @@
       section.appendChild(status)
     }
     status.setAttribute('role', 'status')
+    // Same for the check control: adopt the authored one, keeping the label its author wrote.
+    // Adopted before any early return so a halted section never leaves a live check control.
+    let check = section.querySelector('[profile-items-check-save]')
+    if (!check) {
+      check = document.createElement('button')
+      check.setAttribute('profile-items-check-save', '')
+      section.appendChild(check)
+    }
+    if (check.tagName === 'BUTTON') check.setAttribute('type', 'button')
+    // Authored children are the label, so only a wholly empty control gets the default copy.
+    if (!check.children.length && !check.textContent.trim()) check.textContent = 'Check saved state'
+    // A Webflow class can set `display`, which beats the [hidden] rule, so write both.
+    const showCheck = visible => { check.hidden = !visible; check.style.display = visible ? '' : 'none' }
+    showCheck(false)
     const original = section.querySelector(ROW)
     const template = original?.cloneNode(true)
     const parent = original?.parentElement
@@ -56,16 +70,6 @@
     let warned = false
     const add = section.querySelector('[profile-items-add]')
     const discard = section.querySelector('[profile-items-discard]')
-    // Same for the check control: adopt the authored one, keeping the label its author wrote.
-    let check = section.querySelector('[profile-items-check-save]')
-    if (!check) {
-      check = document.createElement('button')
-      check.setAttribute('profile-items-check-save', '')
-      section.appendChild(check)
-    }
-    if (check.tagName === 'BUTTON') check.setAttribute('type', 'button')
-    if (!String(check.textContent || '').trim()) check.textContent = 'Check saved state'
-    check.hidden = true
     // A field authored `form-xano-required` without the Webflow Required checkbox would let a
     // Starter submit a blank value the Xano writer refuses. Requiredness still comes only from
     // Required; this pauses Save on the mismatch instead of inventing a JavaScript requirement.
@@ -417,12 +421,12 @@
         if (confirmed === NOT_LANDED) {
           // A lag behind a received answer is not proof; only a lost response can be settled here.
           if (!unknown.lost) throw new Error('Save not confirmed')
-          unknown = null; check.hidden = true
+          unknown = null; showCheck(false)
           status.textContent = NOT_LANDED_MESSAGE
           return
         }
         if (!confirmed) throw new Error('Save not confirmed')
-        confirm(unknown, confirmed); unknown = null; check.hidden = true
+        confirm(unknown, confirmed); unknown = null; showCheck(false)
         status.textContent = 'That change is confirmed. Save the section to finish the remaining draft changes.'
       } catch (_) { status.textContent = 'The save is still unconfirmed. Your draft is kept; Save remains paused.' }
       finally { check.disabled = false }
@@ -515,7 +519,7 @@
           restore(); updateCleanState(); status.textContent = 'Changes saved.'
         }
       } catch (error) {
-        check.hidden = !unknown
+        showCheck(!!unknown)
         if (error?.known) {
           // The server refused this change, so Save and Discard stay available for the draft.
           status.textContent = error.serverMessage || 'The server rejected this change. Check the entry and try again.'

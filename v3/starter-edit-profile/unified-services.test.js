@@ -804,11 +804,14 @@ test('Services reveals the authored check element when a save cannot be confirme
   assert.equal(page.authoredCheck.getAttribute('type'), 'button')
   assert.equal(page.authoredCheck.textContent, 'Recheck saved state', 'the authored label is kept')
   assert.equal(page.authoredCheck.hidden, true)
+  // A Webflow class can set `display`, so the inline style is what actually hides it.
+  assert.equal(page.authoredCheck.style.display, 'none')
   page.type(page.name, 'Audit')
   page.type(page.price, '500')
   await submit(page)
   assert.match(page.authoredStatus.textContent, /could not confirm/i)
   assert.equal(page.authoredCheck.hidden, false)
+  assert.equal(page.authoredCheck.style.display, '')
   assert.equal(page.root.querySelectorAll('[profile-items-check-save]').length, 1)
   // Clicking the authored control runs the same canonical readback the created one runs.
   saved = { Hourly_Rate: 125, Availability: 'Available', Availability_ID: '1',
