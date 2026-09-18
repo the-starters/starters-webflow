@@ -16,7 +16,8 @@ Five candidates no longer reconstruct to their published bodies. `canonical-prof
 carries company logo and stable client identity hydration, the
 [required-mirror hydration contract](../starter-edit-profile/README.md#canonical-required-mirror-hydration),
 and the
-[browser-native unsaved-change prompt request](../starter-edit-profile/README.md#unsaved-change-warning),
+[browser-native unsaved-change prompt request](../starter-edit-profile/README.md#unsaved-change-warning)
+including the `isHydrating()` reader that contract documents,
 `draft-state.js` carries the member-bound hydration fix and
 [saved draft recovery contract](#empty-route-seeds-and-saved-draft-recovery),
 `submit-writer.js` carries the behavior changes owned by the
@@ -31,7 +32,9 @@ comma-separated hidden value, and
 applies the [whole-dollar price contract](#whole-dollar-price-contract) to every rate input instead
 of stripping symbols and re-formatting the authored value, and supplies the
 [legacy Build Continue constraint adapter](#legacy-build-continue-constraint-adapter),
-and `incremental-dropdowns.js` syncs each Custom Service field into its hidden capture JSON on
+and re-renders an opted-in unified Services picker on `starter:profile-restore`,
+and `incremental-dropdowns.js` leaves any wrapper inside an opted-in unified section to that
+section's own row controller, and syncs each Custom Service field into its hidden capture JSON on
 input, change, and blur, including when the member clears the field. Each sync reads the latest
 capture JSON, preserving late hydration and sibling changes, and refreshes add-button state.
 Unchanged values emit no synthetic change and retain numeric canonical types when their string
@@ -40,7 +43,10 @@ to an empty string without emitting a change. Actual edits still emit a change; 
 and leaves existing edits and in-flight save protections intact under the
 [Edit dirty-state contract](../starter-edit-profile/README.md#unsaved-change-warning).
 The [capture-sync suite](./incremental-dropdowns-capture-sync.test.js) executes the real dirty guard
-at this boundary. Their transformations are recorded as
+at this boundary. The two unified-section divergences above are why this cutover must publish
+before any `[profile-unified-items]` marker is installed in Webflow; that ordering rule and what
+breaks without it live in
+[Load order](../starter-edit-profile/README.md#load-order). Their transformations are recorded as
 `whitespace_plus_idempotency_guard_plus_behavior_change` and name immutable published-body captures.
 Tests still pin each candidate length and SHA-256, prove the published length, body hash, and
 complete-embed hash from its capture, and fail if a declared change stops diverging from the published

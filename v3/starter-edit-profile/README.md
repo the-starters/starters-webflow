@@ -166,7 +166,11 @@ hydration does not make the form dirty. `input` and `change` events, including
 synthetic events emitted by user-driven custom controls, mark only their containing
 `[data-form="step"][data-index]` section. Controller initialization and hydration
 dispatches must run through `runHydrationSync()` so those synthetic events stay
-clean. Inputs outside the profile steps cannot arm the warning.
+clean. Inputs outside the profile steps cannot arm the warning. The controller also
+answers `isHydrating()`, so a section script that keeps its own draft flag reads the
+same hydration window rather than inventing a second one: `unified-services.js` asks
+it before marking the section dirty, because the pickers and legacy toggles inside
+that section replay `input` and `change` while the profile hydrates.
 
 After validation, the main writer calls `beginSave(stepIndex)` before its first async
 save stage and passes the returned revision token to
