@@ -12,38 +12,42 @@ newlines, and deferred controllers add one-time browser guards. The manifest rec
 live identities and candidate identities, plus the exact inverse transformation used to reconstruct
 each captured live body.
 
-Five candidates no longer reconstruct to their published bodies. `canonical-profile-loader.js`
-carries company logo and stable client identity hydration, the
-[required-mirror hydration contract](../starter-edit-profile/README.md#canonical-required-mirror-hydration),
-and the
-[browser-native unsaved-change prompt request](../starter-edit-profile/README.md#unsaved-change-warning)
-including the `isHydrating()` reader that contract documents,
-`draft-state.js` carries the member-bound hydration fix and
-[saved draft recovery contract](#empty-route-seeds-and-saved-draft-recovery),
-`submit-writer.js` carries the behavior changes owned by the
-[Build Profile documentation](../build-profile/README.md), `shared-foundation.js`
-adds a taxonomy value only through an explicit option click or an Enter press on a highlighted
-option, so typing an exact option name never selects it on fill, on a comma, or on blur, and
-keeps delayed saved-value taxonomy hydration inside the Edit Profile dirty-state hydration guard, so
-the clean page does not report an unsaved Step 6 change before the member edits it, and preserves any
-saved taxonomy id that no longer has a rendered option only for a true multi-select. A scalar
-Function or Availability selector keeps at most one rendered saved option and never emits a
-comma-separated hidden value, and
-applies the [whole-dollar price contract](#whole-dollar-price-contract) to every rate input instead
-of stripping symbols and re-formatting the authored value, and supplies the
-[legacy Build Continue constraint adapter](#legacy-build-continue-constraint-adapter),
-and re-renders an opted-in unified Services picker on `starter:profile-restore`,
-and `incremental-dropdowns.js` leaves any wrapper inside an opted-in unified section to that
-section's own row controller, and syncs each Custom Service field into its hidden capture JSON on
-input, change, and blur, including when the member clears the field. Each sync reads the latest
-capture JSON, preserving late hydration and sibling changes, and refreshes add-button state.
-Unchanged values emit no synthetic change and retain numeric canonical types when their string
-representation matches the field exactly. For a blank control, missing/null capture values normalize
-to an empty string without emitting a change. Actual edits still emit a change; an unchanged blur adds no dirty state of its own
-and leaves existing edits and in-flight save protections intact under the
-[Edit dirty-state contract](../starter-edit-profile/README.md#unsaved-change-warning).
-The [capture-sync suite](./incremental-dropdowns-capture-sync.test.js) executes the real dirty guard
-at this boundary. The two unified-section divergences above are why this cutover must publish
+Five candidates no longer reconstruct to their published bodies.
+
+- `canonical-profile-loader.js` carries company logo and stable client identity hydration, the
+  [required-mirror hydration contract](../starter-edit-profile/README.md#canonical-required-mirror-hydration),
+  and the
+  [browser-native unsaved-change prompt request](../starter-edit-profile/README.md#unsaved-change-warning)
+  including the `isHydrating()` reader that contract documents.
+- `draft-state.js` carries the member-bound hydration fix and
+  [saved draft recovery contract](#empty-route-seeds-and-saved-draft-recovery).
+- `submit-writer.js` carries the behavior changes owned by the
+  [Build Profile documentation](../build-profile/README.md).
+- `shared-foundation.js` adds a taxonomy value only through an explicit option click or an Enter
+  press on a highlighted option, so typing an exact option name never selects it on fill, on a
+  comma, or on blur, and keeps delayed saved-value taxonomy hydration inside the Edit Profile
+  dirty-state hydration guard, so the clean page does not report an unsaved Step 6 change before the
+  member edits it, and preserves any saved taxonomy id that no longer has a rendered option only for
+  a true multi-select. A scalar Function or Availability selector keeps at most one rendered saved
+  option and never emits a comma-separated hidden value. It applies the
+  [whole-dollar price contract](#whole-dollar-price-contract) to every rate input instead of
+  stripping symbols and re-formatting the authored value, supplies the
+  [legacy Build Continue constraint adapter](#legacy-build-continue-constraint-adapter), and
+  re-renders an opted-in unified Services picker on `starter:profile-restore`.
+- `incremental-dropdowns.js` leaves any wrapper inside an opted-in unified section to that section's
+  own row controller, and syncs each Custom Service field into its hidden capture JSON on input,
+  change, and blur, including when the member clears the field. Each sync reads the latest capture
+  JSON, preserving late hydration and sibling changes, and refreshes add-button state. Unchanged
+  values emit no synthetic change and retain numeric canonical types when their string
+  representation matches the field exactly. For a blank control, missing/null capture values
+  normalize to an empty string without emitting a change. Actual edits still emit a change; an
+  unchanged blur adds no dirty state of its own and leaves existing edits and in-flight save
+  protections intact under the
+  [Edit dirty-state contract](../starter-edit-profile/README.md#unsaved-change-warning). The
+  [capture-sync suite](./incremental-dropdowns-capture-sync.test.js) executes the real dirty guard at
+  this boundary.
+
+The two unified-section divergences above are why this cutover must publish
 before any `[profile-unified-items]` marker is installed in Webflow; that ordering rule and what
 breaks without it live in
 [Load order](../starter-edit-profile/README.md#load-order). Their transformations are recorded as
