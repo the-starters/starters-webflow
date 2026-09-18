@@ -7211,6 +7211,102 @@ function mergedFeedDom(roots) {
   }
 }
 
+// Match the actual CMS template: Memberstack containers, no data-opp-role.
+function detailFeedDom(roots) {
+  return {
+    querySelector(selector) {
+      if (selector === '[wf-xano-element="wrapper"][wf-xano-source="opp30:starter/applications/mine"]') return roots.talent
+      if (selector === '[wf-xano-element="wrapper"][wf-xano-source="opp30:brand/applications/list"]') return roots.brand
+      if (selector === '[wf-xano-element="wrapper"][wf-xano-source*="brand/applications/list"]') return roots.brand
+      return null
+    },
+    querySelectorAll: () => [],
+  }
+}
+
+test('detail deferred feeds activate only the resolved Starter feed', async () => {
+  const roots = { talent: deferredRoot('talent'), brand: deferredRoot('brand') }
+  const dom = detailFeedDom(roots)
+  const inits = []
+  const requests = []
+  await loadBridge(async (input) => {
+    const url = String(input)
+    requests.push(url)
+    if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+    if (url.includes('/starter/opportunities/detail')) return response({ opportunity: { status: 'Open' }, application: null })
+    throw new Error(`Unexpected request: ${url}`)
+  }, {
+    member: talentMember, pathname: '/opportunities/710', routeGuard: true,
+    querySelector: dom.querySelector, querySelectorAll: dom.querySelectorAll,
+    wfXano: { init: (root) => inits.push(root) },
+  })
+  assert.ok(await waitFor(() => inits.length === 1))
+  assert.deepEqual(inits, [roots.talent])
+  assert.equal(requests.some((url) => url.includes('/brand/')), false)
+})
+
+test('detail deferred Brand feed waits for ownership and supports a late library', async () => {
+  const roots = { talent: deferredRoot('talent'), brand: deferredRoot('brand') }
+  const dom = detailFeedDom(roots)
+  const owner = deferred()
+  let probed = false
+  const bridge = await loadBridge(async (input) => {
+    const url = String(input)
+    if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+    if (url.includes('/brand/applications/list')) { probed = true; return owner.promise }
+    if (url.includes('/brand/opportunities/')) return response({ status: 'Open' })
+    throw new Error(`Unexpected request: ${url}`)
+  }, {
+    member: paidBrandMember, pathname: '/opportunities/710', routeGuard: true,
+    querySelector: (selector) => selector === '[wf-xano-element="wrapper"][wf-xano-source*="brand/applications/list"]' ? roots.brand : dom.querySelector(selector),
+    querySelectorAll: dom.querySelectorAll,
+  })
+  assert.ok(await waitFor(() => probed))
+  assert.equal(bridge.window.WfXano, undefined)
+  owner.resolve(response({ items: [] }))
+  assert.ok(await waitFor(() => Array.isArray(bridge.window.WfXano)))
+  const inits = []
+  bridge.window.WfXano.forEach((callback) => callback({ init: (root) => inits.push(root) }))
+  assert.deepEqual(inits, [roots.brand])
+})
+
+test('detail deferred feeds stay inactive on foreign ownership or failed ownership checks', async () => {
+  for (const status of [404, 503]) {
+    const roots = { talent: deferredRoot('talent'), brand: deferredRoot('brand') }
+    const dom = detailFeedDom(roots)
+    const inits = []
+    const bridge = await loadBridge(async (input) => {
+      if (String(input).includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      return response({ message: 'Unavailable' }, false, status)
+    }, {
+      member: paidBrandMember, pathname: '/opportunities/710', routeGuard: true,
+      querySelector: dom.querySelector, querySelectorAll: dom.querySelectorAll,
+      wfXano: { init: (root) => inits.push(root) },
+    })
+    assert.ok(await waitFor(() => bridge.documentElement.getAttribute('data-opp-brand-owner') === 'false'))
+    assert.deepEqual(inits, [], String(status))
+  }
+})
+
+test('detail deferred feeds stay inactive for logged-out and free Brand viewers', async () => {
+  for (const member of [null, freeBrandMember]) {
+    const dom = detailFeedDom({ talent: deferredRoot('talent'), brand: deferredRoot('brand') })
+    const inits = []
+    const requests = []
+    const bridge = await loadBridge(async (input) => {
+      requests.push(String(input))
+      throw new Error('A denied viewer must not fetch a feed')
+    }, {
+      member, pathname: '/opportunities/710', routeGuard: true,
+      querySelector: dom.querySelector, querySelectorAll: dom.querySelectorAll,
+      wfXano: { init: (root) => inits.push(root) },
+    })
+    assert.equal(await bridge.window.Opp30.gateByPlan(), null)
+    assert.deepEqual(inits, [])
+    assert.deepEqual(requests, [])
+  }
+})
+
 test('boot routes bare /opportunities to the merged feed: talent wrapper + only the talent feed activates', async () => {
   const roots = { talent: deferredRoot('talent'), brand: deferredRoot('brand') }
   const dom = mergedFeedDom(roots)

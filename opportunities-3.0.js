@@ -5880,7 +5880,14 @@
     if (!gate) return
     const wrapperRole = gate.role === 'talent' ? 'talent' : 'brand'
     showRoleWrapper(wrapperRole)
+    const feedSource = wrapperRole === 'talent'
+      ? 'opp30:starter/applications/mine'
+      : 'opp30:brand/applications/list'
+    // The CMS template uses Memberstack containers, not data-opp-role wrappers.
+    // Explicit activation is idempotent for roots that booted before deferral.
+    const feedRoot = $(`[wf-xano-element="wrapper"][wf-xano-source="${feedSource}"]`)
     if (wrapperRole === 'talent') {
+      if (feedRoot) activateDeferredFeed(feedRoot)
       await initTalentDetail(gate.member)
       return
     }
@@ -5914,6 +5921,9 @@
       log('brand ownership probe failed — owner-only UI hidden')
       return
     }
+    // Start the authored deferred feed only after the owner-scoped probe passes.
+    // The shared library owns rendering; the opposite role stays uninitialized.
+    if (feedRoot) activateDeferredFeed(feedRoot)
     if ($('[wf-xano-element="wrapper"][wf-xano-source*="brand/applications/list"]')) return
     if (!$('[data-opp-role="brand"] [data-opp-list="applicants"]')) return
     const res = await API.brandAppList(oppId)
