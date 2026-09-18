@@ -23,6 +23,8 @@ the page until step 3 below adds the attribute.
 2. Use the official headless Webflow element tools on site
    `69c573f20f82bd0f3384032c`, page `6a0ea3a1cfb6c29eb25f147c`.
    Snapshot the complete attributes and CMS bindings on both roots first.
+   Confirm the page serves `wf-xano` v0.28.0 or newer: older bundles ignore
+   `wf-xano-defer`, so deferring the roots there would stop both feeds outright.
 3. Add only `wf-xano-defer="true"` to Starter root
    `9796c2ce-a8a5-08cb-924d-96dcf6b584e2` and Brand root
    `70df7e66-a489-dad4-ba3d-70a833aa4ba9`. Read back both roots and compare every
@@ -32,6 +34,10 @@ the page until step 3 below adds the attribute.
    release. Publish only with applicable authorization and preservation checks.
 5. Verify actual served attributes, then role-correct browser requests, output,
    reload behavior and screenshots. Repository tests alone do not close this.
+   A console `[opp30] detail feed: no deferred wf-xano root for role <role>`
+   line means the controller found no matching deferred root, so that role's
+   feed never started — check the authored `wf-xano-source` and
+   `wf-xano-defer` values.
 
 Do not defer the roots before the controller release is verified: older code
 does not activate deferred detail feeds. Do not remove templates, loader/empty
@@ -56,3 +62,7 @@ deferred roots with the old controller. Record publication scope and readbacks.
 Current status: local candidate only; no Webflow attributes changed or published.
 Focused regression: the two activation cases fail on the original controller;
 the candidate passes the complete 181-test authentication/controller suite.
+
+```sh
+node --test opportunities-3.0-auth.test.js
+```
