@@ -5,13 +5,15 @@ custom code and embed elements) is a mirror of what's in here — not the other 
 around.
 
 These files **are** served over jsDelivr, at a **pinned tag** rather than
-`@latest`. As of 2026-07-28 the "Algolia Result Modifiers" Webflow component
-loads the original four at `@v1.56.4` (`roles`, `companies`, `learn-categories`,
-`price-label`). `subcategories.js` is a fifth sibling: merging it does not ship
-it until that component also loads it and the pin is bumped.
+`@latest`. As of 2026-09-18 the "Algolia Result Modifiers" Webflow component
+loads all five, at two different pins: `roles`, `companies`, `learn-categories`
+and `price-label` at `@v1.59.28`, and `subcategories` at `@v1.59.223`. The
+component is a single HTML embed element in the Embeds group, placed on 89
+instances, so every page that uses it moves together.
 
 ```html
-<script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v1.56.4/algolia-result-modifiers/roles.js" defer></script>
+<script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v1.59.28/algolia-result-modifiers/roles.js" defer></script>
+<script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v1.59.223/algolia-result-modifiers/subcategories.js" defer></script>
 ```
 
 That pin has a consequence worth spelling out: **merging a fix does not ship it,
