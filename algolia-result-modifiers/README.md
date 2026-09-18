@@ -7,12 +7,14 @@ around.
 These files **are** served over jsDelivr, at a **pinned tag** rather than
 `@latest`. As of 2026-09-18 the "Algolia Result Modifiers" Webflow component
 loads all five, at two different pins: `roles`, `companies`, `learn-categories`
-and `price-label` at `@v1.59.28`, and `subcategories` at `@v1.59.223`. The
+and `price-label` at `@v1.59.582`, and `subcategories` at `@v1.59.223`. The
 component is a single HTML embed element in the Embeds group, placed on 89
-instances, so every page that uses it moves together.
+instances, so every page that uses it moves together. The Webflow Data API
+refuses to read or write that embed's code, so the pin is edited by hand in the
+Designer.
 
 ```html
-<script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v1.59.28/algolia-result-modifiers/roles.js" defer></script>
+<script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v1.59.582/algolia-result-modifiers/roles.js" defer></script>
 <script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v1.59.223/algolia-result-modifiers/subcategories.js" defer></script>
 ```
 
