@@ -24,7 +24,11 @@ function mount(fetchImpl, { rates = false, services = null, readback = null, pic
   const discard = h('button', { 'profile-items-discard': '', type: 'button' })
   const root = h('section', {}, rows ? [row, add, discard] : [add, discard])
   // A Finsweet option search box: authored inside the section but owned by the picker script.
-  const search = h('input', { name: 'availability-search', required: '' })
+  // `pickerSearch: 'backend-required'` is the same box carrying the backend-required marker
+  // without the Webflow Required checkbox: still the picker's mismatch to fix, not this one's.
+  const search = h('input', pickerSearch === 'backend-required'
+    ? { name: 'availability-search', 'form-xano-required': '' }
+    : { name: 'availability-search', required: '' })
   if (pickerSearch) root.appendChild(search)
   // Authored as backend-required while Webflow leaves the Required checkbox unchecked.
   // `backendRequired: '<profile type>'` is instead the authored pair the README forbids: the
@@ -743,6 +747,24 @@ test('a backend-required marker on a call control this section never submits doe
     assert.notEqual(page.root.querySelector('[profile-items-status]').textContent,
       'This form is misconfigured. Saving is paused until it is fixed.')
     assert.deepEqual(warnings, [], 'a control owned by another writer is not this section to report')
+    page.type(page.name, 'Audit')
+    page.type(page.price, '500')
+    await submit(page)
+    assert.equal(page.requests.length, 1, 'Services still saves')
+    assert.equal(page.controller().validate().valid, true)
+  } finally { console.warn = original }
+})
+
+test('a backend-required marker on a picker search box this section never submits does not pause Services', async () => {
+  const warnings = []
+  const original = console.warn
+  console.warn = (...args) => warnings.push(args)
+  try {
+    const page = mount(undefined, { pickerSearch: 'backend-required' })
+    assert.equal(page.search.hasAttribute('required'), false, 'the picker owns the box, Webflow leaves it optional')
+    assert.notEqual(page.root.querySelector('[profile-items-status]').textContent,
+      'This form is misconfigured. Saving is paused until it is fixed.')
+    assert.deepEqual(warnings, [], 'a control owned by the picker script is not this section to report')
     page.type(page.name, 'Audit')
     page.type(page.price, '500')
     await submit(page)

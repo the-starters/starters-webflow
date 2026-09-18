@@ -96,10 +96,14 @@
     // blank value reach a writer that rejects it. Report the mismatch and pause Save; never
     // treat the attribute as requiredness, and never name a value in the diagnostic.
     function misconfiguredFields() {
-      // Only the fields this section submits: the scalar controls `prepare()` reads and the row
-      // fields Save sends. A marker on a Free or Paid Call control, or on a picker's own search
-      // box, belongs to the script that writes it and is not this section's to refuse.
-      const submitted = new Set([...scalarFields(), ...rows().flatMap(row => fields(row))])
+      // Only the fields this section submits: the scalar controls `prepare()` reads - the named
+      // ones, since scalarFields() is broader - and the row fields Save sends. A marker on a Free
+      // or Paid Call control, or on a picker's own search box, belongs to the script that writes
+      // it and is not this section's to refuse.
+      const submitted = new Set([
+        ...scalarFields().filter(field => SCALAR_NAMES.includes(field.getAttribute('name') || '')),
+        ...rows().flatMap(row => fields(row)),
+      ])
       const offenders = window.StarterProfileValidation.misconfigured(section,
         { applies: field => submitted.has(field) })
       if (offenders.length && !misconfiguredForm) {
