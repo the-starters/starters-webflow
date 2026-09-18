@@ -566,7 +566,8 @@ test('diffRecords reports added, removed, changed and unchanged', () => {
 });
 
 test('isLiveItem gates items and references alike', () => {
-  assert.equal(isLiveItem({ isArchived: false, lastPublished: '2026-09-04T09:27:47.286Z', isDraft: true }), true);
+  assert.equal(isLiveItem({ id: 'x', isArchived: false, lastPublished: '2026-09-04T09:27:47.286Z', isDraft: true }), true);
+  assert.equal(isLiveItem({ isArchived: false, lastPublished: '2026-09-04T09:27:47.286Z' }), false);
   assert.equal(isLiveItem({ isArchived: false, lastPublished: null }), false);
   assert.equal(isLiveItem({ isArchived: false, lastPublished: '' }), false);
   assert.equal(isLiveItem({ isArchived: true, lastPublished: '2026-09-04T09:27:47.286Z' }), false);
