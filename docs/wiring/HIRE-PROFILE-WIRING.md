@@ -1,9 +1,11 @@
 # `v3/hire-profile.js` — wiring and ownership
 
-Last updated: 2026-09-05
+Last updated: 2026-09-18
 Status: Call projections and Free Call behavior are GitHub-owned; the Free/Paid
 call-card cutover hides the old CMS variants and renders canonical Xano data;
-direct Webflow head cleanup remains pending
+direct Webflow head cleanup remains pending. Paid-Brand favourite hydration is
+GitHub-owned in `v3/hire-profile-favorites.js` and still needs a hire-template
+footer script tag after merge.
 
 ## What this is
 
@@ -76,13 +78,18 @@ Webflow → hire template → Page Settings → Custom Code → **Footer**:
 
 ```html
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/hire-profile.js"></script>
+<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/hire-profile-favorites.js"></script>
 ```
 
-Nothing else belongs in that footer. The page **head** keeps the three synchronous
-scheduling loads above before the shared component. Its other page scripts can
-remain deferred (`paid-call-brand-payment.js`,
-`freelancer-cms/stripe-connect.js`, `reviews.js`, `project-form.js`,
-`starters-ms-redirect.js`, `profile-portfolio.js`).
+Those two deferred tags belong in that footer. Pin or cache-bust them the same
+way the live hire-profile tag is pinned (`?v=profile-cta-20260910` style); that
+pin is Webflow Guy's job after merge. Do not add `data-starters-list` on this
+template — that marker means the All Starters Algolia list, not profile hearts.
+
+The page **head** keeps the three synchronous scheduling loads above before the
+shared component. Its other page scripts can remain deferred
+(`paid-call-brand-payment.js`, `freelancer-cms/stripe-connect.js`, `reviews.js`,
+`project-form.js`, `starters-ms-redirect.js`, `profile-portfolio.js`).
 
 ## Page ownership
 
@@ -100,6 +107,7 @@ remain deferred (`paid-call-brand-payment.js`,
 | Paid booking popup | signed-in Brand members | this file + `paid-call-brand-payment.js` / authenticated Xano + Stripe Elements + Nylas calendar |
 | Hero Hourly and Retainer touts | everyone | native wf-xano lists adapted by this file; see [Hero rate cards](#hero-rate-cards) |
 | Utilities | everyone | this file / rate formatting, rating average, dropdowns, anchor scroll, mobile TOC, view-all |
+| Favourite heart (hero avatar) | paid Brand only; logged-out / Free Brand / Talent stay on the Designer-owned hidden control | `v3/hire-profile-favorites.js` / sitewide wf-xano + `opp30:brand/favorites`; Designer owns the `button.icon-32.is-profile[wf-xano-element="favorite"]` markup |
 
 ### Hero rate cards
 

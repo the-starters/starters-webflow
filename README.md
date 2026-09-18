@@ -96,6 +96,7 @@ tighter predicate that `STARTERS_DEBUG` cannot unlock, and says so where it live
 - `v3/signup-attribution.js` — sitewide UTM/Meta attribution capture and signup persistence, including CAPI event deduplication, the `/quiz` single-writer boundary, and the production-only Collection, Learn, and Starter signup producer for Xano `lead_email/register/v3`; the authoritative cookie, field, arming, retry, and lead-entry contracts live in [`v3/README.md`](v3/README.md#signup-attribution)
 - `v3/opp-alerts-unsubscribe.js` — explicit unsubscribe and re-subscribe controller for the V3 opportunity-alert email page; the authoritative Webflow markup, request, and user-state contract lives in [`v3/README.md`](v3/README.md#opportunity-alert-email-preferences)
 - `v3/all-starters-favorites.js` — paid-Brand favourites controls and Designer-built All/Favourites filtering for `/all-starters`, backed by sitewide `wf-xano` and `wf-algolia`
+- `v3/hire-profile-favorites.js` — paid-Brand favourite hydration for Designer-authored hearts on `/hire/<slug>`; does not use `data-starters-list`; the authoritative module contract lives in [`v3/README.md`](v3/README.md#hire-profile-favorites) and the hire-template install in [`docs/wiring/HIRE-PROFILE-WIRING.md`](docs/wiring/HIRE-PROFILE-WIRING.md#install)
 - `v3/ai-recruiter.js` — lower-right, role-gated V3 AI Recruiter controller;
   binds native Webflow markup and sends authenticated requests only through
   Xano. The authoritative access, markup, monitoring, release, and rollback
