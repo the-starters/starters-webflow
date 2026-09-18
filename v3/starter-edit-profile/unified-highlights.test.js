@@ -11,7 +11,7 @@ const tick = () => new Promise(resolve => setImmediate(resolve))
 // `stale` answers the canonical list read, and `staleMedia` the canonical media reads, from a
 // replica that has not caught up with the writes already acknowledged, which is what a lagging
 // read looks like to the section.
-async function mount({ portfolios = [], fail = null, required = false, hold = null, stray = false, presence = false, xanoRequired = false, rows = true, saveControl = true, stale = null, staleMedia = null, answer = null, strayXanoRequired = false } = {}) {
+async function mount({ portfolios = [], fail = null, required = false, hold = null, stray = false, presence = false, xanoRequired = false, rows = true, saveControl = true, stale = null, staleMedia = null, answer = null, strayXanoRequired = false, authored = false } = {}) {
   const fields = ['title', 'description', 'images', 'videos'].map(key => h(key === 'description' ? 'textarea' : 'input', {
     'profile-highlight-field': key, name: key, id: key,
     ...(['images', 'videos'].includes(key) ? { type: 'file', multiple: '' } : {}),
@@ -32,7 +32,14 @@ async function mount({ portfolios = [], fail = null, required = false, hold = nu
   // A backend-required marker on a control this section never submits: authored inside the
   // section, owned by another script.
   const strayBackend = h('input', { name: 'stray-backend', 'form-xano-required': '' })
-  const section = h('section', { 'profile-unified-items': 'highlights' }, [h('div', {}, rows ? [row] : []),
+  // Designer-authored status and check elements, ahead of the rows so position cannot be
+  // what the script matches on.
+  const authoredStatus = h('div', { 'profile-items-status': '', class: 'form_status' })
+  // An icon-only authored check: children but no text, which must survive the label fallback.
+  const authoredCheckIcon = h('span', { class: 'icon-embed' })
+  const authoredCheck = h('button', { 'profile-items-check-save': '', class: 'button is-secondary' }, [authoredCheckIcon])
+  const section = h('section', { 'profile-unified-items': 'highlights' }, [
+    ...(authored ? [authoredStatus, authoredCheck] : []), h('div', {}, rows ? [row] : []),
     ...(saveControl ? [save] : []), add, discard,
     ...(presence ? [marker] : []), ...(stray ? [strayOutside] : []), ...(strayXanoRequired ? [strayBackend] : [])])
   let stored = structuredClone(portfolios)
@@ -98,6 +105,7 @@ async function mount({ portfolios = [], fail = null, required = false, hold = nu
   const click = element => element.dispatchEvent(makeEvent('click', element, { bubbles: true }))
   const field = (key, index = 0) => section.querySelectorAll('[profile-item-row]')[index].querySelector('[profile-highlight-field="' + key + '"]')
   return { section, save, add, discard, click, field, requests, warnings, marker, strayOutside, strayBackend, context, revoked,
+    authoredStatus, authoredCheck, authoredCheckIcon,
     media: (kind, index = 0) => section.querySelectorAll('[profile-items-media="' + kind + '"]')[index]
       .querySelectorAll('[profile-media-item]'),
     mutations: () => requests.filter(request => request.method !== 'GET'),
@@ -772,4 +780,49 @@ test('a backend-required marker outside the Highlight rows never pauses this sec
   page.type('title', 'Campaign')
   await page.submit()
   assert.equal(page.status(), 'Changes saved.')
+})
+
+test('Highlights writes its status into the authored element instead of adding a second one', async () => {
+  const gate = deferred()
+  const page = await mount({ authored: true, hold: request => request.endpoint === 'Create_portfolio' ? gate.promise : null })
+  assert.equal(page.section.querySelectorAll('[profile-items-status]').length, 1)
+  assert.equal(page.section.querySelector('[profile-items-status]'), page.authoredStatus)
+  assert.equal(page.authoredStatus.getAttribute('role'), 'status')
+  page.type('title', 'Campaign')
+  assert.equal(page.status(), 'Unsaved changes.')
+  const saving = page.submit()
+  await tick()
+  assert.equal(page.status(), 'Creating highlight…')
+  gate.resolve()
+  await saving
+  await tick()
+  assert.equal(page.status(), 'Changes saved.')
+})
+
+test('Highlights reveals the authored check element when a save cannot be confirmed', async () => {
+  let lose = true, storedRows
+  const page = await mount({ authored: true, fail: (request, stored) => {
+    storedRows = stored
+    if (request.endpoint === 'upload-image' && lose) { lose = false; return 'lose' }
+  } })
+  assert.equal(page.section.querySelectorAll('[profile-items-check-save]').length, 1)
+  assert.equal(page.section.querySelector('[profile-items-check-save]'), page.authoredCheck)
+  assert.equal(page.authoredCheck.getAttribute('type'), 'button')
+  assert.equal(page.authoredCheck.firstChild, page.authoredCheckIcon, 'authored children survive the label fallback')
+  assert.equal(page.authoredCheck.hidden, true)
+  // A Webflow class can set `display`, so the inline style is what actually hides it.
+  assert.equal(page.authoredCheck.style.display, 'none')
+  page.type('title', 'Campaign'); page.files('images', [{ name: 'photo.png', type: 'image/png', size: 1000 }])
+  await page.submit()
+  assert.match(page.status(), /could not be confirmed/)
+  assert.equal(page.authoredCheck.hidden, false)
+  assert.equal(page.authoredCheck.style.display, '')
+  assert.equal(page.section.querySelectorAll('[profile-items-check-save]').length, 1)
+  // Clicking the authored control runs the same canonical check the created one runs.
+  storedRows[0].images.push({ id: 200, image: { name: 'photo.png', size: 1000 }, image_url: 'https://example.test/photo.png', is_cover: false })
+  const clicked = makeEvent('click', page.authoredCheck, { bubbles: true })
+  page.authoredCheck.dispatchEvent(clicked)
+  assert.equal(clicked.defaultPrevented, true, 'an authored anchor never follows its href')
+  await tick()
+  assert.match(page.status(), /That change is confirmed/)
 })

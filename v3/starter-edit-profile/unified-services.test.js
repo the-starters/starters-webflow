@@ -7,7 +7,7 @@ const { createEnvironment, deferred, submit } = require('../test-helpers/edit-pr
 
 function mount(fetchImpl, { rates = false, services = null, readback = null, picker = false, profileType = 'full', hourlyRequired = true,
   rows = true, pickerSearch = false, backendRequired = false, deferProfile = false, saveControl = true,
-  dirtyState = null, retainersOff = false, memberReads = null, callControls = false } = {}) {
+  dirtyState = null, retainersOff = false, memberReads = null, callControls = false, authored = false } = {}) {
   const readRequests = []
   const timers = []
   const elapsed = { ms: 0 }
@@ -23,6 +23,13 @@ function mount(fetchImpl, { rates = false, services = null, readback = null, pic
   const add = h('button', { 'profile-items-add': '', type: 'button' })
   const discard = h('button', { 'profile-items-discard': '', type: 'button' })
   const root = h('section', {}, rows ? [row, add, discard] : [add, discard])
+  // Designer-authored status and check elements, ahead of the rows so position cannot be what
+  // the script matches on. The authored label stands in for copy an author chose.
+  const authoredStatus = h('div', { 'profile-items-status': '', class: 'form_status' })
+  authoredStatus.textContent = 'Status messages appear here.'
+  const authoredCheck = h('button', { 'profile-items-check-save': '', class: 'button is-secondary' })
+  authoredCheck.textContent = 'Recheck saved state'
+  if (authored) { root.insertBefore(authoredCheck, root.firstChild); root.insertBefore(authoredStatus, root.firstChild) }
   // A Finsweet option search box: authored inside the section but owned by the picker script.
   // `pickerSearch: 'backend-required'` is the same box carrying the backend-required marker
   // without the Webflow Required checkbox: still the picker's mismatch to fix, not this one's.
@@ -114,7 +121,7 @@ function mount(fetchImpl, { rates = false, services = null, readback = null, pic
     },
   })
   return { ...environment, name, price, description, row, root, add, remove, discard, hourly, retainer, readRequests, availability, availabilityRequired,
-    search, backendOnly, retainerChoice, retainerDescription, freeCall,
+    search, backendOnly, retainerChoice, retainerDescription, freeCall, authoredStatus, authoredCheck,
     controller: () => environment.window.StarterProfileSections?.get(environment.step),
     flushTimers: () => timers.splice(0).forEach(callback => callback()),
     pendingTimers: () => timers.length,
@@ -771,4 +778,51 @@ test('a backend-required marker on a picker search box this section never submit
     assert.equal(page.requests.length, 1, 'Services still saves')
     assert.equal(page.controller().validate().valid, true)
   } finally { console.warn = original }
+})
+
+test('Services writes its status into the authored element instead of adding a second one', async () => {
+  const request = deferred()
+  const page = mount(() => request.promise, { authored: true })
+  assert.equal(page.root.querySelectorAll('[profile-items-status]').length, 1)
+  assert.equal(page.root.querySelector('[profile-items-status]'), page.authoredStatus)
+  assert.equal(page.authoredStatus.getAttribute('role'), 'status')
+  assert.equal(page.authoredStatus.textContent, '', 'Designer placeholder copy is cleared at bind')
+  page.type(page.name, 'Design audit')
+  assert.equal(page.authoredStatus.textContent, 'Unsaved changes.')
+  page.type(page.price, '500')
+  const saving = submit(page)
+  assert.equal(page.authoredStatus.textContent, 'Saving changes…')
+  request.resolve({ ok: true, status: 200, json: async () => ({ saved: true, projection_pending: false }) })
+  await saving
+  assert.equal(page.authoredStatus.textContent, 'Changes saved.')
+  assert.equal(page.root.querySelectorAll('[profile-items-status]').length, 1)
+})
+
+test('Services reveals the authored check element when a save cannot be confirmed', async () => {
+  let saved = {}
+  const page = mount(async () => { throw new Error('Response lost') }, { authored: true, readback: () => saved })
+  assert.equal(page.root.querySelectorAll('[profile-items-check-save]').length, 1)
+  assert.equal(page.root.querySelector('[profile-items-check-save]'), page.authoredCheck)
+  assert.equal(page.authoredCheck.getAttribute('type'), 'button')
+  assert.equal(page.authoredCheck.textContent, 'Recheck saved state', 'the authored label is kept')
+  assert.equal(page.authoredCheck.hidden, true)
+  // A Webflow class can set `display`, so the inline style is what actually hides it.
+  assert.equal(page.authoredCheck.style.display, 'none')
+  page.type(page.name, 'Audit')
+  page.type(page.price, '500')
+  await submit(page)
+  assert.match(page.authoredStatus.textContent, /could not confirm/i)
+  assert.equal(page.authoredCheck.hidden, false)
+  assert.equal(page.authoredCheck.style.display, '')
+  assert.equal(page.root.querySelectorAll('[profile-items-check-save]').length, 1)
+  // Clicking the authored control runs the same canonical readback the created one runs.
+  saved = { Hourly_Rate: 125, Availability: 'Available', Availability_ID: '1',
+    Services: { 'service-1': { name: 'Audit', description: '', price: 500 }, 'service-2': null, 'service-3': null } }
+  const clicked = makeEvent('click', page.authoredCheck, { bubbles: true })
+  page.authoredCheck.dispatchEvent(clicked)
+  assert.equal(clicked.defaultPrevented, true, 'an authored anchor never follows its href')
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(page.readRequests.length, 2)
+  assert.equal(page.authoredStatus.textContent, 'Changes saved.')
+  assert.equal(page.requests.length, 1, 'the confirmed write is never replayed')
 })

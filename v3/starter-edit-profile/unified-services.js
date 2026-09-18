@@ -1,4 +1,8 @@
-/* Opt-in Services & Rates coordinator. The main profile controller remains the writer. */
+/*
+ * Opt-in Services & Rates coordinator. The main profile controller remains the writer.
+ *
+ * @release v1.59.581
+ */
 ;(function () {
   'use strict'
   if (window.StarterProfileSections) return
@@ -13,10 +17,33 @@
   function bindServices(section) {
     if (sections.has(section)) return sections.get(section)
     const rows = () => Array.from(section.querySelectorAll(ROW))
-    const status = document.createElement('div')
+    // A row is cloned and rebuilt, so a marker authored inside one would be detached.
+    const authored = selector => Array.from(section.querySelectorAll(selector)).find(node => !node.closest(ROW))
+    // Webflow may author the status element so Designer owns its look; create one only when
+    // it did not, and never a second.
+    let status = authored('[profile-items-status]')
+    if (!status) {
+      status = document.createElement('div')
+      status.setAttribute('profile-items-status', '')
+      section.appendChild(status)
+    }
     status.setAttribute('role', 'status')
-    status.setAttribute('profile-items-status', '')
-    section.appendChild(status)
+    // Designer placeholder copy would otherwise sit in the live region all session.
+    status.textContent = ''
+    // Same for the check control: adopt the authored one, keeping the label its author wrote.
+    // Adopted before any early return so a halted section never leaves a live check control.
+    let checkSave = authored('[profile-items-check-save]')
+    if (!checkSave) {
+      checkSave = document.createElement('button')
+      checkSave.setAttribute('profile-items-check-save', '')
+      section.appendChild(checkSave)
+    }
+    if (checkSave.tagName === 'BUTTON') checkSave.setAttribute('type', 'button')
+    // Authored children are the label, so only a wholly empty control gets the default copy.
+    if (!checkSave.children.length && !checkSave.textContent.trim()) checkSave.textContent = 'Check saved state'
+    // A Webflow class can set `display`, which beats the [hidden] rule, so write both.
+    const showCheck = visible => { checkSave.hidden = !visible; checkSave.style.display = visible ? '' : 'none' }
+    showCheck(false)
     const save = section.querySelector('[data-edit-submit]')
     if (!rows().length || !save) {
       // The row is also the template for every added row, and Save is the only route to the
@@ -67,13 +94,9 @@
     const rowSnapshot = () => remaining().filter(row => retained.has(row) || meaningful(row))
       .map(row => ({ values: valuesFor(row), retained: true }))
     const scalarValues = records => records.map(({ value, checked }) => [value, checked])
-    const checkSave = document.createElement('button')
-    checkSave.setAttribute('type', 'button')
-    checkSave.setAttribute('profile-items-check-save', '')
-    checkSave.textContent = 'Check saved state'
-    checkSave.hidden = true
-    section.appendChild(checkSave)
-    checkSave.addEventListener('click', async () => {
+    checkSave.addEventListener('click', async event => {
+      // An authored control may be an anchor or a submit button, so never let its default run.
+      event.preventDefault()
       if (!uncertain || saving || checkSave.disabled || !readbackCheck) return
       checkSave.disabled = true
       status.textContent = 'Checking saved changes…'
@@ -399,13 +422,13 @@
           // The server answered and refused the write, so nothing was saved and nothing is
           // in doubt. Keep the draft and the baseline, and leave Save and Discard usable.
           uncertain = false
-          checkSave.hidden = true
+          showCheck(false)
           status.textContent = outcome.message || 'The server rejected this change. Check the entry and try again.'
           return
         }
         if (!saved) {
           uncertain = dispatched
-          checkSave.hidden = !uncertain || !readbackCheck
+          showCheck(uncertain && !!readbackCheck)
           // A save the page abandoned before sending it never left the browser, which is the
           // same outcome - and the same sentence - the other unified sections report for a
           // write nobody dispatched. "Not saved" is reserved for a write that was sent and a
@@ -416,7 +439,7 @@
           return
         }
         uncertain = false
-        checkSave.hidden = true
+        showCheck(false)
         const laterEdits = JSON.stringify(rowSnapshot()) !== JSON.stringify(submittedRows)
           || JSON.stringify(scalarValues(scalars())) !== JSON.stringify(scalarValues(submittedScalars))
         status.textContent = 'Changes saved.'

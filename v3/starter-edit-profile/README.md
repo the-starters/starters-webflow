@@ -337,8 +337,25 @@ These must exist in Webflow:
 | `profile-items-media="images\|videos"` | Row | Highlights only |
 | `profile-items-summary` | Row | Authored for companies and highlights; created by the script for services |
 
-The scripts create `profile-items-status`, `profile-items-check-save`,
-`profile-items-undo`, `profile-items-removed`, and `profile-items-dirty`.
+The scripts create `profile-items-undo`, `profile-items-removed`, and
+`profile-items-dirty`.
+
+`profile-items-status` and `profile-items-check-save` may be authored in Webflow
+inside the section but outside the repeating row, so Designer owns their styling.
+An element authored inside a row is ignored and the script creates its own,
+because each section clones and rebuilds its rows. Each section adopts
+the authored element when it finds one: it sets `role="status"` on the status
+element, and it hides the check element on bind, keeping the label the author
+wrote. The check element may be a plain Link or Button element carrying
+`profile-items-check-save`; leave it visible in Designer, because the script hides
+and shows it with an inline `display` style that beats the Webflow class rule.
+Never use an instance of the site's Button component: its native `.clickable_btn`
+is an empty overlay whose label lives outside it, so marking the overlay would
+hide the clickable node while the caption kept rendering. Any element works — the
+script prevents a link's default action, sets `type="button"` only on a real
+button, and applies the default label only when the element is empty. When
+neither is authored the script creates them as before. It never creates a second
+one.
 
 Row grammars differ by section. Services reuses the existing
 `[increment-dropdown]` row with `[increment-dropdown-toggle]`,
@@ -559,9 +576,9 @@ node --test v3/starter-edit-profile/profile-section-validation.test.js \
 
 ### Open items
 
-- The status node and the "Check saved state" button are created by the scripts
-  with no class hooks, so both are unstyled until they are authored or classed in
-  Webflow.
+- The status node and the "Check saved state" button are unstyled when the
+  scripts fall back to creating them. Author them in Webflow with
+  `profile-items-status` and `profile-items-check-save` to give them a class.
 - `v3/build-profile/portfolio-crud.js` still states a 50 MB video limit. That is a
   separate page and was not changed here.
 - `renderMedia` in `unified-highlights.js` has no fallback for a stored media row

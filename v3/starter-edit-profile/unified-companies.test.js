@@ -13,16 +13,20 @@ const EDITED_ASSOCIATIONS = '{"client-1":{"name":"Acme","domain":"acme.example",
 async function mount({ companies = [], fail = null, minimum = true, withRow = true, withSave = true,
   required = ['company_name', 'job_title'], xanoRequired = [], hydrate = true, initialOther = '{}',
   liveAssociationReader = false, associationReadStatus = 200, claim = true, normalize = null,
-  answer = null, picker = true, stale = null, strayXanoRequired = false } = {}) {
+  answer = null, picker = true, stale = null, strayXanoRequired = false, authored = false,
+  authoredInRow = false } = {}) {
   const fields = ['company_name', 'job_title', 'start_date', 'end_date', 'current_work'].map(key => h('input', {
     'profile-company-field': key, name: key, id: key,
     ...(key === 'current_work' ? { type: 'checkbox' } : {}),
     ...(required.includes(key) ? { required: '' } : {}),
     ...(xanoRequired.includes(key) ? { 'form-xano-required': '' } : {}),
   }))
+  // A status marker misplaced inside the row, which the section clones and rebuilds.
+  const rowStatus = h('div', { 'profile-items-status': '', class: 'form_status' })
   const row = h('div', { 'profile-item-row': '' }, [
     h('button', { 'profile-item-toggle': '', type: 'button' }, [h('span', { 'profile-items-summary': '' })]),
     h('div', { 'profile-item-content': '' }, fields), h('button', { 'profile-item-remove': '', type: 'button' }),
+    ...(authoredInRow ? [rowStatus] : []),
   ])
   const save = h('button', { 'data-edit-submit': 'companies' })
   const add = h('button', { 'profile-items-add': '' })
@@ -35,8 +39,14 @@ async function mount({ companies = [], fail = null, minimum = true, withRow = tr
   // A backend-required marker on a control this section never submits: authored inside the
   // section, owned by another script.
   const stray = h('input', { name: 'stray-outside-rows', 'form-xano-required': '' })
+  // Designer-authored status and check elements, ahead of the rows so position cannot be
+  // what the script matches on.
+  const authoredStatus = h('div', { 'profile-items-status': '', class: 'form_status' })
+  // A Webflow Button compiles to an anchor, so this section covers the non-button adopt path.
+  const authoredCheck = h('a', { 'profile-items-check-save': '', href: '#', class: 'button w-button' })
   const section = h('section', { 'profile-unified-items': 'companies' },
-    [h('div', {}, withRow ? [row] : []), ...(withSave ? [save] : []), add, discard, presence, other,
+    [...(authored ? [authoredStatus, authoredCheck] : []),
+      h('div', {}, withRow ? [row] : []), ...(withSave ? [save] : []), add, discard, presence, other,
       ...(strayXanoRequired ? [stray] : [])])
   const requests = []
   const warnings = []
@@ -167,7 +177,7 @@ async function mount({ companies = [], fail = null, minimum = true, withRow = tr
     other.dispatchEvent(makeEvent('change', other, { bubbles: true }))
   }
   return { section, save, add, discard, click, field, type, company, requests, context, warnings,
-    other, hydrateOther, failOther, editOther, pickerCalls, stray,
+    other, hydrateOther, failOther, editOther, pickerCalls, stray, authoredStatus, authoredCheck, rowStatus,
     otherRequests: () => requests.filter(item => String(item.url).includes('set_also_worked_with')),
     errors: () => section.querySelectorAll('[profile-validation-error]').map(node => node.textContent),
     checkSave: () => section.querySelector('[profile-items-check-save]'),
@@ -877,4 +887,60 @@ test('a lost update is confirmed against a server that stores the month as a ful
   assert.equal(page.mutations()[0].body.start_date, '2021-03')
   assert.equal(page.status(), 'Changes saved.')
   assert.equal(page.checkSave().hidden, true)
+})
+
+test('Work Experience writes its status into the authored element instead of adding a second one', async () => {
+  const page = await mount({ authored: true })
+  assert.equal(page.section.querySelectorAll('[profile-items-status]').length, 1)
+  assert.equal(page.section.querySelector('[profile-items-status]'), page.authoredStatus)
+  assert.equal(page.authoredStatus.getAttribute('role'), 'status')
+  page.company('Acme'); page.type('job_title', 'Designer')
+  assert.equal(page.status(), 'Unsaved changes.')
+  page.click(page.save)
+  assert.equal(page.status(), 'Saving changes…')
+  await tick()
+  assert.equal(page.status(), 'Changes saved.')
+})
+
+test('Work Experience reveals the authored check element when a save cannot be confirmed', async () => {
+  const page = await mount({
+    authored: true,
+    companies: [{ id: 1, company_name: 'Acme', job_title: 'Designer', company_source: 'custom' }],
+    fail: (request, { stored, setStored }) => {
+      if (request.method !== 'PATCH') return null
+      setStored(stored.map(item => Number(item.id) === 1 ? { ...item, job_title: 'Engineer (in review)' } : item))
+      return 'lose'
+    },
+  })
+  assert.equal(page.section.querySelectorAll('[profile-items-check-save]').length, 1)
+  assert.equal(page.checkSave(), page.authoredCheck)
+  assert.equal(page.authoredCheck.getAttribute('type'), null, 'type is set only on a real button')
+  assert.equal(page.authoredCheck.textContent, 'Check saved state', 'an empty authored label falls back to the script copy')
+  assert.equal(page.authoredCheck.hidden, true)
+  // A Webflow class can set `display`, so the inline style is what actually hides it.
+  assert.equal(page.authoredCheck.style.display, 'none')
+  page.type('job_title', 'Engineer')
+  await page.submit()
+  assert.match(page.status(), /could not be confirmed/)
+  assert.equal(page.authoredCheck.hidden, false)
+  assert.equal(page.authoredCheck.style.display, '')
+  assert.equal(page.section.querySelectorAll('[profile-items-check-save]').length, 1)
+  // Clicking the authored control runs the same canonical check the created one runs.
+  const clicked = makeEvent('click', page.authoredCheck, { bubbles: true })
+  page.authoredCheck.dispatchEvent(clicked)
+  assert.equal(clicked.defaultPrevented, true, 'an authored anchor never follows its href')
+  await tick()
+  assert.equal(page.status(), 'The save is still unconfirmed. Your draft is kept; Save remains paused.')
+  assert.equal(page.authoredCheck.hidden, false)
+})
+
+test('a status element authored inside the repeating row is ignored so the section keeps a live one', async () => {
+  const page = await mount({ authoredInRow: true })
+  const live = page.section.querySelectorAll('[profile-items-status]').filter(node => !node.closest('[profile-item-row]'))
+  assert.equal(live.length, 1)
+  assert.notEqual(live[0], page.rowStatus)
+  // The row rebuild detaches the misplaced node, which is why it must never be adopted.
+  assert.equal(page.section.contains(page.rowStatus), false)
+  page.company('Acme'); page.type('job_title', 'Designer')
+  assert.equal(live[0].textContent, 'Unsaved changes.')
 })
