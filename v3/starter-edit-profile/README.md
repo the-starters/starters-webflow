@@ -278,6 +278,12 @@ The Work Experience writer also publishes `monthRangeMessage`, the sentence show
 month is earlier than its start month. It is published so the unified rows and the legacy
 company form say the same thing, and it is a required part of the writer contract.
 
+The "Also worked with" association is part of the Work Experience draft, so the whole set that
+reads and writes it - `hasOtherChanges()`, `saveOther()`, `otherValue()`, `matchOther(value)`,
+`acceptOther(value)` and `restoreOther()` - is required too, not optional. A writer missing one
+would let Discard leave the picker on a discarded value, or let a confirmed association be
+resent on the next Save.
+
 Both writers mark the answers they receive. A mutation refused with a non-2xx answer throws an
 error carrying `known`; a mutation the server answered 2xx whose body could not be read throws
 one carrying `received`. A section treats `received` as an answer that arrived — the write

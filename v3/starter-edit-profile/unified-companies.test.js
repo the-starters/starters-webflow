@@ -707,6 +707,36 @@ test('a lost atomic replacement is confirmed by the row it created, not refused 
   assert.equal(page.section.querySelectorAll('[profile-item-row]').length, 3)
 })
 
+test('a confirmed lost create leaves the section clean rather than resending its months as an update', async () => {
+  // Xano stores what a month input sends as a full date, so the row a canonical read confirms
+  // comes back as '2020-01-01' where the draft still holds '2020-01'. That is the same month in
+  // two textual forms, not a change the Starter made, so the next Save has nothing to send.
+  let reads = 0
+  const page = await mount({ fail: (request, { stored, setStored }) => {
+    if (request.method === 'POST') {
+      // The row landed; only its answer was lost.
+      setStored([...stored, { ...request.body, id: 99, start_date: '2020-01-01', end_date: '2021-06-01' }])
+      return 'lose'
+    }
+    // The read the save itself runs fails, so the outcome stays unknown until the check.
+    return request.method === 'GET' && ++reads === 3 ? 'lose' : null
+  } })
+  page.company('Acme'); page.type('job_title', 'Designer')
+  page.type('start_date', '2020-01'); page.type('end_date', '2021-06')
+  await page.submit()
+  assert.equal(page.mutations().length, 1)
+  assert.match(page.status(), /could not be confirmed/)
+  assert.equal(page.checkSave().hidden, false)
+
+  page.click(page.checkSave()); await tick()
+  assert.match(page.status(), /is confirmed/)
+  assert.equal(page.checkSave().hidden, true)
+
+  await page.submit()
+  assert.equal(page.mutations().length, 1, 'the confirmed row is not resent as an update')
+  assert.equal(page.status(), 'Changes saved.')
+})
+
 test('Work Experience fails closed when the Edit company picker script never loaded', async () => {
   const page = await mount({ picker: false })
   assert.equal(page.status(), 'This section could not load. Reload the page before editing.')

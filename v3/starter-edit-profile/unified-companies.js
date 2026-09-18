@@ -280,21 +280,25 @@
       event.preventDefault()
       if (saving || loading || unknown) return
       // Also Worked With is part of this section's draft, so Discard has to put it back too.
-      restore(); writer.restoreOther?.(); updateCleanState(); status.textContent = 'Changes discarded.'
+      restore(); writer.restoreOther(); updateCleanState(); status.textContent = 'Changes discarded.'
     })
     section.addEventListener('input', dirty)
     section.addEventListener('change', dirty)
     // Deciding whether to send an update is strict in both directions: clearing a canonical
     // company's entity id or domain (switching it to a same-name custom company) is a real
-    // change. The one exception is the current-role pair, which is a single state written two
-    // ways: a saved row carrying only one of them is not a change the Starter made.
+    // change. Two pairs are exceptions. The current-role pair is a single state written two
+    // ways: a saved row carrying only one of them is not a change the Starter made. The months
+    // are compared by month rather than by text, because the baseline holds whatever the server
+    // stored - a full date after a confirmed write - while a month input sends `YYYY-MM`; the
+    // same month in two textual forms would otherwise be resent as an update forever.
     // `same()` below stays lenient, because it matches what the server wrote back.
     function unchanged(saved, value) {
       const ends = endsNow(value)
-      return names.filter(key => key !== 'current_work' && key !== 'end_date')
+      return names.filter(key => !['current_work', 'start_date', 'end_date'].includes(key))
         .every(key => String(saved[key] || '') === String(value[key] || ''))
+        && sameMonth(saved.start_date, value.start_date)
         && endsNow(saved) === ends
-        && (ends || String(saved.end_date || '') === String(value.end_date || ''))
+        && (ends || sameMonth(saved.end_date, value.end_date))
         && (Number(saved.company_entity_id) || 0) === (Number(value.company_entity_id) || 0)
         && String(saved.company_domain || '').toLowerCase() === String(value.company_domain || '').toLowerCase()
     }
@@ -381,7 +385,7 @@
     function confirm(operation, confirmed) {
       if (operation.kind === 'other') {
         // The write landed, so the association baseline advances and Save stops resending it.
-        writer.acceptOther?.(operation.value)
+        writer.acceptOther(operation.value)
       } else if (operation.kind === 'remove') {
         baseline = baseline.filter(item => String(item.id) !== String(operation.id))
         removeRecord(operation.record)
@@ -484,7 +488,7 @@
             // A received answer whose body could not be read still reached the server, so the
             // association write is unknown rather than lost: no read can prove it never landed.
             if (!error?.known && (error?.received || dispatchedSince(sent))) {
-              unknown = { kind: 'other', lost: !error?.received, value: writer.otherValue?.() ?? '' }
+              unknown = { kind: 'other', lost: !error?.received, value: writer.otherValue() }
             }
             throw error
           }
