@@ -9,10 +9,10 @@ const source = fs.readFileSync(SOURCE_PATH, 'utf8')
 
 // ---------------------------------------------------------------------------
 // The 43 live Subcategories: Hierarchical path (CMS `algolia-filter`, identical
-// to the Algolia `categories.lvl1` facet value) → Collection Page slug. Copied
-// from view-all-404-brief.md, "Xano × Algolia × Webflow three-way check", which
-// verified Xano `subcategories_v3` and the Webflow CMS byte-identical on all 56
-// rows. The 13 archived rows are excluded: Webflow never publishes them.
+// to the Algolia `categories.lvl1` facet value) → Collection Page slug. Taken
+// from the Webflow CMS Subcategories collection, verified 2026-09-18 to be
+// byte-identical to Xano `subcategories_v3` on all 56 rows. The 13 archived
+// rows are excluded: Webflow never publishes them.
 // ---------------------------------------------------------------------------
 
 const LIVE_PAIRS = [
