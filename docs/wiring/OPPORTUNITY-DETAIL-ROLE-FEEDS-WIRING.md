@@ -50,18 +50,25 @@ endpoint change is involved. The merged `/opportunities` feed stays unchanged.
 - Applied Starter: their application card renders; no Brand-feed request.
 - Unapplied Starter: the authored empty state renders; no Brand-feed request.
 - Foreign Brand and free Brand: existing authorization/redirect behavior remains.
+- A transient owner-probe failure leaves owner controls hidden and the Brand feed uninitialized until a successful manual reload. This is not proof of an empty applicants list. Verify this path with fake transport; do not create a production outage for the check.
 - Confirm both script load orders, reloads, and unchanged merged feed behavior.
 - No application, messaging, hiring, or opportunity mutation is needed for proof.
 
-If rolling back the controller after deferral, first restore and publish the
-exact saved root attributes while the new controller is still served. Removing
-deferral restores the previous auto-boot behavior (including the known unwanted
-request). Verify feed activation before rolling back CDN code. Never leave
-deferred roots with the old controller. Record publication scope and readbacks.
+If rolling back the controller after deferral, remove only the added
+`wf-xano-defer` attribute from each root, read both complete attribute inventories
+back, and publish while the new controller is still served. Never resend the
+saved attribute lists: the CMS-bound `wf-xano-param-opportunity_id` may read as
+null, which cannot reconstruct its binding. Verify resolved opportunity IDs and
+request parameters on more than one published CMS item. Removing deferral
+restores the previous auto-boot behavior (including the known unwanted request).
+Verify feed activation before rolling back CDN code. Never leave deferred roots
+with the old controller. Record publication scope and readbacks.
 
 Current status: local candidate only; no Webflow attributes changed or published.
-Focused regression: the two activation cases fail on the original controller;
-the candidate passes the complete 181-test authentication/controller suite.
+Focused regression on this candidate: three new activation cases fail against
+the base controller; all 183 authentication/controller tests pass. Local browser
+fixtures use fake Xano/Memberstack transports and a wf-xano stand-in. These
+results do not establish production runtime acceptance.
 
 ```sh
 node --test opportunities-3.0-auth.test.js
