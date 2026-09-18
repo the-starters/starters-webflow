@@ -474,6 +474,15 @@ test('the listener is capturing, bound once, and a second run adds no second bin
   assert.deepEqual(h.navigations, ['/subcategories/paid-social'], 'and the click fires once')
 })
 
+// ---------------------------------------------------------------------------
+// Release marker
+// ---------------------------------------------------------------------------
+
+test('the header carries a well-formed @release marker', () => {
+  const marker = source.match(/^ \* @release (v\d+\.\d+\.\d+)$/m)
+  assert.ok(marker, 'no "@release vX.Y.Z" line in the view-all.js header')
+})
+
 test('a click outside a View All button is left alone', () => {
   const h = harness({ rows: ['Paid Media > Paid Social'] })
   const event = { type: 'click', target: h.body, preventDefault: () => {}, stopPropagation: () => {} }
