@@ -301,7 +301,7 @@ export function collectionById(id) {
  * always set there; an export is a plain dump, so the same check earns its keep.
  */
 export function isLiveItem(item) {
-  return item?.isArchived !== true && typeof item?.lastPublished === 'string' && item.lastPublished !== '';
+  return Boolean(item?.id) && item.isArchived !== true && typeof item.lastPublished === 'string' && item.lastPublished !== '';
 }
 
 export function stripHighlight(hit) {
