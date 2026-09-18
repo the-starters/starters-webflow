@@ -1369,10 +1369,10 @@ Site Head Code sets `WfXanoConfig.xanoBase` / `authBase` but not
 but WfXanoConfig.favoritesSource is missing", leaves every heart `hidden`, and
 wires no clicks. This module defaults `favoritesSource` to
 `opp30:brand/favorites` only after it confirms a hire-profile path, a profile
-favourite control, and an active paid-Brand plan
-(`pln_new-paid-plan-463h04ph` or `pln_dorxata-test-brand-plan-777r02pa`). It
-then waits up to about ten seconds for `window.WfXano.favorites`, calls `init`
-on each profile control, and pre-warms `favorites.refresh('starter')`.
+favourite control, and an active paid-Brand plan from the plan IDs in
+[ACCESS-MATRIX.md](ACCESS-MATRIX.md). It then waits up to about ten seconds
+for `window.WfXano.favorites`, calls `init` on each profile control, and
+pre-warms `favorites.refresh('starter')`.
 
 Logged-out, Free Brand, and Talent viewers are left on the Designer-owned
 hidden control. The module does not write `favoritesSource` for them, so wf-xano
@@ -1382,12 +1382,15 @@ Install it in the hire template Page Settings -> Custom Code -> Footer, next to
 `hire-profile.js`:
 
 ```html
-<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/hire-profile.js"></script>
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/hire-profile-favorites.js"></script>
 ```
 
-Pin or cache-bust (`?v=…`) the same way the live hire-profile tag is pinned.
+The full hire-template footer contract and its pin rule live in
+[`docs/wiring/HIRE-PROFILE-WIRING.md`](../docs/wiring/HIRE-PROFILE-WIRING.md#install).
 That pin is a Webflow edit after merge; do not publish from this change.
+
+The file header carries the repo's release marker, an `@release vX.Y.Z` comment
+kept present by a unit test, so the served jsDelivr bytes are version-verifiable.
 
 The module injects only favourite-control state styles (favorited fill, loading,
 focus, and a scoped `[hidden]` hide so a Webflow `display:flex` icon button
