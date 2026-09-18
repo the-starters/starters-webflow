@@ -402,6 +402,16 @@ test('a missing date on a dated collection warns and falls back to createdOn', a
   ]);
 });
 
+test('a record left with no date at all warns instead of shipping silently', async () => {
+  const warnings = [];
+  const { createdOn, ...noCreatedOn } = SESSION_ITEM;
+  const record = await mapWith(SESSIONS, noCreatedOn, { warnings });
+  assert.equal(record.date, null);
+  assert.deepEqual(warnings, [
+    `Item ${SESSION_ITEM.id} (sessions): no date and no createdOn, indexed with date null`,
+  ]);
+});
+
 test('collections with no date field never warn about one', async () => {
   const warnings = [];
   await mapWith(PLAYBOOKS, PLAYBOOK_ITEM, { warnings });

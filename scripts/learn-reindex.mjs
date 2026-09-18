@@ -90,14 +90,14 @@ async function webflow(path, { allow404 = false } = {}) {
 async function fetchLiveItems(collectionId) {
   const items = [];
   let offset = 0;
-  let total = Infinity;
-  while (offset < total) {
+  // An empty page is the only end condition; a missing pagination total must
+  // not be read as "done after the first page".
+  for (;;) {
     const page = await webflow(`/collections/${collectionId}/items/live?limit=${PAGE_SIZE}&offset=${offset}`);
     const batch = page.items ?? [];
-    items.push(...batch);
-    total = page.pagination?.total ?? items.length;
-    offset += PAGE_SIZE;
     if (batch.length === 0) break;
+    items.push(...batch);
+    offset += PAGE_SIZE;
   }
   return items;
 }

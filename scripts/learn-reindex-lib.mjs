@@ -17,7 +17,7 @@ export const REF_COLLECTIONS = {
   sessions: '69e08554183023227aa46c1e',
 };
 
-export const LEARN_URL_PREFIX = '/learn';
+const LEARN_URL_PREFIX = '/learn';
 
 // The existing index uses the singular for the Interviews resource type.
 const INTERVIEW_LVL1_ALIASES = { Interviews: 'Interview' };
@@ -117,11 +117,17 @@ function contentType(lvl0, lvl1) {
   return lvl1 ? { lvl0, lvl1 } : { lvl0 };
 }
 
-function core({ item, collectionSlug, lvl0, lvl1, description, thumbnail, date, author, categories }) {
+function core(ctx, { lvl0, lvl1, description, thumbnail, date, author, categories }) {
+  const { item, collectionSlug } = ctx;
   const fieldData = item.fieldData ?? {};
   const slug = fieldData.slug;
   if (!slug) {
     throw new Error(`Item ${item.id} in /learn/${collectionSlug}/ has no slug, so it has no page URL`);
+  }
+  // createdOn is the last fallback; with nothing left the record sorts wrong.
+  const resolvedDate = date ?? toUnixSeconds(item.createdOn);
+  if (resolvedDate === null) {
+    warn(ctx, `Item ${item.id} (${collectionSlug}): no date and no createdOn, indexed with date null`);
   }
   return {
     objectID: item.id,
@@ -131,7 +137,7 @@ function core({ item, collectionSlug, lvl0, lvl1, description, thumbnail, date, 
     content_type: contentType(lvl0, lvl1),
     description: description ?? null,
     thumbnail_url: thumbnail ?? null,
-    date: date ?? toUnixSeconds(item.createdOn),
+    date: resolvedDate,
     published_on: toUnixSeconds(item.lastPublished),
     author,
     categories,
@@ -139,7 +145,7 @@ function core({ item, collectionSlug, lvl0, lvl1, description, thumbnail, date, 
 }
 
 async function mapInterview(ctx) {
-  const { item, collectionSlug, resolve } = ctx;
+  const { item, resolve } = ctx;
   const f = item.fieldData ?? {};
   const { author, memberstack_id } = await authorFrom(resolve, f['autor-3']);
   const resourceType = optionName(ctx, 'category');
@@ -147,9 +153,7 @@ async function mapInterview(ctx) {
     ? `Interview & News > ${INTERVIEW_LVL1_ALIASES[resourceType] ?? resourceType}`
     : null;
   return {
-    ...core({
-      item,
-      collectionSlug,
+    ...core(ctx, {
       lvl0: 'Interview & News',
       lvl1,
       description: f['description-2'] ?? null,
@@ -165,14 +169,12 @@ async function mapInterview(ctx) {
 }
 
 async function mapPlaybook(ctx) {
-  const { item, collectionSlug, resolve } = ctx;
+  const { item, resolve } = ctx;
   const f = item.fieldData ?? {};
   const { author, memberstack_id } = await authorFrom(resolve, f['author-2']);
   const type = optionName(ctx, 'type');
   return {
-    ...core({
-      item,
-      collectionSlug,
+    ...core(ctx, {
       lvl0: 'Playbook',
       lvl1: type ? `Playbook > ${type}` : null,
       description: f.description ?? null,
@@ -188,13 +190,12 @@ async function mapPlaybook(ctx) {
   };
 }
 
-async function mapSession({ item, collectionSlug, resolve }) {
+async function mapSession(ctx) {
+  const { item, resolve } = ctx;
   const f = item.fieldData ?? {};
   const { author, memberstack_id } = await authorFrom(resolve, f['autor-starter']);
   return {
-    ...core({
-      item,
-      collectionSlug,
+    ...core(ctx, {
       lvl0: 'Session',
       lvl1: null,
       description: f.description ?? null,
@@ -210,12 +211,10 @@ async function mapSession({ item, collectionSlug, resolve }) {
 }
 
 async function mapWebinar(ctx) {
-  const { item, collectionSlug, resolve } = ctx;
+  const { item, resolve } = ctx;
   const f = item.fieldData ?? {};
   return {
-    ...core({
-      item,
-      collectionSlug,
+    ...core(ctx, {
       lvl0: 'Webinar',
       lvl1: null,
       description: f['short-description'] ?? null,
@@ -233,12 +232,10 @@ async function mapWebinar(ctx) {
 }
 
 async function mapEvent(ctx) {
-  const { item, collectionSlug, resolve } = ctx;
+  const { item, resolve } = ctx;
   const f = item.fieldData ?? {};
   return {
-    ...core({
-      item,
-      collectionSlug,
+    ...core(ctx, {
       lvl0: 'Event',
       lvl1: null,
       description: f['short-description'] ?? null,
