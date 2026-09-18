@@ -81,36 +81,36 @@ function idList(value) {
   return value ? [value] : [];
 }
 
+// A reference that resolves but carries no slug is unusable here; it is still
+// dropped, but never in silence.
+function warnSlugless(ctx, collectionId, itemId) {
+  warn(ctx, `Item ${ctx.item.id} (${ctx.collectionSlug}): reference ${collectionId}/${itemId} has no slug, dropped`);
+}
+
 /** Resolve reference ids to their item slugs; unresolved refs drop out. */
-async function slugsFor(resolve, collectionId, value) {
+async function slugsFor(ctx, collectionId, value) {
   const slugs = [];
   for (const id of idList(value)) {
-    const item = await resolve(collectionId, id);
-    const slug = item?.fieldData?.slug;
+    const item = await ctx.resolve(collectionId, id);
+    if (!item) continue;
+    const slug = item.fieldData?.slug;
     if (slug) slugs.push(slug);
+    else warnSlugless(ctx, collectionId, id);
   }
   return slugs;
 }
 
 /** Freelancer reference -> { author slug, memberstack id }; both null when missing. */
-async function authorFrom(resolve, id) {
+async function authorFrom(ctx, id) {
   if (!id) return { author: null, memberstack_id: null };
-  const item = await resolve(REF_COLLECTIONS.freelancers, id);
+  const item = await ctx.resolve(REF_COLLECTIONS.freelancers, id);
   if (!item) return { author: null, memberstack_id: null };
+  const slug = item.fieldData?.slug ?? null;
+  if (!slug) warnSlugless(ctx, REF_COLLECTIONS.freelancers, id);
   return {
-    author: item.fieldData?.slug ?? null,
+    author: slug,
     memberstack_id: item.fieldData?.['memberstack-id'] ?? null,
   };
-}
-
-async function memberstackIdsFor(resolve, value) {
-  const ids = [];
-  for (const id of idList(value)) {
-    const item = await resolve(REF_COLLECTIONS.freelancers, id);
-    const memberstackId = item?.fieldData?.['memberstack-id'];
-    if (memberstackId) ids.push(memberstackId);
-  }
-  return ids;
 }
 
 function contentType(lvl0, lvl1) {
@@ -145,9 +145,9 @@ function core(ctx, { lvl0, lvl1, description, thumbnail, date, author, categorie
 }
 
 async function mapInterview(ctx) {
-  const { item, resolve } = ctx;
+  const { item } = ctx;
   const f = item.fieldData ?? {};
-  const { author, memberstack_id } = await authorFrom(resolve, f['autor-3']);
+  const { author, memberstack_id } = await authorFrom(ctx, f['autor-3']);
   const resourceType = optionName(ctx, 'category');
   const lvl1 = resourceType
     ? `Interview & News > ${INTERVIEW_LVL1_ALIASES[resourceType] ?? resourceType}`
@@ -160,7 +160,7 @@ async function mapInterview(ctx) {
       thumbnail: imageUrl(f.image),
       date: requiredDate(ctx, 'publish-date'),
       author,
-      categories: await slugsFor(resolve, REF_COLLECTIONS.categories, f['category-interviews']),
+      categories: await slugsFor(ctx, REF_COLLECTIONS.categories, f['category-interviews']),
     }),
     budget: optionName(ctx, 'budget'),
     featured: f.featured === true,
@@ -169,9 +169,9 @@ async function mapInterview(ctx) {
 }
 
 async function mapPlaybook(ctx) {
-  const { item, resolve } = ctx;
+  const { item } = ctx;
   const f = item.fieldData ?? {};
-  const { author, memberstack_id } = await authorFrom(resolve, f['author-2']);
+  const { author, memberstack_id } = await authorFrom(ctx, f['author-2']);
   const type = optionName(ctx, 'type');
   return {
     ...core(ctx, {
@@ -181,19 +181,19 @@ async function mapPlaybook(ctx) {
       thumbnail: imageUrl(f['list-cover---image']),
       date: null, // no date field on this collection; core falls back to createdOn
       author,
-      categories: await slugsFor(resolve, REF_COLLECTIONS.categories, f['category-3']),
+      categories: await slugsFor(ctx, REF_COLLECTIONS.categories, f['category-3']),
     }),
     version: f.version ?? null,
-    associated_sessions: await slugsFor(resolve, REF_COLLECTIONS.sessions, f['associated-session']),
+    associated_sessions: await slugsFor(ctx, REF_COLLECTIONS.sessions, f['associated-session']),
     gated: false, // no source field in Webflow; every existing record carries false
     memberstack_id,
   };
 }
 
 async function mapSession(ctx) {
-  const { item, resolve } = ctx;
+  const { item } = ctx;
   const f = item.fieldData ?? {};
-  const { author, memberstack_id } = await authorFrom(resolve, f['autor-starter']);
+  const { author, memberstack_id } = await authorFrom(ctx, f['autor-starter']);
   return {
     ...core(ctx, {
       lvl0: 'Session',
@@ -202,7 +202,7 @@ async function mapSession(ctx) {
       thumbnail: imageUrl(f['image-prev-2']),
       date: null, // no date field on this collection
       author,
-      categories: await slugsFor(resolve, REF_COLLECTIONS.categories, f['sessions-category-2']),
+      categories: await slugsFor(ctx, REF_COLLECTIONS.categories, f['sessions-category-2']),
     }),
     time_watching: f['time-watching'] ?? null,
     video_id: f['id-video-for-waching'] ?? null,
@@ -211,7 +211,7 @@ async function mapSession(ctx) {
 }
 
 async function mapWebinar(ctx) {
-  const { item, resolve } = ctx;
+  const { item } = ctx;
   const f = item.fieldData ?? {};
   return {
     ...core(ctx, {
@@ -225,36 +225,14 @@ async function mapWebinar(ctx) {
     }),
     state: optionName(ctx, 'state'),
     location: f.location ?? null,
-    speakers: await slugsFor(resolve, REF_COLLECTIONS.people, f.speackers),
+    speakers: await slugsFor(ctx, REF_COLLECTIONS.people, f.speackers),
     memberstack_ids: [], // no freelancer reference on webinars
     memberstack_id: null,
   };
 }
 
-async function mapEvent(ctx) {
-  const { item, resolve } = ctx;
-  const f = item.fieldData ?? {};
-  return {
-    ...core(ctx, {
-      lvl0: 'Event',
-      lvl1: null,
-      description: f['short-description'] ?? null,
-      thumbnail: imageUrl(f['hero-image']),
-      date: requiredDate(ctx, 'date-and-time'),
-      author: null, // collection has no author field
-      categories: await slugsFor(resolve, REF_COLLECTIONS.categories, f.categories),
-    }),
-    label: optionName(ctx, 'label'),
-    location: f.location ?? null,
-    speakers: await slugsFor(resolve, REF_COLLECTIONS.people, f.speakers),
-    memberstack_ids: await memberstackIdsFor(resolve, f.speakers2),
-    featured: f.featured === true,
-    join_event_url: f['join-event-url'] ?? null,
-    memberstack_id: null,
-  };
-}
-
 // Podcasts are deliberately absent: the Lists collection has no page.
+// Events are deliberately absent too: they are no longer indexed in Learn.
 export const COLLECTIONS = [
   {
     name: 'Interview & News',
@@ -280,12 +258,6 @@ export const COLLECTIONS = [
     expectedSlug: 'webinars',
     map: mapWebinar,
   },
-  {
-    name: 'Events',
-    id: '69ef540fe8dc02d3ea4c0353',
-    expectedSlug: 'event',
-    map: mapEvent,
-  },
 ];
 
 export function collectionById(id) {
@@ -299,11 +271,6 @@ export function collectionById(id) {
  */
 export function isLiveItem(item) {
   return Boolean(item?.id) && item.isArchived !== true && typeof item.lastPublished === 'string' && item.lastPublished !== '';
-}
-
-export function stripHighlight(hit) {
-  const { _highlightResult, _snippetResult, ...rest } = hit ?? {};
-  return rest;
 }
 
 // Only these fields are worth printing old -> new; the rest are too long.
@@ -372,6 +339,24 @@ export function normalizeExport(data) {
     const slug = entry?.schema?.slug;
     if (!slug) throw new Error('Webflow export has a collection without `schema.slug`');
     return { schema: entry.schema, items: Array.isArray(entry.items) ? entry.items : [] };
+  });
+}
+
+/**
+ * Pair an export's entries with the collections we index, in COLLECTIONS order.
+ * Entries for collections we do not index (Events, anything new) are ignored.
+ */
+export function selectExportCollections(entries) {
+  const byId = new Map(entries.map((entry) => [entry.schema.id, entry]));
+  return COLLECTIONS.map((config) => {
+    const entry = byId.get(config.id);
+    if (!entry) throw new Error(`Export is missing collection ${config.name} (${config.id})`);
+    if (entry.schema.slug !== config.expectedSlug) {
+      throw new Error(
+        `Collection ${config.name} (${config.id}) slug is "${entry.schema.slug}", expected "${config.expectedSlug}". Aborting.`
+      );
+    }
+    return { config, schema: entry.schema, items: entry.items.filter(isLiveItem) };
   });
 }
 

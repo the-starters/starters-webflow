@@ -12,6 +12,7 @@ import {
   isLiveItem,
   normalizeExport,
   optionMapsFromSchema,
+  selectExportCollections,
   toUnixSeconds,
 } from './learn-reindex-lib.mjs';
 
@@ -19,6 +20,7 @@ const INTERVIEWS = '69dca9df095d2fbcf34e255b';
 const PLAYBOOKS = '69e1e416f6476e12f572b39b';
 const SESSIONS = '69e08554183023227aa46c1e';
 const WEBINARS = '69e1fdfacbd0eddfd48c1495';
+// Still in the CMS and in exports, deliberately not indexed.
 const EVENTS = '69ef540fe8dc02d3ea4c0353';
 
 const OPTION_IDS = {
@@ -199,33 +201,6 @@ const INTERVIEW_ITEM = {
   },
 };
 
-const EVENT_ITEM = {
-  id: '69f06791bc4b1554326e7640',
-  lastPublished: '2026-07-06T08:44:35.336Z',
-  createdOn: '2026-04-28T07:53:53.028Z',
-  isArchived: false,
-  isDraft: false,
-  fieldData: {
-    label: OPTION_IDS.labelUpcoming,
-    'hero-image': {
-      fileId: '69f06676f8deef3b9df311b2',
-      url: 'https://cdn.prod.website-files.com/69cccb525710adfc97070cec/69f06676f8deef3b9df311b2_event-img.avif',
-      alt: null,
-    },
-    'short-description': 'Most brands today have access to the same tools.',
-    description: '<p>…</p>',
-    speakers: ['69e2007cf6871a152a243da9', '69e20089e1af94265c55cd2d'],
-    speakers2: null,
-    'date-and-time': '2026-04-28T07:53:00.000Z',
-    'join-event-url': 'https://learn-hero-proto.vercel.app/',
-    featured: true,
-    location: 'Building San Francisco, CA',
-    categories: null,
-    name: 'How Great Brands Stay Relevant',
-    slug: 'how-great-brands-stay-relevant',
-  },
-};
-
 const PLAYBOOK_ITEM = {
   id: 'playbook-1',
   lastPublished: '2026-08-01T12:00:00.000Z',
@@ -344,7 +319,6 @@ test('every collection carries its expected slug and content_type', async () => 
       [PLAYBOOKS, 'playbooks-frameworks'],
       [SESSIONS, 'sessions'],
       [WEBINARS, 'webinars'],
-      [EVENTS, 'event'],
     ]
   );
 
@@ -352,18 +326,20 @@ test('every collection carries its expected slug and content_type', async () => 
   const playbook = await mapWith(PLAYBOOKS, PLAYBOOK_ITEM);
   const session = await mapWith(SESSIONS, SESSION_ITEM);
   const webinar = await mapWith(WEBINARS, WEBINAR_ITEM);
-  const event = await mapWith(EVENTS, EVENT_ITEM);
 
   assert.deepEqual(interview.content_type, { lvl0: 'Interview & News', lvl1: 'Interview & News > News' });
   assert.deepEqual(playbook.content_type, { lvl0: 'Playbook', lvl1: 'Playbook > Template' });
   assert.deepEqual(session.content_type, { lvl0: 'Session' });
   assert.deepEqual(webinar.content_type, { lvl0: 'Webinar' });
-  assert.deepEqual(event.content_type, { lvl0: 'Event' });
 
   assert.equal(playbook.url, '/learn/playbooks-frameworks/budget-template');
   assert.equal(session.url, '/learn/sessions/scaling-finance-ops');
   assert.equal(webinar.url, '/learn/webinars/creative-teardown');
-  assert.equal(event.url, '/learn/event/how-great-brands-stay-relevant');
+});
+
+test('Events are not indexed', () => {
+  assert.equal(collectionById(EVENTS), null);
+  assert.equal(COLLECTIONS.some((c) => c.expectedSlug === 'event'), false);
 });
 
 test('the Interviews resource type is indexed as the singular "Interview"', async () => {
@@ -465,30 +441,6 @@ test('webinar has no author or categories and resolves speaker slugs', async () 
   assert.equal(record.date, Math.floor(Date.parse('2026-09-30T16:00:00.000Z') / 1000));
 });
 
-test('event maps speakers, label, date and empty reference arrays', async () => {
-  const record = await mapWith(EVENTS, EVENT_ITEM);
-  assert.equal(record.url, '/learn/event/how-great-brands-stay-relevant');
-  assert.deepEqual(record.content_type, { lvl0: 'Event' });
-  assert.equal(record.label, 'Upcoming');
-  assert.equal(record.date, 1777362780);
-  assert.deepEqual(record.speakers, ['jamie-lee', 'chris-park']);
-  assert.deepEqual(record.memberstack_ids, []);
-  assert.deepEqual(record.categories, []);
-  assert.equal(record.author, null);
-  assert.equal(record.memberstack_id, null);
-  assert.equal(record.featured, true);
-  assert.equal(record.join_event_url, 'https://learn-hero-proto.vercel.app/');
-});
-
-test('event speakers2 becomes memberstack_ids and drops authors without one', async () => {
-  const item = {
-    ...EVENT_ITEM,
-    fieldData: { ...EVENT_ITEM.fieldData, speakers2: ['6a188fb6bf283f471428d608', 'author-no-memberstack'] },
-  };
-  const record = await mapWith(EVENTS, item);
-  assert.deepEqual(record.memberstack_ids, ['mem_cm5b5n6zr057w0sioewr0etrf']);
-});
-
 test('unresolvable references map to nulls and empty arrays', async () => {
   const missing = [];
   const resolve = fakeResolver(REF_ITEMS, (collectionId, itemId) => missing.push(`${collectionId}/${itemId}`));
@@ -506,6 +458,44 @@ test('unresolvable references map to nulls and empty arrays', async () => {
   ]);
 });
 
+test('a reference that resolves without a slug is dropped with a warning', async () => {
+  const warnings = [];
+  const refs = {
+    ...REF_ITEMS,
+    [REF_COLLECTIONS.categories]: {
+      ...REF_ITEMS[REF_COLLECTIONS.categories],
+      'cat-slugless': published({ id: 'cat-slugless', fieldData: { name: 'No Slug' } }),
+    },
+  };
+  const item = {
+    ...INTERVIEW_ITEM,
+    fieldData: { ...INTERVIEW_ITEM.fieldData, 'category-interviews': 'cat-slugless' },
+  };
+  const record = await mapWith(INTERVIEWS, item, { resolve: fakeResolver(refs), warnings });
+  assert.deepEqual(record.categories, []);
+  assert.deepEqual(warnings, [
+    `Item ${INTERVIEW_ITEM.id} (interviews-analysis): reference ${REF_COLLECTIONS.categories}/cat-slugless has no slug, dropped`,
+  ]);
+});
+
+test('a slugless author is dropped with a warning but keeps its memberstack id', async () => {
+  const warnings = [];
+  const refs = {
+    ...REF_ITEMS,
+    [REF_COLLECTIONS.freelancers]: {
+      ...REF_ITEMS[REF_COLLECTIONS.freelancers],
+      'author-slugless': published({ id: 'author-slugless', fieldData: { 'memberstack-id': 'mem_keepme' } }),
+    },
+  };
+  const item = { ...INTERVIEW_ITEM, fieldData: { ...INTERVIEW_ITEM.fieldData, 'autor-3': 'author-slugless' } };
+  const record = await mapWith(INTERVIEWS, item, { resolve: fakeResolver(refs), warnings });
+  assert.equal(record.author, null);
+  assert.equal(record.memberstack_id, 'mem_keepme');
+  assert.deepEqual(warnings, [
+    `Item ${INTERVIEW_ITEM.id} (interviews-analysis): reference ${REF_COLLECTIONS.freelancers}/author-slugless has no slug, dropped`,
+  ]);
+});
+
 test('items with no reference values at all still map cleanly', async () => {
   const bare = {
     id: 'bare-1',
@@ -515,13 +505,12 @@ test('items with no reference values at all still map cleanly', async () => {
     isDraft: false,
     fieldData: { name: 'Bare', slug: 'bare' },
   };
-  const record = await mapWith(EVENTS, bare);
+  const record = await mapWith(WEBINARS, bare);
   assert.equal(record.thumbnail_url, null);
   assert.equal(record.description, null);
-  assert.equal(record.label, null);
+  assert.equal(record.state, null);
   assert.equal(record.location, null);
-  assert.equal(record.join_event_url, null);
-  assert.equal(record.featured, false);
+  assert.equal(record.author, null);
   assert.deepEqual(record.speakers, []);
   assert.deepEqual(record.memberstack_ids, []);
   assert.equal(record.date, Math.floor(Date.parse('2026-07-01T00:00:00.000Z') / 1000));
@@ -543,7 +532,7 @@ test('diffRecords reports added, removed, changed and unchanged', () => {
   ];
   const proposed = [
     { objectID: 'keep', title: 'Keep', url: '/learn/sessions/keep', description: 'same' },
-    { objectID: 'new', title: 'New', url: '/learn/event/new' },
+    { objectID: 'new', title: 'New', url: '/learn/webinars/new' },
     {
       objectID: 'move',
       title: 'Move',
@@ -556,7 +545,7 @@ test('diffRecords reports added, removed, changed and unchanged', () => {
   ];
 
   const diff = diffRecords(current, proposed);
-  assert.deepEqual(diff.added, [{ objectID: 'new', title: 'New', url: '/learn/event/new' }]);
+  assert.deepEqual(diff.added, [{ objectID: 'new', title: 'New', url: '/learn/webinars/new' }]);
   assert.deepEqual(diff.removed, [{ objectID: 'drop', title: 'Drop', url: '/learn/old/drop' }]);
   assert.equal(diff.unchangedCount, 1);
   assert.equal(diff.changed.length, 1);
@@ -639,6 +628,46 @@ test('a minimal export object maps through the export-mode loader', async () => 
   assert.deepEqual(dangling, []);
 });
 
+test('an export that still carries Events yields only the four indexed collections', () => {
+  const entry = (id, slug, items = []) => ({ schema: { ...SCHEMAS[id], id, slug }, items });
+  const exported = {
+    collections: [
+      entry(INTERVIEWS, 'interviews-analysis', [INTERVIEW_ITEM]),
+      entry(PLAYBOOKS, 'playbooks-frameworks', [PLAYBOOK_ITEM]),
+      entry(SESSIONS, 'sessions', [SESSION_ITEM]),
+      entry(WEBINARS, 'webinars', [WEBINAR_ITEM]),
+      entry(EVENTS, 'event', [{ id: 'an-event', isArchived: false, lastPublished: '2026-09-01T00:00:00.000Z', fieldData: { slug: 'an-event' } }]),
+    ],
+    refs: REF_ITEMS,
+  };
+
+  const selected = selectExportCollections(normalizeExport(exported));
+  assert.deepEqual(
+    selected.map((s) => [s.config.expectedSlug, s.items.length]),
+    [
+      ['interviews-analysis', 1],
+      ['playbooks-frameworks', 1],
+      ['sessions', 1],
+      ['webinars', 1],
+    ]
+  );
+});
+
+test('selectExportCollections rejects a renamed or absent collection', () => {
+  const entry = (id, slug) => ({ schema: { ...SCHEMAS[id], id, slug }, items: [] });
+  const four = [
+    entry(INTERVIEWS, 'interviews-analysis'),
+    entry(PLAYBOOKS, 'playbooks-frameworks'),
+    entry(SESSIONS, 'sessions'),
+    entry(WEBINARS, 'webinars'),
+  ];
+  assert.throws(() => selectExportCollections(four.slice(1)), /missing collection Interview & News/);
+  assert.throws(
+    () => selectExportCollections([entry(INTERVIEWS, 'interviews-renamed'), ...four.slice(1)]),
+    /slug is "interviews-renamed"/
+  );
+});
+
 test('normalizeExport rejects a payload it cannot trust', () => {
   assert.throws(() => normalizeExport(null), /collections/);
   assert.throws(() => normalizeExport({ collections: [{ schema: {} }], refs: {} }), /schema\.slug/);
@@ -657,5 +686,5 @@ test('an item with no slug is rejected rather than given an /undefined URL', asy
     fieldData: { name: 'No Slug' },
   };
   assert.equal(isLiveItem(slugless), true);
-  await assert.rejects(() => mapWith(EVENTS, slugless), /slugless-1.*no slug/);
+  await assert.rejects(() => mapWith(WEBINARS, slugless), /slugless-1.*no slug/);
 });

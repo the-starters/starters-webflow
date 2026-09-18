@@ -21,7 +21,7 @@ import {
   isLiveItem,
   normalizeExport,
   optionMapsFromSchema,
-  stripHighlight,
+  selectExportCollections,
 } from './learn-reindex-lib.mjs';
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
@@ -152,17 +152,7 @@ function exportSource(path, dangling) {
     label: `Webflow export ${path} (exportedAt ${data.exportedAt ?? 'unknown'})`,
     resolve,
     async collections() {
-      const byId = new Map(entries.map((entry) => [entry.schema.id, entry]));
-      return COLLECTIONS.map((config) => {
-        const entry = byId.get(config.id);
-        if (!entry) throw new Error(`Export is missing collection ${config.name} (${config.id})`);
-        if (entry.schema.slug !== config.expectedSlug) {
-          throw new Error(
-            `Collection ${config.name} (${config.id}) slug is "${entry.schema.slug}", expected "${config.expectedSlug}". Aborting.`
-          );
-        }
-        return { config, schema: entry.schema, items: entry.items.filter(isLiveItem) };
-      });
+      return selectExportCollections(entries);
     },
   };
 }
@@ -188,7 +178,7 @@ async function browseIndex() {
   let cursor;
   do {
     const page = await algolia('POST', `/indexes/${INDEX}/browse`, cursor ? { hitsPerPage: 1000, cursor } : { hitsPerPage: 1000 });
-    for (const hit of page.hits ?? []) hits.push(stripHighlight(hit));
+    for (const hit of page.hits ?? []) hits.push(hit);
     cursor = page.cursor;
   } while (cursor);
   return hits;
