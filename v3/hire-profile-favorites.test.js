@@ -99,7 +99,6 @@ function loadModule(options = {}) {
   let bootListener = null
   const controls = options.controls || []
   const queried = []
-  const queriedAll = []
   const head = fakeElement({ tagName: 'HEAD' })
   const documentStub = {
     readyState: 'loading',
@@ -117,7 +116,6 @@ function loadModule(options = {}) {
       return null
     },
     querySelectorAll(selector) {
-      queriedAll.push(selector)
       if (selector === CONTROL) return controls.slice()
       return []
     },
@@ -142,14 +140,12 @@ function loadModule(options = {}) {
     clearTimeout,
   }
   vm.createContext(context)
-  vm.runInContext(options.source || source, context)
-  if (options.secondSource) vm.runInContext(options.secondSource, context)
+  vm.runInContext(source, context)
   return {
     window: windowStub,
     document: documentStub,
     context,
     queried,
-    queriedAll,
     warnings,
     boot: () => {
       documentStub.readyState = 'complete'
