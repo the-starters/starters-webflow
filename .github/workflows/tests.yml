@@ -42,7 +42,7 @@ jobs:
       # deployed through jsDelivr. Wire it up separately if it is ever revived.
       #
       # step-flow-test-dom.js is included explicitly — it is a real test file
-      # that predates the *.test.js convention, so the pattern below misses it.
+      # that predates the *.test.js convention, so the patterns below miss it.
       # The list is read into an array over NUL-delimited paths rather than left
       # to word splitting: an unquoted "$files" behaves differently across shells
       # (zsh does not split parameter expansions, so the same line that runs 1962
@@ -59,7 +59,7 @@ jobs:
               code-components/*) continue ;;
             esac
             files+=("$file")
-          done < <(git ls-files -z '*.test.js')
+          done < <(git ls-files -z '*.test.js' '*.test.mjs')
           if [ ${#files[@]} -eq 0 ]; then
             echo "::error::no test files matched — check the pattern in this workflow"
             exit 1
