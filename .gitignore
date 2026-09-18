@@ -17,3 +17,6 @@ local-demos/
 storage-state*.json
 .auth/
 node_modules/
+
+# Proposed-record dumps from scripts/learn-reindex.mjs --out. Local only.
+scripts/.learn-reindex-out/
