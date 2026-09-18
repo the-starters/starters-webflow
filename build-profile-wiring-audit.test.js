@@ -504,6 +504,7 @@ test('a page that loads the writer from the CDN passes when the module owns the 
     // and against the real repo module, which is what the page executes
     const withRepo = auditBuildProfileHtml(pagePath, pageHtml({ submitOwner: 'cdn' }))
     assert.deepEqual(withRepo.findings, [])
+    assert.equal(withRepo.submitOwnerSource, 'cdn')
   }
 })
 
