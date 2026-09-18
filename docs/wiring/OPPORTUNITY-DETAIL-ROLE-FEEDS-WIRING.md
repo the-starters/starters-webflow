@@ -50,7 +50,10 @@ endpoint change is involved. The merged `/opportunities` feed stays unchanged.
 - Applied Starter: their application card renders; no Brand-feed request.
 - Unapplied Starter: the authored empty state renders; no Brand-feed request.
 - Foreign Brand and free Brand: existing authorization/redirect behavior remains.
-- A transient owner-probe failure leaves owner controls hidden and the Brand feed uninitialized until a successful manual reload. This is not proof of an empty applicants list. Verify this path with fake transport; do not create a production outage for the check.
+- A transient owner-probe failure leaves owner controls hidden and the Brand
+  feed uninitialized until a successful manual reload. This is not proof of an
+  empty applicants list. Verify this path with fake transport; do not create a
+  production outage for the check.
 - Confirm both script load orders, reloads, and unchanged merged feed behavior.
 - No application, messaging, hiring, or opportunity mutation is needed for proof.
 
