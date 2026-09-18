@@ -5871,6 +5871,29 @@
     syncOpportunityEstimatedHours(modal)
   }
 
+  // Each role's detail feed is identified by its own wf-xano source path. The
+  // render-ownership guard in initOppDetailByRole matches the Brand applicants
+  // root by this same path but deliberately without the wf-xano-defer clause
+  // below: the guard must also recognize an authored root that still boots
+  // itself, while activation must only ever touch a root that did not.
+  const OPP_DETAIL_FEED_PATH = {
+    talent: 'starter/applications/mine',
+    brand: 'brand/applications/list',
+  }
+  /** The deferred wf-xano root for a role's detail feed on the shared CMS
+   *  template (Memberstack containers, no data-opp-role wrappers), or null when
+   *  the page carries no such root — including before the paired attribute
+   *  deployment, while both authored roots still boot themselves. Prefers the
+   *  exact canonical source, then the ownership guard's substring rule. */
+  function oppDetailFeedRoot(role) {
+    const feedPath = OPP_DETAIL_FEED_PATH[role]
+    if (!feedPath) return null
+    return (
+      $(`[wf-xano-element="wrapper"][wf-xano-source="opp30:${feedPath}"][wf-xano-defer="true"]`) ||
+      $(`[wf-xano-element="wrapper"][wf-xano-source*="${feedPath}"][wf-xano-defer="true"]`)
+    )
+  }
+
   /** /opportunities/<slug> CMS detail page, shared by talent and PAYING brands.
    *  Gates by Memberstack plan (gateByPlan), reveals the matching
    *  [data-opp-role="talent"|"brand"] wrapper, then runs that role's wiring.
@@ -5880,7 +5903,10 @@
     if (!gate) return
     const wrapperRole = gate.role === 'talent' ? 'talent' : 'brand'
     showRoleWrapper(wrapperRole)
+    const feedRoot = oppDetailFeedRoot(wrapperRole)
     if (wrapperRole === 'talent') {
+      if (feedRoot) activateDeferredFeed(feedRoot)
+      else log('detail feed: no deferred wf-xano root for role', wrapperRole)
       await initTalentDetail(gate.member)
       return
     }
@@ -5914,7 +5940,11 @@
       log('brand ownership probe failed — owner-only UI hidden')
       return
     }
-    if ($('[wf-xano-element="wrapper"][wf-xano-source*="brand/applications/list"]')) return
+    // Start the authored deferred feed only after the owner-scoped probe passes.
+    // The shared library owns rendering; the opposite role stays uninitialized.
+    if (feedRoot) activateDeferredFeed(feedRoot)
+    else log('detail feed: no deferred wf-xano root for role', wrapperRole)
+    if ($(`[wf-xano-element="wrapper"][wf-xano-source*="${OPP_DETAIL_FEED_PATH.brand}"]`)) return
     if (!$('[data-opp-role="brand"] [data-opp-list="applicants"]')) return
     const res = await API.brandAppList(oppId)
     renderList('applicants', res.items, (card, a) => {
