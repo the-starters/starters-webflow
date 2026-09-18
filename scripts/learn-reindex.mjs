@@ -3,14 +3,14 @@
 // WEBFLOW_API_TOKEN from the environment and never prints or stores either.
 //
 //   node --env-file=../staging-qa/.env scripts/learn-reindex.mjs --dry-run
-//   node --env-file=../staging-qa/.env scripts/learn-reindex.mjs --dry-run --out proposed.json
 //   node --env-file=../staging-qa/.env scripts/learn-reindex.mjs --webflow-export export.json
 //   node --env-file=../staging-qa/.env scripts/learn-reindex.mjs --write
 //
 // `--dry-run` is the default and never writes to Algolia. `--write` replaces
 // the whole index atomically (copy settings to a temp index, fill it, move it
 // over `LearnContent`). `--webflow-export <path>` reads the CMS from a JSON
-// export instead of api.webflow.com, so no Webflow token is needed.
+// export instead of api.webflow.com, so no Webflow token is needed. Every run
+// dumps the proposed records into the gitignored `scripts/.learn-reindex-out/`.
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -45,17 +45,19 @@ const MIN_RECORDS_TO_WRITE = 10;
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 
 function parseArgs(argv) {
-  const args = { write: false, out: null, exportPath: null };
+  const args = { write: false, exportPath: null };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--write') args.write = true;
     else if (arg === '--dry-run') args.write = false;
-    else if (arg === '--out') args.out = argv[++i];
-    else if (arg === '--webflow-export') args.exportPath = argv[++i];
-    else throw new Error(`Unknown argument: ${arg}`);
-  }
-  if (args.out === undefined || args.exportPath === undefined) {
-    throw new Error('--out and --webflow-export each need a path');
+    else if (arg === '--webflow-export') {
+      // Guard against swallowing the next flag as the path.
+      const value = argv[++i];
+      if (value === undefined || value.startsWith('--')) {
+        throw new Error('--webflow-export needs a path');
+      }
+      args.exportPath = value;
+    } else throw new Error(`Unknown argument: ${arg}`);
   }
   return args;
 }
@@ -207,8 +209,8 @@ async function replaceAllObjects(records) {
     destination: tmp,
     scope: ['settings', 'synonyms', 'rules'],
   });
-  await waitForTask(INDEX, copy.taskID);
   try {
+    await waitForTask(INDEX, copy.taskID);
     for (let i = 0; i < records.length; i += BATCH_SIZE) {
       const chunk = records.slice(i, i + BATCH_SIZE);
       const batch = await algolia('POST', `/indexes/${tmp}/batch`, {
@@ -280,10 +282,8 @@ async function main() {
   const diff = diffRecords(current, proposed);
   printDiff(diff, dangling);
 
-  const outPath = args.out
-    ? resolvePath(args.out)
-    : join(OUT_DIR, `proposed-${new Date().toISOString().replace(/[:.]/g, '-')}.json`);
-  mkdirSync(dirname(outPath), { recursive: true });
+  const outPath = join(OUT_DIR, `proposed-${new Date().toISOString().replace(/[:.]/g, '-')}.json`);
+  mkdirSync(OUT_DIR, { recursive: true });
   writeFileSync(outPath, `${JSON.stringify(proposed, null, 2)}\n`);
   console.log(`\nproposed records written to ${outPath}`);
 

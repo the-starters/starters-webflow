@@ -59,7 +59,7 @@ jobs:
               code-components/*) continue ;;
             esac
             files+=("$file")
-          done < <(git ls-files -z '*.test.js')
+          done < <(git ls-files -z '*.test.js' '*.test.mjs')
           if [ ${#files[@]} -eq 0 ]; then
             echo "::error::no test files matched — check the pattern in this workflow"
             exit 1

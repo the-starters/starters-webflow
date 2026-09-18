@@ -18,5 +18,5 @@ storage-state*.json
 .auth/
 node_modules/
 
-# Proposed-record dumps from scripts/learn-reindex.mjs --out. Local only.
+# Proposed-record dumps from scripts/learn-reindex.mjs. Local only.
 scripts/.learn-reindex-out/

@@ -268,10 +268,6 @@ export function isIndexable(item) {
   return Boolean(item?.id) && item.isArchived !== true;
 }
 
-export function mapCollectionItem(collection, ctx) {
-  return collection.map(ctx);
-}
-
 export function stripHighlight(hit) {
   const { _highlightResult, _snippetResult, ...rest } = hit ?? {};
   return rest;
