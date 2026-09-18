@@ -18,15 +18,18 @@
 
       // Official display names (from the site's CMS category list).
       // Update this map whenever categories are added/renamed in the CMS;
-      // unmapped slugs fall back to prettify() below.
+      // unmapped slugs fall back to prettify() below. Keep retired slugs:
+      // other indexes still carry them. Alphabetical by slug.
       const CATEGORY_LABELS = {
         'ai-technology': 'AI & Technology',
         'analytics-experimentation': 'Analytics & Experimentation',
         'content-organic': 'Content & Organic',
+        'creative': 'Creative',
         'creative-brand': 'Creative & Brand',
         'finance': 'Finance',
         'hiring-team-building': 'Hiring & Team Building',
         'influencer-affiliate-pr': 'Influencer, Affiliate & PR',
+        'marketing-strategy-brand': 'Marketing Strategy & Brand',
         'marketing-strategy-leadership': 'Marketing Strategy & Leadership',
         'operations-supply-chain': 'Operations & Supply Chain',
         'paid-media': 'Paid Media',
