@@ -1594,6 +1594,12 @@ unpinned, `async`/`defer`, or placed after the first legacy `build_profile`
 storage access (it must load synchronously ahead of any authored draft code —
 see below).
 
+The click handler still owns the write when it delegates: the audit follows the
+handler's own helper calls up to four levels deep and resolves the endpoint through
+the argument each callee is actually handed, so a POST issued by a nested save
+helper passes and one handed a different endpoint does not. A write buried deeper
+than four calls reads as native-submit-only.
+
 It also fails when the authored `[build-profile-success]` state is missing, when
 its bounds cannot be established (an unterminated element is reported rather than
 widened to the rest of the page), or when it contains no link to
