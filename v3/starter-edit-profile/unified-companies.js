@@ -215,7 +215,7 @@
       // Both Edit and Build declare a top-level `logoSearchInit`, so on a page that loads
       // both the later script wins `window.logoSearchInit`. These rows need the Edit picker,
       // which is published under its own name, so only that name is called here.
-      window.StarterEditLogoSearchInit?.(company)
+      window.StarterEditLogoSearchInit(company)
       setOpen(record, !record.id)
       if (focus) company?.focus()
       return record

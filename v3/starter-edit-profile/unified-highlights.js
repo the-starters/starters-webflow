@@ -269,6 +269,14 @@
       const known = baseline.find(item => String(item.id) === String(record.id))
       if (known && Array.isArray(known[kind])) known[kind] = known[kind].filter(media => String(media.id) !== String(id))
     }
+    // The mirror of `dropMedia`: an attachment the server answered is confirmed by that answer,
+    // so the baseline gains exactly the media entry the server created and the rest of the
+    // record stays as it was last confirmed.
+    function addMedia(record, kind, media) {
+      const known = baseline.find(item => String(item.id) === String(record.id))
+      if (known && Array.isArray(known[kind])) known[kind] = known[kind]
+        .filter(entry => String(entry.id) !== String(media.id)).concat(clone(media))
+    }
     async function canonical(record) {
       return (await writer.read(record.id))[0] || null
     }
@@ -423,8 +431,20 @@
             item.ref.id = media.id; item.ref.url = url; item.ref.stored = media
             // The stored file is now the entry's source, so the local one is released and
             // the list re-rendered off it rather than off a revoked object URL.
-            releaseMedia(item.ref); renderMedia(record, kind); advance(record, current)
-          }, 'Attaching highlight media…')
+            releaseMedia(item.ref); renderMedia(record, kind)
+            // The canonical read is the fallback: an answer the section received confirms the
+            // attachment on its own, and the baseline then gains just that media entry.
+            if (current) advance(record, current)
+            else addMedia(record, kind, media)
+          }, 'Attaching highlight media…',
+          // The attach answers with the media row it created, id included, so that answer is
+          // the confirmation and a media read that has not caught up cannot turn a landed
+          // attachment into an uncertain one.
+          answer => {
+            const media = window.StarterProfileValidation.answeredRow(answer,
+              { [payloadKey]: item.ref.uploaded, [payloadKey + '_url']: url })
+            return media && { current: null, media }
+          })
         }
       }
       const cover = images.find(item => !item.removed && item.cover)
@@ -442,7 +462,15 @@
         // The record still holds exactly what it held before the write, so the update is
         // proved not to have landed rather than merely unconfirmed.
         return knownDetails !== null && details(current) === knownDetails ? NOT_LANDED : null
-      }, current => advance(record, current), 'Saving highlight details…')
+      }, current => advance(record, current), 'Saving highlight details…',
+      // The update answers with the record it wrote, so that answer confirms it. The answer
+      // covers the record's own columns only, so the media this save already confirmed stays
+      // on the baseline rather than being blanked by a row that never carried it.
+      answer => {
+        const row = window.StarterProfileValidation.answeredRow(answer,
+          { ...value, cover_image_id: coverId, thumbnail_url: thumbnail })
+        return row && { images: known?.images || [], videos: known?.videos || [], ...row }
+      })
     }
     save?.addEventListener('click', async event => {
       event.preventDefault()

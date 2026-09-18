@@ -445,11 +445,13 @@ test('a confirmed media deletion cannot be undone into an empty upload after a l
 })
 
 test('a failed canonical read after a successful write keeps the unconfirmed path, not a refusal', async () => {
-  // The update is answered 2xx, then the read that would confirm it fails. A read nobody could
-  // make settles nothing, so the outcome stays unknown instead of reading as a refusal.
+  // The update is answered 2xx with a body that carries no row, so the canonical read is the
+  // fallback - and that read fails. A read nobody could make settles nothing, so the outcome
+  // stays unknown instead of reading as a refusal.
   let written = false
   const page = await mount({
     portfolios: [{ id: 1, title: 'Saved', description: '', images: [], videos: [] }],
+    answer: request => request.endpoint === 'Update_portfolio' ? { success: true } : undefined,
     fail: request => {
       if (request.endpoint === 'Update_portfolio') { written = true; return null }
       return written && request.endpoint === 'Get_portfolio_images'
@@ -600,6 +602,8 @@ test('a received highlight update the canonical read has not caught up with stay
   const page = await mount({
     portfolios: [{ id: 1, title: 'Saved', description: '', images: [], videos: [] }],
     fail: request => { if (request.endpoint === 'Update_portfolio') updated = true; return null },
+    // The answer carries no row, so the canonical read is the fallback here.
+    answer: request => request.endpoint === 'Update_portfolio' ? { success: true } : undefined,
     // The server answered the update, so it landed. The canonical read simply has not caught up.
     stale: stored => updated ? stored.map(row => ({ ...row, title: 'Saved' })) : null,
   })
@@ -708,6 +712,36 @@ test('a highlight media removal the server answered is confirmed by that answer,
   await page.submit()
   assert.equal(page.mutations().filter(request => request.endpoint === 'Delete_portfolio_image').length, 1,
     'the confirmed deletion is never re-sent')
+})
+
+test('an answered attachment is confirmed by that answer, with no canonical media read behind it', async () => {
+  const page = await mount()
+  page.type('title', 'Campaign')
+  page.files('images', [{ name: 'photo.png', type: 'image/png', size: 1000 }])
+  await page.submit()
+  assert.equal(page.status(), 'Changes saved.')
+  assert.equal(page.requests.filter(request => request.endpoint === 'Get_portfolio_images').length, 0,
+    'the attachment and the details update are confirmed by their own answers')
+  assert.equal(page.requests.filter(request => request.endpoint === 'Get_portfolio_videos').length, 0)
+  // The rows are rebuilt from the confirmed baseline, so the photo the attach confirmed and the
+  // cover the update confirmed must both be on it.
+  assert.equal(page.media('images').length, 1)
+  assert.equal(page.media('images')[0].querySelector('img').getAttribute('src').includes('/uploads/'), true)
+  assert.equal(page.media('images')[0].querySelector('[profile-media-cover]').getAttribute('aria-pressed'), 'true')
+  page.click(page.discard)
+  assert.equal(page.media('images').length, 1, 'Discard restores the confirmed photo')
+})
+
+test('an attachment whose answer carries no row falls back to the canonical media read', async () => {
+  const page = await mount({ answer: request => request.endpoint === 'Add_portfolio_image' ? { success: true } : undefined })
+  page.type('title', 'Campaign')
+  page.files('images', [{ name: 'photo.png', type: 'image/png', size: 1000 }])
+  await page.submit()
+  assert.equal(page.status(), 'Changes saved.')
+  assert.ok(page.requests.filter(request => request.endpoint === 'Get_portfolio_images').length > 0,
+    'the canonical read is the fallback for an answer that carries no row')
+  assert.equal(page.mutations().filter(request => request.endpoint === 'Add_portfolio_image').length, 1)
+  assert.equal(page.media('images').length, 1)
 })
 
 test('a backend-required marker outside the Highlight rows never pauses this section', async () => {

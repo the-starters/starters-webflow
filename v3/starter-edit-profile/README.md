@@ -411,10 +411,11 @@ again.` with the draft kept and Save still usable, rather than pausing the secti
 request nobody made.
 
 **A response the section received is the write's own answer.** Where the server replies with
-the row it wrote — a Work Experience create or update, a Highlight create — that answer
-confirms the save on the spot, and no canonical read can contradict it. A removal is confirmed
-by any answer at all, since a 2xx delete is its own proof. The canonical read is the fallback:
-for a lost response, and for a write whose answer carries no row.
+the row it wrote — a Work Experience create or update, a Highlight create, update or media
+attachment — that answer confirms the save on the spot, and no canonical read can contradict
+it. A removal is confirmed by any answer at all, since a 2xx delete is its own proof. The
+canonical read is the fallback: for a lost response, and for a write whose answer carries no
+row.
 
 A 2xx the section could not parse is still an answer it received: the write landed, so the
 outcome is unknown at worst — Save pauses and "Check saved state" settles it — and never
