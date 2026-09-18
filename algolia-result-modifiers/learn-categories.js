@@ -1,4 +1,5 @@
 // Docs: https://wf-starter-embeds-docs.vercel.app/docs/algolia-result-modifiers/learn-categories
+// @release v1.59.582
 
   (function () {
     // The "Algolia Result Modifiers" component is instantiated inside BOTH the
