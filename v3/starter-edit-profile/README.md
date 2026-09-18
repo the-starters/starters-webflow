@@ -387,9 +387,12 @@ whether the browser still reports `display: none` and forces an inline display,
 so the control shows either way. Never use an instance of the site's Button
 component: its native `.clickable_btn`
 is an empty overlay whose label lives outside it, so marking the overlay would
-hide the clickable node while the caption kept rendering. Any element works — the
-script prevents a link's default action, sets `type="button"` only on a real
-button, and applies the default label only when the element is empty. When
+hide the clickable node while the caption kept rendering. A Link or Button
+element is what the scripts expect: the script prevents a link's default action,
+sets `type="button"` only on a real button, and applies the default label only
+when the element is empty. A `div` is made keyboard-operable by the script,
+which gives it `role="button"`, `tabindex="0"` and Enter/Space activation, but it
+is still not the recommended choice. When
 neither is authored the script creates them as before. It never creates a second
 one.
 

@@ -1,7 +1,7 @@
 /*
  * Opt-in Work Experience rows. Persistence stays in company-experience-crud.js.
  *
- * @release v1.59.581
+ * @release v1.59.583
  */
 ;(function () {
   'use strict'
@@ -37,6 +37,16 @@
     if (check.tagName === 'BUTTON') check.setAttribute('type', 'button')
     // Authored children are the label, so only a wholly empty control gets the default copy.
     if (!check.children.length && !check.textContent.trim()) check.textContent = 'Check saved state'
+    // A div has no native activation, so give it the role and keys a button already has.
+    if (check.tagName !== 'BUTTON' && check.tagName !== 'A') {
+      if (!check.hasAttribute('role')) check.setAttribute('role', 'button')
+      if (!check.hasAttribute('tabindex')) check.setAttribute('tabindex', '0')
+      check.addEventListener('keydown', event => {
+        if (event.target !== check || (event.key !== 'Enter' && event.key !== ' ')) return
+        event.preventDefault()
+        check.dispatchEvent(new Event('click'))
+      })
+    }
     // A Webflow class can set `display`, which beats the [hidden] rule, so write both.
     // Clearing the inline style only uncovers the class rule, so a class that sets
     // `display: none` needs an inline display of its own to be beaten.

@@ -14,7 +14,7 @@ async function mount({ companies = [], fail = null, minimum = true, withRow = tr
   required = ['company_name', 'job_title'], xanoRequired = [], hydrate = true, initialOther = '{}',
   liveAssociationReader = false, associationReadStatus = 200, claim = true, normalize = null,
   answer = null, picker = true, stale = null, strayXanoRequired = false, authored = false,
-  authoredInRow = false } = {}) {
+  authoredInRow = false, authoredCheckDiv = false } = {}) {
   const fields = ['company_name', 'job_title', 'start_date', 'end_date', 'current_work'].map(key => h('input', {
     'profile-company-field': key, name: key, id: key,
     ...(key === 'current_work' ? { type: 'checkbox' } : {}),
@@ -43,7 +43,10 @@ async function mount({ companies = [], fail = null, minimum = true, withRow = tr
   // what the script matches on.
   const authoredStatus = h('div', { 'profile-items-status': '', class: 'form_status' })
   // A Webflow Button compiles to an anchor, so this section covers the non-button adopt path.
-  const authoredCheck = h('a', { 'profile-items-check-save': '', href: '#', class: 'button w-button' })
+  // `authoredCheckDiv` covers the styled div, which carries no native keyboard activation.
+  const authoredCheck = authoredCheckDiv
+    ? h('div', { 'profile-items-check-save': '', class: 'button' })
+    : h('a', { 'profile-items-check-save': '', href: '#', class: 'button w-button' })
   const section = h('section', { 'profile-unified-items': 'companies' },
     [...(authored ? [authoredStatus, authoredCheck] : []),
       h('div', {}, withRow ? [row] : []), ...(withSave ? [save] : []), add, discard, presence, other,
@@ -943,6 +946,33 @@ test('a status element authored inside the repeating row is ignored so the secti
   assert.equal(page.section.contains(page.rowStatus), false)
   page.company('Acme'); page.type('job_title', 'Designer')
   assert.equal(live[0].textContent, 'Unsaved changes.')
+})
+
+test('an authored check element that is a div is given a button role and Enter activation', async () => {
+  const page = await mount({
+    authored: true,
+    authoredCheckDiv: true,
+    companies: [{ id: 1, company_name: 'Acme', job_title: 'Designer', company_source: 'custom' }],
+    fail: (request, { stored, setStored }) => {
+      if (request.method !== 'PATCH') return null
+      setStored(stored.map(item => Number(item.id) === 1 ? { ...item, job_title: 'Engineer (in review)' } : item))
+      return 'lose'
+    },
+  })
+  assert.equal(page.checkSave(), page.authoredCheck)
+  assert.equal(page.authoredCheck.getAttribute('role'), 'button')
+  assert.equal(page.authoredCheck.getAttribute('tabindex'), '0')
+  assert.equal(page.authoredCheck.getAttribute('type'), null, 'type is set only on a real button')
+  page.type('job_title', 'Engineer')
+  await page.submit()
+  assert.match(page.status(), /could not be confirmed/)
+  assert.equal(page.authoredCheck.hidden, false)
+  // Enter runs the same readback the click runs, so a keyboard-only Starter is never stranded.
+  const pressed = makeEvent('keydown', page.authoredCheck, { key: 'Enter' })
+  page.authoredCheck.dispatchEvent(pressed)
+  assert.equal(pressed.defaultPrevented, true)
+  await tick()
+  assert.equal(page.status(), 'The save is still unconfirmed. Your draft is kept; Save remains paused.')
 })
 
 test('a class rule that hides the authored check element is beaten by an inline display', async () => {

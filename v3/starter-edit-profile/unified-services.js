@@ -1,7 +1,7 @@
 /*
  * Opt-in Services & Rates coordinator. The main profile controller remains the writer.
  *
- * @release v1.59.581
+ * @release v1.59.583
  */
 ;(function () {
   'use strict'
@@ -41,6 +41,16 @@
     if (checkSave.tagName === 'BUTTON') checkSave.setAttribute('type', 'button')
     // Authored children are the label, so only a wholly empty control gets the default copy.
     if (!checkSave.children.length && !checkSave.textContent.trim()) checkSave.textContent = 'Check saved state'
+    // A div has no native activation, so give it the role and keys a button already has.
+    if (checkSave.tagName !== 'BUTTON' && checkSave.tagName !== 'A') {
+      if (!checkSave.hasAttribute('role')) checkSave.setAttribute('role', 'button')
+      if (!checkSave.hasAttribute('tabindex')) checkSave.setAttribute('tabindex', '0')
+      checkSave.addEventListener('keydown', event => {
+        if (event.target !== checkSave || (event.key !== 'Enter' && event.key !== ' ')) return
+        event.preventDefault()
+        checkSave.dispatchEvent(new Event('click'))
+      })
+    }
     // A Webflow class can set `display`, which beats the [hidden] rule, so write both.
     // Clearing the inline style only uncovers the class rule, so a class that sets
     // `display: none` needs an inline display of its own to be beaten.
