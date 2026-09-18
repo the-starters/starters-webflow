@@ -38,7 +38,8 @@ async function mount({ companies = [], fail = null, minimum = true, withRow = tr
   // Designer-authored status and check elements, ahead of the rows so position cannot be
   // what the script matches on.
   const authoredStatus = h('div', { 'profile-items-status': '', class: 'form_status' })
-  const authoredCheck = h('button', { 'profile-items-check-save': '', class: 'button is-secondary' })
+  // A Webflow Button compiles to an anchor, so this section covers the non-button adopt path.
+  const authoredCheck = h('a', { 'profile-items-check-save': '', href: '#', class: 'button w-button' })
   const section = h('section', { 'profile-unified-items': 'companies' },
     [...(authored ? [authoredStatus, authoredCheck] : []),
       h('div', {}, withRow ? [row] : []), ...(withSave ? [save] : []), add, discard, presence, other,
@@ -909,7 +910,7 @@ test('Work Experience reveals the authored check element when a save cannot be c
   })
   assert.equal(page.section.querySelectorAll('[profile-items-check-save]').length, 1)
   assert.equal(page.checkSave(), page.authoredCheck)
-  assert.equal(page.authoredCheck.getAttribute('type'), 'button')
+  assert.equal(page.authoredCheck.getAttribute('type'), null, 'type is set only on a real button')
   assert.equal(page.authoredCheck.textContent, 'Check saved state', 'an empty authored label falls back to the script copy')
   assert.equal(page.authoredCheck.hidden, true)
   // A Webflow class can set `display`, so the inline style is what actually hides it.

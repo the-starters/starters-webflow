@@ -344,12 +344,16 @@ The scripts create `profile-items-undo`, `profile-items-removed`, and
 anywhere inside the section, so Designer owns their styling. Each section adopts
 the authored element when it finds one: it sets `role="status"` on the status
 element, and it hides the check element on bind, keeping the label the author
-wrote. The check element may be a Button or a Link; leave it visible in Designer,
-because the script hides and shows it with an inline `display` style that beats
-the Webflow class rule. Prefer a native Button: `type="button"` is set only on a
-real button, and the script disables the control while a check runs, which a div
-or link ignores. When neither is authored the script creates them as before. It
-never creates a second one.
+wrote. The check element may be a plain Link or Button element carrying
+`profile-items-check-save`; leave it visible in Designer, because the script hides
+and shows it with an inline `display` style that beats the Webflow class rule.
+Never use an instance of the site's Button component: its native `.clickable_btn`
+is an empty overlay whose label lives outside it, so marking the overlay would
+hide the clickable node while the caption kept rendering. Any element works — the
+script prevents a link's default action, sets `type="button"` only on a real
+button, and applies the default label only when the element is empty. When
+neither is authored the script creates them as before. It never creates a second
+one.
 
 Row grammars differ by section. Services reuses the existing
 `[increment-dropdown]` row with `[increment-dropdown-toggle]`,
