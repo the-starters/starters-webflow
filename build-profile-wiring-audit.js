@@ -312,8 +312,12 @@ function bodyReachesAuthoritativeEndpoint(body, html, endpointNames, depth, visi
     })
 
     const key = `${helperName}|${[...calleeNames].sort().join(',')}`
-    if (visited.has(key)) continue
-    visited.add(key)
+    // Memoized per remaining budget, not per helper: a helper first reached down a
+    // long path can exhaust the budget and prove nothing, and a later shorter path
+    // to it must still be explored or an intact click owner is reported broken.
+    const exploredAtDepth = visited.get(key)
+    if (exploredAtDepth !== undefined && exploredAtDepth >= depth) continue
+    visited.set(key, depth)
 
     const helperBody = extractHandlerBody(html, declaration.index + declaration[0].length)
     if (!helperBody) continue
@@ -328,7 +332,7 @@ function clickBodyWritesAuthoritativeEndpoint(body, html) {
     html,
     endpointBindings(html),
     MAX_CLICK_HELPER_DEPTH,
-    new Set(),
+    new Map(),
   )
 }
 
