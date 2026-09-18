@@ -50,6 +50,8 @@ function load(overrides = {}, pathname = '/build-profile/full', { respond = null
   const step = new Element()
   submit.closest = () => step
   const success = new Element()
+  const successCTA = new Element()
+  successCTA.href = '/starter-onboarding'
   const error = new Element()
   // Mirrors the authored Webflow error state: a `.w-form-fail` wrapper whose
   // single child div carries the copy the member reads.
@@ -77,6 +79,8 @@ function load(overrides = {}, pathname = '/build-profile/full', { respond = null
       'free-user': values['first-name'],
       'last-name': values['last-name'],
       phone: values.phone,
+      'freelancer-dashboard-url': '/starter-dashboard',
+      'freelancer-profile-url': '/starter/test-starter',
     },
   }
   const qs = (selector, scope) => {
@@ -89,6 +93,7 @@ function load(overrides = {}, pathname = '/build-profile/full', { respond = null
     }
     if (scope === form && selector === '[form-submit]') return submit
     if (scope === form && inputs[selector]) return inputs[selector]
+    if (scope === success && selector === '[dashboard-button-wrap] .button') return successCTA
     if (scope === error && selector === 'p, div') return errorMessage
     return null
   }
@@ -126,8 +131,50 @@ function load(overrides = {}, pathname = '/build-profile/full', { respond = null
   }
   vm.runInNewContext(SOURCE, context, { filename: 'submit-writer.js' })
   domReady.forEach((callback) => callback())
-  return { form, submit, step, success, error, errorMessage, errorPanelIcon, inputs, requests, loaderStates }
+  return { form, submit, step, success, successCTA, error, errorMessage, errorPanelIcon, inputs, requests, loaderStates }
 }
+
+test('retries one rejected canonical request with the identical payload', async () => {
+  let attempt = 0
+  const result = load({}, '/build-profile/full-profile', {
+    respond: async () => {
+      attempt += 1
+      if (attempt === 1) throw new TypeError('Failed to fetch')
+      return { ok: true, status: 200, json: async () => ({ saved: true }) }
+    },
+  })
+
+  await result.submit.click()
+
+  assert.equal(result.requests.length, 2)
+  assert.deepEqual(result.requests[0].body, result.requests[1].body)
+  assert.equal(result.error.style.display, 'none')
+  assert.equal(result.success.style.display, 'block')
+})
+
+test('shows an ambiguous-save recovery message after two rejected requests', async () => {
+  const result = load({}, '/build-profile/full-profile', {
+    respond: async () => { throw new TypeError('Failed to fetch') },
+  })
+
+  await result.submit.click()
+
+  assert.equal(result.requests.length, 2)
+  assert.equal(result.error.style.display, 'block')
+  assert.equal(
+    result.errorMessage.textContent,
+    'We could not confirm your profile was saved. Please wait a moment, then submit again.',
+  )
+})
+
+test('preserves the authored onboarding CTA after a successful save', async () => {
+  const result = load()
+
+  await result.submit.click()
+
+  assert.equal(result.success.style.display, 'block')
+  assert.equal(result.successCTA.href, '/starter-onboarding')
+})
 
 test('sets native whole-dollar constraints on each direct price input', () => {
   const result = load()
@@ -431,16 +478,19 @@ test('a later non-price failure restores the authored error copy', async () => {
   const result = load(
     { service: JSON.stringify({ name: 'Audit', price: '500.50' }) },
     '/build-profile/full',
-    { respond: () => { throw new Error('offline') } },
+    { respond: () => { throw new TypeError('Failed to fetch') } },
   )
   await result.submit.click()
   assert.match(result.errorMessage.textContent, /whole-dollar service price/)
 
   result.form.values.service = JSON.stringify({ name: 'Audit', price: '500' })
   await result.submit.click()
-  assert.equal(result.requests.length, 1)
+  assert.equal(result.requests.length, 2)
   assert.equal(result.error.style.display, 'block')
-  assert.equal(result.errorMessage.textContent, 'Something went wrong. Please try again.')
+  assert.equal(
+    result.errorMessage.textContent,
+    'We could not confirm your profile was saved. Please wait a moment, then submit again.',
+  )
 })
 
 // Clearing a custom-service price is the only remove gesture these forms author.
@@ -564,16 +614,27 @@ test('an error panel holding nested markup is revealed without being flattened',
 
 test('a rejected canonical request clears the loader behind the authored error state', async () => {
   const result = load({}, '/build-profile/full', {
-    respond: () => { throw new Error('offline') },
+    respond: () => { throw new TypeError('Failed to fetch') },
   })
   await result.submit.click()
-  assert.equal(result.requests.length, 1)
+  assert.equal(result.requests.length, 2)
   assert.equal(result.error.style.display, 'block')
   assert.equal(result.success.style.display, 'none')
   assert.deepEqual(result.loaderStates, [
     { state: true, wrapper: result.step },
     { state: false, wrapper: result.step },
   ])
+})
+
+test('does not retry a non-transport client error', async () => {
+  const result = load({}, '/build-profile/full', {
+    respond: () => { throw Object.assign(new Error('Member scope changed'), { code: 'MEMBER_SCOPE_CHANGED' }) },
+  })
+
+  await result.submit.click()
+
+  assert.equal(result.requests.length, 1)
+  assert.equal(result.error.style.display, 'block')
 })
 
 test('a malformed success body clears the loader behind the authored error state', async () => {

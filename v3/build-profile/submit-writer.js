@@ -74,6 +74,35 @@
         priceFeedback.forEach((feedback, field) => clearPriceFeedback(field));
       }
 
+      async function saveCanonicalProfile(endpointUrl, payload) {
+        const request = () => xanoAuthFetch(endpointUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+
+        try {
+          return await request();
+        } catch (firstError) {
+          const transportFailure = firstError?.name === 'TypeError'
+            || firstError?.code === 'NETWORK_ERROR'
+            || /failed to fetch|networkerror|load failed/i.test(firstError?.message || '');
+          if (!transportFailure) throw firstError;
+          // A browser CORS/preflight or transport failure rejects before a response
+          // exists. The endpoint is retry-safe: the profile write is an upsert,
+          // reviewer requests use stable idempotency keys, and projection intent is
+          // versioned. Retry the same payload once, but never retry an HTTP response.
+          try {
+            return await request();
+          } catch (retryError) {
+            throw Object.assign(retryError || firstError || new Error('Profile save could not be confirmed.'), {
+              code: 'PROFILE_SAVE_NETWORK_ERROR',
+              panelMessage: 'We could not confirm your profile was saved. Please wait a moment, then submit again.',
+            });
+          }
+        }
+      }
+
       // custom form submission handler
       formSubmit.addEventListener('click', async function (e) {
         e.preventDefault();
@@ -355,11 +384,7 @@
           setLoader(true, step);
 
           if (!savedBuildResult) {
-            const response = await xanoAuthFetch(ENDPOINT_URL, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(payload),
-            });
+            const response = await saveCanonicalProfile(ENDPOINT_URL, payload);
 
             if (!response.ok) {
               const errorText = await response.text();
@@ -412,12 +437,6 @@
 
           const successName = qs('[data-value="first-name"]', success);
           if (successName) successName.textContent = committedPayload.first_name || '';
-
-          const successCTA = qs('[dashboard-button-wrap] .button', success);
-          if (successCTA) {
-            const redirectUrl = MEMBER.customFields?.['freelancer-dashboard-url'] || MEMBER.customFields?.['freelancer-profile-url'] || '/starter-dashboard';
-            successCTA.href = redirectUrl;
-          }
 
           setLoader(false, step);
           form.style.display = 'none';
