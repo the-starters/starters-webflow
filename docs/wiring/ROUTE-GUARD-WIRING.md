@@ -524,6 +524,13 @@ touched by a release:
   marker out of the source and compares it against the exported property, so an
   edit that updates one and forgets the other fails the suite.
 
+`starter-edit-profile.js` is an accepted exception to the second and third
+bullets. Its `window.StartersStarterEditProfile` export exists for the Personal
+Details validation and replay hooks, not as a release surface, so the file
+carries the header marker alone with no `release` property and no test pinning
+the two. Read its shipped tag from the served bytes below rather than from the
+console.
+
 Verify what is actually deployed either way:
 
 ```sh
