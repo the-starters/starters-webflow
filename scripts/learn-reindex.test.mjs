@@ -19,6 +19,7 @@ import {
 const INTERVIEWS = '69dca9df095d2fbcf34e255b';
 const PLAYBOOKS = '69e1e416f6476e12f572b39b';
 const SESSIONS = '69e08554183023227aa46c1e';
+// Still in the CMS and in exports, deliberately not indexed.
 const WEBINARS = '69e1fdfacbd0eddfd48c1495';
 // Still in the CMS and in exports, deliberately not indexed.
 const EVENTS = '69ef540fe8dc02d3ea4c0353';
@@ -138,10 +139,6 @@ const REF_ITEMS = {
     'cat-finance': published({ id: 'cat-finance', fieldData: { name: 'Finance', slug: 'finance' } }),
     'cat-paid-media': published({ id: 'cat-paid-media', fieldData: { name: 'Paid Media', slug: 'paid-media' } }),
   },
-  [REF_COLLECTIONS.people]: {
-    '69e2007cf6871a152a243da9': published({ id: '69e2007cf6871a152a243da9', fieldData: { name: 'Jamie Lee', slug: 'jamie-lee' } }),
-    '69e20089e1af94265c55cd2d': published({ id: '69e20089e1af94265c55cd2d', fieldData: { name: 'Chris Park', slug: 'chris-park' } }),
-  },
   [REF_COLLECTIONS.sessions]: {
     'session-a': published({ id: 'session-a', fieldData: { name: 'Session A', slug: 'session-a-slug' } }),
   },
@@ -238,24 +235,6 @@ const SESSION_ITEM = {
   },
 };
 
-const WEBINAR_ITEM = {
-  id: 'webinar-1',
-  lastPublished: '2026-08-25T11:30:00.000Z',
-  createdOn: '2026-06-01T11:00:00.000Z',
-  isArchived: false,
-  isDraft: false,
-  fieldData: {
-    image: { fileId: 'w', url: 'https://cdn.example.invalid/webinar.png', alt: null },
-    'short-description': 'Live teardown.',
-    date: '2026-09-30T16:00:00.000Z',
-    state: OPTION_IDS.stateUpcoming,
-    location: 'Online',
-    speackers: ['69e2007cf6871a152a243da9'],
-    name: 'Creative Teardown',
-    slug: 'creative-teardown',
-  },
-};
-
 // --- Tests ------------------------------------------------------------------
 
 test('toUnixSeconds converts ISO strings to integer unix seconds', () => {
@@ -318,23 +297,24 @@ test('every collection carries its expected slug and content_type', async () => 
       [INTERVIEWS, 'interviews-analysis'],
       [PLAYBOOKS, 'playbooks-frameworks'],
       [SESSIONS, 'sessions'],
-      [WEBINARS, 'webinars'],
     ]
   );
 
   const interview = await mapWith(INTERVIEWS, INTERVIEW_ITEM);
   const playbook = await mapWith(PLAYBOOKS, PLAYBOOK_ITEM);
   const session = await mapWith(SESSIONS, SESSION_ITEM);
-  const webinar = await mapWith(WEBINARS, WEBINAR_ITEM);
 
   assert.deepEqual(interview.content_type, { lvl0: 'Interview & News', lvl1: 'Interview & News > News' });
   assert.deepEqual(playbook.content_type, { lvl0: 'Playbook', lvl1: 'Playbook > Template' });
   assert.deepEqual(session.content_type, { lvl0: 'Session' });
-  assert.deepEqual(webinar.content_type, { lvl0: 'Webinar' });
 
   assert.equal(playbook.url, '/learn/playbooks-frameworks/budget-template');
   assert.equal(session.url, '/learn/sessions/scaling-finance-ops');
-  assert.equal(webinar.url, '/learn/webinars/creative-teardown');
+});
+
+test('Webinars are not indexed', () => {
+  assert.equal(collectionById(WEBINARS), null);
+  assert.equal(COLLECTIONS.some((c) => c.expectedSlug === 'webinars'), false);
 });
 
 test('Events are not indexed', () => {
@@ -396,10 +376,10 @@ test('collections with no date field never warn about one', async () => {
 });
 
 test('mappers work without a warnings array', async () => {
-  const item = { ...WEBINAR_ITEM, fieldData: { ...WEBINAR_ITEM.fieldData, date: null, state: 'gone' } };
-  const record = await mapWith(WEBINARS, item);
-  assert.equal(record.state, null);
-  assert.equal(record.date, Math.floor(Date.parse(WEBINAR_ITEM.createdOn) / 1000));
+  const item = { ...INTERVIEW_ITEM, fieldData: { ...INTERVIEW_ITEM.fieldData, 'publish-date': null, category: 'gone' } };
+  const record = await mapWith(INTERVIEWS, item);
+  assert.deepEqual(record.content_type, { lvl0: 'Interview & News' });
+  assert.equal(record.date, Math.floor(Date.parse(INTERVIEW_ITEM.createdOn) / 1000));
 });
 
 test('budget options resolve to their display names', async () => {
@@ -427,18 +407,6 @@ test('session maps its single category reference into an array', async () => {
   assert.equal(record.time_watching, '42 min');
   assert.equal(record.video_id, '1234567');
   assert.equal(record.date, Math.floor(Date.parse('2026-03-03T10:00:00.000Z') / 1000));
-});
-
-test('webinar has no author or categories and resolves speaker slugs', async () => {
-  const record = await mapWith(WEBINARS, WEBINAR_ITEM);
-  assert.equal(record.author, null);
-  assert.equal(record.memberstack_id, null);
-  assert.deepEqual(record.categories, []);
-  assert.deepEqual(record.speakers, ['jamie-lee']);
-  assert.deepEqual(record.memberstack_ids, []);
-  assert.equal(record.state, 'Upcoming');
-  assert.equal(record.location, 'Online');
-  assert.equal(record.date, Math.floor(Date.parse('2026-09-30T16:00:00.000Z') / 1000));
 });
 
 test('unresolvable references map to nulls and empty arrays', async () => {
@@ -505,14 +473,15 @@ test('items with no reference values at all still map cleanly', async () => {
     isDraft: false,
     fieldData: { name: 'Bare', slug: 'bare' },
   };
-  const record = await mapWith(WEBINARS, bare);
+  const record = await mapWith(PLAYBOOKS, bare);
   assert.equal(record.thumbnail_url, null);
   assert.equal(record.description, null);
-  assert.equal(record.state, null);
-  assert.equal(record.location, null);
   assert.equal(record.author, null);
-  assert.deepEqual(record.speakers, []);
-  assert.deepEqual(record.memberstack_ids, []);
+  assert.equal(record.memberstack_id, null);
+  assert.equal(record.version, null);
+  assert.deepEqual(record.categories, []);
+  assert.deepEqual(record.associated_sessions, []);
+  assert.equal(record.gated, false);
   assert.equal(record.date, Math.floor(Date.parse('2026-07-01T00:00:00.000Z') / 1000));
 });
 
@@ -532,7 +501,7 @@ test('diffRecords reports added, removed, changed and unchanged', () => {
   ];
   const proposed = [
     { objectID: 'keep', title: 'Keep', url: '/learn/sessions/keep', description: 'same' },
-    { objectID: 'new', title: 'New', url: '/learn/webinars/new' },
+    { objectID: 'new', title: 'New', url: '/learn/sessions/new' },
     {
       objectID: 'move',
       title: 'Move',
@@ -545,7 +514,7 @@ test('diffRecords reports added, removed, changed and unchanged', () => {
   ];
 
   const diff = diffRecords(current, proposed);
-  assert.deepEqual(diff.added, [{ objectID: 'new', title: 'New', url: '/learn/webinars/new' }]);
+  assert.deepEqual(diff.added, [{ objectID: 'new', title: 'New', url: '/learn/sessions/new' }]);
   assert.deepEqual(diff.removed, [{ objectID: 'drop', title: 'Drop', url: '/learn/old/drop' }]);
   assert.equal(diff.unchangedCount, 1);
   assert.equal(diff.changed.length, 1);
@@ -628,19 +597,21 @@ test('a minimal export object maps through the export-mode loader', async () => 
   assert.deepEqual(dangling, []);
 });
 
-test('an export that still carries Events yields only the four indexed collections', () => {
+test('an export that still carries Events and Webinars yields only the three indexed collections', () => {
   const entry = (id, slug, items = []) => ({ schema: { ...SCHEMAS[id], id, slug }, items });
+  const stub = (slug) => ({ id: slug, isArchived: false, lastPublished: '2026-09-01T00:00:00.000Z', fieldData: { slug } });
   const exported = {
     collections: [
       entry(INTERVIEWS, 'interviews-analysis', [INTERVIEW_ITEM]),
       entry(PLAYBOOKS, 'playbooks-frameworks', [PLAYBOOK_ITEM]),
       entry(SESSIONS, 'sessions', [SESSION_ITEM]),
-      entry(WEBINARS, 'webinars', [WEBINAR_ITEM]),
-      entry(EVENTS, 'event', [{ id: 'an-event', isArchived: false, lastPublished: '2026-09-01T00:00:00.000Z', fieldData: { slug: 'an-event' } }]),
+      entry(WEBINARS, 'webinars', [stub('a-webinar')]),
+      entry(EVENTS, 'event', [stub('an-event')]),
     ],
     refs: REF_ITEMS,
   };
 
+  assert.equal(exported.collections.length, 5);
   const selected = selectExportCollections(normalizeExport(exported));
   assert.deepEqual(
     selected.map((s) => [s.config.expectedSlug, s.items.length]),
@@ -648,22 +619,20 @@ test('an export that still carries Events yields only the four indexed collectio
       ['interviews-analysis', 1],
       ['playbooks-frameworks', 1],
       ['sessions', 1],
-      ['webinars', 1],
     ]
   );
 });
 
 test('selectExportCollections rejects a renamed or absent collection', () => {
   const entry = (id, slug) => ({ schema: { ...SCHEMAS[id], id, slug }, items: [] });
-  const four = [
+  const three = [
     entry(INTERVIEWS, 'interviews-analysis'),
     entry(PLAYBOOKS, 'playbooks-frameworks'),
     entry(SESSIONS, 'sessions'),
-    entry(WEBINARS, 'webinars'),
   ];
-  assert.throws(() => selectExportCollections(four.slice(1)), /missing collection Interview & News/);
+  assert.throws(() => selectExportCollections(three.slice(1)), /missing collection Interview & News/);
   assert.throws(
-    () => selectExportCollections([entry(INTERVIEWS, 'interviews-renamed'), ...four.slice(1)]),
+    () => selectExportCollections([entry(INTERVIEWS, 'interviews-renamed'), ...three.slice(1)]),
     /slug is "interviews-renamed"/
   );
 });
@@ -692,5 +661,5 @@ test('an item with no slug is rejected rather than given an /undefined URL', asy
     fieldData: { name: 'No Slug' },
   };
   assert.equal(isLiveItem(slugless), true);
-  await assert.rejects(() => mapWith(WEBINARS, slugless), /slugless-1.*no slug/);
+  await assert.rejects(() => mapWith(PLAYBOOKS, slugless), /slugless-1.*no slug/);
 });

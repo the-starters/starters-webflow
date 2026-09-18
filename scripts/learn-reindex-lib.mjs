@@ -13,7 +13,6 @@ import { isDeepStrictEqual } from 'node:util';
 export const REF_COLLECTIONS = {
   freelancers: '69f241ec147b71addb6f1531',
   categories: '69f2329d4f5bacf6765c1ca1',
-  people: '69e1fe14e646a7b8e1cb58ca',
   sessions: '69e08554183023227aa46c1e',
 };
 
@@ -210,29 +209,8 @@ async function mapSession(ctx) {
   };
 }
 
-async function mapWebinar(ctx) {
-  const { item } = ctx;
-  const f = item.fieldData ?? {};
-  return {
-    ...core(ctx, {
-      lvl0: 'Webinar',
-      lvl1: null,
-      description: f['short-description'] ?? null,
-      thumbnail: imageUrl(f.image),
-      date: requiredDate(ctx, 'date'),
-      author: null, // collection has no author field
-      categories: [], // collection has no category field
-    }),
-    state: optionName(ctx, 'state'),
-    location: f.location ?? null,
-    speakers: await slugsFor(ctx, REF_COLLECTIONS.people, f.speackers),
-    memberstack_ids: [], // no freelancer reference on webinars
-    memberstack_id: null,
-  };
-}
-
 // Podcasts are deliberately absent: the Lists collection has no page.
-// Events are deliberately absent too: they are no longer indexed in Learn.
+// Events and Webinars are deliberately absent too: they are no longer indexed.
 export const COLLECTIONS = [
   {
     name: 'Interview & News',
@@ -251,12 +229,6 @@ export const COLLECTIONS = [
     id: REF_COLLECTIONS.sessions,
     expectedSlug: 'sessions',
     map: mapSession,
-  },
-  {
-    name: 'Webinars',
-    id: '69e1fdfacbd0eddfd48c1495',
-    expectedSlug: 'webinars',
-    map: mapWebinar,
   },
 ];
 
@@ -357,7 +329,7 @@ export function assertExpectedSlug(config, schema) {
 
 /**
  * Pair an export's entries with the collections we index, in COLLECTIONS order.
- * Entries for collections we do not index (Events, anything new) are ignored.
+ * Entries for collections we do not index (Events, Webinars, anything new) are ignored.
  */
 export function selectExportCollections(entries) {
   const byId = new Map(entries.map((entry) => [entry.schema.id, entry]));
