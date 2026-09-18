@@ -2,7 +2,7 @@
 // file I/O — everything here is unit-testable with fake data.
 //
 // Webflow CMS item -> Algolia record. Reference fields (authors, categories,
-// speakers, sessions) are resolved through an injected
+// sessions) are resolved through an injected
 // `resolve(collectionId, itemId) -> item | null` so tests can fake them.
 //
 // Mappers take a ctx: { item, collectionSlug, optionMaps, resolve, warnings }.
