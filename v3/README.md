@@ -1353,6 +1353,65 @@ Run its focused test with:
 node --test v3/all-starters-favorites.test.js
 ```
 
+Hire profiles are out of scope for this module. They have no
+`[data-starters-list]` marker (and must not gain one). Paid-Brand hearts on
+`/hire/<slug>` are hydrated by [`hire-profile-favorites.js`](#hire-profile-favorites).
+
+## Hire profile favorites
+
+`hire-profile-favorites.js` hydrates Designer-authored favourite controls on
+`/hire/<slug>` for members with an active paid-Brand Memberstack plan. The
+hearts already carry `wf-xano-element="favorite"`; this module does not decorate
+them and does not use `[data-starters-list]`.
+
+Site Head Code sets `WfXanoConfig.xanoBase` / `authBase` but not
+`favoritesSource`. Without that property, wf-xano logs "favorite controls found
+but WfXanoConfig.favoritesSource is missing", leaves every heart `hidden`, and
+wires no clicks. This module defaults `favoritesSource` to
+`opp30:brand/favorites` only after it confirms a hire-profile path, a profile
+favourite control, and an active paid-Brand plan from the plan IDs in
+[ACCESS-MATRIX.md](ACCESS-MATRIX.md). It then waits up to about ten seconds
+for `window.WfXano.favorites`, calls `init` on each profile control, and
+pre-warms `favorites.refresh('starter')`.
+
+Logged-out, Free Brand, and Talent viewers are left on the Designer-owned
+hidden control. The module does not write `favoritesSource` for them, so wf-xano
+cannot auto-init and flash a heart.
+
+Install it in the hire template Page Settings -> Custom Code -> Footer, next to
+`hire-profile.js`:
+
+```html
+<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/hire-profile-favorites.js"></script>
+```
+
+The full hire-template footer contract and its pin rule live in
+[`docs/wiring/HIRE-PROFILE-WIRING.md`](../docs/wiring/HIRE-PROFILE-WIRING.md#install).
+That pin is a Webflow edit after merge; do not publish from this change.
+
+The file header carries the repo's release marker, an `@release vX.Y.Z` comment
+kept present by a unit test, so the served jsDelivr bytes are version-verifiable.
+
+The module injects only favourite-control state styles (favorited fill, loading,
+focus, and a scoped `[hidden]` hide so a Webflow `display:flex` icon button
+cannot beat the UA rule). It does not create UI or inject wf-xano.
+
+Webflow markup contract:
+
+- Path is exactly one `/hire/<slug>` segment, same as `agency-profile.js`.
+- Each heart is a Designer-authored
+  `[wf-xano-element="favorite"][wf-xano-favorite-type="starter"]` control
+  (live Brian example: `button.icon-32.is-profile` with
+  `wf-xano-favorite-id`). Do not add `data-starters-list` on this template.
+- The site Head Code must load Memberstack, `window.memberReady` (or
+  `$memberstackDom`), and wf-xano v0.18 or newer, and must own xanoBase/authBase.
+
+Run its focused test with:
+
+```sh
+node --test v3/hire-profile-favorites.test.js
+```
+
 ## Saved Starters roles chips
 
 `saved-starters-roles.js` splits the Saved Starters card's roles value into one
