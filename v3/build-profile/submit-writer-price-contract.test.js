@@ -168,6 +168,26 @@ test('shows an ambiguous-save recovery message after two rejected requests', asy
   )
 })
 
+// WebKit raises these once the connection drops with the POST already out, which is
+// the ambiguous case the recovery copy exists for. Treating them as deterministic
+// would tell a member on a flaky phone that the submit simply failed.
+test('retries and reports an unconfirmed save for each WebKit transport message', async () => {
+  for (const message of ['The network connection was lost.', 'cancelled', 'Load failed']) {
+    const result = load({}, '/build-profile/full-profile', {
+      respond: () => { throw new TypeError(message) },
+    })
+
+    await result.submit.click()
+
+    assert.equal(result.requests.length, 2, message)
+    assert.equal(
+      result.errorMessage.textContent,
+      'We could not confirm your profile was saved. Please wait a moment, then submit again.',
+      message,
+    )
+  }
+})
+
 test('preserves the authored onboarding CTA after a successful save', async () => {
   const result = load()
 

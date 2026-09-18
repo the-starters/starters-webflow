@@ -208,7 +208,7 @@ Its other behavior changes are the reviewer-alias compatibility described above,
 the profile-save and pending-photo commit gate described in
 [Profile-photo upload contract](#profile-photo-upload-contract), and a single
 retry of the canonical write. Only a transport rejection - one that names a
-browser fetch failure, so no response ever existed - is retried, once, after a
+browser fetch failure, so no response was received - is retried, once, after a
 short wait and with the identical payload; every other rejection, including one
 raised during the retry, keeps its own cause and the authored error copy. When
 both attempts fail on transport the panel says the save could not be confirmed,

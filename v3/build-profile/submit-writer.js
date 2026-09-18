@@ -74,15 +74,19 @@
         priceFeedback.forEach((feedback, field) => clearPriceFeedback(field));
       }
 
-      // A CORS/preflight or transport failure rejects before any response exists:
-      // Chrome reports "Failed to fetch", Firefox "NetworkError when attempting to
-      // fetch resource", Safari "Load failed". A TypeError raised before the request
-      // leaves the page - a replaced xanoAuthFetch bridge, say - is a deterministic
-      // failure, so it owns its own cause instead of an unconfirmed-save recovery.
+      // A CORS/preflight or transport failure rejects with no response delivered,
+      // which does not prove the request never reached the server. Chrome reports
+      // "Failed to fetch", Firefox "NetworkError when attempting to fetch resource",
+      // WebKit "Load failed", "The network connection was lost." or "cancelled" - the
+      // last two are what a dropped mobile connection raises once the POST is already
+      // out. A TypeError raised before the request leaves the page - a replaced
+      // xanoAuthFetch bridge, say - is a deterministic failure, so it owns its own
+      // cause instead of an unconfirmed-save recovery.
       const TRANSPORT_RETRY_DELAY_MS = 400;
+      const TRANSPORT_FAILURE_RE =
+        /failed to fetch|networkerror|load failed|network connection was lost|cancelled/i;
       const isTransportFailure = (candidate) => candidate?.code === 'NETWORK_ERROR'
-        || (candidate?.name === 'TypeError'
-          && /failed to fetch|networkerror|load failed/i.test(candidate?.message || ''));
+        || (candidate?.name === 'TypeError' && TRANSPORT_FAILURE_RE.test(candidate?.message || ''));
 
       async function saveCanonicalProfile(endpointUrl, payload) {
         const request = () => xanoAuthFetch(endpointUrl, {
