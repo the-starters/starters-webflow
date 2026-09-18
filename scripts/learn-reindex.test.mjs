@@ -674,6 +674,12 @@ test('normalizeExport rejects a payload it cannot trust', () => {
   assert.throws(() => normalizeExport({ collections: [] }), /refs/);
   assert.throws(() => normalizeExport({ collections: [], refs: null }), /refs/);
   assert.throws(() => normalizeExport({ collections: [], refs: [] }), /refs/);
+  const noItems = { schema: { ...SCHEMAS[WEBINARS], id: WEBINARS, slug: 'webinars' } };
+  assert.throws(() => normalizeExport({ collections: [noItems], refs: REF_ITEMS }), /webinars.*items/);
+  assert.throws(
+    () => normalizeExport({ collections: [{ ...noItems, items: {} }], refs: REF_ITEMS }),
+    /webinars.*items/
+  );
 });
 
 test('an item with no slug is rejected rather than given an /undefined URL', async () => {

@@ -15,6 +15,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  assertExpectedSlug,
   COLLECTIONS,
   createExportResolver,
   diffRecords,
@@ -124,12 +125,7 @@ function apiSource(dangling) {
       const out = [];
       for (const config of COLLECTIONS) {
         const schema = await webflow(`/collections/${config.id}`);
-        // A renamed collection would silently rewrite every /learn/ URL.
-        if (schema.slug !== config.expectedSlug) {
-          throw new Error(
-            `Collection ${config.name} (${config.id}) slug is "${schema.slug}", expected "${config.expectedSlug}". Aborting.`
-          );
-        }
+        assertExpectedSlug(config, schema);
         const items = (await fetchLiveItems(config.id)).filter(isLiveItem);
         out.push({ config, schema, items });
       }

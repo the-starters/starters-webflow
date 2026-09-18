@@ -338,8 +338,21 @@ export function normalizeExport(data) {
   return data.collections.map((entry) => {
     const slug = entry?.schema?.slug;
     if (!slug) throw new Error('Webflow export has a collection without `schema.slug`');
-    return { schema: entry.schema, items: Array.isArray(entry.items) ? entry.items : [] };
+    // A missing `items` would drop the whole collection from the index silently.
+    if (!Array.isArray(entry.items)) {
+      throw new Error(`Webflow export collection "${slug}" is missing an \`items\` array`);
+    }
+    return { schema: entry.schema, items: entry.items };
   });
+}
+
+/** A renamed collection would silently rewrite every /learn/ URL. */
+export function assertExpectedSlug(config, schema) {
+  if (schema.slug !== config.expectedSlug) {
+    throw new Error(
+      `Collection ${config.name} (${config.id}) slug is "${schema.slug}", expected "${config.expectedSlug}". Aborting.`
+    );
+  }
 }
 
 /**
@@ -351,11 +364,7 @@ export function selectExportCollections(entries) {
   return COLLECTIONS.map((config) => {
     const entry = byId.get(config.id);
     if (!entry) throw new Error(`Export is missing collection ${config.name} (${config.id})`);
-    if (entry.schema.slug !== config.expectedSlug) {
-      throw new Error(
-        `Collection ${config.name} (${config.id}) slug is "${entry.schema.slug}", expected "${config.expectedSlug}". Aborting.`
-      );
-    }
+    assertExpectedSlug(config, entry.schema);
     return { config, schema: entry.schema, items: entry.items.filter(isLiveItem) };
   });
 }
