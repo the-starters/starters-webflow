@@ -944,3 +944,28 @@ test('a status element authored inside the repeating row is ignored so the secti
   page.company('Acme'); page.type('job_title', 'Designer')
   assert.equal(live[0].textContent, 'Unsaved changes.')
 })
+
+test('a class rule that hides the authored check element is beaten by an inline display', async () => {
+  const page = await mount({
+    authored: true,
+    companies: [{ id: 1, company_name: 'Acme', job_title: 'Designer', company_source: 'custom' }],
+    fail: (request, { stored, setStored }) => {
+      if (request.method !== 'PATCH') return null
+      setStored(stored.map(item => Number(item.id) === 1 ? { ...item, job_title: 'Engineer (in review)' } : item))
+      return 'lose'
+    },
+  })
+  // The harness carries no stylesheet, so the browser's own answer stands in for the class rule.
+  const original = page.context.window.getComputedStyle
+  page.context.window.getComputedStyle = node => ({ display: node === page.authoredCheck ? 'none' : 'block' })
+  try {
+    page.type('job_title', 'Engineer')
+    await page.submit()
+    assert.match(page.status(), /could not be confirmed/)
+    assert.equal(page.authoredCheck.hidden, false)
+    assert.equal(page.authoredCheck.style.display, 'inline-block')
+  } finally {
+    if (original) page.context.window.getComputedStyle = original
+    else delete page.context.window.getComputedStyle
+  }
+})

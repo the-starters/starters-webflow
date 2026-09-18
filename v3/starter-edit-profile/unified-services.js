@@ -42,7 +42,13 @@
     // Authored children are the label, so only a wholly empty control gets the default copy.
     if (!checkSave.children.length && !checkSave.textContent.trim()) checkSave.textContent = 'Check saved state'
     // A Webflow class can set `display`, which beats the [hidden] rule, so write both.
-    const showCheck = visible => { checkSave.hidden = !visible; checkSave.style.display = visible ? '' : 'none' }
+    // Clearing the inline style only uncovers the class rule, so a class that sets
+    // `display: none` needs an inline display of its own to be beaten.
+    const showCheck = visible => {
+      checkSave.hidden = !visible
+      checkSave.style.display = visible ? '' : 'none'
+      if (visible && window.getComputedStyle?.(checkSave)?.display === 'none') checkSave.style.display = 'inline-block'
+    }
     showCheck(false)
     const save = section.querySelector('[data-edit-submit]')
     if (!rows().length || !save) {

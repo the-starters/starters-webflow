@@ -382,7 +382,10 @@ element, and it hides the check element on bind, keeping the label the author
 wrote. The check element may be a plain Link or Button element carrying
 `profile-items-check-save`; leave it visible in Designer, because the script hides
 and shows it with an inline `display` style that beats the Webflow class rule.
-Never use an instance of the site's Button component: its native `.clickable_btn`
+A class rule that hides the control is handled too: on reveal the script checks
+whether the browser still reports `display: none` and forces an inline display,
+so the control shows either way. Never use an instance of the site's Button
+component: its native `.clickable_btn`
 is an empty overlay whose label lives outside it, so marking the overlay would
 hide the clickable node while the caption kept rendering. Any element works — the
 script prevents a link's default action, sets `type="button"` only on a real

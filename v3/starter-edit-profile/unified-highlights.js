@@ -34,7 +34,13 @@
     // Authored children are the label, so only a wholly empty control gets the default copy.
     if (!check.children.length && !check.textContent.trim()) check.textContent = 'Check saved state'
     // A Webflow class can set `display`, which beats the [hidden] rule, so write both.
-    const showCheck = visible => { check.hidden = !visible; check.style.display = visible ? '' : 'none' }
+    // Clearing the inline style only uncovers the class rule, so a class that sets
+    // `display: none` needs an inline display of its own to be beaten.
+    const showCheck = visible => {
+      check.hidden = !visible
+      check.style.display = visible ? '' : 'none'
+      if (visible && window.getComputedStyle?.(check)?.display === 'none') check.style.display = 'inline-block'
+    }
     showCheck(false)
     const original = section.querySelector(ROW)
     const template = original?.cloneNode(true), parent = original?.parentElement
