@@ -9,8 +9,7 @@ import {
   collectionById,
   createExportResolver,
   diffRecords,
-  isPublishedForExport,
-  isResolvableRef,
+  isLiveItem,
   normalizeExport,
   optionMapsFromSchema,
   toUnixSeconds,
@@ -157,7 +156,7 @@ function fakeResolver(refs = REF_ITEMS, onMissing) {
   };
 }
 
-function mapWith(collectionId, item, { resolve = fakeResolver(), slug } = {}) {
+function mapWith(collectionId, item, { resolve = fakeResolver(), slug, warnings } = {}) {
   const config = collectionById(collectionId);
   const schema = SCHEMAS[collectionId];
   return config.map({
@@ -165,6 +164,7 @@ function mapWith(collectionId, item, { resolve = fakeResolver(), slug } = {}) {
     collectionSlug: slug ?? schema.slug,
     optionMaps: optionMapsFromSchema(schema),
     resolve,
+    warnings,
   });
 }
 
@@ -381,6 +381,41 @@ test('a missing option id omits lvl1 rather than inventing one', async () => {
   assert.deepEqual(record.content_type, { lvl0: 'Interview & News' });
 });
 
+test('an option id the schema does not know about is recorded as a warning', async () => {
+  const warnings = [];
+  const item = { ...INTERVIEW_ITEM, fieldData: { ...INTERVIEW_ITEM.fieldData, category: 'retired-option-id' } };
+  const record = await mapWith(INTERVIEWS, item, { warnings });
+  // Behaviour is unchanged: lvl1 is omitted rather than invented.
+  assert.deepEqual(record.content_type, { lvl0: 'Interview & News' });
+  assert.deepEqual(warnings, [
+    `Item ${INTERVIEW_ITEM.id} (interviews-analysis): option id retired-option-id not in schema field category`,
+  ]);
+});
+
+test('a missing date on a dated collection warns and falls back to createdOn', async () => {
+  const warnings = [];
+  const item = { ...INTERVIEW_ITEM, fieldData: { ...INTERVIEW_ITEM.fieldData, 'publish-date': null } };
+  const record = await mapWith(INTERVIEWS, item, { warnings });
+  assert.equal(record.date, Math.floor(Date.parse(INTERVIEW_ITEM.createdOn) / 1000));
+  assert.deepEqual(warnings, [
+    `Item ${INTERVIEW_ITEM.id} (interviews-analysis): no publish-date date, falling back to createdOn`,
+  ]);
+});
+
+test('collections with no date field never warn about one', async () => {
+  const warnings = [];
+  await mapWith(PLAYBOOKS, PLAYBOOK_ITEM, { warnings });
+  await mapWith(SESSIONS, SESSION_ITEM, { warnings });
+  assert.deepEqual(warnings, []);
+});
+
+test('mappers work without a warnings array', async () => {
+  const item = { ...WEBINAR_ITEM, fieldData: { ...WEBINAR_ITEM.fieldData, date: null, state: 'gone' } };
+  const record = await mapWith(WEBINARS, item);
+  assert.equal(record.state, null);
+  assert.equal(record.date, Math.floor(Date.parse(WEBINAR_ITEM.createdOn) / 1000));
+});
+
 test('budget options resolve to their display names', async () => {
   const item = { ...INTERVIEW_ITEM, fieldData: { ...INTERVIEW_ITEM.fieldData, budget: OPTION_IDS.budget100k } };
   assert.equal((await mapWith(INTERVIEWS, item)).budget, '$100k-1M');
@@ -530,18 +565,19 @@ test('diffRecords reports added, removed, changed and unchanged', () => {
   assert.deepEqual(changed.fields.find((f) => f.name === 'description'), { name: 'description' });
 });
 
-test('isPublishedForExport is the export-mode publish gate', () => {
-  assert.equal(isPublishedForExport({ isArchived: false, lastPublished: '2026-09-04T09:27:47.286Z', isDraft: true }), true);
-  assert.equal(isPublishedForExport({ isArchived: false, lastPublished: null }), false);
-  assert.equal(isPublishedForExport({ isArchived: false, lastPublished: '' }), false);
-  assert.equal(isPublishedForExport({ isArchived: true, lastPublished: '2026-09-04T09:27:47.286Z' }), false);
-  assert.equal(isPublishedForExport(null), false);
+test('isLiveItem gates items and references alike', () => {
+  assert.equal(isLiveItem({ isArchived: false, lastPublished: '2026-09-04T09:27:47.286Z', isDraft: true }), true);
+  assert.equal(isLiveItem({ isArchived: false, lastPublished: null }), false);
+  assert.equal(isLiveItem({ isArchived: false, lastPublished: '' }), false);
+  assert.equal(isLiveItem({ isArchived: true, lastPublished: '2026-09-04T09:27:47.286Z' }), false);
+  assert.equal(isLiveItem(null), false);
+  assert.equal(isLiveItem(undefined), false);
 });
 
-test('archived or unpublished references count as missing in export mode', () => {
-  assert.equal(isResolvableRef(REF_ITEMS[REF_COLLECTIONS.freelancers]['author-archived']), false);
-  assert.equal(isResolvableRef(REF_ITEMS[REF_COLLECTIONS.freelancers]['author-unpublished']), false);
-  assert.equal(isResolvableRef(REF_ITEMS[REF_COLLECTIONS.freelancers]['6a188fb6bf283f471428d608']), true);
+test('archived or unpublished references count as missing', () => {
+  assert.equal(isLiveItem(REF_ITEMS[REF_COLLECTIONS.freelancers]['author-archived']), false);
+  assert.equal(isLiveItem(REF_ITEMS[REF_COLLECTIONS.freelancers]['author-unpublished']), false);
+  assert.equal(isLiveItem(REF_ITEMS[REF_COLLECTIONS.freelancers]['6a188fb6bf283f471428d608']), true);
 
   const missing = [];
   const resolve = createExportResolver(REF_ITEMS, (c, i) => missing.push(`${c}/${i}`));
@@ -582,7 +618,7 @@ test('a minimal export object maps through the export-mode loader', async () => 
   const optionMaps = optionMapsFromSchema(entries[0].schema);
 
   const records = [];
-  for (const item of entries[0].items.filter(isPublishedForExport)) {
+  for (const item of entries[0].items.filter(isLiveItem)) {
     records.push(await config.map({ item, collectionSlug: entries[0].schema.slug, optionMaps, resolve }));
   }
 
@@ -609,6 +645,6 @@ test('an item with no slug is rejected rather than given an /undefined URL', asy
     isDraft: false,
     fieldData: { name: 'No Slug' },
   };
-  assert.equal(isPublishedForExport(slugless), true);
+  assert.equal(isLiveItem(slugless), true);
   await assert.rejects(() => mapWith(EVENTS, slugless), /slugless-1.*no slug/);
 });

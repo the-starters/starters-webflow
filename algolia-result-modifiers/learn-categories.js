@@ -33,7 +33,7 @@
         'marketing-strategy-leadership': 'Marketing Strategy & Leadership',
         'operations-supply-chain': 'Operations & Supply Chain',
         'paid-media': 'Paid Media',
-        'physical-product-development': 'Physical Product & Development',
+        'physical-product-development': 'Physical Product Development & Commercialization',
         'retail-marketplace': 'Retail & Marketplace',
         'retention-crm': 'Retention & CRM'
       };

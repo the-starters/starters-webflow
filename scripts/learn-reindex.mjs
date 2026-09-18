@@ -18,8 +18,7 @@ import {
   COLLECTIONS,
   createExportResolver,
   diffRecords,
-  isIndexable,
-  isPublishedForExport,
+  isLiveItem,
   normalizeExport,
   optionMapsFromSchema,
   stripHighlight,
@@ -111,7 +110,10 @@ function apiSource(dangling) {
       cache.set(key, await webflow(`/collections/${collectionId}/items/${itemId}/live`, { allow404: true }));
     }
     const item = cache.get(key);
-    if (!item) dangling.set(key, (dangling.get(key) ?? 0) + 1);
+    if (!isLiveItem(item)) {
+      dangling.set(key, (dangling.get(key) ?? 0) + 1);
+      return null;
+    }
     return item;
   };
 
@@ -128,7 +130,7 @@ function apiSource(dangling) {
             `Collection ${config.name} (${config.id}) slug is "${schema.slug}", expected "${config.expectedSlug}". Aborting.`
           );
         }
-        const items = (await fetchLiveItems(config.id)).filter(isIndexable);
+        const items = (await fetchLiveItems(config.id)).filter(isLiveItem);
         out.push({ config, schema, items });
       }
       return out;
@@ -159,7 +161,7 @@ function exportSource(path, dangling) {
             `Collection ${config.name} (${config.id}) slug is "${entry.schema.slug}", expected "${config.expectedSlug}". Aborting.`
           );
         }
-        return { config, schema: entry.schema, items: entry.items.filter(isPublishedForExport) };
+        return { config, schema: entry.schema, items: entry.items.filter(isLiveItem) };
       });
     },
   };
@@ -222,6 +224,8 @@ async function replaceAllObjects(records) {
     const move = await algolia('POST', `/indexes/${tmp}/operation`, { operation: 'move', destination: INDEX });
     await waitForTask(tmp, move.taskID);
   } catch (error) {
+    // The copy may still be queued; deleting before it lands leaks the index.
+    await waitForTask(INDEX, copy.taskID).catch(() => {});
     await algolia('DELETE', `/indexes/${tmp}`).catch(() => {});
     throw error;
   }
@@ -234,7 +238,7 @@ function show(value) {
   return typeof value === 'object' && value !== null ? JSON.stringify(value) : String(value);
 }
 
-function printDiff(diff, dangling) {
+function printDiff(diff, dangling, warnings) {
   console.log(`\nadded (${diff.added.length}):`);
   for (const r of diff.added) console.log(`  ${r.objectID}  ${r.title}  ${r.url}`);
 
@@ -254,6 +258,9 @@ function printDiff(diff, dangling) {
 
   console.log(`\ndangling references (${dangling.size}):`);
   for (const [key, count] of dangling) console.log(`  ${key}${count > 1 ? ` (x${count})` : ''}`);
+
+  console.log(`\nwarnings (${warnings.length}):`);
+  for (const line of warnings) console.log(`  ${line}`);
 }
 
 // --- Main -------------------------------------------------------------------
@@ -261,6 +268,7 @@ function printDiff(diff, dangling) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const dangling = new Map();
+  const warnings = [];
   const source = args.exportPath ? exportSource(resolvePath(args.exportPath), dangling) : apiSource(dangling);
 
   console.log(`mode: ${args.write ? 'WRITE' : 'dry run'}`);
@@ -270,7 +278,9 @@ async function main() {
   for (const { config, schema, items } of await source.collections()) {
     const optionMaps = optionMapsFromSchema(schema);
     for (const item of items) {
-      proposed.push(await config.map({ item, collectionSlug: schema.slug, optionMaps, resolve: source.resolve }));
+      proposed.push(
+        await config.map({ item, collectionSlug: schema.slug, optionMaps, resolve: source.resolve, warnings })
+      );
     }
     console.log(`  ${config.name}: ${items.length} item(s) from /learn/${schema.slug}/`);
   }
@@ -280,7 +290,7 @@ async function main() {
   console.log(`proposed records: ${proposed.length}`);
 
   const diff = diffRecords(current, proposed);
-  printDiff(diff, dangling);
+  printDiff(diff, dangling, warnings);
 
   const outPath = join(OUT_DIR, `proposed-${new Date().toISOString().replace(/[:.]/g, '-')}.json`);
   mkdirSync(OUT_DIR, { recursive: true });
@@ -305,5 +315,6 @@ async function main() {
 
 main().catch((error) => {
   console.error(error.message);
+  if (error.cause?.message) console.error(`  cause: ${error.cause.message}`);
   process.exitCode = 1;
 });

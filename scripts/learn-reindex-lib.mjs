@@ -4,6 +4,10 @@
 // Webflow CMS item -> Algolia record. Reference fields (authors, categories,
 // speakers, sessions) are resolved through an injected
 // `resolve(collectionId, itemId) -> item | null` so tests can fake them.
+//
+// Mappers take a ctx: { item, collectionSlug, optionMaps, resolve, warnings }.
+// `warnings` is optional; when present it collects non-fatal data problems.
+import { isDeepStrictEqual } from 'node:util';
 
 // Referenced collections. Ids are the live Webflow collection ids.
 export const REF_COLLECTIONS = {
@@ -43,9 +47,29 @@ export function optionMapsFromSchema(schema) {
   return maps;
 }
 
-function optionName(optionMaps, fieldSlug, optionId) {
+function warn(ctx, message) {
+  if (Array.isArray(ctx?.warnings)) ctx.warnings.push(message);
+}
+
+// An id the schema does not know about means the schema moved under us.
+function optionName(ctx, fieldSlug) {
+  const optionId = ctx.item.fieldData?.[fieldSlug] ?? null;
   if (!optionId) return null;
-  return optionMaps?.[fieldSlug]?.[optionId] ?? null;
+  const name = ctx.optionMaps?.[fieldSlug]?.[optionId] ?? null;
+  if (name === null) {
+    warn(ctx, `Item ${ctx.item.id} (${ctx.collectionSlug}): option id ${optionId} not in schema field ${fieldSlug}`);
+  }
+  return name;
+}
+
+// Collections that own a date field should always carry one; createdOn is a
+// fallback, not an equivalent, so an empty field is worth surfacing.
+function requiredDate(ctx, fieldSlug) {
+  const seconds = toUnixSeconds(ctx.item.fieldData?.[fieldSlug] ?? null);
+  if (seconds === null) {
+    warn(ctx, `Item ${ctx.item.id} (${ctx.collectionSlug}): no ${fieldSlug} date, falling back to createdOn`);
+  }
+  return seconds;
 }
 
 function imageUrl(value) {
@@ -114,10 +138,11 @@ function core({ item, collectionSlug, lvl0, lvl1, description, thumbnail, date, 
   };
 }
 
-async function mapInterview({ item, collectionSlug, optionMaps, resolve }) {
+async function mapInterview(ctx) {
+  const { item, collectionSlug, resolve } = ctx;
   const f = item.fieldData ?? {};
   const { author, memberstack_id } = await authorFrom(resolve, f['autor-3']);
-  const resourceType = optionName(optionMaps, 'category', f.category);
+  const resourceType = optionName(ctx, 'category');
   const lvl1 = resourceType
     ? `Interview & News > ${INTERVIEW_LVL1_ALIASES[resourceType] ?? resourceType}`
     : null;
@@ -129,20 +154,21 @@ async function mapInterview({ item, collectionSlug, optionMaps, resolve }) {
       lvl1,
       description: f['description-2'] ?? null,
       thumbnail: imageUrl(f.image),
-      date: toUnixSeconds(f['publish-date']),
+      date: requiredDate(ctx, 'publish-date'),
       author,
       categories: await slugsFor(resolve, REF_COLLECTIONS.categories, f['category-interviews']),
     }),
-    budget: optionName(optionMaps, 'budget', f.budget),
+    budget: optionName(ctx, 'budget'),
     featured: f.featured === true,
     memberstack_id,
   };
 }
 
-async function mapPlaybook({ item, collectionSlug, optionMaps, resolve }) {
+async function mapPlaybook(ctx) {
+  const { item, collectionSlug, resolve } = ctx;
   const f = item.fieldData ?? {};
   const { author, memberstack_id } = await authorFrom(resolve, f['author-2']);
-  const type = optionName(optionMaps, 'type', f.type);
+  const type = optionName(ctx, 'type');
   return {
     ...core({
       item,
@@ -183,7 +209,8 @@ async function mapSession({ item, collectionSlug, resolve }) {
   };
 }
 
-async function mapWebinar({ item, collectionSlug, optionMaps, resolve }) {
+async function mapWebinar(ctx) {
+  const { item, collectionSlug, resolve } = ctx;
   const f = item.fieldData ?? {};
   return {
     ...core({
@@ -193,11 +220,11 @@ async function mapWebinar({ item, collectionSlug, optionMaps, resolve }) {
       lvl1: null,
       description: f['short-description'] ?? null,
       thumbnail: imageUrl(f.image),
-      date: toUnixSeconds(f.date),
+      date: requiredDate(ctx, 'date'),
       author: null, // collection has no author field
       categories: [], // collection has no category field
     }),
-    state: optionName(optionMaps, 'state', f.state),
+    state: optionName(ctx, 'state'),
     location: f.location ?? null,
     speakers: await slugsFor(resolve, REF_COLLECTIONS.people, f.speackers),
     memberstack_ids: [], // no freelancer reference on webinars
@@ -205,7 +232,8 @@ async function mapWebinar({ item, collectionSlug, optionMaps, resolve }) {
   };
 }
 
-async function mapEvent({ item, collectionSlug, optionMaps, resolve }) {
+async function mapEvent(ctx) {
+  const { item, collectionSlug, resolve } = ctx;
   const f = item.fieldData ?? {};
   return {
     ...core({
@@ -215,11 +243,11 @@ async function mapEvent({ item, collectionSlug, optionMaps, resolve }) {
       lvl1: null,
       description: f['short-description'] ?? null,
       thumbnail: imageUrl(f['hero-image']),
-      date: toUnixSeconds(f['date-and-time']),
+      date: requiredDate(ctx, 'date-and-time'),
       author: null, // collection has no author field
       categories: await slugsFor(resolve, REF_COLLECTIONS.categories, f.categories),
     }),
-    label: optionName(optionMaps, 'label', f.label),
+    label: optionName(ctx, 'label'),
     location: f.location ?? null,
     speakers: await slugsFor(resolve, REF_COLLECTIONS.people, f.speakers),
     memberstack_ids: await memberstackIdsFor(resolve, f.speakers2),
@@ -267,28 +295,18 @@ export function collectionById(id) {
   return COLLECTIONS.find((c) => c.id === id) ?? null;
 }
 
-/** An item belongs in the index only when it is live and not archived. */
-export function isIndexable(item) {
-  return Boolean(item?.id) && item.isArchived !== true;
+/**
+ * The single liveness test, used for both input sources and both resolvers.
+ * The API's /live endpoint only returns published items, so lastPublished is
+ * always set there; an export is a plain dump, so the same check earns its keep.
+ */
+export function isLiveItem(item) {
+  return item?.isArchived !== true && typeof item?.lastPublished === 'string' && item.lastPublished !== '';
 }
 
 export function stripHighlight(hit) {
   const { _highlightResult, _snippetResult, ...rest } = hit ?? {};
   return rest;
-}
-
-function deepEqual(a, b) {
-  if (a === b) return true;
-  if (Array.isArray(a) && Array.isArray(b)) {
-    return a.length === b.length && a.every((v, i) => deepEqual(v, b[i]));
-  }
-  if (a && b && typeof a === 'object' && typeof b === 'object') {
-    const ka = Object.keys(a);
-    const kb = Object.keys(b);
-    if (ka.length !== kb.length) return false;
-    return ka.every((k) => Object.prototype.hasOwnProperty.call(b, k) && deepEqual(a[k], b[k]));
-  }
-  return false;
 }
 
 // Only these fields are worth printing old -> new; the rest are too long.
@@ -322,7 +340,7 @@ export function diffRecords(current, proposed) {
     names.delete('objectID');
     const fields = [];
     for (const name of names) {
-      if (deepEqual(prev[name], next[name])) continue;
+      if (isDeepStrictEqual(prev[name], next[name])) continue;
       fields.push(
         VERBOSE_DIFF_FIELDS.has(name)
           ? { name, from: prev[name] ?? null, to: next[name] ?? null }
@@ -342,26 +360,7 @@ export function diffRecords(current, proposed) {
 
 // --- Export-file mode -------------------------------------------------------
 // A Webflow export JSON stands in for the API when no token is available. The
-// exporter cannot read the /live endpoint, so the publish gate is applied here.
-
-/** Export stand-in for the /live endpoint: published and not archived. */
-export function isPublishedForExport(item) {
-  return (
-    item?.isArchived === false &&
-    typeof item.lastPublished === 'string' &&
-    item.lastPublished !== ''
-  );
-}
-
-/** A reference resolves only when the API's /live lookup would not 404 on it. */
-export function isResolvableRef(item) {
-  return (
-    Boolean(item) &&
-    item.isArchived !== true &&
-    typeof item.lastPublished === 'string' &&
-    item.lastPublished !== ''
-  );
-}
+// exporter cannot read the /live endpoint, so isLiveItem is the publish gate.
 
 /** Validate an export payload and return its collection entries. */
 export function normalizeExport(data) {
@@ -383,7 +382,7 @@ export function normalizeExport(data) {
 export function createExportResolver(refs, onMissing) {
   return (collectionId, itemId) => {
     const item = refs?.[collectionId]?.[itemId] ?? null;
-    if (!isResolvableRef(item)) {
+    if (!isLiveItem(item)) {
       if (onMissing) onMissing(collectionId, itemId);
       return null;
     }
