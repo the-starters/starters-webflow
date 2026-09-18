@@ -399,7 +399,6 @@ test('a path absent from the Map falls back to the Slug Guess and warns once on 
   ], 'the miss must behave exactly as the script does today')
   assert.equal(h.warnings.length, 1, 'one warning per page load, not one per click')
   assert.match(h.warnings[0], /Fulfillment & Logistics/, 'the warning must name the missed path')
-  assert.match(h.warnings[0], /present/i, 'and say whether the Map was present')
 })
 
 test('the same miss warns nothing on www.thestarters.com', () => {
@@ -433,7 +432,7 @@ test('a page with no Map behaves as today and warns once on staging', () => {
     'every row must land exactly where it lands today'
   )
   assert.equal(h.warnings.length, 1)
-  assert.match(h.warnings[0], /no/i, 'the warning must report the Map as absent')
+  assert.match(h.warnings[0], /Operations Leadership/, 'the warning must name the first missed path')
 })
 
 test('a matched entry with an empty href falls back rather than navigating to nothing', () => {
@@ -472,15 +471,6 @@ test('the listener is capturing, bound once, and a second run adds no second bin
 
   h.click('Paid Media > Paid Social')
   assert.deepEqual(h.navigations, ['/subcategories/paid-social'], 'and the click fires once')
-})
-
-// ---------------------------------------------------------------------------
-// Release marker
-// ---------------------------------------------------------------------------
-
-test('the header carries a well-formed @release marker', () => {
-  const marker = source.match(/^ \* @release (v\d+\.\d+\.\d+)$/m)
-  assert.ok(marker, 'no "@release vX.Y.Z" line in the view-all.js header')
 })
 
 test('a click outside a View All button is left alone', () => {

@@ -2,7 +2,7 @@
  * Explore menu View All — open a Subcategory's Collection Page, using the
  * navbar's View All Map for the real slug and the label-derived slug otherwise.
  *
- * @release v1.59.583
+ * @release v1.59.584
  *
  * Raw JS (CDN-served, no HTML wrapper tags). Load with `defer`.
  */
@@ -53,16 +53,10 @@
 
   var warned = false
 
-  function warnOnce(path, mapPresent) {
+  function warnOnce(path) {
     if (warned || !diagnosticsEnabled()) return
     warned = true
-    console.warn(
-      LOG_PREFIX +
-        ' no Map entry for "' +
-        path +
-        '" — using the derived slug. Map present: ' +
-        (mapPresent ? 'yes' : 'no')
-    )
+    console.warn(LOG_PREFIX + ' no Map entry for "' + path + '" — using the derived slug')
   }
 
   // Queried per click, not cached at load: the Explore rows are Algolia-rendered
@@ -71,11 +65,10 @@
     var entries = document.querySelectorAll('[data-view-all-map] [data-view-all-path]')
     for (var i = 0; i < entries.length; i++) {
       if (normalisePath(entries[i].getAttribute('data-view-all-path')) === path) {
-        return { present: true, href: (entries[i].getAttribute('href') || '').trim() }
+        return (entries[i].getAttribute('href') || '').trim()
       }
     }
-    // Only the warning text needs this, so the wrapper is checked on the miss.
-    return { present: entries.length > 0 || !!document.querySelector('[data-view-all-map]'), href: '' }
+    return ''
   }
 
   // Capturing: the menu stops bubbling clicks before they reach the document.
@@ -92,13 +85,13 @@
       e.stopPropagation()
 
       var path = normalisePath(item.getAttribute('wf-algolia-value'))
-      var entry = lookup(path)
-      if (entry.href) {
-        window.location.assign(entry.href)
+      var href = lookup(path)
+      if (href) {
+        window.location.assign(href)
         return
       }
 
-      warnOnce(path, entry.present)
+      warnOnce(path)
       window.location.assign('/subcategories/' + slugGuess(path))
     },
     true
