@@ -66,9 +66,10 @@ with the old controller. Record publication scope and readbacks.
 
 Current status: local candidate only; no Webflow attributes changed or published.
 Focused regression on this candidate: three new activation cases fail against
-the base controller; all 183 authentication/controller tests pass. Local browser
-fixtures use fake Xano/Memberstack transports and a wf-xano stand-in. These
-results do not establish production runtime acceptance.
+the base controller; the command below reports `tests 183 / pass 183 / fail 0`
+(181 top-level tests plus two nested subtests). Local browser fixtures use fake
+Xano/Memberstack transports and a wf-xano stand-in. These results do not
+establish production runtime acceptance.
 
 ```sh
 node --test opportunities-3.0-auth.test.js

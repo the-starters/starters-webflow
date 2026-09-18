@@ -5872,8 +5872,10 @@
   }
 
   // Each role's detail feed is identified by its own wf-xano source path. The
-  // same path drives the render-ownership guard in initOppDetailByRole, so both
-  // resolve the Brand applicants root under one matching rule.
+  // render-ownership guard in initOppDetailByRole matches the Brand applicants
+  // root by this same path but deliberately without the wf-xano-defer clause
+  // below: the guard must also recognize an authored root that still boots
+  // itself, while activation must only ever touch a root that did not.
   const OPP_DETAIL_FEED_PATH = {
     talent: 'starter/applications/mine',
     brand: 'brand/applications/list',
