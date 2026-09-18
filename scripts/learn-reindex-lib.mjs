@@ -95,11 +95,15 @@ function contentType(lvl0, lvl1) {
 
 function core({ item, collectionSlug, lvl0, lvl1, description, thumbnail, date, author, categories }) {
   const fieldData = item.fieldData ?? {};
+  const slug = fieldData.slug;
+  if (!slug) {
+    throw new Error(`Item ${item.id} in /learn/${collectionSlug}/ has no slug, so it has no page URL`);
+  }
   return {
     objectID: item.id,
     title: fieldData.name ?? null,
-    slug: fieldData.slug ?? null,
-    url: buildUrl(collectionSlug, fieldData.slug),
+    slug,
+    url: buildUrl(collectionSlug, slug),
     content_type: contentType(lvl0, lvl1),
     description: description ?? null,
     thumbnail_url: thumbnail ?? null,
@@ -241,7 +245,7 @@ export const COLLECTIONS = [
   },
   {
     name: 'Sessions',
-    id: '69e08554183023227aa46c1e',
+    id: REF_COLLECTIONS.sessions,
     expectedSlug: 'sessions',
     map: mapSession,
   },
@@ -363,6 +367,10 @@ export function isResolvableRef(item) {
 export function normalizeExport(data) {
   if (!data || !Array.isArray(data.collections)) {
     throw new Error('Webflow export is missing a `collections` array');
+  }
+  // Without refs every reference silently resolves to null, which looks like drift.
+  if (!data.refs || typeof data.refs !== 'object' || Array.isArray(data.refs)) {
+    throw new Error('Webflow export is missing a `refs` object');
   }
   return data.collections.map((entry) => {
     const slug = entry?.schema?.slug;

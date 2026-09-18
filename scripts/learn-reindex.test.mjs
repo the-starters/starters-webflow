@@ -594,5 +594,21 @@ test('a minimal export object maps through the export-mode loader', async () => 
 
 test('normalizeExport rejects a payload it cannot trust', () => {
   assert.throws(() => normalizeExport(null), /collections/);
-  assert.throws(() => normalizeExport({ collections: [{ schema: {} }] }), /schema\.slug/);
+  assert.throws(() => normalizeExport({ collections: [{ schema: {} }], refs: {} }), /schema\.slug/);
+  assert.throws(() => normalizeExport({ collections: [] }), /refs/);
+  assert.throws(() => normalizeExport({ collections: [], refs: null }), /refs/);
+  assert.throws(() => normalizeExport({ collections: [], refs: [] }), /refs/);
+});
+
+test('an item with no slug is rejected rather than given an /undefined URL', async () => {
+  const slugless = {
+    id: 'slugless-1',
+    lastPublished: '2026-09-01T00:00:00.000Z',
+    createdOn: '2026-07-01T00:00:00.000Z',
+    isArchived: false,
+    isDraft: false,
+    fieldData: { name: 'No Slug' },
+  };
+  assert.equal(isPublishedForExport(slugless), true);
+  await assert.rejects(() => mapWith(EVENTS, slugless), /slugless-1.*no slug/);
 });
