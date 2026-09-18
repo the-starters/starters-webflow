@@ -26,6 +26,7 @@ function mount(fetchImpl, { rates = false, services = null, readback = null, pic
   // Designer-authored status and check elements, ahead of the rows so position cannot be what
   // the script matches on. The authored label stands in for copy an author chose.
   const authoredStatus = h('div', { 'profile-items-status': '', class: 'form_status' })
+  authoredStatus.textContent = 'Status messages appear here.'
   const authoredCheck = h('button', { 'profile-items-check-save': '', class: 'button is-secondary' })
   authoredCheck.textContent = 'Recheck saved state'
   if (authored) { root.insertBefore(authoredCheck, root.firstChild); root.insertBefore(authoredStatus, root.firstChild) }
@@ -785,6 +786,7 @@ test('Services writes its status into the authored element instead of adding a s
   assert.equal(page.root.querySelectorAll('[profile-items-status]').length, 1)
   assert.equal(page.root.querySelector('[profile-items-status]'), page.authoredStatus)
   assert.equal(page.authoredStatus.getAttribute('role'), 'status')
+  assert.equal(page.authoredStatus.textContent, '', 'Designer placeholder copy is cleared at bind')
   page.type(page.name, 'Design audit')
   assert.equal(page.authoredStatus.textContent, 'Unsaved changes.')
   page.type(page.price, '500')
@@ -816,7 +818,9 @@ test('Services reveals the authored check element when a save cannot be confirme
   // Clicking the authored control runs the same canonical readback the created one runs.
   saved = { Hourly_Rate: 125, Availability: 'Available', Availability_ID: '1',
     Services: { 'service-1': { name: 'Audit', description: '', price: 500 }, 'service-2': null, 'service-3': null } }
-  page.click(page.authoredCheck)
+  const clicked = makeEvent('click', page.authoredCheck, { bubbles: true })
+  page.authoredCheck.dispatchEvent(clicked)
+  assert.equal(clicked.defaultPrevented, true, 'an authored anchor never follows its href')
   await new Promise(resolve => setImmediate(resolve))
   assert.equal(page.readRequests.length, 2)
   assert.equal(page.authoredStatus.textContent, 'Changes saved.')

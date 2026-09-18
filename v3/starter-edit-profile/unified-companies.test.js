@@ -921,7 +921,9 @@ test('Work Experience reveals the authored check element when a save cannot be c
   assert.equal(page.authoredCheck.style.display, '')
   assert.equal(page.section.querySelectorAll('[profile-items-check-save]').length, 1)
   // Clicking the authored control runs the same canonical check the created one runs.
-  page.click(page.authoredCheck)
+  const clicked = makeEvent('click', page.authoredCheck, { bubbles: true })
+  page.authoredCheck.dispatchEvent(clicked)
+  assert.equal(clicked.defaultPrevented, true, 'an authored anchor never follows its href')
   await tick()
   assert.equal(page.status(), 'The save is still unconfirmed. Your draft is kept; Save remains paused.')
   assert.equal(page.authoredCheck.hidden, false)

@@ -413,7 +413,9 @@
         if (operation.replaceId) records.filter(item => String(item.id) === String(operation.replaceId)).forEach(removeRecord)
       }
     }
-    check.addEventListener('click', async () => {
+    check.addEventListener('click', async event => {
+      // An authored control may be an anchor or a submit button, so never let its default run.
+      event.preventDefault()
       if (!unknown || saving || check.disabled) return
       check.disabled = true
       try {

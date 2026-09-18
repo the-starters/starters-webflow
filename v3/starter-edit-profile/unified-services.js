@@ -26,6 +26,8 @@
       section.appendChild(status)
     }
     status.setAttribute('role', 'status')
+    // Designer placeholder copy would otherwise sit in the live region all session.
+    status.textContent = ''
     // Same for the check control: adopt the authored one, keeping the label its author wrote.
     // Adopted before any early return so a halted section never leaves a live check control.
     let checkSave = section.querySelector('[profile-items-check-save]')
@@ -90,7 +92,9 @@
     const rowSnapshot = () => remaining().filter(row => retained.has(row) || meaningful(row))
       .map(row => ({ values: valuesFor(row), retained: true }))
     const scalarValues = records => records.map(({ value, checked }) => [value, checked])
-    checkSave.addEventListener('click', async () => {
+    checkSave.addEventListener('click', async event => {
+      // An authored control may be an anchor or a submit button, so never let its default run.
+      event.preventDefault()
       if (!uncertain || saving || checkSave.disabled || !readbackCheck) return
       checkSave.disabled = true
       status.textContent = 'Checking saved changes…'
