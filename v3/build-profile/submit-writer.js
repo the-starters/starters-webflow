@@ -74,6 +74,16 @@
         priceFeedback.forEach((feedback, field) => clearPriceFeedback(field));
       }
 
+      // A CORS/preflight or transport failure rejects before any response exists:
+      // Chrome reports "Failed to fetch", Firefox "NetworkError when attempting to
+      // fetch resource", Safari "Load failed". A TypeError raised before the request
+      // leaves the page - a replaced xanoAuthFetch bridge, say - is a deterministic
+      // failure, so it owns its own cause instead of an unconfirmed-save recovery.
+      const TRANSPORT_RETRY_DELAY_MS = 400;
+      const isTransportFailure = (candidate) => candidate?.code === 'NETWORK_ERROR'
+        || (candidate?.name === 'TypeError'
+          && /failed to fetch|networkerror|load failed/i.test(candidate?.message || ''));
+
       async function saveCanonicalProfile(endpointUrl, payload) {
         const request = () => xanoAuthFetch(endpointUrl, {
           method: "POST",
@@ -84,18 +94,17 @@
         try {
           return await request();
         } catch (firstError) {
-          const transportFailure = firstError?.name === 'TypeError'
-            || firstError?.code === 'NETWORK_ERROR'
-            || /failed to fetch|networkerror|load failed/i.test(firstError?.message || '');
-          if (!transportFailure) throw firstError;
-          // A browser CORS/preflight or transport failure rejects before a response
-          // exists. The endpoint is retry-safe: the profile write is an upsert,
-          // reviewer requests use stable idempotency keys, and projection intent is
-          // versioned. Retry the same payload once, but never retry an HTTP response.
+          if (!isTransportFailure(firstError)) throw firstError;
+          // The profile write is an upsert and its projection intent is versioned, so
+          // replaying the identical payload once is safe. Wait briefly first so the
+          // second attempt does not land inside the same transient condition. Retry
+          // the payload once, and never retry an HTTP response.
+          await new Promise((resolve) => { setTimeout(resolve, TRANSPORT_RETRY_DELAY_MS); });
           try {
             return await request();
           } catch (retryError) {
-            throw Object.assign(retryError || firstError || new Error('Profile save could not be confirmed.'), {
+            if (!isTransportFailure(retryError)) throw retryError;
+            throw Object.assign(retryError, {
               code: 'PROFILE_SAVE_NETWORK_ERROR',
               panelMessage: 'We could not confirm your profile was saved. Please wait a moment, then submit again.',
             });

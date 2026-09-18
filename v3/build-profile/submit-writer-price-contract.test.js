@@ -117,6 +117,7 @@ function load(overrides = {}, pathname = '/build-profile/full', { respond = null
     qs,
     FormData,
     setLoader(state, wrapper) { loaderStates.push({ state, wrapper }) },
+    setTimeout,
     xanoAuthFetch: async (url, init) => {
       requests.push({ url, body: JSON.parse(init.body) })
       if (respond) return respond(url, init)
@@ -478,19 +479,20 @@ test('a later non-price failure restores the authored error copy', async () => {
   const result = load(
     { service: JSON.stringify({ name: 'Audit', price: '500.50' }) },
     '/build-profile/full',
-    { respond: () => { throw new TypeError('Failed to fetch') } },
+    {
+      respond: () => {
+        throw Object.assign(new Error('Member session changed during request'), { code: 'MEMBER_SCOPE_CHANGED' })
+      },
+    },
   )
   await result.submit.click()
   assert.match(result.errorMessage.textContent, /whole-dollar service price/)
 
   result.form.values.service = JSON.stringify({ name: 'Audit', price: '500' })
   await result.submit.click()
-  assert.equal(result.requests.length, 2)
+  assert.equal(result.requests.length, 1)
   assert.equal(result.error.style.display, 'block')
-  assert.equal(
-    result.errorMessage.textContent,
-    'We could not confirm your profile was saved. Please wait a moment, then submit again.',
-  )
+  assert.equal(result.errorMessage.textContent, 'Something went wrong. Please try again.')
 })
 
 // Clearing a custom-service price is the only remove gesture these forms author.
@@ -635,6 +637,41 @@ test('does not retry a non-transport client error', async () => {
 
   assert.equal(result.requests.length, 1)
   assert.equal(result.error.style.display, 'block')
+  assert.equal(result.errorMessage.textContent, 'Something went wrong. Please try again.')
+})
+
+// A TypeError thrown before the request reaches the network - a replaced
+// xanoAuthFetch bridge - is deterministic: issuing it twice and reporting it as an
+// unconfirmed save would tell the member to resubmit a save that never happened.
+test('does not retry a TypeError raised before the request reaches the network', async () => {
+  const result = load({}, '/build-profile/full', {
+    respond: () => { throw new TypeError('xanoAuthFetch is not a function') },
+  })
+
+  await result.submit.click()
+
+  assert.equal(result.requests.length, 1)
+  assert.equal(result.error.style.display, 'block')
+  assert.equal(result.errorMessage.textContent, 'Something went wrong. Please try again.')
+})
+
+// The second attempt has its own cause. Relabelling it as an unconfirmed save
+// would erase a live auth failure and send the member back into a doomed retry.
+test('a non-transport failure during the retry keeps its own cause', async () => {
+  let attempt = 0
+  const result = load({}, '/build-profile/full', {
+    respond: () => {
+      attempt += 1
+      if (attempt === 1) throw new TypeError('Failed to fetch')
+      throw Object.assign(new Error('Member session changed during request'), { code: 'MEMBER_SCOPE_CHANGED' })
+    },
+  })
+
+  await result.submit.click()
+
+  assert.equal(result.requests.length, 2)
+  assert.equal(result.error.style.display, 'block')
+  assert.equal(result.errorMessage.textContent, 'Something went wrong. Please try again.')
 })
 
 test('a malformed success body clears the loader behind the authored error state', async () => {
