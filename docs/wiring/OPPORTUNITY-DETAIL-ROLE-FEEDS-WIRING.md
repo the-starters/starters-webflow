@@ -6,11 +6,15 @@ Memberstack hides the other role's section. A Brand viewer therefore calls
 Keep both renderers. Use the library's existing `wf-xano-defer` contract and the
 page controller's existing plan/ownership checks to start only the correct feed.
 
-The controller selects the exact canonical `wf-xano-source` attribute. It does
-not require new role containers or alter Memberstack gating. Starter activation
-follows the plan gate; Brand activation additionally follows the successful
-owner-scoped probe. The existing library queue supports either script load order.
-Already initialized roots remain idempotent under `WfXano.init(root)`.
+The controller ([`../../opportunities-3.0.js`](../../opportunities-3.0.js))
+selects the exact canonical `wf-xano-source` attribute, falling back to the same
+substring rule its render-ownership guard uses, and only ever matches a root that
+carries `wf-xano-defer="true"`. It does not require new role containers or alter
+Memberstack gating. Starter activation follows the plan gate; Brand activation
+additionally follows the successful owner-scoped probe. The existing library
+queue supports either script load order. A root that has not opted out of
+automatic boot is never re-initialized, so the released controller is inert on
+the page until step 3 below adds the attribute.
 
 ## Ordered release
 

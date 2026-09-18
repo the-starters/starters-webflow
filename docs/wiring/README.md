@@ -64,6 +64,7 @@ below is explicitly superseded and retained as history.
 
 - [AI Recruiter](AI-RECRUITER-WIRING.md) — native search UI, authenticated boundary, and operations.
 - [Algolia environment](ALGOLIA-ENVIRONMENT-WIRING.md) — host-selected search configuration.
+- [Opportunity detail role feeds](OPPORTUNITY-DETAIL-ROLE-FEEDS-WIRING.md) — role-scoped wf-xano activation on the shared detail page.
 - [Replica list](REPLICA-LIST-WIRING.md) — curated static lists and their relayout companion.
 - [Xano grabber](XANO-GRABBER-WIRING.md) — mirroring values already rendered in the DOM.
 

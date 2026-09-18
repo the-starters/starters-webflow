@@ -7212,20 +7212,42 @@ function mergedFeedDom(roots) {
 }
 
 // Match the actual CMS template: Memberstack containers, no data-opp-role.
+// The roots carry attributes and the stub resolves real attribute selectors, so
+// exact, substring and wf-xano-defer clauses each decide a match on their own.
+function detailRoot(source, { defer = true } = {}) {
+  return { attributes: { 'wf-xano-element': 'wrapper', 'wf-xano-source': source, ...(defer ? { 'wf-xano-defer': 'true' } : {}) } }
+}
+
+function detailRoots({ talentSource = 'opp30:starter/applications/mine', brandSource = 'opp30:brand/applications/list', defer = true } = {}) {
+  return { talent: detailRoot(talentSource, { defer }), brand: detailRoot(brandSource, { defer }) }
+}
+
+function matchesAttributeSelector(root, selector) {
+  // The stub DOM is flat: a descendant selector can never match one root.
+  if (/\]\s+\S/.test(selector)) return false
+  const clauses = selector.match(/\[[^\]]+\]/g)
+  if (!clauses) return false
+  return clauses.every((clause) => {
+    const exact = /^\[([\w-]+)="([^"]*)"\]$/.exec(clause)
+    if (exact) return root.attributes[exact[1]] === exact[2]
+    const contains = /^\[([\w-]+)\*="([^"]*)"\]$/.exec(clause)
+    if (contains) return String(root.attributes[contains[1]] ?? '').includes(contains[2])
+    const present = /^\[([\w-]+)\]$/.exec(clause)
+    if (present) return root.attributes[present[1]] != null
+    throw new Error(`Unsupported selector clause: ${clause}`)
+  })
+}
+
 function detailFeedDom(roots) {
+  const all = Object.values(roots).filter(Boolean)
   return {
-    querySelector(selector) {
-      if (selector === '[wf-xano-element="wrapper"][wf-xano-source="opp30:starter/applications/mine"]') return roots.talent
-      if (selector === '[wf-xano-element="wrapper"][wf-xano-source="opp30:brand/applications/list"]') return roots.brand
-      if (selector === '[wf-xano-element="wrapper"][wf-xano-source*="brand/applications/list"]') return roots.brand
-      return null
-    },
-    querySelectorAll: () => [],
+    querySelector: (selector) => all.find((root) => matchesAttributeSelector(root, selector)) || null,
+    querySelectorAll: (selector) => all.filter((root) => matchesAttributeSelector(root, selector)),
   }
 }
 
 test('detail deferred feeds activate only the resolved Starter feed', async () => {
-  const roots = { talent: deferredRoot('talent'), brand: deferredRoot('brand') }
+  const roots = detailRoots()
   const dom = detailFeedDom(roots)
   const inits = []
   const requests = []
@@ -7246,7 +7268,7 @@ test('detail deferred feeds activate only the resolved Starter feed', async () =
 })
 
 test('detail deferred Brand feed waits for ownership and supports a late library', async () => {
-  const roots = { talent: deferredRoot('talent'), brand: deferredRoot('brand') }
+  const roots = detailRoots()
   const dom = detailFeedDom(roots)
   const owner = deferred()
   let probed = false
@@ -7258,8 +7280,7 @@ test('detail deferred Brand feed waits for ownership and supports a late library
     throw new Error(`Unexpected request: ${url}`)
   }, {
     member: paidBrandMember, pathname: '/opportunities/710', routeGuard: true,
-    querySelector: (selector) => selector === '[wf-xano-element="wrapper"][wf-xano-source*="brand/applications/list"]' ? roots.brand : dom.querySelector(selector),
-    querySelectorAll: dom.querySelectorAll,
+    querySelector: dom.querySelector, querySelectorAll: dom.querySelectorAll,
   })
   assert.ok(await waitFor(() => probed))
   assert.equal(bridge.window.WfXano, undefined)
@@ -7272,7 +7293,7 @@ test('detail deferred Brand feed waits for ownership and supports a late library
 
 test('detail deferred feeds stay inactive on foreign ownership or failed ownership checks', async () => {
   for (const status of [404, 503]) {
-    const roots = { talent: deferredRoot('talent'), brand: deferredRoot('brand') }
+    const roots = detailRoots()
     const dom = detailFeedDom(roots)
     const inits = []
     const bridge = await loadBridge(async (input) => {
@@ -7290,7 +7311,7 @@ test('detail deferred feeds stay inactive on foreign ownership or failed ownersh
 
 test('detail deferred feeds stay inactive for logged-out and free Brand viewers', async () => {
   for (const member of [null, freeBrandMember]) {
-    const dom = detailFeedDom({ talent: deferredRoot('talent'), brand: deferredRoot('brand') })
+    const dom = detailFeedDom(detailRoots())
     const inits = []
     const requests = []
     const bridge = await loadBridge(async (input) => {
@@ -7305,6 +7326,47 @@ test('detail deferred feeds stay inactive for logged-out and free Brand viewers'
     assert.deepEqual(inits, [])
     assert.deepEqual(requests, [])
   }
+})
+
+test('detail feeds stay untouched until the authored roots opt out of auto-boot', async () => {
+  const roots = detailRoots({ defer: false })
+  const dom = detailFeedDom(roots)
+  const inits = []
+  const listCalls = []
+  const bridge = await loadBridge(async (input) => {
+    const url = String(input)
+    if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+    if (url.includes('/brand/applications/list')) { listCalls.push(url); return response({ items: [] }) }
+    if (url.includes('/brand/opportunities/')) return response({ status: 'Open' })
+    throw new Error(`Unexpected request: ${url}`)
+  }, {
+    member: paidBrandMember, pathname: '/opportunities/710', routeGuard: true,
+    querySelector: dom.querySelector, querySelectorAll: dom.querySelectorAll,
+    wfXano: { init: (root) => inits.push(root) },
+  })
+  assert.ok(await waitFor(() => bridge.documentElement.getAttribute('data-opp-brand-owner') === 'true'))
+  assert.deepEqual(inits, [])
+  // The auto-booting root still owns rendering, so no legacy applicants fetch.
+  assert.equal(listCalls.length, 1)
+})
+
+test('detail deferred Brand feed activates when the canonical source carries CMS parameters', async () => {
+  const roots = detailRoots({ brandSource: 'opp30:brand/applications/list?opportunity_id=710' })
+  const dom = detailFeedDom(roots)
+  const inits = []
+  await loadBridge(async (input) => {
+    const url = String(input)
+    if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+    if (url.includes('/brand/applications/list')) return response({ items: [] })
+    if (url.includes('/brand/opportunities/')) return response({ status: 'Open' })
+    throw new Error(`Unexpected request: ${url}`)
+  }, {
+    member: paidBrandMember, pathname: '/opportunities/710', routeGuard: true,
+    querySelector: dom.querySelector, querySelectorAll: dom.querySelectorAll,
+    wfXano: { init: (root) => inits.push(root) },
+  })
+  assert.ok(await waitFor(() => inits.length === 1))
+  assert.deepEqual(inits, [roots.brand])
 })
 
 test('boot routes bare /opportunities to the merged feed: talent wrapper + only the talent feed activates', async () => {
