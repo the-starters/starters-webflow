@@ -145,7 +145,7 @@
     }).then(function (member) {
       if (!isPremiumBrand(member)) return
       hydrate(controls)
-    })
+    }).catch(function () {})
   }
 
   try {

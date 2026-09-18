@@ -456,6 +456,26 @@ test('all-starters-favorites on a hire page without the list marker does not set
   assert.ok(queried.includes(CONTROL))
 })
 
+test('a rejecting window.memberReady never escapes as an unhandled rejection', async () => {
+  const unhandled = []
+  const capture = (reason) => unhandled.push(reason)
+  process.on('unhandledRejection', capture)
+  try {
+    const wfXano = fakeWfXano()
+    const mod = loadModule({
+      controls: [profileFavoriteControl()],
+      wfXano,
+      memberReady: Promise.reject(new Error('memberstack down')),
+    })
+    mod.boot()
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    assert.deepEqual(unhandled, [])
+    assert.equal(wfXano.calls.init, 0)
+  } finally {
+    process.off('unhandledRejection', capture)
+  }
+})
+
 test('executable code never keys off a list marker or injects library scripts', () => {
   const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
   assert.doesNotMatch(code, /createElement\('script'\)/)
