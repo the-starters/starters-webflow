@@ -140,7 +140,7 @@
       }
       for (const kind of ['images', 'videos']) {
         const mediaKey = kind === 'images' ? 'image' : 'video'
-        record[kind] = (value[kind] || []).map(item => ({ key: ++nextId, id: item.id, stored: item,
+        record[kind] = (value[kind] || []).map(item => ({ key: ++nextId, id: item.id,
           url: item[mediaKey + '_url'], size: item[mediaKey]?.size, removed: false,
           cover: kind === 'images' && (Number(value.cover_image_id) === Number(item.id) || !!item.is_cover) }))
         field(record, kind)?.addEventListener('change', () => {
@@ -401,7 +401,6 @@
                 if (resolution.media) {
                   item.ref.id = resolution.media.id
                   item.ref.url = resolution.media[payloadKey + '_url']
-                  item.ref.stored = resolution.media
                   item.ref.uploaded = resolution.media[payloadKey]
                 }
                 advance(record, resolution.current)
@@ -428,7 +427,7 @@
             const matches = current?.[kind].filter(media => media[payloadKey + '_url'] === url) || []
             return matches.length === 1 ? { current, media: matches[0] } : null
           }, ({ current, media }) => {
-            item.ref.id = media.id; item.ref.url = url; item.ref.stored = media
+            item.ref.id = media.id; item.ref.url = url
             // The stored file is now the entry's source, so the local one is released and
             // the list re-rendered off it rather than off a revoked object URL.
             releaseMedia(item.ref); renderMedia(record, kind)
@@ -469,7 +468,11 @@
       answer => {
         const row = window.StarterProfileValidation.answeredRow(answer,
           { ...value, cover_image_id: coverId, thumbnail_url: thumbnail })
-        return row && { images: known?.images || [], videos: known?.videos || [], ...row }
+        // The media list is carried over from the baseline, but the cover flag on each image is
+        // recomputed from the cover this save sent: a stale `is_cover` on a former cover would
+        // otherwise outrank the new one when the list is next normalized.
+        return row && { images: (known?.images || []).map(image => ({ ...image, is_cover: Number(image.id) === Number(coverId) })),
+          videos: known?.videos || [], ...row }
       })
     }
     save?.addEventListener('click', async event => {
