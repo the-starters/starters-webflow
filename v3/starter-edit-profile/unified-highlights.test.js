@@ -68,8 +68,13 @@ async function mount({ portfolios = [], fail = null, required = false, hold = nu
       else if (endpoint.startsWith('upload-')) value = { path: '/uploads/' + nextAsset++, size: (body.image || body.video).size }
       else if (endpoint === 'Create_portfolio') { value = { ...body, id: nextId++, images: [], videos: [] }; stored.push(value) }
       else if (endpoint === 'Update_portfolio') {
-        value = stored.find(row => row.id === Number(body.id)); Object.assign(value, body)
-        value.images.forEach(image => { image.is_cover = image.id === body.cover_image_id })
+        const record = stored.find(row => row.id === Number(body.id)); Object.assign(record, body)
+        record.images.forEach(image => { image.is_cover = image.id === body.cover_image_id })
+        // `Update_portfolio` writes the portfolio's own columns, and the row it answers with
+        // carries no media: the media lists only exist behind Get_portfolio_images and
+        // Get_portfolio_videos, which is why the canonical read has to fetch them separately.
+        const { images, videos, ...row } = record
+        value = row
       } else if (endpoint === 'Delete_portfolio') { stored = stored.filter(row => row.id !== Number(body.id)); value = { success: true } }
       else if (endpoint.startsWith('Add_portfolio_')) {
         const kind = endpoint.endsWith('image') ? 'images' : 'videos'
@@ -179,6 +184,22 @@ test('Highlight media counts and cover changes include retained photos and selec
   const update = page.mutations().find(request => request.endpoint === 'Update_portfolio')
   assert.equal(update.body.cover_image_id, 3)
   assert.equal(page.mutations().filter(request => request.endpoint === 'upload-image').length, 3)
+})
+
+test('switching the cover between two saved photos keeps the new cover on the confirmed baseline', async () => {
+  const page = await mount({ portfolios: [{ id: 1, title: 'Saved', description: '', cover_image_id: 2, thumbnail_url: 'https://example.test/a.png',
+    images: [{ id: 2, image_url: 'https://example.test/a.png', is_cover: true }, { id: 3, image_url: 'https://example.test/b.png', is_cover: false }], videos: [] }] })
+  page.click(page.media('images')[1].querySelector('[profile-media-cover]'))
+  await page.submit()
+  assert.equal(page.status(), 'Changes saved.')
+  assert.equal(page.mutations().find(request => request.endpoint === 'Update_portfolio').body.cover_image_id, 3)
+  // The rows are rebuilt from the confirmed baseline, and the update's own answer carries no
+  // media, so a stale `is_cover` on the former cover must not outrank the confirmed one.
+  assert.equal(page.media('images')[0].querySelector('[profile-media-cover]').getAttribute('aria-pressed'), 'false')
+  assert.equal(page.media('images')[1].querySelector('[profile-media-cover]').getAttribute('aria-pressed'), 'true')
+  await page.submit()
+  assert.equal(page.mutations().filter(request => request.endpoint === 'Update_portfolio').length, 1,
+    'the confirmed cover is never re-sent, so the old cover is never restored')
 })
 
 test('a delayed media attachment can be checked, then the remaining save avoids repeating confirmed work', async () => {
