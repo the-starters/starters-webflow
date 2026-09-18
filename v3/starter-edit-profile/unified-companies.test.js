@@ -13,16 +13,20 @@ const EDITED_ASSOCIATIONS = '{"client-1":{"name":"Acme","domain":"acme.example",
 async function mount({ companies = [], fail = null, minimum = true, withRow = true, withSave = true,
   required = ['company_name', 'job_title'], xanoRequired = [], hydrate = true, initialOther = '{}',
   liveAssociationReader = false, associationReadStatus = 200, claim = true, normalize = null,
-  answer = null, picker = true, stale = null, strayXanoRequired = false, authored = false } = {}) {
+  answer = null, picker = true, stale = null, strayXanoRequired = false, authored = false,
+  authoredInRow = false } = {}) {
   const fields = ['company_name', 'job_title', 'start_date', 'end_date', 'current_work'].map(key => h('input', {
     'profile-company-field': key, name: key, id: key,
     ...(key === 'current_work' ? { type: 'checkbox' } : {}),
     ...(required.includes(key) ? { required: '' } : {}),
     ...(xanoRequired.includes(key) ? { 'form-xano-required': '' } : {}),
   }))
+  // A status marker misplaced inside the row, which the section clones and rebuilds.
+  const rowStatus = h('div', { 'profile-items-status': '', class: 'form_status' })
   const row = h('div', { 'profile-item-row': '' }, [
     h('button', { 'profile-item-toggle': '', type: 'button' }, [h('span', { 'profile-items-summary': '' })]),
     h('div', { 'profile-item-content': '' }, fields), h('button', { 'profile-item-remove': '', type: 'button' }),
+    ...(authoredInRow ? [rowStatus] : []),
   ])
   const save = h('button', { 'data-edit-submit': 'companies' })
   const add = h('button', { 'profile-items-add': '' })
@@ -173,7 +177,7 @@ async function mount({ companies = [], fail = null, minimum = true, withRow = tr
     other.dispatchEvent(makeEvent('change', other, { bubbles: true }))
   }
   return { section, save, add, discard, click, field, type, company, requests, context, warnings,
-    other, hydrateOther, failOther, editOther, pickerCalls, stray, authoredStatus, authoredCheck,
+    other, hydrateOther, failOther, editOther, pickerCalls, stray, authoredStatus, authoredCheck, rowStatus,
     otherRequests: () => requests.filter(item => String(item.url).includes('set_also_worked_with')),
     errors: () => section.querySelectorAll('[profile-validation-error]').map(node => node.textContent),
     checkSave: () => section.querySelector('[profile-items-check-save]'),
@@ -928,4 +932,15 @@ test('Work Experience reveals the authored check element when a save cannot be c
   await tick()
   assert.equal(page.status(), 'The save is still unconfirmed. Your draft is kept; Save remains paused.')
   assert.equal(page.authoredCheck.hidden, false)
+})
+
+test('a status element authored inside the repeating row is ignored so the section keeps a live one', async () => {
+  const page = await mount({ authoredInRow: true })
+  const live = page.section.querySelectorAll('[profile-items-status]').filter(node => !node.closest('[profile-item-row]'))
+  assert.equal(live.length, 1)
+  assert.notEqual(live[0], page.rowStatus)
+  // The row rebuild detaches the misplaced node, which is why it must never be adopted.
+  assert.equal(page.section.contains(page.rowStatus), false)
+  page.company('Acme'); page.type('job_title', 'Designer')
+  assert.equal(live[0].textContent, 'Unsaved changes.')
 })

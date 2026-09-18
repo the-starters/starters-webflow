@@ -341,7 +341,9 @@ The scripts create `profile-items-undo`, `profile-items-removed`, and
 `profile-items-dirty`.
 
 `profile-items-status` and `profile-items-check-save` may be authored in Webflow
-anywhere inside the section, so Designer owns their styling. Each section adopts
+inside the section but outside the repeating row, so Designer owns their styling.
+An element authored inside a row is ignored and the script creates its own,
+because each section clones and rebuilds its rows. Each section adopts
 the authored element when it finds one: it sets `role="status"` on the status
 element, and it hides the check element on bind, keeping the label the author
 wrote. The check element may be a plain Link or Button element carrying

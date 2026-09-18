@@ -13,9 +13,11 @@
     bound.add(section)
     const ROW = '[profile-item-row]'
     const save = section.querySelector('[data-edit-submit="portfolio"]')
+    // A row is cloned and rebuilt, so a marker authored inside one would be detached.
+    const authored = selector => Array.from(section.querySelectorAll(selector)).find(node => !node.closest(ROW))
     // Webflow may author the status element so Designer owns its look; create one only when
     // it did not, and never a second.
-    let status = section.querySelector('[profile-items-status]')
+    let status = authored('[profile-items-status]')
     if (!status) {
       status = document.createElement('div')
       status.setAttribute('profile-items-status', ''); section.appendChild(status)
@@ -23,7 +25,7 @@
     status.setAttribute('role', 'status')
     // Same for the check control: adopt the authored one, keeping the label its author wrote.
     // Adopted before any early return so a halted section never leaves a live check control.
-    let check = section.querySelector('[profile-items-check-save]')
+    let check = authored('[profile-items-check-save]')
     if (!check) {
       check = document.createElement('button')
       check.setAttribute('profile-items-check-save', ''); section.appendChild(check)

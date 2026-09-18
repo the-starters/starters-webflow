@@ -17,9 +17,11 @@
   function bindServices(section) {
     if (sections.has(section)) return sections.get(section)
     const rows = () => Array.from(section.querySelectorAll(ROW))
+    // A row is cloned and rebuilt, so a marker authored inside one would be detached.
+    const authored = selector => Array.from(section.querySelectorAll(selector)).find(node => !node.closest(ROW))
     // Webflow may author the status element so Designer owns its look; create one only when
     // it did not, and never a second.
-    let status = section.querySelector('[profile-items-status]')
+    let status = authored('[profile-items-status]')
     if (!status) {
       status = document.createElement('div')
       status.setAttribute('profile-items-status', '')
@@ -30,7 +32,7 @@
     status.textContent = ''
     // Same for the check control: adopt the authored one, keeping the label its author wrote.
     // Adopted before any early return so a halted section never leaves a live check control.
-    let checkSave = section.querySelector('[profile-items-check-save]')
+    let checkSave = authored('[profile-items-check-save]')
     if (!checkSave) {
       checkSave = document.createElement('button')
       checkSave.setAttribute('profile-items-check-save', '')
