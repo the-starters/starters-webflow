@@ -306,9 +306,13 @@ function bodyReachesAuthoritativeEndpoint(body, html, endpointNames, depth, visi
     const parameterEnd = declaration.index + declaration[0].length - 1
     const parameters = splitTopLevel(parenthesizedList(html, parameterEnd))
     const args = splitTopLevel(parenthesizedList(body, helperCall.index + helperCall[0].length - 1))
+    // A parameter shadows the caller's binding of the same name, so what the callee
+    // holds is decided by the argument alone: bound when it resolves to the
+    // endpoint, unbound otherwise, never inherited from an outer constant.
     const calleeNames = new Set(endpointNames)
     parameters.forEach((parameter, position) => {
       if (resolvesToEndpoint(args[position], endpointNames)) calleeNames.add(parameter)
+      else calleeNames.delete(parameter)
     })
 
     const key = `${helperName}|${[...calleeNames].sort().join(',')}`

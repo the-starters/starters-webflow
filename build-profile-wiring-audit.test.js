@@ -519,6 +519,33 @@ test('a CDN writer that lost the endpoint or the click owner still fails', () =>
   assert.ok(nativeOnly.findings.some((f) => f.startsWith('authoritative Xano submit must be owned by the [form-submit] click path')))
 })
 
+// A helper parameter shadows a module constant of the same name, so the endpoint it
+// holds is whatever the call site passed. Inheriting the outer binding would pass a
+// click path that writes to a different endpoint entirely.
+test('a helper parameter shadowing the endpoint constant is judged by its argument', () => {
+  const writer = (argument) => `
+  const form = document.querySelector('[build-profile-form]')
+  const formSubmit = form ? qs('[form-submit]', form) : null
+  const ENDPOINT_URL = "https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/build_profile/starter/update"
+  const DRAFT_URL = "https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/build_profile/draft"
+
+  function saveIt(ENDPOINT_URL) { return xanoAuthFetch(ENDPOINT_URL, { method: 'POST' }) }
+
+  formSubmit.addEventListener('click', async function (e) {
+    await saveIt(${argument})
+  })
+`
+  const misrouted = auditBuildProfileHtml('/build-profile/consult', pageHtml({ submitOwner: 'cdn' }), {
+    submitWriterSource: writer('DRAFT_URL'),
+  })
+  assert.ok(misrouted.findings.some((f) => f.startsWith('authoritative Xano submit must be owned by the [form-submit] click path')))
+
+  const routed = auditBuildProfileHtml('/build-profile/consult', pageHtml({ submitOwner: 'cdn' }), {
+    submitWriterSource: writer('ENDPOINT_URL'),
+  })
+  assert.deepEqual(routed.findings, [])
+})
+
 // The writer's click handler does not call the endpoint itself: it calls the submit
 // builder, which hands the endpoint to the canonical-save helper. The click-owner
 // check has to follow that whole chain, or it fails a page whose owner is intact.
