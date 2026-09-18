@@ -415,7 +415,10 @@ the row it wrote — a Work Experience create or update, a Highlight create, upd
 attachment — that answer confirms the save on the spot, and no canonical read can contradict
 it. A removal is confirmed by any answer at all, since a 2xx delete is its own proof. The
 canonical read is the fallback: for a lost response, and for a write whose answer carries no
-row.
+row. A Highlight update answers with the record's own columns and no media — the media lists
+live behind their own endpoints — so the confirmed record keeps the media this save already
+confirmed, and each image's cover flag is taken from the `cover_image_id` the update just
+confirmed rather than from the flag the old cover still carried.
 
 A 2xx the section could not parse is still an answer it received: the write landed, so the
 outcome is unknown at worst — Save pauses and "Check saved state" settles it — and never
@@ -467,6 +470,12 @@ carries `current_work` or the `'Present'` end-date sentinel. `start_date` and `e
 compared by month rather than by text, because a row sends the `YYYY-MM` its month input holds
 while Xano stores a full date: the same month written two ways is the same month, and a lost
 write that landed is confirmed by it instead of locking the section on Save.
+
+Deciding what to *resend* is strict in both directions — clearing a saved company's entity id
+or domain is a real change — with two exceptions: the current-role pair, which is one state
+written two ways, and the months, which use that same month equivalence. Once a confirmed row
+reaches the baseline as the full date Xano stored, the draft's `YYYY-MM` is not a change the
+Starter made, so the next Save sends nothing for it rather than re-sending the row forever.
 
 The "Also worked with" reader answers with the saved set or with nothing at all;
 a failed request never reads as "this member has none". So a failed canonical read
