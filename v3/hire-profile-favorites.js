@@ -1,6 +1,8 @@
 /**
  * V3 /hire/<slug> paid-Brand favorites hydration.
  *
+ * @release v1.59.581
+ *
  * Page glue for Designer-authored profile hearts
  * (`[wf-xano-element="favorite"]`). wf-xano owns toggle/paint; Xano api:opp30
  * brand/favorites/* owns the data. This module only:

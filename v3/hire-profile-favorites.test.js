@@ -463,3 +463,7 @@ test('executable code never keys off a list marker or injects library scripts', 
   assert.doesNotMatch(code, /data-starters-list/)
   assert.doesNotMatch(code, /cdn\.jsdelivr\.net\/gh\/the-starters\/(wf-xano|wf-algolia)/)
 })
+
+test('the file declares the release it ships in', () => {
+  assert.match(source, /@release v\d+\.\d+\.\d+/)
+})
