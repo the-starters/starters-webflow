@@ -383,8 +383,9 @@ wrote. The check element may be a plain Link or Button element carrying
 `profile-items-check-save`; leave it visible in Designer, because the script hides
 and shows it with an inline `display` style that beats the Webflow class rule.
 A class rule that hides the control is handled too: on reveal the script checks
-whether the browser still reports `display: none` and forces an inline display,
-so the control shows either way. Never use an instance of the site's Button
+whether the browser still reports `display: none` and, if it does, sets
+`display: revert`, so the control shows either way — at the cost of the
+`display` value that class was contributing. Never use an instance of the site's Button
 component: its native `.clickable_btn`
 is an empty overlay whose label lives outside it, so marking the overlay would
 hide the clickable node while the caption kept rendering. A Link or Button

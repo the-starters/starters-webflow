@@ -8,16 +8,37 @@
   if (window.StarterProfileHighlights) return
   const bound = new WeakSet()
   let nextId = 0
+  // The repo README's shared staging gate: authoring diagnostics stay off in production.
+  const STAGING_HOSTS = ['localhost', '127.0.0.1']
+  const STAGING_SUFFIXES = ['webflow.io', 'trycloudflare.com']
+  function diagnosticsEnabled() {
+    if (window.STARTERS_DEBUG === true) return true
+    const hostname = (window.location && window.location.hostname) || ''
+    return STAGING_HOSTS.includes(hostname)
+      || STAGING_SUFFIXES.some(suffix => hostname === suffix || hostname.endsWith('.' + suffix))
+  }
   async function bind(section, writer) {
     if (bound.has(section)) return
     bound.add(section)
     const ROW = '[profile-item-row]'
     const save = section.querySelector('[data-edit-submit="portfolio"]')
-    // A row is cloned and rebuilt, so a marker authored inside one would be detached.
-    const authored = selector => Array.from(section.querySelectorAll(selector)).find(node => !node.closest(ROW))
+    // A row is cloned and rebuilt, so a marker authored inside one is stripped here - before the
+    // template clone - rather than adopted, and every cloned row stays free of it.
+    const authored = attribute => {
+      const selector = '[' + attribute + ']'
+      const outside = []
+      for (const node of section.querySelectorAll(selector)) {
+        if (node.closest(ROW)) node.removeAttribute(attribute)
+        else outside.push(node)
+      }
+      if (outside.length > 1 && diagnosticsEnabled()) {
+        console.warn('Edit Profile: more than one ' + selector + ' authored in this section; using the first.')
+      }
+      return outside[0]
+    }
     // Webflow may author the status element so Designer owns its look; create one only when
     // it did not, and never a second.
-    let status = authored('[profile-items-status]')
+    let status = authored('profile-items-status')
     if (!status) {
       status = document.createElement('div')
       status.setAttribute('profile-items-status', ''); section.appendChild(status)
@@ -25,7 +46,7 @@
     status.setAttribute('role', 'status')
     // Same for the check control: adopt the authored one, keeping the label its author wrote.
     // Adopted before any early return so a halted section never leaves a live check control.
-    let check = authored('[profile-items-check-save]')
+    let check = authored('profile-items-check-save')
     if (!check) {
       check = document.createElement('button')
       check.setAttribute('profile-items-check-save', ''); section.appendChild(check)
@@ -33,23 +54,24 @@
     if (check.tagName === 'BUTTON') check.setAttribute('type', 'button')
     // Authored children are the label, so only a wholly empty control gets the default copy.
     if (!check.children.length && !check.textContent.trim()) check.textContent = 'Check saved state'
-    // A div has no native activation, so give it the role and keys a button already has.
-    if (check.tagName !== 'BUTTON' && check.tagName !== 'A') {
-      if (!check.hasAttribute('role')) check.setAttribute('role', 'button')
-      if (!check.hasAttribute('tabindex')) check.setAttribute('tabindex', '0')
+    // A div has no native activation; an anchor activates on Enter but never on Space.
+    if (check.tagName !== 'BUTTON') {
+      if (check.tagName !== 'A') {
+        if (!check.hasAttribute('role')) check.setAttribute('role', 'button')
+        if (!check.hasAttribute('tabindex')) check.setAttribute('tabindex', '0')
+      }
+      const keys = check.tagName === 'A' ? [' '] : ['Enter', ' ']
       check.addEventListener('keydown', event => {
-        if (event.target !== check || (event.key !== 'Enter' && event.key !== ' ')) return
+        if (event.target !== check || !keys.includes(event.key)) return
         event.preventDefault()
         check.dispatchEvent(new Event('click'))
       })
     }
-    // A Webflow class can set `display`, which beats the [hidden] rule, so write both.
-    // Clearing the inline style only uncovers the class rule, so a class that sets
-    // `display: none` needs an inline display of its own to be beaten.
+    // Class rules beat [hidden]; write display too, and revert it if a class still hides the control.
     const showCheck = visible => {
       check.hidden = !visible
       check.style.display = visible ? '' : 'none'
-      if (visible && window.getComputedStyle?.(check)?.display === 'none') check.style.display = 'inline-block'
+      if (visible && window.getComputedStyle?.(check)?.display === 'none') check.style.display = 'revert'
     }
     showCheck(false)
     const original = section.querySelector(ROW)
@@ -370,7 +392,7 @@
       // An authored control may be an anchor or a submit button, so never let its default run.
       event.preventDefault()
       if (!unknown?.reconcile || saving || check.disabled) return
-      check.disabled = true
+      check.disabled = true; check.setAttribute('aria-disabled', 'true')
       try {
         const result = await unknown.reconcile()
         if (result === NOT_LANDED) {
@@ -384,7 +406,7 @@
         unknown.confirm(result); unknown = null; showCheck(false)
         status.textContent = 'That change is confirmed. Save the section to finish the remaining draft changes.'
       } catch (_) { status.textContent = 'The save is still unconfirmed. Your draft is kept; Save remains paused.' }
-      finally { check.disabled = false }
+      finally { check.disabled = false; check.removeAttribute('aria-disabled') }
     })
     async function persistRecord(submitted) {
       const { record, value, images, videos } = submitted

@@ -800,8 +800,8 @@ test('Highlights writes its status into the authored element instead of adding a
 })
 
 test('Highlights reveals the authored check element when a save cannot be confirmed', async () => {
-  let lose = true, storedRows
-  const page = await mount({ authored: true, fail: (request, stored) => {
+  let lose = true, storedRows, held = null
+  const page = await mount({ authored: true, hold: request => held?.(request), fail: (request, stored) => {
     storedRows = stored
     if (request.endpoint === 'upload-image' && lose) { lose = false; return 'lose' }
   } })
@@ -820,9 +820,16 @@ test('Highlights reveals the authored check element when a save cannot be confir
   assert.equal(page.section.querySelectorAll('[profile-items-check-save]').length, 1)
   // Clicking the authored control runs the same canonical check the created one runs.
   storedRows[0].images.push({ id: 200, image: { name: 'photo.png', size: 1000 }, image_url: 'https://example.test/photo.png', is_cover: false })
+  // Hold the canonical read so the in-flight state of the control is observable.
+  const gate = deferred()
+  held = () => gate.promise
   const clicked = makeEvent('click', page.authoredCheck, { bubbles: true })
   page.authoredCheck.dispatchEvent(clicked)
   assert.equal(clicked.defaultPrevented, true, 'an authored anchor never follows its href')
   await tick()
+  assert.equal(page.authoredCheck.getAttribute('aria-disabled'), 'true', 'the control reports itself busy while checking')
+  held = null; gate.resolve()
+  await tick(); await tick(); await tick()
+  assert.equal(page.authoredCheck.getAttribute('aria-disabled'), null, 'the busy state clears once the check settles')
   assert.match(page.status(), /That change is confirmed/)
 })

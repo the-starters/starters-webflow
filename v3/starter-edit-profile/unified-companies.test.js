@@ -14,7 +14,7 @@ async function mount({ companies = [], fail = null, minimum = true, withRow = tr
   required = ['company_name', 'job_title'], xanoRequired = [], hydrate = true, initialOther = '{}',
   liveAssociationReader = false, associationReadStatus = 200, claim = true, normalize = null,
   answer = null, picker = true, stale = null, strayXanoRequired = false, authored = false,
-  authoredInRow = false, authoredCheckDiv = false } = {}) {
+  authoredInRow = false, authoredCheckDiv = false, authoredDuplicate = false } = {}) {
   const fields = ['company_name', 'job_title', 'start_date', 'end_date', 'current_work'].map(key => h('input', {
     'profile-company-field': key, name: key, id: key,
     ...(key === 'current_work' ? { type: 'checkbox' } : {}),
@@ -47,8 +47,10 @@ async function mount({ companies = [], fail = null, minimum = true, withRow = tr
   const authoredCheck = authoredCheckDiv
     ? h('div', { 'profile-items-check-save': '', class: 'button' })
     : h('a', { 'profile-items-check-save': '', href: '#', class: 'button w-button' })
+  // A second status marker outside the rows: an authoring slip the section must not act on twice.
+  const duplicateStatus = h('div', { 'profile-items-status': '', class: 'form_status' })
   const section = h('section', { 'profile-unified-items': 'companies' },
-    [...(authored ? [authoredStatus, authoredCheck] : []),
+    [...(authored ? [authoredStatus, ...(authoredDuplicate ? [duplicateStatus] : []), authoredCheck] : []),
       h('div', {}, withRow ? [row] : []), ...(withSave ? [save] : []), add, discard, presence, other,
       ...(strayXanoRequired ? [stray] : [])])
   const requests = []
@@ -181,6 +183,7 @@ async function mount({ companies = [], fail = null, minimum = true, withRow = tr
   }
   return { section, save, add, discard, click, field, type, company, requests, context, warnings,
     other, hydrateOther, failOther, editOther, pickerCalls, stray, authoredStatus, authoredCheck, rowStatus,
+    duplicateStatus,
     otherRequests: () => requests.filter(item => String(item.url).includes('set_also_worked_with')),
     errors: () => section.querySelectorAll('[profile-validation-error]').map(node => node.textContent),
     checkSave: () => section.querySelector('[profile-items-check-save]'),
@@ -937,15 +940,31 @@ test('Work Experience reveals the authored check element when a save cannot be c
   assert.equal(page.authoredCheck.hidden, false)
 })
 
-test('a status element authored inside the repeating row is ignored so the section keeps a live one', async () => {
+test('a status marker authored inside the repeating row is stripped so only one is ever live', async () => {
   const page = await mount({ authoredInRow: true })
-  const live = page.section.querySelectorAll('[profile-items-status]').filter(node => !node.closest('[profile-item-row]'))
+  const live = page.section.querySelectorAll('[profile-items-status]')
   assert.equal(live.length, 1)
   assert.notEqual(live[0], page.rowStatus)
-  // The row rebuild detaches the misplaced node, which is why it must never be adopted.
-  assert.equal(page.section.contains(page.rowStatus), false)
+  // Stripped at bind, so neither the original row nor the template it is cloned from carries it.
+  assert.equal(page.rowStatus.hasAttribute('profile-items-status'), false)
   page.company('Acme'); page.type('job_title', 'Designer')
   assert.equal(live[0].textContent, 'Unsaved changes.')
+  page.click(page.add)
+  assert.equal(page.section.querySelectorAll('[profile-items-status]').length, 1, 'a cloned row carries no marker')
+  await page.submit()
+  assert.equal(page.status(), 'Changes saved.')
+  const after = page.section.querySelectorAll('[profile-items-status]')
+  assert.equal(after.length, 1, 'the restore after a save rebuilds rows without a second marker')
+  assert.equal(after[0], live[0])
+})
+
+test('a second authored status element outside the rows is ignored and the first is used', async () => {
+  const page = await mount({ authored: true, authoredDuplicate: true })
+  assert.equal(page.section.querySelectorAll('[profile-items-status]').length, 2, 'both authored nodes are left in place')
+  page.company('Acme'); page.type('job_title', 'Designer')
+  assert.equal(page.authoredStatus.textContent, 'Unsaved changes.')
+  assert.equal(page.duplicateStatus.textContent, '', 'only the first authored element is written to')
+  assert.deepEqual(page.warnings, [], 'the duplicate is reported on staging only')
 })
 
 test('an authored check element that is a div is given a button role and Enter activation', async () => {
@@ -975,6 +994,29 @@ test('an authored check element that is a div is given a button role and Enter a
   assert.equal(page.status(), 'The save is still unconfirmed. Your draft is kept; Save remains paused.')
 })
 
+test('an authored anchor check element activates on Space, which anchors never do natively', async () => {
+  const page = await mount({
+    authored: true,
+    companies: [{ id: 1, company_name: 'Acme', job_title: 'Designer', company_source: 'custom' }],
+    fail: (request, { stored, setStored }) => {
+      if (request.method !== 'PATCH') return null
+      setStored(stored.map(item => Number(item.id) === 1 ? { ...item, job_title: 'Engineer (in review)' } : item))
+      return 'lose'
+    },
+  })
+  assert.equal(page.authoredCheck.tagName, 'A')
+  assert.equal(page.authoredCheck.getAttribute('role'), null, 'an anchor keeps its native role')
+  assert.equal(page.authoredCheck.getAttribute('tabindex'), null, 'an anchor is already focusable')
+  page.type('job_title', 'Engineer')
+  await page.submit()
+  assert.equal(page.authoredCheck.hidden, false)
+  const pressed = makeEvent('keydown', page.authoredCheck, { key: ' ' })
+  page.authoredCheck.dispatchEvent(pressed)
+  assert.equal(pressed.defaultPrevented, true, 'Space never scrolls the page instead')
+  await tick()
+  assert.equal(page.status(), 'The save is still unconfirmed. Your draft is kept; Save remains paused.')
+})
+
 test('a class rule that hides the authored check element is beaten by an inline display', async () => {
   const page = await mount({
     authored: true,
@@ -993,7 +1035,7 @@ test('a class rule that hides the authored check element is beaten by an inline 
     await page.submit()
     assert.match(page.status(), /could not be confirmed/)
     assert.equal(page.authoredCheck.hidden, false)
-    assert.equal(page.authoredCheck.style.display, 'inline-block')
+    assert.equal(page.authoredCheck.style.display, 'revert')
   } finally {
     if (original) page.context.window.getComputedStyle = original
     else delete page.context.window.getComputedStyle
