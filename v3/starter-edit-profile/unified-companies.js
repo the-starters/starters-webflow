@@ -1,4 +1,8 @@
-/* Opt-in Work Experience rows. Persistence stays in company-experience-crud.js. */
+/*
+ * Opt-in Work Experience rows. Persistence stays in company-experience-crud.js.
+ *
+ * @release v1.59.581
+ */
 ;(function () {
   'use strict'
   if (window.StarterProfileCompanies) return
@@ -11,10 +15,15 @@
     if (bound.has(section)) return
     bound.add(section)
     const save = section.querySelector('[data-edit-submit="companies"]')
-    const status = document.createElement('div')
+    // Webflow may author the status element so Designer owns its look; create one only when
+    // it did not, and never a second.
+    let status = section.querySelector('[profile-items-status]')
+    if (!status) {
+      status = document.createElement('div')
+      status.setAttribute('profile-items-status', '')
+      section.appendChild(status)
+    }
     status.setAttribute('role', 'status')
-    status.setAttribute('profile-items-status', '')
-    section.appendChild(status)
     const original = section.querySelector(ROW)
     const template = original?.cloneNode(true)
     const parent = original?.parentElement
@@ -47,12 +56,16 @@
     let warned = false
     const add = section.querySelector('[profile-items-add]')
     const discard = section.querySelector('[profile-items-discard]')
-    const check = document.createElement('button')
-    check.setAttribute('type', 'button')
-    check.setAttribute('profile-items-check-save', '')
-    check.textContent = 'Check saved state'
+    // Same for the check control: adopt the authored one, keeping the label its author wrote.
+    let check = section.querySelector('[profile-items-check-save]')
+    if (!check) {
+      check = document.createElement('button')
+      check.setAttribute('profile-items-check-save', '')
+      section.appendChild(check)
+    }
+    if (check.tagName === 'BUTTON') check.setAttribute('type', 'button')
+    if (!String(check.textContent || '').trim()) check.textContent = 'Check saved state'
     check.hidden = true
-    section.appendChild(check)
     // A field authored `form-xano-required` without the Webflow Required checkbox would let a
     // Starter submit a blank value the Xano writer refuses. Requiredness still comes only from
     // Required; this pauses Save on the mismatch instead of inventing a JavaScript requirement.

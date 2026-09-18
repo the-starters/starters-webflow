@@ -1,4 +1,8 @@
-/* Opt-in Highlight drafts, coordinated around the existing portfolio/media writers. */
+/*
+ * Opt-in Highlight drafts, coordinated around the existing portfolio/media writers.
+ *
+ * @release v1.59.581
+ */
 ;(function () {
   'use strict'
   if (window.StarterProfileHighlights) return
@@ -9,9 +13,14 @@
     bound.add(section)
     const ROW = '[profile-item-row]'
     const save = section.querySelector('[data-edit-submit="portfolio"]')
-    const status = document.createElement('div')
-    status.setAttribute('role', 'status'); status.setAttribute('profile-items-status', '')
-    section.appendChild(status)
+    // Webflow may author the status element so Designer owns its look; create one only when
+    // it did not, and never a second.
+    let status = section.querySelector('[profile-items-status]')
+    if (!status) {
+      status = document.createElement('div')
+      status.setAttribute('profile-items-status', ''); section.appendChild(status)
+    }
+    status.setAttribute('role', 'status')
     const original = section.querySelector(ROW)
     const template = original?.cloneNode(true), parent = original?.parentElement
     if (!template || !parent || !save) {
@@ -24,10 +33,15 @@
       return
     }
     const field = (record, key) => record.row.querySelector('[profile-highlight-field="' + key + '"]')
-    const check = document.createElement('button')
-    check.setAttribute('type', 'button'); check.setAttribute('profile-items-check-save', '')
-    check.textContent = 'Check saved state'; check.hidden = true
-    section.appendChild(check)
+    // Same for the check control: adopt the authored one, keeping the label its author wrote.
+    let check = section.querySelector('[profile-items-check-save]')
+    if (!check) {
+      check = document.createElement('button')
+      check.setAttribute('profile-items-check-save', ''); section.appendChild(check)
+    }
+    if (check.tagName === 'BUTTON') check.setAttribute('type', 'button')
+    if (!String(check.textContent || '').trim()) check.textContent = 'Check saved state'
+    check.hidden = true
     let records = [], baseline = [], active = null, loading = true, saving = false, unknown = null
     let misconfigured = false, warned = false
     const clone = value => JSON.parse(JSON.stringify(value))

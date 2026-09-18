@@ -1,4 +1,8 @@
-/* Opt-in Services & Rates coordinator. The main profile controller remains the writer. */
+/*
+ * Opt-in Services & Rates coordinator. The main profile controller remains the writer.
+ *
+ * @release v1.59.581
+ */
 ;(function () {
   'use strict'
   if (window.StarterProfileSections) return
@@ -13,10 +17,15 @@
   function bindServices(section) {
     if (sections.has(section)) return sections.get(section)
     const rows = () => Array.from(section.querySelectorAll(ROW))
-    const status = document.createElement('div')
+    // Webflow may author the status element so Designer owns its look; create one only when
+    // it did not, and never a second.
+    let status = section.querySelector('[profile-items-status]')
+    if (!status) {
+      status = document.createElement('div')
+      status.setAttribute('profile-items-status', '')
+      section.appendChild(status)
+    }
     status.setAttribute('role', 'status')
-    status.setAttribute('profile-items-status', '')
-    section.appendChild(status)
     const save = section.querySelector('[data-edit-submit]')
     if (!rows().length || !save) {
       // The row is also the template for every added row, and Save is the only route to the
@@ -67,12 +76,16 @@
     const rowSnapshot = () => remaining().filter(row => retained.has(row) || meaningful(row))
       .map(row => ({ values: valuesFor(row), retained: true }))
     const scalarValues = records => records.map(({ value, checked }) => [value, checked])
-    const checkSave = document.createElement('button')
-    checkSave.setAttribute('type', 'button')
-    checkSave.setAttribute('profile-items-check-save', '')
-    checkSave.textContent = 'Check saved state'
+    // Same for the check control: adopt the authored one, keeping the label its author wrote.
+    let checkSave = section.querySelector('[profile-items-check-save]')
+    if (!checkSave) {
+      checkSave = document.createElement('button')
+      checkSave.setAttribute('profile-items-check-save', '')
+      section.appendChild(checkSave)
+    }
+    if (checkSave.tagName === 'BUTTON') checkSave.setAttribute('type', 'button')
+    if (!String(checkSave.textContent || '').trim()) checkSave.textContent = 'Check saved state'
     checkSave.hidden = true
-    section.appendChild(checkSave)
     checkSave.addEventListener('click', async () => {
       if (!uncertain || saving || checkSave.disabled || !readbackCheck) return
       checkSave.disabled = true

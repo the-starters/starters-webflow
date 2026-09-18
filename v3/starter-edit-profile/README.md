@@ -337,8 +337,17 @@ These must exist in Webflow:
 | `profile-items-media="images\|videos"` | Row | Highlights only |
 | `profile-items-summary` | Row | Authored for companies and highlights; created by the script for services |
 
-The scripts create `profile-items-status`, `profile-items-check-save`,
-`profile-items-undo`, `profile-items-removed`, and `profile-items-dirty`.
+The scripts create `profile-items-undo`, `profile-items-removed`, and
+`profile-items-dirty`.
+
+`profile-items-status` and `profile-items-check-save` may be authored in Webflow
+anywhere inside the section, so Designer owns their styling. Each section adopts
+the authored element when it finds one: it sets `role="status"` on the status
+element, and it sets `type="button"` and hides the check element on bind, keeping
+the label the author wrote. Author the check element as a native Button: the
+script sets `type="button"` only on a button, and it disables the control while a
+check runs, which a div or link ignores. When neither is authored the script
+creates them as before. It never creates a second one.
 
 Row grammars differ by section. Services reuses the existing
 `[increment-dropdown]` row with `[increment-dropdown-toggle]`,
@@ -559,9 +568,9 @@ node --test v3/starter-edit-profile/profile-section-validation.test.js \
 
 ### Open items
 
-- The status node and the "Check saved state" button are created by the scripts
-  with no class hooks, so both are unstyled until they are authored or classed in
-  Webflow.
+- The status node and the "Check saved state" button are unstyled when the
+  scripts fall back to creating them. Author them in Webflow with
+  `profile-items-status` and `profile-items-check-save` to give them a class.
 - `v3/build-profile/portfolio-crud.js` still states a 50 MB video limit. That is a
   separate page and was not changed here.
 - `renderMedia` in `unified-highlights.js` has no fallback for a stored media row
