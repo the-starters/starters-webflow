@@ -171,6 +171,7 @@ function load({
   pageActions = false,
   prepare = null,
   profileDirtyState = false,
+  schedulingAuthDelayed = false,
 } = {}) {
   const dom = buildStepSix()
   if (pageActions) {
@@ -214,6 +215,11 @@ function load({
     throw new Error('unrouted request ' + path)
   }
 
+  const installSchedulingAuth = () => {
+    window.__tsSchedulingAuthFetch = authFetch
+    window.__tsSchedulingAuthGetScope = async () => authScope
+  }
+
   const window = {
     location: { hostname: 'thestarters.com', pathname: '/starter-edit-profile' },
     crypto: { randomUUID: () => 'uuid-fixed' },
@@ -229,9 +235,8 @@ function load({
       getCurrentMember: async () => ({ data: { id: 'member-a' } }),
       onAuthChange() {},
     },
-    __tsSchedulingAuthFetch: authFetch,
-    __tsSchedulingAuthGetScope: async () => authScope,
   }
+  if (!schedulingAuthDelayed) installSchedulingAuth()
 
   class CustomEvent {
     constructor(type, init) {
@@ -264,7 +269,18 @@ function load({
     vm.runInContext(name === 'free' ? FREE_SOURCE : PAID_SOURCE, context)
   })
 
-  return { dom, calls, window, warnings, html }
+  return {
+    dom,
+    calls,
+    window,
+    warnings,
+    html,
+    installSchedulingAuth,
+    flushTimers() {
+      const pending = timers.splice(0)
+      pending.forEach((timer) => { if (!timer.cancelled) timer.callback() })
+    },
+  }
 }
 
 async function settle(iterations = 30) {
@@ -293,6 +309,38 @@ for (const order of [['paid', 'free'], ['free', 'paid']]) {
 
     assert.equal(result.window.StarterFreeCallSettings.hasChanges(), false)
     assert.equal(result.window.StarterPaidCallSettings.hasChanges(), false)
+  })
+
+  test(`both call controllers wait for a late scheduling auth bridge (${order.join(' then ')})`, async () => {
+    const result = load({
+      order,
+      schedulingAuthDelayed: true,
+      free: freeCanonical({
+        public_description: 'Free growth review',
+        services: [freeService()],
+        readiness: { free_call_enabled: true, bookable: true },
+      }),
+      paid: paidCanonical(),
+    })
+    await settle()
+
+    assert.equal(result.calls.length, 0)
+    assert.equal(result.warnings.length, 0)
+
+    result.installSchedulingAuth()
+    result.flushTimers()
+    await settle()
+
+    assert.deepEqual(result.calls.map(({ path, method }) => ({ path, method })).sort((a, b) =>
+      a.path.localeCompare(b.path)), [
+      { path: '/starter/paid-call-settings/get/v3', method: 'GET' },
+      { path: '/starter/free-call-settings/get/v3', method: 'GET' },
+    ].sort((a, b) => a.path.localeCompare(b.path)))
+    assert.equal(result.html.getAttribute('data-free-call-settings'), 'ready')
+    assert.equal(result.html.getAttribute('data-paid-call-settings'), 'ready')
+    assert.equal(result.dom.freeYes.checked, true)
+    assert.equal(result.dom.paidNo.checked, true)
+    assert.equal(result.warnings.length, 0)
   })
 
   test(`a Paid radio click never marks the Free controller dirty (${order.join(' then ')})`, async () => {

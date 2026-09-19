@@ -24,6 +24,8 @@
   const FIXED_DURATION_MINUTES = 60
   const VALIDATED_FIELD_NAMES = ['title', 'price']
   const ROOT_WAIT_TIMEOUT_MS = 10000
+  const AUTH_BRIDGE_WAIT_INTERVAL_MS = 100
+  const AUTH_BRIDGE_WAIT_ATTEMPTS = 100
   const BUSY_STYLE_ID = 'ts-call-settings-busy-style'
   const PAID_RADIO_GROUP_NAMES = [
     'consulting-calls-paid',
@@ -1424,6 +1426,33 @@
     })
   }
 
+  function schedulingAuthReady() {
+    return (
+      typeof window.__tsSchedulingAuthGetScope === 'function' &&
+      typeof window.__tsSchedulingAuthFetch === 'function'
+    )
+  }
+
+  function waitForSchedulingAuth() {
+    if (schedulingAuthReady()) return Promise.resolve()
+    return new Promise(function (resolve) {
+      let attempts = 0
+      function check() {
+        if (schedulingAuthReady()) {
+          resolve()
+          return
+        }
+        attempts += 1
+        if (attempts >= AUTH_BRIDGE_WAIT_ATTEMPTS) {
+          resolve()
+          return
+        }
+        window.setTimeout(check, AUTH_BRIDGE_WAIT_INTERVAL_MS)
+      }
+      check()
+    })
+  }
+
   function bind() {
     if (bound) return
     bound = true
@@ -1527,6 +1556,7 @@
       if (cardMode && !editProfileMode) setCardEditorOpen(false)
       bind()
       await waitForMemberstack()
+      await waitForSchedulingAuth()
       return loadSession(undefined, false)
     })()
     try {
