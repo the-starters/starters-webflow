@@ -59,9 +59,11 @@ in [README.md](README.md) and in the root
 
 ## 🧪 Automated evidence
 
-- [x] Legacy Free and Paid Call controls are disabled, un-required, and hidden. One
-      accessible replacement action occupies their first position, links to Call
-      Settings, and the legacy fields never contribute to the step 6 payload.
+- [x] Legacy Free and Paid Call controls are disabled, un-required, and hidden, except
+      where a wrapper also holds a Retainer control, which stays visible with its call
+      control only disabled. One accessible replacement action occupies their first
+      position, links to Call Settings, and the legacy fields never contribute to the
+      step 6 payload.
 - [x] Disabled Retainer rates submit `0`, and configured Retainer rates on the same
       step submit unchanged.
 - [x] A blank Retainer rate whose toggle is still on submits its authored blank value
@@ -111,10 +113,12 @@ node --test v3/starter-edit-profile/portfolio-modal-state.test.js
 - [ ] No-mistakes review, tests, documentation, lint, PR, and CI pass with no findings.
 - [ ] Release the asset through the [release verification](README.md#release-verification)
       sequence, including the tag, jsDelivr purge, and served-byte comparison.
-- [ ] Confirm on the published page that legacy Free and Paid Call controls are hidden,
-      the replacement action routes to `/starter-dashboard#calendar`, no Free or
-      Paid Call profile fields are sent, and turning retainers off saves canonical `0`
-      without changing stored Call Settings.
+- [ ] Confirm on the published page that legacy Free and Paid Call controls are hidden —
+      or, where their wrapper also holds a Retainer control, visible but disabled and
+      still disabled after toggling Retainers — that the replacement action routes to
+      `/starter-dashboard#calendar`, that no Free or Paid Call profile fields are sent,
+      and that turning retainers off saves canonical `0` without changing stored Call
+      Settings.
 - [ ] Confirm endpoint #1499 returns `saved: true` with a Boolean
       `projection_pending`; verify pending and complete projection states show profile
       success, including the documented canonical-save response with non-2xx status,

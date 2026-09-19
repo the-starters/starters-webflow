@@ -8,7 +8,44 @@ const vm = require('node:vm')
 const SOURCE = require.resolve('./starter-edit-profile.js')
 
 function control(value = '') {
-  return { value, required: false, tagName: 'INPUT', setAttribute() {} }
+  const attributes = new Map()
+  return {
+    value,
+    required: false,
+    tagName: 'INPUT',
+    setAttribute(name, attributeValue) { attributes.set(name, String(attributeValue)) },
+    getAttribute(name) { return attributes.has(name) ? attributes.get(name) : null },
+  }
+}
+
+// `<head>` is where the controller really installs its hiding rule, so the harness has to
+// own one for the dedupe guard to be exercised at all.
+function documentHead() {
+  const children = []
+  return {
+    children,
+    appendChild(node) { children.push(node); return node },
+    querySelector(selector) {
+      const attribute = /^\[([^\]]+)\]$/.exec(selector)?.[1]
+      if (!attribute) return null
+      return children.find((node) => node.getAttribute?.(attribute) !== null) || null
+    },
+  }
+}
+
+function createdElement(tagName) {
+  const attributes = new Map()
+  return {
+    tagName,
+    className: '',
+    href: '',
+    textContent: '',
+    style: {},
+    setAttribute(name, value) { attributes.set(name, String(value)) },
+    getAttribute(name) { return attributes.has(name) ? attributes.get(name) : null },
+    appendChild(node) { return node },
+    addEventListener() {},
+  }
 }
 
 function group({ required = false, fields = [] } = {}) {
@@ -49,14 +86,22 @@ function boot({
   unifiedServices = false,
   retainerRequired = false,
   callSettingsStep = false,
+  legacyCallControls = true,
+  shareRetainerRateWrapper = false,
 } = {}) {
   const retainerDescriptionField = control(retainerDescription)
   const retainerRateField = control('2500')
+  const paidCallRateField = control('400')
   const paidCallDescriptionField = control(paidCallDescription)
   const freeCallDescriptionField = control(freeCallDescription)
 
   const retainerDesc = group({ required: true, fields: [retainerDescriptionField] })
-  const retainerRate = group({ required: true, fields: [retainerRateField] })
+  // The accepted contract leaves a wrapper shared with a Retainer control visible, so the
+  // Paid Call rate sits inside the Retainer rate wrapper the Retainer toggle operates on.
+  const retainerRate = group({
+    required: true,
+    fields: shareRetainerRateWrapper ? [retainerRateField, paidCallRateField] : [retainerRateField],
+  })
   retainerRateField.required = retainerRequired
   if (unifiedServices) {
     for (const wrapper of [retainerDesc, retainerRate]) wrapper.closest = selector => selector === '[profile-unified-items="services"]' ? {} : null
@@ -83,13 +128,11 @@ function boot({
   }
 
   // The dashboard owns Free and Paid Call settings; step 6 only carries the locked controls.
-  const canonicalCallControls = [paidCallDescriptionField, freeCallDescriptionField]
+  const canonicalCallControls = legacyCallControls ? [paidCallDescriptionField, freeCallDescriptionField] : []
+  if (legacyCallControls && shareRetainerRateWrapper) canonicalCallControls.push(paidCallRateField)
   const stepSix = {
     querySelector(selector) {
-      return selector === '[data-call-settings-profile-notice]'
-        || selector === '[data-call-settings-profile-style]'
-        ? {}
-        : null
+      return selector === '[data-call-settings-profile-notice]' ? {} : null
     },
     querySelectorAll() { return canonicalCallControls },
     appendChild() {},
@@ -107,6 +150,7 @@ function boot({
     '[free-call-group]': [freeCallGroup],
   }
 
+  const head = documentHead()
   const domReady = []
   const profileDataCallbacks = []
   let hydrationCallbackRuns = 0
@@ -127,6 +171,8 @@ function boot({
     document: {
       readyState: 'loading',
       currentScript: null,
+      head,
+      createElement(tag) { return createdElement(tag) },
       addEventListener(type, listener) {
         if (type === 'DOMContentLoaded') domReady.push(listener)
       },
@@ -166,9 +212,11 @@ function boot({
     fields: {
       retainerDescription: retainerDescriptionField,
       retainerRate: retainerRateField,
+      paidCallRate: paidCallRateField,
       paidCallDescription: paidCallDescriptionField,
       freeCallDescription: freeCallDescriptionField,
     },
+    ownershipStyles: () => head.children.filter((node) => node.tagName === 'style'),
     groups: { retainerDesc, retainerRate, paidCallGroup, freeCallGroup },
     // The controller defers its first toggle pass until canonical profile data lands.
     // Callbacks are replayed, not drained, so a second call really is a second pass.
@@ -293,4 +341,45 @@ test('a unified services section never hands Free or Paid Call settings back to 
   assert.equal(harness.fields.freeCallDescription.disabled, true)
   assert.equal(harness.fields.paidCallDescription.required, false)
   assert.equal(harness.fields.freeCallDescription.required, false)
+})
+
+test('a wrapper shared with a Retainer control never hands its call field back on a Retainer toggle', () => {
+  const harness = boot({
+    unifiedServices: true,
+    callSettingsStep: true,
+    shareRetainerRateWrapper: true,
+    retainers: 'no',
+  })
+  harness.hydrate()
+  assert.equal(harness.fields.paidCallRate.disabled, true)
+
+  // Showing the Retainer rate enables every control in its wrapper, including the Paid Call
+  // rate the dashboard owns. The member must never get an editable copy of it here.
+  harness.chooseRetainers('yes')
+  assert.equal(harness.fields.paidCallRate.disabled, true)
+  assert.equal(harness.fields.paidCallRate.required, false)
+  assert.equal(harness.fields.retainerRate.disabled, false)
+
+  harness.chooseRetainers('no')
+  assert.equal(harness.fields.paidCallRate.disabled, true)
+})
+
+test('re-applying dashboard ownership installs the hiding rule exactly once', () => {
+  const harness = boot({ unifiedServices: true, callSettingsStep: true })
+  harness.hydrate()
+  harness.choosePaidCalls('yes')
+  harness.chooseFreeCalls('yes')
+  harness.chooseRetainers('no')
+
+  const styles = harness.ownershipStyles()
+  assert.equal(styles.length, 1)
+  assert.equal(styles[0].getAttribute('data-call-settings-profile-style'), '')
+  assert.equal(styles[0].textContent, '[data-call-settings-owned]{display:none!important}')
+})
+
+test('a step that no longer carries the legacy call controls installs no hiding rule', () => {
+  const harness = boot({ unifiedServices: true, callSettingsStep: true, legacyCallControls: false })
+  harness.hydrate()
+
+  assert.deepEqual(harness.ownershipStyles(), [])
 })

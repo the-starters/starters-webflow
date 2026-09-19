@@ -282,6 +282,10 @@ function callSettingsFieldGroup(control, step, ownedControls) {
 function configureCanonicalCallSettings() {
 	const step = qs('[data-form="step"][data-index="6"]');
 	if (!step) return;
+
+	const controls = qsa(CALL_SETTINGS_CONTROL_SELECTOR, step);
+	if (!controls.length) return;
+
 	const styleRoot = document.head || step;
 	if (typeof document.createElement === 'function' && !qs('[data-call-settings-profile-style]', styleRoot)) {
 		const style = document.createElement('style');
@@ -289,9 +293,6 @@ function configureCanonicalCallSettings() {
 		style.textContent = '[data-call-settings-owned]{display:none!important}';
 		styleRoot.appendChild(style);
 	}
-
-	const controls = qsa(CALL_SETTINGS_CONTROL_SELECTOR, step);
-	if (!controls.length) return;
 
 	const groups = [];
 	controls.forEach((control) => {
@@ -2117,6 +2118,9 @@ onDomReady(() => {
 			retainerRate.style.display = isMonthlyYes ? '' : 'none';
 			toggleInputs(retainerDesc, isMonthlyYes, clearDisabledValues);
 			toggleInputs(retainerRate, isMonthlyYes, clearDisabledValues);
+			// A wrapper shared with a call control stays visible, so `toggleInputs` can hand a
+			// Free or Paid Call field back to this form here too. The dashboard owns them.
+			configureCanonicalCallSettings();
 		};
 
 		function paidCallToggle(clearDisabledValues = false) {
