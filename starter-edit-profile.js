@@ -257,7 +257,10 @@ function wrapsOnlyCallSettings(node, ownedControls) {
 	const ownedIds = ownedControls.map((control) => control.id).filter(Boolean);
 	return !qsa('label', node).some((label) => {
 		const target = label.getAttribute?.('for') || '';
-		return target !== '' && !ownedIds.includes(target);
+		if (target === '' || ownedIds.includes(target)) return false;
+		const labelledControl = label.control
+			|| (typeof document.getElementById === 'function' ? document.getElementById(target) : null);
+		return Boolean(labelledControl && !ownedControls.includes(labelledControl));
 	});
 }
 

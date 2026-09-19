@@ -217,6 +217,9 @@ function createEnvironment(fetchImpl, {
     const containerLabels = []
     const wireGroup = (group, members) => {
       const label = new Target()
+      // Published Webflow radio captions can retain an authored `for` value that does
+      // not equal the nested input id. It is not evidence that the wrapper is shared.
+      label.setAttribute('for', `webflow-call-setting-${containerLabels.length + 1}`)
       group.classNames.add('app-form_input_group')
       group.appendChild(label)
       members.forEach((member) => group.appendChild(member))
