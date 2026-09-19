@@ -525,6 +525,13 @@ snapshot with no plan connections; a complete unmapped snapshot does not.
 After the guard allows the route, an unresolved role bails without revealing or
 initializing either role's UI.
 
+`quiz-results.js` is a second production consumer of `roleBounceTargetFor`: it
+repeats the guard's own `/quiz-results` decision before capturing the
+`quiz_results_viewed` funnel event, so a member already bouncing elsewhere never
+lands in analytics. That export is therefore a shipped contract, not only a
+console aid; the event's own rules live in the `quiz-results.js` entry of the
+root [README script inventory](../../README.md#current-scripts).
+
 ## Release markers
 
 Standing convention (Jerico, 2026-08-03), applied to every browser-facing script
