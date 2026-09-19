@@ -1,6 +1,6 @@
 # 🧭 Starter Profile Reliability Progress Checklist
 
-Last updated: 2026-09-04
+Last updated: 2026-09-19
 
 This checklist tracks release-safe implementation evidence for the
 `/starter-edit-profile` reliability workflow. The workspace operator checklist
@@ -21,7 +21,8 @@ in [README.md](README.md) and in the root
       request. Contract:
       [Whole-dollar price contract](../profile-form/README.md#whole-dollar-price-contract).
 - [x] Keep the authored Services and Rates markup intact while the controller disables
-      the legacy Free and Paid Call controls and adds a link to Call Settings.
+      and hides the legacy Free and Paid Call groups, then replaces their first position
+      with one accessible `Manage Call Settings` action.
 - [x] Omit the legacy Free Call toggle and description plus the Paid Call toggle,
       description, and rate from every step 6 profile payload.
 - [x] Require `saved: true` and a Boolean `projection_pending`, show success after the
@@ -58,8 +59,9 @@ in [README.md](README.md) and in the root
 
 ## 🧪 Automated evidence
 
-- [x] Legacy Free and Paid Call controls are disabled and un-required, link to Call
-      Settings, and never contribute fields to the step 6 payload.
+- [x] Legacy Free and Paid Call controls are disabled, un-required, and hidden. One
+      accessible replacement action occupies their first position, links to Call
+      Settings, and the legacy fields never contribute to the step 6 payload.
 - [x] Disabled Retainer rates submit `0`, and configured Retainer rates on the same
       step submit unchanged.
 - [x] A blank Retainer rate whose toggle is still on submits its authored blank value
@@ -109,8 +111,8 @@ node --test v3/starter-edit-profile/portfolio-modal-state.test.js
 - [ ] No-mistakes review, tests, documentation, lint, PR, and CI pass with no findings.
 - [ ] Release the asset through the [release verification](README.md#release-verification)
       sequence, including the tag, jsDelivr purge, and served-byte comparison.
-- [ ] Confirm on the published page that legacy Free and Paid Call controls are
-      disabled, the settings link routes to `/starter-dashboard#calendar`, no Free or
+- [ ] Confirm on the published page that legacy Free and Paid Call controls are hidden,
+      the replacement action routes to `/starter-dashboard#calendar`, no Free or
       Paid Call profile fields are sent, and turning retainers off saves canonical `0`
       without changing stored Call Settings.
 - [ ] Confirm endpoint #1499 returns `saved: true` with a Boolean

@@ -5,7 +5,7 @@
  * GitHub and jsDelivr are the source and delivery path for this browser code.
  * Each section must initialize whether this script runs before or after DOMContentLoaded.
  *
- * @release v1.59.579
+ * @release v1.59.586
  */
 
 (() => {
@@ -240,9 +240,30 @@ function setProfileFeedbackMessage(modalName, message) {
 	messageElement.textContent = message || authoredProfileFeedbackCopy.get(modalName);
 }
 
+function callSettingsFieldGroup(control, step) {
+	const authoredField = control.closest?.('.app-form_input_group');
+	if (authoredField) return authoredField;
+
+	const semanticGroup = control.closest?.('[free-call-group], [paid-call-group]');
+	if (semanticGroup) return semanticGroup;
+
+	let current = control.parentElement;
+	while (current && current !== step) {
+		if (qs(':scope > label', current)) return current;
+		current = current.parentElement;
+	}
+	return null;
+}
+
 function configureCanonicalCallSettings() {
 	const step = qs('[data-form="step"][data-index="6"]');
 	if (!step) return;
+	if (!qs('[data-call-settings-profile-style]', step) && typeof document.createElement === 'function') {
+		const style = document.createElement('style');
+		style.setAttribute('data-call-settings-profile-style', '');
+		style.textContent = '[data-call-settings-owned]{display:none!important}';
+		(document.head || step).appendChild(style);
+	}
 
 	const controls = qsa([
 		'[name="free-consulting-calls"]',
@@ -253,22 +274,48 @@ function configureCanonicalCallSettings() {
 	].join(','), step);
 	if (!controls.length) return;
 
+	const groups = [];
 	controls.forEach((control) => {
 		control.disabled = true;
 		control.required = false;
 		control.setAttribute('aria-disabled', 'true');
+
+		const group = callSettingsFieldGroup(control, step);
+		if (group && !groups.includes(group)) groups.push(group);
 	});
 
-	if (qs('[data-paid-call-profile-notice]', step) || typeof document.createElement !== 'function') return;
-	const notice = document.createElement('p');
-	notice.setAttribute('data-paid-call-profile-notice', '');
-	notice.textContent = 'Free and Paid Call settings are managed in ';
+	groups.forEach((group) => {
+		group.setAttribute('data-call-settings-owned', '');
+		group.hidden = true;
+		group.style.display = 'none';
+		group.setAttribute('aria-hidden', 'true');
+	});
+
+	if (qs('[data-call-settings-profile-notice]', step) || typeof document.createElement !== 'function') return;
+	const notice = document.createElement('section');
+	notice.setAttribute('data-call-settings-profile-notice', '');
+	notice.setAttribute('role', 'region');
+	notice.setAttribute('aria-label', 'Free and Paid Call settings');
+	notice.className = 'app-form_input_group';
+
+	const heading = document.createElement('strong');
+	heading.textContent = 'Free and Paid Calls';
+	const copy = document.createElement('p');
+	copy.textContent = 'Manage these services from Call Settings on your Starter Dashboard.';
 	const link = document.createElement('a');
 	link.href = PAID_CALL_SETTINGS_URL;
-	link.textContent = 'Call Settings';
+	link.textContent = 'Manage Call Settings';
+	link.className = 'button w-button';
+	notice.appendChild(heading);
+	notice.appendChild(copy);
 	notice.appendChild(link);
-	notice.appendChild(document.createTextNode('.'));
-	step.appendChild(notice);
+
+	const firstGroup = groups[0];
+	if (firstGroup?.parentElement?.insertBefore) {
+		firstGroup.parentElement.insertBefore(notice, firstGroup);
+	} else {
+		step.appendChild(notice);
+	}
 }
 
 function openProfileFeedback(modalName, trigger, message) {

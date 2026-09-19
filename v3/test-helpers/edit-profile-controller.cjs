@@ -54,6 +54,13 @@ class Target {
   reportValidity() { this.reportValidityCount += 1; return this.checkValidity?.() ?? true }
   setCustomValidity(message) { this.validationMessage = String(message || '') }
   appendChild(child) { this.children.push(child); child.parentElement = this; return child }
+  insertBefore(child, reference) {
+    const index = this.children.indexOf(reference)
+    if (index < 0) return this.appendChild(child)
+    this.children.splice(index, 0, child)
+    child.parentElement = this
+    return child
+  }
 }
 
 function createEnvironment(fetchImpl, {
@@ -196,6 +203,33 @@ function createEnvironment(fetchImpl, {
   const buttonText = { textContent: 'Submit' }
   const button = new Target()
   const step = Object.assign(new Target(), { dataset: { index: String(stepIndex) } })
+  const legacyCallContainer = new Target()
+  const legacyCallGroups = []
+  if (stepIndex === 6) {
+    [
+      '[name="free-consulting-calls"]',
+      '[name="free-call-description"]',
+      '[name="paid-consulting-calls"]',
+      '[name="paid-call-description"]',
+      '[name="paid-call-rate"]',
+    ].forEach((selector) => {
+      const group = new Target()
+      const directLabel = new Target()
+      group.querySelector = (query) => query === ':scope > label' ? directLabel : null
+      legacyCallContainer.appendChild(group)
+      stepFields[selector].parentElement = group
+      stepFields[selector].closest = (query) => (
+        query === '.app-form_input_group'
+          ? group
+          : query === '[free-call-group], [paid-call-group]'
+            && ['[name="free-call-description"]', '[name="paid-call-description"]'].includes(selector)
+              ? group
+              : null
+      )
+      legacyCallGroups.push(group)
+    })
+    step.appendChild(legacyCallContainer)
+  }
   const form = new Target()
   const counter = new Target()
   const counterInput = Object.assign(new Target(), {
@@ -221,6 +255,12 @@ function createEnvironment(fetchImpl, {
   button.querySelectorAll = (selector) => selector === '.button_main-text' ? [buttonText] : []
   step.querySelector = (selector) => {
     if (selector === '[data-edit-submit]') return button
+    if (selector === '[data-call-settings-profile-notice]') {
+      return legacyCallContainer.children.find((child) => child.hasAttribute('data-call-settings-profile-notice')) || null
+    }
+    if (selector === '[data-call-settings-profile-style]') {
+      return step.children.find((child) => child.hasAttribute('data-call-settings-profile-style')) || null
+    }
     if (absentSelectors.has(selector)) return null
     if (Object.prototype.hasOwnProperty.call(stepFields, selector)) return stepFields[selector]
     if (selector.includes(',') || selector.startsWith('.ql-editor')) return focusTarget
@@ -296,7 +336,7 @@ function createEnvironment(fetchImpl, {
     addEventListener(type, listener) {
       if (type === 'DOMContentLoaded') domReady.push(listener)
     },
-    createElement() { return new Target() },
+    createElement(tagName) { return Object.assign(new Target(), { tagName: String(tagName || '').toUpperCase() }) },
     createTextNode(text) { return Object.assign(new Target(), { textContent: text }) },
     querySelector(selector) {
       if (selector === '[build-profile-form]') return form
@@ -458,6 +498,8 @@ function createEnvironment(fetchImpl, {
     counterInput,
     fields,
     stepFields,
+    legacyCallContainer,
+    legacyCallGroups,
     focusTarget,
     window,
     liveRateFormatterCalls,
