@@ -7074,6 +7074,7 @@
     formatProjectTimeline,
     prepareDashboardProjectLazyDetails,
     initProjectDashboardWorkflow,
+    refreshProjectWorkflow,
     opportunityPath,
     pageOppId,
     waitForMemberstackDom,

@@ -964,7 +964,7 @@
     current.keyPayload = ''
     var proposal = result && result.proposal
     var proposalId = positiveId(proposal && proposal.id)
-    var copy = proposalStatusCopy(proposal) || PROPOSAL_STATUS_COPY.awaiting_brand_approval
+    var copy = proposalStatusCopy(proposal)
     var success = stateElement(form, SUCCESS_SELECTOR)
     if (success) {
       var titles = success.querySelectorAll ? success.querySelectorAll('[data-project-success-title], .generate-contract_success-text') : []

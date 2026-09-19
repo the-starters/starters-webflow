@@ -18,7 +18,6 @@
   }
 
   var DASHBOARD_PATH = '/brand-dashboard'
-  var INSTANCE_KEY = 'dash-brand-projects'
   var MODAL_ID = 'review-project-request'
   var TEMPLATE_SELECTOR = '[data-project-proposal-template]'
   var CARD_SELECTOR = '[data-project-proposal-card]'
@@ -215,8 +214,8 @@
   function completedDecision(result, proposal, action) {
     var resultProposal = result && result.proposal
     var resultProject = result && result.project
-    var resultId = positiveId(resultProposal && (resultProposal.id || resultProposal.proposal_id))
-    var resultVersion = positiveId(resultProposal && (resultProposal.lifecycle_version || resultProposal.version))
+    var resultId = positiveId(resultProposal && resultProposal.id)
+    var resultVersion = positiveId(resultProposal && resultProposal.lifecycle_version)
     var status = clean(resultProposal && resultProposal.status).toLowerCase()
     if (!proposal || resultId !== proposal.id || !resultVersion || resultVersion <= proposal.version) return null
     if (action === 'accept') {
@@ -760,9 +759,9 @@
     }
 
     async function reloadProjectProjection() {
-      var runtime = globalObject && globalObject.WfXano
-      var projection = runtime && typeof runtime.get === 'function' ? runtime.get(INSTANCE_KEY) : null
-      if (projection && typeof projection.refresh === 'function') await projection.refresh()
+      var bridge = globalObject && globalObject.Opp30
+      if (!bridge || typeof bridge.refreshProjectWorkflow !== 'function') return
+      await bridge.refreshProjectWorkflow('brand', true)
     }
 
     async function act(action) {
@@ -800,7 +799,7 @@
         if (typeof globalObject.CustomEvent === 'function' && documentObject.dispatchEvent) {
           documentObject.dispatchEvent(new globalObject.CustomEvent(eventName, {
             detail: {
-              proposal_id: positiveId(resultProposal && (resultProposal.id || resultProposal.proposal_id)) || proposal.id,
+              proposal_id: positiveId(resultProposal && resultProposal.id) || proposal.id,
               project_id: positiveId(resultProject && (resultProject.id || resultProject.project_id)),
               replayed: Boolean(result && result.replayed),
             },
@@ -810,18 +809,25 @@
         var successMessage = action === 'accept' ? 'Project approved and created.' : 'Project request declined.'
         if (state.active && state.active.id === request.proposalId) feedback(successMessage, false)
         announce(successMessage, false)
+        var reloadFailed = false
+        if (action === 'accept') {
+          try {
+            await reloadProjectProjection()
+          } catch (projectionError) {
+            reloadFailed = true
+          }
+        }
         try {
-          if (action === 'accept') await reloadProjectProjection()
           await refresh()
         } catch (refreshError) {
-          if (state.active && state.active.id === request.proposalId) {
-            feedback(
-              action === 'accept'
-                ? 'Project approved. Refresh the dashboard to load the project.'
-                : 'Project request declined. Refresh the dashboard to update the list.',
-              false,
-            )
-          }
+          reloadFailed = true
+        }
+        if (reloadFailed) {
+          var reloadMessage = action === 'accept'
+            ? 'Project approved. Refresh the dashboard to load the project.'
+            : 'Project request declined. Refresh the dashboard to update the list.'
+          if (state.active && state.active.id === request.proposalId) feedback(reloadMessage, false)
+          announce(reloadMessage, false)
         }
         return true
       } catch (error) {

@@ -1805,6 +1805,99 @@ test('project dashboard releases a synchronously failed state waiter', async () 
   assert.ok(await waitFor(() => subscriptions === 2 && unsubscriptions === 1))
 })
 
+test('the exported project list reload replays the loaded page range', async () => {
+  const end = el('button', { 'wf-xano-link': 'project-end' })
+  const label = el('div', { class: 'button_main-text' })
+  label.textContent = 'End Project'
+  const wrap = el('div', { class: 'button_main-wrap' }, [end, label])
+  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '675' }, [wrap])
+  const root = el(
+    'div',
+    { 'wf-xano-instance': 'dash-brand-projects', 'wf-xano-source': 'opp30:brand/projects/mine' },
+    [card],
+  )
+  const events = []
+  const handlers = new Set()
+  const pageItems = (page) => Array.from({ length: 12 }, (_, index) => (
+    page === 1 && index === 0
+      ? { id: 675, lifecycle_state: 'active', lifecycle_version: 1 }
+      : { id: (page - 1) * 12 + index + 1 }
+  ))
+  let state = {
+    status: 'success',
+    data: {
+      items: [
+        { id: 675, lifecycle_state: 'active', lifecycle_version: 1 },
+        ...Array.from({ length: 35 }, (_, index) => ({ id: index + 1 })),
+      ],
+      hasMore: true,
+    },
+    query: { page: 3, perPage: 12 },
+  }
+  const publishPage = (page, append) => {
+    state = {
+      status: 'success',
+      data: {
+        items: append ? state.data.items.concat(pageItems(page)) : pageItems(page),
+        hasMore: page < 4,
+      },
+      query: { page, perPage: 12 },
+    }
+    handlers.forEach((handler) => handler(state))
+    return Promise.resolve(state)
+  }
+  const instance = {
+    getState: () => state,
+    refresh() {
+      events.push({ type: 'refresh' })
+      return publishPage(1, false)
+    },
+    goToPage(page) {
+      events.push({ type: `page:${page}` })
+      return publishPage(page, false)
+    },
+    loadNext() {
+      const page = state.query.page + 1
+      events.push({ type: `page:${page}` })
+      return publishPage(page, true)
+    },
+    subscribe(handler) {
+      handlers.add(handler)
+      handler(state)
+      return () => handlers.delete(handler)
+    },
+  }
+  const bridge = await loadBridge(
+    async (input) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: paidBrandMember,
+      pathname: '/brand-dashboard',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+      wfXano: {
+        get(key) {
+          return key === 'dash-brand-projects' ? instance : null
+        },
+      },
+    },
+  )
+  assert.ok(await waitFor(() => end.getAttribute('data-project-action') === 'end'))
+  assert.equal(typeof bridge.window.Opp30.refreshProjectWorkflow, 'function')
+
+  await bridge.window.Opp30.refreshProjectWorkflow('brand', true)
+
+  assert.deepEqual(events.map((event) => event.type), ['page:1', 'page:2', 'page:3'])
+  assert.equal(state.query.page, 3)
+  assert.equal(state.data.items.length, 36)
+})
+
 test('project lifecycle replay retries transient failure and accepts earlier exhaustion', async () => {
   const end = el('button', { 'wf-xano-link': 'project-end' })
   const label = el('div', { class: 'button_main-text' })

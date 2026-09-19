@@ -69,6 +69,9 @@ idempotent on `idempotency_key`. On accept it returns the created project:
 { "proposal": { "id": 72, "status": "accepted", "lifecycle_version": 4 }, "project": { "id": 669 }, "replayed": false }
 ```
 
+The browser reads the decision's proposal identity from `id` and
+`lifecycle_version` only; no alternate spelling is accepted.
+
 A decline returns the settled proposal and no project:
 
 ```json
@@ -132,10 +135,15 @@ no other surface can accept or decline one.
 
 The list loads on mount, reloads after every settled decision, reloads after a
 403 or 409, and resets on `opp30:member-scope-reset`. A successful acceptance
-also reloads the shared `dash-brand-projects` WfXano projection when that
-runtime is present, so the new project appears in the dashboard project list
-without a reload. Without that runtime the decision still succeeds; only the
-project list waits for the next `pageshow`, `focus`, or visibility refresh.
+also asks the project list's owner to reload through
+`Opp30.refreshProjectWorkflow('brand', true)`, so the new project appears in the
+dashboard project list without a page reload and the Brand's already-loaded
+project page range is replayed rather than collapsed back to page 1. This
+controller never touches the `dash-brand-projects` wf-xano instance directly.
+Without that bridge method the decision still succeeds; only the project list
+waits for the next `pageshow`, `focus`, or visibility refresh. The proposal list
+reloads independently, so a failed project-list reload never leaves an accepted
+request rendered as a pending row.
 
 - Approved: **Project approved and created.**
 - Declined: **Project request declined.**
