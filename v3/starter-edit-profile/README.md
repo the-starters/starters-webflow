@@ -350,6 +350,10 @@ marker first breaks the page two ways:
   flashing the unavailable state, whichever entry point — page init or a Memberstack auth change —
   reaches the canonical read first. A bridge that never installs is reported once per controller as
   a `scheduling-auth bridge never installed` console warning.
+  Both bridge arrival orders are exercised in Chrome against the authored step 6 DOM by
+  `node v3/browser-tests/edit-profile-call-settings.browser.cjs`; set
+  `EDIT_PROFILE_BROWSER_EVIDENCE=<dir>` to write screenshots and observations. The fixture fakes
+  only the Memberstack session and the Xano responses, so it cannot establish production behavior.
 
 ### Authored markers
 
