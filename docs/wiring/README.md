@@ -53,7 +53,7 @@ below is explicitly superseded and retained as history.
 - [Profile portfolio](PROFILE-PORTFOLIO-WIRING.md) — Highlights and case studies.
 - [Direct-hire project form](PROJECT-FORM-WIRING.md) — Brand Contract Generation form.
 - [Starter project form](STARTER-PROJECT-FORM-WIRING.md) — Starter Dashboard Contract Generation form.
-- [Brand project proposals (superseded)](BRAND-PROJECT-PROPOSALS-WIRING.md) — historical approval workflow and its replacement.
+- [Brand project proposals](BRAND-PROJECT-PROPOSALS-WIRING.md) — Brand Dashboard accept/decline step for Starter project requests.
 
 ### Call settings
 

@@ -143,8 +143,12 @@ function controllerFixture(options = {}) {
       return selector === '[data-project-proposal-global-feedback]' ? globalFeedback : null
     },
   }
+  const projectProjectionReloads = []
   const globalObject = {
     crypto: { randomUUID: () => 'decision-key' },
+    WfXano: options.wfXano === undefined
+      ? { get: (key) => ({ async refresh() { projectProjectionReloads.push(key) } }) }
+      : options.wfXano,
     CustomEvent: class CustomEvent {
       constructor(type, init) { this.type = type; this.detail = init.detail }
     },
@@ -155,11 +159,6 @@ function controllerFixture(options = {}) {
     } } } },
   }
   const projection = { status: 'success', data: { project_proposals: [proposal()] } }
-  const instance = options.instance || {
-    subscribe() { return () => {} },
-    getState() { return projection },
-    async refresh() {},
-  }
   const calls = []
   const requestApi = options.api || {
     async projectProposalAction(payload) {
@@ -174,9 +173,17 @@ function controllerFixture(options = {}) {
     template,
     modal,
     api: requestApi,
-    instance,
   })
-  return { calls, controller, dispatched, globalFeedback, list, modal, projection }
+  return {
+    calls,
+    controller,
+    dispatched,
+    globalFeedback,
+    list,
+    modal,
+    projection,
+    projectProjectionReloads,
+  }
 }
 
 test('normalizes only actionable pending proposals with positive lifecycle versions', () => {
@@ -226,6 +233,92 @@ test('renders proposal rows as Action Items from the authored template', () => {
   assert.equal(card.getAttribute('data-action-element'), 'item')
   assert.equal(card.fields[0].textContent, 'Alex Starter')
   assert.equal(fixture.list.children[1].hidden, true)
+})
+
+test('refresh renders Action Items from the dedicated Brand proposal projection', async () => {
+  const pages = []
+  const fixture = controllerFixture({
+    api: {
+      async brandProjectProposalList(page, perPage) {
+        pages.push([page, perPage])
+        return { project_proposals: [proposal(), proposal({ proposal_id: 42, title: 'Lifecycle audit' })] }
+      },
+    },
+  })
+
+  const result = await fixture.controller.refresh()
+
+  assert.deepEqual(pages, [[1, 12]])
+  assert.deepEqual(result.project_proposals.length, 2)
+  assert.deepEqual(fixture.controller.state.proposals.map((item) => item.id), [42, 41])
+  assert.deepEqual(
+    fixture.list.children.slice(0, 2).map((card) => card.getAttribute('data-project-proposal-id')),
+    ['42', '41'],
+  )
+})
+
+test('a refresh without the proposal list route leaves the rendered cards untouched', async () => {
+  const fixture = controllerFixture({ api: {} })
+  fixture.controller.render(fixture.projection)
+  assert.equal(await fixture.controller.refresh(), null)
+  assert.deepEqual(fixture.controller.state.proposals.map((item) => item.id), [41])
+})
+
+test('accepting reloads the canonical Brand project projection alongside the proposal list', async () => {
+  const listed = []
+  const fixture = controllerFixture({
+    api: {
+      async projectProposalAction() {
+        return { proposal: { id: 41 }, project: { id: 95 }, replayed: false }
+      },
+      async brandProjectProposalList() {
+        listed.push(true)
+        return { project_proposals: [] }
+      },
+    },
+  })
+  fixture.controller.render(fixture.projection)
+  fixture.controller.open(fixture.controller.state.proposals[0])
+
+  assert.equal(await fixture.controller.act('accept'), true)
+
+  assert.deepEqual(fixture.projectProjectionReloads, ['dash-brand-projects'])
+  assert.equal(listed.length, 1)
+  assert.equal(fixture.controller.state.proposals.length, 0)
+})
+
+test('declining leaves the canonical Brand project projection alone', async () => {
+  const fixture = controllerFixture({
+    api: {
+      async projectProposalAction() {
+        return { proposal: { id: 41 }, replayed: false }
+      },
+      async brandProjectProposalList() { return { project_proposals: [] } },
+    },
+  })
+  fixture.controller.render(fixture.projection)
+  fixture.controller.open(fixture.controller.state.proposals[0])
+
+  assert.equal(await fixture.controller.act('reject'), true)
+
+  assert.deepEqual(fixture.projectProjectionReloads, [])
+})
+
+test('an accept survives a runtime without the project projection registry', async () => {
+  const fixture = controllerFixture({
+    wfXano: null,
+    api: {
+      async projectProposalAction() {
+        return { proposal: { id: 41 }, project: { id: 95 }, replayed: false }
+      },
+      async brandProjectProposalList() { return { project_proposals: [] } },
+    },
+  })
+  fixture.controller.render(fixture.projection)
+  fixture.controller.open(fixture.controller.state.proposals[0])
+
+  assert.equal(await fixture.controller.act('accept'), true)
+  assert.equal(fixture.globalFeedback.textContent, 'Project approved and created.')
 })
 
 test('builds a complete read-only review dialog when Designer markup is absent', () => {
@@ -338,11 +431,10 @@ test('a failed retry reuses its idempotency key and maps stale conflicts safely'
         if (attempt === 1) throw Object.assign(new Error('raw backend detail'), { status: 500 })
         throw Object.assign(new Error('raw stale detail'), { status: 409 })
       },
-    },
-    instance: {
-      subscribe() { return () => {} },
-      getState() { return { status: 'success', project_proposals: [proposal()] } },
-      async refresh() { refreshes += 1 },
+      async brandProjectProposalList() {
+        refreshes += 1
+        return { project_proposals: [proposal()] }
+      },
     },
   })
   fixture.controller.render({ project_proposals: [proposal()] })
@@ -404,11 +496,6 @@ test('an in-flight request keeps later proposal actions locked until it settles'
         }
         return { proposal: { id: 42 }, replayed: false }
       },
-    },
-    instance: {
-      subscribe() { return () => {} },
-      getState() { return projection },
-      async refresh() {},
     },
   })
   fixture.controller.render(projection)

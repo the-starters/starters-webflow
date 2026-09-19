@@ -106,9 +106,7 @@
 
   function createdProposal(result) {
     var proposal = result && result.proposal
-    return positiveId(proposal && proposal.id) && clean(proposal && proposal.status).toLowerCase() === 'awaiting_brand_approval'
-      ? proposal
-      : null
+    return positiveId(proposal && proposal.id) ? proposal : null
   }
 
   function formState(form) {
@@ -971,7 +969,7 @@
     var status = error && Number(error.status)
     if (status === 401) return 'Your session expired. Sign in and try again.'
     if (status === 403) return 'That Brand is no longer eligible. Refresh the Brand list.'
-    if (status === 409) return 'A project already exists for this request.'
+    if (status === 409) return 'A project request already exists for this Brand.'
     if (status === 422) return 'Review the project details and try again.'
     return 'The project request could not be sent. Try again.'
   }

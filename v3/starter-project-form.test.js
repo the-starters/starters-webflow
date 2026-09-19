@@ -1622,7 +1622,7 @@ test('failed retry keeps the same idempotency key', async () => {
 test('malformed proposal responses fail and preserve the retry key', async () => {
   const submitted = []
   const responses = [
-    { proposal: { id: 72, status: 'unexpected' } },
+    { proposal: { id: 0, status: 'awaiting_brand_approval' } },
     { project: { id: 91, lifecycle_state: 'contract_create_pending' } },
     { proposal: { id: 91, status: 'awaiting_brand_approval', lifecycle_version: 1 }, replayed: true },
   ]
@@ -1650,6 +1650,31 @@ test('malformed proposal responses fail and preserve the retry key', async () =>
     'project-key-123',
   ])
   assert.equal(loaded.events[0].detail.proposal_id, 91)
+})
+
+test('an idempotent replay of an already-resolved proposal still reports success', async () => {
+  const submitted = []
+  let attempt = 0
+  const loaded = load({
+    noDocument: true,
+    counterparties: [{ counterparty_id: 31, company_name: 'Brand', hiring_manager_name: 'Brand Member' }],
+    projectSubmit: async (payload) => {
+      submitted.push({ ...payload })
+      attempt += 1
+      if (attempt === 1) throw Object.assign(new Error('gateway'), { status: 503 })
+      return { proposal: { id: 88, status: 'accepted', lifecycle_version: 2 }, replayed: true }
+    },
+  })
+  await loaded.api.loadOptions(loaded.form, loaded.window)
+
+  assert.equal(await loaded.api.submit(loaded.form, loaded.window, loaded.document), false)
+  assert.equal(await loaded.api.submit(loaded.form, loaded.window, loaded.document), true)
+
+  assert.equal(submitted[0].idempotency_key, submitted[1].idempotency_key)
+  assert.equal(loaded.events[0].type, 'starters:project-proposal-requested')
+  assert.equal(loaded.events[0].detail.proposal_id, 88)
+  assert.equal(loaded.events[0].detail.replayed, true)
+  assert.equal(loaded.wrapper.success.getAttribute('aria-hidden'), 'false')
 })
 
 test('a rejected Brand authorization is invalidated before another submit', async () => {

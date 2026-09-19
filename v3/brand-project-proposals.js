@@ -4,9 +4,9 @@
  * Webflow owns the Action Items row template. The controller prefers an authored
  * review dialog and creates a read-only fallback dialog when that Designer
  * element is not available yet. It binds the authenticated
- * the dedicated Brand proposal projection, paints read-only proposal terms,
- * and submits versioned accept/reject commands through Opp30. A proposal is
- * never treated as a canonical project before acceptance.
+ * `brand/project-proposals/mine/v3` projection, paints read-only proposal
+ * terms, and submits versioned accept/reject commands through Opp30. A
+ * proposal is never treated as a canonical project before acceptance.
  */
 ;(function (global) {
   'use strict'
@@ -550,14 +550,12 @@
     var template = options.template
     var modal = options.modal
     var api = options.api
-    var instance = options.instance || null
     var state = {
       proposals: [],
       active: null,
       activeTrigger: null,
       pendingAction: null,
       keys: {},
-      unsubscribe: null,
       generation: 0,
       resolved: {},
     }
@@ -683,21 +681,17 @@
       return true
     }
 
-    function currentState() {
-      return instance && typeof instance.getState === 'function' ? instance.getState() : null
-    }
-
     async function refresh() {
-      if (instance && typeof instance.refresh === 'function') {
-        await instance.refresh()
-        var current = currentState()
-        if (current && current.status === 'success') render(current)
-        return current
-      }
       if (!api || typeof api.brandProjectProposalList !== 'function') return null
       var result = await api.brandProjectProposalList(1, 12)
       render(result)
       return result
+    }
+
+    async function reloadProjectProjection() {
+      var runtime = globalObject && globalObject.WfXano
+      var projection = runtime && typeof runtime.get === 'function' ? runtime.get(INSTANCE_KEY) : null
+      if (projection && typeof projection.refresh === 'function') await projection.refresh()
     }
 
     async function act(action) {
@@ -744,6 +738,7 @@
         if (state.active && state.active.id === request.proposalId) feedback(successMessage, false)
         announce(successMessage, false)
         try {
+          if (action === 'accept') await reloadProjectProjection()
           await refresh()
         } catch (refreshError) {
           if (state.active && state.active.id === request.proposalId) {
@@ -809,16 +804,6 @@
       }
     }
 
-    function subscribe() {
-      if (!instance || typeof instance.subscribe !== 'function') return false
-      state.unsubscribe = instance.subscribe(function (projectionState) {
-        if (projectionState && projectionState.status === 'success') render(projectionState)
-      })
-      var current = currentState()
-      if (current && current.status === 'success') render(current)
-      return true
-    }
-
     function reset() {
       state.generation += 1
       state.pendingAction = null
@@ -832,8 +817,6 @@
 
     function destroy() {
       reset()
-      if (typeof state.unsubscribe === 'function') state.unsubscribe()
-      state.unsubscribe = null
       documentObject.removeEventListener('click', onClick, true)
       if (modal && modal.removeEventListener) modal.removeEventListener('cancel', onModalCancel)
     }
@@ -855,14 +838,7 @@
       render: render,
       reset: reset,
       state: state,
-      subscribe: subscribe,
     }
-  }
-
-  function resolveInstance(globalObject) {
-    return globalObject.WfXano && typeof globalObject.WfXano.get === 'function'
-      ? globalObject.WfXano.get(INSTANCE_KEY)
-      : null
   }
 
   function mount(globalObject) {
@@ -884,9 +860,8 @@
       template: template,
       modal: modal,
       api: api,
-      instance: null,
     })
-    if (!controller.subscribe()) controller.refresh().catch(function () { controller.render({ project_proposals: [] }) })
+    controller.refresh().catch(function () { controller.render({ project_proposals: [] }) })
     globalObject.addEventListener(MEMBER_RESET_EVENT, function () {
       controller.reset()
       globalObject.setTimeout(function () { controller.refresh().catch(function () {}) }, 0)
