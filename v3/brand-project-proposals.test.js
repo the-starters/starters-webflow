@@ -553,15 +553,16 @@ test('a failed project list reload still reloads the proposal list', async () =>
   assert.equal(fixture.globalFeedback.hidden, false)
 })
 
-test('a decision response must carry the documented id and lifecycle_version', async () => {
-  for (const proposalResult of [
-    { proposal_id: 41, status: 'accepted', lifecycle_version: 4 },
-    { id: 41, status: 'accepted', version: 4 },
+test('a decision response must carry the documented proposal and project identity', async () => {
+  for (const [proposalResult, projectResult] of [
+    [{ proposal_id: 41, status: 'accepted', lifecycle_version: 4 }, { id: 95 }],
+    [{ id: 41, status: 'accepted', version: 4 }, { id: 95 }],
+    [{ id: 41, status: 'accepted', lifecycle_version: 4 }, { project_id: 95 }],
   ]) {
     const fixture = controllerFixture({
       api: {
         async projectProposalAction() {
-          return { proposal: proposalResult, project: { id: 95 }, replayed: false }
+          return { proposal: proposalResult, project: projectResult, replayed: false }
         },
         async brandProjectProposalList() { return { project_proposals: [] } },
       },

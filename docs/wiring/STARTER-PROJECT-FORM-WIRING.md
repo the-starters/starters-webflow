@@ -63,19 +63,18 @@ relationship and create one proposal row awaiting Brand approval:
 
 ```json
 {
-  "kind": "proposal",
   "proposal": { "id": 669, "status": "awaiting_brand_approval", "lifecycle_version": 1 },
   "replayed": false
 }
 ```
 
-The browser requires `kind: "proposal"`, a positive proposal ID and lifecycle
-version, and a known proposal status. This keeps idempotent terminal replays
-valid while a fulfilled malformed response remains a retryable failure. The
-known statuses are `awaiting_brand_approval`, `accepted`, `rejected`,
-`withdrawn`, and `expired`; the success panel paints copy for the returned
-status, so a replay of a request the Brand already declined reads as declined
-rather than as still pending.
+The browser requires a positive `proposal.id`, a positive
+`proposal.lifecycle_version`, and a known proposal status. This keeps idempotent
+terminal replays valid while a fulfilled malformed response remains a retryable
+failure. The known statuses are exactly the three this lifecycle produces:
+`awaiting_brand_approval`, plus `accepted` and `rejected` from a Brand decision.
+The success panel paints copy for the returned status, so a replay of a request
+the Brand already declined reads as declined rather than as still pending.
 
 The pre-proposal routes `projects/options/v3` (`Opp30.API.projectOptions`) and
 `projects/submit/v3` (`Opp30.API.projectDirectSubmit`) stay wired in the bridge

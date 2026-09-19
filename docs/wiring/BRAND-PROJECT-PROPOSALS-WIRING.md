@@ -70,7 +70,8 @@ idempotent on `idempotency_key`. On accept it returns the created project:
 ```
 
 The browser reads the decision's proposal identity from `id` and
-`lifecycle_version` only; no alternate spelling is accepted.
+`lifecycle_version`, and the created project's identity from `project.id`, only;
+no alternate spelling is accepted for either.
 
 A decline returns the settled proposal and no project:
 

@@ -117,14 +117,6 @@
       title: 'Project request declined',
       message: 'The Brand declined this request. Adjust the terms and send a new request.',
     },
-    withdrawn: {
-      title: 'Project request withdrawn',
-      message: 'This request was withdrawn. Send a new request when the terms are ready.',
-    },
-    expired: {
-      title: 'Project request expired',
-      message: 'This request expired before the Brand responded. Send a new request when the terms are ready.',
-    },
   }
 
   function proposalStatusCopy(proposal) {
@@ -136,7 +128,7 @@
 
   function createdProposal(result) {
     var proposal = result && result.proposal
-    return result && result.kind === 'proposal' && positiveId(proposal && proposal.id) &&
+    return positiveId(proposal && proposal.id) &&
       positiveId(proposal && proposal.lifecycle_version) && proposalStatusCopy(proposal)
       ? proposal
       : null

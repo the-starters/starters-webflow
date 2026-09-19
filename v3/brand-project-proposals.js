@@ -219,9 +219,9 @@
     var status = clean(resultProposal && resultProposal.status).toLowerCase()
     if (!proposal || resultId !== proposal.id || !resultVersion || resultVersion <= proposal.version) return null
     if (action === 'accept') {
-      if (status !== 'accepted' || !positiveId(resultProject && (resultProject.id || resultProject.project_id))) return null
+      if (status !== 'accepted' || !positiveId(resultProject && resultProject.id)) return null
     } else if (action === 'reject') {
-      if (status !== 'rejected' || positiveId(resultProject && (resultProject.id || resultProject.project_id))) return null
+      if (status !== 'rejected' || positiveId(resultProject && resultProject.id)) return null
     } else {
       return null
     }
@@ -800,7 +800,7 @@
           documentObject.dispatchEvent(new globalObject.CustomEvent(eventName, {
             detail: {
               proposal_id: positiveId(resultProposal && resultProposal.id) || proposal.id,
-              project_id: positiveId(resultProject && (resultProject.id || resultProject.project_id)),
+              project_id: positiveId(resultProject && resultProject.id),
               replayed: Boolean(result && result.replayed),
             },
           }))
