@@ -309,7 +309,7 @@ function load(options = {}) {
       }),
       projectSubmit: options.projectSubmit || (async (payload) => {
         calls.submit.push(payload)
-        return { project: { id: 81, lifecycle_state: 'contract_create_pending' }, replayed: false }
+        return { proposal: { id: 81, status: 'awaiting_brand_approval', lifecycle_version: 1 }, replayed: false }
       }),
     } },
   }
@@ -354,7 +354,7 @@ test('diagnostics stay off by default and emit only the safe options-to-submit t
     projectSubmit: async (payload) => {
       submittedPayload = payload
       return {
-        project: { id: 81, lifecycle_state: 'contract_create_pending' },
+        proposal: { id: 81, status: 'awaiting_brand_approval', lifecycle_version: 1 },
         replayed: false,
         member_id: 'mem_starter',
         email: 'sample@example.com',
@@ -374,8 +374,8 @@ test('diagnostics stay off by default and emit only the safe options-to-submit t
     ['[StarterProjectV3]', 'options_response', { eligible_count: 1 }],
     ['[StarterProjectV3]', 'submit_request', { selected_brand_id: 31 }],
     ['[StarterProjectV3]', 'submit_success', {
-      project_id: 81,
-      lifecycle_state: 'contract_create_pending',
+      proposal_id: 81,
+      proposal_status: 'awaiting_brand_approval',
       replayed: false,
     }],
   ])
@@ -1253,7 +1253,7 @@ test('reopening during an options request supersedes its stale response', async 
   assert.equal(loaded.form.fields.select.options.length, 2)
 })
 
-test('submission reports the canonical project and contract-first success state', async () => {
+test('submission reports the canonical proposal and approval-first success state', async () => {
   const loaded = load({
     noDocument: true,
     counterparties: [{ counterparty_id: 31, company_name: 'Brand', hiring_manager_name: 'Brand Member' }],
@@ -1272,16 +1272,16 @@ test('submission reports the canonical project and contract-first success state'
   assert.equal(loaded.calls.submit[0].brand_id, 31)
   assert.equal(loaded.calls.submit[0].idempotency_key, 'project-key-123')
   assert.equal(Object.prototype.hasOwnProperty.call(loaded.calls.submit[0], 'connection_type'), false)
-  assert.equal(loaded.events[0].type, 'starters:project-created')
-  assert.equal(loaded.events[0].detail.project_id, 81)
-  assert.equal(loaded.tracks[0].name, 'project_created')
+  assert.equal(loaded.events[0].type, 'starters:project-proposal-requested')
+  assert.equal(loaded.events[0].detail.proposal_id, 81)
+  assert.equal(loaded.tracks[0].name, 'project_proposal_requested')
   assert.deepEqual(loaded.wrapper.success.successTitles.map((title) => title.textContent), [
-    'Project successfully created',
-    'Project successfully created',
+    'Project request sent',
+    'Project request sent',
   ])
   assert.equal(
     loaded.wrapper.success.querySelector('[data-project-success-message]').textContent,
-    'Your contract is being prepared. You and the Brand can sign when it is ready.',
+    'The Brand can review your project terms. A project and contract are created only after approval.',
   )
   assert.equal(loaded.context.successLinks[0].getAttribute('href'), '/starter-dashboard#projects')
   assert.equal(loaded.wrapper.success.getAttribute('aria-hidden'), 'false')
@@ -1501,21 +1501,21 @@ test('Review Edit fee change refreshes preview controls and preserves authored d
   assert.equal(loaded.form.fields.email.disabled, true)
 })
 
-test('Own Contract submission reports immediate activation', async () => {
+test('Own Contract submission still waits for Brand approval', async () => {
   let loaded
   loaded = load({
     noDocument: true,
     counterparties: [{ counterparty_id: 31, company_name: 'Brand', hiring_manager_name: 'Brand Member' }],
     projectSubmit: async (payload) => {
       loaded.calls.submit.push(payload)
-      return { project: { id: 82, lifecycle_state: 'active' }, replayed: false }
+      return { proposal: { id: 82, status: 'awaiting_brand_approval', lifecycle_version: 1 }, replayed: false }
     },
   })
   await loaded.api.loadOptions(loaded.form, loaded.window)
   assert.equal(await loaded.api.submit(loaded.form, loaded.window, loaded.document), true)
   assert.equal(
     loaded.wrapper.success.querySelector('[data-project-success-message]').textContent,
-    'Your project is now active.',
+    'The Brand can review your project terms. A project and contract are created only after approval.',
   )
 })
 
@@ -1556,7 +1556,7 @@ test('reopening during submission cannot let an options refresh replace success'
   assert.equal(loaded.calls.options.length, 1)
   assert.equal(loaded.form.getAttribute('data-starter-project-status'), 'submitting')
 
-  resolveSubmit({ project: { id: 92, lifecycle_state: 'contract_create_pending' }, replayed: false })
+  resolveSubmit({ proposal: { id: 92, status: 'awaiting_brand_approval', lifecycle_version: 1 }, replayed: false })
   assert.equal(await submission, true)
   assert.equal(loaded.form.getAttribute('data-starter-project-status'), 'success')
 
@@ -1609,7 +1609,7 @@ test('failed retry keeps the same idempotency key', async () => {
       submitted.push({ ...payload })
       attempt += 1
       if (attempt === 1) throw Object.assign(new Error('temporary'), { status: 503 })
-      return { project: { id: 91, lifecycle_state: 'contract_create_pending' }, replayed: true }
+      return { proposal: { id: 91, status: 'awaiting_brand_approval', lifecycle_version: 1 }, replayed: true }
     },
   })
   await loaded.api.loadOptions(loaded.form, loaded.window)
@@ -1619,12 +1619,12 @@ test('failed retry keeps the same idempotency key', async () => {
   assert.equal(submitted[0].idempotency_key, submitted[1].idempotency_key)
 })
 
-test('malformed project responses fail and preserve the retry key', async () => {
+test('malformed proposal responses fail and preserve the retry key', async () => {
   const submitted = []
   const responses = [
-    { proposal: { id: 72, status: 'awaiting_brand_approval' } },
-    { project: { id: 91, lifecycle_state: 'unexpected' } },
-    { project: { id: 91, lifecycle_state: 'contract_create_pending' }, replayed: true },
+    { proposal: { id: 72, status: 'unexpected' } },
+    { project: { id: 91, lifecycle_state: 'contract_create_pending' } },
+    { proposal: { id: 91, status: 'awaiting_brand_approval', lifecycle_version: 1 }, replayed: true },
   ]
   const loaded = load({
     noDocument: true,
@@ -1641,7 +1641,7 @@ test('malformed project responses fail and preserve the retry key', async () => 
   assert.equal(loaded.events.length, 0)
   assert.equal(loaded.tracks.length, 0)
   assert.equal(loaded.form.style.display, '')
-  assert.match(loaded.wrapper.error.textContent, /could not be created/)
+  assert.match(loaded.wrapper.error.textContent, /could not be sent/)
 
   assert.equal(await loaded.api.submit(loaded.form, loaded.window, loaded.document), true)
   assert.deepEqual(submitted.map((payload) => payload.idempotency_key), [
@@ -1649,7 +1649,7 @@ test('malformed project responses fail and preserve the retry key', async () => 
     'project-key-123',
     'project-key-123',
   ])
-  assert.equal(loaded.events[0].detail.project_id, 91)
+  assert.equal(loaded.events[0].detail.proposal_id, 91)
 })
 
 test('a rejected Brand authorization is invalidated before another submit', async () => {

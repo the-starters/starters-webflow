@@ -333,9 +333,9 @@ test('project options and canonical Starter submission use authenticated V3 rout
       if (url.includes('/projects/options/v3')) {
         return response({ counterparties: [{ counterparty_id: 81, company_name: 'Acme' }] })
       }
-      if (url.includes('/projects/submit/v3')) {
+      if (url.includes('/projects/proposal-request/v3')) {
         return response({
-          project: { id: 669, lifecycle_state: 'contract_create_pending' },
+          proposal: { id: 669, status: 'awaiting_brand_approval', lifecycle_version: 1 },
           replayed: false,
         })
       }
@@ -349,13 +349,13 @@ test('project options and canonical Starter submission use authenticated V3 rout
   const result = await bridge.API.projectSubmit(payload)
 
   assert.equal(options.counterparties[0].counterparty_id, 81)
-  assert.equal(result.project.id, 669)
-  assert.equal(result.project.lifecycle_state, 'contract_create_pending')
+  assert.equal(result.proposal.id, 669)
+  assert.equal(result.proposal.status, 'awaiting_brand_approval')
   assert.equal(requests[1].url, 'https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30/projects/options/v3')
   assert.equal(requests[1].init.method, 'POST')
   assert.equal(requests[1].init.headers.Authorization, 'Bearer xano-token')
   assert.deepEqual(JSON.parse(requests[1].init.body), {})
-  assert.equal(requests[2].url, 'https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30/projects/submit/v3')
+  assert.equal(requests[2].url, 'https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30/projects/proposal-request/v3')
   assert.equal(requests[2].init.headers.Authorization, 'Bearer xano-token')
   assert.deepEqual(JSON.parse(requests[2].init.body), payload)
 })
@@ -383,7 +383,7 @@ test('authenticated Starter profile uses the V3 self-profile route', async () =>
   assert.deepEqual(JSON.parse(requests[1].init.body), {})
 })
 
-test('superseded proposal controller retains its authenticated decision route', async () => {
+test('proposal controller uses dedicated authenticated projection and decision routes', async () => {
   const requests = []
   const bridge = await loadBridge(
     async (input, init = {}) => {
@@ -392,6 +392,9 @@ test('superseded proposal controller retains its authenticated decision route', 
       if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
       if (url.includes('/projects/proposal-action/v3')) {
         return response({ proposal: { id: 72, status: 'accepted' }, project: { id: 669 } })
+      }
+      if (url.includes('/brand/project-proposals/mine/v3')) {
+        return response({ project_proposals: [{ proposal_id: 72, status: 'awaiting_brand_approval' }] })
       }
       throw new Error(`Unexpected request: ${url}`)
     },
@@ -404,12 +407,16 @@ test('superseded proposal controller retains its authenticated decision route', 
     idempotency_key: 'proposal-action-test',
   }
 
+  const pending = await bridge.API.brandProjectProposalList(2, 6)
   const accepted = await bridge.API.projectProposalAction(decision)
 
+  assert.equal(pending.project_proposals[0].proposal_id, 72)
   assert.equal(accepted.project.id, 669)
-  assert.equal(requests[1].url, 'https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30/projects/proposal-action/v3')
-  assert.equal(requests[1].init.headers.Authorization, 'Bearer xano-token')
-  assert.deepEqual(JSON.parse(requests[1].init.body), decision)
+  assert.equal(requests[1].url, 'https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30/brand/project-proposals/mine/v3')
+  assert.deepEqual(JSON.parse(requests[1].init.body), { page: 2, per_page: 6 })
+  assert.equal(requests[2].url, 'https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30/projects/proposal-action/v3')
+  assert.equal(requests[2].init.headers.Authorization, 'Bearer xano-token')
+  assert.deepEqual(JSON.parse(requests[2].init.body), decision)
 })
 
 test('invoiceCreate sends the V3 invoice payload through the authenticated Xano bridge', async () => {
