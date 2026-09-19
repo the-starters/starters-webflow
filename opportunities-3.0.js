@@ -1598,7 +1598,7 @@
    */
   function redirectForeignBrandToFeed(err) {
     if (err && (err.status === 403 || err.status === 404)) {
-      location.href = '/opportunities-brands-view'
+      location.href = '/opportunities'
       return true
     }
     return false

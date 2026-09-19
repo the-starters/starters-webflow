@@ -6545,11 +6545,11 @@ test('openInvoiceModal opens through modal.js and only falls back to showModal',
 test('redirectForeignBrandToFeed redirects only on ownership-denied statuses', async () => {
   const denied404 = await loadBridge(async () => response({}))
   assert.equal(denied404.window.Opp30.redirectForeignBrandToFeed({ status: 404 }), true)
-  assert.equal(denied404.location.href, '/opportunities-brands-view')
+  assert.equal(denied404.location.href, '/opportunities')
 
   const denied403 = await loadBridge(async () => response({}))
   assert.equal(denied403.window.Opp30.redirectForeignBrandToFeed({ status: 403 }), true)
-  assert.equal(denied403.location.href, '/opportunities-brands-view')
+  assert.equal(denied403.location.href, '/opportunities')
 
   // Transient / server / network errors must NOT bounce the (possibly real) owner.
   const server = await loadBridge(async () => response({}))
@@ -6592,10 +6592,10 @@ test('both brand detail routes redirect a foreign brand after the owner-scoped p
       },
     )
     await waitForRequestCount(requests, 2)
-    for (let attempt = 0; attempt < 20 && bridge.location.href !== '/opportunities-brands-view'; attempt += 1) {
+    for (let attempt = 0; attempt < 20 && bridge.location.href !== '/opportunities'; attempt += 1) {
       await new Promise(setImmediate)
     }
-    assert.equal(bridge.location.href, '/opportunities-brands-view')
+    assert.equal(bridge.location.href, '/opportunities')
     assert.match(requests[1], /\/brand\/applications\/list$/)
     if (/^\/opportunities\//.test(pathname)) {
       assert.equal(dom.navbar.getAttribute('data-preview-nav'), 'common')
