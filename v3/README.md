@@ -1268,6 +1268,14 @@ Designer, install, and release contract lives in
 Install it in the same release as `starter-project-form.js`; the Starter half
 alone leaves every request unactionable.
 
+Its Designer markers are proposal-only: `data-project-request-template` for the
+row template and `data-project-request-list` for the list host. It never reads
+`data-project-proposal-template`, which the [Action Items
+panel](#dashboard-action-items-panel) below owns as the Brand first-opportunity
+row and hides once that Brand has an opportunity. With neither proposal marker
+authored the controller builds its own labelled request section next to the
+Action Items wrapper rather than borrowing a row from it.
+
 Run the focused tests with:
 
 ```sh
@@ -4264,7 +4272,10 @@ is also recorded in the module header. Remove the fallback once every row
 carries `data-action-element="item"`.
 
 On `/brand-dashboard`, the controller finds the first-opportunity row through
-`[data-project-proposal-template="true"]`, then resolves that authored inner
+`[data-project-proposal-template="true"]`, which it owns exclusively — the
+[Brand project proposal approval](#brand-project-proposal-approval) controller
+uses its own `data-project-request-*` markers and never matches this one. It
+then resolves that authored inner
 template to its closest `.dash-hero_action-item` so the full outer row hides. If
 there is no outer row, it uses the template itself as a compatibility fallback.
 It requests the first owned opportunity through

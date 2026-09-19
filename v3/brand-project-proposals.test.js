@@ -57,6 +57,12 @@ class Element {
     if (present) return this.hasAttribute(present[1])
     return false
   }
+  closest(selector) {
+    for (let node = this; node; node = node.parentNode) {
+      if (node.matches && node.matches(selector)) return node
+    }
+    return null
+  }
   cloneNode() {
     const clone = new Element({ ...this.attrs })
     clone.fields = this.fields.map((field) => new Element({ ...field.attrs }))
@@ -93,10 +99,23 @@ class Element {
 function fallbackDocument() {
   const head = new Element()
   const body = new Element()
+  const documentListeners = {}
   return {
     head,
     body,
-    createElement() { return new Element() },
+    listeners: documentListeners,
+    addEventListener(name, handler) { documentListeners[name] = handler },
+    removeEventListener(name) { delete documentListeners[name] },
+    dispatchEvent() { return true },
+    createElement(tagName) {
+      const element = new Element()
+      element.tagName = String(tagName || '').toUpperCase()
+      return element
+    },
+    querySelector(selector) {
+      return [...head.descendants(), ...body.descendants()]
+        .find((element) => selector.split(',').some((part) => element.matches(part.trim()))) || null
+    },
     getElementById(id) {
       return [...head.descendants(), ...body.descendants()].find((element) => element.id === id) || null
     },
@@ -127,7 +146,7 @@ function proposal(overrides = {}) {
 }
 
 function controllerFixture(options = {}) {
-  const template = new Element({ 'data-project-proposal-template': '' })
+  const template = new Element({ 'data-project-request-template': '' })
   template.fields = [new Element({ 'data-project-proposal-field': 'starter_name' })]
   const list = new Element()
   list.children = [template]
@@ -174,7 +193,7 @@ function controllerFixture(options = {}) {
       close() { modal.open = false },
     } } } },
   }
-  const projection = { status: 'success', data: { project_proposals: [proposal()] } }
+  const projection = { project_proposals: [proposal()] }
   const calls = []
   const requestApi = options.api || {
     async projectProposalAction(payload) {
@@ -245,10 +264,8 @@ test('builds a minimal versioned decision command', () => {
 
 test('one envelope parser feeds both rendered rows and pagination', () => {
   const rows = [proposal()]
-  for (const payload of [{ project_proposals: rows }, { data: { project_proposals: rows } }]) {
-    assert.deepEqual(api.normalizeProposals(payload).map((item) => item.id), [41])
-  }
-  for (const payload of [{ items: rows }, { data: { items: rows } }, null, []]) {
+  assert.deepEqual(api.normalizeProposals({ project_proposals: rows }).map((item) => item.id), [41])
+  for (const payload of [{ data: { project_proposals: rows } }, { items: rows }, null, []]) {
     assert.deepEqual(api.normalizeProposals(payload), [])
   }
 })
@@ -618,6 +635,31 @@ test('a failed project list reload still reloads the proposal list', async () =>
   assert.equal(fixture.globalFeedback.hidden, false)
 })
 
+test('a reload that fails after a member reset does not announce stale copy', async () => {
+  let settleList
+  const fixture = controllerFixture({
+    api: {
+      async projectProposalAction() {
+        return { proposal: { id: 41, status: 'accepted', lifecycle_version: 4 }, project: { id: 95 }, replayed: false }
+      },
+      brandProjectProposalList() {
+        return new Promise((resolve, reject) => { settleList = reject })
+      },
+    },
+  })
+  fixture.controller.render(fixture.projection)
+  fixture.controller.open(fixture.controller.state.proposals[0])
+  const pending = fixture.controller.act('accept')
+  await new Promise((resolve) => setTimeout(resolve, 0))
+
+  fixture.controller.reset()
+  settleList(Object.assign(new Error('offline'), { status: 0 }))
+
+  assert.equal(await pending, true)
+  assert.equal(fixture.globalFeedback.textContent, '')
+  assert.equal(fixture.globalFeedback.hidden, true)
+})
+
 test('a decision response must carry the documented proposal and project identity', async () => {
   for (const [proposalResult, projectResult] of [
     [{ proposal_id: 41, status: 'accepted', lifecycle_version: 4 }, { id: 95 }],
@@ -662,6 +704,100 @@ test('builds a complete read-only review dialog when Designer markup is absent',
   })))
   assert.equal(modal.fields.find((field) => field.getAttribute('data-project-proposal-field') === 'title').textContent, 'Retention launch')
   assert.equal(modal.actions.message.getAttribute('href'), '/messages/alex')
+})
+
+function brandDashboard() {
+  const documentObject = fallbackDocument()
+  const panel = documentObject.body.appendChild(new Element())
+  const wrapper = panel.appendChild(new Element({ 'data-action-element': 'wrapper' }))
+  const onboardingRow = wrapper.appendChild(new Element({ class: 'dash-hero_action-item' }))
+  onboardingRow.rectHeight = 40
+  const onboardingTemplate = onboardingRow.appendChild(
+    new Element({ 'data-project-proposal-template': 'true' }),
+  )
+  const onboardingButton = onboardingRow.appendChild(new Element({ class: 'button_main-wrap' }))
+  onboardingButton.textContent = 'Post Opportunity'
+  const listeners = {}
+  const globalObject = {
+    document: documentObject,
+    location: { pathname: '/brand-dashboard' },
+    crypto: { randomUUID: () => 'decision-key' },
+    addEventListener(name, handler) { listeners[name] = handler },
+    setTimeout(callback) { return callback() },
+    Opp30: { API: { async brandProjectProposalList() { return { project_proposals: [proposal()] } } } },
+  }
+  return { documentObject, globalObject, listeners, onboardingButton, onboardingRow, onboardingTemplate, panel, wrapper }
+}
+
+test('mount never claims the Action Items onboarding row as its proposal template', async () => {
+  const dashboard = brandDashboard()
+
+  const controller = api.mount(dashboard.globalObject)
+  assert.ok(controller)
+  await controller.load()
+
+  assert.equal(dashboard.onboardingTemplate.getAttribute('data-project-proposal-template'), 'true')
+  assert.equal(dashboard.onboardingTemplate.hasAttribute('data-project-request-template'), false)
+  assert.equal(dashboard.onboardingButton.textContent, 'Post Opportunity')
+  assert.equal(dashboard.onboardingButton.hasAttribute('data-project-proposal-open'), false)
+  assert.equal(dashboard.onboardingRow.querySelectorAll('[data-project-proposal-card]').length, 0)
+  assert.equal(dashboard.wrapper.querySelectorAll('[data-project-proposal-card]').length, 0)
+
+  const section = dashboard.documentObject.querySelector('[data-project-request-list]')
+  assert.ok(section)
+  assert.equal(section.parentNode, dashboard.panel)
+  const feedback = dashboard.documentObject.querySelector('[data-project-proposal-global-feedback]')
+  assert.ok(feedback)
+  assert.deepEqual(
+    dashboard.panel.children.map((child) => (child === feedback ? 'feedback' : child === section ? 'requests' : 'action-items')),
+    ['feedback', 'requests', 'action-items'],
+  )
+  assert.equal(dashboard.wrapper.children.includes(section), false)
+  assert.equal(section.getAttribute('aria-labelledby'), 'project-request-list-heading')
+  const heading = section.children[0]
+  assert.equal(heading.getAttribute('id'), 'project-request-list-heading')
+  assert.equal(heading.textContent, 'Project requests')
+  assert.deepEqual(
+    section.querySelectorAll('[data-project-proposal-card]').map((card) => card.getAttribute('data-project-proposal-id')),
+    ['41'],
+  )
+})
+
+test('pending requests stay visible when Action Items hides the onboarding row', async () => {
+  const dashboard = brandDashboard()
+  const controller = api.mount(dashboard.globalObject)
+  await controller.load()
+  const card = dashboard.documentObject
+    .querySelector('[data-project-request-list]')
+    .querySelectorAll('[data-project-proposal-card]')[0]
+  card.rectHeight = 30
+  assert.equal(card.getBoundingClientRect().height, 30)
+
+  const rows = actionItems.brandRows(dashboard.documentObject)
+  assert.equal(rows.post, dashboard.onboardingRow)
+  actionItems.show(rows.post, false)
+
+  assert.equal(dashboard.onboardingRow.hidden, true)
+  assert.equal(dashboard.onboardingRow.style.display, 'none')
+  assert.equal(card.getBoundingClientRect().height, 30)
+  assert.equal(actionItems.countPendingItems(dashboard.wrapper), 0)
+})
+
+test('an authored proposal list host receives the generated row template', async () => {
+  const dashboard = brandDashboard()
+  const authoredList = dashboard.documentObject.body.appendChild(
+    new Element({ 'data-project-request-list': '' }),
+  )
+
+  const controller = api.mount(dashboard.globalObject)
+  await controller.load()
+
+  assert.equal(authoredList.children.length, 2)
+  assert.equal(authoredList.children[1].hasAttribute('data-project-request-template'), true)
+  assert.deepEqual(
+    authoredList.querySelectorAll('[data-project-proposal-card]').map((card) => card.getAttribute('data-project-proposal-id')),
+    ['41'],
+  )
 })
 
 function actionItemsDashboard() {
@@ -714,12 +850,12 @@ test('the failed-load message survives the Action Items panel hiding its empty w
   assert.equal(feedback.getBoundingClientRect().height, 18)
 })
 
-test('adapts the existing Action Items row when nested proposal attributes are absent', () => {
+test('binds an authored row without rewriting its authored copy', () => {
   const card = new Element()
-  const label = card.appendChild(new Element({ class: 'label_text', textContent: 'Onboarding' }))
-  const title = card.appendChild(new Element({ class: 'action-item_title', textContent: 'Have great talent come to you.' }))
+  const label = card.appendChild(new Element({ class: 'label_text', textContent: 'Pending' }))
+  const title = card.appendChild(new Element({ class: 'action-item_title', textContent: 'Project request' }))
   const review = card.appendChild(new Element({ class: 'button_main-wrap' }))
-  review.appendChild(new Element({ textContent: 'Post Opportunity' }))
+  review.appendChild(new Element({ textContent: 'Review request' }))
   const dismiss = card.appendChild(new Element({ class: 'button_main-wrap' }))
   dismiss.appendChild(new Element({ textContent: 'Dismiss' }))
 
@@ -727,6 +863,7 @@ test('adapts the existing Action Items row when nested proposal attributes are a
   assert.equal(label.getAttribute('data-project-proposal-field'), 'status_label')
   assert.equal(title.getAttribute('data-project-proposal-field'), 'title')
   assert.equal(review.hasAttribute('data-project-proposal-open'), true)
+  assert.equal(review.getAttribute('aria-label'), 'Review project request')
   assert.equal(review.children[0].textContent, 'Review request')
   assert.equal(dismiss.hidden, true)
 })
@@ -869,7 +1006,7 @@ test('an in-flight request keeps later proposal actions locked until it settles'
   let settleFirst
   const calls = []
   const proposals = [proposal(), proposal({ proposal_id: 42, title: 'Lifecycle audit' })]
-  const projection = { status: 'success', data: { project_proposals: proposals } }
+  const projection = { project_proposals: proposals }
   const fixture = controllerFixture({
     api: {
       async projectProposalAction(payload) {

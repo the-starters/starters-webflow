@@ -1652,6 +1652,27 @@ test('malformed proposal responses fail and preserve the retry key', async () =>
   assert.equal(loaded.events[0].detail.proposal_id, 91)
 })
 
+test('the direct-project rollback route response is not accepted by this form', async () => {
+  const submitted = []
+  const loaded = load({
+    noDocument: true,
+    counterparties: [{ counterparty_id: 41, company_name: 'Brand', hiring_manager_name: 'Brand Member' }],
+    projectSubmit: async (payload) => {
+      submitted.push({ ...payload })
+      return { project: { id: 669, lifecycle_state: 'contract_draft' }, replayed: false }
+    },
+  })
+  await loaded.api.loadOptions(loaded.form, loaded.window)
+
+  assert.equal(await loaded.api.submit(loaded.form, loaded.window, loaded.document), false)
+  assert.equal(await loaded.api.submit(loaded.form, loaded.window, loaded.document), false)
+
+  assert.equal(loaded.events.length, 0)
+  assert.equal(loaded.tracks.length, 0)
+  assert.equal(submitted[0].idempotency_key, submitted[1].idempotency_key)
+  assert.match(loaded.wrapper.error.textContent, /could not be sent/)
+})
+
 test('an idempotent replay of an already-resolved proposal still reports success', async () => {
   const submitted = []
   let attempt = 0

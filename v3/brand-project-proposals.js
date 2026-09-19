@@ -1,7 +1,10 @@
 /**
  * V3 Brand Dashboard pending Starter project-proposal controller.
  *
- * Webflow owns the Action Items row template. The controller prefers an authored
+ * Webflow owns the proposal row template and its list host, both marked with
+ * proposal-only attributes that no other dashboard controller claims. When
+ * neither is authored the controller builds its own labelled request section
+ * rather than borrowing a row from another panel. It prefers an authored
  * review dialog and creates a read-only fallback dialog when that Designer
  * element is not available yet. It binds the authenticated
  * `brand/project-proposals/mine/v3` projection, paints read-only proposal
@@ -19,7 +22,10 @@
 
   var DASHBOARD_PATH = '/brand-dashboard'
   var MODAL_ID = 'review-project-request'
-  var TEMPLATE_SELECTOR = '[data-project-proposal-template]'
+  var TEMPLATE_ATTR = 'data-project-request-template'
+  var TEMPLATE_SELECTOR = '[' + TEMPLATE_ATTR + ']'
+  var LIST_SELECTOR = '[data-project-request-list]'
+  var FALLBACK_LIST_HEADING_ID = 'project-request-list-heading'
   var CARD_SELECTOR = '[data-project-proposal-card]'
   var FIELD_SELECTOR = '[data-project-proposal-field]'
   var ACTION_SELECTOR = '[data-project-proposal-action]'
@@ -47,9 +53,7 @@
   }
 
   function proposalEnvelope(value) {
-    if (Array.isArray(value && value.project_proposals)) return value
-    if (Array.isArray(value && value.data && value.data.project_proposals)) return value.data
-    return null
+    return Array.isArray(value && value.project_proposals) ? value : null
   }
 
   function sourceProposals(value) {
@@ -348,6 +352,8 @@
       '.project-proposal-review_button.is-primary{background:#1d1f1d;color:#fff;}',
       '.project-proposal-review_button.is-danger{border-color:#b3261e;color:#b3261e;}',
       '.project-proposal-review_feedback{padding:.75rem;background:#f1f3f1;}',
+      '.project-request_list{display:grid;gap:1rem;padding:clamp(1rem,3vw,2rem);}',
+      '.project-request_card{display:grid;gap:.5rem;padding:1rem;border:1px solid #d9ddd9;}',
       '.project-proposal-review_confirm{display:grid;gap:.75rem;padding:1rem;border:1px solid #d9ddd9;}',
       '@media(max-width:47.99rem){.project-proposal-review_grid{grid-template-columns:1fr;}}',
     ].join('')
@@ -479,18 +485,6 @@
     return modal
   }
 
-  function replaceExactText(root, before, after) {
-    if (!root || !root.querySelectorAll) return false
-    var candidates = [root].concat(Array.prototype.slice.call(root.querySelectorAll('*')))
-      .filter(function (element) { return clean(element.textContent) === before })
-      .sort(function (left, right) {
-        return left.querySelectorAll('*').length - right.querySelectorAll('*').length
-      })
-    if (!candidates.length) return false
-    candidates[0].textContent = after
-    return true
-  }
-
   function prepareFallbackCard(card) {
     if (!card || !card.querySelector) return card
     if (!card.querySelector(FIELD_SELECTOR)) {
@@ -505,7 +499,6 @@
       if (opener) {
         opener.setAttribute('data-project-proposal-open', '')
         opener.setAttribute('aria-label', 'Review project request')
-        replaceExactText(opener, 'Post Opportunity', 'Review request')
       }
       if (buttons && buttons[1]) setVisible(buttons[1], false)
     }
@@ -522,6 +515,69 @@
       node = node.parentNode
     }
     return anchor
+  }
+
+  function actionItemsWrapper(documentObject) {
+    return documentObject && documentObject.querySelector
+      ? documentObject.querySelector('[' + ACTION_ELEMENT_ATTR + '="' + ACTION_ITEMS_WRAPPER + '"]')
+      : null
+  }
+
+  function createFallbackRequestList(documentObject) {
+    if (!documentObject || typeof documentObject.createElement !== 'function') return null
+    var list = documentObject.querySelector ? documentObject.querySelector(LIST_SELECTOR) : null
+    if (!list) {
+      if (!documentObject.body) return null
+      ensureFallbackStyles(documentObject)
+      var section = documentObject.createElement('section')
+      setAttributes(section, {
+        'class': 'project-request_list',
+        'data-project-request-list': '',
+        'data-project-proposal-generated': 'true',
+        'aria-labelledby': FALLBACK_LIST_HEADING_ID,
+      })
+      appendElement(documentObject, section, 'h2', {
+        'class': 'project-request_heading',
+        'id': FALLBACK_LIST_HEADING_ID,
+      }, 'Project requests')
+      var anchor = actionItemsWrapper(documentObject)
+      if (anchor && anchor.parentNode && typeof anchor.parentNode.insertBefore === 'function') {
+        anchor.parentNode.insertBefore(section, anchor)
+      } else {
+        documentObject.body.appendChild(section)
+      }
+      list = section
+    }
+    var template = appendElement(documentObject, list, 'article', {
+      'class': 'project-request_card',
+      'data-project-proposal-generated': 'true',
+    })
+    if (!template) return null
+    template.setAttribute(TEMPLATE_ATTR, '')
+    appendElement(documentObject, template, 'p', {
+      'class': 'project-request_status',
+      'data-project-proposal-field': 'status_label',
+    })
+    appendElement(documentObject, template, 'h3', {
+      'class': 'project-request_title',
+      'data-project-proposal-field': 'title',
+    })
+    appendElement(documentObject, template, 'p', {
+      'class': 'project-request_byline',
+      'data-project-proposal-field': 'starter_name',
+    })
+    appendElement(documentObject, template, 'p', {
+      'class': 'project-request_summary',
+      'data-project-proposal-field': 'commercial_summary',
+    })
+    appendElement(documentObject, template, 'button', {
+      'type': 'button',
+      'class': 'project-proposal-review_button is-primary',
+      'data-project-proposal-open': '',
+      'aria-label': 'Review project request',
+    }, 'Review request')
+    setVisible(template, false)
+    return { list: list, template: template }
   }
 
   function ensureGlobalFeedback(documentObject, list) {
@@ -551,7 +607,7 @@
   function clearCards(list) {
     if (!list || !list.querySelectorAll) return
     Array.prototype.forEach.call(list.querySelectorAll(CARD_SELECTOR), function (card) {
-      if (!card.hasAttribute('data-project-proposal-template') && typeof card.remove === 'function') card.remove()
+      if (!card.hasAttribute(TEMPLATE_ATTR) && typeof card.remove === 'function') card.remove()
     })
   }
 
@@ -561,7 +617,7 @@
     setVisible(template, false)
     proposals.forEach(function (proposal) {
       var card = template.cloneNode(true)
-      card.removeAttribute('data-project-proposal-template')
+      card.removeAttribute(TEMPLATE_ATTR)
       card.setAttribute('data-project-proposal-card', '')
       card.setAttribute('data-project-proposal-id', String(proposal.id))
       card.setAttribute('data-action-element', 'item')
@@ -826,7 +882,7 @@
         } catch (refreshError) {
           reloadFailed = true
         }
-        if (reloadFailed) {
+        if (reloadFailed && request.generation === state.generation) {
           var reloadMessage = action === 'accept'
             ? 'Project approved. Refresh the dashboard to load the project.'
             : 'Project request declined. Refresh the dashboard to update the list.'
@@ -932,7 +988,12 @@
     var template = documentObject.querySelector(TEMPLATE_SELECTOR)
     var modal = documentObject.querySelector('[data-modal-target="' + MODAL_ID + '"]')
     var list = template && template.parentNode
-    if (!template || !list) return null
+    if (!template || !list) {
+      var host = createFallbackRequestList(documentObject)
+      if (!host) return null
+      template = host.template
+      list = host.list
+    }
     ensureGlobalFeedback(documentObject, list)
     if (!modal) modal = createFallbackReviewModal(documentObject)
     if (!modal) return null
@@ -967,6 +1028,7 @@
     normalizeProposal: normalizeProposal,
     normalizeProposals: normalizeProposals,
     paintFields: paintFields,
+    createFallbackRequestList: createFallbackRequestList,
     prepareFallbackCard: prepareFallbackCard,
     proposalDisplay: proposalDisplay,
     renderCards: renderCards,

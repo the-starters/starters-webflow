@@ -48,7 +48,8 @@ Brand's own pending requests. The body is `{ "page": 1, "per_page": 12 }`:
 }
 ```
 
-The array may also arrive as `data.project_proposals`. The controller drops any
+`project_proposals` is the only accepted envelope; a response without that
+top-level array is a load failure, not an empty list. The controller drops any
 row missing a positive `proposal_id`, missing a positive `lifecycle_version`, or
 whose `status` is not `awaiting_brand_approval`, and it drops a row the server
 marks neither acceptable nor rejectable. `can_accept` and `can_reject` are the
@@ -95,12 +96,18 @@ route and never reads Memberstack as authority.
 
 ## Designer contract
 
-Webflow owns the Action Items row template. JavaScript binds row data and
-behavior; it does not generate the dashboard markup.
+Webflow owns the proposal row template and its list host. JavaScript binds row
+data and behavior; it does not rewrite markup any other controller owns.
+
+These attributes are proposal-only. In particular this controller never reads
+`data-project-proposal-template`, which `v3/dashboard-action-items.js` already
+owns as the Brand "post your first opportunity" onboarding row and hides once
+the Brand has an opportunity.
 
 | Attribute | Purpose |
 | --- | --- |
-| `data-project-proposal-template` | The authored pending-request row template. Its parent element is the list. Required — with no template the controller does not mount |
+| `data-project-request-template` | The authored pending-request row template. Its parent element is the list |
+| `data-project-request-list` | The list host. Used only when no `data-project-request-template` is authored: the controller appends its own hidden row template here |
 | `data-project-proposal-field="<name>"` | A text slot inside the row or the dialog |
 | `data-project-proposal-open` | The control that opens the review dialog. Added to the row's first link or button when absent |
 | `data-project-proposal-global-feedback` | Page-level status region. It must sit outside the Action Items `data-action-element="wrapper"`, which the shared panel hides entirely once it settles with zero rows. When absent the controller creates it immediately before that wrapper (before the list when no wrapper is authored), so decision feedback and load failures survive both the dialog closing and an empty list |
@@ -115,7 +122,16 @@ Supported field names: `status_label`, `starter_name`, `title`, `service`,
 `invoice_frequency`. Rendered rows also receive `data-project-proposal-id` and
 `data-action-element="item"`, so the shared
 [dashboard Action Items](../../v3/README.md#dashboard-action-items-panel) panel counts
-them.
+them when the authored template sits inside that panel's scope.
+
+With neither attribute authored the controller creates its own labelled
+`<section data-project-request-list aria-labelledby="project-request-list-heading">`
+holding an `<h2>Project requests</h2>` and a generated hidden row template. That
+section is inserted immediately before the Action Items
+`data-action-element="wrapper"` when one exists, and appended to `<body>`
+otherwise. It is never placed inside that wrapper, so the panel's zero-item
+collapse cannot hide pending requests. Generated markup carries
+`data-project-proposal-generated="true"`.
 
 ## Script order
 
@@ -147,12 +163,16 @@ reloads independently, so a failed project-list reload never leaves an accepted
 request rendered as a pending row. A proposal-list response that was requested
 before an `opp30:member-scope-reset` is discarded when it settles after one, so
 the previous member's requests can never paint into the new member's dashboard
-and a stale failure can never overwrite a fresh load.
+and a stale failure can never overwrite a fresh load. The same guard covers the
+post-decision path: once a reset has happened, a settled decision neither
+reloads the lists nor announces its reload-failure copy into the new scope.
 
 - Approved: **Project approved and created.**
 - Declined: **Project request declined.**
 - Approved but the reload failed: **Project approved. Refresh the dashboard to load the project.**
-- Stale or already handled (403/409): **This project request changed or was already handled.**
+- Approved or declined but the reload failed, declined case: **Project request declined. Refresh the dashboard to update the list.**
+- No longer the Brand's request (403): **This project request is no longer available to your Brand account.**
+- Changed or already handled (409): **This request changed or was already handled. Refresh the request before continuing.**
 - Reopening a request already resolved in this session: **This project request was already handled. Refresh the dashboard to update the list.**
 - No decision route on the page: **Project request actions are not available. Reload and try again.**
 - The pending-request list failed to load (malformed envelope, failed page, page cap, or a bridge without `brandProjectProposalList`): the list renders empty and the page-level feedback region reads **Your pending project requests could not be loaded. Refresh the dashboard to try again.** An empty list is never shown silently for a failed load, including when a stale cached `opportunities-3.0.js` is served without the proposal-list route.

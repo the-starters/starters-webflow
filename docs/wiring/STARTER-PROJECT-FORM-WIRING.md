@@ -78,8 +78,21 @@ the Brand already declined reads as declined rather than as still pending.
 
 The pre-proposal routes `projects/options/v3` (`Opp30.API.projectOptions`) and
 `projects/submit/v3` (`Opp30.API.projectDirectSubmit`) stay wired in the bridge
-as the rollback pair for this form. No shipped controller calls them; a rollback
-repoints this form at them instead of deploying a backend change.
+so the direct-project route remains callable without a backend change. No
+shipped controller calls them.
+
+The executable rollback is removing this loader together with the Brand loader
+in [BRAND-PROJECT-PROPOSALS-WIRING.md](BRAND-PROJECT-PROPOSALS-WIRING.md#script-order),
+which returns `/starter-dashboard` to its authored Designer state. Repointing
+this form at `projectDirectSubmit` alone does **not** work and must not be
+attempted as a hotfix: `projects/submit/v3` answers with
+`{ "project": { "id": 669, "lifecycle_state": "contract_draft" } }` and no
+`proposal` object, which this form's response validation rejects, so every
+Starter would be told the request could not be sent for a project that was in
+fact created, and the retained idempotency key would replay onto the same row
+forever. A repoint therefore also requires restoring the direct-create response
+validation, success copy, and `starters:project-created` event that this
+release removed.
 
 The endpoint must not create a `core_projects_v3` row, a `project.created`
 lifecycle event, or a PandaDoc outbox job. Those belong to Brand acceptance —
