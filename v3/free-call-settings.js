@@ -452,6 +452,18 @@
     visual.setAttribute('class', next.join(' '))
   }
 
+  // canonical-profile-loader.js hydrates these same step 6 controls from the legacy profile
+  // record and dispatches native input and change events on each one. Those are not member
+  // gestures, so the shared hydration window - the same one the page dirty state answers with -
+  // decides what counts as an Edit Profile change. Without it a freshly hydrated page reports
+  // unsaved call settings, and a failed canonical read then wedges every other step 6 field.
+  function markEditProfileDirty() {
+    if (!editProfileMode) return
+    const dirtyState = window.__tsProfileDirtyState
+    if (dirtyState && typeof dirtyState.isHydrating === 'function' && dirtyState.isHydrating()) return
+    editProfileDirty = true
+  }
+
   // Edit Profile derives the dependent field's enabled and visible state from a radio
   // change, so a canonical write has to announce itself the same way a member click does.
   function notifyRadioChange(item) {
@@ -1093,7 +1105,7 @@
       pair.enabled.addEventListener('change', function () {
         if (applyingCanonicalRender) return
         if (pair.enabled.checked) explicitIntent = 'enabled'
-        if (editProfileMode) editProfileDirty = true
+        markEditProfileDirty()
         setRadioChecked(pair.enabled, pair.enabled.checked)
         if (pair.enabled.checked) setRadioChecked(pair.disabled, false)
       })
@@ -1102,7 +1114,7 @@
       pair.disabled.addEventListener('change', function () {
         if (applyingCanonicalRender) return
         if (pair.disabled.checked) explicitIntent = 'disabled'
-        if (editProfileMode) editProfileDirty = true
+        markEditProfileDirty()
         setRadioChecked(pair.disabled, pair.disabled.checked)
         if (pair.disabled.checked) setRadioChecked(pair.enabled, false)
       })
@@ -1111,7 +1123,7 @@
     if (descriptionInput) {
       descriptionInput.addEventListener('input', function () {
         if (applyingCanonicalRender) return
-        if (editProfileMode) editProfileDirty = true
+        markEditProfileDirty()
       })
     }
     bindOpenAction()

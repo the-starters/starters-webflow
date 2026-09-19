@@ -212,7 +212,10 @@ root, so each stamps its own radio hook (`data-free-call-settings-input` and
 `data-paid-call-settings-input`) rather than the shared dashboard name. A canonical render
 announces its radio answer with a `change` event so the page re-derives the dependent field's
 enabled and visible state, and a controller that reports no changes never gates the step: a
-failed call-settings read must not block Hourly Rate, Availability, Retainer, or Services. Retainer controls remain owned by
+failed call-settings read must not block Hourly Rate, Availability, Retainer, or Services. Both
+controllers read the same `isHydrating()` window before marking themselves changed, because the
+profile loader replays `input` and `change` on those five controls while it restores the legacy
+record; a hydration write is never a member change. Retainer controls remain owned by
 the profile form even when Webflow markup places them in a wrapper shared with a call
 field. See the [Free Call settings contract](../../docs/wiring/FREE-CALL-SETTINGS-WIRING.md)
 and [Paid Call settings contract](../../docs/wiring/PAID-CALL-SETTINGS-WIRING.md). The root

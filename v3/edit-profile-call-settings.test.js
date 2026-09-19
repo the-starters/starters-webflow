@@ -5,6 +5,10 @@ const vm = require('node:vm')
 
 const FREE_SOURCE = fs.readFileSync(require.resolve('./free-call-settings.js'), 'utf8')
 const PAID_SOURCE = fs.readFileSync(require.resolve('./paid-call-settings.js'), 'utf8')
+const PROFILE_LOADER_SOURCE = fs.readFileSync(
+  require.resolve('./starter-edit-profile/canonical-profile-loader.js'),
+  'utf8',
+)
 const API_BASE = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:tCpV3oqd'
 
 class El {
@@ -166,6 +170,7 @@ function load({
   failGets = false,
   pageActions = false,
   prepare = null,
+  profileDirtyState = false,
 } = {}) {
   const dom = buildStepSix()
   if (pageActions) {
@@ -252,6 +257,9 @@ function load({
     document,
     window,
   })
+  // The page embeds the profile loader alongside the call controllers, and the loader owns the
+  // shared hydration window both of them read.
+  if (profileDirtyState) vm.runInContext(PROFILE_LOADER_SOURCE, context)
   order.forEach((name) => {
     vm.runInContext(name === 'free' ? FREE_SOURCE : PAID_SOURCE, context)
   })
@@ -366,4 +374,54 @@ test('the Free controller never reaches profile CRUD controls outside step 6', a
   assert.equal(result.dom.pageSubmit.style.pointerEvents, undefined)
   assert.equal(result.dom.pageSubmit.style.opacity, undefined)
   assert.equal(result.dom.pageOpen.listeners.has('click'), false)
+})
+
+// canonical-profile-loader.js writes the legacy profile record into these same five controls
+// and announces each write with the native input + change pair every restored control gets.
+function replayProfileLoaderHydration(dom) {
+  function writeRadio(checked, unchecked) {
+    checked.checked = true
+    unchecked.checked = false
+    checked.dispatchEvent({ type: 'input' })
+    checked.dispatchEvent({ type: 'change' })
+  }
+  function writeText(input, value) {
+    input.value = value
+    input.dispatchEvent({ type: 'input' })
+    input.dispatchEvent({ type: 'change' })
+  }
+  writeRadio(dom.freeNo, dom.freeYes)
+  writeText(dom.freeDescription, '')
+  writeRadio(dom.paidNo, dom.paidYes)
+  writeText(dom.paidDescription, '')
+  writeText(dom.paidRate, '')
+}
+
+test('the profile loader hydrating step 6 is not a member change to call settings', async () => {
+  const result = load({
+    profileDirtyState: true,
+    failGets: true,
+    prepare: (dom) => {
+      dom.freeNo.checked = false
+      dom.freeYes.checked = true
+      dom.freeDescription.value = 'Free growth review'
+    },
+  })
+  await settle()
+
+  const dirtyState = result.window.__tsProfileDirtyState
+  assert.equal(dirtyState.isHydrating(), true)
+  replayProfileLoaderHydration(result.dom)
+
+  // Neither controller may claim unsaved work the member never made: with the canonical read
+  // failed, a claimed change is what blocks Hourly Rate, Availability and Retainer from saving.
+  assert.equal(result.window.StarterFreeCallSettings.hasChanges(), false)
+  assert.equal(result.window.StarterPaidCallSettings.hasChanges(), false)
+
+  // A real gesture after hydration still counts, and still only for the controller that owns it.
+  dirtyState.finishHydration()
+  result.dom.freeDescription.value = 'Updated free introduction'
+  result.dom.freeDescription.dispatchEvent({ type: 'input' })
+  assert.equal(result.window.StarterFreeCallSettings.hasChanges(), true)
+  assert.equal(result.window.StarterPaidCallSettings.hasChanges(), false)
 })
