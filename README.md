@@ -569,20 +569,12 @@ Xano ID. Existing `/opportunities/<id>` URLs remain supported as the
 backwards-compatible fallback, including detail pages that have not yet added
 `data-opp-page-id`. V2 opportunity scripts and query-parameter URLs are unchanged.
 
-For a paid brand, opportunity detail remains owner-scoped after the role-level route
-guard succeeds. Both `/opportunities/<slug>` and the legacy
-`/opportunities-details---brand-view?opp=<id>` entry point probe the authenticated
-brand's applicant list. A `403` or `404` redirects a non-owner to the merged
-`/opportunities` feed; server, transient, and network failures do not redirect
-and therefore cannot bounce the actual owner during an outage. Xano remains the
-authorization boundary. The legacy route also sends a brand to the merged
-`/opportunities` feed when its `opp` parameter is missing or nonnumeric, so an
-entry point with no usable opportunity ID never dead-ends. The legacy
-no-route-guard fallback in `gateOrRedirect` uses the same merged feed for a
-brand-custom-field member who lands on a Talent-expected page.
-
-For console checks, `window.Opp30.redirectForeignBrandToFeed(error)` applies that
-status policy and returns whether it redirected.
+For a paid brand, opportunity detail stays owner-scoped after the role-level route
+guard succeeds, and Xano remains the authorization boundary. The ownership probe,
+its redirect and fail-open policy on both `/opportunities/<slug>` and the legacy
+`/opportunities-details---brand-view?opp=<id>` entry point, and the console check
+live in
+[`docs/wiring/ROUTE-GUARD-WIRING.md`](docs/wiring/ROUTE-GUARD-WIRING.md#brand-opportunity-detail-ownership).
 
 ## Opportunities 3.0 Create and Edit Forms
 

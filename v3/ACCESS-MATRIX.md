@@ -358,13 +358,11 @@ separate owner:
 | Not-yet-quizzed free Brand on the homepage | `v3/route-guard.js` homepage branch of `bounceTargetFor` | Settled 2026-08-03: a free Brand with an empty `starter-quiz` field stays on `/` instead of being pushed to `/quiz`. Homepage only — the login pages and `/sign-up` still send them to `/quiz`, and guarded pages still use `brandFreeHome` |
 
 `Allow` on `/opportunities/<slug>` is the route guard's role-level decision, not
-brand ownership authorization. After a paid brand enters either that route or the
-legacy `/opportunities-details---brand-view?opp=<id>` route, `opportunities-3.0.js`
-uses the owner-scoped applicant-list probe. A `403` or `404` redirects the brand to
-the merged `/opportunities` feed, as does the legacy route when its `opp` parameter
-is missing or nonnumeric. Other failures do not redirect: the slug route leaves
-owner-only UI hidden, while the legacy route surfaces the error as before. Xano
-enforces the underlying ownership boundary.
+brand ownership authorization. Xano enforces the underlying ownership boundary.
+The owner-scoped applicant-list probe that `opportunities-3.0.js` runs afterwards
+on that route and on the legacy `/opportunities-details---brand-view?opp=<id>`
+route, and the redirect policy for its failures, are owned by
+[ROUTE-GUARD-WIRING.md](../docs/wiring/ROUTE-GUARD-WIRING.md#brand-opportunity-detail-ownership).
 
 ## Open decisions
 
