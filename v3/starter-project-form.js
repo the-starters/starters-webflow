@@ -769,7 +769,7 @@
     if (current.optionsLoaded) return Promise.resolve(current.options)
     var generation = current.generation
     var optionsGeneration = current.optionsGeneration
-    var request = projectApi(globalObject, 'projectOptions')
+    var request = projectApi(globalObject, 'projectProposalOptions')
     if (!request) {
       setStatus(form, 'error', 'The Brand list is not available. Reload and try again.')
       return Promise.resolve([])

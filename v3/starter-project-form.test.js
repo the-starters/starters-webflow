@@ -303,7 +303,7 @@ function load(options = {}) {
           freelancer_information: 'Builds durable growth systems.',
         }
       }),
-      projectOptions: options.projectOptions || (async (payload) => {
+      projectProposalOptions: options.projectOptions || (async (payload) => {
         calls.options.push(payload)
         return { counterparties: options.counterparties || [] }
       }),
