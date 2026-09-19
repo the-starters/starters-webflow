@@ -104,18 +104,40 @@
     return id ? '/messages?with=' + encodeURIComponent(id) : '#'
   }
 
+  var PROPOSAL_STATUS_COPY = {
+    awaiting_brand_approval: {
+      title: 'Project request sent',
+      message: 'The Brand can review your project terms. A project and contract are created only after approval.',
+    },
+    accepted: {
+      title: 'Project request approved',
+      message: 'The Brand approved this request. Your project and contract are being prepared.',
+    },
+    rejected: {
+      title: 'Project request declined',
+      message: 'The Brand declined this request. Adjust the terms and send a new request.',
+    },
+    withdrawn: {
+      title: 'Project request withdrawn',
+      message: 'This request was withdrawn. Send a new request when the terms are ready.',
+    },
+    expired: {
+      title: 'Project request expired',
+      message: 'This request expired before the Brand responded. Send a new request when the terms are ready.',
+    },
+  }
+
+  function proposalStatusCopy(proposal) {
+    var status = clean(proposal && proposal.status).toLowerCase()
+    return Object.prototype.hasOwnProperty.call(PROPOSAL_STATUS_COPY, status)
+      ? PROPOSAL_STATUS_COPY[status]
+      : null
+  }
+
   function createdProposal(result) {
     var proposal = result && result.proposal
-    var status = clean(proposal && proposal.status).toLowerCase()
-    var validStatus = [
-      'awaiting_brand_approval',
-      'accepted',
-      'rejected',
-      'withdrawn',
-      'expired',
-    ].indexOf(status) !== -1
     return result && result.kind === 'proposal' && positiveId(proposal && proposal.id) &&
-      positiveId(proposal && proposal.lifecycle_version) && validStatus
+      positiveId(proposal && proposal.lifecycle_version) && proposalStatusCopy(proposal)
       ? proposal
       : null
   }
@@ -942,17 +964,16 @@
     current.keyPayload = ''
     var proposal = result && result.proposal
     var proposalId = positiveId(proposal && proposal.id)
+    var copy = proposalStatusCopy(proposal) || PROPOSAL_STATUS_COPY.awaiting_brand_approval
     var success = stateElement(form, SUCCESS_SELECTOR)
     if (success) {
       var titles = success.querySelectorAll ? success.querySelectorAll('[data-project-success-title], .generate-contract_success-text') : []
-      Array.prototype.forEach.call(titles, function (title) { title.textContent = 'Project request sent' })
+      Array.prototype.forEach.call(titles, function (title) { title.textContent = copy.title })
       var message = success.querySelector && (
         success.querySelector('[data-project-success-message]') ||
         success.querySelector(LEGACY_SUCCESS_MESSAGE_SELECTOR)
       )
-      if (message) {
-        message.textContent = 'The Brand can review your project terms. A project and contract are created only after approval.'
-      }
+      if (message) message.textContent = copy.message
       var successLink = success.querySelector && success.querySelector(SUCCESS_LINK_SELECTOR)
       if (successLink && successLink.setAttribute) successLink.setAttribute('href', '/starter-dashboard#projects')
       success.hidden = false

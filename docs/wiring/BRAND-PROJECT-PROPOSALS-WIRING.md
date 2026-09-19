@@ -54,11 +54,11 @@ whose `status` is not `awaiting_brand_approval`, and it drops a row the server
 marks neither acceptable nor rejectable. `can_accept` and `can_reject` are the
 only authority for the dialog's controls; the browser never infers them.
 
-The controller requests 12 rows per page and follows `nextPage` until every
-pending request is loaded. When `nextPage` is absent, it uses `itemsTotal` to
-continue only while rows remain. It rejects a non-advancing or malformed page
-and stops after 100 pages, so a request after the first 12 remains reachable
-without allowing an unbounded browser loop.
+The controller requests 12 rows per page and follows `nextPage` alone until the
+server stops returning one, so a request after the first 12 remains reachable.
+`nextPage` is the only continuation signal; `itemsTotal` is never used to keep
+paging. A page that does not advance is rejected, a malformed page is rejected,
+and the loop stops after 100 pages, so the browser can never loop unbounded.
 
 `POST projects/proposal-action/v3` takes
 `{ proposal_id, expected_version, action, idempotency_key }` where `action` is
@@ -69,10 +69,21 @@ idempotent on `idempotency_key`. On accept it returns the created project:
 { "proposal": { "id": 72, "status": "accepted", "lifecycle_version": 4 }, "project": { "id": 669 }, "replayed": false }
 ```
 
+A decline returns the settled proposal and no project:
+
+```json
+{ "proposal": { "id": 72, "status": "rejected", "lifecycle_version": 4 }, "replayed": false }
+```
+
+`project` may be absent, `null`, or an empty object on a decline. Any of those
+is accepted. A decline that carries a positive project ID is rejected as
+malformed, because a decline must never create a project.
+
 The browser reports success only when the returned proposal ID matches the
 request, the lifecycle version advanced, the terminal status matches the
-action, and acceptance includes a positive project ID. A fulfilled malformed
-response stays in retry state and reuses the same idempotency key.
+action, acceptance includes a positive project ID, and a decline carries no
+project ID. A fulfilled malformed response stays in retry state and reuses the
+same idempotency key.
 
 Both routes are authenticated `api:opp30` routes reached through the
 `Opp30.API` bridge in `opportunities-3.0.js`. The controller calls no other
@@ -132,6 +143,7 @@ project list waits for the next `pageshow`, `focus`, or visibility refresh.
 - Stale or already handled (403/409): **This project request changed or was already handled.**
 - Reopening a request already resolved in this session: **This project request was already handled. Refresh the dashboard to update the list.**
 - No decision route on the page: **Project request actions are not available. Reload and try again.**
+- The pending-request list failed to load (malformed envelope, failed page, or page cap): the list renders empty and the page-level feedback region reads **Your pending project requests could not be loaded. Refresh the dashboard to try again.** An empty list is never shown silently for a failed load.
 
 Raw server text is never shown. Decision events
 `starters:project-proposal-accepted` and `starters:project-proposal-rejected`

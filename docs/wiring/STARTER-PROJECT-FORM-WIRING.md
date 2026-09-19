@@ -31,11 +31,11 @@ Airtable, Make, or a legacy TalkJS table.
 
 ## Backend contract required before Webflow wiring
 
-`POST projects/proposal-options/v3` must authenticate the Starter and return only paid Brands
-with a current active `talkjs_brand_message` relationship. The shared
-`projects/options/v3` route remains the direct-hire option source.
-authorized by the server-verified V3 Brand-to-Starter message relationship
-projection:
+`POST projects/proposal-options/v3` must authenticate the Starter and return
+only paid Brands with a current active `talkjs_brand_message` relationship. It
+is the dedicated option source for this form, and the only route the form reads
+counterparties from. It returns the server-verified V3 Brand-to-Starter message
+relationship projection:
 
 ```json
 {
@@ -71,7 +71,16 @@ relationship and create one proposal row awaiting Brand approval:
 
 The browser requires `kind: "proposal"`, a positive proposal ID and lifecycle
 version, and a known proposal status. This keeps idempotent terminal replays
-valid while a fulfilled malformed response remains a retryable failure.
+valid while a fulfilled malformed response remains a retryable failure. The
+known statuses are `awaiting_brand_approval`, `accepted`, `rejected`,
+`withdrawn`, and `expired`; the success panel paints copy for the returned
+status, so a replay of a request the Brand already declined reads as declined
+rather than as still pending.
+
+The pre-proposal routes `projects/options/v3` (`Opp30.API.projectOptions`) and
+`projects/submit/v3` (`Opp30.API.projectDirectSubmit`) stay wired in the bridge
+as the rollback pair for this form. No shipped controller calls them; a rollback
+repoints this form at them instead of deploying a backend change.
 
 The endpoint must not create a `core_projects_v3` row, a `project.created`
 lifecycle event, or a PandaDoc outbox job. Those belong to Brand acceptance —

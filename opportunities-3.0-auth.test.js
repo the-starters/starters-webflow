@@ -360,6 +360,31 @@ test('project options and canonical Starter submission use authenticated V3 rout
   assert.deepEqual(JSON.parse(requests[2].init.body), payload)
 })
 
+test('the direct Starter submit route stays callable as the proposal rollback path', async () => {
+  const requests = []
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      requests.push({ url, init })
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/projects/submit/v3')) {
+        return response({ project: { id: 669, lifecycle_state: 'contract_draft' }, replayed: false })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    { member: paidBrandMember },
+  )
+  const payload = { brand_id: 81, title: 'Launch project', idempotency_key: 'starter-rollback-test' }
+
+  const result = await bridge.API.projectDirectSubmit(payload)
+
+  assert.equal(result.project.id, 669)
+  assert.equal(requests[1].url, 'https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30/projects/submit/v3')
+  assert.equal(requests[1].init.method, 'POST')
+  assert.equal(requests[1].init.headers.Authorization, 'Bearer xano-token')
+  assert.deepEqual(JSON.parse(requests[1].init.body), payload)
+})
+
 test('authenticated Starter profile uses the V3 self-profile route', async () => {
   const requests = []
   const bridge = await loadBridge(

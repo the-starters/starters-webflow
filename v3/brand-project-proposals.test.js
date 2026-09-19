@@ -287,6 +287,132 @@ test('refresh loads every proposal page so requests after the first 12 remain re
   assert.ok(fixture.controller.state.proposals.some((item) => item.id === 112))
 })
 
+test('refresh stops at the last nextPage and never pages on itemsTotal alone', async () => {
+  const pages = []
+  const fixture = controllerFixture({
+    api: {
+      async brandProjectProposalList(page, perPage) {
+        pages.push([page, perPage])
+        return {
+          project_proposals: [proposal({ proposal_id: 200 + page })],
+          itemsTotal: 40,
+          nextPage: null,
+        }
+      },
+    },
+  })
+
+  const result = await fixture.controller.refresh()
+
+  assert.deepEqual(pages, [[1, 12]])
+  assert.equal(result.project_proposals.length, 1)
+  assert.equal(result.itemsTotal, 1)
+  assert.deepEqual(fixture.controller.state.proposals.map((item) => item.id), [201])
+})
+
+test('refresh rejects a nextPage that does not advance', async () => {
+  const pages = []
+  const fixture = controllerFixture({
+    api: {
+      async brandProjectProposalList(page) {
+        pages.push(page)
+        return { project_proposals: [proposal({ proposal_id: 300 + page })], nextPage: 1 }
+      },
+    },
+  })
+
+  await assert.rejects(() => fixture.controller.refresh(), /did not advance/)
+  assert.deepEqual(pages, [1])
+})
+
+test('refresh stops a server that keeps advancing nextPage forever', async () => {
+  let requests = 0
+  const fixture = controllerFixture({
+    api: {
+      async brandProjectProposalList(page) {
+        requests += 1
+        return { project_proposals: [proposal({ proposal_id: 400 + page })], nextPage: page + 1 }
+      },
+    },
+  })
+
+  await assert.rejects(() => fixture.controller.refresh(), /safe page limit/)
+  assert.equal(requests, 100)
+})
+
+test('a failed list load renders an actionable message instead of a silent empty list', async () => {
+  const fixture = controllerFixture({
+    api: { async brandProjectProposalList() { return { items: [proposal()] } } },
+  })
+  fixture.controller.render(fixture.projection)
+
+  assert.equal(await fixture.controller.load(), null)
+
+  assert.deepEqual(fixture.controller.state.proposals, [])
+  assert.equal(fixture.list.children.length, 1)
+  assert.match(fixture.globalFeedback.textContent, /could not be loaded/)
+  assert.equal(fixture.globalFeedback.hidden, false)
+  assert.equal(fixture.globalFeedback.getAttribute('role'), 'alert')
+})
+
+test('a successful list load clears a previous load failure message', async () => {
+  let attempt = 0
+  const fixture = controllerFixture({
+    api: {
+      async brandProjectProposalList() {
+        attempt += 1
+        if (attempt === 1) throw Object.assign(new Error('offline'), { status: 0 })
+        return { project_proposals: [proposal()] }
+      },
+    },
+  })
+
+  assert.equal(await fixture.controller.load(), null)
+  assert.match(fixture.globalFeedback.textContent, /could not be loaded/)
+
+  const reloaded = await fixture.controller.load()
+
+  assert.equal(reloaded.project_proposals.length, 1)
+  assert.equal(fixture.globalFeedback.textContent, '')
+  assert.equal(fixture.globalFeedback.hidden, true)
+})
+
+test('a decline settles whether or not the response carries an empty project field', async () => {
+  for (const project of [null, undefined, {}, { id: 0 }]) {
+    const fixture = controllerFixture({
+      api: {
+        async projectProposalAction() {
+          return { proposal: { id: 41, status: 'rejected', lifecycle_version: 4 }, project, replayed: false }
+        },
+        async brandProjectProposalList() { return { project_proposals: [] } },
+      },
+    })
+    fixture.controller.render(fixture.projection)
+    fixture.controller.open(fixture.controller.state.proposals[0])
+
+    assert.equal(await fixture.controller.act('reject'), true, String(project))
+    assert.equal(fixture.globalFeedback.textContent, 'Project request declined.')
+    assert.deepEqual(fixture.projectProjectionReloads, [])
+  }
+})
+
+test('a decline that reports a created project fails closed', async () => {
+  const fixture = controllerFixture({
+    api: {
+      async projectProposalAction() {
+        return { proposal: { id: 41, status: 'rejected', lifecycle_version: 4 }, project: { id: 95 }, replayed: false }
+      },
+      async brandProjectProposalList() { return { project_proposals: [] } },
+    },
+  })
+  fixture.controller.render(fixture.projection)
+  fixture.controller.open(fixture.controller.state.proposals[0])
+
+  assert.equal(await fixture.controller.act('reject'), false)
+  assert.match(fixture.globalFeedback.textContent, /could not be updated/)
+  assert.deepEqual(fixture.controller.state.proposals.map((item) => item.id), [41])
+})
+
 test('refresh rejects a malformed fulfilled list response without clearing rendered cards', async () => {
   const fixture = controllerFixture({
     api: { async brandProjectProposalList() { return { items: [proposal()] } } },

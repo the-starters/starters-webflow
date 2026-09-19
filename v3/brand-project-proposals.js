@@ -29,6 +29,8 @@
   var CONFIRM_SELECTOR = '[data-project-proposal-confirm="reject"]'
   var FALLBACK_STYLE_ID = 'brand-project-proposal-fallback-styles'
   var MEMBER_RESET_EVENT = 'opp30:member-scope-reset'
+  var MAX_PROPOSAL_PAGES = 100
+  var LIST_FAILURE_MESSAGE = 'Your pending project requests could not be loaded. Refresh the dashboard to try again.'
 
   function clean(value) {
     return String(value == null ? '' : value).trim()
@@ -221,7 +223,7 @@
     if (action === 'accept') {
       if (status !== 'accepted' || !positiveId(resultProject && (resultProject.id || resultProject.project_id))) return null
     } else if (action === 'reject') {
-      if (status !== 'rejected' || resultProject != null) return null
+      if (status !== 'rejected' || positiveId(resultProject && (resultProject.id || resultProject.project_id))) return null
     } else {
       return null
     }
@@ -709,25 +711,32 @@
       var page = 1
       var perPage = 12
       var items = []
-      var seenPages = {}
-      var total = null
-      while (page && !seenPages[page]) {
-        if (Object.keys(seenPages).length >= 100) throw new Error('Proposal pagination exceeded its safe page limit')
-        seenPages[page] = true
+      var loaded = 0
+      while (page) {
+        if (loaded >= MAX_PROPOSAL_PAGES) throw new Error('Proposal pagination exceeded its safe page limit')
+        loaded += 1
         var result = await api.brandProjectProposalList(page, perPage)
         var envelope = proposalEnvelope(result)
         if (!envelope) throw new Error('Proposal list returned an invalid response')
         items = items.concat(envelope.project_proposals)
-        var parsedTotal = Number(envelope.itemsTotal)
-        if (Number.isInteger(parsedTotal) && parsedTotal >= 0) total = parsedTotal
         var next = positiveId(envelope.nextPage)
-        if (!next && total !== null && items.length < total) next = page + 1
         if (next && next <= page) throw new Error('Proposal pagination did not advance')
         page = next
       }
-      var combined = { project_proposals: items, itemsTotal: total === null ? items.length : total, nextPage: null }
+      var combined = { project_proposals: items, itemsTotal: items.length, nextPage: null }
       render(combined)
       return combined
+    }
+
+    async function load() {
+      announce('', false)
+      try {
+        return await refresh()
+      } catch (error) {
+        render({ project_proposals: [] })
+        announce(LIST_FAILURE_MESSAGE, true)
+        return null
+      }
     }
 
     async function reloadProjectProjection() {
@@ -877,6 +886,7 @@
       act: act,
       close: close,
       destroy: destroy,
+      load: load,
       open: open,
       refresh: refresh,
       render: render,
@@ -905,10 +915,10 @@
       modal: modal,
       api: api,
     })
-    controller.refresh().catch(function () { controller.render({ project_proposals: [] }) })
+    controller.load()
     globalObject.addEventListener(MEMBER_RESET_EVENT, function () {
       controller.reset()
-      globalObject.setTimeout(function () { controller.refresh().catch(function () {}) }, 0)
+      globalObject.setTimeout(function () { controller.load() }, 0)
     })
     globalObject.StartersBrandProjectProposalsV3 = controller
     return controller

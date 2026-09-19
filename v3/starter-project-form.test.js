@@ -1678,6 +1678,59 @@ test('an idempotent replay of an already-resolved proposal still reports success
   assert.equal(loaded.wrapper.success.getAttribute('aria-hidden'), 'false')
 })
 
+test('a replayed proposal paints copy for the status the server returned', async () => {
+  const cases = [
+    ['awaiting_brand_approval', 'Project request sent', /created only after approval/],
+    ['accepted', 'Project request approved', /project and contract are being prepared/],
+    ['rejected', 'Project request declined', /Adjust the terms and send a new request/],
+    ['withdrawn', 'Project request withdrawn', /was withdrawn/],
+    ['expired', 'Project request expired', /expired before the Brand responded/],
+  ]
+  for (const [status, title, messagePattern] of cases) {
+    const loaded = load({
+      noDocument: true,
+      counterparties: [{ counterparty_id: 31, company_name: 'Brand', hiring_manager_name: 'Brand Member' }],
+      projectSubmit: async () => ({
+        kind: 'proposal',
+        proposal: { id: 88, status, lifecycle_version: 2 },
+        replayed: true,
+      }),
+    })
+    await loaded.api.loadOptions(loaded.form, loaded.window)
+
+    assert.equal(await loaded.api.submit(loaded.form, loaded.window, loaded.document), true)
+
+    assert.deepEqual(
+      loaded.wrapper.success.successTitles.map((element) => element.textContent),
+      [title, title],
+      status,
+    )
+    assert.match(
+      loaded.wrapper.success.querySelector('[data-project-success-message]').textContent,
+      messagePattern,
+      status,
+    )
+  }
+})
+
+test('an unknown proposal status is not reported as a sent request', async () => {
+  const loaded = load({
+    noDocument: true,
+    counterparties: [{ counterparty_id: 31, company_name: 'Brand', hiring_manager_name: 'Brand Member' }],
+    projectSubmit: async () => ({
+      kind: 'proposal',
+      proposal: { id: 88, status: 'queued_for_review', lifecycle_version: 2 },
+      replayed: true,
+    }),
+  })
+  await loaded.api.loadOptions(loaded.form, loaded.window)
+
+  assert.equal(await loaded.api.submit(loaded.form, loaded.window, loaded.document), false)
+  assert.equal(loaded.events.length, 0)
+  assert.deepEqual(loaded.wrapper.success.successTitles.map((element) => element.textContent), ['', ''])
+  assert.match(loaded.wrapper.error.textContent, /could not be sent/)
+})
+
 test('a rejected Brand authorization is invalidated before another submit', async () => {
   let optionsRequest = 0
   const loaded = load({
