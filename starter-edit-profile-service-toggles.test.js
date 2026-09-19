@@ -132,7 +132,13 @@ function boot({
   if (legacyCallControls && shareRetainerRateWrapper) canonicalCallControls.push(paidCallRateField)
   const stepSix = {
     querySelector(selector) {
-      return selector === '[data-call-settings-profile-notice]' ? {} : null
+      if (selector === '[data-call-settings-profile-notice]') return null
+      const byName = {
+        '[name="free-call-description"]': freeCallDescriptionField,
+        '[name="paid-call-description"]': paidCallDescriptionField,
+        '[name="paid-call-rate"]': paidCallRateField,
+      }
+      return byName[selector] || null
     },
     querySelectorAll() { return canonicalCallControls },
     appendChild() {},
@@ -327,23 +333,22 @@ test('a second hydration pass after a reload still preserves declined descriptio
   assert.equal(harness.fields.retainerDescription.required, false)
 })
 
-test('a unified services section never hands Free or Paid Call settings back to this form', () => {
+test('a unified services section keeps Free and Paid Call settings editable in this form', () => {
   const harness = boot({ unifiedServices: true, callSettingsStep: true, paidCalls: 'no', freeCalls: 'no' })
   harness.hydrate()
   assert.equal(harness.fields.paidCallDescription.disabled, true)
   assert.equal(harness.fields.freeCallDescription.disabled, true)
 
-  // Showing a call group enables the controls inside it, which would take these settings back
-  // from the dashboard. They stay locked whichever way the toggle goes.
+  // Each canonical call controller owns its fields and the profile PATCH omits them.
   harness.choosePaidCalls('yes')
-  assert.equal(harness.fields.paidCallDescription.disabled, true)
+  assert.equal(harness.fields.paidCallDescription.disabled, false)
   harness.chooseFreeCalls('yes')
-  assert.equal(harness.fields.freeCallDescription.disabled, true)
+  assert.equal(harness.fields.freeCallDescription.disabled, false)
   assert.equal(harness.fields.paidCallDescription.required, false)
   assert.equal(harness.fields.freeCallDescription.required, false)
 })
 
-test('a wrapper shared with a Retainer control never hands its call field back on a Retainer toggle', () => {
+test('a wrapper shared with a Retainer control preserves the Paid Call toggle state', () => {
   const harness = boot({
     unifiedServices: true,
     callSettingsStep: true,
@@ -351,30 +356,25 @@ test('a wrapper shared with a Retainer control never hands its call field back o
     retainers: 'no',
   })
   harness.hydrate()
-  assert.equal(harness.fields.paidCallRate.disabled, true)
+  assert.equal(harness.fields.paidCallRate.disabled, false)
 
-  // Showing the Retainer rate enables every control in its wrapper, including the Paid Call
-  // rate the dashboard owns. The member must never get an editable copy of it here.
+  // Retainer visibility must not disable a Paid Call rate while Paid Calls remain on.
   harness.chooseRetainers('yes')
-  assert.equal(harness.fields.paidCallRate.disabled, true)
-  assert.equal(harness.fields.paidCallRate.required, false)
+  assert.equal(harness.fields.paidCallRate.disabled, false)
   assert.equal(harness.fields.retainerRate.disabled, false)
 
   harness.chooseRetainers('no')
-  assert.equal(harness.fields.paidCallRate.disabled, true)
+  assert.equal(harness.fields.paidCallRate.disabled, false)
 })
 
-test('re-applying dashboard ownership installs the hiding rule exactly once', () => {
+test('re-applying canonical call ownership never installs a hiding rule', () => {
   const harness = boot({ unifiedServices: true, callSettingsStep: true })
   harness.hydrate()
   harness.choosePaidCalls('yes')
   harness.chooseFreeCalls('yes')
   harness.chooseRetainers('no')
 
-  const styles = harness.ownershipStyles()
-  assert.equal(styles.length, 1)
-  assert.equal(styles[0].getAttribute('data-call-settings-profile-style'), '')
-  assert.equal(styles[0].textContent, '[data-call-settings-owned]{display:none!important}')
+  assert.deepEqual(harness.ownershipStyles(), [])
 })
 
 test('a step that no longer carries the legacy call controls installs no hiding rule', () => {

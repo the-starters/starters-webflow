@@ -21,7 +21,7 @@
   const STATUS_ATTRIBUTE = 'data-free-call-settings'
   const FIXED_DURATION_MINUTES = 30
   const ROOT_WAIT_TIMEOUT_MS = 10000
-  const FREE_RADIO_GROUP_NAME = 'consulting-calls-free'
+  const FREE_RADIO_GROUP_NAMES = ['consulting-calls-free', 'free-consulting-calls']
   const BUSY_STYLE_ID = 'ts-call-settings-busy-style'
 
   const hostname = window.location.hostname
@@ -31,6 +31,7 @@
 
   let root = null
   let uiScope = null
+  let editProfileMode = false
   let sessionMemberId = null
   let sessionAuthScope = null
   let settings = null
@@ -52,6 +53,8 @@
   let activeWrite = null
   let authTransitionPending = null
   let prerequisiteRefreshQueued = false
+  let editProfileDirty = false
+  let editProfileReady = false
 
   function qs(selector, scope) {
     return (scope || document).querySelector(selector)
@@ -64,6 +67,11 @@
   function locateRoot() {
     root = qs(ROOT_SELECTOR)
     if (!root) root = qs(CARD_ROOT_SELECTOR)
+    editProfileMode = false
+    if (!root && String(window.location.pathname || '').replace(/\/+$/, '') === '/starter-edit-profile') {
+      root = qs('[data-form="step"][data-index="6"]')
+      editProfileMode = Boolean(root)
+    }
     return root
   }
 
@@ -292,12 +300,16 @@
   }
 
   function namedRadio(word) {
-    return Array.prototype.find.call(qsa('[name="' + FREE_RADIO_GROUP_NAME + '"]', root), function (item) {
-      const value = radioValue(item)
-      if (value.indexOf(word) !== 0) return false
-      const next = value.charAt(word.length)
-      return next === '' || /[^a-z0-9]/.test(next)
-    }) || null
+    for (const groupName of FREE_RADIO_GROUP_NAMES) {
+      const match = Array.prototype.find.call(qsa('[name="' + groupName + '"]', root), function (item) {
+        const value = radioValue(item)
+        if (value.indexOf(word) !== 0) return false
+        const next = value.charAt(word.length)
+        return next === '' || /[^a-z0-9]/.test(next)
+      }) || null
+      if (match) return match
+    }
+    return null
   }
 
   function radioPair() {
@@ -322,7 +334,8 @@
     if (name !== 'description') return null
     return (
       qs('[data-call-settings-input="title"]', root) ||
-      qs('[name="call-description"]', root)
+      qs('[name="call-description"]', root) ||
+      qs('[name="free-call-description"]', root)
     )
   }
 
@@ -611,6 +624,8 @@
     settings = value
     const service = canonicalService(value)
     explicitIntent = null
+    editProfileDirty = false
+    editProfileReady = true
     const readiness = readinessState(value)
     const contractMatches = validateService(service)
     const bookable = readiness.bookable && contractMatches
@@ -680,6 +695,7 @@
   }
 
   function setCardEditorOpen(open) {
+    if (editProfileMode) return
     const wrapper = cardPanel()
     if (wrapper) wrapper.style.display = open ? 'flex' : 'none'
     root.setAttribute('data-free-call-editor-open', open ? 'true' : 'false')
@@ -813,21 +829,22 @@
   }
 
   async function submitIntent() {
+    if (editProfileMode && !editProfileDirty) return settings
     const pair = radioPair()
     const service = canonicalService(settings)
     if (explicitIntent === 'disabled') {
       const result = await disable()
-      if (result) setCardEditorOpen(false)
+      if (result && !editProfileMode) setCardEditorOpen(false)
       return result
     }
     if (!service && explicitIntent !== 'enabled') {
       if (!pair.enabled || !pair.enabled.checked || (pair.disabled && pair.disabled.checked)) {
-        setCardEditorOpen(false)
+        if (!editProfileMode) setCardEditorOpen(false)
         return settings
       }
     }
     const result = await save()
-    if (result) setCardEditorOpen(false)
+    if (result && !editProfileMode) setCardEditorOpen(false)
     return result
   }
 
@@ -1045,6 +1062,7 @@
     if (pair.enabled) {
       pair.enabled.addEventListener('change', function () {
         if (pair.enabled.checked) explicitIntent = 'enabled'
+        if (editProfileMode) editProfileDirty = true
         setRadioChecked(pair.enabled, pair.enabled.checked)
         if (pair.enabled.checked) setRadioChecked(pair.disabled, false)
       })
@@ -1052,8 +1070,15 @@
     if (pair.disabled) {
       pair.disabled.addEventListener('change', function () {
         if (pair.disabled.checked) explicitIntent = 'disabled'
+        if (editProfileMode) editProfileDirty = true
         setRadioChecked(pair.disabled, pair.disabled.checked)
         if (pair.disabled.checked) setRadioChecked(pair.enabled, false)
+      })
+    }
+    const descriptionInput = field('description')
+    if (descriptionInput) {
+      descriptionInput.addEventListener('input', function () {
+        if (editProfileMode) editProfileDirty = true
       })
     }
     bindOpenAction()
@@ -1082,7 +1107,7 @@
       stopRootWait()
       uiScope = findCallCardScope(root)
       watchUiScope()
-      setCardEditorOpen(false)
+      if (!editProfileMode) setCardEditorOpen(false)
       bind()
       await waitForMemberstack()
       return loadSession(undefined, false)
@@ -1099,6 +1124,9 @@
     read: readCanonicalSettings,
     save: save,
     disable: disable,
+    submit: submitIntent,
+    hasChanges: function () { return editProfileMode && editProfileDirty },
+    isReady: function () { return !editProfileMode || editProfileReady },
   }
 
   if (document.readyState === 'loading') {

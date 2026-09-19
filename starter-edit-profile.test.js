@@ -313,41 +313,27 @@ async function testStepSixNeverWritesFreeCallAuthority() {
   assert.equal(Object.hasOwn(payload, 'Free_Call_Description'), false)
 }
 
-async function testStepSixReplacesLegacyCallControlsWithCanonicalSettingsAction() {
+async function testStepSixKeepsCanonicalCallControlsEditable() {
   const environment = saved({ stepIndex: 6 })
-  const controlSelectors = [
+  const toggleSelectors = [
     '[name="free-consulting-calls"]',
-    '[name="free-call-description"]',
     '[name="paid-consulting-calls"]',
-    '[name="paid-call-description"]',
-    '[name="paid-call-rate"]',
   ]
-  controlSelectors.forEach((selector) => {
-    assert.equal(environment.fields[selector].disabled, true)
-    assert.equal(environment.fields[selector].required, false)
-    assert.equal(environment.fields[selector].getAttribute('aria-disabled'), 'true')
+  toggleSelectors.forEach((selector) => {
+    assert.equal(environment.fields[selector].disabled, false)
+    assert.equal(environment.fields[selector].getAttribute('aria-disabled'), null)
   })
 
   environment.legacyCallGroups.forEach((group) => {
-    assert.equal(group.hasAttribute('data-call-settings-owned'), true)
-    assert.equal(group.hidden, true)
-    assert.equal(group.style.display, 'none')
-    assert.equal(group.getAttribute('aria-hidden'), 'true')
+    assert.equal(group.hasAttribute('data-call-settings-owned'), false)
+    assert.equal(group.hidden, undefined)
+    assert.notEqual(group.style.display, 'none')
+    assert.equal(group.getAttribute('aria-hidden'), null)
   })
 
-  const ownershipStyles = environment.documentHead.children.filter((child) => child.hasAttribute('data-call-settings-profile-style'))
-  assert.equal(ownershipStyles.length, 1)
-  assert.equal(ownershipStyles[0].textContent, '[data-call-settings-owned]{display:none!important}')
-
   const notice = environment.legacyCallContainer.children.find((child) => child.hasAttribute('data-call-settings-profile-notice'))
-  assert.ok(notice)
-  assert.equal(environment.legacyCallContainer.children[0], notice, 'replacement action must occupy the first legacy control position')
-  assert.equal(notice.getAttribute('role'), 'region')
-  assert.equal(notice.getAttribute('aria-label'), 'Free and Paid Call settings')
-  assert.equal(notice.children[0].textContent, 'Free and Paid Calls')
-  assert.equal(notice.children[1].textContent, 'Manage these services from Call Settings on your Starter Dashboard.')
-  assert.equal(notice.children[2].href, '/starter-dashboard#calendar')
-  assert.equal(notice.children[2].textContent, 'Manage Call Settings')
+  assert.equal(notice, undefined)
+  assert.equal(environment.documentHead.children.length, 0)
   assert.equal(environment.fields['[name="rate-retainer"]'].disabled, false)
   assert.equal(environment.fields['[name="rate-retainer"]'].parentElement, environment.retainerCallGroup)
   assert.equal(environment.retainerCallGroup.hidden, undefined)
@@ -359,7 +345,7 @@ async function testStepSixReplacesLegacyCallControlsWithCanonicalSettingsAction(
 // The Retainer rate is authored in the same step 6 group family. A wrapper it shares with
 // a call control must stay visible: a hidden but enabled required Retainer control aborts
 // native submit with "An invalid form control is not focusable".
-async function testStepSixNeverHidesAWrapperSharedWithRetainers() {
+async function testStepSixKeepsSharedCallAndRetainerWrapperVisible() {
   const environment = saved({
     stepIndex: 6,
     callRetainerShareWrapper: '[name="paid-call-rate"]',
@@ -374,42 +360,81 @@ async function testStepSixNeverHidesAWrapperSharedWithRetainers() {
   assert.equal(sharedGroup.hasAttribute('aria-hidden'), false)
   assert.equal(environment.fields['[name="rate-retainer"]'].disabled, false)
 
-  assert.equal(environment.fields['[name="paid-call-rate"]'].disabled, true)
+  assert.equal(environment.fields['[name="paid-consulting-calls"]'].disabled, false)
   environment.legacyCallGroups
     .filter((group) => group !== sharedGroup)
     .forEach((group) => {
-      assert.equal(group.hidden, true)
-      assert.equal(group.hasAttribute('data-call-settings-owned'), true)
+      assert.equal(group.hidden, undefined)
+      assert.equal(group.hasAttribute('data-call-settings-owned'), false)
     })
-  assert.ok(environment.legacyCallContainer.children.find((child) => child.hasAttribute('data-call-settings-profile-notice')))
+  assert.equal(environment.legacyCallContainer.children.find((child) => child.hasAttribute('data-call-settings-profile-notice')), undefined)
 }
 
-async function testStepSixReappliesCallOwnershipAfterProfileHydration() {
+async function testStepSixKeepsCallControlsEditableAfterProfileHydration() {
   const environment = saved({
     stepIndex: 6,
     simulateProfileHydrationAfterDomReady: true,
   })
-  const controlSelectors = [
+  const toggleSelectors = [
     '[name="free-consulting-calls"]',
-    '[name="free-call-description"]',
     '[name="paid-consulting-calls"]',
-    '[name="paid-call-description"]',
-    '[name="paid-call-rate"]',
   ]
-  controlSelectors.forEach((selector) => {
-    assert.equal(environment.fields[selector].disabled, true)
-    assert.equal(environment.fields[selector].getAttribute('aria-disabled'), 'true')
+  toggleSelectors.forEach((selector) => {
+    assert.equal(environment.fields[selector].disabled, false)
+    assert.equal(environment.fields[selector].getAttribute('aria-disabled'), null)
   })
   assert.equal(
     environment.legacyCallContainer.children.filter((child) => child.hasAttribute('data-call-settings-profile-notice')).length,
-    1,
-    'hydration must not duplicate the replacement action',
+    0,
+    'hydration must not replace the editable call settings',
   )
-  assert.equal(
-    environment.documentHead.children.filter((child) => child.hasAttribute('data-call-settings-profile-style')).length,
-    1,
-    'hydration must not duplicate the ownership style',
-  )
+}
+
+async function testStepSixSubmitsOnlyChangedCanonicalCallSettingsBeforeProfilePatch() {
+  const order = []
+  const environment = createEnvironment(async () => {
+    order.push('profile')
+    return { ok: true, status: 200, json: async () => ({ saved: true, projection_pending: false }) }
+  }, {
+    stepIndex: 6,
+    callSettingsControllers: {
+      free: {
+        hasChanges: () => true,
+        isReady: () => true,
+        submit: async () => { order.push('free'); return { saved: true } },
+      },
+      paid: {
+        hasChanges: () => false,
+        isReady: () => true,
+        submit: async () => { order.push('paid'); return { saved: true } },
+      },
+    },
+  })
+
+  await submit(environment)
+
+  assert.deepEqual(order, ['free', 'profile'])
+  const payload = JSON.parse(environment.requests[0][1].body)
+  assert.equal(Object.hasOwn(payload, 'Free_Call_Enabled'), false)
+  assert.equal(Object.hasOwn(payload, 'Paid_Call_Enabled'), false)
+}
+
+async function testStepSixStopsProfilePatchWhenCanonicalCallSaveFails() {
+  const environment = createEnvironment(async () => {
+    throw new Error('profile fetch must not run')
+  }, {
+    stepIndex: 6,
+    callSettingsControllers: {
+      free: { hasChanges: () => true, isReady: () => true, submit: async () => null },
+      paid: { hasChanges: () => false, isReady: () => true, submit: async () => ({ saved: true }) },
+    },
+  })
+
+  await submit(environment)
+
+  assert.equal(environment.requests.length, 0)
+  assert.deepEqual(environment.modalEvents, { success: 0, error: 1 })
+  assert.match(environment.errorFeedback.textContent, /Call settings could not be saved/)
 }
 
 async function testPersonalDetailsUsesAuthoredContactControlsAndPreservesUntouchedCanonicalPhone() {
@@ -1530,9 +1555,11 @@ Promise.all([
   testOptionalRatesPreserveCanonicalZeroSentinel(),
   testStepSixNeverWritesPaidCallAuthority(),
   testStepSixNeverWritesFreeCallAuthority(),
-  testStepSixReplacesLegacyCallControlsWithCanonicalSettingsAction(),
-  testStepSixNeverHidesAWrapperSharedWithRetainers(),
-  testStepSixReappliesCallOwnershipAfterProfileHydration(),
+  testStepSixKeepsCanonicalCallControlsEditable(),
+  testStepSixKeepsSharedCallAndRetainerWrapperVisible(),
+  testStepSixKeepsCallControlsEditableAfterProfileHydration(),
+  testStepSixSubmitsOnlyChangedCanonicalCallSettingsBeforeProfilePatch(),
+  testStepSixStopsProfilePatchWhenCanonicalCallSaveFails(),
   testPersonalDetailsUsesAuthoredContactControlsAndPreservesUntouchedCanonicalPhone(),
   testPhoneCountryChangeCountsAsAMemberEdit(),
   testEnabledOptionalRatesNeverSilentlyPersistZero(),

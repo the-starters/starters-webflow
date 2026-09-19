@@ -203,16 +203,13 @@ values, member data, text, component props, styles, URLs, tokens, or Webflow
 element IDs. Contract drift must fail tests; do not silently refresh the fixture.
 
 Account-settings tabs, membership panels, pause/cancel UI, and scheduling persistence
-remain separate shared-component work. On step 6, the page controller disables and
-hides the complete legacy Free Call and Paid Call groups, then replaces their first
-position with one accessible `Manage Call Settings` action to
-`/starter-dashboard#calendar`. Group resolution never climbs past the step and never
-hides a wrapper that also holds a Retainer control or another member-owned field, so a
-shared wrapper leaves its call control disabled and visible rather than hiding an
-enabled required Retainer field. It omits all five legacy fields from the profile
-payload. The dashboard Free and Paid Call settings
-controllers and their canonical Xano endpoints are the only member-facing writers
-for those services; see the [Free Call settings contract](../../docs/wiring/FREE-CALL-SETTINGS-WIRING.md)
+remain separate shared-component work. On step 6, Free Call and Paid Call controls stay
+visible and editable. Their dedicated settings controllers hydrate the authored fields
+from canonical Xano GET responses and save only changed settings through the guarded
+upsert or disable endpoints before the profile PATCH begins. The profile PATCH omits all
+five call fields, so it never becomes a second writer. Retainer controls remain owned by
+the profile form even when Webflow markup places them in a wrapper shared with a call
+field. See the [Free Call settings contract](../../docs/wiring/FREE-CALL-SETTINGS-WIRING.md)
 and [Paid Call settings contract](../../docs/wiring/PAID-CALL-SETTINGS-WIRING.md). The root
 [Current Scripts](../../README.md#current-scripts) entry owns the profile endpoint's
 canonical-save and asynchronous-projection response contract.
@@ -390,7 +387,7 @@ draft edit does not overwrite the diagnostic with `Unsaved changes.`
 ownership filter: Services passes the scalar controls `prepare()` reads plus its row fields,
 Work Experience passes `[profile-company-field]`, and Highlights passes
 `[profile-highlight-field]`. A `form-xano-required` marker on anything else authored inside the
-section — a Free or Paid Call control the dashboard writers own, a picker's own search box —
+section — a Free or Paid Call control the canonical settings controllers own, a picker's own search box —
 belongs to the script that writes that field and never pauses this section's Save.
 
 `data-non-required="<profile type>"` is the authored way to say a field is not asked of that
@@ -615,7 +612,7 @@ workflow is tracked in [PROGRESS-CHECKLIST.md](PROGRESS-CHECKLIST.md).
    read the complete saved location back before publish.
 6. Publish staging only with approval. Test empty visible fields, empty mirrors,
    hydrated unchanged saves, full/consult branches, location transitions, reviewer
-   tuples, the hidden legacy Free and Paid Call controls and replacement settings action,
+   tuples, the editable canonical Free and Paid Call controls,
    explicit save responses with pending and complete projection states, and
    computed pointer behavior.
 7. For the shared-foundation extraction, use only the atomic route page-Head-Code cutover in

@@ -86,6 +86,7 @@ function createEnvironment(fetchImpl, {
   dirtyState = null,
   setupSection = null,
   profileReady = false,
+  callSettingsControllers = null,
 } = {}) {
   const domReady = []
   const profileDataCallbacks = []
@@ -97,6 +98,7 @@ function createEnvironment(fetchImpl, {
   const tracked = []
   const copied = []
   const requests = []
+  const callSettingsSubmits = []
   function createField(selector, defaults = {}) {
     const field = Object.assign(new Target(), {
       value: '',
@@ -449,6 +451,18 @@ function createEnvironment(fetchImpl, {
     StartersTrack: { track: (name, properties) => tracked.push({ name, properties }) },
     console,
   }
+  if (stepIndex === 6) {
+    const controller = (name) => ({
+      async submit() {
+        callSettingsSubmits.push(name)
+        return { saved: true }
+      },
+      hasChanges() { return false },
+      isReady() { return true },
+    })
+    window.StarterFreeCallSettings = callSettingsControllers?.free || controller('free')
+    window.StarterPaidCallSettings = callSettingsControllers?.paid || controller('paid')
+  }
   if (modalApi) {
     window.lumos = {
       modal: {
@@ -520,6 +534,7 @@ function createEnvironment(fetchImpl, {
     tracked,
     copied,
     requests,
+    callSettingsSubmits,
     successFeedback,
     errorFeedback,
     counter,
