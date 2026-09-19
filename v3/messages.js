@@ -272,14 +272,31 @@
     container.setAttribute('aria-busy', 'false')
 
     const notice = document.createElement('div')
+    notice.setAttribute('data-starters-messages-error', '')
     notice.setAttribute('role', 'alert')
+    notice.style.display = 'flex'
+    notice.style.flexDirection = 'column'
+    notice.style.alignItems = 'flex-start'
+    notice.style.gap = '12px'
+    notice.style.padding = '24px'
 
     const message = document.createElement('p')
     message.textContent = 'Messages could not load. Please try again.'
+    message.style.color = '#b3261e'
+    message.style.fontSize = '14px'
+    message.style.lineHeight = '1.4'
+    message.style.margin = '0'
 
     const retry = document.createElement('button')
     retry.type = 'button'
     retry.textContent = 'Try again'
+    retry.style.padding = '12px 16px'
+    retry.style.border = '1px solid #1f211d'
+    retry.style.borderRadius = '6px'
+    retry.style.background = '#1f211d'
+    retry.style.color = '#ffffff'
+    retry.style.fontSize = '14px'
+    retry.style.cursor = 'pointer'
     retry.addEventListener('click', () => window.location.reload())
 
     notice.appendChild(message)

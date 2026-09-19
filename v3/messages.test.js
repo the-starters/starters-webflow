@@ -67,6 +67,7 @@ function loadMessages(options = {}) {
       attributes: {},
       children: [],
       dataset: {},
+      style: {},
       textContent: '',
       removed: false,
       listeners: new Map(),
@@ -376,12 +377,42 @@ test('a guarded TalkJS timeout does not reload again and renders retry UI', asyn
   assert.equal(loaded.container.children.length, 1)
   const notice = loaded.container.children[0]
   assert.equal(notice.attributes.role, 'alert')
+  assert.equal(notice.attributes['data-starters-messages-error'], '')
   assert.equal(notice.children[0].textContent, 'Messages could not load. Please try again.')
+  assert.equal(notice.children[0].style.color, '#b3261e')
   assert.equal(notice.children[1].textContent, 'Try again')
   assert.equal(notice.children[1].type, 'button')
+  assert.equal(notice.children[1].style.background, '#1f211d')
 
   notice.children[1].listeners.get('click')()
   assert.equal(loaded.calls.reloads, 1)
+})
+
+test('a TalkJS script that never loads fails without spending the reload', async () => {
+  const loaded = loadMessages({ talk: false })
+  await settle()
+
+  assert.equal(loaded.calls.scripts.length, 1)
+  loaded.calls.scripts[0].onerror()
+  await settle()
+
+  assert.equal(loaded.calls.scripts.length, 2)
+  loaded.calls.scripts[1].onerror()
+  await settle()
+
+  // A dead script is not an ambiguous readiness timeout, so the one guarded
+  // reload stays available and the member gets the retry UI instead.
+  assert.equal(loaded.calls.reloads, 0)
+  assert.equal(loaded.storage.has(TALKJS_RELOAD_GUARD_KEY), false)
+  assert.equal(loaded.container.children.length, 1)
+  assert.equal(
+    loaded.container.children[0].attributes['data-starters-messages-error'],
+    '',
+  )
+  assert.deepEqual(loaded.calls.mounted, [])
+  assert.deepEqual(loaded.errors, [
+    '[messages-3.0] Unable to mount TalkJS inbox Error: TalkJS script failed to load',
+  ])
 })
 
 test('a successful inbox mount clears the TalkJS reload guard', async () => {
