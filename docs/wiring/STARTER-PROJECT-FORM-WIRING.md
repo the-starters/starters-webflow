@@ -61,15 +61,15 @@ relationship and create one proposal row awaiting Brand approval:
 
 ```json
 {
+  "kind": "proposal",
   "proposal": { "id": 669, "status": "awaiting_brand_approval", "lifecycle_version": 1 },
   "replayed": false
 }
 ```
 
-Only `proposal.id` is a contract for the browser. The controller treats any
-positive `proposal.id` as an accepted submission so an idempotent replay still
-reports success after the Brand has already accepted or declined the request;
-it never branches its copy on `proposal.status`.
+The browser requires `kind: "proposal"`, a positive proposal ID and lifecycle
+version, and a known proposal status. This keeps idempotent terminal replays
+valid while a fulfilled malformed response remains a retryable failure.
 
 The endpoint must not create a `core_projects_v3` row, a `project.created`
 lifecycle event, or a PandaDoc outbox job. Those belong to Brand acceptance —

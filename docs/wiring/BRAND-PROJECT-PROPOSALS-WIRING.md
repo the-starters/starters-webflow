@@ -54,10 +54,11 @@ whose `status` is not `awaiting_brand_approval`, and it drops a row the server
 marks neither acceptable nor rejectable. `can_accept` and `can_reject` are the
 only authority for the dialog's controls; the browser never infers them.
 
-The controller requests page 1 with 12 rows per page and renders newest-first
-within that page. There is no pagination control yet, so the endpoint must keep
-per-Brand pending volume inside that window or this doc must grow a paging
-contract before a Brand can exceed it.
+The controller requests 12 rows per page and follows `nextPage` until every
+pending request is loaded. When `nextPage` is absent, it uses `itemsTotal` to
+continue only while rows remain. It rejects a non-advancing or malformed page
+and stops after 100 pages, so a request after the first 12 remains reachable
+without allowing an unbounded browser loop.
 
 `POST projects/proposal-action/v3` takes
 `{ proposal_id, expected_version, action, idempotency_key }` where `action` is
@@ -65,8 +66,13 @@ contract before a Brand can exceed it.
 idempotent on `idempotency_key`. On accept it returns the created project:
 
 ```json
-{ "proposal": { "id": 72, "status": "accepted" }, "project": { "id": 669 }, "replayed": false }
+{ "proposal": { "id": 72, "status": "accepted", "lifecycle_version": 4 }, "project": { "id": 669 }, "replayed": false }
 ```
+
+The browser reports success only when the returned proposal ID matches the
+request, the lifecycle version advanced, the terminal status matches the
+action, and acceptance includes a positive project ID. A fulfilled malformed
+response stays in retry state and reuses the same idempotency key.
 
 Both routes are authenticated `api:opp30` routes reached through the
 `Opp30.API` bridge in `opportunities-3.0.js`. The controller calls no other

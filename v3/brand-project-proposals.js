@@ -51,6 +51,12 @@
     return []
   }
 
+  function proposalEnvelope(value) {
+    if (Array.isArray(value && value.project_proposals)) return value
+    if (Array.isArray(value && value.data && value.data.project_proposals)) return value.data
+    return null
+  }
+
   function normalizeProposal(raw) {
     var id = positiveId(raw && (raw.proposal_id || raw.id))
     var version = positiveId(raw && (raw.lifecycle_version || raw.version))
@@ -203,6 +209,23 @@
       action: action,
       idempotency_key: key,
     }
+  }
+
+  function completedDecision(result, proposal, action) {
+    var resultProposal = result && result.proposal
+    var resultProject = result && result.project
+    var resultId = positiveId(resultProposal && (resultProposal.id || resultProposal.proposal_id))
+    var resultVersion = positiveId(resultProposal && (resultProposal.lifecycle_version || resultProposal.version))
+    var status = clean(resultProposal && resultProposal.status).toLowerCase()
+    if (!proposal || resultId !== proposal.id || !resultVersion || resultVersion <= proposal.version) return null
+    if (action === 'accept') {
+      if (status !== 'accepted' || !positiveId(resultProject && (resultProject.id || resultProject.project_id))) return null
+    } else if (action === 'reject') {
+      if (status !== 'rejected' || resultProject != null) return null
+    } else {
+      return null
+    }
+    return { proposal: resultProposal, project: resultProject }
   }
 
   function errorMessage(error) {
@@ -683,9 +706,28 @@
 
     async function refresh() {
       if (!api || typeof api.brandProjectProposalList !== 'function') return null
-      var result = await api.brandProjectProposalList(1, 12)
-      render(result)
-      return result
+      var page = 1
+      var perPage = 12
+      var items = []
+      var seenPages = {}
+      var total = null
+      while (page && !seenPages[page]) {
+        if (Object.keys(seenPages).length >= 100) throw new Error('Proposal pagination exceeded its safe page limit')
+        seenPages[page] = true
+        var result = await api.brandProjectProposalList(page, perPage)
+        var envelope = proposalEnvelope(result)
+        if (!envelope) throw new Error('Proposal list returned an invalid response')
+        items = items.concat(envelope.project_proposals)
+        var parsedTotal = Number(envelope.itemsTotal)
+        if (Number.isInteger(parsedTotal) && parsedTotal >= 0) total = parsedTotal
+        var next = positiveId(envelope.nextPage)
+        if (!next && total !== null && items.length < total) next = page + 1
+        if (next && next <= page) throw new Error('Proposal pagination did not advance')
+        page = next
+      }
+      var combined = { project_proposals: items, itemsTotal: total === null ? items.length : total, nextPage: null }
+      render(combined)
+      return combined
     }
 
     async function reloadProjectProjection() {
@@ -718,9 +760,11 @@
       try {
         var result = await api.projectProposalAction(decisionPayload(proposal, action, state.keys[scope]))
         if (state.pendingAction !== request) return false
+        var completed = completedDecision(result, proposal, action)
+        if (!completed) throw new Error('Project request action returned an invalid response')
         delete state.keys[scope]
-        var resultProposal = result && result.proposal
-        var resultProject = result && result.project
+        var resultProposal = completed.proposal
+        var resultProject = completed.project
         var eventName = action === 'accept'
           ? 'starters:project-proposal-accepted'
           : 'starters:project-proposal-rejected'
@@ -876,6 +920,7 @@
     createController: createController,
     dateLabel: dateLabel,
     decisionPayload: decisionPayload,
+    completedDecision: completedDecision,
     errorMessage: errorMessage,
     ensureGlobalFeedback: ensureGlobalFeedback,
     mount: mount,

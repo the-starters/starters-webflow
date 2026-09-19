@@ -309,7 +309,7 @@ function load(options = {}) {
       }),
       projectSubmit: options.projectSubmit || (async (payload) => {
         calls.submit.push(payload)
-        return { proposal: { id: 81, status: 'awaiting_brand_approval', lifecycle_version: 1 }, replayed: false }
+        return { kind: 'proposal', proposal: { id: 81, status: 'awaiting_brand_approval', lifecycle_version: 1 }, replayed: false }
       }),
     } },
   }
@@ -354,6 +354,7 @@ test('diagnostics stay off by default and emit only the safe options-to-submit t
     projectSubmit: async (payload) => {
       submittedPayload = payload
       return {
+        kind: 'proposal',
         proposal: { id: 81, status: 'awaiting_brand_approval', lifecycle_version: 1 },
         replayed: false,
         member_id: 'mem_starter',
@@ -1508,7 +1509,7 @@ test('Own Contract submission still waits for Brand approval', async () => {
     counterparties: [{ counterparty_id: 31, company_name: 'Brand', hiring_manager_name: 'Brand Member' }],
     projectSubmit: async (payload) => {
       loaded.calls.submit.push(payload)
-      return { proposal: { id: 82, status: 'awaiting_brand_approval', lifecycle_version: 1 }, replayed: false }
+      return { kind: 'proposal', proposal: { id: 82, status: 'awaiting_brand_approval', lifecycle_version: 1 }, replayed: false }
     },
   })
   await loaded.api.loadOptions(loaded.form, loaded.window)
@@ -1556,7 +1557,7 @@ test('reopening during submission cannot let an options refresh replace success'
   assert.equal(loaded.calls.options.length, 1)
   assert.equal(loaded.form.getAttribute('data-starter-project-status'), 'submitting')
 
-  resolveSubmit({ proposal: { id: 92, status: 'awaiting_brand_approval', lifecycle_version: 1 }, replayed: false })
+  resolveSubmit({ kind: 'proposal', proposal: { id: 92, status: 'awaiting_brand_approval', lifecycle_version: 1 }, replayed: false })
   assert.equal(await submission, true)
   assert.equal(loaded.form.getAttribute('data-starter-project-status'), 'success')
 
@@ -1609,7 +1610,7 @@ test('failed retry keeps the same idempotency key', async () => {
       submitted.push({ ...payload })
       attempt += 1
       if (attempt === 1) throw Object.assign(new Error('temporary'), { status: 503 })
-      return { proposal: { id: 91, status: 'awaiting_brand_approval', lifecycle_version: 1 }, replayed: true }
+      return { kind: 'proposal', proposal: { id: 91, status: 'awaiting_brand_approval', lifecycle_version: 1 }, replayed: true }
     },
   })
   await loaded.api.loadOptions(loaded.form, loaded.window)
@@ -1624,7 +1625,7 @@ test('malformed proposal responses fail and preserve the retry key', async () =>
   const responses = [
     { proposal: { id: 0, status: 'awaiting_brand_approval' } },
     { project: { id: 91, lifecycle_state: 'contract_create_pending' } },
-    { proposal: { id: 91, status: 'awaiting_brand_approval', lifecycle_version: 1 }, replayed: true },
+    { kind: 'proposal', proposal: { id: 91, status: 'awaiting_brand_approval', lifecycle_version: 1 }, replayed: true },
   ]
   const loaded = load({
     noDocument: true,
@@ -1662,7 +1663,7 @@ test('an idempotent replay of an already-resolved proposal still reports success
       submitted.push({ ...payload })
       attempt += 1
       if (attempt === 1) throw Object.assign(new Error('gateway'), { status: 503 })
-      return { proposal: { id: 88, status: 'accepted', lifecycle_version: 2 }, replayed: true }
+      return { kind: 'proposal', proposal: { id: 88, status: 'accepted', lifecycle_version: 2 }, replayed: true }
     },
   })
   await loaded.api.loadOptions(loaded.form, loaded.window)

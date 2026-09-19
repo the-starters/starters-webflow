@@ -163,7 +163,7 @@ function controllerFixture(options = {}) {
   const requestApi = options.api || {
     async projectProposalAction(payload) {
       calls.push(payload)
-      return { proposal: { id: 41 }, project: { id: 95 }, replayed: false }
+      return { proposal: { id: 41, status: 'accepted', lifecycle_version: 4 }, project: { id: 95 }, replayed: false }
     },
   }
   const controller = api.createController({
@@ -257,6 +257,45 @@ test('refresh renders Action Items from the dedicated Brand proposal projection'
   )
 })
 
+test('refresh loads every proposal page so requests after the first 12 remain reachable', async () => {
+  const pages = []
+  const fixture = controllerFixture({
+    api: {
+      async brandProjectProposalList(page, perPage) {
+        pages.push([page, perPage])
+        if (page === 1) {
+          return {
+            project_proposals: Array.from({ length: 12 }, (_, index) => proposal({ proposal_id: 100 + index })),
+            itemsTotal: 13,
+            nextPage: 2,
+          }
+        }
+        return {
+          project_proposals: [proposal({ proposal_id: 112, title: 'Page two request' })],
+          itemsTotal: 13,
+          nextPage: null,
+        }
+      },
+    },
+  })
+
+  const result = await fixture.controller.refresh()
+
+  assert.deepEqual(pages, [[1, 12], [2, 12]])
+  assert.equal(result.project_proposals.length, 13)
+  assert.equal(fixture.controller.state.proposals.length, 13)
+  assert.ok(fixture.controller.state.proposals.some((item) => item.id === 112))
+})
+
+test('refresh rejects a malformed fulfilled list response without clearing rendered cards', async () => {
+  const fixture = controllerFixture({
+    api: { async brandProjectProposalList() { return { items: [proposal()] } } },
+  })
+  fixture.controller.render(fixture.projection)
+  await assert.rejects(() => fixture.controller.refresh(), /invalid response/)
+  assert.deepEqual(fixture.controller.state.proposals.map((item) => item.id), [41])
+})
+
 test('a refresh without the proposal list route leaves the rendered cards untouched', async () => {
   const fixture = controllerFixture({ api: {} })
   fixture.controller.render(fixture.projection)
@@ -269,7 +308,7 @@ test('accepting reloads the canonical Brand project projection alongside the pro
   const fixture = controllerFixture({
     api: {
       async projectProposalAction() {
-        return { proposal: { id: 41 }, project: { id: 95 }, replayed: false }
+        return { proposal: { id: 41, status: 'accepted', lifecycle_version: 4 }, project: { id: 95 }, replayed: false }
       },
       async brandProjectProposalList() {
         listed.push(true)
@@ -291,7 +330,7 @@ test('declining leaves the canonical Brand project projection alone', async () =
   const fixture = controllerFixture({
     api: {
       async projectProposalAction() {
-        return { proposal: { id: 41 }, replayed: false }
+        return { proposal: { id: 41, status: 'rejected', lifecycle_version: 4 }, project: null, replayed: false }
       },
       async brandProjectProposalList() { return { project_proposals: [] } },
     },
@@ -309,7 +348,7 @@ test('an accept survives a runtime without the project projection registry', asy
     wfXano: null,
     api: {
       async projectProposalAction() {
-        return { proposal: { id: 41 }, project: { id: 95 }, replayed: false }
+        return { proposal: { id: 41, status: 'accepted', lifecycle_version: 4 }, project: { id: 95 }, replayed: false }
       },
       async brandProjectProposalList() { return { project_proposals: [] } },
     },
@@ -419,6 +458,33 @@ test('accept sends the authorized command and keeps success feedback outside the
   assert.match(fixture.modal.feedback.textContent, /already handled/)
 })
 
+test('a malformed fulfilled action response is not reported as success and reuses its retry key', async () => {
+  const calls = []
+  let attempt = 0
+  const fixture = controllerFixture({
+    api: {
+      async projectProposalAction(payload) {
+        calls.push(payload)
+        attempt += 1
+        if (attempt === 1) return { proposal: { id: 41, status: 'accepted', lifecycle_version: 4 }, project: null }
+        return { proposal: { id: 41, status: 'accepted', lifecycle_version: 4 }, project: { id: 95 }, replayed: true }
+      },
+      async brandProjectProposalList() { return { project_proposals: [] } },
+    },
+  })
+  fixture.controller.render(fixture.projection)
+  fixture.controller.open(fixture.controller.state.proposals[0])
+
+  assert.equal(await fixture.controller.act('accept'), false)
+  assert.equal(fixture.dispatched.length, 0)
+  assert.equal(fixture.projectProjectionReloads.length, 0)
+  assert.match(fixture.globalFeedback.textContent, /could not be updated/)
+
+  assert.equal(await fixture.controller.act('accept'), true)
+  assert.equal(calls[0].idempotency_key, calls[1].idempotency_key)
+  assert.equal(fixture.dispatched[0].type, 'starters:project-proposal-accepted')
+})
+
 test('a failed retry reuses its idempotency key and maps stale conflicts safely', async () => {
   const calls = []
   let attempt = 0
@@ -494,7 +560,7 @@ test('an in-flight request keeps later proposal actions locked until it settles'
         if (calls.length === 1) {
           return new Promise((resolve) => { settleFirst = resolve })
         }
-        return { proposal: { id: 42 }, replayed: false }
+        return { proposal: { id: 42, status: 'rejected', lifecycle_version: 4 }, project: null, replayed: false }
       },
     },
   })
@@ -508,7 +574,7 @@ test('an in-flight request keeps later proposal actions locked until it settles'
   assert.equal(await fixture.controller.act('reject'), false)
   assert.equal(calls.length, 1)
 
-  settleFirst({ proposal: { id: 41 }, project: { id: 95 }, replayed: false })
+  settleFirst({ proposal: { id: 41, status: 'accepted', lifecycle_version: 4 }, project: { id: 95 }, replayed: false })
   assert.equal(await firstAction, true)
   assert.equal(fixture.controller.state.active.id, 42)
   assert.equal(fixture.modal.actions.accept.disabled, false)

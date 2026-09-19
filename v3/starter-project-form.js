@@ -106,7 +106,18 @@
 
   function createdProposal(result) {
     var proposal = result && result.proposal
-    return positiveId(proposal && proposal.id) ? proposal : null
+    var status = clean(proposal && proposal.status).toLowerCase()
+    var validStatus = [
+      'awaiting_brand_approval',
+      'accepted',
+      'rejected',
+      'withdrawn',
+      'expired',
+    ].indexOf(status) !== -1
+    return result && result.kind === 'proposal' && positiveId(proposal && proposal.id) &&
+      positiveId(proposal && proposal.lifecycle_version) && validStatus
+      ? proposal
+      : null
   }
 
   function formState(form) {
