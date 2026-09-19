@@ -950,6 +950,13 @@ onDomReady(function () {
 							return;
 						}
 
+						// The section lock is taken before any await so a second click cannot slip
+						// into the gap: everything past this point is one save, and a step that
+						// stops here reports a write nobody dispatched.
+						if (sectionController && !sectionController.begin()) return;
+						saveToken = window.__tsProfileDirtyState?.beginSave(stepIndex);
+						saveStarted = true;
+
 						if (stepIndex === 6) {
 							try {
 								await submitCanonicalCallSettings();
@@ -963,9 +970,6 @@ onDomReady(function () {
 							}
 						}
 
-						if (sectionController && !sectionController.begin()) return;
-						saveToken = window.__tsProfileDirtyState?.beginSave(stepIndex);
-						saveStarted = true;
 						canonicalSaveAccepted = await submitStep(stepIndex, submitButton, replayProof, saveToken, saveOutcome);
 					} finally {
 						if (saveStarted) window.__tsProfileDirtyState?.finishSave(stepIndex, canonicalSaveAccepted, saveToken);
