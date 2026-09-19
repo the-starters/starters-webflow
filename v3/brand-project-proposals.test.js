@@ -113,8 +113,11 @@ function fallbackDocument() {
       return element
     },
     querySelector(selector) {
+      return this.querySelectorAll(selector)[0] || null
+    },
+    querySelectorAll(selector) {
       return [...head.descendants(), ...body.descendants()]
-        .find((element) => selector.split(',').some((part) => element.matches(part.trim()))) || null
+        .filter((element) => selector.split(',').some((part) => element.matches(part.trim())))
     },
     getElementById(id) {
       return [...head.descendants(), ...body.descendants()].find((element) => element.id === id) || null
@@ -270,14 +273,14 @@ test('one envelope parser feeds both rendered rows and pagination', () => {
   }
 })
 
-test('renders proposal rows as Action Items from the authored template', () => {
+test('renders proposal rows from the authored template without claiming the Action Items marker', () => {
   const fixture = controllerFixture()
   const rows = fixture.controller.render(fixture.projection)
   assert.equal(rows.length, 1)
   assert.equal(fixture.list.children.length, 2)
   const card = fixture.list.children[0]
   assert.equal(card.getAttribute('data-project-proposal-id'), '41')
-  assert.equal(card.getAttribute('data-action-element'), 'item')
+  assert.equal(card.hasAttribute('data-action-element'), false)
   assert.equal(card.fields[0].textContent, 'Alex Starter')
   assert.equal(fixture.list.children[1].hidden, true)
 })
@@ -716,6 +719,55 @@ test('a stalled project list reload does not lock the remaining pending requests
   assert.equal(await acceptFirst, true)
 })
 
+test('a late project reload failure never overwrites a newer decision status', async () => {
+  let failProjection
+  const decisions = []
+  const proposals = [proposal(), proposal({ proposal_id: 42, title: 'Lifecycle audit' })]
+  const fixture = controllerFixture({
+    opp30: {
+      refreshProjectWorkflow() {
+        return new Promise((resolve, reject) => { failProjection = reject })
+      },
+    },
+    api: {
+      async projectProposalAction(payload) {
+        decisions.push(payload)
+        return {
+          proposal: {
+            id: payload.proposal_id,
+            status: payload.action === 'accept' ? 'accepted' : 'rejected',
+            lifecycle_version: 4,
+          },
+          project: payload.action === 'accept' ? { id: 95 } : null,
+          replayed: false,
+        }
+      },
+      async brandProjectProposalList() {
+        return {
+          project_proposals: proposals.filter(
+            (item) => !decisions.some((decision) => decision.proposal_id === item.proposal_id),
+          ),
+          nextPage: null,
+        }
+      },
+    },
+  })
+  fixture.controller.render({ project_proposals: proposals })
+  fixture.controller.open(fixture.controller.state.proposals.find((item) => item.id === 41))
+
+  const acceptFirst = fixture.controller.act('accept')
+  await new Promise((resolve) => setTimeout(resolve, 0))
+
+  fixture.controller.open(fixture.controller.state.proposals.find((item) => item.id === 42))
+  assert.equal(await fixture.controller.act('reject'), true)
+  assert.equal(fixture.globalFeedback.textContent, 'Project request declined.')
+
+  failProjection(new Error('Project list owner is unavailable'))
+  assert.equal(await acceptFirst, true)
+
+  assert.equal(fixture.globalFeedback.textContent, 'Project request declined.')
+})
+
 test('a failed project list reload still reloads the proposal list', async () => {
   const listed = []
   const fixture = controllerFixture({
@@ -948,6 +1000,65 @@ test('an authored list host keeps its own empty state', async () => {
 
   assert.equal(authoredList.hidden, false)
   assert.equal(authoredList.style.display, '')
+})
+
+test('generated rows stay out of a document-scope Action Items count', async () => {
+  const documentObject = fallbackDocument()
+  const empty = documentObject.body.appendChild(new Element({ 'data-action-element': 'empty' }))
+  const total = documentObject.body.appendChild(new Element({ 'data-action-element': 'total' }))
+  const globalObject = {
+    document: documentObject,
+    location: { pathname: '/brand-dashboard' },
+    crypto: { randomUUID: () => 'decision-key' },
+    addEventListener() {},
+    setTimeout(callback) { return callback() },
+    Opp30: {
+      API: {
+        async brandProjectProposalList() {
+          return {
+            project_proposals: [proposal(), proposal({ proposal_id: 42, title: 'Lifecycle audit' })],
+            nextPage: null,
+          }
+        },
+      },
+    },
+  }
+
+  const controller = api.mount(globalObject)
+  await controller.load()
+
+  const section = documentObject.querySelector('[data-project-request-list]')
+  const cards = section.querySelectorAll('[data-project-proposal-card]')
+  assert.equal(cards.length, 2)
+  cards.forEach((card) => {
+    card.rectHeight = 30
+    assert.equal(card.hasAttribute('data-action-element'), false)
+  })
+
+  const scopes = actionItems.resolveScopes(documentObject)
+  assert.deepEqual(scopes, [documentObject])
+  const panel = actionItems.createPanel(documentObject)
+
+  assert.equal(panel.render(), 0)
+  assert.equal(total.textContent, '0')
+  panel.settle()
+  assert.equal(empty.style.display, '')
+})
+
+test('an authored row inside the Action Items wrapper still counts as an item', async () => {
+  const dashboard = brandDashboard()
+  const authoredList = dashboard.wrapper.appendChild(new Element({ 'data-action-element': 'list' }))
+  const authoredTemplate = authoredList.appendChild(new Element({ 'data-project-request-template': '' }))
+  authoredTemplate.rectHeight = 30
+
+  const controller = api.mount(dashboard.globalObject)
+  await controller.load()
+
+  const cards = authoredList.querySelectorAll('[data-project-proposal-card]')
+  assert.equal(cards.length, 1)
+  assert.equal(cards[0].getAttribute('data-action-element'), 'item')
+  cards[0].rectHeight = 30
+  assert.equal(actionItems.countPendingItems(dashboard.wrapper), 2)
 })
 
 test('pending requests stay visible when Action Items hides the onboarding row', async () => {

@@ -505,16 +505,20 @@
     return card
   }
 
-  function feedbackAnchor(list) {
-    var anchor = list
-    var node = list
-    while (node) {
-      if (typeof node.getAttribute === 'function' && node.getAttribute(ACTION_ELEMENT_ATTR) === ACTION_ITEMS_WRAPPER) {
-        anchor = node
+  function outermostActionItemsWrapper(node) {
+    var found = null
+    var current = node
+    while (current) {
+      if (typeof current.getAttribute === 'function' && current.getAttribute(ACTION_ELEMENT_ATTR) === ACTION_ITEMS_WRAPPER) {
+        found = current
       }
-      node = node.parentNode
+      current = current.parentNode
     }
-    return anchor
+    return found
+  }
+
+  function feedbackAnchor(list) {
+    return outermostActionItemsWrapper(list) || list
   }
 
   function actionItemsWrapper(documentObject) {
@@ -614,6 +618,7 @@
 
   function renderCards(list, template, proposals) {
     if (!list || !template || typeof template.cloneNode !== 'function') return 0
+    var countsAsActionItem = Boolean(outermostActionItemsWrapper(list))
     clearCards(list)
     setVisible(template, false)
     proposals.forEach(function (proposal) {
@@ -621,7 +626,7 @@
       card.removeAttribute(TEMPLATE_ATTR)
       card.setAttribute('data-project-proposal-card', '')
       card.setAttribute('data-project-proposal-id', String(proposal.id))
-      card.setAttribute('data-action-element', 'item')
+      if (countsAsActionItem) card.setAttribute('data-action-element', 'item')
       prepareFallbackCard(card)
       paintFields(card, proposal)
       setVisible(card, true)
@@ -657,6 +662,7 @@
       keys: {},
       generation: 0,
       resolved: {},
+      lastDecision: null,
     }
 
     function feedback(message, isError) {
@@ -879,6 +885,7 @@
         var successMessage = action === 'accept' ? 'Project approved and created.' : 'Project request declined.'
         if (state.active && state.active.id === request.proposalId) feedback(successMessage, false)
         announce(successMessage, false)
+        state.lastDecision = request
         var projectionReload = action === 'accept'
           ? reloadProjectProjection().then(function () { return false }, function () { return true })
           : null
@@ -893,7 +900,7 @@
           lockActions(false)
         }
         if (projectionReload && await projectionReload) reloadFailed = true
-        if (reloadFailed && request.generation === state.generation) {
+        if (reloadFailed && request.generation === state.generation && state.lastDecision === request) {
           var reloadMessage = action === 'accept'
             ? 'Project approved. Refresh the dashboard to load the project.'
             : 'Project request declined. Refresh the dashboard to update the list.'
@@ -960,6 +967,7 @@
       state.proposals = []
       state.keys = {}
       state.resolved = {}
+      state.lastDecision = null
       clearCards(list)
       showGeneratedHost(false)
       close()

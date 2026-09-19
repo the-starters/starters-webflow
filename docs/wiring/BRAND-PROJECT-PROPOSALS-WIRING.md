@@ -129,10 +129,14 @@ the Brand has an opportunity.
 Supported field names: `status_label`, `starter_name`, `title`, `service`,
 `commercial_summary`, `submitted_at`, `start_date`, `estimated_end_date`,
 `scope_preview`, `project_scope`, `engagement_type`, `contract_type`, and
-`invoice_frequency`. Rendered rows also receive `data-project-proposal-id` and
-`data-action-element="item"`, so the shared
+`invoice_frequency`. Rendered rows always receive `data-project-proposal-id`.
+They receive `data-action-element="item"` only when the list host sits inside an
+Action Items `data-action-element="wrapper"`, so the shared
 [dashboard Action Items](../../v3/README.md#dashboard-action-items-panel) panel counts
-them when the authored template sits inside that panel's scope.
+them exactly when the Designer put them in that panel. Rows in a
+proposal-owned list outside that wrapper carry no Action Items marker and never
+change that panel's count, including on a page whose panel falls back to
+document scope.
 
 With neither attribute authored the controller creates its own labelled
 `<section data-project-request-list aria-labelledby="project-request-list-heading">`
@@ -185,7 +189,9 @@ project-list result, so a slow or failed project-list reload never leaves an
 accepted request rendered as a pending row. The decision lock is released as
 soon as the proposal list has reloaded, before that join, so a stalled
 project-list reload can never leave the Brand's other pending requests
-disabled. A proposal-list response that was requested
+disabled. Only the most recently settled decision may write reload-failure copy
+to the page-level region, so a late project-list result from an earlier decision
+cannot overwrite the status of a newer one. A proposal-list response that was requested
 before an `opp30:member-scope-reset` is discarded when it settles after one, so
 the previous member's requests can never paint into the new member's dashboard
 and a stale failure can never overwrite a fresh load. The same guard covers the
