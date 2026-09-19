@@ -72,6 +72,7 @@ function makeEnv({
   response = [],
   responseOk = true,
   responsePromise,
+  approvedFetch = null,
   memberstackId = 'mem_test_starter',
   imageRows = [],
   videoRows = [],
@@ -80,6 +81,7 @@ function makeEnv({
   mediaFetch = null,
   hasModalTitle = true,
   hasLoader = true,
+  hasRetryControl = false,
   staleModalCopy = false,
   modalOpenAtLoad = false,
   captureTimers = false,
@@ -93,6 +95,10 @@ function makeEnv({
   const appendedCards = []
   const errors = []
   const warnings = []
+  const captures = []
+  const abortControllers = []
+  const approvedFetchOptions = []
+  let approvedCallIndex = 0
 
   function addListener(store, type, handler) {
     if (!store[type]) store[type] = []
@@ -285,6 +291,20 @@ function makeEnv({
     },
   }
 
+  // The authored `[data-highlights-retry]` control the renderer reveals when the
+  // approved read fails after its retry.
+  const retryListeners = []
+  const retryControl = {
+    style: {},
+    addEventListener(type, handler) {
+      if (type === 'click') retryListeners.push(handler)
+    },
+    click() {
+      const event = { preventDefault() {} }
+      retryListeners.forEach((handler) => handler(event))
+    },
+  }
+
   const section = { style: {}, classList: classList() }
   const block = { style: {}, classList: classList() }
 
@@ -307,6 +327,7 @@ function makeEnv({
       if (selector === '[portfolio-section]') return section
       if (selector === '#portfolio-block') return block
       if (selector === '[data-btn-view-all]') return viewAllButton
+      if (selector === '[data-highlights-retry]') return hasRetryControl ? retryControl : null
       if (selector === 'dialog[wf-portfolio-element="modal"]') return modal
       if (selector === '[wf-portfolio-element="modal"]') return (stale || live).modal
       // Document-wide lookups for modal children must never win: these decoys
@@ -331,6 +352,10 @@ function makeEnv({
   const window = {
     starter_memberstack_id: memberstackId,
     location: { hostname: 'the-starters-3-0.webflow.io' },
+    // The shared, platform-tagged event helper the renderer reports through.
+    StartersTrack: {
+      track(name, props) { captures.push({ name, props }) },
+    },
     document,
     addEventListener(type, handler) {
       addListener(windowListeners, type, handler)
@@ -339,9 +364,14 @@ function makeEnv({
     dispatch(type, detail) {
       return dispatchListeners(windowListeners, type, { detail })
     },
-    fetch(url) {
+    fetch(url, options) {
       requests.push(url)
       if (url.includes('/Get_approved_portfolios?')) {
+        approvedFetchOptions.push(options)
+        if (approvedFetch) {
+          const controlled = approvedFetch(approvedCallIndex++)
+          if (controlled) return controlled
+        }
         return responsePromise || Promise.resolve({ ok: responseOk, json: () => Promise.resolve(response) })
       }
       if (mediaFetch) {
@@ -374,6 +404,17 @@ function makeEnv({
       pendingTimers.push(handler)
       return pendingTimers.length
     },
+    clearTimeout(id) {
+      if (!captureTimers) clearTimeout(id)
+    },
+    // The approved read wraps its fetch in an AbortController timeout.
+    AbortController: function () {
+      this.signal = { aborted: false }
+      this.abort = () => {
+        this.signal.aborted = true
+      }
+      abortControllers.push(this)
+    },
     Promise,
     encodeURIComponent,
   }
@@ -405,11 +446,15 @@ function makeEnv({
     },
     wrapper,
     requests,
+    approvedFetchOptions,
+    captures,
+    abortControllers,
     appendedIds,
     appendedCards,
     errors,
     warnings,
     section,
+    retryControl,
     viewAllButton,
     modal,
     modalTitle,
@@ -558,6 +603,81 @@ test('does not treat a failed public read as an empty portfolio list', async () 
   assert.deepEqual(env.appendedIds, [])
   assert.equal(env.section.classList.has('hidden'), false)
   assert.deepEqual(env.errors, ['Portfolio: approved public read failed'])
+})
+
+test('reads under an abort timeout and clears it once the read settles', async () => {
+  const env = makeEnv({ response: [{ id: 1 }] })
+  env.document.dispatch('DOMContentLoaded')
+  await settle()
+
+  assert.ok(env.approvedFetchOptions[0] && env.approvedFetchOptions[0].signal, 'the read carries an abort signal')
+  assert.equal(env.abortControllers.length, 1)
+  assert.equal(env.abortControllers[0].signal.aborted, false, 'a read that answered in time is never aborted')
+})
+
+test('retries the approved read once and recovers on the second attempt', async () => {
+  const env = makeEnv({
+    approvedFetch: (attempt) =>
+      attempt === 0
+        ? Promise.reject(new TypeError('Failed to fetch'))
+        : Promise.resolve({ ok: true, json: () => Promise.resolve([{ id: 1 }, { id: 2 }]) }),
+  })
+  env.document.dispatch('DOMContentLoaded')
+  await settle()
+
+  assert.deepEqual(env.appendedIds, [1, 2], 'the retry result renders')
+  assert.deepEqual(env.errors, [], 'a recovered read is not an error')
+  assert.equal(env.captures.length, 1, 'a read that only worked on the retry leaves a signal')
+  assert.equal(env.captures[0].name, 'portfolio_highlights_recovered')
+  assert.equal(env.captures[0].props.attempt, 2)
+})
+
+test('does not report recovery when the first attempt succeeds', async () => {
+  const env = makeEnv({ response: [{ id: 1 }] })
+  env.document.dispatch('DOMContentLoaded')
+  await settle()
+
+  assert.deepEqual(env.captures, [], 'a clean read is silent')
+  assert.equal(env.requests.filter((url) => url.includes('/Get_approved_portfolios?')).length, 1)
+})
+
+test('shows the authored retry control when both attempts fail', async () => {
+  const env = makeEnv({
+    approvedFetch: () => Promise.reject(new TypeError('Failed to fetch')),
+    hasRetryControl: true,
+  })
+  env.document.dispatch('DOMContentLoaded')
+  await settle()
+
+  assert.equal(
+    env.requests.filter((url) => url.includes('/Get_approved_portfolios?')).length,
+    2,
+    'the read is attempted twice before giving up',
+  )
+  assert.deepEqual(env.appendedIds, [])
+  assert.equal(env.section.style.display, 'block', 'the section stays visible so the control shows')
+  assert.equal(env.retryControl.style.display, '', 'the retry control is revealed')
+  assert.deepEqual(env.errors, ['Portfolio: approved public read failed'])
+})
+
+test('re-runs the read when the visitor clicks retry, then renders', async () => {
+  const env = makeEnv({
+    approvedFetch: (attempt) =>
+      attempt < 2
+        ? Promise.reject(new TypeError('Failed to fetch'))
+        : Promise.resolve({ ok: true, json: () => Promise.resolve([{ id: 7 }]) }),
+    hasRetryControl: true,
+  })
+  env.document.dispatch('DOMContentLoaded')
+  await settle()
+
+  assert.equal(env.retryControl.style.display, '', 'the first load failed and offered a retry')
+
+  env.retryControl.click()
+  await settle()
+
+  assert.deepEqual(env.appendedIds, [7], 'the retry click loaded and rendered the section')
+  assert.equal(env.retryControl.style.display, 'none', 'the control is hidden again once the read works')
 })
 
 test('fills only the elements inside the modal root, never a duplicate outside it', async () => {
