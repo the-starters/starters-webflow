@@ -1598,7 +1598,7 @@
    */
   function redirectForeignBrandToFeed(err) {
     if (err && (err.status === 403 || err.status === 404)) {
-      location.href = '/opportunities-brands-view'
+      location.href = '/opportunities'
       return true
     }
     return false
@@ -1640,7 +1640,7 @@
     }
     const cf = member.customFields || {}
     if (expect === 'freelancer' && !cf['freelancer-dashboard-url']) {
-      location.href = cf['brands-dashboard-url'] ? '/opportunities-brands-view' : '/'
+      location.href = cf['brands-dashboard-url'] ? '/opportunities' : '/'
       return null
     }
     if (expect === 'brand' && !cf['brands-dashboard-url']) {
@@ -5014,7 +5014,7 @@
   async function initBrandDetail() {
     if (!(await gateOrRedirect('brand'))) return
     const oppId = parseInt(urlParam('opp'), 10)
-    if (!oppId) return (location.href = '/opportunities-brands-view')
+    if (!oppId) return (location.href = '/opportunities')
     setActiveOpp(oppId)
     track('opportunity_viewed', { opportunity_id: oppId, viewer_role: 'brand' })
     const showArchived = false

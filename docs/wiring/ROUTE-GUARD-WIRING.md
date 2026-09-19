@@ -350,13 +350,6 @@ bookmark, so a login form would ask a stranger to authenticate into a funnel ste
 they have no account for yet; the homepage restarts the funnel properly. The
 override replaces the whole destination, so no `?next=` is preserved for them.
 
-The guard's Brand paid allowance is role-level only. On both
-`/opportunities/<slug>` and the legacy
-`/opportunities-details---brand-view?opp=<id>` entry point,
-`opportunities-3.0.js` probes the owner-scoped applicant list. A `403` or `404`
-redirects a foreign brand to `/opportunities-brands-view`; transient, server, and
-network errors do not redirect. Xano remains responsible for ownership enforcement.
-
 **Intentionally not guarded:** `/quiz`, `/quiz-results`, and `/all-starters`.
 None of them may force a login, because all three serve pre-signup visitors.
 `/quiz-results` and `/all-starters` carry their logged-in role rules in
@@ -375,6 +368,27 @@ excluded from `PAGE_ROLES` permanently (decision 2026-08-03): its content
 gating is Memberstack `data-ms-content` on the page plus list/render-level
 limiting for free Brands, and the Talent role bounce is the only route-level rule
 it gets.
+
+## Brand opportunity-detail ownership
+
+This section is the authoritative contract for what happens after the guard
+allows a paid Brand onto an opportunity detail page. The guard's Brand paid
+allowance is role-level only. On both `/opportunities/<slug>` and the legacy
+`/opportunities-details---brand-view?opp=<id>` entry point,
+`opportunities-3.0.js` probes the owner-scoped applicant list. A `403` or `404`
+redirects a foreign brand to the merged `/opportunities` feed; transient,
+server, and network errors do not redirect, so the actual owner is never
+bounced during an outage — the slug route leaves owner-only UI hidden, while
+the legacy route surfaces the error as before. Xano remains responsible for
+ownership enforcement.
+
+The legacy entry point uses that same merged feed when its `opp` parameter is
+missing or nonnumeric, so an entry point with no usable opportunity ID never
+dead-ends, and so does `gateOrRedirect`'s no-guard fallback for a
+brand-custom-field member on a Talent-expected page.
+
+For console checks, `window.Opp30.redirectForeignBrandToFeed(error)` applies
+that status policy and returns whether it redirected.
 
 ## Webflow install
 
