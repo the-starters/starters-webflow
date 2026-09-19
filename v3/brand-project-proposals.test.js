@@ -201,7 +201,7 @@ function controllerFixture(options = {}) {
       return { proposal: { id: 41, status: 'accepted', lifecycle_version: 4 }, project: { id: 95 }, replayed: false }
     },
     async brandProjectProposalList() {
-      return { project_proposals: [proposal()] }
+      return { project_proposals: [proposal()], nextPage: null }
     },
   }
   const controller = api.createController({
@@ -288,7 +288,7 @@ test('refresh renders Action Items from the dedicated Brand proposal projection'
     api: {
       async brandProjectProposalList(page, perPage) {
         pages.push([page, perPage])
-        return { project_proposals: [proposal(), proposal({ proposal_id: 42, title: 'Lifecycle audit' })] }
+        return { project_proposals: [proposal(), proposal({ proposal_id: 42, title: 'Lifecycle audit' })], nextPage: null }
       },
     },
   })
@@ -357,6 +357,28 @@ test('refresh stops at the last nextPage and never pages on itemsTotal alone', a
   assert.deepEqual(fixture.controller.state.proposals.map((item) => item.id), [201])
 })
 
+test('a full page without a nextPage signal is a load failure, not a short list', async () => {
+  const pages = []
+  const fixture = controllerFixture({
+    api: {
+      async brandProjectProposalList(page) {
+        pages.push(page)
+        return {
+          project_proposals: Array.from({ length: 12 }, (_, index) => proposal({ proposal_id: 500 + index })),
+          itemsTotal: 40,
+        }
+      },
+    },
+  })
+
+  await assert.rejects(() => fixture.controller.refresh(), /nextPage signal/)
+  assert.deepEqual(pages, [1])
+
+  assert.equal(await fixture.controller.load(), null)
+  assert.deepEqual(fixture.controller.state.proposals, [])
+  assert.match(fixture.globalFeedback.textContent, /could not be loaded/)
+})
+
 test('refresh rejects a nextPage that does not advance', async () => {
   const pages = []
   const fixture = controllerFixture({
@@ -414,7 +436,7 @@ test('a list response that settles after a member reset is discarded', async () 
   const pending = fixture.controller.load()
 
   fixture.controller.reset()
-  settleList({ project_proposals: [proposal({ proposal_id: 77, starter_name: 'Previous Brand Starter' })] })
+  settleList({ project_proposals: [proposal({ proposal_id: 77, starter_name: 'Previous Brand Starter' })], nextPage: null })
 
   assert.equal(await pending, null)
   assert.deepEqual(fixture.controller.state.proposals, [])
@@ -474,7 +496,7 @@ test('a successful list load clears a previous load failure message', async () =
       async brandProjectProposalList() {
         attempt += 1
         if (attempt === 1) throw Object.assign(new Error('offline'), { status: 0 })
-        return { project_proposals: [proposal()] }
+        return { project_proposals: [proposal()], nextPage: null }
       },
     },
   })
@@ -496,7 +518,7 @@ test('a decline settles whether or not the response carries an empty project fie
         async projectProposalAction() {
           return { proposal: { id: 41, status: 'rejected', lifecycle_version: 4 }, project, replayed: false }
         },
-        async brandProjectProposalList() { return { project_proposals: [] } },
+        async brandProjectProposalList() { return { project_proposals: [], nextPage: null } },
       },
     })
     fixture.controller.render(fixture.projection)
@@ -514,7 +536,7 @@ test('a decline that reports a created project fails closed', async () => {
       async projectProposalAction() {
         return { proposal: { id: 41, status: 'rejected', lifecycle_version: 4 }, project: { id: 95 }, replayed: false }
       },
-      async brandProjectProposalList() { return { project_proposals: [] } },
+      async brandProjectProposalList() { return { project_proposals: [], nextPage: null } },
     },
   })
   fixture.controller.render(fixture.projection)
@@ -558,7 +580,7 @@ test('accepting reloads the canonical Brand project projection alongside the pro
       },
       async brandProjectProposalList() {
         listed.push(true)
-        return { project_proposals: [] }
+        return { project_proposals: [], nextPage: null }
       },
     },
   })
@@ -579,7 +601,7 @@ test('declining leaves the canonical Brand project projection alone', async () =
       async projectProposalAction() {
         return { proposal: { id: 41, status: 'rejected', lifecycle_version: 4 }, project: null, replayed: false }
       },
-      async brandProjectProposalList() { return { project_proposals: [] } },
+      async brandProjectProposalList() { return { project_proposals: [], nextPage: null } },
     },
   })
   fixture.controller.render(fixture.projection)
@@ -597,7 +619,7 @@ test('an accept survives a bridge without the project list reload method', async
       async projectProposalAction() {
         return { proposal: { id: 41, status: 'accepted', lifecycle_version: 4 }, project: { id: 95 }, replayed: false }
       },
-      async brandProjectProposalList() { return { project_proposals: [] } },
+      async brandProjectProposalList() { return { project_proposals: [], nextPage: null } },
     },
   })
   fixture.controller.render(fixture.projection)
@@ -618,7 +640,7 @@ test('a failed project list reload still reloads the proposal list', async () =>
       },
       async brandProjectProposalList() {
         listed.push(true)
-        return { project_proposals: [] }
+        return { project_proposals: [], nextPage: null }
       },
     },
   })
@@ -671,7 +693,7 @@ test('a decision response must carry the documented proposal and project identit
         async projectProposalAction() {
           return { proposal: proposalResult, project: projectResult, replayed: false }
         },
-        async brandProjectProposalList() { return { project_proposals: [] } },
+        async brandProjectProposalList() { return { project_proposals: [], nextPage: null } },
       },
     })
     fixture.controller.render(fixture.projection)
@@ -724,7 +746,7 @@ function brandDashboard() {
     crypto: { randomUUID: () => 'decision-key' },
     addEventListener(name, handler) { listeners[name] = handler },
     setTimeout(callback) { return callback() },
-    Opp30: { API: { async brandProjectProposalList() { return { project_proposals: [proposal()] } } } },
+    Opp30: { API: { async brandProjectProposalList() { return { project_proposals: [proposal()], nextPage: null } } } },
   }
   return { documentObject, globalObject, listeners, onboardingButton, onboardingRow, onboardingTemplate, panel, wrapper }
 }
@@ -761,6 +783,69 @@ test('mount never claims the Action Items onboarding row as its proposal templat
     section.querySelectorAll('[data-project-proposal-card]').map((card) => card.getAttribute('data-project-proposal-id')),
     ['41'],
   )
+})
+
+test('the generated request section stays hidden until a request is pending', async () => {
+  const dashboard = brandDashboard()
+  let pending = []
+  dashboard.globalObject.Opp30.API.brandProjectProposalList = async () => ({
+    project_proposals: pending,
+    nextPage: null,
+  })
+
+  const controller = api.mount(dashboard.globalObject)
+  await controller.load()
+
+  const section = dashboard.documentObject.querySelector('[data-project-request-list]')
+  assert.ok(section)
+  assert.equal(section.hidden, true)
+  assert.equal(section.style.display, 'none')
+  assert.equal(section.getAttribute('aria-hidden'), 'true')
+
+  pending = [proposal()]
+  await controller.load()
+
+  assert.equal(section.hidden, false)
+  assert.equal(section.getAttribute('aria-hidden'), 'false')
+  assert.equal(section.querySelectorAll('[data-project-proposal-card]').length, 1)
+
+  pending = []
+  await controller.load()
+
+  assert.equal(section.hidden, true)
+  assert.equal(section.querySelectorAll('[data-project-proposal-card]').length, 0)
+})
+
+test('a failed load hides the generated section but keeps its feedback visible', async () => {
+  const dashboard = brandDashboard()
+  dashboard.globalObject.Opp30.API.brandProjectProposalList = async () => ({ items: [proposal()] })
+
+  const controller = api.mount(dashboard.globalObject)
+  await controller.load()
+
+  const section = dashboard.documentObject.querySelector('[data-project-request-list]')
+  const feedback = dashboard.documentObject.querySelector('[data-project-proposal-global-feedback]')
+  assert.equal(section.hidden, true)
+  assert.equal(feedback.hidden, false)
+  assert.match(feedback.textContent, /could not be loaded/)
+  assert.equal(section.children.includes(feedback), false)
+})
+
+test('an authored list host keeps its own empty state', async () => {
+  const dashboard = brandDashboard()
+  const authoredList = dashboard.documentObject.body.appendChild(
+    new Element({ 'data-project-request-list': '' }),
+  )
+  dashboard.globalObject.Opp30.API.brandProjectProposalList = async () => ({
+    project_proposals: [],
+    nextPage: null,
+  })
+
+  const controller = api.mount(dashboard.globalObject)
+  await controller.load()
+
+  assert.equal(authoredList.hidden, false)
+  assert.equal(authoredList.style.display, '')
 })
 
 test('pending requests stay visible when Action Items hides the onboarding row', async () => {
@@ -923,7 +1008,7 @@ test('a malformed fulfilled action response is not reported as success and reuse
         if (attempt === 1) return { proposal: { id: 41, status: 'accepted', lifecycle_version: 4 }, project: null }
         return { proposal: { id: 41, status: 'accepted', lifecycle_version: 4 }, project: { id: 95 }, replayed: true }
       },
-      async brandProjectProposalList() { return { project_proposals: [] } },
+      async brandProjectProposalList() { return { project_proposals: [], nextPage: null } },
     },
   })
   fixture.controller.render(fixture.projection)
@@ -953,7 +1038,7 @@ test('a failed retry reuses its idempotency key and maps stale conflicts safely'
       },
       async brandProjectProposalList() {
         refreshes += 1
-        return { project_proposals: [proposal()] }
+        return { project_proposals: [proposal()], nextPage: null }
       },
     },
   })

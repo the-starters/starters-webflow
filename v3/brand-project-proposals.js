@@ -546,6 +546,7 @@
       } else {
         documentObject.body.appendChild(section)
       }
+      setVisible(section, false)
       list = section
     }
     var template = appendElement(documentObject, list, 'article', {
@@ -712,7 +713,10 @@
 
     function render(value) {
       state.proposals = normalizeProposals(value)
-      renderCards(list, template, state.proposals)
+      var rendered = renderCards(list, template, state.proposals)
+      if (list && list.getAttribute && list.getAttribute('data-project-proposal-generated') === 'true') {
+        setVisible(list, rendered > 0)
+      }
       if (state.active) {
         var refreshedActive = state.proposals.find(function (item) { return item.id === state.active.id })
         if (!refreshedActive) {
@@ -795,6 +799,9 @@
         if (generation !== state.generation) return null
         var envelope = proposalEnvelope(result)
         if (!envelope) throw new Error('Proposal list returned an invalid response')
+        if (!Object.prototype.hasOwnProperty.call(envelope, 'nextPage')) {
+          throw new Error('Proposal list page is missing its nextPage signal')
+        }
         items = items.concat(envelope.project_proposals)
         var next = positiveId(envelope.nextPage)
         if (next && next <= page) throw new Error('Proposal pagination did not advance')

@@ -44,22 +44,30 @@ Brand's own pending requests. The body is `{ "page": 1, "per_page": 12 }`:
       "start_date": "2026-08-20",
       "created_at": "2026-08-12T00:00:00Z"
     }
-  ]
+  ],
+  "nextPage": null
 }
 ```
 
 `project_proposals` is the only accepted envelope; a response without that
-top-level array is a load failure, not an empty list. The controller drops any
+top-level array is a load failure, not an empty list. Every page must also
+carry `nextPage` explicitly — the next page number when more pending requests
+remain, `null` on the last page. It is a required field, not an optional one:
+a page that omits the key entirely is rejected as malformed rather than
+treated as the end of the list, so a truncated list can never be painted as a
+complete one. The controller drops any
 row missing a positive `proposal_id`, missing a positive `lifecycle_version`, or
 whose `status` is not `awaiting_brand_approval`, and it drops a row the server
 marks neither acceptable nor rejectable. `can_accept` and `can_reject` are the
 only authority for the dialog's controls; the browser never infers them.
 
-The controller requests 12 rows per page and follows `nextPage` alone until the
-server stops returning one, so a request after the first 12 remains reachable.
-`nextPage` is the only continuation signal; `itemsTotal` is never used to keep
-paging. A page that does not advance is rejected, a malformed page is rejected,
-and the loop stops after 100 pages, so the browser can never loop unbounded.
+The controller requests 12 rows per page and follows `nextPage` until the server
+returns `null`, so a request after the first 12 remains reachable. `nextPage` is
+the only continuation signal; `itemsTotal` is never used to keep paging, which
+is why `nextPage` must be present on every page. A page missing that key, a page
+that does not advance, and a malformed page are all rejected, and the loop stops
+after 100 pages, so the browser can never loop unbounded. Every one of those
+rejections surfaces the load-failure state below rather than a short list.
 
 `POST projects/proposal-action/v3` takes
 `{ proposal_id, expected_version, action, idempotency_key }` where `action` is
@@ -133,6 +141,15 @@ otherwise. It is never placed inside that wrapper, so the panel's zero-item
 collapse cannot hide pending requests. Generated markup carries
 `data-project-proposal-generated="true"`.
 
+The generated section is created hidden and is shown only while it holds at
+least one pending request, so a Brand with nothing to review never sees an
+empty "Project requests" box. It is hidden again whenever a render leaves zero
+rows, including after the last pending request is approved or declined and
+after a failed load. The page-level feedback region sits outside the section, so
+the load-failure message stays visible while the section is hidden. An authored
+`data-project-request-list` keeps whatever empty state Webflow gives it; the
+controller only toggles the section it generated itself.
+
 ## Script order
 
 Install on `/brand-dashboard` Page Settings -> Custom Code -> Footer, after
@@ -175,7 +192,8 @@ reloads the lists nor announces its reload-failure copy into the new scope.
 - Changed or already handled (409): **This request changed or was already handled. Refresh the request before continuing.**
 - Reopening a request already resolved in this session: **This project request was already handled. Refresh the dashboard to update the list.**
 - No decision route on the page: **Project request actions are not available. Reload and try again.**
-- The pending-request list failed to load (malformed envelope, failed page, page cap, or a bridge without `brandProjectProposalList`): the list renders empty and the page-level feedback region reads **Your pending project requests could not be loaded. Refresh the dashboard to try again.** An empty list is never shown silently for a failed load, including when a stale cached `opportunities-3.0.js` is served without the proposal-list route.
+- No pending requests: the generated request section is hidden and no message is shown.
+- The pending-request list failed to load (malformed envelope, a page missing `nextPage`, a non-advancing page, a failed page, the page cap, or a bridge without `brandProjectProposalList`): the list renders empty and the page-level feedback region reads **Your pending project requests could not be loaded. Refresh the dashboard to try again.** An empty list is never shown silently for a failed load, including when a stale cached `opportunities-3.0.js` is served without the proposal-list route.
 
 Raw server text is never shown. Decision events
 `starters:project-proposal-accepted` and `starters:project-proposal-rejected`
