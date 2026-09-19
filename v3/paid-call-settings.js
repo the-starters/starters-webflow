@@ -24,6 +24,8 @@
   const FIXED_DURATION_MINUTES = 60
   const VALIDATED_FIELD_NAMES = ['title', 'price']
   const ROOT_WAIT_TIMEOUT_MS = 10000
+  const AUTH_BRIDGE_WAIT_INTERVAL_MS = 100
+  const AUTH_BRIDGE_WAIT_ATTEMPTS = 100
   const BUSY_STYLE_ID = 'ts-call-settings-busy-style'
   const PAID_RADIO_GROUP_NAMES = [
     'consulting-calls-paid',
@@ -1342,6 +1344,8 @@
         return null
       }
       sessionMemberId = member.id
+      await waitForSchedulingAuth()
+      if (version !== refreshVersion) return null
       sessionAuthScope = await currentAuthScope()
       if (!currentRender(version, member.id)) return null
       const pendingWrite = activeWrite && activeWrite.memberId === member.id ? activeWrite : null
@@ -1422,6 +1426,42 @@
     return new Promise(function (resolve) {
       memberstackReadyResolvers.push(resolve)
     })
+  }
+
+  let schedulingAuthWait = null
+
+  function schedulingAuthReady() {
+    return (
+      typeof window.__tsSchedulingAuthGetScope === 'function' &&
+      typeof window.__tsSchedulingAuthFetch === 'function'
+    )
+  }
+
+  function waitForSchedulingAuth() {
+    if (schedulingAuthReady()) return Promise.resolve()
+    if (schedulingAuthWait) return schedulingAuthWait
+    schedulingAuthWait = new Promise(function (resolve) {
+      let attempts = 0
+      function check() {
+        if (schedulingAuthReady()) {
+          resolve()
+          return
+        }
+        attempts += 1
+        if (attempts >= AUTH_BRIDGE_WAIT_ATTEMPTS) {
+          console.warn(
+            '[paid-call-settings] scheduling-auth bridge never installed on ' +
+              window.location.pathname +
+              '; canonical paid-call reads and writes cannot be authenticated',
+          )
+          resolve()
+          return
+        }
+        window.setTimeout(check, AUTH_BRIDGE_WAIT_INTERVAL_MS)
+      }
+      check()
+    })
+    return schedulingAuthWait
   }
 
   function bind() {

@@ -182,6 +182,14 @@ hand only on a surface that does not use that loader:
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/free-call-settings.js"></script>
 ```
 
+That order is the contract, but it is not the only protection against a late bridge. The
+controller's session load path — page init and every Memberstack auth change — waits for the
+bridge-owned scope and fetch references before its canonical read, polling every 100 ms for up to
+10 seconds. A bridge that installs after the controller therefore still hydrates the card instead
+of painting the unavailable state. A bridge that never installs logs one
+`scheduling-auth bridge never installed` console warning naming the path, then falls through to the
+existing fail-closed error paint.
+
 The existing Paid controller remains separate. Both can coexist on the dashboard because their roots,
 radio groups, status attributes, events, and Xano endpoints are distinct.
 

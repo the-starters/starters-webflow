@@ -11,6 +11,14 @@ update-the-duration message until it is saved again at 60 minutes.
 
 Load `v3/paid-call-settings.js` after `v3/scheduling-auth.js`. The local stage component loader already includes it.
 
+That order is the contract, but it is not the only protection against a late bridge. The
+controller's session load path — page init and every Memberstack auth change — waits for the
+bridge-owned scope and fetch references before its canonical read, polling every 100 ms for up to
+10 seconds. A bridge that installs after the controller therefore still hydrates the card instead
+of painting the unavailable state. A bridge that never installs logs one
+`scheduling-auth bridge never installed` console warning naming the path, then falls through to the
+existing fail-closed error paint.
+
 Boot does not require the Paid card to exist yet. The controller publishes its own progress on
 `<html>` as `data-paid-call-settings`, one of `waiting-for-ui`, `loading`, `ready`, `saving`,
 `disabling`, `error`, or `not-applicable`. With no Paid card root on the page it stays in

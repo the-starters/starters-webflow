@@ -340,12 +340,18 @@ marker first breaks the page two ways:
   Xano authority live in the [Free Call settings contract](../../docs/wiring/FREE-CALL-SETTINGS-WIRING.md#loader-order)
   and the [Paid Call settings contract](../../docs/wiring/PAID-CALL-SETTINGS-WIRING.md#script).
   That prerequisite scopes where step 6 call settings work today. The bridge runs host-wide on
-  `the-starters-3-0.webflow.io`, but on the V3 custom domains it runs only on the paths listed in
-  its [current safety boundary](../README.md#scheduling-auth), which does not include
+  `the-starters-3-0.webflow.io`, and on the V3 custom domains it runs only on the paths listed in
+  its [current safety boundary](../README.md#scheduling-auth), which now includes
   `/starter-edit-profile`. Without the bridge both controllers throw `xanoAuthFetch is unavailable`,
-  so the step 6 call controls render unhydrated and every call save fails closed. Until that
-  boundary adds this path, the editable step 6 call settings described above are staging-only;
-  the boundary list owns that decision, so widen it there rather than restating a host rule here.
+  so the step 6 call controls render unhydrated and every call save fails closed. The boundary list
+  owns that decision, so widen it there rather than restating a host rule here.
+  Loader order alone does not decide the race on this page: both controllers wait for the bridge
+  before their canonical read, so a bridge that installs after them still hydrates step 6 instead
+  of flashing the unavailable state. The two contracts linked above own that wait and its bounds.
+  Both bridge arrival orders are exercised in Chrome against the authored step 6 DOM by
+  `node v3/browser-tests/edit-profile-call-settings.browser.cjs`; set
+  `EDIT_PROFILE_BROWSER_EVIDENCE=<dir>` to write screenshots and observations. The fixture fakes
+  only the Memberstack session and the Xano responses, so it cannot establish production behavior.
 
 ### Authored markers
 

@@ -21,6 +21,8 @@
   const STATUS_ATTRIBUTE = 'data-free-call-settings'
   const FIXED_DURATION_MINUTES = 30
   const ROOT_WAIT_TIMEOUT_MS = 10000
+  const AUTH_BRIDGE_WAIT_INTERVAL_MS = 100
+  const AUTH_BRIDGE_WAIT_ATTEMPTS = 100
   const FREE_RADIO_GROUP_NAMES = ['consulting-calls-free', 'free-consulting-calls']
   const SHARED_RADIO_HOOK = 'data-call-settings-input'
   const FREE_RADIO_HOOK = 'data-free-call-settings-input'
@@ -1002,6 +1004,8 @@
         return null
       }
       sessionMemberId = member.id
+      await waitForSchedulingAuth()
+      if (version !== refreshVersion) return null
       sessionAuthScope = await currentAuthScope()
       if (!currentRender(version, member.id)) return null
       const pendingWrite = activeWrite && activeWrite.memberId === member.id ? activeWrite : null
@@ -1078,6 +1082,42 @@
       return Promise.resolve(memberstack)
     }
     return new Promise(function (resolve) { memberstackReadyResolvers.push(resolve) })
+  }
+
+  let schedulingAuthWait = null
+
+  function schedulingAuthReady() {
+    return (
+      typeof window.__tsSchedulingAuthGetScope === 'function' &&
+      typeof window.__tsSchedulingAuthFetch === 'function'
+    )
+  }
+
+  function waitForSchedulingAuth() {
+    if (schedulingAuthReady()) return Promise.resolve()
+    if (schedulingAuthWait) return schedulingAuthWait
+    schedulingAuthWait = new Promise(function (resolve) {
+      let attempts = 0
+      function check() {
+        if (schedulingAuthReady()) {
+          resolve()
+          return
+        }
+        attempts += 1
+        if (attempts >= AUTH_BRIDGE_WAIT_ATTEMPTS) {
+          console.warn(
+            '[free-call-settings] scheduling-auth bridge never installed on ' +
+              window.location.pathname +
+              '; canonical free-call reads and writes cannot be authenticated',
+          )
+          resolve()
+          return
+        }
+        window.setTimeout(check, AUTH_BRIDGE_WAIT_INTERVAL_MS)
+      }
+      check()
+    })
+    return schedulingAuthWait
   }
 
   function bind() {

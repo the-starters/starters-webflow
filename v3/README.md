@@ -1933,8 +1933,11 @@ Current safety boundary:
 
 - Runs across `the-starters-3-0.webflow.io`.
 - On the V3 custom domains, runs on valid single-segment `/hire/<slug>` paths,
-  `/starter-dashboard`, `/brand-dashboard`, and `/messages`. Production
-  `/hire/jp-dionisio` remains explicitly blocked.
+  `/starter-dashboard`, `/brand-dashboard`, `/messages`, and
+  `/starter-edit-profile`. Production `/hire/jp-dionisio` remains explicitly
+  blocked. `/starter-edit-profile` is on this list because step 6 of Edit Profile
+  reads and writes the same canonical Free and Paid call settings the Starter
+  dashboard already owns; it adds no route to the authenticated list below.
 - Authenticates only explicit reviewed `/v3` routes on the configured Xano
   origin, including the two Brand paid-call payment-method paths documented
   below. It does not use a group-wide prefix allowlist.
