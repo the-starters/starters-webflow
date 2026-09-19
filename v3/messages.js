@@ -49,6 +49,8 @@
   const MEMBERSTACK_TIMEOUT_MS = 10000
   const TALKJS_TIMEOUT_MS = 15000
   const TALKJS_MAX_LOAD_ATTEMPTS = 2
+  const TALKJS_READY_TIMEOUT_CODE = 'TALKJS_READY_TIMEOUT'
+  const TALKJS_RELOAD_GUARD_KEY = 'starters:messages-talkjs-recovery-reload'
   const LOGIN_PATH = '/login'
   const DEEP_LINK_PARAM = 'with'
   const CONVERSATION_PARAM = 'conversation'
@@ -221,10 +223,11 @@
         return await Promise.race([
           attempt.ready,
           new Promise((resolve, reject) => {
-            timer = window.setTimeout(
-              () => reject(new Error('TalkJS did not become ready')),
-              timeoutMs,
-            )
+            timer = window.setTimeout(() => {
+              const error = new Error('TalkJS did not become ready')
+              error.code = TALKJS_READY_TIMEOUT_CODE
+              reject(error)
+            }, timeoutMs)
           }),
         ])
       } catch (error) {
@@ -237,6 +240,51 @@
     }
 
     throw lastError || new Error('TalkJS did not become ready')
+  }
+
+  // A readiness timeout is ambiguous: the first SDK request may still execute,
+  // so adding another script tag to this document can evaluate TalkJS twice.
+  // A single full-document reload gives the browser a fresh request and a fresh
+  // global without that risk. sessionStorage scopes the guard to this tab and
+  // preserves it across the reload; if storage is unavailable, fail closed to
+  // the retry UI because a reload loop would be worse than a visible failure.
+  function claimTalkJsRecoveryReload() {
+    try {
+      if (window.sessionStorage.getItem(TALKJS_RELOAD_GUARD_KEY) === '1') {
+        return false
+      }
+      window.sessionStorage.setItem(TALKJS_RELOAD_GUARD_KEY, '1')
+      return true
+    } catch (error) {
+      return false
+    }
+  }
+
+  function clearTalkJsRecoveryReload() {
+    try {
+      window.sessionStorage.removeItem(TALKJS_RELOAD_GUARD_KEY)
+    } catch (error) {}
+  }
+
+  function renderTalkJsFailure(container) {
+    if (!container) return
+    container.textContent = ''
+    container.setAttribute('aria-busy', 'false')
+
+    const notice = document.createElement('div')
+    notice.setAttribute('role', 'alert')
+
+    const message = document.createElement('p')
+    message.textContent = 'Messages could not load. Please try again.'
+
+    const retry = document.createElement('button')
+    retry.type = 'button'
+    retry.textContent = 'Try again'
+    retry.addEventListener('click', () => window.location.reload())
+
+    notice.appendChild(message)
+    notice.appendChild(retry)
+    container.appendChild(notice)
   }
 
   // Replicated from v3/route-guard.js PLAN_ROLES — that file is the canonical
@@ -887,6 +935,7 @@
       inbox, member, container, identity,
     })
     await inbox.mount(container)
+    clearTalkJsRecoveryReload()
 
 
     // Deliberately after mount and deliberately not awaited: the inbox is already
@@ -903,6 +952,15 @@
   function start() {
     mountMessages().catch((error) => {
       console.error('[messages-3.0] Unable to mount TalkJS inbox', error)
+      if (
+        error &&
+        error.code === TALKJS_READY_TIMEOUT_CODE &&
+        claimTalkJsRecoveryReload()
+      ) {
+        window.location.reload()
+        return
+      }
+      renderTalkJsFailure(document.getElementById('talkjs-container'))
     })
   }
 

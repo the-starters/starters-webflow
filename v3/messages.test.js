@@ -8,6 +8,7 @@ const source = fs.readFileSync(require.resolve('./messages.js'), 'utf8')
 const MY_ID = 'mem_me00000000000000000000'
 const OTHER_ID = 'mem_other0000000000000000'
 const HANDOFF_KEY = 'starters:hire-message-handoff'
+const TALKJS_RELOAD_GUARD_KEY = 'starters:messages-talkjs-recovery-reload'
 
 function member(id = MY_ID) {
   return {
@@ -32,6 +33,7 @@ function member(id = MY_ID) {
  * options.steerThrows  — steering a reserved tab throws, as a refused
  *                        navigation does
  * options.hostname  — window.location.hostname, which gates staging diagnostics
+ * options.storage   — initial sessionStorage entries
  */
 function loadMessages(options = {}) {
   const replacements = []
@@ -57,9 +59,34 @@ function loadMessages(options = {}) {
     // identity handler's abort budget and fire it without waiting 4 seconds.
     timers: [],
     scripts: [],
+    reloads: 0,
   }
-  const container = {}
-  const storage = new Map()
+  function element(tagName) {
+    return {
+      tagName: String(tagName || '').toUpperCase(),
+      attributes: {},
+      children: [],
+      dataset: {},
+      textContent: '',
+      removed: false,
+      listeners: new Map(),
+      setAttribute(name, value) {
+        this.attributes[name] = String(value)
+      },
+      appendChild(child) {
+        this.children.push(child)
+        return child
+      },
+      addEventListener(name, handler) {
+        this.listeners.set(name, handler)
+      },
+      remove() {
+        this.removed = true
+      },
+    }
+  }
+  const container = element('div')
+  const storage = new Map(Object.entries(options.storage || {}))
 
   if (options.handoff !== undefined) {
     storage.set(
@@ -149,6 +176,9 @@ function loadMessages(options = {}) {
       replace(value) {
         replacements.push(value)
       },
+      reload() {
+        calls.reloads += 1
+      },
     },
     open(...args) {
       calls.opens.push(args)
@@ -203,13 +233,7 @@ function loadMessages(options = {}) {
   const document = {
     addEventListener() {},
     createElement() {
-      return {
-        dataset: {},
-        removed: false,
-        remove() {
-          this.removed = true
-        },
-      }
+      return element(arguments[0])
     },
     getElementById(id) {
       return id === 'talkjs-container' ? container : null
@@ -313,7 +337,7 @@ test('a TalkJS script that fails to load is removed and retried once', async () 
   assert.deepEqual(loaded.errors, [])
 })
 
-test('a TalkJS script still in flight is never superseded by a second tag', async () => {
+test('a TalkJS script still in flight triggers one guarded document reload', async () => {
   const loaded = loadMessages({ talk: false })
   await settle()
 
@@ -329,9 +353,46 @@ test('a TalkJS script still in flight is never superseded by a second tag', asyn
   assert.equal(loaded.calls.scripts.length, 1)
   assert.equal(loaded.calls.scripts[0].removed, false)
   assert.deepEqual(loaded.calls.mounted, [])
+  assert.equal(loaded.calls.reloads, 1)
+  assert.equal(loaded.storage.get(TALKJS_RELOAD_GUARD_KEY), '1')
   assert.deepEqual(loaded.errors, [
     '[messages-3.0] Unable to mount TalkJS inbox Error: TalkJS did not become ready',
   ])
+})
+
+test('a guarded TalkJS timeout does not reload again and renders retry UI', async () => {
+  const loaded = loadMessages({
+    talk: false,
+    storage: { [TALKJS_RELOAD_GUARD_KEY]: '1' },
+  })
+  await settle()
+
+  const readiness = loaded.calls.timers.find((timer) => timer.ms === 15000)
+  readiness.fire()
+  await settle()
+
+  assert.equal(loaded.calls.reloads, 0)
+  assert.equal(loaded.calls.scripts.length, 1)
+  assert.equal(loaded.container.children.length, 1)
+  const notice = loaded.container.children[0]
+  assert.equal(notice.attributes.role, 'alert')
+  assert.equal(notice.children[0].textContent, 'Messages could not load. Please try again.')
+  assert.equal(notice.children[1].textContent, 'Try again')
+  assert.equal(notice.children[1].type, 'button')
+
+  notice.children[1].listeners.get('click')()
+  assert.equal(loaded.calls.reloads, 1)
+})
+
+test('a successful inbox mount clears the TalkJS reload guard', async () => {
+  const loaded = loadMessages({
+    storage: { [TALKJS_RELOAD_GUARD_KEY]: '1' },
+  })
+
+  await settle()
+
+  assert.deepEqual(loaded.calls.mounted, [loaded.container])
+  assert.equal(loaded.storage.has(TALKJS_RELOAD_GUARD_KEY), false)
 })
 
 test('a slow TalkJS SDK fails once rather than waiting out a second timeout', async () => {
@@ -347,6 +408,7 @@ test('a slow TalkJS SDK fails once rather than waiting out a second timeout', as
   await settle()
 
   assert.equal(loaded.calls.scripts.length, 1)
+  assert.equal(loaded.calls.reloads, 1)
   assert.equal(
     loaded.calls.timers.filter((timer) => timer.ms === 15000).length,
     1,
