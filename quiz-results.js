@@ -6185,24 +6185,16 @@
      * @returns {Promise<boolean>} Whether this call attempted the event capture.
      */
     async function trackQuizResultsViewed(recommendations, options = {}) {
-        if (quizResultsViewedTracked || options.isSyntheticResult) return false
+        if (options.isSyntheticResult) return false
 
         try {
-            const pathname = String(window.location.pathname || '')
-            const normalizedPathname = pathname.replace(/\/+$/, '') || '/'
+            const normalizedPathname =
+                String(window.location.pathname || '').replace(/\/+$/, '') ||
+                '/'
 
             if (normalizedPathname !== '/quiz-results') return false
-            if (
-                document.documentElement.getAttribute('data-route-guard') ===
-                'redirecting'
-            ) {
-                return false
-            }
 
             const matchCount = getUniqueStarterCount(recommendations)
-
-            if (!Number.isFinite(matchCount) || matchCount < 0) return false
-
             const authState = await resolveMemberstackAuthState()
 
             if (
@@ -6226,7 +6218,10 @@
                 quizResultsViewedTracked ||
                 document.documentElement.getAttribute('data-route-guard') ===
                     'redirecting' ||
-                routeGuard.roleBounceTargetFor(authState.member, pathname) !== ''
+                routeGuard.roleBounceTargetFor(
+                    authState.member,
+                    normalizedPathname,
+                ) !== ''
             ) {
                 return false
             }

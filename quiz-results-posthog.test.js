@@ -26,6 +26,13 @@ const QUIZ_EMAIL_TEST_CANARY = {
     ...BRAND_PAID,
     auth: { email: 'jp+brand10@thestarters.com' },
 }
+// A completed `starter-quiz` field makes /quiz-results this member's own role
+// home, so the role gate authorizes the page from the member alone — no ready
+// sessionStorage payload needed to keep the capture open.
+const BRAND_FREE_QUIZ_SAVED = {
+    ...BRAND_FREE,
+    customFields: { 'starter-quiz': '{"status":"ready"}' },
+}
 
 function savedResult(starterCount = 3) {
     return {
@@ -242,10 +249,13 @@ test('a duplicate DOMContentLoaded invocation cannot capture twice', async () =>
 })
 
 test('actual synthetic URL result boot renders without analytics', async () => {
+    // Every other gate is deliberately open here — authorized role, real
+    // /quiz-results path, no redirect — so only the synthetic-data rejection
+    // can be what keeps this capture count at zero.
     const harness = createHarness({
-        search: '?starterQuizTest=1',
+        search: '?starterQuizTest=1&category=Paid%20Media',
         pending: null,
-        member: null,
+        member: BRAND_FREE_QUIZ_SAVED,
     })
     harness.boot()
     await waitForSettled(harness)
@@ -286,7 +296,12 @@ test('wrong and unresolved roles fail closed during real boot', async () => {
 
 test('wrong path, missing guard and unavailable auth fail closed', async () => {
     const cases = [
-        createHarness({ pathname: '/starter-dashboard' }),
+        // /all-starters keeps a quiz-completed Brand Free member in place, so
+        // this case is rejected by the path check and not by a role bounce.
+        createHarness({
+            pathname: '/all-starters',
+            member: BRAND_FREE_QUIZ_SAVED,
+        }),
         createHarness({ routeGuardMissing: true }),
         createHarness({ unresolvedAuth: true }),
         createHarness({ member: null }),
@@ -297,6 +312,18 @@ test('wrong path, missing guard and unavailable auth fail closed', async () => {
         await waitForSettled(harness)
         assert.equal(harness.captures.length, 0)
     }
+})
+
+test('a doubled trailing slash still fails a wrong role closed', async () => {
+    // The role gate must read the same normalized path the page check accepted;
+    // a raw '/quiz-results//' matches no role-bounce rule, and the guard itself
+    // leaves this Talent member in place, so only normalization rejects it.
+    const harness = createHarness({ pathname: '/quiz-results//', member: TALENT })
+    harness.boot()
+    await waitForSettled(harness)
+
+    assert.equal(harness.location.replaced, undefined)
+    assert.equal(harness.captures.length, 0)
 })
 
 test('redirect state prevents capture during real boot', async () => {
