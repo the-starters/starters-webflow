@@ -345,11 +345,9 @@ marker first breaks the page two ways:
   `/starter-edit-profile`. Without the bridge both controllers throw `xanoAuthFetch is unavailable`,
   so the step 6 call controls render unhydrated and every call save fails closed. The boundary list
   owns that decision, so widen it there rather than restating a host rule here.
-  Loader order alone does not decide the race: both controllers await the bridge at their shared
-  auth boundary, so a bridge that installs after the controllers still hydrates step 6 instead of
-  flashing the unavailable state, whichever entry point — page init or a Memberstack auth change —
-  reaches the canonical read first. A bridge that never installs is reported once per controller as
-  a `scheduling-auth bridge never installed` console warning.
+  Loader order alone does not decide the race on this page: both controllers wait for the bridge
+  before their canonical read, so a bridge that installs after them still hydrates step 6 instead
+  of flashing the unavailable state. The two contracts linked above own that wait and its bounds.
   Both bridge arrival orders are exercised in Chrome against the authored step 6 DOM by
   `node v3/browser-tests/edit-profile-call-settings.browser.cjs`; set
   `EDIT_PROFILE_BROWSER_EVIDENCE=<dir>` to write screenshots and observations. The fixture fakes
