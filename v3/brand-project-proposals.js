@@ -30,6 +30,8 @@
   var FALLBACK_STYLE_ID = 'brand-project-proposal-fallback-styles'
   var MEMBER_RESET_EVENT = 'opp30:member-scope-reset'
   var MAX_PROPOSAL_PAGES = 100
+  var ACTION_ELEMENT_ATTR = 'data-action-element'
+  var ACTION_ITEMS_WRAPPER = 'wrapper'
   var LIST_FAILURE_MESSAGE = 'Your pending project requests could not be loaded. Refresh the dashboard to try again.'
 
   function clean(value) {
@@ -45,18 +47,15 @@
     return value === true
   }
 
-  function sourceProposals(value) {
-    if (Array.isArray(value && value.project_proposals)) return value.project_proposals
-    if (Array.isArray(value && value.data && value.data.project_proposals)) {
-      return value.data.project_proposals
-    }
-    return []
-  }
-
   function proposalEnvelope(value) {
     if (Array.isArray(value && value.project_proposals)) return value
     if (Array.isArray(value && value.data && value.data.project_proposals)) return value.data
     return null
+  }
+
+  function sourceProposals(value) {
+    var envelope = proposalEnvelope(value)
+    return envelope ? envelope.project_proposals : []
   }
 
   function normalizeProposal(raw) {
@@ -514,20 +513,39 @@
     return card
   }
 
+  function feedbackAnchor(list) {
+    var anchor = list
+    var node = list
+    while (node) {
+      if (typeof node.getAttribute === 'function' && node.getAttribute(ACTION_ELEMENT_ATTR) === ACTION_ITEMS_WRAPPER) {
+        anchor = node
+      }
+      node = node.parentNode
+    }
+    return anchor
+  }
+
   function ensureGlobalFeedback(documentObject, list) {
     if (!documentObject || !list) return null
     var existing = documentObject.querySelector
       ? documentObject.querySelector(GLOBAL_FEEDBACK_SELECTOR)
       : null
     if (existing) return existing
-    var target = appendElement(documentObject, list, 'p', {
+    if (typeof documentObject.createElement !== 'function') return null
+    var anchor = feedbackAnchor(list)
+    var parent = anchor.parentNode
+    var target = documentObject.createElement('p')
+    setAttributes(target, {
       'class': 'project-proposal-review_feedback',
       'data-project-proposal-global-feedback': '',
       'role': 'status',
       'aria-live': 'polite',
       'hidden': '',
     })
-    if (target) target.hidden = true
+    if (parent && typeof parent.insertBefore === 'function') parent.insertBefore(target, anchor)
+    else if (documentObject.body) documentObject.body.appendChild(target)
+    else return null
+    target.hidden = true
     return target
   }
 
@@ -707,7 +725,9 @@
     }
 
     async function refresh() {
-      if (!api || typeof api.brandProjectProposalList !== 'function') return null
+      if (!api || typeof api.brandProjectProposalList !== 'function') {
+        throw new Error('Proposal list route is not available')
+      }
       var page = 1
       var perPage = 12
       var items = []

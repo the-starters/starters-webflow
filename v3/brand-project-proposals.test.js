@@ -3,6 +3,7 @@
 const assert = require('node:assert/strict')
 const test = require('node:test')
 const api = require('./brand-project-proposals.js')
+const actionItems = require('./dashboard-action-items.js')
 
 class Element {
   constructor(attrs = {}) {
@@ -24,6 +25,13 @@ class Element {
   }
   setAttribute(name, value) { this.attrs[name] = String(value) }
   getAttribute(name) { return this.attrs[name] ?? null }
+  isRendered() {
+    for (let node = this; node; node = node.parentNode) {
+      if (node.hidden || node.style.display === 'none') return false
+    }
+    return true
+  }
+  getBoundingClientRect() { return { height: this.isRendered() ? this.rectHeight || 0 : 0 } }
   hasAttribute(name) { return Object.prototype.hasOwnProperty.call(this.attrs, name) }
   removeAttribute(name) { delete this.attrs[name] }
   focus() { this.focused = true }
@@ -221,6 +229,16 @@ test('builds a minimal versioned decision command', () => {
     idempotency_key: 'retry-1',
   })
   assert.throws(() => api.decisionPayload(normalized, 'edit', 'retry-1'), /Unsupported/)
+})
+
+test('one envelope parser feeds both rendered rows and pagination', () => {
+  const rows = [proposal()]
+  for (const payload of [{ project_proposals: rows }, { data: { project_proposals: rows } }]) {
+    assert.deepEqual(api.normalizeProposals(payload).map((item) => item.id), [41])
+  }
+  for (const payload of [{ items: rows }, { data: { items: rows } }, null, []]) {
+    assert.deepEqual(api.normalizeProposals(payload), [])
+  }
 })
 
 test('renders proposal rows as Action Items from the authored template', () => {
@@ -422,11 +440,19 @@ test('refresh rejects a malformed fulfilled list response without clearing rende
   assert.deepEqual(fixture.controller.state.proposals.map((item) => item.id), [41])
 })
 
-test('a refresh without the proposal list route leaves the rendered cards untouched', async () => {
+test('a bridge without the proposal list route is a load failure, not an empty list', async () => {
   const fixture = controllerFixture({ api: {} })
   fixture.controller.render(fixture.projection)
-  assert.equal(await fixture.controller.refresh(), null)
+
+  await assert.rejects(() => fixture.controller.refresh(), /not available/)
   assert.deepEqual(fixture.controller.state.proposals.map((item) => item.id), [41])
+
+  assert.equal(await fixture.controller.load(), null)
+
+  assert.deepEqual(fixture.controller.state.proposals, [])
+  assert.match(fixture.globalFeedback.textContent, /could not be loaded/)
+  assert.equal(fixture.globalFeedback.hidden, false)
+  assert.equal(fixture.globalFeedback.getAttribute('role'), 'alert')
 })
 
 test('accepting reloads the canonical Brand project projection alongside the proposal list', async () => {
@@ -508,19 +534,54 @@ test('builds a complete read-only review dialog when Designer markup is absent',
   assert.equal(modal.actions.message.getAttribute('href'), '/messages/alex')
 })
 
-test('adds one persistent Action Items feedback region when none is authored', () => {
+function actionItemsDashboard() {
   const documentObject = fallbackDocument()
-  const list = new Element()
-  const first = api.ensureGlobalFeedback(documentObject, list)
+  const section = documentObject.body.appendChild(new Element())
+  const wrapper = section.appendChild(new Element({ 'data-action-element': 'wrapper' }))
+  const empty = wrapper.appendChild(new Element({ 'data-action-element': 'empty' }))
+  const list = wrapper.appendChild(new Element({ 'data-action-element': 'list' }))
+  return { documentObject, section, wrapper, empty, list }
+}
+
+test('the feedback region is created outside the Action Items wrapper', () => {
+  const dashboard = actionItemsDashboard()
+  const first = api.ensureGlobalFeedback(dashboard.documentObject, dashboard.list)
   assert.ok(first)
   assert.equal(first.getAttribute('data-project-proposal-global-feedback'), '')
   assert.equal(first.getAttribute('aria-live'), 'polite')
   assert.equal(first.hidden, true)
+  assert.equal(first.parentNode, dashboard.section)
+  assert.deepEqual(dashboard.section.children, [first, dashboard.wrapper])
+  assert.equal(dashboard.wrapper.children.includes(first), false)
+  assert.equal(dashboard.list.children.length, 0)
 
-  documentObject.querySelector = (selector) => selector === '[data-project-proposal-global-feedback]' ? first : null
-  const second = api.ensureGlobalFeedback(documentObject, list)
+  dashboard.documentObject.querySelector = (selector) =>
+    selector === '[data-project-proposal-global-feedback]' ? first : null
+  const second = api.ensureGlobalFeedback(dashboard.documentObject, dashboard.list)
   assert.equal(second, first)
-  assert.equal(list.children.length, 1)
+  assert.equal(dashboard.section.children.length, 2)
+})
+
+test('the failed-load message survives the Action Items panel hiding its empty wrapper', () => {
+  const dashboard = actionItemsDashboard()
+  const feedback = api.ensureGlobalFeedback(dashboard.documentObject, dashboard.list)
+  const pendingRow = dashboard.list.appendChild(new Element({ 'data-action-element': 'item' }))
+  pendingRow.rectHeight = 20
+  const panel = actionItems.createPanel(dashboard.wrapper)
+
+  assert.equal(panel.render(), 1)
+  assert.equal(dashboard.wrapper.hidden, false)
+
+  pendingRow.remove()
+  feedback.textContent = 'Your pending project requests could not be loaded. Refresh the dashboard to try again.'
+  feedback.hidden = false
+  feedback.style.display = ''
+  feedback.rectHeight = 18
+
+  assert.equal(panel.render(), 0)
+  assert.equal(dashboard.wrapper.hidden, true)
+  assert.equal(dashboard.wrapper.style.display, 'none')
+  assert.equal(feedback.getBoundingClientRect().height, 18)
 })
 
 test('adapts the existing Action Items row when nested proposal attributes are absent', () => {

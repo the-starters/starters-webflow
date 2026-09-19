@@ -99,7 +99,7 @@ behavior; it does not generate the dashboard markup.
 | `data-project-proposal-template` | The authored pending-request row template. Its parent element is the list. Required — with no template the controller does not mount |
 | `data-project-proposal-field="<name>"` | A text slot inside the row or the dialog |
 | `data-project-proposal-open` | The control that opens the review dialog. Added to the row's first link or button when absent |
-| `data-project-proposal-global-feedback` | Page-level status region. Created above the list when absent, so decision feedback survives the dialog closing |
+| `data-project-proposal-global-feedback` | Page-level status region. It must sit outside the Action Items `data-action-element="wrapper"`, which the shared panel hides entirely once it settles with zero rows. When absent the controller creates it immediately before that wrapper (before the list when no wrapper is authored), so decision feedback and load failures survive both the dialog closing and an empty list |
 | `data-modal-target="review-project-request"` | The authored review dialog. When absent the controller builds a read-only fallback dialog |
 | `data-project-proposal-feedback` | Status region inside the dialog |
 | `data-project-proposal-action="accept\|reject\|reject-confirm\|reject-cancel\|close\|message"` | Dialog controls. `message` keeps its authored href |
@@ -143,7 +143,7 @@ project list waits for the next `pageshow`, `focus`, or visibility refresh.
 - Stale or already handled (403/409): **This project request changed or was already handled.**
 - Reopening a request already resolved in this session: **This project request was already handled. Refresh the dashboard to update the list.**
 - No decision route on the page: **Project request actions are not available. Reload and try again.**
-- The pending-request list failed to load (malformed envelope, failed page, or page cap): the list renders empty and the page-level feedback region reads **Your pending project requests could not be loaded. Refresh the dashboard to try again.** An empty list is never shown silently for a failed load.
+- The pending-request list failed to load (malformed envelope, failed page, page cap, or a bridge without `brandProjectProposalList`): the list renders empty and the page-level feedback region reads **Your pending project requests could not be loaded. Refresh the dashboard to try again.** An empty list is never shown silently for a failed load, including when a stale cached `opportunities-3.0.js` is served without the proposal-list route.
 
 Raw server text is never shown. Decision events
 `starters:project-proposal-accepted` and `starters:project-proposal-rejected`
