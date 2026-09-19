@@ -575,7 +575,11 @@ guard succeeds. Both `/opportunities/<slug>` and the legacy
 brand's applicant list. A `403` or `404` redirects a non-owner to the merged
 `/opportunities` feed; server, transient, and network failures do not redirect
 and therefore cannot bounce the actual owner during an outage. Xano remains the
-authorization boundary.
+authorization boundary. The legacy route also sends a brand to the merged
+`/opportunities` feed when its `opp` parameter is missing or nonnumeric, so an
+entry point with no usable opportunity ID never dead-ends. The legacy
+no-route-guard fallback in `gateOrRedirect` uses the same merged feed for a
+brand-custom-field member who lands on a Talent-expected page.
 
 For console checks, `window.Opp30.redirectForeignBrandToFeed(error)` applies that
 status policy and returns whether it redirected.

@@ -356,6 +356,9 @@ The guard's Brand paid allowance is role-level only. On both
 `opportunities-3.0.js` probes the owner-scoped applicant list. A `403` or `404`
 redirects a foreign brand to the merged `/opportunities` feed; transient, server, and
 network errors do not redirect. Xano remains responsible for ownership enforcement.
+The legacy entry point uses that same merged feed when its `opp` parameter is
+missing or nonnumeric, and so does `gateOrRedirect`'s no-guard fallback for a
+brand-custom-field member on a Talent-expected page.
 
 **Intentionally not guarded:** `/quiz`, `/quiz-results`, and `/all-starters`.
 None of them may force a login, because all three serve pre-signup visitors.

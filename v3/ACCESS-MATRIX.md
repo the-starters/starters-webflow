@@ -361,7 +361,8 @@ separate owner:
 brand ownership authorization. After a paid brand enters either that route or the
 legacy `/opportunities-details---brand-view?opp=<id>` route, `opportunities-3.0.js`
 uses the owner-scoped applicant-list probe. A `403` or `404` redirects the brand to
-the merged `/opportunities` feed. Other failures do not redirect: the slug route leaves
+the merged `/opportunities` feed, as does the legacy route when its `opp` parameter
+is missing or nonnumeric. Other failures do not redirect: the slug route leaves
 owner-only UI hidden, while the legacy route surfaces the error as before. Xano
 enforces the underlying ownership boundary.
 

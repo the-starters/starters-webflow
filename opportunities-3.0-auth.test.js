@@ -6610,6 +6610,57 @@ test('both brand detail routes redirect a foreign brand after the owner-scoped p
   await runRoute({ pathname: '/opportunities/456' })
 })
 
+test('the legacy brand detail route sends an unusable opp param to the merged feed', async () => {
+  const member = {
+    ...paidBrandMember,
+    customFields: { 'brands-dashboard-url': '/brand-dashboard' },
+  }
+  const runRoute = async (search) => {
+    const requests = []
+    const bridge = await loadBridge(
+      async (input) => {
+        requests.push(String(input))
+        throw new Error(`Unexpected request: ${input}`)
+      },
+      { member, pathname: '/opportunities-details---brand-view', search },
+    )
+    for (let attempt = 0; attempt < 20 && bridge.location.href !== '/opportunities'; attempt += 1) {
+      await new Promise(setImmediate)
+    }
+    assert.equal(bridge.location.href, '/opportunities')
+    assert.deepEqual(requests, [])
+  }
+
+  await runRoute('')
+  await runRoute('?opp=abc')
+  await runRoute('?opp=0')
+})
+
+test('the no-route-guard fallback sends a brand off a talent page to the merged feed', async () => {
+  const brandOnTalentPage = await loadBridge(async () => response({}), {
+    member: { ...paidBrandMember, customFields: { 'brands-dashboard-url': '/brand-dashboard' } },
+    pathname: '/opportunities-freelancer-view',
+  })
+  for (
+    let attempt = 0;
+    attempt < 20 && brandOnTalentPage.location.href !== '/opportunities';
+    attempt += 1
+  ) {
+    await new Promise(setImmediate)
+  }
+  assert.equal(brandOnTalentPage.location.href, '/opportunities')
+
+  // A member with neither dashboard custom field still falls back to the homepage.
+  const unmapped = await loadBridge(async () => response({}), {
+    member: { ...paidBrandMember, customFields: {} },
+    pathname: '/opportunities-freelancer-view',
+  })
+  for (let attempt = 0; attempt < 20 && unmapped.location.href !== '/'; attempt += 1) {
+    await new Promise(setImmediate)
+  }
+  assert.equal(unmapped.location.href, '/')
+})
+
 test('brandFreeHome routes to /quiz until the quiz is completed, then /quiz-results', async () => {
   const bridge = await loadBridge(async () => response({}))
   const { Opp30 } = bridge.window
