@@ -8,6 +8,16 @@
  * the current path and query, loads TalkJS, syncs the current member's public
  * profile, and mounts the 3.0-themed inbox into #talkjs-container.
  *
+ * Bootstrap recovery: a TalkJS script that fails outright (onerror) is removed
+ * and retried once in this document. A readiness timeout is ambiguous instead,
+ * so it never adds a second script tag; it spends one full-document reload,
+ * guarded by a sessionStorage flag (`starters:messages-talkjs-recovery-reload`)
+ * that survives the reload and is cleared once the inbox mounts, so a member
+ * cannot be caught in a reload loop. Any bootstrap failure with no recovery
+ * left replaces #talkjs-container with a `role="alert"` notice and a "Try
+ * again" button; logged-out visitors still leave through the login redirect
+ * without seeing it.
+ *
  * Deep linking: `/messages?conversation=<TalkJS conversation id>` selects an
  * existing conversation (used by dashboard preview cards). The existing
  * `/messages?with=<memberstack id>` contract opens — creating if needed — the
