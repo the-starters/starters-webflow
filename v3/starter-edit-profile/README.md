@@ -332,6 +332,11 @@ marker first breaks the page two ways:
   prerequisite: a section that binds without it registers the halted state above.
 - `unified-companies.js` before `company-experience-crud.js`.
 - `unified-highlights.js` before `portfolio-crud.js`.
+- `scheduling-auth.js` before `free-call-settings.js` and `paid-call-settings.js`, all three
+  of which this page must serve for step 6: each call controller claims the step 6 root on
+  its own and reads canonical settings only through the bridge-owned fetch. Their tags and
+  Xano authority live in the [Free Call settings contract](../../docs/wiring/FREE-CALL-SETTINGS-WIRING.md#loader-order)
+  and the [Paid Call settings contract](../../docs/wiring/PAID-CALL-SETTINGS-WIRING.md#script).
 
 ### Authored markers
 
@@ -654,9 +659,10 @@ A stale nonempty mirror cannot pass an empty picker, and an empty mirror cannot
 block a selected picker. `syncSelectionGroupBounds` sets `wf-validate-min="1"`
 for Full and removes it for Consult. Failure code: `GROUP_MIN_NOT_MET`.
 
-The `[name="rate"]` and `nativeGroup` rules remain unchanged. The controller
-continues to disable legacy call fields. The existing single-select widget owns
-the maximum; this controller change adds no new maximum check.
+The `[name="rate"]` and `nativeGroup` rules remain unchanged. The call fields stay
+editable and un-required, owned by the canonical settings controllers described above.
+The existing single-select widget owns the maximum; this controller change adds no new
+maximum check.
 
 This PR does not change Webflow attributes or enable the pane 6 library Save gate.
 A later approved Webflow change would set `wf-validate-element="group"`,
