@@ -385,6 +385,71 @@ test('a failed list load renders an actionable message instead of a silent empty
   assert.equal(fixture.globalFeedback.getAttribute('role'), 'alert')
 })
 
+test('a list response that settles after a member reset is discarded', async () => {
+  let settleList
+  const fixture = controllerFixture({
+    api: {
+      brandProjectProposalList() {
+        return new Promise((resolve) => { settleList = resolve })
+      },
+    },
+  })
+  const pending = fixture.controller.load()
+
+  fixture.controller.reset()
+  settleList({ project_proposals: [proposal({ proposal_id: 77, starter_name: 'Previous Brand Starter' })] })
+
+  assert.equal(await pending, null)
+  assert.deepEqual(fixture.controller.state.proposals, [])
+  assert.equal(fixture.list.children.length, 1)
+  assert.equal(fixture.globalFeedback.textContent, '')
+})
+
+test('a list failure that settles after a member reset does not paint the failure banner', async () => {
+  let failList
+  const fixture = controllerFixture({
+    api: {
+      brandProjectProposalList() {
+        return new Promise((resolve, reject) => { failList = reject })
+      },
+    },
+  })
+  const pending = fixture.controller.load()
+
+  fixture.controller.reset()
+  failList(Object.assign(new Error('offline'), { status: 0 }))
+
+  assert.equal(await pending, null)
+  assert.equal(fixture.globalFeedback.textContent, '')
+  assert.equal(fixture.globalFeedback.hidden, true)
+})
+
+test('a later proposal page that arrives after a member reset never renders', async () => {
+  const pages = []
+  let settleSecondPage
+  const fixture = controllerFixture({
+    api: {
+      brandProjectProposalList(page) {
+        pages.push(page)
+        if (page === 1) {
+          return Promise.resolve({ project_proposals: [proposal({ proposal_id: 61 })], nextPage: 2 })
+        }
+        return new Promise((resolve) => { settleSecondPage = resolve })
+      },
+    },
+  })
+  const pending = fixture.controller.load()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+
+  fixture.controller.reset()
+  settleSecondPage({ project_proposals: [proposal({ proposal_id: 62 })], nextPage: null })
+
+  assert.equal(await pending, null)
+  assert.deepEqual(pages, [1, 2])
+  assert.deepEqual(fixture.controller.state.proposals, [])
+  assert.equal(fixture.list.children.length, 1)
+})
+
 test('a successful list load clears a previous load failure message', async () => {
   let attempt = 0
   const fixture = controllerFixture({

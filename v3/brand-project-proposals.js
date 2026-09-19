@@ -727,6 +727,7 @@
       if (!api || typeof api.brandProjectProposalList !== 'function') {
         throw new Error('Proposal list route is not available')
       }
+      var generation = state.generation
       var page = 1
       var perPage = 12
       var items = []
@@ -735,6 +736,7 @@
         if (loaded >= MAX_PROPOSAL_PAGES) throw new Error('Proposal pagination exceeded its safe page limit')
         loaded += 1
         var result = await api.brandProjectProposalList(page, perPage)
+        if (generation !== state.generation) return null
         var envelope = proposalEnvelope(result)
         if (!envelope) throw new Error('Proposal list returned an invalid response')
         items = items.concat(envelope.project_proposals)
@@ -748,10 +750,12 @@
     }
 
     async function load() {
+      var generation = state.generation
       announce('', false)
       try {
         return await refresh()
       } catch (error) {
+        if (generation !== state.generation) return null
         render({ project_proposals: [] })
         announce(LIST_FAILURE_MESSAGE, true)
         return null

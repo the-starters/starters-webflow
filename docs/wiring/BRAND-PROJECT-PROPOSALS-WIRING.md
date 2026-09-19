@@ -144,7 +144,10 @@ controller never touches the `dash-brand-projects` wf-xano instance directly.
 Without that bridge method the decision still succeeds; only the project list
 waits for the next `pageshow`, `focus`, or visibility refresh. The proposal list
 reloads independently, so a failed project-list reload never leaves an accepted
-request rendered as a pending row.
+request rendered as a pending row. A proposal-list response that was requested
+before an `opp30:member-scope-reset` is discarded when it settles after one, so
+the previous member's requests can never paint into the new member's dashboard
+and a stale failure can never overwrite a fresh load.
 
 - Approved: **Project approved and created.**
 - Declined: **Project request declined.**
