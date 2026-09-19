@@ -30,6 +30,8 @@
     'paid-consulting-calls',
     'consulting-calls',
   ]
+  const SHARED_RADIO_HOOK = 'data-call-settings-input'
+  const PAID_RADIO_HOOK = 'data-paid-call-settings-input'
 
   const hostname = window.location.hostname
   if (hostname !== STAGING_HOST && !PRODUCTION_HOSTS.has(hostname)) return
@@ -62,6 +64,7 @@
   let prerequisiteRefreshQueued = false
   let editProfileDirty = false
   let editProfileReady = false
+  let applyingCanonicalRender = false
 
   function qs(selector, scope) {
     return (scope || document).querySelector(selector)
@@ -359,10 +362,19 @@
     return Boolean(canonicalService(value)) || prerequisitesReady(value)
   }
 
+  // Edit Profile gives the Free and Paid controllers one shared step-6 root, so the
+  // canonical hook cannot say which service a stamped radio belongs to there.
+  function radioHook() {
+    return editProfileMode ? PAID_RADIO_HOOK : SHARED_RADIO_HOOK
+  }
+
   function field(name) {
-    const canonical =
-      qs('[data-call-settings-input="' + name + '"]', root) ||
-      qs('[data-paid-call-input="' + name + '"]', root)
+    const canonical = editProfileMode
+      ? null
+      : (
+        qs('[data-call-settings-input="' + name + '"]', root) ||
+        qs('[data-paid-call-input="' + name + '"]', root)
+      )
     if (canonical || (!cardMode && !editProfileMode)) return canonical
     const selectors = {
       title: editProfileMode ? '[name="paid-call-description"]' : '[name="call-description"]',
@@ -413,8 +425,9 @@
   // identifiable the pair stays unresolved: the card takes no radio-driven action
   // rather than guessing an answer from DOM order.
   function cardRadioPair() {
-    let enabledInput = qs('[data-call-settings-input="enabled"]', root)
-    let disabledInput = qs('[data-call-settings-input="disabled"]', root)
+    const hook = radioHook()
+    let enabledInput = qs('[' + hook + '="enabled"]', root)
+    let disabledInput = qs('[' + hook + '="disabled"]', root)
     for (const groupName of PAID_RADIO_GROUP_NAMES) {
       if (!enabledInput) enabledInput = namedRadio(groupName, 'yes')
       if (!disabledInput) disabledInput = namedRadio(groupName, 'no')
@@ -433,7 +446,7 @@
 
   function disabledField() {
     if (!cardMode && !editProfileMode) return null
-    const canonical = qs('[data-call-settings-input="disabled"]', root)
+    const canonical = qs('[' + radioHook() + '="disabled"]', root)
     if (canonical) return canonical
     return cardRadioPair().disabled
   }
@@ -451,8 +464,9 @@
     const enabledInput = field('enabled')
     const disabledInput = disabledField()
     if (enabledInput === disabledInput) return
-    if (enabledInput) enabledInput.setAttribute('data-call-settings-input', 'enabled')
-    if (disabledInput) disabledInput.setAttribute('data-call-settings-input', 'disabled')
+    const hook = radioHook()
+    if (enabledInput) enabledInput.setAttribute(hook, 'enabled')
+    if (disabledInput) disabledInput.setAttribute(hook, 'disabled')
     if (!enabledInput || !disabledInput) return
     const enabledName = enabledInput.getAttribute('name')
     const disabledName = disabledInput.getAttribute('name')
@@ -620,6 +634,18 @@
     const next = classes.filter(function (name) { return name !== 'w--redirected-checked' })
     if (checked) next.push('w--redirected-checked')
     visual.setAttribute('class', next.join(' '))
+  }
+
+  // Edit Profile derives the dependent field's enabled and visible state from a radio
+  // change, so a canonical write has to announce itself the same way a member click does.
+  function notifyRadioChange(item) {
+    if (!editProfileMode || !item || typeof item.dispatchEvent !== 'function') return
+    applyingCanonicalRender = true
+    try {
+      item.dispatchEvent(new CustomEvent('change', { bubbles: true }))
+    } finally {
+      applyingCanonicalRender = false
+    }
   }
 
   function pillLabel(item) {
@@ -834,16 +860,20 @@
     setBusy(false)
     sessionMemberId = null
     sessionAuthScope = null
-    const enabledInput = field('enabled')
-    const titleInput = field('title')
-    const priceInput = field('price')
-    const durationInput = field('duration')
-    setRadioChecked(enabledInput, false)
-    if (titleInput) titleInput.value = ''
-    if (priceInput) priceInput.value = ''
-    if (durationInput) durationInput.value = String(FIXED_DURATION_MINUTES)
-    const disabledInput = disabledField()
-    setRadioChecked(disabledInput, true)
+    // Edit Profile shows these controls while the canonical GET is still in flight, so a
+    // pre-load reset would wipe hydrated or typed answers the member can see.
+    if (!editProfileMode) {
+      const enabledInput = field('enabled')
+      const titleInput = field('title')
+      const priceInput = field('price')
+      const durationInput = field('duration')
+      setRadioChecked(enabledInput, false)
+      if (titleInput) titleInput.value = ''
+      if (priceInput) priceInput.value = ''
+      if (durationInput) durationInput.value = String(FIXED_DURATION_MINUTES)
+      const disabledInput = disabledField()
+      setRadioChecked(disabledInput, true)
+    }
     clearFieldValidity()
     qsa('[data-paid-call-prerequisite]', uiScope || root).forEach(function (item) {
       item.setAttribute('data-ready', 'false')
@@ -937,6 +967,7 @@
     setRadioChecked(enabledInput, Boolean(service))
     const disabledInput = disabledField()
     setRadioChecked(disabledInput, !service)
+    notifyRadioChange(service ? enabledInput : disabledInput)
     if (titleInput) titleInput.value = service ? service.title || '' : 'Paid Consultation Call'
     if (priceInput) priceInput.value = confirmedRate ? Number(confirmedRate.price_cents) / 100 : ''
     if (durationInput) durationInput.value = String(FIXED_DURATION_MINUTES)
@@ -1421,6 +1452,7 @@
     const enabledInput = field('enabled')
     if (enabledInput) {
       enabledInput.addEventListener('change', function () {
+        if (applyingCanonicalRender) return
         if (enabledInput.checked) explicitIntent = 'enabled'
         if (editProfileMode) editProfileDirty = true
         const disabledInput = disabledField()
@@ -1435,6 +1467,7 @@
     const disabledInput = disabledField()
     if (disabledInput) {
       disabledInput.addEventListener('change', function () {
+        if (applyingCanonicalRender) return
         if (disabledInput.checked) explicitIntent = 'disabled'
         if (editProfileMode) editProfileDirty = true
         setRadioChecked(disabledInput, disabledInput.checked)
@@ -1446,6 +1479,7 @@
       const input = field(name)
       if (!input) return
       input.addEventListener('input', function () {
+        if (applyingCanonicalRender) return
         if (editProfileMode) editProfileDirty = true
         setFieldValidity(input, '')
       })

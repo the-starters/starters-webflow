@@ -207,7 +207,12 @@ remain separate shared-component work. On step 6, Free Call and Paid Call contro
 visible and editable. Their dedicated settings controllers hydrate the authored fields
 from canonical Xano GET responses and save only changed settings through the guarded
 upsert or disable endpoints before the profile PATCH begins. The profile PATCH omits all
-five call fields, so it never becomes a second writer. Retainer controls remain owned by
+five call fields, so it never becomes a second writer. Both controllers claim the same step 6
+root, so each stamps its own radio hook (`data-free-call-settings-input` and
+`data-paid-call-settings-input`) rather than the shared dashboard name. A canonical render
+announces its radio answer with a `change` event so the page re-derives the dependent field's
+enabled and visible state, and a controller that reports no changes never gates the step: a
+failed call-settings read must not block Hourly Rate, Availability, Retainer, or Services. Retainer controls remain owned by
 the profile form even when Webflow markup places them in a wrapper shared with a call
 field. See the [Free Call settings contract](../../docs/wiring/FREE-CALL-SETTINGS-WIRING.md)
 and [Paid Call settings contract](../../docs/wiring/PAID-CALL-SETTINGS-WIRING.md). The root

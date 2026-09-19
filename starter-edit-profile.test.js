@@ -419,6 +419,61 @@ async function testStepSixSubmitsOnlyChangedCanonicalCallSettingsBeforeProfilePa
   assert.equal(Object.hasOwn(payload, 'Paid_Call_Enabled'), false)
 }
 
+async function testStepSixSavesUnrelatedFieldsWhileCallSettingsFailedToLoad() {
+  let requests = 0
+  const environment = createEnvironment(async () => {
+    requests += 1
+    return { ok: true, status: 200, json: async () => ({ saved: true, projection_pending: false }) }
+  }, {
+    stepIndex: 6,
+    // A failed canonical GET never reaches render(), so both controllers stay unready
+    // for the life of the page. Retainer, rate and availability edits must still save.
+    callSettingsControllers: {
+      free: {
+        hasChanges: () => false,
+        isReady: () => false,
+        submit: async () => { throw new Error('free submit must not run') },
+      },
+      paid: {
+        hasChanges: () => false,
+        isReady: () => false,
+        submit: async () => { throw new Error('paid submit must not run') },
+      },
+    },
+  })
+
+  await submit(environment)
+
+  assert.equal(requests, 1)
+  assert.deepEqual(environment.modalEvents, { success: 1, error: 0 })
+}
+
+async function testStepSixBlocksOnlyTheUnreadyControllerThatHasChanges() {
+  const environment = createEnvironment(async () => {
+    throw new Error('profile fetch must not run')
+  }, {
+    stepIndex: 6,
+    callSettingsControllers: {
+      free: {
+        hasChanges: () => true,
+        isReady: () => false,
+        submit: async () => { throw new Error('free submit must not run') },
+      },
+      paid: {
+        hasChanges: () => false,
+        isReady: () => true,
+        submit: async () => ({ saved: true }),
+      },
+    },
+  })
+
+  await submit(environment)
+
+  assert.equal(environment.requests.length, 0)
+  assert.deepEqual(environment.modalEvents, { success: 0, error: 1 })
+  assert.match(environment.errorFeedback.textContent, /still loading/)
+}
+
 async function testStepSixStopsProfilePatchWhenCanonicalCallSaveFails() {
   const environment = createEnvironment(async () => {
     throw new Error('profile fetch must not run')
@@ -1560,6 +1615,8 @@ Promise.all([
   testStepSixKeepsCallControlsEditableAfterProfileHydration(),
   testStepSixSubmitsOnlyChangedCanonicalCallSettingsBeforeProfilePatch(),
   testStepSixStopsProfilePatchWhenCanonicalCallSaveFails(),
+  testStepSixSavesUnrelatedFieldsWhileCallSettingsFailedToLoad(),
+  testStepSixBlocksOnlyTheUnreadyControllerThatHasChanges(),
   testPersonalDetailsUsesAuthoredContactControlsAndPreservesUntouchedCanonicalPhone(),
   testPhoneCountryChangeCountsAsAMemberEdit(),
   testEnabledOptionalRatesNeverSilentlyPersistZero(),

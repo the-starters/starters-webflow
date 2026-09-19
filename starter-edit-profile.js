@@ -5,7 +5,7 @@
  * GitHub and jsDelivr are the source and delivery path for this browser code.
  * Each section must initialize whether this script runs before or after DOMContentLoaded.
  *
- * @release v1.59.587
+ * @release v1.59.588
  */
 
 (() => {
@@ -259,8 +259,8 @@ function configureCanonicalCallSettings() {
 		if (!control.disabled) control.removeAttribute?.('aria-disabled');
 	});
 
-	const freeEnabled = qs('input[name="free-consulting-calls"]:checked')?.value === 'yes';
-	const paidEnabled = qs('input[name="paid-consulting-calls"]:checked')?.value === 'yes';
+	const freeEnabled = qs('input[name="free-consulting-calls"]:checked', step)?.value === 'yes';
+	const paidEnabled = qs('input[name="paid-consulting-calls"]:checked', step)?.value === 'yes';
 	[
 		[qs('[name="free-call-description"]', step), freeEnabled],
 		[qs('[name="paid-call-description"]', step), paidEnabled],
@@ -268,6 +268,10 @@ function configureCanonicalCallSettings() {
 	].forEach(([control, enabled]) => {
 		if (!control) return;
 		control.disabled = !enabled;
+		// A shared authored wrapper can hide one of these while its own toggle stays on.
+		// The canonical controller validates them, so a native requirement here would only
+		// abort the whole step on a control the member cannot see or reach.
+		control.required = false;
 		if (enabled) control.removeAttribute?.('aria-disabled');
 	});
 
@@ -275,6 +279,7 @@ function configureCanonicalCallSettings() {
 		group.removeAttribute?.('data-call-settings-owned');
 		group.removeAttribute?.('aria-hidden');
 		group.hidden = false;
+		group.style.display = '';
 	});
 	qs('[data-call-settings-profile-notice]', step)?.remove?.();
 }
@@ -976,15 +981,15 @@ onDomReady(function () {
 				window.StarterFreeCallSettings,
 				window.StarterPaidCallSettings,
 			];
-			if (controllers.some((controller) => !controller || typeof controller.submit !== 'function')) {
-				throw new Error('Call settings are still loading. Try again in a moment.');
-			}
-			if (controllers.some((controller) => typeof controller.isReady === 'function' && !controller.isReady())) {
-				throw new Error('Call settings are still loading. Try again in a moment.');
-			}
-
+			// A controller that reports no changes must never gate this step: every other
+			// step 6 field belongs to the profile PATCH, and a call settings load failure
+			// would otherwise wedge them all.
 			for (const controller of controllers) {
+				if (!controller || typeof controller.submit !== 'function') continue;
 				if (typeof controller.hasChanges === 'function' && !controller.hasChanges()) continue;
+				if (typeof controller.isReady === 'function' && !controller.isReady()) {
+					throw new Error('Call settings are still loading. Try again in a moment.');
+				}
 				const saved = await controller.submit();
 				if (!saved) throw new Error('Call settings could not be saved. Review the setup requirements and try again.');
 			}

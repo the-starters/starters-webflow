@@ -88,12 +88,16 @@ function boot({
   callSettingsStep = false,
   legacyCallControls = true,
   shareRetainerRateWrapper = false,
+  callControlsRequired = false,
 } = {}) {
   const retainerDescriptionField = control(retainerDescription)
   const retainerRateField = control('2500')
   const paidCallRateField = control('400')
   const paidCallDescriptionField = control(paidCallDescription)
   const freeCallDescriptionField = control(freeCallDescription)
+  for (const field of [paidCallRateField, paidCallDescriptionField, freeCallDescriptionField]) {
+    field.required = callControlsRequired
+  }
 
   const retainerDesc = group({ required: true, fields: [retainerDescriptionField] })
   // The accepted contract leaves a wrapper shared with a Retainer control visible, so the
@@ -133,6 +137,11 @@ function boot({
   const stepSix = {
     querySelector(selector) {
       if (selector === '[data-call-settings-profile-notice]') return null
+      const checkedMatch = /^input\[name="([^"]+)"\]:checked$/.exec(selector)
+      if (checkedMatch) {
+        const radios = selectorsAll[`input[name="${checkedMatch[1]}"]`] || []
+        return radios.find((option) => option.checked) || null
+      }
       const byName = {
         '[name="free-call-description"]': freeCallDescriptionField,
         '[name="paid-call-description"]': paidCallDescriptionField,
@@ -140,7 +149,9 @@ function boot({
       }
       return byName[selector] || null
     },
-    querySelectorAll() { return canonicalCallControls },
+    querySelectorAll(selector) {
+      return selector.includes('[name="free-consulting-calls"]') ? canonicalCallControls : []
+    },
     appendChild() {},
   }
   const selectors = {
@@ -365,6 +376,25 @@ test('a wrapper shared with a Retainer control preserves the Paid Call toggle st
 
   harness.chooseRetainers('no')
   assert.equal(harness.fields.paidCallRate.disabled, false)
+})
+
+test('a call control hidden by the Retainer toggle never blocks native submit', () => {
+  const harness = boot({
+    unifiedServices: true,
+    callSettingsStep: true,
+    shareRetainerRateWrapper: true,
+    callControlsRequired: true,
+    paidCalls: 'yes',
+    retainers: 'no',
+  })
+  harness.hydrate()
+
+  // The Retainer rate wrapper is hidden, so this enabled Paid Call rate is unreachable.
+  // A required unfocusable control aborts the whole step-6 submit before it starts.
+  assert.equal(harness.fields.paidCallRate.disabled, false)
+  assert.equal(harness.fields.paidCallRate.required, false)
+  assert.equal(harness.fields.paidCallDescription.required, false)
+  assert.equal(harness.fields.freeCallDescription.required, false)
 })
 
 test('re-applying canonical call ownership never installs a hiding rule', () => {

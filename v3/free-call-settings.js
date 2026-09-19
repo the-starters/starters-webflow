@@ -22,6 +22,8 @@
   const FIXED_DURATION_MINUTES = 30
   const ROOT_WAIT_TIMEOUT_MS = 10000
   const FREE_RADIO_GROUP_NAMES = ['consulting-calls-free', 'free-consulting-calls']
+  const SHARED_RADIO_HOOK = 'data-call-settings-input'
+  const FREE_RADIO_HOOK = 'data-free-call-settings-input'
   const BUSY_STYLE_ID = 'ts-call-settings-busy-style'
 
   const hostname = window.location.hostname
@@ -55,6 +57,7 @@
   let prerequisiteRefreshQueued = false
   let editProfileDirty = false
   let editProfileReady = false
+  let applyingCanonicalRender = false
 
   function qs(selector, scope) {
     return (scope || document).querySelector(selector)
@@ -181,7 +184,7 @@
 
   function refreshUiScope() {
     if (!root) return
-    uiScope = findCallCardScope(root)
+    uiScope = editProfileMode ? root : findCallCardScope(root)
     bindOpenAction()
     paintStatusPills()
   }
@@ -312,9 +315,16 @@
     return null
   }
 
+  // Edit Profile gives the Free and Paid controllers one shared step-6 root, so the
+  // canonical hook cannot say which service a stamped radio belongs to there.
+  function radioHook() {
+    return editProfileMode ? FREE_RADIO_HOOK : SHARED_RADIO_HOOK
+  }
+
   function radioPair() {
-    const enabled = qs('[data-call-settings-input="enabled"]', root) || namedRadio('yes')
-    const disabled = qs('[data-call-settings-input="disabled"]', root) || namedRadio('no')
+    const hook = radioHook()
+    const enabled = qs('[' + hook + '="enabled"]', root) || namedRadio('yes')
+    const disabled = qs('[' + hook + '="disabled"]', root) || namedRadio('no')
     if (!enabled || !disabled || enabled === disabled) return { enabled: null, disabled: null }
     return { enabled: enabled, disabled: disabled }
   }
@@ -322,27 +332,30 @@
   function stampRadioHooks() {
     const pair = radioPair()
     if (!pair.enabled || !pair.disabled) return pair
-    pair.enabled.setAttribute('data-call-settings-input', 'enabled')
-    pair.disabled.setAttribute('data-call-settings-input', 'disabled')
+    const hook = radioHook()
+    pair.enabled.setAttribute(hook, 'enabled')
+    pair.disabled.setAttribute(hook, 'disabled')
     return pair
   }
 
   function field(name) {
     if (name === 'enabled' || name === 'disabled') return radioPair()[name]
+    if (editProfileMode) {
+      return name === 'description' ? qs('[name="free-call-description"]', root) : null
+    }
     const canonical = qs('[data-call-settings-input="' + name + '"]', root)
     if (canonical) return canonical
     if (name !== 'description') return null
     return (
       qs('[data-call-settings-input="title"]', root) ||
-      qs('[name="call-description"]', root) ||
-      qs('[name="free-call-description"]', root)
+      qs('[name="call-description"]', root)
     )
   }
 
   function action(name) {
     const stableName = name === 'save' ? 'submit' : name
     const canonical = qs('[data-call-settings-action="' + stableName + '"]', uiScope || root)
-    if (canonical) return canonical
+    if (canonical || editProfileMode) return canonical
     const selectors = {
       open: '[data-availability-action="item-form-open"]',
       close: '[data-availability-action="item-form-close"]',
@@ -439,6 +452,18 @@
     visual.setAttribute('class', next.join(' '))
   }
 
+  // Edit Profile derives the dependent field's enabled and visible state from a radio
+  // change, so a canonical write has to announce itself the same way a member click does.
+  function notifyRadioChange(item) {
+    if (!editProfileMode || !item || typeof item.dispatchEvent !== 'function') return
+    applyingCanonicalRender = true
+    try {
+      item.dispatchEvent(new CustomEvent('change', { bubbles: true }))
+    } finally {
+      applyingCanonicalRender = false
+    }
+  }
+
   function show(element, visible) {
     if (!element) return
     element.hidden = !visible
@@ -519,11 +544,15 @@
     setBusy(false)
     sessionMemberId = null
     sessionAuthScope = null
-    const pair = radioPair()
-    setRadioChecked(pair.enabled, false)
-    setRadioChecked(pair.disabled, true)
-    const descriptionInput = field('description')
-    if (descriptionInput) descriptionInput.value = ''
+    // Edit Profile shows these controls while the canonical GET is still in flight, so a
+    // pre-load reset would wipe hydrated or typed answers the member can see.
+    if (!editProfileMode) {
+      const pair = radioPair()
+      setRadioChecked(pair.enabled, false)
+      setRadioChecked(pair.disabled, true)
+      const descriptionInput = field('description')
+      if (descriptionInput) descriptionInput.value = ''
+    }
     qsa('[data-free-call-prerequisite]', uiScope || root).forEach(function (item) {
       item.setAttribute('data-ready', 'false')
     })
@@ -632,6 +661,7 @@
     const pair = radioPair()
     setRadioChecked(pair.enabled, Boolean(service))
     setRadioChecked(pair.disabled, !service)
+    notifyRadioChange(service ? pair.enabled : pair.disabled)
     const descriptionInput = field('description')
     if (descriptionInput) {
       descriptionInput.value = value.public_description || ''
@@ -1061,6 +1091,7 @@
     const pair = radioPair()
     if (pair.enabled) {
       pair.enabled.addEventListener('change', function () {
+        if (applyingCanonicalRender) return
         if (pair.enabled.checked) explicitIntent = 'enabled'
         if (editProfileMode) editProfileDirty = true
         setRadioChecked(pair.enabled, pair.enabled.checked)
@@ -1069,6 +1100,7 @@
     }
     if (pair.disabled) {
       pair.disabled.addEventListener('change', function () {
+        if (applyingCanonicalRender) return
         if (pair.disabled.checked) explicitIntent = 'disabled'
         if (editProfileMode) editProfileDirty = true
         setRadioChecked(pair.disabled, pair.disabled.checked)
@@ -1078,6 +1110,7 @@
     const descriptionInput = field('description')
     if (descriptionInput) {
       descriptionInput.addEventListener('input', function () {
+        if (applyingCanonicalRender) return
         if (editProfileMode) editProfileDirty = true
       })
     }
@@ -1105,7 +1138,7 @@
     }
     initializationPromise = (async function () {
       stopRootWait()
-      uiScope = findCallCardScope(root)
+      uiScope = editProfileMode ? root : findCallCardScope(root)
       watchUiScope()
       if (!editProfileMode) setCardEditorOpen(false)
       bind()
