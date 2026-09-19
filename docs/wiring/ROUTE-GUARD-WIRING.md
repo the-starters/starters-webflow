@@ -354,8 +354,9 @@ The guard's Brand paid allowance is role-level only. On both
 `/opportunities/<slug>` and the legacy
 `/opportunities-details---brand-view?opp=<id>` entry point,
 `opportunities-3.0.js` probes the owner-scoped applicant list. A `403` or `404`
-redirects a foreign brand to the merged `/opportunities` feed; transient, server, and
-network errors do not redirect. Xano remains responsible for ownership enforcement.
+redirects a foreign brand to the merged `/opportunities` feed; transient,
+server, and network errors do not redirect. Xano remains responsible for
+ownership enforcement.
 The legacy entry point uses that same merged feed when its `opp` parameter is
 missing or nonnumeric, and so does `gateOrRedirect`'s no-guard fallback for a
 brand-custom-field member on a Talent-expected page.
