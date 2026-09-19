@@ -7,6 +7,7 @@
     '/starter-dashboard',
     '/brand-dashboard',
     '/messages',
+    '/starter-edit-profile',
   ])
   const BLOCKED_PRODUCTION_PATHS = new Set(['/hire/jp-dionisio'])
   const XANO_ORIGIN = 'https://x08a-5ko8-jj1r.n7c.xano.io'

@@ -340,12 +340,16 @@ marker first breaks the page two ways:
   Xano authority live in the [Free Call settings contract](../../docs/wiring/FREE-CALL-SETTINGS-WIRING.md#loader-order)
   and the [Paid Call settings contract](../../docs/wiring/PAID-CALL-SETTINGS-WIRING.md#script).
   That prerequisite scopes where step 6 call settings work today. The bridge runs host-wide on
-  `the-starters-3-0.webflow.io`, but on the V3 custom domains it runs only on the paths listed in
-  its [current safety boundary](../README.md#scheduling-auth), which does not include
+  `the-starters-3-0.webflow.io`, and on the V3 custom domains it runs only on the paths listed in
+  its [current safety boundary](../README.md#scheduling-auth), which now includes
   `/starter-edit-profile`. Without the bridge both controllers throw `xanoAuthFetch is unavailable`,
-  so the step 6 call controls render unhydrated and every call save fails closed. Until that
-  boundary adds this path, the editable step 6 call settings described above are staging-only;
-  the boundary list owns that decision, so widen it there rather than restating a host rule here.
+  so the step 6 call controls render unhydrated and every call save fails closed. The boundary list
+  owns that decision, so widen it there rather than restating a host rule here.
+  Loader order alone does not decide the race: both controllers await the bridge at their shared
+  auth boundary, so a bridge that installs after the controllers still hydrates step 6 instead of
+  flashing the unavailable state, whichever entry point — page init or a Memberstack auth change —
+  reaches the canonical read first. A bridge that never installs is reported once per controller as
+  a `scheduling-auth bridge never installed` console warning.
 
 ### Authored markers
 

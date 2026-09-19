@@ -215,6 +215,7 @@ function load({
     throw new Error('unrouted request ' + path)
   }
 
+  const authChangeHandlers = []
   const installSchedulingAuth = () => {
     window.__tsSchedulingAuthFetch = authFetch
     window.__tsSchedulingAuthGetScope = async () => authScope
@@ -233,7 +234,7 @@ function load({
     dispatchEvent() {},
     $memberstackDom: {
       getCurrentMember: async () => ({ data: { id: 'member-a' } }),
-      onAuthChange() {},
+      onAuthChange(handler) { authChangeHandlers.push(handler) },
     },
   }
   if (!schedulingAuthDelayed) installSchedulingAuth()
@@ -276,6 +277,9 @@ function load({
     warnings,
     html,
     installSchedulingAuth,
+    notifyAuthChange(member) {
+      authChangeHandlers.forEach((handler) => { handler(member) })
+    },
     flushTimers() {
       const pending = timers.splice(0)
       pending.forEach((timer) => { if (!timer.cancelled) timer.callback() })
@@ -336,6 +340,41 @@ for (const order of [['paid', 'free'], ['free', 'paid']]) {
       { path: '/starter/paid-call-settings/get/v3', method: 'GET' },
       { path: '/starter/free-call-settings/get/v3', method: 'GET' },
     ].sort((a, b) => a.path.localeCompare(b.path)))
+    assert.equal(result.html.getAttribute('data-free-call-settings'), 'ready')
+    assert.equal(result.html.getAttribute('data-paid-call-settings'), 'ready')
+    assert.equal(result.dom.freeYes.checked, true)
+    assert.equal(result.dom.paidNo.checked, true)
+    assert.equal(result.warnings.length, 0)
+  })
+
+  test(`a Memberstack auth change during the auth-bridge wait never flashes the unavailable state (${order.join(' then ')})`, async () => {
+    const result = load({
+      order,
+      schedulingAuthDelayed: true,
+      free: freeCanonical({
+        public_description: 'Free growth review',
+        services: [freeService()],
+        readiness: { free_call_enabled: true, bookable: true },
+      }),
+      paid: paidCanonical(),
+    })
+    await settle()
+
+    assert.equal(result.html.getAttribute('data-free-call-settings'), 'loading')
+    assert.equal(result.html.getAttribute('data-paid-call-settings'), 'loading')
+
+    result.notifyAuthChange({ data: { id: 'member-a' } })
+    await settle()
+
+    assert.equal(result.calls.length, 0)
+    assert.equal(result.html.getAttribute('data-free-call-settings'), 'loading')
+    assert.equal(result.html.getAttribute('data-paid-call-settings'), 'loading')
+    assert.equal(result.warnings.length, 0)
+
+    result.installSchedulingAuth()
+    result.flushTimers()
+    await settle()
+
     assert.equal(result.html.getAttribute('data-free-call-settings'), 'ready')
     assert.equal(result.html.getAttribute('data-paid-call-settings'), 'ready')
     assert.equal(result.dom.freeYes.checked, true)

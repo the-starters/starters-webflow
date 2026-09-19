@@ -1344,6 +1344,8 @@
         return null
       }
       sessionMemberId = member.id
+      await waitForSchedulingAuth()
+      if (version !== refreshVersion) return null
       sessionAuthScope = await currentAuthScope()
       if (!currentRender(version, member.id)) return null
       const pendingWrite = activeWrite && activeWrite.memberId === member.id ? activeWrite : null
@@ -1426,6 +1428,8 @@
     })
   }
 
+  let schedulingAuthWait = null
+
   function schedulingAuthReady() {
     return (
       typeof window.__tsSchedulingAuthGetScope === 'function' &&
@@ -1435,7 +1439,8 @@
 
   function waitForSchedulingAuth() {
     if (schedulingAuthReady()) return Promise.resolve()
-    return new Promise(function (resolve) {
+    if (schedulingAuthWait) return schedulingAuthWait
+    schedulingAuthWait = new Promise(function (resolve) {
       let attempts = 0
       function check() {
         if (schedulingAuthReady()) {
@@ -1444,6 +1449,11 @@
         }
         attempts += 1
         if (attempts >= AUTH_BRIDGE_WAIT_ATTEMPTS) {
+          console.warn(
+            '[paid-call-settings] scheduling-auth bridge never installed on ' +
+              window.location.pathname +
+              '; canonical paid-call reads and writes cannot be authenticated',
+          )
           resolve()
           return
         }
@@ -1451,6 +1461,7 @@
       }
       check()
     })
+    return schedulingAuthWait
   }
 
   function bind() {
@@ -1556,7 +1567,6 @@
       if (cardMode && !editProfileMode) setCardEditorOpen(false)
       bind()
       await waitForMemberstack()
-      await waitForSchedulingAuth()
       return loadSession(undefined, false)
     })()
     try {
