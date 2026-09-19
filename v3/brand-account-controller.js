@@ -66,6 +66,22 @@
   var OP_TIMEOUT_MS = 15000
   var RETRY_DELAYS_MS = [0, 300]
   var EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+  // Memberstack's documented custom status element: a `data-ms-message`
+  // container it shows for the outcome, with the copy written into a
+  // `data-ms-message-text` child when the member nested one and onto the
+  // container itself when they did not. v3/native-form-diagnostics.js already
+  // reads these same two attributes as this site's status markup, so the
+  // vocabulary is the repo's, not a second dialect invented here.
+  var STATUS_ELEMENT_SELECTORS = {
+    success: '[data-ms-message="success"]',
+    error: '[data-ms-message="error"]',
+  }
+  var STATUS_ELEMENT_TEXT_SELECTOR = '[data-ms-message-text]'
+  // The confirmation the guarded email-change forms render on success. It is
+  // passed in by those call sites rather than baked into setMessage, because
+  // Build Account shares that renderer and is not an email-change form: it
+  // keeps whatever success copy Webflow authored.
+  var EMAIL_UPDATED_MESSAGE = 'Your email has been updated'
   // Read by v3/complete-profile-redirect.js (outbound), v3/auth-route.js (login
   // hop), and v3/brand-profile-redirect.js (inbound) as "this member is done,
   // do not ask Xano". Written here and cleared by nobody: it dies with the tab,
@@ -558,17 +574,60 @@
     return form && typeof form.closest === 'function' ? form.closest('.w-form') : null
   }
 
+  /**
+   * Show or hide one state block, and give it the outcome's copy when it is the
+   * block being shown. The copy goes on the authored text node the block nests
+   * -- Webflow's own blocks nest a `div`, Memberstack's status element nests a
+   * `data-ms-message-text` child when the member added one -- and on the block
+   * itself only when there is no such child, because writing to the container
+   * would throw the authored child away.
+   *
+   * Only the shown block is written to. The hidden one keeps whatever it last
+   * held, which is what stops a success confirmation from being planted in the
+   * failure block behind it.
+   */
+  function showState(element, textSelector, shown, message) {
+    if (!element) return
+    element.style.display = shown ? 'block' : 'none'
+    if (!shown || !message) return
+    var text =
+      typeof element.querySelector === 'function' ? element.querySelector(textSelector) : null
+    if (text) text.textContent = message
+    else element.textContent = message
+  }
+
+  /**
+   * The one place every guarded form renders the outcome of a submit it took
+   * over from Memberstack. Because the controller preventDefaults these submits
+   * in the capture phase, Memberstack's SDK never drives the member's own status
+   * element -- so this function drives it, alongside Webflow's native blocks.
+   * A form that carries no status element is simply left with the native ones,
+   * and a form that gains one later needs no change here.
+   *
+   * `message` is the copy for whichever state is being shown: the friendly error
+   * on failure, and the caller's confirmation on success. A success call with no
+   * message leaves the authored success copy untouched, which is how Build
+   * Account keeps its own wording.
+   */
   function setMessage(form, kind, message, receipt) {
     var wrapper = formWrapper(form)
     if (!wrapper) return
-    var success = wrapper.querySelector('.w-form-done')
-    var failure = wrapper.querySelector('.w-form-fail')
-    if (success) success.style.display = kind === 'success' ? 'block' : 'none'
-    if (failure) {
-      failure.style.display = kind === 'error' ? 'block' : 'none'
-      var text = failure.querySelector('div')
-      if (text && message) text.textContent = message
-    }
+    var shownOnSuccess = kind === 'success'
+    var shownOnError = kind === 'error'
+    showState(wrapper.querySelector('.w-form-done'), 'div', shownOnSuccess, message)
+    showState(wrapper.querySelector('.w-form-fail'), 'div', shownOnError, message)
+    showState(
+      wrapper.querySelector(STATUS_ELEMENT_SELECTORS.success),
+      STATUS_ELEMENT_TEXT_SELECTOR,
+      shownOnSuccess,
+      message,
+    )
+    showState(
+      wrapper.querySelector(STATUS_ELEMENT_SELECTORS.error),
+      STATUS_ELEMENT_TEXT_SELECTOR,
+      shownOnError,
+      message,
+    )
   }
 
   function setBusy(form, busy) {
@@ -934,7 +993,9 @@
           .then(function (result) {
             if (!result) return
             if (!result.confirmed) {
-              if (result.changed) setMessage(form, 'success', '', result.receipt)
+              if (result.changed) {
+                setMessage(form, 'success', EMAIL_UPDATED_MESSAGE, result.receipt)
+              }
               return
             }
             if (profileWasValid && profileEmailMatches(email)) {
@@ -945,9 +1006,11 @@
                   profileEmailChanged = true
                 },
               })
-              if (!replayed && result.changed) setMessage(form, 'success', '', result.receipt)
+              if (!replayed && result.changed) {
+                setMessage(form, 'success', EMAIL_UPDATED_MESSAGE, result.receipt)
+              }
             } else if (result.changed) {
-              setMessage(form, 'success', '', result.receipt)
+              setMessage(form, 'success', EMAIL_UPDATED_MESSAGE, result.receipt)
             } else if (typeof form.reportValidity === 'function') {
               form.reportValidity()
             }
@@ -1090,7 +1153,7 @@
               duration_ms: Date.now() - (form.__startersAccountDiagnosticStartedAt || Date.now()),
               request_started: true,
             })
-            setMessage(form, 'success', '', receipt)
+            setMessage(form, 'success', EMAIL_UPDATED_MESSAGE, receipt)
             return true
           })
           .then(function (owned) {
@@ -1167,6 +1230,12 @@
     signupPlanForHost: signupPlanForHost,
     validate: validate,
     retryable: retryable,
+    // The shared submit-outcome renderer, exported so its contract is pinned
+    // directly rather than only through whichever form happens to call it —
+    // a future guarded form inherits the status-element behavior, and the
+    // regression test proving that does not have to know the form exists.
+    setMessage: setMessage,
+    emailUpdatedMessage: EMAIL_UPDATED_MESSAGE,
     // The shared completion-marker contract, exported so the reading modules'
     // key can be pinned against the writer's rather than against a literal.
     brandProfileMarkerKey: BRAND_PROFILE_MARKER_KEY,

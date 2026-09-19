@@ -117,6 +117,39 @@ input remains under the browser's native validation. Do not add a second form,
 remove the existing Xano handler, or move
 the login-email input outside this form.
 
+### Submit status messages
+
+Both guarded email-change forms — Account Security and the visible Talent
+edit-profile form — have their submit intercepted in the capture phase, so
+Memberstack's SDK never sees it and never renders a status of its own. Every
+outcome these forms show is rendered by the controller's `setMessage`, against
+the form's own `.w-form` wrapper.
+
+`setMessage` drives Webflow's native blocks and, when the Designer-authored
+markup carries one, Memberstack's own status element:
+
+| Element | Shown when | Copy |
+| --- | --- | --- |
+| `.w-form-done` | success | `Your email has been updated` |
+| `.w-form-fail > div` | failure | the friendly error for that failure |
+| `[data-ms-message="success"]` | success | `Your email has been updated` |
+| `[data-ms-message="error"]` | failure | the friendly error for that failure |
+
+A `data-ms-message` container's copy goes into its `[data-ms-message-text]`
+child when one is nested inside it, and onto the container itself when none is.
+`v3/native-form-diagnostics.js` reads the same two `data-ms-message` values, so
+this is one attribute vocabulary across the repo rather than two.
+
+A status element is optional. A form without one renders exactly the native
+blocks and nothing else, and adding one to a form later needs no code change.
+It must sit inside the form's `.w-form` wrapper — an element outside that
+wrapper is not resolved and stays silent.
+
+The Build Account form shares this renderer but is not an email-change form: it
+passes no success copy and keeps whatever confirmation Webflow authored. A new
+form that wants its own confirmation passes it the same way, from its own call
+site.
+
 ## Install order
 
 Install `brand-account-controller.js` sitewide, before Memberstack form

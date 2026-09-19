@@ -54,27 +54,61 @@ function makeElement(value = '') {
   }
 }
 
-function makeWrapper() {
+// `status` opts the wrapper into the Memberstack status element a member can
+// add in the Designer: 'nested' is Memberstack's documented shape, where the
+// copy goes into a `data-ms-message-text` child, and 'direct' is the same
+// container with no such child, where the copy goes onto the container itself.
+// Omitting it models every form that has no status element at all.
+function makeWrapper({ status } = {}) {
+  // Both native blocks nest their copy in a `div`, the way Webflow authors them.
   const done = makeElement()
   done.textContent = 'Your authored success message.'
+  const doneText = makeElement()
+  doneText.textContent = 'Your authored success message.'
+  done.querySelector = (selector) => (selector.includes('div') ? doneText : null)
   const fail = makeElement()
   const failText = makeElement()
   failText.textContent = 'Original failure'
   fail.querySelector = (selector) => (selector.includes('div') ? failText : null)
+
+  let statusSuccess = null
+  let statusError = null
+  let statusSuccessText = null
+  let statusErrorText = null
+  if (status) {
+    statusSuccess = makeElement()
+    statusError = makeElement()
+    if (status === 'nested') {
+      statusSuccessText = makeElement()
+      statusErrorText = makeElement()
+      statusSuccess.querySelector = (selector) =>
+        selector === '[data-ms-message-text]' ? statusSuccessText : null
+      statusError.querySelector = (selector) =>
+        selector === '[data-ms-message-text]' ? statusErrorText : null
+    }
+  }
+
   return {
     done,
+    doneText,
     fail,
     failText,
+    statusSuccess,
+    statusError,
+    statusSuccessText,
+    statusErrorText,
     querySelector(selector) {
       if (selector === '.w-form-done') return done
       if (selector === '.w-form-fail') return fail
+      if (selector === '[data-ms-message="success"]') return statusSuccess
+      if (selector === '[data-ms-message="error"]') return statusError
       return null
     },
   }
 }
 
 function makeForm(kind = 'build', values = {}) {
-  const wrapper = makeWrapper()
+  const wrapper = makeWrapper({ status: values.status })
   const submit = makeElement()
   const loading = makeElement()
   const inputs = new Map()
@@ -1663,7 +1697,10 @@ test('Talent Account Security success exposes no email in its diagnostic receipt
   assert.equal(receipt.request_started, true)
   assert.equal(Object.hasOwn(receipt, 'email'), false)
   assert.equal(Object.hasOwn(receipt, 'member_id'), false)
-  assert.equal(securityForm.wrapper.done.textContent, 'Your authored success message.')
+  // The success block now carries the controller's own email confirmation. What
+  // this test still guards is that the diagnostics layer did not put its receipt
+  // copy there on top of it.
+  assert.equal(securityForm.wrapper.doneText.textContent, 'Your email has been updated')
   assert.equal(securityForm.wrapper.done.getAttribute('data-workflow-diagnostic-copy'), null)
 })
 
@@ -2708,4 +2745,197 @@ test('native form diagnostics inherit the controller CDN ref and use one loader 
   assert.equal(script.getAttribute('data-starters-native-form-diagnostics'), '')
   environment.api.init()
   assert.equal(nativeScripts().length, 1)
+})
+
+// The submit-outcome renderer, exercised directly rather than through a form.
+// Every guarded form funnels its result through this one function, so what is
+// asserted here is what a form added later inherits without a code change --
+// which is the whole point of the fix these tests cover: the member's own
+// Memberstack status element went undriven because nothing shared reached it.
+function renderer() {
+  return loadController({ buildForm: null }).api.setMessage
+}
+
+// A bare form whose only job is to hand setMessage a wrapper. Nothing binds it,
+// so no submit path can be what drives the assertions.
+function messageForm(status) {
+  const wrapper = makeWrapper(status ? { status } : {})
+  return {
+    wrapper,
+    closest: (selector) => (selector === '.w-form' ? wrapper : null),
+  }
+}
+
+test('a successful submit shows the success block with the caller copy and hides failure', () => {
+  const setMessage = renderer()
+  const form = messageForm()
+
+  setMessage(form, 'success', 'Your email has been updated')
+
+  assert.equal(form.wrapper.done.style.display, 'block')
+  assert.equal(form.wrapper.doneText.textContent, 'Your email has been updated')
+  // The container keeps its authored child rather than being flattened to text.
+  assert.equal(form.wrapper.done.textContent, 'Your authored success message.')
+  assert.equal(form.wrapper.fail.style.display, 'none')
+  // The confirmation is not also planted in the hidden failure block.
+  assert.equal(form.wrapper.failText.textContent, 'Original failure')
+})
+
+test('a successful submit with no copy keeps the authored success message', () => {
+  const setMessage = renderer()
+  const form = messageForm()
+
+  setMessage(form, 'success', '')
+
+  assert.equal(form.wrapper.done.style.display, 'block')
+  assert.equal(form.wrapper.doneText.textContent, 'Your authored success message.')
+})
+
+test('a failed submit shows the failure block with the error and hides success', () => {
+  const setMessage = renderer()
+  const form = messageForm()
+
+  setMessage(form, 'error', 'That email is already in use. Choose another email address.')
+
+  assert.equal(form.wrapper.fail.style.display, 'block')
+  assert.equal(
+    form.wrapper.failText.textContent,
+    'That email is already in use. Choose another email address.',
+  )
+  assert.equal(form.wrapper.done.style.display, 'none')
+  // The hidden success block is never written to, so no confirmation is left
+  // sitting behind the error the member is reading.
+  assert.equal(form.wrapper.doneText.textContent, 'Your authored success message.')
+})
+
+test('a Memberstack status element is shown with the success copy and its error twin hidden', () => {
+  const setMessage = renderer()
+  const form = messageForm('nested')
+
+  setMessage(form, 'success', 'Your email has been updated')
+
+  assert.equal(form.wrapper.statusSuccess.style.display, 'block')
+  assert.equal(form.wrapper.statusSuccessText.textContent, 'Your email has been updated')
+  assert.equal(form.wrapper.statusError.style.display, 'none')
+  assert.equal(form.wrapper.statusErrorText.textContent, '')
+})
+
+test('a Memberstack status element is shown with the error copy and its success twin hidden', () => {
+  const setMessage = renderer()
+  const form = messageForm('nested')
+
+  setMessage(form, 'error', 'Enter a valid email address.')
+
+  assert.equal(form.wrapper.statusError.style.display, 'block')
+  assert.equal(form.wrapper.statusErrorText.textContent, 'Enter a valid email address.')
+  assert.equal(form.wrapper.statusSuccess.style.display, 'none')
+  assert.equal(form.wrapper.statusSuccessText.textContent, '')
+})
+
+test('a status element with no text child takes the copy on the container itself', () => {
+  const setMessage = renderer()
+  const form = messageForm('direct')
+
+  setMessage(form, 'success', 'Your email has been updated')
+
+  assert.equal(form.wrapper.statusSuccess.style.display, 'block')
+  assert.equal(form.wrapper.statusSuccess.textContent, 'Your email has been updated')
+})
+
+test('a resubmit hides both status elements again while the request is in flight', () => {
+  const setMessage = renderer()
+  const form = messageForm('nested')
+
+  setMessage(form, 'error', 'Enter a valid email address.')
+  setMessage(form, 'idle', '')
+
+  assert.equal(form.wrapper.statusSuccess.style.display, 'none')
+  assert.equal(form.wrapper.statusError.style.display, 'none')
+  assert.equal(form.wrapper.done.style.display, 'none')
+  assert.equal(form.wrapper.fail.style.display, 'none')
+})
+
+test('a form with no status element renders exactly the native blocks and nothing else', () => {
+  const setMessage = renderer()
+  const form = messageForm()
+
+  setMessage(form, 'success', 'Your email has been updated')
+  assert.equal(form.wrapper.statusSuccess, null)
+  assert.equal(form.wrapper.statusError, null)
+  assert.equal(form.wrapper.done.style.display, 'block')
+
+  setMessage(form, 'error', 'Enter a valid email address.')
+  assert.equal(form.wrapper.fail.style.display, 'block')
+  assert.equal(form.wrapper.failText.textContent, 'Enter a valid email address.')
+})
+
+test('a form with no wrapper at all is left alone', () => {
+  const setMessage = renderer()
+
+  assert.doesNotThrow(() => {
+    setMessage({ closest: () => null }, 'success', 'Your email has been updated')
+  })
+})
+
+test('Account Security renders the email confirmation and drives the status element', async () => {
+  const securityForm = makeForm('security', {
+    email: 'next@example.com',
+    status: 'nested',
+  })
+  loadController({
+    buildForm: null,
+    securityForm,
+    currentEmail: 'old@example.com',
+    config: { guardSecurityForm: 'identity' },
+    routeGuard: { memberRole: () => 'talent' },
+  })
+
+  securityForm.submitEvent()
+  await settle()
+
+  assert.equal(securityForm.wrapper.done.style.display, 'block')
+  assert.equal(securityForm.wrapper.doneText.textContent, 'Your email has been updated')
+  assert.equal(securityForm.wrapper.statusSuccess.style.display, 'block')
+  assert.equal(securityForm.wrapper.statusSuccessText.textContent, 'Your email has been updated')
+})
+
+test('Starter Edit Profile renders the email confirmation and drives the status element', async () => {
+  const starterProfileForm = makeForm('starter-profile', {
+    email: 'talent-old@example.com',
+    valid: false,
+    status: 'nested',
+  })
+  loadController({
+    buildForm: null,
+    starterProfileForm,
+    currentEmail: 'talent-old@example.com',
+    pathname: '/starter-edit-profile',
+    config: { guardSecurityForm: 'identity' },
+    routeGuard: { memberRole: () => 'talent' },
+  })
+
+  starterProfileForm.inputEmail('talent-next@example.com')
+  starterProfileForm.clickSubmit()
+  await settle()
+
+  assert.equal(starterProfileForm.wrapper.done.style.display, 'block')
+  assert.equal(starterProfileForm.wrapper.doneText.textContent, 'Your email has been updated')
+  assert.equal(starterProfileForm.wrapper.statusSuccess.style.display, 'block')
+  assert.equal(
+    starterProfileForm.wrapper.statusSuccessText.textContent,
+    'Your email has been updated',
+  )
+})
+
+test('Build Account keeps its authored success copy and is not given email wording', async () => {
+  const buildForm = makeForm('build', { status: 'nested' })
+  loadController({ buildForm, currentEmail: 'ada@example.com' })
+
+  buildForm.submitEvent()
+  await settle()
+
+  assert.equal(buildForm.wrapper.done.style.display, 'block')
+  assert.equal(buildForm.wrapper.doneText.textContent, 'Your authored success message.')
+  assert.equal(buildForm.wrapper.statusSuccess.style.display, 'block')
+  assert.equal(buildForm.wrapper.statusSuccessText.textContent, '')
 })
