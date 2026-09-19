@@ -91,7 +91,9 @@ For new Designer wiring, use the stable contract instead of the compatibility na
 - Paid card root: `data-call-settings-service="paid"`
 - Native form: `data-call-settings-element="form"`
 - Edit panel: `data-call-settings-element="panel"`
-- Inputs: `data-call-settings-input="enabled|disabled|title|price"`
+- Inputs: `data-call-settings-input="enabled|disabled|title|price"`. On `/starter-edit-profile`
+  both controllers claim the same step 6 root, so there the Paid controller stamps and resolves
+  `data-paid-call-settings-input` and reads the authored `paid-call-*` field names.
 - Actions: `data-call-settings-action="open|close|submit"`
 - Optional outputs: `data-call-settings-output="status|on|off|price"`; a canonical `on` or `off`
   marker always wins over the authored pill copy above

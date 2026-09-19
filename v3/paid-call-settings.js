@@ -30,6 +30,8 @@
     'paid-consulting-calls',
     'consulting-calls',
   ]
+  const SHARED_RADIO_HOOK = 'data-call-settings-input'
+  const PAID_RADIO_HOOK = 'data-paid-call-settings-input'
 
   const hostname = window.location.hostname
   if (hostname !== STAGING_HOST && !PRODUCTION_HOSTS.has(hostname)) return
@@ -39,6 +41,7 @@
   let root = null
   let uiScope = null
   let cardMode = false
+  let editProfileMode = false
   let sessionMemberId = null
   let sessionAuthScope = null
   let settings = null
@@ -59,6 +62,9 @@
   let activeWrite = null
   let authTransitionPending = null
   let prerequisiteRefreshQueued = false
+  let editProfileDirty = false
+  let editProfileReady = false
+  let applyingCanonicalRender = false
 
   function qs(selector, scope) {
     return (scope || document).querySelector(selector)
@@ -67,6 +73,7 @@
   function locateRoot() {
     root = qs(CALL_SETTINGS_ROOT_SELECTOR)
     cardMode = Boolean(root)
+    editProfileMode = false
     if (!root) {
       root = qs(ROOT_SELECTOR)
       cardMode = false
@@ -74,6 +81,11 @@
     if (!root) {
       root = qs(CARD_ROOT_SELECTOR)
       cardMode = Boolean(root)
+    }
+    if (!root && String(window.location.pathname || '').replace(/\/+$/, '') === '/starter-edit-profile') {
+      root = qs('[data-form="step"][data-index="6"]')
+      cardMode = false
+      editProfileMode = Boolean(root)
     }
     return root
   }
@@ -350,14 +362,23 @@
     return Boolean(canonicalService(value)) || prerequisitesReady(value)
   }
 
+  // Edit Profile gives the Free and Paid controllers one shared step-6 root, so the
+  // canonical hook cannot say which service a stamped radio belongs to there.
+  function radioHook() {
+    return editProfileMode ? PAID_RADIO_HOOK : SHARED_RADIO_HOOK
+  }
+
   function field(name) {
-    const canonical =
-      qs('[data-call-settings-input="' + name + '"]', root) ||
-      qs('[data-paid-call-input="' + name + '"]', root)
-    if (canonical || !cardMode) return canonical
+    const canonical = editProfileMode
+      ? null
+      : (
+        qs('[data-call-settings-input="' + name + '"]', root) ||
+        qs('[data-paid-call-input="' + name + '"]', root)
+      )
+    if (canonical || (!cardMode && !editProfileMode)) return canonical
     const selectors = {
-      title: '[name="call-description"]',
-      price: '[name="call-rate"]',
+      title: editProfileMode ? '[name="paid-call-description"]' : '[name="call-description"]',
+      price: editProfileMode ? '[name="paid-call-rate"]' : '[name="call-rate"]',
     }
     if (name === 'enabled') return cardRadioPair().enabled
     return selectors[name] ? qs(selectors[name], root) : null
@@ -404,8 +425,9 @@
   // identifiable the pair stays unresolved: the card takes no radio-driven action
   // rather than guessing an answer from DOM order.
   function cardRadioPair() {
-    let enabledInput = qs('[data-call-settings-input="enabled"]', root)
-    let disabledInput = qs('[data-call-settings-input="disabled"]', root)
+    const hook = radioHook()
+    let enabledInput = qs('[' + hook + '="enabled"]', root)
+    let disabledInput = qs('[' + hook + '="disabled"]', root)
     for (const groupName of PAID_RADIO_GROUP_NAMES) {
       if (!enabledInput) enabledInput = namedRadio(groupName, 'yes')
       if (!disabledInput) disabledInput = namedRadio(groupName, 'no')
@@ -423,8 +445,8 @@
   }
 
   function disabledField() {
-    if (!cardMode) return null
-    const canonical = qs('[data-call-settings-input="disabled"]', root)
+    if (!cardMode && !editProfileMode) return null
+    const canonical = qs('[' + radioHook() + '="disabled"]', root)
     if (canonical) return canonical
     return cardRadioPair().disabled
   }
@@ -438,12 +460,13 @@
   // name-and-value lookups can no longer tell them apart, so every later
   // field('enabled')/disabledField() call must resolve by that stable hook.
   function normalizeCardRadioGroup() {
-    if (!cardMode) return
+    if (!cardMode && !editProfileMode) return
     const enabledInput = field('enabled')
     const disabledInput = disabledField()
     if (enabledInput === disabledInput) return
-    if (enabledInput) enabledInput.setAttribute('data-call-settings-input', 'enabled')
-    if (disabledInput) disabledInput.setAttribute('data-call-settings-input', 'disabled')
+    const hook = radioHook()
+    if (enabledInput) enabledInput.setAttribute(hook, 'enabled')
+    if (disabledInput) disabledInput.setAttribute(hook, 'disabled')
     if (!enabledInput || !disabledInput) return
     const enabledName = enabledInput.getAttribute('name')
     const disabledName = disabledInput.getAttribute('name')
@@ -611,6 +634,30 @@
     const next = classes.filter(function (name) { return name !== 'w--redirected-checked' })
     if (checked) next.push('w--redirected-checked')
     visual.setAttribute('class', next.join(' '))
+  }
+
+  // canonical-profile-loader.js hydrates these same step 6 controls from the legacy profile
+  // record and dispatches native input and change events on each one. Those are not member
+  // gestures, so the shared hydration window - the same one the page dirty state answers with -
+  // decides what counts as an Edit Profile change. Without it a freshly hydrated page reports
+  // unsaved call settings, and a failed canonical read then wedges every other step 6 field.
+  function markEditProfileDirty() {
+    if (!editProfileMode) return
+    const dirtyState = window.__tsProfileDirtyState
+    if (dirtyState && typeof dirtyState.isHydrating === 'function' && dirtyState.isHydrating()) return
+    editProfileDirty = true
+  }
+
+  // Edit Profile derives the dependent field's enabled and visible state from a radio
+  // change, so a canonical write has to announce itself the same way a member click does.
+  function notifyRadioChange(item) {
+    if (!editProfileMode || !item || typeof item.dispatchEvent !== 'function') return
+    applyingCanonicalRender = true
+    try {
+      item.dispatchEvent(new CustomEvent('change', { bubbles: true }))
+    } finally {
+      applyingCanonicalRender = false
+    }
   }
 
   function pillLabel(item) {
@@ -825,16 +872,20 @@
     setBusy(false)
     sessionMemberId = null
     sessionAuthScope = null
-    const enabledInput = field('enabled')
-    const titleInput = field('title')
-    const priceInput = field('price')
-    const durationInput = field('duration')
-    setRadioChecked(enabledInput, false)
-    if (titleInput) titleInput.value = ''
-    if (priceInput) priceInput.value = ''
-    if (durationInput) durationInput.value = String(FIXED_DURATION_MINUTES)
-    const disabledInput = disabledField()
-    setRadioChecked(disabledInput, true)
+    // Edit Profile shows these controls while the canonical GET is still in flight, so a
+    // pre-load reset would wipe hydrated or typed answers the member can see.
+    if (!editProfileMode) {
+      const enabledInput = field('enabled')
+      const titleInput = field('title')
+      const priceInput = field('price')
+      const durationInput = field('duration')
+      setRadioChecked(enabledInput, false)
+      if (titleInput) titleInput.value = ''
+      if (priceInput) priceInput.value = ''
+      if (durationInput) durationInput.value = String(FIXED_DURATION_MINUTES)
+      const disabledInput = disabledField()
+      setRadioChecked(disabledInput, true)
+    }
     clearFieldValidity()
     qsa('[data-paid-call-prerequisite]', uiScope || root).forEach(function (item) {
       item.setAttribute('data-ready', 'false')
@@ -913,6 +964,8 @@
     settings = value
     const service = canonicalService(value)
     explicitIntent = null
+    editProfileDirty = false
+    editProfileReady = true
     const readiness = readinessState(value)
     const durationMatches = !service || Number(service.duration) === FIXED_DURATION_MINUTES
     const enabledInput = field('enabled')
@@ -926,6 +979,7 @@
     setRadioChecked(enabledInput, Boolean(service))
     const disabledInput = disabledField()
     setRadioChecked(disabledInput, !service)
+    notifyRadioChange(service ? enabledInput : disabledInput)
     if (titleInput) titleInput.value = service ? service.title || '' : 'Paid Consultation Call'
     if (priceInput) priceInput.value = confirmedRate ? Number(confirmedRate.price_cents) / 100 : ''
     if (durationInput) durationInput.value = String(FIXED_DURATION_MINUTES)
@@ -1022,31 +1076,32 @@
   }
 
   function setCardEditorOpen(open) {
-    if (!cardMode) return
+    if (!cardMode || editProfileMode) return
     const wrapper = cardPanel()
     if (wrapper) wrapper.style.display = open ? 'flex' : 'none'
     root.setAttribute('data-paid-call-editor-open', open ? 'true' : 'false')
   }
 
   async function submitIntent() {
-    if (cardMode) {
+    if (editProfileMode && !editProfileDirty) return settings
+    if (cardMode || editProfileMode) {
       const enabledInput = field('enabled')
       const disabledInput = disabledField()
       const service = canonicalService(settings)
       if (explicitIntent === 'disabled') {
         const result = await disable()
-        if (result) setCardEditorOpen(false)
+        if (result && !editProfileMode) setCardEditorOpen(false)
         return result
       }
       if (!service && explicitIntent !== 'enabled') {
         if (!enabledInput || !enabledInput.checked || (disabledInput && disabledInput.checked)) {
-          setCardEditorOpen(false)
+          if (!editProfileMode) setCardEditorOpen(false)
           return settings
         }
       }
     }
     const result = await save()
-    if (result) setCardEditorOpen(false)
+    if (result && !editProfileMode) setCardEditorOpen(false)
     return result
   }
 
@@ -1409,10 +1464,12 @@
     const enabledInput = field('enabled')
     if (enabledInput) {
       enabledInput.addEventListener('change', function () {
+        if (applyingCanonicalRender) return
         if (enabledInput.checked) explicitIntent = 'enabled'
+        markEditProfileDirty()
         const disabledInput = disabledField()
         setRadioChecked(enabledInput, enabledInput.checked)
-        if (cardMode && enabledInput.checked) setRadioChecked(disabledInput, false)
+        if ((cardMode || editProfileMode) && enabledInput.checked) setRadioChecked(disabledInput, false)
         clearFieldValidity()
         if (!enabledInput.checked && canonicalService(settings)) {
           setMessage('Use Turn off paid calls to disable the active service safely.')
@@ -1422,7 +1479,9 @@
     const disabledInput = disabledField()
     if (disabledInput) {
       disabledInput.addEventListener('change', function () {
+        if (applyingCanonicalRender) return
         if (disabledInput.checked) explicitIntent = 'disabled'
+        markEditProfileDirty()
         setRadioChecked(disabledInput, disabledInput.checked)
         if (disabledInput.checked) setRadioChecked(enabledInput, false)
         clearFieldValidity()
@@ -1432,6 +1491,8 @@
       const input = field(name)
       if (!input) return
       input.addEventListener('input', function () {
+        if (applyingCanonicalRender) return
+        markEditProfileDirty()
         setFieldValidity(input, '')
       })
     })
@@ -1463,7 +1524,7 @@
       stopRootWait()
       uiScope = cardMode ? findCallCardScope(root) : root
       watchUiScope()
-      if (cardMode) setCardEditorOpen(false)
+      if (cardMode && !editProfileMode) setCardEditorOpen(false)
       bind()
       await waitForMemberstack()
       return loadSession(undefined, false)
@@ -1480,6 +1541,9 @@
     read: readCanonicalSettings,
     save: save,
     disable: disable,
+    submit: submitIntent,
+    hasChanges: function () { return editProfileMode && editProfileDirty },
+    isReady: function () { return !editProfileMode || editProfileReady },
   }
 
   if (document.readyState === 'loading') {

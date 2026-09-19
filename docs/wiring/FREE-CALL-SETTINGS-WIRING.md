@@ -40,7 +40,10 @@ The current Designer form works without generated IDs or styling selectors:
   instead of the last click
 
 The controller stamps `data-call-settings-input="enabled|disabled"` on the verified radio pair at
-runtime. It never renames the group and never binds the Paid form.
+runtime. It never renames the group and never binds the Paid form. On `/starter-edit-profile`
+both controllers claim the same step 6 root, so there the Free controller stamps and resolves
+`data-free-call-settings-input` instead; the shared name would not say which service a radio
+answers.
 
 Webflow or Memberstack can insert the Free form root before the sibling status pills and Edit
 control. After the root boots, the controller watches the document, re-resolves the owning Free

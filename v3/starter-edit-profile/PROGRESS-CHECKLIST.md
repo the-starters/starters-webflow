@@ -20,11 +20,11 @@ in [README.md](README.md) and in the root
       rounded or partially parsed, and stop an out-of-contract price before the
       request. Contract:
       [Whole-dollar price contract](../profile-form/README.md#whole-dollar-price-contract).
-- [x] Keep the authored Services and Rates markup intact while the controller disables
-      and hides the legacy Free and Paid Call groups, then replaces their first position
-      with one accessible `Manage Call Settings` action.
-- [x] Omit the legacy Free Call toggle and description plus the Paid Call toggle,
-      description, and rate from every step 6 profile payload.
+- [x] Keep the authored Services and Rates markup intact while the Free and Paid Call
+      controls stay visible and editable, each dependent field following its own toggle.
+- [x] Save only changed call settings through the canonical Xano upsert or disable
+      endpoints before the profile PATCH, and omit the Free Call toggle and description
+      plus the Paid Call toggle, description, and rate from every step 6 profile payload.
 - [x] Require `saved: true` and a Boolean `projection_pending`, show success after the
       canonical save even when public projection is pending or reports a later non-2xx
       failure, and fail closed when a 2xx response omits either confirmation.
@@ -59,11 +59,11 @@ in [README.md](README.md) and in the root
 
 ## 🧪 Automated evidence
 
-- [x] Legacy Free and Paid Call controls are disabled, un-required, and hidden, except
-      where a wrapper also holds a Retainer control, which stays visible with its call
-      control only disabled. One accessible replacement action occupies their first
-      position, links to Call Settings, and the legacy fields never contribute to the
-      step 6 payload.
+- [x] Free and Paid Call controls stay editable on step 6, each dependent field follows
+      its own toggle, a canonical render re-derives that dependent state, hydration events
+      never count as a member change, a controller reporting no changes never gates the
+      step, a failed canonical call save stops the profile PATCH, and the call fields
+      never contribute to the step 6 payload.
 - [x] Disabled Retainer rates submit `0`, and configured Retainer rates on the same
       step submit unchanged.
 - [x] A blank Retainer rate whose toggle is still on submits its authored blank value
@@ -99,6 +99,7 @@ Run this coverage with:
 ```sh
 node --test starter-edit-profile.test.js
 node --test starter-edit-profile-service-toggles.test.js
+node --test v3/edit-profile-call-settings.test.js
 node --test v3/profile-form/company-experience-date-hydration.test.js
 node --test v3/profile-form/company-search-race.test.js
 node --test v3/profile-form/taxonomy-explicit-selection.test.js
@@ -113,12 +114,17 @@ node --test v3/starter-edit-profile/portfolio-modal-state.test.js
 - [ ] No-mistakes review, tests, documentation, lint, PR, and CI pass with no findings.
 - [ ] Release the asset through the [release verification](README.md#release-verification)
       sequence, including the tag, jsDelivr purge, and served-byte comparison.
-- [ ] Confirm on the published page that legacy Free and Paid Call controls are hidden —
-      or, where their wrapper also holds a Retainer control, visible but disabled and
-      still disabled after toggling Retainers — that the replacement action routes to
-      `/starter-dashboard#calendar`, that no Free or Paid Call profile fields are sent,
-      and that turning retainers off saves canonical `0` without changing stored Call
-      Settings.
+- [ ] Verify the step 6 call settings host scope before promoting past staging: the
+      scheduling-auth bridge runs host-wide on staging but reaches `/starter-edit-profile`
+      on the V3 custom domains only once that path joins its
+      [current safety boundary](../README.md#scheduling-auth). Until then the call
+      controls hydrate and save on staging only, and the production check below is blocked.
+- [ ] Confirm on the published page that Free and Paid Call controls hydrate from the
+      canonical GET and stay editable, that a changed call setting reaches only the
+      canonical upsert or disable endpoint, that no Free or Paid Call profile fields are
+      sent in the step 6 PATCH, that a step 6 save with no call change still succeeds when
+      the canonical read failed, and that turning retainers off saves canonical `0`
+      without changing stored Call Settings.
 - [ ] Confirm endpoint #1499 returns `saved: true` with a Boolean
       `projection_pending`; verify pending and complete projection states show profile
       success, including the documented canonical-save response with non-2xx status,
