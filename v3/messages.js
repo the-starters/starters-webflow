@@ -48,6 +48,7 @@
   const TALKJS_SCRIPT_URL = 'https://cdn.talkjs.com/talk.js'
   const MEMBERSTACK_TIMEOUT_MS = 10000
   const TALKJS_TIMEOUT_MS = 15000
+  const TALKJS_MAX_LOAD_ATTEMPTS = 2
   const LOGIN_PATH = '/login'
   const DEEP_LINK_PARAM = 'with'
   const CONVERSATION_PARAM = 'conversation'
@@ -134,18 +135,21 @@
     return LOGIN_PATH + '?next=' + encodeURIComponent(next)
   }
 
+  let talkJsLoaderAttempt = null
+
   function installTalkJsLoader() {
-    if (window.Talk && window.Talk.ready) return
+    if (talkJsLoaderAttempt) return talkJsLoaderAttempt
+    if (window.Talk && window.Talk.ready) {
+      talkJsLoaderAttempt = {
+        owned: false,
+        ready: Promise.resolve(window.Talk.ready).then(() => window.Talk),
+      }
+      return talkJsLoaderAttempt
+    }
 
     const callbacks = []
     const NativePromise = window.Promise
-    const script = document.createElement('script')
-    script.async = true
-    script.src = TALKJS_SCRIPT_URL
-    script.dataset.startersMessagesTalkjs = 'true'
-    document.head.appendChild(script)
-
-    window.Talk = {
+    const stub = {
       v: 3,
       ready: {
         then(callback) {
@@ -162,28 +166,77 @@
         c: callbacks,
       },
     }
+    const script = document.createElement('script')
+    script.async = true
+    script.src = TALKJS_SCRIPT_URL
+    script.dataset.startersMessagesTalkjs = 'true'
+    const attempt = { owned: true, script, stub, scriptFailed: false }
+    const failed = new Promise((_, reject) => {
+      script.onerror = () => {
+        attempt.scriptFailed = true
+        reject(new Error('TalkJS script failed to load'))
+      }
+    })
+
+    // Install the queue before appending the async script, so the stub is in
+    // place for the whole life of the request. An external async script always
+    // executes in a later task, so neither order can drop a callback.
+    window.Talk = stub
+    document.head.appendChild(script)
+
+    attempt.ready = Promise.race([
+      Promise.resolve(stub.ready).then(() => window.Talk),
+      failed,
+    ])
+    talkJsLoaderAttempt = attempt
+    return attempt
   }
 
-  function waitForTalkJs(timeoutMs = TALKJS_TIMEOUT_MS) {
-    installTalkJsLoader()
+  // A second script tag is only safe once the first one is known dead. A
+  // readiness timeout proves nothing: a script still in flight would execute
+  // anyway and evaluate the TalkJS bundle twice, and a script that already ran
+  // has replaced window.Talk, so reloading it cannot change the outcome. Only
+  // an onerror-ed script that never touched the global is retryable.
+  function resetTalkJsLoader(attempt) {
+    if (!attempt || !attempt.owned) return false
+    if (!attempt.scriptFailed) return false
+    if (window.Talk !== attempt.stub) return false
+    if (typeof attempt.script.remove === 'function') attempt.script.remove()
+    try {
+      delete window.Talk
+    } catch {
+      window.Talk = undefined
+    }
+    if (talkJsLoaderAttempt === attempt) talkJsLoaderAttempt = null
+    return true
+  }
 
-    return new Promise((resolve, reject) => {
-      const timer = window.setTimeout(
-        () => reject(new Error('TalkJS did not become ready')),
-        timeoutMs,
-      )
+  async function waitForTalkJs(timeoutMs = TALKJS_TIMEOUT_MS) {
+    let lastError
 
-      Promise.resolve(window.Talk.ready).then(
-        () => {
-          window.clearTimeout(timer)
-          resolve(window.Talk)
-        },
-        (error) => {
-          window.clearTimeout(timer)
-          reject(error)
-        },
-      )
-    })
+    for (let index = 0; index < TALKJS_MAX_LOAD_ATTEMPTS; index += 1) {
+      const attempt = installTalkJsLoader()
+      let timer
+      try {
+        return await Promise.race([
+          attempt.ready,
+          new Promise((resolve, reject) => {
+            timer = window.setTimeout(
+              () => reject(new Error('TalkJS did not become ready')),
+              timeoutMs,
+            )
+          }),
+        ])
+      } catch (error) {
+        lastError = error
+        if (index + 1 >= TALKJS_MAX_LOAD_ATTEMPTS) break
+        if (!resetTalkJsLoader(attempt)) break
+      } finally {
+        if (timer) window.clearTimeout(timer)
+      }
+    }
+
+    throw lastError || new Error('TalkJS did not become ready')
   }
 
   // Replicated from v3/route-guard.js PLAN_ROLES — that file is the canonical
