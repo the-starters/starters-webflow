@@ -170,38 +170,42 @@
     script.async = true
     script.src = TALKJS_SCRIPT_URL
     script.dataset.startersMessagesTalkjs = 'true'
+    const attempt = { owned: true, script, stub, scriptFailed: false }
     const failed = new Promise((_, reject) => {
-      script.onerror = () => reject(new Error('TalkJS script failed to load'))
+      script.onerror = () => {
+        attempt.scriptFailed = true
+        reject(new Error('TalkJS script failed to load'))
+      }
     })
 
-    // Install the queue before appending the async script. A cache-fast script
-    // must never initialize and then be overwritten by our temporary queue.
+    // Install the queue before appending the async script, so the stub is in
+    // place for the whole life of the request. An external async script always
+    // executes in a later task, so neither order can drop a callback.
     window.Talk = stub
     document.head.appendChild(script)
 
-    talkJsLoaderAttempt = {
-      owned: true,
-      script,
-      stub,
-      ready: Promise.race([
-        Promise.resolve(stub.ready).then(() => window.Talk),
-        failed,
-      ]),
-    }
-    return talkJsLoaderAttempt
+    attempt.ready = Promise.race([
+      Promise.resolve(stub.ready).then(() => window.Talk),
+      failed,
+    ])
+    talkJsLoaderAttempt = attempt
+    return attempt
   }
 
+  // A second script tag is only safe once the first one is known dead. A
+  // readiness timeout proves nothing: a script still in flight would execute
+  // anyway and evaluate the TalkJS bundle twice, and a script that already ran
+  // has replaced window.Talk, so reloading it cannot change the outcome. Only
+  // an onerror-ed script that never touched the global is retryable.
   function resetTalkJsLoader(attempt) {
     if (!attempt || !attempt.owned) return false
-    if (attempt.script && typeof attempt.script.remove === 'function') {
-      attempt.script.remove()
-    }
-    if (window.Talk === attempt.stub) {
-      try {
-        delete window.Talk
-      } catch {
-        window.Talk = undefined
-      }
+    if (!attempt.scriptFailed) return false
+    if (window.Talk !== attempt.stub) return false
+    if (typeof attempt.script.remove === 'function') attempt.script.remove()
+    try {
+      delete window.Talk
+    } catch {
+      window.Talk = undefined
     }
     if (talkJsLoaderAttempt === attempt) talkJsLoaderAttempt = null
     return true

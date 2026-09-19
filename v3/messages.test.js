@@ -291,19 +291,18 @@ test('a visit without ?with= mounts the inbox and touches no conversation', asyn
   assert.deepEqual(errors, [])
 })
 
-test('a timed-out TalkJS script is removed and retried once', async () => {
+test('a TalkJS script that fails to load is removed and retried once', async () => {
   const loaded = loadMessages({ talk: false })
   await settle()
 
   assert.equal(loaded.calls.scripts.length, 1)
-  const firstTimeout = loaded.calls.timers.find((timer) => timer.ms === 15000)
-  assert.ok(firstTimeout, 'first TalkJS readiness timeout is armed')
 
-  firstTimeout.fire()
+  loaded.calls.scripts[0].onerror()
   await settle()
 
   assert.equal(loaded.calls.scripts.length, 2)
   assert.equal(loaded.calls.scripts[0].removed, true)
+  assert.notEqual(loaded.window.Talk, undefined)
 
   const callbacks = loaded.window.Talk.ready.c.slice()
   loaded.window.Talk = loaded.Talk
@@ -312,6 +311,49 @@ test('a timed-out TalkJS script is removed and retried once', async () => {
 
   assert.deepEqual(loaded.calls.mounted, [loaded.container])
   assert.deepEqual(loaded.errors, [])
+})
+
+test('a TalkJS script still in flight is never superseded by a second tag', async () => {
+  const loaded = loadMessages({ talk: false })
+  await settle()
+
+  assert.equal(loaded.calls.scripts.length, 1)
+  const readiness = loaded.calls.timers.find((timer) => timer.ms === 15000)
+  assert.ok(readiness, 'TalkJS readiness timeout is armed')
+
+  readiness.fire()
+  await settle()
+
+  // The first script may still execute, so appending a second tag would
+  // evaluate the TalkJS bundle twice against a live page.
+  assert.equal(loaded.calls.scripts.length, 1)
+  assert.equal(loaded.calls.scripts[0].removed, false)
+  assert.deepEqual(loaded.calls.mounted, [])
+  assert.deepEqual(loaded.errors, [
+    '[messages-3.0] Unable to mount TalkJS inbox Error: TalkJS did not become ready',
+  ])
+})
+
+test('a slow TalkJS SDK fails once rather than waiting out a second timeout', async () => {
+  const loaded = loadMessages({ talk: false })
+  await settle()
+
+  // The script executed and replaced our queue, but its own ready never
+  // settles. Reloading the script cannot change that, so there is no retry.
+  loaded.window.Talk = { ready: new Promise(() => {}) }
+
+  const readiness = loaded.calls.timers.find((timer) => timer.ms === 15000)
+  readiness.fire()
+  await settle()
+
+  assert.equal(loaded.calls.scripts.length, 1)
+  assert.equal(
+    loaded.calls.timers.filter((timer) => timer.ms === 15000).length,
+    1,
+  )
+  assert.deepEqual(loaded.errors, [
+    '[messages-3.0] Unable to mount TalkJS inbox Error: TalkJS did not become ready',
+  ])
 })
 
 test('?conversation= selects that existing conversation without mutating it', async () => {
