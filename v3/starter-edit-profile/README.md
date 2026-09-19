@@ -217,7 +217,9 @@ controllers read the same `isHydrating()` window before marking themselves chang
 profile loader replays `input` and `change` on those five controls while it restores the legacy
 record; a hydration write is never a member change. Retainer controls remain owned by
 the profile form even when Webflow markup places them in a wrapper shared with a call
-field. See the [Free Call settings contract](../../docs/wiring/FREE-CALL-SETTINGS-WIRING.md)
+field. This contract holds only where `scheduling-auth.js` authenticates this page; its host
+scope is owned by [Load order](#load-order). See the
+[Free Call settings contract](../../docs/wiring/FREE-CALL-SETTINGS-WIRING.md)
 and [Paid Call settings contract](../../docs/wiring/PAID-CALL-SETTINGS-WIRING.md). The root
 [Current Scripts](../../README.md#current-scripts) entry owns the profile endpoint's
 canonical-save and asynchronous-projection response contract.
@@ -337,6 +339,13 @@ marker first breaks the page two ways:
   its own and reads canonical settings only through the bridge-owned fetch. Their tags and
   Xano authority live in the [Free Call settings contract](../../docs/wiring/FREE-CALL-SETTINGS-WIRING.md#loader-order)
   and the [Paid Call settings contract](../../docs/wiring/PAID-CALL-SETTINGS-WIRING.md#script).
+  That prerequisite scopes where step 6 call settings work today. The bridge runs host-wide on
+  `the-starters-3-0.webflow.io`, but on the V3 custom domains it runs only on the paths listed in
+  its [current safety boundary](../README.md#scheduling-auth), which does not include
+  `/starter-edit-profile`. Without the bridge both controllers throw `xanoAuthFetch is unavailable`,
+  so the step 6 call controls render unhydrated and every call save fails closed. Until that
+  boundary adds this path, the editable step 6 call settings described above are staging-only;
+  the boundary list owns that decision, so widen it there rather than restating a host rule here.
 
 ### Authored markers
 

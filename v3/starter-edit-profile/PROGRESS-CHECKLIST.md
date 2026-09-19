@@ -114,6 +114,11 @@ node --test v3/starter-edit-profile/portfolio-modal-state.test.js
 - [ ] No-mistakes review, tests, documentation, lint, PR, and CI pass with no findings.
 - [ ] Release the asset through the [release verification](README.md#release-verification)
       sequence, including the tag, jsDelivr purge, and served-byte comparison.
+- [ ] Verify the step 6 call settings host scope before promoting past staging: the
+      scheduling-auth bridge runs host-wide on staging but reaches `/starter-edit-profile`
+      on the V3 custom domains only once that path joins its
+      [current safety boundary](../README.md#scheduling-auth). Until then the call
+      controls hydrate and save on staging only, and the production check below is blocked.
 - [ ] Confirm on the published page that Free and Paid Call controls hydrate from the
       canonical GET and stay editable, that a changed call setting reaches only the
       canonical upsert or disable endpoint, that no Free or Paid Call profile fields are
