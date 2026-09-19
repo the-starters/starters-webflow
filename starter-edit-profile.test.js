@@ -335,9 +335,9 @@ async function testStepSixReplacesLegacyCallControlsWithCanonicalSettingsAction(
     assert.equal(group.getAttribute('aria-hidden'), 'true')
   })
 
-  const ownershipStyle = environment.step.children.find((child) => child.hasAttribute('data-call-settings-profile-style'))
-  assert.ok(ownershipStyle)
-  assert.equal(ownershipStyle.textContent, '[data-call-settings-owned]{display:none!important}')
+  const ownershipStyles = environment.documentHead.children.filter((child) => child.hasAttribute('data-call-settings-profile-style'))
+  assert.equal(ownershipStyles.length, 1)
+  assert.equal(ownershipStyles[0].textContent, '[data-call-settings-owned]{display:none!important}')
 
   const notice = environment.legacyCallContainer.children.find((child) => child.hasAttribute('data-call-settings-profile-notice'))
   assert.ok(notice)
@@ -349,7 +349,39 @@ async function testStepSixReplacesLegacyCallControlsWithCanonicalSettingsAction(
   assert.equal(notice.children[2].href, '/starter-dashboard#calendar')
   assert.equal(notice.children[2].textContent, 'Manage Call Settings')
   assert.equal(environment.fields['[name="rate-retainer"]'].disabled, false)
-  assert.notEqual(environment.fields['[name="rate-retainer"]'].parentElement?.hidden, true)
+  assert.equal(environment.fields['[name="rate-retainer"]'].parentElement, environment.retainerCallGroup)
+  assert.equal(environment.retainerCallGroup.hidden, undefined)
+  assert.equal(environment.retainerCallGroup.hasAttribute('data-call-settings-owned'), false)
+  assert.equal(environment.legacyCallContainer.hidden, undefined)
+  assert.equal(environment.legacyCallContainer.hasAttribute('data-call-settings-owned'), false)
+}
+
+// The Retainer rate is authored in the same step 6 group family. A wrapper it shares with
+// a call control must stay visible: a hidden but enabled required Retainer control aborts
+// native submit with "An invalid form control is not focusable".
+async function testStepSixNeverHidesAWrapperSharedWithRetainers() {
+  const environment = saved({
+    stepIndex: 6,
+    callRetainerShareWrapper: '[name="paid-call-rate"]',
+  })
+  const sharedGroup = environment.retainerCallGroup
+
+  assert.equal(environment.fields['[name="rate-retainer"]'].parentElement, sharedGroup)
+  assert.equal(environment.fields['[name="paid-call-rate"]'].parentElement, sharedGroup)
+  assert.equal(sharedGroup.hidden, undefined)
+  assert.equal(sharedGroup.style.display, undefined)
+  assert.equal(sharedGroup.hasAttribute('data-call-settings-owned'), false)
+  assert.equal(sharedGroup.hasAttribute('aria-hidden'), false)
+  assert.equal(environment.fields['[name="rate-retainer"]'].disabled, false)
+
+  assert.equal(environment.fields['[name="paid-call-rate"]'].disabled, true)
+  environment.legacyCallGroups
+    .filter((group) => group !== sharedGroup)
+    .forEach((group) => {
+      assert.equal(group.hidden, true)
+      assert.equal(group.hasAttribute('data-call-settings-owned'), true)
+    })
+  assert.ok(environment.legacyCallContainer.children.find((child) => child.hasAttribute('data-call-settings-profile-notice')))
 }
 
 async function testStepSixReappliesCallOwnershipAfterProfileHydration() {
@@ -372,6 +404,11 @@ async function testStepSixReappliesCallOwnershipAfterProfileHydration() {
     environment.legacyCallContainer.children.filter((child) => child.hasAttribute('data-call-settings-profile-notice')).length,
     1,
     'hydration must not duplicate the replacement action',
+  )
+  assert.equal(
+    environment.documentHead.children.filter((child) => child.hasAttribute('data-call-settings-profile-style')).length,
+    1,
+    'hydration must not duplicate the ownership style',
   )
 }
 
@@ -1494,6 +1531,7 @@ Promise.all([
   testStepSixNeverWritesPaidCallAuthority(),
   testStepSixNeverWritesFreeCallAuthority(),
   testStepSixReplacesLegacyCallControlsWithCanonicalSettingsAction(),
+  testStepSixNeverHidesAWrapperSharedWithRetainers(),
   testStepSixReappliesCallOwnershipAfterProfileHydration(),
   testPersonalDetailsUsesAuthoredContactControlsAndPreservesUntouchedCanonicalPhone(),
   testPhoneCountryChangeCountsAsAMemberEdit(),

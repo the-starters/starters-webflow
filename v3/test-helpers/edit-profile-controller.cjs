@@ -82,6 +82,7 @@ function createEnvironment(fetchImpl, {
   canonicalPhone = '',
   liveRateFormatter = false,
   simulateProfileHydrationAfterDomReady = false,
+  callRetainerShareWrapper = null,
   dirtyState = null,
   setupSection = null,
   profileReady = false,
@@ -203,10 +204,32 @@ function createEnvironment(fetchImpl, {
   const buttonText = { textContent: 'Submit' }
   const button = new Target()
   const step = Object.assign(new Target(), { dataset: { index: String(stepIndex) } })
+  // Mirrors the authored step 6 Services markup: one `.app-form_input_group` per call
+  // control, all of them plus the Retainer rate inside one shared Services container.
+  // `callRetainerShareWrapper` reproduces the markup risk where a call control and the
+  // Retainer rate live in the same authored group.
   const legacyCallContainer = new Target()
   const legacyCallGroups = []
+  let retainerCallGroup = null
   if (stepIndex === 6) {
-    [
+    const retainerField = stepFields['[name="rate-retainer"]']
+    const containerControls = []
+    const containerLabels = []
+    const wireGroup = (group, members) => {
+      const label = new Target()
+      group.classNames.add('app-form_input_group')
+      group.appendChild(label)
+      members.forEach((member) => group.appendChild(member))
+      group.querySelectorAll = (query) => {
+        if (query === 'input, select, textarea') return members
+        if (query === 'label') return [label]
+        return []
+      }
+      containerControls.push(...members)
+      containerLabels.push(label)
+      legacyCallContainer.appendChild(group)
+    }
+    ;[
       '[name="free-consulting-calls"]',
       '[name="free-call-description"]',
       '[name="paid-consulting-calls"]',
@@ -214,20 +237,20 @@ function createEnvironment(fetchImpl, {
       '[name="paid-call-rate"]',
     ].forEach((selector) => {
       const group = new Target()
-      const directLabel = new Target()
-      group.querySelector = (query) => query === ':scope > label' ? directLabel : null
-      legacyCallContainer.appendChild(group)
-      stepFields[selector].parentElement = group
-      stepFields[selector].closest = (query) => (
-        query === '.app-form_input_group'
-          ? group
-          : query === '[free-call-group], [paid-call-group]'
-            && ['[name="free-call-description"]', '[name="paid-call-description"]'].includes(selector)
-              ? group
-              : null
-      )
+      const shared = callRetainerShareWrapper === selector
+      wireGroup(group, shared ? [stepFields[selector], retainerField] : [stepFields[selector]])
+      if (shared) retainerCallGroup = group
       legacyCallGroups.push(group)
     })
+    if (!retainerCallGroup) {
+      retainerCallGroup = new Target()
+      wireGroup(retainerCallGroup, [retainerField])
+    }
+    legacyCallContainer.querySelectorAll = (query) => {
+      if (query === 'input, select, textarea') return containerControls
+      if (query === 'label') return containerLabels
+      return []
+    }
     step.appendChild(legacyCallContainer)
   }
   const form = new Target()
@@ -257,9 +280,6 @@ function createEnvironment(fetchImpl, {
     if (selector === '[data-edit-submit]') return button
     if (selector === '[data-call-settings-profile-notice]') {
       return legacyCallContainer.children.find((child) => child.hasAttribute('data-call-settings-profile-notice')) || null
-    }
-    if (selector === '[data-call-settings-profile-style]') {
-      return step.children.find((child) => child.hasAttribute('data-call-settings-profile-style')) || null
     }
     if (absentSelectors.has(selector)) return null
     if (Object.prototype.hasOwnProperty.call(stepFields, selector)) return stepFields[selector]
@@ -331,8 +351,13 @@ function createEnvironment(fetchImpl, {
   errorModal.addEventListener('click', () => { modalEvents.error += 1 })
 
   let domParsed = documentReadyState !== 'loading'
+  const documentHead = new Target()
+  documentHead.querySelector = (selector) => documentHead.children.find(
+    (child) => child.hasAttribute(selector.replace(/^\[|\]$/g, '')),
+  ) || null
   const document = {
     readyState: documentReadyState,
+    head: documentHead,
     addEventListener(type, listener) {
       if (type === 'DOMContentLoaded') domReady.push(listener)
     },
@@ -500,6 +525,8 @@ function createEnvironment(fetchImpl, {
     stepFields,
     legacyCallContainer,
     legacyCallGroups,
+    retainerCallGroup,
+    documentHead,
     focusTarget,
     window,
     liveRateFormatterCalls,

@@ -240,38 +240,54 @@ function setProfileFeedbackMessage(modalName, message) {
 	messageElement.textContent = message || authoredProfileFeedbackCopy.get(modalName);
 }
 
-function callSettingsFieldGroup(control, step) {
-	const authoredField = control.closest?.('.app-form_input_group');
-	if (authoredField) return authoredField;
+const CALL_SETTINGS_CONTROL_SELECTOR = [
+	'[name="free-consulting-calls"]',
+	'[name="free-call-description"]',
+	'[name="paid-consulting-calls"]',
+	'[name="paid-call-description"]',
+	'[name="paid-call-rate"]',
+].join(',');
 
-	const semanticGroup = control.closest?.('[free-call-group], [paid-call-group]');
-	if (semanticGroup) return semanticGroup;
+// True when the node wraps no control and no caption other than the call settings the
+// dashboard owns. Retainers are authored in the same step, and a hidden-but-enabled
+// required Retainer control would abort native submit, so a shared wrapper is never hidden.
+function wrapsOnlyCallSettings(node, ownedControls) {
+	if (typeof node?.querySelectorAll !== 'function') return false;
+	if (qsa('input, select, textarea', node).some((control) => !ownedControls.includes(control))) return false;
+	const ownedIds = ownedControls.map((control) => control.id).filter(Boolean);
+	return !qsa('label', node).some((label) => {
+		const target = label.getAttribute?.('for') || '';
+		return target !== '' && !ownedIds.includes(target);
+	});
+}
 
-	let current = control.parentElement;
-	while (current && current !== step) {
-		if (qs(':scope > label', current)) return current;
-		current = current.parentElement;
+// Prefer the authored wrapper, but never climb past `step` and never past a node that
+// also wraps something the member still owns.
+function callSettingsFieldGroup(control, step, ownedControls) {
+	let node = control.parentElement;
+	let exclusiveAncestor = null;
+	while (node && node !== step) {
+		if (!wrapsOnlyCallSettings(node, ownedControls)) break;
+		exclusiveAncestor = node;
+		if (node.classList?.contains('app-form_input_group')) return node;
+		if (node.hasAttribute?.('free-call-group') || node.hasAttribute?.('paid-call-group')) return node;
+		node = node.parentElement;
 	}
-	return null;
+	return exclusiveAncestor;
 }
 
 function configureCanonicalCallSettings() {
 	const step = qs('[data-form="step"][data-index="6"]');
 	if (!step) return;
-	if (!qs('[data-call-settings-profile-style]', step) && typeof document.createElement === 'function') {
+	const styleRoot = document.head || step;
+	if (typeof document.createElement === 'function' && !qs('[data-call-settings-profile-style]', styleRoot)) {
 		const style = document.createElement('style');
 		style.setAttribute('data-call-settings-profile-style', '');
 		style.textContent = '[data-call-settings-owned]{display:none!important}';
-		(document.head || step).appendChild(style);
+		styleRoot.appendChild(style);
 	}
 
-	const controls = qsa([
-		'[name="free-consulting-calls"]',
-		'[name="free-call-description"]',
-		'[name="paid-consulting-calls"]',
-		'[name="paid-call-description"]',
-		'[name="paid-call-rate"]',
-	].join(','), step);
+	const controls = qsa(CALL_SETTINGS_CONTROL_SELECTOR, step);
 	if (!controls.length) return;
 
 	const groups = [];
@@ -280,7 +296,7 @@ function configureCanonicalCallSettings() {
 		control.required = false;
 		control.setAttribute('aria-disabled', 'true');
 
-		const group = callSettingsFieldGroup(control, step);
+		const group = callSettingsFieldGroup(control, step, controls);
 		if (group && !groups.includes(group)) groups.push(group);
 	});
 

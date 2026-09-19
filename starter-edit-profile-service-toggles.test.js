@@ -85,7 +85,12 @@ function boot({
   // The dashboard owns Free and Paid Call settings; step 6 only carries the locked controls.
   const canonicalCallControls = [paidCallDescriptionField, freeCallDescriptionField]
   const stepSix = {
-    querySelector(selector) { return selector === '[data-paid-call-profile-notice]' ? {} : null },
+    querySelector(selector) {
+      return selector === '[data-call-settings-profile-notice]'
+        || selector === '[data-call-settings-profile-style]'
+        ? {}
+        : null
+    },
     querySelectorAll() { return canonicalCallControls },
     appendChild() {},
   }

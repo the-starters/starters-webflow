@@ -206,7 +206,10 @@ Account-settings tabs, membership panels, pause/cancel UI, and scheduling persis
 remain separate shared-component work. On step 6, the page controller disables and
 hides the complete legacy Free Call and Paid Call groups, then replaces their first
 position with one accessible `Manage Call Settings` action to
-`/starter-dashboard#calendar`. It omits all five legacy fields from the profile
+`/starter-dashboard#calendar`. Group resolution never climbs past the step and never
+hides a wrapper that also holds a Retainer control or another member-owned field, so a
+shared wrapper leaves its call control disabled and visible rather than hiding an
+enabled required Retainer field. It omits all five legacy fields from the profile
 payload. The dashboard Free and Paid Call settings
 controllers and their canonical Xano endpoints are the only member-facing writers
 for those services; see the [Free Call settings contract](../../docs/wiring/FREE-CALL-SETTINGS-WIRING.md)
