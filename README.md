@@ -224,6 +224,10 @@ tighter predicate that `STARTERS_DEBUG` cannot unlock, and says so where it live
   `[data-editor-id]` element for the same reason.
 - `v3/scheduling-auth.js` — availability and scheduling authentication bridge;
   see `v3/README.md` for its authoritative host and path boundary
+- `v3/scheduling-bridge.js` — byte-equivalent neutral-path release of the
+  scheduling authentication bridge for `/starter-edit-profile`, where browser
+  client filtering can block an asset URL containing `auth`; the bridge owner,
+  allowlist, token, and retry contracts remain `scheduling-auth`
 - `v3/dashboard-calls.js` — authenticated canonical call-section and Brand hero
   binder for the V3 dashboards; see `v3/README.md` for its Designer markup,
   identity, state, and endpoint contracts
