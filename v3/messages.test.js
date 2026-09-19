@@ -56,6 +56,7 @@ function loadMessages(options = {}) {
     // Every window.setTimeout the module arms, so a test can assert the
     // identity handler's abort budget and fire it without waiting 4 seconds.
     timers: [],
+    scripts: [],
   }
   const container = {}
   const storage = new Map()
@@ -202,12 +203,22 @@ function loadMessages(options = {}) {
   const document = {
     addEventListener() {},
     createElement() {
-      return {}
+      return {
+        dataset: {},
+        removed: false,
+        remove() {
+          this.removed = true
+        },
+      }
     },
     getElementById(id) {
       return id === 'talkjs-container' ? container : null
     },
-    head: { appendChild() {} },
+    head: {
+      appendChild(script) {
+        calls.scripts.push(script)
+      },
+    },
     readyState: 'complete',
   }
 
@@ -228,7 +239,16 @@ function loadMessages(options = {}) {
     window,
   })
 
-  return { replacements, warnings, errors, calls, container, storage, window }
+  return {
+    replacements,
+    warnings,
+    errors,
+    calls,
+    container,
+    storage,
+    Talk,
+    window,
+  }
 }
 
 /**
@@ -269,6 +289,29 @@ test('a visit without ?with= mounts the inbox and touches no conversation', asyn
   assert.equal(calls.conversations.length, 0)
   assert.equal(calls.selected.length, 0)
   assert.deepEqual(errors, [])
+})
+
+test('a timed-out TalkJS script is removed and retried once', async () => {
+  const loaded = loadMessages({ talk: false })
+  await settle()
+
+  assert.equal(loaded.calls.scripts.length, 1)
+  const firstTimeout = loaded.calls.timers.find((timer) => timer.ms === 15000)
+  assert.ok(firstTimeout, 'first TalkJS readiness timeout is armed')
+
+  firstTimeout.fire()
+  await settle()
+
+  assert.equal(loaded.calls.scripts.length, 2)
+  assert.equal(loaded.calls.scripts[0].removed, true)
+
+  const callbacks = loaded.window.Talk.ready.c.slice()
+  loaded.window.Talk = loaded.Talk
+  callbacks.forEach(([callback]) => callback())
+  await settle()
+
+  assert.deepEqual(loaded.calls.mounted, [loaded.container])
+  assert.deepEqual(loaded.errors, [])
 })
 
 test('?conversation= selects that existing conversation without mutating it', async () => {
