@@ -334,7 +334,7 @@ marker first breaks the page two ways:
   prerequisite: a section that binds without it registers the halted state above.
 - `unified-companies.js` before `company-experience-crud.js`.
 - `unified-highlights.js` before `portfolio-crud.js`.
-- `scheduling-auth.js` before `free-call-settings.js` and `paid-call-settings.js`, all three
+- `scheduling-bridge.js` before `free-call-settings.js` and `paid-call-settings.js`, all three
   of which this page must serve for step 6: each call controller claims the step 6 root on
   its own and reads canonical settings only through the bridge-owned fetch. Their tags and
   Xano authority live in the [Free Call settings contract](../../docs/wiring/FREE-CALL-SETTINGS-WIRING.md#loader-order)
@@ -345,6 +345,10 @@ marker first breaks the page two ways:
   `/starter-edit-profile`. Without the bridge both controllers throw `xanoAuthFetch is unavailable`,
   so the step 6 call controls render unhydrated and every call save fails closed. The boundary list
   owns that decision, so widen it there rather than restating a host rule here.
+  `scheduling-bridge.js` is the neutral-path release alias of `scheduling-auth.js` for this page.
+  It exists because production browser client filtering can reject the filename containing
+  `auth` before JavaScript runs. The alias executes the same bridge contract and still reports
+  `window.__tsSchedulingAuthBridgeOwner = 'scheduling-auth'`; do not fork its behavior.
   Loader order alone does not decide the race on this page: both controllers wait for the bridge
   before their canonical read, so a bridge that installs after them still hydrates step 6 instead
   of flashing the unavailable state. The two contracts linked above own that wait and its bounds.
