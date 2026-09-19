@@ -4,7 +4,7 @@
  * Webflow owns the Action Items row template. The controller prefers an authored
  * review dialog and creates a read-only fallback dialog when that Designer
  * element is not available yet. It binds the authenticated
- * `brand/projects/mine` proposal projection, paints read-only proposal terms,
+ * the dedicated Brand proposal projection, paints read-only proposal terms,
  * and submits versioned accept/reject commands through Opp30. A proposal is
  * never treated as a canonical project before acceptance.
  */
@@ -694,8 +694,8 @@
         if (current && current.status === 'success') render(current)
         return current
       }
-      if (!api || typeof api.brandProjectList !== 'function') return null
-      var result = await api.brandProjectList(1, 12)
+      if (!api || typeof api.brandProjectProposalList !== 'function') return null
+      var result = await api.brandProjectProposalList(1, 12)
       render(result)
       return result
     }
@@ -884,7 +884,7 @@
       template: template,
       modal: modal,
       api: api,
-      instance: resolveInstance(globalObject),
+      instance: null,
     })
     if (!controller.subscribe()) controller.refresh().catch(function () { controller.render({ project_proposals: [] }) })
     globalObject.addEventListener(MEMBER_RESET_EVENT, function () {
