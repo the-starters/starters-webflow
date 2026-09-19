@@ -711,12 +711,15 @@
       lockActions(Boolean(state.pendingAction))
     }
 
+    function showGeneratedHost(visible) {
+      if (list && list.getAttribute && list.getAttribute('data-project-proposal-generated') === 'true') {
+        setVisible(list, visible)
+      }
+    }
+
     function render(value) {
       state.proposals = normalizeProposals(value)
-      var rendered = renderCards(list, template, state.proposals)
-      if (list && list.getAttribute && list.getAttribute('data-project-proposal-generated') === 'true') {
-        setVisible(list, rendered > 0)
-      }
+      showGeneratedHost(renderCards(list, template, state.proposals) > 0)
       if (state.active) {
         var refreshedActive = state.proposals.find(function (item) { return item.id === state.active.id })
         if (!refreshedActive) {
@@ -876,19 +879,16 @@
         var successMessage = action === 'accept' ? 'Project approved and created.' : 'Project request declined.'
         if (state.active && state.active.id === request.proposalId) feedback(successMessage, false)
         announce(successMessage, false)
+        var projectionReload = action === 'accept'
+          ? reloadProjectProjection().then(function () { return false }, function () { return true })
+          : null
         var reloadFailed = false
-        if (action === 'accept') {
-          try {
-            await reloadProjectProjection()
-          } catch (projectionError) {
-            reloadFailed = true
-          }
-        }
         try {
           await refresh()
         } catch (refreshError) {
           reloadFailed = true
         }
+        if (projectionReload && await projectionReload) reloadFailed = true
         if (reloadFailed && request.generation === state.generation) {
           var reloadMessage = action === 'accept'
             ? 'Project approved. Refresh the dashboard to load the project.'
@@ -957,6 +957,7 @@
       state.keys = {}
       state.resolved = {}
       clearCards(list)
+      showGeneratedHost(false)
       close()
       announce('', false)
     }

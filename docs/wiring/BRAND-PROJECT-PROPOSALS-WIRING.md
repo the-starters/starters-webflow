@@ -9,7 +9,9 @@ must be installed alongside the Starter form — not after it.
 
 ## Scope
 
-- List each pending request as an Action Items row on `/brand-dashboard`.
+- List each pending request on `/brand-dashboard` in a proposal-owned request
+  list, outside the shared Action Items wrapper so that panel's zero-item
+  collapse can never hide a pending request. See the Designer contract below.
 - Open a read-only review dialog for one request. The Brand can never edit
   Starter-authored commercial terms from this surface.
 - Submit a versioned **Approve & Create Project** or **Decline Request**
@@ -144,8 +146,9 @@ collapse cannot hide pending requests. Generated markup carries
 The generated section is created hidden and is shown only while it holds at
 least one pending request, so a Brand with nothing to review never sees an
 empty "Project requests" box. It is hidden again whenever a render leaves zero
-rows, including after the last pending request is approved or declined and
-after a failed load. The page-level feedback region sits outside the section, so
+rows, including after the last pending request is approved or declined, after a
+failed load, and on `opp30:member-scope-reset`, so a member switch never leaves
+an empty section on screen while the next member's list loads. The page-level feedback region sits outside the section, so
 the load-failure message stays visible while the section is hidden. An authored
 `data-project-request-list` keeps whatever empty state Webflow gives it; the
 controller only toggles the section it generated itself.
@@ -176,8 +179,10 @@ project page range is replayed rather than collapsed back to page 1. This
 controller never touches the `dash-brand-projects` wf-xano instance directly.
 Without that bridge method the decision still succeeds; only the project list
 waits for the next `pageshow`, `focus`, or visibility refresh. The proposal list
-reloads independently, so a failed project-list reload never leaves an accepted
-request rendered as a pending row. A proposal-list response that was requested
+reloads independently and first: an acceptance starts the project-list reload
+without waiting for it, reloads the proposal list, and only then joins the
+project-list result, so a slow or failed project-list reload never leaves an
+accepted request rendered as a pending row. A proposal-list response that was requested
 before an `opp30:member-scope-reset` is discarded when it settles after one, so
 the previous member's requests can never paint into the new member's dashboard
 and a stale failure can never overwrite a fresh load. The same guard covers the

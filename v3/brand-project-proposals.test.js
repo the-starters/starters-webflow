@@ -630,6 +630,41 @@ test('an accept survives a bridge without the project list reload method', async
   assert.deepEqual(fixture.rawProjectionRefreshes, [])
 })
 
+test('the proposal list reloads before a stalled project list reload settles', async () => {
+  let settleProjection
+  const listed = []
+  const fixture = controllerFixture({
+    opp30: {
+      refreshProjectWorkflow() {
+        return new Promise((resolve) => { settleProjection = resolve })
+      },
+    },
+    api: {
+      async projectProposalAction() {
+        return { proposal: { id: 41, status: 'accepted', lifecycle_version: 4 }, project: { id: 95 }, replayed: false }
+      },
+      async brandProjectProposalList() {
+        listed.push(true)
+        return { project_proposals: [], nextPage: null }
+      },
+    },
+  })
+  fixture.controller.render(fixture.projection)
+  fixture.controller.open(fixture.controller.state.proposals[0])
+  assert.equal(fixture.list.children.length, 2)
+
+  const pending = fixture.controller.act('accept')
+  await new Promise((resolve) => setTimeout(resolve, 0))
+
+  assert.equal(listed.length, 1)
+  assert.deepEqual(fixture.controller.state.proposals, [])
+  assert.equal(fixture.list.children.length, 1)
+
+  settleProjection([])
+  assert.equal(await pending, true)
+  assert.equal(fixture.globalFeedback.textContent, 'Project approved and created.')
+})
+
 test('a failed project list reload still reloads the proposal list', async () => {
   const listed = []
   const fixture = controllerFixture({
@@ -813,6 +848,22 @@ test('the generated request section stays hidden until a request is pending', as
   await controller.load()
 
   assert.equal(section.hidden, true)
+  assert.equal(section.querySelectorAll('[data-project-proposal-card]').length, 0)
+})
+
+test('a member reset hides the generated section before the next list loads', async () => {
+  const dashboard = brandDashboard()
+  const controller = api.mount(dashboard.globalObject)
+  await controller.load()
+  const section = dashboard.documentObject.querySelector('[data-project-request-list]')
+  assert.equal(section.hidden, false)
+  assert.equal(section.querySelectorAll('[data-project-proposal-card]').length, 1)
+
+  controller.reset()
+
+  assert.equal(section.hidden, true)
+  assert.equal(section.style.display, 'none')
+  assert.equal(section.getAttribute('aria-hidden'), 'true')
   assert.equal(section.querySelectorAll('[data-project-proposal-card]').length, 0)
 })
 
