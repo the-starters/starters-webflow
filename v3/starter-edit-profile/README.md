@@ -204,9 +204,13 @@ element IDs. Contract drift must fail tests; do not silently refresh the fixture
 
 Account-settings tabs, membership panels, pause/cancel UI, and scheduling persistence
 remain separate shared-component work. On step 6, the page controller disables and
-un-requires the legacy Free Call toggle and description plus the Paid Call toggle,
-description, and rate. It omits all five fields from the profile payload and adds a
-link to `/starter-dashboard#calendar`. The dashboard Free and Paid Call settings
+hides the complete legacy Free Call and Paid Call groups, then replaces their first
+position with one accessible `Manage Call Settings` action to
+`/starter-dashboard#calendar`. Group resolution never climbs past the step and never
+hides a wrapper that also holds a Retainer control or another member-owned field, so a
+shared wrapper leaves its call control disabled and visible rather than hiding an
+enabled required Retainer field. It omits all five legacy fields from the profile
+payload. The dashboard Free and Paid Call settings
 controllers and their canonical Xano endpoints are the only member-facing writers
 for those services; see the [Free Call settings contract](../../docs/wiring/FREE-CALL-SETTINGS-WIRING.md)
 and [Paid Call settings contract](../../docs/wiring/PAID-CALL-SETTINGS-WIRING.md). The root
@@ -611,7 +615,7 @@ workflow is tracked in [PROGRESS-CHECKLIST.md](PROGRESS-CHECKLIST.md).
    read the complete saved location back before publish.
 6. Publish staging only with approval. Test empty visible fields, empty mirrors,
    hydrated unchanged saves, full/consult branches, location transitions, reviewer
-   tuples, the disabled legacy Free and Paid Call controls and settings link,
+   tuples, the hidden legacy Free and Paid Call controls and replacement settings action,
    explicit save responses with pending and complete projection states, and
    computed pointer behavior.
 7. For the shared-foundation extraction, use only the atomic route page-Head-Code cutover in

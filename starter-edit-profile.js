@@ -5,7 +5,7 @@
  * GitHub and jsDelivr are the source and delivery path for this browser code.
  * Each section must initialize whether this script runs before or after DOMContentLoaded.
  *
- * @release v1.59.579
+ * @release v1.59.586
  */
 
 (() => {
@@ -240,35 +240,102 @@ function setProfileFeedbackMessage(modalName, message) {
 	messageElement.textContent = message || authoredProfileFeedbackCopy.get(modalName);
 }
 
+const CALL_SETTINGS_CONTROL_SELECTOR = [
+	'[name="free-consulting-calls"]',
+	'[name="free-call-description"]',
+	'[name="paid-consulting-calls"]',
+	'[name="paid-call-description"]',
+	'[name="paid-call-rate"]',
+].join(',');
+
+// True when the node wraps no control and no caption other than the call settings the
+// dashboard owns. Retainers are authored in the same step, and a hidden-but-enabled
+// required Retainer control would abort native submit, so a shared wrapper is never hidden.
+function wrapsOnlyCallSettings(node, ownedControls) {
+	if (typeof node?.querySelectorAll !== 'function') return false;
+	if (qsa('input, select, textarea', node).some((control) => !ownedControls.includes(control))) return false;
+	const ownedIds = ownedControls.map((control) => control.id).filter(Boolean);
+	return !qsa('label', node).some((label) => {
+		const target = label.getAttribute?.('for') || '';
+		if (target === '' || ownedIds.includes(target)) return false;
+		const labelledControl = label.control
+			|| (typeof document.getElementById === 'function' ? document.getElementById(target) : null);
+		return Boolean(labelledControl && !ownedControls.includes(labelledControl));
+	});
+}
+
+// Prefer the authored wrapper, but never climb past `step` and never past a node that
+// also wraps something the member still owns.
+function callSettingsFieldGroup(control, step, ownedControls) {
+	let node = control.parentElement;
+	let exclusiveAncestor = null;
+	while (node && node !== step) {
+		if (!wrapsOnlyCallSettings(node, ownedControls)) break;
+		exclusiveAncestor = node;
+		if (node.classList?.contains('app-form_input_group')) return node;
+		if (node.hasAttribute?.('free-call-group') || node.hasAttribute?.('paid-call-group')) return node;
+		node = node.parentElement;
+	}
+	return exclusiveAncestor;
+}
+
 function configureCanonicalCallSettings() {
 	const step = qs('[data-form="step"][data-index="6"]');
 	if (!step) return;
 
-	const controls = qsa([
-		'[name="free-consulting-calls"]',
-		'[name="free-call-description"]',
-		'[name="paid-consulting-calls"]',
-		'[name="paid-call-description"]',
-		'[name="paid-call-rate"]',
-	].join(','), step);
+	const controls = qsa(CALL_SETTINGS_CONTROL_SELECTOR, step);
 	if (!controls.length) return;
 
+	const styleRoot = document.head || step;
+	if (typeof document.createElement === 'function' && !qs('[data-call-settings-profile-style]', styleRoot)) {
+		const style = document.createElement('style');
+		style.setAttribute('data-call-settings-profile-style', '');
+		style.textContent = '[data-call-settings-owned]{display:none!important}';
+		styleRoot.appendChild(style);
+	}
+
+	const groups = [];
 	controls.forEach((control) => {
 		control.disabled = true;
 		control.required = false;
 		control.setAttribute('aria-disabled', 'true');
+
+		const group = callSettingsFieldGroup(control, step, controls);
+		if (group && !groups.includes(group)) groups.push(group);
 	});
 
-	if (qs('[data-paid-call-profile-notice]', step) || typeof document.createElement !== 'function') return;
-	const notice = document.createElement('p');
-	notice.setAttribute('data-paid-call-profile-notice', '');
-	notice.textContent = 'Free and Paid Call settings are managed in ';
+	groups.forEach((group) => {
+		group.setAttribute('data-call-settings-owned', '');
+		group.hidden = true;
+		group.style.display = 'none';
+		group.setAttribute('aria-hidden', 'true');
+	});
+
+	if (qs('[data-call-settings-profile-notice]', step) || typeof document.createElement !== 'function') return;
+	const notice = document.createElement('section');
+	notice.setAttribute('data-call-settings-profile-notice', '');
+	notice.setAttribute('role', 'region');
+	notice.setAttribute('aria-label', 'Free and Paid Call settings');
+	notice.className = 'app-form_input_group';
+
+	const heading = document.createElement('strong');
+	heading.textContent = 'Free and Paid Calls';
+	const copy = document.createElement('p');
+	copy.textContent = 'Manage these services from Call Settings on your Starter Dashboard.';
 	const link = document.createElement('a');
 	link.href = PAID_CALL_SETTINGS_URL;
-	link.textContent = 'Call Settings';
+	link.textContent = 'Manage Call Settings';
+	link.className = 'button w-button';
+	notice.appendChild(heading);
+	notice.appendChild(copy);
 	notice.appendChild(link);
-	notice.appendChild(document.createTextNode('.'));
-	step.appendChild(notice);
+
+	const firstGroup = groups[0];
+	if (firstGroup?.parentElement?.insertBefore) {
+		firstGroup.parentElement.insertBefore(notice, firstGroup);
+	} else {
+		step.appendChild(notice);
+	}
 }
 
 function openProfileFeedback(modalName, trigger, message) {
@@ -2051,6 +2118,9 @@ onDomReady(() => {
 			retainerRate.style.display = isMonthlyYes ? '' : 'none';
 			toggleInputs(retainerDesc, isMonthlyYes, clearDisabledValues);
 			toggleInputs(retainerRate, isMonthlyYes, clearDisabledValues);
+			// A wrapper shared with a call control stays visible, so `toggleInputs` can hand a
+			// Free or Paid Call field back to this form here too. The dashboard owns them.
+			configureCanonicalCallSettings();
 		};
 
 		function paidCallToggle(clearDisabledValues = false) {
