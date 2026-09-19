@@ -888,6 +888,10 @@
         } catch (refreshError) {
           reloadFailed = true
         }
+        if (state.pendingAction === request) {
+          state.pendingAction = null
+          lockActions(false)
+        }
         if (projectionReload && await projectionReload) reloadFailed = true
         if (reloadFailed && request.generation === state.generation) {
           var reloadMessage = action === 'accept'

@@ -665,6 +665,57 @@ test('the proposal list reloads before a stalled project list reload settles', a
   assert.equal(fixture.globalFeedback.textContent, 'Project approved and created.')
 })
 
+test('a stalled project list reload does not lock the remaining pending requests', async () => {
+  let settleProjection
+  const decisions = []
+  const proposals = [proposal(), proposal({ proposal_id: 42, title: 'Lifecycle audit' })]
+  const fixture = controllerFixture({
+    opp30: {
+      refreshProjectWorkflow() {
+        return new Promise((resolve) => { settleProjection = resolve })
+      },
+    },
+    api: {
+      async projectProposalAction(payload) {
+        decisions.push(payload)
+        return {
+          proposal: {
+            id: payload.proposal_id,
+            status: payload.action === 'accept' ? 'accepted' : 'rejected',
+            lifecycle_version: 4,
+          },
+          project: payload.action === 'accept' ? { id: 95 } : null,
+          replayed: false,
+        }
+      },
+      async brandProjectProposalList() {
+        return {
+          project_proposals: proposals.filter(
+            (item) => !decisions.some((decision) => decision.proposal_id === item.proposal_id),
+          ),
+          nextPage: null,
+        }
+      },
+    },
+  })
+  fixture.controller.render({ project_proposals: proposals })
+  fixture.controller.open(fixture.controller.state.proposals.find((item) => item.id === 41))
+
+  const acceptFirst = fixture.controller.act('accept')
+  await new Promise((resolve) => setTimeout(resolve, 0))
+
+  assert.equal(fixture.controller.state.pendingAction, null)
+  fixture.controller.open(fixture.controller.state.proposals.find((item) => item.id === 42))
+  assert.equal(fixture.modal.actions.accept.disabled, false)
+  assert.equal(fixture.modal.getAttribute('aria-busy'), 'false')
+
+  assert.equal(await fixture.controller.act('reject'), true)
+  assert.deepEqual(decisions.map((decision) => [decision.proposal_id, decision.action]), [[41, 'accept'], [42, 'reject']])
+
+  settleProjection([])
+  assert.equal(await acceptFirst, true)
+})
+
 test('a failed project list reload still reloads the proposal list', async () => {
   const listed = []
   const fixture = controllerFixture({

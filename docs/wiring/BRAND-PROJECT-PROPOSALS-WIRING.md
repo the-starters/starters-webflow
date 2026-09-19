@@ -182,7 +182,10 @@ waits for the next `pageshow`, `focus`, or visibility refresh. The proposal list
 reloads independently and first: an acceptance starts the project-list reload
 without waiting for it, reloads the proposal list, and only then joins the
 project-list result, so a slow or failed project-list reload never leaves an
-accepted request rendered as a pending row. A proposal-list response that was requested
+accepted request rendered as a pending row. The decision lock is released as
+soon as the proposal list has reloaded, before that join, so a stalled
+project-list reload can never leave the Brand's other pending requests
+disabled. A proposal-list response that was requested
 before an `opp30:member-scope-reset` is discarded when it settles after one, so
 the previous member's requests can never paint into the new member's dashboard
 and a stale failure can never overwrite a fresh load. The same guard covers the
