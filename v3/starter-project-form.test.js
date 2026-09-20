@@ -307,7 +307,7 @@ function load(options = {}) {
         calls.options.push(payload)
         return { counterparties: options.counterparties || [] }
       }),
-      projectProposalSubmit: options.projectSubmit || (async (payload) => {
+      projectProposalSubmit: options.projectProposalSubmit || (async (payload) => {
         calls.submit.push(payload)
         return { proposal: { id: 81, status: 'awaiting_brand_approval', lifecycle_version: 1 }, replayed: false }
       }),
@@ -351,7 +351,7 @@ test('diagnostics stay off by default and emit only the safe options-to-submit t
       counterparties: [{ counterparty_id: 31, company_name: 'Brand', hiring_manager_name: 'Brand Member' }],
       blocked_reason: 'starter mem_starter cannot use sample@example.com for project_scope',
     }),
-    projectSubmit: async (payload) => {
+    projectProposalSubmit: async (payload) => {
       submittedPayload = payload
       return {
         proposal: { id: 81, status: 'awaiting_brand_approval', lifecycle_version: 1 },
@@ -426,7 +426,7 @@ test('diagnostic error entries expose status only and omit free-form server deta
     noDocument: true,
     debug: true,
     counterparties: [{ counterparty_id: 31, company_name: 'Brand', hiring_manager_name: 'Brand Member' }],
-    projectSubmit: async () => {
+    projectProposalSubmit: async () => {
       throw Object.assign(new Error('mem_starter sample@example.com secret-token project_scope'), {
         status: 422,
         response: { idempotency_key: 'project-key-123', contract_payload: { private: true } },
@@ -1366,7 +1366,7 @@ test('Confirm enables only for ready and retryable submit errors', async () => {
   const loaded = load({
     fixture,
     counterparties: [{ counterparty_id: 31, company_name: 'Brand', hiring_manager_name: 'Brand Member' }],
-    projectSubmit: () => new Promise((resolve, reject) => { rejectSubmit = reject }),
+    projectProposalSubmit: () => new Promise((resolve, reject) => { rejectSubmit = reject }),
   })
 
   await loaded.api.loadOptions(loaded.form, loaded.window)
@@ -1425,7 +1425,7 @@ test('Confirm stays disabled for non-retryable errors', async () => {
       name: 'authorization invalidation',
       load: {
         counterparties: [{ counterparty_id: 31, company_name: 'Brand', hiring_manager_name: 'Brand Member' }],
-        projectSubmit: async () => { throw Object.assign(new Error('forbidden'), { status: 403 }) },
+        projectProposalSubmit: async () => { throw Object.assign(new Error('forbidden'), { status: 403 }) },
       },
       run: async (loaded) => {
         await loaded.api.loadOptions(loaded.form, loaded.window)
@@ -1436,7 +1436,7 @@ test('Confirm stays disabled for non-retryable errors', async () => {
       name: 'reload required',
       load: {
         counterparties: [{ counterparty_id: 31, company_name: 'Brand', hiring_manager_name: 'Brand Member' }],
-        projectSubmit: async () => { throw Object.assign(new Error('expired'), { status: 401 }) },
+        projectProposalSubmit: async () => { throw Object.assign(new Error('expired'), { status: 401 }) },
       },
       run: async (loaded) => {
         await loaded.api.loadOptions(loaded.form, loaded.window)
@@ -1506,7 +1506,7 @@ test('Own Contract submission still waits for Brand approval', async () => {
   loaded = load({
     noDocument: true,
     counterparties: [{ counterparty_id: 31, company_name: 'Brand', hiring_manager_name: 'Brand Member' }],
-    projectSubmit: async (payload) => {
+    projectProposalSubmit: async (payload) => {
       loaded.calls.submit.push(payload)
       return { proposal: { id: 82, status: 'awaiting_brand_approval', lifecycle_version: 1 }, replayed: false }
     },
@@ -1541,7 +1541,7 @@ test('reopening during submission cannot let an options refresh replace success'
   let resolveSubmit
   const loaded = load({
     counterparties: [{ counterparty_id: 63, company_name: 'Brand', hiring_manager_name: 'Brand Member' }],
-    projectSubmit: (payload) => {
+    projectProposalSubmit: (payload) => {
       loaded.calls.submit.push(payload)
       return new Promise((resolve) => { resolveSubmit = resolve })
     },
@@ -1605,7 +1605,7 @@ test('failed retry keeps the same idempotency key', async () => {
   const loaded = load({
     noDocument: true,
     counterparties: [{ counterparty_id: 41, company_name: 'Brand', hiring_manager_name: 'Brand Member' }],
-    projectSubmit: async (payload) => {
+    projectProposalSubmit: async (payload) => {
       submitted.push({ ...payload })
       attempt += 1
       if (attempt === 1) throw Object.assign(new Error('temporary'), { status: 503 })
@@ -1629,7 +1629,7 @@ test('malformed proposal responses fail and preserve the retry key', async () =>
   const loaded = load({
     noDocument: true,
     counterparties: [{ counterparty_id: 41, company_name: 'Brand', hiring_manager_name: 'Brand Member' }],
-    projectSubmit: async (payload) => {
+    projectProposalSubmit: async (payload) => {
       submitted.push({ ...payload })
       return responses.shift()
     },
@@ -1657,7 +1657,7 @@ test('the direct-project rollback route response is not accepted by this form', 
   const loaded = load({
     noDocument: true,
     counterparties: [{ counterparty_id: 41, company_name: 'Brand', hiring_manager_name: 'Brand Member' }],
-    projectSubmit: async (payload) => {
+    projectProposalSubmit: async (payload) => {
       submitted.push({ ...payload })
       return { project: { id: 669, lifecycle_state: 'contract_draft' }, replayed: false }
     },
@@ -1699,7 +1699,7 @@ test('an idempotent replay of an already-resolved proposal still reports success
   const loaded = load({
     noDocument: true,
     counterparties: [{ counterparty_id: 31, company_name: 'Brand', hiring_manager_name: 'Brand Member' }],
-    projectSubmit: async (payload) => {
+    projectProposalSubmit: async (payload) => {
       submitted.push({ ...payload })
       attempt += 1
       if (attempt === 1) throw Object.assign(new Error('gateway'), { status: 503 })
@@ -1728,7 +1728,7 @@ test('a replayed proposal paints copy for the status the server returned', async
     const loaded = load({
       noDocument: true,
       counterparties: [{ counterparty_id: 31, company_name: 'Brand', hiring_manager_name: 'Brand Member' }],
-      projectSubmit: async () => ({
+      projectProposalSubmit: async () => ({
         proposal: { id: 88, status, lifecycle_version: 2 },
         replayed: true,
       }),
@@ -1755,7 +1755,7 @@ test('an unsupported proposal status is not reported as a sent request', async (
     const loaded = load({
       noDocument: true,
       counterparties: [{ counterparty_id: 31, company_name: 'Brand', hiring_manager_name: 'Brand Member' }],
-      projectSubmit: async () => ({ proposal: { id: 88, status, lifecycle_version: 2 }, replayed: true }),
+      projectProposalSubmit: async () => ({ proposal: { id: 88, status, lifecycle_version: 2 }, replayed: true }),
     })
     await loaded.api.loadOptions(loaded.form, loaded.window)
 
@@ -1780,7 +1780,7 @@ test('a rejected Brand authorization is invalidated before another submit', asyn
         ? [{ counterparty_id: 42, company_name: 'Revoked Brand', hiring_manager_name: 'Revoked Member' }]
         : [{ counterparty_id: 43, company_name: 'Current Brand', hiring_manager_name: 'Current Member' }] }
     },
-    projectSubmit: async (payload) => {
+    projectProposalSubmit: async (payload) => {
       loaded.calls.submit.push(payload)
       throw Object.assign(new Error('revoked'), { status: 403 })
     },
