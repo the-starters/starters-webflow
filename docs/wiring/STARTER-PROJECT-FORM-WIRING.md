@@ -77,9 +77,12 @@ The success panel paints copy for the returned status, so a replay of a request
 the Brand already declined reads as declined rather than as still pending.
 
 The pre-proposal routes `projects/options/v3` (`Opp30.API.projectOptions`) and
-`projects/submit/v3` (`Opp30.API.projectDirectSubmit`) stay wired in the bridge
-so the direct-project route remains callable without a backend change. No
-shipped controller calls them.
+`projects/submit/v3` (`Opp30.API.projectSubmit` and
+`Opp30.API.projectDirectSubmit`) stay wired in the bridge so existing direct
+project flows retain their established contract. This form calls only the
+distinct `Opp30.API.projectProposalSubmit` capability. If a browser has a
+cached bridge from before that capability existed, the form fails closed and
+does not call the legacy direct-project method.
 
 The executable rollback is removing this loader together with the Brand loader
 in [BRAND-PROJECT-PROPOSALS-WIRING.md](BRAND-PROJECT-PROPOSALS-WIRING.md#script-order),

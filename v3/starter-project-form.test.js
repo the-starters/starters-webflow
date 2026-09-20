@@ -307,7 +307,7 @@ function load(options = {}) {
         calls.options.push(payload)
         return { counterparties: options.counterparties || [] }
       }),
-      projectSubmit: options.projectSubmit || (async (payload) => {
+      projectProposalSubmit: options.projectSubmit || (async (payload) => {
         calls.submit.push(payload)
         return { proposal: { id: 81, status: 'awaiting_brand_approval', lifecycle_version: 1 }, replayed: false }
       }),
@@ -1417,7 +1417,7 @@ test('Confirm stays disabled for non-retryable errors', async () => {
       load: { counterparties: [{ counterparty_id: 31, company_name: 'Brand', hiring_manager_name: 'Brand Member' }] },
       run: async (loaded) => {
         await loaded.api.loadOptions(loaded.form, loaded.window)
-        delete loaded.window.Opp30.API.projectSubmit
+        delete loaded.window.Opp30.API.projectProposalSubmit
         return loaded.api.submit(loaded.form, loaded.window, loaded.document)
       },
     },
@@ -1671,6 +1671,26 @@ test('the direct-project rollback route response is not accepted by this form', 
   assert.equal(loaded.tracks.length, 0)
   assert.equal(submitted[0].idempotency_key, submitted[1].idempotency_key)
   assert.match(loaded.wrapper.error.textContent, /could not be sent/)
+})
+
+test('a cached bridge with only the legacy direct submit capability fails closed', async () => {
+  const loaded = load({
+    noDocument: true,
+    counterparties: [{ counterparty_id: 41, company_name: 'Brand', hiring_manager_name: 'Brand Member' }],
+  })
+  let directCalls = 0
+  delete loaded.window.Opp30.API.projectProposalSubmit
+  loaded.window.Opp30.API.projectSubmit = async () => {
+    directCalls += 1
+    return { project: { id: 669, lifecycle_state: 'contract_draft' }, replayed: false }
+  }
+  await loaded.api.loadOptions(loaded.form, loaded.window)
+
+  assert.equal(await loaded.api.submit(loaded.form, loaded.window, loaded.document), false)
+  assert.equal(directCalls, 0)
+  assert.equal(loaded.calls.submit.length, 0)
+  assert.equal(loaded.events.length, 0)
+  assert.match(loaded.wrapper.error.textContent, /service is not available/)
 })
 
 test('an idempotent replay of an already-resolved proposal still reports success', async () => {
