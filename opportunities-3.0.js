@@ -575,8 +575,12 @@
     projectCreate: (payload) => call('projects/create/v3', { body: payload }),
     projectDirectCreate: (payload) => call('projects/create-direct/v3', { body: payload }),
     projectOptions: (payload = {}) => call('projects/options/v3', { body: payload }),
-    projectSubmit: (payload) => call('projects/submit/v3', { body: payload }),
+    projectProposalOptions: (payload = {}) => call('projects/proposal-options/v3', { body: payload }),
+    projectSubmit: (payload) => call('projects/proposal-request/v3', { body: payload }),
+    projectDirectSubmit: (payload) => call('projects/submit/v3', { body: payload }),
     projectProposalAction: (payload) => call('projects/proposal-action/v3', { body: payload }),
+    brandProjectProposalList: (page = 1, perPage = 12) =>
+      call('brand/project-proposals/mine/v3', { body: { page, per_page: perPage } }),
     brandProjectList: (page = 1, per_page = 12) =>
       call('brand/projects/mine', { body: { page, per_page } }),
     starterProjectList: (page = 1, per_page = 12) =>
@@ -7070,6 +7074,7 @@
     formatProjectTimeline,
     prepareDashboardProjectLazyDetails,
     initProjectDashboardWorkflow,
+    refreshProjectWorkflow,
     opportunityPath,
     pageOppId,
     waitForMemberstackDom,

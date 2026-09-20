@@ -1,12 +1,15 @@
 /**
  * V3 Brand Dashboard pending Starter project-proposal controller.
  *
- * Webflow owns the Action Items row template. The controller prefers an authored
+ * Webflow owns the proposal row template and its list host, both marked with
+ * proposal-only attributes that no other dashboard controller claims. When
+ * neither is authored the controller builds its own labelled request section
+ * rather than borrowing a row from another panel. It prefers an authored
  * review dialog and creates a read-only fallback dialog when that Designer
  * element is not available yet. It binds the authenticated
- * `brand/projects/mine` proposal projection, paints read-only proposal terms,
- * and submits versioned accept/reject commands through Opp30. A proposal is
- * never treated as a canonical project before acceptance.
+ * `brand/project-proposals/mine/v3` projection, paints read-only proposal
+ * terms, and submits versioned accept/reject commands through Opp30. A
+ * proposal is never treated as a canonical project before acceptance.
  */
 ;(function (global) {
   'use strict'
@@ -18,9 +21,11 @@
   }
 
   var DASHBOARD_PATH = '/brand-dashboard'
-  var INSTANCE_KEY = 'dash-brand-projects'
   var MODAL_ID = 'review-project-request'
-  var TEMPLATE_SELECTOR = '[data-project-proposal-template]'
+  var TEMPLATE_ATTR = 'data-project-request-template'
+  var TEMPLATE_SELECTOR = '[' + TEMPLATE_ATTR + ']'
+  var LIST_SELECTOR = '[data-project-request-list]'
+  var FALLBACK_LIST_HEADING_ID = 'project-request-list-heading'
   var CARD_SELECTOR = '[data-project-proposal-card]'
   var FIELD_SELECTOR = '[data-project-proposal-field]'
   var ACTION_SELECTOR = '[data-project-proposal-action]'
@@ -29,6 +34,10 @@
   var CONFIRM_SELECTOR = '[data-project-proposal-confirm="reject"]'
   var FALLBACK_STYLE_ID = 'brand-project-proposal-fallback-styles'
   var MEMBER_RESET_EVENT = 'opp30:member-scope-reset'
+  var MAX_PROPOSAL_PAGES = 100
+  var ACTION_ELEMENT_ATTR = 'data-action-element'
+  var ACTION_ITEMS_WRAPPER = 'wrapper'
+  var LIST_FAILURE_MESSAGE = 'Your pending project requests could not be loaded. Refresh the dashboard to try again.'
 
   function clean(value) {
     return String(value == null ? '' : value).trim()
@@ -43,12 +52,13 @@
     return value === true
   }
 
+  function proposalEnvelope(value) {
+    return Array.isArray(value && value.project_proposals) ? value : null
+  }
+
   function sourceProposals(value) {
-    if (Array.isArray(value && value.project_proposals)) return value.project_proposals
-    if (Array.isArray(value && value.data && value.data.project_proposals)) {
-      return value.data.project_proposals
-    }
-    return []
+    var envelope = proposalEnvelope(value)
+    return envelope ? envelope.project_proposals : []
   }
 
   function normalizeProposal(raw) {
@@ -205,6 +215,23 @@
     }
   }
 
+  function completedDecision(result, proposal, action) {
+    var resultProposal = result && result.proposal
+    var resultProject = result && result.project
+    var resultId = positiveId(resultProposal && resultProposal.id)
+    var resultVersion = positiveId(resultProposal && resultProposal.lifecycle_version)
+    var status = clean(resultProposal && resultProposal.status).toLowerCase()
+    if (!proposal || resultId !== proposal.id || !resultVersion || resultVersion <= proposal.version) return null
+    if (action === 'accept') {
+      if (status !== 'accepted' || !positiveId(resultProject && resultProject.id)) return null
+    } else if (action === 'reject') {
+      if (status !== 'rejected' || positiveId(resultProject && resultProject.id)) return null
+    } else {
+      return null
+    }
+    return { proposal: resultProposal, project: resultProject }
+  }
+
   function errorMessage(error) {
     var status = Number(error && error.status)
     if (status === 401) return 'Your session expired. Sign in and try again.'
@@ -325,6 +352,8 @@
       '.project-proposal-review_button.is-primary{background:#1d1f1d;color:#fff;}',
       '.project-proposal-review_button.is-danger{border-color:#b3261e;color:#b3261e;}',
       '.project-proposal-review_feedback{padding:.75rem;background:#f1f3f1;}',
+      '.project-request_list{display:grid;gap:1rem;padding:clamp(1rem,3vw,2rem);}',
+      '.project-request_card{display:grid;gap:.5rem;padding:1rem;border:1px solid #d9ddd9;}',
       '.project-proposal-review_confirm{display:grid;gap:.75rem;padding:1rem;border:1px solid #d9ddd9;}',
       '@media(max-width:47.99rem){.project-proposal-review_grid{grid-template-columns:1fr;}}',
     ].join('')
@@ -456,18 +485,6 @@
     return modal
   }
 
-  function replaceExactText(root, before, after) {
-    if (!root || !root.querySelectorAll) return false
-    var candidates = [root].concat(Array.prototype.slice.call(root.querySelectorAll('*')))
-      .filter(function (element) { return clean(element.textContent) === before })
-      .sort(function (left, right) {
-        return left.querySelectorAll('*').length - right.querySelectorAll('*').length
-      })
-    if (!candidates.length) return false
-    candidates[0].textContent = after
-    return true
-  }
-
   function prepareFallbackCard(card) {
     if (!card || !card.querySelector) return card
     if (!card.querySelector(FIELD_SELECTOR)) {
@@ -482,11 +499,90 @@
       if (opener) {
         opener.setAttribute('data-project-proposal-open', '')
         opener.setAttribute('aria-label', 'Review project request')
-        replaceExactText(opener, 'Post Opportunity', 'Review request')
       }
       if (buttons && buttons[1]) setVisible(buttons[1], false)
     }
     return card
+  }
+
+  function outermostActionItemsWrapper(node) {
+    var found = null
+    var current = node
+    while (current) {
+      if (typeof current.getAttribute === 'function' && current.getAttribute(ACTION_ELEMENT_ATTR) === ACTION_ITEMS_WRAPPER) {
+        found = current
+      }
+      current = current.parentNode
+    }
+    return found
+  }
+
+  function feedbackAnchor(list) {
+    return outermostActionItemsWrapper(list) || list
+  }
+
+  function actionItemsWrapper(documentObject) {
+    return documentObject && documentObject.querySelector
+      ? documentObject.querySelector('[' + ACTION_ELEMENT_ATTR + '="' + ACTION_ITEMS_WRAPPER + '"]')
+      : null
+  }
+
+  function createFallbackRequestList(documentObject) {
+    if (!documentObject || typeof documentObject.createElement !== 'function') return null
+    var list = documentObject.querySelector ? documentObject.querySelector(LIST_SELECTOR) : null
+    if (!list) {
+      if (!documentObject.body) return null
+      ensureFallbackStyles(documentObject)
+      var section = documentObject.createElement('section')
+      setAttributes(section, {
+        'class': 'project-request_list',
+        'data-project-request-list': '',
+        'data-project-proposal-generated': 'true',
+        'aria-labelledby': FALLBACK_LIST_HEADING_ID,
+      })
+      appendElement(documentObject, section, 'h2', {
+        'class': 'project-request_heading',
+        'id': FALLBACK_LIST_HEADING_ID,
+      }, 'Project requests')
+      var anchor = actionItemsWrapper(documentObject)
+      if (anchor && anchor.parentNode && typeof anchor.parentNode.insertBefore === 'function') {
+        anchor.parentNode.insertBefore(section, anchor)
+      } else {
+        documentObject.body.appendChild(section)
+      }
+      setVisible(section, false)
+      list = section
+    }
+    var template = appendElement(documentObject, list, 'article', {
+      'class': 'project-request_card',
+      'data-project-proposal-generated': 'true',
+    })
+    if (!template) return null
+    template.setAttribute(TEMPLATE_ATTR, '')
+    appendElement(documentObject, template, 'p', {
+      'class': 'project-request_status',
+      'data-project-proposal-field': 'status_label',
+    })
+    appendElement(documentObject, template, 'h3', {
+      'class': 'project-request_title',
+      'data-project-proposal-field': 'title',
+    })
+    appendElement(documentObject, template, 'p', {
+      'class': 'project-request_byline',
+      'data-project-proposal-field': 'starter_name',
+    })
+    appendElement(documentObject, template, 'p', {
+      'class': 'project-request_summary',
+      'data-project-proposal-field': 'commercial_summary',
+    })
+    appendElement(documentObject, template, 'button', {
+      'type': 'button',
+      'class': 'project-proposal-review_button is-primary',
+      'data-project-proposal-open': '',
+      'aria-label': 'Review project request',
+    }, 'Review request')
+    setVisible(template, false)
+    return { list: list, template: template }
   }
 
   function ensureGlobalFeedback(documentObject, list) {
@@ -495,34 +591,42 @@
       ? documentObject.querySelector(GLOBAL_FEEDBACK_SELECTOR)
       : null
     if (existing) return existing
-    var target = appendElement(documentObject, list, 'p', {
+    if (typeof documentObject.createElement !== 'function') return null
+    var anchor = feedbackAnchor(list)
+    var parent = anchor.parentNode
+    var target = documentObject.createElement('p')
+    setAttributes(target, {
       'class': 'project-proposal-review_feedback',
       'data-project-proposal-global-feedback': '',
       'role': 'status',
       'aria-live': 'polite',
       'hidden': '',
     })
-    if (target) target.hidden = true
+    if (parent && typeof parent.insertBefore === 'function') parent.insertBefore(target, anchor)
+    else if (documentObject.body) documentObject.body.appendChild(target)
+    else return null
+    target.hidden = true
     return target
   }
 
   function clearCards(list) {
     if (!list || !list.querySelectorAll) return
     Array.prototype.forEach.call(list.querySelectorAll(CARD_SELECTOR), function (card) {
-      if (!card.hasAttribute('data-project-proposal-template') && typeof card.remove === 'function') card.remove()
+      if (!card.hasAttribute(TEMPLATE_ATTR) && typeof card.remove === 'function') card.remove()
     })
   }
 
   function renderCards(list, template, proposals) {
     if (!list || !template || typeof template.cloneNode !== 'function') return 0
+    var countsAsActionItem = Boolean(outermostActionItemsWrapper(list))
     clearCards(list)
     setVisible(template, false)
     proposals.forEach(function (proposal) {
       var card = template.cloneNode(true)
-      card.removeAttribute('data-project-proposal-template')
+      card.removeAttribute(TEMPLATE_ATTR)
       card.setAttribute('data-project-proposal-card', '')
       card.setAttribute('data-project-proposal-id', String(proposal.id))
-      card.setAttribute('data-action-element', 'item')
+      if (countsAsActionItem) card.setAttribute('data-action-element', 'item')
       prepareFallbackCard(card)
       paintFields(card, proposal)
       setVisible(card, true)
@@ -550,16 +654,15 @@
     var template = options.template
     var modal = options.modal
     var api = options.api
-    var instance = options.instance || null
     var state = {
       proposals: [],
       active: null,
       activeTrigger: null,
       pendingAction: null,
       keys: {},
-      unsubscribe: null,
       generation: 0,
       resolved: {},
+      lastDecision: null,
     }
 
     function feedback(message, isError) {
@@ -606,17 +709,24 @@
     }
 
     function paintActionCapabilities(proposal) {
-      if (!proposal) return
-      var alreadyResolved = Boolean(state.resolved[proposal.id])
-      setVisible(actionControl('accept'), proposal.can_accept && !alreadyResolved)
-      setVisible(actionControl('reject'), proposal.can_reject && !alreadyResolved)
-      setVisible(actionControl('reject-confirm'), proposal.can_reject && !alreadyResolved)
+      if (proposal) {
+        var alreadyResolved = Boolean(state.resolved[proposal.id])
+        setVisible(actionControl('accept'), proposal.can_accept && !alreadyResolved)
+        setVisible(actionControl('reject'), proposal.can_reject && !alreadyResolved)
+        setVisible(actionControl('reject-confirm'), proposal.can_reject && !alreadyResolved)
+      }
       lockActions(Boolean(state.pendingAction))
+    }
+
+    function showGeneratedHost(visible) {
+      if (list && list.getAttribute && list.getAttribute('data-project-proposal-generated') === 'true') {
+        setVisible(list, visible)
+      }
     }
 
     function render(value) {
       state.proposals = normalizeProposals(value)
-      renderCards(list, template, state.proposals)
+      showGeneratedHost(renderCards(list, template, state.proposals) > 0)
       if (state.active) {
         var refreshedActive = state.proposals.find(function (item) { return item.id === state.active.id })
         if (!refreshedActive) {
@@ -683,21 +793,52 @@
       return true
     }
 
-    function currentState() {
-      return instance && typeof instance.getState === 'function' ? instance.getState() : null
+    async function refresh() {
+      if (!api || typeof api.brandProjectProposalList !== 'function') {
+        throw new Error('Proposal list route is not available')
+      }
+      var generation = state.generation
+      var page = 1
+      var perPage = 12
+      var items = []
+      var loaded = 0
+      while (page) {
+        if (loaded >= MAX_PROPOSAL_PAGES) throw new Error('Proposal pagination exceeded its safe page limit')
+        loaded += 1
+        var result = await api.brandProjectProposalList(page, perPage)
+        if (generation !== state.generation) return null
+        var envelope = proposalEnvelope(result)
+        if (!envelope) throw new Error('Proposal list returned an invalid response')
+        if (!Object.prototype.hasOwnProperty.call(envelope, 'nextPage')) {
+          throw new Error('Proposal list page is missing its nextPage signal')
+        }
+        items = items.concat(envelope.project_proposals)
+        var next = positiveId(envelope.nextPage)
+        if (next && next <= page) throw new Error('Proposal pagination did not advance')
+        page = next
+      }
+      var combined = { project_proposals: items, itemsTotal: items.length, nextPage: null }
+      render(combined)
+      return combined
     }
 
-    async function refresh() {
-      if (instance && typeof instance.refresh === 'function') {
-        await instance.refresh()
-        var current = currentState()
-        if (current && current.status === 'success') render(current)
-        return current
+    async function load() {
+      var generation = state.generation
+      announce('', false)
+      try {
+        return await refresh()
+      } catch (error) {
+        if (generation !== state.generation) return null
+        render({ project_proposals: [] })
+        announce(LIST_FAILURE_MESSAGE, true)
+        return null
       }
-      if (!api || typeof api.brandProjectList !== 'function') return null
-      var result = await api.brandProjectList(1, 12)
-      render(result)
-      return result
+    }
+
+    async function reloadProjectProjection() {
+      var bridge = globalObject && globalObject.Opp30
+      if (!bridge || typeof bridge.refreshProjectWorkflow !== 'function') return
+      await bridge.refreshProjectWorkflow('brand', true)
     }
 
     async function act(action) {
@@ -719,22 +860,25 @@
         proposalId: proposal.id,
       }
       state.pendingAction = request
+      state.lastDecision = request
       lockActions(true)
       feedback('', false)
       try {
         var result = await api.projectProposalAction(decisionPayload(proposal, action, state.keys[scope]))
         if (state.pendingAction !== request) return false
+        var completed = completedDecision(result, proposal, action)
+        if (!completed) throw new Error('Project request action returned an invalid response')
         delete state.keys[scope]
-        var resultProposal = result && result.proposal
-        var resultProject = result && result.project
+        var resultProposal = completed.proposal
+        var resultProject = completed.project
         var eventName = action === 'accept'
           ? 'starters:project-proposal-accepted'
           : 'starters:project-proposal-rejected'
         if (typeof globalObject.CustomEvent === 'function' && documentObject.dispatchEvent) {
           documentObject.dispatchEvent(new globalObject.CustomEvent(eventName, {
             detail: {
-              proposal_id: positiveId(resultProposal && (resultProposal.id || resultProposal.proposal_id)) || proposal.id,
-              project_id: positiveId(resultProject && (resultProject.id || resultProject.project_id)),
+              proposal_id: positiveId(resultProposal && resultProposal.id) || proposal.id,
+              project_id: positiveId(resultProject && resultProject.id),
               replayed: Boolean(result && result.replayed),
             },
           }))
@@ -743,17 +887,26 @@
         var successMessage = action === 'accept' ? 'Project approved and created.' : 'Project request declined.'
         if (state.active && state.active.id === request.proposalId) feedback(successMessage, false)
         announce(successMessage, false)
+        var projectionReload = action === 'accept'
+          ? reloadProjectProjection().then(function () { return false }, function () { return true })
+          : null
+        var reloadFailed = false
         try {
           await refresh()
         } catch (refreshError) {
-          if (state.active && state.active.id === request.proposalId) {
-            feedback(
-              action === 'accept'
-                ? 'Project approved. Refresh the dashboard to load the project.'
-                : 'Project request declined. Refresh the dashboard to update the list.',
-              false,
-            )
-          }
+          reloadFailed = true
+        }
+        if (state.pendingAction === request) {
+          state.pendingAction = null
+          paintActionCapabilities(state.active)
+        }
+        if (projectionReload && await projectionReload) reloadFailed = true
+        if (reloadFailed && request.generation === state.generation && state.lastDecision === request) {
+          var reloadMessage = action === 'accept'
+            ? 'Project approved. Refresh the dashboard to load the project.'
+            : 'Project request declined. Refresh the dashboard to update the list.'
+          if (state.active && state.active.id === request.proposalId) feedback(reloadMessage, false)
+          announce(reloadMessage, false)
         }
         return true
       } catch (error) {
@@ -768,7 +921,7 @@
       } finally {
         if (state.pendingAction === request) {
           state.pendingAction = null
-          lockActions(false)
+          paintActionCapabilities(state.active)
         }
       }
     }
@@ -809,31 +962,21 @@
       }
     }
 
-    function subscribe() {
-      if (!instance || typeof instance.subscribe !== 'function') return false
-      state.unsubscribe = instance.subscribe(function (projectionState) {
-        if (projectionState && projectionState.status === 'success') render(projectionState)
-      })
-      var current = currentState()
-      if (current && current.status === 'success') render(current)
-      return true
-    }
-
     function reset() {
       state.generation += 1
       state.pendingAction = null
       state.proposals = []
       state.keys = {}
       state.resolved = {}
+      state.lastDecision = null
       clearCards(list)
+      showGeneratedHost(false)
       close()
       announce('', false)
     }
 
     function destroy() {
       reset()
-      if (typeof state.unsubscribe === 'function') state.unsubscribe()
-      state.unsubscribe = null
       documentObject.removeEventListener('click', onClick, true)
       if (modal && modal.removeEventListener) modal.removeEventListener('cancel', onModalCancel)
     }
@@ -850,19 +993,13 @@
       act: act,
       close: close,
       destroy: destroy,
+      load: load,
       open: open,
       refresh: refresh,
       render: render,
       reset: reset,
       state: state,
-      subscribe: subscribe,
     }
-  }
-
-  function resolveInstance(globalObject) {
-    return globalObject.WfXano && typeof globalObject.WfXano.get === 'function'
-      ? globalObject.WfXano.get(INSTANCE_KEY)
-      : null
   }
 
   function mount(globalObject) {
@@ -872,7 +1009,12 @@
     var template = documentObject.querySelector(TEMPLATE_SELECTOR)
     var modal = documentObject.querySelector('[data-modal-target="' + MODAL_ID + '"]')
     var list = template && template.parentNode
-    if (!template || !list) return null
+    if (!template || !list) {
+      var host = createFallbackRequestList(documentObject)
+      if (!host) return null
+      template = host.template
+      list = host.list
+    }
     ensureGlobalFeedback(documentObject, list)
     if (!modal) modal = createFallbackReviewModal(documentObject)
     if (!modal) return null
@@ -884,12 +1026,11 @@
       template: template,
       modal: modal,
       api: api,
-      instance: resolveInstance(globalObject),
     })
-    if (!controller.subscribe()) controller.refresh().catch(function () { controller.render({ project_proposals: [] }) })
+    controller.load()
     globalObject.addEventListener(MEMBER_RESET_EVENT, function () {
       controller.reset()
-      globalObject.setTimeout(function () { controller.refresh().catch(function () {}) }, 0)
+      globalObject.setTimeout(function () { controller.load() }, 0)
     })
     globalObject.StartersBrandProjectProposalsV3 = controller
     return controller
@@ -901,12 +1042,14 @@
     createController: createController,
     dateLabel: dateLabel,
     decisionPayload: decisionPayload,
+    completedDecision: completedDecision,
     errorMessage: errorMessage,
     ensureGlobalFeedback: ensureGlobalFeedback,
     mount: mount,
     normalizeProposal: normalizeProposal,
     normalizeProposals: normalizeProposals,
     paintFields: paintFields,
+    createFallbackRequestList: createFallbackRequestList,
     prepareFallbackCard: prepareFallbackCard,
     proposalDisplay: proposalDisplay,
     renderCards: renderCards,
