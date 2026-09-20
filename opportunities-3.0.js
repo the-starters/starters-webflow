@@ -576,6 +576,7 @@
     projectDirectCreate: (payload) => call('projects/create-direct/v3', { body: payload }),
     projectOptions: (payload = {}) => call('projects/options/v3', { body: payload }),
     projectProposalOptions: (payload = {}) => call('projects/proposal-options/v3', { body: payload }),
+    projectProposalSubmit: (payload) => call('projects/proposal-request/v3', { body: payload }),
     projectSubmit: (payload) => call('projects/proposal-request/v3', { body: payload }),
     projectDirectSubmit: (payload) => call('projects/submit/v3', { body: payload }),
     projectProposalAction: (payload) => call('projects/proposal-action/v3', { body: payload }),

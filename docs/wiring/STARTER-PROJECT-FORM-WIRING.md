@@ -76,10 +76,22 @@ failure. The known statuses are exactly the three this lifecycle produces:
 The success panel paints copy for the returned status, so a replay of a request
 the Brand already declined reads as declined rather than as still pending.
 
-The pre-proposal routes `projects/options/v3` (`Opp30.API.projectOptions`) and
-`projects/submit/v3` (`Opp30.API.projectDirectSubmit`) stay wired in the bridge
-so the direct-project route remains callable without a backend change. No
-shipped controller calls them.
+For submission this form calls only `Opp30.API.projectProposalSubmit`. The
+bridge carries three submit capabilities, and the split exists because the two
+jsDelivr assets cache independently, so either one can be stale on its own:
+
+| Capability | Route | Why it exists |
+| --- | --- | --- |
+| `projectProposalSubmit` | `projects/proposal-request/v3` | The canonical capability this form calls. |
+| `projectSubmit` | `projects/proposal-request/v3` | Temporary compatibility alias for the already-released form, which calls `projectSubmit`. It must stay on the proposal route until that form is no longer served from any cache. |
+| `projectDirectSubmit` | `projects/submit/v3` | The only capability that reaches the direct-project route. |
+
+Both stale-asset directions therefore fail safe. A cached form plus a fresh
+bridge calls `projectSubmit` and still lands on the proposal route. A fresh form
+plus a cached bridge from before `projectProposalSubmit` existed finds no such
+capability, so the form fails closed and never falls back to a direct-project
+method. The pre-proposal route `projects/options/v3`
+(`Opp30.API.projectOptions`) likewise stays wired without a shipped caller.
 
 The executable rollback is removing this loader together with the Brand loader
 in [BRAND-PROJECT-PROPOSALS-WIRING.md](BRAND-PROJECT-PROPOSALS-WIRING.md#script-order),
@@ -324,6 +336,9 @@ a production project, PandaDoc document, signature, or email canary.
   Brand declined this request. Adjust the terms and send a new request.**
 - Duplicate request (409): **A project request already exists for this Brand.**
 - Stale relationship: ask the Starter to refresh the available Brands and retry.
+- Cached bridge without `projectProposalSubmit` (the fail-closed case above):
+  **The project service is not available. Reload and try again.** No request is
+  sent and Confirm stays disabled.
 
 The success event is `starters:project-proposal-requested`. Its detail contains
 only the stable `proposal_id` and replay state.

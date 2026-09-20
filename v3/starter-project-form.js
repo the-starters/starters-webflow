@@ -1026,7 +1026,10 @@
       current.keyPayload = signature
     }
     serialized.payload.idempotency_key = current.key
-    var request = projectApi(globalObject, 'projectSubmit')
+    // Keep proposal submission on a distinct capability. A cached bridge from
+    // before the proposal release exposes projectSubmit for direct project
+    // creation; falling back to it would create a project before Brand review.
+    var request = projectApi(globalObject, 'projectProposalSubmit')
     if (!request) {
       setStatus(form, 'error', 'The project service is not available. Reload and try again.')
       return Promise.resolve(false)
