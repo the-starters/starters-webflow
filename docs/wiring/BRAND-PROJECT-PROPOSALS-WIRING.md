@@ -189,9 +189,13 @@ project-list result, so a slow or failed project-list reload never leaves an
 accepted request rendered as a pending row. The decision lock is released as
 soon as the proposal list has reloaded, before that join, so a stalled
 project-list reload can never leave the Brand's other pending requests
-disabled. Only the most recently settled decision may write reload-failure copy
-to the page-level region, so a late project-list result from an earlier decision
-cannot overwrite the status of a newer one. A proposal-list response that was requested
+disabled. Releasing that lock repaints the open dialog's controls from the
+controller's own record of which proposals are already resolved, so a proposal
+that has been approved or declined keeps its controls hidden even when the
+reload that would have removed its row failed. Only the most recently *started*
+decision may write reload-failure copy to the page-level region, so a late
+project-list result from an earlier decision cannot overwrite the status of a
+newer one — including when that newer decision itself failed and left an alert. A proposal-list response that was requested
 before an `opp30:member-scope-reset` is discarded when it settles after one, so
 the previous member's requests can never paint into the new member's dashboard
 and a stale failure can never overwrite a fresh load. The same guard covers the

@@ -709,11 +709,12 @@
     }
 
     function paintActionCapabilities(proposal) {
-      if (!proposal) return
-      var alreadyResolved = Boolean(state.resolved[proposal.id])
-      setVisible(actionControl('accept'), proposal.can_accept && !alreadyResolved)
-      setVisible(actionControl('reject'), proposal.can_reject && !alreadyResolved)
-      setVisible(actionControl('reject-confirm'), proposal.can_reject && !alreadyResolved)
+      if (proposal) {
+        var alreadyResolved = Boolean(state.resolved[proposal.id])
+        setVisible(actionControl('accept'), proposal.can_accept && !alreadyResolved)
+        setVisible(actionControl('reject'), proposal.can_reject && !alreadyResolved)
+        setVisible(actionControl('reject-confirm'), proposal.can_reject && !alreadyResolved)
+      }
       lockActions(Boolean(state.pendingAction))
     }
 
@@ -859,6 +860,7 @@
         proposalId: proposal.id,
       }
       state.pendingAction = request
+      state.lastDecision = request
       lockActions(true)
       feedback('', false)
       try {
@@ -885,7 +887,6 @@
         var successMessage = action === 'accept' ? 'Project approved and created.' : 'Project request declined.'
         if (state.active && state.active.id === request.proposalId) feedback(successMessage, false)
         announce(successMessage, false)
-        state.lastDecision = request
         var projectionReload = action === 'accept'
           ? reloadProjectProjection().then(function () { return false }, function () { return true })
           : null
@@ -897,7 +898,7 @@
         }
         if (state.pendingAction === request) {
           state.pendingAction = null
-          lockActions(false)
+          paintActionCapabilities(state.active)
         }
         if (projectionReload && await projectionReload) reloadFailed = true
         if (reloadFailed && request.generation === state.generation && state.lastDecision === request) {
@@ -920,7 +921,7 @@
       } finally {
         if (state.pendingAction === request) {
           state.pendingAction = null
-          lockActions(false)
+          paintActionCapabilities(state.active)
         }
       }
     }

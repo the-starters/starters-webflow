@@ -719,6 +719,71 @@ test('a stalled project list reload does not lock the remaining pending requests
   assert.equal(await acceptFirst, true)
 })
 
+test('a late project reload failure never overwrites a newer failed decision alert', async () => {
+  let failProjection
+  const proposals = [proposal(), proposal({ proposal_id: 42, title: 'Lifecycle audit' })]
+  let attempt = 0
+  const fixture = controllerFixture({
+    opp30: {
+      refreshProjectWorkflow() {
+        return new Promise((resolve, reject) => { failProjection = reject })
+      },
+    },
+    api: {
+      async projectProposalAction(payload) {
+        attempt += 1
+        if (attempt === 1) {
+          return { proposal: { id: payload.proposal_id, status: 'accepted', lifecycle_version: 4 }, project: { id: 95 }, replayed: false }
+        }
+        throw Object.assign(new Error('raw backend detail'), { status: 500 })
+      },
+      async brandProjectProposalList() {
+        return { project_proposals: [proposals[1]], nextPage: null }
+      },
+    },
+  })
+  fixture.controller.render({ project_proposals: proposals })
+  fixture.controller.open(fixture.controller.state.proposals.find((item) => item.id === 41))
+
+  const acceptFirst = fixture.controller.act('accept')
+  await new Promise((resolve) => setTimeout(resolve, 0))
+
+  fixture.controller.open(fixture.controller.state.proposals.find((item) => item.id === 42))
+  assert.equal(await fixture.controller.act('reject'), false)
+  assert.match(fixture.globalFeedback.textContent, /could not be updated/)
+  assert.equal(fixture.globalFeedback.getAttribute('role'), 'alert')
+
+  failProjection(new Error('Project list owner is unavailable'))
+  assert.equal(await acceptFirst, true)
+
+  assert.match(fixture.globalFeedback.textContent, /could not be updated/)
+  assert.equal(fixture.globalFeedback.getAttribute('role'), 'alert')
+})
+
+test('a settled proposal keeps its controls hidden when the list reload fails', async () => {
+  const fixture = controllerFixture({
+    api: {
+      async projectProposalAction() {
+        return { proposal: { id: 41, status: 'accepted', lifecycle_version: 4 }, project: { id: 95 }, replayed: false }
+      },
+      async brandProjectProposalList() {
+        throw Object.assign(new Error('offline'), { status: 0 })
+      },
+    },
+  })
+  fixture.controller.render(fixture.projection)
+  fixture.controller.open(fixture.controller.state.proposals[0])
+  assert.equal(fixture.modal.actions.accept.hidden, false)
+
+  assert.equal(await fixture.controller.act('accept'), true)
+
+  assert.equal(fixture.controller.state.resolved[41], true)
+  assert.equal(fixture.modal.actions.accept.hidden, true)
+  assert.equal(fixture.modal.actions.reject.hidden, true)
+  assert.equal(fixture.modal.getAttribute('aria-busy'), 'false')
+  assert.match(fixture.globalFeedback.textContent, /Refresh the dashboard to load the project/)
+})
+
 test('a late project reload failure never overwrites a newer decision status', async () => {
   let failProjection
   const decisions = []
