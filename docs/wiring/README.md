@@ -21,8 +21,7 @@ adding another writer or controller.
 A guide's presence here does not establish that its feature is installed or
 live. Preserve and check its status, release pins, prerequisites, known gaps,
 and QA notes. The [repository release rules](../../README.md#sync-safety)
-explain how source changes reach Webflow. The Brand project-proposals guide
-below is explicitly superseded and retained as history.
+explain how source changes reach Webflow.
 
 ## Find a guide
 

@@ -288,7 +288,10 @@ canonical services. The controller still removes the generic placeholders and
 
 Do not add the last loader until both V3 endpoints exist and pass backend tests.
 After release, install it on the Starter Dashboard so the existing Navbar action
-opens the detached shared Contract Generation form.
+opens the detached shared Contract Generation form. Ship it in the same release
+as the Brand loader in
+[BRAND-PROJECT-PROPOSALS-WIRING.md](BRAND-PROJECT-PROPOSALS-WIRING.md#script-order);
+the Starter half alone leaves every request unactionable.
 The deferred Starter adapter must execute before `global-embeds/modal/modal.js`
 initializes the shared modal registry, because it normalizes duplicate targets
 and the Navbar link during boot.
@@ -315,6 +318,10 @@ a production project, PandaDoc document, signature, or email canary.
 - Successful submit, either contract type: **Project request sent. The Brand can
   review your project terms. A project and contract are created only after
   approval.**
+- Replay of a request the Brand already approved: **Project request approved. The
+  Brand approved this request. Your project and contract are being prepared.**
+- Replay of a request the Brand already declined: **Project request declined. The
+  Brand declined this request. Adjust the terms and send a new request.**
 - Duplicate request (409): **A project request already exists for this Brand.**
 - Stale relationship: ask the Starter to refresh the available Brands and retry.
 
