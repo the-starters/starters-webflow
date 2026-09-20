@@ -76,9 +76,9 @@ failure. The known statuses are exactly the three this lifecycle produces:
 The success panel paints copy for the returned status, so a replay of a request
 the Brand already declined reads as declined rather than as still pending.
 
-This form calls only `Opp30.API.projectProposalSubmit`. The bridge carries
-three submit capabilities, and the split exists because the two jsDelivr assets
-cache independently, so either one can be stale on its own:
+For submission this form calls only `Opp30.API.projectProposalSubmit`. The
+bridge carries three submit capabilities, and the split exists because the two
+jsDelivr assets cache independently, so either one can be stale on its own:
 
 | Capability | Route | Why it exists |
 | --- | --- | --- |
@@ -336,6 +336,9 @@ a production project, PandaDoc document, signature, or email canary.
   Brand declined this request. Adjust the terms and send a new request.**
 - Duplicate request (409): **A project request already exists for this Brand.**
 - Stale relationship: ask the Starter to refresh the available Brands and retry.
+- Cached bridge without `projectProposalSubmit` (the fail-closed case above):
+  **The project service is not available. Reload and try again.** No request is
+  sent and Confirm stays disabled.
 
 The success event is `starters:project-proposal-requested`. Its detail contains
 only the stable `proposal_id` and replay state.
