@@ -36,6 +36,109 @@
     }
   }
 
+  const WEBFLOW_CHUNK_RECOVERY_KEY = 'starters:webflow-chunk-recovery'
+  const WEBFLOW_CHUNK_RECOVERY_COOLDOWN_MS = 5 * 60 * 1000
+  const WEBFLOW_CHUNK_RECOVERY_DELAY_MS = 250
+  const WEBFLOW_CHUNK_RECOVERY_MAX_PAGES = 10
+  const WEBFLOW_CHUNK_RECOVERY_MAX_PAGE_LENGTH = 200
+  const WEBFLOW_CHUNK_RECOVERY_HOSTS = new Set([
+    'the-starters-3-0.webflow.io',
+    'thestarters.com',
+    'www.thestarters.com',
+  ])
+
+  function safeString(value) {
+    try {
+      return typeof value === 'string' ? value : ''
+    } catch (e) {
+      return ''
+    }
+  }
+
+  function isWebflowChunkFailure(event) {
+    try {
+      const error = event && event.error
+      const name = safeString(error && error.name)
+      const message = [
+        safeString(error && error.message),
+        safeString(event && event.message),
+      ].join(' ')
+      const isChunkFailure =
+        name === 'ChunkLoadError' || /Loading chunk\s+\S+\s+failed/i.test(message)
+      if (!isChunkFailure) return false
+
+      const source = [
+        safeString(error && error.request),
+        safeString(error && error.stack),
+        message,
+        safeString(event && event.filename),
+      ].join(' ')
+      return /https?:\/\/cdn\.prod\.website-files\.com\/[^\s"'()]+\/js\/webflow\.[^\s"'()]+\.js/i.test(
+        source,
+      )
+    } catch (e) {
+      return false
+    }
+  }
+
+  function claimWebflowChunkRecovery() {
+    try {
+      const page = (
+        safeString(window.location && window.location.pathname) || '/'
+      ).slice(0, WEBFLOW_CHUNK_RECOVERY_MAX_PAGE_LENGTH)
+      const storage = window.sessionStorage
+      if (!storage) return false
+
+      const now = Date.now()
+      // Each pathname carries its own cooldown, so recovering one page can
+      // never re-arm another page's reload inside the five-minute window.
+      let fresh = []
+      try {
+        const previous = JSON.parse(
+          storage.getItem(WEBFLOW_CHUNK_RECOVERY_KEY),
+        )
+        if (Array.isArray(previous)) {
+          for (const entry of previous) {
+            if (!entry || typeof entry.page !== 'string') continue
+            if (!Number.isFinite(entry.at)) continue
+            if (now - entry.at >= WEBFLOW_CHUNK_RECOVERY_COOLDOWN_MS) continue
+            if (entry.page === page) return false
+            fresh.push({ page: entry.page, at: entry.at })
+          }
+        }
+      } catch (e) {
+        // Replace malformed local state with the bounded markers below.
+        fresh = []
+      }
+
+      fresh.push({ page, at: now })
+      storage.setItem(
+        WEBFLOW_CHUNK_RECOVERY_KEY,
+        JSON.stringify(fresh.slice(-WEBFLOW_CHUNK_RECOVERY_MAX_PAGES)),
+      )
+      return true
+    } catch (e) {
+      // Reloading without a durable loop guard is unsafe. Keep the original
+      // error visible to PostHog and leave the page in its current state.
+      return false
+    }
+  }
+
+  function recoverWebflowChunkFailure(event) {
+    const hostname = safeString(window.location && window.location.hostname)
+    if (!WEBFLOW_CHUNK_RECOVERY_HOSTS.has(hostname)) return false
+    if (!isWebflowChunkFailure(event) || !claimWebflowChunkRecovery()) return false
+
+    window.setTimeout(() => {
+      try {
+        window.location.reload()
+      } catch (e) {
+        /* recovery must never replace the original error */
+      }
+    }, WEBFLOW_CHUNK_RECOVERY_DELAY_MS)
+    return true
+  }
+
   // Frontend error tracking: forward uncaught errors + unhandled promise
   // rejections to PostHog (complements the server-side `bridge_error` event;
   // links to session replay). Wired once. posthog.captureException is stubbed
@@ -122,10 +225,14 @@
       if (e.lineno) props.lineno = e.lineno
       if (e.colno) props.colno = e.colno
       send(e.error || new Error(e.message), props)
+      recoverWebflowChunkFailure(e)
     })
-    window.addEventListener('unhandledrejection', (e) =>
-      send(rejectionError(e.reason), { starters_error_source: 'onunhandledrejection' }),
-    )
+    window.addEventListener('unhandledrejection', (e) => {
+      send(rejectionError(e.reason), {
+        starters_error_source: 'onunhandledrejection',
+      })
+      recoverWebflowChunkFailure({ error: e.reason })
+    })
   }
 
   // Sitewide form tracking: delegated `submit` listener fires `form_submitted`

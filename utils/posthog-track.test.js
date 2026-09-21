@@ -5,16 +5,44 @@ const vm = require('node:vm')
 
 const source = fs.readFileSync(require.resolve('./posthog-track.js'), 'utf8')
 
-function load({ beforeSend, queued = false } = {}) {
+function load({
+  beforeSend,
+  queued = false,
+  storageThrows = false,
+  hostname = 'www.thestarters.com',
+} = {}) {
   const listeners = {}
   const captured = []
+  const scheduled = []
+  const storageValues = new Map()
+  let reloads = 0
   const context = {
-    location: { host: 'www.thestarters.com', pathname: '/' },
+    location: {
+      host: hostname,
+      hostname,
+      pathname: '/',
+      reload() {
+        reloads += 1
+      },
+    },
     document: { addEventListener() {} },
     MutationObserver: function () {},
     getComputedStyle: () => ({}),
-    setTimeout,
-    clearTimeout,
+    sessionStorage: {
+      getItem(key) {
+        if (storageThrows) throw new Error('storage blocked')
+        return storageValues.has(key) ? storageValues.get(key) : null
+      },
+      setItem(key, value) {
+        if (storageThrows) throw new Error('storage blocked')
+        storageValues.set(key, String(value))
+      },
+    },
+    setTimeout(fn) {
+      scheduled.push(fn)
+      return scheduled.length
+    },
+    clearTimeout() {},
     Error,
   }
   context.window = context
@@ -39,7 +67,13 @@ function load({ beforeSend, queued = false } = {}) {
   context.window.addEventListener = (type, fn) => { listeners[type] = fn }
   vm.createContext(context)
   vm.runInContext(source, context)
-  return { listeners, captured, sdk,
+  return { listeners, captured, sdk, storageValues, location: context.location,
+    get reloads() {
+      return reloads
+    },
+    runScheduled() {
+      while (scheduled.length) scheduled.shift()()
+    },
     flush() {
       context.window.posthog = sdk
       for (const entry of queue) {
@@ -49,6 +83,13 @@ function load({ beforeSend, queued = false } = {}) {
       queue.length = 0
     },
   }
+}
+
+function chunkError(request) {
+  const error = new Error(`Loading chunk 862 failed. (error: ${request})`)
+  error.name = 'ChunkLoadError'
+  error.request = request
+  return error
 }
 
 test('uncaught errors forward the source location and a truthful mechanism', () => {
@@ -74,6 +115,167 @@ test('cross-origin "Script error." events with no detail are dropped', () => {
   listeners.error({ error: null, message: 'Script error.', filename: '', lineno: 0, colno: 0 })
 
   assert.equal(captured.length, 0)
+})
+
+test('a confirmed Webflow chunk failure is captured before one recovery reload', () => {
+  const app = load()
+  const request =
+    'https://cdn.prod.website-files.com/site/js/webflow.achunk.deadbeef.js'
+
+  app.listeners.error({
+    error: chunkError(request),
+    message: `Loading chunk 862 failed. (error: ${request})`,
+    filename:
+      'https://cdn.prod.website-files.com/site/js/webflow.runtime.js',
+  })
+  app.listeners.error({ error: chunkError(request), message: 'Loading chunk 862 failed.' })
+
+  assert.equal(app.captured.length, 2)
+  assert.equal(app.reloads, 0)
+  app.runScheduled()
+  assert.equal(app.reloads, 1)
+
+  const markers = JSON.parse(
+    app.storageValues.get('starters:webflow-chunk-recovery'),
+  )
+  assert.deepEqual(markers.map((marker) => marker.page), ['/'])
+  assert.equal(Number.isFinite(markers[0].at), true)
+})
+
+test('an unhandled Webflow chunk rejection uses the same recovery guard', () => {
+  const app = load()
+  const request =
+    'https://cdn.prod.website-files.com/site/js/webflow.achunk.deadbeef.js'
+
+  app.listeners.unhandledrejection({ reason: chunkError(request) })
+
+  assert.equal(app.captured.length, 1)
+  assert.equal(
+    app.captured[0].properties.starters_error_source,
+    'onunhandledrejection',
+  )
+  assert.equal(app.reloads, 0)
+  app.runScheduled()
+  assert.equal(app.reloads, 1)
+})
+
+test('a Webflow chunk failure can recover independently on another page', () => {
+  const app = load()
+  const request =
+    'https://cdn.prod.website-files.com/site/js/webflow.achunk.deadbeef.js'
+
+  app.listeners.error({ error: chunkError(request) })
+  app.runScheduled()
+  assert.equal(app.reloads, 1)
+
+  app.location.pathname = '/starter-dashboard'
+  app.listeners.error({ error: chunkError(request) })
+  app.runScheduled()
+  assert.equal(app.reloads, 2)
+  assert.deepEqual(
+    JSON.parse(app.storageValues.get('starters:webflow-chunk-recovery')).map(
+      (marker) => marker.page,
+    ),
+    ['/', '/starter-dashboard'],
+  )
+})
+
+test('recovering another page never re-arms an earlier page cooldown', () => {
+  const app = load()
+  const request =
+    'https://cdn.prod.website-files.com/site/js/webflow.achunk.deadbeef.js'
+
+  app.listeners.error({ error: chunkError(request) })
+  app.runScheduled()
+  assert.equal(app.reloads, 1)
+
+  app.location.pathname = '/starter-dashboard'
+  app.listeners.error({ error: chunkError(request) })
+  app.runScheduled()
+  assert.equal(app.reloads, 2)
+
+  app.location.pathname = '/'
+  app.listeners.error({ error: chunkError(request) })
+  app.runScheduled()
+  assert.equal(app.captured.length, 3)
+  assert.equal(app.reloads, 2)
+})
+
+test('recovery markers stay bounded as more pages fail', () => {
+  const app = load()
+  const request =
+    'https://cdn.prod.website-files.com/site/js/webflow.achunk.deadbeef.js'
+
+  for (let i = 0; i < 25; i += 1) {
+    app.location.pathname = `/page-${i}`
+    app.listeners.error({ error: chunkError(request) })
+    app.runScheduled()
+  }
+
+  assert.equal(app.reloads, 25)
+  const markers = JSON.parse(
+    app.storageValues.get('starters:webflow-chunk-recovery'),
+  )
+  assert.equal(markers.length, 10)
+  assert.equal(markers[markers.length - 1].page, '/page-24')
+  assert.deepEqual(Object.keys(markers[0]).sort(), ['at', 'page'])
+})
+
+test('an expired same-page recovery marker permits a later retry', () => {
+  const app = load()
+  const request =
+    'https://cdn.prod.website-files.com/site/js/webflow.achunk.deadbeef.js'
+  app.storageValues.set(
+    'starters:webflow-chunk-recovery',
+    JSON.stringify([{ page: '/', at: 0 }]),
+  )
+
+  app.listeners.error({ error: chunkError(request) })
+  app.runScheduled()
+
+  assert.equal(app.reloads, 1)
+})
+
+test('Marker.io and other providers never trigger Webflow recovery', () => {
+  const app = load()
+  const request = 'https://edge.marker.io/latest/2.v2.36.2.js'
+
+  app.listeners.error({
+    error: chunkError(request),
+    message: `Loading chunk 2 failed. (timeout: ${request})`,
+    filename: 'https://edge.marker.io/latest/shim.js',
+  })
+
+  assert.equal(app.captured.length, 1)
+  app.runScheduled()
+  assert.equal(app.reloads, 0)
+  assert.equal(app.storageValues.size, 0)
+})
+
+test('a Webflow chunk failure on a non-V3 host remains capture-only', () => {
+  const app = load({ hostname: 'www.hirethestarters.com' })
+  const request =
+    'https://cdn.prod.website-files.com/site/js/webflow.achunk.deadbeef.js'
+
+  app.listeners.error({ error: chunkError(request) })
+
+  assert.equal(app.captured.length, 1)
+  app.runScheduled()
+  assert.equal(app.reloads, 0)
+  assert.equal(app.storageValues.size, 0)
+})
+
+test('blocked session storage fails closed without escaping the error listener', () => {
+  const app = load({ storageThrows: true })
+  const request =
+    'https://cdn.prod.website-files.com/site/js/webflow.achunk.deadbeef.js'
+
+  assert.doesNotThrow(() =>
+    app.listeners.error({ error: chunkError(request) }),
+  )
+  assert.equal(app.captured.length, 1)
+  app.runScheduled()
+  assert.equal(app.reloads, 0)
 })
 
 test('unhandled rejections are marked unhandled', () => {
