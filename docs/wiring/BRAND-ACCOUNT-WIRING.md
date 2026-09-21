@@ -383,8 +383,9 @@ projection.
   email without requesting password-reset or verification emails and keep the
   member's existing password. Explicit Forgot Password remains available.
 - Account Security shows its authored `[data-ms-message="success"]` or
-  `[data-ms-message="error"]` block, writes the result into
-  `[data-ms-message-text]`, and hides Webflow's sibling success/failure blocks.
+  `[data-ms-message="error"]` block and hides Webflow's sibling success/failure
+  blocks. The success block's authored copy is left untouched; only the error
+  block's `[data-ms-message-text]` receives the failure reason.
   A legacy installation missing the relevant Memberstack block falls back to
   its Webflow state. Starting another save clears the prior feedback.
 - Account Security marks only the submit control's containing

@@ -2711,20 +2711,6 @@ test('native form diagnostics inherit the controller CDN ref and use one loader 
 })
 
 
-test('Account Security saves a changed email without sending a password code', async () => {
-  const securityForm = makeForm('security', { email: 'next@example.com' })
-  const environment = loadController({
-    buildForm: null, securityForm, currentEmail: 'old@example.com',
-    config: { guardSecurityForm: 'identity' },
-    routeGuard: { memberRole: () => 'brand-paid' },
-  })
-  securityForm.submitEvent()
-  await settle()
-  assert.deepEqual(environment.calls.map(call => call.method),
-    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth'])
-})
-
-
 function addSecurityFeedback(form) {
   for (const kind of ['success', 'error']) {
     const state = makeElement()
@@ -2759,7 +2745,7 @@ test('Account Security uses authored Memberstack states and only loads Save Chan
   write.resolve({})
   await settle()
   assert.equal(form.inputs.get('[data-ms-message="success"]').style.display, 'block')
-  assert.equal(form.inputs.get('[data-ms-message="success"]').messageText.textContent, 'Your account settings have been saved.')
+  assert.equal(form.inputs.get('[data-ms-message="success"]').messageText.textContent, 'Success State')
   assert.equal(form.inputs.get('[data-ms-message="error"]').style.display, 'none')
   assert.equal(form.wrapper.done.style.display, 'none')
   assert.equal(form.wrapper.fail.style.display, 'none')

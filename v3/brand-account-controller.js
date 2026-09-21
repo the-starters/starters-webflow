@@ -581,13 +581,13 @@
     if (success) success.style.display = kind === 'success' ? 'block' : 'none'
     if (failure) failure.style.display = kind === 'error' ? 'block' : 'none'
     var state = kind === 'success' ? success : kind === 'error' ? failure : null
-    if (state) {
+    if (!state) {
+      if (kind !== 'idle') setMessage(form, kind, message)
+      return
+    }
+    if (kind === 'error') {
       var text = state.querySelector('[data-ms-message-text]')
-      if (text) text.textContent = kind === 'success'
-        ? 'Your account settings have been saved.'
-        : message
-    } else if (kind !== 'idle') {
-      setMessage(form, kind, message)
+      if (text) text.textContent = message
     }
   }
 
@@ -694,10 +694,6 @@
   }
 
   function submitSecurity(form, memberSnapshot, emailSnapshot) {
-    return submitEmailUpdate(form, memberSnapshot, emailSnapshot)
-  }
-
-  function submitStarterProfileEmail(form, memberSnapshot, emailSnapshot) {
     return submitEmailUpdate(form, memberSnapshot, emailSnapshot)
   }
 
@@ -935,7 +931,7 @@
             setMessage(form, 'idle', '')
             await workflowDiagnosticsReady
             diagnosticStart(form, 'starter/account/email')
-            await submitStarterProfileEmail(form, member, email)
+            await submitEmailUpdate(form, member, email)
             rememberProfileEmail(email)
             var receipt = diagnosticComplete(form, {
               result: 'success',
@@ -1031,7 +1027,7 @@
             setMessage(form, 'idle', '')
             await workflowDiagnosticsReady
             diagnosticStart(form, 'starter/account/email')
-            await submitStarterProfileEmail(form, member, email)
+            await submitEmailUpdate(form, member, email)
             rememberProfileEmail(email)
             diagnosticComplete(form, {
               result: 'success',
