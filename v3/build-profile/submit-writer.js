@@ -45,6 +45,98 @@
       const authoredErrorMessage = errorMessage ? errorMessage.textContent : '';
       const priceFeedback = new Map();
 
+      // Build Profile can collect call preferences before a new Starter has the
+      // calendar, availability, and (for Paid) Stripe prerequisites required by
+      // the provider-backed Call Settings writers. Keep that pre-activation
+      // intent in the member's private JSON. Dashboard/Edit Profile consume it
+      // as create, update, or disable intent; the canonical endpoints remain
+      // the only writers of provider state and freelancers_v3 call projections.
+      const BUILD_CALL_INTENT_KEY = 'starter_call_settings_intent_v3';
+
+      function buildCallSettingsIntent(formData) {
+        const hasFree = Object.prototype.hasOwnProperty.call(formData, 'free-consulting-calls');
+        const hasPaid = Object.prototype.hasOwnProperty.call(formData, 'paid-consulting-calls');
+        if (!hasFree && !hasPaid) return null;
+
+        const answer = (value) => String(value || '').trim().toLowerCase();
+        const enabled = (value) => answer(value).startsWith('yes');
+        const intent = {
+          version: 1,
+          member_id: MEMBER.id,
+          source: 'build-profile',
+          updated_at: Date.now(),
+        };
+
+        if (hasFree) {
+          const description = String(formData['free-call-description'] || '').trim();
+          if (description.length > 60) {
+            throw Object.assign(new Error('Free-call description must be 60 characters or fewer.'), {
+              code: 'FREE_CALL_DESCRIPTION_TOO_LONG',
+              panelMessage: 'Free-call description must be 60 characters or fewer.',
+            });
+          }
+          intent.free = {
+            enabled: enabled(formData['free-consulting-calls']),
+            description,
+          };
+        }
+
+        if (hasPaid) {
+          const paidEnabled = enabled(formData['paid-consulting-calls']);
+          const title = String(formData['paid-call-description'] || '').trim() || 'Paid Consultation Call';
+          const rawRate = String(formData['paid-call-rate'] || '').trim();
+          if (paidEnabled && (title.length < 3 || title.length > 80)) {
+            throw Object.assign(new Error('Use a paid-call title between 3 and 80 characters.'), {
+              code: 'PAID_CALL_TITLE_INVALID',
+              panelMessage: 'Use a paid-call title between 3 and 80 characters.',
+            });
+          }
+          if (paidEnabled && (!/^[0-9]+$/.test(rawRate) || Number(rawRate) < 1 || Number(rawRate) > 1000)) {
+            throw Object.assign(new Error('Use a whole-dollar paid-call rate from $1 to $1,000.'), {
+              code: 'PAID_CALL_RATE_INVALID',
+              panelMessage: 'Use a whole-dollar paid-call rate from $1 to $1,000.',
+            });
+          }
+          intent.paid = {
+            enabled: paidEnabled,
+            title,
+            price_dollars: paidEnabled ? Number(rawRate) : null,
+          };
+        }
+
+        return intent;
+      }
+
+      async function saveBuildCallSettingsIntent(formData) {
+        const intent = buildCallSettingsIntent(formData);
+        if (!intent) return null;
+        const memberstack = window.$memberstackDom;
+        if (
+          !memberstack ||
+          typeof memberstack.getMemberJSON !== 'function' ||
+          typeof memberstack.updateMemberJSON !== 'function'
+        ) {
+          throw Object.assign(new Error('Member Call Settings storage is unavailable.'), {
+            code: 'CALL_SETTINGS_INTENT_STORAGE_UNAVAILABLE',
+            panelMessage: 'We saved your profile but could not save your Call Settings. Please submit again.',
+          });
+        }
+        const response = await memberstack.getMemberJSON();
+        const current = response && Object.prototype.hasOwnProperty.call(response, 'data')
+          ? response.data
+          : response;
+        const memberJSON = current && typeof current === 'object' && !Array.isArray(current)
+          ? current
+          : {};
+        await memberstack.updateMemberJSON({
+          json: {
+            ...memberJSON,
+            [BUILD_CALL_INTENT_KEY]: intent,
+          },
+        });
+        return intent;
+      }
+
       function clearPriceFeedback(field) {
         const feedback = priceFeedback.get(field);
         if (!feedback) return;
@@ -383,6 +475,8 @@
               responseData: await response.json(),
             };
           }
+
+          await saveBuildCallSettingsIntent(formData);
 
           const committedPayload = savedBuildResult.payload;
           const photoUpload = window.StartersBuildProfilePhotoUpload;

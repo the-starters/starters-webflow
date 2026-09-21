@@ -170,12 +170,13 @@ unconditionally inapplicable on Consult — it always submits `retainer: false, 
 regardless of the hidden radio and regardless of whether the hidden rate satisfies this contract.
 Full Profile authors both controls, so an enabled or required section there stays strict.
 
-The Paid Call rate is not part of Build Profile's contract. Build Profile neither constrains,
-validates, nor submits `free_call`, `free_call_desc`, `paid_call`, `paid_call_desc`, or
-`paid_call_rate`, so whatever hydration left in a hidden call control is inert there. Dashboard Call
-Settings — including the `[name="paid-call-rate"]` control it renders in Edit Profile mode — and the
-active environment-matched `nylas_configurations_v3` row are the sole call authority, and that writer
-enforces the `$1` through `$1,000` whole-dollar Paid Call range on its own.
+The Paid Call rate in Build Profile uses the same `$1` through `$1,000`
+whole-dollar contract as Dashboard and Edit Profile. Build Profile validates
+and stores that private setup intent but never sends call fields to the profile
+endpoint and never creates provider state. Dashboard or Edit Profile completes
+the guarded canonical write after Calendar, Availability, and Stripe are ready.
+The active environment-matched `nylas_configurations_v3` row remains the sole
+call authority.
 
 Wherever a blank is the compatibility-empty state, the canonical zero these same writers persist for
 that field is that same state: a blank, zero, or otherwise out-of-contract profile-type-inapplicable Hourly Rate

@@ -19,6 +19,16 @@ payload.
 - Initial and terminal UI state always comes from
   `GET starter/free-call-settings/get/v3`.
 
+## Build Profile handoff
+
+Build Profile stores the member's visible Free choice as private
+`starter_call_settings_intent_v3.free` Memberstack JSON. This is not an active
+service and is not a `freelancers_v3` projection. Dashboard and Edit Profile
+hydrate it as pending create, update, or disable intent. The controller keeps a
+new enable pending until Calendar and Availability are ready, then requires the
+member to select Update. It removes only the Free part of the receipt after an
+exact canonical write/readback; any pending Paid part is preserved.
+
 ## Published compatibility contract
 
 The current Designer form works without generated IDs or styling selectors:
@@ -85,6 +95,8 @@ the cached Free state is cleared. It also sets these attributes:
 - `data-free-call-duration-current` — the stored duration in minutes, empty with no active service
 - `data-free-call-price-cents` — the stored price in cents, `0` with no active service
 - `data-free-call-editor-open="true|false"`
+- `data-build-call-intent="pending"` while a Build Profile choice is waiting for
+  canonical confirmation; empty after consumption
 
 The canonical reader supplies `duration` on each service record, the same field every other
 scheduling reader in this repository uses; `duration_minutes` stays an outbound request field only.

@@ -7,6 +7,17 @@ always sends `duration_minutes: 60`. Duration choices can be added in a later pr
 active canonical service stored at any other duration reads as not bookable and shows the
 update-the-duration message until it is saved again at 60 minutes.
 
+## Build Profile handoff
+
+Build Profile stores the member's visible Paid choice as private
+`starter_call_settings_intent_v3.paid` Memberstack JSON. This is not an active
+service and is not a `freelancers_v3` projection. Dashboard and Edit Profile
+hydrate it as pending create, update, or disable intent. A new enable remains
+pending until Calendar, Availability, Stripe linkage, charge readiness, and the
+freshness gate are all ready, then the member must select Update. The controller
+removes only the Paid part of the receipt after exact canonical write/readback;
+any pending Free part is preserved.
+
 ## Script
 
 Load `v3/paid-call-settings.js` after `v3/scheduling-auth.js`. The local stage component loader already includes it.
@@ -148,6 +159,8 @@ The controller sets `data-ready="true|false"` on each row. It also sets these wr
 - `data-paid-call-state="loading|ready|saving|disabling|error"`
 - `data-paid-call-enabled="true|false"`
 - `data-paid-call-bookable="true|false"` (also `false` when the stored duration is not `60`)
+- `data-build-call-intent="pending"` while a Build Profile choice is waiting for
+  canonical confirmation; empty after consumption
 - `data-paid-call-card-state="on|off"` on the Paid card scope
 - `data-paid-call-rate-source="legacy_v2"` only while a valid imported suggestion is displayed;
   otherwise empty

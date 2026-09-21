@@ -104,10 +104,10 @@ const EXPECTED_CANDIDATE_ASSETS = Object.freeze({
     restoreTrailingWhitespace: Object.freeze({}), terminalNewlinesRemoved: 1,
   }),
   'v3/build-profile/submit-writer.js': Object.freeze({
-    characters: 19646, sha256: 'd339d9f14e2b8903567f09b564c1a781182b2ad92f7d0f7fd38f6341d22b265e',
+    characters: 23770, sha256: '6df6391eaa656667d5afbce2c7fa9005941401d53721fb0d0462e34ca7e55a54',
     guardKey: 'buildProfileSubmitWriter',
     liveCaptureAsset: 'v3/profile-form/build-submit-writer-published.capture.txt',
-    restoreTrailingWhitespace: Object.freeze({ 423: '          ' }), terminalNewlinesRemoved: 0,
+    restoreTrailingWhitespace: Object.freeze({ 517: '          ' }), terminalNewlinesRemoved: 0,
   }),
   'v3/build-profile/locations-consult.js': Object.freeze({
     characters: 11065, sha256: '3c2e09a3a55806e1f4a82af2c3e850c6f53120fc70c1506cbf6315d5f311f160',
@@ -1505,6 +1505,12 @@ test('build submit writer sends one normalized payload through the authored form
   })
   context.window.location = { pathname: '/build-profile/full-profile' }
   context.window.intlTelInput = { getInstance() { return { getNumber() { return '+15550000000' } } } }
+  context.window.$memberstackDom = {
+    async getMemberJSON() { return { data: { keep: 'member-json' } } },
+    async updateMemberJSON() {},
+    async updateMember() {},
+    async updateMemberAuth() {},
+  }
 
   run('v3/build-profile/submit-writer.js', context)
   run('v3/build-profile/submit-writer.js', context)

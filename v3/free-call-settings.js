@@ -60,6 +60,55 @@
   let editProfileDirty = false
   let editProfileReady = false
   let applyingCanonicalRender = false
+  let pendingBuildIntent = null
+
+  function memberJsonValue(response) {
+    const value = response && Object.prototype.hasOwnProperty.call(response, 'data')
+      ? response.data
+      : response
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+  }
+
+  async function readPendingBuildIntent() {
+    const memberstack = window.$memberstackDom
+    if (!memberstack || typeof memberstack.getMemberJSON !== 'function') return null
+    const json = memberJsonValue(await memberstack.getMemberJSON())
+    const envelope = json.starter_call_settings_intent_v3
+    if (
+      !envelope ||
+      Number(envelope.version) !== 1 ||
+      envelope.member_id !== sessionMemberId ||
+      !envelope.free ||
+      typeof envelope.free.enabled !== 'boolean'
+    ) return null
+    return {
+      enabled: envelope.free.enabled,
+      description: String(envelope.free.description || '').trim().slice(0, 60),
+    }
+  }
+
+  async function consumePendingBuildIntent() {
+    if (!pendingBuildIntent) return
+    const memberstack = window.$memberstackDom
+    if (
+      !memberstack ||
+      typeof memberstack.getMemberJSON !== 'function' ||
+      typeof memberstack.updateMemberJSON !== 'function'
+    ) throw new Error('Pending Build Profile Call Settings could not be cleared')
+    const json = memberJsonValue(await memberstack.getMemberJSON())
+    const envelope = json.starter_call_settings_intent_v3
+    if (!envelope || envelope.member_id !== sessionMemberId) {
+      pendingBuildIntent = null
+      return
+    }
+    const nextEnvelope = Object.assign({}, envelope)
+    delete nextEnvelope.free
+    const nextJson = Object.assign({}, json)
+    if (nextEnvelope.paid) nextJson.starter_call_settings_intent_v3 = nextEnvelope
+    else delete nextJson.starter_call_settings_intent_v3
+    await memberstack.updateMemberJSON({ json: nextJson })
+    pendingBuildIntent = null
+  }
 
   function qs(selector, scope) {
     return (scope || document).querySelector(selector)
@@ -682,6 +731,19 @@
       descriptionInput.readOnly = false
       descriptionInput.setAttribute('aria-readonly', 'false')
     }
+    if (pendingBuildIntent) {
+      setRadioChecked(pair.enabled, pendingBuildIntent.enabled)
+      setRadioChecked(pair.disabled, !pendingBuildIntent.enabled)
+      notifyRadioChange(pendingBuildIntent.enabled ? pair.enabled : pair.disabled)
+      if (descriptionInput && pendingBuildIntent.enabled) {
+        descriptionInput.value = pendingBuildIntent.description
+      }
+      explicitIntent = pendingBuildIntent.enabled ? 'enabled' : 'disabled'
+      if (editProfileMode && (service || pendingBuildIntent.enabled)) editProfileDirty = true
+      root.setAttribute('data-build-call-intent', 'pending')
+    } else {
+      root.setAttribute('data-build-call-intent', '')
+    }
     root.setAttribute(
       'data-free-call-duration-current',
       service ? String(serviceDuration(service) || 0) : '',
@@ -703,7 +765,15 @@
     if (priceOutput) priceOutput.textContent = formatFreePrice(service ? servicePriceCents(service) : 0)
     paintStatusPills()
     setMessage(
-      service
+      pendingBuildIntent
+        ? pendingBuildIntent.enabled
+          ? prerequisitesReady(value) || Boolean(service)
+            ? 'Your Build Profile choice is ready. Select Update to save free calls.'
+            : 'Your Build Profile choice is saved. Connect your calendar and set availability to turn on free calls.'
+          : service
+            ? 'Your Build Profile choice is ready. Select Update to turn off free calls.'
+            : 'Free calls are off, matching your Build Profile choice.'
+        : service
         ? !contractMatches
           ? 'Update this service to the required 30-minute Free Call settings.'
           : readiness.bookable
@@ -756,7 +826,13 @@
     const memberId = sessionMemberId
     try {
       const canonical = await readCanonicalSettings()
+      pendingBuildIntent = await readPendingBuildIntent().catch(function () { return null })
       if (currentRender(version, memberId) && !busy) render(canonical)
+      if (!canonicalService(canonical) && pendingBuildIntent && !pendingBuildIntent.enabled) {
+        consumePendingBuildIntent().then(function () {
+          if (currentRender(version, memberId) && !busy) render(canonical)
+        }).catch(function () {})
+      }
       return canonical
     } catch (error) {
       if (currentRender(version, memberId) && !busy) {
@@ -810,6 +886,7 @@
       if (String(canonical.public_description || '') !== description) {
         throw new Error('Free-call description did not match canonical readback')
       }
+      await consumePendingBuildIntent()
       write.canonical = canonical
       if (!currentRender(version, memberId)) return null
       render(canonical)
@@ -850,6 +927,7 @@
       if (canonicalService(canonical)) {
         throw new Error('Free-call service remained active after canonical readback')
       }
+      await consumePendingBuildIntent()
       write.canonical = canonical
       if (!currentRender(version, memberId)) return null
       render(canonical)
@@ -1004,6 +1082,7 @@
         return null
       }
       sessionMemberId = member.id
+      pendingBuildIntent = await readPendingBuildIntent().catch(function () { return null })
       await waitForSchedulingAuth()
       if (version !== refreshVersion) return null
       sessionAuthScope = await currentAuthScope()
@@ -1047,7 +1126,13 @@
         return render(pendingWrite.canonical)
       }
       if (!currentRender(version, member.id)) return null
-      return render(canonical)
+      const rendered = render(canonical)
+      if (!canonicalService(canonical) && pendingBuildIntent && !pendingBuildIntent.enabled) {
+        consumePendingBuildIntent().then(function () {
+          if (currentRender(version, member.id)) render(canonical)
+        }).catch(function () {})
+      }
+      return rendered
     } catch (error) {
       if (version === refreshVersion) {
         setStatus('error')

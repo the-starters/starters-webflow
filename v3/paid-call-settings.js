@@ -67,6 +67,58 @@
   let editProfileDirty = false
   let editProfileReady = false
   let applyingCanonicalRender = false
+  let pendingBuildIntent = null
+
+  function memberJsonValue(response) {
+    const value = response && Object.prototype.hasOwnProperty.call(response, 'data')
+      ? response.data
+      : response
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+  }
+
+  async function readPendingBuildIntent() {
+    const memberstack = window.$memberstackDom
+    if (!memberstack || typeof memberstack.getMemberJSON !== 'function') return null
+    const json = memberJsonValue(await memberstack.getMemberJSON())
+    const envelope = json.starter_call_settings_intent_v3
+    const paid = envelope && envelope.paid
+    const price = Number(paid && paid.price_dollars)
+    if (
+      !envelope ||
+      Number(envelope.version) !== 1 ||
+      envelope.member_id !== sessionMemberId ||
+      !paid ||
+      typeof paid.enabled !== 'boolean'
+    ) return null
+    if (!paid.enabled) return { enabled: false, title: '', price_dollars: null }
+    if (!Number.isSafeInteger(price) || price < 1 || price > 1000) return null
+    const title = String(paid.title || '').trim()
+    if (title.length < 3 || title.length > 80) return null
+    return { enabled: true, title: title, price_dollars: price }
+  }
+
+  async function consumePendingBuildIntent() {
+    if (!pendingBuildIntent) return
+    const memberstack = window.$memberstackDom
+    if (
+      !memberstack ||
+      typeof memberstack.getMemberJSON !== 'function' ||
+      typeof memberstack.updateMemberJSON !== 'function'
+    ) throw new Error('Pending Build Profile Call Settings could not be cleared')
+    const json = memberJsonValue(await memberstack.getMemberJSON())
+    const envelope = json.starter_call_settings_intent_v3
+    if (!envelope || envelope.member_id !== sessionMemberId) {
+      pendingBuildIntent = null
+      return
+    }
+    const nextEnvelope = Object.assign({}, envelope)
+    delete nextEnvelope.paid
+    const nextJson = Object.assign({}, json)
+    if (nextEnvelope.free) nextJson.starter_call_settings_intent_v3 = nextEnvelope
+    else delete nextJson.starter_call_settings_intent_v3
+    await memberstack.updateMemberJSON({ json: nextJson })
+    pendingBuildIntent = null
+  }
 
   function qs(selector, scope) {
     return (scope || document).querySelector(selector)
@@ -985,6 +1037,20 @@
     if (titleInput) titleInput.value = service ? service.title || '' : 'Paid Consultation Call'
     if (priceInput) priceInput.value = confirmedRate ? Number(confirmedRate.price_cents) / 100 : ''
     if (durationInput) durationInput.value = String(FIXED_DURATION_MINUTES)
+    if (pendingBuildIntent) {
+      setRadioChecked(enabledInput, pendingBuildIntent.enabled)
+      setRadioChecked(disabledInput, !pendingBuildIntent.enabled)
+      notifyRadioChange(pendingBuildIntent.enabled ? enabledInput : disabledInput)
+      if (pendingBuildIntent.enabled) {
+        if (titleInput) titleInput.value = pendingBuildIntent.title
+        if (priceInput) priceInput.value = String(pendingBuildIntent.price_dollars)
+      }
+      explicitIntent = pendingBuildIntent.enabled ? 'enabled' : 'disabled'
+      if (editProfileMode && (service || pendingBuildIntent.enabled)) editProfileDirty = true
+      root.setAttribute('data-build-call-intent', 'pending')
+    } else {
+      root.setAttribute('data-build-call-intent', '')
+    }
     clearFieldValidity()
     root.setAttribute(
       'data-paid-call-duration-current',
@@ -1017,7 +1083,15 @@
     if (!service && suggestion && priceInput) priceInput.value = Number(suggestion.price_cents) / 100
     paintStatusPills()
     setMessage(
-      service
+      pendingBuildIntent
+        ? pendingBuildIntent.enabled
+          ? prerequisitesReady(value) || Boolean(service)
+            ? 'Your Build Profile choice is ready. Select Update to save paid calls.'
+            : 'Your Build Profile choice is saved. Complete Calendar, Availability, and Stripe setup to turn on paid calls.'
+          : service
+            ? 'Your Build Profile choice is ready. Select Update to turn off paid calls.'
+            : 'Paid calls are off, matching your Build Profile choice.'
+        : service
         ? rateNeedsCorrection
           ? 'Paid calls are not bookable: update this service to a whole-dollar rate from $1 to $1,000.'
           : Number(service.duration) !== FIXED_DURATION_MINUTES
@@ -1144,6 +1218,7 @@
       ) {
         throw new Error('Paid-call settings did not match canonical readback')
       }
+      await consumePendingBuildIntent()
       write.canonical = canonical
       if (!currentRender(version, memberId)) return null
       render(canonical)
@@ -1176,7 +1251,13 @@
     const memberId = sessionMemberId
     try {
       const canonical = await readCanonicalSettings()
+      pendingBuildIntent = await readPendingBuildIntent().catch(function () { return null })
       if (currentRender(version, memberId) && !busy) render(canonical)
+      if (!canonicalService(canonical) && pendingBuildIntent && !pendingBuildIntent.enabled) {
+        consumePendingBuildIntent().then(function () {
+          if (currentRender(version, memberId) && !busy) render(canonical)
+        }).catch(function () {})
+      }
       return canonical
     } catch (error) {
       if (currentRender(version, memberId) && !busy) {
@@ -1208,6 +1289,7 @@
       if (canonicalService(canonical)) {
         throw new Error('Paid-call service remained active after canonical readback')
       }
+      await consumePendingBuildIntent()
       write.canonical = canonical
       if (!currentRender(version, memberId)) return null
       render(canonical)
@@ -1344,6 +1426,7 @@
         return null
       }
       sessionMemberId = member.id
+      pendingBuildIntent = await readPendingBuildIntent().catch(function () { return null })
       await waitForSchedulingAuth()
       if (version !== refreshVersion) return null
       sessionAuthScope = await currentAuthScope()
@@ -1387,7 +1470,13 @@
         return render(pendingWrite.canonical)
       }
       if (!currentRender(version, member.id)) return null
-      return render(canonical)
+      const rendered = render(canonical)
+      if (!canonicalService(canonical) && pendingBuildIntent && !pendingBuildIntent.enabled) {
+        consumePendingBuildIntent().then(function () {
+          if (currentRender(version, member.id)) render(canonical)
+        }).catch(function () {})
+      }
+      return rendered
     } catch (error) {
       if (version === refreshVersion) {
         setStatus('error')

@@ -67,6 +67,8 @@ test('Build leaves Dashboard call settings untouched while retrying photo saves'
     $memberstackDom: {
       async updateMember() {},
       async updateMemberAuth() {},
+      async getMemberJSON() { return { data: {} } },
+      async updateMemberJSON() {},
     },
   }
   const context = vm.createContext({

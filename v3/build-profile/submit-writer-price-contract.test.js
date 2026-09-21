@@ -71,6 +71,7 @@ function load(overrides = {}, pathname = '/build-profile/full', { respond = null
     ['#service-3', new Element(values['service-3'])],
   ])
   const requests = []
+  const memberJsonWrites = []
   const loaderStates = []
   const MEMBER = {
     id: 'mem_test',
@@ -105,7 +106,12 @@ function load(overrides = {}, pathname = '/build-profile/full', { respond = null
     __tsProfileFormControllers: {},
     location: { pathname },
     intlTelInput: { getInstance: () => ({ getNumber: () => values.phone }) },
-    $memberstackDom: { updateMember: async () => {}, updateMemberAuth: async () => {} },
+    $memberstackDom: {
+      updateMember: async () => {},
+      updateMemberAuth: async () => {},
+      getMemberJSON: async () => ({ data: { keep: 'member-json' } }),
+      updateMemberJSON: async (value) => { memberJsonWrites.push(value) },
+    },
   }
   const domReady = []
   const context = {
@@ -132,7 +138,20 @@ function load(overrides = {}, pathname = '/build-profile/full', { respond = null
   }
   vm.runInNewContext(SOURCE, context, { filename: 'submit-writer.js' })
   domReady.forEach((callback) => callback())
-  return { form, submit, step, success, successCTA, error, errorMessage, errorPanelIcon, inputs, requests, loaderStates }
+  return {
+    form,
+    submit,
+    step,
+    success,
+    successCTA,
+    error,
+    errorMessage,
+    errorPanelIcon,
+    inputs,
+    requests,
+    loaderStates,
+    memberJsonWrites,
+  }
 }
 
 test('retries one rejected canonical request with the identical payload', async () => {
@@ -282,22 +301,47 @@ test('disabled and non-owned blank rates preserve compatibility zero without acc
   assert.equal(consult.requests[0].body.retainer_rate, 0)
 })
 
-test('Build Profile never emits or validates call settings owned by the Dashboard', async () => {
+test('Build Profile keeps provider call fields out of the profile payload and saves private pending intent', async () => {
   const callFields = ['free_call', 'free_call_desc', 'paid_call', 'paid_call_desc', 'paid_call_rate']
   for (const pathname of ['/build-profile/consult', '/build-profile/full']) {
     const result = load({
       'free-consulting-calls': 'yes',
-      'free-call-description': 'Stale free call copy',
+      'free-call-description': 'Free intro',
       'paid-consulting-calls': 'yes',
-      'paid-call-description': 'Stale paid call copy',
-      'paid-call-rate': 'not-a-price',
+      'paid-call-description': 'Strategy call',
+      'paid-call-rate': '250',
     }, pathname)
     await result.submit.click()
     assert.equal(result.requests.length, 1, pathname)
     for (const field of callFields) assert.equal(Object.hasOwn(result.requests[0].body, field), false, field)
-    assert.equal(result.inputs['[name="paid-call-rate"]'].reportValidityCount, 0)
-    assert.equal(result.inputs['[name="paid-call-rate"]'].validationMessage, '')
+    assert.equal(result.memberJsonWrites.length, 1, pathname)
+    assert.deepEqual(
+      JSON.parse(JSON.stringify(result.memberJsonWrites[0].json.starter_call_settings_intent_v3)),
+      {
+        version: 1,
+        member_id: 'mem_test',
+        source: 'build-profile',
+        updated_at: result.memberJsonWrites[0].json.starter_call_settings_intent_v3.updated_at,
+        free: { enabled: true, description: 'Free intro' },
+        paid: { enabled: true, title: 'Strategy call', price_dollars: 250 },
+      },
+    )
+    assert.equal(result.memberJsonWrites[0].json.keep, 'member-json')
   }
+})
+
+test('Build Profile blocks combined success when enabled Paid intent is invalid', async () => {
+  const result = load({
+    'paid-consulting-calls': 'yes',
+    'paid-call-description': 'Strategy call',
+    'paid-call-rate': 'not-a-price',
+  })
+  await result.submit.click()
+  assert.equal(result.requests.length, 1, 'the idempotent profile save may complete first')
+  assert.equal(result.memberJsonWrites.length, 0)
+  assert.equal(result.success.style.display, 'none')
+  assert.equal(result.error.style.display, 'block')
+  assert.equal(result.errorMessage.textContent, 'Use a whole-dollar paid-call rate from $1 to $1,000.')
 })
 
 // A consult save persists Hourly_Rate 0 for the profile-inapplicable control, and

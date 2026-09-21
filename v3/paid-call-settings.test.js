@@ -468,6 +468,8 @@ function load(options = {}) {
   let authScopeGate = null
   let currentMemberReader = () => activeMember
   let authChange = null
+  let memberJSON = options.memberJSON || {}
+  const memberJsonWrites = []
   const routes = options.routes || {}
 
   const document = {
@@ -503,6 +505,11 @@ function load(options = {}) {
 
   const memberstack = {
     getCurrentMember: async () => ({ data: await currentMemberReader() }),
+    getMemberJSON: async () => ({ data: memberJSON }),
+    updateMemberJSON: async ({ json }) => {
+      memberJSON = json
+      memberJsonWrites.push(json)
+    },
     onAuthChange(listener) { authChange = listener },
   }
   const schedulingAuthFetch = async (url, init) => {
@@ -582,6 +589,7 @@ function load(options = {}) {
   return {
     dom,
     calls,
+    memberJsonWrites,
     events,
     timers,
     warnings,
@@ -737,6 +745,114 @@ test('keeps waiting for the native Paid card after the root deadline expires', a
   assert.equal(result.document.documentElement.getAttribute('data-paid-call-settings'), 'ready')
   assert.equal(result.calls.length, 1)
   assert.equal(result.dom.price.value, 5)
+})
+
+test('hydrates pending Build Profile Paid intent and consumes it after canonical save', async () => {
+  const result = load({
+    cardMode: true,
+    memberId: 'member-a',
+    memberJSON: {
+      keep: 'private',
+      starter_call_settings_intent_v3: {
+        version: 1,
+        member_id: 'member-a',
+        source: 'build-profile',
+        free: { enabled: true, description: 'Saved intro' },
+        paid: { enabled: true, title: 'Strategy call', price_dollars: 250 },
+      },
+    },
+    initial: canonical(),
+    routes: {
+      '/starter/paid-call-settings/upsert/v3': ({ body, setState }) => {
+        const saved = service({
+          title: body.title,
+          price_cents: body.price_cents,
+          duration: body.duration_minutes,
+          revision: 1,
+        })
+        setState(canonical({
+          services: [saved],
+          readiness: { paid_call_enabled: true, bookable: true },
+        }))
+        return { ok: true, status: 200, json: async () => ({ service: saved }) }
+      },
+    },
+  })
+  await settle()
+
+  assert.equal(result.dom.enabled.checked, true)
+  assert.equal(result.dom.disabled.checked, false)
+  assert.equal(result.dom.title.value, 'Strategy call')
+  assert.equal(result.dom.price.value, '250')
+  assert.equal(result.dom.root.getAttribute('data-build-call-intent'), 'pending')
+  assert.match(result.dom.statusOutput.textContent, /Build Profile choice is ready/)
+
+  await result.window.StarterPaidCallSettings.submit()
+  await settle()
+
+  const upsert = result.calls.find((call) => call.path === '/starter/paid-call-settings/upsert/v3')
+  assert.deepEqual(
+    JSON.parse(JSON.stringify({
+      title: upsert.body.title,
+      price_cents: upsert.body.price_cents,
+      duration_minutes: upsert.body.duration_minutes,
+    })),
+    { title: 'Strategy call', price_cents: 25000, duration_minutes: 60 },
+  )
+  assert.equal(result.memberJsonWrites.length, 1)
+  assert.equal(result.memberJsonWrites[0].keep, 'private')
+  assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3.paid, undefined)
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(result.memberJsonWrites[0].starter_call_settings_intent_v3.free)),
+    { enabled: true, description: 'Saved intro' },
+  )
+  assert.equal(result.dom.root.getAttribute('data-build-call-intent'), '')
+})
+
+test('a pending Build Profile Paid change updates an existing canonical service', async () => {
+  const active = service({ title: 'Old call', price_cents: 10000 })
+  const result = load({
+    cardMode: true,
+    memberJSON: {
+      starter_call_settings_intent_v3: {
+        version: 1,
+        member_id: 'member-a',
+        paid: { enabled: true, title: 'New strategy call', price_dollars: 300 },
+      },
+    },
+    initial: canonical({
+      services: [active],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+    routes: {
+      '/starter/paid-call-settings/upsert/v3': ({ body, setState }) => {
+        const saved = service({
+          title: body.title,
+          price_cents: body.price_cents,
+          duration: body.duration_minutes,
+          revision: 5,
+        })
+        setState(canonical({
+          services: [saved],
+          readiness: { paid_call_enabled: true, bookable: true },
+        }))
+        return { ok: true, status: 200, json: async () => ({ service: saved }) }
+      },
+    },
+  })
+  await settle()
+
+  assert.equal(result.dom.title.value, 'New strategy call')
+  assert.equal(result.dom.price.value, '300')
+  assert.match(result.dom.statusOutput.textContent, /save paid calls/)
+  await result.window.StarterPaidCallSettings.submit()
+  await settle()
+
+  const upsert = result.calls.find((call) => call.path === '/starter/paid-call-settings/upsert/v3')
+  assert.equal(upsert.body.config_id, 'cfg-paid-1')
+  assert.equal(upsert.body.title, 'New strategy call')
+  assert.equal(upsert.body.price_cents, 30000)
+  assert.equal(result.memberJsonWrites.at(-1).starter_call_settings_intent_v3, undefined)
 })
 
 test('renders the active service and prerequisite state from canonical GET', async () => {

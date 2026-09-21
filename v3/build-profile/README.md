@@ -184,13 +184,19 @@ These live blocks stay unchanged while Elvin owns availability, booking, and pai
 - page validation and rate formatting that is coupled to those fields;
 - Consult and Full Profile call/retainer visibility controllers.
 
-The extracted final submit writer is now a declared behavior-change candidate. It
-keeps the existing normalized profile payload and availability fields. It no
-longer reads or writes call settings: `free_call`, `free_call_desc`,
-`paid_call`, `paid_call_desc`, and `paid_call_rate` are absent from the payload
-and the `[name="paid-call-rate"]` control is neither constrained nor validated
-here, because Dashboard Call Settings and its active environment-matched
-`nylas_configurations_v3` row are the sole call authority. It
+The extracted final submit writer keeps the existing normalized profile payload
+and availability fields. It never sends `free_call`, `free_call_desc`,
+`paid_call`, `paid_call_desc`, or `paid_call_rate` to the profile endpoint.
+Instead, Build Profile validates its visible Call Settings controls and stores a
+versioned, member-bound `starter_call_settings_intent_v3` receipt in private
+Memberstack JSON. Dashboard and Edit Profile hydrate that receipt as a pending
+create, update, or disable, then consume it only after the existing canonical
+Call Settings endpoint returns exact readback. Calendar plus availability are
+required for Free activation; Paid also requires a charge-ready, fresh Stripe
+connection. Until those prerequisites exist, the choice remains pending rather
+than being projected to `freelancers_v3`. The active environment-matched
+`nylas_configurations_v3` row and provider readback remain the sole call
+authority. The writer
 also treats the monthly-retainer section as profile-type-inapplicable on
 Consult: hidden hydrated radio/rate values always submit `retainer: false` and
 `retainer_rate: 0`. The hidden hourly rate is inapplicable on Consult in the same
