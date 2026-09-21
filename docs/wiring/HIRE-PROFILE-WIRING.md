@@ -191,7 +191,10 @@ rule, so delayed wf-xano results cannot restore a missing Company-page link.
 
 The runtime no longer calls `api:SYL06lUR/companies`,
 `edit_profile/starter/get_also_worked_with`, or `profile/get_companies`.
-`FREELANCER_ID` remains the Memberstack ID used by booking. The public Algolia
+`FREELANCER_ID` remains the CMS-authored Memberstack ID of the viewed profile,
+used for ownership and the CMS Starter-name lookup; the booking identity comes
+from `bookingStarterMemberstackId()` and differs on the staging fixture route.
+The public Algolia
 lookup instead reads the starter's positive integer Xano ID at parse time from
 `[data-starter-xano-id]` inside the hidden `.data-native-binding` wrapper. If
 the carrier is absent or invalid, the lookup warns and stands down.
@@ -1219,9 +1222,11 @@ which is the only caller of the two painters. A starter opening their own
 viewer saw canonical values.
 
 The gate is ownership, not role: the paint runs only when
-`MEMBER.id === FREELANCER_ID`. `FREELANCER_ID` is what this file feeds to
-`getStarterByMemberId`, whose Xano input is a Memberstack id, so both sides of
-that comparison live in one id space. A talent viewing **someone else's**
+`MEMBER.id === FREELANCER_ID`. `FREELANCER_ID` is the CMS-authored Memberstack
+id of the viewed profile, so both sides of that comparison live in one id space.
+It is not the booking identity — `bookingStarterMemberstackId()` owns that and
+diverges on the staging fixture route — so a new booking-side lookup must read
+the booking identity, not `FREELANCER_ID`. A talent viewing **someone else's**
 profile is not an owner and gets the unchanged non-brand behaviour, byte for
 byte. The reveal itself is untouched for every viewer — the paint is layered on
 top of it and changes only what the revealed surfaces say.

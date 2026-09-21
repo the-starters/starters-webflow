@@ -1,7 +1,7 @@
 /**
  * V3 hire-profile renderer — /hire/<slug>
  *
- * @release v1.59.601
+ * @release v1.59.602
  *
  * Ported from the page-level FOOTER custom code on the hire template (page
  * 69f241ed147b71addb6f153d), so that the remaining runtime logic lives in
@@ -824,6 +824,12 @@
   }
 
   function publicCallTypeReady(type) {
+      // This gate only means something while the public projection and the
+      // booking paths describe the SAME starter. On the staging fixture route
+      // they deliberately do not: the wrappers keep their CMS-authored
+      // `starter_id`, so their answer is about a different starter than the one
+      // being booked and cannot decide this viewer's readiness.
+      if (STAGING_BOOKING_FIXTURE) return true;
       const wrapper = document.querySelector('[wf-xano-instance="starter-call-offers-header"], [wf-xano-instance="starter-call-offers-services"]');
       if (!wrapper) return true; // Legacy pages have no public-readiness contract.
       if (!latestCanonicalCallItems) return false;
@@ -1655,9 +1661,12 @@
   /**
    * The viewer IS the starter whose profile this is.
    *
-   * `FREELANCER_ID` is what this file feeds to `getStarterByMemberId`, whose
-   * Xano input is a Memberstack id, so both sides of this comparison live in
-   * the same id space. A talent viewing SOMEONE ELSE's profile is not an owner
+   * `FREELANCER_ID` is the CMS-authored Memberstack id of the profile being
+   * viewed, so both sides of this comparison live in the same id space. It is
+   * NOT the booking identity: `bookingStarterMemberstackId()` owns that, and on
+   * the staging fixture route the two differ. Ownership and the CMS Starter-name
+   * lookup read `FREELANCER_ID`; anything booking-side must read the booking
+   * identity instead. A talent viewing SOMEONE ELSE's profile is not an owner
    * and keeps the unchanged non-brand behaviour.
    */
   function isProfileOwner(member) {
