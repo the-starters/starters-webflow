@@ -9,7 +9,10 @@
  * `also-worked-with` list with the profile's Algolia `work-history` company
  * names. The rail's CMS image filename carries the stable Xano/Algolia ID.
  *
- * Load once from the home page via a thin jsDelivr loader:
+ * Load once from the home page via a thin jsDelivr loader, after the deferred
+ * v3/algolia-environment.js tag — that resolver is the only source of the
+ * managed Starter index, so an earlier tag fails closed and renders no
+ * companies at all:
  *   <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/quiz-main/quiz-home.js"></script>
  *
  * Debug logging is OFF by default; opt in per session with ?starterQuizDebug=true
@@ -25,12 +28,9 @@
         '.section_home-consult .expert-card_item.is-consult-home'
     const homeConsultCompanyListSelector = '.expert-card_company-list'
     const homeConsultProfileImageSelector = '.expert-card_profile-image'
-    const algoliaClientSelector = 'script[data-starters-v3-algolia-client]'
-    const startersResourceSelector =
-        '[data-starters-v3-algolia-resource="starters"][wf-algolia-index]'
+    const homeConsultCompanyTextClass =
+        'expert-card_company-text text-size-small'
     const workHistoryField = 'work-history'
-    const starterReplicaSuffix =
-        /__(?:name-AtoZ|rate_asc|rate_desc|published_asc|published_desc)$/
 
     /**
      * Checks whether starter quiz debug logging is enabled.
@@ -172,43 +172,46 @@
     }
 
     /**
-     * Returns ordered company names from an Algolia work-history value.
-     * Invalid and blank entries are omitted without falling back to the legacy
-     * also-worked-with projection.
+     * Returns ordered company names from an Algolia work-history value, using
+     * the same rules as quiz-results.js: index order is preserved, entries
+     * whose `company` is not a string are dropped rather than coerced, and
+     * repeat stints at one company collapse to the first spelling, matched
+     * case-insensitively. Invalid and blank entries are omitted without
+     * falling back to the legacy also-worked-with projection.
      *
      * @param {unknown} value Algolia `work-history` value.
-     * @returns {string[]} Ordered company names.
+     * @returns {string[]} Ordered company names, deduplicated.
      */
     function getWorkHistoryCompanies(value) {
         if (!Array.isArray(value)) return []
 
-        return value
-            .map((entry) =>
-                entry && typeof entry === 'object'
-                    ? String(entry.company || '').trim()
-                    : '',
-            )
-            .filter(Boolean)
+        const seenCompanies = new Set()
+
+        return value.reduce((companies, entry) => {
+            if (typeof entry?.company !== 'string') return companies
+
+            const company = entry.company.trim()
+            if (!company) return companies
+
+            const companyKey = company.toLowerCase()
+            if (seenCompanies.has(companyKey)) return companies
+
+            seenCompanies.add(companyKey)
+            companies.push(company)
+
+            return companies
+        }, [])
     }
 
     /**
-     * Reads a card's stable Xano/Algolia profile ID. A canonical data attribute
-     * wins when present; the current Webflow CMS rail exposes the same ID in
-     * the profile image filename (`freelancer-593.avif`).
+     * Reads a card's stable Xano/Algolia profile ID. The Webflow CMS rail
+     * carries no ID attribute, so the ID comes from the profile image
+     * filename (`freelancer-593.avif`) the CMS already publishes.
      *
      * @param {Element} card Home consult card.
      * @returns {string} Stable profile ID, or an empty string.
      */
     function getHomeConsultProfileId(card) {
-        const attributeId = [
-            'data-starter-id',
-            'data-xano-id',
-            'data-wf-xano-id',
-        ]
-            .map((name) => String(card.getAttribute(name) || '').trim())
-            .find(Boolean)
-        if (attributeId) return attributeId
-
         const image = card.querySelector(homeConsultProfileImageSelector)
         const source = String(image?.getAttribute('src') || '')
         const match = source.match(/(?:^|[_/-])freelancer-(\d+)(?:\.|[_/?#-]|$)/i)
@@ -216,43 +219,32 @@
     }
 
     /**
-     * Resolves the environment-managed public Algolia settings. The official
-     * environment controller is preferred; DOM attributes are its documented
-     * runtime output and keep this adapter compatible if the controller object
-     * is not retained after boot.
+     * Resolves the environment-managed public Algolia settings. The managed
+     * host resolution in v3/algolia-environment.js is the only authority, so
+     * this asset must load after it; an unresolved environment fails closed.
      *
      * @returns {{appId: string, searchKey: string, indexName: string}|null}
      */
     function getHomeConsultAlgoliaConfig() {
         const environmentApi = window.StartersV3AlgoliaEnvironment
         const managed = environmentApi?.getManagedSearchConfig?.('starters')
-        if (managed?.appId && managed?.searchKey && managed?.indexName) {
-            return {
-                appId: managed.appId,
-                searchKey: managed.searchKey,
-                indexName: managed.indexName.replace(starterReplicaSuffix, ''),
-            }
+        if (!managed?.appId || !managed?.searchKey || !managed?.indexName) {
+            return null
         }
 
-        const client = document.querySelector(algoliaClientSelector)
-        const resource = document.querySelector(startersResourceSelector)
-        const appId = String(client?.getAttribute('data-app-id') || '').trim()
-        const searchKey = String(
-            client?.getAttribute('data-search-key') || '',
-        ).trim()
-        const indexName = String(
-            resource?.getAttribute('wf-algolia-index') || '',
-        )
-            .trim()
-            .replace(starterReplicaSuffix, '')
-
-        if (!appId || !searchKey || !indexName) return null
-        return { appId, searchKey, indexName }
+        return {
+            appId: managed.appId,
+            searchKey: managed.searchKey,
+            indexName: managed.indexName,
+        }
     }
 
     /**
      * Replaces a single legacy company list with ordered work-history names.
-     * Text-only rendering avoids treating CMS or search values as markup.
+     * One paragraph per company is the shape the shared expert-card stylesheet
+     * styles, so each name keeps its `.text-size-small` sizing, stays an
+     * unbreakable inline unit, and gets its separating comma from the sheet.
+     * Per-element textContent avoids treating CMS or search values as markup.
      *
      * @param {Element} list Company-list element.
      * @param {string[]} companies Ordered company names.
@@ -260,7 +252,14 @@
      * @returns {void}
      */
     function renderHomeConsultCompanies(list, companies, status) {
-        list.textContent = companies.join(', ')
+        list.replaceChildren(
+            ...companies.map((company) => {
+                const item = document.createElement('p')
+                item.className = homeConsultCompanyTextClass
+                item.textContent = company
+                return item
+            }),
+        )
         list.setAttribute('data-home-work-history-status', status)
     }
 
@@ -287,7 +286,7 @@
         if (!cards.length) return
 
         cards.forEach(({ id, list }) => {
-            list.textContent = ''
+            list.replaceChildren()
             list.setAttribute(
                 'data-home-work-history-status',
                 id ? 'loading' : 'missing-id',
@@ -301,6 +300,7 @@
                 'data-home-work-history-status',
                 config ? 'missing-id' : 'missing-config',
             )
+            window.dispatchEvent(new CustomEvent('expert-cards:relayout'))
             return
         }
 
@@ -343,7 +343,7 @@
                 list.setAttribute('data-home-work-history-status', 'error')
             })
             section.setAttribute('data-home-work-history-status', 'error')
-            console.warn('[Home Consult]', 'work-history hydration failed', error)
+            logQuizFlow('consult work-history hydration failed', error)
         } finally {
             window.dispatchEvent(new CustomEvent('expert-cards:relayout'))
         }
