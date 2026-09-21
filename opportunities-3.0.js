@@ -3948,6 +3948,45 @@
     })
   }
 
+  function ensureEndProjectClearReview(parts, visible) {
+    if (!parts.form) return
+    let clear = $('[data-end-project-clear-review]', parts.form)
+    if (!clear && visible) {
+      const rating = $('input[name="Call-Rating"]', parts.form)
+      const group = rating && rating.closest('[data-end-project-review]')
+      if (!group) return
+      clear = document.createElement('button')
+      clear.setAttribute('type', 'button')
+      clear.setAttribute('data-end-project-clear-review', '')
+      clear.textContent = 'Clear review'
+      // Use an authored control when available; older published modals get a
+      // keyboard-accessible fallback beside the existing review fields.
+      clear.style.cssText = 'display:block;margin-top:0.5rem;padding:0.5rem 0;' +
+        'border:0;background:transparent;color:inherit;font:inherit;' +
+        'text-decoration:underline;cursor:pointer;'
+      group.appendChild(clear)
+    }
+    setEndProjectVisible(clear, visible)
+  }
+
+  function clearEndProjectReview(event, control) {
+    event.preventDefault()
+    event.stopPropagation()
+    const request = activeEndProjectRequest
+    const form = control.closest('form')
+    if (!request || !request.view.showReview || !form ||
+      request.modal !== control.closest('[data-modal-target="' + PROJECT_END_MODAL_ID + '"]') ||
+      form !== $('form', request.modal)) return
+    $$('input[name="Call-Rating"], [name="Public-Feedback"], [name="Feedback"]', form)
+      .forEach((input) => {
+        if (input.getAttribute('name') === 'Call-Rating') input.checked = false
+        else input.value = ''
+        input.dispatchEvent(new CustomEvent('input', { bubbles: true }))
+        input.dispatchEvent(new CustomEvent('change', { bubbles: true }))
+      })
+    setEndProjectVisible($('.w-form-fail', request.modal), false)
+  }
+
   function paintEndProjectModal(modal, view, project) {
     const parts = endProjectModalParts(modal)
     const identity = endProjectIdentity(project)
@@ -3970,6 +4009,7 @@
         })
       })
     }
+    ensureEndProjectClearReview(parts, view.showReview)
     setEndProjectVisible(parts.reasonWrap, view.showReason)
     // Active projects no longer have a second end mode, but an authored
     // toggle can still exist during Designer/CDN rollout skew: keep it hidden.
@@ -4095,7 +4135,7 @@
         if (!(rating >= 1 && rating <= 5)) {
           reviewError(
             modal,
-            'Choose a rating from 1 to 5 stars, or clear your feedback to skip the review.',
+            'Choose a rating from 1 to 5 stars, or select “Clear review” to skip the review.',
             validationDiagnostic('project_end', 'review', 'INVALID_RATING'),
           )
           return
@@ -4103,7 +4143,7 @@
         if (reviewText.length < 10 || reviewText.length > 4000) {
           reviewError(
             modal,
-            'Write between 10 and 4,000 characters, or clear the rating to skip the review.',
+            'Write between 10 and 4,000 characters, or select “Clear review” to skip the review.',
             validationDiagnostic('project_end', 'review', 'INVALID_REVIEW_LENGTH'),
           )
           return
@@ -4718,6 +4758,13 @@
         return
       }
       const target = event.target
+      const clearReview = target && target.closest
+        ? target.closest('[data-end-project-clear-review]')
+        : null
+      if (clearReview) {
+        clearEndProjectReview(event, clearReview)
+        return
+      }
       const toggle = target && target.closest
         ? target.closest('[data-end-project-mode-toggle]')
         : null

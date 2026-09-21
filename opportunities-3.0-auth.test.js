@@ -9415,3 +9415,98 @@ test('final invoices reject extra decimal places before any request', async () =
     assert.match(dom.modal.querySelector('.w-form-fail').textContent, /two decimal places/)
   }
 })
+
+for (const feedback of ['', 'Too short', 'x'.repeat(4001)]) {
+  test(`end-project Clear review recovers a selected star with ${feedback.length} feedback characters`, async () => {
+    const dom = endProjectDom({ rating: '1', feedback })
+    dom.rating.checked = true
+    const changes = []
+    dom.rating.dispatchEvent = (event) => { changes.push(event.type) }
+    dom.feedback.dispatchEvent = (event) => { changes.push(event.type) }
+    let actionBody = null
+    let reviewCount = 0
+    const bridge = await loadBridge(async (input, init = {}) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/brand/projects/mine')) return response({ items: [{
+        id: 675, lifecycle_state: 'active', lifecycle_version: 4, has_review: false,
+      }] })
+      if (url.includes('/projects/action/v3')) {
+        actionBody = JSON.parse(init.body)
+        return response({ project: { id: 675, lifecycle_state: 'completed', lifecycle_version: 5 } })
+      }
+      if (url.includes('/brand/reviews/submit')) { reviewCount += 1; return response({ review_id: 42 }) }
+      throw new Error(`Unexpected request: ${url}`)
+    }, endProjectBridgeOptions(dom, paidBrandMember, '/brand-dashboard'))
+    assert.ok(await waitFor(() => dom.end.getAttribute('data-project-action') === 'end'))
+    bridge.dispatchDocument('click', clickEvent(dom.end).event)
+    assert.ok(await waitFor(() => dom.title.textContent === 'End Project & Review'))
+    const submit = () => bridge.dispatchDocument('submit', {
+      target: dom.form, preventDefault() {}, stopPropagation() {},
+    })
+    submit()
+    assert.match(dom.fail.textContent, /between 10 and 4,000/)
+    assert.equal(actionBody, null)
+    const clear = dom.form.querySelector('[data-end-project-clear-review]')
+    assert.ok(clear, 'the optional review needs a visible clear control')
+    assert.equal(clear.textContent, 'Clear review')
+    assert.equal(clear.getAttribute('type'), 'button')
+    assert.notEqual(clear.style.display, 'none')
+    bridge.dispatchDocument('click', clickEvent(clear).event)
+    assert.equal(dom.rating.checked, false)
+    assert.equal(dom.rating.value, '1', 'clearing must retain the star value for reuse')
+    assert.equal(dom.feedback.value, '')
+    assert.equal(dom.fail.style.display, 'none')
+    assert.equal(actionBody, null, 'clearing must not end the project')
+    assert.deepEqual(changes, ['input', 'change', 'input', 'change'])
+    submit()
+    assert.ok(await waitFor(() => actionBody !== null))
+    assert.equal(actionBody.action, 'complete')
+    await new Promise(setImmediate)
+    assert.equal(reviewCount, 0)
+  })
+}
+
+test('end-project reuses an authored clear control and scopes it to the active optional review', async () => {
+  const dom = endProjectDom({ rating: '1', feedback: 'Draft review' })
+  dom.rating.checked = true
+  dom.rating.dispatchEvent = () => {}
+  dom.feedback.dispatchEvent = () => {}
+  const clear = el('button', { type: 'button', 'data-end-project-clear-review': '' })
+  clear.textContent = 'Clear review'
+  dom.form.appendChild(clear)
+  let state = 'active'
+  let hasReview = false
+  const bridge = await loadBridge(async (input) => {
+    const url = String(input)
+    if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+    if (url.includes('/brand/projects/mine')) return response({ items: [{
+      id: 675, lifecycle_state: state, lifecycle_version: 4, has_review: hasReview,
+    }] })
+    throw new Error(`Unexpected request: ${url}`)
+  }, endProjectBridgeOptions(dom, paidBrandMember, '/brand-dashboard'))
+  assert.ok(await waitFor(() => dom.end.getAttribute('data-project-action') === 'end'))
+  bridge.dispatchDocument('click', clickEvent(clear).event)
+  assert.equal(dom.rating.checked, true, 'an inactive form must not be cleared')
+  for (const scenario of [
+    { state: 'active', hasReview: false, visible: true },
+    { state: 'pending', hasReview: false, visible: false },
+    { state: 'active', hasReview: true, visible: false },
+    { state: 'active', hasReview: false, visible: true },
+  ]) {
+    state = scenario.state
+    hasReview = scenario.hasReview
+    bridge.dispatchDocument('click', clickEvent(dom.end).event)
+    await new Promise(setImmediate)
+    assert.ok(await waitFor(() => dom.title.textContent === (state === 'pending' ? 'Cancel Project' : 'End Project & Review')))
+    assert.equal(dom.form.querySelectorAll('[data-end-project-clear-review]').length, 1)
+    assert.equal(clear.style.display !== 'none', scenario.visible)
+    if (!scenario.visible) {
+      bridge.dispatchDocument('click', clickEvent(clear).event)
+      assert.equal(dom.rating.checked, true)
+      assert.equal(dom.feedback.value, 'Draft review')
+    }
+    bridge.dispatchWindow('modal-close', { modal: dom.modal })
+    await new Promise(setImmediate)
+  }
+})
