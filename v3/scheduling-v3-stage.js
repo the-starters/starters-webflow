@@ -1,3 +1,11 @@
+/**
+ * V3 scheduling compatibility adapter — hostname/path-gated route rewriting.
+ *
+ * @release v1.59.602
+ *
+ * Served from jsDelivr `@latest` next to `hire-profile.js`, so the marker is
+ * what tells a cached copy apart from the bytes a change just shipped.
+ */
 ;(function () {
   'use strict'
 
@@ -170,11 +178,21 @@
     return new Request(url.href, request)
   }
 
+  function bookingStarterMemberstackId() {
+    if (
+      activeHost === STAGING_HOST &&
+      activePath === '/hire/jp-test'
+    ) {
+      return 'mem_sb_cmqhuaxn80d270sseeo74fn7i'
+    }
+    return window.starter_memberstack_id
+  }
+
   function injectBookingIdentity(scheduler) {
     if (!isHireBookingPath || !scheduler) return false
 
     const brandMemberstackId = window.MEMBER && window.MEMBER.id
-    const starterMemberstackId = window.starter_memberstack_id
+    const starterMemberstackId = bookingStarterMemberstackId()
     if (!brandMemberstackId || !starterMemberstackId) return false
 
     const serialized = typeof scheduler.bookingInfo === 'string'

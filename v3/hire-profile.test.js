@@ -496,6 +496,7 @@ function makeContext({
   freeController,
   paidController,
   dynamicFreeController,
+  starterMemberId = 'mem_canary',
   freeControllerLoadFails = false,
   omitInitialFreeController = false,
   existingHeadScripts = [],
@@ -608,7 +609,7 @@ function makeContext({
       : (freeController || defaultFreeController),
     StartersPaidCallBrandPayment: paidController,
     formatWithTimezone: () => ({ list: {} }),
-    starter_memberstack_id: 'mem_canary',
+    starter_memberstack_id: starterMemberId,
     stripe_charges: false,
     location,
     fetch: (url) => {
@@ -8150,6 +8151,281 @@ test('booking discovery passes the matching CMS Starter name to Free and Paid', 
     assert.deepEqual(installed.map(options => options.config.is_paid), [false, true])
     assert.deepEqual(installed.map(options => options.starterName), [name, name])
   }
+})
+
+test('the exact staging jp-test canary uses the owned Test booking identity and keeps the CMS name', async () => {
+  const page = makePage()
+  page.root.appendChild(makeElement('a', {
+    'messages-profile-message': 'mem_live_cms_value',
+    'messages-profile-name': 'JP Test',
+  }))
+  const lookups = []
+  const installs = []
+  const context = makeContext({
+    page,
+    location: { hostname: 'the-starters-3-0.webflow.io', pathname: '/hire/jp-test/' },
+    starterMemberId: 'mem_live_cms_value',
+    member: BRAND_MEMBER,
+    freeController: {
+      getStarterByMemberId: async (memberId) => {
+        lookups.push(memberId)
+        return { nylas_grant_id: 'grant_test', nylas_grant_email: 'starter@example.com' }
+      },
+      getConfigs: async () => [
+        {
+          config_id: 'free_test',
+          is_paid: false,
+          active: true,
+          data_environment: 'test',
+          duration: 30,
+          price_cents: 0,
+        },
+        {
+          config_id: 'paid_test',
+          is_paid: true,
+          active: true,
+          data_environment: 'test',
+          payment_environment: 'test',
+          currency: 'USD',
+          duration: 60,
+          price_cents: 100,
+        },
+      ],
+      getNearestSlot: async () => null,
+      installFreeBookingController: (options) => {
+        installs.push(options)
+        return true
+      },
+    },
+    paidController: {
+      installPaidBookingController: (options) => {
+        installs.push(options)
+        return true
+      },
+    },
+  })
+
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.deepEqual(lookups, ['mem_sb_cmqhuaxn80d270sseeo74fn7i'])
+  assert.equal(installs.length, 2)
+  assert.equal(installs[0].starterMemberstackId, 'mem_sb_cmqhuaxn80d270sseeo74fn7i')
+  assert.deepEqual(installs.map((options) => options.starterSlug), ['jp-dionisio', 'jp-dionisio'])
+  assert.deepEqual(installs.map((options) => options.starterName), ['JP Test', 'JP Test'])
+})
+
+test('another staging profile keeps its CMS identity and route slug', async () => {
+  const page = makePage()
+  const lookups = []
+  const installs = []
+  const context = makeContext({
+    page,
+    location: { hostname: 'the-starters-3-0.webflow.io', pathname: '/hire/another-starter' },
+    starterMemberId: 'mem_sb_another_starter',
+    member: BRAND_MEMBER,
+    freeController: {
+      getStarterByMemberId: async (memberId) => {
+        lookups.push(memberId)
+        return { nylas_grant_id: 'grant_test' }
+      },
+      getConfigs: async () => [{
+        config_id: 'free_test', is_paid: false, active: true,
+        data_environment: 'test', duration: 30, price_cents: 0,
+      }],
+      getNearestSlot: async () => null,
+      installFreeBookingController: (options) => {
+        installs.push(options)
+        return true
+      },
+    },
+  })
+
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.deepEqual(lookups, ['mem_sb_another_starter'])
+  assert.equal(installs[0].starterMemberstackId, 'mem_sb_another_starter')
+  assert.equal(installs[0].starterSlug, 'another-starter')
+})
+
+test('jp-test keeps its CMS identity and route slug outside the exact staging host', async () => {
+  const page = makePage()
+  const lookups = []
+  const installs = []
+  const context = makeContext({
+    page,
+    location: { hostname: 'www.thestarters.com', pathname: '/hire/jp-test' },
+    starterMemberId: 'mem_live_cms_value',
+    member: BRAND_MEMBER,
+    freeController: {
+      getStarterByMemberId: async (memberId) => {
+        lookups.push(memberId)
+        return { nylas_grant_id: 'grant_live', nylas_grant_email: 'starter@example.com' }
+      },
+      getConfigs: async () => [{
+        config_id: 'free_live',
+        is_paid: false,
+        active: true,
+        data_environment: 'production',
+        duration: 30,
+        price_cents: 0,
+      }],
+      getNearestSlot: async () => null,
+      installFreeBookingController: (options) => {
+        installs.push(options)
+        return true
+      },
+    },
+  })
+
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.deepEqual(lookups, ['mem_live_cms_value'])
+  assert.equal(installs.length, 1)
+  assert.equal(installs[0].starterMemberstackId, 'mem_live_cms_value')
+  assert.equal(installs[0].starterSlug, 'jp-test')
+})
+
+// The call-offers wrappers keep their CMS-authored `starter_id`, so on the
+// fixture route their public projection describes the CMS starter while
+// discovery books the Test starter. A gate reading a different starter's offers
+// cannot decide this route's readiness, and fails closed if it tries.
+test('the staging jp-test canary opens Book Call when the CMS public projection has no Free offer', async () => {
+  const page = makePage()
+  const services = addXanoCallCardsFixture(page, 'starter-call-offers-services')
+  const wfx = makeCallCardsWfXanoFixture(services.wrapper, 'starter-call-offers-services')
+  const installs = []
+  const context = makeContext({
+    page,
+    location: { hostname: 'the-starters-3-0.webflow.io', pathname: '/hire/jp-test' },
+    starterMemberId: 'mem_live_cms_value',
+    member: BRAND_MEMBER,
+    wfXano: wfx.api,
+    freeController: {
+      getStarterByMemberId: async () => ({
+        nylas_grant_id: 'grant_test',
+        nylas_grant_email: 'starter@example.com',
+      }),
+      getConfigs: async () => [{
+        config_id: 'free_test', is_paid: false, active: true,
+        data_environment: 'test', duration: 30, price_cents: 0,
+      }],
+      getNearestSlot: async () => null,
+      installFreeBookingController: (options) => {
+        installs.push(options)
+        return true
+      },
+    },
+  })
+
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  wfx.emit(callCardResult({ free: false, paid: false }))
+  await settle()
+
+  assert.equal(installs.length, 1)
+  assert.equal(installs[0].starterMemberstackId, 'mem_sb_cmqhuaxn80d270sseeo74fn7i')
+  assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), null)
+  assert.equal(page.bookingButton.getAttribute('aria-disabled'), null)
+})
+
+// The foreign CMS projection answers for neither type on this route, so Paid is
+// refused locally — a CMS record that publishes a public paid offer must still
+// not hand a tester a Stripe entry point.
+test('the staging jp-test canary keeps Paid closed even when the CMS projection publishes it', async () => {
+  const page = makePage()
+  const services = addXanoCallCardsFixture(page, 'starter-call-offers-services')
+  const wfx = makeCallCardsWfXanoFixture(services.wrapper, 'starter-call-offers-services')
+  const installs = []
+  const context = makeContext({
+    page,
+    location: { hostname: 'the-starters-3-0.webflow.io', pathname: '/hire/jp-test' },
+    starterMemberId: 'mem_live_cms_value',
+    member: BRAND_MEMBER,
+    wfXano: wfx.api,
+    freeController: {
+      getStarterByMemberId: async () => ({
+        nylas_grant_id: 'grant_test',
+        nylas_grant_email: 'starter@example.com',
+      }),
+      getConfigs: async () => [
+        {
+          config_id: 'free_test', is_paid: false, active: true,
+          data_environment: 'test', duration: 30, price_cents: 0,
+        },
+        {
+          config_id: 'paid_test', is_paid: true, active: true,
+          data_environment: 'test', payment_environment: 'test',
+          currency: 'USD', duration: 60, price_cents: 100,
+        },
+      ],
+      getNearestSlot: async () => null,
+      installFreeBookingController: () => {
+        installs.push('free')
+        return true
+      },
+    },
+    paidController: {
+      installPaidBookingController: () => {
+        installs.push('paid')
+        return true
+      },
+    },
+  })
+
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  wfx.emit(callCardResult({ free: true, paid: true }))
+  await settle()
+
+  assert.deepEqual(installs, ['free', 'paid'])
+  assert.equal(services.free.root.style.display, 'block')
+  assert.equal(services.free.root.getAttribute('data-canonical-call-unavailable'), null)
+  assert.equal(services.paid.root.style.display, 'none')
+  assert.equal(services.paid.root.getAttribute('data-canonical-call-unavailable'), '')
+  assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), null)
+})
+
+test('another staging profile still gates Book Call on its own public projection', async () => {
+  const page = makePage()
+  const services = addXanoCallCardsFixture(page, 'starter-call-offers-services')
+  const wfx = makeCallCardsWfXanoFixture(services.wrapper, 'starter-call-offers-services')
+  const installs = []
+  const context = makeContext({
+    page,
+    location: { hostname: 'the-starters-3-0.webflow.io', pathname: '/hire/another-starter' },
+    starterMemberId: 'mem_sb_another_starter',
+    member: BRAND_MEMBER,
+    wfXano: wfx.api,
+    freeController: {
+      getStarterByMemberId: async () => ({
+        nylas_grant_id: 'grant_test',
+        nylas_grant_email: 'starter@example.com',
+      }),
+      getConfigs: async () => [{
+        config_id: 'free_test', is_paid: false, active: true,
+        data_environment: 'test', duration: 30, price_cents: 0,
+      }],
+      getNearestSlot: async () => null,
+      installFreeBookingController: (options) => {
+        installs.push(options)
+        return true
+      },
+    },
+  })
+
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  wfx.emit(callCardResult({ free: false, paid: false }))
+  await settle()
+
+  assert.equal(installs.length, 1)
+  assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), '')
 })
 
 /* ====================== paywalled signed-in viewers ====================== */
