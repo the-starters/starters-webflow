@@ -1,7 +1,7 @@
 /**
  * V3 scheduling compatibility adapter — hostname/path-gated route rewriting.
  *
- * @release v1.59.602
+ * @release v1.59.603
  *
  * Served from jsDelivr `@latest` next to `hire-profile.js`, so the marker is
  * what tells a cached copy apart from the bytes a change just shipped.
