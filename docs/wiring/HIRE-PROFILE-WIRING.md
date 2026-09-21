@@ -1,7 +1,9 @@
 # `v3/hire-profile.js` — wiring and ownership
 
-Last updated: 2026-09-18
-Status: Call projections and Free Call behavior are GitHub-owned; the Free/Paid
+Last updated: 2026-09-21
+Status: Free Brands and every other signed-in non-paid viewer are paywalled into
+`signup-modal` on all paid CTAs (see [Paywalled viewers](#paywalled-viewers)).
+Call projections and Free Call behavior are GitHub-owned; the Free/Paid
 call-card cutover hides the old CMS variants and renders canonical Xano data;
 direct Webflow head cleanup remains pending. Paid-Brand favourite hydration is
 GitHub-owned in `v3/hire-profile-favorites.js` and still needs a hire-template
@@ -842,6 +844,29 @@ That attribution pair is the existing signup controller's canonical service
 contract. It opens `signup-modal` for a confirmed logged-out viewer and maps the
 two card values to `booking_free` / `booking_paid` lead entries on the Starter
 Booking track. It does not open a booking surface before signup.
+
+<a id="paywalled-viewers"></a>
+
+**Paywalled viewers (signed in, not paid).** Decision 2026-09-21. A signed-in
+viewer who is not the profile owner, not talent and not on a paid Brand plan
+reads exactly the logged-out projection above: `isPaywalledViewer` in
+`hire-profile.js` covers `brand-free`, the legacy-Brand compatibility role,
+cancelled paid Brands whose free plan is still active, and any member whose plan
+maps to no role. `isBrandMember`, which gates the authenticated booking path,
+the chooser and the `generate-contract` wiring, is paid-only. Because
+`signup-attribution.js` acts only for a confirmed logged-out viewer,
+`hire-profile.js` owns the paywalled click itself: one document-level
+capture-phase listener on `[data-signup-trigger-element]` that prevents the
+default, stops propagation and opens `signup-modal` through the Lumos registry,
+writing no attribution cookie. Every authored `data-modal-trigger` on those
+elements is removed at member-ready as the fail-closed half. The modal itself
+is the paywall: its signup form is `data-ms-content="!members"` and its
+membership upsell block is `data-ms-content="members"`, so no Designer change
+was needed. Talent viewing another Starter is unchanged: Hire, Book Call and
+Message are already hidden for them by `data-ms-content="!freelancer-only"`,
+their call cards read `hidden`, and their service cards carry no modal trigger.
+Regression coverage: the "paywalled signed-in viewers" block at the end of
+`v3/hire-profile.test.js`.
 
 A public Paid item's amount is painted from the DTO's whole-dollar `price`,
 converted to cents for the shared rate writer. Every other viewer has that value

@@ -9,7 +9,6 @@ const MEMBER_ATTRIBUTE = 'messages-profile-message'
 const NAME_ATTRIBUTE = 'messages-profile-name'
 const PHOTO_ATTRIBUTE = 'messages-profile-photo'
 const CHAT_ATTRIBUTE = 'messages-profile-chat'
-const UPGRADE_ATTRIBUTE = 'messages-profile-upgrade'
 const BUTTON_SELECTOR = '[' + MEMBER_ATTRIBUTE + ']'
 const CHAT_SELECTOR = '[' + CHAT_ATTRIBUTE + ']'
 
@@ -929,10 +928,12 @@ test('a wired trigger is not reported as unwired', async () => {
   )
 })
 
-test('a free Brand is redirected to the configured upgrade target', async () => {
+test('a free Brand is sent to the signup modal instead of the chat', async () => {
+  // Decision 2026-09-21: the signup modal doubles as the membership paywall.
+  // Memberstack's data-ms-content swaps the form for the upsell block, so a
+  // free Brand sees pricing in place, with no page redirect.
   const loaded = load({
     triggers: [starterTrigger()],
-    containerAttributes: { [UPGRADE_ATTRIBUTE]: '/pricing' },
     member: { id: VIEWER_ID },
     role: 'brand-free',
   })
@@ -941,39 +942,14 @@ test('a free Brand is redirected to the configured upgrade target', async () => 
   loaded.openModal()
   await settle()
 
-  assert.deepEqual(loaded.navigations, ['/pricing'])
+  assert.deepEqual(loaded.navigations, [])
+  assert.equal(loaded.openedSignup.length, 1)
+  assert.equal(loaded.closed.length, 1, 'the message modal closes so the two are not stacked')
   assert.equal(loaded.calls.mounted.length, 0)
 })
 
-test('an upgrade override on the nested carrier is honored, not dropped', async () => {
-  // Webflow publishes messages-profile-upgrade onto the clickable_link carrier,
-  // the same place the other messages-profile-* attributes land, while the modal
-  // trigger is the outer button_main-wrap wrapper.
-  const carrier = starterTrigger({ [UPGRADE_ATTRIBUTE]: '/pricing' })
-  const wrapper = trigger({ tagName: 'DIV' })
-  wrapper.querySelector = (selector) => {
-    if (selector === BUTTON_SELECTOR || selector === 'a') return carrier
-    return null
-  }
-  wrapper.contains = (element) => element === carrier
-
-  const loaded = load({
-    triggers: [carrier],
-    modalTriggers: [wrapper],
-    member: { id: VIEWER_ID },
-    role: 'brand-free',
-  })
-  await settle()
-
-  wrapper.click()
-  await settle()
-
-  assert.deepEqual(loaded.navigations, ['/pricing'])
-  assert.equal(loaded.calls.mounted.length, 0)
-})
-
-test('a free Brand click never opens the modal', async () => {
-  const element = starterTrigger({ [UPGRADE_ATTRIBUTE]: '/pricing' })
+test('a free Brand click opens signup and never the chat modal', async () => {
+  const element = starterTrigger()
   const loaded = load({
     triggers: [element],
     member: { id: VIEWER_ID },
@@ -983,44 +959,45 @@ test('a free Brand click never opens the modal', async () => {
 
   const event = element.click()
 
-  assert.equal(event.propagationStopped, true)
-  assert.deepEqual(loaded.navigations, ['/pricing'])
+  assert.equal(event.defaultPrevented, true)
+  assert.equal(event.propagationStopped, true, 'modal.js must not see this click')
+  assert.deepEqual(loaded.navigations, [])
+  assert.equal(loaded.opened.length, 0)
+  assert.equal(loaded.openedSignup.length, 1)
 })
 
-test('a free Brand who finished the quiz goes to membership pricing', async () => {
+test('a signed-in member with no mapped role is paywalled when route-guard is present', async () => {
+  // route-guard resolved and found no plan it knows: not a paid Brand, so not
+  // the chat. Only an absent route-guard skips the role rules (see below).
   const loaded = load({
     triggers: [starterTrigger()],
     member: { id: VIEWER_ID },
-    role: 'brand-free',
-    brandFreeHome: '/quiz-results',
+    role: null,
   })
   await settle()
 
   loaded.openModal()
   await settle()
 
-  assert.deepEqual(loaded.navigations, ['/why-us#join-starters-cta'])
+  assert.equal(loaded.openedSignup.length, 1)
   assert.equal(loaded.calls.mounted.length, 0)
-  assert.equal(
-    loaded.warnings.filter((w) => w.indexOf(UPGRADE_ATTRIBUTE) !== -1).length,
-    0,
-    'brandFreeHome is the intended default now, not a nagged-about fallback',
-  )
 })
 
-test('a free Brand who has not finished the quiz also goes to membership pricing', async () => {
+test('a retired messages-profile-upgrade override changes nothing for a free Brand', async () => {
+  const element = starterTrigger({ 'messages-profile-upgrade': '/pricing' })
   const loaded = load({
-    triggers: [starterTrigger()],
+    triggers: [element],
+    containerAttributes: { 'messages-profile-upgrade': '/pricing' },
     member: { id: VIEWER_ID },
     role: 'brand-free',
-    brandFreeHome: '/quiz',
   })
   await settle()
 
-  loaded.openModal()
+  element.click()
   await settle()
 
-  assert.deepEqual(loaded.navigations, ['/why-us#join-starters-cta'])
+  assert.deepEqual(loaded.navigations, [])
+  assert.equal(loaded.openedSignup.length, 1)
 })
 
 test('talent gets the modal closed rather than a chat', async () => {
@@ -1149,14 +1126,3 @@ test('production is silent', async () => {
   assert.deepEqual(warnings, [])
   assert.equal(element.hidden, true, 'still hidden, just quietly')
 })
-
- test('the published legacy quiz override now reaches membership pricing', async () => {
- const element = starterTrigger()
- const loaded = load({ triggers: [element], containerAttributes: { [UPGRADE_ATTRIBUTE]: '/quiz' }, member: { id: VIEWER_ID }, role: 'brand-free' })
- await settle()
- element.click()
- await settle()
- assert.equal(element.hidden, false)
- assert.deepEqual(loaded.navigations, ['/why-us#join-starters-cta'])
- assert.equal(loaded.calls.mounted.length, 0)
- })
