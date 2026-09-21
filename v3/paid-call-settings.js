@@ -1107,7 +1107,7 @@
     setActionEnabled(action('save'), canSaveSettings(value))
     setActionEnabled(action('disable'), Boolean(service))
     const priceOutput = output('price')
-    const displayedRate = pendingRate || confirmedRate || correctionRequiredRate(service) || suggestion
+    const displayedRate = confirmedRate || correctionRequiredRate(service) || pendingRate || suggestion
     if (priceOutput) {
       priceOutput.textContent = displayedRate ? formatUsd(displayedRate.price_cents) : 'Not set'
     } else {
@@ -1506,7 +1506,7 @@
       const rendered = render(canonical)
       if (!canonicalService(canonical) && pendingBuildIntent && !pendingBuildIntent.enabled) {
         consumePendingBuildIntent().then(function () {
-          if (currentRender(version, member.id)) renderWithoutProfileDirty(canonical)
+          if (currentRender(version, member.id) && !busy) renderWithoutProfileDirty(canonical)
         }).catch(function () {})
       }
       return rendered

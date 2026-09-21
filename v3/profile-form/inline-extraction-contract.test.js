@@ -104,7 +104,7 @@ const EXPECTED_CANDIDATE_ASSETS = Object.freeze({
     restoreTrailingWhitespace: Object.freeze({}), terminalNewlinesRemoved: 1,
   }),
   'v3/build-profile/submit-writer.js': Object.freeze({
-    characters: 24124, sha256: '814759a743eadc6b16c296b3ce6f144fee0b71ed152ece9e7d755ca449ffa3c0',
+    characters: 24145, sha256: 'f227ecb0a413c7a678e7be1a229ebbfdcb341669a2f835c7967d0b56dfab1236',
     guardKey: 'buildProfileSubmitWriter',
     liveCaptureAsset: 'v3/profile-form/build-submit-writer-published.capture.txt',
     restoreTrailingWhitespace: Object.freeze({ 526: '          ' }), terminalNewlinesRemoved: 0,

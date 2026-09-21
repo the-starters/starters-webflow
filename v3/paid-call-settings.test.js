@@ -2189,6 +2189,32 @@ test('an imported V2 suggestion replaces the placeholder but stays off until con
   assert.equal(result.dom.statusOutput.textContent, 'Paid calls are off. Confirm the imported V2 rate to turn them on.')
 })
 
+test('a pending Paid intent never displaces the confirmed canonical rate in the price output', async () => {
+  const active = service({ title: 'Old call', price_cents: 35000 })
+  const result = load({
+    cardMode: true,
+    memberId: 'member-a',
+    memberJSON: {
+      starter_call_settings_intent_v3: {
+        version: 1,
+        member_id: 'member-a',
+        paid: { enabled: true, title: 'New strategy call', price_dollars: 250 },
+      },
+    },
+    initial: canonical({
+      services: [active],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+  })
+  await settle()
+
+  assert.equal(result.dom.priceOutput.textContent, '$350.00')
+  assert.equal(result.dom.root.getAttribute('data-paid-call-enabled'), 'true')
+  assert.equal(result.dom.root.getAttribute('data-paid-call-bookable'), 'true')
+  assert.equal(result.dom.title.value, 'New strategy call')
+  assert.equal(result.dom.price.value, '250')
+})
+
 test('a pending Paid intent outranks an imported V2 rate suggestion', async () => {
   const result = load({
     cardMode: true,

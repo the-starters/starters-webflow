@@ -1159,7 +1159,7 @@
       const rendered = render(canonical)
       if (!canonicalService(canonical) && pendingBuildIntent && !pendingBuildIntent.enabled) {
         consumePendingBuildIntent().then(function () {
-          if (currentRender(version, member.id)) renderWithoutProfileDirty(canonical)
+          if (currentRender(version, member.id) && !busy) renderWithoutProfileDirty(canonical)
         }).catch(function () {})
       }
       return rendered

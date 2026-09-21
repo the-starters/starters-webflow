@@ -114,8 +114,7 @@
         return intent;
       }
 
-      async function saveBuildCallSettingsIntent(formData) {
-        const intent = buildCallSettingsIntent(formData);
+      async function saveBuildCallSettingsIntent(intent) {
         if (!intent) return null;
         const memberstack = window.$memberstackDom;
         if (
@@ -394,6 +393,8 @@
           ? wholeDollar(formData["rate-retainer"], RETAINER_PRICE)
           : 0;
 
+        const callSettingsIntent = buildCallSettingsIntent(formData);
+
         const payload = {
           member_id: MEMBER.id || "",
 
@@ -485,7 +486,7 @@
             };
           }
 
-          await saveBuildCallSettingsIntent(formData);
+          await saveBuildCallSettingsIntent(callSettingsIntent);
 
           const committedPayload = savedBuildResult.payload;
           const photoUpload = window.StartersBuildProfilePhotoUpload;

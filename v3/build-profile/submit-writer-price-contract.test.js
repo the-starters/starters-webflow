@@ -390,7 +390,7 @@ test('Build Profile blocks combined success when enabled Paid intent is invalid'
     'paid-call-rate': 'not-a-price',
   })
   await result.submit.click()
-  assert.equal(result.requests.length, 1, 'the idempotent profile save may complete first')
+  assert.equal(result.requests.length, 0, 'member-repairable receipt input fails before the profile save')
   assert.equal(result.memberJsonWrites.length, 0)
   assert.equal(result.success.style.display, 'none')
   assert.equal(result.error.style.display, 'block')

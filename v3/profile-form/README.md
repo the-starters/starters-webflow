@@ -173,11 +173,13 @@ Full Profile authors both controls, so an enabled or required section there stay
 The Paid Call rate in Build Profile uses the same `$1` through `$1,000`
 whole-dollar contract as Dashboard and Edit Profile. Build Profile validates
 and stores that private setup intent but never sends call fields to the profile
-endpoint and never creates provider state. Its enforcement point is the receipt
-write rather than the profile request: a rejected rate or title reports itself in
-the `[build-profile-error]` panel after the profile save was already accepted,
-and because call fields are not part of that payload, the corrected resubmit
-stores the receipt without repeating the profile write. Dashboard or Edit Profile completes
+endpoint and never creates provider state. The receipt is validated alongside the
+other whole-dollar prices, before the profile request is sent: a rejected rate or
+title reports itself in the `[build-profile-error]` panel with nothing saved, so a
+bad rate never turns an accepted profile save into a visible failure. The receipt
+*write* still runs after the profile save, and because call fields are not part of
+that payload, a resubmit after a later failure stores the receipt without repeating
+the profile write. Dashboard or Edit Profile completes
 the guarded canonical write after Calendar, Availability, and Stripe are ready.
 The active environment-matched `nylas_configurations_v3` row remains the sole
 call authority.

@@ -203,11 +203,12 @@ The controller sets `data-ready="true|false"` on each row. It also sets these wr
   The suggestion does not cause a write. The Starter must select Yes and submit the existing native
   V3 form before the canonical upsert can confirm it. A missing or rejected suggestion renders
   `Not set` and leaves the rate field blank.
-- An unconsumed Build Profile enable outranks both the imported suggestion and the displayed
-  confirmed rate: the receipt's title and rate prefill the form, the price output shows that pending
-  rate until the member clicks Update and canonical readback replaces it, `data-paid-call-rate-source`
-  stays empty, and the Yes radio is preselected. The receipt itself causes no write, and
-  `data-paid-call-enabled` keeps reporting canonical service state.
+- An unconsumed Build Profile enable outranks the imported suggestion but never the canonical rate:
+  the receipt's title and rate prefill the form, `data-paid-call-rate-source` stays empty, and the Yes
+  radio is preselected. The price output shows the pending rate only while no active canonical service
+  exists; an active service keeps its own confirmed (or correction-required) rate in that output, so
+  the card never displays a rate the Starter is not actually charging. The receipt itself causes no
+  write, and `data-paid-call-enabled` keeps reporting canonical service state.
 - Save uses revision-guarded `POST starter/paid-call-settings/upsert/v3` (`#2925`).
 - Turn off uses guarded `POST starter/paid-call-settings/disable/v3` (`#2923`).
 - Each mutation gets a new idempotency key and is followed by canonical GET readback.
