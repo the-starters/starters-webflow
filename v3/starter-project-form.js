@@ -6,7 +6,7 @@
  * native Brand select to Xano-authorized options, removes the authored generic
  * Service 1/2/3 slots, appends the authenticated Starter's canonical Xano
  * service names, reuses the shared commercial serializer from
- * v3/project-form.js, and creates the canonical project.
+ * v3/project-form.js, and sends a canonical proposal for Brand approval.
  */
 ;(function (global) {
   'use strict'
@@ -40,13 +40,6 @@
   var PROFILE_BIND_SELECTOR = '[data-project-bind]'
   var LEGACY_PROFILE_BIND_SELECTOR = '[element]'
   var CMS_ONLY_IDENTITY_SELECTOR = '#brand-name-contract, #brand-name, #freeName, #FreeEmail, #pushMemID'
-  var CREATED_PROJECT_STATES = {
-    contract_create_pending: true,
-    contract_draft: true,
-    contract_sent: true,
-    signature_partial: true,
-    active: true,
-  }
   var STARTER_PAYLOAD_FIELDS = [
     'title',
     'service',
@@ -111,11 +104,33 @@
     return id ? '/messages?with=' + encodeURIComponent(id) : '#'
   }
 
-  function createdProject(result) {
-    var project = result && result.project
-    var lifecycleState = clean(project && project.lifecycle_state).toLowerCase()
-    return positiveId(project && project.id) && CREATED_PROJECT_STATES[lifecycleState]
-      ? project
+  var PROPOSAL_STATUS_COPY = {
+    awaiting_brand_approval: {
+      title: 'Project request sent',
+      message: 'The Brand can review your project terms. A project and contract are created only after approval.',
+    },
+    accepted: {
+      title: 'Project request approved',
+      message: 'The Brand approved this request. Your project and contract are being prepared.',
+    },
+    rejected: {
+      title: 'Project request declined',
+      message: 'The Brand declined this request. Adjust the terms and send a new request.',
+    },
+  }
+
+  function proposalStatusCopy(proposal) {
+    var status = clean(proposal && proposal.status).toLowerCase()
+    return Object.prototype.hasOwnProperty.call(PROPOSAL_STATUS_COPY, status)
+      ? PROPOSAL_STATUS_COPY[status]
+      : null
+  }
+
+  function createdProposal(result) {
+    var proposal = result && result.proposal
+    return positiveId(proposal && proposal.id) &&
+      positiveId(proposal && proposal.lifecycle_version) && proposalStatusCopy(proposal)
+      ? proposal
       : null
   }
 
@@ -768,7 +783,7 @@
     if (current.optionsLoaded) return Promise.resolve(current.options)
     var generation = current.generation
     var optionsGeneration = current.optionsGeneration
-    var request = projectApi(globalObject, 'projectOptions')
+    var request = projectApi(globalObject, 'projectProposalOptions')
     if (!request) {
       setStatus(form, 'error', 'The Brand list is not available. Reload and try again.')
       return Promise.resolve([])
@@ -939,22 +954,18 @@
     var current = formState(form)
     current.key = ''
     current.keyPayload = ''
-    var project = result && result.project
-    var projectId = positiveId(project && project.id)
-    var isActive = project && project.lifecycle_state === 'active'
+    var proposal = result && result.proposal
+    var proposalId = positiveId(proposal && proposal.id)
+    var copy = proposalStatusCopy(proposal)
     var success = stateElement(form, SUCCESS_SELECTOR)
     if (success) {
       var titles = success.querySelectorAll ? success.querySelectorAll('[data-project-success-title], .generate-contract_success-text') : []
-      Array.prototype.forEach.call(titles, function (title) { title.textContent = 'Project successfully created' })
+      Array.prototype.forEach.call(titles, function (title) { title.textContent = copy.title })
       var message = success.querySelector && (
         success.querySelector('[data-project-success-message]') ||
         success.querySelector(LEGACY_SUCCESS_MESSAGE_SELECTOR)
       )
-      if (message) {
-        message.textContent = isActive
-          ? 'Your project is now active.'
-          : 'Your contract is being prepared. You and the Brand can sign when it is ready.'
-      }
+      if (message) message.textContent = copy.message
       var successLink = success.querySelector && success.querySelector(SUCCESS_LINK_SELECTOR)
       if (successLink && successLink.setAttribute) successLink.setAttribute('href', '/starter-dashboard#projects')
       success.hidden = false
@@ -969,12 +980,12 @@
       }
     }
     if (typeof global.CustomEvent === 'function' && documentObject && documentObject.dispatchEvent) {
-      documentObject.dispatchEvent(new global.CustomEvent('starters:project-created', {
-        detail: { project_id: projectId, replayed: Boolean(result && result.replayed) },
+      documentObject.dispatchEvent(new global.CustomEvent('starters:project-proposal-requested', {
+        detail: { proposal_id: proposalId, replayed: Boolean(result && result.replayed) },
       }))
     }
     if (global.StartersTrack && typeof global.StartersTrack.track === 'function') {
-      global.StartersTrack.track('project_created', { project_id: projectId })
+      global.StartersTrack.track('project_proposal_requested', { proposal_id: proposalId })
     }
   }
 
@@ -982,9 +993,9 @@
     var status = error && Number(error.status)
     if (status === 401) return 'Your session expired. Sign in and try again.'
     if (status === 403) return 'That Brand is no longer eligible. Refresh the Brand list.'
-    if (status === 409) return 'A project already exists for this request.'
+    if (status === 409) return 'A project request already exists for this Brand.'
     if (status === 422) return 'Review the project details and try again.'
-    return 'The project could not be created. Try again.'
+    return 'The project request could not be sent. Try again.'
   }
 
   function retryableSubmitError(error) {
@@ -1015,7 +1026,10 @@
       current.keyPayload = signature
     }
     serialized.payload.idempotency_key = current.key
-    var request = projectApi(globalObject, 'projectSubmit')
+    // Keep proposal submission on a distinct capability. A cached bridge from
+    // before the proposal release exposes projectSubmit for direct project
+    // creation; falling back to it would create a project before Brand review.
+    var request = projectApi(globalObject, 'projectProposalSubmit')
     if (!request) {
       setStatus(form, 'error', 'The project service is not available. Reload and try again.')
       return Promise.resolve(false)
@@ -1027,15 +1041,15 @@
       .then(function () { return request(serialized.payload) })
       .then(function (result) {
         if (generation !== current.generation) return false
-        if (!createdProject(result)) {
+        if (!createdProposal(result)) {
           debugLog(globalObject, 'submit_invalid_response', {})
           setStatus(form, 'error', safeError(), true)
           return false
         }
         showSuccess(form, result, documentObject)
         debugLog(globalObject, 'submit_success', {
-          project_id: positiveId(result && result.project && result.project.id),
-          lifecycle_state: clean(result && result.project && result.project.lifecycle_state) || null,
+          proposal_id: positiveId(result && result.proposal && result.proposal.id),
+          proposal_status: clean(result && result.proposal && result.proposal.status) || null,
           replayed: Boolean(result && result.replayed),
         })
         return true

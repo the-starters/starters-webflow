@@ -54,6 +54,13 @@ class Target {
   reportValidity() { this.reportValidityCount += 1; return this.checkValidity?.() ?? true }
   setCustomValidity(message) { this.validationMessage = String(message || '') }
   appendChild(child) { this.children.push(child); child.parentElement = this; return child }
+  insertBefore(child, reference) {
+    const index = this.children.indexOf(reference)
+    if (index < 0) return this.appendChild(child)
+    this.children.splice(index, 0, child)
+    child.parentElement = this
+    return child
+  }
 }
 
 function createEnvironment(fetchImpl, {
@@ -75,9 +82,11 @@ function createEnvironment(fetchImpl, {
   canonicalPhone = '',
   liveRateFormatter = false,
   simulateProfileHydrationAfterDomReady = false,
+  callRetainerShareWrapper = null,
   dirtyState = null,
   setupSection = null,
   profileReady = false,
+  callSettingsControllers = null,
 } = {}) {
   const domReady = []
   const profileDataCallbacks = []
@@ -89,6 +98,7 @@ function createEnvironment(fetchImpl, {
   const tracked = []
   const copied = []
   const requests = []
+  const callSettingsSubmits = []
   function createField(selector, defaults = {}) {
     const field = Object.assign(new Target(), {
       value: '',
@@ -196,6 +206,58 @@ function createEnvironment(fetchImpl, {
   const buttonText = { textContent: 'Submit' }
   const button = new Target()
   const step = Object.assign(new Target(), { dataset: { index: String(stepIndex) } })
+  // Mirrors the authored step 6 Services markup: one `.app-form_input_group` per call
+  // control, all of them plus the Retainer rate inside one shared Services container.
+  // `callRetainerShareWrapper` reproduces the markup risk where a call control and the
+  // Retainer rate live in the same authored group.
+  const legacyCallContainer = new Target()
+  const legacyCallGroups = []
+  let retainerCallGroup = null
+  if (stepIndex === 6) {
+    const retainerField = stepFields['[name="rate-retainer"]']
+    const containerControls = []
+    const containerLabels = []
+    const wireGroup = (group, members) => {
+      const label = new Target()
+      // Published Webflow radio captions can retain an authored `for` value that does
+      // not equal the nested input id. It is not evidence that the wrapper is shared.
+      label.setAttribute('for', `webflow-call-setting-${containerLabels.length + 1}`)
+      group.classNames.add('app-form_input_group')
+      group.appendChild(label)
+      members.forEach((member) => group.appendChild(member))
+      group.querySelectorAll = (query) => {
+        if (query === 'input, select, textarea') return members
+        if (query === 'label') return [label]
+        return []
+      }
+      containerControls.push(...members)
+      containerLabels.push(label)
+      legacyCallContainer.appendChild(group)
+    }
+    ;[
+      '[name="free-consulting-calls"]',
+      '[name="free-call-description"]',
+      '[name="paid-consulting-calls"]',
+      '[name="paid-call-description"]',
+      '[name="paid-call-rate"]',
+    ].forEach((selector) => {
+      const group = new Target()
+      const shared = callRetainerShareWrapper === selector
+      wireGroup(group, shared ? [stepFields[selector], retainerField] : [stepFields[selector]])
+      if (shared) retainerCallGroup = group
+      legacyCallGroups.push(group)
+    })
+    if (!retainerCallGroup) {
+      retainerCallGroup = new Target()
+      wireGroup(retainerCallGroup, [retainerField])
+    }
+    legacyCallContainer.querySelectorAll = (query) => {
+      if (query === 'input, select, textarea') return containerControls
+      if (query === 'label') return containerLabels
+      return []
+    }
+    step.appendChild(legacyCallContainer)
+  }
   const form = new Target()
   const counter = new Target()
   const counterInput = Object.assign(new Target(), {
@@ -221,6 +283,9 @@ function createEnvironment(fetchImpl, {
   button.querySelectorAll = (selector) => selector === '.button_main-text' ? [buttonText] : []
   step.querySelector = (selector) => {
     if (selector === '[data-edit-submit]') return button
+    if (selector === '[data-call-settings-profile-notice]') {
+      return legacyCallContainer.children.find((child) => child.hasAttribute('data-call-settings-profile-notice')) || null
+    }
     if (absentSelectors.has(selector)) return null
     if (Object.prototype.hasOwnProperty.call(stepFields, selector)) return stepFields[selector]
     if (selector.includes(',') || selector.startsWith('.ql-editor')) return focusTarget
@@ -291,12 +356,17 @@ function createEnvironment(fetchImpl, {
   errorModal.addEventListener('click', () => { modalEvents.error += 1 })
 
   let domParsed = documentReadyState !== 'loading'
+  const documentHead = new Target()
+  documentHead.querySelector = (selector) => documentHead.children.find(
+    (child) => child.hasAttribute(selector.replace(/^\[|\]$/g, '')),
+  ) || null
   const document = {
     readyState: documentReadyState,
+    head: documentHead,
     addEventListener(type, listener) {
       if (type === 'DOMContentLoaded') domReady.push(listener)
     },
-    createElement() { return new Target() },
+    createElement(tagName) { return Object.assign(new Target(), { tagName: String(tagName || '').toUpperCase() }) },
     createTextNode(text) { return Object.assign(new Target(), { textContent: text }) },
     querySelector(selector) {
       if (selector === '[build-profile-form]') return form
@@ -381,6 +451,18 @@ function createEnvironment(fetchImpl, {
     StartersTrack: { track: (name, properties) => tracked.push({ name, properties }) },
     console,
   }
+  if (stepIndex === 6) {
+    const controller = (name) => ({
+      async submit() {
+        callSettingsSubmits.push(name)
+        return { saved: true }
+      },
+      hasChanges() { return false },
+      isReady() { return true },
+    })
+    window.StarterFreeCallSettings = callSettingsControllers?.free || controller('free')
+    window.StarterPaidCallSettings = callSettingsControllers?.paid || controller('paid')
+  }
   if (modalApi) {
     window.lumos = {
       modal: {
@@ -452,12 +534,17 @@ function createEnvironment(fetchImpl, {
     tracked,
     copied,
     requests,
+    callSettingsSubmits,
     successFeedback,
     errorFeedback,
     counter,
     counterInput,
     fields,
     stepFields,
+    legacyCallContainer,
+    legacyCallGroups,
+    retainerCallGroup,
+    documentHead,
     focusTarget,
     window,
     liveRateFormatterCalls,

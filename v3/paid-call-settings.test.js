@@ -406,6 +406,7 @@ function buildDom(withRoot = true, cardMode = false, shared = false, priceTile =
 }
 
 function load(options = {}) {
+  if (options.editProfile === true) options = { ...options, cardMode: true }
   if (options.sharedCallItem === true) options = { ...options, cardMode: true }
   const dom = buildDom(
     options.withRoot !== false,
@@ -441,6 +442,15 @@ function load(options = {}) {
     dom.open.setAttribute('data-call-settings-action', 'open')
     dom.close.setAttribute('data-call-settings-action', 'close')
     dom.save.setAttribute('data-call-settings-action', 'submit')
+  }
+  if (options.editProfile === true && dom.root) {
+    delete dom.root.attributes['data-availability-element']
+    dom.root.setAttribute('data-form', 'step')
+    dom.root.setAttribute('data-index', '6')
+    dom.disabled.setAttribute('name', 'paid-consulting-calls')
+    dom.enabled.setAttribute('name', 'paid-consulting-calls')
+    dom.title.setAttribute('name', 'paid-call-description')
+    dom.price.setAttribute('name', 'paid-call-rate')
   }
   const html = new El('html')
   const calls = []
@@ -478,9 +488,12 @@ function load(options = {}) {
           : null
       }
       if (selector === '[data-availability-element="call-paid-form"]') {
-        return rootAvailable && (options.cardMode === true || options.stableCardMode === true)
+        return rootAvailable && options.editProfile !== true && (options.cardMode === true || options.stableCardMode === true)
           ? dom.root
           : null
+      }
+      if (selector === '[data-form="step"][data-index="6"]') {
+        return rootAvailable && options.editProfile === true ? dom.root : null
       }
       return null
     },
@@ -513,7 +526,10 @@ function load(options = {}) {
     throw new Error('unrouted request ' + path)
   }
   const window = {
-    location: { hostname: options.hostname || 'thestarters.com' },
+    location: {
+      hostname: options.hostname || 'thestarters.com',
+      pathname: options.editProfile === true ? '/starter-edit-profile' : '',
+    },
     crypto: { randomUUID: () => 'uuid-fixed' },
     memberReady: options.memberReady,
     setTimeout(callback, delay) {
@@ -846,6 +862,52 @@ test('the native Paid card binds without generated IDs and upgrades a legacy dur
   assert.equal(result.dom.root.getAttribute('data-paid-call-duration-current'), '60')
   assert.equal(result.dom.root.getAttribute('data-paid-call-bookable'), 'true')
   assert.equal(result.dom.formWrapper.style.display, 'none')
+})
+
+test('Edit Profile hydrates and saves Paid Call settings through the canonical controller', async () => {
+  const active = service()
+  const result = load({
+    editProfile: true,
+    initial: canonical({
+      services: [active],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+    routes: {
+      '/starter/paid-call-settings/upsert/v3': ({ body, setState }) => {
+        const saved = service({
+          title: body.title,
+          price_cents: body.price_cents,
+          duration: body.duration_minutes,
+          revision: 5,
+        })
+        setState(canonical({
+          services: [saved],
+          readiness: { paid_call_enabled: true, bookable: true },
+        }))
+        return { ok: true, status: 200, json: async () => ({ service: saved }) }
+      },
+    },
+  })
+  await settle()
+
+  assert.equal(result.window.StarterPaidCallSettings.isReady(), true)
+  assert.equal(result.window.StarterPaidCallSettings.hasChanges(), false)
+  assert.equal(result.dom.enabled.checked, true)
+  assert.equal(result.dom.price.value, 350)
+
+  result.dom.title.value = 'Paid strategy session'
+  result.dom.price.value = '425'
+  await result.dom.title.dispatch('input')
+  await result.dom.price.dispatch('input')
+  assert.equal(result.window.StarterPaidCallSettings.hasChanges(), true)
+  await result.window.StarterPaidCallSettings.submit()
+  await settle()
+
+  const upsert = result.calls.find((call) => call.path === '/starter/paid-call-settings/upsert/v3')
+  assert.equal(upsert.body.title, 'Paid strategy session')
+  assert.equal(upsert.body.price_cents, 42500)
+  assert.equal(upsert.body.duration_minutes, 60)
+  assert.equal(result.window.StarterPaidCallSettings.hasChanges(), false)
 })
 
 test('the published consulting-calls-paid group binds without runtime renaming', async () => {

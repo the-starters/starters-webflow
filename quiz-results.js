@@ -28,6 +28,7 @@
 ;(() => {
     const starterQuizResultsControllerFlag = 'starterQuizResultsController'
     const starterQuizResultsDebugEnabled = true
+    let quizResultsViewedTracked = false
     const debugStorageKey = 'starterQuizDebug'
     const pendingQuizStorageKey = 'starterQuizPending'
     const quizLeadDripAuthBase =
@@ -6171,6 +6172,73 @@
     }
 
     /**
+     * Records one real, role-authorized results view per page load.
+     *
+     * The route guard resolves asynchronously, so a rendered page can briefly
+     * exist while the wrong role is already on its way elsewhere. Repeating the
+     * guard's own decision here keeps that redirect race out of analytics. Any
+     * unavailable dependency fails closed and never blocks the results flow.
+     *
+     * @param {object} recommendations Rendered recommendation sections.
+     * @param {object} [options] Tracking context.
+     * @param {boolean} [options.isSyntheticResult] Whether URL test data rendered.
+     * @returns {Promise<boolean>} Whether this call attempted the event capture.
+     */
+    async function trackQuizResultsViewed(recommendations, options = {}) {
+        if (options.isSyntheticResult) return false
+
+        try {
+            const normalizedPathname =
+                String(window.location.pathname || '').replace(/\/+$/, '') ||
+                '/'
+
+            if (normalizedPathname !== '/quiz-results') return false
+
+            const matchCount = getUniqueStarterCount(recommendations)
+            const authState = await resolveMemberstackAuthState()
+
+            if (
+                !authState.resolved ||
+                authState.isLoggedOut ||
+                !authState.member?.id
+            ) {
+                return false
+            }
+
+            const routeGuard = window.StartersV3RouteGuard
+
+            if (
+                !routeGuard ||
+                typeof routeGuard.roleBounceTargetFor !== 'function'
+            ) {
+                return false
+            }
+
+            if (
+                quizResultsViewedTracked ||
+                document.documentElement.getAttribute('data-route-guard') ===
+                    'redirecting' ||
+                routeGuard.roleBounceTargetFor(
+                    authState.member,
+                    normalizedPathname,
+                ) !== ''
+            ) {
+                return false
+            }
+
+            const tracker = window.StartersTrack
+
+            if (!tracker || typeof tracker.track !== 'function') return false
+
+            quizResultsViewedTracked = true
+            tracker.track('quiz_results_viewed', { match_count: matchCount })
+            return true
+        } catch (error) {
+            return false
+        }
+    }
+
+    /**
      * Tells a member-side cache apart from the funnel's own pre-signup record.
      *
      * `memberstackSavedAt` is stamped only by this controller, and only for a
@@ -7072,6 +7140,13 @@
         // that keeps the visitor here: test mode, the no-save early return, and
         // normal completion — all fall through from this point.
         signalQuizResultsReady('rendered')
+
+        // URL test data is allowed to render for visual checks, but it must not
+        // become product analytics. The helper rejects it before auth or any
+        // capture work while the production result follows the same call site.
+        void trackQuizResultsViewed(recommendationSections, {
+            isSyntheticResult: Boolean(testPendingQuiz),
+        })
 
         if (testPendingQuiz) {
             settleQuizEmailTestSavedState(

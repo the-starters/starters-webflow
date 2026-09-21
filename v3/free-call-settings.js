@@ -21,7 +21,11 @@
   const STATUS_ATTRIBUTE = 'data-free-call-settings'
   const FIXED_DURATION_MINUTES = 30
   const ROOT_WAIT_TIMEOUT_MS = 10000
-  const FREE_RADIO_GROUP_NAME = 'consulting-calls-free'
+  const AUTH_BRIDGE_WAIT_INTERVAL_MS = 100
+  const AUTH_BRIDGE_WAIT_ATTEMPTS = 100
+  const FREE_RADIO_GROUP_NAMES = ['consulting-calls-free', 'free-consulting-calls']
+  const SHARED_RADIO_HOOK = 'data-call-settings-input'
+  const FREE_RADIO_HOOK = 'data-free-call-settings-input'
   const BUSY_STYLE_ID = 'ts-call-settings-busy-style'
 
   const hostname = window.location.hostname
@@ -31,6 +35,7 @@
 
   let root = null
   let uiScope = null
+  let editProfileMode = false
   let sessionMemberId = null
   let sessionAuthScope = null
   let settings = null
@@ -52,6 +57,9 @@
   let activeWrite = null
   let authTransitionPending = null
   let prerequisiteRefreshQueued = false
+  let editProfileDirty = false
+  let editProfileReady = false
+  let applyingCanonicalRender = false
 
   function qs(selector, scope) {
     return (scope || document).querySelector(selector)
@@ -64,6 +72,11 @@
   function locateRoot() {
     root = qs(ROOT_SELECTOR)
     if (!root) root = qs(CARD_ROOT_SELECTOR)
+    editProfileMode = false
+    if (!root && String(window.location.pathname || '').replace(/\/+$/, '') === '/starter-edit-profile') {
+      root = qs('[data-form="step"][data-index="6"]')
+      editProfileMode = Boolean(root)
+    }
     return root
   }
 
@@ -173,7 +186,7 @@
 
   function refreshUiScope() {
     if (!root) return
-    uiScope = findCallCardScope(root)
+    uiScope = editProfileMode ? root : findCallCardScope(root)
     bindOpenAction()
     paintStatusPills()
   }
@@ -292,17 +305,28 @@
   }
 
   function namedRadio(word) {
-    return Array.prototype.find.call(qsa('[name="' + FREE_RADIO_GROUP_NAME + '"]', root), function (item) {
-      const value = radioValue(item)
-      if (value.indexOf(word) !== 0) return false
-      const next = value.charAt(word.length)
-      return next === '' || /[^a-z0-9]/.test(next)
-    }) || null
+    for (const groupName of FREE_RADIO_GROUP_NAMES) {
+      const match = Array.prototype.find.call(qsa('[name="' + groupName + '"]', root), function (item) {
+        const value = radioValue(item)
+        if (value.indexOf(word) !== 0) return false
+        const next = value.charAt(word.length)
+        return next === '' || /[^a-z0-9]/.test(next)
+      }) || null
+      if (match) return match
+    }
+    return null
+  }
+
+  // Edit Profile gives the Free and Paid controllers one shared step-6 root, so the
+  // canonical hook cannot say which service a stamped radio belongs to there.
+  function radioHook() {
+    return editProfileMode ? FREE_RADIO_HOOK : SHARED_RADIO_HOOK
   }
 
   function radioPair() {
-    const enabled = qs('[data-call-settings-input="enabled"]', root) || namedRadio('yes')
-    const disabled = qs('[data-call-settings-input="disabled"]', root) || namedRadio('no')
+    const hook = radioHook()
+    const enabled = qs('[' + hook + '="enabled"]', root) || namedRadio('yes')
+    const disabled = qs('[' + hook + '="disabled"]', root) || namedRadio('no')
     if (!enabled || !disabled || enabled === disabled) return { enabled: null, disabled: null }
     return { enabled: enabled, disabled: disabled }
   }
@@ -310,13 +334,17 @@
   function stampRadioHooks() {
     const pair = radioPair()
     if (!pair.enabled || !pair.disabled) return pair
-    pair.enabled.setAttribute('data-call-settings-input', 'enabled')
-    pair.disabled.setAttribute('data-call-settings-input', 'disabled')
+    const hook = radioHook()
+    pair.enabled.setAttribute(hook, 'enabled')
+    pair.disabled.setAttribute(hook, 'disabled')
     return pair
   }
 
   function field(name) {
     if (name === 'enabled' || name === 'disabled') return radioPair()[name]
+    if (editProfileMode) {
+      return name === 'description' ? qs('[name="free-call-description"]', root) : null
+    }
     const canonical = qs('[data-call-settings-input="' + name + '"]', root)
     if (canonical) return canonical
     if (name !== 'description') return null
@@ -329,7 +357,7 @@
   function action(name) {
     const stableName = name === 'save' ? 'submit' : name
     const canonical = qs('[data-call-settings-action="' + stableName + '"]', uiScope || root)
-    if (canonical) return canonical
+    if (canonical || editProfileMode) return canonical
     const selectors = {
       open: '[data-availability-action="item-form-open"]',
       close: '[data-availability-action="item-form-close"]',
@@ -426,6 +454,30 @@
     visual.setAttribute('class', next.join(' '))
   }
 
+  // canonical-profile-loader.js hydrates these same step 6 controls from the legacy profile
+  // record and dispatches native input and change events on each one. Those are not member
+  // gestures, so the shared hydration window - the same one the page dirty state answers with -
+  // decides what counts as an Edit Profile change. Without it a freshly hydrated page reports
+  // unsaved call settings, and a failed canonical read then wedges every other step 6 field.
+  function markEditProfileDirty() {
+    if (!editProfileMode) return
+    const dirtyState = window.__tsProfileDirtyState
+    if (dirtyState && typeof dirtyState.isHydrating === 'function' && dirtyState.isHydrating()) return
+    editProfileDirty = true
+  }
+
+  // Edit Profile derives the dependent field's enabled and visible state from a radio
+  // change, so a canonical write has to announce itself the same way a member click does.
+  function notifyRadioChange(item) {
+    if (!editProfileMode || !item || typeof item.dispatchEvent !== 'function') return
+    applyingCanonicalRender = true
+    try {
+      item.dispatchEvent(new CustomEvent('change', { bubbles: true }))
+    } finally {
+      applyingCanonicalRender = false
+    }
+  }
+
   function show(element, visible) {
     if (!element) return
     element.hidden = !visible
@@ -506,11 +558,15 @@
     setBusy(false)
     sessionMemberId = null
     sessionAuthScope = null
-    const pair = radioPair()
-    setRadioChecked(pair.enabled, false)
-    setRadioChecked(pair.disabled, true)
-    const descriptionInput = field('description')
-    if (descriptionInput) descriptionInput.value = ''
+    // Edit Profile shows these controls while the canonical GET is still in flight, so a
+    // pre-load reset would wipe hydrated or typed answers the member can see.
+    if (!editProfileMode) {
+      const pair = radioPair()
+      setRadioChecked(pair.enabled, false)
+      setRadioChecked(pair.disabled, true)
+      const descriptionInput = field('description')
+      if (descriptionInput) descriptionInput.value = ''
+    }
     qsa('[data-free-call-prerequisite]', uiScope || root).forEach(function (item) {
       item.setAttribute('data-ready', 'false')
     })
@@ -611,12 +667,15 @@
     settings = value
     const service = canonicalService(value)
     explicitIntent = null
+    editProfileDirty = false
+    editProfileReady = true
     const readiness = readinessState(value)
     const contractMatches = validateService(service)
     const bookable = readiness.bookable && contractMatches
     const pair = radioPair()
     setRadioChecked(pair.enabled, Boolean(service))
     setRadioChecked(pair.disabled, !service)
+    notifyRadioChange(service ? pair.enabled : pair.disabled)
     const descriptionInput = field('description')
     if (descriptionInput) {
       descriptionInput.value = value.public_description || ''
@@ -680,6 +739,7 @@
   }
 
   function setCardEditorOpen(open) {
+    if (editProfileMode) return
     const wrapper = cardPanel()
     if (wrapper) wrapper.style.display = open ? 'flex' : 'none'
     root.setAttribute('data-free-call-editor-open', open ? 'true' : 'false')
@@ -813,21 +873,22 @@
   }
 
   async function submitIntent() {
+    if (editProfileMode && !editProfileDirty) return settings
     const pair = radioPair()
     const service = canonicalService(settings)
     if (explicitIntent === 'disabled') {
       const result = await disable()
-      if (result) setCardEditorOpen(false)
+      if (result && !editProfileMode) setCardEditorOpen(false)
       return result
     }
     if (!service && explicitIntent !== 'enabled') {
       if (!pair.enabled || !pair.enabled.checked || (pair.disabled && pair.disabled.checked)) {
-        setCardEditorOpen(false)
+        if (!editProfileMode) setCardEditorOpen(false)
         return settings
       }
     }
     const result = await save()
-    if (result) setCardEditorOpen(false)
+    if (result && !editProfileMode) setCardEditorOpen(false)
     return result
   }
 
@@ -943,6 +1004,8 @@
         return null
       }
       sessionMemberId = member.id
+      await waitForSchedulingAuth()
+      if (version !== refreshVersion) return null
       sessionAuthScope = await currentAuthScope()
       if (!currentRender(version, member.id)) return null
       const pendingWrite = activeWrite && activeWrite.memberId === member.id ? activeWrite : null
@@ -1021,6 +1084,42 @@
     return new Promise(function (resolve) { memberstackReadyResolvers.push(resolve) })
   }
 
+  let schedulingAuthWait = null
+
+  function schedulingAuthReady() {
+    return (
+      typeof window.__tsSchedulingAuthGetScope === 'function' &&
+      typeof window.__tsSchedulingAuthFetch === 'function'
+    )
+  }
+
+  function waitForSchedulingAuth() {
+    if (schedulingAuthReady()) return Promise.resolve()
+    if (schedulingAuthWait) return schedulingAuthWait
+    schedulingAuthWait = new Promise(function (resolve) {
+      let attempts = 0
+      function check() {
+        if (schedulingAuthReady()) {
+          resolve()
+          return
+        }
+        attempts += 1
+        if (attempts >= AUTH_BRIDGE_WAIT_ATTEMPTS) {
+          console.warn(
+            '[free-call-settings] scheduling-auth bridge never installed on ' +
+              window.location.pathname +
+              '; canonical free-call reads and writes cannot be authenticated',
+          )
+          resolve()
+          return
+        }
+        window.setTimeout(check, AUTH_BRIDGE_WAIT_INTERVAL_MS)
+      }
+      check()
+    })
+    return schedulingAuthWait
+  }
+
   function bind() {
     if (bound) return
     bound = true
@@ -1044,16 +1143,27 @@
     const pair = radioPair()
     if (pair.enabled) {
       pair.enabled.addEventListener('change', function () {
+        if (applyingCanonicalRender) return
         if (pair.enabled.checked) explicitIntent = 'enabled'
+        markEditProfileDirty()
         setRadioChecked(pair.enabled, pair.enabled.checked)
         if (pair.enabled.checked) setRadioChecked(pair.disabled, false)
       })
     }
     if (pair.disabled) {
       pair.disabled.addEventListener('change', function () {
+        if (applyingCanonicalRender) return
         if (pair.disabled.checked) explicitIntent = 'disabled'
+        markEditProfileDirty()
         setRadioChecked(pair.disabled, pair.disabled.checked)
         if (pair.disabled.checked) setRadioChecked(pair.enabled, false)
+      })
+    }
+    const descriptionInput = field('description')
+    if (descriptionInput) {
+      descriptionInput.addEventListener('input', function () {
+        if (applyingCanonicalRender) return
+        markEditProfileDirty()
       })
     }
     bindOpenAction()
@@ -1080,9 +1190,9 @@
     }
     initializationPromise = (async function () {
       stopRootWait()
-      uiScope = findCallCardScope(root)
+      uiScope = editProfileMode ? root : findCallCardScope(root)
       watchUiScope()
-      setCardEditorOpen(false)
+      if (!editProfileMode) setCardEditorOpen(false)
       bind()
       await waitForMemberstack()
       return loadSession(undefined, false)
@@ -1099,6 +1209,9 @@
     read: readCanonicalSettings,
     save: save,
     disable: disable,
+    submit: submitIntent,
+    hasChanges: function () { return editProfileMode && editProfileDirty },
+    isReady: function () { return !editProfileMode || editProfileReady },
   }
 
   if (document.readyState === 'loading') {

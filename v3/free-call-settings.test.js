@@ -248,6 +248,15 @@ function load(options = {}) {
   if (dom.form && options.reportValidity !== undefined) {
     dom.form.reportValidity = () => options.reportValidity
   }
+  if (options.editProfile === true && dom.root) {
+    delete dom.root.attributes['data-call-settings-service']
+    delete dom.root.attributes['data-availability-element']
+    dom.root.setAttribute('data-form', 'step')
+    dom.root.setAttribute('data-index', '6')
+    dom.no.setAttribute('name', 'free-consulting-calls')
+    dom.yes.setAttribute('name', 'free-consulting-calls')
+    dom.title.setAttribute('name', 'free-call-description')
+  }
 
   const html = new El('html')
   const calls = []
@@ -275,7 +284,10 @@ function load(options = {}) {
         selector === '[data-call-settings-service="free"]' ||
         selector === '[data-availability-element="call-free-form"]'
       ) {
-        return rootAvailable ? dom.root : null
+        return rootAvailable && options.editProfile !== true ? dom.root : null
+      }
+      if (selector === '[data-form="step"][data-index="6"]') {
+        return rootAvailable && options.editProfile === true ? dom.root : null
       }
       return null
     },
@@ -308,7 +320,10 @@ function load(options = {}) {
   }
 
   const window = {
-    location: { hostname: options.hostname || 'the-starters-3-0.webflow.io' },
+    location: {
+      hostname: options.hostname || 'the-starters-3-0.webflow.io',
+      pathname: options.editProfile === true ? '/starter-edit-profile' : '',
+    },
     crypto: { randomUUID: () => 'uuid-fixed' },
     memberReady: options.memberReady,
     setTimeout(callback, delay) {
@@ -465,6 +480,45 @@ test('hydrates the published Free radio group from canonical GET', async () => {
   assert.equal(result.dom.root.getAttribute('data-free-call-bookable'), 'true')
   assert.equal(result.dom.noVisual.getAttribute('class').includes('w--redirected-checked'), false)
   assert.equal(result.dom.yesVisual.getAttribute('class').includes('w--redirected-checked'), true)
+})
+
+test('Edit Profile hydrates and saves Free Call settings through the canonical controller', async () => {
+  const active = service()
+  const result = load({
+    editProfile: true,
+    initial: canonical({
+      public_description: 'Free growth review',
+      services: [active],
+      readiness: { free_call_enabled: true, bookable: true },
+    }),
+    routes: {
+      '/starter/free-call-settings/upsert/v3': ({ body, setState }) => {
+        const saved = service({ revision: 5 })
+        setState(canonical({
+          public_description: body.description,
+          services: [saved],
+          readiness: { free_call_enabled: true, bookable: true },
+        }))
+        return { ok: true, status: 200, json: async () => ({ service: saved }) }
+      },
+    },
+  })
+  await settle()
+
+  assert.equal(result.window.StarterFreeCallSettings.isReady(), true)
+  assert.equal(result.window.StarterFreeCallSettings.hasChanges(), false)
+  assert.equal(result.dom.yes.checked, true)
+  assert.equal(result.dom.title.value, 'Free growth review')
+
+  result.dom.title.value = 'Updated free introduction'
+  await result.dom.title.dispatch('input')
+  assert.equal(result.window.StarterFreeCallSettings.hasChanges(), true)
+  await result.window.StarterFreeCallSettings.submit()
+  await settle()
+
+  const upsert = result.calls.find((call) => call.path === '/starter/free-call-settings/upsert/v3')
+  assert.equal(upsert.body.description, 'Updated free introduction')
+  assert.equal(result.window.StarterFreeCallSettings.hasChanges(), false)
 })
 
 test('production-shaped pills show only canonical Free status', async () => {

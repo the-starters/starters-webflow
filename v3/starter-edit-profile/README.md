@@ -203,12 +203,23 @@ values, member data, text, component props, styles, URLs, tokens, or Webflow
 element IDs. Contract drift must fail tests; do not silently refresh the fixture.
 
 Account-settings tabs, membership panels, pause/cancel UI, and scheduling persistence
-remain separate shared-component work. On step 6, the page controller disables and
-un-requires the legacy Free Call toggle and description plus the Paid Call toggle,
-description, and rate. It omits all five fields from the profile payload and adds a
-link to `/starter-dashboard#calendar`. The dashboard Free and Paid Call settings
-controllers and their canonical Xano endpoints are the only member-facing writers
-for those services; see the [Free Call settings contract](../../docs/wiring/FREE-CALL-SETTINGS-WIRING.md)
+remain separate shared-component work. On step 6, Free Call and Paid Call controls stay
+visible and editable. Their dedicated settings controllers hydrate the authored fields
+from canonical Xano GET responses and save only changed settings through the guarded
+upsert or disable endpoints before the profile PATCH begins. The profile PATCH omits all
+five call fields, so it never becomes a second writer. Both controllers claim the same step 6
+root, so each stamps its own radio hook (`data-free-call-settings-input` and
+`data-paid-call-settings-input`) rather than the shared dashboard name. A canonical render
+announces its radio answer with a `change` event so the page re-derives the dependent field's
+enabled and visible state, and a controller that reports no changes never gates the step: a
+failed call-settings read must not block Hourly Rate, Availability, Retainer, or Services. Both
+controllers read the same `isHydrating()` window before marking themselves changed, because the
+profile loader replays `input` and `change` on those five controls while it restores the legacy
+record; a hydration write is never a member change. Retainer controls remain owned by
+the profile form even when Webflow markup places them in a wrapper shared with a call
+field. This contract holds only where `scheduling-auth.js` authenticates this page; its host
+scope is owned by [Load order](#load-order). See the
+[Free Call settings contract](../../docs/wiring/FREE-CALL-SETTINGS-WIRING.md)
 and [Paid Call settings contract](../../docs/wiring/PAID-CALL-SETTINGS-WIRING.md). The root
 [Current Scripts](../../README.md#current-scripts) entry owns the profile endpoint's
 canonical-save and asynchronous-projection response contract.
@@ -323,6 +334,28 @@ marker first breaks the page two ways:
   prerequisite: a section that binds without it registers the halted state above.
 - `unified-companies.js` before `company-experience-crud.js`.
 - `unified-highlights.js` before `portfolio-crud.js`.
+- `scheduling-bridge.js` before `free-call-settings.js` and `paid-call-settings.js`, all three
+  of which this page must serve for step 6: each call controller claims the step 6 root on
+  its own and reads canonical settings only through the bridge-owned fetch. Their tags and
+  Xano authority live in the [Free Call settings contract](../../docs/wiring/FREE-CALL-SETTINGS-WIRING.md#loader-order)
+  and the [Paid Call settings contract](../../docs/wiring/PAID-CALL-SETTINGS-WIRING.md#script).
+  That prerequisite scopes where step 6 call settings work today. The bridge runs host-wide on
+  `the-starters-3-0.webflow.io`, and on the V3 custom domains it runs only on the paths listed in
+  its [current safety boundary](../README.md#scheduling-auth), which now includes
+  `/starter-edit-profile`. Without the bridge both controllers throw `xanoAuthFetch is unavailable`,
+  so the step 6 call controls render unhydrated and every call save fails closed. The boundary list
+  owns that decision, so widen it there rather than restating a host rule here.
+  `scheduling-bridge.js` is the neutral-path release alias of `scheduling-auth.js` for this page.
+  It exists because production browser client filtering can reject the filename containing
+  `auth` before JavaScript runs. The alias executes the same bridge contract and still reports
+  `window.__tsSchedulingAuthBridgeOwner = 'scheduling-auth'`; do not fork its behavior.
+  Loader order alone does not decide the race on this page: both controllers wait for the bridge
+  before their canonical read, so a bridge that installs after them still hydrates step 6 instead
+  of flashing the unavailable state. The two contracts linked above own that wait and its bounds.
+  Both bridge arrival orders are exercised in Chrome against the authored step 6 DOM by
+  `node v3/browser-tests/edit-profile-call-settings.browser.cjs`; set
+  `EDIT_PROFILE_BROWSER_EVIDENCE=<dir>` to write screenshots and observations. The fixture fakes
+  only the Memberstack session and the Xano responses, so it cannot establish production behavior.
 
 ### Authored markers
 
@@ -386,7 +419,7 @@ draft edit does not overwrite the diagnostic with `Unsaved changes.`
 ownership filter: Services passes the scalar controls `prepare()` reads plus its row fields,
 Work Experience passes `[profile-company-field]`, and Highlights passes
 `[profile-highlight-field]`. A `form-xano-required` marker on anything else authored inside the
-section — a Free or Paid Call control the dashboard writers own, a picker's own search box —
+section — a Free or Paid Call control the canonical settings controllers own, a picker's own search box —
 belongs to the script that writes that field and never pauses this section's Save.
 
 `data-non-required="<profile type>"` is the authored way to say a field is not asked of that
@@ -611,7 +644,7 @@ workflow is tracked in [PROGRESS-CHECKLIST.md](PROGRESS-CHECKLIST.md).
    read the complete saved location back before publish.
 6. Publish staging only with approval. Test empty visible fields, empty mirrors,
    hydrated unchanged saves, full/consult branches, location transitions, reviewer
-   tuples, the disabled legacy Free and Paid Call controls and settings link,
+   tuples, the editable canonical Free and Paid Call controls,
    explicit save responses with pending and complete projection states, and
    computed pointer behavior.
 7. For the shared-foundation extraction, use only the atomic route page-Head-Code cutover in
@@ -645,9 +678,10 @@ A stale nonempty mirror cannot pass an empty picker, and an empty mirror cannot
 block a selected picker. `syncSelectionGroupBounds` sets `wf-validate-min="1"`
 for Full and removes it for Consult. Failure code: `GROUP_MIN_NOT_MET`.
 
-The `[name="rate"]` and `nativeGroup` rules remain unchanged. The controller
-continues to disable legacy call fields. The existing single-select widget owns
-the maximum; this controller change adds no new maximum check.
+The `[name="rate"]` and `nativeGroup` rules remain unchanged. The call fields stay
+editable and un-required, owned by the canonical settings controllers described above.
+The existing single-select widget owns the maximum; this controller change adds no new
+maximum check.
 
 This PR does not change Webflow attributes or enable the pane 6 library Save gate.
 A later approved Webflow change would set `wf-validate-element="group"`,

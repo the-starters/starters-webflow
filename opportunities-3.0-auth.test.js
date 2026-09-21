@@ -330,12 +330,12 @@ test('project options and canonical Starter submission use authenticated V3 rout
       const url = String(input)
       requests.push({ url, init })
       if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
-      if (url.includes('/projects/options/v3')) {
+      if (url.includes('/projects/proposal-options/v3')) {
         return response({ counterparties: [{ counterparty_id: 81, company_name: 'Acme' }] })
       }
-      if (url.includes('/projects/submit/v3')) {
+      if (url.includes('/projects/proposal-request/v3')) {
         return response({
-          project: { id: 669, lifecycle_state: 'contract_create_pending' },
+          proposal: { id: 669, status: 'awaiting_brand_approval', lifecycle_version: 1 },
           replayed: false,
         })
       }
@@ -344,20 +344,83 @@ test('project options and canonical Starter submission use authenticated V3 rout
     { member: paidBrandMember },
   )
 
-  const options = await bridge.API.projectOptions()
+  const options = await bridge.API.projectProposalOptions()
   const payload = { brand_id: 81, title: 'Launch project', idempotency_key: 'starter-project-test' }
-  const result = await bridge.API.projectSubmit(payload)
+  const result = await bridge.API.projectProposalSubmit(payload)
 
   assert.equal(options.counterparties[0].counterparty_id, 81)
-  assert.equal(result.project.id, 669)
-  assert.equal(result.project.lifecycle_state, 'contract_create_pending')
-  assert.equal(requests[1].url, 'https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30/projects/options/v3')
+  assert.equal(result.proposal.id, 669)
+  assert.equal(result.proposal.status, 'awaiting_brand_approval')
+  assert.equal(requests[1].url, 'https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30/projects/proposal-options/v3')
   assert.equal(requests[1].init.method, 'POST')
   assert.equal(requests[1].init.headers.Authorization, 'Bearer xano-token')
   assert.deepEqual(JSON.parse(requests[1].init.body), {})
-  assert.equal(requests[2].url, 'https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30/projects/submit/v3')
+  assert.equal(requests[2].url, 'https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30/projects/proposal-request/v3')
   assert.equal(requests[2].init.headers.Authorization, 'Bearer xano-token')
   assert.deepEqual(JSON.parse(requests[2].init.body), payload)
+})
+
+test('the legacy projectSubmit alias keeps the released form on the proposal route', async () => {
+  const requests = []
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      requests.push({ url, init })
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/projects/proposal-request/v3')) {
+        return response({
+          proposal: { id: 669, status: 'awaiting_brand_approval', lifecycle_version: 1 },
+          replayed: false,
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    { member: paidBrandMember },
+  )
+  const payload = { brand_id: 81, title: 'Launch project', idempotency_key: 'starter-cached-form-test' }
+
+  const result = await bridge.API.projectSubmit(payload)
+
+  assert.equal(result.proposal.id, 669)
+  assert.equal(result.proposal.status, 'awaiting_brand_approval')
+  assert.equal(requests[1].url, 'https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30/projects/proposal-request/v3')
+  assert.equal(requests[1].init.method, 'POST')
+  assert.equal(requests[1].init.headers.Authorization, 'Bearer xano-token')
+  assert.deepEqual(JSON.parse(requests[1].init.body), payload)
+})
+
+test('only projectDirectSubmit reaches the direct-project route', async () => {
+  const requests = []
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      requests.push({ url, init })
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/projects/submit/v3')) {
+        return response({ project: { id: 669, lifecycle_state: 'contract_draft' }, replayed: false })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    { member: paidBrandMember },
+  )
+  const payload = { brand_id: 81, title: 'Launch project', idempotency_key: 'starter-rollback-test' }
+
+  const result = await bridge.API.projectDirectSubmit(payload)
+
+  assert.equal(result.project.id, 669)
+  assert.equal(requests[1].url, 'https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30/projects/submit/v3')
+  assert.equal(requests[1].init.method, 'POST')
+  assert.equal(requests[1].init.headers.Authorization, 'Bearer xano-token')
+  assert.deepEqual(JSON.parse(requests[1].init.body), payload)
+
+  await assert.rejects(bridge.API.projectSubmit(payload), /Unexpected request/)
+  await assert.rejects(bridge.API.projectProposalSubmit(payload), /Unexpected request/)
+  assert.equal(requests[2].url, 'https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30/projects/proposal-request/v3')
+  assert.equal(requests[3].url, 'https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30/projects/proposal-request/v3')
+  assert.equal(
+    requests.filter((entry) => entry.url.endsWith('/projects/submit/v3')).length,
+    1,
+  )
 })
 
 test('authenticated Starter profile uses the V3 self-profile route', async () => {
@@ -383,7 +446,7 @@ test('authenticated Starter profile uses the V3 self-profile route', async () =>
   assert.deepEqual(JSON.parse(requests[1].init.body), {})
 })
 
-test('superseded proposal controller retains its authenticated decision route', async () => {
+test('proposal controller uses dedicated authenticated projection and decision routes', async () => {
   const requests = []
   const bridge = await loadBridge(
     async (input, init = {}) => {
@@ -392,6 +455,9 @@ test('superseded proposal controller retains its authenticated decision route', 
       if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
       if (url.includes('/projects/proposal-action/v3')) {
         return response({ proposal: { id: 72, status: 'accepted' }, project: { id: 669 } })
+      }
+      if (url.includes('/brand/project-proposals/mine/v3')) {
+        return response({ project_proposals: [{ proposal_id: 72, status: 'awaiting_brand_approval' }] })
       }
       throw new Error(`Unexpected request: ${url}`)
     },
@@ -404,12 +470,16 @@ test('superseded proposal controller retains its authenticated decision route', 
     idempotency_key: 'proposal-action-test',
   }
 
+  const pending = await bridge.API.brandProjectProposalList(2, 6)
   const accepted = await bridge.API.projectProposalAction(decision)
 
+  assert.equal(pending.project_proposals[0].proposal_id, 72)
   assert.equal(accepted.project.id, 669)
-  assert.equal(requests[1].url, 'https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30/projects/proposal-action/v3')
-  assert.equal(requests[1].init.headers.Authorization, 'Bearer xano-token')
-  assert.deepEqual(JSON.parse(requests[1].init.body), decision)
+  assert.equal(requests[1].url, 'https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30/brand/project-proposals/mine/v3')
+  assert.deepEqual(JSON.parse(requests[1].init.body), { page: 2, per_page: 6 })
+  assert.equal(requests[2].url, 'https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30/projects/proposal-action/v3')
+  assert.equal(requests[2].init.headers.Authorization, 'Bearer xano-token')
+  assert.deepEqual(JSON.parse(requests[2].init.body), decision)
 })
 
 test('invoiceCreate sends the V3 invoice payload through the authenticated Xano bridge', async () => {
@@ -1771,6 +1841,99 @@ test('project dashboard releases a synchronously failed state waiter', async () 
   )
 
   assert.ok(await waitFor(() => subscriptions === 2 && unsubscriptions === 1))
+})
+
+test('the exported project list reload replays the loaded page range', async () => {
+  const end = el('button', { 'wf-xano-link': 'project-end' })
+  const label = el('div', { class: 'button_main-text' })
+  label.textContent = 'End Project'
+  const wrap = el('div', { class: 'button_main-wrap' }, [end, label])
+  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '675' }, [wrap])
+  const root = el(
+    'div',
+    { 'wf-xano-instance': 'dash-brand-projects', 'wf-xano-source': 'opp30:brand/projects/mine' },
+    [card],
+  )
+  const events = []
+  const handlers = new Set()
+  const pageItems = (page) => Array.from({ length: 12 }, (_, index) => (
+    page === 1 && index === 0
+      ? { id: 675, lifecycle_state: 'active', lifecycle_version: 1 }
+      : { id: (page - 1) * 12 + index + 1 }
+  ))
+  let state = {
+    status: 'success',
+    data: {
+      items: [
+        { id: 675, lifecycle_state: 'active', lifecycle_version: 1 },
+        ...Array.from({ length: 35 }, (_, index) => ({ id: index + 1 })),
+      ],
+      hasMore: true,
+    },
+    query: { page: 3, perPage: 12 },
+  }
+  const publishPage = (page, append) => {
+    state = {
+      status: 'success',
+      data: {
+        items: append ? state.data.items.concat(pageItems(page)) : pageItems(page),
+        hasMore: page < 4,
+      },
+      query: { page, perPage: 12 },
+    }
+    handlers.forEach((handler) => handler(state))
+    return Promise.resolve(state)
+  }
+  const instance = {
+    getState: () => state,
+    refresh() {
+      events.push({ type: 'refresh' })
+      return publishPage(1, false)
+    },
+    goToPage(page) {
+      events.push({ type: `page:${page}` })
+      return publishPage(page, false)
+    },
+    loadNext() {
+      const page = state.query.page + 1
+      events.push({ type: `page:${page}` })
+      return publishPage(page, true)
+    },
+    subscribe(handler) {
+      handlers.add(handler)
+      handler(state)
+      return () => handlers.delete(handler)
+    },
+  }
+  const bridge = await loadBridge(
+    async (input) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: paidBrandMember,
+      pathname: '/brand-dashboard',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+      wfXano: {
+        get(key) {
+          return key === 'dash-brand-projects' ? instance : null
+        },
+      },
+    },
+  )
+  assert.ok(await waitFor(() => end.getAttribute('data-project-action') === 'end'))
+  assert.equal(typeof bridge.window.Opp30.refreshProjectWorkflow, 'function')
+
+  await bridge.window.Opp30.refreshProjectWorkflow('brand', true)
+
+  assert.deepEqual(events.map((event) => event.type), ['page:1', 'page:2', 'page:3'])
+  assert.equal(state.query.page, 3)
+  assert.equal(state.data.items.length, 36)
 })
 
 test('project lifecycle replay retries transient failure and accepts earlier exhaustion', async () => {

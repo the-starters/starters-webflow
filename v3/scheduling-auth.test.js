@@ -154,7 +154,7 @@ test('blocks every scheduling request on the protected production Test profile',
   }
 })
 
-test('installs on valid Hire profiles and canonical dashboards across both production hosts', () => {
+test('installs on valid Hire profiles, canonical dashboards, and Edit Profile across both production hosts', () => {
   for (const hostname of ['thestarters.com', 'www.thestarters.com']) {
     for (const pathname of [
       '/hire/jp-testiz-d',
@@ -162,6 +162,7 @@ test('installs on valid Hire profiles and canonical dashboards across both produ
       '/starter-dashboard',
       '/brand-dashboard',
       '/messages',
+      '/starter-edit-profile',
     ]) {
       const nativeFetch = async () => response({})
       const { window } = loadBridge(nativeFetch, { hostname, pathname })

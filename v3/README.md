@@ -1257,17 +1257,29 @@ node --test v3/project-form.test.js v3/project-form-workflow.test.js \
 scope, endpoint, Designer, user-state, and release contract lives in
 [STARTER-PROJECT-FORM-WIRING.md](../docs/wiring/STARTER-PROJECT-FORM-WIRING.md).
 
-## Superseded Brand proposal approval
+## Brand project proposal approval
 
-`brand-project-proposals.js` is retained as release history. Do not install it
-for the contract-first workflow. A Starter submission creates a normal pending
-project immediately. The existing contract-signing panel supplies both-party
-consent and allows either party to sign first.
+`brand-project-proposals.js` binds the Brand Dashboard accept/decline step for
+pending Starter project requests. A Starter submission creates a proposal row
+only; acceptance creates the canonical project and the single PandaDoc
+invitation owned by the existing project outbox. The authoritative endpoint,
+Designer, install, and release contract lives in
+[BRAND-PROJECT-PROPOSALS-WIRING.md](../docs/wiring/BRAND-PROJECT-PROPOSALS-WIRING.md).
+Install it in the same release as `starter-project-form.js`; the Starter half
+alone leaves every request unactionable.
+
+Its Designer markers are proposal-only: `data-project-request-template` for the
+row template and `data-project-request-list` for the list host. It never reads
+`data-project-proposal-template`, which the [Action Items
+panel](#dashboard-action-items-panel) below owns as the Brand first-opportunity
+row and hides once that Brand has an opportunity. With neither proposal marker
+authored the controller builds its own labelled request section next to the
+Action Items wrapper rather than borrowing a row from it.
 
 Run the focused tests with:
 
 ```sh
-node --test v3/starter-project-form.test.js
+node --test v3/starter-project-form.test.js v3/brand-project-proposals.test.js
 ```
 
 ## All Starters favorites
@@ -1933,8 +1945,11 @@ Current safety boundary:
 
 - Runs across `the-starters-3-0.webflow.io`.
 - On the V3 custom domains, runs on valid single-segment `/hire/<slug>` paths,
-  `/starter-dashboard`, `/brand-dashboard`, and `/messages`. Production
-  `/hire/jp-dionisio` remains explicitly blocked.
+  `/starter-dashboard`, `/brand-dashboard`, `/messages`, and
+  `/starter-edit-profile`. Production `/hire/jp-dionisio` remains explicitly
+  blocked. `/starter-edit-profile` is on this list because step 6 of Edit Profile
+  reads and writes the same canonical Free and Paid call settings the Starter
+  dashboard already owns; it adds no route to the authenticated list below.
 - Authenticates only explicit reviewed `/v3` routes on the configured Xano
   origin, including the two Brand paid-call payment-method paths documented
   below. It does not use a group-wide prefix allowlist.
@@ -4257,7 +4272,10 @@ is also recorded in the module header. Remove the fallback once every row
 carries `data-action-element="item"`.
 
 On `/brand-dashboard`, the controller finds the first-opportunity row through
-`[data-project-proposal-template="true"]`, then resolves that authored inner
+`[data-project-proposal-template="true"]`, which it owns exclusively — the
+[Brand project proposal approval](#brand-project-proposal-approval) controller
+uses its own `data-project-request-*` markers and never matches this one. It
+then resolves that authored inner
 template to its closest `.dash-hero_action-item` so the full outer row hides. If
 there is no outer row, it uses the template itself as a compatibility fallback.
 It requests the first owned opportunity through
