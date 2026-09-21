@@ -250,10 +250,10 @@ frontend install.
 ## Configuration switch
 
 Memberstack's browser SDK owns reset-password emails for explicit recovery and
-the changed login-email security used by Build Account and Account Security.
-Starter Edit Profile does not request one. Build Account also sends none when
-the member keeps the email they already authenticated with. Memberstack's Admin
-API does not expose a server-side reset-email action, so this controller
+the changed login-email security used by Build Account. Account Security and
+Starter Edit Profile do not request one. Build Account also sends none when the
+member keeps the email they already authenticated with. Memberstack's Admin API
+does not expose a server-side reset-email action, so this controller
 deliberately does not depend on or claim a durable email outbox. Do not add an
 automatic retry around `sendMemberResetPasswordEmail`; a lost response is
 ambiguous and retrying could send a second message.
@@ -379,9 +379,18 @@ projection.
   second `updateMemberAuth`. That marker is per form and lives only for the page:
   after a reload the login email is already the target, nothing is attempted, and
   Forgot Password is the recovery path.
-- Account Security attempts its reset email only after a changed login email has
-  been saved successfully. The guarded Talent edit-profile form never requests
-  a reset email and keeps the member's existing password.
+- Account Security and the guarded Talent edit-profile form update the login
+  email without requesting password-reset or verification emails and keep the
+  member's existing password. Explicit Forgot Password remains available.
+- Account Security shows its authored `[data-ms-message="success"]` or
+  `[data-ms-message="error"]` block and hides Webflow's sibling success/failure
+  blocks. The success block's authored copy is left untouched; only the error
+  block's `[data-ms-message-text]` receives the failure reason.
+  A legacy installation missing the relevant Memberstack block falls back to
+  its Webflow state. Starting another save clears the prior feedback.
+- Account Security marks only the submit control's containing
+  `[data-opp-element="loading-button"]` as loading. Change Password's lock
+  icon stays visible during an email save.
 - A failed or unconfirmed changed login-email write blocks the guarded Talent
   profile replay. Before replay, the controller re-reads Memberstack and requires
   the same stable member ID and normalized login email that initiated the save.
@@ -391,23 +400,22 @@ projection.
   invalid profile fields.
 - The guarded Talent edit-profile form confirms ownership by reading back the
   same stable member ID and exact normalized login email before profile replay.
-  It does not send a verification or password email. Build Account and Account
-  Security retain their reset/set-password email contract.
-- Reset-email delivery in Build Account and Account Security is an external,
-  non-idempotent browser side effect. The
-  controller records the normalized target in an in-memory per-form marker
-  before calling Memberstack and will not attempt that target again during the
-  same page lifecycle, including after a timeout or lost response. It never
-  automatically retries the email call across a reload or new session and does
-  not claim mathematically exactly-once delivery.
-- If a Build Account or Account Security reset-email result is failed or
-  ambiguous, the durable account changes remain saved and the UI directs the
-  member to the standard Forgot Password flow for an explicit recovery attempt.
-- For Build Account and Account Security, successful password-token redemption
-  is the ownership proof. The controller does not claim Memberstack
-  `verified=true` without separately observed state. Starter Edit Profile uses
-  the same-member and exact-email readback described above and does not require
-  password-token redemption.
+  It does not send a verification or password email. Build Account retains its
+  reset/set-password email contract.
+- Reset-email delivery in Build Account is an external, non-idempotent browser
+  side effect. The controller records the normalized target in an in-memory
+  per-form marker before calling Memberstack and will not attempt that target
+  again during the same page lifecycle, including after a timeout or lost
+  response. It never automatically retries the email call across a reload or
+  new session and does not claim mathematically exactly-once delivery.
+- If a Build Account reset-email result is failed or ambiguous, the durable
+  account changes remain saved and the UI directs the member to the standard
+  Forgot Password flow for an explicit recovery attempt.
+- For Build Account, successful password-token redemption is the ownership
+  proof. The controller does not claim Memberstack `verified=true` without
+  separately observed state. Starter Edit Profile uses the same-member and
+  exact-email readback described above and does not require password-token
+  redemption.
 - `completed-brand-profile` is the final durable Build Account write. Any
   earlier account-write failure leaves the member on onboarding for a safe
   idempotent replay; an email failure occurs only after completion is durable.
@@ -437,8 +445,8 @@ Run in Memberstack Test Mode first with an approved sandbox Brand identity:
 6. Change ordinary fields in Account Settings; prove both Xano rows converge.
 7. Attempt an invalid email and an already-used email; prove no completion mark
    and no partial Xano email drift.
-8. Change to the approved canary email; prove one reset/set-password message and
-   matching Xano values.
+8. Change the Account Security email to the approved canary address; prove zero
+   password-reset/verification API calls and matching Xano values.
 9. Submit Build Account with unchanged and changed login-email fixtures. Prove
    the unchanged path calls no reset-email API. Simulate a changed-email write
    that lands and then answers 409; prove the same submit completes and sends
@@ -448,10 +456,11 @@ Run in Memberstack Test Mode first with an approved sandbox Brand identity:
    one. Simulate an ambiguous email response on the changed path; prove a
    same-page resubmit performs no second email attempt, preserves the completed
    account, and can reach the dashboard.
-10. Simulate an ambiguous Account Security email response after the auth
-   mutation; prove the saved email remains authoritative and a same-page
-   resubmit performs no second email attempt. Prove Forgot Password can issue a
-   fresh recovery link when the member explicitly requests one.
+10. Exercise Account Security success, error, and retry; prove its authored
+   Memberstack states show the result, Webflow states stay hidden, and only
+   Save Changes enters loading (Change Password's lock stays visible). Repeat
+   changed/unchanged and A-B-A email saves with zero password-email API calls.
+   Prove Forgot Password can still issue a recovery link on explicit request.
 11. Replay duplicate and out-of-order webhook fixtures; prove no stale overwrite.
 12. Run the read-only reconciliation and require zero unexplained differences.
 

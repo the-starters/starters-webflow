@@ -77,6 +77,7 @@ function makeForm(kind = 'build', values = {}) {
   const wrapper = makeWrapper()
   const submit = makeElement()
   const loading = makeElement()
+  submit.closest = selector => selector === '[data-opp-element="loading-button"]' ? loading : null
   const inputs = new Map()
 
   if (kind === 'build') {
@@ -1479,7 +1480,7 @@ test('Brand Account Security owns the submit and skips an unchanged email', asyn
   assert.equal(securityForm.wrapper.done.style.display, 'block')
 })
 
-test('Brand Account Security changes email and sends reset password email once', async () => {
+test('Brand Account Security changes email without sending a password email', async () => {
   const securityForm = makeForm('security', { email: 'next@example.com' })
   const environment = loadController({
     buildForm: null,
@@ -1494,13 +1495,13 @@ test('Brand Account Security changes email and sends reset password email once',
 
   assert.deepEqual(
     environment.calls.map((call) => call.method),
-    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail'],
+    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth'],
   )
-  assert.deepEqual(plain(environment.calls[3].payload), { email: 'next@example.com' })
+  assert.deepEqual(plain(environment.calls[2].payload), { email: 'next@example.com' })
   assert.equal(securityForm.wrapper.done.style.display, 'block')
 })
 
-test('Brand-scoped Account Security binds Brand roles and sends only the reset password email', async () => {
+test('Brand-scoped Account Security binds Brand roles without sending password or verification emails', async () => {
   for (const role of ['brand-free', 'brand-paid']) {
     const securityForm = makeForm('security', { email: `${role}@example.com` })
     const environment = loadController({
@@ -1523,7 +1524,6 @@ test('Brand-scoped Account Security binds Brand roles and sends only the reset p
         'getCurrentMember',
         'getCurrentMember',
         'updateMemberAuth',
-        'sendMemberResetPasswordEmail',
       ],
     )
     assert.equal(
@@ -1550,7 +1550,7 @@ test('Identity-scoped Account Security owns Talent email changes', async () => {
   assert.equal(submission.event.stopped, true)
   assert.deepEqual(
     environment.calls.map((call) => call.method),
-    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail'],
+    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth'],
   )
   assert.deepEqual(plain(environment.calls[2].payload), {
     email: 'talent-next@example.com',
@@ -2499,7 +2499,7 @@ test('Identity-scoped Account Security revalidates the same member before mutati
   assert.equal(reads, 2)
   assert.deepEqual(
     environment.calls.map((call) => call.method),
-    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail'],
+    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth'],
   )
   assert.equal(securityForm.nativeSubmits, 0)
 })
@@ -2642,7 +2642,7 @@ test('Build Account does not retry an ambiguously acknowledged changed-email mes
   assert.deepEqual(environment.redirects, ['/brand-dashboard'])
 })
 
-test('Account Security suppresses an A-B-A replay after ambiguous email sends', async () => {
+test('Account Security never sends password emails across A-B-A email changes', async () => {
   let deliveries = 0
   const securityForm = makeForm('security', { email: 'a@example.com' })
   const environment = loadController({
@@ -2665,7 +2665,7 @@ test('Account Security suppresses an A-B-A replay after ambiguous email sends', 
   securityForm.submitEvent()
   await settle()
 
-  assert.equal(deliveries, 2)
+  assert.equal(deliveries, 0)
   assert.equal(
     environment.calls.filter((call) => call.method === 'updateMemberAuth').length,
     3,
@@ -2708,4 +2708,75 @@ test('native form diagnostics inherit the controller CDN ref and use one loader 
   assert.equal(script.getAttribute('data-starters-native-form-diagnostics'), '')
   environment.api.init()
   assert.equal(nativeScripts().length, 1)
+})
+
+
+function addSecurityFeedback(form) {
+  for (const kind of ['success', 'error']) {
+    const state = makeElement()
+    const text = makeElement()
+    state.style.display = 'none'
+    text.textContent = kind === 'success' ? 'Success State' : 'Error state'
+    state.querySelector = selector => selector === '[data-ms-message-text]' ? text : null
+    state.messageText = text
+    form.inputs.set(`[data-ms-message="${kind}"]`, state)
+  }
+}
+
+test('Account Security uses authored Memberstack states and only loads Save Changes', async () => {
+  const form = makeForm('security', { email: 'next@example.com' })
+  addSecurityFeedback(form)
+  const passwordButton = makeElement()
+  passwordButton.setAttribute('data-opp-loading', 'false')
+  form.inputs.set('[data-opp-element="loading-button"]', passwordButton)
+  const write = deferred()
+  loadController({ buildForm: null, securityForm: form,
+    config: { guardSecurityForm: 'identity' },
+    routeGuard: { memberRole: () => 'talent' },
+    updateMemberAuth: () => write.promise,
+  })
+  form.wrapper.done.style.display = 'block'
+  form.submitEvent()
+  await settle()
+  assert.equal(passwordButton.getAttribute('data-opp-loading'), 'false')
+  assert.equal(form.loading.getAttribute('data-opp-loading'), 'true')
+  assert.equal(form.submit.disabled, true)
+  assert.equal(form.wrapper.done.style.display, 'none')
+  write.resolve({})
+  await settle()
+  assert.equal(form.inputs.get('[data-ms-message="success"]').style.display, 'block')
+  assert.equal(form.inputs.get('[data-ms-message="success"]').messageText.textContent, 'Success State')
+  assert.equal(form.inputs.get('[data-ms-message="error"]').style.display, 'none')
+  assert.equal(form.wrapper.done.style.display, 'none')
+  assert.equal(form.wrapper.fail.style.display, 'none')
+  assert.equal(form.loading.getAttribute('data-opp-loading'), 'false')
+  assert.equal(form.submit.disabled, false)
+  assert.equal(passwordButton.getAttribute('data-opp-loading'), 'false')
+})
+
+test('Account Security shows an auth failure in the authored error state and clears it on retry', async () => {
+  const form = makeForm('security', { email: 'next@example.com' })
+  addSecurityFeedback(form)
+  let fails = true
+  loadController({ buildForm: null, securityForm: form,
+    config: { guardSecurityForm: 'identity' },
+    routeGuard: { memberRole: () => 'brand-paid' },
+    updateMemberAuth: async () => {
+      if (fails) throw Object.assign(new Error('Email already exists'), { status: 409 })
+      return {}
+    },
+  })
+  form.submitEvent()
+  await settle()
+  const failure = form.inputs.get('[data-ms-message="error"]')
+  assert.equal(failure.style.display, 'block')
+  assert.match(failure.messageText.textContent, /email/i)
+  assert.equal(form.inputs.get('[data-ms-message="success"]').style.display, 'none')
+  assert.equal(form.wrapper.fail.style.display, 'none')
+  assert.equal(form.submit.disabled, false)
+  fails = false
+  form.submitEvent()
+  await settle()
+  assert.equal(failure.style.display, 'none')
+  assert.equal(form.inputs.get('[data-ms-message="success"]').style.display, 'block')
 })
