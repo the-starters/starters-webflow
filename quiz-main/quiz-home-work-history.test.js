@@ -5,9 +5,13 @@ const vm = require('node:vm')
 
 const source = fs.readFileSync(require.resolve('./quiz-home.js'), 'utf8')
 
+const MANAGED_INDEX = 'Freelancers3.0-production'
+
 function attributeElement(attributes = {}) {
     return {
         attributes: { ...attributes },
+        children: [],
+        textContent: '',
         getAttribute(name) {
             return Object.prototype.hasOwnProperty.call(this.attributes, name)
                 ? this.attributes[name]
@@ -16,10 +20,14 @@ function attributeElement(attributes = {}) {
         setAttribute(name, value) {
             this.attributes[name] = String(value)
         },
+        replaceChildren(...nodes) {
+            this.children = nodes
+            this.textContent = nodes.map((node) => node.textContent).join('')
+        },
     }
 }
 
-function homeCard(id, legacyText) {
+function homeCard(id, legacyText, { withImage = true } = {}) {
     const list = attributeElement()
     list.textContent = legacyText
     const image = attributeElement({
@@ -27,7 +35,9 @@ function homeCard(id, legacyText) {
     })
     const card = attributeElement()
     card.querySelector = (selector) => {
-        if (selector === '.expert-card_profile-image') return image
+        if (selector === '.expert-card_profile-image') {
+            return withImage ? image : null
+        }
         if (selector === '.expert-card_company-list') return list
         return null
     }
@@ -38,31 +48,35 @@ function flushPromises() {
     return new Promise((resolve) => setImmediate(resolve))
 }
 
-async function load({ histories, responseOk = true, responseStatus = 200 }) {
-    const cards = Object.keys(histories).map((id) => homeCard(id, 'Legacy company'))
+async function load({
+    histories,
+    responseOk = true,
+    responseStatus = 200,
+    managedConfig = {
+        appId: 'APP123',
+        searchKey: 'public-search-key',
+        indexName: MANAGED_INDEX,
+    },
+    withImages = true,
+}) {
+    const cards = Object.keys(histories).map((id) =>
+        homeCard(id, 'Legacy company', { withImage: withImages }),
+    )
     const section = attributeElement()
-    const client = attributeElement({
-        'data-app-id': 'APP123',
-        'data-search-key': 'public-search-key',
-    })
-    const resource = attributeElement({
-        'wf-algolia-index': 'Freelancers3.0-production__published_desc',
-    })
     const requests = []
     const dispatched = []
 
     const document = {
         readyState: 'complete',
+        createElement(tagName) {
+            const element = attributeElement()
+            element.tagName = tagName.toUpperCase()
+            element.className = ''
+            return element
+        },
         querySelector(selector) {
             if (selector === '[data-quiz-form="home"]') return null
             if (selector === '.section_home-consult') return section
-            if (selector === 'script[data-starters-v3-algolia-client]') return client
-            if (
-                selector ===
-                '[data-starters-v3-algolia-resource="starters"][wf-algolia-index]'
-            ) {
-                return resource
-            }
             return null
         },
         querySelectorAll(selector) {
@@ -88,6 +102,12 @@ async function load({ histories, responseOk = true, responseStatus = 200 }) {
         dispatchEvent(event) {
             dispatched.push(event.type)
             return true
+        },
+        StartersV3AlgoliaEnvironment: {
+            getManagedSearchConfig(resource) {
+                if (resource !== 'starters') return null
+                return managedConfig
+            },
         },
     }
     window.window = window
@@ -130,6 +150,18 @@ async function load({ histories, responseOk = true, responseStatus = 200 }) {
     return { cards, dispatched, requests, section }
 }
 
+function companiesOf({ list }) {
+    return list.children.map((child) => child.textContent)
+}
+
+function companyClassesOf({ list }) {
+    return list.children.map((child) => `${child.tagName}.${child.className}`)
+}
+
+function sectionStatus(page) {
+    return page.section.getAttribute('data-home-work-history-status')
+}
+
 test('Home consult cards render ordered work-history for three, two, one, and empty states', async () => {
     const page = await load({
         histories: {
@@ -157,31 +189,33 @@ test('Home consult cards render ordered work-history for three, two, one, and em
         })),
         [
             {
-                indexName: 'Freelancers3.0-production',
+                indexName: MANAGED_INDEX,
                 objectID: '101',
                 attributesToRetrieve: ['work-history'],
             },
             {
-                indexName: 'Freelancers3.0-production',
+                indexName: MANAGED_INDEX,
                 objectID: '102',
                 attributesToRetrieve: ['work-history'],
             },
             {
-                indexName: 'Freelancers3.0-production',
+                indexName: MANAGED_INDEX,
                 objectID: '103',
                 attributesToRetrieve: ['work-history'],
             },
             {
-                indexName: 'Freelancers3.0-production',
+                indexName: MANAGED_INDEX,
                 objectID: '104',
                 attributesToRetrieve: ['work-history'],
             },
         ],
     )
-    assert.deepEqual(
-        page.cards.map(({ list }) => list.textContent),
-        ['First, Second, Third', 'Alpha, Beta', 'Only', ''],
-    )
+    assert.deepEqual(page.cards.map(companiesOf), [
+        ['First', 'Second', 'Third'],
+        ['Alpha', 'Beta'],
+        ['Only'],
+        [],
+    ])
     assert.deepEqual(
         page.cards.map(({ list }) =>
             list.getAttribute('data-home-work-history-status'),
@@ -192,6 +226,18 @@ test('Home consult cards render ordered work-history for three, two, one, and em
     assert.deepEqual(page.dispatched, ['expert-cards:relayout'])
 })
 
+test('each company is its own styled paragraph the expert-card sheet can size', async () => {
+    const page = await load({
+        histories: { 593: [{ company: 'Xero Shoes' }, { company: 'Parachute Home' }] },
+    })
+
+    assert.deepEqual(companyClassesOf(page.cards[0]), [
+        'P.expert-card_company-text text-size-small',
+        'P.expert-card_company-text text-size-small',
+    ])
+    assert.deepEqual(companiesOf(page.cards[0]), ['Xero Shoes', 'Parachute Home'])
+})
+
 test('invalid work-history entries are omitted without reviving legacy CMS text', async () => {
     const page = await load({
         histories: {
@@ -199,19 +245,34 @@ test('invalid work-history entries are omitted without reviving legacy CMS text'
                 null,
                 { company: ' Parachute Home ' },
                 { company: '' },
+                { company: { name: 'Nike' } },
                 { company: 'The Honest Company' },
             ],
         },
     })
 
-    assert.equal(
-        page.cards[0].list.textContent,
-        'Parachute Home, The Honest Company',
-    )
+    assert.deepEqual(companiesOf(page.cards[0]), [
+        'Parachute Home',
+        'The Honest Company',
+    ])
     assert.equal(
         page.cards[0].list.getAttribute('data-home-work-history-status'),
         'ready',
     )
+})
+
+test('repeat stints at one company collapse to the first spelling', async () => {
+    const page = await load({
+        histories: {
+            593: [
+                { company: 'Nike', title: 'PM' },
+                { company: 'nike', title: 'Sr PM' },
+                { company: 'Parachute Home' },
+            ],
+        },
+    })
+
+    assert.deepEqual(companiesOf(page.cards[0]), ['Nike', 'Parachute Home'])
 })
 
 test('a failed Algolia request removes the misleading legacy company list', async () => {
@@ -221,6 +282,7 @@ test('a failed Algolia request removes the misleading legacy company list', asyn
         responseStatus: 503,
     })
 
+    assert.deepEqual(companiesOf(page.cards[0]), [])
     assert.equal(page.cards[0].list.textContent, '')
     assert.equal(
         page.cards[0].list.getAttribute('data-home-work-history-status'),
@@ -230,6 +292,30 @@ test('a failed Algolia request removes the misleading legacy company list', asyn
     assert.deepEqual(page.dispatched, ['expert-cards:relayout'])
 })
 
-function sectionStatus(page) {
-    return page.section.getAttribute('data-home-work-history-status')
-}
+test('an unresolved managed environment fails closed and still relayouts', async () => {
+    const page = await load({
+        histories: { 593: [{ company: 'Parachute Home' }] },
+        managedConfig: null,
+    })
+
+    assert.equal(page.requests.length, 0, 'no request without managed credentials')
+    assert.equal(page.cards[0].list.textContent, '')
+    assert.equal(sectionStatus(page), 'missing-config')
+    assert.deepEqual(page.dispatched, ['expert-cards:relayout'])
+})
+
+test('a card with no resolvable profile ID clears its legacy list and relayouts', async () => {
+    const page = await load({
+        histories: { 593: [{ company: 'Parachute Home' }] },
+        withImages: false,
+    })
+
+    assert.equal(page.requests.length, 0, 'no request without a profile ID')
+    assert.equal(page.cards[0].list.textContent, '')
+    assert.equal(
+        page.cards[0].list.getAttribute('data-home-work-history-status'),
+        'missing-id',
+    )
+    assert.equal(sectionStatus(page), 'missing-id')
+    assert.deepEqual(page.dispatched, ['expert-cards:relayout'])
+})
