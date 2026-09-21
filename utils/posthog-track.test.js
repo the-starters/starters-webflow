@@ -135,11 +135,11 @@ test('a confirmed Webflow chunk failure is captured before one recovery reload',
   app.runScheduled()
   assert.equal(app.reloads, 1)
 
-  const marker = JSON.parse(
+  const markers = JSON.parse(
     app.storageValues.get('starters:webflow-chunk-recovery'),
   )
-  assert.deepEqual(marker.page, '/')
-  assert.equal(Number.isFinite(marker.at), true)
+  assert.deepEqual(markers.map((marker) => marker.page), ['/'])
+  assert.equal(Number.isFinite(markers[0].at), true)
 })
 
 test('an unhandled Webflow chunk rejection uses the same recovery guard', () => {
@@ -172,10 +172,53 @@ test('a Webflow chunk failure can recover independently on another page', () => 
   app.listeners.error({ error: chunkError(request) })
   app.runScheduled()
   assert.equal(app.reloads, 2)
-  assert.equal(
-    JSON.parse(app.storageValues.get('starters:webflow-chunk-recovery')).page,
-    '/starter-dashboard',
+  assert.deepEqual(
+    JSON.parse(app.storageValues.get('starters:webflow-chunk-recovery')).map(
+      (marker) => marker.page,
+    ),
+    ['/', '/starter-dashboard'],
   )
+})
+
+test('recovering another page never re-arms an earlier page cooldown', () => {
+  const app = load()
+  const request =
+    'https://cdn.prod.website-files.com/site/js/webflow.achunk.deadbeef.js'
+
+  app.listeners.error({ error: chunkError(request) })
+  app.runScheduled()
+  assert.equal(app.reloads, 1)
+
+  app.location.pathname = '/starter-dashboard'
+  app.listeners.error({ error: chunkError(request) })
+  app.runScheduled()
+  assert.equal(app.reloads, 2)
+
+  app.location.pathname = '/'
+  app.listeners.error({ error: chunkError(request) })
+  app.runScheduled()
+  assert.equal(app.captured.length, 3)
+  assert.equal(app.reloads, 2)
+})
+
+test('recovery markers stay bounded as more pages fail', () => {
+  const app = load()
+  const request =
+    'https://cdn.prod.website-files.com/site/js/webflow.achunk.deadbeef.js'
+
+  for (let i = 0; i < 25; i += 1) {
+    app.location.pathname = `/page-${i}`
+    app.listeners.error({ error: chunkError(request) })
+    app.runScheduled()
+  }
+
+  assert.equal(app.reloads, 25)
+  const markers = JSON.parse(
+    app.storageValues.get('starters:webflow-chunk-recovery'),
+  )
+  assert.equal(markers.length, 10)
+  assert.equal(markers[markers.length - 1].page, '/page-24')
+  assert.deepEqual(Object.keys(markers[0]).sort(), ['at', 'page'])
 })
 
 test('an expired same-page recovery marker permits a later retry', () => {
@@ -184,7 +227,7 @@ test('an expired same-page recovery marker permits a later retry', () => {
     'https://cdn.prod.website-files.com/site/js/webflow.achunk.deadbeef.js'
   app.storageValues.set(
     'starters:webflow-chunk-recovery',
-    JSON.stringify({ page: '/', at: 0 }),
+    JSON.stringify([{ page: '/', at: 0 }]),
   )
 
   app.listeners.error({ error: chunkError(request) })
