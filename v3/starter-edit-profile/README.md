@@ -209,9 +209,9 @@ from canonical Xano GET responses and save only changed settings through the gua
 upsert or disable endpoints before the profile PATCH begins. The profile PATCH omits all
 five call fields, so it never becomes a second writer. Both controllers claim the same step 6
 root, so each stamps its own radio hook (`data-free-call-settings-input` and
-`data-paid-call-settings-input`) rather than the shared dashboard name. The pending-intent signal
-`data-build-call-intent` is not namespaced that way, so on this shared root whichever controller
-renders last owns the value; read it as a Starter-dashboard QA signal, not a per-branch one here. A canonical render
+`data-paid-call-settings-input`) rather than the shared dashboard name. The pending receipt signals
+are also namespaced as `data-free-build-call-intent` and `data-paid-build-call-intent`, so neither
+controller overwrites the other on this shared root. A canonical render
 announces its radio answer with a `change` event so the page re-derives the dependent field's
 enabled and visible state, and a controller that reports no changes never gates the step: a
 failed call-settings read must not block Hourly Rate, Availability, Retainer, or Services. Both

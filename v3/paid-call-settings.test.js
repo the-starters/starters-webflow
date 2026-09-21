@@ -507,6 +507,7 @@ function load(options = {}) {
     getCurrentMember: async () => ({ data: await currentMemberReader() }),
     getMemberJSON: async () => ({ data: memberJSON }),
     updateMemberJSON: async ({ json }) => {
+      if (options.memberJsonUpdateError) throw options.memberJsonUpdateError
       memberJSON = json
       memberJsonWrites.push(json)
     },
@@ -784,7 +785,7 @@ test('hydrates pending Build Profile Paid intent and consumes it after canonical
   assert.equal(result.dom.disabled.checked, false)
   assert.equal(result.dom.title.value, 'Strategy call')
   assert.equal(result.dom.price.value, '250')
-  assert.equal(result.dom.root.getAttribute('data-build-call-intent'), 'pending')
+  assert.equal(result.dom.root.getAttribute('data-paid-build-call-intent'), 'pending')
   assert.match(result.dom.statusOutput.textContent, /Build Profile choice is ready/)
 
   await result.window.StarterPaidCallSettings.submit()
@@ -806,7 +807,48 @@ test('hydrates pending Build Profile Paid intent and consumes it after canonical
     JSON.parse(JSON.stringify(result.memberJsonWrites[0].starter_call_settings_intent_v3.free)),
     { enabled: true, description: 'Saved intro' },
   )
-  assert.equal(result.dom.root.getAttribute('data-build-call-intent'), '')
+  assert.equal(result.dom.root.getAttribute('data-paid-build-call-intent'), '')
+})
+
+test('a pending receipt cleanup failure never turns a verified Paid save into an error', async () => {
+  const result = load({
+    cardMode: true,
+    memberId: 'member-a',
+    memberJsonUpdateError: new Error('Memberstack timeout'),
+    memberJSON: {
+      starter_call_settings_intent_v3: {
+        version: 1,
+        member_id: 'member-a',
+        paid: { enabled: true, title: 'Strategy call', price_dollars: 250 },
+      },
+    },
+    initial: canonical(),
+    routes: {
+      '/starter/paid-call-settings/upsert/v3': ({ body, setState }) => {
+        const saved = service({
+          title: body.title,
+          price_cents: body.price_cents,
+          duration: body.duration_minutes,
+          revision: 1,
+        })
+        setState(canonical({
+          services: [saved],
+          readiness: { paid_call_enabled: true, bookable: true },
+        }))
+        return { ok: true, status: 200, json: async () => ({ service: saved }) }
+      },
+    },
+  })
+  await settle()
+
+  const canonicalResult = await result.window.StarterPaidCallSettings.submit()
+  await settle()
+
+  assert.ok(canonicalResult.services.length)
+  assert.equal(result.events.some((event) => event.type === 'starterPaidCallWriteError'), false)
+  assert.equal(result.events.some((event) => event.type === 'starterPaidCallWriteSuccess'), true)
+  assert.equal(result.dom.root.getAttribute('data-paid-build-call-intent'), '')
+  assert.match(result.warnings.join('\n'), /pending Build Profile receipt could not be cleared/)
 })
 
 test('a pending Build Profile Paid change updates an existing canonical service', async () => {
@@ -998,7 +1040,7 @@ test('a gated pending Paid enable never blocks the Edit Profile step save', asyn
   await settle()
 
   assert.equal(result.dom.enabled.checked, true)
-  assert.equal(result.dom.root.getAttribute('data-build-call-intent'), 'pending')
+  assert.equal(result.dom.root.getAttribute('data-paid-build-call-intent'), 'pending')
   assert.equal(result.window.StarterPaidCallSettings.hasChanges(), false)
   assert.ok(await result.window.StarterPaidCallSettings.submit())
   assert.equal(result.calls.some((call) => call.method === 'POST'), false)

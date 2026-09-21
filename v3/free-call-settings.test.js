@@ -301,6 +301,7 @@ function load(options = {}) {
     getCurrentMember: async () => ({ data: await currentMemberReader() }),
     getMemberJSON: async () => ({ data: memberJSON }),
     updateMemberJSON: async ({ json }) => {
+      if (options.memberJsonUpdateError) throw options.memberJsonUpdateError
       memberJSON = json
       memberJsonWrites.push(json)
     },
@@ -521,7 +522,7 @@ test('hydrates pending Build Profile Free intent and consumes it after canonical
   assert.equal(result.dom.yes.checked, true)
   assert.equal(result.dom.no.checked, false)
   assert.equal(result.dom.title.value, 'Saved intro')
-  assert.equal(result.dom.root.getAttribute('data-build-call-intent'), 'pending')
+  assert.equal(result.dom.root.getAttribute('data-free-build-call-intent'), 'pending')
   assert.match(result.dom.status.textContent, /Build Profile choice is ready/)
 
   await result.window.StarterFreeCallSettings.submit()
@@ -536,7 +537,43 @@ test('hydrates pending Build Profile Free intent and consumes it after canonical
     JSON.parse(JSON.stringify(result.memberJsonWrites[0].starter_call_settings_intent_v3.paid)),
     { enabled: true, title: 'Strategy call', price_dollars: 250 },
   )
-  assert.equal(result.dom.root.getAttribute('data-build-call-intent'), '')
+  assert.equal(result.dom.root.getAttribute('data-free-build-call-intent'), '')
+})
+
+test('a pending receipt cleanup failure never turns a verified Free save into an error', async () => {
+  const result = load({
+    memberId: 'member-free-a',
+    memberJsonUpdateError: new Error('Memberstack timeout'),
+    memberJSON: {
+      starter_call_settings_intent_v3: {
+        version: 1,
+        member_id: 'member-free-a',
+        free: { enabled: true, description: 'Saved intro' },
+      },
+    },
+    initial: canonical(),
+    routes: {
+      '/starter/free-call-settings/upsert/v3': ({ body, setState }) => {
+        const saved = service({ revision: 1 })
+        setState(canonical({
+          public_description: body.description,
+          services: [saved],
+          readiness: { free_call_enabled: true, bookable: true },
+        }))
+        return { ok: true, status: 200, json: async () => ({ service: saved }) }
+      },
+    },
+  })
+  await settle()
+
+  const canonicalResult = await result.window.StarterFreeCallSettings.submit()
+  await settle()
+
+  assert.ok(canonicalResult.services.length)
+  assert.equal(result.events.some((event) => event.type === 'starterFreeCallWriteError'), false)
+  assert.equal(result.events.some((event) => event.type === 'starterFreeCallWriteSuccess'), true)
+  assert.equal(result.dom.root.getAttribute('data-free-build-call-intent'), '')
+  assert.match(result.warnings.join('\n'), /pending Build Profile receipt could not be cleared/)
 })
 
 test('a pending Build Profile Free off choice disables an existing canonical service', async () => {
@@ -569,7 +606,7 @@ test('a pending Build Profile Free off choice disables an existing canonical ser
 
   assert.ok(result.calls.some((call) => call.path === '/starter/free-call-settings/disable/v3'))
   assert.equal(result.memberJsonWrites.at(-1).starter_call_settings_intent_v3, undefined)
-  assert.equal(result.dom.root.getAttribute('data-build-call-intent'), '')
+  assert.equal(result.dom.root.getAttribute('data-free-build-call-intent'), '')
 })
 
 test('a gated pending Free enable never blocks the Edit Profile step save', async () => {
@@ -590,7 +627,7 @@ test('a gated pending Free enable never blocks the Edit Profile step save', asyn
   await settle()
 
   assert.equal(result.dom.yes.checked, true)
-  assert.equal(result.dom.root.getAttribute('data-build-call-intent'), 'pending')
+  assert.equal(result.dom.root.getAttribute('data-free-build-call-intent'), 'pending')
   assert.equal(result.window.StarterFreeCallSettings.hasChanges(), false)
   assert.ok(await result.window.StarterFreeCallSettings.submit())
   assert.equal(result.calls.some((call) => call.method === 'POST'), false)

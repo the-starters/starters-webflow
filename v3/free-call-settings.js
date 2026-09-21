@@ -87,14 +87,23 @@
     }
   }
 
-  // Memberstack replaces the whole member JSON on every write, and the Free and Paid
-  // controllers load on the same page, so their read-modify-write passes must share one
-  // writer or the later write resurrects the branch the other just consumed.
+  // Memberstack replaces the whole member JSON on every write. Build Profile draft,
+  // submit, Free, and Paid read-modify-write passes must share one writer or a later
+  // write can erase the receipt or resurrect a branch another controller consumed.
   function queueMemberJsonWrite(task) {
-    const previous = window.__tsCallSettingsIntentWrite || Promise.resolve()
+    const previous = window.__tsMemberJsonWrite || Promise.resolve()
     const next = previous.then(task, task)
-    window.__tsCallSettingsIntentWrite = next.then(function () {}, function () {})
+    window.__tsMemberJsonWrite = next.then(function () {}, function () {})
     return next
+  }
+
+  async function consumePendingBuildIntentBestEffort() {
+    try {
+      await consumePendingBuildIntent()
+    } catch (error) {
+      pendingBuildIntent = null
+      console.warn('Canonical Free Call Settings were saved, but the pending Build Profile receipt could not be cleared.', error)
+    }
   }
 
   async function consumePendingBuildIntent() {
@@ -753,9 +762,9 @@
       }
       explicitIntent = pendingBuildIntent.enabled ? 'enabled' : 'disabled'
       if (editProfileMode && (service || pendingBuildIntent.enabled) && canSaveSettings(value)) editProfileDirty = true
-      root.setAttribute('data-build-call-intent', 'pending')
+      root.setAttribute('data-free-build-call-intent', 'pending')
     } else {
-      root.setAttribute('data-build-call-intent', '')
+      root.setAttribute('data-free-build-call-intent', '')
     }
     root.setAttribute(
       'data-free-call-duration-current',
@@ -899,7 +908,7 @@
       if (String(canonical.public_description || '') !== description) {
         throw new Error('Free-call description did not match canonical readback')
       }
-      await consumePendingBuildIntent()
+      await consumePendingBuildIntentBestEffort()
       write.canonical = canonical
       if (!currentRender(version, memberId)) return null
       render(canonical)
@@ -940,7 +949,7 @@
       if (canonicalService(canonical)) {
         throw new Error('Free-call service remained active after canonical readback')
       }
-      await consumePendingBuildIntent()
+      await consumePendingBuildIntentBestEffort()
       write.canonical = canonical
       if (!currentRender(version, memberId)) return null
       render(canonical)

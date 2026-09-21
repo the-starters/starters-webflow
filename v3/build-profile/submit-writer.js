@@ -53,6 +53,13 @@
       // the only writers of provider state and freelancers_v3 call projections.
       const BUILD_CALL_INTENT_KEY = 'starter_call_settings_intent_v3';
 
+      function queueMemberJsonWrite(task) {
+        const previous = window.__tsMemberJsonWrite || Promise.resolve();
+        const next = previous.then(task, task);
+        window.__tsMemberJsonWrite = next.then(function () {}, function () {});
+        return next;
+      }
+
       function buildCallSettingsIntent(formData) {
         const hasFree = Object.prototype.hasOwnProperty.call(formData, 'free-consulting-calls');
         const hasPaid = Object.prototype.hasOwnProperty.call(formData, 'paid-consulting-calls');
@@ -121,18 +128,20 @@
             panelMessage: 'We saved your profile but could not save your Call Settings. Please submit again.',
           });
         }
-        const response = await memberstack.getMemberJSON();
-        const current = response && Object.prototype.hasOwnProperty.call(response, 'data')
-          ? response.data
-          : response;
-        const memberJSON = current && typeof current === 'object' && !Array.isArray(current)
-          ? current
-          : {};
-        await memberstack.updateMemberJSON({
-          json: {
-            ...memberJSON,
-            [BUILD_CALL_INTENT_KEY]: intent,
-          },
+        await queueMemberJsonWrite(async function () {
+          const response = await memberstack.getMemberJSON();
+          const current = response && Object.prototype.hasOwnProperty.call(response, 'data')
+            ? response.data
+            : response;
+          const memberJSON = current && typeof current === 'object' && !Array.isArray(current)
+            ? current
+            : {};
+          await memberstack.updateMemberJSON({
+            json: {
+              ...memberJSON,
+              [BUILD_CALL_INTENT_KEY]: intent,
+            },
+          });
         });
         return intent;
       }

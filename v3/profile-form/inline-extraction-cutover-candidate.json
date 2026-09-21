@@ -159,8 +159,8 @@
       }
     },
     "v3/build-profile/draft-state.js": {
-      "candidateCharacters": 12728,
-      "candidateSha256": "9c579a3d47e81a318172c367993c704c2af4c1c43467374b6358aff84887210c",
+      "candidateCharacters": 13080,
+      "candidateSha256": "5d73c5effa2149d110c051829a0738429a02271f2181937653a652a3b56c30a1",
       "transformation": {
         "kind": "whitespace_plus_idempotency_guard_plus_behavior_change",
         "guardKey": "buildProfileDraftState",
@@ -170,12 +170,12 @@
       }
     },
     "v3/build-profile/submit-writer.js": {
-      "candidateCharacters": 23755,
-      "candidateSha256": "4dbbc03007322822bb8641bb233503596d6a3a463213044e97bb4d71938b58ba",
+      "candidateCharacters": 24124,
+      "candidateSha256": "814759a743eadc6b16c296b3ce6f144fee0b71ed152ece9e7d755ca449ffa3c0",
       "transformation": {
         "kind": "whitespace_plus_idempotency_guard_plus_behavior_change",
         "guardKey": "buildProfileSubmitWriter",
-        "restoreTrailingWhitespace": { "517": "          " },
+        "restoreTrailingWhitespace": { "526": "          " },
         "terminalNewlinesRemoved": 0,
         "liveCaptureAsset": "v3/profile-form/build-submit-writer-published.capture.txt"
       }

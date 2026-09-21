@@ -30,6 +30,11 @@ hydrate it as pending create, update, or disable intent. The controller keeps a
 new enable pending until Calendar and Availability are ready, then requires the
 member to select Update. It removes only the Free part of the receipt after an
 exact canonical write/readback; any pending Paid part is preserved.
+Build Profile draft saves and both Call Settings controllers serialize the full
+Memberstack JSON read-modify-write through `window.__tsMemberJsonWrite`, so one
+branch cannot overwrite another. Receipt cleanup is best-effort after verified
+canonical readback: a cleanup timeout never changes a successful canonical save
+into a profile-step failure, and the unchanged receipt can be retried on reload.
 
 ## Published compatibility contract
 
@@ -97,7 +102,7 @@ the cached Free state is cleared. It also sets these attributes:
 - `data-free-call-duration-current` — the stored duration in minutes, empty with no active service
 - `data-free-call-price-cents` — the stored price in cents, `0` with no active service
 - `data-free-call-editor-open="true|false"`
-- `data-build-call-intent="pending"` while a Build Profile choice is waiting for
+- `data-free-build-call-intent="pending"` while a Build Profile choice is waiting for
   canonical confirmation; empty after consumption
 
 The canonical reader supplies `duration` on each service record, the same field every other

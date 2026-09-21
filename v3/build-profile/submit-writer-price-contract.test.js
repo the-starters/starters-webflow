@@ -4,6 +4,7 @@ const test = require('node:test')
 const vm = require('node:vm')
 
 const SOURCE = fs.readFileSync(require.resolve('./submit-writer.js'), 'utf8')
+const DRAFT_SOURCE = fs.readFileSync(require.resolve('./draft-state.js'), 'utf8')
 
 class Element {
   constructor(value = '') {
@@ -28,7 +29,11 @@ class Element {
   async click() { return this.listeners.get('click')?.({ preventDefault() {} }) }
 }
 
-function load(overrides = {}, pathname = '/build-profile/full', { respond = null, errorPanelHoldsMarkup = false } = {}) {
+function load(overrides = {}, pathname = '/build-profile/full', {
+  respond = null,
+  errorPanelHoldsMarkup = false,
+  memberJSON: initialMemberJSON = null,
+} = {}) {
   const values = {
     email: 'starter@example.test',
     'first-name': 'Test',
@@ -72,6 +77,7 @@ function load(overrides = {}, pathname = '/build-profile/full', { respond = null
   ])
   const requests = []
   const memberJsonWrites = []
+  let memberJSON = { keep: 'member-json', ...(initialMemberJSON || {}) }
   const loaderStates = []
   const MEMBER = {
     id: 'mem_test',
@@ -109,8 +115,11 @@ function load(overrides = {}, pathname = '/build-profile/full', { respond = null
     $memberstackDom: {
       updateMember: async () => {},
       updateMemberAuth: async () => {},
-      getMemberJSON: async () => ({ data: { keep: 'member-json' } }),
-      updateMemberJSON: async (value) => { memberJsonWrites.push(value) },
+      getMemberJSON: async () => ({ data: memberJSON }),
+      updateMemberJSON: async (value) => {
+        memberJSON = value.json
+        memberJsonWrites.push(value)
+      },
     },
   }
   const domReady = []
@@ -151,6 +160,8 @@ function load(overrides = {}, pathname = '/build-profile/full', { respond = null
     requests,
     loaderStates,
     memberJsonWrites,
+    window,
+    memberJSON: () => memberJSON,
   }
 }
 
@@ -328,6 +339,35 @@ test('Build Profile keeps provider call fields out of the profile payload and sa
     )
     assert.equal(result.memberJsonWrites[0].json.keep, 'member-json')
   }
+})
+
+test('Build Profile and draft saves share one Memberstack JSON writer without dropping either branch', async () => {
+  assert.match(DRAFT_SOURCE, /window\.__tsMemberJsonWrite/)
+  const result = load({
+    'free-consulting-calls': 'yes',
+    'free-call-description': 'Free intro',
+    'paid-consulting-calls': 'no',
+  }, '/build-profile/full', {
+    memberJSON: { build_profile: { step: 7 } },
+  })
+
+  const submitPromise = result.submit.click()
+  const previous = result.window.__tsMemberJsonWrite || Promise.resolve()
+  const draftWrite = previous.then(async () => {
+    const current = (await result.window.$memberstackDom.getMemberJSON()).data
+    await result.window.$memberstackDom.updateMemberJSON({
+      json: { ...current, build_profile: { step: 8, saved: true } },
+    })
+  })
+  result.window.__tsMemberJsonWrite = draftWrite.then(() => {}, () => {})
+
+  await Promise.all([submitPromise, draftWrite])
+
+  assert.deepEqual(JSON.parse(JSON.stringify(result.memberJSON().build_profile)), { step: 8, saved: true })
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(result.memberJSON().starter_call_settings_intent_v3.free)),
+    { enabled: true, description: 'Free intro' },
+  )
 })
 
 test('a hidden long free-call description never blocks a Free off choice', async () => {

@@ -98,16 +98,16 @@ const EXPECTED_CANDIDATE_ASSETS = Object.freeze({
     restoreTrailingWhitespace: Object.freeze({}), terminalNewlinesRemoved: 0,
   }),
   'v3/build-profile/draft-state.js': Object.freeze({
-    characters: 12728, sha256: '9c579a3d47e81a318172c367993c704c2af4c1c43467374b6358aff84887210c',
+    characters: 13080, sha256: '5d73c5effa2149d110c051829a0738429a02271f2181937653a652a3b56c30a1',
     guardKey: 'buildProfileDraftState',
     liveCaptureAsset: 'v3/profile-form/build-draft-state-published.capture.txt',
     restoreTrailingWhitespace: Object.freeze({}), terminalNewlinesRemoved: 1,
   }),
   'v3/build-profile/submit-writer.js': Object.freeze({
-    characters: 23755, sha256: '4dbbc03007322822bb8641bb233503596d6a3a463213044e97bb4d71938b58ba',
+    characters: 24124, sha256: '814759a743eadc6b16c296b3ce6f144fee0b71ed152ece9e7d755ca449ffa3c0',
     guardKey: 'buildProfileSubmitWriter',
     liveCaptureAsset: 'v3/profile-form/build-submit-writer-published.capture.txt',
-    restoreTrailingWhitespace: Object.freeze({ 517: '          ' }), terminalNewlinesRemoved: 0,
+    restoreTrailingWhitespace: Object.freeze({ 526: '          ' }), terminalNewlinesRemoved: 0,
   }),
   'v3/build-profile/locations-consult.js': Object.freeze({
     characters: 11065, sha256: '3c2e09a3a55806e1f4a82af2c3e850c6f53120fc70c1506cbf6315d5f311f160',
