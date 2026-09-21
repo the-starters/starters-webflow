@@ -237,11 +237,6 @@
         },
         step_6: {
           rate: valueOrEmpty(canonical.Hourly_Rate),
-          'free-consulting-calls': yesNo(canonical.Free_Call_Enabled),
-          'free-call-description': valueOrEmpty(canonical.Free_Call_Description),
-          'paid-consulting-calls': yesNo(canonical.Paid_Call_Enabled),
-          'paid-call-description': valueOrEmpty(canonical.Paid_Call_Description),
-          'paid-call-rate': valueOrEmpty(canonical.Paid_Call_Rate),
           'offer-monthly-retainers': yesNo(canonical.Retainer_Enabled),
           'description-retainer': valueOrEmpty(canonical.Retainer_Description),
           'rate-retainer': valueOrEmpty(canonical.Retainer_Rate),

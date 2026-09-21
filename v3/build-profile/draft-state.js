@@ -10,6 +10,13 @@
       if (!MEMBER.id) return;
 
       const LOCAL_STORAGE_KEY = 'ts:build_profile:member:' + MEMBER.id;
+      const CALL_SETTING_FIELD_NAMES = new Set([
+        'free-consulting-calls',
+        'free-call-description',
+        'paid-consulting-calls',
+        'paid-call-description',
+        'paid-call-rate',
+      ]);
       const localProfile = getLocalProfile();
 
       console.log("localProfile", localProfile);
@@ -123,6 +130,7 @@
         fields.forEach((field) => {
           const fieldName = field.name;
           if (!fieldName) return;
+          if (CALL_SETTING_FIELD_NAMES.has(fieldName)) return;
 
           if (fieldName === "phone") {
             const phoneInput = window.intlTelInput?.getInstance(field);
@@ -159,6 +167,10 @@
           fields.forEach((field) => {
             const fieldName = field.name;
             if (!fieldName) return;
+            if (CALL_SETTING_FIELD_NAMES.has(fieldName)) {
+              delete stepData[fieldName];
+              return;
+            }
 
             if (field.hasAttribute('data-ms-member')) {
               const draftValue = stepData[fieldName];
@@ -313,11 +325,24 @@
           return createEmptyProfile(PROFILE_TYPE, PROFILE_TYPE_ID, isMemberProfile ? 0 : Date.now());
         }
 
+        const data = Object.fromEntries(
+          Object.entries(profile.data && typeof profile.data === 'object' ? profile.data : {}).map(
+            ([stepKey, stepData]) => [
+              stepKey,
+              stepData && typeof stepData === 'object' && !Array.isArray(stepData)
+                ? Object.fromEntries(
+                    Object.entries(stepData).filter(([fieldName]) => !CALL_SETTING_FIELD_NAMES.has(fieldName)),
+                  )
+                : stepData,
+            ],
+          ),
+        );
+
         return {
           type: profile.type || PROFILE_TYPE,
           type_id: profile.type_id || PROFILE_TYPE_ID,
           last_update: Number(profile.last_update || Date.now()),
-          data: profile.data && typeof profile.data === 'object' ? profile.data : {},
+          data,
         };
       }
 

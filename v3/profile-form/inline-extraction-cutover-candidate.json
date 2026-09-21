@@ -117,8 +117,8 @@
   },
   "candidateAssets": {
     "v3/profile-form/shared-foundation.js": {
-      "candidateCharacters": 25332,
-      "candidateSha256": "5bd7e810fb73bd93a71cf9fda25f4d054ca78f492a9b686cfc546c0d62f75ccd",
+      "candidateCharacters": 25578,
+      "candidateSha256": "9a7d541a134a9aa30a14cab62c3c3d44af0a692b0098295130e7f13025b80828",
       "transformation": {
         "kind": "whitespace_plus_idempotency_guard_plus_behavior_change",
         "liveCaptureAsset": "v3/profile-form/shared-foundation-published.capture.txt",
@@ -159,8 +159,8 @@
       }
     },
     "v3/build-profile/draft-state.js": {
-      "candidateCharacters": 11857,
-      "candidateSha256": "d7f029fb5e0324078b1c5c962bcd7bb4af301932735eb3f1bd8e32fc90941e2c",
+      "candidateCharacters": 12728,
+      "candidateSha256": "9c579a3d47e81a318172c367993c704c2af4c1c43467374b6358aff84887210c",
       "transformation": {
         "kind": "whitespace_plus_idempotency_guard_plus_behavior_change",
         "guardKey": "buildProfileDraftState",

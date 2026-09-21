@@ -76,7 +76,7 @@ const EXPECTED_LIVE_CAPTURES = Object.freeze({
 
 const EXPECTED_CANDIDATE_ASSETS = Object.freeze({
   'v3/profile-form/shared-foundation.js': Object.freeze({
-    characters: 25332, sha256: '5bd7e810fb73bd93a71cf9fda25f4d054ca78f492a9b686cfc546c0d62f75ccd',
+    characters: 25578, sha256: '9a7d541a134a9aa30a14cab62c3c3d44af0a692b0098295130e7f13025b80828',
     liveCaptureAsset: 'v3/profile-form/shared-foundation-published.capture.txt',
     restoreTrailingWhitespace: Object.freeze({ 3: '  ', 81: ' ', 239: '      ' }), terminalNewlinesRemoved: 0,
   }),
@@ -98,7 +98,7 @@ const EXPECTED_CANDIDATE_ASSETS = Object.freeze({
     restoreTrailingWhitespace: Object.freeze({}), terminalNewlinesRemoved: 0,
   }),
   'v3/build-profile/draft-state.js': Object.freeze({
-    characters: 11857, sha256: 'd7f029fb5e0324078b1c5c962bcd7bb4af301932735eb3f1bd8e32fc90941e2c',
+    characters: 12728, sha256: '9c579a3d47e81a318172c367993c704c2af4c1c43467374b6358aff84887210c',
     guardKey: 'buildProfileDraftState',
     liveCaptureAsset: 'v3/profile-form/build-draft-state-published.capture.txt',
     restoreTrailingWhitespace: Object.freeze({}), terminalNewlinesRemoved: 1,
@@ -961,8 +961,11 @@ test('shared rate setup applies whole-dollar constraints without rewriting autho
   const service = new Element('input')
   service.value = '$500'
   service.getAttribute = (name) => name === 'name' ? '' : (service[name] ?? null)
+  const paidCall = new Element('input')
+  paidCall.value = '2500'
+  paidCall.getAttribute = (name) => name === 'name' ? 'paid-call-rate' : (paidCall[name] ?? null)
   const document = createDocument({
-    '[data-element="rate"]:not(.initialized)': [hourly, retainer, service],
+    '[data-element="rate"]:not(.initialized)': [hourly, retainer, service, paidCall],
   })
   const context = createBaseContext({ document })
   run('v3/profile-form/shared-foundation.js', context)
@@ -978,6 +981,11 @@ test('shared rate setup applies whole-dollar constraints without rewriting autho
     assert.equal(input.min, '1')
     assert.equal(input.listeners.size, 0)
   }
+  assert.equal(paidCall.value, '2500')
+  assert.equal(paidCall.type, undefined)
+  assert.equal(paidCall.min, undefined)
+  assert.equal(paidCall.max, undefined)
+  assert.equal(paidCall.classList.contains('initialized'), false)
 })
 
 test('each deferred controller registers one boot and never creates a replacement form', async () => {
@@ -1176,14 +1184,19 @@ async function runDraftCase({ localProfile, memberProfile, member, stepFields = 
 }
 
 test('build draft state keeps the newest local draft and syncs it once', async () => {
-  const localProfile = { type: 'consult', type_id: 'consult-id', last_update: 200, data: { step_1: { tagline: 'local' } } }
+  const localProfile = { type: 'consult', type_id: 'consult-id', last_update: 200, data: {
+    step_1: { tagline: 'local' },
+    step_6: { 'free-consulting-calls': 'yes', 'paid-call-rate': '250' },
+  } }
   const memberProfile = { type: 'full', type_id: 'full-id', last_update: 100, data: { step_1: { tagline: 'member' } } }
   const { context, memberUpdates } = await runDraftCase({ localProfile, memberProfile })
 
   assert.equal(context.activeProfile.type, 'consult')
   assert.equal(context.activeProfile.data.step_1.tagline, 'local')
+  assert.deepEqual(JSON.parse(JSON.stringify(context.activeProfile.data.step_6)), {})
   assert.equal(memberUpdates.length, 1)
   assert.equal(memberUpdates[0].json.build_profile.data.step_1.tagline, 'local')
+  assert.deepEqual(memberUpdates[0].json.build_profile.data.step_6, {})
 })
 
 test('build draft state restores saved answers instead of a newer empty route seed', async () => {
@@ -1192,7 +1205,7 @@ test('build draft state restores saved answers instead of a newer empty route se
     data: { step_1: { 'first-name': 'QA Consult' }, step_6: { 'paid-call-rate': '1000' } } }
   const { context, memberUpdates } = await runDraftCase({ localProfile, memberProfile })
   assert.equal(context.activeProfile.data.step_1['first-name'], 'QA Consult')
-  assert.equal(context.activeProfile.data.step_6['paid-call-rate'], '1000')
+  assert.deepEqual(JSON.parse(JSON.stringify(context.activeProfile.data.step_6)), {})
   assert.equal(memberUpdates.length, 0, 'initial route seeding must not overwrite the saved member draft')
 })
 
@@ -1205,7 +1218,12 @@ for (const [routeType, savedType] of [['consult', 'full'], ['full', 'consult']])
       const tagline = new Element('input')
       tagline.name = 'tagline'
       const { context, memberUpdates, values } = await runDraftCase({ localProfile, memberProfile, stepFields: [tagline] })
-      const expected = { ...memberProfile, type: routeType, type_id: `${routeType}-id` }
+      const expected = {
+        ...memberProfile,
+        type: routeType,
+        type_id: `${routeType}-id`,
+        data: { ...memberProfile.data, step_6: {} },
+      }
 
       assert.deepEqual(JSON.parse(JSON.stringify(context.activeProfile)), expected)
       assert.deepEqual(JSON.parse(values.get('ts:build_profile:member:member-1')), expected)
