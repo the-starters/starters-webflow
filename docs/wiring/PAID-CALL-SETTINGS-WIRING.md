@@ -18,7 +18,11 @@ freshness gate are all ready, then the member must select Update. The controller
 removes only the Paid part of the receipt after exact canonical write/readback;
 any pending Free part is preserved. An off choice that canonical already
 satisfies — no active Paid service — needs no write: the controller drops that
-part of the receipt on load and repaints.
+part of the receipt on load and repaints. A submitted off choice is treated the
+same way while no active Paid service exists, even when the receipt itself is
+still an unconsumed enable — the controller consumes that part of the receipt
+with no canonical write and repaints, so a declined Build Profile Yes cannot
+re-assert itself on the next load.
 Build Profile draft saves and both Call Settings controllers serialize the full
 Memberstack JSON read-modify-write through `window.__tsMemberJsonWrite`, so one
 branch cannot overwrite another. Receipt cleanup is best-effort after verified

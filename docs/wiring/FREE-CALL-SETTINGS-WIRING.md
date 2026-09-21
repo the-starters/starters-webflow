@@ -31,7 +31,12 @@ new enable pending until Calendar and Availability are ready, then requires the
 member to select Update. It removes only the Free part of the receipt after an
 exact canonical write/readback; any pending Paid part is preserved. An off
 choice that canonical already satisfies — no active Free service — needs no
-write: the controller drops that part of the receipt on load and repaints.
+write: the controller drops that part of the receipt on load and repaints. A
+submitted off choice is treated the same way while no active Free service
+exists, even when the receipt itself is still an unconsumed enable — the
+controller consumes that part of the receipt with no canonical write and
+repaints, so a declined Build Profile Yes cannot re-assert itself on the next
+load.
 Build Profile draft saves and both Call Settings controllers serialize the full
 Memberstack JSON read-modify-write through `window.__tsMemberJsonWrite`, so one
 branch cannot overwrite another. Receipt cleanup is best-effort after verified

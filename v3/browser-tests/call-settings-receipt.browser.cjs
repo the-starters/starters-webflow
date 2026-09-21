@@ -20,6 +20,10 @@ const BASE_COMMIT = process.env.CALL_RECEIPT_BASE_COMMIT || '86a5ad08'
 // The commit before "canonical rate outranks pending receipt": it paints the
 // unconsumed Build Profile rate over a confirmed canonical rate.
 const RATE_BASE_COMMIT = process.env.CALL_RECEIPT_RATE_BASE_COMMIT || 'e450dfc3'
+// The commit before "consume pending call receipt when declining with no
+// service": declining an unconsumed "Yes" receipt writes nothing, so the Build
+// Profile answer survives and re-asserts itself on the next load.
+const DECLINE_BASE_COMMIT = process.env.CALL_RECEIPT_DECLINE_BASE_COMMIT || 'f507851d'
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
 ;(async () => {
   const profile = await fs.mkdtemp(path.join(root, '.call-receipt-browser-'))
@@ -32,7 +36,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
       res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'none'; form-action 'none'")
       res.end(body)
     }
-    for (const [prefix, commit] of [['/base/', BASE_COMMIT], ['/base-rate/', RATE_BASE_COMMIT]]) {
+    for (const [prefix, commit] of [['/base/', BASE_COMMIT], ['/base-rate/', RATE_BASE_COMMIT], ['/base-decline/', DECLINE_BASE_COMMIT]]) {
       if (!requested.startsWith(prefix)) continue
       try {
         send(execFileSync('git', ['show', `${commit}:${requested.slice(prefix.length)}`], { cwd: root }), 'text/javascript')
@@ -394,7 +398,103 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
     record('build-profile-pre-fix-control-saves-profile-before-validating-receipt', { profileSaves: rejectedPrefix.profileSaves.length })
 
     // ------------------------------------------------------------------
-    // 10. Boundary: every Xano call made across the run.
+    // 10. Edit Profile: a member who changes their mind and declines an
+    //     unconsumed Build Profile "Yes" keeps that decline.
+    // ------------------------------------------------------------------
+    const openDeclineSurface = async query => {
+      await navigate('/starter-edit-profile', query)
+      assert.ok(await settleUntil(`document.documentElement.getAttribute('data-free-call-settings') === 'ready'`), 'the Free card hydrates')
+      assert.equal(await evaluate('window.__tsFinishProfileHydration()'), true)
+      assert.equal(await evaluate('window.__tsPendingWriteCount()'), 0, 'an unconsumed enable receipt is never auto-consumed')
+      const noBox = await evaluate(`(() => { const r = document.getElementById('free-no').closest('label').getBoundingClientRect(); return { x: r.x + 10, y: r.y + r.height / 2 } })()`)
+      await send('Input.dispatchMouseEvent', { type: 'mousePressed', ...noBox, button: 'left', clickCount: 1 })
+      await send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...noBox, button: 'left', clickCount: 1 })
+      await pause(200)
+      // What the Edit Profile step 6 save runs for a card that reports changes
+      // (starter-edit-profile.js submitCanonicalCallSettings).
+      return evaluate(`(async () => {
+        const controller = window.StarterFreeCallSettings
+        const changed = controller.hasChanges()
+        const saved = changed ? await controller.submit() : null
+        return { changed, stepSaveAccepted: !changed || Boolean(saved) }
+      })()`)
+    }
+
+    await navigate('/starter-edit-profile', 'page=edit&receipt=free-pending')
+    assert.ok(await settleUntil(`document.querySelector('[data-form="step"][data-index="6"]').getAttribute('data-free-build-call-intent') === 'pending'`), 'the Build Profile Yes is carried into step 6')
+    const carried = await snapshot('14-edit-head-pending-yes-carried-into-step-6', 'HEAD, unconsumed Build Profile Free = Yes prefilled before the member changes their mind')
+    assert.equal(carried.free.yes, true, 'the Build Profile Yes is preselected')
+    assert.equal(carried.free.description, 'Quick intro', 'the Build Profile description is prefilled')
+
+    const declined = await openDeclineSurface('page=edit&receipt=free-pending')
+    assert.equal(declined.changed, true, 'clicking No marks step 6 as having a call-settings change')
+    assert.equal(declined.stepSaveAccepted, true, 'Edit Profile accepts the step 6 save')
+    assert.ok(await settleUntil(`!window.__tsMemberJsonState().starter_call_settings_intent_v3`), 'the declined receipt is removed from the member JSON')
+    const declinedState = await snapshot('15-edit-head-decline-persists', 'HEAD, member declined the pending Yes and the receipt is gone')
+    assert.equal(declinedState.free.no, true, 'the card keeps the No the member just chose')
+    assert.equal(declinedState.free.description, '', 'the prefilled Build Profile description is dropped')
+    assert.equal(declinedState.buildIntent.free, '', 'the pending affordance is gone')
+    assert.equal(declinedState.memberJson.keep, 'private', 'unrelated member JSON keys survive the decline')
+    assert.deepEqual(xanoWrites(declinedState), [], 'declining with no canonical service makes no canonical write')
+    assert.deepEqual(errors, [], 'no uncaught browser errors')
+    // The receipt is what a reload re-hydrates from, so its absence is the proof
+    // the Build Profile Yes cannot come back.
+    assert.equal(await evaluate(`(async () => { const json = (await window.$memberstackDom.getMemberJSON()).data; return JSON.stringify(json.starter_call_settings_intent_v3 || null) })()`), 'null', 'nothing is left for the next page load to re-assert')
+    record('edit-profile-declining-an-unconsumed-yes-receipt-persists-the-decline', {
+      memberJson: declinedState.memberJson, freeRadio: declinedState.free,
+    })
+
+    // Pre-fix control: the same decline used to be a silent no-op.
+    const declinedPrefix = await openDeclineSurface('page=edit&receipt=free-pending&base=free-call-settings.js&baseRef=decline')
+    assert.equal(declinedPrefix.stepSaveAccepted, true, 'pre-fix Edit Profile also reports step 6 as saved')
+    await pause(400)
+    const prefixDecline = await snapshot('16-edit-prefix-decline-lost', 'pre-fix build, same decline: the Build Profile Yes survives in the member JSON')
+    assert.deepEqual(prefixDecline.memberJson.starter_call_settings_intent_v3.free, { enabled: true, description: 'Quick intro' }, 'pre-fix regression reproduces: the declined Yes is still stored and re-asserts on the next load')
+    record('edit-profile-pre-fix-control-drops-the-decline-and-keeps-the-build-profile-yes', {
+      memberJson: prefixDecline.memberJson,
+    })
+
+    // ------------------------------------------------------------------
+    // 11. Adversarial: a pending Paid "Yes" cannot buy its way past the
+    //     Stripe and scheduling prerequisites.
+    // ------------------------------------------------------------------
+    await navigate('/starter-dashboard', 'page=dashboard&paid=1&receipt=paid-pending&seen=1')
+    assert.ok(await settleUntil(`document.documentElement.getAttribute('data-paid-call-settings') === 'ready'`), 'the Paid card hydrates')
+    const clickPaid = async action => {
+      const box = await evaluate(`(() => { const el = document.querySelector('[data-call-settings-service="paid"] [data-call-settings-action="${action}"]'); el.scrollIntoView(); const r = el.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 } })()`)
+      await send('Input.dispatchMouseEvent', { type: 'mousePressed', ...box, button: 'left', clickCount: 1 })
+      await send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...box, button: 'left', clickCount: 1 })
+      await pause(300)
+    }
+    await clickPaid('open')
+    await clickPaid('submit')
+    await pause(500)
+    const blocked = await snapshot('17-dashboard-head-pending-paid-blocked-on-stripe', 'HEAD, pending Paid = Yes at $250 with no Stripe or scheduling setup')
+    assert.equal(blocked.paid.enabled, 'false', 'no canonical paid service is created')
+    assert.equal(blocked.paid.rateInput, '250', 'the Build Profile rate still prefills the editable field for setup')
+    assert.equal(blocked.paid.buildIntent, 'pending', 'the receipt stays pending until the setup is finished')
+    assert.equal(await evaluate(`document.querySelector('[data-call-settings-service="paid"] [data-call-settings-output="status"]').textContent`),
+      'Your Build Profile choice is saved. Complete Calendar, Availability, and Stripe setup to turn on paid calls.',
+      'the card tells the Starter what is still missing')
+    assert.deepEqual(xanoWrites(blocked), [], 'clicking Update writes nothing canonical while Stripe is unconnected')
+    // The same guard from the controller's own entry point, not just the
+    // disabled button: this is what the Edit Profile step 6 save calls.
+    const forced = await evaluate(`(async () => {
+      const saved = await window.StarterPaidCallSettings.save()
+      return { saved, status: document.querySelector('[data-call-settings-service="paid"] [data-call-settings-output="status"]').textContent }
+    })()`)
+    assert.equal(forced.saved, null, 'a forced save is refused while the prerequisites are unmet')
+    assert.equal(forced.status, 'Complete the calendar and Stripe setup before you turn on paid calls.', 'the refusal names the missing Stripe setup')
+    const stillBlocked = await snapshot('18-dashboard-head-forced-save-refused', 'HEAD, forced save refused and the receipt left untouched')
+    assert.deepEqual(xanoWrites(stillBlocked), [], 'the forced save sends no canonical write either')
+    assert.deepEqual(stillBlocked.memberJson.starter_call_settings_intent_v3.paid, { enabled: true, title: 'Strategy call', price_dollars: 250 }, 'the unconfirmed receipt survives so the choice is not silently lost')
+    assert.deepEqual(errors, [], 'no uncaught browser errors')
+    record('dashboard-pending-paid-yes-cannot-bypass-stripe-readiness', {
+      status: forced.status, paidEnabled: stillBlocked.paid.enabled, receipt: stillBlocked.memberJson.starter_call_settings_intent_v3,
+    })
+
+    // ------------------------------------------------------------------
+    // 12. Boundary: every Xano call made across the run.
     // ------------------------------------------------------------------
     const allCalls = observations.flatMap(entry => entry.network.map(call => `${call.method} ${new URL(call.url).pathname}`))
     const unique = Array.from(new Set(allCalls)).sort()

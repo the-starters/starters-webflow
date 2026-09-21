@@ -11,9 +11,9 @@
 // Query params:
 //   page=edit|dashboard|build  which authored surface to wire
 //   base=<file>,<file>         serve these controller files from the pre-fix commit
-//   receipt=off-both|free-off-paid-pending|paid-pending|foreign|none
+//   receipt=off-both|free-off-paid-pending|free-pending|paid-pending|foreign|none
 //   canonical=none|paid-active  which canonical services Xano answers with
-//   baseRef=calls|rate         which pre-fix commit the base files come from
+//   baseRef=calls|rate|decline which pre-fix commit the base files come from
 //   paid=1                     also wire the dashboard Paid card and controller
 //   gate=1                     hold every Memberstack member-JSON write until released
 //   seen=1                     seed an existing tours seen-stamp in the member JSON
@@ -44,6 +44,11 @@ const RECEIPTS = {
     member_id: MEMBER.id,
     free: { enabled: false, description: '' },
     paid: { enabled: true, title: 'Strategy call', price_dollars: 250 },
+  },
+  'free-pending': {
+    version: 1,
+    member_id: MEMBER.id,
+    free: { enabled: true, description: 'Quick intro' },
   },
   'paid-pending': {
     version: 1,
@@ -213,7 +218,8 @@ function loadScript(src) {
   })
 }
 
-const basePrefix = params.get('baseRef') === 'rate' ? '/base-rate' : '/base'
+const BASE_PREFIXES = { rate: '/base-rate', decline: '/base-decline' }
+const basePrefix = BASE_PREFIXES[params.get('baseRef')] || '/base'
 function sourceFor(file) {
   return (baseFiles.has(file) ? basePrefix : '') + '/v3/' + file
 }

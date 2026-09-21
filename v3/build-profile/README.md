@@ -206,7 +206,13 @@ draft-state writer, and Free/Paid receipt consumers share one serialized
 therefore cannot overwrite the Call Settings receipt from the same click. A draft
 write also abandons itself when its own Memberstack read fails, rather than
 persisting a blob rebuilt from an empty read, so a transient read error cannot
-drop the receipt or any other member JSON key. The writer
+drop the receipt or any other member JSON key. The whole handoff — Build Profile
+storing the receipt, then Dashboard and Edit Profile hydrating, consuming, and
+declining it — is exercised in Chrome against the authored DOM by
+`node v3/browser-tests/call-settings-receipt.browser.cjs`; set
+`CALL_RECEIPT_BROWSER_EVIDENCE=<dir>` to write screenshots and observations. That
+fixture fakes only the Memberstack session and the Xano responses, so it cannot
+establish production behavior. The writer
 also treats the monthly-retainer section as profile-type-inapplicable on
 Consult: hidden hydrated radio/rate values always submit `retainer: false` and
 `retainer_rate: 0`. The hidden hourly rate is inapplicable on Consult in the same
