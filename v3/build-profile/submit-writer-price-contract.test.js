@@ -246,27 +246,24 @@ test('persists exact maximums and converts service values once without rounding'
   assert.equal(payload.services['service-1'].price, 50000)
 })
 
-for (const [label, toggle, field, payloadField, max] of [
-  ['Retainer', 'offer-monthly-retainers', 'rate-retainer', 'retainer_rate', 25000],
-]) {
-  for (const value of ['1,000', '$100', '1e2', '   ', '-1']) {
-    test(`Full enabled ${label} rejects lexical ${JSON.stringify(value)} before request`, async () => {
-      const result = load({ [toggle]: 'yes', [field]: value }, '/build-profile/full-profile')
-      await result.submit.click()
-      assert.equal(result.requests.length, 0)
-      assert.match(result.inputs[`[name="${field}"]`].validationMessage, value.trim() === ''
-        ? /rate is required\./
-        : new RegExp(`1 to \\${'$'}${max.toLocaleString('en-US')}`))
-      assert.equal(result.inputs[`[name="${field}"]`].reportValidityCount, 1)
-    })
-  }
-  test(`Full enabled ${label} trims padded digits without changing whole-dollar value`, async () => {
-    const result = load({ [toggle]: 'yes', [field]: ' 100 ' }, '/build-profile/full-profile')
+for (const value of ['1,000', '$100', '1e2', '   ', '-1']) {
+  test(`Full enabled Retainer rejects lexical ${JSON.stringify(value)} before request`, async () => {
+    const result = load({ 'offer-monthly-retainers': 'yes', 'rate-retainer': value }, '/build-profile/full-profile')
     await result.submit.click()
-    assert.equal(result.requests.length, 1)
-    assert.equal(result.requests[0].body[payloadField], 100)
+    assert.equal(result.requests.length, 0)
+    assert.match(result.inputs['[name="rate-retainer"]'].validationMessage, value.trim() === ''
+      ? /rate is required\./
+      : /1 to \$25,000/)
+    assert.equal(result.inputs['[name="rate-retainer"]'].reportValidityCount, 1)
   })
 }
+
+test('Full enabled Retainer trims padded digits without changing whole-dollar value', async () => {
+  const result = load({ 'offer-monthly-retainers': 'yes', 'rate-retainer': ' 100 ' }, '/build-profile/full-profile')
+  await result.submit.click()
+  assert.equal(result.requests.length, 1)
+  assert.equal(result.requests[0].body.retainer_rate, 100)
+})
 
 test('a collapsed retainer section keeps its compatibility value instead of blocking the submit', async () => {
   const retainer = load({ 'offer-monthly-retainers': 'no', 'rate-retainer': '30000' })
@@ -275,7 +272,6 @@ test('a collapsed retainer section keeps its compatibility value instead of bloc
   assert.equal(retainer.requests[0].body.retainer, false)
   assert.equal(retainer.requests[0].body.retainer_rate, 0)
   assert.equal(retainer.error.style.display, 'none')
-
 })
 
 test('disabled and non-owned blank rates preserve compatibility zero without accepting authored zero', async () => {

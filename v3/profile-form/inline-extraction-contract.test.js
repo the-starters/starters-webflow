@@ -104,10 +104,10 @@ const EXPECTED_CANDIDATE_ASSETS = Object.freeze({
     restoreTrailingWhitespace: Object.freeze({}), terminalNewlinesRemoved: 1,
   }),
   'v3/build-profile/submit-writer.js': Object.freeze({
-    characters: 21266, sha256: '8bf9cac5dac54aa93a563496bead0247fe7455502d98c90a25345fee0dbbf8cf',
+    characters: 19646, sha256: 'd339d9f14e2b8903567f09b564c1a781182b2ad92f7d0f7fd38f6341d22b265e',
     guardKey: 'buildProfileSubmitWriter',
     liveCaptureAsset: 'v3/profile-form/build-submit-writer-published.capture.txt',
-    restoreTrailingWhitespace: Object.freeze({ 450: '          ' }), terminalNewlinesRemoved: 0,
+    restoreTrailingWhitespace: Object.freeze({ 423: '          ' }), terminalNewlinesRemoved: 0,
   }),
   'v3/build-profile/locations-consult.js': Object.freeze({
     characters: 11065, sha256: '3c2e09a3a55806e1f4a82af2c3e850c6f53120fc70c1506cbf6315d5f311f160',
@@ -1515,7 +1515,6 @@ test('build submit writer sends one normalized payload through the authored form
       tagline: 'Profile tagline', pro_headline: 'Profile headline', bio: '<p>Bio</p>',
       best_fit_1: 'Startups', best_fit_2: '', best_fit_3: '', hourly_rate: 126,
       availability: '11-20', availability_id: 'availability-id', full_time: true,
-      free_call: false, free_call_desc: '', paid_call: true, paid_call_desc: 'Strategy call', paid_call_rate: 200,
       retainer: true, retainer_desc: '', retainer_rate: 2500,
       services: { 'service-1': { name: 'Audit', price: 500 }, 'service-2': null, 'service-3': null },
       reviewers: {
