@@ -98,7 +98,7 @@ const EXPECTED_CANDIDATE_ASSETS = Object.freeze({
     restoreTrailingWhitespace: Object.freeze({}), terminalNewlinesRemoved: 0,
   }),
   'v3/build-profile/draft-state.js': Object.freeze({
-    characters: 13080, sha256: '5d73c5effa2149d110c051829a0738429a02271f2181937653a652a3b56c30a1',
+    characters: 13300, sha256: '4a301c4080495fac246df82b55b1083b7d96ba7062ea8edefc7c71b501a15813',
     guardKey: 'buildProfileDraftState',
     liveCaptureAsset: 'v3/profile-form/build-draft-state-published.capture.txt',
     restoreTrailingWhitespace: Object.freeze({}), terminalNewlinesRemoved: 1,

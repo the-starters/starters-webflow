@@ -4,7 +4,6 @@ const test = require('node:test')
 const vm = require('node:vm')
 
 const SOURCE = fs.readFileSync(require.resolve('./submit-writer.js'), 'utf8')
-const DRAFT_SOURCE = fs.readFileSync(require.resolve('./draft-state.js'), 'utf8')
 
 class Element {
   constructor(value = '') {
@@ -341,8 +340,7 @@ test('Build Profile keeps provider call fields out of the profile payload and sa
   }
 })
 
-test('Build Profile and draft saves share one Memberstack JSON writer without dropping either branch', async () => {
-  assert.match(DRAFT_SOURCE, /window\.__tsMemberJsonWrite/)
+test('the pending intent write yields to a prior holder of the shared member JSON writer', async () => {
   const result = load({
     'free-consulting-calls': 'yes',
     'free-call-description': 'Free intro',

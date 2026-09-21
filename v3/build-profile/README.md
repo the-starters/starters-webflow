@@ -202,7 +202,10 @@ profile save cached for the resubmit the panel asks for and leaves the pending
 photo uncommitted until an attempt gets past that write. The submit writer,
 draft-state writer, and Free/Paid receipt consumers share one serialized
 `window.__tsMemberJsonWrite` read-modify-write boundary. A final-step draft save
-therefore cannot overwrite the Call Settings receipt from the same click. The writer
+therefore cannot overwrite the Call Settings receipt from the same click. A draft
+write also abandons itself when its own Memberstack read fails, rather than
+persisting a blob rebuilt from an empty read, so a transient read error cannot
+drop the receipt or any other member JSON key. The writer
 also treats the monthly-retainer section as profile-type-inapplicable on
 Consult: hidden hydrated radio/rate values always submit `retainer: false` and
 `retainer_rate: 0`. The hidden hourly rate is inapplicable on Consult in the same
