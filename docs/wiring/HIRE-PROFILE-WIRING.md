@@ -194,10 +194,10 @@ The runtime no longer calls `api:SYL06lUR/companies`,
 `FREELANCER_ID` remains the CMS-authored Memberstack ID of the viewed profile,
 used for ownership and the CMS Starter-name lookup; the booking identity comes
 from `bookingStarterMemberstackId()` and differs on the staging fixture route.
-The public Algolia
-lookup instead reads the starter's positive integer Xano ID at parse time from
-`[data-starter-xano-id]` inside the hidden `.data-native-binding` wrapper. If
-the carrier is absent or invalid, the lookup warns and stands down.
+The public Algolia lookup instead reads the starter's positive integer Xano ID
+at parse time from `[data-starter-xano-id]` inside the hidden
+`.data-native-binding` wrapper. If the carrier is absent or invalid, the lookup
+warns and stands down.
 
 ## Dependencies this file does NOT own
 

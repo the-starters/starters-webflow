@@ -2076,6 +2076,13 @@ metadata. Every other installed surface uses the self-only
 `starter/get_by_memberstack/v3` and grant-owner-only
 `nylas_configurations/get_all/v3` routes.
 
+The starter identity the adapter injects into the scheduler `bookingInfo`
+payload is the page's `starter_memberstack_id` on every route but one: on
+staging `/hire/jp-test` it is the owned Test Starter fixture, so the scheduler
+payload agrees with the booking paths `hire-profile.js` binds there. That
+fixture, and the reason it exists, is owned by
+[`HIRE-PROFILE-WIRING.md`](../docs/wiring/HIRE-PROFILE-WIRING.md#staging-hire-jp-test-booking-fixture).
+
 Hire booking surfaces also contain the post-booking Nylas
 DOM race. After a successful `bookedEventInfo` event includes a `booking_id`,
 the adapter waits for the Designer-authored `[schedule-step="success"]` inside
@@ -2124,9 +2131,11 @@ Runtime contract:
   otherwise, the attribute is not set on pages where the adapter does not
   install.
 - `window.StarterSchedulingV3Stage` is a frozen object exposing `paths` (the
-  explicit stage paths), `productionPaths` (the canonical dashboards), and
-  `routeMap` (the effective request-to-`/v3` route map). Valid Hire paths are
-  selected by the route grammar and are not enumerated in either path array.
+  explicit stage paths), `productionPaths` (the canonical dashboards),
+  `routeMap` (the effective request-to-`/v3` route map), and
+  `injectBookingIdentity` (the scheduler identity writer described above).
+  Valid Hire paths are selected by the route grammar and are not enumerated in
+  either path array.
 - `window.__tsSchedulingV3StageOriginalFetch` retains the pre-adapter
   `window.fetch` for provider and non-scheduling passthrough.
 
