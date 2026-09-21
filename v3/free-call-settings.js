@@ -372,6 +372,10 @@
     return Boolean(canonicalService(value)) || prerequisitesReady(value)
   }
 
+  function canSubmitSettings(value) {
+    return canSaveSettings(value) || Boolean(pendingBuildIntent)
+  }
+
   function radioValue(item) {
     return String(item.value || item.getAttribute('value') || '').toLowerCase()
   }
@@ -630,7 +634,7 @@
         : qs('button, input', button)
       if (nativeButton) nativeButton.disabled = nextBusy
     })
-    if (!nextBusy && settings) setActionEnabled(action('save'), canSaveSettings(settings))
+    if (!nextBusy && settings) setActionEnabled(action('save'), canSubmitSettings(settings))
   }
 
   function clearRenderedState(message) {
@@ -791,7 +795,11 @@
         item.setAttribute('data-ready', readiness[name] ? 'true' : 'false')
       })
     })
-    setActionEnabled(action('save'), canSaveSettings(value))
+    // A pending Build Profile receipt must stay actionable even before Calendar
+    // and Availability are ready. Save still rejects an enable without those
+    // prerequisites, while a member can always change their mind and consume the
+    // pending receipt by selecting Off.
+    setActionEnabled(action('save'), canSubmitSettings(value))
     const priceOutput = output('price')
     if (priceOutput) priceOutput.textContent = formatFreePrice(service ? servicePriceCents(service) : 0)
     paintStatusPills()
@@ -947,7 +955,18 @@
     const service = canonicalService(settings)
     if (!service) {
       if (pendingBuildIntent) {
-        await consumePendingBuildIntentBestEffort()
+        if (!settings) {
+          setStatus('error')
+          setMessage('Free-call settings could not be confirmed. Reload and try again.')
+          return null
+        }
+        try {
+          await consumePendingBuildIntent()
+        } catch (error) {
+          setStatus('error')
+          setMessage('Your Build Profile choice could not be cleared. Your selection was not saved.')
+          return null
+        }
         render(settings)
       }
       return settings
@@ -1101,7 +1120,7 @@
       )
     } finally {
       if (authTransitionPending === transition && settings && sessionMemberId) {
-        setActionEnabled(action('save'), canSaveSettings(settings))
+        setActionEnabled(action('save'), canSubmitSettings(settings))
       }
       finishAuthTransition(transition)
     }

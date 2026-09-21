@@ -15,6 +15,7 @@
       [
         { selector: '[name="rate"]', min: 1, max: 1000 },
         { selector: '[name="rate-retainer"]', min: 1, max: 25000 },
+        { selector: '[name="paid-call-rate"]', min: 1, max: 1000 },
       ].forEach(({ selector, min, max }) => {
         const input = qs(selector, form);
         if (!input) return;
@@ -60,7 +61,7 @@
         return next;
       }
 
-      function buildCallSettingsIntent(formData) {
+      function buildCallSettingsIntent(formData, wholeDollar, fieldError) {
         const hasFree = Object.prototype.hasOwnProperty.call(formData, 'free-consulting-calls');
         const hasPaid = Object.prototype.hasOwnProperty.call(formData, 'paid-consulting-calls');
         if (!hasFree && !hasPaid) return null;
@@ -77,10 +78,11 @@
           const freeEnabled = enabled(formData['free-consulting-calls']);
           const description = freeEnabled ? String(formData['free-call-description'] || '').trim() : '';
           if (freeEnabled && description.length > 60) {
-            throw Object.assign(new Error('Free-call description must be 60 characters or fewer.'), {
-              code: 'FREE_CALL_DESCRIPTION_TOO_LONG',
-              panelMessage: 'Free-call description must be 60 characters or fewer.',
-            });
+            fieldError(
+              qs('[name="free-call-description"]', form),
+              'Free-call description must be 60 characters or fewer.',
+              'FREE_CALL_DESCRIPTION_TOO_LONG',
+            );
           }
           intent.free = {
             enabled: freeEnabled,
@@ -93,21 +95,24 @@
           const title = String(formData['paid-call-description'] || '').trim() || 'Paid Consultation Call';
           const rawRate = String(formData['paid-call-rate'] || '').trim();
           if (paidEnabled && (title.length < 3 || title.length > 80)) {
-            throw Object.assign(new Error('Use a paid-call title between 3 and 80 characters.'), {
-              code: 'PAID_CALL_TITLE_INVALID',
-              panelMessage: 'Use a paid-call title between 3 and 80 characters.',
-            });
+            fieldError(
+              qs('[name="paid-call-description"]', form),
+              'Use a paid-call title between 3 and 80 characters.',
+              'PAID_CALL_TITLE_INVALID',
+            );
           }
-          if (paidEnabled && (!/^[0-9]+$/.test(rawRate) || Number(rawRate) < 1 || Number(rawRate) > 1000)) {
-            throw Object.assign(new Error('Use a whole-dollar paid-call rate from $1 to $1,000.'), {
-              code: 'PAID_CALL_RATE_INVALID',
-              panelMessage: 'Use a whole-dollar paid-call rate from $1 to $1,000.',
-            });
-          }
+          const paidRate = paidEnabled
+            ? wholeDollar(rawRate, {
+              min: 1,
+              max: 1000,
+              label: 'paid-call rate',
+              selector: '[name="paid-call-rate"]',
+            })
+            : null;
           intent.paid = {
             enabled: paidEnabled,
             title,
-            price_dollars: paidEnabled ? Number(rawRate) : null,
+            price_dollars: paidRate,
           };
         }
 
@@ -158,7 +163,7 @@
         if (feedback && field.value !== feedback.value) clearPriceFeedback(field);
       }
 
-      ['rate', 'rate-retainer'].forEach((name) => {
+      ['rate', 'rate-retainer', 'paid-call-rate', 'paid-call-description', 'free-call-description'].forEach((name) => {
         const field = qs('[name="' + name + '"]', form);
         field?.addEventListener('input', clearChangedPriceFeedback);
         field?.addEventListener('change', clearChangedPriceFeedback);
@@ -255,7 +260,7 @@
           return value;
         };
 
-        const priceError = (field, message, code, mirror) => {
+        const fieldError = (field, message, code, mirror) => {
           if (mirror || !field) {
             throw Object.assign(new Error(message), { code, panelMessage: message });
           }
@@ -294,7 +299,7 @@
             const message = failure === 'PRICE_REQUIRED'
               ? `${label} is required.`
               : `Use a whole-dollar ${label} from $${min.toLocaleString('en-US')} to $${max.toLocaleString('en-US')}.`;
-            return priceError(field, message, failure, mirror);
+            return fieldError(field, message, failure, mirror);
           }
           clearPriceFeedback(field);
           const raw = String(value ?? '').trim();
@@ -337,11 +342,11 @@
           // Validate JSON type before blank detection or numeric conversion:
           // [] is not a remove gesture and [100] is not a scalar price.
           if (typeof data.price !== 'string' && typeof data.price !== 'number') {
-            return priceError(qs(selector, form), 'Use a whole-dollar service price from $1 to $50,000.', 'PRICE_NOT_INTEGER', true);
+            return fieldError(qs(selector, form), 'Use a whole-dollar service price from $1 to $50,000.', 'PRICE_NOT_INTEGER', true);
           }
           if (typeof data.price === 'string' && !data.price.trim()) return null;
           if (!String(data.name ?? '').trim()) {
-            return priceError(qs(selector, form), 'A service name is required when a service price is set.', 'SERVICE_NAME_REQUIRED', true);
+            return fieldError(qs(selector, form), 'A service name is required when a service price is set.', 'SERVICE_NAME_REQUIRED', true);
           }
           data.price = wholeDollar(data.price, {
             min: 1,
@@ -393,7 +398,7 @@
           ? wholeDollar(formData["rate-retainer"], RETAINER_PRICE)
           : 0;
 
-        const callSettingsIntent = buildCallSettingsIntent(formData);
+        const callSettingsIntent = buildCallSettingsIntent(formData, wholeDollar, fieldError);
 
         const payload = {
           member_id: MEMBER.id || "",

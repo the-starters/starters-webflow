@@ -1054,6 +1054,99 @@ test('declining a pending Paid enable consumes the receipt when canonical has no
   assert.equal(result.dom.enabled.checked, false)
 })
 
+test('Dashboard keeps a gated pending Paid receipt actionable so the member can decline it', async () => {
+  const result = load({
+    cardMode: true,
+    memberJSON: {
+      starter_call_settings_intent_v3: {
+        version: 1,
+        member_id: 'member-a',
+        paid: { enabled: true, title: 'Strategy call', price_dollars: 250 },
+      },
+    },
+    initial: canonical({
+      readiness: {
+        calendar_connected: false,
+        availability_configured: false,
+        stripe_connect_linked: false,
+        stripe_charges_enabled: false,
+        stripe_readiness_fresh: false,
+      },
+    }),
+  })
+  await settle()
+
+  assert.equal(result.dom.save.disabled, false)
+  assert.equal(result.dom.save.getAttribute('aria-disabled'), 'false')
+  await result.rotateAuthScope()
+  await settle()
+  assert.equal(result.dom.save.disabled, false, 'same-member auth refresh keeps the decline path actionable')
+  result.dom.disabled.checked = true
+  await result.dom.disabled.dispatch('change')
+  await result.dom.save.dispatch('click')
+  await settle()
+
+  assert.equal(result.memberJsonWrites.length, 1)
+  assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
+  assert.equal(result.dom.disabled.checked, true)
+})
+
+test('a failed no-service Paid decline keeps the pending receipt and reports failure', async () => {
+  const result = load({
+    cardMode: true,
+    memberJsonUpdateError: new Error('member JSON unavailable'),
+    memberJSON: {
+      starter_call_settings_intent_v3: {
+        version: 1,
+        member_id: 'member-a',
+        paid: { enabled: true, title: 'Strategy call', price_dollars: 250 },
+      },
+    },
+    initial: canonical(),
+  })
+  await settle()
+
+  result.dom.disabled.checked = true
+  await result.dom.disabled.dispatch('change')
+  assert.equal(await result.window.StarterPaidCallSettings.submit(), null)
+
+  assert.equal(result.dom.root.getAttribute('data-paid-build-call-intent'), 'pending')
+  assert.match(result.dom.statusOutput.textContent, /could not be cleared/)
+  assert.equal(result.calls.some((call) => call.method === 'POST'), false)
+})
+
+test('a Paid decline never consumes its receipt when canonical state is unavailable', async () => {
+  let reads = 0
+  const result = load({
+    editProfile: true,
+    memberJSON: {
+      starter_call_settings_intent_v3: {
+        version: 1,
+        member_id: 'member-b',
+        paid: { enabled: true, title: 'Strategy call', price_dollars: 250 },
+      },
+    },
+    routes: {
+      '/starter/paid-call-settings/get/v3': () => {
+        reads += 1
+        if (reads === 1) return { ok: true, status: 200, json: async () => canonical() }
+        return { ok: false, status: 503, json: async () => ({ message: 'unavailable' }) }
+      },
+    },
+  })
+  await settle()
+  await result.changeMember({ id: 'member-b' })
+  await settle()
+
+  result.dom.disabled.checked = true
+  await result.dom.disabled.dispatch('change')
+  assert.equal(await result.window.StarterPaidCallSettings.submit(), null)
+
+  assert.equal(result.memberJsonWrites.length, 0)
+  assert.match(result.dom.nativeErrorMessage.textContent, /could not be confirmed/)
+  assert.equal(result.dom.nativeError.getAttribute('data-call-settings-error-visible'), 'true')
+})
+
 test('a gated pending Paid enable never blocks the Edit Profile step save', async () => {
   const result = load({
     editProfile: true,

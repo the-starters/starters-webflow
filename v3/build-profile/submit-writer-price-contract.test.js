@@ -69,6 +69,8 @@ function load(overrides = {}, pathname = '/build-profile/full', {
   const inputs = Object.fromEntries([
     ['[name="rate"]', new Element(values.rate)],
     ['[name="rate-retainer"]', new Element(values['rate-retainer'])],
+    ['[name="free-call-description"]', new Element(values['free-call-description'])],
+    ['[name="paid-call-description"]', new Element(values['paid-call-description'])],
     ['[name="paid-call-rate"]', new Element(values['paid-call-rate'])],
     ['#service', new Element(values.service)],
     ['#service-2', new Element(values['service-2'])],
@@ -394,7 +396,33 @@ test('Build Profile blocks combined success when enabled Paid intent is invalid'
   assert.equal(result.memberJsonWrites.length, 0)
   assert.equal(result.success.style.display, 'none')
   assert.equal(result.error.style.display, 'block')
-  assert.equal(result.errorMessage.textContent, 'Use a whole-dollar paid-call rate from $1 to $1,000.')
+  assert.equal(result.inputs['[name="paid-call-rate"]'].validationMessage, 'Use a whole-dollar paid-call rate from $1 to $1,000.')
+  assert.equal(result.inputs['[name="paid-call-rate"]'].focusCount, 1)
+  assert.equal(result.inputs['[name="paid-call-rate"]'].reportValidityCount, 1)
+  assert.equal(result.errorMessage.textContent, 'Something went wrong. Please try again.')
+})
+
+test('Build Profile points invalid Call Settings copy at the exact authored field', async () => {
+  const free = load({
+    'free-consulting-calls': 'yes',
+    'free-call-description': 'x'.repeat(61),
+  })
+  await free.submit.click()
+  assert.equal(free.requests.length, 0)
+  assert.equal(free.inputs['[name="free-call-description"]'].focusCount, 1)
+  assert.equal(free.inputs['[name="free-call-description"]'].reportValidityCount, 1)
+  assert.match(free.inputs['[name="free-call-description"]'].validationMessage, /60 characters or fewer/)
+
+  const paid = load({
+    'paid-consulting-calls': 'yes',
+    'paid-call-description': 'x',
+    'paid-call-rate': '250',
+  })
+  await paid.submit.click()
+  assert.equal(paid.requests.length, 0)
+  assert.equal(paid.inputs['[name="paid-call-description"]'].focusCount, 1)
+  assert.equal(paid.inputs['[name="paid-call-description"]'].reportValidityCount, 1)
+  assert.match(paid.inputs['[name="paid-call-description"]'].validationMessage, /between 3 and 80/)
 })
 
 // A consult save persists Hourly_Rate 0 for the profile-inapplicable control, and

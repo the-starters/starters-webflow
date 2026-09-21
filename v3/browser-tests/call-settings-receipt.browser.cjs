@@ -169,6 +169,8 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
       success: getComputedStyle(document.querySelector('[build-profile-success]')).display,
       error: getComputedStyle(document.querySelector('[build-profile-error]')).display,
       errorMessage: document.querySelector('[build-profile-error] div').textContent,
+      paidRateValidation: document.getElementById('paid-call-rate').validationMessage,
+      focusedField: document.activeElement && document.activeElement.id,
       onboardingCta: document.querySelector('[build-profile-success] [dashboard-button-wrap] .button').getAttribute('href'),
       profileSaves: window.__tsProfileRequestLog(),
       memberJson: window.__tsMemberJsonState(),
@@ -377,11 +379,12 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
     })
 
     // Adversarial: a rate the member can repair must fail before the profile save.
-    await navigate('/build-profile/full-profile', 'page=build&receipt=none&rate=not-a-price')
+    await navigate('/build-profile/full-profile', 'page=build&receipt=none&rate=0')
     await clickSubmit()
-    assert.ok(await settleUntil(`document.querySelector('[build-profile-error] div').textContent.includes('whole-dollar')`), 'the authored error panel names the bad rate')
+    assert.ok(await settleUntil(`document.getElementById('paid-call-rate').validationMessage.includes('whole-dollar')`), 'the authored rate field names the bad rate')
     const rejected = await buildSnapshot('12-build-profile-invalid-rate-fails-before-save', 'HEAD, Paid = Yes with an unusable rate')
-    assert.equal(rejected.errorMessage, 'Use a whole-dollar paid-call rate from $1 to $1,000.')
+    assert.equal(rejected.paidRateValidation, 'Use a whole-dollar paid-call rate from $1 to $1,000.')
+    assert.equal(rejected.focusedField, 'paid-call-rate', 'the invalid authored control receives focus')
     assert.equal(rejected.success, 'none', 'no success panel over a rejected submit')
     assert.equal(rejected.profileSaves.length, 0, 'the canonical profile is never saved behind a member-repairable receipt error')
     assert.equal(rejected.memberJson.starter_call_settings_intent_v3, undefined, 'no receipt is written for a rejected submit')
@@ -390,7 +393,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
     })
 
     // Pre-fix control: the same bad rate used to land after the profile save.
-    await navigate('/build-profile/full-profile', 'page=build&receipt=none&rate=not-a-price&base=build-profile/submit-writer.js&baseRef=rate')
+    await navigate('/build-profile/full-profile', 'page=build&receipt=none&rate=0&base=build-profile/submit-writer.js&baseRef=rate')
     await clickSubmit()
     assert.ok(await settleUntil(`document.querySelector('[build-profile-error] div').textContent.includes('whole-dollar')`), 'the pre-fix build also shows the error')
     const rejectedPrefix = await buildSnapshot('13-build-profile-prefix-saves-before-validating', 'pre-fix build, same bad rate: the profile is already saved')
@@ -474,8 +477,8 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
     assert.equal(blocked.paid.rateInput, '250', 'the Build Profile rate still prefills the editable field for setup')
     assert.equal(blocked.paid.buildIntent, 'pending', 'the receipt stays pending until the setup is finished')
     assert.equal(await evaluate(`document.querySelector('[data-call-settings-service="paid"] [data-call-settings-output="status"]').textContent`),
-      'Your Build Profile choice is saved. Complete Calendar, Availability, and Stripe setup to turn on paid calls.',
-      'the card tells the Starter what is still missing')
+      'Complete the calendar and Stripe setup before you turn on paid calls.',
+      'Update remains actionable but an enable still names the missing prerequisite and fails closed')
     assert.deepEqual(xanoWrites(blocked), [], 'clicking Update writes nothing canonical while Stripe is unconnected')
     // The same guard from the controller's own entry point, not just the
     // disabled button: this is what the Edit Profile step 6 save calls.
@@ -491,6 +494,24 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
     assert.deepEqual(errors, [], 'no uncaught browser errors')
     record('dashboard-pending-paid-yes-cannot-bypass-stripe-readiness', {
       status: forced.status, paidEnabled: stillBlocked.paid.enabled, receipt: stillBlocked.memberJson.starter_call_settings_intent_v3,
+    })
+
+    // The same pending receipt must let the Starter change their mind before
+    // those prerequisites exist. Off consumes only the receipt and makes no
+    // canonical provider write.
+    await navigate('/starter-dashboard', 'page=dashboard&paid=1&receipt=paid-pending&seen=1')
+    assert.ok(await settleUntil(`document.documentElement.getAttribute('data-paid-call-settings') === 'ready'`), 'the Paid decline card hydrates')
+    await clickPaid('open')
+    await evaluate(`document.getElementById('paid-no').click()`)
+    await clickPaid('submit')
+    assert.ok(await settleUntil(`!window.__tsMemberJsonState().starter_call_settings_intent_v3`), 'the declined receipt is consumed')
+    const dashboardDecline = await snapshot('19-dashboard-head-pending-paid-decline-persists', 'HEAD, pending Paid = Yes declined before Stripe or scheduling setup')
+    assert.equal(await evaluate(`document.getElementById('paid-no').checked`), true, 'the authored No radio stays selected')
+    assert.equal(dashboardDecline.paid.buildIntent, '', 'the pending marker clears after the decline')
+    assert.deepEqual(xanoWrites(dashboardDecline), [], 'declining with no service makes no canonical provider write')
+    record('dashboard-declining-a-gated-pending-paid-receipt-persists-off', {
+      memberJson: dashboardDecline.memberJson,
+      paidEnabled: dashboardDecline.paid.enabled,
     })
 
     // ------------------------------------------------------------------

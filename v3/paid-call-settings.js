@@ -439,6 +439,10 @@
     return Boolean(canonicalService(value)) || prerequisitesReady(value)
   }
 
+  function canSubmitSettings(value) {
+    return canSaveSettings(value) || Boolean(pendingBuildIntent)
+  }
+
   // Edit Profile gives the Free and Paid controllers one shared step-6 root, so the
   // canonical hook cannot say which service a stamped radio belongs to there.
   function radioHook() {
@@ -893,7 +897,7 @@
     })
     if (!nextBusy && settings) {
       const service = canonicalService(settings)
-      setActionEnabled(action('save'), canSaveSettings(settings))
+      setActionEnabled(action('save'), canSubmitSettings(settings))
       setActionEnabled(action('disable'), Boolean(service))
     }
   }
@@ -1105,7 +1109,11 @@
     cardStateTarget.setAttribute('data-paid-call-card-state', service ? 'on' : 'off')
     root.setAttribute('data-paid-call-rate-source', suggestion ? 'legacy_v2' : '')
     root.setAttribute('data-paid-call-rate-state', rateNeedsCorrection ? 'correction-required' : '')
-    setActionEnabled(action('save'), canSaveSettings(value))
+    // A pending Build Profile receipt must stay actionable even before scheduling
+    // and Stripe are ready. Save still rejects an enable without those
+    // prerequisites, while a member can always change their mind and consume the
+    // pending receipt by selecting Off.
+    setActionEnabled(action('save'), canSubmitSettings(value))
     setActionEnabled(action('disable'), Boolean(service))
     const priceOutput = output('price')
     const displayedRate = service
@@ -1314,7 +1322,18 @@
     const service = canonicalService(settings)
     if (!service) {
       if (pendingBuildIntent) {
-        await consumePendingBuildIntentBestEffort()
+        if (!settings) {
+          setStatus('error')
+          setMessage('Paid-call settings could not be confirmed. Reload and try again.')
+          return null
+        }
+        try {
+          await consumePendingBuildIntent()
+        } catch (error) {
+          setStatus('error')
+          setMessage('Your Build Profile choice could not be cleared. Your selection was not saved.')
+          return null
+        }
         render(settings)
       }
       return settings
@@ -1449,7 +1468,7 @@
       )
     } finally {
       if (authTransitionPending === transition && settings && sessionMemberId) {
-        setActionEnabled(action('save'), canSaveSettings(settings))
+        setActionEnabled(action('save'), canSubmitSettings(settings))
         setActionEnabled(action('disable'), Boolean(canonicalService(settings)))
       }
       finishAuthTransition(transition)

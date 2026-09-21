@@ -247,12 +247,18 @@ versioned, member-bound `starter_call_settings_intent_v3` receipt in private
 Memberstack JSON, with a separate `free` part and `paid` part. A receipt is not
 an active service and is not a `freelancers_v3` projection. The active
 environment-matched `nylas_configurations_v3` row and provider readback remain
-the sole call authority.
+the sole call authority. The visible Free description, Paid title, and Paid
+whole-dollar rate report validation on their exact authored controls. The Paid
+rate reuses the same `$1` through `$1,000` whole-dollar validator as the other
+direct Build Profile price controls.
 
 Dashboard and Edit Profile hydrate the receipt as a pending create, update, or
 disable. A pending enable prefills that branch's controls without becoming
 canonical state, and stays pending until the branch's prerequisites are ready
-and the member selects Update.
+and the member selects Update. On Dashboard, a pending receipt keeps Update
+actionable before those prerequisites are ready so the member can still change
+their mind and submit Off. An attempted enable continues to fail closed on the
+existing scheduling and Stripe prerequisite checks.
 
 Each consumer removes only its own part of the receipt; the other branch's
 pending part is preserved. It consumes its part once canonical state matches the
@@ -267,7 +273,11 @@ member's choice, in one of three ways:
 
 Cleanup after a verified canonical readback is best-effort: a failed cleanup
 write never turns a successful canonical save into a profile-step failure, and
-the unchanged receipt retries on reload.
+the unchanged receipt retries on reload. The no-service submitted-Off path is
+different because no canonical write backs up the choice: its cleanup is strict.
+If Memberstack cleanup fails, the controller keeps the receipt pending, reports
+that the selection was not saved, and returns failure to Edit Profile. If the
+latest canonical state is unavailable, it does not consume the receipt.
 
 The submit writer, the draft-state writer, and both receipt consumers share one
 serialized `window.__tsMemberJsonWrite` read-modify-write boundary, so one
