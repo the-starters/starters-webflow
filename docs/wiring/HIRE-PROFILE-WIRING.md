@@ -350,16 +350,18 @@ authenticated authored calendar. Paid uses the booking flow owned by
 authored modal. Valid `/hire/<slug>` paths use the host-classified TEST or
 production route map. Generic Book Call controls remain visible across primary,
 sticky, and mobile CTAs when unavailable, with `data-booking-trigger-unavailable`
-and `aria-disabled="true"`. Hover, keyboard focus, or tap reveals “This Starter
-isn’t accepting calls right now.” Hover and focus are tracked independently
+and `aria-disabled="true"`. For a paid Brand, hover, keyboard focus, or tap
+reveals “This Starter isn’t accepting calls right now.”; the owner keeps the
+call-settings guidance instead. Signed-out and paywalled viewers never see the
+generic hint. Hover and focus are tracked independently
 across the control and hint. Pointer exit allows a cancellable 180ms grace period
 to cross the gap; dismissal waits until neither surface is hovered or focused.
 The hint is attached to the body with fixed viewport positioning, constrained
 horizontally and placed above the control when there is insufficient room below.
 Escape dismisses the hint. Disabled controls lose
 signup and modal delegate hooks so they cannot open either flow. A confirmed
-logged-out viewer gets signup-only activation when either public call type is
-available; its Lumos modal hook remains removed. Brand triggers and chooser options follow the
+logged-out or paywalled viewer always gets signup-only activation regardless of
+call availability; its Lumos modal hook remains removed. Brand triggers and chooser options follow the
 [Brand readiness contract](#signed-in-brand-readiness). Triggers outside these
 two approved paths stay closed, so no entry point can open an empty chooser.
 The authored `[data-modal-target="popup-booking-main"]` dialog also stays marked
@@ -804,7 +806,7 @@ settings lookup can still apply Default or Disabled states.
 
 `callOfferTypeOf` is the single reader of a DTO item's call type — trimmed,
 lowercased, and admitted only as `free` or `paid`. Admission, the per-card
-paint, and the logged-out availability lookup all key on it, so one payload
+paint, and the Brand public-readiness lookup all key on it, so one payload
 cannot be read as Free by one of them and as nothing by another. A clone is
 adapted only when its `data-wf-xano-id` exactly matches a returned item id;
 nothing falls back by position.
@@ -837,8 +839,11 @@ stale content. The final state for an admitted clone is one of:
 `Free Call` / `Paid Consulting Call`, and its `.service-card_content-wrapper` booking row
 is removed through the same `stripCallBookingRow` writer the touts and rate-card
 clones use — no authenticated writer runs for this viewer, so a row nobody owns
-would show the `00:00pm on 00/00` sentinel forever. When either type is public,
-the generic Book Call CTAs become available as signup-only entry points.
+would show the `00:00pm on 00/00` sentinel forever. The generic Book Call CTAs
+remain signup-only entry points regardless of call availability, including
+while public data is loading or has failed. The unavailable-call tooltip is
+reserved for paid Brands; signed-out and paywalled visitors continue to signup
+or upgrade. Owner-specific call settings guidance remains unchanged.
 
 That attribution pair is the existing signup controller's canonical service
 contract. It opens `signup-modal` for a confirmed logged-out viewer and maps the
@@ -865,6 +870,10 @@ membership upsell block is `data-ms-content="members"`, so no Designer change
 was needed. Talent viewing another Starter is unchanged: Hire, Book Call and
 Message are already hidden for them by `data-ms-content="!freelancer-only"`,
 their call cards read `hidden`, and their service cards carry no modal trigger.
+For non-owner talent, the generic unavailable-call hint is also suppressed;
+the controller keeps any retained Book Call node inert with no signup or
+booking hook. Memberstack owns hiding the action group. This is intentional,
+not a signup/upgrade path for talent accounts.
 Regression coverage: the "paywalled signed-in viewers" block at the end of
 `v3/hire-profile.test.js`.
 
@@ -1423,7 +1432,9 @@ node v3/browser-tests/hire-calls.browser.cjs
 The browser runner uses the default macOS Chrome path unless `CHROME_BIN` is
 set. Optional `HIRE_BROWSER_EVIDENCE` selects the screenshot and observation
 output directory. It exercises both wrappers' failure/replay/recovery, public
-paid price, signup attribution, matching Brand controller entry, and owner
+paid price, signed-out/free-Brand Book Call signup through stale and recovered
+results, paid-Brand disabled hints and chooser entry, signup attribution,
+matching Brand controller entry, and owner
 settings states through real DOM, adapter, attribution, and modal code.
 Provider responses and booking controllers are synthetic; fetch connections
 and form submissions are blocked by the fixture's content security policy.

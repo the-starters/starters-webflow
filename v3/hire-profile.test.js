@@ -2819,7 +2819,7 @@ test('an anonymous viewer sees only the call touts enabled by canonical public p
   assert.equal(paidSurface.getAttribute('data-logged-out-call-tout'), 'paid')
 })
 
-test('an anonymous viewer sees a disabled Book Call when both public projections are off', async () => {
+test('an anonymous viewer keeps Book Call signup when both public projections are off', async () => {
   const page = makePage()
   const paidSurface = makeElement('div', {
     'data-service-card': 'component',
@@ -2847,7 +2847,7 @@ test('an anonymous viewer sees a disabled Book Call when both public projections
   }
   assert.equal(page.bookingButtonWrapper.style.display, 'flex')
   assert.equal(page.bookingButton.getAttribute('data-modal-trigger'), null)
-  assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), '')
+  assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), null)
 })
 
 test('a chooser trigger outside booking-button-wrapper stays hidden until discovery succeeds', async () => {
@@ -3823,9 +3823,9 @@ test('wf-xano call cards use public Xano availability for logged-out signup pres
   assert.equal(xano.free.root.getAttribute('data-xano-call-card'), null)
   assert.equal(page.bookingButtonWrapper.style.display, 'flex')
   assert.equal(page.bookingButtonWrapper.getAttribute('aria-hidden'), 'false')
-  assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), '')
-  assert.equal(page.bookingButton.getAttribute('aria-disabled'), 'true')
-  assert.equal(page.bookingButton.getAttribute('data-logged-out-book-call'), null)
+  assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), null)
+  assert.equal(page.bookingButton.getAttribute('aria-disabled'), null)
+  assert.equal(page.bookingButton.getAttribute('data-logged-out-book-call'), '')
   assert.equal(page.bookingButton.getAttribute('data-modal-trigger'), null)
 
   wfx.emit(callCardResult({ free: false, paid: true }))
@@ -3918,7 +3918,7 @@ test('a legacy Header rendered after canonical Services replays the latest publi
   assert.equal(legacyHeader.paid.root.getAttribute('data-canonical-public-call'), 'paid')
 })
 
-test('the latest canonical wf-xano result controls logged-out Book Call across both wrappers', async () => {
+test('canonical wf-xano results hide unavailable cards but preserve Book Call signup across both wrappers', async () => {
   const page = makePage()
   const legacyHeader = addLegacyHeaderCallCardsFixture(page)
   const services = addXanoCallCardsFixture(page, 'starter-call-offers-services')
@@ -3950,8 +3950,8 @@ test('the latest canonical wf-xano result controls logged-out Book Call across b
   headerWfx.emit({ items: [] })
   await settle()
   assert.equal(page.bookingButtonWrapper.style.display, 'flex')
-  assert.equal(page.bookingButton.getAttribute('data-logged-out-book-call'), null)
-  assert.equal(page.bookingButton.getAttribute('aria-disabled'), 'true')
+  assert.equal(page.bookingButton.getAttribute('data-logged-out-book-call'), '')
+  assert.equal(page.bookingButton.getAttribute('aria-disabled'), null)
 
   servicesWfx.emit(callCardResult())
   headerWfx.emit(callCardResult())
@@ -7696,26 +7696,26 @@ for (const canonical of [false, true]) {
         vm.runInContext(source, context)
         await settle()
 
-        const assertAvailability = (available) => {
+        const assertAvailability = () => {
           assert.equal(mixed.style.display, display)
           assert.equal(mixed.hasAttribute('booking-button-wrapper'), false,
             'mixed groups must not match the shared booking-only CSS hiding rule')
           assert.equal(mixed.getAttribute('aria-hidden'), authoredAria)
           assert.equal(hire.getAttribute('data-booking-trigger-unavailable'), null)
           assert.equal(hire.getAttribute('data-modal-trigger'), 'generate-contract')
-          assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), available ? null : '')
-          assert.equal(page.bookingButton.getAttribute('aria-disabled'), available ? null : 'true')
-          assert.equal(page.bookingButton.getAttribute('data-logged-out-book-call'), available ? '' : null)
-          assert.equal(page.bookingButton.getAttribute('data-signup-trigger-element'), available ? 'book-call' : null)
-          if (available) assert.equal(page.bookingButton.getAttribute('data-modal-trigger'), null)
+          assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), null)
+          assert.equal(page.bookingButton.getAttribute('aria-disabled'), null)
+          assert.equal(page.bookingButton.getAttribute('data-logged-out-book-call'), '')
+          assert.equal(page.bookingButton.getAttribute('data-signup-trigger-element'), 'book-call')
+          assert.equal(page.bookingButton.getAttribute('data-modal-trigger'), null)
           assert.equal(page.bookingDialog.getAttribute('data-booking-surface-unavailable'), '')
         }
-        assertAvailability(ready)
+        assertAvailability()
         if (wfx) {
           for (const available of [!ready, ready]) {
             wfx.emit(callCardResult({ free: available, paid: false }))
             await settle()
-            assertAvailability(available)
+            assertAvailability()
             assert.equal(page.bookingButton.getAttribute('data-modal-trigger'), null)
           }
         }
@@ -8013,7 +8013,7 @@ test('a re-entry during the close fade keeps its stamp when the close lands', as
 
 test('unavailable Book Call explains on focus and tap without opening booking', async () => {
   const page = makePage()
-  const context = makeContext({ page, record: { 'free-consulting-calls-t-f': false, 'paid-consulting-calls-t-f': false } })
+  const context = makeContext({ page, member: BRAND_MEMBER, record: { 'free-consulting-calls-t-f': false, 'paid-consulting-calls-t-f': false } })
   vm.createContext(context)
   vm.runInContext(source, context)
   await settle()
@@ -8052,7 +8052,7 @@ for (const owner of [false, true]) {
     const page = makePage()
     const context = owner
       ? ownerContext(page, ownerController())
-      : makeContext({ page, record: { 'free-consulting-calls-t-f': false, 'paid-consulting-calls-t-f': false } })
+      : makeContext({ page, member: BRAND_MEMBER, record: { 'free-consulting-calls-t-f': false, 'paid-consulting-calls-t-f': false } })
     vm.createContext(context)
     vm.runInContext(source, context)
     await settle()
@@ -8352,4 +8352,90 @@ test('a free Brand with no signup modal on the page opens nothing and warns once
     1,
     'one warning, not one per click',
   )
+})
+
+for (const [viewer, member] of [['signed-out', {}], ['free Brand', FREE_BRAND_MEMBER]]) {
+  test(`Book Call keeps signup available for ${viewer} when the Starter offers no calls`, async () => {
+    const page = makePage()
+    const context = paywalledContext(page, member, {
+      record: { 'free-consulting-calls-t-f': false, 'paid-consulting-calls-t-f': false },
+    })
+    const { opens, lumos } = signupRegistry(page)
+    context.lumos = lumos
+    vm.createContext(context)
+    vm.runInContext(source, context)
+    await settle()
+
+    const button = page.bookingButton
+    assert.equal(button.getAttribute('aria-disabled'), null)
+    assert.equal(button.getAttribute('data-signup-trigger-element'), 'book-call')
+    assert.equal(button.getAttribute('data-modal-trigger'), null)
+    for (const fn of button.listeners.mouseenter || []) fn({})
+    for (const fn of button.listeners.focusin || []) fn({})
+    for (const hint of page.root.querySelectorAll('[data-call-availability-hint]')) {
+      assert.equal(hint.style.display, 'none')
+    }
+    const click = spyEvent()
+    for (const fn of button.listeners.click || []) fn(click.event)
+    assert.equal(click.seen.prevented, 0)
+    if (viewer === 'free Brand') {
+      context.clickDocument(button)
+      assert.equal(opens.signup, 1)
+    }
+    assert.equal(opens.chooser, 0)
+    assert.equal(context.bookingCalls.length, 0)
+    assert.equal(page.bookingDialog.getAttribute('data-booking-surface-unavailable'), '')
+  })
+}
+
+for (const [viewer, member] of [['signed-out', {}], ['free Brand', FREE_BRAND_MEMBER]]) {
+  test(`Book Call signup survives pending and failed public reads for ${viewer}`, async () => {
+    const page = makePage()
+    const context = paywalledContext(page, member)
+    let rejectRead
+    context.WfAlgolia.getObject = () => new Promise((resolve, reject) => { rejectRead = reject })
+    vm.createContext(context)
+    vm.runInContext(source, context)
+    // Before member readiness, an unavailable Starter hint must not appear.
+    for (const fn of page.bookingButton.listeners.mouseenter || []) fn({})
+    assert.equal(page.root.querySelector('[data-call-availability-hint]').style.display, 'none')
+    await settle()
+    const assertSignup = () => {
+      assert.equal(page.bookingButton.getAttribute('aria-disabled'), null)
+      assert.equal(page.bookingButton.getAttribute('data-signup-trigger-element'), 'book-call')
+      assert.equal(page.bookingButton.getAttribute('data-modal-trigger'), null)
+      assert.equal(page.bookingDialog.getAttribute('data-booking-surface-unavailable'), '')
+    }
+    assertSignup()
+    assert.equal(typeof rejectRead, 'function')
+    rejectRead(new Error('public lookup failed'))
+    await settle()
+    assertSignup()
+  })
+}
+
+
+test('non-owner talent has no Brand tooltip, signup route, or booking action', async () => {
+  // Memberstack owns hiding the Brand-only action group on the published page.
+  // Keep the script boundary closed even if this fixture leaves it in the DOM.
+  const page = makePage()
+  const context = paywalledContext(page, OTHER_TALENT_MEMBER)
+  const { opens, lumos } = signupRegistry(page)
+  context.lumos = lumos
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+  const button = page.bookingButton
+  for (const fn of button.listeners.mouseenter || []) fn({})
+  for (const fn of button.listeners.focusin || []) fn({})
+  const click = spyEvent()
+  for (const fn of button.listeners.click || []) fn(click.event)
+  context.clickDocument(button)
+  assert.equal(page.root.querySelector('[data-call-availability-hint]').style.display, 'none')
+  assert.equal(button.getAttribute('data-signup-trigger-element'), null)
+  assert.equal(button.getAttribute('data-modal-trigger'), null)
+  assert.equal(button.getAttribute('aria-disabled'), 'true')
+  assert.equal(click.seen.prevented, 1)
+  assert.deepEqual(opens, { signup: 0, chooser: 0, contract: 0 })
+  assert.equal(context.bookingCalls.length, 0)
 })
