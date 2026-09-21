@@ -488,6 +488,13 @@
     return response && typeof response === 'object' ? response : {}
   }
 
+  function queueMemberJsonWrite(task) {
+    var previous = window.__tsMemberJsonWrite || Promise.resolve()
+    var next = previous.then(task, task)
+    window.__tsMemberJsonWrite = next.then(function () {}, function () {})
+    return next
+  }
+
   async function memberSeenIds(memberstack) {
     try {
       var response = await memberstack.getMemberJSON()
@@ -501,17 +508,19 @@
 
   async function memberMarkSeen(memberstack, tourId) {
     try {
-      var response = await memberstack.getMemberJSON()
-      var json = memberJson(response)
-      var tours = Object.create(null)
-      if (json.tours && typeof json.tours === 'object') {
-        Object.keys(json.tours).forEach(function (id) {
-          tours[id] = json.tours[id]
-        })
-      }
-      tours[tourId] = new Date().toISOString()
-      json.tours = tours
-      await memberstack.updateMemberJSON({ json: json })
+      await queueMemberJsonWrite(async function () {
+        var response = await memberstack.getMemberJSON()
+        var json = memberJson(response)
+        var tours = Object.create(null)
+        if (json.tours && typeof json.tours === 'object') {
+          Object.keys(json.tours).forEach(function (id) {
+            tours[id] = json.tours[id]
+          })
+        }
+        tours[tourId] = new Date().toISOString()
+        json.tours = tours
+        await memberstack.updateMemberJSON({ json: json })
+      })
     } catch (error) {
       console.warn('[v3-onboarding-tour] Could not persist tour state', error)
     }
@@ -802,12 +811,14 @@
   async function clearSeen(memberstack, member) {
     if (member && member.id) {
       try {
-        var response = await memberstack.getMemberJSON()
-        var json = memberJson(response)
-        if (json && json.tours) {
-          delete json.tours
-          await memberstack.updateMemberJSON({ json: json })
-        }
+        await queueMemberJsonWrite(async function () {
+          var response = await memberstack.getMemberJSON()
+          var json = memberJson(response)
+          if (json && json.tours) {
+            delete json.tours
+            await memberstack.updateMemberJSON({ json: json })
+          }
+        })
       } catch (error) {
         console.warn('[v3-onboarding-tour] Could not reset tour state', error)
       }

@@ -37,6 +37,9 @@ Memberstack JSON read-modify-write through `window.__tsMemberJsonWrite`, so one
 branch cannot overwrite another. Receipt cleanup is best-effort after verified
 canonical readback: a cleanup timeout never changes a successful canonical save
 into a profile-step failure, and the unchanged receipt can be retried on reload.
+When an already-off receipt is consumed without a canonical write, the delayed
+Edit Profile re-render runs inside `__tsProfileDirtyState.runHydrationSync` so
+the synthetic radio change cannot create an unsaved step-6 state.
 
 ## Published compatibility contract
 

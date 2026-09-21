@@ -561,6 +561,7 @@ function load(options = {}) {
     },
     xanoAuthFetch: schedulingAuthFetch,
   }
+  if (options.profileDirtyState) window.__tsProfileDirtyState = options.profileDirtyState
   if (!options.withoutMemberstackAtLoad) window.$memberstackDom = memberstack
 
   class CustomEvent {
@@ -1045,6 +1046,35 @@ test('a gated pending Paid enable never blocks the Edit Profile step save', asyn
   assert.ok(await result.window.StarterPaidCallSettings.submit())
   assert.equal(result.calls.some((call) => call.method === 'POST'), false)
   assert.equal(result.memberJsonWrites.length, 0)
+})
+
+test('auto-consuming a satisfied Paid off receipt re-renders inside the profile hydration boundary', async () => {
+  let hydrationRuns = 0
+  const result = load({
+    editProfile: true,
+    memberId: 'member-a',
+    profileDirtyState: {
+      isHydrating: () => false,
+      runHydrationSync(callback) {
+        hydrationRuns += 1
+        return callback()
+      },
+    },
+    memberJSON: {
+      starter_call_settings_intent_v3: {
+        version: 1,
+        member_id: 'member-a',
+        paid: { enabled: false, title: '', price_dollars: null },
+      },
+    },
+    initial: canonical(),
+  })
+  await settle()
+
+  assert.equal(result.memberJsonWrites.length, 1)
+  assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
+  assert.equal(hydrationRuns, 1)
+  assert.equal(result.window.StarterPaidCallSettings.hasChanges(), false)
 })
 
 test('Edit Profile hydrates and saves Paid Call settings through the canonical controller', async () => {

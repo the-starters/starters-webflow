@@ -736,6 +736,14 @@
     }
   }
 
+  function renderWithoutProfileDirty(canonical) {
+    const dirtyState = window.__tsProfileDirtyState
+    if (editProfileMode && dirtyState && typeof dirtyState.runHydrationSync === 'function') {
+      return dirtyState.runHydrationSync(function () { return render(canonical) })
+    }
+    return render(canonical)
+  }
+
   function pillLabel(item) {
     return String(item.textContent || '')
       .replace(/\u00a0/g, ' ')
@@ -1280,7 +1288,7 @@
       if (currentRender(version, memberId) && !busy) render(canonical)
       if (!canonicalService(canonical) && pendingBuildIntent && !pendingBuildIntent.enabled) {
         consumePendingBuildIntent().then(function () {
-          if (currentRender(version, memberId) && !busy) render(canonical)
+          if (currentRender(version, memberId) && !busy) renderWithoutProfileDirty(canonical)
         }).catch(function () {})
       }
       return canonical
@@ -1498,7 +1506,7 @@
       const rendered = render(canonical)
       if (!canonicalService(canonical) && pendingBuildIntent && !pendingBuildIntent.enabled) {
         consumePendingBuildIntent().then(function () {
-          if (currentRender(version, member.id)) render(canonical)
+          if (currentRender(version, member.id)) renderWithoutProfileDirty(canonical)
         }).catch(function () {})
       }
       return rendered
