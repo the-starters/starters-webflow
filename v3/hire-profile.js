@@ -1498,9 +1498,38 @@
           : null;
   }
 
+  /**
+   * The viewer who gets the authenticated booking and project-service path.
+   * Paid Brands only, since 2026-09-21: a free Brand used to share this path
+   * and could open the chooser and the contract modal without a membership.
+   */
   function isBrandMember(member) {
+      return memberRole(member) === 'brand-paid';
+  }
+
+  /**
+   * A signed-in viewer the paid surfaces are closed to: not the owner, not
+   * talent, not on a paid Brand plan. Free Brands, legacy Brands whose payload
+   * carries no plan list, cancelled paid Brands with the free plan still active,
+   * and members whose plan maps to no role all land here. They read the same
+   * public projection a logged-out visitor does, and every paid CTA opens
+   * `signup-modal`, where Memberstack's `data-ms-content` swaps the signup form
+   * for the membership upsell (see ownPaywalledViewerClicks).
+   */
+  function isPaywalledViewer(member) {
+      if (!member || !member.id) return false;
+      if (isProfileOwner(member)) return false;
       const role = memberRole(member);
-      return role === 'brand-free' || role === 'brand-paid' || role === 'legacy-brand';
+      return role !== 'brand-paid' && role !== 'talent';
+  }
+
+  /**
+   * Whether the viewer reads the public projection: logged out, or signed in
+   * and paywalled. Every logged-out branch below keys off this, so the two
+   * viewer states cannot drift apart.
+   */
+  function viewerSeesPublicProjection(member) {
+      return !member || !member.id || isPaywalledViewer(member);
   }
 
   /**
@@ -1946,8 +1975,65 @@
      stands down). */
   waitForMember(hideOwnerContactActions);
 
+  /* PAYWALLED VIEWERS (signed in, not paid: see isPaywalledViewer)
+     A logged-out click on a paid CTA reaches the signup modal through
+     signup-attribution.js, whose capture-phase listener only acts for a
+     confirmed logged-out viewer and stamps signup attribution on the way. A
+     paywalled member is signed in, so that listener stands down for them, and
+     stamping a signup trigger for someone who already signed up would be
+     wrong anyway. This file owns their click instead: same selector, same
+     capture phase, same registry open, no cookie. Every paid CTA on this page
+     carries data-signup-trigger-element, authored on Hire, Message and Book
+     Call and stamped by the adapters on every call, service and rate card, so
+     that attribute is the whole "this leads to a paid feature" contract. */
+  const SIGNUP_MODAL_ID = 'signup-modal';
+  const PAID_CTA_SELECTOR = '[data-signup-trigger-element]';
+  let signupModalMissingWarned = false;
+
+  function openSignupModalForPaywalledViewer() {
+      const modal = window.lumos && window.lumos.modal;
+      const entry = modal && modal.list ? modal.list[SIGNUP_MODAL_ID] : null;
+      if (!entry || typeof entry.open !== 'function') {
+          if (!signupModalMissingWarned) {
+              signupModalMissingWarned = true;
+              console.warn('[hire-profile] signup modal is not on this page; a paywalled click opens nothing');
+          }
+          return;
+      }
+      if (entry.el && entry.el.open) return;
+      try {
+          entry.open();
+      } catch (error) {
+          console.warn('[hire-profile] signup modal refused to open:', error);
+      }
+  }
+
+  function ownPaywalledViewerClicks() {
+      if (!isPaywalledViewer(MEMBER)) return;
+
+      // Fail-closed half, mirroring setLoggedOutBookingButtonAvailable: the
+      // authored modal triggers go, so a paid surface cannot open through
+      // modal.js's delegate even if this listener were somehow bypassed.
+      qsa(PAID_CTA_SELECTOR).forEach(function (trigger) {
+          trigger.removeAttribute('data-modal-trigger');
+      });
+
+      document.addEventListener('click', function (event) {
+          const target = event && event.target;
+          if (!target || typeof target.closest !== 'function') return;
+          const trigger = target.closest(PAID_CTA_SELECTOR);
+          if (!trigger) return;
+          if (typeof event.preventDefault === 'function') event.preventDefault();
+          if (typeof event.stopPropagation === 'function') event.stopPropagation();
+          if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
+          openSignupModalForPaywalledViewer();
+      }, true);
+  }
+
+  waitForMember(ownPaywalledViewerClicks);
+
   waitForMember(async function () {
-      if (!MEMBER.id) return;
+      if (viewerSeesPublicProjection(MEMBER)) return;
 
       /* BOOKING (viewer-specific; stays behind the member gate) */
       (async function () {
@@ -2062,13 +2148,14 @@
 
   waitForMember(async function () {
       var isBrand = isBrandMember(MEMBER);
-      if (MEMBER.id && !isBrand) return;
+      var publicViewer = viewerSeesPublicProjection(MEMBER);
+      if (MEMBER.id && !isBrand && !publicViewer) return;
 
       try {
           const record = await getPublicStarterRecord();
           if (!record) return;
 
-          if (!MEMBER.id) {
+          if (publicViewer) {
               const publicCalls = syncLoggedOutCallSurfaces(record);
               loggedOutLegacyCallsAvailable = publicCalls.free || publicCalls.paid;
               syncLoggedOutBookCallCta();
@@ -2455,7 +2542,7 @@
       if (latestCanonicalCallItems) {
           paintLegacyHeaderCanonicalContent(latestCanonicalCallItems);
       }
-      if (!MEMBER.id && latestCanonicalCallItems) {
+      if (viewerSeesPublicProjection(MEMBER) && latestCanonicalCallItems) {
           syncLoggedOutCanonicalHeader(latestCanonicalCallItems);
           return;
       }
@@ -2698,7 +2785,7 @@
           adapted.push({ card: card, item: item, type: type });
       });
 
-      if (!MEMBER.id) {
+      if (viewerSeesPublicProjection(MEMBER)) {
           syncLoggedOutCanonicalHeader(itemsById);
           adapted.forEach(function (entry) {
               const card = entry.card;
@@ -2841,7 +2928,7 @@
           card.style.cursor = '';
       });
 
-      if (!MEMBER.id) {
+      if (viewerSeesPublicProjection(MEMBER)) {
           markServiceCardsClickable();
       } else if (isBrandMember(MEMBER) && !isProfileOwner(MEMBER)) {
           syncProjectServiceOptions(names);
@@ -3109,7 +3196,7 @@
   }
 
   function wireXanoRetainerCardRole() {
-      if (!MEMBER.id) {
+      if (viewerSeesPublicProjection(MEMBER)) {
           markServiceCardsClickable();
       } else if (isBrandMember(MEMBER) && !isProfileOwner(MEMBER)) {
           wireProjectServiceCards();
@@ -3130,7 +3217,7 @@
 
           renderRateCards(record);
           await memberReady;
-          if (!MEMBER.id) markServiceCardsClickable();
+          if (viewerSeesPublicProjection(MEMBER)) markServiceCardsClickable();
           if (isBrandMember(MEMBER)) {
               wireProjectServiceCards();
               window.setTimeout(wireProjectServiceCards, 0);

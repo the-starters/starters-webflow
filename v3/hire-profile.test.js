@@ -516,12 +516,18 @@ function makeContext({
 
   if (page) page.starterXanoId.textContent = String(starterId)
 
+  const documentListeners = {}
   const documentObject = {
     documentElement: makeElement('html'),
     head,
     body: root,
-    addEventListener: (type, fn) => {
-      if (type === 'DOMContentLoaded') fn()
+    addEventListener: (type, fn, options) => {
+      if (type === 'DOMContentLoaded') {
+        fn()
+        return
+      }
+      const capture = options === true || Boolean(options && options.capture)
+      ;(documentListeners[type] = documentListeners[type] || []).push({ fn, capture })
     },
     getElementById: (id) => head.querySelector('#' + id) || root.querySelector('#' + id),
     // Real document queries span head and body; script tags live in head.
@@ -650,6 +656,27 @@ function makeContext({
   context.requestedUrls = requestedUrls
   context.mutationObserverCallbacks = mutationObserverCallbacks
   context.windowListeners = windowListeners
+  context.documentListeners = documentListeners
+  /**
+   * Dispatches a click at `target` through the document-level capture
+   * listeners the file bound, the way a real browser would reach them before
+   * modal.js's bubble-phase delegate. Returns the synthetic event so a test
+   * can read what the listener did to it.
+   */
+  context.clickDocument = (target) => {
+    const event = {
+      target,
+      defaultPrevented: false,
+      propagationStopped: false,
+      preventDefault() { event.defaultPrevented = true },
+      stopPropagation() { event.propagationStopped = true },
+      stopImmediatePropagation() { event.propagationStopped = true },
+    }
+    for (const entry of documentListeners.click || []) {
+      if (entry.capture) entry.fn(event)
+    }
+    return event
+  }
   /** Fires the modal embed's close-complete event for one dialog. */
   context.fireModalClose = (dialog) => {
     for (const fn of windowListeners['modal-close'] || []) fn({ detail: { modal: dialog } })
@@ -1941,6 +1968,9 @@ test('a signed-in Starter refreshes empty navigation after owner cards are revea
       id: 'owner_member',
       auth: { email: 'owner@example.com' },
       customFields: { 'free-user': 'Owner', 'last-name': 'Member' },
+      // A Starter plan: a member with no plan at all is paywalled since
+      // 2026-09-21 and never reaches the owner-card reveal this test covers.
+      planConnections: [{ planId: 'pln_dorxata-test-free-plan-dvcg0k8o', status: 'ACTIVE' }],
     },
     getStarterByMemberId: () => starterReady,
   })
@@ -2665,7 +2695,7 @@ test('signed-in Brand keeps Free Call in the existing modal and the inline panel
       id: 'brand_member',
       auth: { email: 'brand@example.com' },
       customFields: { 'free-user': 'Brand', 'last-name': 'Member' },
-      planConnections: [{ planId: 'pln_free-plan-f6kn0dxz', status: 'ACTIVE' }],
+      planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', status: 'ACTIVE' }],
     },
     getStarterByMemberId: async () => ({
       nylas_grant_id: 'grant_prod',
@@ -2737,7 +2767,7 @@ test('a signed-in Brand hides call projections while canonical discovery is pend
       id: 'brand_member',
       auth: { email: 'brand@example.com' },
       customFields: { 'free-user': 'Brand', 'last-name': 'Member' },
-      planConnections: [{ planId: 'pln_free-plan-f6kn0dxz', status: 'ACTIVE' }],
+      planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', status: 'ACTIVE' }],
     },
     getStarterByMemberId: () => starterReady,
     getConfigs: async () => [],
@@ -2832,7 +2862,7 @@ test('a chooser trigger outside booking-button-wrapper stays hidden until discov
       id: 'brand_member',
       auth: { email: 'brand@example.com' },
       customFields: { 'free-user': 'Brand', 'last-name': 'Member' },
-      planConnections: [{ planId: 'pln_free-plan-f6kn0dxz', status: 'ACTIVE' }],
+      planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', status: 'ACTIVE' }],
     },
     getStarterByMemberId: async () => null,
     getConfigs: async () => [],
@@ -2863,7 +2893,7 @@ test('canonical discovery removes legacy Free and Paid projections when the prof
       id: 'brand_member',
       auth: { email: 'brand@example.com' },
       customFields: { 'free-user': 'Brand', 'last-name': 'Member' },
-      planConnections: [{ planId: 'pln_free-plan-f6kn0dxz', status: 'ACTIVE' }],
+      planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', status: 'ACTIVE' }],
     },
     getStarterByMemberId: async () => null,
     getConfigs: async () => [],
@@ -2943,7 +2973,7 @@ test('canonical Brand discovery refreshes hidden Services navigation after revea
       id: 'brand_member',
       auth: { email: 'brand@example.com' },
       customFields: { 'free-user': 'Brand', 'last-name': 'Member' },
-      planConnections: [{ planId: 'pln_free-plan-f6kn0dxz', status: 'ACTIVE' }],
+      planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', status: 'ACTIVE' }],
     },
     getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_prod' }),
     getConfigs: () => configsReady,
@@ -2983,7 +3013,7 @@ test('canonical discovery preserves hidden runtime call templates', async () => 
       id: 'brand_member',
       auth: { email: 'brand@example.com' },
       customFields: { 'free-user': 'Brand', 'last-name': 'Member' },
-      planConnections: [{ planId: 'pln_free-plan-f6kn0dxz', status: 'ACTIVE' }],
+      planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', status: 'ACTIVE' }],
     },
     getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_prod' }),
     getConfigs: async () => [{
@@ -3048,7 +3078,7 @@ test('booking discovery rejects inactive, mixed-environment, and duplicate confi
         id: 'brand_member',
         auth: { email: 'brand@example.com' },
         customFields: { 'free-user': 'Brand', 'last-name': 'Member' },
-        planConnections: [{ planId: 'pln_free-plan-f6kn0dxz', status: 'ACTIVE' }],
+        planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', status: 'ACTIVE' }],
       },
       getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_prod' }),
       getConfigs: async () => configs,
@@ -3233,7 +3263,7 @@ test('a Free service card opens the modal shell before the ready Free CTA', asyn
       id: 'brand_member',
       auth: { email: 'brand@example.com' },
       customFields: { 'free-user': 'Brand', 'last-name': 'Member' },
-      planConnections: [{ planId: 'pln_free-plan-f6kn0dxz', status: 'ACTIVE' }],
+      planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', status: 'ACTIVE' }],
     },
     freeController: {
       getStarterByMemberId: async () => ({
@@ -3522,7 +3552,7 @@ test('a migrated profile without the legacy Book Call button still uses the dire
       id: 'brand_member',
       auth: { email: 'brand@example.com' },
       customFields: { 'free-user': 'Brand', 'last-name': 'Member' },
-      planConnections: [{ planId: 'pln_free-plan-f6kn0dxz', status: 'ACTIVE' }],
+      planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', status: 'ACTIVE' }],
     },
     omitInitialFreeController: true,
   })
@@ -3583,7 +3613,7 @@ test('a migrated profile fails closed when no trigger or modal registry exists',
       id: 'brand_member',
       auth: { email: 'brand@example.com' },
       customFields: { 'free-user': 'Brand', 'last-name': 'Member' },
-      planConnections: [{ planId: 'pln_free-plan-f6kn0dxz', status: 'ACTIVE' }],
+      planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', status: 'ACTIVE' }],
     },
     freeController: {
       getStarterByMemberId: async () => ({
@@ -7217,7 +7247,7 @@ function readyFreeContext(page) {
       id: 'brand_member',
       auth: { email: 'brand@example.com' },
       customFields: { 'free-user': 'Brand', 'last-name': 'Member' },
-      planConnections: [{ planId: 'pln_free-plan-f6kn0dxz', status: 'ACTIVE' }],
+      planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', status: 'ACTIVE' }],
     },
     freeController: {
       getStarterByMemberId: async () => ({
@@ -7583,7 +7613,7 @@ test('the availability gate preserves Hire wrappers when calls are unavailable',
       id: 'brand_member',
       auth: { email: 'brand@example.com' },
       customFields: { 'free-user': 'Brand', 'last-name': 'Member' },
-      planConnections: [{ planId: 'pln_free-plan-f6kn0dxz', status: 'ACTIVE' }],
+      planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', status: 'ACTIVE' }],
     },
     getStarterByMemberId: async () => null,
     getConfigs: async () => [],
@@ -7618,7 +7648,7 @@ for (const ready of [false, true]) {
           id: 'brand_member',
           auth: { email: 'brand@example.com' },
           customFields: { 'free-user': 'Brand', 'last-name': 'Member' },
-          planConnections: [{ planId: 'pln_free-plan-f6kn0dxz', status: 'ACTIVE' }],
+          planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', status: 'ACTIVE' }],
         },
         getStarterByMemberId: async () => null,
         getConfigs: async () => [],
@@ -7707,7 +7737,7 @@ test('the availability gate leaves the in-dialog back control alone', async () =
       id: 'brand_member',
       auth: { email: 'brand@example.com' },
       customFields: { 'free-user': 'Brand', 'last-name': 'Member' },
-      planConnections: [{ planId: 'pln_free-plan-f6kn0dxz', status: 'ACTIVE' }],
+      planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', status: 'ACTIVE' }],
     },
     getStarterByMemberId: async () => null,
     getConfigs: async () => [],
@@ -8120,4 +8150,206 @@ test('booking discovery passes the matching CMS Starter name to Free and Paid', 
     assert.deepEqual(installed.map(options => options.config.is_paid), [false, true])
     assert.deepEqual(installed.map(options => options.starterName), [name, name])
   }
+})
+
+/* ====================== paywalled signed-in viewers ====================== */
+
+// Decision 2026-09-21: a signed-in viewer who is not the owner, not talent and
+// not on a paid Brand plan is a paywalled viewer. They read the same public
+// projection a logged-out visitor does, and every paid CTA opens the signup
+// modal, where Memberstack swaps the form for the membership upsell.
+
+const FREE_BRAND_MEMBER = {
+  id: 'free_brand_member',
+  auth: { email: 'free-brand@example.com' },
+  customFields: { 'free-user': 'Free', 'last-name': 'Brand' },
+  planConnections: [{ planId: 'pln_free-plan-f6kn0dxz', status: 'ACTIVE' }],
+}
+
+function paywalledContext(page, member, extra = {}) {
+  const bookingCalls = []
+  const context = makeContext({
+    page,
+    member,
+    record: {
+      'free-consulting-calls-t-f': true,
+      'paid-consulting-calls-t-f': false,
+      rate: 135,
+    },
+    getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_canary' }),
+    getConfigs: async () => [{ config_id: 'config_free', is_paid: false, active: true }],
+    initBookingComponents: (...args) => bookingCalls.push(args),
+    location: { hostname: 'www.thestarters.com', pathname: '/hire/jp-testiz-d' },
+    schedulingBridge: true,
+    ...extra,
+  })
+  context.bookingCalls = bookingCalls
+  return context
+}
+
+function signupRegistry(page) {
+  const opens = { signup: 0, chooser: 0, contract: 0 }
+  const lumos = {
+    modal: {
+      list: {
+        'signup-modal': { el: { open: false }, open: () => { opens.signup += 1 } },
+        'popup-booking-main': { el: page.bookingDialog, open: () => { opens.chooser += 1 } },
+        'generate-contract': { el: { open: false }, open: () => { opens.contract += 1 } },
+      },
+    },
+  }
+  return { opens, lumos }
+}
+
+test('a free Brand reads the logged-out projection: Book Call signup-only, chooser closed, no booking discovery', async () => {
+  const page = makePage()
+  const context = paywalledContext(page, FREE_BRAND_MEMBER)
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(context.bookingCalls.length, 0, 'a free Brand must never install a booking controller')
+  assert.equal(page.bookingButtonWrapper.style.display, 'flex')
+  assert.equal(page.bookingButton.getAttribute('data-signup-trigger-element'), 'book-call')
+  assert.equal(page.bookingButton.getAttribute('data-logged-out-book-call'), '')
+  assert.equal(page.bookingButton.getAttribute('data-modal-trigger'), null)
+  assert.equal(page.bookingButton.getAttribute('aria-disabled'), null)
+  assert.equal(
+    page.bookingDialog.getAttribute('data-booking-surface-unavailable'),
+    '',
+    'the Free/Paid chooser must remain structurally closed',
+  )
+
+  const freeCard = page.servicesList.querySelector('[has-connection="free"]')
+  assert.equal(freeCard.style.display, 'block')
+  assert.equal(freeCard.getAttribute('data-logged-out-call-tout'), 'free')
+  assert.equal(freeCard.getAttribute('data-signup-trigger-element'), 'service')
+  assert.equal(freeCard.getAttribute('data-signup-trigger-value'), 'Free Call')
+
+  const rateCard = page.servicesList.children.find((c) => c.getAttribute('data-rate-card') === 'freelance')
+  assert.ok(rateCard, 'the Freelance rate card still renders for a free Brand')
+  assert.equal(rateCard.getAttribute('data-signup-trigger-element'), 'service')
+  assert.equal(rateCard.getAttribute('data-modal-trigger'), null, 'no contract modal for a free Brand')
+})
+
+test('a free Brand click on any paid CTA opens the signup modal and nothing else', async () => {
+  const page = makePage()
+  const hire = makeElement('a', {
+    href: '#',
+    'data-signup-trigger-element': 'hire',
+    'data-modal-trigger': 'generate-contract',
+  })
+  page.root.appendChild(hire)
+  const context = paywalledContext(page, FREE_BRAND_MEMBER)
+  const { opens, lumos } = signupRegistry(page)
+  context.lumos = lumos
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(hire.getAttribute('data-modal-trigger'), null, 'the authored contract trigger is stripped for a free Brand')
+
+  for (const target of [page.bookingButton, page.servicesList.querySelector('[has-connection="free"]'), hire]) {
+    const before = opens.signup
+    const event = context.clickDocument(target)
+    assert.equal(event.defaultPrevented, true)
+    assert.equal(event.propagationStopped, true, 'modal.js and the card listeners must not see this click')
+    assert.equal(opens.signup, before + 1)
+  }
+  assert.equal(opens.chooser, 0)
+  assert.equal(opens.contract, 0)
+})
+
+test('a click outside a paid CTA is left alone for a free Brand', async () => {
+  const page = makePage()
+  const plain = makeElement('a', { href: '/learn' })
+  page.root.appendChild(plain)
+  const context = paywalledContext(page, FREE_BRAND_MEMBER)
+  const { opens, lumos } = signupRegistry(page)
+  context.lumos = lumos
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  const event = context.clickDocument(plain)
+  assert.equal(event.defaultPrevented, false)
+  assert.equal(opens.signup, 0)
+})
+
+test('legacy Brands and members with no mapped plan are paywalled too', async () => {
+  for (const member of [
+    // Old payload with no plan list at all: the legacy Brand compatibility role.
+    { id: 'legacy', auth: { email: 'l@example.com' }, customFields: { 'brands-dashboard-url': '/brand-dashboard' } },
+    // A plan Memberstack knows but this site does not map.
+    { id: 'unmapped', auth: { email: 'u@example.com' }, customFields: {}, planConnections: [{ planId: 'pln_unknown', status: 'ACTIVE' }] },
+    // A cancelled paid plan with the free plan still active.
+    { id: 'cancelled', auth: { email: 'c@example.com' }, customFields: {}, planConnections: [
+      { planId: 'pln_new-paid-plan-463h04ph', status: 'CANCELED' },
+      { planId: 'pln_free-plan-f6kn0dxz', status: 'ACTIVE' },
+    ] },
+  ]) {
+    const page = makePage()
+    const context = paywalledContext(page, member)
+    const { opens, lumos } = signupRegistry(page)
+    context.lumos = lumos
+    vm.createContext(context)
+    vm.runInContext(source, context)
+    await settle()
+
+    assert.equal(context.bookingCalls.length, 0, member.id)
+    assert.equal(page.bookingButton.getAttribute('data-logged-out-book-call'), '', member.id)
+    context.clickDocument(page.bookingButton)
+    assert.equal(opens.signup, 1, member.id)
+    assert.equal(opens.chooser, 0, member.id)
+  }
+})
+
+test('a paid Brand is never taken over by the paywall click owner', async () => {
+  const page = makePage()
+  const context = paywalledContext(page, BRAND_MEMBER)
+  const { opens, lumos } = signupRegistry(page)
+  context.lumos = lumos
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(page.bookingButton.getAttribute('data-logged-out-book-call'), null, 'the paid Brand keeps the booking path')
+  const captureClicks = (context.documentListeners.click || []).filter((entry) => entry.capture)
+  assert.equal(captureClicks.length, 0, 'no paywall listener is bound for a paid Brand')
+  const event = context.clickDocument(page.bookingButton)
+  assert.equal(event.defaultPrevented, false)
+  assert.equal(opens.signup, 0)
+})
+
+test('a talent viewing another Starter is not paywalled and the owner keeps the preview', async () => {
+  for (const member of [OTHER_TALENT_MEMBER, OWNER_MEMBER]) {
+    const page = makePage()
+    const context = paywalledContext(page, member)
+    const { lumos } = signupRegistry(page)
+    context.lumos = lumos
+    vm.createContext(context)
+    vm.runInContext(source, context)
+    await settle()
+
+    const captureClicks = (context.documentListeners.click || []).filter((entry) => entry.capture)
+    assert.equal(captureClicks.length, 0, member.id)
+    assert.equal(page.bookingButton.getAttribute('data-logged-out-book-call'), null, member.id)
+  }
+})
+
+test('a free Brand with no signup modal on the page opens nothing and warns once', async () => {
+  const page = makePage()
+  const context = paywalledContext(page, FREE_BRAND_MEMBER)
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  const event = context.clickDocument(page.bookingButton)
+  assert.equal(event.defaultPrevented, true, 'the click still never reaches a booking surface')
+  context.clickDocument(page.bookingButton)
+  assert.equal(
+    context.warnings.filter((line) => line.includes('signup modal')).length,
+    1,
+    'one warning, not one per click',
+  )
 })
