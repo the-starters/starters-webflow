@@ -828,9 +828,10 @@
       // booking paths describe the SAME starter. On the staging fixture route
       // they deliberately do not: the wrappers keep their CMS-authored
       // `starter_id`, so their answer is about a different starter than the one
-      // being booked. Only Free stands down — Paid keeps the unchanged public
-      // contract so the fixture cannot open a Stripe entry point.
-      if (STAGING_BOOKING_FIXTURE && type === 'free') return true;
+      // being booked and cannot decide EITHER type. That route answers locally
+      // instead — Free is the fixture's whole purpose, and Paid stays closed so
+      // no Stripe entry point can open on it.
+      if (STAGING_BOOKING_FIXTURE) return type === 'free';
       const wrapper = document.querySelector('[wf-xano-instance="starter-call-offers-header"], [wf-xano-instance="starter-call-offers-services"]');
       if (!wrapper) return true; // Legacy pages have no public-readiness contract.
       if (!latestCanonicalCallItems) return false;

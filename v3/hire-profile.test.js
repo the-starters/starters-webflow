@@ -8334,9 +8334,10 @@ test('the staging jp-test canary opens Book Call when the CMS public projection 
   assert.equal(page.bookingButton.getAttribute('aria-disabled'), null)
 })
 
-// Only Free stands down from the public half of the gate. Paid keeps the full
-// intersection, so the fixture cannot hand a tester a Stripe entry point.
-test('the staging jp-test canary keeps Paid closed while the CMS projection withholds it', async () => {
+// The foreign CMS projection answers for neither type on this route, so Paid is
+// refused locally — a CMS record that publishes a public paid offer must still
+// not hand a tester a Stripe entry point.
+test('the staging jp-test canary keeps Paid closed even when the CMS projection publishes it', async () => {
   const page = makePage()
   const services = addXanoCallCardsFixture(page, 'starter-call-offers-services')
   const wfx = makeCallCardsWfXanoFixture(services.wrapper, 'starter-call-offers-services')
@@ -8379,7 +8380,7 @@ test('the staging jp-test canary keeps Paid closed while the CMS projection with
 
   vm.createContext(context)
   vm.runInContext(source, context)
-  wfx.emit(callCardResult({ free: false, paid: false }))
+  wfx.emit(callCardResult({ free: true, paid: true }))
   await settle()
 
   assert.deepEqual(installs, ['free', 'paid'])

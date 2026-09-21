@@ -950,11 +950,12 @@ neither canonical wrapper retain the authenticated discovery gate alone.
 
 The one exception is the staging fixture route described under
 [The staging `/hire/jp-test` booking fixture](#staging-hire-jp-test-booking-fixture),
-where the public DTO describes a different starter than the one being booked.
-There the **Free** type stands down from the public half of the intersection and
-rests on installed-controller discovery alone. **Paid** keeps the full
-intersection on that route as everywhere else, so the fixture cannot open a
-Stripe entry point.
+where the public DTO describes a different starter than the one being booked and
+so cannot answer for either type. That route resolves public readiness locally
+instead of consulting the foreign projection: **Free** is admitted and rests on
+installed-controller discovery alone, and **Paid** is refused outright, so no
+Stripe entry point can open there whatever the CMS record happens to publish.
+Every other route keeps the full intersection unchanged.
 
 **Any other signed-in viewer** — talent on someone else's profile, unknown role
 — gets both cards hidden. That is the fail-closed default, and it is why the
