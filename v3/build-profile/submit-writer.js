@@ -58,8 +58,7 @@
         const hasPaid = Object.prototype.hasOwnProperty.call(formData, 'paid-consulting-calls');
         if (!hasFree && !hasPaid) return null;
 
-        const answer = (value) => String(value || '').trim().toLowerCase();
-        const enabled = (value) => answer(value).startsWith('yes');
+        const enabled = (value) => value === 'yes';
         const intent = {
           version: 1,
           member_id: MEMBER.id,
@@ -68,15 +67,16 @@
         };
 
         if (hasFree) {
-          const description = String(formData['free-call-description'] || '').trim();
-          if (description.length > 60) {
+          const freeEnabled = enabled(formData['free-consulting-calls']);
+          const description = freeEnabled ? String(formData['free-call-description'] || '').trim() : '';
+          if (freeEnabled && description.length > 60) {
             throw Object.assign(new Error('Free-call description must be 60 characters or fewer.'), {
               code: 'FREE_CALL_DESCRIPTION_TOO_LONG',
               panelMessage: 'Free-call description must be 60 characters or fewer.',
             });
           }
           intent.free = {
-            enabled: enabled(formData['free-consulting-calls']),
+            enabled: freeEnabled,
             description,
           };
         }

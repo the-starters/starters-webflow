@@ -980,6 +980,31 @@ test('the native Paid card binds without generated IDs and upgrades a legacy dur
   assert.equal(result.dom.formWrapper.style.display, 'none')
 })
 
+test('a gated pending Paid enable never blocks the Edit Profile step save', async () => {
+  const result = load({
+    editProfile: true,
+    memberId: 'member-a',
+    memberJSON: {
+      starter_call_settings_intent_v3: {
+        version: 1,
+        member_id: 'member-a',
+        paid: { enabled: true, title: 'Strategy call', price_dollars: 250 },
+      },
+    },
+    initial: canonical({
+      readiness: { stripe_charges_enabled: false, stripe_readiness_fresh: false },
+    }),
+  })
+  await settle()
+
+  assert.equal(result.dom.enabled.checked, true)
+  assert.equal(result.dom.root.getAttribute('data-build-call-intent'), 'pending')
+  assert.equal(result.window.StarterPaidCallSettings.hasChanges(), false)
+  assert.ok(await result.window.StarterPaidCallSettings.submit())
+  assert.equal(result.calls.some((call) => call.method === 'POST'), false)
+  assert.equal(result.memberJsonWrites.length, 0)
+})
+
 test('Edit Profile hydrates and saves Paid Call settings through the canonical controller', async () => {
   const active = service()
   const result = load({
@@ -2090,6 +2115,50 @@ test('an imported V2 suggestion replaces the placeholder but stays off until con
   assert.equal(result.dom.enabled.checked, false)
   assert.equal(result.dom.root.getAttribute('data-paid-call-rate-source'), 'legacy_v2')
   assert.equal(result.dom.statusOutput.textContent, 'Paid calls are off. Confirm the imported V2 rate to turn them on.')
+})
+
+test('a pending Paid intent outranks an imported V2 rate suggestion', async () => {
+  const result = load({
+    cardMode: true,
+    memberId: 'member-a',
+    priceTile: { canonical: false, authored: true },
+    memberJSON: {
+      starter_call_settings_intent_v3: {
+        version: 1,
+        member_id: 'member-a',
+        paid: { enabled: true, title: 'Strategy call', price_dollars: 250 },
+      },
+    },
+    initial: canonical({ suggestion: importedSuggestion(15000) }),
+    routes: {
+      '/starter/paid-call-settings/upsert/v3': ({ body, setState }) => {
+        const saved = service({
+          title: body.title,
+          price_cents: body.price_cents,
+          duration: body.duration_minutes,
+          revision: 1,
+        })
+        setState(canonical({
+          services: [saved],
+          readiness: { paid_call_enabled: true, bookable: true },
+        }))
+        return { ok: true, status: 200, json: async () => ({ service: saved }) }
+      },
+    },
+  })
+  await settle()
+
+  assert.equal(result.dom.price.value, '250')
+  assert.equal(result.dom.authoredPriceText.textContent, '$250.00')
+  assert.equal(result.dom.root.getAttribute('data-paid-call-rate-source'), '')
+
+  await result.window.StarterPaidCallSettings.submit()
+  await settle()
+
+  const upsert = result.calls.find((call) => call.path === '/starter/paid-call-settings/upsert/v3')
+  assert.equal(upsert.body.price_cents, 25000)
+  assert.equal(upsert.body.title, 'Strategy call')
+  assert.equal(result.memberJsonWrites.at(-1).starter_call_settings_intent_v3, undefined)
 })
 
 test('an imported V2 suggestion writes only after the Starter explicitly turns it on', async () => {

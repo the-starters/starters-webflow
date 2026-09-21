@@ -97,6 +97,16 @@
     return { enabled: true, title: title, price_dollars: price }
   }
 
+  // Memberstack replaces the whole member JSON on every write, and the Free and Paid
+  // controllers load on the same page, so their read-modify-write passes must share one
+  // writer or the later write resurrects the branch the other just consumed.
+  function queueMemberJsonWrite(task) {
+    const previous = window.__tsCallSettingsIntentWrite || Promise.resolve()
+    const next = previous.then(task, task)
+    window.__tsCallSettingsIntentWrite = next.then(function () {}, function () {})
+    return next
+  }
+
   async function consumePendingBuildIntent() {
     if (!pendingBuildIntent) return
     const memberstack = window.$memberstackDom
@@ -105,19 +115,22 @@
       typeof memberstack.getMemberJSON !== 'function' ||
       typeof memberstack.updateMemberJSON !== 'function'
     ) throw new Error('Pending Build Profile Call Settings could not be cleared')
-    const json = memberJsonValue(await memberstack.getMemberJSON())
-    const envelope = json.starter_call_settings_intent_v3
-    if (!envelope || envelope.member_id !== sessionMemberId) {
+    await queueMemberJsonWrite(async function () {
+      if (!pendingBuildIntent) return
+      const json = memberJsonValue(await memberstack.getMemberJSON())
+      const envelope = json.starter_call_settings_intent_v3
+      if (!envelope || envelope.member_id !== sessionMemberId) {
+        pendingBuildIntent = null
+        return
+      }
+      const nextEnvelope = Object.assign({}, envelope)
+      delete nextEnvelope.paid
+      const nextJson = Object.assign({}, json)
+      if (nextEnvelope.free) nextJson.starter_call_settings_intent_v3 = nextEnvelope
+      else delete nextJson.starter_call_settings_intent_v3
+      await memberstack.updateMemberJSON({ json: nextJson })
       pendingBuildIntent = null
-      return
-    }
-    const nextEnvelope = Object.assign({}, envelope)
-    delete nextEnvelope.paid
-    const nextJson = Object.assign({}, json)
-    if (nextEnvelope.free) nextJson.starter_call_settings_intent_v3 = nextEnvelope
-    else delete nextJson.starter_call_settings_intent_v3
-    await memberstack.updateMemberJSON({ json: nextJson })
-    pendingBuildIntent = null
+    })
   }
 
   function qs(selector, scope) {
@@ -1046,7 +1059,7 @@
         if (priceInput) priceInput.value = String(pendingBuildIntent.price_dollars)
       }
       explicitIntent = pendingBuildIntent.enabled ? 'enabled' : 'disabled'
-      if (editProfileMode && (service || pendingBuildIntent.enabled)) editProfileDirty = true
+      if (editProfileMode && (service || pendingBuildIntent.enabled) && canSaveSettings(value)) editProfileDirty = true
       root.setAttribute('data-build-call-intent', 'pending')
     } else {
       root.setAttribute('data-build-call-intent', '')
@@ -1066,7 +1079,10 @@
 
     root.setAttribute('data-paid-call-enabled', service ? 'true' : 'false')
     root.setAttribute('data-paid-call-bookable', bookable ? 'true' : 'false')
-    const suggestion = service ? null : importedRateSuggestion(value)
+    const pendingRate = pendingBuildIntent && pendingBuildIntent.enabled
+      ? { price_cents: pendingBuildIntent.price_dollars * 100 }
+      : null
+    const suggestion = service || pendingRate ? null : importedRateSuggestion(value)
     const cardStateTarget = uiScope || root
     cardStateTarget.setAttribute('data-paid-call-card-state', service ? 'on' : 'off')
     root.setAttribute('data-paid-call-rate-source', suggestion ? 'legacy_v2' : '')
@@ -1074,7 +1090,7 @@
     setActionEnabled(action('save'), canSaveSettings(value))
     setActionEnabled(action('disable'), Boolean(service))
     const priceOutput = output('price')
-    const displayedRate = confirmedRate || correctionRequiredRate(service) || suggestion
+    const displayedRate = pendingRate || confirmedRate || correctionRequiredRate(service) || suggestion
     if (priceOutput) {
       priceOutput.textContent = displayedRate ? formatUsd(displayedRate.price_cents) : 'Not set'
     } else {

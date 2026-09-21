@@ -572,6 +572,31 @@ test('a pending Build Profile Free off choice disables an existing canonical ser
   assert.equal(result.dom.root.getAttribute('data-build-call-intent'), '')
 })
 
+test('a gated pending Free enable never blocks the Edit Profile step save', async () => {
+  const result = load({
+    editProfile: true,
+    memberId: 'member-free-a',
+    memberJSON: {
+      starter_call_settings_intent_v3: {
+        version: 1,
+        member_id: 'member-free-a',
+        free: { enabled: true, description: 'Saved intro' },
+      },
+    },
+    initial: canonical({
+      readiness: { calendar_connected: false, availability_configured: false },
+    }),
+  })
+  await settle()
+
+  assert.equal(result.dom.yes.checked, true)
+  assert.equal(result.dom.root.getAttribute('data-build-call-intent'), 'pending')
+  assert.equal(result.window.StarterFreeCallSettings.hasChanges(), false)
+  assert.ok(await result.window.StarterFreeCallSettings.submit())
+  assert.equal(result.calls.some((call) => call.method === 'POST'), false)
+  assert.equal(result.memberJsonWrites.length, 0)
+})
+
 test('Edit Profile hydrates and saves Free Call settings through the canonical controller', async () => {
   const active = service()
   const result = load({

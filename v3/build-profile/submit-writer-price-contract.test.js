@@ -330,6 +330,21 @@ test('Build Profile keeps provider call fields out of the profile payload and sa
   }
 })
 
+test('a hidden long free-call description never blocks a Free off choice', async () => {
+  const result = load({
+    'free-consulting-calls': 'no',
+    'free-call-description': 'x'.repeat(120),
+  })
+  await result.submit.click()
+  assert.equal(result.error.style.display, 'none')
+  assert.equal(result.success.style.display, 'block')
+  assert.equal(result.memberJsonWrites.length, 1)
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(result.memberJsonWrites[0].json.starter_call_settings_intent_v3.free)),
+    { enabled: false, description: '' },
+  )
+})
+
 test('Build Profile blocks combined success when enabled Paid intent is invalid', async () => {
   const result = load({
     'paid-consulting-calls': 'yes',
