@@ -440,7 +440,7 @@
   }
 
   function canSubmitSettings(value) {
-    return canSaveSettings(value) || Boolean(pendingBuildIntent)
+    return canSaveSettings(value) || (Boolean(pendingBuildIntent) && explicitIntent === 'disabled')
   }
 
   function canonicalSatisfiesPendingIntent(value) {
@@ -913,6 +913,11 @@
     }
   }
 
+  function refreshSubmitEnabled() {
+    if (busy || !settings) return
+    setActionEnabled(action('save'), canSubmitSettings(settings))
+  }
+
   function setActionEnabled(button, enabled) {
     if (!button) return
     button.setAttribute('aria-disabled', enabled ? 'false' : 'true')
@@ -972,6 +977,7 @@
     setBusy(false)
     sessionMemberId = null
     sessionAuthScope = null
+    root.setAttribute('data-paid-build-call-intent', '')
     // Edit Profile shows these controls while the canonical GET is still in flight, so a
     // pre-load reset would wipe hydrated or typed answers the member can see.
     if (!editProfileMode) {
@@ -1120,10 +1126,9 @@
     cardStateTarget.setAttribute('data-paid-call-card-state', service ? 'on' : 'off')
     root.setAttribute('data-paid-call-rate-source', suggestion ? 'legacy_v2' : '')
     root.setAttribute('data-paid-call-rate-state', rateNeedsCorrection ? 'correction-required' : '')
-    // A pending Build Profile receipt must stay actionable even before scheduling
-    // and Stripe are ready. Save still rejects an enable without those
-    // prerequisites, while a member can always change their mind and consume the
-    // pending receipt by selecting Off.
+    // A pending Build Profile receipt must stay declinable even before scheduling
+    // and Stripe are ready, so Save is live whenever Off is the current choice.
+    // An enable still needs those prerequisites before Save can run.
     setActionEnabled(action('save'), canSubmitSettings(value))
     setActionEnabled(action('disable'), Boolean(service))
     const priceOutput = output('price')
@@ -1679,6 +1684,7 @@
         setRadioChecked(enabledInput, enabledInput.checked)
         if ((cardMode || editProfileMode) && enabledInput.checked) setRadioChecked(disabledInput, false)
         clearFieldValidity()
+        refreshSubmitEnabled()
         if (!enabledInput.checked && canonicalService(settings)) {
           setMessage('Use Turn off paid calls to disable the active service safely.')
         }
@@ -1694,6 +1700,7 @@
         setRadioChecked(disabledInput, disabledInput.checked)
         if (disabledInput.checked) setRadioChecked(enabledInput, false)
         clearFieldValidity()
+        refreshSubmitEnabled()
       })
     }
     VALIDATED_FIELD_NAMES.forEach(function (name) {

@@ -255,9 +255,9 @@ direct Build Profile price controls.
 Dashboard and Edit Profile hydrate the receipt as a pending create, update, or
 disable. A pending enable prefills that branch's controls without becoming
 canonical state, and stays pending until the branch's prerequisites are ready
-and the member selects Update. On Dashboard, a pending receipt keeps Update
-actionable before those prerequisites are ready so the member can still change
-their mind and submit Off. An attempted enable continues to fail closed on the
+and the member selects Update. A pending receipt stays declinable before those
+prerequisites are ready: selecting Off makes Update live so the member can
+change their mind and submit it. A pending Yes leaves Update gated on the
 existing scheduling and Stripe prerequisite checks.
 
 Each consumer removes only its own part of the receipt; the other branch's

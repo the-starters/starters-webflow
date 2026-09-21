@@ -1054,41 +1054,106 @@ test('declining a pending Paid enable consumes the receipt when canonical has no
   assert.equal(result.dom.enabled.checked, false)
 })
 
-test('Dashboard keeps a gated pending Paid receipt actionable so the member can decline it', async () => {
+const GATED_PAID_READINESS = {
+  calendar_connected: false,
+  availability_configured: false,
+  stripe_connect_linked: false,
+  stripe_charges_enabled: false,
+  stripe_readiness_fresh: false,
+}
+
+const PENDING_PAID_ENABLE = {
+  starter_call_settings_intent_v3: {
+    version: 1,
+    member_id: 'member-a',
+    paid: { enabled: true, title: 'Strategy call', price_dollars: 250 },
+  },
+}
+
+test('Dashboard keeps a gated pending Paid receipt declinable so the member can decline it', async () => {
   const result = load({
     cardMode: true,
-    memberJSON: {
-      starter_call_settings_intent_v3: {
-        version: 1,
-        member_id: 'member-a',
-        paid: { enabled: true, title: 'Strategy call', price_dollars: 250 },
-      },
-    },
-    initial: canonical({
-      readiness: {
-        calendar_connected: false,
-        availability_configured: false,
-        stripe_connect_linked: false,
-        stripe_charges_enabled: false,
-        stripe_readiness_fresh: false,
-      },
-    }),
+    memberJSON: PENDING_PAID_ENABLE,
+    initial: canonical({ readiness: GATED_PAID_READINESS }),
   })
   await settle()
 
-  assert.equal(result.dom.save.disabled, false)
+  assert.equal(
+    result.dom.save.getAttribute('aria-disabled'),
+    'true',
+    'a gated pending Yes offers no Update that could succeed',
+  )
+  result.dom.disabled.checked = true
+  await result.dom.disabled.dispatch('change')
+  assert.equal(result.dom.save.disabled, false, 'choosing Off makes the decline submittable')
   assert.equal(result.dom.save.getAttribute('aria-disabled'), 'false')
   await result.rotateAuthScope()
   await settle()
-  assert.equal(result.dom.save.disabled, false, 'same-member auth refresh keeps the decline path actionable')
   result.dom.disabled.checked = true
   await result.dom.disabled.dispatch('change')
+  assert.equal(result.dom.save.disabled, false, 'same-member auth refresh keeps the decline path actionable')
   await result.dom.save.dispatch('click')
   await settle()
 
   assert.equal(result.memberJsonWrites.length, 1)
   assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
   assert.equal(result.dom.disabled.checked, true)
+})
+
+test('a gated pending Paid Yes re-enables Update only while Off stays selected', async () => {
+  const result = load({
+    cardMode: true,
+    memberJSON: PENDING_PAID_ENABLE,
+    initial: canonical({ readiness: GATED_PAID_READINESS }),
+  })
+  await settle()
+
+  result.dom.disabled.checked = true
+  await result.dom.disabled.dispatch('change')
+  assert.equal(result.dom.save.getAttribute('aria-disabled'), 'false')
+
+  result.dom.enabled.checked = true
+  await result.dom.enabled.dispatch('change')
+  assert.equal(
+    result.dom.save.getAttribute('aria-disabled'),
+    'true',
+    'switching back to Yes re-gates Update on the unmet prerequisites',
+  )
+  await result.dom.save.dispatch('click')
+  await settle()
+  assert.equal(result.calls.some((call) => call.method === 'POST'), false)
+  assert.equal(result.memberJsonWrites.length, 0)
+})
+
+test('a fail-closed Paid session clears the pending Build Profile receipt it painted', async () => {
+  let reads = 0
+  const gated = canonical({ readiness: GATED_PAID_READINESS })
+  const result = load({
+    cardMode: true,
+    memberJSON: PENDING_PAID_ENABLE,
+    initial: gated,
+    routes: {
+      '/starter/paid-call-settings/get/v3': () => {
+        reads += 1
+        return reads === 1
+          ? { ok: true, status: 200, json: async () => gated }
+          : { ok: false, status: 401, json: async () => ({ message: 'Unauthorized' }) }
+      },
+    },
+  })
+  await settle()
+  assert.equal(result.dom.root.getAttribute('data-paid-build-call-intent'), 'pending')
+
+  await result.dispatchWindow('starterSchedulingConnectionStateChanged', {})
+  await settle()
+
+  assert.equal(result.dom.statusOutput.textContent, 'Sign in to manage paid calls.')
+  assert.equal(
+    result.dom.root.getAttribute('data-paid-build-call-intent'),
+    '',
+    'the blanked card no longer advertises a pending Build Profile choice',
+  )
+  assert.equal(result.dom.save.getAttribute('aria-disabled'), 'true')
 })
 
 test('a failed no-service Paid decline keeps the pending receipt and reports failure', async () => {

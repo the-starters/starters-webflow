@@ -373,7 +373,7 @@
   }
 
   function canSubmitSettings(value) {
-    return canSaveSettings(value) || Boolean(pendingBuildIntent)
+    return canSaveSettings(value) || (Boolean(pendingBuildIntent) && explicitIntent === 'disabled')
   }
 
   function canonicalSatisfiesPendingIntent(value) {
@@ -647,11 +647,17 @@
     if (!nextBusy && settings) setActionEnabled(action('save'), canSubmitSettings(settings))
   }
 
+  function refreshSubmitEnabled() {
+    if (busy || !settings) return
+    setActionEnabled(action('save'), canSubmitSettings(settings))
+  }
+
   function clearRenderedState(message) {
     settings = null
     setBusy(false)
     sessionMemberId = null
     sessionAuthScope = null
+    root.setAttribute('data-free-build-call-intent', '')
     // Edit Profile shows these controls while the canonical GET is still in flight, so a
     // pre-load reset would wipe hydrated or typed answers the member can see.
     if (!editProfileMode) {
@@ -805,10 +811,9 @@
         item.setAttribute('data-ready', readiness[name] ? 'true' : 'false')
       })
     })
-    // A pending Build Profile receipt must stay actionable even before Calendar
-    // and Availability are ready. Save still rejects an enable without those
-    // prerequisites, while a member can always change their mind and consume the
-    // pending receipt by selecting Off.
+    // A pending Build Profile receipt must stay declinable even before Calendar
+    // and Availability are ready, so Save is live whenever Off is the current
+    // choice. An enable still needs those prerequisites before Save can run.
     setActionEnabled(action('save'), canSubmitSettings(value))
     const priceOutput = output('price')
     if (priceOutput) priceOutput.textContent = formatFreePrice(service ? servicePriceCents(service) : 0)
@@ -1306,6 +1311,7 @@
         markEditProfileDirty()
         setRadioChecked(pair.enabled, pair.enabled.checked)
         if (pair.enabled.checked) setRadioChecked(pair.disabled, false)
+        refreshSubmitEnabled()
       })
     }
     if (pair.disabled) {
@@ -1316,6 +1322,7 @@
         markEditProfileDirty()
         setRadioChecked(pair.disabled, pair.disabled.checked)
         if (pair.disabled.checked) setRadioChecked(pair.enabled, false)
+        refreshSubmitEnabled()
       })
     }
     const descriptionInput = field('description')

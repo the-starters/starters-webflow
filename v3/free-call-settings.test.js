@@ -641,7 +641,7 @@ test('declining a pending Free enable consumes the receipt when canonical has no
   assert.match(result.dom.status.textContent, /Free calls are off/)
 })
 
-test('Dashboard keeps a gated pending Free receipt actionable so the member can decline it', async () => {
+test('Dashboard keeps a gated pending Free receipt declinable so the member can decline it', async () => {
   const result = load({
     memberJSON: {
       starter_call_settings_intent_v3: {
@@ -656,19 +656,96 @@ test('Dashboard keeps a gated pending Free receipt actionable so the member can 
   })
   await settle()
 
-  assert.equal(result.dom.save.disabled, false)
+  assert.equal(
+    result.dom.save.getAttribute('aria-disabled'),
+    'true',
+    'a gated pending Yes offers no Update that could succeed',
+  )
+  result.dom.no.checked = true
+  await result.dom.no.dispatch('change')
+  assert.equal(result.dom.save.disabled, false, 'choosing Off makes the decline submittable')
   assert.equal(result.dom.save.getAttribute('aria-disabled'), 'false')
   await result.rotateAuthScope()
   await settle()
-  assert.equal(result.dom.save.disabled, false, 'same-member auth refresh keeps the decline path actionable')
   result.dom.no.checked = true
   await result.dom.no.dispatch('change')
+  assert.equal(result.dom.save.disabled, false, 'same-member auth refresh keeps the decline path actionable')
   await result.dom.save.dispatch('click')
   await settle()
 
   assert.equal(result.memberJsonWrites.length, 1)
   assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
   assert.equal(result.dom.no.checked, true)
+})
+
+test('a gated pending Free Yes re-enables Update only while Off stays selected', async () => {
+  const result = load({
+    memberJSON: {
+      starter_call_settings_intent_v3: {
+        version: 1,
+        member_id: 'member-free-a',
+        free: { enabled: true, description: 'Quick intro' },
+      },
+    },
+    initial: canonical({
+      readiness: { calendar_connected: false, availability_configured: false },
+    }),
+  })
+  await settle()
+
+  result.dom.no.checked = true
+  await result.dom.no.dispatch('change')
+  assert.equal(result.dom.save.getAttribute('aria-disabled'), 'false')
+
+  result.dom.yes.checked = true
+  await result.dom.yes.dispatch('change')
+  assert.equal(
+    result.dom.save.getAttribute('aria-disabled'),
+    'true',
+    'switching back to Yes re-gates Update on the unmet prerequisites',
+  )
+  await result.dom.save.dispatch('click')
+  await settle()
+  assert.equal(result.calls.some((call) => call.method === 'POST'), false)
+  assert.equal(result.memberJsonWrites.length, 0)
+})
+
+test('a fail-closed Free session clears the pending Build Profile receipt it painted', async () => {
+  let reads = 0
+  const gated = canonical({
+    readiness: { calendar_connected: false, availability_configured: false },
+  })
+  const result = load({
+    memberJSON: {
+      starter_call_settings_intent_v3: {
+        version: 1,
+        member_id: 'member-free-a',
+        free: { enabled: true, description: 'Quick intro' },
+      },
+    },
+    initial: gated,
+    routes: {
+      '/starter/free-call-settings/get/v3': () => {
+        reads += 1
+        return reads === 1
+          ? { ok: true, status: 200, json: async () => gated }
+          : { ok: false, status: 401, json: async () => ({ message: 'Unauthorized' }) }
+      },
+    },
+  })
+  await settle()
+  assert.equal(result.dom.root.getAttribute('data-free-build-call-intent'), 'pending')
+
+  await result.dispatchWindowEvent('starterSchedulingConnectionStateChanged')
+  await settle()
+
+  assert.equal(result.dom.status.textContent, 'Sign in to manage free calls.')
+  assert.equal(
+    result.dom.root.getAttribute('data-free-build-call-intent'),
+    '',
+    'the blanked card no longer advertises a pending Build Profile choice',
+  )
+  assert.equal(result.dom.save.getAttribute('aria-disabled'), 'true')
 })
 
 test('a failed no-service Free decline keeps the pending receipt and reports failure', async () => {
