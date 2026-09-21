@@ -42,6 +42,7 @@
   const REQUEST_EXPIRATION_POLL_MS = 30000
   const REQUEST_EXPIRATION_MAX_POLLS = 3
   const PROFILE_REFRESH_DELAYS_MS = [0, 150, 300, 600, 1000, 1600, 2500]
+  const DEEP_LINK_READY_DELAYS_MS = [0, 100, 250, 500, 1000, 1600]
   const PROFILE_FORM_SELECTOR = 'form[data-ms-form="profile"]'
   const PAGE_SIZE = 6
   const PROJECT_PAGE_SIZE = 12
@@ -86,6 +87,70 @@
 
   function roleForPath(pathname) {
     return DASHBOARD_ROLES[normalizedPath(pathname)] || ''
+  }
+
+  function dashboardEnvironment(location) {
+    const hostname = clean(location && location.hostname).toLowerCase()
+    if (hostname === 'the-starters-3-0.webflow.io') return 'test'
+    if (hostname === 'thestarters.com' || hostname === 'www.thestarters.com') {
+      return 'production'
+    }
+    return ''
+  }
+
+  function locatorValues(searchParams, hashParams, name) {
+    const values = []
+      .concat(searchParams ? searchParams.getAll(name) : [])
+      .concat(hashParams ? hashParams.getAll(name) : [])
+      .map(clean)
+      .filter(Boolean)
+    if (!values.length || values.some(function (value) { return value !== values[0] })) {
+      return ''
+    }
+    return values[0]
+  }
+
+  /**
+   * Parses the F18 request-created dashboard locator. The URL is only a locator:
+   * ownership and current state still come from the authenticated canonical feed.
+   * Existing links put the locator in the query string before `#calls`; the hash
+   * query form is accepted so forwarded links keep working.
+   */
+  function callDeepLinkLocator(location) {
+    const Params = global.URLSearchParams
+    if (!location || typeof Params !== 'function') return null
+    const rawHash = clean(location.hash)
+    const split = rawHash.indexOf('?') >= 0
+      ? rawHash.split(/\?(.+)/, 2)
+      : rawHash.split(/&(.+)/, 2)
+    const anchor = clean(split[0]).toLowerCase()
+    if (anchor !== '#calls' && anchor !== '#calls-section') return null
+    const searchParams = new Params(clean(location.search).replace(/^\?/, ''))
+    const hashParams = new Params(clean(split[1]))
+    const bookingId = locatorValues(searchParams, hashParams, 'booking_id')
+    const revisionValue = locatorValues(searchParams, hashParams, 'revision')
+    const environment = locatorValues(searchParams, hashParams, 'environment').toLowerCase()
+    const revision = Number(revisionValue)
+    if (
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(bookingId) ||
+      !/^\d+$/.test(revisionValue) ||
+      !Number.isSafeInteger(revision) ||
+      revision < 0 ||
+      !['test', 'production'].includes(environment) ||
+      dashboardEnvironment(location) !== environment
+    ) return null
+    return { bookingId, revision, environment }
+  }
+
+  function normalizeCallsAnchor(location, history) {
+    if (!location || !/^#calls(?:[?&]|$)/i.test(clean(location.hash))) return false
+    const next = clean(location.pathname) + clean(location.search) + '#calls-section'
+    if (history && typeof history.replaceState === 'function') {
+      history.replaceState(null, '', next)
+      return true
+    }
+    location.hash = '#calls-section'
+    return true
   }
 
   function clean(value) {
@@ -1414,6 +1479,13 @@
         upcoming &&
         !gates.cancelShown,
     )
+    const deepLinkState =
+      typeof modal.getAttribute === 'function'
+        ? clean(modal.getAttribute('data-booking-deep-link'))
+        : ''
+    if (deepLinkState && deepLinkState !== 'current_actionable_request') {
+      makeDeepLinkDetailReadOnly(modal)
+    }
   }
 
   function resetDetailActionState(modal) {
@@ -1533,6 +1605,7 @@
       scheduleDetailSupplements(modal, booking, role, timezone, content)
       return true
     }
+    resetDeepLinkDetailState(modal)
     const nextBookingId = clean(booking.booking_id || booking.id)
     const previousBookingId = clean(modal.getAttribute('data-booking-id'))
     if (previousBookingId !== nextBookingId) resetDetailActionState(modal)
@@ -1688,6 +1761,165 @@
     if (!populateDetailModal(modal, booking, role)) return false
     system.open('popup-booking-info')
     return !dialog || dialog.open
+  }
+
+  function canonicalDeepLinkState(locator, bookings, memberId, role, now) {
+    if (!locator || !memberId || !['starter', 'brand'].includes(role)) return null
+    const booking = (Array.isArray(bookings) ? bookings : []).find(function (candidate) {
+      return (
+        clean(candidate && candidate.booking_id) === locator.bookingId &&
+        clean(candidate && candidate.data_environment).toLowerCase() === locator.environment &&
+        memberOwnsBooking(candidate, memberId, role)
+      )
+    })
+    if (!booking) return null
+    const rawRevision = booking.lifecycle_revision
+    const revisionValue = clean(rawRevision)
+    const revision = Number(rawRevision)
+    const validRevision =
+      /^\d+$/.test(revisionValue) &&
+      Number.isSafeInteger(revision) &&
+      revision >= 0
+    const stale = !validRevision || revision !== locator.revision
+    const reference = Number.isFinite(Number(now)) ? Number(now) : Date.now()
+    const rawExpiresAt = booking.confirmation_expires_at
+    const expiresAtValue = clean(rawExpiresAt)
+    const expiresAt = normalizeTimestamp(rawExpiresAt)
+    const validFutureExpiry =
+      expiresAtValue !== '' &&
+      Number.isFinite(expiresAt) &&
+      expiresAt > reference
+    const actionable =
+      !stale &&
+      role === 'starter' &&
+      bookingStatus(booking, now) === 'pending' &&
+      validFutureExpiry &&
+      responseWindowOpen(booking, now)
+    return {
+      booking,
+      readOnly: !actionable,
+      reason: stale ? 'stale_revision' : (actionable ? 'current_actionable_request' : 'current_state_read_only'),
+    }
+  }
+
+  function makeDeepLinkDetailReadOnly(modal) {
+    if (!modal || typeof modal.querySelectorAll !== 'function') return 0
+    const nonMutatingActions = ['switch-close', 'switch-base', 'message', 'details', 'notetaker-media']
+    const controls = Array.prototype.slice
+      .call(modal.querySelectorAll(DETAIL_ACTION_SELECTOR))
+      .filter(function (control) {
+        const action = clean(
+          control.getAttribute('booking-action-btn') ||
+          control.getAttribute('booking-card-action-btn'),
+        )
+        if (nonMutatingActions.includes(action)) return false
+        return Boolean(
+          action ||
+          clean(control.getAttribute('payment-action-btn')) ||
+          control.hasAttribute('booking-pm-action') ||
+          control.hasAttribute('data-btn-payment') ||
+          control.hasAttribute('popup-stripe-card-open') ||
+          control.hasAttribute('pm-use-this'),
+        )
+      })
+    controls.forEach(function (control) {
+      if (!control.__startersDeepLinkControlState) {
+        control.__startersDeepLinkControlState = {
+          hadAriaDisabled: control.hasAttribute('aria-disabled'),
+          ariaDisabled: control.getAttribute('aria-disabled'),
+          hadTabindex: control.hasAttribute('tabindex'),
+          tabindex: control.getAttribute('tabindex'),
+          hasDisabledProperty: 'disabled' in control,
+          disabled: 'disabled' in control ? Boolean(control.disabled) : false,
+          hidden: Boolean(control.hidden),
+          display: control.style && control.style.display,
+        }
+      }
+      show(control, false)
+      control.setAttribute('data-booking-deep-link-disabled', '')
+      control.setAttribute('aria-disabled', 'true')
+      control.setAttribute('tabindex', '-1')
+      if ('disabled' in control) control.disabled = true
+    })
+    return controls.length
+  }
+
+  function resetDeepLinkDetailState(modal) {
+    if (!modal || typeof modal.querySelectorAll !== 'function') return 0
+    const controls = Array.prototype.slice.call(
+      modal.querySelectorAll('[data-booking-deep-link-disabled]'),
+    )
+    controls.forEach(function (control) {
+      const state = control.__startersDeepLinkControlState
+      control.removeAttribute('data-booking-deep-link-disabled')
+      if (state && state.hadAriaDisabled) {
+        control.setAttribute('aria-disabled', state.ariaDisabled)
+      } else {
+        control.removeAttribute('aria-disabled')
+      }
+      if (state && state.hadTabindex) {
+        control.setAttribute('tabindex', state.tabindex)
+      } else {
+        control.removeAttribute('tabindex')
+      }
+      if (state && state.hasDisabledProperty) control.disabled = state.disabled
+      if (state) {
+        control.hidden = state.hidden
+        if (control.style) control.style.display = state.display
+      }
+      delete control.__startersDeepLinkControlState
+    })
+    modal.removeAttribute('data-booking-deep-link')
+    return controls.length
+  }
+
+  function focusCanonicalDeepLink(locator, bookings, memberId, role, now) {
+    const state = canonicalDeepLinkState(locator, bookings, memberId, role, now)
+    if (!state || !global.document || typeof global.document.querySelector !== 'function') {
+      return { focused: false, readOnly: true, reason: 'canonical_booking_unavailable' }
+    }
+    const modal = global.document.querySelector(DETAIL_MODAL_SELECTOR)
+    if (!modal || !openBookingDetail(modal, state.booking, role)) {
+      return { focused: false, readOnly: true, reason: 'details_unavailable' }
+    }
+    if (state.readOnly) makeDeepLinkDetailReadOnly(modal)
+    modal.setAttribute('data-booking-deep-link', state.reason)
+    return { focused: true, readOnly: state.readOnly, reason: state.reason }
+  }
+
+  async function focusCanonicalDeepLinkWhenReady(
+    locator,
+    bookings,
+    memberId,
+    role,
+    now,
+    generation,
+    currentGeneration,
+    options,
+  ) {
+    const settings = options || {}
+    const delays = Array.isArray(settings.delays)
+      ? settings.delays
+      : DEEP_LINK_READY_DELAYS_MS
+    const schedule = settings.setTimeout || global.setTimeout
+    const clock = typeof settings.now === 'function' ? settings.now : Date.now
+    let result = { focused: false, readOnly: true, reason: 'details_unavailable' }
+    for (let index = 0; index < delays.length; index += 1) {
+      if (generation !== currentGeneration()) {
+        return { focused: false, readOnly: true, reason: 'session_changed' }
+      }
+      const delay = Number(delays[index])
+      if (delay > 0) {
+        if (typeof schedule !== 'function') break
+        await new Promise(function (resolve) { schedule(resolve, delay) })
+      }
+      if (generation !== currentGeneration()) {
+        return { focused: false, readOnly: true, reason: 'session_changed' }
+      }
+      result = focusCanonicalDeepLink(locator, bookings, memberId, role, clock())
+      if (result.focused || result.reason !== 'details_unavailable') return result
+    }
+    return result
   }
 
   function wireBookingDetails(refs, role) {
@@ -2315,6 +2547,9 @@
         }
       })
       document.documentElement.setAttribute('data-dashboard-calls-v3', 'ready')
+      if (options && typeof options.onCanonicalRows === 'function') {
+        options.onCanonicalRows(rows, memberId, role)
+      }
       return true
     } catch (error) {
       if (generation !== currentGeneration()) return
@@ -2337,6 +2572,9 @@
     if (!role) return
     if (global.__startersDashboardCallsBooted) return
     global.__startersDashboardCallsBooted = true
+    const deepLinkLocator = callDeepLinkLocator(global.location)
+    const callsAnchorNormalized = normalizeCallsAnchor(global.location, global.history)
+    let deepLinkPending = Boolean(deepLinkLocator)
     wireProjectFilters()
 
     const refs = Array.prototype.slice
@@ -2351,6 +2589,12 @@
     wireBookingDetails(refs, role)
     wireBookingMessages(refs, role)
     hideAuthoredDuplicates()
+    if (callsAnchorNormalized && typeof document.getElementById === 'function') {
+      const callsAnchor = document.getElementById('calls-section')
+      if (callsAnchor && typeof callsAnchor.scrollIntoView === 'function') {
+        callsAnchor.scrollIntoView()
+      }
+    }
     resetIdentityState(refs, role)
 
     const memberstack = await waitForMemberstack(MEMBERSTACK_TIMEOUT_MS)
@@ -2373,6 +2617,23 @@
       restartCount += 1
       const preserveExisting = Boolean(options && options.preserveExisting)
       if (!preserveExisting) resetIdentityState(refs, role)
+      const onCanonicalRows = deepLinkPending
+        ? function (rows, memberId) {
+            deepLinkPending = false
+            const generation = sessionGeneration
+            focusCanonicalDeepLinkWhenReady(
+              deepLinkLocator,
+              rows,
+              memberId,
+              role,
+              Date.now(),
+              generation,
+              currentGeneration,
+            ).catch(function (error) {
+              console.error('[dashboard-calls] deep link focus failed:', error && error.message)
+            })
+          }
+        : null
       return refreshSession(
         memberstack,
         refs,
@@ -2380,7 +2641,7 @@
         sessionGeneration,
         currentGeneration,
         useSharedMember,
-        { preserveExisting },
+        { preserveExisting, onCanonicalRows },
       )
     }
     const refreshAfterMutation = function () {
@@ -2467,6 +2728,14 @@
     memberOwnsBooking,
     memberMatchesProfile,
     normalizeBooking,
+    dashboardEnvironment,
+    callDeepLinkLocator,
+    normalizeCallsAnchor,
+    canonicalDeepLinkState,
+    makeDeepLinkDetailReadOnly,
+    resetDeepLinkDetailState,
+    focusCanonicalDeepLink,
+    focusCanonicalDeepLinkWhenReady,
     profileValues,
     adoptSectionAnchors,
     hideAuthoredDuplicates,
