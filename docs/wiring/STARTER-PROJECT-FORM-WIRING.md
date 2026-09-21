@@ -31,7 +31,7 @@ Airtable, Make, or a legacy TalkJS table.
 
 ## Backend contract required before Webflow wiring
 
-`POST projects/proposal-options/v3` must authenticate the Starter and return
+`POST projects/proposal-options/v4` must authenticate the Starter and return
 only paid Brands with a current active `talkjs_brand_message` relationship. It
 is the dedicated option source for this form, and the only route the form reads
 counterparties from. It returns the server-verified V3 Brand-to-Starter message

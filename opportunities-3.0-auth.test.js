@@ -330,8 +330,13 @@ test('project options and canonical Starter submission use authenticated V3 rout
       const url = String(input)
       requests.push({ url, init })
       if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
-      if (url.includes('/projects/proposal-options/v3')) {
-        return response({ counterparties: [{ counterparty_id: 81, company_name: 'Acme' }] })
+      if (url.includes('/projects/proposal-options/v4')) {
+        return response({ counterparties: [{
+          counterparty_id: 81,
+          company_name: 'Acme',
+          hiring_manager_name: 'Owner',
+          counterparty_memberstack_id: 'mem_brand_81',
+        }] })
       }
       if (url.includes('/projects/proposal-request/v3')) {
         return response({
@@ -351,13 +356,35 @@ test('project options and canonical Starter submission use authenticated V3 rout
   assert.equal(options.counterparties[0].counterparty_id, 81)
   assert.equal(result.proposal.id, 669)
   assert.equal(result.proposal.status, 'awaiting_brand_approval')
-  assert.equal(requests[1].url, 'https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30/projects/proposal-options/v3')
+  assert.equal(requests[1].url, 'https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30/projects/proposal-options/v4')
   assert.equal(requests[1].init.method, 'POST')
   assert.equal(requests[1].init.headers.Authorization, 'Bearer xano-token')
   assert.deepEqual(JSON.parse(requests[1].init.body), {})
   assert.equal(requests[2].url, 'https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30/projects/proposal-request/v3')
   assert.equal(requests[2].init.headers.Authorization, 'Bearer xano-token')
   assert.deepEqual(JSON.parse(requests[2].init.body), payload)
+})
+
+test('proposal options fail closed on v4 without falling back to the staged v3 endpoint', async () => {
+  const requests = []
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      requests.push({ url, init })
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/projects/proposal-options/v4')) {
+        return response({ message: 'Unavailable' }, false, 503)
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    { member: paidBrandMember },
+  )
+
+  await assert.rejects(bridge.API.projectProposalOptions(), /Unavailable/)
+  assert.equal(requests[1].url, 'https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30/projects/proposal-options/v4')
+  assert.equal(requests.filter((entry) => entry.url.endsWith('/projects/proposal-options/v3')).length, 0)
+  assert.equal(requests.filter((entry) => entry.url.endsWith('/projects/proposal-request/v3')).length, 0)
+  assert.equal(requests.filter((entry) => entry.url.endsWith('/projects/submit/v3')).length, 0)
 })
 
 test('the legacy projectSubmit alias keeps the released form on the proposal route', async () => {
