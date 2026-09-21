@@ -211,6 +211,9 @@ const NON_BROWSER_SCRIPTS = new Set([
   // Synthetic Memberstack/Xano boundary for the local Edit Profile step 6
   // browser fixture, never installed on Webflow.
   'v3/browser-tests/edit-profile-call-settings-fixture.js',
+  // Synthetic Memberstack/Xano boundary for the local Call Settings receipt
+  // browser fixture, never installed on Webflow.
+  'v3/browser-tests/call-settings-receipt-fixture.js',
   // Legacy booking owner for lifecycle-adoption regression tests and the local
   // booking-details browser fixture, never installed on Webflow.
   'v3/browser-tests/legacy-free-booking-owner.js',
