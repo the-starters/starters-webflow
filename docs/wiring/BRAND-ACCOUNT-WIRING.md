@@ -250,10 +250,10 @@ frontend install.
 ## Configuration switch
 
 Memberstack's browser SDK owns reset-password emails for explicit recovery and
-the changed login-email security used by Build Account.
-Account Security and Starter Edit Profile do not request one. Build Account also sends none when
-the member keeps the email they already authenticated with. Memberstack's Admin
-API does not expose a server-side reset-email action, so this controller
+the changed login-email security used by Build Account. Account Security and
+Starter Edit Profile do not request one. Build Account also sends none when the
+member keeps the email they already authenticated with. Memberstack's Admin API
+does not expose a server-side reset-email action, so this controller
 deliberately does not depend on or claim a durable email outbox. Do not add an
 automatic retry around `sendMemberResetPasswordEmail`; a lost response is
 ambiguous and retrying could send a second message.
@@ -400,22 +400,22 @@ projection.
   invalid profile fields.
 - The guarded Talent edit-profile form confirms ownership by reading back the
   same stable member ID and exact normalized login email before profile replay.
-  It does not send a verification or password email. Build Account retains its reset/set-password email contract.
-- Reset-email delivery in Build Account is an external,
-  non-idempotent browser side effect. The
-  controller records the normalized target in an in-memory per-form marker
-  before calling Memberstack and will not attempt that target again during the
-  same page lifecycle, including after a timeout or lost response. It never
-  automatically retries the email call across a reload or new session and does
-  not claim mathematically exactly-once delivery.
-- If a Build Account reset-email result is failed or
-  ambiguous, the durable account changes remain saved and the UI directs the
-  member to the standard Forgot Password flow for an explicit recovery attempt.
-- For Build Account, successful password-token redemption
-  is the ownership proof. The controller does not claim Memberstack
-  `verified=true` without separately observed state. Starter Edit Profile uses
-  the same-member and exact-email readback described above and does not require
-  password-token redemption.
+  It does not send a verification or password email. Build Account retains its
+  reset/set-password email contract.
+- Reset-email delivery in Build Account is an external, non-idempotent browser
+  side effect. The controller records the normalized target in an in-memory
+  per-form marker before calling Memberstack and will not attempt that target
+  again during the same page lifecycle, including after a timeout or lost
+  response. It never automatically retries the email call across a reload or
+  new session and does not claim mathematically exactly-once delivery.
+- If a Build Account reset-email result is failed or ambiguous, the durable
+  account changes remain saved and the UI directs the member to the standard
+  Forgot Password flow for an explicit recovery attempt.
+- For Build Account, successful password-token redemption is the ownership
+  proof. The controller does not claim Memberstack `verified=true` without
+  separately observed state. Starter Edit Profile uses the same-member and
+  exact-email readback described above and does not require password-token
+  redemption.
 - `completed-brand-profile` is the final durable Build Account write. Any
   earlier account-write failure leaves the member on onboarding for a safe
   idempotent replay; an email failure occurs only after completion is durable.
