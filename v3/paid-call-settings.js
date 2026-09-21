@@ -443,6 +443,17 @@
     return canSaveSettings(value) || Boolean(pendingBuildIntent)
   }
 
+  function canonicalSatisfiesPendingIntent(value) {
+    if (!pendingBuildIntent) return false
+    const service = canonicalService(value)
+    if (!pendingBuildIntent.enabled) return !service
+    return (
+      Boolean(displayableRate(service)) &&
+      String(service.title || '') === pendingBuildIntent.title &&
+      Number(service.price_cents) === pendingBuildIntent.price_dollars * 100
+    )
+  }
+
   // Edit Profile gives the Free and Paid controllers one shared step-6 root, so the
   // canonical hook cannot say which service a stamped radio belongs to there.
   function radioHook() {
@@ -1297,7 +1308,7 @@
       const canonical = await readCanonicalSettings()
       pendingBuildIntent = await readPendingBuildIntent().catch(function () { return null })
       if (currentRender(version, memberId) && !busy) render(canonical)
-      if (!canonicalService(canonical) && pendingBuildIntent && !pendingBuildIntent.enabled) {
+      if (canonicalSatisfiesPendingIntent(canonical)) {
         const consumeEditRevision = memberEditRevision
         consumePendingBuildIntent().then(function () {
           if (currentRender(version, memberId) && !busy && memberEditRevision === consumeEditRevision) {
@@ -1535,7 +1546,7 @@
       }
       if (!currentRender(version, member.id)) return null
       const rendered = render(canonical)
-      if (!canonicalService(canonical) && pendingBuildIntent && !pendingBuildIntent.enabled) {
+      if (canonicalSatisfiesPendingIntent(canonical)) {
         const consumeEditRevision = memberEditRevision
         consumePendingBuildIntent().then(function () {
           if (currentRender(version, member.id) && !busy && memberEditRevision === consumeEditRevision) {

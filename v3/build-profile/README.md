@@ -265,8 +265,12 @@ pending part is preserved. It consumes its part once canonical state matches the
 member's choice, in one of three ways:
 
 - after the canonical Call Settings endpoint returns exact readback;
-- with no canonical write, on load, when the receipt's own off choice is already
-  satisfied because that branch has no active service;
+- with no canonical write, on load, when canonical already satisfies the
+  receipt's own choice exactly: an off choice with no active service, or an
+  enable whose values the active service already holds — Free's public
+  description, or Paid's title and whole-dollar USD rate. This is what repairs a
+  receipt whose best-effort cleanup failed after a verified save, so it cannot
+  re-assert Build Profile values over newer canonical ones;
 - with no canonical write, on a submitted off choice while that branch has no
   active service, even when the receipt itself is still an unconsumed enable, so
   a declined Build Profile Yes cannot re-assert itself on the next load.
@@ -293,8 +297,8 @@ profile save cached for the resubmit the panel asks for and leaves the pending
 photo uncommitted until an attempt gets past that write.
 
 Consuming a receipt must not invent unsaved work on Edit Profile. When an
-already-off receipt is consumed with no canonical write, the delayed re-render
-runs inside `__tsProfileDirtyState.runHydrationSync`, so the synthetic radio
+already-satisfied receipt is consumed with no canonical write, the delayed
+re-render runs inside `__tsProfileDirtyState.runHydrationSync`, so the synthetic radio
 change cannot create an unsaved step-6 state. Each controller also records a
 monotonic member-edit revision: if the member changes that branch's choice or
 fields while receipt cleanup is in flight, the delayed re-render is skipped and

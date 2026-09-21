@@ -376,6 +376,16 @@
     return canSaveSettings(value) || Boolean(pendingBuildIntent)
   }
 
+  function canonicalSatisfiesPendingIntent(value) {
+    if (!pendingBuildIntent) return false
+    const service = canonicalService(value)
+    if (!pendingBuildIntent.enabled) return !service
+    return (
+      Boolean(service) &&
+      String((value && value.public_description) || '') === pendingBuildIntent.description
+    )
+  }
+
   function radioValue(item) {
     return String(item.value || item.getAttribute('value') || '').toLowerCase()
   }
@@ -867,7 +877,7 @@
       const canonical = await readCanonicalSettings()
       pendingBuildIntent = await readPendingBuildIntent().catch(function () { return null })
       if (currentRender(version, memberId) && !busy) render(canonical)
-      if (!canonicalService(canonical) && pendingBuildIntent && !pendingBuildIntent.enabled) {
+      if (canonicalSatisfiesPendingIntent(canonical)) {
         const consumeEditRevision = memberEditRevision
         consumePendingBuildIntent().then(function () {
           if (currentRender(version, memberId) && !busy && memberEditRevision === consumeEditRevision) {
@@ -1186,7 +1196,7 @@
       }
       if (!currentRender(version, member.id)) return null
       const rendered = render(canonical)
-      if (!canonicalService(canonical) && pendingBuildIntent && !pendingBuildIntent.enabled) {
+      if (canonicalSatisfiesPendingIntent(canonical)) {
         const consumeEditRevision = memberEditRevision
         consumePendingBuildIntent().then(function () {
           if (currentRender(version, member.id) && !busy && memberEditRevision === consumeEditRevision) {
