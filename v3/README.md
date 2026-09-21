@@ -538,8 +538,10 @@ node --test v3/brand-account-controller.test.js
 
 `brand-account-controller.js` aligns the native Brand signup plan with
 Memberstack Test or Live Data and owns the native Build Account submission,
-while its login-email interception remains configuration-gated for Brand
-Account Security and the visible Talent form on `/starter-edit-profile`. The
+while its login-email interception remains configuration-gated for legacy
+Account Security forms without a native `data-ms-form="profile"` or `"email"`
+marker (the published form stays Memberstack-native) and the visible Talent
+form on `/starter-edit-profile`. The
 authoritative identity scope, stable-ID propagation, failure, release-gate, and
 reversible-canary contract is in
 [BRAND-ACCOUNT-WIRING.md](../docs/wiring/BRAND-ACCOUNT-WIRING.md).
