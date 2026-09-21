@@ -323,7 +323,7 @@ test('projectDirectCreate sends its payload through the authenticated V3 route',
   assert.deepEqual(JSON.parse(requests[1].init.body), payload)
 })
 
-test('project options and canonical Starter submission use authenticated V3 routes', async () => {
+test('project options use the authenticated v4 route and canonical Starter submission stays on V3', async () => {
   const requests = []
   const bridge = await loadBridge(
     async (input, init = {}) => {
@@ -335,7 +335,7 @@ test('project options and canonical Starter submission use authenticated V3 rout
           counterparty_id: 81,
           company_name: 'Acme',
           hiring_manager_name: 'Owner',
-          counterparty_memberstack_id: 'mem_brand_81',
+          memberstack_member_id: 'mem_brand_81',
         }] })
       }
       if (url.includes('/projects/proposal-request/v3')) {
@@ -353,7 +353,12 @@ test('project options and canonical Starter submission use authenticated V3 rout
   const payload = { brand_id: 81, title: 'Launch project', idempotency_key: 'starter-project-test' }
   const result = await bridge.API.projectProposalSubmit(payload)
 
-  assert.equal(options.counterparties[0].counterparty_id, 81)
+  assert.deepEqual(options.counterparties, [{
+    counterparty_id: 81,
+    company_name: 'Acme',
+    hiring_manager_name: 'Owner',
+    memberstack_member_id: 'mem_brand_81',
+  }])
   assert.equal(result.proposal.id, 669)
   assert.equal(result.proposal.status, 'awaiting_brand_approval')
   assert.equal(requests[1].url, 'https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30/projects/proposal-options/v4')
