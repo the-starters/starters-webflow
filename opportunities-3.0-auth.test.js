@@ -9415,3 +9415,146 @@ test('final invoices reject extra decimal places before any request', async () =
     assert.match(dom.modal.querySelector('.w-form-fail').textContent, /two decimal places/)
   }
 })
+
+function ratingGroupFixture(modalId, feedbackText = '') {
+  const stars = []
+  const radios = []
+  const labels = []
+  for (let value = 1; value <= 5; value += 1) {
+    const radio = el('input', { type: 'radio', name: 'Call-Rating' })
+    radio.value = String(value)
+    radio.checked = false
+    const star = el('span', { 'fs-starrating-element': 'star' })
+    const label = el('label', {}, [radio, star])
+    radios.push(radio); stars.push(star); labels.push(label)
+  }
+  const group = el('div', {
+    'fs-starrating-element': 'group', 'fs-starrating-active': 'is-active',
+  }, labels)
+  const feedback = el('textarea', { name: 'Feedback' })
+  feedback.value = feedbackText
+  const form = el('form', {}, [group, feedback])
+  const fail = el('div', { class: 'w-form-fail' })
+  const modal = el('dialog', { 'data-modal-target': modalId }, [form, fail])
+  return { stars, radios, labels, group, feedback, form, fail, modal }
+}
+
+async function ratingBridge(...fixtures) {
+  const root = el('div', {}, fixtures.map(f => f.modal))
+  const bridge = await loadBridge(async () => response({}), documentWith(root))
+  for (const fixture of fixtures) {
+    for (const radio of fixture.radios) {
+      radio.dispatchEvent = event => bridge.dispatchDocument(event.type, { target: radio })
+    }
+  }
+  return bridge
+}
+
+test('review stars isolate Finsweet names and clear a repeated selection without deleting feedback', async () => {
+  const call = ratingGroupFixture('rate-starter-call')
+  const project = ratingGroupFixture('end-project', 'Keep this draft')
+  const bridge = await ratingBridge(call, project)
+  assert.notEqual(call.radios[0].getAttribute('name'), project.radios[0].getAttribute('name'))
+  assert.equal(new Set(project.radios.map(r => r.getAttribute('name'))).size, 1)
+  const first = clickEvent(project.stars[0]).event
+  bridge.dispatchDocument('click', first)
+  assert.equal(project.radios[0].checked, false, 'first activation is left to native radio behavior')
+  project.radios[0].checked = true
+  bridge.dispatchDocument('input', { target: project.radios[0] })
+  project.stars[0].classList.add('is-active')
+  call.radios[4].checked = true
+  call.stars[4].classList.add('is-active')
+  const repeated = clickEvent(project.stars[0]).event
+  bridge.dispatchDocument('click', repeated)
+  await Promise.resolve()
+  assert.equal(project.radios[0].checked, false)
+  assert.equal(project.stars[0].getAttribute('class'), '')
+  assert.equal(project.feedback.value, 'Keep this draft')
+  assert.equal(call.radios[4].checked, true)
+  assert.equal(call.stars[4].getAttribute('class'), 'is-active')
+})
+
+test('review star Space clears once, changing rating stays native, and reset refreshes selection', async () => {
+  const project = ratingGroupFixture('end-project')
+  const bridge = await ratingBridge(project)
+  project.radios[3].checked = true
+  bridge.dispatchDocument('input', { target: project.radios[3] })
+  bridge.dispatchDocument('click', clickEvent(project.stars[1]).event)
+  await Promise.resolve()
+  assert.equal(project.radios[3].checked, true, 'changing stars is left to the browser')
+  let prevented = false
+  bridge.dispatchDocument('keydown', {
+    target: project.radios[3], key: ' ', repeat: false,
+    preventDefault() { prevented = true }, stopPropagation() {},
+  })
+  await Promise.resolve()
+  assert.equal(prevented, true)
+  assert.equal(project.radios[3].checked, false)
+  project.radios[2].checked = true
+  bridge.dispatchDocument('input', { target: project.radios[2] })
+  bridge.dispatchDocument('reset', { target: project.form })
+  project.radios[2].checked = false
+  await new Promise(resolve => setTimeout(resolve, 5))
+  bridge.dispatchDocument('click', clickEvent(project.stars[2]).event)
+  project.radios[2].checked = true
+  bridge.dispatchDocument('input', { target: project.radios[2] })
+  await Promise.resolve()
+  assert.equal(project.radios[2].checked, true, 'first click after reset must select')
+})
+
+for (const feedback of ['', 'Too short', 'x'.repeat(4001)]) {
+  test(`end-project star clear preserves ${feedback.length} feedback characters and skips only an empty review`, async () => {
+    const dom = endProjectDom()
+    const rating = ratingGroupFixture('end-project', feedback)
+    dom.reviewGroup.children = []
+    dom.reviewGroup.appendChild(rating.group)
+    dom.reviewGroup.appendChild(rating.feedback)
+    let actionBody = null
+    let reviews = 0
+    const bridge = await loadBridge(async (input, init = {}) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/brand/projects/mine')) return response({ items: [{
+        id: 675, lifecycle_state: 'active', lifecycle_version: 4, has_review: false,
+      }] })
+      if (url.includes('/projects/action/v3')) {
+        actionBody = JSON.parse(init.body)
+        return response({ project: { id: 675, lifecycle_state: 'completed', lifecycle_version: 5 } })
+      }
+      if (url.includes('/brand/reviews/submit')) { reviews += 1; return response({ review_id: 42 }) }
+      throw new Error(`Unexpected request: ${url}`)
+    }, endProjectBridgeOptions(dom, paidBrandMember, '/brand-dashboard'))
+    for (const radio of rating.radios) {
+      radio.dispatchEvent = event => bridge.dispatchDocument(event.type, { target: radio })
+    }
+    assert.ok(await waitFor(() => dom.end.getAttribute('data-project-action') === 'end'))
+    bridge.dispatchDocument('click', clickEvent(dom.end).event)
+    assert.ok(await waitFor(() => dom.title.textContent === 'End Project & Review'))
+    rating.radios[0].checked = true
+    bridge.dispatchDocument('input', { target: rating.radios[0] })
+    const submit = () => bridge.dispatchDocument('submit', {
+      target: dom.form, preventDefault() {}, stopPropagation() {},
+    })
+    submit()
+    assert.match(dom.fail.textContent, /click your selected star again/)
+    assert.equal(actionBody, null)
+    bridge.dispatchDocument('click', clickEvent(rating.stars[0]).event)
+    assert.equal(rating.radios[0].checked, false)
+    assert.equal(rating.feedback.value, feedback)
+    assert.equal(actionBody, null, 'clearing must not complete the project')
+    assert.equal(dom.form.querySelector('[data-end-project-clear-review]'), null)
+    if (feedback) {
+      submit()
+      assert.equal(actionBody, null, 'text without a rating must not be silently discarded')
+      assert.match(dom.fail.textContent, /Choose a rating/)
+      rating.feedback.value = ''
+      bridge.dispatchDocument('input', { target: rating.feedback })
+    }
+    assert.equal(dom.fail.style.display, 'none')
+    submit()
+    assert.ok(await waitFor(() => actionBody !== null))
+    assert.equal(actionBody.action, 'complete')
+    await new Promise(setImmediate)
+    assert.equal(reviews, 0)
+  })
+}
