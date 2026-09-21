@@ -567,6 +567,38 @@ test('adds stable booking identity on the exact production Live JP Hire route', 
   )
 })
 
+test('the exact staging jp-test scheduler uses the owned Test Starter identity', () => {
+  const { window } = loadStage({
+    pathname: '/hire/jp-test/',
+    brandMemberstackId: 'test-brand-member',
+    starterMemberstackId: 'live-cms-starter-member',
+  })
+  const scheduler = { bookingInfo: JSON.stringify({ additionalFields: {} }) }
+
+  assert.equal(window.StarterSchedulingV3Stage.injectBookingIdentity(scheduler), true)
+  const bookingInfo = JSON.parse(scheduler.bookingInfo)
+  assert.equal(bookingInfo.additionalFields.brand_memberstack_id.value, 'test-brand-member')
+  assert.equal(
+    bookingInfo.additionalFields.starter_memberstack_id.value,
+    'mem_sb_cmqhuaxn80d270sseeo74fn7i',
+  )
+})
+
+test('another staging Hire scheduler keeps its CMS Starter identity', () => {
+  const { window } = loadStage({
+    pathname: '/hire/another-starter',
+    brandMemberstackId: 'test-brand-member',
+    starterMemberstackId: 'another-test-starter',
+  })
+  const scheduler = { bookingInfo: JSON.stringify({ additionalFields: {} }) }
+
+  assert.equal(window.StarterSchedulingV3Stage.injectBookingIdentity(scheduler), true)
+  assert.equal(
+    JSON.parse(scheduler.bookingInfo).additionalFields.starter_memberstack_id.value,
+    'another-test-starter',
+  )
+})
+
 test('keeps the isolated Hire stage separate from the live CMS profile path', () => {
   const stage = loadStage({ pathname: '/hire-stage' })
   assert.equal(stage.window.__tsSchedulingV3Stage, true)

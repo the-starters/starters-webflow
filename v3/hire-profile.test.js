@@ -8153,13 +8153,17 @@ test('booking discovery passes the matching CMS Starter name to Free and Paid', 
   }
 })
 
-test('the exact staging jp-test canary uses the owned Test Starter identity and slug', async () => {
+test('the exact staging jp-test canary uses the owned Test booking identity and keeps the CMS name', async () => {
   const page = makePage()
+  page.root.appendChild(makeElement('a', {
+    'messages-profile-message': 'mem_live_cms_value',
+    'messages-profile-name': 'JP Test',
+  }))
   const lookups = []
   const installs = []
   const context = makeContext({
     page,
-    location: { hostname: 'the-starters-3-0.webflow.io', pathname: '/hire/jp-test' },
+    location: { hostname: 'the-starters-3-0.webflow.io', pathname: '/hire/jp-test/' },
     starterMemberId: 'mem_live_cms_value',
     member: BRAND_MEMBER,
     freeController: {
@@ -8167,13 +8171,68 @@ test('the exact staging jp-test canary uses the owned Test Starter identity and 
         lookups.push(memberId)
         return { nylas_grant_id: 'grant_test', nylas_grant_email: 'starter@example.com' }
       },
+      getConfigs: async () => [
+        {
+          config_id: 'free_test',
+          is_paid: false,
+          active: true,
+          data_environment: 'test',
+          duration: 30,
+          price_cents: 0,
+        },
+        {
+          config_id: 'paid_test',
+          is_paid: true,
+          active: true,
+          data_environment: 'test',
+          payment_environment: 'test',
+          currency: 'USD',
+          duration: 60,
+          price_cents: 100,
+        },
+      ],
+      getNearestSlot: async () => null,
+      installFreeBookingController: (options) => {
+        installs.push(options)
+        return true
+      },
+    },
+    paidController: {
+      installPaidBookingController: (options) => {
+        installs.push(options)
+        return true
+      },
+    },
+  })
+
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.deepEqual(lookups, ['mem_sb_cmqhuaxn80d270sseeo74fn7i'])
+  assert.equal(installs.length, 2)
+  assert.equal(installs[0].starterMemberstackId, 'mem_sb_cmqhuaxn80d270sseeo74fn7i')
+  assert.deepEqual(installs.map((options) => options.starterSlug), ['jp-dionisio', 'jp-dionisio'])
+  assert.deepEqual(installs.map((options) => options.starterName), ['JP Test', 'JP Test'])
+})
+
+test('another staging profile keeps its CMS identity and route slug', async () => {
+  const page = makePage()
+  const lookups = []
+  const installs = []
+  const context = makeContext({
+    page,
+    location: { hostname: 'the-starters-3-0.webflow.io', pathname: '/hire/another-starter' },
+    starterMemberId: 'mem_sb_another_starter',
+    member: BRAND_MEMBER,
+    freeController: {
+      getStarterByMemberId: async (memberId) => {
+        lookups.push(memberId)
+        return { nylas_grant_id: 'grant_test' }
+      },
       getConfigs: async () => [{
-        config_id: 'free_test',
-        is_paid: false,
-        active: true,
-        data_environment: 'test',
-        duration: 30,
-        price_cents: 0,
+        config_id: 'free_test', is_paid: false, active: true,
+        data_environment: 'test', duration: 30, price_cents: 0,
       }],
       getNearestSlot: async () => null,
       installFreeBookingController: (options) => {
@@ -8187,10 +8246,9 @@ test('the exact staging jp-test canary uses the owned Test Starter identity and 
   vm.runInContext(source, context)
   await settle()
 
-  assert.deepEqual(lookups, ['mem_sb_cmqhuaxn80d270sseeo74fn7i'])
-  assert.equal(installs.length, 1)
-  assert.equal(installs[0].starterMemberstackId, 'mem_sb_cmqhuaxn80d270sseeo74fn7i')
-  assert.equal(installs[0].starterSlug, 'jp-dionisio')
+  assert.deepEqual(lookups, ['mem_sb_another_starter'])
+  assert.equal(installs[0].starterMemberstackId, 'mem_sb_another_starter')
+  assert.equal(installs[0].starterSlug, 'another-starter')
 })
 
 test('jp-test keeps its CMS identity and route slug outside the exact staging host', async () => {

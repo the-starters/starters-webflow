@@ -1462,9 +1462,13 @@
   // `starter_memberstack_id` is a global var (set by an embedded script at the
   // top of the Freelancer Template page). Read it off window so a missing global
   // warns instead of throwing a ReferenceError that would abort this file.
-  const FREELANCER_ID = STAGING_BOOKING_FIXTURE
-      ? STAGING_BOOKING_FIXTURE.memberstackId
-      : window.starter_memberstack_id;
+  const FREELANCER_ID = window.starter_memberstack_id;
+
+  function bookingStarterMemberstackId() {
+      return STAGING_BOOKING_FIXTURE
+          ? STAGING_BOOKING_FIXTURE.memberstackId
+          : FREELANCER_ID;
+  }
 
   function bookingStarterSlug() {
       if (STAGING_BOOKING_FIXTURE) return STAGING_BOOKING_FIXTURE.starterSlug;
@@ -2147,7 +2151,7 @@
               return;
           }
 
-          startersBooking_handler(FREELANCER_ID, brand_name, brand_email);
+          startersBooking_handler(bookingStarterMemberstackId(), brand_name, brand_email);
       })();
   });
 
@@ -3499,7 +3503,7 @@
       }
 
       const starterIdentity = Array.from(qsa('[messages-profile-message][messages-profile-name]')).find(function (element) {
-          return element.getAttribute('messages-profile-message') === freelancerId;
+          return element.getAttribute('messages-profile-message') === FREELANCER_ID;
       });
       const starterName = starterIdentity ? starterIdentity.getAttribute('messages-profile-name') : '';
 

@@ -170,11 +170,21 @@
     return new Request(url.href, request)
   }
 
+  function bookingStarterMemberstackId() {
+    if (
+      activeHost === STAGING_HOST &&
+      activePath === '/hire/jp-test'
+    ) {
+      return 'mem_sb_cmqhuaxn80d270sseeo74fn7i'
+    }
+    return window.starter_memberstack_id
+  }
+
   function injectBookingIdentity(scheduler) {
     if (!isHireBookingPath || !scheduler) return false
 
     const brandMemberstackId = window.MEMBER && window.MEMBER.id
-    const starterMemberstackId = window.starter_memberstack_id
+    const starterMemberstackId = bookingStarterMemberstackId()
     if (!brandMemberstackId || !starterMemberstackId) return false
 
     const serialized = typeof scheduler.bookingInfo === 'string'
