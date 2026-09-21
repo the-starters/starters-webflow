@@ -526,7 +526,7 @@
     const successText = popup.querySelector('[booking-success-text]')
     if (successText) {
       successText.textContent =
-        "We'll share your call request with " + (clean(input && input.starterName) || 'the Starter') + " and reach out when it's been confirmed, typically within 48 hours"
+        "We'll share your call request with " + (clean(input && input.starterName) || 'the Starter') + " and reach out when it's been confirmed, typically within 24 hours"
     }
     switchStep(popup, 'success')
   }
