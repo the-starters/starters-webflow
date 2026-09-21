@@ -11,6 +11,22 @@ It owns `[data-quiz-form="home"]`, saves the IDs of its selected checkboxes to
 submitted, then redirects submissions to `/quiz`. The controller can initialize
 before or after the DOM has been parsed and ignores duplicate script loads.
 
+The same Home-only asset owns the company text in
+`.section_home-consult .expert-card_item.is-consult-home`. Webflow still selects
+and lays out the CMS cards, but its legacy `also-worked-with` nested list is not
+the visible data authority. The controller reads each card's stable profile ID
+from `data-starter-id`, `data-xano-id`, or `data-wf-xano-id` when present, with
+the current `freelancer-{id}` CMS image filename as the compatibility source.
+It then performs one multi-object request against the host-managed Starter
+Algolia index and replaces `.expert-card_company-list` with the ordered company
+names from `work-history`.
+
+The adapter is fail-closed: it clears legacy company text before the request and
+does not fall back to `also-worked-with` for a missing ID, missing configuration,
+empty work history, or failed request. It changes no card rate, role, profile
+link, order, or CMS record. After a successful or failed request it dispatches
+`expert-cards:relayout` so the shared card layout recalculates the company row.
+
 Load both controllers on `/quiz` with `defer`, after the site Memberstack
 bootstrap:
 
