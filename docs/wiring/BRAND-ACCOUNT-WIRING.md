@@ -249,6 +249,25 @@ frontend install.
 
 ## Configuration switch
 
+### Native Account Security ownership
+
+An Account Security form with `data-ms-form="profile"` or
+`data-ms-form="email"` stays entirely Memberstack-native, even when
+`guardSecurityForm` is `brand` or `identity`. The account controller must not
+bind its submit interceptor, write feedback text, toggle loading, or make a
+second API call for that form. Memberstack updates the account, refreshes its
+member data, fills `[data-ms-message-text]` with its response message, and owns
+message dismissal and loader timing. Showing the authored placeholder without
+letting Memberstack process the submission is not native feedback.
+
+The published Security form uses `profile`, which the current Memberstack DOM
+script supports for combined email/custom-field updates. The documented
+email-only `email` form is also supported. No Designer attribute change is
+required for the existing form. The interception details below apply only to
+legacy Security forms without either native marker. Starter Edit Profile and
+Build Account keep their existing controller ownership.
+
+
 Memberstack's browser SDK owns reset-password emails for explicit recovery and
 the changed login-email security used by Build Account. Account Security and
 Starter Edit Profile do not request one. Build Account also sends none when the
@@ -382,13 +401,13 @@ projection.
 - Account Security and the guarded Talent edit-profile form update the login
   email without requesting password-reset or verification emails and keep the
   member's existing password. Explicit Forgot Password remains available.
-- Account Security shows its authored `[data-ms-message="success"]` or
+- Legacy non-native Account Security shows its authored `[data-ms-message="success"]` or
   `[data-ms-message="error"]` block and hides Webflow's sibling success/failure
   blocks. The success block's authored copy is left untouched; only the error
   block's `[data-ms-message-text]` receives the failure reason.
   A legacy installation missing the relevant Memberstack block falls back to
   its Webflow state. Starting another save clears the prior feedback.
-- Account Security marks only the submit control's containing
+- Legacy non-native Account Security marks only the submit control's containing
   `[data-opp-element="loading-button"]` as loading. Change Password's lock
   icon stays visible during an email save.
 - A failed or unconfirmed changed login-email write blocks the guarded Talent

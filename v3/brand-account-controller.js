@@ -1,6 +1,6 @@
 /**
  * Brand signup plan, Build Account, and guarded identity email controller.
- * @release v1.59.600
+ * @release v1.59.601
  *
  * Authority contract:
  *   - Memberstack owns identity, login email, custom fields, and profile image.
@@ -34,7 +34,9 @@
  * Login-email interception is also OFF by default so it cannot race the forms'
  * existing submit owners. The configured identity-scoped mode resolves the
  * current member through the canonical route-guard role contract, claims Brand
- * and Talent Account Security, and guards the visible Talent edit-profile form.
+ * and Talent Account Security only when it has no native Memberstack profile
+ * or email handler, and guards the visible Talent edit-profile form. Native
+ * Account Security retains Memberstack-owned saving, loaders, and messages.
  * A valid changed login email can save independently when Personal Details is
  * invalid. When Personal Details is valid, the controller changes the login
  * email first and then authorizes one replay of its Designer-authored Xano save;
@@ -1068,6 +1070,10 @@
 
   function bindIdentitySecurityForm(form, mode) {
     if (!form || form.getAttribute('data-brand-account-bound') === 'true') return false
+    // Memberstack's native handler owns its API response, dynamic messages,
+    // member-data refresh, and loader. Intercepting it leaves placeholder copy.
+    var nativeKind = form.getAttribute('data-ms-form')
+    if (nativeKind === 'profile' || nativeKind === 'email') return false
     form.setAttribute('data-brand-account-bound', 'true')
     var busy = false
     var ownsSubmission = false

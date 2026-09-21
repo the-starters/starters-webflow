@@ -2780,3 +2780,39 @@ test('Account Security shows an auth failure in the authored error state and cle
   assert.equal(failure.style.display, 'none')
   assert.equal(form.inputs.get('[data-ms-message="success"]').style.display, 'block')
 })
+
+
+for (const kind of ['profile', 'email']) {
+  for (const mode of ['brand', 'identity']) {
+    test(`native Memberstack ${kind} form retains submit ownership in ${mode} mode`, async () => {
+      const form = makeForm('security', { email: 'next@example.com' })
+      form.setAttribute('data-ms-form', kind)
+      addSecurityFeedback(form)
+      let nativeSaves = 0
+      form.addEventListener('submit', function memberstackSubmit(event) {
+        event.preventDefault()
+        nativeSaves += 1
+        const state = form.inputs.get('[data-ms-message="success"]')
+        state.messageText.textContent = 'Message returned by Memberstack'
+        state.style.display = 'block'
+      })
+      const environment = loadController({ buildForm: null, securityForm: form,
+        config: { guardSecurityForm: mode },
+        routeGuard: { memberRole: () => 'brand-paid' },
+      })
+      form.submitEvent()
+      await settle()
+      assert.equal(nativeSaves, 1)
+      assert.deepEqual(environment.calls, [])
+      assert.equal(form.getAttribute('data-brand-account-bound'), null)
+      assert.equal(form.loading.getAttribute('data-opp-loading'), null)
+      assert.equal(form.inputs.get('[data-ms-message="success"]').messageText.textContent,
+        'Message returned by Memberstack')
+      environment.window.StartersBrandAccount.init()
+      form.submitEvent()
+      await settle()
+      assert.equal(nativeSaves, 2)
+      assert.deepEqual(environment.calls, [])
+    })
+  }
+}
