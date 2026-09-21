@@ -34,10 +34,11 @@ consumer); until it has booted, `getManagedSearchConfig('starters')` returns
 The adapter is fail-closed: it clears legacy company text before the request and
 does not fall back to `also-worked-with` for a missing ID, missing configuration,
 empty work history, or failed request. It changes no card rate, role, profile
-link, order, or CMS record. On every terminal path — success, failure, and the
-early return for an unresolved ID or unresolved managed configuration — it
-dispatches `expert-cards:relayout` so the shared card layout recalculates the
-company row.
+link, order, or CMS record. Once it has cleared the rail it always ends by
+dispatching `expert-cards:relayout` — on success, on failure, and on the early
+return for an unresolved ID or unresolved managed configuration — so the shared
+card layout recalculates the company row. A page with no consult cards is left
+untouched.
 
 Load both controllers on `/quiz` with `defer`, after the site Memberstack
 bootstrap:
