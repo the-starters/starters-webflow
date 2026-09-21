@@ -18,7 +18,7 @@ Scope: user-facing forms that create or change an account, profile, opportunity,
 | Start Project / Contract Generation | Xano + PandaDoc outbox | GitHub: `v3/project-form.js` | Live in v1.59.190 | No authoritative writer should remain inline |
 | Project lifecycle and review | Xano | GitHub: `opportunities-3.0.js`, `v3/reviews.js` | PR #399 | No authoritative writer should remain inline |
 | Generate Invoice | Xano | GitHub: `opportunities-3.0.js` | PR #399 | No authoritative writer should remain inline |
-| Account Profile / Account Security email change | Memberstack + Xano webhook | GitHub: `brand-account-controller.js`, `native-form-diagnostics.js`, dashboard readback observer | PR #401 plus native Account Profile receipt in this PR | No page-specific writer found |
+| Account Profile / Account Security email change | Memberstack + Xano webhook | Native `data-ms-form="profile"` submission for the published Account Security form; GitHub: `brand-account-controller.js` only for legacy non-native Security forms (see [BRAND-ACCOUNT-WIRING.md](../docs/wiring/BRAND-ACCOUNT-WIRING.md#native-account-security-ownership)), `native-form-diagnostics.js`, dashboard readback observer | PR #401 plus native Account Profile receipt in this PR | No page-specific writer found |
 | Pause Membership / Cancel Membership | Webflow form request intake only; no Memberstack subscription mutation is present in the published form path | GitHub: `native-form-diagnostics.js` plus UI helpers in `account-settings/*` and `global-embeds/step-flow/*` | Request-intake receipt in this PR; success stage is `request_accepted`, never membership changed | Native forms remain in Webflow; no inline mutation writer found |
 
 ## Release gates
