@@ -2,8 +2,9 @@
 
 Status: Prepared for GitHub source release; not installed in Webflow
 
-`v3/algolia-environment.js` must load before the deferred wf-algolia bundle and
-`quiz-results.js`. It selects public search credentials and primary indexes
+`v3/algolia-environment.js` must load before the deferred wf-algolia bundle,
+`quiz-results.js`, and `quiz-main/quiz-home.js`. It selects public search
+credentials and primary indexes
 from the exact host. Managed clients, including quiz Starter recommendations,
 consume this resolved configuration. They do not accept a mode or index from
 query parameters, local storage, Memberstack custom fields, page forms, DOM
@@ -170,6 +171,12 @@ Xano routes are published.
 - After the GitHub source release, purge jsDelivr and verify the served source
   bytes. Then install the resolver before wf-algolia, publish staging first,
   and verify loaded bytes and runtime attributes.
+- On the Home page, which carries no wf-algolia bundle, install the public host
+  configuration and `v3/algolia-environment.js` before the deferred
+  `quiz-main/quiz-home.js` tag. That adapter takes the Starter index and search
+  credentials only from the managed host resolution, and it clears the consult
+  rail's legacy company text before it requests work history, so a Home page
+  without the resolver renders the blue cards with no companies at all.
 
 Unknown hosts, missing values, an unknown managed resource, shared keys, shared
 indexes, and legacy dev indexes in public configuration remove all client

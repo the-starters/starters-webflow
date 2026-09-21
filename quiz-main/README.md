@@ -29,14 +29,15 @@ The Home tag must load **after** the deferred `v3/algolia-environment.js` tag.
 That resolver is the only source of the app ID, search key, and Starter index
 this adapter accepts (no DOM-attribute fallback, matching every other managed
 consumer); until it has booted, `getManagedSearchConfig('starters')` returns
-`null` and the rail resolves `missing-config` and renders no companies at all.
+`null`, the adapter makes no request, and the rail renders no companies at all.
 
 The adapter is fail-closed: it clears legacy company text before the request and
 does not fall back to `also-worked-with` for a missing ID, missing configuration,
 empty work history, or failed request. It changes no card rate, role, profile
 link, order, or CMS record. On every terminal path — success, failure, and the
-missing-ID/missing-config early return — it dispatches `expert-cards:relayout`
-so the shared card layout recalculates the company row.
+early return for an unresolved ID or unresolved managed configuration — it
+dispatches `expert-cards:relayout` so the shared card layout recalculates the
+company row.
 
 Load both controllers on `/quiz` with `defer`, after the site Memberstack
 bootstrap:

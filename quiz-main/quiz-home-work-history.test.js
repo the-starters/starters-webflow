@@ -62,7 +62,6 @@ async function load({
     const cards = Object.keys(histories).map((id) =>
         homeCard(id, 'Legacy company', { withImage: withImages }),
     )
-    const section = attributeElement()
     const requests = []
     const dispatched = []
 
@@ -76,7 +75,6 @@ async function load({
         },
         querySelector(selector) {
             if (selector === '[data-quiz-form="home"]') return null
-            if (selector === '.section_home-consult') return section
             return null
         },
         querySelectorAll(selector) {
@@ -147,7 +145,7 @@ async function load({
     await flushPromises()
     await flushPromises()
 
-    return { cards, dispatched, requests, section }
+    return { cards, dispatched, requests }
 }
 
 function companiesOf({ list }) {
@@ -156,10 +154,6 @@ function companiesOf({ list }) {
 
 function companyClassesOf({ list }) {
     return list.children.map((child) => `${child.tagName}.${child.className}`)
-}
-
-function sectionStatus(page) {
-    return page.section.getAttribute('data-home-work-history-status')
 }
 
 test('Home consult cards render ordered work-history for three, two, one, and empty states', async () => {
@@ -217,12 +211,10 @@ test('Home consult cards render ordered work-history for three, two, one, and em
         [],
     ])
     assert.deepEqual(
-        page.cards.map(({ list }) =>
-            list.getAttribute('data-home-work-history-status'),
-        ),
-        ['ready', 'ready', 'ready', 'empty'],
+        page.cards.map(({ list }) => list.textContent),
+        ['FirstSecondThird', 'AlphaBeta', 'Only', ''],
+        'the legacy CMS company text is gone from every card, populated or empty',
     )
-    assert.equal(sectionStatus(page), 'ready')
     assert.deepEqual(page.dispatched, ['expert-cards:relayout'])
 })
 
@@ -255,10 +247,6 @@ test('invalid work-history entries are omitted without reviving legacy CMS text'
         'Parachute Home',
         'The Honest Company',
     ])
-    assert.equal(
-        page.cards[0].list.getAttribute('data-home-work-history-status'),
-        'ready',
-    )
 })
 
 test('repeat stints at one company collapse to the first spelling', async () => {
@@ -284,11 +272,6 @@ test('a failed Algolia request removes the misleading legacy company list', asyn
 
     assert.deepEqual(companiesOf(page.cards[0]), [])
     assert.equal(page.cards[0].list.textContent, '')
-    assert.equal(
-        page.cards[0].list.getAttribute('data-home-work-history-status'),
-        'error',
-    )
-    assert.equal(sectionStatus(page), 'error')
     assert.deepEqual(page.dispatched, ['expert-cards:relayout'])
 })
 
@@ -300,7 +283,6 @@ test('an unresolved managed environment fails closed and still relayouts', async
 
     assert.equal(page.requests.length, 0, 'no request without managed credentials')
     assert.equal(page.cards[0].list.textContent, '')
-    assert.equal(sectionStatus(page), 'missing-config')
     assert.deepEqual(page.dispatched, ['expert-cards:relayout'])
 })
 
@@ -312,10 +294,5 @@ test('a card with no resolvable profile ID clears its legacy list and relayouts'
 
     assert.equal(page.requests.length, 0, 'no request without a profile ID')
     assert.equal(page.cards[0].list.textContent, '')
-    assert.equal(
-        page.cards[0].list.getAttribute('data-home-work-history-status'),
-        'missing-id',
-    )
-    assert.equal(sectionStatus(page), 'missing-id')
     assert.deepEqual(page.dispatched, ['expert-cards:relayout'])
 })

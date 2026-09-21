@@ -23,7 +23,6 @@
     const starterQuizHomeControllerFlag = 'starterQuizHomeController'
     const starterQuizHomeDebugEnabled = true
     const debugStorageKey = 'starterQuizDebug'
-    const homeConsultSectionSelector = '.section_home-consult'
     const homeConsultCardSelector =
         '.section_home-consult .expert-card_item.is-consult-home'
     const homeConsultCompanyListSelector = '.expert-card_company-list'
@@ -248,10 +247,9 @@
      *
      * @param {Element} list Company-list element.
      * @param {string[]} companies Ordered company names.
-     * @param {'ready'|'empty'} status Final render status.
      * @returns {void}
      */
-    function renderHomeConsultCompanies(list, companies, status) {
+    function renderHomeConsultCompanies(list, companies) {
         list.replaceChildren(
             ...companies.map((company) => {
                 const item = document.createElement('p')
@@ -260,7 +258,6 @@
                 return item
             }),
         )
-        list.setAttribute('data-home-work-history-status', status)
     }
 
     /**
@@ -271,35 +268,27 @@
      * @returns {Promise<void>}
      */
     async function homeConsultWorkHistoryController() {
-        const section = document.querySelector(homeConsultSectionSelector)
-        if (!section) return
-
         const cards = Array.from(
             document.querySelectorAll(homeConsultCardSelector),
         )
             .map((card) => ({
-                card,
                 id: getHomeConsultProfileId(card),
                 list: card.querySelector(homeConsultCompanyListSelector),
             }))
             .filter((entry) => entry.list)
         if (!cards.length) return
 
-        cards.forEach(({ id, list }) => {
+        cards.forEach(({ list }) => {
             list.replaceChildren()
-            list.setAttribute(
-                'data-home-work-history-status',
-                id ? 'loading' : 'missing-id',
-            )
         })
 
         const requestedCards = cards.filter((entry) => entry.id)
         const config = getHomeConsultAlgoliaConfig()
         if (!requestedCards.length || !config) {
-            section.setAttribute(
-                'data-home-work-history-status',
-                config ? 'missing-id' : 'missing-config',
-            )
+            logQuizFlow('consult work-history skipped', {
+                hasManagedConfig: Boolean(config),
+                requestedCards: requestedCards.length,
+            })
             window.dispatchEvent(new CustomEvent('expert-cards:relayout'))
             return
         }
@@ -328,21 +317,12 @@
             const payload = await response.json()
             const results = Array.isArray(payload?.results) ? payload.results : []
             requestedCards.forEach(({ list }, index) => {
-                const companies = getWorkHistoryCompanies(
-                    results[index]?.[workHistoryField],
-                )
                 renderHomeConsultCompanies(
                     list,
-                    companies,
-                    companies.length ? 'ready' : 'empty',
+                    getWorkHistoryCompanies(results[index]?.[workHistoryField]),
                 )
             })
-            section.setAttribute('data-home-work-history-status', 'ready')
         } catch (error) {
-            requestedCards.forEach(({ list }) => {
-                list.setAttribute('data-home-work-history-status', 'error')
-            })
-            section.setAttribute('data-home-work-history-status', 'error')
             logQuizFlow('consult work-history hydration failed', error)
         } finally {
             window.dispatchEvent(new CustomEvent('expert-cards:relayout'))
