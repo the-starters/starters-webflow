@@ -1214,11 +1214,11 @@ modal's `<form>`; a control placed elsewhere in the modal is ignored and the
 native fallback is still injected. Older published modals without an authored
 control receive that native button inside the rating's
 `data-end-project-review` group. It appears only while the optional review is
-offered. Validation messages name this control explicitly.
-If the Brand enters either a rating or review text,
-JavaScript requires both a 1–5 rating and a 10–4,000 character review before
-posting the project action. When the action response reaches `completed`, the
-controller submits the review to `brand/reviews/submit` in the same pass.
+offered. Validation messages name this control explicitly. If the Brand enters
+either a rating or review text, JavaScript requires both a 1–5 rating and a
+10–4,000 character review before posting the project action. When the action
+response reaches `completed`, the controller submits the review to
+`brand/reviews/submit` in the same pass.
 Termination never submits a review, and `canceled` or `cancelled` responses
 never receive one. A review failure after the project closes does not roll back
 the project and directs the Brand to retry through Review Starter.
