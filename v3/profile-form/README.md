@@ -220,7 +220,7 @@ No invalid value is silently clamped or treated as removal.
 
 The real-writer regressions cover rejected JSON types, numeric decimals, accepted scalar boundaries,
 and null/blank removal in all three slots. They also exercise the enabled Edit Profile Retainer
-and Full Profile Retainer/Paid Call writers with comma, currency, exponent, whitespace-only, and
+and Full Profile Retainer writers with comma, currency, exponent, whitespace-only, and
 negative inputs, asserting no request, plus padded digits that serialize as the exact whole-dollar value:
 
 ```sh
