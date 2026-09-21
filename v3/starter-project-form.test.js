@@ -1053,6 +1053,30 @@ test('an eligible Brand without a manager name uses its company for Party copy',
   assert.equal(context.copyTargets.at(-1).getAttribute('href'), '/messages?with=mem_northwind')
 })
 
+test('the live v4 counterparty_memberstack_id key drives the rendered Message action', async () => {
+  const { api, calls, context, form, window } = load({
+    counterparties: [{
+      counterparty_id: 81,
+      company_name: 'Acme',
+      hiring_manager_name: 'Jai',
+      counterparty_memberstack_id: 'mem_brand81',
+    }],
+  })
+
+  const options = await api.loadOptions(form, window)
+
+  assert.equal(calls.options.length, 1)
+  assert.deepEqual(JSON.parse(JSON.stringify(options)), [
+    { id: 81, label: 'Acme — Jai', company_name: 'Acme', manager_name: 'Jai', memberstack_member_id: 'mem_brand81' },
+  ])
+  assert.equal(form.fields.brandId.value, '81')
+  assert.deepEqual(context.copyTargets.slice(-2).map((element) => element.textContent), [
+    'Jai',
+    'Message Jai',
+  ])
+  assert.equal(context.copyTargets.at(-1).getAttribute('href'), '/messages?with=mem_brand81')
+})
+
 test('prepares Starter-specific copy and dashboard destination without changing native markup', () => {
   const { api, context, form } = load({ noDocument: true })
 
