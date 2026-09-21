@@ -579,6 +579,7 @@
           const reveal = function () {
               clearTimeout(dismissalTimer);
               if (trigger.getAttribute('aria-disabled') !== 'true') return;
+              if (!bookingOwner && !isBrandMember(window.MEMBER)) return;
               hint.style.display = 'block';
               if (!trigger.getBoundingClientRect || !hint.getBoundingClientRect) return;
               const rect = trigger.getBoundingClientRect();
@@ -725,27 +726,20 @@
    * controller is missing or cannot confirm the viewer, the CTA opens nothing
    * rather than an unconfigured Free/Paid chooser.
    */
-  function setLoggedOutBookingButtonAvailable(available) {
-      const show = available !== false;
+  function setLoggedOutBookingButtonAvailable() {
+      // Signup and upgrade do not require a bookable Starter.
       const selector =
           '[data-signup-trigger-element="book-call"]:not([data-booking-back]), [data-profile-book-call]';
 
       document.querySelectorAll(selector).forEach(function (trigger) {
-          const wasLoggedOutAvailable = trigger.hasAttribute('data-logged-out-book-call');
-          if (show) trigger.setAttribute('data-logged-out-book-call', '');
-          else trigger.removeAttribute('data-logged-out-book-call');
-          if (show || wasLoggedOutAvailable) trigger.removeAttribute('data-modal-trigger');
-          if (show) {
-              trigger.removeAttribute('data-booking-trigger-unavailable');
-              trigger.removeAttribute('aria-disabled');
-          } else {
-              trigger.setAttribute('data-booking-trigger-unavailable', '');
-              trigger.setAttribute('aria-disabled', 'true');
-          }
+          trigger.setAttribute('data-logged-out-book-call', '');
+          trigger.removeAttribute('data-modal-trigger');
+          trigger.removeAttribute('data-booking-trigger-unavailable');
+          trigger.removeAttribute('aria-disabled');
 
           const wrapper = trigger.closest('[booking-button-wrapper]');
-          setBookingWrapperAvailable(wrapper, show);
-          explainBookingAvailability(trigger, show);
+          setBookingWrapperAvailable(wrapper, true);
+          explainBookingAvailability(trigger, true);
       });
   }
 
@@ -2150,15 +2144,14 @@
       var isBrand = isBrandMember(MEMBER);
       var publicViewer = viewerSeesPublicProjection(MEMBER);
       if (MEMBER.id && !isBrand && !publicViewer) return;
+      if (publicViewer) setLoggedOutBookingButtonAvailable();
 
       try {
           const record = await getPublicStarterRecord();
           if (!record) return;
 
           if (publicViewer) {
-              const publicCalls = syncLoggedOutCallSurfaces(record);
-              loggedOutLegacyCallsAvailable = publicCalls.free || publicCalls.paid;
-              syncLoggedOutBookCallCta();
+              syncLoggedOutCallSurfaces(record);
               markServiceCardsClickable();
           }
           if (isBrand) {
@@ -2236,17 +2229,7 @@
      two-item public DTO into both wrappers. This adapter adds viewer state and
      routes actions into the controllers that already own signup, booking, and
      owner settings. It never creates a card or a modal. */
-  let loggedOutXanoCallsSettled = false;
-  let loggedOutXanoCallsAvailable = false;
-  let loggedOutLegacyCallsAvailable = false;
   let latestCanonicalCallItems = null;
-
-  function syncLoggedOutBookCallCta() {
-      const available = loggedOutXanoCallsSettled
-          ? loggedOutXanoCallsAvailable
-          : loggedOutLegacyCallsAvailable;
-      setLoggedOutBookingButtonAvailable(available);
-  }
 
   function installXanoCallCardsAdapter() {
       window.WfXano = window.WfXano || [];
@@ -2807,15 +2790,7 @@
                   card.removeAttribute('data-signup-trigger-value');
               }
           });
-          const anyPublicType = Array.from(itemsById.values()).some(function (item) {
-              return item.public_available === true;
-          });
-          loggedOutXanoCallsSettled = true;
-          // Both wrappers read the same canonical endpoint. Treat its latest
-          // completed response as authoritative for the shared Book Call CTA;
-          // retaining a per-wrapper OR lets a stale sibling keep the CTA open.
-          loggedOutXanoCallsAvailable = anyPublicType;
-          syncLoggedOutBookCallCta();
+          setLoggedOutBookingButtonAvailable();
           markServiceCardsClickable();
       } else if (isProfileOwner(MEMBER)) {
           applyOwnerCallCardStates(ownerCallSettingsSnapshot);

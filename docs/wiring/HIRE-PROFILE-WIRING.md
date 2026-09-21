@@ -837,8 +837,11 @@ stale content. The final state for an admitted clone is one of:
 `Free Call` / `Paid Consulting Call`, and its `.service-card_content-wrapper` booking row
 is removed through the same `stripCallBookingRow` writer the touts and rate-card
 clones use — no authenticated writer runs for this viewer, so a row nobody owns
-would show the `00:00pm on 00/00` sentinel forever. When either type is public,
-the generic Book Call CTAs become available as signup-only entry points.
+would show the `00:00pm on 00/00` sentinel forever. The generic Book Call CTAs
+remain signup-only entry points regardless of call availability, including
+while public data is loading or has failed. The unavailable-call tooltip is
+reserved for paid Brands; signed-out and paywalled visitors continue to signup
+or upgrade. Owner-specific call settings guidance remains unchanged.
 
 That attribution pair is the existing signup controller's canonical service
 contract. It opens `signup-modal` for a confirmed logged-out viewer and maps the
