@@ -1209,9 +1209,12 @@ completion, not the legacy stranded-termination cleanup or cancellation. The
 review is optional. A **Clear review** button clears all selected stars and both
 supported feedback fields, dismisses the validation error, and leaves the modal
 open without submitting the project. An authored `type="button"` control can use
-`data-end-project-clear-review`; older published modals receive a native button
-inside the rating's `data-end-project-review` group. It appears only while the
-optional review is offered. Validation messages name this control explicitly.
+`data-end-project-clear-review`, but it must sit inside the `end-project`
+modal's `<form>`; a control placed elsewhere in the modal is ignored and the
+native fallback is still injected. Older published modals without an authored
+control receive that native button inside the rating's
+`data-end-project-review` group. It appears only while the optional review is
+offered. Validation messages name this control explicitly.
 If the Brand enters either a rating or review text,
 JavaScript requires both a 1–5 rating and a 10–4,000 character review before
 posting the project action. When the action response reaches `completed`, the
