@@ -1,7 +1,7 @@
 /**
  * V3 hire-profile renderer — /hire/<slug>
  *
- * @release v1.59.601
+ * @release v1.59.603
  *
  * Ported from the page-level FOOTER custom code on the hire template (page
  * 69f241ed147b71addb6f153d), so that the remaining runtime logic lives in
@@ -824,6 +824,14 @@
   }
 
   function publicCallTypeReady(type) {
+      // This gate only means something while the public projection and the
+      // booking paths describe the SAME starter. On the staging fixture route
+      // they deliberately do not: the wrappers keep their CMS-authored
+      // `starter_id`, so their answer is about a different starter than the one
+      // being booked and cannot decide EITHER type. That route answers locally
+      // instead — Free is the fixture's whole purpose, and Paid stays closed so
+      // no Stripe entry point can open on it.
+      if (STAGING_BOOKING_FIXTURE) return type === 'free';
       const wrapper = document.querySelector('[wf-xano-instance="starter-call-offers-header"], [wf-xano-instance="starter-call-offers-services"]');
       if (!wrapper) return true; // Legacy pages have no public-readiness contract.
       if (!latestCanonicalCallItems) return false;
@@ -1444,10 +1452,38 @@
     return;
   }
 
+  // `jp-test` is the published CMS canary shared by both environments. Its
+  // authored Memberstack value belongs to Live, so the Test Brand on Webflow
+  // staging would otherwise cross the environment boundary and correctly get
+  // a 403 before the chooser opens. Bind that one exact staging route to the
+  // owned Test Starter fixture. Production and every other profile keep their
+  // CMS-bound identity and route slug.
+  const STAGING_BOOKING_FIXTURE =
+      window.location.hostname === 'the-starters-3-0.webflow.io' &&
+      window.location.pathname.replace(/\/+$/, '') === '/hire/jp-test'
+          ? {
+              memberstackId: 'mem_sb_cmqhuaxn80d270sseeo74fn7i',
+              starterSlug: 'jp-dionisio',
+          }
+          : null;
+
   // `starter_memberstack_id` is a global var (set by an embedded script at the
   // top of the Freelancer Template page). Read it off window so a missing global
   // warns instead of throwing a ReferenceError that would abort this file.
   const FREELANCER_ID = window.starter_memberstack_id;
+
+  function bookingStarterMemberstackId() {
+      return STAGING_BOOKING_FIXTURE
+          ? STAGING_BOOKING_FIXTURE.memberstackId
+          : FREELANCER_ID;
+  }
+
+  function bookingStarterSlug() {
+      if (STAGING_BOOKING_FIXTURE) return STAGING_BOOKING_FIXTURE.starterSlug;
+      return decodeURIComponent(
+          window.location.pathname.replace(/^\/hire\//, '').replace(/\/+$/, '')
+      );
+  }
   // Keep this map aligned with v3/route-guard.js and v3/auth-route.js. Access
   // decisions use stable Memberstack plan IDs; display names and old dashboard
   // URL fields are not role authority.
@@ -1627,9 +1663,12 @@
   /**
    * The viewer IS the starter whose profile this is.
    *
-   * `FREELANCER_ID` is what this file feeds to `getStarterByMemberId`, whose
-   * Xano input is a Memberstack id, so both sides of this comparison live in
-   * the same id space. A talent viewing SOMEONE ELSE's profile is not an owner
+   * `FREELANCER_ID` is the CMS-authored Memberstack id of the profile being
+   * viewed, so both sides of this comparison live in the same id space. It is
+   * NOT the booking identity: `bookingStarterMemberstackId()` owns that, and on
+   * the staging fixture route the two differ. Ownership and the CMS Starter-name
+   * lookup read `FREELANCER_ID`; anything booking-side must read the booking
+   * identity instead. A talent viewing SOMEONE ELSE's profile is not an owner
    * and keeps the unchanged non-brand behaviour.
    */
   function isProfileOwner(member) {
@@ -2123,7 +2162,7 @@
               return;
           }
 
-          startersBooking_handler(FREELANCER_ID, brand_name, brand_email);
+          startersBooking_handler(bookingStarterMemberstackId(), brand_name, brand_email);
       })();
   });
 
@@ -3466,7 +3505,7 @@
       item.style.display = 'none';
   });
 
-  async function startersBooking_handler(freelancerId, brand_name, brand_email) {
+  async function startersBooking_handler(bookingStarterId, brand_name, brand_email) {
 
       if (!validBookingDiscovery(freeCallBooking)) {
           settleEmptyCallDiscovery();
@@ -3475,12 +3514,12 @@
       }
 
       const starterIdentity = Array.from(qsa('[messages-profile-message][messages-profile-name]')).find(function (element) {
-          return element.getAttribute('messages-profile-message') === freelancerId;
+          return element.getAttribute('messages-profile-message') === FREELANCER_ID;
       });
       const starterName = starterIdentity ? starterIdentity.getAttribute('messages-profile-name') : '';
 
       // GET STARTER
-      const starter = await freeCallBooking.getStarterByMemberId(freelancerId);
+      const starter = await freeCallBooking.getStarterByMemberId(bookingStarterId);
       const grant_id = starter ? starter['nylas_grant_id'] : null;
       if (grant_id) {
 
@@ -3518,10 +3557,8 @@
                       freeCallBooking.installFreeBookingController({
                           config: freeConfigs[0],
                           grantId: grant_id,
-                          starterSlug: decodeURIComponent(
-                              window.location.pathname.replace(/^\/hire\//, '').replace(/\/+$/, '')
-                          ),
-                          starterMemberstackId: freelancerId,
+                          starterSlug: bookingStarterSlug(),
+                          starterMemberstackId: bookingStarterId,
                           brandName: brand_name,
                           brandEmail: brand_email,
                           starterEmail: starter.nylas_grant_email,
@@ -3555,9 +3592,7 @@
                       paidController.installPaidBookingController({
                           config: paidConfig,
                           grantId: grant_id,
-                          starterSlug: decodeURIComponent(
-                              window.location.pathname.replace(/^\/hire\//, '').replace(/\/+$/, '')
-                          ),
+                          starterSlug: bookingStarterSlug(),
                           brandName: brand_name,
                           brandEmail: brand_email,
                           starterEmail: starter.nylas_grant_email,

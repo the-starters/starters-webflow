@@ -191,10 +191,13 @@ rule, so delayed wf-xano results cannot restore a missing Company-page link.
 
 The runtime no longer calls `api:SYL06lUR/companies`,
 `edit_profile/starter/get_also_worked_with`, or `profile/get_companies`.
-`FREELANCER_ID` remains the Memberstack ID used by booking. The public Algolia
-lookup instead reads the starter's positive integer Xano ID at parse time from
-`[data-starter-xano-id]` inside the hidden `.data-native-binding` wrapper. If
-the carrier is absent or invalid, the lookup warns and stands down.
+`FREELANCER_ID` remains the CMS-authored Memberstack ID of the viewed profile,
+used for ownership and the CMS Starter-name lookup; the booking identity comes
+from `bookingStarterMemberstackId()` and differs on the staging fixture route.
+The public Algolia lookup instead reads the starter's positive integer Xano ID
+at parse time from `[data-starter-xano-id]` inside the hidden
+`.data-native-binding` wrapper. If the carrier is absent or invalid, the lookup
+warns and stands down.
 
 ## Dependencies this file does NOT own
 
@@ -368,6 +371,35 @@ The authored `[data-modal-target="popup-booking-main"]` dialog also stays marked
 `data-booking-surface-unavailable` until an option is admitted.
 Production `/hire/jp-dionisio` remains blocked before grant or configuration
 discovery, so the TEST fixture cannot activate on a production host.
+
+<a id="staging-hire-jp-test-booking-fixture"></a>
+
+### The staging `/hire/jp-test` booking fixture
+
+`jp-test` is the published CMS canary shared by both environments, so its
+authored `starter_memberstack_id` is a **Live** value while the authenticated
+Test Brand and the enabled Free Call fixture live in **Test**. Canonical
+discovery would therefore reject the cross-environment request before the
+chooser opens.
+
+On the one exact pair `the-starters-3-0.webflow.io` + `/hire/jp-test` (trailing
+slashes normalized), `hire-profile.js` binds the booking paths to the owned Test
+Starter: `bookingStarterMemberstackId()` returns the Test Memberstack id for
+canonical discovery and for the controller installs, and `bookingStarterSlug()`
+returns the canonical Test slug instead of the route segment.
+`scheduling-v3-stage.js` applies the same identity to the scheduler
+`bookingInfo` payload, so every booking path agrees on one starter.
+
+The binding is deliberately narrow. `FREELANCER_ID` — profile ownership and the
+CMS Starter-name lookup — stays CMS-authored, so the owner path, the displayed
+Starter name, and the authored UI are unchanged. Every other profile, and
+`/hire/jp-test` on any production host, resolves its CMS identity and its own
+route slug exactly as before.
+
+Because the call-offers wrappers keep their CMS-authored `starter_id`, the
+public DTO on this route describes the CMS starter rather than the one being
+booked; the [Brand readiness contract](#signed-in-brand-readiness) records how
+Free stands down from that half of the gate while Paid does not.
 
 The booking availability gate controls a `[booking-button-wrapper]` only when
 it contains a Book Call entry and no `[data-signup-trigger-element="hire"]` entry.
@@ -916,6 +948,15 @@ arrive in either order; unresolved public readiness keeps the surfaces closed.
 A late card replays `paintedCallState.configs` through the same gate. Pages with
 neither canonical wrapper retain the authenticated discovery gate alone.
 
+The one exception is the staging fixture route described under
+[The staging `/hire/jp-test` booking fixture](#staging-hire-jp-test-booking-fixture),
+where the public DTO describes a different starter than the one being booked and
+so cannot answer for either type. That route resolves public readiness locally
+instead of consulting the foreign projection: **Free** is admitted and rests on
+installed-controller discovery alone, and **Paid** is refused outright, so no
+Stripe entry point can open there whatever the CMS record happens to publish.
+Every other route keeps the full intersection unchanged.
+
 **Any other signed-in viewer** — talent on someone else's profile, unknown role
 — gets both cards hidden. That is the fail-closed default, and it is why the
 legacy reveal has to stand down from these cards: the Algolia and grant booleans
@@ -1219,9 +1260,11 @@ which is the only caller of the two painters. A starter opening their own
 viewer saw canonical values.
 
 The gate is ownership, not role: the paint runs only when
-`MEMBER.id === FREELANCER_ID`. `FREELANCER_ID` is what this file feeds to
-`getStarterByMemberId`, whose Xano input is a Memberstack id, so both sides of
-that comparison live in one id space. A talent viewing **someone else's**
+`MEMBER.id === FREELANCER_ID`. `FREELANCER_ID` is the CMS-authored Memberstack
+id of the viewed profile, so both sides of that comparison live in one id space.
+It is not the booking identity — `bookingStarterMemberstackId()` owns that and
+diverges on the staging fixture route — so a new booking-side lookup must read
+the booking identity, not `FREELANCER_ID`. A talent viewing **someone else's**
 profile is not an owner and gets the unchanged non-brand behaviour, byte for
 byte. The reveal itself is untouched for every viewer — the paint is layered on
 top of it and changes only what the revealed surfaces say.
