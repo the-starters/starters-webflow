@@ -1,7 +1,9 @@
 # V3 Starter project form wiring
 
 `v3/starter-project-form.js` connects the detached Starter Dashboard copy of the
-shared **Contract Generation** component to the authenticated V3 project endpoints.
+shared **Contract Generation** component to the authenticated Xano project
+endpoints listed under [Backend contract required before Webflow
+wiring](#backend-contract-required-before-webflow-wiring).
 V2 is a behavior reference only. This controller does not call a V2 route,
 Airtable, Make, or a legacy TalkJS table.
 
@@ -298,10 +300,10 @@ cached `opportunities-3.0.js` lacking `Opp30.API.starterProfile` cannot load
 canonical services. The controller still removes the generic placeholders and
 `Monthly retainer`, and keeps every other valid authored option.
 
-Do not add the last loader until both V3 endpoints exist and pass backend tests.
-After release, install it on the Starter Dashboard so the existing Navbar action
-opens the detached shared Contract Generation form. Ship it in the same release
-as the Brand loader in
+Do not add the last loader until both backend endpoints exist and pass backend
+tests. After release, install it on the Starter Dashboard so the existing Navbar
+action opens the detached shared Contract Generation form. Ship it in the same
+release as the Brand loader in
 [BRAND-PROJECT-PROPOSALS-WIRING.md](BRAND-PROJECT-PROPOSALS-WIRING.md#script-order);
 the Starter half alone leaves every request unactionable.
 The deferred Starter adapter must execute before `global-embeds/modal/modal.js`
