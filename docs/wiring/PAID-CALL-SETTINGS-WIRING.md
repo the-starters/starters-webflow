@@ -9,31 +9,19 @@ update-the-duration message until it is saved again at 60 minutes.
 
 ## Build Profile handoff
 
-Build Profile stores the member's visible Paid choice as private
-`starter_call_settings_intent_v3.paid` Memberstack JSON. This is not an active
-service and is not a `freelancers_v3` projection. Dashboard and Edit Profile
-hydrate it as pending create, update, or disable intent. A new enable remains
-pending until Calendar, Availability, Stripe linkage, charge readiness, and the
-freshness gate are all ready, then the member must select Update. The controller
-removes only the Paid part of the receipt after exact canonical write/readback;
-any pending Free part is preserved. An off choice that canonical already
-satisfies — no active Paid service — needs no write: the controller drops that
-part of the receipt on load and repaints. A submitted off choice is treated the
-same way while no active Paid service exists, even when the receipt itself is
-still an unconsumed enable — the controller consumes that part of the receipt
-with no canonical write and repaints, so a declined Build Profile Yes cannot
-re-assert itself on the next load.
-Build Profile draft saves and both Call Settings controllers serialize the full
-Memberstack JSON read-modify-write through `window.__tsMemberJsonWrite`, so one
-branch cannot overwrite another. Receipt cleanup is best-effort after verified
-canonical readback: a failed cleanup write never turns a successful canonical
-save into a profile-step failure, and the unchanged receipt retries on reload.
-When an already-off receipt is consumed without a canonical write, the delayed
-Edit Profile re-render runs inside `__tsProfileDirtyState.runHydrationSync` so
-the synthetic radio change cannot create an unsaved step-6 state. The controller
-also records a monotonic member-edit revision. If the member changes the Paid
-choice, title, or rate while receipt cleanup is in flight, the delayed re-render
-is skipped and the unsaved member input remains visible and dirty.
+Build Profile stores the member's visible Paid choice as the `paid` part of the
+private, member-bound `starter_call_settings_intent_v3` Memberstack receipt. The
+Paid controller keeps a new enable pending — prefilling the radio, title, and
+rate without becoming canonical state — until Calendar, Availability, Stripe
+linkage, charge readiness, and the freshness gate are all ready, then the member
+must select Update.
+
+Everything else about that receipt is branch-agnostic and owned by
+[Call Settings receipt lifecycle](../../v3/build-profile/README.md#call-settings-receipt-lifecycle):
+its shape, how Dashboard and Edit Profile hydrate it, the three ways a
+controller consumes its own part while leaving the Free part untouched, the
+serialized `window.__tsMemberJsonWrite` boundary, best-effort cleanup, and the
+protection that keeps unsaved member edits from being repainted during cleanup.
 
 ## Script
 

@@ -188,31 +188,10 @@ The extracted final submit writer keeps the existing normalized profile payload
 and availability fields. It never sends `free_call`, `free_call_desc`,
 `paid_call`, `paid_call_desc`, or `paid_call_rate` to the profile endpoint.
 Instead, Build Profile validates its visible Call Settings controls and stores a
-versioned, member-bound `starter_call_settings_intent_v3` receipt in private
-Memberstack JSON. Dashboard and Edit Profile hydrate that receipt as a pending
-create, update, or disable, then consume it once canonical state matches the
-choice: after the existing canonical Call Settings endpoint returns exact
-readback, or without any write when canonical already satisfies an off choice.
-Calendar plus availability are required for Free activation; Paid also requires
-a charge-ready, fresh Stripe connection. Until those prerequisites exist, the
-choice remains pending rather than being projected to `freelancers_v3`. The
-active environment-matched `nylas_configurations_v3` row and provider readback
-remain the sole call authority. The receipt is written after the canonical
-profile save and before the pending-photo commit, so a Call Settings storage failure keeps the accepted
-profile save cached for the resubmit the panel asks for and leaves the pending
-photo uncommitted until an attempt gets past that write. The submit writer,
-draft-state writer, and Free/Paid receipt consumers share one serialized
-`window.__tsMemberJsonWrite` read-modify-write boundary. A final-step draft save
-therefore cannot overwrite the Call Settings receipt from the same click. A draft
-write also abandons itself when its own Memberstack read fails, rather than
-persisting a blob rebuilt from an empty read, so a transient read error cannot
-drop the receipt or any other member JSON key. The whole handoff — Build Profile
-storing the receipt, then Dashboard and Edit Profile hydrating, consuming, and
-declining it — is exercised in Chrome against the authored DOM by
-`node v3/browser-tests/call-settings-receipt.browser.cjs`; set
-`CALL_RECEIPT_BROWSER_EVIDENCE=<dir>` to write screenshots and observations. That
-fixture fakes only the Memberstack session and the Xano responses, so it cannot
-establish production behavior. The writer
+private, member-bound Call Settings receipt that Dashboard and Edit Profile
+materialize. [Call Settings receipt lifecycle](#call-settings-receipt-lifecycle)
+owns that contract, including where this writer's receipt write sits relative to
+the canonical profile save and the pending-photo commit. The writer
 also treats the monthly-retainer section as profile-type-inapplicable on
 Consult: hidden hydrated radio/rate values always submit `retainer: false` and
 `retainer_rate: 0`. The hidden hourly rate is inapplicable on Consult in the same
@@ -252,6 +231,71 @@ inline blocks only. What each candidate changes is recorded once, in
 [Inline extraction candidate](../profile-form/README.md#inline-extraction-candidate).
 
 This exclusion is a release boundary, not proof that the remaining inline code is acceptable long term.
+
+## Call Settings receipt lifecycle
+
+This section is the single owner of the branch-agnostic Build Profile Call
+Settings handoff. The
+[Free Call settings contract](../../docs/wiring/FREE-CALL-SETTINGS-WIRING.md#build-profile-handoff)
+and the
+[Paid Call settings contract](../../docs/wiring/PAID-CALL-SETTINGS-WIRING.md#build-profile-handoff)
+own only what differs per branch: which prerequisites gate an enable, and which
+authored controls that branch's receipt part prefills.
+
+Build Profile validates its visible Call Settings controls and stores a
+versioned, member-bound `starter_call_settings_intent_v3` receipt in private
+Memberstack JSON, with a separate `free` part and `paid` part. A receipt is not
+an active service and is not a `freelancers_v3` projection. The active
+environment-matched `nylas_configurations_v3` row and provider readback remain
+the sole call authority.
+
+Dashboard and Edit Profile hydrate the receipt as a pending create, update, or
+disable. A pending enable prefills that branch's controls without becoming
+canonical state, and stays pending until the branch's prerequisites are ready
+and the member selects Update.
+
+Each consumer removes only its own part of the receipt; the other branch's
+pending part is preserved. It consumes its part once canonical state matches the
+member's choice, in one of three ways:
+
+- after the canonical Call Settings endpoint returns exact readback;
+- with no canonical write, on load, when the receipt's own off choice is already
+  satisfied because that branch has no active service;
+- with no canonical write, on a submitted off choice while that branch has no
+  active service, even when the receipt itself is still an unconsumed enable, so
+  a declined Build Profile Yes cannot re-assert itself on the next load.
+
+Cleanup after a verified canonical readback is best-effort: a failed cleanup
+write never turns a successful canonical save into a profile-step failure, and
+the unchanged receipt retries on reload.
+
+The submit writer, the draft-state writer, and both receipt consumers share one
+serialized `window.__tsMemberJsonWrite` read-modify-write boundary, so one
+branch cannot overwrite another. A final-step draft save therefore cannot
+overwrite the Call Settings receipt from the same click. A draft write also
+abandons itself when its own Memberstack read fails, rather than persisting a
+blob rebuilt from an empty read, so a transient read error cannot drop the
+receipt or any other member JSON key.
+
+Build Profile writes the receipt after the canonical profile save and before the
+pending-photo commit, so a Call Settings storage failure keeps the accepted
+profile save cached for the resubmit the panel asks for and leaves the pending
+photo uncommitted until an attempt gets past that write.
+
+Consuming a receipt must not invent unsaved work on Edit Profile. When an
+already-off receipt is consumed with no canonical write, the delayed re-render
+runs inside `__tsProfileDirtyState.runHydrationSync`, so the synthetic radio
+change cannot create an unsaved step-6 state. Each controller also records a
+monotonic member-edit revision: if the member changes that branch's choice or
+fields while receipt cleanup is in flight, the delayed re-render is skipped and
+the unsaved member input stays visible and dirty.
+
+The whole handoff — Build Profile storing the receipt, then Dashboard and Edit
+Profile hydrating, consuming, and declining it — is exercised in Chrome against
+the authored DOM by `node v3/browser-tests/call-settings-receipt.browser.cjs`;
+set `CALL_RECEIPT_BROWSER_EVIDENCE=<dir>` to write screenshots and observations.
+That fixture fakes only the Memberstack session and the Xano responses, so it
+cannot establish production behavior.
 
 ## Release verification
 

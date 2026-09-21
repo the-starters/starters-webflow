@@ -20,3 +20,13 @@ node_modules/
 
 # Proposed-record dumps from scripts/learn-reindex.mjs. Local only.
 scripts/.learn-reindex-out/
+
+# Ephemeral Chrome user-data directories created by v3/browser-tests/*.browser.cjs
+# (mkdtemp in the repository root). Normally removed on exit; ignored so a crashed
+# run cannot commit a browser profile.
+.availability-browser-*/
+.call-receipt-browser-*/
+.edit-profile-browser-*/
+.hire-browser-*/
+.messages-browser-*/
+.paste-browser-*/
