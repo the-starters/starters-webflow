@@ -29,7 +29,9 @@ service and is not a `freelancers_v3` projection. Dashboard and Edit Profile
 hydrate it as pending create, update, or disable intent. The controller keeps a
 new enable pending until Calendar and Availability are ready, then requires the
 member to select Update. It removes only the Free part of the receipt after an
-exact canonical write/readback; any pending Paid part is preserved.
+exact canonical write/readback; any pending Paid part is preserved. An off
+choice that canonical already satisfies — no active Free service — needs no
+write: the controller drops that part of the receipt on load and repaints.
 Build Profile draft saves and both Call Settings controllers serialize the full
 Memberstack JSON read-modify-write through `window.__tsMemberJsonWrite`, so one
 branch cannot overwrite another. Receipt cleanup is best-effort after verified

@@ -16,7 +16,9 @@ hydrate it as pending create, update, or disable intent. A new enable remains
 pending until Calendar, Availability, Stripe linkage, charge readiness, and the
 freshness gate are all ready, then the member must select Update. The controller
 removes only the Paid part of the receipt after exact canonical write/readback;
-any pending Free part is preserved.
+any pending Free part is preserved. An off choice that canonical already
+satisfies — no active Paid service — needs no write: the controller drops that
+part of the receipt on load and repaints.
 Build Profile draft saves and both Call Settings controllers serialize the full
 Memberstack JSON read-modify-write through `window.__tsMemberJsonWrite`, so one
 branch cannot overwrite another. Receipt cleanup is best-effort after verified

@@ -190,14 +190,15 @@ and availability fields. It never sends `free_call`, `free_call_desc`,
 Instead, Build Profile validates its visible Call Settings controls and stores a
 versioned, member-bound `starter_call_settings_intent_v3` receipt in private
 Memberstack JSON. Dashboard and Edit Profile hydrate that receipt as a pending
-create, update, or disable, then consume it only after the existing canonical
-Call Settings endpoint returns exact readback. Calendar plus availability are
-required for Free activation; Paid also requires a charge-ready, fresh Stripe
-connection. Until those prerequisites exist, the choice remains pending rather
-than being projected to `freelancers_v3`. The active environment-matched
-`nylas_configurations_v3` row and provider readback remain the sole call
-authority. The receipt is written after the canonical profile save and before the
-pending-photo commit, so a Call Settings storage failure keeps the accepted
+create, update, or disable, then consume it once canonical state matches the
+choice: after the existing canonical Call Settings endpoint returns exact
+readback, or without any write when canonical already satisfies an off choice.
+Calendar plus availability are required for Free activation; Paid also requires
+a charge-ready, fresh Stripe connection. Until those prerequisites exist, the
+choice remains pending rather than being projected to `freelancers_v3`. The
+active environment-matched `nylas_configurations_v3` row and provider readback
+remain the sole call authority. The receipt is written after the canonical
+profile save and before the pending-photo commit, so a Call Settings storage failure keeps the accepted
 profile save cached for the resubmit the panel asks for and leaves the pending
 photo uncommitted until an attempt gets past that write. The submit writer,
 draft-state writer, and Free/Paid receipt consumers share one serialized
