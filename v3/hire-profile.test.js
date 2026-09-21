@@ -8334,6 +8334,62 @@ test('the staging jp-test canary opens Book Call when the CMS public projection 
   assert.equal(page.bookingButton.getAttribute('aria-disabled'), null)
 })
 
+// Only Free stands down from the public half of the gate. Paid keeps the full
+// intersection, so the fixture cannot hand a tester a Stripe entry point.
+test('the staging jp-test canary keeps Paid closed while the CMS projection withholds it', async () => {
+  const page = makePage()
+  const services = addXanoCallCardsFixture(page, 'starter-call-offers-services')
+  const wfx = makeCallCardsWfXanoFixture(services.wrapper, 'starter-call-offers-services')
+  const installs = []
+  const context = makeContext({
+    page,
+    location: { hostname: 'the-starters-3-0.webflow.io', pathname: '/hire/jp-test' },
+    starterMemberId: 'mem_live_cms_value',
+    member: BRAND_MEMBER,
+    wfXano: wfx.api,
+    freeController: {
+      getStarterByMemberId: async () => ({
+        nylas_grant_id: 'grant_test',
+        nylas_grant_email: 'starter@example.com',
+      }),
+      getConfigs: async () => [
+        {
+          config_id: 'free_test', is_paid: false, active: true,
+          data_environment: 'test', duration: 30, price_cents: 0,
+        },
+        {
+          config_id: 'paid_test', is_paid: true, active: true,
+          data_environment: 'test', payment_environment: 'test',
+          currency: 'USD', duration: 60, price_cents: 100,
+        },
+      ],
+      getNearestSlot: async () => null,
+      installFreeBookingController: () => {
+        installs.push('free')
+        return true
+      },
+    },
+    paidController: {
+      installPaidBookingController: () => {
+        installs.push('paid')
+        return true
+      },
+    },
+  })
+
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  wfx.emit(callCardResult({ free: false, paid: false }))
+  await settle()
+
+  assert.deepEqual(installs, ['free', 'paid'])
+  assert.equal(services.free.root.style.display, 'block')
+  assert.equal(services.free.root.getAttribute('data-canonical-call-unavailable'), null)
+  assert.equal(services.paid.root.style.display, 'none')
+  assert.equal(services.paid.root.getAttribute('data-canonical-call-unavailable'), '')
+  assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), null)
+})
+
 test('another staging profile still gates Book Call on its own public projection', async () => {
   const page = makePage()
   const services = addXanoCallCardsFixture(page, 'starter-call-offers-services')

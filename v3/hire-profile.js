@@ -828,8 +828,9 @@
       // booking paths describe the SAME starter. On the staging fixture route
       // they deliberately do not: the wrappers keep their CMS-authored
       // `starter_id`, so their answer is about a different starter than the one
-      // being booked and cannot decide this viewer's readiness.
-      if (STAGING_BOOKING_FIXTURE) return true;
+      // being booked. Only Free stands down — Paid keeps the unchanged public
+      // contract so the fixture cannot open a Stripe entry point.
+      if (STAGING_BOOKING_FIXTURE && type === 'free') return true;
       const wrapper = document.querySelector('[wf-xano-instance="starter-call-offers-header"], [wf-xano-instance="starter-call-offers-services"]');
       if (!wrapper) return true; // Legacy pages have no public-readiness contract.
       if (!latestCanonicalCallItems) return false;
@@ -3503,7 +3504,7 @@
       item.style.display = 'none';
   });
 
-  async function startersBooking_handler(freelancerId, brand_name, brand_email) {
+  async function startersBooking_handler(bookingStarterId, brand_name, brand_email) {
 
       if (!validBookingDiscovery(freeCallBooking)) {
           settleEmptyCallDiscovery();
@@ -3517,7 +3518,7 @@
       const starterName = starterIdentity ? starterIdentity.getAttribute('messages-profile-name') : '';
 
       // GET STARTER
-      const starter = await freeCallBooking.getStarterByMemberId(freelancerId);
+      const starter = await freeCallBooking.getStarterByMemberId(bookingStarterId);
       const grant_id = starter ? starter['nylas_grant_id'] : null;
       if (grant_id) {
 
@@ -3556,7 +3557,7 @@
                           config: freeConfigs[0],
                           grantId: grant_id,
                           starterSlug: bookingStarterSlug(),
-                          starterMemberstackId: freelancerId,
+                          starterMemberstackId: bookingStarterId,
                           brandName: brand_name,
                           brandEmail: brand_email,
                           starterEmail: starter.nylas_grant_email,

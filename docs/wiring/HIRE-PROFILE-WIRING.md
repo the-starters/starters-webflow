@@ -372,6 +372,35 @@ The authored `[data-modal-target="popup-booking-main"]` dialog also stays marked
 Production `/hire/jp-dionisio` remains blocked before grant or configuration
 discovery, so the TEST fixture cannot activate on a production host.
 
+<a id="staging-hire-jp-test-booking-fixture"></a>
+
+### The staging `/hire/jp-test` booking fixture
+
+`jp-test` is the published CMS canary shared by both environments, so its
+authored `starter_memberstack_id` is a **Live** value while the authenticated
+Test Brand and the enabled Free Call fixture live in **Test**. Canonical
+discovery would therefore reject the cross-environment request before the
+chooser opens.
+
+On the one exact pair `the-starters-3-0.webflow.io` + `/hire/jp-test` (trailing
+slashes normalized), `hire-profile.js` binds the booking paths to the owned Test
+Starter: `bookingStarterMemberstackId()` returns the Test Memberstack id for
+canonical discovery and for the controller installs, and `bookingStarterSlug()`
+returns the canonical Test slug instead of the route segment.
+`scheduling-v3-stage.js` applies the same identity to the scheduler
+`bookingInfo` payload, so every booking path agrees on one starter.
+
+The binding is deliberately narrow. `FREELANCER_ID` — profile ownership and the
+CMS Starter-name lookup — stays CMS-authored, so the owner path, the displayed
+Starter name, and the authored UI are unchanged. Every other profile, and
+`/hire/jp-test` on any production host, resolves its CMS identity and its own
+route slug exactly as before.
+
+Because the call-offers wrappers keep their CMS-authored `starter_id`, the
+public DTO on this route describes the CMS starter rather than the one being
+booked; the [Brand readiness contract](#signed-in-brand-readiness) records how
+Free stands down from that half of the gate while Paid does not.
+
 The booking availability gate controls a `[booking-button-wrapper]` only when
 it contains a Book Call entry and no `[data-signup-trigger-element="hire"]` entry.
 The template uses the attribute on Hire-only and mixed Hire/Book Call groups.
@@ -918,6 +947,14 @@ and Book Call availability. Public results and authenticated discovery may
 arrive in either order; unresolved public readiness keeps the surfaces closed.
 A late card replays `paintedCallState.configs` through the same gate. Pages with
 neither canonical wrapper retain the authenticated discovery gate alone.
+
+The one exception is the staging fixture route described under
+[The staging `/hire/jp-test` booking fixture](#staging-hire-jp-test-booking-fixture),
+where the public DTO describes a different starter than the one being booked.
+There the **Free** type stands down from the public half of the intersection and
+rests on installed-controller discovery alone. **Paid** keeps the full
+intersection on that route as everywhere else, so the fixture cannot open a
+Stripe entry point.
 
 **Any other signed-in viewer** — talent on someone else's profile, unknown role
 — gets both cards hidden. That is the fail-closed default, and it is why the
