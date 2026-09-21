@@ -17,8 +17,8 @@
  *
  * Build Account does not send a password email when the member keeps the login
  * email they already authenticated with. If that email changes, Build Account
- * and Account Security attempt one reset email after the auth update succeeds.
- * Starter Edit Profile updates only the login email and keeps the existing
+ * attempts one reset email after the auth update succeeds. Account Security and
+ * Starter Edit Profile update only the login email and keep the existing
  * password. Password email calls are never automatically retried; Memberstack's
  * Forgot Password flow is the recovery path when delivery cannot be confirmed.
  *
@@ -571,11 +571,35 @@
     }
   }
 
-  function setBusy(form, busy) {
+  // Account Security already authors Memberstack feedback inside its form.
+  // Keep Webflow's sibling states hidden; retain the legacy fallback only for
+  // installations without the matching authored Memberstack state.
+  function setSecurityMessage(form, kind, message) {
+    setMessage(form, 'idle', '')
+    var success = form.querySelector('[data-ms-message="success"]')
+    var failure = form.querySelector('[data-ms-message="error"]')
+    if (success) success.style.display = kind === 'success' ? 'block' : 'none'
+    if (failure) failure.style.display = kind === 'error' ? 'block' : 'none'
+    var state = kind === 'success' ? success : kind === 'error' ? failure : null
+    if (state) {
+      var text = state.querySelector('[data-ms-message-text]')
+      if (text) text.textContent = kind === 'success'
+        ? 'Your account settings have been saved.'
+        : message
+    } else if (kind !== 'idle') {
+      setMessage(form, kind, message)
+    }
+  }
+
+  function setBusy(form, busy, submitOnly) {
     form.setAttribute('aria-busy', busy ? 'true' : 'false')
     var submit = form.querySelector('[type="submit"]')
     if (submit) submit.disabled = !!busy
-    var loading = form.querySelector('[data-opp-element="loading-button"]')
+    var loading = submitOnly
+      ? submit && typeof submit.closest === 'function'
+        ? submit.closest('[data-opp-element="loading-button"]')
+        : null
+      : form.querySelector('[data-opp-element="loading-button"]')
     if (loading) loading.setAttribute('data-opp-loading', busy ? 'true' : 'false')
   }
 
@@ -655,7 +679,7 @@
     return { memberId: member.id }
   }
 
-  async function submitEmailUpdate(form, memberSnapshot, emailSnapshot, sendPasswordEmail) {
+  async function submitEmailUpdate(form, memberSnapshot, emailSnapshot) {
     var email = trim(emailSnapshot).toLowerCase()
     if (!EMAIL_PATTERN.test(email)) {
       var validationError = new Error('Enter a valid email address.')
@@ -666,18 +690,15 @@
     diagnosticRequestStarted(form)
     var member = memberSnapshot || await currentMember(client)
     var result = await updateEmailIfChanged(client, member, email)
-    if (result.changed && sendPasswordEmail) {
-      await sendResetPasswordEmailOnce(form, client, result.email)
-    }
     return result
   }
 
   function submitSecurity(form, memberSnapshot, emailSnapshot) {
-    return submitEmailUpdate(form, memberSnapshot, emailSnapshot, true)
+    return submitEmailUpdate(form, memberSnapshot, emailSnapshot)
   }
 
   function submitStarterProfileEmail(form, memberSnapshot, emailSnapshot) {
-    return submitEmailUpdate(form, memberSnapshot, emailSnapshot, false)
+    return submitEmailUpdate(form, memberSnapshot, emailSnapshot)
   }
 
   function bindForm(form, operation, submitter, redirectOnSuccess) {
@@ -1079,18 +1100,18 @@
             if (!securityModeOwnsRole(mode, role)) return false
             submissionRole = role
             ownsSubmission = true
-            setBusy(form, true)
-            setMessage(form, 'idle', '')
+            setBusy(form, true, true)
+            setSecurityMessage(form, 'idle', '')
             await workflowDiagnosticsReady
             diagnosticStart(form, securityFailurePath(role))
             await submitSecurity(form, member, email)
-            var receipt = diagnosticComplete(form, {
+            diagnosticComplete(form, {
               result: 'success',
               stage: 'response',
               duration_ms: Date.now() - (form.__startersAccountDiagnosticStartedAt || Date.now()),
               request_started: true,
             })
-            setMessage(form, 'success', '', receipt)
+            setSecurityMessage(form, 'success', '')
             return true
           })
           .then(function (owned) {
@@ -1101,7 +1122,7 @@
               replayNativeSubmit(form, submitter)
               return
             }
-            var receipt = diagnosticComplete(form, {
+            diagnosticComplete(form, {
               result: 'failed',
               stage: error && error.code === 'validation' ? 'validation' : 'response',
               error_code: diagnosticErrorCode(error),
@@ -1109,12 +1130,12 @@
               duration_ms: Date.now() - (form.__startersAccountDiagnosticStartedAt || Date.now()),
               request_started: !(error && error.code === 'validation'),
             })
-            setMessage(form, 'error', friendlyError(error), receipt)
+            setSecurityMessage(form, 'error', friendlyError(error))
             trackFailure(error, securityFailurePath(submissionRole))
           })
           .finally(function () {
             busy = false
-            setBusy(form, false)
+            setBusy(form, false, true)
           })
       },
       true,
