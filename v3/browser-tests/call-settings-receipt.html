@@ -1,0 +1,61 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Starter Edit Profile - step 6 call settings receipt-handoff fixture</title>
+<style>
+  body { font: 15px/1.45 system-ui, sans-serif; margin: 0; background: #f6f7f9; color: #182423 }
+  .page { max-width: 760px; margin: 0 auto; padding: 28px 32px 40px }
+  h1 { font-size: 24px; margin: 0 0 4px }
+  .sub { color: #5c6b68; margin: 0 0 24px }
+  .card { background: #fff; border: 1px solid #ccd5d2; border-radius: 14px; padding: 22px 24px; margin-bottom: 18px }
+  .card h2 { font-size: 17px; margin: 0 0 4px }
+  .card p.hint { color: #5c6b68; margin: 0 0 14px; font-size: 13px }
+  .radio-row { display: flex; gap: 28px; margin-bottom: 14px }
+  label.w-radio { display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: 500 }
+  .radio-filter_check.w-radio-input { width: 18px; height: 18px; border: 2px solid #9fb0ac; border-radius: 50%; background: #fff; display: inline-block }
+  .radio-filter_check.w-radio-input.w--redirected-checked { border-color: #186545; background: radial-gradient(circle, #186545 0 5px, #fff 6px 100%) }
+  label.w-radio input[type=radio] { position: absolute; opacity: 0; width: 0; height: 0 }
+  .field { display: block; margin-bottom: 12px }
+  .field span { display: block; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: #5c6b68; margin-bottom: 4px }
+  input[type=text], input[type=number] { width: 100%; box-sizing: border-box; padding: 9px 11px; border: 1px solid #ccd5d2; border-radius: 8px; font: inherit; background: #fff }
+  input:placeholder-shown { color: #98a5a2 }
+  .stamp { position: fixed; top: 0; right: 0; background: #182423; color: #fff; font: 12px/1.3 ui-monospace, monospace; padding: 8px 12px; border-bottom-left-radius: 10px; white-space: pre; text-align: right }
+</style>
+<div class="page">
+  <h1>Edit Profile — Services and rates</h1>
+  <p class="sub">Step 6 of the published Starter Edit Profile form (<code>/starter-edit-profile</code>).</p>
+  <form id="wf-form-Build-Form-Full-Profile" build-profile-form>
+    <div data-form="step" data-index="6">
+      <div class="card" id="free-card">
+        <h2>Free consulting calls</h2>
+        <p class="hint">Canonical Xano Free Call settings.</p>
+        <div class="radio-row">
+          <label class="w-radio"><div class="radio-filter_check w-radio-input"></div><input type="radio" id="free-yes" name="free-consulting-calls" value="Yes" data-input-capture><span>Yes</span></label>
+          <label class="w-radio"><div class="radio-filter_check w-radio-input w--redirected-checked"></div><input type="radio" id="free-no" name="free-consulting-calls" value="No" data-input-capture checked><span>No</span></label>
+        </div>
+        <label class="field"><span>Free call description</span><input type="text" id="free-call-description" name="free-call-description" maxlength="60" placeholder="Describe your free call" data-input-capture></label>
+      </div>
+      <div class="card" id="paid-card">
+        <h2>Paid consulting calls</h2>
+        <p class="hint">Canonical Xano Paid Call settings.</p>
+        <div class="radio-row">
+          <label class="w-radio"><div class="radio-filter_check w-radio-input"></div><input type="radio" id="paid-yes" name="paid-consulting-calls" value="Yes" data-input-capture><span>Yes</span></label>
+          <label class="w-radio"><div class="radio-filter_check w-radio-input w--redirected-checked"></div><input type="radio" id="paid-no" name="paid-consulting-calls" value="No" data-input-capture checked><span>No</span></label>
+        </div>
+        <label class="field"><span>Paid call description</span><input type="text" id="paid-call-description" name="paid-call-description" maxlength="60" placeholder="Describe your paid call" data-input-capture></label>
+        <label class="field"><span>Paid call rate (USD)</span><input type="text" id="paid-call-rate" name="paid-call-rate" placeholder="Set your rate" data-input-capture edit-form-input></label>
+      </div>
+      <div class="card" id="retainer-card">
+        <h2>Monthly retainers</h2>
+        <p class="hint">Legacy profile fields. No canonical call controller owns these.</p>
+        <div class="radio-row">
+          <label class="w-radio"><div class="radio-filter_check w-radio-input w--redirected-checked"></div><input type="radio" id="retainer-yes" name="offer-monthly-retainers" value="Yes" data-input-capture checked><span>Yes</span></label>
+          <label class="w-radio"><div class="radio-filter_check w-radio-input"></div><input type="radio" id="retainer-no" name="offer-monthly-retainers" value="No" data-input-capture><span>No</span></label>
+        </div>
+        <label class="field"><span>Retainer description</span><input type="text" id="description-retainer" name="description-retainer" maxlength="200" value="Fractional growth lead, two days a week" data-input-capture edit-form-input></label>
+        <label class="field"><span>Retainer rate</span><input type="text" id="rate-retainer" name="rate-retainer" value="12000" data-input-capture edit-form-input></label>
+      </div>
+    </div>
+  </form>
+</div>
+<div class="stamp" id="stamp"></div>
+<script src="/v3/browser-tests/call-settings-receipt-fixture.js"></script>

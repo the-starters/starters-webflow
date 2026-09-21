@@ -23,12 +23,13 @@ never need a code release. Jira: INITIATIVE-125.
   Disclosure steps are omitted when their control is hidden, so desktop-only
   controls do not leave broken mobile steps or inflate the progress count.
 - Persists seen-state per member in Memberstack member JSON
-- Serializes member seen/reset writes through `window.__tsMemberJsonWrite`, the
-  same full-JSON boundary used by Call Settings receipt consumption, so a tour
-  dismissal cannot resurrect a consumed pending branch
   (`json.tours[tourId]`), so a successful write suppresses that tour for the
   member across devices.
   Logged-out visitors on public pages fall back to `localStorage`.
+- Serializes the member seen/reset read-modify-write through
+  `window.__tsMemberJsonWrite`, the same full-JSON boundary Call Settings
+  receipt consumption uses, so a tour dismissal or reset cannot resurrect a
+  consumed pending branch.
 - Loads driver.js JS + CSS from jsDelivr on demand — only when the page has an
   eligible tour, nothing loads otherwise.
 - Applies the site's typography to driver.js popovers on the first tour start:

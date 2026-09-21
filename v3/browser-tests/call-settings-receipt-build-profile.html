@@ -1,0 +1,72 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Build Profile - call settings receipt fixture</title>
+<style>
+  body { font: 15px/1.45 system-ui, sans-serif; margin: 0; background: #f6f7f9; color: #182423 }
+  .page { max-width: 760px; margin: 0 auto; padding: 28px 32px 40px }
+  h1 { font-size: 24px; margin: 0 0 4px }
+  .sub { color: #5c6b68; margin: 0 0 24px }
+  .card { background: #fff; border: 1px solid #ccd5d2; border-radius: 14px; padding: 22px 24px; margin-bottom: 18px }
+  .card h2 { font-size: 17px; margin: 0 0 10px }
+  .radio-row { display: flex; gap: 28px; margin-bottom: 14px }
+  label.w-radio { display: flex; align-items: center; gap: 8px; font-weight: 500 }
+  .field { display: block; margin-bottom: 12px }
+  .field span { display: block; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: #5c6b68; margin-bottom: 4px }
+  input[type=text], input[type=email], input[type=number] { width: 100%; box-sizing: border-box; padding: 9px 11px; border: 1px solid #ccd5d2; border-radius: 8px; font: inherit; background: #fff }
+  button { font: inherit; padding: 10px 18px; border-radius: 8px; border: 1px solid #186545; background: #186545; color: #fff; cursor: pointer }
+  .w-form-fail { background: #fdecec; border: 1px solid #e3b7b7; color: #9b1c1c; border-radius: 10px; padding: 14px 16px; margin-top: 16px }
+  .w-form-done { background: #e7efec; border: 1px solid #a9ccbe; color: #12503a; border-radius: 10px; padding: 18px 20px; margin-top: 16px }
+  .w-form-done a.button { display: inline-block; margin-top: 10px; background: #186545; color: #fff; padding: 9px 16px; border-radius: 8px; text-decoration: none }
+  .stamp { position: fixed; top: 0; right: 0; background: #182423; color: #fff; font: 12px/1.3 ui-monospace, monospace; padding: 8px 12px; border-bottom-left-radius: 10px; white-space: pre; text-align: right }
+</style>
+<div class="page">
+  <h1>Build your profile</h1>
+  <p class="sub">Final step of the published Build Profile form (<code>/build-profile/full-profile</code>).</p>
+  <form id="wf-form-Build-Form-Full-Profile" build-profile-form data-form="multistep">
+    <div data-form="step" data-index="6">
+      <div class="card">
+        <h2>About you</h2>
+        <label class="field"><span>First name</span><input type="text" name="first-name" value="Test"></label>
+        <label class="field"><span>Last name</span><input type="text" name="last-name" value="Starter"></label>
+        <label class="field"><span>Email</span><input type="email" name="email" value="starter@example.invalid"></label>
+        <label class="field"><span>Phone</span><input type="text" name="phone" value="+15555550100"></label>
+        <label class="field"><span>Hourly rate (USD)</span><input type="text" name="rate" value="100"></label>
+      </div>
+      <div class="card">
+        <h2>Free consulting calls</h2>
+        <div class="radio-row">
+          <label class="w-radio"><input type="radio" id="free-yes" name="free-consulting-calls" value="yes"><span>Yes</span></label>
+          <label class="w-radio"><input type="radio" id="free-no" name="free-consulting-calls" value="no" checked><span>No</span></label>
+        </div>
+        <label class="field"><span>Free call description</span><input type="text" id="free-call-description" name="free-call-description" maxlength="60"></label>
+      </div>
+      <div class="card">
+        <h2>Paid consulting calls</h2>
+        <div class="radio-row">
+          <label class="w-radio"><input type="radio" id="paid-yes" name="paid-consulting-calls" value="yes" checked><span>Yes</span></label>
+          <label class="w-radio"><input type="radio" id="paid-no" name="paid-consulting-calls" value="no"><span>No</span></label>
+        </div>
+        <label class="field"><span>Paid call description</span><input type="text" id="paid-call-description" name="paid-call-description" value="Strategy call"></label>
+        <label class="field"><span>Paid call rate (USD)</span><input type="text" id="paid-call-rate" name="paid-call-rate" value="250"></label>
+      </div>
+      <div class="card">
+        <h2>Monthly retainers</h2>
+        <div class="radio-row">
+          <label class="w-radio"><input type="radio" id="retainer-yes" name="offer-monthly-retainers" value="yes"><span>Yes</span></label>
+          <label class="w-radio"><input type="radio" id="retainer-no" name="offer-monthly-retainers" value="no" checked><span>No</span></label>
+        </div>
+        <label class="field"><span>Retainer rate</span><input type="text" name="rate-retainer" value=""></label>
+      </div>
+      <button type="button" form-submit>Submit profile</button>
+    </div>
+  </form>
+  <div class="w-form-done" build-profile-success>
+    <strong>Profile submitted, <span data-value="first-name"></span>.</strong>
+    <div dashboard-button-wrap><a class="button" href="/starter-onboarding">Continue onboarding</a></div>
+  </div>
+  <div class="w-form-fail" build-profile-error>
+    <div>Something went wrong. Please try again.</div>
+  </div>
+</div>
+<div class="stamp" id="stamp"></div>
+<script src="/v3/browser-tests/call-settings-receipt-fixture.js"></script>
