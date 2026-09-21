@@ -11,6 +11,35 @@ It owns `[data-quiz-form="home"]`, saves the IDs of its selected checkboxes to
 submitted, then redirects submissions to `/quiz`. The controller can initialize
 before or after the DOM has been parsed and ignores duplicate script loads.
 
+The same Home-only asset owns the company text in
+`.section_home-consult .expert-card_item.is-consult-home`. Webflow still selects
+and lays out the CMS cards, but its legacy `also-worked-with` nested list is not
+the visible data authority. The controller reads each card's stable profile ID
+from the `freelancer-{id}` CMS image filename the rail already publishes, then
+performs one multi-object request against the host-managed Starter Algolia index
+and replaces `.expert-card_company-list` with the ordered company names from
+`work-history`. Names render one `p.expert-card_company-text.text-size-small`
+per company, the shape the shared expert-card stylesheet styles, so each name
+keeps the Designer font size, stays unbreakable, and takes its separating comma
+from that sheet. Companies keep index order; an entry whose `company` is not a
+string is dropped rather than coerced, and repeat stints at one company collapse
+to the first spelling — the same rules `quiz-results.js` applies.
+
+The Home tag must load **after** the deferred `v3/algolia-environment.js` tag.
+That resolver is the only source of the app ID, search key, and Starter index
+this adapter accepts (no DOM-attribute fallback, matching every other managed
+consumer); until it has booted, `getManagedSearchConfig('starters')` returns
+`null`, the adapter makes no request, and the rail renders no companies at all.
+
+The adapter is fail-closed: it clears legacy company text before the request and
+does not fall back to `also-worked-with` for a missing ID, missing configuration,
+empty work history, or failed request. It changes no card rate, role, profile
+link, order, or CMS record. Once it has cleared the rail it always ends by
+dispatching `expert-cards:relayout` — on success, on failure, and on the early
+return for an unresolved ID or unresolved managed configuration — so the shared
+card layout recalculates the company row. A page with no consult cards is left
+untouched.
+
 Load both controllers on `/quiz` with `defer`, after the site Memberstack
 bootstrap:
 
