@@ -41,15 +41,19 @@
  *   logged out    -> the hire-page signup modal (`data-modal-target="signup-modal"`).
  *                    Chat intent is dropped in v1 — no auto-continue after signup.
  *                    Does not send the visitor to /quiz.
- *   free Brand    -> visible Message; membership pricing at /why-us#join-starters-cta.
- *                    Explicit upgrade overrides remain supported; old quiz URLs are retired.
+ *   free Brand,   -> the same signup modal. It doubles as the membership paywall:
+ *   unmapped role    Memberstack's `data-ms-content` hides the form from members
+ *                    and shows the upsell block in its place (decision 2026-09-21;
+ *                    the earlier /why-us#join-starters-cta redirect and the
+ *                    `messages-profile-upgrade` override are retired).
  *   talent, self  -> trigger hidden, and the modal closes if opened anyway
  *   paid Brand    -> the chat
  * Role comes from `window.StartersV3RouteGuard.memberRole`, so route-guard.js has
- * to be on the page for role rules to apply at all. Every check here is
- * client-side, and unlike the `/messages` route this modal never passes through
- * route-guard, so treat these as product gating and not as an authorization
- * boundary.
+ * to be on the page for role rules to apply at all: with it absent every
+ * signed-in viewer reaches the chat, as before. With it present, only
+ * `brand-paid` does. Every check here is client-side, and unlike the
+ * `/messages` route this modal never passes through route-guard, so treat
+ * these as product gating and not as an authorization boundary.
  *
  * The trigger keeps `href="/messages?with=<id>"` as a fallback: if this module
  * never boots, the link still reaches the conversation through the deep link
@@ -70,7 +74,6 @@
   var NAME_ATTRIBUTE = 'messages-profile-name'
   var PHOTO_ATTRIBUTE = 'messages-profile-photo'
   var CHAT_ATTRIBUTE = 'messages-profile-chat'
-  var UPGRADE_ATTRIBUTE = 'messages-profile-upgrade'
   var BOUND_ATTRIBUTE = 'data-messages-profile-bound'
   var BUTTON_SELECTOR = '[' + MEMBER_ATTRIBUTE + ']'
   var CHAT_SELECTOR = '[' + CHAT_ATTRIBUTE + ']'
@@ -82,7 +85,6 @@
   var DEEP_LINK_PARAM = 'with'
   var MODAL_PARAM = 'modal-id'
   var SIGNUP_MODAL_ID = 'signup-modal'
-  var FALLBACK_FREE_BRAND_PATH = '/why-us#join-starters-cta'
 
   var TALKJS_APP_ID = 'LmYV8DIA'
   var TALKJS_THEME = 'the-starters-3-0-profile'
@@ -98,9 +100,11 @@
   // create a real user record for it.
   var MEMBER_ID_PATTERN = /^mem_(?:sb_)?[A-Za-z0-9]+$/
   var MAX_NAME_LENGTH = 120
-  // Hidden from the trigger. `brand-free` is additionally redirected on open.
+  // Hidden from the trigger.
   var HIDDEN_ROLES = ['talent']
-  var REDIRECTED_ROLES = ['brand-free']
+  // The one role the chat is open to. Every other resolved role, including a
+  // plan route-guard cannot map, is paywalled into the signup modal.
+  var CHAT_ROLE = 'brand-paid'
 
   var LOG_PREFIX = '[messages-profile]'
   var STAGING_HOST_SUFFIXES = ['webflow.io', 'trycloudflare.com']
@@ -121,7 +125,10 @@
 
   // Resolved once on boot so a click can decide synchronously whether to let the
   // modal open at all, instead of flashing it and then navigating away.
-  var viewer = { resolved: false, member: null, role: null }
+  // `guarded` records that route-guard.js resolved a role at all: a null role
+  // from a present guard is a member with no mapped plan (paywalled), while an
+  // absent guard skips the role rules entirely.
+  var viewer = { resolved: false, member: null, role: null, guarded: false }
   // The starter whose trigger was actually pressed. Falls back to the page's
   // single starter for the `?modal-id=` return, where there is no click.
   var pendingIdentity = null
@@ -295,9 +302,10 @@
   }
 
   /**
-   * Open the hire-page signup dialog for a logged-out visitor. Closes the
-   * message modal first so the two are not stacked. Missing signup markup is
-   * a staging warning, not a bounce to /quiz.
+   * Open the hire-page signup dialog: for a logged-out visitor it is signup, for
+   * a signed-in non-paid member Memberstack renders the membership upsell in
+   * its place. Closes the message modal first so the two are not stacked.
+   * Missing signup markup is a staging warning, not a bounce to /quiz.
    * @returns {boolean}
    */
   function openSignupModal() {
@@ -319,22 +327,6 @@
   }
 
   /* ============================ DESTINATIONS ========================= */
-
-  /** Resolve membership pricing, preserving explicit non-quiz overrides. */
-  function upgradeUrl(member) {
-    var container = chatContainer()
-    var configured = container ? text(container.getAttribute(UPGRADE_ATTRIBUTE)) : ''
-    if (!configured) {
-      identityCarriers().some(function (element) {
-        configured = text(element.getAttribute(UPGRADE_ATTRIBUTE))
-        return !!configured
-      })
-    }
-    // Retire the template's old quiz destinations: those are onboarding,
-    // not membership upgrades. Preserve deliberate page-level overrides.
-    if (configured && !/^\/quiz(?:-results)?(?:[?#].*)?$/.test(configured)) return configured
-    return FALLBACK_FREE_BRAND_PATH
-  }
 
   function goTo(url) {
     window.location.assign(url)
@@ -379,15 +371,21 @@
     var guard = window.StartersV3RouteGuard
     if (!guard || typeof guard.memberRole !== 'function') {
       warn('route-guard.js is absent, so role rules are skipped')
-      return null
+      return { role: null, guarded: false }
     }
 
     try {
-      return guard.memberRole(member) || null
+      return { role: guard.memberRole(member) || null, guarded: true }
     } catch (error) {
       warn('memberRole threw: ' + (error && error.message))
-      return null
+      return { role: null, guarded: false }
     }
+  }
+
+  /** A signed-in viewer the chat is closed to: every resolved role but paid Brand. */
+  function isPaywalled(state) {
+    return !!state.member && state.guarded && state.role !== CHAT_ROLE &&
+      HIDDEN_ROLES.indexOf(state.role) === -1
   }
 
   async function resolveViewer() {
@@ -400,10 +398,12 @@
     var response = await memberstack.getCurrentMember()
     var member = (response && response.data) || null
     var signedIn = member && member.id ? member : null
+    var resolution = signedIn ? roleFor(signedIn) : { role: null, guarded: false }
     viewer = {
       resolved: true,
       member: signedIn,
-      role: signedIn ? roleFor(signedIn) : null,
+      role: resolution.role,
+      guarded: resolution.guarded,
     }
     return viewer
   }
@@ -614,13 +614,13 @@
         closeModal()
         return
       }
-      if (state.role && REDIRECTED_ROLES.indexOf(state.role) !== -1) {
-        goTo(upgradeUrl(state.member))
-        return
-      }
       if (state.role && HIDDEN_ROLES.indexOf(state.role) !== -1) {
         warn('viewer role "' + state.role + '" cannot message from a profile page')
         closeModal()
+        return
+      }
+      if (isPaywalled(state)) {
+        openSignupModal()
         return
       }
 
@@ -690,16 +690,8 @@
     // whichever happens to come first in the document.
     pendingIdentity = identity
 
-    if (viewer.resolved && !viewer.member) {
+    if (viewer.resolved && (!viewer.member || isPaywalled(viewer))) {
       openSignupModal()
-      return
-    }
-    if (
-      viewer.resolved &&
-      viewer.role &&
-      REDIRECTED_ROLES.indexOf(viewer.role) !== -1
-    ) {
-      goTo(upgradeUrl(viewer.member))
       return
     }
 

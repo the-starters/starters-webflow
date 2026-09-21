@@ -1141,7 +1141,7 @@ And an empty container inside that modal, which is where the chat renders:
   <div class="modal_backdrop" data-modal-close></div>
   <div class="modal_content">
     <div class="modal_slot">
-      <div messages-profile-chat messages-profile-upgrade="/why-us#join-starters-cta"></div>
+      <div messages-profile-chat></div>
     </div>
   </div>
 </dialog>
@@ -1162,11 +1162,9 @@ The three identity attributes must be *field bindings*, not literal values, or
 every profile ships the same starter's id. Bind `Profile Photo Xano` rather than
 `Profile Photo`: the latter is an Image field and is not reliably offered for
 attribute binding, while the former is PlainText holding the durable Xano vault
-URL. `messages-profile-upgrade` is a static path, not a binding, and goes on the
-chat container or the identity carrier — the same nested `clickable_link` that
-holds the other `messages-profile-*` attributes — not the outer modal-trigger
-wrapper. Give the container a height in the Designer; a zero-height box renders a
-zero-height chat.
+URL. Give the container a height in the Designer; a zero-height box renders a
+zero-height chat. The former `messages-profile-upgrade` attribute is retired
+(2026-09-21) and ignored wherever it still appears in published markup.
 
 Keep `href="/messages"` on an anchor trigger. The module rewrites it to
 `/messages?with=<memberstack id>`, which the `/messages` deep link in
@@ -1184,17 +1182,22 @@ Who gets through:
 | viewer | outcome |
 | --- | --- |
 | logged out | hire-page signup modal (`data-modal-target="signup-modal"`). Chat intent is dropped in v1; the visitor is not sent to `/quiz` |
-| free Brand | Message stays visible and opens membership pricing at `/why-us#join-starters-cta`; an explicit non-quiz `messages-profile-upgrade` overrides this destination. Legacy `/quiz` and `/quiz-results` overrides (including query strings and fragments) are ignored |
+| free Brand | Message stays visible and opens the same `signup-modal`. It doubles as the membership paywall: the modal's signup form is `data-ms-content="!members"` and its upsell block is `data-ms-content="members"`, so Memberstack shows a signed-in member the pricing block in place. Decision 2026-09-21; the earlier `/why-us#join-starters-cta` redirect is retired |
 | talent | trigger hidden; modal closes if opened anyway |
 | viewer is this starter | trigger hidden; modal closes if opened anyway |
 | paid Brand | the chat |
-| role unknown | the chat |
+| role unmapped, route-guard present | `signup-modal`, like a free Brand: any resolved role other than paid Brand is paywalled |
+| route-guard absent | the chat; the role rules are skipped, as before |
 
-The logged-out and free-Brand redirects also run as a capture-phase click
-handler on the trigger, which calls `stopPropagation` so `modal.js` never sees
-the click. Without that the modal would flash open a frame before the redirect.
-This only works once Memberstack has resolved; a click during that window opens
-the modal and is handled there instead.
+The logged-out and paywalled signup opens also run from the trigger's own click
+handler, which calls `stopPropagation` so `modal.js` never sees the click.
+Without that the message modal would flash open a frame before the signup modal
+replaced it. This only works once Memberstack has resolved; a click during that
+window opens the message modal and is handled there instead. On `/hire/<slug>`
+`v3/hire-profile.js` also owns paywalled clicks at the document level for every
+`[data-signup-trigger-element]` (see
+[HIRE-PROFILE-WIRING.md](../docs/wiring/HIRE-PROFILE-WIRING.md#paywalled-viewers)),
+so the two agree on the outcome whichever one sees the click first.
 
 Every check here is client-side, and unlike the `/messages` route this modal
 never passes through route-guard. Treat the rules as product gating, not as an
