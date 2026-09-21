@@ -30,6 +30,7 @@ function mount(route = '/build-profile/consult') {
   function add(valid, options = {}) {
     const field = {
       disabled: false, willValidate: true, visibility: 'visible', checked: 0, reported: 0, focused: false,
+      getAttribute: name => name === 'name' ? '' : null,
       getClientRects: () => [1],
       checkValidity() { this.checked++; return valid },
       reportValidity() { this.reported++; this.focused = !valid; return valid },
@@ -87,6 +88,16 @@ test('disabled, barred, hidden, and collapsed inactive numeric fields do not blo
     page.add(false, { visibility: 'collapse' })]
   assert.equal(page.click().advances, 1)
   inputs.forEach(input => assert.equal(input.checked, 0))
+})
+
+test('legacy paid-call price never blocks Build Profile Continue', () => {
+  const page = mount('/build-profile/full-profile')
+  const field = page.add(false, {
+    getAttribute: name => name === 'name' ? 'paid-call-rate' : null,
+  })
+  assert.equal(page.click().advances, 1)
+  assert.equal(field.checked, 0)
+  assert.equal(field.reported, 0)
 })
 
 test('fresh click reads dynamic fields and a corrected invalid field can continue', () => {

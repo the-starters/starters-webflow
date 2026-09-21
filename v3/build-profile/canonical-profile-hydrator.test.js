@@ -112,8 +112,9 @@ test('maps the canonical profile into the native seven-step capture shape', () =
     },
   })
   assert.equal(profile.data.step_5['skills-required'], 'skill-id')
-  assert.equal(profile.data.step_6['free-consulting-calls'], 'yes')
-  assert.equal(profile.data.step_6['paid-consulting-calls'], 'no')
+  for (const field of ['free-consulting-calls', 'free-call-description', 'paid-consulting-calls', 'paid-call-description', 'paid-call-rate']) {
+    assert.equal(Object.hasOwn(profile.data.step_6, field), false, field)
+  }
   assert.equal(profile.data.step_6['full-time-placement'], 'no')
   assert.deepEqual(JSON.parse(profile.data.step_6.service), { name: 'Audit', price: '100' })
   assert.deepEqual(JSON.parse(profile.data.step_7.reviewer), {

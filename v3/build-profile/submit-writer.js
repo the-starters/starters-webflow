@@ -15,7 +15,6 @@
       [
         { selector: '[name="rate"]', min: 1, max: 1000 },
         { selector: '[name="rate-retainer"]', min: 1, max: 25000 },
-        { selector: '[name="paid-call-rate"]', min: 1, max: 1000 },
       ].forEach(({ selector, min, max }) => {
         const input = qs(selector, form);
         if (!input) return;
@@ -59,7 +58,7 @@
         if (feedback && field.value !== feedback.value) clearPriceFeedback(field);
       }
 
-      ['rate', 'rate-retainer', 'paid-call-rate'].forEach((name) => {
+      ['rate', 'rate-retainer'].forEach((name) => {
         const field = qs('[name="' + name + '"]', form);
         field?.addEventListener('input', clearChangedPriceFeedback);
         field?.addEventListener('change', clearChangedPriceFeedback);
@@ -267,26 +266,6 @@
         };
 
         const isConsultProfile = String(window.location?.pathname || "").replace(/\/+$/, "") === "/build-profile/consult";
-        const PAID_CALL_PRICE = {
-          min: 1,
-          max: 1000,
-          label: 'paid call rate',
-          selector: '[name="paid-call-rate"]',
-        };
-        const paidCallSelected = toBool(formData["paid-consulting-calls"]) === true;
-        // A toggle-owned rate is only authored while its own section says yes. Once the
-        // toggle is off the control is collapsed, so its stale text is neither visible
-        // nor editable and must never block the whole submit behind a price failure the
-        // member cannot see or reach. The consult flow authors no paid-call section at
-        // all, so neither the hidden radio nor its hidden text is an authored answer
-        // there: only a rate the contract already accepts preserves a paid consult, and
-        // every other value, blank included, keeps the no-paid-consult compatibility
-        // state. Full Profile authors the control, so its answer stays strict.
-        const paidCallInContract = wholeDollarFailure(formData["paid-call-rate"], PAID_CALL_PRICE) === null;
-        const paidCallEnabled = isConsultProfile ? paidCallInContract : paidCallSelected;
-        const paidCallRate = paidCallEnabled
-          ? wholeDollar(formData["paid-call-rate"], PAID_CALL_PRICE)
-          : null;
 
         const fullProfile = !isConsultProfile;
         const HOURLY_PRICE = {
@@ -362,15 +341,9 @@
 
           full_time: toBool(formData["full-time-placement"]),
 
-          free_call: toBool(formData["free-consulting-calls"]),
-          free_call_desc: formData["free-call-description"] || "",
-
-          // The authored paid-call control is hidden in the consult flow, so an
-          // in-contract whole-dollar rate is the only enablement signal there,
-          // whichever way fallback hydration left the hidden radio.
-          paid_call: paidCallEnabled,
-          paid_call_desc: formData["paid-call-description"] || "",
-          paid_call_rate: paidCallRate,
+          // Call availability belongs to Dashboard Call Settings and its active
+          // environment-matched configuration. Build Profile must not compete with
+          // that writer or project stale hidden controls back into canonical state.
 
           retainer: retainerEnabled,
           retainer_desc: formData["description-retainer"] || "",

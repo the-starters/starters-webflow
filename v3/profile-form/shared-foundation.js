@@ -15,6 +15,7 @@
       if (!step?.closest('form[data-form="multistep"]')) return;
       const fields = step.querySelectorAll('input[type="number"][required]');
       for (const field of fields) {
+        if (String(field.getAttribute?.('name') || '') === 'paid-call-rate') continue;
         if (field.disabled || !field.willValidate || !field.getClientRects().length) continue;
         const visibility = window.getComputedStyle(field).visibility;
         if (visibility === 'hidden' || visibility === 'collapse') continue;
@@ -68,9 +69,12 @@
   function formatRateInputs(wrapper = null) {
     const inputs = qsa('[data-element="rate"]:not(.initialized)', wrapper);
     inputs.forEach((input) => {
-      input.classList.add('initialized');
       const name = String(input.getAttribute('name') || '');
-      const maximum = name === 'rate' || name === 'paid-call-rate'
+      // Dashboard Call Settings owns paid-call price. Legacy Build markup can
+      // still contain this field, but it must stay inert here.
+      if (name === 'paid-call-rate') return;
+      input.classList.add('initialized');
+      const maximum = name === 'rate'
         ? 1000
         : name === 'rate-retainer'
           ? 25000

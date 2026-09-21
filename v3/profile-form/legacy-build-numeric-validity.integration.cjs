@@ -11,14 +11,14 @@ const source = process.env.BUILD_NUMERIC_BASELINE === '1'
   ? execFileSync('git', ['show', 'HEAD:v3/profile-form/shared-foundation.js'], { cwd: path.resolve(__dirname, '../..'), encoding: 'utf8' })
   : fs.readFileSync(path.join(__dirname, 'shared-foundation.js'), 'utf8')
 
-function mount(route) {
+function mount(route, name = 'rate') {
   const dom = new JSDOM(`<!doctype html><form data-form="multistep">
-    <section data-form="step"><input name="paid-call-rate" type="number" required min="1" max="1000" step="1">
+    <section data-form="step"><input name="${name}" type="number" required min="1" max="1000" step="1">
       <button type="button" data-form="next-btn"><span>Continue</span></button></section>
     <section data-form="step" hidden><input type="number" required min="1" value="0"></section>
   </form>`, { url: 'https://example.test' + route, runScripts: 'outside-only' })
   const { window } = dom
-  const field = window.document.querySelector('[name="paid-call-rate"]')
+  const field = window.document.querySelector(`[name="${name}"]`)
   const button = window.document.querySelector('button')
   // Geometry alone is outside jsdom's implementation. No validity override.
   field.getClientRects = () => [{ width: 120, height: 30 }]
@@ -50,6 +50,18 @@ for (const route of ['/build-profile/consult', '/build-profile/full-profile/']) 
   }
 }
 
+test('real DOM legacy paid-call price never blocks Continue', () => {
+  const { dom, window, field, button, state } = mount('/build-profile/consult', 'paid-call-rate')
+  try {
+    field.value = ''
+    assert.equal(field.checkValidity(), false)
+    const event = new window.MouseEvent('click', { bubbles: true, cancelable: true, detail: 0 })
+    button.querySelector('span').dispatchEvent(event)
+    assert.equal(event.defaultPrevented, false)
+    assert.deepEqual(state, { draftSaves: 1, advances: 1 })
+  } finally { dom.window.close() }
+})
+
 test('real DOM disabled and inherited hidden visibility are exempt; correcting value restores Continue', () => {
   const { dom, window, field, button, state } = mount('/build-profile/consult')
   try {
@@ -77,7 +89,6 @@ async function mountWriter() {
   await new Promise(resolve => window.document.addEventListener('DOMContentLoaded', resolve, { once: true }))
   const form = field.closest('form')
   form.setAttribute('build-profile-form', '')
-  field.name = 'rate'
   form.insertAdjacentHTML('beforeend', '<button type="button" form-submit>Submit</button>')
   window.document.body.insertAdjacentHTML('beforeend', '<div build-profile-success></div><div build-profile-error><p>Error</p></div>')
   window.qs = (selector, scope = window.document) => scope.querySelector(selector)

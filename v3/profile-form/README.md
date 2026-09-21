@@ -153,25 +153,29 @@ jsdom has no layout. Browser message/focus UX still requires browser QA.
 
 Profile price inputs preserve the member's authored text until validation. They do not strip symbols,
 round decimals, or convert exponent notation. The native inputs use `type="number"`,
-`inputmode="numeric"`, and `step="1"`. Hourly and Paid Call rates allow `$1` through `$1,000`,
+`inputmode="numeric"`, and `step="1"`. The Hourly Rate allows `$1` through `$1,000`,
 Monthly Retainer allows `$1` through `$25,000`, and each Custom Service allows `$1` through `$50,000`.
 An enabled blank, zero, decimal, comma, currency symbol, sign, exponent, unsafe integer, or value outside
 its range stops before the Xano request. A toggle-owned rate is only validated while its own section
-says yes. A collapsed Monthly Retainer or Paid Call section never forwards the stale text behind it,
+says yes. A collapsed Monthly Retainer section never forwards the stale text behind it,
 because an unvalidated collapsed value would violate this contract: Build Profile replaces it with the
-same zero or null compatibility value it uses for a section that was never filled in, so turning a
+same zero compatibility value it uses for a section that was never filled in, so turning a
 section off does discard the rate it was holding, and Edit Profile sends the canonical zero only
-alongside the toggle it is turning off and otherwise omits the field. On Build Profile Consult the Paid Call
-section, the Monthly Retainer section, and the Hourly Rate are all unauthored, so no hidden control
-there is an answer and none of them may block a submit the member cannot repair. Each has its own
-rule. For Paid Call the hidden radio is ignored and only a rate that already satisfies this contract
-preserves the paid consult, so a canonical zero, blank, malformed, unsafe, or out-of-range rate keeps
-`paid_call: false, paid_call_rate: null` whichever way hydration left the radio. The Hourly Rate
-follows that same in-contract rule: an in-contract value is persisted, and a blank, zero, malformed,
-unsafe, or out-of-range one stays `hourly_rate: 0`. The Monthly Retainer is unconditionally
-inapplicable on Consult — it always submits `retainer: false, retainer_rate: 0` regardless of the
-hidden radio and regardless of whether the hidden rate satisfies this contract. Full Profile authors
-all three controls, so an enabled or required section there stays strict.
+alongside the toggle it is turning off and otherwise omits the field. On Build Profile Consult the
+Monthly Retainer section and the Hourly Rate are both unauthored, so no hidden control
+there is an answer and neither may block a submit the member cannot repair. Each has its own
+rule. The Hourly Rate follows an in-contract rule: an in-contract value is persisted, and a blank,
+zero, malformed, unsafe, or out-of-range one stays `hourly_rate: 0`. The Monthly Retainer is
+unconditionally inapplicable on Consult — it always submits `retainer: false, retainer_rate: 0`
+regardless of the hidden radio and regardless of whether the hidden rate satisfies this contract.
+Full Profile authors both controls, so an enabled or required section there stays strict.
+
+The Paid Call rate is not part of Build Profile's contract. Build Profile neither constrains,
+validates, nor submits `free_call`, `free_call_desc`, `paid_call`, `paid_call_desc`, or
+`paid_call_rate`, so whatever hydration left in a hidden call control is inert there. Dashboard Call
+Settings — including the `[name="paid-call-rate"]` control it renders in Edit Profile mode — and the
+active environment-matched `nylas_configurations_v3` row are the sole call authority, and that writer
+enforces the `$1` through `$1,000` whole-dollar Paid Call range on its own.
 
 Wherever a blank is the compatibility-empty state, the canonical zero these same writers persist for
 that field is that same state: a blank, zero, or otherwise out-of-contract profile-type-inapplicable Hourly Rate
@@ -195,8 +199,8 @@ before any Xano request until the member supplies a whole-dollar replacement of 
 collapsed section, or on a Consult profile that authors none of these controls, it cannot block — the
 compatibility rules above decide what is submitted instead.
 
-On Build Profile, an `input` or `change` event that changes an hourly, retainer,
-or paid-call rate also clears that field's writer-owned custom error, provided
+On Build Profile, an `input` or `change` event that changes an hourly or
+retainer rate also clears that field's writer-owned custom error, provided
 its current message still matches the one the writer set. An event without a
 value change leaves the error in place. Unrelated custom errors are preserved
 during editing and submit retries. This lets a member correct a rejected
@@ -216,7 +220,7 @@ No invalid value is silently clamped or treated as removal.
 
 The real-writer regressions cover rejected JSON types, numeric decimals, accepted scalar boundaries,
 and null/blank removal in all three slots. They also exercise the enabled Edit Profile Retainer
-and Full Profile Retainer/Paid Call writers with comma, currency, exponent, whitespace-only, and
+and Full Profile Retainer writers with comma, currency, exponent, whitespace-only, and
 negative inputs, asserting no request, plus padded digits that serialize as the exact whole-dollar value:
 
 ```sh
