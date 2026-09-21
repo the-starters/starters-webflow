@@ -335,7 +335,7 @@ test('project options use the authenticated v4 route and canonical Starter submi
           counterparty_id: 81,
           company_name: 'Acme',
           hiring_manager_name: 'Owner',
-          memberstack_member_id: 'mem_brand_81',
+          counterparty_memberstack_id: 'mem_brand81',
         }] })
       }
       if (url.includes('/projects/proposal-request/v3')) {
@@ -357,7 +357,7 @@ test('project options use the authenticated v4 route and canonical Starter submi
     counterparty_id: 81,
     company_name: 'Acme',
     hiring_manager_name: 'Owner',
-    memberstack_member_id: 'mem_brand_81',
+    counterparty_memberstack_id: 'mem_brand81',
   }])
   assert.equal(result.proposal.id, 669)
   assert.equal(result.proposal.status, 'awaiting_brand_approval')

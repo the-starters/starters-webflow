@@ -46,16 +46,17 @@ Brand-to-Starter relationship projection:
       "counterparty_id": 81,
       "company_name": "Acme",
       "hiring_manager_name": "Jai",
-      "memberstack_member_id": "mem_brand"
+      "counterparty_memberstack_id": "mem_brand81"
     }
   ]
 }
 ```
 
-`hiring_manager_name` may be empty. The company name remains the visible Party
-fallback in that state. `memberstack_member_id` is the authenticated Brand
-member ID. The controller validates it and uses
-`/messages?with=<memberstack_member_id>` for the existing Message action.
+`hiring_manager_name` and `counterparty_memberstack_id` are required by the v4
+endpoint admission contract. The controller validates the authenticated Brand
+member ID, normalizes it to its internal `memberstack_member_id` option field,
+and uses `/messages?with=<memberstack_member_id>` for the existing Message
+action.
 
 Do not return message text or use the browser's Brand value as authority.
 
