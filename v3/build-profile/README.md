@@ -196,7 +196,10 @@ required for Free activation; Paid also requires a charge-ready, fresh Stripe
 connection. Until those prerequisites exist, the choice remains pending rather
 than being projected to `freelancers_v3`. The active environment-matched
 `nylas_configurations_v3` row and provider readback remain the sole call
-authority. The writer
+authority. The receipt is written after the canonical profile save and before the
+pending-photo commit, so a Call Settings storage failure keeps the accepted
+profile save cached for the resubmit the panel asks for and leaves the pending
+photo uncommitted until an attempt gets past that write. The writer
 also treats the monthly-retainer section as profile-type-inapplicable on
 Consult: hidden hydrated radio/rate values always submit `retainer: false` and
 `retainer_rate: 0`. The hidden hourly rate is inapplicable on Consult in the same
@@ -207,7 +210,8 @@ validate an enabled retainer and its required hourly rate. It enforces the
 on the hourly, retainer, and service prices before it builds the
 request, instead of rounding a parsed number, and reveals the authored error
 block when a submit does not complete. Every failure — a rejected price, a
-rejected request, a non-ok response, a malformed success body, or a failed photo
+rejected request, a non-ok response, a malformed success body, a rejected or
+unstorable Call Settings receipt, or a failed photo
 commit — clears the step loader as it reveals that block, so the error state is
 never left behind a spinner.
 Its other behavior changes are the reviewer-alias compatibility described above,

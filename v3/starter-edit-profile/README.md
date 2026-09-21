@@ -209,13 +209,19 @@ from canonical Xano GET responses and save only changed settings through the gua
 upsert or disable endpoints before the profile PATCH begins. The profile PATCH omits all
 five call fields, so it never becomes a second writer. Both controllers claim the same step 6
 root, so each stamps its own radio hook (`data-free-call-settings-input` and
-`data-paid-call-settings-input`) rather than the shared dashboard name. A canonical render
+`data-paid-call-settings-input`) rather than the shared dashboard name. The pending-intent signal
+`data-build-call-intent` is not namespaced that way, so on this shared root whichever controller
+renders last owns the value; read it as a Starter-dashboard QA signal, not a per-branch one here. A canonical render
 announces its radio answer with a `change` event so the page re-derives the dependent field's
 enabled and visible state, and a controller that reports no changes never gates the step: a
 failed call-settings read must not block Hourly Rate, Availability, Retainer, or Services. Both
 controllers read the same `isHydrating()` window before marking themselves changed, because the
 profile loader replays `input` and `change` on those five controls while it restores the legacy
-record; a hydration write is never a member change. Retainer controls remain owned by
+record; a hydration write is never a member change. An unconsumed Build Profile Call Settings
+receipt is the one hydration that does count: it prefills the Free or Paid controls and marks step 6
+changed once that controller's readiness gates allow the write, so Save materializes the member's
+Build Profile choice through the same guarded upsert or disable. Each contract's Build Profile
+handoff section owns that receipt. Retainer controls remain owned by
 the profile form even when Webflow markup places them in a wrapper shared with a call
 field. This contract holds only where `scheduling-auth.js` authenticates this page; its host
 scope is owned by [Load order](#load-order). See the

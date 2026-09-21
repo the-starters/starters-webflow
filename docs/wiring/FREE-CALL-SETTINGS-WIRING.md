@@ -17,7 +17,9 @@ payload.
   Xano returns it as `public_description` and projects the same value to the public Webflow profile
   and Algolia record.
 - Initial and terminal UI state always comes from
-  `GET starter/free-call-settings/get/v3`.
+  `GET starter/free-call-settings/get/v3`. The one overlay is an unconsumed
+  Build Profile receipt, which prefills the form controls without becoming
+  canonical state — see [Build Profile handoff](#build-profile-handoff).
 
 ## Build Profile handoff
 

@@ -140,8 +140,8 @@ The authored tile is borrowed, not owned, so the fallback is deliberately narrow
   a cents fragment such as `.00` disqualifies the tile, so the amount is never half-rewritten into a
   doubled price. A caption, a `/hr` unit, more than one candidate, and any other shape are never
   rewritten, and such a tile is left entirely to Designer.
-- The canonical output and a resolved authored tile show `Not set` when no valid confirmed or
-  imported rate exists. They never show `$0.00`, a Designer placeholder, or another fallback for a
+- The canonical output and a resolved authored tile show `Not set` when no valid confirmed,
+  pending, or imported rate exists. They never show `$0.00`, a Designer placeholder, or another fallback for a
   blank, zero, invalid, or absent rate.
 
 Optional prerequisite rows use `data-paid-call-prerequisite` with one of these values (authorable
@@ -173,7 +173,8 @@ The controller sets `data-ready="true|false"` on each row. It also sets these wr
 ## Authority and behavior
 
 - Xano `nylas_configurations_v3` table `#104` is the canonical Paid Call authority.
-- Initial and terminal state comes from `GET starter/paid-call-settings/get/v3` (`#2924`).
+- Initial and terminal state comes from `GET starter/paid-call-settings/get/v3` (`#2924`). An
+  unconsumed Build Profile receipt prefills the form controls only; it is never canonical state.
 - An active service in `services[]` is the confirmed V3 authority. It wins over any imported
   suggestion. A service rate is bookable only when it is USD and has an exact whole-dollar integer
   `price_cents` from 100 through 100000 (`price_cents % 100 === 0`).
@@ -192,6 +193,11 @@ The controller sets `data-ready="true|false"` on each row. It also sets these wr
   The suggestion does not cause a write. The Starter must select Yes and submit the existing native
   V3 form before the canonical upsert can confirm it. A missing or rejected suggestion renders
   `Not set` and leaves the rate field blank.
+- An unconsumed Build Profile enable outranks both the imported suggestion and the displayed
+  confirmed rate: the receipt's title and rate prefill the form, the price output shows that pending
+  rate until the member clicks Update and canonical readback replaces it, `data-paid-call-rate-source`
+  stays empty, and the Yes radio is preselected. The receipt itself causes no write, and
+  `data-paid-call-enabled` keeps reporting canonical service state.
 - Save uses revision-guarded `POST starter/paid-call-settings/upsert/v3` (`#2925`).
 - Turn off uses guarded `POST starter/paid-call-settings/disable/v3` (`#2923`).
 - Each mutation gets a new idempotency key and is followed by canonical GET readback.
