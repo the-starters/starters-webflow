@@ -17,7 +17,7 @@ function element() {
   }
 }
 
-test('Build preserves Full Profile paid-call No while retrying photo saves', async () => {
+test('Build leaves Dashboard call settings untouched while retrying photo saves', async () => {
   const form = element()
   const submit = element()
   const success = element()
@@ -109,8 +109,9 @@ test('Build preserves Full Profile paid-call No while retrying photo saves', asy
   // unhandled promise rejection.
   await click({ preventDefault() {} })
   assert.equal(profileSaves, 1)
-  assert.equal(submittedPayloads[0].paid_call, false)
-  assert.equal(submittedPayloads[0].paid_call_rate, null)
+  for (const field of ['free_call', 'free_call_desc', 'paid_call', 'paid_call_desc', 'paid_call_rate']) {
+    assert.equal(Object.hasOwn(submittedPayloads[0], field), false, field)
+  }
   assert.equal(photoAttempts, 1)
   assert.equal(failure.style.display, 'block')
   assert.equal(success.style.display, 'none')
@@ -124,8 +125,9 @@ test('Build preserves Full Profile paid-call No while retrying photo saves', asy
   firstName = 'Changed'
   await click({ preventDefault() {} })
   assert.equal(profileSaves, 2)
-  assert.equal(submittedPayloads[1].paid_call, false)
-  assert.equal(submittedPayloads[1].paid_call_rate, null)
+  for (const field of ['free_call', 'free_call_desc', 'paid_call', 'paid_call_desc', 'paid_call_rate']) {
+    assert.equal(Object.hasOwn(submittedPayloads[1], field), false, field)
+  }
   assert.equal(photoAttempts, 3)
   assert.equal(form.style.display, 'none')
   assert.equal(failure.style.display, 'none')

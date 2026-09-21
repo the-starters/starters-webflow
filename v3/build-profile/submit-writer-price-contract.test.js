@@ -197,10 +197,10 @@ test('preserves the authored onboarding CTA after a successful save', async () =
   assert.equal(result.successCTA.href, '/starter-onboarding')
 })
 
-test('sets native whole-dollar constraints on each direct price input', () => {
+test('sets native whole-dollar constraints on profile-owned direct price inputs', () => {
   const result = load()
   assert.deepEqual(
-    ['[name="rate"]', '[name="rate-retainer"]', '[name="paid-call-rate"]'].map((selector) => ({
+    ['[name="rate"]', '[name="rate-retainer"]'].map((selector) => ({
       type: result.inputs[selector].getAttribute('type'),
       inputmode: result.inputs[selector].getAttribute('inputmode'),
       step: result.inputs[selector].getAttribute('step'),
@@ -210,7 +210,6 @@ test('sets native whole-dollar constraints on each direct price input', () => {
     [
       { type: 'number', inputmode: 'numeric', step: '1', min: '1', max: '1000' },
       { type: 'number', inputmode: 'numeric', step: '1', min: '1', max: '25000' },
-      { type: 'number', inputmode: 'numeric', step: '1', min: '1', max: '1000' },
     ],
   )
 })
@@ -247,30 +246,8 @@ test('persists exact maximums and converts service values once without rounding'
   assert.equal(payload.services['service-1'].price, 50000)
 })
 
-test('consult Paid Call accepts $1 and $1,000 and converts to no hidden precision', async () => {
-  for (const value of ['1', '1000']) {
-    const result = load({ 'paid-call-rate': value }, '/build-profile/consult')
-    await result.submit.click()
-    assert.equal(result.requests.length, 1)
-    assert.equal(result.requests[0].body.paid_call_rate, Number(value))
-  }
-
-  const hidden = load({ 'paid-call-rate': '1.01' }, '/build-profile/consult')
-  await hidden.submit.click()
-  assert.equal(hidden.requests.length, 1)
-  assert.equal(hidden.requests[0].body.paid_call_rate, null)
-})
-
-test('Full Profile rejects a selected Paid Call rate that is not a whole dollar', async () => {
-  const invalid = load({ 'paid-consulting-calls': 'yes', 'paid-call-rate': '1.01' }, '/build-profile/full')
-  await invalid.submit.click()
-  assert.equal(invalid.requests.length, 0)
-  assert.match(invalid.inputs['[name="paid-call-rate"]'].validationMessage, /\$1 to \$1,000/)
-})
-
 for (const [label, toggle, field, payloadField, max] of [
   ['Retainer', 'offer-monthly-retainers', 'rate-retainer', 'retainer_rate', 25000],
-  ['Paid Call', 'paid-consulting-calls', 'paid-call-rate', 'paid_call_rate', 1000],
 ]) {
   for (const value of ['1,000', '$100', '1e2', '   ', '-1']) {
     test(`Full enabled ${label} rejects lexical ${JSON.stringify(value)} before request`, async () => {
@@ -291,7 +268,7 @@ for (const [label, toggle, field, payloadField, max] of [
   })
 }
 
-test('a collapsed section keeps its compatibility value instead of blocking the submit', async () => {
+test('a collapsed retainer section keeps its compatibility value instead of blocking the submit', async () => {
   const retainer = load({ 'offer-monthly-retainers': 'no', 'rate-retainer': '30000' })
   await retainer.submit.click()
   assert.equal(retainer.requests.length, 1, retainer.inputs['[name="rate-retainer"]'].validationMessage)
@@ -299,30 +276,6 @@ test('a collapsed section keeps its compatibility value instead of blocking the 
   assert.equal(retainer.requests[0].body.retainer_rate, 0)
   assert.equal(retainer.error.style.display, 'none')
 
-  const paidCall = load({ 'paid-consulting-calls': 'no', 'paid-call-rate': '2500' })
-  await paidCall.submit.click()
-  assert.equal(paidCall.requests.length, 1, paidCall.inputs['[name="paid-call-rate"]'].validationMessage)
-  assert.equal(paidCall.requests[0].body.paid_call, false)
-  assert.equal(paidCall.requests[0].body.paid_call_rate, null)
-})
-
-test('a consult profile treats the canonical zero paid-call rate as no paid consult', async () => {
-  for (const sentinel of ['0', '00', ' 0 ']) {
-    const result = load({ 'paid-call-rate': sentinel }, '/build-profile/consult')
-    await result.submit.click()
-    assert.equal(result.requests.length, 1, result.inputs['[name="paid-call-rate"]'].validationMessage)
-    assert.equal(result.requests[0].body.paid_call, false)
-    assert.equal(result.requests[0].body.paid_call_rate, null)
-    assert.equal(result.error.style.display, 'none')
-  }
-
-})
-
-test('Full Profile rejects a selected Paid Call rate of zero', async () => {
-  const selected = load({ 'paid-consulting-calls': 'yes', 'paid-call-rate': '0' }, '/build-profile/full')
-  await selected.submit.click()
-  assert.equal(selected.requests.length, 0)
-  assert.match(selected.inputs['[name="paid-call-rate"]'].validationMessage, /\$1 to \$1,000/)
 })
 
 test('disabled and non-owned blank rates preserve compatibility zero without accepting authored zero', async () => {
@@ -331,62 +284,24 @@ test('disabled and non-owned blank rates preserve compatibility zero without acc
   assert.equal(consult.requests.length, 1)
   assert.equal(consult.requests[0].body.hourly_rate, 0)
   assert.equal(consult.requests[0].body.retainer_rate, 0)
-  assert.equal(consult.requests[0].body.paid_call_rate, null)
 })
 
-test('a consult profile never enables or blocks on hidden paid-call data the contract rejects', async () => {
-  for (const stale of ['2500', '1.50', '1,000', '$50', '1e2', '-5', '   ', '9007199254740993']) {
-    const result = load({ 'paid-call-rate': stale }, '/build-profile/consult')
+test('Build Profile never emits or validates call settings owned by the Dashboard', async () => {
+  const callFields = ['free_call', 'free_call_desc', 'paid_call', 'paid_call_desc', 'paid_call_rate']
+  for (const pathname of ['/build-profile/consult', '/build-profile/full']) {
+    const result = load({
+      'free-consulting-calls': 'yes',
+      'free-call-description': 'Stale free call copy',
+      'paid-consulting-calls': 'yes',
+      'paid-call-description': 'Stale paid call copy',
+      'paid-call-rate': 'not-a-price',
+    }, pathname)
     await result.submit.click()
-    assert.equal(
-      result.requests.length, 1,
-      `${stale}: ${result.inputs['[name="paid-call-rate"]'].validationMessage}`,
-    )
-    assert.equal(result.requests[0].body.paid_call, false)
-    assert.equal(result.requests[0].body.paid_call_rate, null)
-    assert.equal(result.error.style.display, 'none')
+    assert.equal(result.requests.length, 1, pathname)
+    for (const field of callFields) assert.equal(Object.hasOwn(result.requests[0].body, field), false, field)
     assert.equal(result.inputs['[name="paid-call-rate"]'].reportValidityCount, 0)
+    assert.equal(result.inputs['[name="paid-call-rate"]'].validationMessage, '')
   }
-
-})
-
-test('Full Profile reports a selected out-of-range Paid Call rate on its own visible control', async () => {
-  const selected = load({ 'paid-consulting-calls': 'yes', 'paid-call-rate': '2500' }, '/build-profile/full')
-  await selected.submit.click()
-  assert.equal(selected.requests.length, 0)
-  assert.equal(selected.error.style.display, 'block')
-  assert.match(selected.inputs['[name="paid-call-rate"]'].validationMessage, /\$1 to \$1,000/)
-  assert.equal(selected.inputs['[name="paid-call-rate"]'].reportValidityCount, 1)
-})
-
-// The consult flow authors no paid-call section, so hydration can leave the hidden
-// radio on either answer over data the member can neither see nor repair. Neither
-// answer may block the submit or leak an out-of-contract rate.
-test('a consult profile ignores the hidden paid-call radio over data the contract rejects', async () => {
-  for (const stale of ['2500', '0', '1.50', '1,000', '$50', '1e2', '-5', '   ', '9007199254740993']) {
-    const result = load(
-      { 'paid-consulting-calls': 'yes', 'paid-call-rate': stale },
-      '/build-profile/consult',
-    )
-    await result.submit.click()
-    assert.equal(
-      result.requests.length, 1,
-      `${stale}: ${result.inputs['[name="paid-call-rate"]'].validationMessage}`,
-    )
-    assert.equal(result.requests[0].body.paid_call, false)
-    assert.equal(result.requests[0].body.paid_call_rate, null)
-    assert.equal(result.error.style.display, 'none')
-    assert.equal(result.inputs['[name="paid-call-rate"]'].reportValidityCount, 0)
-  }
-
-  const inContract = load(
-    { 'paid-consulting-calls': 'yes', 'paid-call-rate': '250' },
-    '/build-profile/consult',
-  )
-  await inContract.submit.click()
-  assert.equal(inContract.requests.length, 1)
-  assert.equal(inContract.requests[0].body.paid_call, true)
-  assert.equal(inContract.requests[0].body.paid_call_rate, 250)
 })
 
 // A consult save persists Hourly_Rate 0 for the profile-inapplicable control, and
@@ -441,14 +356,6 @@ test('Full Profile rejects a required hourly rate of zero', async () => {
   assert.equal(fullProfile.requests.length, 0)
   assert.equal(fullProfile.error.style.display, 'block')
   assert.match(fullProfile.inputs['[name="rate"]'].validationMessage, /\$1 to \$1,000/)
-})
-
-test('a consult profile still enables an in-contract hidden paid-call rate', async () => {
-  const result = load({ 'paid-call-rate': '250' }, '/build-profile/consult')
-  await result.submit.click()
-  assert.equal(result.requests.length, 1)
-  assert.equal(result.requests[0].body.paid_call, true)
-  assert.equal(result.requests[0].body.paid_call_rate, 250)
 })
 
 // A service price and name live in hidden JSON capture inputs, so focus() and
