@@ -267,7 +267,6 @@ required for the existing form. The interception details below apply only to
 legacy Security forms without either native marker. Starter Edit Profile and
 Build Account keep their existing controller ownership.
 
-
 Memberstack's browser SDK owns reset-password emails for explicit recovery and
 the changed login-email security used by Build Account. Account Security and
 Starter Edit Profile do not request one. Build Account also sends none when the
@@ -290,20 +289,21 @@ sitewide:
 
 - `guardSecurityForm: 'identity'`: resolve the current member through
   `window.StartersV3RouteGuard.memberRole` and take capture-phase ownership of
-  `#wf-form-Account-Security` for `brand-free`, `brand-paid`, or `talent`. On
-  `/starter-edit-profile`, the same setting also guards the visible
-  `#wf-form-Build-Form-Full-Profile` for Talent. A natively valid changed email
-  can be written to Memberstack even while Personal Details is invalid, without
-  running the Xano profile save. When Personal Details is valid, the email is
-  written first and the existing Designer-authored button click is replayed so
-  its authenticated Xano save continues unchanged. Required fields in later
-  sections do not block this section-scoped replay. The profile path never sends
-  a reset email; an unchanged email also avoids the auth mutation.
+  a legacy non-native `#wf-form-Account-Security` for `brand-free`,
+  `brand-paid`, or `talent`. On `/starter-edit-profile`, the same setting also
+  guards the visible `#wf-form-Build-Form-Full-Profile` for Talent. A natively
+  valid changed email can be written to Memberstack even while Personal Details
+  is invalid, without running the Xano profile save. When Personal Details is
+  valid, the email is written first and the existing Designer-authored button
+  click is replayed so its authenticated Xano save continues unchanged.
+  Required fields in later sections do not block this section-scoped replay.
+  The profile path never sends a reset email; an unchanged email also avoids
+  the auth mutation.
 - `guardSecurityForm: 'brand'`: resolve the current member through
   `window.StartersV3RouteGuard.memberRole` and take capture-phase ownership of
-  `#wf-form-Account-Security` only for `brand-free` or `brand-paid`. This is the
-  rollback switch if Starter interception must be disabled without changing
-  Brand behavior.
+  a legacy non-native `#wf-form-Account-Security` only for `brand-free` or
+  `brand-paid`. This is the rollback switch if Starter interception must be
+  disabled without changing Brand behavior.
 - With either setting, unmapped, conflicted, logged-out, or unreadable identity
   states fail closed for a changed login email: they do not replay the profile
   save. Account Security stays Memberstack-native, while a confirmed Talent
@@ -475,11 +475,15 @@ Run in Memberstack Test Mode first with an approved sandbox Brand identity:
    one. Simulate an ambiguous email response on the changed path; prove a
    same-page resubmit performs no second email attempt, preserves the completed
    account, and can reach the dashboard.
-10. Exercise Account Security success, error, and retry; prove its authored
-   Memberstack states show the result, Webflow states stay hidden, and only
-   Save Changes enters loading (Change Password's lock stays visible). Repeat
-   changed/unchanged and A-B-A email saves with zero password-email API calls.
-   Prove Forgot Password can still issue a recovery link on explicit request.
+10. Exercise Account Security success, error, and retry. On the published
+   native `data-ms-form="profile"` form, prove `[data-ms-message-text]` shows
+   Memberstack's own response message, the controller binds no interceptor,
+   marks nothing loading, and makes no API call. On a legacy non-native form,
+   prove its authored Memberstack states show the result, Webflow states stay
+   hidden, and only Save Changes enters loading (Change Password's lock stays
+   visible). Repeat changed/unchanged and A-B-A email saves with zero
+   password-email API calls. Prove Forgot Password can still issue a recovery
+   link on explicit request.
 11. Replay duplicate and out-of-order webhook fixtures; prove no stale overwrite.
 12. Run the read-only reconciliation and require zero unexplained differences.
 
