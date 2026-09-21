@@ -1,7 +1,9 @@
 # V3 Starter project form wiring
 
 `v3/starter-project-form.js` connects the detached Starter Dashboard copy of the
-shared **Contract Generation** component to the authenticated V3 project endpoints.
+shared **Contract Generation** component to the authenticated Xano project
+endpoints listed under [Backend contract required before Webflow
+wiring](#backend-contract-required-before-webflow-wiring).
 V2 is a behavior reference only. This controller does not call a V2 route,
 Airtable, Make, or a legacy TalkJS table.
 
@@ -31,11 +33,11 @@ Airtable, Make, or a legacy TalkJS table.
 
 ## Backend contract required before Webflow wiring
 
-`POST projects/proposal-options/v3` must authenticate the Starter and return
+`POST projects/proposal-options/v4` must authenticate the Starter and return
 only paid Brands with a current active `talkjs_brand_message` relationship. It
 is the dedicated option source for this form, and the only route the form reads
-counterparties from. It returns the server-verified V3 Brand-to-Starter message
-relationship projection:
+counterparties from. It returns the server-verified V3 `talkjs_brand_message`
+Brand-to-Starter relationship projection:
 
 ```json
 {
@@ -44,15 +46,17 @@ relationship projection:
       "counterparty_id": 81,
       "company_name": "Acme",
       "hiring_manager_name": "Jai",
-      "memberstack_member_id": "mem_brand"
+      "counterparty_memberstack_id": "mem_brand81"
     }
   ]
 }
 ```
 
-`hiring_manager_name` may be empty. The company name remains the visible Party
-fallback in that state. `memberstack_member_id` is the authenticated Brand
-member ID. The controller validates it and uses
+`counterparty_memberstack_id` is required by the v4 endpoint admission
+contract. `hiring_manager_name` may be empty. The company name remains the
+visible Party fallback in that state. The controller validates the
+authenticated Brand member ID, normalizes it to its internal
+`memberstack_member_id` option field, and uses
 `/messages?with=<memberstack_member_id>` for the existing Message action.
 
 Do not return message text or use the browser's Brand value as authority.
@@ -298,10 +302,10 @@ cached `opportunities-3.0.js` lacking `Opp30.API.starterProfile` cannot load
 canonical services. The controller still removes the generic placeholders and
 `Monthly retainer`, and keeps every other valid authored option.
 
-Do not add the last loader until both V3 endpoints exist and pass backend tests.
-After release, install it on the Starter Dashboard so the existing Navbar action
-opens the detached shared Contract Generation form. Ship it in the same release
-as the Brand loader in
+Do not add the last loader until both backend endpoints exist and pass backend
+tests. After release, install it on the Starter Dashboard so the existing Navbar
+action opens the detached shared Contract Generation form. Ship it in the same
+release as the Brand loader in
 [BRAND-PROJECT-PROPOSALS-WIRING.md](BRAND-PROJECT-PROPOSALS-WIRING.md#script-order);
 the Starter half alone leaves every request unactionable.
 The deferred Starter adapter must execute before `global-embeds/modal/modal.js`
