@@ -611,6 +611,36 @@ test('a pending Build Profile Free off choice disables an existing canonical ser
   assert.equal(result.dom.root.getAttribute('data-free-build-call-intent'), '')
 })
 
+test('declining a pending Free enable consumes the receipt when canonical has no service', async () => {
+  const result = load({
+    memberJSON: {
+      starter_call_settings_intent_v3: {
+        version: 1,
+        member_id: 'member-free-a',
+        free: { enabled: true, description: 'Quick intro' },
+      },
+    },
+    initial: canonical(),
+  })
+  await settle()
+
+  assert.equal(result.dom.yes.checked, true)
+  assert.equal(result.dom.root.getAttribute('data-free-build-call-intent'), 'pending')
+
+  result.dom.no.checked = true
+  await result.dom.no.dispatch('change')
+  assert.ok(await result.window.StarterFreeCallSettings.submit())
+  await settle()
+
+  assert.equal(result.calls.some((call) => call.method === 'POST'), false)
+  assert.equal(result.memberJsonWrites.length, 1)
+  assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
+  assert.equal(result.dom.root.getAttribute('data-free-build-call-intent'), '')
+  assert.equal(result.dom.no.checked, true)
+  assert.equal(result.dom.yes.checked, false)
+  assert.match(result.dom.status.textContent, /Free calls are off/)
+})
+
 test('a gated pending Free enable never blocks the Edit Profile step save', async () => {
   const result = load({
     editProfile: true,

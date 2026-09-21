@@ -1024,6 +1024,36 @@ test('the native Paid card binds without generated IDs and upgrades a legacy dur
   assert.equal(result.dom.formWrapper.style.display, 'none')
 })
 
+test('declining a pending Paid enable consumes the receipt when canonical has no service', async () => {
+  const result = load({
+    cardMode: true,
+    memberJSON: {
+      starter_call_settings_intent_v3: {
+        version: 1,
+        member_id: 'member-a',
+        paid: { enabled: true, title: 'Strategy call', price_dollars: 250 },
+      },
+    },
+    initial: canonical(),
+  })
+  await settle()
+
+  assert.equal(result.dom.enabled.checked, true)
+  assert.equal(result.dom.root.getAttribute('data-paid-build-call-intent'), 'pending')
+
+  result.dom.disabled.checked = true
+  await result.dom.disabled.dispatch('change')
+  assert.ok(await result.window.StarterPaidCallSettings.submit())
+  await settle()
+
+  assert.equal(result.calls.some((call) => call.method === 'POST'), false)
+  assert.equal(result.memberJsonWrites.length, 1)
+  assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
+  assert.equal(result.dom.root.getAttribute('data-paid-build-call-intent'), '')
+  assert.equal(result.dom.disabled.checked, true)
+  assert.equal(result.dom.enabled.checked, false)
+})
+
 test('a gated pending Paid enable never blocks the Edit Profile step save', async () => {
   const result = load({
     editProfile: true,

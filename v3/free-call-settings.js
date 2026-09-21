@@ -945,7 +945,13 @@
   async function disable() {
     if (busy || activeWrite || authTransitionPending) return null
     const service = canonicalService(settings)
-    if (!service) return settings
+    if (!service) {
+      if (pendingBuildIntent) {
+        await consumePendingBuildIntentBestEffort()
+        render(settings)
+      }
+      return settings
+    }
     const version = ++refreshVersion
     const memberId = sessionMemberId
     const write = beginWrite(memberId)
