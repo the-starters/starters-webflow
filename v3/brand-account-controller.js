@@ -1,5 +1,6 @@
 /**
  * Brand signup plan, Build Account, and guarded identity email controller.
+ * @release v1.59.600
  *
  * Authority contract:
  *   - Memberstack owns identity, login email, custom fields, and profile image.
