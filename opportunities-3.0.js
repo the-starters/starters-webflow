@@ -3948,43 +3948,102 @@
     })
   }
 
-  function ensureEndProjectClearReview(parts, visible) {
-    if (!parts.form) return
-    let clear = $('[data-end-project-clear-review]', parts.form)
-    if (!clear && visible) {
-      const rating = $('input[name="Call-Rating"]', parts.form)
-      const group = rating && rating.closest('[data-end-project-review]')
-      if (!group) return
-      clear = document.createElement('button')
-      clear.setAttribute('type', 'button')
-      clear.setAttribute('data-end-project-clear-review', '')
-      clear.textContent = 'Clear review'
-      // Use an authored control when available; older published modals get a
-      // keyboard-accessible fallback beside the existing review fields.
-      clear.style.cssText = 'display:block;margin-top:0.5rem;padding:0.5rem 0;' +
-        'border:0;background:transparent;color:inherit;font:inherit;' +
-        'text-decoration:underline;cursor:pointer;'
-      group.appendChild(clear)
-    }
-    setEndProjectVisible(clear, visible)
+  // Finsweet v1 resolves selected stars by radio name across the document.
+  // Give each authored review group its own name, while reading submissions
+  // through the existing Finsweet group attribute instead of the renamed field.
+  function selectedReviewRating(form) {
+    const group = $('[fs-starrating-element="group"]', form)
+    return group
+      ? $('input[type="radio"]:checked', group)
+      : $('input[name="Call-Rating"]:checked', form)
   }
 
-  function clearEndProjectReview(event, control) {
-    event.preventDefault()
-    event.stopPropagation()
-    const request = activeEndProjectRequest
-    const form = control.closest('form')
-    if (!request || !request.view.showReview || !form ||
-      request.modal !== control.closest('[data-modal-target="' + PROJECT_END_MODAL_ID + '"]') ||
-      form !== $('form', request.modal)) return
-    $$('input[name="Call-Rating"], [name="Public-Feedback"], [name="Feedback"]', form)
-      .forEach((input) => {
-        if (input.getAttribute('name') === 'Call-Rating') input.checked = false
-        else input.value = ''
-        input.dispatchEvent(new CustomEvent('input', { bubbles: true }))
-        input.dispatchEvent(new CustomEvent('change', { bubbles: true }))
+  function wireReviewRatings() {
+    const records = new Map()
+    $$('[fs-starrating-element="group"]').forEach((group, index) => {
+      const modal = group.closest('[data-modal-target="end-project"], [data-modal-target="rate-starter-call"]')
+      const form = group.closest('form')
+      if (!modal || !form) return
+      const radios = $$('input[type="radio"]', group)
+      if (!radios.length) return
+      radios.forEach(radio => radio.setAttribute('name', 'Call-Rating-opp30-' + index))
+      records.set(group, { group, form, modal, radios, selected: radios.find(radio => radio.checked) || null })
+    })
+    if (!records.size) return
+
+    function recordFor(target) {
+      const group = target && target.closest && target.closest('[fs-starrating-element="group"]')
+      return records.get(group)
+    }
+
+    function paint(record) {
+      record.selected = record.radios.find(radio => radio.checked) || null
+      const value = Number(record.selected && record.selected.value)
+      record.radios.forEach(radio => {
+        const label = radio.closest('label')
+        const star = label && $('[fs-starrating-element="star"]', label)
+        if (!star) return
+        const activeClass = star.getAttribute('fs-starrating-active') ||
+          record.group.getAttribute('fs-starrating-active') || 'is-active-starrating'
+        if (Number(radio.value) <= value) star.classList.add(activeClass)
+        else star.classList.remove(activeClass)
       })
-    setEndProjectVisible($('.w-form-fail', request.modal), false)
+    }
+
+    function clearRating(event, record, radio) {
+      // Cancelling a radio's click restores its checked state after dispatch.
+      // Cancel label activation only; for a direct radio click, uncheck it
+      // without cancelling the browser's activation transaction.
+      if (event.type !== 'click' || event.target !== radio) event.preventDefault()
+      radio.checked = false
+      record.selected = null
+      radio.dispatchEvent(new Event('input', { bubbles: true }))
+      radio.dispatchEvent(new Event('change', { bubbles: true }))
+      // Finsweet treats input as a hover preview, even for an unchecked radio.
+      // Repaint after its listeners; subsequent normal hover stays Finsweet-owned.
+      paint(record)
+      dismissEmptyReviewError(record.form, record.modal)
+    }
+
+    document.addEventListener('click', event => {
+      const record = recordFor(event.target)
+      if (!record) return
+      const label = event.target.closest('label')
+      const radio = record.radios.includes(event.target)
+        ? event.target : label && $('input[type="radio"]', label)
+      if (!radio || radio.disabled || radio !== record.selected) return
+      clearRating(event, record, radio)
+    })
+    document.addEventListener('keydown', event => {
+      if (event.key !== ' ') return
+      const record = recordFor(event.target)
+      if (!record || !record.radios.includes(event.target) || event.target.disabled) return
+      if (event.repeat) { event.preventDefault(); return }
+      if (event.target === record.selected) clearRating(event, record, event.target)
+    })
+    function dismissEmptyReviewError(form, modal) {
+      if (!form || !modal || modal.getAttribute('data-modal-target') !== PROJECT_END_MODAL_ID) return
+      const feedback = $('[name="Public-Feedback"], [name="Feedback"]', form)
+      if (!selectedReviewRating(form) && !String(feedback && feedback.value || '').trim()) {
+        setEndProjectVisible($('.w-form-fail', modal), false)
+      }
+    }
+    function trackSelection(event) {
+      const record = recordFor(event.target)
+      if (record) record.selected = record.radios.find(radio => radio.checked) || null
+      const form = event.target && event.target.closest && event.target.closest('form')
+      const owner = form && Array.from(records.values()).find(item => item.form === form)
+      if (owner) dismissEmptyReviewError(form, owner.modal)
+    }
+    document.addEventListener('input', trackSelection)
+    document.addEventListener('change', trackSelection)
+    document.addEventListener('reset', event => {
+      // Native form reset applies its checked defaults after the reset event.
+      window.setTimeout(() => {
+        records.forEach(record => { if (record.form === event.target) paint(record) })
+      }, 0)
+    })
+    records.forEach(paint)
   }
 
   function paintEndProjectModal(modal, view, project) {
@@ -4009,7 +4068,6 @@
         })
       })
     }
-    ensureEndProjectClearReview(parts, view.showReview)
     setEndProjectVisible(parts.reasonWrap, view.showReason)
     // Active projects no longer have a second end mode, but an authored
     // toggle can still exist during Designer/CDN rollout skew: keep it hidden.
@@ -4123,7 +4181,7 @@
     const form = event.target
     const intent = { action: view.action, reason: view.reason }
     if (view.showReview) {
-      const ratingInput = $('input[name="Call-Rating"]:checked', form)
+      const ratingInput = selectedReviewRating(form)
       const reviewInput = $('[name="Public-Feedback"], [name="Feedback"]', form)
       const rating = Number(ratingInput && ratingInput.value)
       const reviewText = String(reviewInput && reviewInput.value || '').trim()
@@ -4135,7 +4193,7 @@
         if (!(rating >= 1 && rating <= 5)) {
           reviewError(
             modal,
-            'Choose a rating from 1 to 5 stars, or select “Clear review” to skip the review.',
+            'Choose a rating from 1 to 5 stars, or leave the rating and feedback empty to skip the review.',
             validationDiagnostic('project_end', 'review', 'INVALID_RATING'),
           )
           return
@@ -4143,7 +4201,7 @@
         if (reviewText.length < 10 || reviewText.length > 4000) {
           reviewError(
             modal,
-            'Write between 10 and 4,000 characters, or select “Clear review” to skip the review.',
+            'Write between 10 and 4,000 characters, or click your selected star again and leave feedback empty to skip the review.',
             validationDiagnostic('project_end', 'review', 'INVALID_REVIEW_LENGTH'),
           )
           return
@@ -4585,7 +4643,7 @@
       return
     }
     const form = event.target
-    const ratingInput = $('input[name="Call-Rating"]:checked', form)
+    const ratingInput = selectedReviewRating(form)
     const reviewInput = $('[name="Public-Feedback"], [name="Feedback"]', form)
     const rating = Number(ratingInput && ratingInput.value)
     const reviewText = String(reviewInput && reviewInput.value || '').trim()
@@ -4758,13 +4816,6 @@
         return
       }
       const target = event.target
-      const clearReview = target && target.closest
-        ? target.closest('[data-end-project-clear-review]')
-        : null
-      if (clearReview) {
-        clearEndProjectReview(event, clearReview)
-        return
-      }
       const toggle = target && target.closest
         ? target.closest('[data-end-project-mode-toggle]')
         : null
@@ -7013,6 +7064,7 @@
 
   /* ========================= BOOTSTRAP ========================== */
   function boot() {
+    wireReviewRatings()
     wireMemberScopeAuthChange()
     initOpportunityCategorySelects()
     prepareOpportunityStatusControls()

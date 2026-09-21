@@ -1206,19 +1206,29 @@ during the authored surface transition.
 
 The Brand end-project form offers its rating and public-review fields only for
 completion, not the legacy stranded-termination cleanup or cancellation. The
-review is optional. A **Clear review** button clears all selected stars and both
-supported feedback fields, dismisses the validation error, and leaves the modal
-open without submitting the project. An authored `type="button"` control can use
-`data-end-project-clear-review`, but it must sit inside the `end-project`
-modal's `<form>`; a control placed elsewhere in the modal is ignored and the
-native fallback is still injected. Older published modals without an authored
-control receive that native button inside the rating's
-`data-end-project-review` group. It appears only while the optional review is
-offered. Validation messages name this control explicitly. If the Brand enters
-either a rating or review text, JavaScript requires both a 1–5 rating and a
-10–4,000 character review before posting the project action. When the action
-response reaches `completed`, the controller submits the review to
-`brand/reviews/submit` in the same pass.
+review is optional. Click the currently selected star again, or press Space on
+its focused radio, to clear the rating. This preserves any typed feedback and
+never submits the form. Clicking a different star changes the rating normally.
+No Clear review button is added. If both rating and feedback are empty, the
+review validation error is dismissed and completion can proceed without a review.
+If either field remains filled, a 1–5 rating and a 10–4,000 character review are
+required. Validation copy explains how to clear the star and leave feedback empty.
+Suggested authored helper text: “Review optional. Click your selected star again
+to clear.”
+
+The existing Finsweet v1 `fs-starrating-element="group"` and `star` attributes
+remain the styling contract. The controller gives each review group a unique
+runtime radio name to prevent Finsweet's document-wide name lookup from
+highlighting another form. Submissions read the selected radio inside the group;
+older forms without the group attribute retain the `Call-Rating` fallback.
+Finsweet keeps normal hover styling; the controller synchronizes highlighting
+when clearing or resetting. The same clear gesture works in the standalone
+review modal, where a rating and valid feedback are still required to submit.
+The Starter modal has no rating controls. Duplicate modal targets on the
+`/all-modals` preview page are a separate authored-wiring issue.
+
+When the action response reaches `completed`, the controller submits a supplied
+review to `brand/reviews/submit` in the same pass.
 Termination never submits a review, and `canceled` or `cancelled` responses
 never receive one. A review failure after the project closes does not roll back
 the project and directs the Brand to retry through Review Starter.
