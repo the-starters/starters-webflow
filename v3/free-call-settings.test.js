@@ -302,6 +302,7 @@ function load(options = {}) {
     getMemberJSON: async () => ({ data: memberJSON }),
     updateMemberJSON: async ({ json }) => {
       if (options.memberJsonUpdateError) throw options.memberJsonUpdateError
+      if (options.memberJsonUpdateGate) await options.memberJsonUpdateGate
       memberJSON = json
       memberJsonWrites.push(json)
     },
@@ -662,6 +663,36 @@ test('auto-consuming a satisfied Free off receipt re-renders inside the profile 
   assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
   assert.equal(hydrationRuns, 1)
   assert.equal(result.window.StarterFreeCallSettings.hasChanges(), false)
+})
+
+test('a member edit made while a Free off receipt is being consumed is never repainted away', async () => {
+  const cleanupGate = deferred()
+  const result = load({
+    editProfile: true,
+    memberId: 'member-free-a',
+    memberJsonUpdateGate: cleanupGate.promise,
+    memberJSON: {
+      starter_call_settings_intent_v3: {
+        version: 1,
+        member_id: 'member-free-a',
+        free: { enabled: false, description: '' },
+      },
+    },
+    initial: canonical(),
+  })
+  await settle()
+
+  result.dom.yes.checked = true
+  await result.dom.yes.dispatch('change')
+  result.dom.title.value = 'New member choice'
+  await result.dom.title.dispatch('input')
+  cleanupGate.resolve()
+  await settle()
+
+  assert.equal(result.dom.yes.checked, true)
+  assert.equal(result.dom.no.checked, false)
+  assert.equal(result.dom.title.value, 'New member choice')
+  assert.equal(result.window.StarterFreeCallSettings.hasChanges(), true)
 })
 
 test('Edit Profile hydrates and saves Free Call settings through the canonical controller', async () => {

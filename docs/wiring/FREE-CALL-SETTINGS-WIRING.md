@@ -39,7 +39,10 @@ canonical readback: a failed cleanup write never turns a successful canonical
 save into a profile-step failure, and the unchanged receipt retries on reload.
 When an already-off receipt is consumed without a canonical write, the delayed
 Edit Profile re-render runs inside `__tsProfileDirtyState.runHydrationSync` so
-the synthetic radio change cannot create an unsaved step-6 state.
+the synthetic radio change cannot create an unsaved step-6 state. The controller
+also records a monotonic member-edit revision. If the member changes the Free
+choice or description while receipt cleanup is in flight, the delayed re-render
+is skipped and the unsaved member input remains visible and dirty.
 
 ## Published compatibility contract
 

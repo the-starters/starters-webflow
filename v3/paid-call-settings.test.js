@@ -508,6 +508,7 @@ function load(options = {}) {
     getMemberJSON: async () => ({ data: memberJSON }),
     updateMemberJSON: async ({ json }) => {
       if (options.memberJsonUpdateError) throw options.memberJsonUpdateError
+      if (options.memberJsonUpdateGate) await options.memberJsonUpdateGate
       memberJSON = json
       memberJsonWrites.push(json)
     },
@@ -1075,6 +1076,39 @@ test('auto-consuming a satisfied Paid off receipt re-renders inside the profile 
   assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
   assert.equal(hydrationRuns, 1)
   assert.equal(result.window.StarterPaidCallSettings.hasChanges(), false)
+})
+
+test('a member edit made while a Paid off receipt is being consumed is never repainted away', async () => {
+  const cleanupGate = deferred()
+  const result = load({
+    editProfile: true,
+    memberId: 'member-a',
+    memberJsonUpdateGate: cleanupGate.promise,
+    memberJSON: {
+      starter_call_settings_intent_v3: {
+        version: 1,
+        member_id: 'member-a',
+        paid: { enabled: false, title: '', price_dollars: null },
+      },
+    },
+    initial: canonical(),
+  })
+  await settle()
+
+  result.dom.enabled.checked = true
+  await result.dom.enabled.dispatch('change')
+  result.dom.title.value = 'New strategy choice'
+  await result.dom.title.dispatch('input')
+  result.dom.price.value = '275'
+  await result.dom.price.dispatch('input')
+  cleanupGate.resolve()
+  await settle()
+
+  assert.equal(result.dom.enabled.checked, true)
+  assert.equal(result.dom.disabled.checked, false)
+  assert.equal(result.dom.title.value, 'New strategy choice')
+  assert.equal(result.dom.price.value, '275')
+  assert.equal(result.window.StarterPaidCallSettings.hasChanges(), true)
 })
 
 test('Edit Profile hydrates and saves Paid Call settings through the canonical controller', async () => {
@@ -2213,6 +2247,27 @@ test('a pending Paid intent never displaces the confirmed canonical rate in the 
   assert.equal(result.dom.root.getAttribute('data-paid-call-bookable'), 'true')
   assert.equal(result.dom.title.value, 'New strategy call')
   assert.equal(result.dom.price.value, '250')
+})
+
+test('an active non-USD Paid service never falls through to a pending USD receipt rate', async () => {
+  const active = service({ currency: 'eur', price_cents: 30000 })
+  const result = load({
+    cardMode: true,
+    memberId: 'member-a',
+    memberJSON: {
+      starter_call_settings_intent_v3: {
+        version: 1,
+        member_id: 'member-a',
+        paid: { enabled: true, title: 'New strategy call', price_dollars: 250 },
+      },
+    },
+    initial: canonical({ services: [active] }),
+  })
+  await settle()
+
+  assert.equal(result.dom.priceOutput.textContent, 'Not set')
+  assert.equal(result.dom.root.getAttribute('data-paid-call-enabled'), 'true')
+  assert.equal(result.dom.price.value, '250', 'the pending choice still prefills the editable form')
 })
 
 test('a pending Paid intent outranks an imported V2 rate suggestion', async () => {

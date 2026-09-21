@@ -26,7 +26,10 @@ canonical readback: a failed cleanup write never turns a successful canonical
 save into a profile-step failure, and the unchanged receipt retries on reload.
 When an already-off receipt is consumed without a canonical write, the delayed
 Edit Profile re-render runs inside `__tsProfileDirtyState.runHydrationSync` so
-the synthetic radio change cannot create an unsaved step-6 state.
+the synthetic radio change cannot create an unsaved step-6 state. The controller
+also records a monotonic member-edit revision. If the member changes the Paid
+choice, title, or rate while receipt cleanup is in flight, the delayed re-render
+is skipped and the unsaved member input remains visible and dirty.
 
 ## Script
 
@@ -186,7 +189,10 @@ The controller sets `data-ready="true|false"` on each row. It also sets these wr
 - Initial and terminal state comes from `GET starter/paid-call-settings/get/v3` (`#2924`). An
   unconsumed Build Profile receipt prefills the form controls only; it is never canonical state.
 - An active service in `services[]` is the confirmed V3 authority. It wins over any imported
-  suggestion. A service rate is bookable only when it is USD and has an exact whole-dollar integer
+  suggestion or pending Build Profile receipt. The card output uses that active service's valid
+  canonical rate, or `Not set` when that canonical rate cannot be displayed. A pending receipt can
+  still prefill the editable form, but it never becomes the displayed rate for an active service.
+  A service rate is bookable only when it is USD and has an exact whole-dollar integer
   `price_cents` from 100 through 100000 (`price_cents % 100 === 0`).
 - An active service whose stored rate fails that check is never presented as bookable. The browser
   does not repair or overwrite it: the canonical value survives until the Starter submits a valid

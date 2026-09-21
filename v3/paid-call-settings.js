@@ -68,6 +68,7 @@
   let editProfileReady = false
   let applyingCanonicalRender = false
   let pendingBuildIntent = null
+  let memberEditRevision = 0
 
   function memberJsonValue(response) {
     const value = response && Object.prototype.hasOwnProperty.call(response, 'data')
@@ -1107,7 +1108,9 @@
     setActionEnabled(action('save'), canSaveSettings(value))
     setActionEnabled(action('disable'), Boolean(service))
     const priceOutput = output('price')
-    const displayedRate = confirmedRate || correctionRequiredRate(service) || pendingRate || suggestion
+    const displayedRate = service
+      ? (confirmedRate || correctionRequiredRate(service))
+      : (pendingRate || suggestion)
     if (priceOutput) {
       priceOutput.textContent = displayedRate ? formatUsd(displayedRate.price_cents) : 'Not set'
     } else {
@@ -1287,8 +1290,11 @@
       pendingBuildIntent = await readPendingBuildIntent().catch(function () { return null })
       if (currentRender(version, memberId) && !busy) render(canonical)
       if (!canonicalService(canonical) && pendingBuildIntent && !pendingBuildIntent.enabled) {
+        const consumeEditRevision = memberEditRevision
         consumePendingBuildIntent().then(function () {
-          if (currentRender(version, memberId) && !busy) renderWithoutProfileDirty(canonical)
+          if (currentRender(version, memberId) && !busy && memberEditRevision === consumeEditRevision) {
+            renderWithoutProfileDirty(canonical)
+          }
         }).catch(function () {})
       }
       return canonical
@@ -1505,8 +1511,11 @@
       if (!currentRender(version, member.id)) return null
       const rendered = render(canonical)
       if (!canonicalService(canonical) && pendingBuildIntent && !pendingBuildIntent.enabled) {
+        const consumeEditRevision = memberEditRevision
         consumePendingBuildIntent().then(function () {
-          if (currentRender(version, member.id) && !busy) renderWithoutProfileDirty(canonical)
+          if (currentRender(version, member.id) && !busy && memberEditRevision === consumeEditRevision) {
+            renderWithoutProfileDirty(canonical)
+          }
         }).catch(function () {})
       }
       return rendered
@@ -1627,6 +1636,7 @@
     if (enabledInput) {
       enabledInput.addEventListener('change', function () {
         if (applyingCanonicalRender) return
+        memberEditRevision += 1
         if (enabledInput.checked) explicitIntent = 'enabled'
         markEditProfileDirty()
         const disabledInput = disabledField()
@@ -1642,6 +1652,7 @@
     if (disabledInput) {
       disabledInput.addEventListener('change', function () {
         if (applyingCanonicalRender) return
+        memberEditRevision += 1
         if (disabledInput.checked) explicitIntent = 'disabled'
         markEditProfileDirty()
         setRadioChecked(disabledInput, disabledInput.checked)
@@ -1654,6 +1665,7 @@
       if (!input) return
       input.addEventListener('input', function () {
         if (applyingCanonicalRender) return
+        memberEditRevision += 1
         markEditProfileDirty()
         setFieldValidity(input, '')
       })

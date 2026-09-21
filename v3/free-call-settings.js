@@ -61,6 +61,7 @@
   let editProfileReady = false
   let applyingCanonicalRender = false
   let pendingBuildIntent = null
+  let memberEditRevision = 0
 
   function memberJsonValue(response) {
     const value = response && Object.prototype.hasOwnProperty.call(response, 'data')
@@ -859,8 +860,11 @@
       pendingBuildIntent = await readPendingBuildIntent().catch(function () { return null })
       if (currentRender(version, memberId) && !busy) render(canonical)
       if (!canonicalService(canonical) && pendingBuildIntent && !pendingBuildIntent.enabled) {
+        const consumeEditRevision = memberEditRevision
         consumePendingBuildIntent().then(function () {
-          if (currentRender(version, memberId) && !busy) renderWithoutProfileDirty(canonical)
+          if (currentRender(version, memberId) && !busy && memberEditRevision === consumeEditRevision) {
+            renderWithoutProfileDirty(canonical)
+          }
         }).catch(function () {})
       }
       return canonical
@@ -1158,8 +1162,11 @@
       if (!currentRender(version, member.id)) return null
       const rendered = render(canonical)
       if (!canonicalService(canonical) && pendingBuildIntent && !pendingBuildIntent.enabled) {
+        const consumeEditRevision = memberEditRevision
         consumePendingBuildIntent().then(function () {
-          if (currentRender(version, member.id) && !busy) renderWithoutProfileDirty(canonical)
+          if (currentRender(version, member.id) && !busy && memberEditRevision === consumeEditRevision) {
+            renderWithoutProfileDirty(canonical)
+          }
         }).catch(function () {})
       }
       return rendered
@@ -1259,6 +1266,7 @@
     if (pair.enabled) {
       pair.enabled.addEventListener('change', function () {
         if (applyingCanonicalRender) return
+        memberEditRevision += 1
         if (pair.enabled.checked) explicitIntent = 'enabled'
         markEditProfileDirty()
         setRadioChecked(pair.enabled, pair.enabled.checked)
@@ -1268,6 +1276,7 @@
     if (pair.disabled) {
       pair.disabled.addEventListener('change', function () {
         if (applyingCanonicalRender) return
+        memberEditRevision += 1
         if (pair.disabled.checked) explicitIntent = 'disabled'
         markEditProfileDirty()
         setRadioChecked(pair.disabled, pair.disabled.checked)
@@ -1278,6 +1287,7 @@
     if (descriptionInput) {
       descriptionInput.addEventListener('input', function () {
         if (applyingCanonicalRender) return
+        memberEditRevision += 1
         markEditProfileDirty()
       })
     }
