@@ -806,7 +806,7 @@ settings lookup can still apply Default or Disabled states.
 
 `callOfferTypeOf` is the single reader of a DTO item's call type — trimmed,
 lowercased, and admitted only as `free` or `paid`. Admission, the per-card
-paint, and the logged-out availability lookup all key on it, so one payload
+paint, and the Brand public-readiness lookup all key on it, so one payload
 cannot be read as Free by one of them and as nothing by another. A clone is
 adapted only when its `data-wf-xano-id` exactly matches a returned item id;
 nothing falls back by position.
