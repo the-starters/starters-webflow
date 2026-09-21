@@ -61,7 +61,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
     await send('Emulation.setDeviceMetricsOverride', { width: 1100, height: 950, deviceScaleFactor: 1, mobile: false })
     const observations = []
     const snapshot = async label => {
-      const state = await evaluate(`({ cards: [...document.querySelectorAll('[wf-xano-item]')].map(el => ({ visible: el.getBoundingClientRect().height > 0 && getComputedStyle(el).display !== 'none', type: el.getAttribute('data-call-offer-type'), state: el.getAttribute('data-service-card-state'), price: el.querySelector('[data-millify]').textContent, tooltip: el.querySelector('[hover-text]').textContent })), book: document.querySelector('[booking-button-wrapper]').getBoundingClientRect().height > 0 })`)
+      const state = await evaluate(`({ cards: [...document.querySelectorAll('[wf-xano-item]')].map(el => ({ visible: el.getBoundingClientRect().height > 0 && getComputedStyle(el).display !== 'none', type: el.getAttribute('data-call-offer-type'), state: el.getAttribute('data-service-card-state'), price: el.querySelector('[data-millify]').textContent, tooltip: el.querySelector('[hover-text]').textContent })), book: (() => { const button = document.querySelector('[booking-button-wrapper] button'); return { visible: button.getBoundingClientRect().height > 0, disabled: button.getAttribute('aria-disabled') === 'true', signup: button.getAttribute('data-signup-trigger-element'), modal: button.getAttribute('data-modal-trigger') } })() })`)
       observations.push({ label, ...state })
       if (evidence) { const shot = await send('Page.captureScreenshot', { format: 'png' }); await fs.writeFile(path.join(evidence, `${label}.png`), Buffer.from(shot.data, 'base64')) }
       return state
@@ -74,11 +74,32 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
       }
       await pause(150)
     }
-    for (const role of ['anonymous', 'brand']) {
+    const assertBookCall = async (role, available) => {
+      const button = await evaluate(`(() => { const el = document.querySelector('[booking-button-wrapper] button'); el.scrollIntoView({block: 'center'}); const r = el.getBoundingClientRect(); return {x: r.x + r.width / 2, y: r.y + r.height / 2} })()`)
+      await send('Input.dispatchMouseEvent', { type: 'mouseMoved', ...button })
+      const hintVisible = await evaluate(`[...document.querySelectorAll('[data-call-availability-hint]')].some(el => getComputedStyle(el).display !== 'none')`)
+      assert.equal(hintVisible, role === 'brand' && !available, 'only unavailable paid Brands see the hint')
+      await send('Input.dispatchMouseEvent', { type: 'mousePressed', ...button, button: 'left', clickCount: 1 })
+      await send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...button, button: 'left', clickCount: 1 })
+      await pause(100)
+      const dialogs = await evaluate(`({ signup: document.querySelector('[data-modal-target="signup-modal"]').open, chooser: document.querySelector('[data-modal-target="popup-booking-main"]').open, booking: document.querySelector('[data-modal-target="popup-booking"]').open })`)
+      assert.deepEqual(dialogs, { signup: role !== 'brand', chooser: role === 'brand' && available, booking: false })
+      await evaluate('lumos.modal.closeAll()')
+      await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 0, y: 0 })
+      await pause(220)
+    }
+    const assertBookState = (state, role, available) => {
+      assert.equal(state.book.visible, true, 'Book Call remains discoverable')
+      assert.equal(state.book.disabled, role === 'brand' && !available)
+      assert.equal(state.book.signup, role !== 'brand' || available ? 'book-call' : null)
+      assert.equal(state.book.modal, role === 'brand' && available ? 'popup-booking-main' : null)
+    }
+    for (const role of ['anonymous', 'free', 'brand']) {
       for (const failed of ['header', 'services']) {
         await navigate(`role=${role}&failed=${failed}`)
         let state = await snapshot(`${role}-${failed}-stale`)
-        assert.ok(state.cards.every(card => !card.visible)); assert.equal(state.book, false)
+        assert.ok(state.cards.every(card => !card.visible)); assertBookState(state, role, false)
+        await assertBookCall(role, false)
         await evaluate(`lists['starter-call-offers-${failed === 'header' ? 'services' : 'header'}'].replay()`)
         await pause(50)
         state = await snapshot(`${role}-${failed}-replay`)
@@ -86,16 +107,17 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
         await evaluate(`lists['starter-call-offers-${failed}'].emit()`)
         await pause(100)
         state = await snapshot(`${role}-${failed}-recovered`)
-        assert.equal(state.cards.length, 4); assert.ok(state.cards.every(card => card.visible)); assert.equal(state.book, true)
+        assert.equal(state.cards.length, 4); assert.ok(state.cards.every(card => card.visible)); assertBookState(state, role, true)
+        await assertBookCall(role, true)
         assert.ok(state.cards.filter(card => card.type === 'paid').every(card => card.price === '250'))
         for (const surface of ['header', 'services']) for (const type of ['free', 'paid']) {
           const point = await evaluate(`(() => { const el = document.querySelector('#${surface} [data-call-offer-type="${type}"]'); el.scrollIntoView({block: 'center'}); const r = el.getBoundingClientRect(); return {x: r.x + r.width / 2, y: r.y + 20} })()`)
           await send('Input.dispatchMouseEvent', { type: 'mousePressed', ...point, button: 'left', clickCount: 1 })
           await send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...point, button: 'left', clickCount: 1 })
           await pause(100)
-          if (role === 'anonymous') {
+          if (role !== 'brand') {
             assert.equal(await evaluate(`document.querySelector('[data-modal-target="signup-modal"]').open`), true)
-            assert.ok((await evaluate('decodeURIComponent(document.cookie)')).includes(`signup_trigger=service:${type === 'free' ? 'Free Call' : 'Paid Consulting Call'}`))
+            if (role === 'anonymous') assert.ok((await evaluate('decodeURIComponent(document.cookie)')).includes(`signup_trigger=service:${type === 'free' ? 'Free Call' : 'Paid Consulting Call'}`))
           } else {
             assert.equal(await evaluate('bookingEntries.at(-1)'), type)
             assert.equal(await evaluate(`document.querySelector('[data-modal-target="popup-booking"]').open`), true)
@@ -106,7 +128,8 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
         await evaluate(`lists['starter-call-offers-${failed}'].fail()`)
         await pause(50)
         state = await snapshot(`${role}-${failed}-refresh-error`)
-        assert.ok(state.cards.every(card => !card.visible)); assert.equal(state.book, false)
+        assert.ok(state.cards.every(card => !card.visible)); assertBookState(state, role, false)
+        await assertBookCall(role, false)
         await evaluate(`lists['starter-call-offers-${failed}'].emit(false)`)
         await pause(50)
         state = await snapshot(`${role}-${failed}-paid-revoked`)

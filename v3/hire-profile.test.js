@@ -8413,3 +8413,29 @@ for (const [viewer, member] of [['signed-out', {}], ['free Brand', FREE_BRAND_ME
     assertSignup()
   })
 }
+
+
+test('non-owner talent has no Brand tooltip, signup route, or booking action', async () => {
+  // Memberstack owns hiding the Brand-only action group on the published page.
+  // Keep the script boundary closed even if this fixture leaves it in the DOM.
+  const page = makePage()
+  const context = paywalledContext(page, OTHER_TALENT_MEMBER)
+  const { opens, lumos } = signupRegistry(page)
+  context.lumos = lumos
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+  const button = page.bookingButton
+  for (const fn of button.listeners.mouseenter || []) fn({})
+  for (const fn of button.listeners.focusin || []) fn({})
+  const click = spyEvent()
+  for (const fn of button.listeners.click || []) fn(click.event)
+  context.clickDocument(button)
+  assert.equal(page.root.querySelector('[data-call-availability-hint]').style.display, 'none')
+  assert.equal(button.getAttribute('data-signup-trigger-element'), null)
+  assert.equal(button.getAttribute('data-modal-trigger'), null)
+  assert.equal(button.getAttribute('aria-disabled'), 'true')
+  assert.equal(click.seen.prevented, 1)
+  assert.deepEqual(opens, { signup: 0, chooser: 0, contract: 0 })
+  assert.equal(context.bookingCalls.length, 0)
+})

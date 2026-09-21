@@ -11,7 +11,7 @@ window.MEMBER = role === 'anonymous' ? {} : {
   id: role === 'owner' ? 'fixture-owner' : 'fixture-brand',
   auth: { email: 'fixture@example.invalid' },
   customFields: { 'free-user': role === 'owner' ? 'Owner' : 'Brand', 'last-name': 'Fixture' },
-  planConnections: [{ planId: role === 'owner' ? 'pln_dorxata-test-free-plan-dvcg0k8o' : 'pln_new-paid-plan-463h04ph', status: 'ACTIVE' }],
+  planConnections: [{ planId: role === 'owner' ? 'pln_dorxata-test-free-plan-dvcg0k8o' : role === 'free' ? 'pln_free-plan-f6kn0dxz' : 'pln_new-paid-plan-463h04ph', status: 'ACTIVE' }],
 }
 window.memberReady = Promise.resolve(MEMBER)
 window.waitForMember = callback => memberReady.then(callback)

@@ -870,6 +870,10 @@ membership upsell block is `data-ms-content="members"`, so no Designer change
 was needed. Talent viewing another Starter is unchanged: Hire, Book Call and
 Message are already hidden for them by `data-ms-content="!freelancer-only"`,
 their call cards read `hidden`, and their service cards carry no modal trigger.
+For non-owner talent, the generic unavailable-call hint is also suppressed;
+the controller keeps any retained Book Call node inert with no signup or
+booking hook. Memberstack owns hiding the action group. This is intentional,
+not a signup/upgrade path for talent accounts.
 Regression coverage: the "paywalled signed-in viewers" block at the end of
 `v3/hire-profile.test.js`.
 
@@ -1428,7 +1432,9 @@ node v3/browser-tests/hire-calls.browser.cjs
 The browser runner uses the default macOS Chrome path unless `CHROME_BIN` is
 set. Optional `HIRE_BROWSER_EVIDENCE` selects the screenshot and observation
 output directory. It exercises both wrappers' failure/replay/recovery, public
-paid price, signup attribution, matching Brand controller entry, and owner
+paid price, signed-out/free-Brand Book Call signup through stale and recovered
+results, paid-Brand disabled hints and chooser entry, signup attribution,
+matching Brand controller entry, and owner
 settings states through real DOM, adapter, attribution, and modal code.
 Provider responses and booking controllers are synthetic; fetch connections
 and form submissions are blocked by the fixture's content security policy.
