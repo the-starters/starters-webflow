@@ -496,6 +496,7 @@ function makeContext({
   freeController,
   paidController,
   dynamicFreeController,
+  starterMemberId = 'mem_canary',
   freeControllerLoadFails = false,
   omitInitialFreeController = false,
   existingHeadScripts = [],
@@ -608,7 +609,7 @@ function makeContext({
       : (freeController || defaultFreeController),
     StartersPaidCallBrandPayment: paidController,
     formatWithTimezone: () => ({ list: {} }),
-    starter_memberstack_id: 'mem_canary',
+    starter_memberstack_id: starterMemberId,
     stripe_charges: false,
     location,
     fetch: (url) => {
@@ -8150,6 +8151,86 @@ test('booking discovery passes the matching CMS Starter name to Free and Paid', 
     assert.deepEqual(installed.map(options => options.config.is_paid), [false, true])
     assert.deepEqual(installed.map(options => options.starterName), [name, name])
   }
+})
+
+test('the exact staging jp-test canary uses the owned Test Starter identity and slug', async () => {
+  const page = makePage()
+  const lookups = []
+  const installs = []
+  const context = makeContext({
+    page,
+    location: { hostname: 'the-starters-3-0.webflow.io', pathname: '/hire/jp-test' },
+    starterMemberId: 'mem_live_cms_value',
+    member: BRAND_MEMBER,
+    freeController: {
+      getStarterByMemberId: async (memberId) => {
+        lookups.push(memberId)
+        return { nylas_grant_id: 'grant_test', nylas_grant_email: 'starter@example.com' }
+      },
+      getConfigs: async () => [{
+        config_id: 'free_test',
+        is_paid: false,
+        active: true,
+        data_environment: 'test',
+        duration: 30,
+        price_cents: 0,
+      }],
+      getNearestSlot: async () => null,
+      installFreeBookingController: (options) => {
+        installs.push(options)
+        return true
+      },
+    },
+  })
+
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.deepEqual(lookups, ['mem_sb_cmqhuaxn80d270sseeo74fn7i'])
+  assert.equal(installs.length, 1)
+  assert.equal(installs[0].starterMemberstackId, 'mem_sb_cmqhuaxn80d270sseeo74fn7i')
+  assert.equal(installs[0].starterSlug, 'jp-dionisio')
+})
+
+test('jp-test keeps its CMS identity and route slug outside the exact staging host', async () => {
+  const page = makePage()
+  const lookups = []
+  const installs = []
+  const context = makeContext({
+    page,
+    location: { hostname: 'www.thestarters.com', pathname: '/hire/jp-test' },
+    starterMemberId: 'mem_live_cms_value',
+    member: BRAND_MEMBER,
+    freeController: {
+      getStarterByMemberId: async (memberId) => {
+        lookups.push(memberId)
+        return { nylas_grant_id: 'grant_live', nylas_grant_email: 'starter@example.com' }
+      },
+      getConfigs: async () => [{
+        config_id: 'free_live',
+        is_paid: false,
+        active: true,
+        data_environment: 'production',
+        duration: 30,
+        price_cents: 0,
+      }],
+      getNearestSlot: async () => null,
+      installFreeBookingController: (options) => {
+        installs.push(options)
+        return true
+      },
+    },
+  })
+
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.deepEqual(lookups, ['mem_live_cms_value'])
+  assert.equal(installs.length, 1)
+  assert.equal(installs[0].starterMemberstackId, 'mem_live_cms_value')
+  assert.equal(installs[0].starterSlug, 'jp-test')
 })
 
 /* ====================== paywalled signed-in viewers ====================== */

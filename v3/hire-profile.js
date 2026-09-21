@@ -1444,10 +1444,34 @@
     return;
   }
 
+  // `jp-test` is the published CMS canary shared by both environments. Its
+  // authored Memberstack value belongs to Live, so the Test Brand on Webflow
+  // staging would otherwise cross the environment boundary and correctly get
+  // a 403 before the chooser opens. Bind that one exact staging route to the
+  // owned Test Starter fixture. Production and every other profile keep their
+  // CMS-bound identity and route slug.
+  const STAGING_BOOKING_FIXTURE =
+      window.location.hostname === 'the-starters-3-0.webflow.io' &&
+      window.location.pathname.replace(/\/+$/, '') === '/hire/jp-test'
+          ? {
+              memberstackId: 'mem_sb_cmqhuaxn80d270sseeo74fn7i',
+              starterSlug: 'jp-dionisio',
+          }
+          : null;
+
   // `starter_memberstack_id` is a global var (set by an embedded script at the
   // top of the Freelancer Template page). Read it off window so a missing global
   // warns instead of throwing a ReferenceError that would abort this file.
-  const FREELANCER_ID = window.starter_memberstack_id;
+  const FREELANCER_ID = STAGING_BOOKING_FIXTURE
+      ? STAGING_BOOKING_FIXTURE.memberstackId
+      : window.starter_memberstack_id;
+
+  function bookingStarterSlug() {
+      if (STAGING_BOOKING_FIXTURE) return STAGING_BOOKING_FIXTURE.starterSlug;
+      return decodeURIComponent(
+          window.location.pathname.replace(/^\/hire\//, '').replace(/\/+$/, '')
+      );
+  }
   // Keep this map aligned with v3/route-guard.js and v3/auth-route.js. Access
   // decisions use stable Memberstack plan IDs; display names and old dashboard
   // URL fields are not role authority.
@@ -3518,9 +3542,7 @@
                       freeCallBooking.installFreeBookingController({
                           config: freeConfigs[0],
                           grantId: grant_id,
-                          starterSlug: decodeURIComponent(
-                              window.location.pathname.replace(/^\/hire\//, '').replace(/\/+$/, '')
-                          ),
+                          starterSlug: bookingStarterSlug(),
                           starterMemberstackId: freelancerId,
                           brandName: brand_name,
                           brandEmail: brand_email,
@@ -3555,9 +3577,7 @@
                       paidController.installPaidBookingController({
                           config: paidConfig,
                           grantId: grant_id,
-                          starterSlug: decodeURIComponent(
-                              window.location.pathname.replace(/^\/hire\//, '').replace(/\/+$/, '')
-                          ),
+                          starterSlug: bookingStarterSlug(),
                           brandName: brand_name,
                           brandEmail: brand_email,
                           starterEmail: starter.nylas_grant_email,
