@@ -350,16 +350,18 @@ authenticated authored calendar. Paid uses the booking flow owned by
 authored modal. Valid `/hire/<slug>` paths use the host-classified TEST or
 production route map. Generic Book Call controls remain visible across primary,
 sticky, and mobile CTAs when unavailable, with `data-booking-trigger-unavailable`
-and `aria-disabled="true"`. Hover, keyboard focus, or tap reveals “This Starter
-isn’t accepting calls right now.” Hover and focus are tracked independently
+and `aria-disabled="true"`. For a paid Brand, hover, keyboard focus, or tap
+reveals “This Starter isn’t accepting calls right now.”; the owner keeps the
+call-settings guidance instead. Signed-out and paywalled viewers never see the
+generic hint. Hover and focus are tracked independently
 across the control and hint. Pointer exit allows a cancellable 180ms grace period
 to cross the gap; dismissal waits until neither surface is hovered or focused.
 The hint is attached to the body with fixed viewport positioning, constrained
 horizontally and placed above the control when there is insufficient room below.
 Escape dismisses the hint. Disabled controls lose
 signup and modal delegate hooks so they cannot open either flow. A confirmed
-logged-out viewer gets signup-only activation when either public call type is
-available; its Lumos modal hook remains removed. Brand triggers and chooser options follow the
+logged-out or paywalled viewer always gets signup-only activation regardless of
+call availability; its Lumos modal hook remains removed. Brand triggers and chooser options follow the
 [Brand readiness contract](#signed-in-brand-readiness). Triggers outside these
 two approved paths stay closed, so no entry point can open an empty chooser.
 The authored `[data-modal-target="popup-booking-main"]` dialog also stays marked
