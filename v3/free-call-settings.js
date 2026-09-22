@@ -84,10 +84,10 @@
       Number(envelope.version) !== 1 ||
       envelope.member_id !== sessionMemberId ||
       !envelope.free ||
-      typeof envelope.free.enabled !== 'boolean'
+      envelope.free.enabled !== true
     ) return null
     return {
-      enabled: envelope.free.enabled,
+      enabled: true,
       description: String(envelope.free.description || '').trim().slice(0, 60),
     }
   }
@@ -384,11 +384,10 @@
 
   function canonicalSatisfiesPendingIntent(value) {
     if (!pendingBuildIntent) return false
-    const service = canonicalService(value)
     // Build Profile is a pre-onboarding handoff. Once a canonical service
     // exists, post-onboarding changes belong to Edit Profile or Dashboard and
     // a leftover Build receipt must never replace that service's newer state.
-    return Boolean(service) || !pendingBuildIntent.enabled
+    return Boolean(canonicalService(value))
   }
 
   function radioValue(item) {

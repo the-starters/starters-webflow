@@ -247,7 +247,9 @@ versioned, member-bound `starter_call_settings_intent_v3` receipt in private
 Memberstack JSON, with a separate `free` part and `paid` part. A receipt records
 pending creates only: a branch answered Off stores no part, and a submit that
 turns a branch off removes the part an earlier attempt stored, dropping the whole
-receipt once neither branch is left. A receipt is not
+receipt once neither branch is left. Each consumer reads a branch only as a pending
+create and ignores anything else under that key, so a leftover envelope from an
+older shape can neither paint a control nor drive a canonical write. A receipt is not
 an active service and is not a `freelancers_v3` projection. The active
 environment-matched `nylas_configurations_v3` row and provider readback remain
 the sole call authority. The visible Free description, Paid title, and Paid

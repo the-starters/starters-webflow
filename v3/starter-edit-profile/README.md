@@ -432,9 +432,11 @@ belongs to the script that writes that field and never pauses this section's Sav
 profile type, and `starter-edit-profile.js` clears `required` on those fields for the active
 `window.activeProfile.type`.
 
-**The report does not depend on the active profile type.** The only fields whose `required`
-`starter-edit-profile.js` rewrites at runtime are the ones carrying `data-non-required`, and
-those are reported whatever `required` currently says (below). Every other field keeps the
+**The report does not depend on the active profile type.** The fields whose `required`
+`starter-edit-profile.js` rewrites at runtime are the ones carrying `data-non-required` — which
+are reported whatever `required` currently says (below) — and the five canonically owned call
+controls, whose `required` it always clears because the profile PATCH never sends them and the
+call-settings controllers are their only validator. Every other field keeps the
 attribute Webflow authored, so the same page reports the same fields for every Starter and
 whenever the check runs. Inside `[profile-unified-items]`, `starter-edit-profile.js` records the
 authored value once per page load before it rewrites `required` for the active type.

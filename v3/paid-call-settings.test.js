@@ -1033,7 +1033,7 @@ test('declining a pending Paid enable consumes the receipt when canonical has no
   assert.equal(result.dom.enabled.checked, false)
 })
 
-test('a non-card stale Paid off receipt cannot disable an active canonical service', async () => {
+test('a legacy Paid off envelope is not a pending create and drives nothing', async () => {
   const active = service()
   const result = load({
     memberJSON: {
@@ -1053,17 +1053,17 @@ test('a non-card stale Paid off receipt cannot disable an active canonical servi
   assert.equal(result.dom.enabled.checked, true, 'the canonical active service wins')
   assert.equal(result.calls.filter((call) => call.path === '/starter/paid-call-settings/disable/v3').length, 0)
   assert.equal(result.calls.filter((call) => call.path === '/starter/paid-call-settings/upsert/v3').length, 0)
-  assert.equal(result.memberJsonWrites.at(-1).starter_call_settings_intent_v3, undefined)
+  assert.equal(result.memberJsonWrites.length, 0, 'a declined branch carries no pending create to retire')
 })
 
-test('an unretired stale Paid off receipt cannot disable an active service from an uncheck', async () => {
+test('an unretired Paid receipt cannot disable an active service from an uncheck', async () => {
   const active = service({ title: 'Strategy call', price_cents: 20000, revision: 2 })
   const result = load({
     memberJSON: {
       starter_call_settings_intent_v3: {
         version: 1,
         member_id: 'member-a',
-        paid: { enabled: false },
+        paid: { enabled: true, title: 'Deep-dive session', price_dollars: 350 },
       },
     },
     memberJsonUpdateError: new Error('Memberstack timeout'),
@@ -1635,10 +1635,13 @@ test('auto-consuming a satisfied Paid off receipt leaves step 6 clean without re
       starter_call_settings_intent_v3: {
         version: 1,
         member_id: 'member-a',
-        paid: { enabled: false, title: '', price_dollars: null },
+        paid: { enabled: true, title: 'Strategy call', price_dollars: 250 },
       },
     },
-    initial: canonical(),
+    initial: canonical({
+      services: [service({ title: 'Strategy call', price_cents: 25000 })],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
   })
   await settle()
 
@@ -1646,7 +1649,7 @@ test('auto-consuming a satisfied Paid off receipt leaves step 6 clean without re
   assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
   assert.equal(hydrationRuns, 0, 'retiring the receipt needs no synthetic re-render to stay clean')
   assert.equal(result.window.StarterPaidCallSettings.hasChanges(), false)
-  assert.equal(result.dom.disabled.checked, true, 'the canonical off state the first render painted still stands')
+  assert.equal(result.dom.enabled.checked, true, 'the canonical state the first render painted still stands')
 })
 
 const SATISFIED_PAID_RECEIPT = {
@@ -1667,14 +1670,8 @@ test('a Paid refresh released by the same cleanup never invalidates the save tha
   const result = load({
     cardMode: true,
     memberJsonUpdateGate: cleanupGate.promise,
-    memberJSON: {
-      starter_call_settings_intent_v3: {
-        version: 1,
-        member_id: 'member-a',
-        paid: { enabled: false },
-      },
-    },
-    initial: canonical(),
+    memberJSON: SATISFIED_PAID_RECEIPT,
+    initial: satisfiedPaidCanonical(),
     routes: {
       '/starter/paid-call-settings/upsert/v3': ({ body, setState }) => {
         const saved = service({
@@ -2037,20 +2034,14 @@ test('a stale Paid enable receipt cannot replace a newer canonical rate', async 
   assert.equal(result.calls.some((call) => call.method === 'POST'), false)
 })
 
-test('a member edit made while a Paid off receipt is being consumed is never repainted away', async () => {
+test('a member edit made while a satisfied Paid receipt is being consumed is never repainted away', async () => {
   const cleanupGate = deferred()
   const result = load({
     editProfile: true,
     memberId: 'member-a',
     memberJsonUpdateGate: cleanupGate.promise,
-    memberJSON: {
-      starter_call_settings_intent_v3: {
-        version: 1,
-        member_id: 'member-a',
-        paid: { enabled: false, title: '', price_dollars: null },
-      },
-    },
-    initial: canonical(),
+    memberJSON: SATISFIED_PAID_RECEIPT,
+    initial: satisfiedPaidCanonical(),
   })
   await settle()
 

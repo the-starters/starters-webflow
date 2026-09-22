@@ -93,9 +93,8 @@
       Number(envelope.version) !== 1 ||
       envelope.member_id !== sessionMemberId ||
       !paid ||
-      typeof paid.enabled !== 'boolean'
+      paid.enabled !== true
     ) return null
-    if (!paid.enabled) return { enabled: false, title: '', price_dollars: null }
     if (!Number.isSafeInteger(price) || price < 1 || price > 1000) return null
     const title = String(paid.title || '').trim()
     if (title.length < 3 || title.length > 80) return null
@@ -451,11 +450,10 @@
 
   function canonicalSatisfiesPendingIntent(value) {
     if (!pendingBuildIntent) return false
-    const service = canonicalService(value)
     // Build Profile is a pre-onboarding handoff. Once a canonical service
     // exists, post-onboarding changes belong to Edit Profile or Dashboard and
     // a leftover Build receipt must never replace that service's newer state.
-    return Boolean(service) || !pendingBuildIntent.enabled
+    return Boolean(canonicalService(value))
   }
 
   // Edit Profile gives the Free and Paid controllers one shared step-6 root, so the
