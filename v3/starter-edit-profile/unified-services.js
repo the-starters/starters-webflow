@@ -1,7 +1,7 @@
 /*
  * Opt-in Services & Rates coordinator. The main profile controller remains the writer.
  *
- * @release v1.59.583
+ * @release v1.59.607
  */
 ;(function () {
   'use strict'

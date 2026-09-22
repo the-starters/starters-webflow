@@ -1,7 +1,7 @@
 /*
  * Opt-in Highlight drafts, coordinated around the existing portfolio/media writers.
  *
- * @release v1.59.583
+ * @release v1.59.607
  */
 ;(function () {
   'use strict'
