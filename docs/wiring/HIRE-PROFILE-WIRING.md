@@ -1071,7 +1071,7 @@ The click path also stamps `data-next-slot-state` now, so a hook is
 self-describing whichever writer got there last.
 
 Availability is asked **only** through the controller's exported
-`getNearestSlot`. That export owns the minimum booking notice — 24 hours on
+`getNearestSlot`. That export owns the minimum booking notice — 8 hours on
 production, 5 minutes on staging — in both the window it queries and the filter
 it applies to the answer, so fetching availability here instead would silently
 drop it.

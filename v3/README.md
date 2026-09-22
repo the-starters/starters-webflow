@@ -3875,6 +3875,10 @@ flowchart TD
 1. Read the next 14 days through authenticated
    `scheduler/get_availability/v3`. Xano selects the Nylas environment and keeps
    the provider credential and private Scheduler session off the browser.
+   Production initial Paid booking availability begins eight hours ahead, with
+   a slot exactly eight hours away allowed; the exact staging host keeps its
+   five-minute exception. Dashboard rescheduling keeps its existing 24-hour
+   availability floor.
 2. Render the month calendar, timezone dropdown, time buttons and confirmation
    row inside the authored `[nylas-container]` mount. In a wide mount, the month
    calendar spans the left column. The timezone dropdown sits at the top of the
@@ -4080,6 +4084,10 @@ flowchart TD
 7. **Request Call** sends `expected_payment_method_id` with the retained slot,
    message and normalized Guests. The backend claims that reviewed card before
    provider booking creation and persists it even if the account default later changes.
+   Paid rechecks the eight-hour production cutoff at this submit boundary,
+   including after card review. If the retained slot has aged below the cutoff,
+   no booking command starts, the authored details remain, and the calendar says
+   **This time is no longer available. Please choose another time.**
 8. An uncertain booking response keeps the original payload and command identity.
    Retry checks that request; card and detail editing remain locked until it resolves.
    Later authentication or other non-command-specific errors do not clear established
