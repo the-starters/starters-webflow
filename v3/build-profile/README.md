@@ -291,10 +291,14 @@ pending part is preserved. It consumes its part in one of three ways:
   a declined Build Profile Yes cannot re-assert itself on the next load.
 
 Cleanup after a verified canonical readback is best-effort: a failed cleanup
-write never turns a successful canonical save into a profile-step failure. It
-never reports the receipt as consumed either, so the branch stays pending in
-memory exactly as it stays stored, and the next verified save or disable in the
-same session retries it before a reload ever has to. The no-service submitted-Off path is
+write never turns a successful canonical save into a profile-step failure. What
+it leaves behind is a retry obligation, not a pending choice. The verified write
+already superseded the member's Build Profile answer, so the consumer stops
+offering that answer whatever canonical shape the write produced — a disable
+whose cleanup also failed still renders as off, and never repaints the Build
+Profile Yes over it. The stored branch is still owed a removal, so the next
+verified save or disable in the same session retries it, re-reading and
+member-scoping the envelope, before a reload ever has to. The no-service submitted-Off path is
 different because no canonical write backs up the choice: its cleanup is strict.
 If Memberstack cleanup fails, the controller keeps the receipt pending, reports
 that the selection was not saved, and returns failure to Edit Profile. If the

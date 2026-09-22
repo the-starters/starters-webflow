@@ -68,6 +68,10 @@
   let editProfileReady = false
   let applyingCanonicalRender = false
   let pendingBuildIntent = null
+  // Storage may still hold this branch after a swallowed cleanup write. That is a
+  // retry obligation, not a pending create: a verified canonical write supersedes
+  // the member's Build Profile choice whatever the resulting canonical shape is.
+  let receiptCleanupDeferred = false
   // Retiring a receipt canonical already satisfies is passive: it must never
   // disable a control or reject a member action, only delay one.
   let receiptCleanup = null
@@ -115,12 +119,14 @@
     try {
       await consumePendingBuildIntent()
     } catch (error) {
+      receiptCleanupDeferred = true
+      pendingBuildIntent = null
       console.warn('Canonical Paid Call Settings were saved, but the pending Build Profile receipt could not be cleared.', error)
     }
   }
 
   async function consumePendingBuildIntent() {
-    if (!pendingBuildIntent) return
+    if (!pendingBuildIntent && !receiptCleanupDeferred) return
     const memberstack = window.$memberstackDom
     if (
       !memberstack ||
@@ -129,12 +135,13 @@
     ) throw new Error('Pending Build Profile Call Settings could not be cleared')
     const consumeMemberId = sessionMemberId
     await queueMemberJsonWrite(async function () {
-      if (!pendingBuildIntent || sessionMemberId !== consumeMemberId) return
+      if ((!pendingBuildIntent && !receiptCleanupDeferred) || sessionMemberId !== consumeMemberId) return
       const json = memberJsonValue(await memberstack.getMemberJSON())
       const envelope = json.starter_call_settings_intent_v3
       if (sessionMemberId !== consumeMemberId) return
       if (!envelope || envelope.member_id !== consumeMemberId) {
         pendingBuildIntent = null
+        receiptCleanupDeferred = false
         return
       }
       const nextEnvelope = Object.assign({}, envelope)
@@ -144,6 +151,7 @@
       else delete nextJson.starter_call_settings_intent_v3
       await memberstack.updateMemberJSON({ json: nextJson })
       pendingBuildIntent = null
+      receiptCleanupDeferred = false
     })
   }
 
@@ -968,6 +976,7 @@
   function clearRenderedState(message) {
     settings = null
     pendingBuildIntent = null
+    receiptCleanupDeferred = false
     setBusy(false)
     sessionMemberId = null
     sessionAuthScope = null
