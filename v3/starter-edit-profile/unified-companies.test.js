@@ -14,7 +14,7 @@ async function mount({ companies = [], fail = null, minimum = true, withRow = tr
   required = ['company_name', 'job_title'], xanoRequired = [], hydrate = true, initialOther = '{}',
   liveAssociationReader = false, associationReadStatus = 200, claim = true, normalize = null,
   answer = null, picker = true, stale = null, strayXanoRequired = false, authored = false,
-  authoredInRow = false, authoredCheckDiv = false, authoredDuplicate = false } = {}) {
+  authoredInRow = false, componentMarkup = false, outerActionMarker = false, authoredCheckDiv = false, authoredDuplicate = false } = {}) {
   const fields = ['company_name', 'job_title', 'start_date', 'end_date', 'current_work'].map(key => h('input', {
     'profile-company-field': key, name: key, id: key,
     ...(key === 'current_work' ? { type: 'checkbox' } : {}),
@@ -23,9 +23,15 @@ async function mount({ companies = [], fail = null, minimum = true, withRow = tr
   }))
   // A status marker misplaced inside the row, which the section clones and rebuilds.
   const rowStatus = h('div', { 'profile-items-status': '', class: 'form_status' })
+  const remove = h('button', { 'profile-item-remove': '', type: 'button' })
+  const removeWrap = h('div', { 'data-button-theme': 'danger', 'data-button-style': 'primary' }, [h('div', {}, [remove])])
+  const action = outerActionMarker ? h('div', { 'profile-item-remove': '' }, [removeWrap]) : removeWrap
+  if (outerActionMarker) remove.removeAttribute('profile-item-remove')
+  const undoAction = h('div', { 'profile-items-undo': '' }, [h('div', { 'data-button-theme': 'black' }, [h('button', { type: 'button' }), h('span', { 'data-fixture-undo-label': '' })])])
+  undoAction.querySelector('[data-fixture-undo-label]').textContent = 'Undo removal'
   const row = h('div', { 'profile-item-row': '' }, [
-    h('button', { 'profile-item-toggle': '', type: 'button' }, [h('span', { 'profile-items-summary': '' })]),
-    h('div', { 'profile-item-content': '' }, fields), h('button', { 'profile-item-remove': '', type: 'button' }),
+    h(componentMarkup ? 'div' : 'button', { 'profile-item-toggle': '', type: 'button' }, [h('span', { 'profile-items-summary': '' }), ...(componentMarkup ? [h('div', { 'profile-item-actions': '' }, [action, ...(outerActionMarker ? [undoAction] : [])])] : [])]),
+    h('div', { 'profile-item-content': '' }, fields), ...(componentMarkup ? [] : [remove]),
     ...(authoredInRow ? [rowStatus] : []),
   ])
   const save = h('button', { 'data-edit-submit': 'companies' })
@@ -51,7 +57,7 @@ async function mount({ companies = [], fail = null, minimum = true, withRow = tr
   const duplicateStatus = h('div', { 'profile-items-status': '', class: 'form_status' })
   const section = h('section', { 'profile-unified-items': 'companies' },
     [...(authored ? [authoredStatus, ...(authoredDuplicate ? [duplicateStatus] : []), authoredCheck] : []),
-      h('div', {}, withRow ? [row] : []), ...(withSave ? [save] : []), add, discard, presence, other,
+      h('div', {}, [...(withRow ? [row] : []), ...(componentMarkup ? [add] : [])]), ...(componentMarkup ? [h('div', { 'profile-items-footer': '' }, [discard, ...(withSave ? [save] : [])])] : [...(withSave ? [save] : []), add, discard]), presence, other,
       ...(strayXanoRequired ? [stray] : [])])
   const requests = []
   const warnings = []
@@ -296,7 +302,7 @@ test('partial company saves keep confirmed entries and release a create the serv
   assert.equal(page.mutations()[2].body.company_name, 'Beta')
 })
 
-test('an atomic company replacement preserves the three-entry limit and last-entry removal follows authored presence', async () => {
+test('an atomic company replacement preserves the limit and the last entry remains protected', async () => {
   const companies = ['Acme', 'Beta', 'Gamma'].map((company_name, index) => ({ id: index + 1, company_name, company_source: 'custom', job_title: 'Designer' }))
   const page = await mount({ companies })
   page.click(page.add)
@@ -311,7 +317,7 @@ test('an atomic company replacement preserves the three-entry limit and last-ent
   const empty = await mount({ companies: [companies[0]], minimum: false })
   empty.click(empty.section.querySelector('[profile-item-remove]'))
   await empty.submit()
-  assert.equal(empty.mutations()[0].method, 'DELETE')
+  assert.equal(empty.mutations().length, 0)
   assert.equal(empty.section.querySelectorAll('[profile-item-row]').length, 1)
 })
 
@@ -586,8 +592,9 @@ test('a section missing its row template or Save control reports the gap and dis
   assert.equal(missingSave.section.querySelectorAll('[profile-item-row]').length, 1)
 })
 
-test('the presence message opens a usable row instead of the one being removed', async () => {
+test('the presence message opens the blank remaining row rather than the removed one', async () => {
   const page = await mount({ companies: [{ id: 1, company_name: 'Acme', company_source: 'custom', job_title: 'Designer' }] })
+  page.click(page.add)
   page.click(page.section.querySelector('[profile-item-remove]'))
   const rows = page.section.querySelectorAll('[profile-item-row]')
   assert.equal(rows.length, 2)
@@ -1039,4 +1046,119 @@ test('a class rule that hides the authored check element is beaten by an inline 
     if (original) page.context.window.getComputedStyle = original
     else delete page.context.window.getComputedStyle
   }
+})
+
+
+test('authored company rows stay above Add and the footer Discard cannot submit', async () => {
+  const page = await mount({ componentMarkup: true })
+  page.company('Acme'); page.type('job_title', 'Designer'); page.click(page.add)
+  const rows = page.section.querySelectorAll('[profile-item-row]')
+  assert.equal(rows.length, 2)
+  assert.equal(page.add.parentElement.children.at(-1), page.add)
+  page.click(page.discard)
+  await tick()
+  assert.equal(page.mutations().length, 0)
+})
+
+test('last company Remove uses disabled theme and Undo replaces the removal action', async () => {
+  const page = await mount({ componentMarkup: true, companies: [{ id: 1, company_name: 'Acme', company_source: 'custom', job_title: 'Designer' }] })
+  const first = page.section.querySelector('[profile-item-row]')
+  const remove = first.querySelector('[profile-item-remove]')
+  const theme = remove.closest('[data-button-theme]')
+  assert.equal(remove.disabled, true)
+  assert.equal(remove.getAttribute('aria-disabled'), 'true')
+  assert.equal(theme.getAttribute('data-button-theme'), 'disabled')
+  page.click(remove)
+  assert.equal(first.querySelector('[profile-items-undo]').hidden, true)
+  page.click(page.add)
+  assert.equal(remove.disabled, false)
+  assert.equal(theme.getAttribute('data-button-theme'), 'danger')
+  page.click(remove)
+  const undo = first.querySelector('[profile-items-undo]')
+  assert.equal(first.querySelector('[profile-item-toggle]').hidden, false)
+  assert.equal(theme.style.display, 'none')
+  assert.ok(first.querySelector('[profile-item-actions]').contains(undo))
+  assert.equal(undo.hidden, false)
+  page.click(undo)
+  assert.equal(first.querySelector('[profile-item-content]').hidden, false)
+  assert.equal(remove.disabled, true)
+  assert.notEqual(theme.style.display, 'none')
+  assert.equal(page.mutations().length, 0)
+})
+
+test('company heading keeps its saved identity and its row status follows edits and discard', async () => {
+  const page = await mount({ componentMarkup: true, companies: [{ id: 1, company_name: 'Acme', company_source: 'custom', job_title: 'Designer' }] })
+  const summary = () => page.section.querySelector('[profile-items-summary]').textContent
+  const badge = () => page.section.querySelector('[profile-items-unsaved]')
+  assert.equal(summary(), 'Work Experience (Acme · Designer)')
+  assert.equal(badge().hidden, true)
+  page.type('job_title', 'Engineer')
+  assert.equal(summary(), 'Work Experience (Acme · Designer)')
+  assert.equal(badge().hidden, false)
+  assert.equal(badge().textContent, 'Unsaved')
+  page.type('job_title', 'Designer')
+  assert.equal(badge().hidden, true)
+  page.type('job_title', 'Engineer')
+  page.click(page.discard)
+  assert.equal(badge().hidden, true)
+  page.type('job_title', 'Engineer')
+  await page.submit()
+  assert.equal(summary(), 'Work Experience (Acme · Engineer)')
+  assert.equal(badge().hidden, true)
+})
+
+test('a partial company save clears only the confirmed row badge', async () => {
+  const page = await mount({ componentMarkup: true, fail: request => request.method === 'POST' && request.body.company_name === 'Beta' ? {status: 422, body: {message: 'Rejected'}} : null })
+  page.company('Acme'); page.type('job_title', 'Designer'); page.click(page.add)
+  page.company('Beta', 1); page.type('job_title', 'Engineer', 1)
+  await page.submit()
+  const rows = page.section.querySelectorAll('[profile-item-row]')
+  assert.equal(rows[0].querySelector('[profile-items-unsaved]').hidden, true)
+  assert.equal(rows[1].querySelector('[profile-items-unsaved]').hidden, false)
+  assert.equal(rows[0].querySelector('[profile-items-summary]').textContent, 'Work Experience (Acme · Designer)')
+})
+
+
+test('visible marked month controls hydrate and their edits reach the company writer', async () => {
+  const page = await mount({ componentMarkup: true, companies: [{ id: 1, company_name: 'Acme', company_source: 'custom', job_title: 'Designer', start_date: '2024-01-01', end_date: '2025-02-01' }] })
+  assert.equal(page.field('start_date').getAttribute('type'), 'month')
+  assert.equal(page.field('start_date').value, '2024-01')
+  assert.equal(page.field('end_date').value, '2025-02')
+  page.type('start_date', '2023-09')
+  await page.submit()
+  assert.equal(page.mutations()[0].body.start_date, '2023-09')
+  assert.equal(page.mutations()[0].body.end_date, '2025-02-01')
+})
+
+test('a later edit during a confirmed company save retains its row Unsaved status', async () => {
+  let page
+  page = await mount({ componentMarkup: true, companies: [{ id: 1, company_name: 'Acme', company_source: 'custom', job_title: 'Designer' }],
+    fail: request => { if (request.method === 'PATCH') page.type('job_title', 'Later title'); return null } })
+  page.type('job_title', 'Submitted title')
+  await page.submit()
+  assert.equal(page.section.querySelector('[profile-items-summary]').textContent, 'Work Experience (Acme · Submitted title)')
+  assert.equal(page.section.querySelector('[profile-items-unsaved]').hidden, false)
+  assert.equal(page.field('job_title').value, 'Later title')
+  assert.equal(page.status(), 'Changes saved. Later edits are still unsaved.')
+})
+
+
+test('page-local action markers wrap themed components without making Undo remove again', async () => {
+  const page = await mount({ componentMarkup: true, outerActionMarker: true, companies: [
+    { id: 1, company_name: 'Acme', company_source: 'custom', job_title: 'Designer' },
+    { id: 2, company_name: 'Beta', company_source: 'custom', job_title: 'Engineer' }] })
+  const row = page.section.querySelector('[profile-item-row]')
+  const remove = row.querySelector('[profile-item-remove]')
+  const control = remove.querySelector('button')
+  page.click(control)
+  assert.equal(remove.style.display, 'none')
+  const undo = row.querySelector('[profile-items-undo]')
+  assert.equal(undo.hidden, false)
+  page.click(undo)
+  assert.equal(undo.hidden, true)
+  assert.notEqual(remove.style.display, 'none')
+  assert.equal(row.querySelector('[profile-item-content]').hidden, false)
+  assert.equal(row.querySelector('[profile-items-unsaved]').hidden, true)
+  assert.equal(control.disabled, false)
+  assert.equal(remove.querySelector('[data-button-theme]').getAttribute('data-button-theme'), 'danger')
 })

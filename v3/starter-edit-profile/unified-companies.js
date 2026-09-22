@@ -98,6 +98,38 @@
     let warned = false
     const add = section.querySelector('[profile-items-add]')
     const discard = section.querySelector('[profile-items-discard]')
+    // Keep every generated row in the authored template's position, ahead of Add.
+    const anchor = document.createElement('span')
+    anchor.hidden = true
+    anchor.style.display = 'none'
+    parent.insertBefore(anchor, original)
+    const show = (node, visible) => {
+      if (!node) return
+      node.hidden = !visible
+      node.style.display = visible ? '' : 'none'
+      if (visible && window.getComputedStyle?.(node)?.display === 'none') node.style.display = 'revert'
+    }
+    function refreshRows() {
+      for (const record of records) {
+        const saved = record.saved
+        const label = saved && [saved.company_name, saved.job_title].filter(Boolean).join(' · ')
+        const summary = record.row.querySelector('[profile-items-summary]')
+        if (summary) summary.textContent = label ? 'Work Experience (' + label + ')' : 'Work Experience'
+        const changed = record.removed || (saved ? !unchanged(saved, values(record)) : present(record))
+        show(record.badge, changed)
+        const disabled = remaining().length <= 1
+        if (record.remove) {
+          record.remove.setAttribute('aria-disabled', String(disabled))
+          if (record.removeControl) {
+            record.removeControl.disabled = disabled
+            record.removeControl.setAttribute('aria-disabled', String(disabled))
+          }
+          if (record.removeWrap.hasAttribute('data-button-theme')) {
+            record.removeWrap.setAttribute('data-button-theme', disabled ? 'disabled' : record.removeTheme)
+          }
+        }
+      }
+    }
     // A field authored `form-xano-required` without the Webflow Required checkbox would let a
     // Starter submit a blank value the Xano writer refuses. Requiredness still comes only from
     // Required; this pauses Save on the mismatch instead of inventing a JavaScript requirement.
@@ -152,14 +184,14 @@
     function setOpen(record, open) {
       const content = record.row.querySelector('[profile-item-content]')
       const toggle = record.row.querySelector('[profile-item-toggle]')
-      if (content) { content.hidden = !open; content.inert = !open; content.style.height = open ? 'auto' : '0px' }
+      if (content) { show(content, open); content.inert = !open; content.style.height = open ? 'auto' : '0px' }
       toggle?.setAttribute('aria-expanded', String(open))
-      const summary = record.row.querySelector('[profile-items-summary]')
-      if (summary) summary.textContent = [input(record.row, 'company_name')?.value, input(record.row, 'job_title')?.value].filter(Boolean).join(' · ') || 'Work experience'
+      refreshRows()
       if (open) active = record
     }
     function dirty() {
       if (loading) return
+      refreshRows()
       section.setAttribute('profile-items-dirty', 'true')
       window.__tsProfileDirtyState?.markDirty(3)
       if (!saving && !unknown && !misconfigured) status.textContent = 'Unsaved changes.'
@@ -172,11 +204,12 @@
       record.row.querySelector('[profile-company-field="company_name"]')?._starterCompanySearch?.destroy()
       record.row.remove()
       records = records.filter(item => item !== record)
+      refreshRows()
     }
     function addRow(value = {}, focus = false) {
       const row = template.cloneNode(true)
       Array.from(row.querySelectorAll('[profile-company-search-results]')).forEach(node => node.remove())
-      const record = { row, id: value.id || null, removed: false, dates: {} }
+      const record = { row, id: value.id || null, removed: false, dates: {}, saved: value.id ? copy(value) : null }
       row.setAttribute('data-profile-row-id', 'company-' + ++uid)
       const ids = new Map()
       Array.from(row.querySelectorAll('[id]')).forEach(node => {
@@ -212,13 +245,13 @@
         selectedCompanyEntityId: String(value.company_entity_id || 0),
         selectedCompanySource: value.company_source || value.source || (value.company_entity_id ? 'platform' : ''),
       })
-      parent.appendChild(row)
+      parent.insertBefore(row, anchor)
       records.push(record)
       const toggle = row.querySelector('[profile-item-toggle]')
       toggle?.setAttribute('role', 'button')
       toggle?.setAttribute('tabindex', '0')
       const toggleRow = event => {
-        if (event.target.closest?.('[profile-item-remove]')) return
+        if (event.target.closest?.('[profile-item-remove], [profile-items-undo]')) return
         event.preventDefault()
         if (!saving && !record.removed) setOpen(record, toggle.getAttribute('aria-expanded') !== 'true')
       }
@@ -226,32 +259,50 @@
       toggle?.addEventListener('keydown', event => {
         if (event.target === toggle && ['Enter', ' '].includes(event.key)) toggleRow(event)
       })
+      if (toggle) toggle.hidden = false
+      const summary = row.querySelector('[profile-items-summary]')
+      const badge = row.querySelector('[profile-items-unsaved]') || document.createElement('span')
+      badge.setAttribute('profile-items-unsaved', '')
+      badge.textContent = 'Unsaved'
+      badge.style.marginLeft = '0.5em'
+      if (!badge.parentElement) {
+        const host = summary?.parentElement || toggle || row
+        const siblings = Array.from(host.children)
+        host.insertBefore(badge, summary ? siblings[siblings.indexOf(summary) + 1] || null : null)
+      }
+      record.badge = badge
       const remove = row.querySelector('[profile-item-remove]')
-      const undo = document.createElement('button')
-      undo.setAttribute('type', 'button')
+      const removeWrap = remove?.querySelector('[data-button-theme]') || remove?.closest('[data-button-theme]') || remove
+      const removeShell = remove?.contains(removeWrap) ? remove : removeWrap
+      const removeControl = remove?.matches('button, input, a') ? remove : remove?.querySelector('button, input, a')
+      Object.assign(record, { remove, removeWrap, removeControl,
+        removeTheme: removeWrap?.getAttribute('data-button-theme') === 'disabled' ? 'black' : removeWrap?.getAttribute('data-button-theme') || 'black' })
+      // Webflow owns the Button's separate visual label and overlay control. Adopt a
+      // complete authored Undo component instead of cloning Remove and guessing its label.
+      const undo = row.querySelector('[profile-items-undo]') || document.createElement('button')
       undo.setAttribute('profile-items-undo', '')
-      undo.textContent = 'Undo removal'
-      undo.hidden = true
-      row.appendChild(undo)
+      if (undo.tagName === 'BUTTON') undo.setAttribute('type', 'button')
+      if (!undo.children.length && !undo.textContent.trim()) undo.textContent = 'Undo removal'
+      const undoControl = undo.matches('button, input, a') ? undo : undo.querySelector('button, input, a')
+      if (undoControl) { undoControl.disabled = false; undoControl.removeAttribute('disabled'); undoControl.removeAttribute('aria-disabled') }
+      show(undo, false)
+      if (!undo.parentElement) (removeShell?.parentElement || toggle || row).appendChild(undo)
       remove?.addEventListener('click', event => {
         event.preventDefault()
-        if (saving) return
+        if (saving || record.removed || remaining().length <= 1) return
         record.removed = true
         setOpen(record, false)
-        if (toggle) toggle.hidden = true
-        remove.hidden = true; undo.hidden = false
+        show(removeShell, false); show(undo, true)
         if (active === record) active = remaining().at(-1) || null
-        if (!remaining().length) addRow({}, true)
         dirty()
       })
-      undo.addEventListener('click', () => {
+      undo.addEventListener('click', event => {
+        event.preventDefault()
         if (saving) return
         remaining().filter(item => !present(item)).forEach(removeRecord)
         if (remaining().length >= 3) { status.textContent = 'Remove another entry before restoring this one. You can keep up to three.'; return }
         record.removed = false
-        if (toggle) toggle.hidden = false
-        if (remove) remove.hidden = false
-        undo.hidden = true
+        show(removeShell, true); show(undo, false)
         setOpen(record, true); company?.focus(); dirty()
       })
       row.addEventListener('focusin', () => { active = record })
@@ -438,8 +489,10 @@
         baseline = baseline.filter(item => String(item.id) !== String(operation.id || '') && String(item.id) !== String(operation.replaceId || ''))
         baseline.push(copy(confirmed))
         operation.record.id = confirmed.id
+        operation.record.saved = copy({ ...operation.value, ...confirmed })
         if (operation.replaceId) records.filter(item => String(item.id) === String(operation.replaceId)).forEach(removeRecord)
       }
+      refreshRows()
     }
     check.addEventListener('click', async event => {
       // An authored control may be an anchor or a submit button, so never let its default run.

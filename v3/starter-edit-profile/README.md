@@ -555,6 +555,63 @@ picker publish an empty baseline.
 A failed initial load leaves the section readable rather than inert. Save and
 Discard are refused until the page is reloaded.
 
+### Work Experience accordion actions
+
+The visible row controls carry `profile-company-field`; obsolete hidden copies must
+not carry those markers. The visible date fields use the native month ownership
+below, without the legacy `data-input-datepicker` markers. Author the Add action
+after the row template. Page-local plain wrappers carry `profile-items-add`,
+`profile-items-discard`, `data-edit-submit="companies"`, and `profile-item-remove`;
+each wrapper contains its existing themed Button component. The whole footer
+must not carry the Save marker: Discard shares that footer but remains outside
+the Save owner. Author a separate `profile-items-undo` wrapper in the same header
+action slot, containing a small secondary Button labelled `Undo removal`. Give
+that wrapper the native `hidden` attribute initially; the controller explicitly
+sets its display state. The component's visible label and overlay button remain
+authored together.
+
+Runtime rows stay before Add. Saved headings read `Work Experience (Company · Title)`;
+the confirmed identity stays visible while edits are pending. An `Unsaved` status
+beside each heading reflects that row's draft, including removals and partial saves.
+Discard restores the confirmed headings and clears row statuses. Remove uses the
+existing disabled button theme while only one active row remains. A pending removal
+keeps its heading and replaces Remove with Undo removal in the same action position.
+
+[`unified-companies.fixture.html`](unified-companies.fixture.html) exercises these
+states with themed Button wrappers and a local, in-memory writer. It does not prove
+published-page wiring or authenticated persistence. Run its desktop/mobile Chrome checks
+with `node v3/browser-tests/work-experience-annotations.browser.cjs`.
+
+#### Work Experience annotation rollout state — 2026-09-22
+
+The test page's saved Designer tree now has the visible start/end inputs marked
+`profile-company-field` and authored as native month inputs. The old datepicker
+attributes/group were removed, legacy hidden field markers and custom IDs were
+removed, and the obsolete decorative calendar icons were hidden. Existing Add,
+Discard, Save, and Remove Button components were moved into the plain action
+wrappers above; obsolete action markers, including the whole-footer Save marker,
+were removed. The separate Undo component is authored with its wrapper initially
+hidden. Save is labelled `Save Changes`.
+
+These Designer edits remain **unpublished**. Script pins were not changed, the
+script retains its existing `v1.59.607` marker pending release, and this work does
+not release or publish the change. Deployment requires the reviewed controller
+release and the corresponding authored markup together. The actual page has not
+been verified with an authenticated member or real persistence. The original
+missing Save button's computed-style cause was not established; the local fixture
+only proves that its explicitly authored Save is visible and correctly scoped.
+
+Completed local checks:
+
+- `node --test v3/starter-edit-profile/profile-section-validation.test.js v3/starter-edit-profile/unified-companies.test.js`: 65 tests passed.
+- `node --check v3/starter-edit-profile/unified-companies.js`: passed.
+- `node v3/browser-tests/work-experience-annotations.browser.cjs`: desktop (1200px)
+  and mobile (390px) Chrome checks passed, including computed action visibility,
+  disabled theme, Add ordering, native month/current-role values sent to the
+  in-memory writer, saved headings, row status, Remove/Undo, and Discard without
+  saving. Screenshots were inspected. This uses fixture colors and simulated
+  persistence, not published-page styling or an authenticated account.
+
 ### Work Experience section readiness
 
 Unified Work Experience saves row creates, updates, and removals before the

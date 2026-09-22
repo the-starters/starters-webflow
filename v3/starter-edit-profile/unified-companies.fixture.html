@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Work Experience component fixture</title>
+<link rel="stylesheet" href="../../global-embeds/button.css">
+<style>
+:root{--colors--disabled-gray:#ddd;--colors--dark-disabled-gray:#777;--colors--black-olive:#1e211e;--colors--white:#fff;--colors--error:#b53c38;--colors--olive:#434b43}*{box-sizing:border-box}body{font:16px system-ui;background:#fafafa;color:#1e211e;margin:24px auto;max-width:900px;padding:0 16px}h1{font-size:22px}.profile-dropdown{background:#eee;border-radius:6px;padding:16px;margin-bottom:12px}.all-starters_accordion-toggle-button{display:flex;align-items:center;gap:8px;cursor:pointer}.all-starters_accordion-toggle-wrapper{margin-left:auto}.all-starters_accordion-content{display:block;padding-top:20px}.button_main-wrap{display:flex;border-radius:4px;background:#1e211e;color:white;width:fit-content;position:relative}.clickable_wrap{display:flex}.button_main-element{padding:8px 14px;pointer-events:none}.button_main-element+.clickable_wrap{position:absolute;inset:0}[profile-item-actions] .clickable_wrap{position:absolute;inset:0}[profile-item-actions] .clickable_btn{width:100%;height:100%}[profile-item-actions]{display:flex}.clickable_btn{font:inherit;background:none;border:0;color:inherit;padding:10px 14px;cursor:pointer}.button_main-wrap[data-button-theme=disabled] .clickable_btn{cursor:not-allowed}.app-form_group_wr{display:flex;gap:16px;margin-top:14px}label{display:flex;flex-direction:column;gap:6px;flex:1}input:not([type=checkbox]){font:inherit;min-width:0;width:100%;padding:10px;border:1px solid #999;border-radius:4px}.edit-buttons{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:24px}[profile-items-unsaved]{font-size:12px;color:#755700}[profile-items-add]{width:100%;justify-content:center}[profile-validation-error]{color:#a00}@media(max-width:550px){.app-form_group_wr{flex-direction:column}.all-starters_accordion-toggle-button{flex-wrap:wrap}.all-starters_accordion-toggle-wrapper{margin-left:0}[profile-items-summary]{max-width:100%}}
+</style>
+<h1>Work Experience component fixture</h1>
+<p>Local browser verification. Saves update memory only; no profile requests are made.</p>
+<section profile-unified-items="companies">
+<div class="accordion-info_wrapper">
+<div class="profile-dropdown" profile-item-row>
+<div class="all-starters_accordion-toggle-button" profile-item-toggle>
+<div profile-items-summary>Work Experience</div>
+<div class="all-starters_accordion-toggle-wrapper" profile-item-actions><div profile-item-remove><div class="button_main-wrap" data-button-theme="danger" data-button-style="primary"><div class="clickable_wrap"><button class="clickable_btn" type="button" aria-label="Remove"></button></div><div class="button_main-element"><div class="button_main-text">Remove</div></div></div></div><div profile-items-undo><div class="button_main-wrap" data-button-theme="black" data-button-style="secondary"><div class="clickable_wrap"><button class="clickable_btn" type="button" aria-label="Undo removal"></button></div><div class="button_main-element"><div class="button_main-text">Undo removal</div></div></div></div></div>
+</div>
+<div class="all-starters_accordion-content" profile-item-content>
+<div class="app-form_group_wr"><label>Name *<input profile-company-field="company_name" required></label><label>Title *<input profile-company-field="job_title" required></label></div>
+<div class="app-form_group_wr"><label>Start Date<input profile-company-field="start_date" type="month"></label><label>End Date<input profile-company-field="end_date" type="month"></label></div>
+<label style="display:block;margin-top:14px"><input type="checkbox" profile-company-field="current_work"> I currently work here</label>
+</div></div>
+<div class="button_main-wrap" data-button-theme="black" data-button-style="secondary" profile-items-add><div class="clickable_wrap"><button class="clickable_btn" type="button">Add Work Experience</button></div></div>
+</div>
+<div class="edit-buttons"><div class="button_main-wrap" data-button-theme="black" data-button-style="secondary" profile-items-discard><button class="clickable_btn" type="button">Discard Changes</button></div><div class="button_main-wrap" data-button-theme="black" data-button-style="primary" data-edit-submit="companies"><button class="clickable_btn" type="button">Save Changes</button></div><div profile-items-status role="status"></div><button type="button" profile-items-check-save>Check saved state</button></div>
+</section>
+<script src="profile-section-validation.js"></script>
+<script src="unified-companies.js"></script>
+<script>
+window.StarterEditLogoSearchInit = field => {
+ const select = () => Object.assign(field.dataset,{ selectedCompanyName:field.value,selectedCompanySource:'custom' });
+ field.addEventListener('input',select); select();
+};
+let stored=[{id:1,company_name:'Example Company',company_source:'custom',job_title:'Designer',start_date:'2022-03-01',end_date:'2025-08-01'}];
+let dispatchCount=0;let nextId=2;
+const writer={read:async()=>structuredClone(stored),parseDate:value=>/^\d{4}-\d{2}(?:-\d{2})?$/.test(value||'')?new Date(value.slice(0,7)+'-01T12:00:00'):null,
+create:async value=>{dispatchCount++;const saved={...value,id:nextId++};stored.push(saved);return saved},
+update:async(id,value)=>{dispatchCount++;const saved={...value,id};stored=stored.map(row=>row.id===id?saved:row);return saved},remove:async id=>{dispatchCount++;stored=stored.filter(row=>row.id!==id);return {deleted:true}},
+hasOtherChanges:()=>false,restoreOther:()=>{},dispatches:()=>dispatchCount,monthRangeMessage:'End month must be the same as or later than the start month.'};
+window.fixture={ready:StarterProfileCompanies.bind(document.querySelector('section'),writer),stored:()=>structuredClone(stored),mutations:()=>dispatchCount};
+</script>
+</html>
