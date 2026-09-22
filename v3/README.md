@@ -3019,14 +3019,15 @@ to prevent duplicate Brand and Starter messages. Guest calendar invitations
 belong to the canonical backend event lifecycle after organizer confirmation,
 not to the Scheduler configuration email flags.
 
-Minimum booking notice: the exact TEST/staging host
-`the-starters-3-0.webflow.io` uses five minutes in new Scheduler
-configurations and browser availability query floors. Booking Preview states
-the five-minute minimum there and the eight-hour minimum on `thestarters.com`
-and `www.thestarters.com`. Opening the preview does not mutate provider
-configurations. Existing provider notice corrections belong to the bounded
-backend reconciliation; availability-only updates and Paid configurations
-remain unchanged. The Paid configuration is
+Minimum booking notice: in the non-modal Dashboard / Calendar section, the
+exact TEST/staging host `the-starters-3-0.webflow.io` uses five minutes in new
+Free Scheduler configurations and browser availability query floors;
+production, unknown hosts, and CommonJS contexts use eight hours. Booking
+Preview states the five-minute minimum on staging and the eight-hour minimum
+on `thestarters.com` and `www.thestarters.com`. Opening the preview does not
+mutate provider configurations. Existing provider notice corrections belong
+to the bounded backend reconciliation; availability-only updates and Paid
+configurations remain unchanged. The Paid configuration is
 created server-side through `/starter/paid-call-settings/upsert/v3`, which the
 browser calls with product intent only, so that record's provider-side
 `min_booking_notice` is owned by Xano: the staging five-minute value narrows
