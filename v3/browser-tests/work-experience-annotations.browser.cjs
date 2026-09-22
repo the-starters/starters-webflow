@@ -13,7 +13,14 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
   const evidence = process.env.WORK_EXPERIENCE_BROWSER_EVIDENCE
   if (evidence) await fs.mkdir(evidence, { recursive: true })
   const server = http.createServer(async (req, res) => {
-    const file = path.resolve(root, '.' + new URL(req.url, 'http://local').pathname)
+    const url = new URL(req.url, 'http://local')
+    // The animated path needs the real library, not a stand-in that renders when this one does not.
+    if (url.pathname === '/gsap.js') {
+      res.setHeader('Content-Type', 'text/javascript')
+      res.end(await fs.readFile(process.env.GSAP_SOURCE || require.resolve('gsap'), 'utf8'))
+      return
+    }
+    const file = path.resolve(root, '.' + url.pathname)
     if (!file.startsWith(root + path.sep)) { res.writeHead(403).end(); return }
     try {
       res.setHeader('Content-Type', file.endsWith('.html') ? 'text/html' : file.endsWith('.css') ? 'text/css' : 'text/javascript')
@@ -145,6 +152,49 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
       await shot(device + '-saved')
       observations.push({device,checks:'hydration, Add order, disabled theme with a blank added row, one-open accordion, dates/current-role payload, saved and typed headings, row status/revert, authored Remove/Undo placement and visibility, Discard without save',view})
     }
+    // With GSAP on the page an accordion open renders on the next frame, so every path that
+    // focuses the row it just opened has to open that row instantly. Anything less leaves the
+    // focus inside a `display: none` panel with no layout at all.
+    await send('Emulation.setDeviceMetricsOverride', { width: 1200, height: 1000, deviceScaleFactor: 1, mobile: false })
+    await send('Page.navigate', { url: `http://127.0.0.1:${server.address().port}/v3/starter-edit-profile/unified-companies.fixture.html?gsap=1` })
+    await pause(300)
+    await evaluate('fixture.ready')
+    const version = await evaluate('window.gsap && window.gsap.version')
+    assert.ok(version, 'the animated pass runs against real GSAP')
+    const focused = () => evaluate(`(()=>{const el=document.activeElement;if(!el)return null;
+      const r=el.getBoundingClientRect();const rows=[...document.querySelectorAll('[profile-item-row]')];
+      const panel=el.closest('[profile-item-content]');
+      return {field:el.getAttribute('profile-company-field'),row:rows.indexOf(el.closest('[profile-item-row]')),
+       width:r.width,height:r.height,panel:panel?getComputedStyle(panel).display:null,
+       panelHeight:panel?panel.getBoundingClientRect().height:0}})()`)
+    // Add opens the new row and focuses its Company field.
+    await click('[profile-items-add] button')
+    let landed = await focused()
+    assert.equal(landed.field, 'company_name'); assert.equal(landed.row, 1)
+    assert.notEqual(landed.panel, 'none')
+    assert.ok(landed.width > 0 && landed.height > 0, 'the focused field has layout')
+    assert.ok(landed.panelHeight > 0, 'the opened panel has height')
+    await type('company_name', 'Second Company', 1); await type('job_title', 'CMO', 1)
+    // Undo restores the removed row, opens it and focuses its Company field.
+    await click('[profile-item-remove] button')
+    await click('[profile-items-undo] button')
+    landed = await focused()
+    assert.equal(landed.field, 'company_name'); assert.equal(landed.row, 0)
+    assert.notEqual(landed.panel, 'none')
+    assert.ok(landed.width > 0 && landed.height > 0, 'the restored row focused field has layout')
+    // A failing field in a collapsed row: validation opens that row and focuses into it.
+    await type('job_title', '', 0)
+    await click('[profile-item-row] ~ [profile-item-row] [profile-item-toggle]')
+    await pause(400)
+    await click('[data-edit-submit] button')
+    landed = await focused()
+    assert.equal(landed.field, 'job_title'); assert.equal(landed.row, 0)
+    assert.notEqual(landed.panel, 'none')
+    assert.ok(landed.width > 0 && landed.height > 0, 'the revealed field has layout')
+    assert.equal((await state()).mutations, 0)
+    await shot('animated-focus')
+    observations.push({ device: 'desktop-gsap', gsap: version,
+      checks: 'real GSAP animated opens still land focus for Add, Undo and validation reveal', view: await state() })
     assert.deepEqual(errors, [])
     if (evidence) await fs.writeFile(path.join(evidence, 'observations.json'), JSON.stringify({ boundary: 'Isolated local Chrome fixture; in-memory writer; no authenticated-page or real persistence proof', observations }, null, 2))
     console.log('Desktop and mobile Work Experience component checks passed' + (evidence ? '; evidence: ' + evidence : ''))

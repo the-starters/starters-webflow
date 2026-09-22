@@ -382,7 +382,7 @@ These must exist in Webflow:
 | `profile-unified-items="services\|companies\|highlights"` | Section | Opts the section in |
 | `profile-items-add` | Section | Add-entry control |
 | `profile-items-discard` | Section | Discard-changes control |
-| `profile-items-presence` | Section | Optional; gates Save only when it carries `required` |
+| `profile-items-presence` | Section | Optional; gates Save only when it carries `required`. For companies it never weakens the Remove floor below - a section without it still keeps one filled entry |
 | `profile-items-media="images\|videos"` | Row | Highlights only |
 | `profile-items-summary` | Row | Authored for companies and highlights; created by the script for services |
 | `profile-items-undo` | Row | Required for companies, so Designer owns the Button component; created by the script for services and highlights |
@@ -617,17 +617,28 @@ read confirms from a row Xano stores without every column it was sent.
 Discard restores the confirmed headings and clears row statuses. Remove uses the
 existing disabled button theme while only one entry remains, counting filled entries rather
 than rows: adding a blank row never unlocks removing the last saved entry, and the section
-never ends up with no row at all. A pending removal keeps its heading and replaces Remove
+never ends up with no row at all. That floor is unconditional and deliberate. It does not
+consult `profile-items-presence`, so a section whose presence marker is absent or not
+`required` still cannot be emptied through Remove: presence decides whether Save refuses an
+empty section, not whether Remove may take the last filled entry away. A pending removal keeps its heading and replaces Remove
 with Undo removal in the same action position.
 
 Validation opens the first failing row only. The shared validator reveals every failure and
 then focuses the first, and only one Work Experience entry can be open, so revealing each
 failure in turn would collapse the row whose field is about to take focus.
 
+Any row the section opens and then immediately focuses or scrolls to is opened instantly, not
+animated. When GSAP is on the page the shared accordion renders an animated open on the next
+frame, so the panel is still `display: none` when the call returns and a focus into it would
+be a no-op. Add, Undo, the presence message, and validation reveal all take the instant path;
+a Starter's own toggle still animates.
+
 [`unified-companies.fixture.html`](unified-companies.fixture.html) exercises these
 states with themed Button wrappers and a local, in-memory writer. It does not prove
 published-page wiring or authenticated persistence. Run its desktop/mobile Chrome checks
-with `node v3/browser-tests/work-experience-annotations.browser.cjs`.
+with `node v3/browser-tests/work-experience-annotations.browser.cjs`; a third pass reloads the
+fixture with the real GSAP build resolved from `node_modules` (override with `GSAP_SOURCE`) and
+asserts that Add, Undo, and validation reveal still land focus on a field with real layout.
 
 #### Work Experience annotation rollout state — 2026-09-22
 
@@ -664,7 +675,8 @@ Completed local checks:
   disabled theme with a blank added row, one-entry-open accordion behavior against the
   actual shared script, Add ordering, native month/current-role values sent to the
   in-memory writer, saved and typed headings, row status, authored Remove/Undo, and
-  Discard without saving. Set `WORK_EXPERIENCE_BROWSER_EVIDENCE=<dir>` to write screenshots and
+  Discard without saving, plus an animated pass against real GSAP 3.14.2 asserting that
+  Add, Undo, and validation reveal focus a field with non-zero layout inside an open panel. Set `WORK_EXPERIENCE_BROWSER_EVIDENCE=<dir>` to write screenshots and
   observations. This uses fixture colors and simulated
   persistence, not published-page styling or an authenticated account.
 

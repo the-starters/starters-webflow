@@ -211,9 +211,12 @@
       if (value.current_work) value.end_date = 'Present'
       return { ...value, ...(selection(record.row) || { company_domain: '', company_logo_url: '', company_entity_id: 0, company_source: '' }) }
     }
-    function setOpen(record, open) {
+    // An animated open renders on the next frame, so a panel opened that way is still
+    // `display: none` when this function returns. Anything that focuses or scrolls into the row
+    // it just opened has to open it instantly instead, or the focus lands on nothing.
+    function setOpen(record, open, instant) {
       const content = record.row.querySelector('[profile-item-content]')
-      if (open) record.accordion.open()
+      if (open) record.accordion.open(instant)
       else record.accordion.close()
       if (content) content.inert = !open
       refreshRows()
@@ -326,7 +329,7 @@
         if (remaining().length >= 3) { status.textContent = 'Remove another entry before restoring this one. You can keep up to three.'; return }
         record.removed = false
         show(remove, true); show(undo, false)
-        setOpen(record, true); company?.focus(); dirty()
+        setOpen(record, true, true); company?.focus(); dirty()
       })
       row.addEventListener('focusin', () => { active = record })
       input(row, 'current_work')?.addEventListener('change', () => syncCurrent(record))
@@ -335,7 +338,7 @@
       // both the later script wins `window.logoSearchInit`. These rows need the Edit picker,
       // which is published under its own name, so only that name is called here.
       window.StarterEditLogoSearchInit(company)
-      setOpen(record, !record.id)
+      setOpen(record, !record.id, focus)
       if (focus) company?.focus()
       return record
     }
@@ -370,7 +373,7 @@
         const record = records.find(item => item.row.contains(field))
         if (!record) return
         revealed = record
-        setOpen(record, true)
+        setOpen(record, true, true)
       },
     })
     const validate = scope => { revealed = null; return validation.validate(scope) }
@@ -555,7 +558,7 @@
         // Never reopen a row the Starter is removing: point at a usable row, adding one if needed.
         const target = remaining()[0] || addRow({}, true)
         status.textContent = 'Add at least one work experience entry.'
-        setOpen(target, true); input(target.row, 'company_name')?.focus(); return
+        setOpen(target, true, true); input(target.row, 'company_name')?.focus(); return
       }
       const deletions = records.filter(record => record.removed && record.id)
       const operations = []
