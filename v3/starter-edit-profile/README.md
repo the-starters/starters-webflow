@@ -747,6 +747,25 @@ and the detailed report remain outside Git under the test run's evidence directo
 Shared-group component fixture results are not live product acceptance. The
 desktop acceptance verdict remains **blocked**, with no pipeline approval.
 
+##### Focused live create recheck at `d1d0c3f` — failure not reproduced
+
+On 2026-09-23, the authorized disposable account started with an independently
+verified empty server baseline. A selected company, temporary job title, and
+January 2024–February 2025 dates were saved through the actual desktop UI.
+The create returned HTTP 200, the UI reported Changes saved, and an independent
+read confirmed exactly one matching record. Reloading with both exact local
+script overrides and the target commit marker verified preserved the confirmed
+heading and both native month values. Deleting only that newly created record
+returned HTTP 200; a subsequent independent read confirmed zero records.
+
+The earlier `WORK_HISTORY_CREATE_PROFILE_EVENT_INVALID` rejection did not
+reproduce; its cause remains unknown. No runtime or test change was justified.
+This focused persistence check passes, but partial-create retry and lost-response
+reconciliation were not rerun, so this is not full desktop acceptance or pipeline
+approval. Mobile remains deferred. Redacted results and private screenshots are
+in the current run's external evidence directory as `create-reproduction.json`,
+`create-reproduction-result.json`, and `repro-persisted-dates.png`.
+
 Focused re-verification during the earlier evidence assessment:
 `node --test --test-name-pattern='a partial company save|a lost create is confirmed|validation opens and focuses|visible marked month controls' v3/starter-edit-profile/unified-companies.test.js`
 passed all four selected behavioral tests. No executable failure was reproduced;
