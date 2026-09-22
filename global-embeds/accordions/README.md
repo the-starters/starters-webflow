@@ -75,7 +75,10 @@ not both act on one activation.
 `register(card, control, panel)` applies the same ARIA wiring, generated ids, and
 optional GSAP timeline the scan applies, starts the card collapsed, and returns
 `{ card, button, content, open(instant), close(), isOpen(), release() }`. It
-returns `null` when any of the three elements is missing. Registering later joins
+returns `null` when any of the three elements is missing. `open(true)` lays the
+panel out synchronously, for a caller that focuses or scrolls to the card it just
+opened; it restores forward playback before seeking, so a card that was closed
+stays open instead of animating back shut. Registering later joins
 the same group, so a card added after initialization obeys `closePrevious` too.
 Call `release()` when the page discards a card: it stops `closePrevious` reaching
 back into a detached one and kills that card's GSAP timeline, which would

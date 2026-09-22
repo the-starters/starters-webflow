@@ -647,8 +647,12 @@ with `GSAP_SOURCE=<path to a GSAP UMD build> node v3/browser-tests/work-experien
 unreadable path fails with a clear message instead of a mid-run crash. This repository has no
 manifest and does not vendor GSAP, so the path has to come from the operator - point it at a
 GSAP install of your own (for example `node_modules/gsap/dist/gsap.js`). A third pass reloads
-the fixture with that build and asserts that Add on a collapsed unfinished row, Undo, and
-validation reveal all land focus on a field with real layout inside an open panel.
+the fixture with that build and asserts that Add, Add on a collapsed unfinished row, Undo, and
+validation reveal all land focus on a field with real layout inside an open panel, and that the
+panel is still open once the animation budget has passed. A reversed timeline leaves a panel at
+`display: block` with `height: 0` while its children still paint outside the box, so the pass
+measures the panel box against its own content rather than trusting `display` or a non-zero
+rectangle.
 
 #### Work Experience annotation rollout state — 2026-09-22
 
@@ -676,7 +680,7 @@ only proves that its explicitly authored Save is visible and correctly scoped.
 
 Completed local checks:
 
-- `node --test v3/starter-edit-profile/profile-section-validation.test.js v3/starter-edit-profile/unified-companies.test.js v3/starter-edit-profile/unified-section-switching.test.js global-embeds/accordions/accordions.test.js global-embeds/accordions/mobile-accordions.test.js`: 109 tests passed.
+- `node --test v3/starter-edit-profile/profile-section-validation.test.js v3/starter-edit-profile/unified-companies.test.js v3/starter-edit-profile/unified-section-switching.test.js global-embeds/accordions/accordions.test.js global-embeds/accordions/mobile-accordions.test.js`: 110 tests passed.
 - `node --check v3/starter-edit-profile/unified-companies.js` and
   `node --check global-embeds/accordions/accordions.js`: passed.
 - `node --test readme-doc-links.test.js`: 81 tests passed.
@@ -685,9 +689,9 @@ Completed local checks:
   disabled theme with a blank added row, one-entry-open accordion behavior against the
   actual shared script, Add ordering, native month/current-role values sent to the
   in-memory writer, saved and typed headings, row status, authored Remove/Undo, and
-  Discard without saving, plus an animated pass asserting that Add on a collapsed unfinished
-  row, Undo, and validation reveal each focus a field with non-zero layout inside an open
-  panel. That pass was run against a GSAP 3.14.2 build supplied through `GSAP_SOURCE`; the
+  Discard without saving, plus an animated pass asserting that Add, Add on a collapsed
+  unfinished row, Undo, and validation reveal each focus a field inside a panel whose box
+  covers its content, both immediately and after the animation budget has passed. That pass was run against a GSAP 3.14.2 build supplied through `GSAP_SOURCE`; the
   repository declares no GSAP dependency, so reproducing it needs an operator-supplied path. Set `WORK_EXPERIENCE_BROWSER_EVIDENCE=<dir>` to write screenshots and
   observations. This uses fixture colors and simulated
   persistence, not published-page styling or an authenticated account.

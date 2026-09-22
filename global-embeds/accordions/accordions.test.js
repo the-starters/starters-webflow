@@ -63,8 +63,10 @@ function mount({ animated = false, attrs = {}, scrollTrigger = false, groups = 1
             this.steps.push(['fromTo', target, { ...from }, { ...to }])
             return this
           },
-          play() { this.actions.push('play'); return this },
-          reverse() { this.actions.push('reverse'); return this },
+          reversed: false,
+          play() { this.actions.push('play'); this.reversed = false; return this },
+          reverse() { this.actions.push('reverse'); this.reversed = true; return this },
+          // Seeking does not change direction in GSAP, so the double does not either.
           progress(value) { this.actions.push(['progress', value]); return this },
           invalidate() { this.invalidations += 1; return this },
           killed: false,
@@ -170,12 +172,12 @@ for (const animated of [false, true]) {
     assertOpen(env, 0, false)
     assertOpen(env, 1, true)
     assertOpen(env, 2, false)
-    if (animated) assert.deepEqual(env.timelines[1].actions, [['progress', 1]])
+    if (animated) assert.deepEqual(env.timelines[1].actions, ['play', ['progress', 1]])
     env.fire(2)
     assertOpen(env, 1, false)
     assertOpen(env, 2, true)
     if (animated) {
-      assert.deepEqual(env.timelines[1].actions, [['progress', 1], 'reverse'])
+      assert.deepEqual(env.timelines[1].actions, ['play', ['progress', 1], 'reverse'])
       assert.deepEqual(env.timelines[2].actions, ['play'])
     }
   })
@@ -187,7 +189,7 @@ for (const animated of [false, true]) {
       'data-close-on-second-click': 'true',
     } })
     env.cards.forEach((_, index) => assertOpen(env, index, true))
-    if (animated) env.timelines.forEach((timeline) => assert.deepEqual(timeline.actions, [['progress', 1]]))
+    if (animated) env.timelines.forEach((timeline) => assert.deepEqual(timeline.actions, ['play', ['progress', 1]]))
     env.fire(1)
     assertOpen(env, 0, true)
     assertOpen(env, 1, false)
@@ -294,6 +296,23 @@ for (const animated of [false, true]) {
     }
   })
 }
+
+test('an instant open after a close leaves the card playing forward, not reversed', () => {
+  const env = mount({ animated: true })
+  const group = env.accordions.group({ closePrevious: true })
+  const built = env.card()
+  const entry = group.register(built.card, built.button, built.content)
+  const timeline = env.timelines.at(-1)
+  entry.open()
+  assert.equal(timeline.reversed, false)
+  entry.close()
+  assert.equal(timeline.reversed, true, 'closing runs the timeline backwards')
+  // Seeking alone would leave the card running backwards, so it would collapse again on its own.
+  entry.open(true)
+  assert.equal(entry.isOpen(), true)
+  assert.equal(timeline.reversed, false, 'an instant open restores forward direction before seeking')
+  assert.deepEqual(timeline.actions, ['play', 'reverse', 'play', ['progress', 1]])
+})
 
 test('a released card is no longer the one close-previous closes', () => {
   const env = mount()

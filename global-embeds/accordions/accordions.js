@@ -59,7 +59,10 @@
           previous = entry;
           button.setAttribute("aria-expanded", "true");
           card.classList.add("is-active");
-          if (tl) instant ? tl.progress(1) : tl.play();
+          // Seeking alone keeps whatever direction the timeline was left in, so a card that was
+          // closed would jump open and then animate straight back shut. Restore forward play
+          // first, then jump to the end when the caller needs the panel laid out right now.
+          if (tl) { tl.play(); if (instant) tl.progress(1); }
           else content.style.display = "block";
         },
         // A card the page discards must stop being the one close-previous would close, and its

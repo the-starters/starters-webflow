@@ -178,7 +178,25 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
       const panel=el.closest('[profile-item-content]');
       return {field:el.getAttribute('profile-company-field'),row:rows.indexOf(el.closest('[profile-item-row]')),
        width:r.width,height:r.height,panel:panel?getComputedStyle(panel).display:null,
-       panelHeight:panel?panel.getBoundingClientRect().height:0}})()`)
+       panelHeight:panel?Math.round(panel.getBoundingClientRect().height):0,
+       panelContent:panel?panel.scrollHeight:0,
+       spill:panel?Math.round(r.bottom-panel.getBoundingClientRect().bottom):0}})()`)
+    // An instant open must still be open once the 300ms animation budget has passed. Reading
+    // only the frame the focus landed on would certify a panel that animates straight back shut.
+    const settled = async () => { await pause(400); return focused() }
+    // A reversed timeline leaves the panel at `display: block` with `height: 0` while its
+    // children still paint outside the box, so "displayed" and "non-zero rect" both stay true.
+    // The panel is only really open when its measured box covers its content and the focused
+    // field sits inside it.
+    const holds = (view, field, row, label) => {
+      assert.equal(view.field, field, label + ': focus stays on ' + field)
+      assert.equal(view.row, row, label + ': focus stays in row ' + row)
+      assert.notEqual(view.panel, 'none', label + ': the panel stays displayed')
+      assert.ok(view.width > 0 && view.height > 0, label + ': the focused field keeps layout')
+      assert.ok(view.panelHeight >= view.panelContent - 1,
+        label + ': the panel box covers its content (' + view.panelHeight + ' of ' + view.panelContent + ')')
+      assert.ok(view.spill <= 0, label + ': the focused field sits inside the panel box')
+    }
     // Add opens the new row and focuses its Company field.
     await click('[profile-items-add] button')
     let landed = await focused()
@@ -186,6 +204,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
     assert.notEqual(landed.panel, 'none')
     assert.ok(landed.width > 0 && landed.height > 0, 'the focused field has layout')
     assert.ok(landed.panelHeight > 0, 'the opened panel has height')
+    holds(await settled(), 'company_name', 1, 'Add')
     // Add on a collapsed unfinished row opens that row and puts the Starter in its Company field.
     await click('[profile-item-row] ~ [profile-item-row] [profile-item-toggle]')
     await pause(400)
@@ -194,6 +213,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
     assert.equal(landed.field, 'company_name'); assert.equal(landed.row, 1)
     assert.notEqual(landed.panel, 'none')
     assert.ok(landed.width > 0 && landed.height > 0, 'the reopened unfinished row has layout')
+    holds(await settled(), 'company_name', 1, 'Add on a collapsed unfinished row')
     assert.equal((await state()).rows.length, 2, 'the unfinished row is reused rather than joined by another')
     await type('company_name', 'Second Company', 1); await type('job_title', 'CMO', 1)
     // Undo restores the removed row, opens it and focuses its Company field.
@@ -203,6 +223,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
     assert.equal(landed.field, 'company_name'); assert.equal(landed.row, 0)
     assert.notEqual(landed.panel, 'none')
     assert.ok(landed.width > 0 && landed.height > 0, 'the restored row focused field has layout')
+    holds(await settled(), 'company_name', 0, 'Undo')
     // A failing field in a collapsed row: validation opens that row and focuses into it.
     await type('job_title', '', 0)
     await click('[profile-item-row] ~ [profile-item-row] [profile-item-toggle]')
@@ -212,10 +233,11 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
     assert.equal(landed.field, 'job_title'); assert.equal(landed.row, 0)
     assert.notEqual(landed.panel, 'none')
     assert.ok(landed.width > 0 && landed.height > 0, 'the revealed field has layout')
+    holds(await settled(), 'job_title', 0, 'validation reveal')
     assert.equal((await state()).mutations, 0)
     await shot('animated-focus')
     observations.push({ device: 'desktop-gsap', gsap: version,
-      checks: 'real GSAP animated opens still land focus for Add, Undo and validation reveal', view: await state() })
+      checks: 'real GSAP instant opens land focus and stay open past the animation for Add, Add on a collapsed unfinished row, Undo and validation reveal', view: await state() })
     assert.deepEqual(errors, [])
     if (evidence) await fs.writeFile(path.join(evidence, 'observations.json'), JSON.stringify({ boundary: 'Isolated local Chrome fixture; in-memory writer; no authenticated-page or real persistence proof', observations }, null, 2))
     console.log('Desktop and mobile Work Experience component checks passed' + (evidence ? '; evidence: ' + evidence : ''))
