@@ -964,7 +964,6 @@ test('a second authored status element outside the rows is ignored and the first
   page.company('Acme'); page.type('job_title', 'Designer')
   assert.equal(page.authoredStatus.textContent, 'Unsaved changes.')
   assert.equal(page.duplicateStatus.textContent, '', 'only the first authored element is written to')
-  assert.deepEqual(page.warnings, [], 'the duplicate is reported on staging only')
 })
 
 test('an authored check element that is a div is given a button role and Enter activation', async () => {

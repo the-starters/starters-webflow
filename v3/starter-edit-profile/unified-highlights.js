@@ -8,15 +8,6 @@
   if (window.StarterProfileHighlights) return
   const bound = new WeakSet()
   let nextId = 0
-  // The repo README's shared staging gate: authoring diagnostics stay off in production.
-  const STAGING_HOSTS = ['localhost', '127.0.0.1']
-  const STAGING_SUFFIXES = ['webflow.io', 'trycloudflare.com']
-  function diagnosticsEnabled() {
-    if (window.STARTERS_DEBUG === true) return true
-    const hostname = (window.location && window.location.hostname) || ''
-    return STAGING_HOSTS.includes(hostname)
-      || STAGING_SUFFIXES.some(suffix => hostname === suffix || hostname.endsWith('.' + suffix))
-  }
   async function bind(section, writer) {
     if (bound.has(section)) return
     bound.add(section)
@@ -30,9 +21,6 @@
       for (const node of section.querySelectorAll(selector)) {
         if (node.closest(ROW)) node.removeAttribute(attribute)
         else outside.push(node)
-      }
-      if (outside.length > 1 && diagnosticsEnabled()) {
-        console.warn('Edit Profile: more than one ' + selector + ' authored in this section; using the first.')
       }
       return outside[0]
     }
@@ -516,7 +504,7 @@
       }
       const cover = images.find(item => !item.removed && item.cover)
       const coverId = cover?.ref.id || null
-      const thumbnail = cover ? cover.ref.url : ''
+      const thumbnail = cover?.ref.url || ''
       const details = row => JSON.stringify([row.title, row.description || '', row.cover_image_id || null, row.thumbnail_url || ''])
       const sent = JSON.stringify([value.title, value.description, coverId, thumbnail])
       const known = baseline.find(item => String(item.id) === String(record.id))

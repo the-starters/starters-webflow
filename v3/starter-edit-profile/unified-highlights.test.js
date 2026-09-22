@@ -528,6 +528,31 @@ test('retained media without URLs stays editable without creating broken preview
   }
 })
 
+test('a lost update that landed is confirmed when the retained cover has no URL', async () => {
+  let lose = true
+  const page = await mount({
+    portfolios: [{ id: 1, title: 'Saved', description: '', cover_image_id: 2, thumbnail_url: null,
+      images: [{ id: 2, image_url: null, is_cover: true }], videos: [] }],
+    // The server applied the update; only its answer was lost.
+    fail: (request, stored) => {
+      if (request.endpoint !== 'Update_portfolio' || !lose) return null
+      lose = false
+      Object.assign(stored.find(row => row.id === Number(request.body.id)), request.body)
+      return 'lose'
+    },
+  })
+  page.type('title', 'Renamed')
+  await page.submit()
+  assert.equal(page.status(), 'Changes saved.')
+  assert.equal(page.section.querySelector('[profile-items-check-save]').hidden, true)
+  const update = page.mutations().find(request => request.endpoint === 'Update_portfolio')
+  assert.equal(update.body.cover_image_id, 2, 'the retained cover is kept')
+  assert.equal(page.media('images')[0].querySelector('[profile-media-cover]').getAttribute('aria-pressed'), 'true')
+  await page.submit()
+  assert.equal(page.mutations().filter(request => request.endpoint === 'Update_portfolio').length, 1,
+    'the confirmed update is not repeated')
+})
+
 test('a confirmed attachment renders from the stored file and frees the local one', async () => {
   // The second row is refused, so the save ends without the reset that Discard-style restore
   // would do. The first row's confirmed photo must already be living off its stored URL.

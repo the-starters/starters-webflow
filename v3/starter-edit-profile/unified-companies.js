@@ -11,15 +11,6 @@
   const ROW = '[profile-item-row]'
   const FIELD = '[profile-company-field]'
   const names = ['company_name', 'job_title', 'start_date', 'end_date', 'current_work']
-  // The repo README's shared staging gate: authoring diagnostics stay off in production.
-  const STAGING_HOSTS = ['localhost', '127.0.0.1']
-  const STAGING_SUFFIXES = ['webflow.io', 'trycloudflare.com']
-  function diagnosticsEnabled() {
-    if (window.STARTERS_DEBUG === true) return true
-    const hostname = (window.location && window.location.hostname) || ''
-    return STAGING_HOSTS.includes(hostname)
-      || STAGING_SUFFIXES.some(suffix => hostname === suffix || hostname.endsWith('.' + suffix))
-  }
   async function bind(section, writer) {
     if (bound.has(section)) return
     bound.add(section)
@@ -32,9 +23,6 @@
       for (const node of section.querySelectorAll(selector)) {
         if (node.closest(ROW)) node.removeAttribute(attribute)
         else outside.push(node)
-      }
-      if (outside.length > 1 && diagnosticsEnabled()) {
-        console.warn('Edit Profile: more than one ' + selector + ' authored in this section; using the first.')
       }
       return outside[0]
     }

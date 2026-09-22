@@ -14,15 +14,6 @@
   const SCALAR_NAMES = ['rate', 'rate-retainer', 'description-retainer', 'offer-monthly-retainers',
     'availability-option', 'availability', 'full-time-placement']
   let nextRowId = 0
-  // The repo README's shared staging gate: authoring diagnostics stay off in production.
-  const STAGING_HOSTS = ['localhost', '127.0.0.1']
-  const STAGING_SUFFIXES = ['webflow.io', 'trycloudflare.com']
-  function diagnosticsEnabled() {
-    if (window.STARTERS_DEBUG === true) return true
-    const hostname = (window.location && window.location.hostname) || ''
-    return STAGING_HOSTS.includes(hostname)
-      || STAGING_SUFFIXES.some(suffix => hostname === suffix || hostname.endsWith('.' + suffix))
-  }
   function bindServices(section) {
     if (sections.has(section)) return sections.get(section)
     const rows = () => Array.from(section.querySelectorAll(ROW))
@@ -34,9 +25,6 @@
       for (const node of section.querySelectorAll(selector)) {
         if (node.closest(ROW)) node.removeAttribute(attribute)
         else outside.push(node)
-      }
-      if (outside.length > 1 && diagnosticsEnabled()) {
-        console.warn('Edit Profile: more than one ' + selector + ' authored in this section; using the first.')
       }
       return outside[0]
     }
