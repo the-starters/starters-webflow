@@ -552,8 +552,21 @@
   function switchPopupContent(modal, target) {
     if (!modal || typeof modal.querySelectorAll !== 'function') return false
     let found = false
-    modal.querySelectorAll('[booking-popup-content]').forEach(function (content) {
-      const active = content.getAttribute('booking-popup-content') === target
+    const contents = Array.prototype.slice.call(modal.querySelectorAll('[booking-popup-content]'))
+    // Some authored pages also label the legacy proposal-confirmation panel
+    // as "cancel". Prefer the panel that owns the cancellation controls so
+    // opening cancellation cannot reveal that unrelated confirmation form.
+    const cancellationPanel = target === 'cancel' && contents.find(function (content) {
+      return content.getAttribute('booking-popup-content') === 'cancel' &&
+        typeof content.querySelector === 'function' &&
+        content.querySelector(
+          '[booking-action-btn="switch-cancel-reason"], [booking-card-action-btn="switch-cancel-reason"], ' +
+          '[booking-action-btn="cancel"], [booking-card-action-btn="cancel"]',
+        )
+    })
+    contents.forEach(function (content) {
+      const active = content.getAttribute('booking-popup-content') === target &&
+        (!cancellationPanel || content === cancellationPanel)
       content.hidden = !active
       content.style.display = active ? 'flex' : 'none'
       if (active) {

@@ -3390,6 +3390,396 @@ test('both project dashboards leave remote filtering to the default wf-xano cont
   assert.deepEqual(results, keys)
 })
 
+test('F18 request links parse from the query and normalize #calls to the live anchor', () => {
+  const bookingId = '00d39a7b-40be-436f-b794-a6832215234b'
+  assert.deepEqual(api.callDeepLinkLocator({
+    hostname: 'www.thestarters.com',
+    search: '?booking_id=' + bookingId + '&revision=7&environment=production',
+    hash: '#calls',
+  }), { bookingId, revision: 7, environment: 'production' })
+  const location = {
+    pathname: '/starter-dashboard',
+    search: '?booking_id=' + bookingId + '&revision=7&environment=production',
+    hash: '#calls',
+  }
+  let replaced = ''
+  assert.equal(api.normalizeCallsAnchor(location, {
+    replaceState(_state, _title, url) { replaced = url },
+  }), true)
+  assert.equal(
+    replaced,
+    '/starter-dashboard?booking_id=' + bookingId + '&revision=7&environment=production#calls-section',
+  )
+})
+
+test('F18 request locators reject malformed, fragment-carried, and cross-environment values', () => {
+  const bookingId = '00d39a7b-40be-436f-b794-a6832215234b'
+  assert.equal(api.callDeepLinkLocator({
+    hostname: 'www.thestarters.com',
+    search: '?booking_id=' + bookingId + '&revision=7&environment=test',
+    hash: '#calls',
+  }), null)
+  assert.equal(api.callDeepLinkLocator({
+    hostname: 'www.thestarters.com',
+    search: '',
+    hash: '#calls?booking_id=' + bookingId + '&revision=7&environment=production',
+  }), null)
+  assert.equal(api.callDeepLinkLocator({
+    hostname: 'www.thestarters.com',
+    search: '?booking_id=not-a-uuid&revision=7&environment=production',
+    hash: '#calls',
+  }), null)
+  assert.equal(api.callDeepLinkLocator({
+    hostname: 'www.thestarters.com',
+    search: '?booking_id=' + bookingId + '&revision=7&environment=production',
+    hash: '#messages',
+  }), null)
+})
+
+test('F18 canonical focus binds participant, environment, revision, and current actionability', () => {
+  const bookingId = '00d39a7b-40be-436f-b794-a6832215234b'
+  const locator = { bookingId, revision: 7, environment: 'production' }
+  const booking = api.normalizeBooking({
+    booking_id: bookingId,
+    lifecycle_revision: 7,
+    data_environment: 'production',
+    status: 'pending',
+    confirmation_expires_at: 10_000,
+    start: 20_000,
+    starter_data: { memberstack_id: 'mem_starter' },
+    brand_data: { memberstack_id: 'mem_brand' },
+  })
+  const current = api.canonicalDeepLinkState(locator, [booking], 'mem_starter', 'starter', 1_000)
+  assert.equal(current.booking.booking_id, bookingId)
+  assert.equal(current.readOnly, false)
+  assert.equal(current.reason, 'current_actionable_request')
+
+  const stale = api.canonicalDeepLinkState(
+    { ...locator, revision: 6 }, [booking], 'mem_starter', 'starter', 1_000,
+  )
+  assert.equal(stale.readOnly, true)
+  assert.equal(stale.reason, 'stale_revision')
+  assert.equal(
+    api.canonicalDeepLinkState(locator, [booking], 'mem_foreign', 'starter', 1_000),
+    null,
+  )
+  assert.equal(
+    api.canonicalDeepLinkState(
+      { ...locator, environment: 'test' }, [booking], 'mem_starter', 'starter', 1_000,
+    ),
+    null,
+  )
+  assert.equal(
+    api.canonicalDeepLinkState(locator, [booking], 'mem_brand', 'brand', 1_000).readOnly,
+    true,
+  )
+  assert.equal(
+    api.canonicalDeepLinkState(
+      locator, [{ ...booking, status: 'confirmed' }], 'mem_starter', 'starter', 1_000,
+    ).readOnly,
+    true,
+  )
+  ;[undefined, null, ''].forEach((revision) => {
+    const missingRevision = api.canonicalDeepLinkState(
+      locator,
+      [{ ...booking, lifecycle_revision: revision }],
+      'mem_starter',
+      'starter',
+      1_000,
+    )
+    assert.equal(missingRevision.readOnly, true)
+    assert.equal(missingRevision.reason, 'stale_revision')
+  })
+  ;[undefined, null, '', 'not-a-date', 1].forEach((expiry) => {
+    const missingOrPastExpiry = api.canonicalDeepLinkState(
+      locator,
+      [{ ...booking, confirmation_expires_at: expiry }],
+      'mem_starter',
+      'starter',
+      1_000,
+    )
+    assert.equal(missingOrPastExpiry.readOnly, true)
+    assert.equal(missingOrPastExpiry.reason, 'current_state_read_only')
+  })
+  assert.equal(api.canonicalDeepLinkState(
+    locator,
+    [{ ...booking, start: 1, confirmation_expires_at: 10_000 }],
+    'mem_starter',
+    'starter',
+    2_000,
+  ).readOnly, true)
+})
+
+test('F18 read-only focus disables mutation controls and restores their original state', () => {
+  const controls = [
+    element({ 'booking-action-btn': 'switch-confirm' }),
+    element({ 'booking-action-btn': 'reschedule' }),
+    element({ 'payment-action-btn': 'change-card' }),
+  ]
+  controls[0].disabled = false
+  controls[1].setAttribute('aria-disabled', 'mixed')
+  controls[2].setAttribute('tabindex', '0')
+  controls[2].hidden = true
+  controls[2].style.display = 'inline-flex'
+  const modal = element()
+  modal.querySelectorAll = (selector) => {
+    if (selector.includes('[booking-action-btn]')) return controls
+    if (selector === '[data-booking-deep-link-disabled]') {
+      return controls.filter((control) => control.hasAttribute('data-booking-deep-link-disabled'))
+    }
+    return []
+  }
+  assert.equal(api.makeDeepLinkDetailReadOnly(modal), 3)
+  controls.forEach((control) => {
+    assert.equal(control.hidden, true)
+    assert.equal(control.getAttribute('aria-disabled'), 'true')
+    assert.equal(control.getAttribute('tabindex'), '-1')
+  })
+  assert.equal(controls[0].disabled, true)
+
+  assert.equal(api.resetDeepLinkDetailState(modal), 3)
+  controls.forEach((control) => {
+    assert.equal(control.hasAttribute('data-booking-deep-link-disabled'), false)
+  })
+  assert.equal(controls[0].disabled, false)
+  assert.equal(controls[0].getAttribute('aria-disabled'), null)
+  assert.equal(controls[1].getAttribute('aria-disabled'), 'mixed')
+  assert.equal(controls[2].getAttribute('tabindex'), '0')
+  assert.equal(controls[0].hidden, false)
+  assert.equal(controls[2].hidden, true)
+  assert.equal(controls[2].style.display, 'inline-flex')
+})
+
+test('F18 read-only focus preserves close, back, message, and media controls', () => {
+  const preserved = [
+    element({ 'booking-action-btn': 'switch-close' }),
+    element({ 'booking-action-btn': 'switch-base' }),
+    element({ 'booking-action-btn': 'message' }),
+    element({ 'booking-action-btn': 'notetaker-media' }),
+  ]
+  const accept = element({ 'booking-action-btn': 'switch-confirm' })
+  const modal = element()
+  modal.querySelectorAll = (selector) =>
+    selector.includes('[booking-action-btn]') ? preserved.concat(accept) : []
+
+  assert.equal(api.makeDeepLinkDetailReadOnly(modal), 1)
+  preserved.forEach((control) => {
+    assert.equal(control.hidden, false)
+    assert.equal(control.hasAttribute('data-booking-deep-link-disabled'), false)
+  })
+  assert.equal(accept.hidden, true)
+  assert.equal(accept.hasAttribute('data-booking-deep-link-disabled'), true)
+})
+
+test('a delayed action-gate repaint cannot reveal stale-link actions', () => {
+  const accept = element({ 'booking-action-btn': 'switch-confirm' })
+  const modal = element({ 'data-booking-deep-link': 'stale_revision' })
+  modal.querySelectorAll = (selector) => {
+    if (selector.includes('[booking-action-btn]')) return [accept]
+    if (selector === '[data-booking-deep-link-disabled]') {
+      return accept.hasAttribute('data-booking-deep-link-disabled') ? [accept] : []
+    }
+    return []
+  }
+  modal.querySelector = () => null
+  api.configureDetailActions(modal, 'starter', 'pending', {
+    booking_id: '00d39a7b-40be-436f-b794-a6832215234b',
+    status: 'pending',
+    confirmation_expires_at: 10_000,
+    start: 20_000,
+    starter_data: { memberstack_id: 'mem_starter' },
+  }, 1_000)
+  assert.equal(accept.hidden, true)
+  assert.equal(accept.getAttribute('aria-disabled'), 'true')
+  assert.equal(accept.hasAttribute('data-booking-deep-link-disabled'), true)
+})
+
+test('F18 canonical focus waits for delayed Lumos readiness without refetching the booking', async () => {
+  const originalDocument = global.document
+  const originalLumos = global.lumos
+  const view = detailModalHarness()
+  const bookingId = '00d39a7b-40be-436f-b794-a6832215234b'
+  let opened = 0
+  let scheduled = 0
+  try {
+    global.document = { querySelector: () => view.modal }
+    global.lumos = null
+    const result = await api.focusCanonicalDeepLinkWhenReady(
+      { bookingId, revision: 7, environment: 'production' },
+      [{
+        booking_id: bookingId,
+        lifecycle_revision: 7,
+        data_environment: 'production',
+        status: 'pending',
+        confirmation_expires_at: 10_000,
+        start: 20_000,
+        starter_data: { memberstack_id: 'mem_starter' },
+        brand_data: { memberstack_id: 'mem_brand' },
+      }],
+      'mem_starter',
+      'starter',
+      1_000,
+      1,
+      () => 1,
+      {
+        delays: [0, 1],
+        now: () => 1_000,
+        setTimeout(resolve) {
+          scheduled += 1
+          global.lumos = {
+            modal: {
+              list: { 'popup-booking-info': {} },
+              open() { opened += 1 },
+            },
+          }
+          resolve()
+        },
+      },
+    )
+    assert.equal(result.focused, true)
+    assert.equal(result.reason, 'current_actionable_request')
+    assert.equal(scheduled, 1)
+    assert.equal(opened, 1)
+  } finally {
+    global.document = originalDocument
+    global.lumos = originalLumos
+  }
+})
+
+test('F18 delayed focus stops when the authenticated session generation changes', async () => {
+  const originalDocument = global.document
+  const originalLumos = global.lumos
+  const view = detailModalHarness()
+  const bookingId = '00d39a7b-40be-436f-b794-a6832215234b'
+  let generation = 1
+  let opened = 0
+  try {
+    global.document = { querySelector: () => view.modal }
+    global.lumos = null
+    const result = await api.focusCanonicalDeepLinkWhenReady(
+      { bookingId, revision: 7, environment: 'production' },
+      [{
+        booking_id: bookingId,
+        lifecycle_revision: 7,
+        data_environment: 'production',
+        status: 'pending',
+        confirmation_expires_at: 10_000,
+        start: 20_000,
+        starter_data: { memberstack_id: 'mem_starter' },
+      }],
+      'mem_starter', 'starter', 1_000, 1, () => generation,
+      {
+        delays: [0, 1],
+        now: () => 1_000,
+        setTimeout(resolve) {
+          generation = 2
+          global.lumos = {
+            modal: {
+              list: { 'popup-booking-info': {} },
+              open() { opened += 1 },
+            },
+          }
+          resolve()
+        },
+      },
+    )
+    assert.equal(result.focused, false)
+    assert.equal(result.reason, 'session_changed')
+    assert.equal(opened, 0)
+  } finally {
+    global.document = originalDocument
+    global.lumos = originalLumos
+  }
+})
+
+test('F18 delayed focus rechecks canonical expiry when the modal becomes ready', async () => {
+  const originalDocument = global.document
+  const originalLumos = global.lumos
+  const view = detailModalHarness()
+  const bookingId = '00d39a7b-40be-436f-b794-a6832215234b'
+  const times = [1_000, 11_000_000]
+  try {
+    global.document = { querySelector: () => view.modal }
+    global.lumos = null
+    const result = await api.focusCanonicalDeepLinkWhenReady(
+      { bookingId, revision: 7, environment: 'production' },
+      [{
+        booking_id: bookingId,
+        lifecycle_revision: 7,
+        data_environment: 'production',
+        status: 'pending',
+        confirmation_expires_at: 10_000,
+        start: 20_000,
+        starter_data: { memberstack_id: 'mem_starter' },
+      }],
+      'mem_starter', 'starter', 1_000, 1, () => 1,
+      {
+        delays: [0, 1],
+        now: () => times.shift(),
+        setTimeout(resolve) {
+          global.lumos = {
+            modal: {
+              list: { 'popup-booking-info': {} },
+              open() {},
+            },
+          }
+          resolve()
+        },
+      },
+    )
+    assert.equal(result.focused, true)
+    assert.equal(result.readOnly, true)
+    assert.equal(result.reason, 'current_state_read_only')
+    assert.equal(view.modal.getAttribute('data-booking-deep-link'), 'current_state_read_only')
+  } finally {
+    global.document = originalDocument
+    global.lumos = originalLumos
+  }
+})
+
+test('authenticated canonical rows reach F18 focus only after render, including an off-page booking', async () => {
+  const originalDocument = global.document
+  const originalFetch = global.xanoAuthFetch
+  const root = element()
+  const appended = []
+  const list = element()
+  list.appendChild = (child) => appended.push(child)
+  const refs = {
+    name: 'requests', filter: 'all', rows: [], rendered: 0,
+    list, template: element(), loader: element(), empty: element(),
+    loadMore: element(), filters: element(), count: element(), section: element(),
+  }
+  const rows = Array.from({ length: 8 }, (_unused, index) => ({
+    booking_id: '00000000-0000-4000-8000-' + String(index).padStart(12, '0'),
+    lifecycle_revision: 1,
+    data_environment: 'production',
+    status: 'pending',
+    start: 20_000 + index,
+    starter_data: { memberstack_id: 'mem_starter' },
+  }))
+  let callback = null
+  try {
+    global.document = { documentElement: root, querySelector: () => null }
+    global.xanoAuthFetch = async () => ({ ok: true, json: async () => rows })
+    assert.equal(await api.refreshSession(
+      { getCurrentMember: async () => ({ id: 'mem_starter' }) },
+      [refs], 'starter', 1, () => 1, false,
+      { onCanonicalRows(canonicalRows, memberId, role) {
+        callback = { canonicalRows, memberId, role, rendered: refs.rendered }
+      } },
+    ), true)
+    assert.equal(callback.canonicalRows.length, 8)
+    assert.equal(callback.canonicalRows[7].booking_id, rows[7].booking_id)
+    assert.equal(callback.memberId, 'mem_starter')
+    assert.equal(callback.role, 'starter')
+    assert.equal(callback.rendered, 6)
+    assert.equal(appended.length, 6)
+  } finally {
+    global.document = originalDocument
+    global.xanoAuthFetch = originalFetch
+  }
+})
+
 // SFR-232 — the Designer put `#calls-section` inside the *authored* Calls tile, not
 // inside the V3 `[bookings-section="calls"]` tile that replaces it. Hiding the
 // duplicate used to take that id out of layout, so the CALLS tab and every
