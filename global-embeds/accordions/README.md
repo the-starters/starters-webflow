@@ -77,8 +77,9 @@ optional GSAP timeline the scan applies, starts the card collapsed, and returns
 `{ card, button, content, open(instant), close(), isOpen(), release() }`. It
 returns `null` when any of the three elements is missing. Registering later joins
 the same group, so a card added after initialization obeys `closePrevious` too.
-Call `release()` when the page discards a card, so `closePrevious` never reaches
-back into a detached one.
+Call `release()` when the page discards a card: it stops `closePrevious` reaching
+back into a detached one and kills that card's GSAP timeline, which would
+otherwise stay attached to the global timeline holding the detached panel.
 
 `v3/starter-edit-profile/unified-companies.js` is the first consumer: its Work
 Experience rows are cloned at runtime, it registers each row with

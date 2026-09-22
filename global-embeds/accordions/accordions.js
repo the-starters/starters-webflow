@@ -62,9 +62,13 @@
           if (tl) instant ? tl.progress(1) : tl.play();
           else content.style.display = "block";
         },
-        // A card the page discards must stop being the one close-previous would close, so a
-        // detached card is never reached through this group again.
-        release: function () { if (previous === entry) previous = null; },
+        // A card the page discards must stop being the one close-previous would close, and its
+        // paused timeline must leave the global one: GSAP would otherwise keep animating toward
+        // a detached panel's height and hold that subtree for the rest of the page session.
+        release: function () {
+          if (previous === entry) previous = null;
+          if (tl) tl.kill();
+        },
       };
       if (bindControl) {
         button.addEventListener("click", function () {

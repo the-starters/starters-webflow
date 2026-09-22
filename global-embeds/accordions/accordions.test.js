@@ -67,6 +67,8 @@ function mount({ animated = false, attrs = {}, scrollTrigger = false, groups = 1
           reverse() { this.actions.push('reverse'); return this },
           progress(value) { this.actions.push(['progress', value]); return this },
           invalidate() { this.invalidations += 1; return this },
+          killed: false,
+          kill() { this.killed = true; return this },
         }
         timelines.push(timeline)
         return timeline
@@ -306,6 +308,38 @@ test('a released card is no longer the one close-previous closes', () => {
   two.open()
   assert.equal(one.isOpen(), true)
   assert.equal(two.isOpen(), true)
+})
+
+test('releasing a card also releases the animation it registered', () => {
+  const env = mount({ animated: true })
+  const group = env.accordions.group({ closePrevious: true })
+  const first = env.card()
+  const second = env.card()
+  const one = group.register(first.card, first.button, first.content)
+  const two = group.register(second.card, second.button, second.content)
+  const discarded = env.timelines.at(-2)
+  const kept = env.timelines.at(-1)
+  one.open()
+  assert.equal(discarded.killed, false)
+  one.release()
+  assert.equal(discarded.killed, true)
+  // Releasing one card leaves every other card in the group animating as before.
+  assert.equal(kept.killed, false)
+  two.open()
+  assert.equal(two.isOpen(), true)
+  assert.deepEqual(kept.actions, ['play'])
+  assert.equal(kept.killed, false)
+})
+
+test('releasing a card without GSAP on the page is still safe', () => {
+  const env = mount()
+  const group = env.accordions.group({ closePrevious: true })
+  const built = env.card()
+  const entry = group.register(built.card, built.button, built.content)
+  entry.open()
+  entry.release()
+  assert.equal(env.timelines.length, 0)
+  assert.equal(entry.isOpen(), true)
 })
 
 test('a group that does not bind the control leaves activation to the page', () => {
