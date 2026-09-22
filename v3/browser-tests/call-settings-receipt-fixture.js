@@ -11,8 +11,8 @@
 // Query params:
 //   page=edit|dashboard|build  which authored surface to wire
 //   base=<file>,<file>         serve these controller files from the pre-fix commit
-//   receipt=off-both|free-off-paid-pending|free-pending|paid-pending|foreign|none
-//   canonical=none|paid-active  which canonical services Xano answers with
+//   receipt=off-both|free-off-paid-pending|free-pending|paid-pending|paid-satisfied|foreign|none
+//   canonical=none|paid-active|free-active  which canonical services Xano answers with
 //   baseRef=calls|rate|decline which pre-fix commit the base files come from
 //   paid=1                     also wire the dashboard Paid card and controller
 //   gate=1                     hold every Memberstack member-JSON write until released
@@ -55,6 +55,12 @@ const RECEIPTS = {
     member_id: MEMBER.id,
     paid: { enabled: true, title: 'Strategy call', price_dollars: 250 },
   },
+  // The same Yes the canonical paid-active service already satisfies exactly.
+  'paid-satisfied': {
+    version: 1,
+    member_id: MEMBER.id,
+    paid: { enabled: true, title: 'Deep-dive strategy session', price_dollars: 350 },
+  },
   foreign: {
     version: 1,
     member_id: 'mem_sb_someone_else',
@@ -69,6 +75,9 @@ if (RECEIPTS[receipt]) memberJson.starter_call_settings_intent_v3 = clone(RECEIP
 if (params.get('seen') === '1') memberJson.tours = { 'starter-dashboard': '2026-09-01T00:00:00.000Z' }
 
 const pendingWrites = []
+// Lets a scenario make the very next Memberstack member-JSON write reject, which
+// is how a receipt cleanup fails in production.
+let failNextWrite = false
 window.__tsMemberJsonLog = []
 window.__tsNetworkLog = []
 
@@ -85,6 +94,11 @@ window.$memberstackDom = {
     const payload = clone(value && value.json) || {}
     const entry = { op: 'write', json: payload, released: !gate }
     window.__tsMemberJsonLog.push(entry)
+    if (failNextWrite) {
+      failNextWrite = false
+      entry.rejected = true
+      throw new Error('Memberstack member JSON write failed')
+    }
     if (gate) {
       await new Promise(resolve => pendingWrites.push(() => { entry.released = true; resolve() }))
     }
@@ -92,6 +106,7 @@ window.$memberstackDom = {
   },
 }
 
+window.__tsFailNextMemberJsonWrite = () => { failNextWrite = true }
 window.__tsMemberJsonState = () => clone(memberJson)
 window.__tsPendingWriteCount = () => pendingWrites.length
 window.__tsReleaseNextWrite = () => {
@@ -116,12 +131,20 @@ window.__tsBeforeUnloadPrompts = () => {
   return event.defaultPrevented
 }
 
-// No canonical Free or Paid service exists: the off receipt is already satisfied.
-const FREE_SETTINGS = {
-  public_description: '',
-  readiness: { calendar_connected: false, availability_configured: false, free_call_enabled: false, bookable: false },
-  services: [],
-}
+// By default no canonical Free or Paid service exists: the off receipt is
+// already satisfied. canonical=free-active answers with a live Free service
+// whose public description matches the free-pending receipt exactly.
+const FREE_SETTINGS = params.get('canonical') === 'free-active'
+  ? {
+    public_description: 'Quick intro',
+    readiness: { calendar_connected: true, availability_configured: true, free_call_enabled: true, bookable: true },
+    services: [{ config_id: 'cfg-free-1', title: 'Intro call', price_cents: 0, currency: 'usd', duration: 30, active: true, revision: 3 }],
+  }
+  : {
+    public_description: '',
+    readiness: { calendar_connected: false, availability_configured: false, free_call_enabled: false, bookable: false },
+    services: [],
+  }
 const PAID_SETTINGS = params.get('canonical') === 'paid-active'
   ? {
     readiness: { calendar_connected: true, availability_configured: true, stripe_connected: true, stripe_charges_enabled: true, paid_call_enabled: true, bookable: true },
@@ -136,6 +159,13 @@ function json(body) {
   return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } })
 }
 
+// Lets a scenario expire the session for every later canonical Paid read, which
+// is how the controller loses its canonical snapshot mid-session in production.
+// The scheduling-auth bridge re-trades its token and retries once on a 401, so a
+// single rejected read is not enough to reach the fail-closed path.
+let expirePaidReads = false
+window.__tsExpirePaidReads = () => { expirePaidReads = true }
+
 window.fetch = async function (input, init) {
   const request = new Request(input, init)
   const url = new URL(request.url, location.href)
@@ -147,7 +177,12 @@ window.fetch = async function (input, init) {
   if (url.origin !== XANO) throw new Error('unexpected origin ' + url.origin)
   if (url.pathname === '/api:g1vmSLWh/auth/trade-token/v3') return json({ authToken: 'xano-session-token' })
   if (url.pathname === '/api:tCpV3oqd/starter/free-call-settings/get/v3') return json(FREE_SETTINGS)
-  if (url.pathname === '/api:tCpV3oqd/starter/paid-call-settings/get/v3') return json(PAID_SETTINGS)
+  if (url.pathname === '/api:tCpV3oqd/starter/paid-call-settings/get/v3') {
+    if (expirePaidReads) {
+      return new Response(JSON.stringify({ message: 'Unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json' } })
+    }
+    return json(PAID_SETTINGS)
+  }
   throw new Error('unrouted request ' + url.pathname)
 }
 

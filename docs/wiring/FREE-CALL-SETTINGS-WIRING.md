@@ -103,7 +103,7 @@ the cached Free state is cleared. It also sets these attributes:
 - `data-free-call-price-cents` — the stored price in cents, `0` with no active service
 - `data-free-call-editor-open="true|false"`
 - `data-free-build-call-intent="pending"` while a Build Profile choice is waiting for
-  canonical confirmation; empty after consumption
+  canonical confirmation; empty after consumption and whenever the cached state is cleared
 
 The canonical reader supplies `duration` on each service record, the same field every other
 scheduling reader in this repository uses; `duration_minutes` stays an outbound request field only.

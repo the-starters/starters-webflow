@@ -470,6 +470,8 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
       await pause(300)
     }
     await clickPaid('open')
+    const submitState = await evaluate(`(() => { const el = document.querySelector('[data-call-settings-service="paid"] [data-call-settings-action="submit"]'); return { ariaDisabled: el.getAttribute('aria-disabled'), pointerEvents: el.style.pointerEvents } })()`)
+    assert.equal(submitState.ariaDisabled, 'true', 'Update is not offered for a pending Yes the prerequisites cannot honour')
     await clickPaid('submit')
     await pause(500)
     const blocked = await snapshot('17-dashboard-head-pending-paid-blocked-on-stripe', 'HEAD, pending Paid = Yes at $250 with no Stripe or scheduling setup')
@@ -477,9 +479,9 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
     assert.equal(blocked.paid.rateInput, '250', 'the Build Profile rate still prefills the editable field for setup')
     assert.equal(blocked.paid.buildIntent, 'pending', 'the receipt stays pending until the setup is finished')
     assert.equal(await evaluate(`document.querySelector('[data-call-settings-service="paid"] [data-call-settings-output="status"]').textContent`),
-      'Complete the calendar and Stripe setup before you turn on paid calls.',
-      'Update remains actionable but an enable still names the missing prerequisite and fails closed')
-    assert.deepEqual(xanoWrites(blocked), [], 'clicking Update writes nothing canonical while Stripe is unconnected')
+      'Your Build Profile choice is saved. Complete Calendar, Availability, and Stripe setup to turn on paid calls.',
+      'the card keeps naming the missing prerequisites instead of offering a save that cannot succeed')
+    assert.deepEqual(xanoWrites(blocked), [], 'clicking the inert Update writes nothing canonical while Stripe is unconnected')
     // The same guard from the controller's own entry point, not just the
     // disabled button: this is what the Edit Profile step 6 save calls.
     const forced = await evaluate(`(async () => {
@@ -515,7 +517,91 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
     })
 
     // ------------------------------------------------------------------
-    // 12. Boundary: every Xano call made across the run.
+    // 12. A pending "Yes" the canonical service already satisfies exactly is
+    //     retired on load, with no canonical write and no stale prefill.
+    // ------------------------------------------------------------------
+    await navigate('/starter-dashboard', 'page=dashboard&paid=1&canonical=paid-active&receipt=paid-satisfied&seen=1')
+    assert.ok(await settleUntil(`document.documentElement.getAttribute('data-paid-call-settings') === 'ready'`), 'the satisfied Paid card hydrates')
+    assert.ok(await settleUntil(`!window.__tsMemberJsonState().starter_call_settings_intent_v3`), 'the already-satisfied receipt is consumed')
+    await clickPaid('open')
+    const satisfied = await snapshot('20-dashboard-head-satisfied-receipt-consumed', 'HEAD, pending Paid = Yes that the live $350 canonical service already satisfies')
+    assert.equal(satisfied.paid.enabled, 'true', 'the canonical paid service stays on')
+    assert.equal(satisfied.paid.displayedRate, '$350.00', 'the card keeps showing the canonical rate')
+    assert.equal(satisfied.paid.rateInput, '350', 'the editable rate holds the canonical value, not a stale receipt value')
+    assert.equal(satisfied.paid.titleInput, 'Deep-dive strategy session', 'the editable title holds the canonical value')
+    assert.equal(satisfied.paid.buildIntent, '', 'the pending marker clears once the receipt is retired')
+    assert.deepEqual(xanoWrites(satisfied), [], 'retiring a satisfied receipt makes no canonical provider write')
+    assert.deepEqual(errors, [], 'no uncaught browser errors')
+    record('dashboard-satisfied-pending-yes-is-retired-without-a-canonical-write', {
+      memberJson: satisfied.memberJson, displayedRate: satisfied.paid.displayedRate, rateInput: satisfied.paid.rateInput,
+    })
+
+    // ------------------------------------------------------------------
+    // 13. Adversarial: the receipt cleanup itself fails. The member must be
+    //     told the choice was not saved instead of seeing a clean off state.
+    // ------------------------------------------------------------------
+    await navigate('/starter-dashboard', 'page=dashboard&paid=1&receipt=paid-pending&seen=1')
+    assert.ok(await settleUntil(`document.documentElement.getAttribute('data-paid-call-settings') === 'ready'`), 'the Paid card hydrates before the failing cleanup')
+    await clickPaid('open')
+    await evaluate(`document.getElementById('paid-no').click()`)
+    await evaluate(`window.__tsFailNextMemberJsonWrite()`)
+    await clickPaid('submit')
+    await pause(500)
+    const cleanupFailed = await snapshot('21-dashboard-head-failed-cleanup-tells-the-truth', 'HEAD, the decline is refused out loud because the receipt cleanup write failed')
+    assert.equal(await evaluate(`document.querySelector('[data-call-settings-service="paid"] [data-call-settings-output="status"]').textContent`),
+      'Your Build Profile choice could not be cleared. Your selection was not saved.',
+      'the failed cleanup is reported instead of a save that never happened')
+    assert.deepEqual(cleanupFailed.memberJson.starter_call_settings_intent_v3.paid, { enabled: true, title: 'Strategy call', price_dollars: 250 }, 'the receipt survives the failed cleanup so the choice is not silently lost')
+    assert.equal(cleanupFailed.paid.buildIntent, 'pending', 'the card still marks the receipt as pending')
+    assert.deepEqual(xanoWrites(cleanupFailed), [], 'a failed cleanup makes no canonical provider write')
+    const refused = await evaluate(`(async () => await window.StarterPaidCallSettings.save())()`)
+    assert.equal(refused, null, 'the controller entry point Edit Profile step 6 calls reports the refusal as null')
+    record('dashboard-failed-receipt-cleanup-is-reported-not-swallowed', {
+      status: 'Your Build Profile choice could not be cleared. Your selection was not saved.',
+      receipt: cleanupFailed.memberJson.starter_call_settings_intent_v3,
+    })
+
+    // ------------------------------------------------------------------
+    // 14. Adversarial: the session expires and the card loses its canonical
+    //     snapshot while a receipt is still pending. Acting on the receipt
+    //     must refuse instead of destroying it against unknown canonical state.
+    // ------------------------------------------------------------------
+    await navigate('/starter-dashboard', 'page=dashboard&paid=1&receipt=paid-pending&seen=1')
+    assert.ok(await settleUntil(`document.documentElement.getAttribute('data-paid-call-settings') === 'ready'`), 'the Paid card hydrates before the session expires')
+    await evaluate(`window.__tsExpirePaidReads()`)
+    await evaluate(`window.dispatchEvent(new Event('starterSchedulingConnectionStateChanged'))`)
+    assert.ok(await settleUntil(`document.querySelector('[data-call-settings-service="paid"] [data-call-settings-output="status"]').textContent === 'Sign in to manage paid calls.'`), 'the expired session fails the card closed')
+    const unknownCanonical = await evaluate(`(async () => {
+      const saved = await window.StarterPaidCallSettings.disable()
+      return { saved, status: document.querySelector('[data-call-settings-service="paid"] [data-call-settings-output="status"]').textContent }
+    })()`)
+    const noCanonical = await snapshot('22-dashboard-head-no-canonical-state-refuses', 'HEAD, the receipt cannot be acted on while the canonical state is unknown')
+    assert.equal(unknownCanonical.saved, null, 'the refusal is reported as null, not a phantom save')
+    assert.equal(unknownCanonical.status, 'Paid-call settings could not be confirmed. Reload and try again.', 'the member is told to reload instead of seeing a clean off state')
+    assert.deepEqual(noCanonical.memberJson.starter_call_settings_intent_v3.paid, { enabled: true, title: 'Strategy call', price_dollars: 250 }, 'the receipt survives an action taken against unknown canonical state')
+    assert.equal(noCanonical.paid.buildIntent, '', 'the fail-closed card stops advertising a pending Build Profile choice')
+    assert.deepEqual(xanoWrites(noCanonical), [], 'nothing canonical is written while the session is expired')
+    record('dashboard-receipt-is-not-consumed-against-unknown-canonical-state', {
+      status: unknownCanonical.status, receipt: noCanonical.memberJson.starter_call_settings_intent_v3,
+    })
+
+    // The Free branch of the same already-satisfied rule: a pending Free "Yes"
+    // whose description the canonical service already carries is retired too.
+    await navigate('/starter-dashboard', 'page=dashboard&canonical=free-active&receipt=free-pending&seen=1')
+    assert.ok(await settleUntil(`document.documentElement.getAttribute('data-free-call-settings') === 'ready'`), 'the satisfied Free card hydrates')
+    assert.ok(await settleUntil(`!window.__tsMemberJsonState().starter_call_settings_intent_v3`), 'the already-satisfied Free receipt is consumed')
+    const freeSatisfied = await snapshot('23-dashboard-head-satisfied-free-receipt-consumed', 'HEAD, pending Free = Yes that the live canonical Free service already satisfies')
+    assert.equal(freeSatisfied.free.yes, true, 'the canonical Free service stays on')
+    assert.equal(freeSatisfied.free.description, 'Quick intro', 'the canonical description is what the member sees')
+    assert.equal(freeSatisfied.buildIntent.free, '', 'the pending marker clears once the Free receipt is retired')
+    assert.deepEqual(xanoWrites(freeSatisfied), [], 'retiring a satisfied Free receipt makes no canonical provider write')
+    assert.deepEqual(errors, [], 'no uncaught browser errors')
+    record('dashboard-satisfied-pending-free-yes-is-retired-without-a-canonical-write', {
+      memberJson: freeSatisfied.memberJson, description: freeSatisfied.free.description,
+    })
+
+    // ------------------------------------------------------------------
+    // 16. Boundary: every Xano call made across the run.
     // ------------------------------------------------------------------
     const allCalls = observations.flatMap(entry => entry.network.map(call => `${call.method} ${new URL(call.url).pathname}`))
     const unique = Array.from(new Set(allCalls)).sort()

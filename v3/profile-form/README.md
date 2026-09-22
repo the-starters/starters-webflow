@@ -171,12 +171,19 @@ regardless of the hidden radio and regardless of whether the hidden rate satisfi
 Full Profile authors both controls, so an enabled or required section there stays strict.
 
 The Paid Call rate in Build Profile uses the same `$1` through `$1,000`
-whole-dollar contract as Dashboard and Edit Profile. Build Profile validates
-and stores that private setup intent but never sends call fields to the profile
-endpoint and never creates provider state. The receipt is validated alongside the
-other whole-dollar prices, before the profile request is sent: a rejected rate or
-title reports itself in the `[build-profile-error]` panel with nothing saved, so a
-bad rate never turns an accepted profile save into a visible failure. The receipt
+whole-dollar contract as Dashboard and Edit Profile, and the writer stamps the
+same native `type="number"`, `inputmode="numeric"`, `step="1"`, `min`, and `max`
+attributes on `[name="paid-call-rate"]` as on the other price controls. Build
+Profile validates and stores that private setup intent but never sends call
+fields to the profile endpoint and never creates provider state. The receipt is
+validated through the same shared whole-dollar validator as the other prices,
+before the profile request is sent: because the Paid Call rate, the Paid Call
+title, and the Free Call description are all visible authored controls, a
+rejected one names itself on its own control through focus and native constraint
+validation the way the visible Hourly Rate and Monthly Retainer do, and the
+`[build-profile-error]` panel is revealed with its authored copy and nothing
+saved, so a bad rate never turns an accepted profile save into a visible
+failure. The receipt
 *write* still runs after the profile save, and because call fields are not part of
 that payload, a resubmit after a later failure stores the receipt without repeating
 the profile write. Dashboard or Edit Profile completes

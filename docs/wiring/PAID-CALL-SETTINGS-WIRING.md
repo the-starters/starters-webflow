@@ -165,7 +165,7 @@ The controller sets `data-ready="true|false"` on each row. It also sets these wr
 - `data-paid-call-enabled="true|false"`
 - `data-paid-call-bookable="true|false"` (also `false` when the stored duration is not `60`)
 - `data-paid-build-call-intent="pending"` while a Build Profile choice is waiting for
-  canonical confirmation; empty after consumption
+  canonical confirmation; empty after consumption and whenever the cached state is cleared
 - `data-paid-call-card-state="on|off"` on the Paid card scope
 - `data-paid-call-rate-source="legacy_v2"` only while a valid imported suggestion is displayed;
   otherwise empty
