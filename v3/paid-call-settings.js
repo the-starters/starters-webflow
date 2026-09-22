@@ -1318,8 +1318,10 @@
     const memberId = sessionMemberId
     try {
       const canonical = await readCanonicalSettings()
-      pendingBuildIntent = await readPendingBuildIntent().catch(function () { return null })
-      if (currentRender(version, memberId) && !busy) render(canonical)
+      const pending = await readPendingBuildIntent().catch(function () { return null })
+      if (!currentRender(version, memberId) || busy) return canonical
+      pendingBuildIntent = pending
+      render(canonical)
       if (canonicalSatisfiesPendingIntent(canonical)) {
         const consumeEditRevision = memberEditRevision
         consumePendingBuildIntent().then(function () {
@@ -1354,6 +1356,7 @@
         const memberId = sessionMemberId
         const write = beginWrite(memberId)
         setBusy(true)
+        setStatus('disabling')
         try {
           await consumePendingBuildIntent()
         } catch (error) {
@@ -1368,6 +1371,7 @@
         }
         if (memberId !== sessionMemberId || !settings) return null
         if (currentRender(version, memberId)) render(settings)
+        else setStatus('ready')
       }
       return settings
     }
@@ -1523,7 +1527,9 @@
         return null
       }
       sessionMemberId = member.id
-      pendingBuildIntent = await readPendingBuildIntent().catch(function () { return null })
+      const pending = await readPendingBuildIntent().catch(function () { return null })
+      if (version !== refreshVersion) return null
+      pendingBuildIntent = pending
       await waitForSchedulingAuth()
       if (version !== refreshVersion) return null
       sessionAuthScope = await currentAuthScope()

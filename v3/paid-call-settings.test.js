@@ -505,7 +505,14 @@ function load(options = {}) {
 
   const memberstack = {
     getCurrentMember: async () => ({ data: await currentMemberReader() }),
-    getMemberJSON: async () => ({ data: memberJSON }),
+    // Memberstack serves a read from the state it held when the request was
+    // made, so the snapshot is captured before any optional test hold.
+    getMemberJSON: async () => {
+      const snapshot = memberJSON
+      const hold = options.memberJsonReadGate ? options.memberJsonReadGate() : null
+      if (hold) await hold
+      return { data: snapshot }
+    },
     updateMemberJSON: async ({ json }) => {
       if (options.memberJsonUpdateError) throw options.memberJsonUpdateError
       if (options.memberJsonUpdateGate) await options.memberJsonUpdateGate
@@ -1378,6 +1385,88 @@ test('an empty-state uncheck on the legacy Paid surface still asks the member to
   assert.equal(result.dom.status.textContent, 'Turn on paid calls before you save these settings.')
   assert.equal(result.calls.some((call) => call.method === 'POST'), false)
   assert.equal(result.memberJsonWrites.length, 0)
+})
+
+test('a superseded Paid refresh never resurrects the receipt a decline just consumed', async () => {
+  const readGate = deferred()
+  let holdNextRead = null
+  const result = load({
+    cardMode: true,
+    memberJsonReadGate: () => holdNextRead,
+    memberJSON: PENDING_PAID_ENABLE,
+    initial: canonical({ readiness: GATED_PAID_READINESS }),
+  })
+  await settle()
+  assert.equal(result.dom.enabled.checked, true, 'the pending enable is hydrated')
+
+  holdNextRead = readGate.promise
+  await result.dispatchWindow('starterSchedulingConnectionStateChanged', {})
+  await settle()
+  holdNextRead = null
+
+  result.dom.disabled.checked = true
+  await result.dom.disabled.dispatch('change')
+  assert.ok(await result.window.StarterPaidCallSettings.submit())
+  await settle()
+  assert.equal(result.memberJsonWrites.length, 1)
+  assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
+
+  readGate.resolve()
+  await settle()
+
+  await result.rotateAuthScope()
+  await settle()
+
+  assert.equal(result.dom.disabled.checked, true, 'a render that does not re-read the receipt keeps the decline')
+  assert.equal(result.dom.enabled.checked, false, 'the consumed receipt is never resurrected in module state')
+  assert.equal(result.dom.price.value, '', 'the declined rate is not repainted')
+  assert.equal(result.window.StarterPaidCallSettings.hasChanges(), false)
+})
+
+test('a Paid receipt decline publishes the disabling status for its whole write window', async () => {
+  const cleanupGate = deferred()
+  const result = load({
+    cardMode: true,
+    memberJsonUpdateGate: cleanupGate.promise,
+    memberJSON: PENDING_PAID_ENABLE,
+    initial: canonical({ readiness: GATED_PAID_READINESS }),
+  })
+  await settle()
+
+  result.dom.disabled.checked = true
+  await result.dom.disabled.dispatch('change')
+  const declined = result.window.StarterPaidCallSettings.submit()
+  await settle()
+
+  assert.equal(
+    result.document.documentElement.getAttribute('data-paid-call-settings'),
+    'disabling',
+    'the published status reports the in-flight receipt cleanup',
+  )
+
+  cleanupGate.resolve()
+  assert.ok(await declined)
+  await settle()
+
+  assert.equal(result.document.documentElement.getAttribute('data-paid-call-settings'), 'ready')
+})
+
+test('a failed Paid receipt decline leaves the published status in error', async () => {
+  const result = load({
+    cardMode: true,
+    memberJsonUpdateError: new Error('member JSON unavailable'),
+    memberJSON: PENDING_PAID_ENABLE,
+    initial: canonical({ readiness: GATED_PAID_READINESS }),
+  })
+  await settle()
+
+  result.dom.disabled.checked = true
+  await result.dom.disabled.dispatch('change')
+  assert.equal(await result.window.StarterPaidCallSettings.submit(), null)
+  await settle()
+
+  assert.equal(result.document.documentElement.getAttribute('data-paid-call-settings'), 'error')
+  assert.match(result.dom.statusOutput.textContent, /could not be cleared/)
 })
 
 test('a prerequisite refresh waits for a Paid decline cleanup instead of re-asserting the receipt', async () => {

@@ -299,7 +299,14 @@ function load(options = {}) {
 
   const memberstack = {
     getCurrentMember: async () => ({ data: await currentMemberReader() }),
-    getMemberJSON: async () => ({ data: memberJSON }),
+    // Memberstack serves a read from the state it held when the request was
+    // made, so the snapshot is captured before any optional test hold.
+    getMemberJSON: async () => {
+      const snapshot = memberJSON
+      const hold = options.memberJsonReadGate ? options.memberJsonReadGate() : null
+      if (hold) await hold
+      return { data: snapshot }
+    },
     updateMemberJSON: async ({ json }) => {
       if (options.memberJsonUpdateError) throw options.memberJsonUpdateError
       if (options.memberJsonUpdateGate) await options.memberJsonUpdateGate
@@ -780,6 +787,109 @@ test('a fail-closed refresh during a Free decline cleanup is never repainted by 
   assert.equal(result.dom.status.textContent, 'Sign in to manage free calls.', 'the signed-out card is never repainted')
   assert.equal(result.dom.save.getAttribute('aria-disabled'), 'true')
   assert.equal(result.dom.title.value, '', 'the decline continuation never repaints the blanked card')
+})
+
+test('a superseded Free refresh never resurrects the receipt a decline just consumed', async () => {
+  const readGate = deferred()
+  let holdNextRead = null
+  const result = load({
+    memberJsonReadGate: () => holdNextRead,
+    memberJSON: {
+      starter_call_settings_intent_v3: {
+        version: 1,
+        member_id: 'member-free-a',
+        free: { enabled: true, description: 'Quick intro' },
+      },
+    },
+    initial: canonical({
+      readiness: { calendar_connected: false, availability_configured: false },
+    }),
+  })
+  await settle()
+  assert.equal(result.dom.yes.checked, true, 'the pending enable is hydrated')
+
+  holdNextRead = readGate.promise
+  await result.dispatchWindowEvent('starterSchedulingConnectionStateChanged')
+  await settle()
+  holdNextRead = null
+
+  result.dom.no.checked = true
+  await result.dom.no.dispatch('change')
+  assert.ok(await result.window.StarterFreeCallSettings.submit())
+  await settle()
+  assert.equal(result.memberJsonWrites.length, 1)
+  assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
+
+  readGate.resolve()
+  await settle()
+
+  await result.rotateAuthScope()
+  await settle()
+
+  assert.equal(result.dom.no.checked, true, 'a render that does not re-read the receipt keeps the decline')
+  assert.equal(result.dom.yes.checked, false, 'the consumed receipt is never resurrected in module state')
+  assert.equal(result.dom.title.value, '', 'the declined description is not repainted')
+  assert.equal(result.window.StarterFreeCallSettings.hasChanges(), false)
+})
+
+test('a Free receipt decline publishes the disabling status for its whole write window', async () => {
+  const cleanupGate = deferred()
+  const result = load({
+    memberJsonUpdateGate: cleanupGate.promise,
+    memberJSON: {
+      starter_call_settings_intent_v3: {
+        version: 1,
+        member_id: 'member-free-a',
+        free: { enabled: true, description: 'Quick intro' },
+      },
+    },
+    initial: canonical({
+      readiness: { calendar_connected: false, availability_configured: false },
+    }),
+  })
+  await settle()
+
+  result.dom.no.checked = true
+  await result.dom.no.dispatch('change')
+  const declined = result.window.StarterFreeCallSettings.submit()
+  await settle()
+
+  assert.equal(
+    result.document.documentElement.getAttribute('data-free-call-settings'),
+    'disabling',
+    'the published status reports the in-flight receipt cleanup',
+  )
+
+  cleanupGate.resolve()
+  assert.ok(await declined)
+  await settle()
+
+  assert.equal(result.document.documentElement.getAttribute('data-free-call-settings'), 'ready')
+})
+
+test('a failed Free receipt decline leaves the published status in error', async () => {
+  const result = load({
+    memberJsonUpdateError: new Error('member JSON unavailable'),
+    memberJSON: {
+      starter_call_settings_intent_v3: {
+        version: 1,
+        member_id: 'member-free-a',
+        free: { enabled: true, description: 'Quick intro' },
+      },
+    },
+    initial: canonical({
+      readiness: { calendar_connected: false, availability_configured: false },
+    }),
+  })
+  await settle()
+
+  result.dom.no.checked = true
+  await result.dom.no.dispatch('change')
+  assert.equal(await result.window.StarterFreeCallSettings.submit(), null)
+  await settle()
+
+  assert.equal(result.document.documentElement.getAttribute('data-free-call-settings'), 'error')
+  assert.match(result.dom.status.textContent, /could not be cleared/)
 })
 
 test('a prerequisite refresh waits for a Free decline cleanup instead of re-asserting the receipt', async () => {
