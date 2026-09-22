@@ -2641,8 +2641,6 @@
       if (!preserveExisting) resetIdentityState(refs, role)
       const onCanonicalRows = deepLinkPending
         ? function (rows, memberId) {
-            deepLinkPending = false
-            const generation = sessionGeneration
             focusCanonicalDeepLinkWhenReady(
               deepLinkLocator,
               rows,
@@ -2651,9 +2649,15 @@
               Date.now(),
               generation,
               currentGeneration,
-            ).catch(function (error) {
-              console.error('[dashboard-calls] deep link focus failed:', error && error.message)
-            })
+            )
+              .then(function (result) {
+                if (result && result.reason !== 'session_changed') {
+                  deepLinkPending = false
+                }
+              })
+              .catch(function (error) {
+                console.error('[dashboard-calls] deep link focus failed:', error && error.message)
+              })
           }
         : null
       return refreshSession(

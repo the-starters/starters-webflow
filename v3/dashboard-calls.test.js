@@ -1301,6 +1301,119 @@ test('transient auth change keeps the initial post-login readiness window', asyn
   assert.deepEqual(delays.slice(0, 4), [200, 200, 400, 800])
 })
 
+test('auth change during delayed deep-link focus retries after canonical reload', async () => {
+  const source = fs.readFileSync(require.resolve('./dashboard-calls.js'), 'utf8')
+  const bookingId = '00d39a7b-40be-436f-b794-a6832215234b'
+  const retryTimers = []
+  const requests = []
+  let authChange
+  let opened = 0
+  const member = { id: 'starter-after-login' }
+  const booking = {
+    booking_id: bookingId,
+    lifecycle_revision: 1,
+    data_environment: 'production',
+    status: 'confirmed',
+    start: Date.now() + 86_400_000,
+    starter_data: { memberstack_id: member.id },
+  }
+  const view = detailModalHarness()
+  const list = element()
+  const template = element({ 'bookings-item-template': 'calls' })
+  list.querySelectorAll = (selector) =>
+    selector === '[bookings-item-template]' ? [template] : []
+  const section = element({ 'bookings-section': 'calls' })
+  section.querySelector = (selector) =>
+    ({
+      '[bookings-list="calls"]': list,
+      '[bookings-item-template="calls"]': template,
+      '[bookings-loader="calls"]': element(),
+      '[bookings-empty="calls"]': element(),
+      '[bookings-count]': element(),
+      '.tabs-button_component.is-dashboard': element(),
+    })[selector] || null
+  const root = element()
+  const document = {
+    documentElement: root,
+    readyState: 'complete',
+    getElementById() {
+      return null
+    },
+    querySelector(selector) {
+      return selector === '[popup-booking-info], dialog[data-modal-target="popup-booking-info"]'
+        ? view.modal
+        : null
+    },
+    querySelectorAll(selector) {
+      return selector === '[bookings-section]' ? [section] : []
+    },
+  }
+  const window = {
+    $memberstackDom: {
+      async getCurrentMember() {
+        return { data: member }
+      },
+      onAuthChange(listener) {
+        authChange = listener
+      },
+    },
+    URLSearchParams,
+    clearInterval() {},
+    document,
+    history: { replaceState() {} },
+    location: {
+      hostname: 'www.thestarters.com',
+      pathname: '/starter-dashboard',
+      search: '?booking_id=' + bookingId + '&revision=1&environment=production',
+      hash: '#calls',
+    },
+    memberReady: Promise.resolve(member),
+    setInterval() {
+      return 1
+    },
+    setTimeout(callback) {
+      retryTimers.push(callback)
+      return retryTimers.length
+    },
+    xanoAuthFetch: async (_url, init) => {
+      requests.push(JSON.parse(init.body).memberstack_id)
+      return { ok: true, json: async () => [booking] }
+    },
+  }
+
+  vm.runInNewContext(source, {
+    console: { error() {} },
+    document,
+    Intl,
+    URLSearchParams,
+    window,
+  })
+  await until(() => requests.length === 1 && retryTimers.length === 1)
+  authChange({ data: null })
+  await until(() => requests.length === 2 && retryTimers.length === 2)
+
+  window.lumos = {
+    modal: {
+      list: { 'popup-booking-info': {} },
+      open() {
+        opened += 1
+      },
+    },
+  }
+  while (retryTimers.length) {
+    retryTimers.shift()()
+    await new Promise(setImmediate)
+  }
+  await until(() => opened === 1)
+
+  assert.deepEqual(requests, [member.id, member.id])
+  assert.equal(view.modal.getAttribute('data-booking-id'), bookingId)
+  assert.equal(
+    view.modal.getAttribute('data-booking-deep-link'),
+    'current_state_read_only',
+  )
+})
+
 test('a post-mutation refresh still fails closed once the member stays missing', async () => {
   const originalDocument = global.document
   const originalFetch = global.xanoAuthFetch
