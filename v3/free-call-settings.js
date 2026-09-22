@@ -801,14 +801,12 @@
       ? pendingBuildIntent
       : null
     if (unsavedIntent) {
-      setRadioChecked(pair.enabled, unsavedIntent.enabled)
-      setRadioChecked(pair.disabled, !unsavedIntent.enabled)
-      notifyRadioChange(unsavedIntent.enabled ? pair.enabled : pair.disabled)
-      if (descriptionInput && unsavedIntent.enabled) {
-        descriptionInput.value = unsavedIntent.description
-      }
-      explicitIntent = unsavedIntent.enabled ? 'enabled' : 'disabled'
-      if (editProfileMode && (service || unsavedIntent.enabled) && canSaveSettings(value)) editProfileDirty = true
+      setRadioChecked(pair.enabled, true)
+      setRadioChecked(pair.disabled, false)
+      notifyRadioChange(pair.enabled)
+      if (descriptionInput) descriptionInput.value = unsavedIntent.description
+      explicitIntent = 'enabled'
+      if (editProfileMode && canSaveSettings(value)) editProfileDirty = true
     }
     root.setAttribute(
       'data-free-call-duration-current',
@@ -835,11 +833,9 @@
     paintStatusPills()
     setMessage(
       unsavedIntent
-        ? unsavedIntent.enabled
-          ? prerequisitesReady(value) || Boolean(service)
-            ? 'Your Build Profile choice is ready. Select Update to save free calls.'
-            : 'Your Build Profile choice is saved. Connect your calendar and set availability to turn on free calls.'
-          : 'Your Build Profile choice is ready. Select Update to turn off free calls.'
+        ? prerequisitesReady(value)
+          ? 'Your Build Profile choice is ready. Select Update to save free calls.'
+          : 'Your Build Profile choice is saved. Connect your calendar and set availability to turn on free calls.'
         : service
         ? !contractMatches
           ? 'Update this service to the required 30-minute Free Call settings.'

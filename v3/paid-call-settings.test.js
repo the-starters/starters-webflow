@@ -1056,6 +1056,43 @@ test('a non-card stale Paid off receipt cannot disable an active canonical servi
   assert.equal(result.memberJsonWrites.at(-1).starter_call_settings_intent_v3, undefined)
 })
 
+test('an unretired stale Paid off receipt cannot disable an active service from an uncheck', async () => {
+  const active = service({ title: 'Strategy call', price_cents: 20000, revision: 2 })
+  const result = load({
+    memberJSON: {
+      starter_call_settings_intent_v3: {
+        version: 1,
+        member_id: 'member-a',
+        paid: { enabled: false },
+      },
+    },
+    memberJsonUpdateError: new Error('Memberstack timeout'),
+    initial: canonical({
+      services: [active],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+  })
+  await settle()
+
+  assert.equal(result.memberJsonWrites.length, 0, 'the passive cleanup write failed, so the receipt is still held')
+  assert.equal(result.dom.enabled.checked, true, 'the canonical active service still wins the render')
+
+  result.dom.enabled.checked = false
+  await result.dom.enabled.dispatch('change')
+  await result.dom.save.dispatch('click')
+  await settle()
+
+  assert.equal(
+    result.calls.filter((call) => call.path === '/starter/paid-call-settings/disable/v3').length,
+    0,
+    'an active service is only turned off through the authored Turn off action',
+  )
+  assert.equal(
+    result.dom.status.textContent,
+    'Use Turn off paid calls to disable the active service safely.',
+  )
+})
+
 const GATED_PAID_READINESS = {
   calendar_connected: false,
   availability_configured: false,

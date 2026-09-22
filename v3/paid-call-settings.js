@@ -1107,15 +1107,13 @@
       ? pendingBuildIntent
       : null
     if (unsavedIntent) {
-      setRadioChecked(enabledInput, unsavedIntent.enabled)
-      setRadioChecked(disabledInput, !unsavedIntent.enabled)
-      notifyRadioChange(unsavedIntent.enabled ? enabledInput : disabledInput)
-      if (unsavedIntent.enabled) {
-        if (titleInput) titleInput.value = unsavedIntent.title
-        if (priceInput) priceInput.value = String(unsavedIntent.price_dollars)
-      }
-      explicitIntent = unsavedIntent.enabled ? 'enabled' : 'disabled'
-      if (editProfileMode && (service || unsavedIntent.enabled) && canSaveSettings(value)) editProfileDirty = true
+      setRadioChecked(enabledInput, true)
+      setRadioChecked(disabledInput, false)
+      notifyRadioChange(enabledInput)
+      if (titleInput) titleInput.value = unsavedIntent.title
+      if (priceInput) priceInput.value = String(unsavedIntent.price_dollars)
+      explicitIntent = 'enabled'
+      if (editProfileMode && canSaveSettings(value)) editProfileDirty = true
     }
     clearFieldValidity()
     root.setAttribute(
@@ -1132,9 +1130,7 @@
 
     root.setAttribute('data-paid-call-enabled', service ? 'true' : 'false')
     root.setAttribute('data-paid-call-bookable', bookable ? 'true' : 'false')
-    const pendingRate = unsavedIntent && unsavedIntent.enabled
-      ? { price_cents: unsavedIntent.price_dollars * 100 }
-      : null
+    const pendingRate = unsavedIntent ? { price_cents: unsavedIntent.price_dollars * 100 } : null
     const suggestion = service || pendingRate ? null : importedRateSuggestion(value)
     const cardStateTarget = uiScope || root
     cardStateTarget.setAttribute('data-paid-call-card-state', service ? 'on' : 'off')
@@ -1158,11 +1154,9 @@
     paintStatusPills()
     setMessage(
       unsavedIntent
-        ? unsavedIntent.enabled
-          ? prerequisitesReady(value) || Boolean(service)
-            ? 'Your Build Profile choice is ready. Select Update to save paid calls.'
-            : 'Your Build Profile choice is saved. Complete Calendar, Availability, and Stripe setup to turn on paid calls.'
-          : 'Your Build Profile choice is ready. Select Update to turn off paid calls.'
+        ? prerequisitesReady(value)
+          ? 'Your Build Profile choice is ready. Select Update to save paid calls.'
+          : 'Your Build Profile choice is saved. Complete Calendar, Availability, and Stripe setup to turn on paid calls.'
         : service
         ? rateNeedsCorrection
           ? 'Paid calls are not bookable: update this service to a whole-dollar rate from $1 to $1,000.'
@@ -1234,10 +1228,8 @@
     if (editProfileMode && !editProfileDirty) return settings
     if (explicitIntent === 'disabled') {
       // Where the surface has no Off control of its own, only the authored
-      // Disable action or the member's own pending Off receipt may turn an
-      // active service off.
-      const pendingOff = Boolean(pendingBuildIntent) && !pendingBuildIntent.enabled
-      if (canonicalService(settings) && !disabledField() && !pendingOff) {
+      // Disable action may turn an active service off.
+      if (canonicalService(settings) && !disabledField()) {
         setMessage('Use Turn off paid calls to disable the active service safely.')
         return settings
       }
