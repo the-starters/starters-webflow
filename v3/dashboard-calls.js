@@ -119,6 +119,25 @@
     const anchor = clean(location.hash).toLowerCase()
     if (anchor !== '' && anchor !== '#calls' && anchor !== '#calls-section') return null
     const searchParams = new Params(clean(location.search).replace(/^\?/, ''))
+    if (anchor === '') {
+      if (
+        normalizedPath(location.pathname) !== '/starter-dashboard' ||
+        dashboardEnvironment(location) !== 'production'
+      ) return null
+      const locatorNames = ['booking_id', 'revision', 'environment']
+      let parameterCount = 0
+      searchParams.forEach(function (_value, name) {
+        parameterCount += 1
+        if (!locatorNames.includes(name)) parameterCount = Number.NaN
+      })
+      if (
+        parameterCount !== locatorNames.length ||
+        locatorNames.some(function (name) {
+          const values = searchParams.getAll(name)
+          return values.length !== 1 || clean(values[0]) === ''
+        })
+      ) return null
+    }
     const bookingId = locatorValue(searchParams, 'booking_id')
     const revisionValue = locatorValue(searchParams, 'revision')
     const environment = locatorValue(searchParams, 'environment').toLowerCase()

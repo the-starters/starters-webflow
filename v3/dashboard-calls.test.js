@@ -3446,12 +3446,44 @@ test('F18 query-only recovery rejects incomplete, malformed, and non-call locato
     '?booking_id=not-a-uuid&revision=1&environment=production',
     '?booking_id=' + bookingId + '&revision=1&environment=test',
     '?booking_id=' + bookingId + '&booking_id=00000000-0000-4000-8000-000000000000&revision=1&environment=production',
+    '?booking_id=' + bookingId + '&booking_id=' + bookingId + '&revision=1&environment=production',
+    '?booking_id=' + bookingId + '&booking_id=&revision=1&environment=production',
+    '?booking_id=' + bookingId + '&revision=1&environment=production&thread=7',
     '?thread=7',
   ].forEach((search) => {
     const location = { ...base, search }
     assert.equal(api.callDeepLinkLocator(location), null)
     assert.equal(api.normalizeCallsAnchor(location, { replaceState() {} }), false)
   })
+})
+
+test('F18 query-only recovery is limited to the production Starter dashboard', () => {
+  const bookingId = '2f3bec74-0f47-4a98-ae8b-c6d38a1d5fa8'
+  const search = '?booking_id=' + bookingId + '&revision=1&environment=production'
+  ;[
+    { hostname: 'www.thestarters.com', pathname: '/brand-dashboard', search, hash: '' },
+    { hostname: 'www.thestarters.com', pathname: '/starter-dashboard---availability-stage', search, hash: '' },
+    {
+      hostname: 'the-starters-3-0.webflow.io',
+      pathname: '/starter-dashboard',
+      search: search.replace('production', 'test'),
+      hash: '',
+    },
+  ].forEach((location) => {
+    assert.equal(api.callDeepLinkLocator(location), null)
+    assert.equal(api.normalizeCallsAnchor(location, { replaceState() {} }), false)
+  })
+})
+
+test('F18 fragment-based links retain their existing dashboard and query behavior', () => {
+  const bookingId = '2f3bec74-0f47-4a98-ae8b-c6d38a1d5fa8'
+  const locator = api.callDeepLinkLocator({
+    hostname: 'the-starters-3-0.webflow.io',
+    pathname: '/brand-dashboard',
+    search: '?booking_id=' + bookingId + '&revision=1&environment=test&thread=7',
+    hash: '#calls-section',
+  })
+  assert.deepEqual(locator, { bookingId, revision: 1, environment: 'test' })
 })
 
 test('F18 request locators reject malformed, fragment-carried, and cross-environment values', () => {
