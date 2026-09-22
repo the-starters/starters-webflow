@@ -107,7 +107,7 @@ const EXPECTED_CANDIDATE_ASSETS = Object.freeze({
     characters: 24074, sha256: '690267296c1b1a8be3101608bc7582e81ac67b4cb04a6219e13c0ab467cd6825',
     guardKey: 'buildProfileSubmitWriter',
     liveCaptureAsset: 'v3/profile-form/build-submit-writer-published.capture.txt',
-    restoreTrailingWhitespace: Object.freeze({ 530: '          ' }), terminalNewlinesRemoved: 0,
+    restoreTrailingWhitespace: Object.freeze({ 531: '          ' }), terminalNewlinesRemoved: 0,
   }),
   'v3/build-profile/locations-consult.js': Object.freeze({
     characters: 11065, sha256: '3c2e09a3a55806e1f4a82af2c3e850c6f53120fc70c1506cbf6315d5f311f160',
@@ -284,7 +284,32 @@ function sha256(value) {
   return crypto.createHash('sha256').update(value).digest('hex')
 }
 
-function restoreCapturedWhitespace(candidate, expected, asset) {
+// A behaviour-changed candidate cannot be compared line for line against its
+// published capture, so the restoration map is verified against the one thing
+// both bodies still share: which lines carried trailing whitespace, in order.
+function assertRestorationAnchors(lines, expected, asset, published) {
+  const carriers = published.split('\n').filter((line) => /[ \t]+$/.test(line))
+  const pins = Object.entries(expected.restoreTrailingWhitespace)
+    .sort(([left], [right]) => Number(left) - Number(right))
+  assert.equal(
+    pins.length, carriers.length,
+    `${asset}: restoration must pin every published trailing-whitespace line`,
+  )
+  pins.forEach(([lineNumber, suffix], position) => {
+    const carrier = carriers[position]
+    const carrierBody = carrier.replace(/[ \t]+$/, '')
+    assert.equal(
+      suffix, carrier.slice(carrierBody.length),
+      `${asset}: restored suffix for line ${lineNumber} does not match its published line`,
+    )
+    assert.equal(
+      lines[Number(lineNumber) - 1] === '', carrierBody === '',
+      `${asset}: restored line ${lineNumber} is not the published whitespace-carrying line`,
+    )
+  })
+}
+
+function restoreCapturedWhitespace(candidate, expected, asset, published) {
   assert.equal(candidate.endsWith('\n'), true, `${asset}: candidate must end with one newline`)
   assert.equal(candidate.endsWith('\n\n'), false, `${asset}: candidate has excess terminal newlines`)
   let normalizedCandidate = candidate
@@ -295,6 +320,7 @@ function restoreCapturedWhitespace(candidate, expected, asset) {
   assert.doesNotMatch(normalizedCandidate, /[ \t]+$/m, `${asset}: candidate has trailing whitespace`)
 
   const lines = normalizedCandidate.split('\n')
+  if (published) assertRestorationAnchors(lines, expected, asset, published)
   for (const [lineNumber, suffix] of Object.entries(expected.restoreTrailingWhitespace)) {
     const index = Number(lineNumber) - 1
     assert.ok(index >= 0 && index < lines.length - 1, `${asset}: invalid restored line ${lineNumber}`)
@@ -341,14 +367,15 @@ function validateLiveCaptureContract(provenance, readAsset = source) {
     const candidate = readAsset(asset)
     assert.equal(candidate.length, expected.characters, `${asset}: candidate length`)
     assert.equal(sha256(candidate), expected.sha256, `${asset}: candidate hash`)
-    const reconstructed = restoreCapturedWhitespace(candidate, expected, asset)
+    const published = expected.liveCaptureAsset ? readAsset(expected.liveCaptureAsset) : null
+    const reconstructed = restoreCapturedWhitespace(candidate, expected, asset, published)
 
     if (!expected.liveCaptureAsset) {
       restoredAssets[asset] = reconstructed
       continue
     }
 
-    restoredAssets[asset] = readAsset(expected.liveCaptureAsset)
+    restoredAssets[asset] = published
     assert.notEqual(
       reconstructed, restoredAssets[asset],
       `${asset}: declared behavior change no longer diverges from its published capture`,
