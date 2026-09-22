@@ -1978,12 +1978,10 @@ Current safety boundary:
   their initial identity snapshot and `window.getXanoAuthToken` for the
   Opportunities, Points, Messages, and Stripe reads. This keeps one shared
   Memberstack bootstrap and one in-flight Xano token trade per member session.
-  If that initial snapshot is empty after login, the sitewide route guard and
-  call dashboard keep the loading state through a bounded Memberstack retry
-  schedule with 8.2 seconds of delays between reads. A transient auth event
-  before the first canonical load keeps that initial readiness window. Later
-  refreshes retain the shorter 600 ms retry schedule, and all missing-session
-  paths still fail closed.
+  The source-backed post-login wait is owned by the
+  [protected-route guard](#protected-route-guard), and the call reader's initial
+  and later-refresh behavior is owned by the
+  [dashboard call section](#dashboard-call-sections).
   The Free and Paid settings controllers use the bridge-owned auth scope and fetch reference for
   auth-triggered refreshes and writes, so a transient Memberstack DOM null cannot block the current
   owner. A logout or account switch changes that scope and still fails closed.
@@ -2182,8 +2180,12 @@ identity data and booking rows; a response started under the prior session can
 never repaint the page.
 
 Memberstack can briefly hand back an empty member while its client refreshes the
-session, so an empty read is retried on a bounded budget of three total member
-reads with a 200ms then 400ms backoff before the identity is treated as missing.
+session. On the initial load, an empty shared `memberReady` snapshot keeps the
+dashboard loading through the bounded 200, 400, 800, 1200, 1600, 2000, and
+2000ms readiness schedule. A transient auth notification before the first
+successful canonical load restarts that initial window instead of shortening
+it. Later refreshes retain the three-total-read budget with 200ms then 400ms
+backoff before the identity is treated as missing.
 A refresh that follows a successful cancel, decline, confirm, or reschedule
 keeps the rendered list and the success panel in place when the canonical read
 itself fails, and logs instead. A member that is still absent after the bounded
@@ -2210,8 +2212,9 @@ actionable only for its Starter participant. The Brand view, a stale revision,
 or any matching row that is no longer an actionable request opens the canonical
 details read-only with mutation and payment controls hidden. A missing or
 unauthorized canonical row opens nothing. Modal discovery is retried only on a
-bounded readiness schedule, and an account change cancels the pending focus so
-one member's link cannot open under another session.
+bounded readiness schedule. A transient auth restart keeps the locator pending
+until a new canonical load can retry it; a definitive mismatch after an account
+change opens nothing, so one member's link cannot open under another session.
 
 Webflow owns all call-section markup. Each section must provide:
 

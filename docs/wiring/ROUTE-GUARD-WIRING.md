@@ -108,6 +108,16 @@ detail pages. `/dashboard` and `/favorites` list both slash forms for the same
 reason: no prefix rule catches their trailing-slash twin, so each must appear
 explicitly for both canonical URL forms to route identically.
 
+On the exact `/starter-dashboard` and `/brand-dashboard` routes, the auth-page
+loader marks a navigation only after consuming a confirmed login-to-destination
+timing receipt. If that marked navigation reaches the guard with an empty shared
+`memberReady` snapshot and an empty live member read, the guard stays in its
+checking state while it retries after 200, 400, 800, 1200, 1600, 2000, and
+2000ms. This bounded post-login window lets the authenticated member hydrate
+before the role decision. A direct signed-out dashboard visit has no timing
+receipt, skips these retries, and follows the normal logged-out redirect
+immediately.
+
 Memberstack can initially expose only a lower Brand Free connection for a
 multi-plan member. On the two exact merged-feed paths, an allowed Talent or
 paid-Brand snapshot proceeds without delay. Before redirecting a denied role or
