@@ -70,18 +70,22 @@
     const original = section.querySelector(ROW)
     const template = original?.cloneNode(true)
     const parent = original?.parentElement
-    // The shared accordion opens a row through its control and its panel, so a row carrying
-    // neither is the same kind of markup gap as a missing row: without both, every entry would
-    // render permanently expanded and inert.
-    // Undo joins them: Webflow owns its themed Button, so a row without the authored control
-    // has no Remove-position replacement to show and removal would strand the row.
-    const openable = !!template?.querySelector('[profile-item-toggle]') && !!template?.querySelector('[profile-item-content]')
+    // Every row control the section drives is Designer's. The accordion opens a row through
+    // its control and its panel; Undo replaces Remove in place; and Remove's own themed Button
+    // carries the enabled theme the disabled state is swapped back from, so that theme has to
+    // be an enabled one - a tree saved showing the disabled state would otherwise teach every
+    // row that 'disabled' is what Remove looks like when it is usable. A row missing any of
+    // them is the same kind of markup gap as a missing row.
+    const authoredRemove = template?.querySelector('[profile-item-remove]')
+    const authoredTheme = authoredRemove?.querySelector('[data-button-theme]')?.getAttribute('data-button-theme') || ''
+    const complete = !!template?.querySelector('[profile-item-toggle]') && !!template?.querySelector('[profile-item-content]')
       && !!template?.querySelector('[profile-items-undo]')
-    if (!template || !parent || !save || !openable) {
+      && !!authoredTheme && authoredTheme !== 'disabled' && !!authoredRemove.querySelector('button, input, a')
+    if (!template || !parent || !save || !complete) {
       // The row is also the template for every added row, and Save is the only route to the
       // writer. Without either, report the markup gap and disable Save instead of leaving a
       // live control that silently does nothing.
-      console.warn('[unified-companies] missing [profile-item-row] with [profile-item-toggle], [profile-item-content] and [profile-items-undo], or Save control in section')
+      console.warn('[unified-companies] missing [profile-item-row] with [profile-item-toggle], [profile-item-content], [profile-items-undo] and a [profile-item-remove] button themed with an enabled theme, or Save control in section')
       status.textContent = 'This section could not load. Reload the page before editing.'
       save?.setAttribute('disabled', '')
       return
@@ -142,16 +146,10 @@
         const changed = record.removed || (saved ? !unchanged(saved, values(record)) : present(record))
         show(record.badge, changed)
         const disabled = !removable(record)
-        if (record.remove) {
-          record.remove.setAttribute('aria-disabled', String(disabled))
-          if (record.removeControl) {
-            record.removeControl.disabled = disabled
-            record.removeControl.setAttribute('aria-disabled', String(disabled))
-          }
-          if (record.removeWrap.hasAttribute('data-button-theme')) {
-            record.removeWrap.setAttribute('data-button-theme', disabled ? 'disabled' : record.removeTheme)
-          }
-        }
+        record.remove.setAttribute('aria-disabled', String(disabled))
+        record.removeControl.disabled = disabled
+        record.removeControl.setAttribute('aria-disabled', String(disabled))
+        record.removeWrap.setAttribute('data-button-theme', disabled ? 'disabled' : record.removeTheme)
       }
     }
     // A field authored `form-xano-required` without the Webflow Required checkbox would let a
@@ -304,15 +302,15 @@
       // The authored marker is a plain wrapper around the themed Button component, so the
       // theme lives inside it and the marker itself is what Remove hides.
       const remove = row.querySelector('[profile-item-remove]')
-      const removeWrap = remove?.querySelector('[data-button-theme]') || remove
-      const removeControl = remove?.matches('button, input, a') ? remove : remove?.querySelector('button, input, a')
+      const removeWrap = remove.querySelector('[data-button-theme]')
+      const removeControl = remove.querySelector('button, input, a')
       Object.assign(record, { remove, removeWrap, removeControl,
-        removeTheme: removeWrap?.getAttribute('data-button-theme') === 'disabled' ? 'black' : removeWrap?.getAttribute('data-button-theme') || 'black' })
+        removeTheme: removeWrap.getAttribute('data-button-theme') })
       // Webflow owns the Button's separate visual label and overlay control, so the authored
       // component is the only Undo: the section refuses to bind without it.
       const undo = row.querySelector('[profile-items-undo]')
       show(undo, false)
-      remove?.addEventListener('click', event => {
+      remove.addEventListener('click', event => {
         event.preventDefault()
         if (saving || record.removed || !removable(record)) return
         record.removed = true

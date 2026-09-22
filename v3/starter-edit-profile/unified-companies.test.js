@@ -15,7 +15,8 @@ async function mount({ companies = [], fail = null, minimum = true, withRow = tr
   liveAssociationReader = false, associationReadStatus = 200, claim = true, normalize = null,
   answer = null, picker = true, stale = null, strayXanoRequired = false, authored = false,
   authoredInRow = false, componentMarkup = false, authoredCheckDiv = false, authoredDuplicate = false,
-  accordions = true, withToggle = true, withContent = true, withUndo = true } = {}) {
+  accordions = true, withToggle = true, withContent = true, withUndo = true,
+  removeTheme = 'danger', withRemoveControl = true } = {}) {
   const fields = ['company_name', 'job_title', 'start_date', 'end_date', 'current_work'].map(key => h('input', {
     'profile-company-field': key, name: key, id: key,
     ...(key === 'current_work' ? { type: 'checkbox' } : {}),
@@ -27,9 +28,9 @@ async function mount({ companies = [], fail = null, minimum = true, withRow = tr
   // The documented Designer shape: a page-local plain wrapper carries the marker and contains
   // the existing themed Button component.
   const removeControl = h('button', { type: 'button' })
-  const removeWrap = h('div', { 'data-button-theme': 'danger', 'data-button-style': 'primary' }, [h('div', {}, [removeControl])])
+  const removeWrap = h('div', { ...(removeTheme === null ? {} : { 'data-button-theme': removeTheme }), 'data-button-style': 'primary' },
+    [h('div', {}, withRemoveControl ? [removeControl] : [])])
   const action = h('div', { 'profile-item-remove': '' }, [removeWrap])
-  const remove = h('button', { 'profile-item-remove': '', type: 'button' })
   const undoAction = h('div', { 'profile-items-undo': '' }, [h('div', { 'data-button-theme': 'black' }, [h('button', { type: 'button' }), h('span', { 'data-fixture-undo-label': '' })])])
   undoAction.querySelector('[data-fixture-undo-label]').textContent = 'Undo removal'
   const toggle = h(componentMarkup ? 'div' : 'button', { 'profile-item-toggle': '', type: 'button' },
@@ -37,7 +38,7 @@ async function mount({ companies = [], fail = null, minimum = true, withRow = tr
   const row = h('div', { 'profile-item-row': '' }, [
     ...(withToggle ? [toggle] : []),
     ...(withContent ? [h('div', { 'profile-item-content': '' }, fields)] : fields),
-    ...(componentMarkup ? [] : [remove, ...(withUndo ? [undoAction] : [])]),
+    ...(componentMarkup ? [] : [action, ...(withUndo ? [undoAction] : [])]),
     ...(authoredInRow ? [rowStatus] : []),
   ])
   const save = h('button', { 'data-edit-submit': 'companies' })
@@ -595,7 +596,7 @@ test('a section missing its row template or Save control reports the gap and dis
   const unusable = 'This section could not load. Reload the page before editing.'
   const missingRow = await mount({ withRow: false })
   assert.equal(missingRow.status(), unusable)
-  assert.ok(missingRow.warnings.some(args => args[0] === '[unified-companies] missing [profile-item-row] with [profile-item-toggle], [profile-item-content] and [profile-items-undo], or Save control in section'))
+  assert.ok(missingRow.warnings.some(args => args[0] === '[unified-companies] missing [profile-item-row] with [profile-item-toggle], [profile-item-content], [profile-items-undo] and a [profile-item-remove] button themed with an enabled theme, or Save control in section'))
   assert.equal(missingRow.save.getAttribute('disabled'), '')
   assert.equal(missingRow.requests.length, 0)
   const missingSave = await mount({ withSave: false })
@@ -1170,13 +1171,15 @@ test('one Work Experience entry is open at a time, through the shared accordion 
 
 test('a row missing the markup the section drives reports the gap and disables Save', async () => {
   // Without a control and a panel the row would render permanently expanded and inert, and
-  // without the authored Undo a removed row would have no way back, so the section reports the
-  // markup gap instead of hydrating into that state.
-  for (const options of [{ withToggle: false }, { withContent: false }, { withUndo: false }]) {
+  // without the authored Undo a removed row would have no way back. A Remove whose authored
+  // theme is the disabled one has no enabled theme to return to, so a tree saved in that state
+  // is a gap too. Each is reported instead of hydrating into it.
+  for (const options of [{ withToggle: false }, { withContent: false }, { withUndo: false },
+    { removeTheme: null }, { removeTheme: '' }, { removeTheme: 'disabled' }, { withRemoveControl: false }]) {
     const page = await mount(options)
     assert.equal(page.status(), 'This section could not load. Reload the page before editing.')
     assert.equal(page.save.getAttribute('disabled'), '')
-    assert.ok(page.warnings.some(args => args[0] === '[unified-companies] missing [profile-item-row] with [profile-item-toggle], [profile-item-content] and [profile-items-undo], or Save control in section'))
+    assert.ok(page.warnings.some(args => args[0] === '[unified-companies] missing [profile-item-row] with [profile-item-toggle], [profile-item-content], [profile-items-undo] and a [profile-item-remove] button themed with an enabled theme, or Save control in section'))
     assert.equal(page.requests.length, 0)
   }
 })
@@ -1279,6 +1282,24 @@ test('an unsaved company row heads with what was typed while saved rows keep the
   assert.equal(heading(2), 'Work Experience')
   page.company('Gamma', 2)
   assert.equal(heading(2), 'Work Experience (Gamma)')
+  assert.equal(page.mutations().length, 0)
+})
+
+test('Remove returns to the theme Designer authored once a second entry makes it usable', async () => {
+  const page = await mount({ componentMarkup: true, companies: [{ id: 1, company_name: 'Acme', company_source: 'custom', job_title: 'Designer' }] })
+  const theme = page.section.querySelector('[profile-item-remove]').querySelector('[data-button-theme]')
+  // One entry: the disabled look is derived at runtime, not the theme the row was authored with.
+  assert.equal(theme.getAttribute('data-button-theme'), 'disabled')
+  page.click(page.add)
+  page.company('Beta', 1); page.type('job_title', 'Engineer', 1)
+  assert.equal(theme.getAttribute('data-button-theme'), 'danger')
+  // Discard rebuilds the rows from the same template, so the authored theme survives the round trip.
+  page.click(page.discard)
+  const rebuilt = page.section.querySelector('[profile-item-remove]').querySelector('[data-button-theme]')
+  assert.equal(rebuilt.getAttribute('data-button-theme'), 'disabled')
+  page.click(page.add)
+  page.company('Gamma', 1); page.type('job_title', 'CTO', 1)
+  assert.equal(rebuilt.getAttribute('data-button-theme'), 'danger')
   assert.equal(page.mutations().length, 0)
 })
 

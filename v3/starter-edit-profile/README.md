@@ -388,12 +388,20 @@ These must exist in Webflow:
 | `profile-items-undo` | Row | Required for companies, so Designer owns the Button component; created by the script for services and highlights |
 | `profile-item-toggle` | Row | The control that opens the row |
 | `profile-item-content` | Row | The panel the control opens |
+| `profile-item-remove` | Row | Required for companies; a plain wrapper around the themed Button, authored with the enabled theme (`danger`) and containing the actionable control |
 
-Companies treats a row missing `profile-item-toggle`, `profile-item-content`, or
-`profile-items-undo` as the same markup gap as a missing row: it reports the halted state and
-disables Save rather than rendering every entry permanently expanded and inert, or leaving a
-removed row with no way back. Companies never creates its own Undo control: Webflow owns that
-themed Button, so the authored one is the only one.
+Companies treats a row missing `profile-item-toggle`, `profile-item-content`,
+`profile-items-undo`, or a themed `profile-item-remove` button as the same markup gap as a
+missing row: it reports the halted state and disables Save rather than rendering every entry
+permanently expanded and inert, leaving a removed row with no way back, or having no enabled
+theme to restore. Companies never creates its own Remove or Undo control and never invents a
+theme: Webflow owns those Button components, so the authored ones are the only ones.
+
+`profile-item-remove` must be authored with its **enabled** theme. The disabled look is
+derived at runtime - the script swaps `data-button-theme` to `disabled` while only one entry
+remains and swaps the authored value back when a second entry makes Remove usable - so a
+Designer tree saved while Remove is showing its disabled state is rejected as a markup gap
+rather than adopted as the enabled theme.
 
 The scripts create `profile-items-removed`, `profile-items-dirty`, and the
 per-row `profile-items-unsaved` status. None of those three is authored in
@@ -579,7 +587,8 @@ below, without the legacy `data-input-datepicker` markers. Author the Add action
 after the row template. Page-local plain wrappers carry `profile-items-add`,
 `profile-items-discard`, `data-edit-submit="companies"`, and `profile-item-remove`;
 each wrapper contains its existing themed Button component, and the
-theme is read from inside that wrapper - the marker itself is the element Remove hides. The whole footer
+theme and the actionable control are both read from inside that wrapper - the marker itself is
+the element Remove hides. The whole footer
 must not carry the Save marker: Discard shares that footer but remains outside
 the Save owner. Author a separate `profile-items-undo` wrapper in the same header
 action slot, containing a small secondary Button labelled `Undo removal`. Give
@@ -646,7 +655,7 @@ only proves that its explicitly authored Save is visible and correctly scoped.
 
 Completed local checks:
 
-- `node --test v3/starter-edit-profile/profile-section-validation.test.js v3/starter-edit-profile/unified-companies.test.js v3/starter-edit-profile/unified-section-switching.test.js global-embeds/accordions/accordions.test.js global-embeds/accordions/mobile-accordions.test.js`: 104 tests passed.
+- `node --test v3/starter-edit-profile/profile-section-validation.test.js v3/starter-edit-profile/unified-companies.test.js v3/starter-edit-profile/unified-section-switching.test.js global-embeds/accordions/accordions.test.js global-embeds/accordions/mobile-accordions.test.js`: 105 tests passed.
 - `node --check v3/starter-edit-profile/unified-companies.js` and
   `node --check global-embeds/accordions/accordions.js`: passed.
 - `node --test readme-doc-links.test.js`: 81 tests passed.
