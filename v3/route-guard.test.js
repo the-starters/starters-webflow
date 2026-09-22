@@ -114,6 +114,9 @@ function loadGuard(options = {}) {
   if (Object.prototype.hasOwnProperty.call(options, 'memberReady')) {
     window.memberReady = options.memberReady
   }
+  if (options.postLoginNavigation === true) {
+    window.__startersV3PostLoginNavigation = true
+  }
   // `noStorage` leaves window.sessionStorage undefined, which is the shape an
   // embedded/partitioned context can present. Every other call gets the double,
   // so a test that passes no `pending` reads exactly as an empty store.
@@ -528,6 +531,7 @@ test('call dashboard guard waits for post-login member hydration', async () => {
   const { location, attributes } = loadGuard({
     pathname: '/starter-dashboard',
     memberReady: Promise.resolve({}),
+    postLoginNavigation: true,
     getCurrentMember: async () => ({
       data: ++reads < 4 ? null : TALENT,
     }),
@@ -725,7 +729,11 @@ test('a logged-out Calls notification keeps its validated fragment through login
     pathname: '/brand-dashboard',
     search,
     hash: '#calls',
+    memberReady: Promise.resolve({}),
     member: null,
+    setTimeout() {
+      throw new Error('signed-out dashboard must not enter readiness retries')
+    },
   })
   await flush()
   assert.equal(location.replaced, '/login?next=' + encodeURIComponent(expectedNext))

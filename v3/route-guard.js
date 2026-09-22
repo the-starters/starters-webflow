@@ -837,6 +837,13 @@
   }
 
   async function initialMemberSnapshot(memberstack) {
+    var postLoginNavigation =
+      window.__startersV3PostLoginNavigation === true
+    try {
+      delete window.__startersV3PostLoginNavigation
+    } catch (error) {
+      window.__startersV3PostLoginNavigation = false
+    }
     var sharedSnapshotWasEmpty = false
     if (window.memberReady && typeof window.memberReady.then === 'function') {
       var member = await window.memberReady
@@ -847,6 +854,7 @@
     member = response && response.data
     if (
       !sharedSnapshotWasEmpty ||
+      !postLoginNavigation ||
       (window.location.pathname !== '/brand-dashboard' &&
         window.location.pathname !== '/starter-dashboard')
     ) {
