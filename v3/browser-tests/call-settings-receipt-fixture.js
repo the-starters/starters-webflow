@@ -10,16 +10,13 @@
 //
 // Query params:
 //   page=edit|dashboard|build  which authored surface to wire
-//   base=<file>,<file>         serve these controller files from the pre-fix commit
 //   receipt=off-both|free-off-paid-pending|free-pending|paid-pending|paid-satisfied|foreign|none
 //   canonical=none|paid-active|free-active  which canonical services Xano answers with
-//   baseRef=calls|rate|decline which pre-fix commit the base files come from
 //   paid=1                     also wire the dashboard Paid card and controller
 //   gate=1                     hold every Memberstack member-JSON write until released
 //   seen=1                     seed an existing tours seen-stamp in the member JSON
 const params = new URLSearchParams(location.search)
 const page = params.get('page') || 'edit'
-const baseFiles = new Set((params.get('base') || '').split(',').filter(Boolean))
 const receipt = params.get('receipt') || 'off-both'
 let gate = params.get('gate') === '1'
 const XANO = 'https://x08a-5ko8-jj1r.n7c.xano.io'
@@ -253,10 +250,8 @@ function loadScript(src) {
   })
 }
 
-const BASE_PREFIXES = { rate: '/base-rate', decline: '/base-decline' }
-const basePrefix = BASE_PREFIXES[params.get('baseRef')] || '/base'
 function sourceFor(file) {
-  return (baseFiles.has(file) ? basePrefix : '') + '/v3/' + file
+  return '/v3/' + file
 }
 
 // The dashboard tour scenarios wire the Free card alone so the receipt's Paid
@@ -284,14 +279,12 @@ window.__tsControllersReady = (async () => {
 const stamp = document.getElementById('stamp')
 function paintStamp() {
   const html = document.documentElement
-  const freeRoot = document.querySelector('[data-call-settings-service="free"], [data-form="step"][data-index="6"]')
   const success = document.querySelector('[build-profile-success]')
   stamp.textContent = [
     'page: ' + page,
-    'sources: ' + (baseFiles.size ? 'base for ' + Array.from(baseFiles).join(', ') : 'HEAD'),
+    'sources: working tree',
     'receipt: ' + receipt,
     'data-free-call-settings: ' + (html.getAttribute('data-free-call-settings') || '—'),
-    'data-free-build-call-intent: ' + ((freeRoot && freeRoot.getAttribute('data-free-build-call-intent')) || '—'),
     'member JSON receipt: ' + (memberJson.starter_call_settings_intent_v3
       ? Object.keys(memberJson.starter_call_settings_intent_v3).filter(key => key === 'free' || key === 'paid').join('+') || 'empty'
       : 'consumed'),

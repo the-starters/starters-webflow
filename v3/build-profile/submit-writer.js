@@ -70,8 +70,6 @@
         const intent = {
           version: 1,
           member_id: MEMBER.id,
-          source: 'build-profile',
-          updated_at: Date.now(),
         };
 
         if (hasFree) {

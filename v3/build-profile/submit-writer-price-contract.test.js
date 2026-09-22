@@ -332,8 +332,6 @@ test('Build Profile keeps provider call fields out of the profile payload and sa
       {
         version: 1,
         member_id: 'mem_test',
-        source: 'build-profile',
-        updated_at: result.memberJsonWrites[0].json.starter_call_settings_intent_v3.updated_at,
         free: { enabled: true, description: 'Free intro' },
         paid: { enabled: true, title: 'Strategy call', price_dollars: 250 },
       },

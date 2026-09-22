@@ -759,7 +759,6 @@ test('hydrates pending Build Profile Paid intent and consumes it after canonical
       starter_call_settings_intent_v3: {
         version: 1,
         member_id: 'member-a',
-        source: 'build-profile',
         free: { enabled: true, description: 'Saved intro' },
         paid: { enabled: true, title: 'Strategy call', price_dollars: 250 },
       },
@@ -787,7 +786,6 @@ test('hydrates pending Build Profile Paid intent and consumes it after canonical
   assert.equal(result.dom.disabled.checked, false)
   assert.equal(result.dom.title.value, 'Strategy call')
   assert.equal(result.dom.price.value, '250')
-  assert.equal(result.dom.root.getAttribute('data-paid-build-call-intent'), 'pending')
   assert.match(result.dom.statusOutput.textContent, /Build Profile choice is ready/)
 
   await result.window.StarterPaidCallSettings.submit()
@@ -809,7 +807,6 @@ test('hydrates pending Build Profile Paid intent and consumes it after canonical
     JSON.parse(JSON.stringify(result.memberJsonWrites[0].starter_call_settings_intent_v3.free)),
     { enabled: true, description: 'Saved intro' },
   )
-  assert.equal(result.dom.root.getAttribute('data-paid-build-call-intent'), '')
 })
 
 test('a pending receipt cleanup failure never turns a verified Paid save into an error', async () => {
@@ -849,7 +846,6 @@ test('a pending receipt cleanup failure never turns a verified Paid save into an
   assert.ok(canonicalResult.services.length)
   assert.equal(result.events.some((event) => event.type === 'starterPaidCallWriteError'), false)
   assert.equal(result.events.some((event) => event.type === 'starterPaidCallWriteSuccess'), true)
-  assert.equal(result.dom.root.getAttribute('data-paid-build-call-intent'), '')
   assert.match(result.warnings.join('\n'), /pending Build Profile receipt could not be cleared/)
 })
 
@@ -1039,7 +1035,6 @@ test('declining a pending Paid enable consumes the receipt when canonical has no
   await settle()
 
   assert.equal(result.dom.enabled.checked, true)
-  assert.equal(result.dom.root.getAttribute('data-paid-build-call-intent'), 'pending')
 
   result.dom.disabled.checked = true
   await result.dom.disabled.dispatch('change')
@@ -1049,8 +1044,40 @@ test('declining a pending Paid enable consumes the receipt when canonical has no
   assert.equal(result.calls.some((call) => call.method === 'POST'), false)
   assert.equal(result.memberJsonWrites.length, 1)
   assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
-  assert.equal(result.dom.root.getAttribute('data-paid-build-call-intent'), '')
   assert.equal(result.dom.disabled.checked, true)
+  assert.equal(result.dom.enabled.checked, false)
+})
+
+test('a non-card pending Paid off receipt disables an active canonical service', async () => {
+  const active = service()
+  const result = load({
+    memberJSON: {
+      starter_call_settings_intent_v3: {
+        version: 1,
+        member_id: 'member-a',
+        paid: { enabled: false, title: '', price_dollars: null },
+      },
+    },
+    initial: canonical({
+      services: [active],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+    routes: {
+      '/starter/paid-call-settings/disable/v3': ({ setState }) => {
+        setState(canonical())
+        return { ok: true, status: 200, json: async () => ({ service: { active: false } }) }
+      },
+    },
+  })
+  await settle()
+
+  assert.equal(result.dom.enabled.checked, false, 'the Build Profile Off choice is hydrated')
+  assert.ok(await result.window.StarterPaidCallSettings.submit())
+  await settle()
+
+  assert.equal(result.calls.filter((call) => call.path === '/starter/paid-call-settings/disable/v3').length, 1)
+  assert.equal(result.calls.filter((call) => call.path === '/starter/paid-call-settings/upsert/v3').length, 0)
+  assert.equal(result.memberJsonWrites.at(-1).starter_call_settings_intent_v3, undefined)
   assert.equal(result.dom.enabled.checked, false)
 })
 
@@ -1142,17 +1169,12 @@ test('a fail-closed Paid session clears the pending Build Profile receipt it pai
     },
   })
   await settle()
-  assert.equal(result.dom.root.getAttribute('data-paid-build-call-intent'), 'pending')
 
   await result.dispatchWindow('starterSchedulingConnectionStateChanged', {})
   await settle()
 
   assert.equal(result.dom.statusOutput.textContent, 'Sign in to manage paid calls.')
-  assert.equal(
-    result.dom.root.getAttribute('data-paid-build-call-intent'),
-    '',
-    'the blanked card no longer advertises a pending Build Profile choice',
-  )
+  assert.equal(result.dom.disabled.checked, true, 'the fail-closed card resets to Off')
   assert.equal(result.dom.save.getAttribute('aria-disabled'), 'true')
 })
 
@@ -1175,7 +1197,6 @@ test('a failed no-service Paid decline keeps the pending receipt and reports fai
   await result.dom.disabled.dispatch('change')
   assert.equal(await result.window.StarterPaidCallSettings.submit(), null)
 
-  assert.equal(result.dom.root.getAttribute('data-paid-build-call-intent'), 'pending')
   assert.match(result.dom.statusOutput.textContent, /could not be cleared/)
   assert.equal(result.calls.some((call) => call.method === 'POST'), false)
 })
@@ -1208,7 +1229,7 @@ test('a Paid decline never consumes its receipt when canonical state is unavaila
   assert.equal(await result.window.StarterPaidCallSettings.submit(), null)
 
   assert.equal(result.memberJsonWrites.length, 0)
-  assert.match(result.dom.nativeErrorMessage.textContent, /could not be confirmed/)
+  assert.equal(result.dom.nativeErrorMessage.textContent, 'Paid-call settings are unavailable. Your account was not changed.')
   assert.equal(result.dom.nativeError.getAttribute('data-call-settings-error-visible'), 'true')
 })
 
@@ -1230,7 +1251,6 @@ test('a gated pending Paid enable never blocks the Edit Profile step save', asyn
   await settle()
 
   assert.equal(result.dom.enabled.checked, true)
-  assert.equal(result.dom.root.getAttribute('data-paid-build-call-intent'), 'pending')
   assert.equal(result.window.StarterPaidCallSettings.hasChanges(), false)
   assert.ok(await result.window.StarterPaidCallSettings.submit())
   assert.equal(result.calls.some((call) => call.method === 'POST'), false)
@@ -1286,7 +1306,6 @@ test('a Paid enable receipt canonical already satisfies is consumed on load, not
 
   assert.equal(result.memberJsonWrites.length, 1)
   assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
-  assert.equal(result.dom.root.getAttribute('data-paid-build-call-intent'), '')
   assert.equal(result.dom.title.value, 'Strategy call')
   assert.equal(Number(result.dom.price.value), 250)
   assert.equal(result.window.StarterPaidCallSettings.hasChanges(), false)
@@ -1311,7 +1330,6 @@ test('a Paid enable receipt canonical does not satisfy stays pending over the ca
   await settle()
 
   assert.equal(result.memberJsonWrites.length, 0)
-  assert.equal(result.dom.root.getAttribute('data-paid-build-call-intent'), 'pending')
   assert.equal(result.dom.price.value, '250')
 })
 

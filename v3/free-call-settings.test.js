@@ -501,7 +501,6 @@ test('hydrates pending Build Profile Free intent and consumes it after canonical
       starter_call_settings_intent_v3: {
         version: 1,
         member_id: 'member-free-a',
-        source: 'build-profile',
         free: { enabled: true, description: 'Saved intro' },
         paid: { enabled: true, title: 'Strategy call', price_dollars: 250 },
       },
@@ -524,7 +523,6 @@ test('hydrates pending Build Profile Free intent and consumes it after canonical
   assert.equal(result.dom.yes.checked, true)
   assert.equal(result.dom.no.checked, false)
   assert.equal(result.dom.title.value, 'Saved intro')
-  assert.equal(result.dom.root.getAttribute('data-free-build-call-intent'), 'pending')
   assert.match(result.dom.status.textContent, /Build Profile choice is ready/)
 
   await result.window.StarterFreeCallSettings.submit()
@@ -539,7 +537,6 @@ test('hydrates pending Build Profile Free intent and consumes it after canonical
     JSON.parse(JSON.stringify(result.memberJsonWrites[0].starter_call_settings_intent_v3.paid)),
     { enabled: true, title: 'Strategy call', price_dollars: 250 },
   )
-  assert.equal(result.dom.root.getAttribute('data-free-build-call-intent'), '')
 })
 
 test('a pending receipt cleanup failure never turns a verified Free save into an error', async () => {
@@ -574,7 +571,6 @@ test('a pending receipt cleanup failure never turns a verified Free save into an
   assert.ok(canonicalResult.services.length)
   assert.equal(result.events.some((event) => event.type === 'starterFreeCallWriteError'), false)
   assert.equal(result.events.some((event) => event.type === 'starterFreeCallWriteSuccess'), true)
-  assert.equal(result.dom.root.getAttribute('data-free-build-call-intent'), '')
   assert.match(result.warnings.join('\n'), /pending Build Profile receipt could not be cleared/)
 })
 
@@ -608,7 +604,6 @@ test('a pending Build Profile Free off choice disables an existing canonical ser
 
   assert.ok(result.calls.some((call) => call.path === '/starter/free-call-settings/disable/v3'))
   assert.equal(result.memberJsonWrites.at(-1).starter_call_settings_intent_v3, undefined)
-  assert.equal(result.dom.root.getAttribute('data-free-build-call-intent'), '')
 })
 
 test('declining a pending Free enable consumes the receipt when canonical has no service', async () => {
@@ -625,7 +620,6 @@ test('declining a pending Free enable consumes the receipt when canonical has no
   await settle()
 
   assert.equal(result.dom.yes.checked, true)
-  assert.equal(result.dom.root.getAttribute('data-free-build-call-intent'), 'pending')
 
   result.dom.no.checked = true
   await result.dom.no.dispatch('change')
@@ -635,7 +629,6 @@ test('declining a pending Free enable consumes the receipt when canonical has no
   assert.equal(result.calls.some((call) => call.method === 'POST'), false)
   assert.equal(result.memberJsonWrites.length, 1)
   assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
-  assert.equal(result.dom.root.getAttribute('data-free-build-call-intent'), '')
   assert.equal(result.dom.no.checked, true)
   assert.equal(result.dom.yes.checked, false)
   assert.match(result.dom.status.textContent, /Free calls are off/)
@@ -734,17 +727,12 @@ test('a fail-closed Free session clears the pending Build Profile receipt it pai
     },
   })
   await settle()
-  assert.equal(result.dom.root.getAttribute('data-free-build-call-intent'), 'pending')
 
   await result.dispatchWindowEvent('starterSchedulingConnectionStateChanged')
   await settle()
 
   assert.equal(result.dom.status.textContent, 'Sign in to manage free calls.')
-  assert.equal(
-    result.dom.root.getAttribute('data-free-build-call-intent'),
-    '',
-    'the blanked card no longer advertises a pending Build Profile choice',
-  )
+  assert.equal(result.dom.no.checked, true, 'the fail-closed card resets to Off')
   assert.equal(result.dom.save.getAttribute('aria-disabled'), 'true')
 })
 
@@ -766,7 +754,6 @@ test('a failed no-service Free decline keeps the pending receipt and reports fai
   await result.dom.no.dispatch('change')
   assert.equal(await result.window.StarterFreeCallSettings.submit(), null)
 
-  assert.equal(result.dom.root.getAttribute('data-free-build-call-intent'), 'pending')
   assert.match(result.dom.status.textContent, /could not be cleared/)
   assert.equal(result.calls.some((call) => call.method === 'POST'), false)
 })
@@ -799,7 +786,7 @@ test('a Free decline never consumes its receipt when canonical state is unavaila
   assert.equal(await result.window.StarterFreeCallSettings.submit(), null)
 
   assert.equal(result.memberJsonWrites.length, 0)
-  assert.match(result.dom.nativeErrorMessage.textContent, /could not be confirmed/)
+  assert.equal(result.dom.nativeErrorMessage.textContent, 'Free-call settings are unavailable. Your account was not changed.')
   assert.equal(result.dom.nativeError.getAttribute('data-call-settings-error-visible'), 'true')
 })
 
@@ -821,7 +808,6 @@ test('a gated pending Free enable never blocks the Edit Profile step save', asyn
   await settle()
 
   assert.equal(result.dom.yes.checked, true)
-  assert.equal(result.dom.root.getAttribute('data-free-build-call-intent'), 'pending')
   assert.equal(result.window.StarterFreeCallSettings.hasChanges(), false)
   assert.ok(await result.window.StarterFreeCallSettings.submit())
   assert.equal(result.calls.some((call) => call.method === 'POST'), false)
@@ -878,7 +864,6 @@ test('a Free enable receipt canonical already satisfies is consumed on load, not
 
   assert.equal(result.memberJsonWrites.length, 1)
   assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
-  assert.equal(result.dom.root.getAttribute('data-free-build-call-intent'), '')
   assert.equal(result.dom.title.value, 'Quick intro')
   assert.equal(result.window.StarterFreeCallSettings.hasChanges(), false)
 })
@@ -903,7 +888,6 @@ test('a Free enable receipt canonical does not satisfy stays pending over the ca
   await settle()
 
   assert.equal(result.memberJsonWrites.length, 0)
-  assert.equal(result.dom.root.getAttribute('data-free-build-call-intent'), 'pending')
   assert.equal(result.dom.title.value, 'Quick intro')
 })
 

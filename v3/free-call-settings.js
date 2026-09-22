@@ -654,10 +654,10 @@
 
   function clearRenderedState(message) {
     settings = null
+    pendingBuildIntent = null
     setBusy(false)
     sessionMemberId = null
     sessionAuthScope = null
-    root.setAttribute('data-free-build-call-intent', '')
     // Edit Profile shows these controls while the canonical GET is still in flight, so a
     // pre-load reset would wipe hydrated or typed answers the member can see.
     if (!editProfileMode) {
@@ -791,9 +791,6 @@
       }
       explicitIntent = pendingBuildIntent.enabled ? 'enabled' : 'disabled'
       if (editProfileMode && (service || pendingBuildIntent.enabled) && canSaveSettings(value)) editProfileDirty = true
-      root.setAttribute('data-free-build-call-intent', 'pending')
-    } else {
-      root.setAttribute('data-free-build-call-intent', '')
     }
     root.setAttribute(
       'data-free-call-duration-current',
