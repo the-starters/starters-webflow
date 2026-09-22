@@ -111,14 +111,34 @@
   /**
    * Parses the F18 request-created dashboard locator. The URL is only a locator:
    * ownership and current state still come from the authenticated canonical feed.
-   * Existing links put the locator in the query string before `#calls`.
+   * Existing links put the locator in the query string before `#calls`. A missing
+   * anchor is recovered only for an exact production Starter-dashboard query.
    */
   function callDeepLinkLocator(location) {
     const Params = global.URLSearchParams
     if (!location || typeof Params !== 'function') return null
     const anchor = clean(location.hash).toLowerCase()
-    if (anchor !== '#calls' && anchor !== '#calls-section') return null
+    if (anchor !== '' && anchor !== '#calls' && anchor !== '#calls-section') return null
     const searchParams = new Params(clean(location.search).replace(/^\?/, ''))
+    if (anchor === '') {
+      if (
+        normalizedPath(location.pathname) !== '/starter-dashboard' ||
+        dashboardEnvironment(location) !== 'production'
+      ) return null
+      const locatorNames = ['booking_id', 'revision', 'environment']
+      let parameterCount = 0
+      searchParams.forEach(function (_value, name) {
+        parameterCount += 1
+        if (!locatorNames.includes(name)) parameterCount = Number.NaN
+      })
+      if (
+        parameterCount !== locatorNames.length ||
+        locatorNames.some(function (name) {
+          const values = searchParams.getAll(name)
+          return values.length !== 1 || clean(values[0]) === ''
+        })
+      ) return null
+    }
     const bookingId = locatorValue(searchParams, 'booking_id')
     const revisionValue = locatorValue(searchParams, 'revision')
     const environment = locatorValue(searchParams, 'environment').toLowerCase()
@@ -135,7 +155,10 @@
   }
 
   function normalizeCallsAnchor(location, history) {
-    if (!location || clean(location.hash).toLowerCase() !== '#calls') return false
+    if (!location) return false
+    const anchor = clean(location.hash).toLowerCase()
+    const exactQueryWithoutAnchor = anchor === '' && Boolean(callDeepLinkLocator(location))
+    if (anchor !== '#calls' && !exactQueryWithoutAnchor) return false
     const next = clean(location.pathname) + clean(location.search) + '#calls-section'
     if (history && typeof history.replaceState === 'function') {
       history.replaceState(null, '', next)
