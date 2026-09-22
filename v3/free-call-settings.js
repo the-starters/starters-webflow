@@ -73,7 +73,9 @@
   async function readPendingBuildIntent() {
     const memberstack = window.$memberstackDom
     if (!memberstack || typeof memberstack.getMemberJSON !== 'function') return null
-    const json = memberJsonValue(await memberstack.getMemberJSON())
+    const json = memberJsonValue(await queueMemberJsonWrite(function () {
+      return memberstack.getMemberJSON()
+    }))
     const envelope = json.starter_call_settings_intent_v3
     if (
       !envelope ||
@@ -885,11 +887,12 @@
       render(canonical)
       if (canonicalSatisfiesPendingIntent(canonical)) {
         const consumeEditRevision = memberEditRevision
+        const consumeWrite = beginWrite(memberId)
         consumePendingBuildIntent().then(function () {
           if (currentRender(version, memberId) && !busy && memberEditRevision === consumeEditRevision) {
             renderWithoutProfileDirty(canonical)
           }
-        }).catch(function () {})
+        }).catch(function () {}).then(function () { finishWrite(consumeWrite) })
       }
       return canonical
     } catch (error) {
@@ -1218,11 +1221,12 @@
       const rendered = render(canonical)
       if (canonicalSatisfiesPendingIntent(canonical)) {
         const consumeEditRevision = memberEditRevision
+        const consumeWrite = beginWrite(member.id)
         consumePendingBuildIntent().then(function () {
           if (currentRender(version, member.id) && !busy && memberEditRevision === consumeEditRevision) {
             renderWithoutProfileDirty(canonical)
           }
-        }).catch(function () {})
+        }).catch(function () {}).then(function () { finishWrite(consumeWrite) })
       }
       return rendered
     } catch (error) {

@@ -815,13 +815,14 @@ test('a superseded Free refresh never resurrects the receipt a decline just cons
 
   result.dom.no.checked = true
   await result.dom.no.dispatch('change')
-  assert.ok(await result.window.StarterFreeCallSettings.submit())
+  const declined = result.window.StarterFreeCallSettings.submit()
+  await settle()
+
+  readGate.resolve()
+  assert.ok(await declined)
   await settle()
   assert.equal(result.memberJsonWrites.length, 1)
   assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
-
-  readGate.resolve()
-  await settle()
 
   await result.rotateAuthScope()
   await settle()
@@ -1075,6 +1076,88 @@ test('auto-consuming a satisfied Free off receipt re-renders inside the profile 
   assert.equal(result.window.StarterFreeCallSettings.hasChanges(), false)
 })
 
+const SATISFIED_FREE_RECEIPT = {
+  starter_call_settings_intent_v3: {
+    version: 1,
+    member_id: 'member-free-a',
+    free: { enabled: true, description: 'Quick intro' },
+  },
+}
+
+const satisfiedFreeCanonical = () => canonical({
+  public_description: 'Quick intro',
+  services: [service()],
+  readiness: { free_call_enabled: true, bookable: true },
+})
+
+test('a prerequisite refresh during a satisfied Free auto-consume never resurrects the receipt', async () => {
+  const cleanupGate = deferred()
+  let reads = 0
+  const result = load({
+    editProfile: true,
+    memberId: 'member-free-a',
+    memberJsonUpdateGate: cleanupGate.promise,
+    memberJSON: SATISFIED_FREE_RECEIPT,
+    initial: satisfiedFreeCanonical(),
+    routes: {
+      // The canonical description moves on while the repair is in flight, so a
+      // refresh that re-reads the receipt can no longer self-heal by consuming it.
+      '/starter/free-call-settings/get/v3': () => {
+        reads += 1
+        return {
+          ok: true,
+          status: 200,
+          json: async () => (reads === 1 ? satisfiedFreeCanonical() : canonical({
+            public_description: 'Updated intro',
+            services: [service()],
+            readiness: { free_call_enabled: true, bookable: true },
+          })),
+        }
+      },
+    },
+  })
+  await settle()
+
+  await result.dispatchWindowEvent('starterSchedulingConnectionStateChanged')
+  await settle()
+
+  cleanupGate.resolve()
+  await settle()
+
+  assert.equal(result.memberJsonWrites.length, 1, 'the satisfied receipt is consumed exactly once')
+  assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
+  assert.equal(
+    result.window.StarterFreeCallSettings.hasChanges(), false,
+    'the concurrent refresh never repaints the consumed receipt as an unsaved step-6 edit',
+  )
+  assert.equal(result.dom.yes.checked, true, 'the card keeps the canonical on state')
+  assert.equal(result.dom.title.value, 'Updated intro', 'the newest canonical description wins over the consumed receipt')
+  assert.equal(result.calls.some((call) => call.method === 'POST'), false, 'a repair makes no canonical write')
+})
+
+test('a satisfied Free auto-consume and another queued member-JSON writer both keep their own keys', async () => {
+  const result = load({
+    editProfile: true,
+    memberId: 'member-free-a',
+    memberJSON: SATISFIED_FREE_RECEIPT,
+    initial: satisfiedFreeCanonical(),
+  })
+  const memberstack = result.window.$memberstackDom
+  const unrelatedWrite = (result.window.__tsMemberJsonWrite || Promise.resolve()).then(async () => {
+    const current = (await memberstack.getMemberJSON()).data
+    await memberstack.updateMemberJSON({ json: { ...current, tours: { 'starter-dashboard': 'seen' } } })
+  })
+  result.window.__tsMemberJsonWrite = unrelatedWrite.then(() => {}, () => {})
+  await unrelatedWrite
+  await settle()
+
+  const stored = result.memberJsonWrites.at(-1)
+  assert.equal(stored.starter_call_settings_intent_v3, undefined, 'the consumed branch is not resurrected by the other writer')
+  assert.deepEqual(stored.tours, { 'starter-dashboard': 'seen' }, "the other writer's key survives the consume")
+  assert.equal(result.window.StarterFreeCallSettings.hasChanges(), false)
+  assert.equal(result.calls.some((call) => call.method === 'POST'), false)
+})
+
 test('a Free enable receipt canonical already satisfies is consumed on load, not re-asserted', async () => {
   const result = load({
     editProfile: true,
@@ -1124,10 +1207,11 @@ test('a queued Free receipt consume never deletes the receipt of the member who 
 
   receipt.member_id = 'member-free-b'
   receipt.free = { enabled: true, description: 'B intro' }
-  await result.changeMember({ id: 'member-free-b' })
+  const switched = result.changeMember({ id: 'member-free-b' })
   await settle()
 
   gate.resolve()
+  await switched
   await settle()
 
   assert.equal(result.memberJsonWrites.length, 0, "the previous member's consume writes nothing")

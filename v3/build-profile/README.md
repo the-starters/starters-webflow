@@ -289,7 +289,9 @@ a failed cleanup drops that queued refresh so it cannot erase the error.
 
 The submit writer, the draft-state writer, and both receipt consumers share one
 serialized `window.__tsMemberJsonWrite` read-modify-write boundary, so one
-branch cannot overwrite another. A final-step draft save therefore cannot
+branch cannot overwrite another. Every receipt read joins that same queue, so a
+hydration or prerequisite-refresh read taken while a consume is in flight sees
+the post-consume state rather than resurrecting the branch being deleted. A final-step draft save therefore cannot
 overwrite the Call Settings receipt from the same click. A draft write also
 abandons itself when its own Memberstack read fails, rather than persisting a
 blob rebuilt from an empty read, so a transient read error cannot drop the
