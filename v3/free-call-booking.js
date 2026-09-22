@@ -301,8 +301,7 @@
 
   async function getNearestSlot(grantId, configId, nowMs) {
     const result = await authenticatedRequest(availabilityPath(grantId, configId, nowMs), 'GET')
-    const minimum =
-      Math.floor(Number(nowMs === undefined ? Date.now() : nowMs) / 1000) +
+    const minimum = Number(nowMs === undefined ? Date.now() : nowMs) / 1000 +
       minimumBookingNoticeMinutes() * 60
     const slots = Array.isArray(result && result.time_slots) ? result.time_slots : []
     const starts = slots.map(function (slot) {

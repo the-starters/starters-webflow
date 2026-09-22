@@ -410,6 +410,18 @@ test('Free initial booking uses the production 8-hour floor and the exact stagin
     await production.getNearestSlot('grant', 'config', now),
     nowSeconds + 8 * 60 * 60,
   )
+
+  const fractionalNow = now + 999
+  const fractional = loadBrowserApi('thestarters.com', async () => response({
+    time_slots: [
+      { start_time: nowSeconds + 8 * 60 * 60 },
+      { start_time: nowSeconds + 8 * 60 * 60 + 1 },
+    ],
+  }))
+  assert.equal(
+    await fractional.getNearestSlot('grant', 'config', fractionalNow),
+    nowSeconds + 8 * 60 * 60 + 1,
+  )
 })
 
 test('next-slot text uses an abbreviated month and two-digit day', () => {

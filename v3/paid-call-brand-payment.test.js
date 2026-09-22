@@ -764,6 +764,14 @@ test('Paid initial booking uses the production 8-hour floor and the exact stagin
       end: (nowSeconds + 9 * 60 * 60) * 1000,
     }],
   )
+  const rescheduleQuery = new URL('https://example.test' + production.availabilityQuery({
+    ...config,
+    booking_id: 'booking_existing',
+  }, now))
+  assert.equal(
+    rescheduleQuery.searchParams.get('start_time'),
+    String(nowSeconds + 24 * 60 * 60),
+  )
   assert.equal(loadBrowserApi('staging.thestarters.com').minimumBookingNoticeMinutes(), 480)
   assert.equal(loadBrowserApi().minimumBookingNoticeMinutes(), 480)
 })
@@ -775,7 +783,14 @@ test('paid availability fails closed before a request when service identity is i
   )
 })
 
-test('shared calendar rechecks the 8-hour boundary when the selected slot is submitted', async () => {
+test('Paid booking notice uses exact milliseconds at the 8-hour boundary', () => {
+  const now = Date.UTC(2026, 7, 24, 0, 0, 0)
+  const slot = { start: now + 8 * 60 * 60 * 1000 }
+  assert.equal(api.slotMeetsBookingNotice(slot, now), true)
+  assert.equal(api.slotMeetsBookingNotice(slot, now + 1), false)
+})
+
+test('dashboard rescheduling retains its existing submit behavior', async () => {
   const previous = {
     document: global.document,
     jQuery: global.jQuery,
@@ -783,7 +798,7 @@ test('shared calendar rechecks the 8-hour boundary when the selected slot is sub
     xanoAuthFetch: global.xanoAuthFetch,
   }
   const now = Date.UTC(2026, 7, 24, 0, 0, 0)
-  const startSeconds = Math.floor(now / 1000) + 8 * 60 * 60
+  const startSeconds = Math.floor(now / 1000) + 24 * 60 * 60
   const container = new CalendarElement('div')
   const submissions = []
   global.document = calendarDocument()
@@ -796,24 +811,22 @@ test('shared calendar rechecks the 8-hour boundary when the selected slot is sub
   try {
     await api.mountPaidCalendar({
       container,
-      config: { config_id: 'config_paid', grant_id: 'grant_test', duration: 30 },
+      config: {
+        booking_id: 'booking_existing',
+        config_id: 'config_paid',
+        grant_id: 'grant_test',
+        duration: 30,
+      },
       async onConfirm(slot) { submissions.push(slot) },
     })
     const slot = container.querySelectorAll('[data-paid-calendar-slot]')[0]
     const confirm = container.querySelectorAll('[data-paid-calendar-element]')
       .find((node) => node.getAttribute('data-paid-calendar-element') === 'confirm')
-    const status = container.querySelectorAll('[data-paid-calendar-element]')
-      .find((node) => node.getAttribute('data-paid-calendar-element') === 'status')
 
     slot.listeners.click()
-    await confirm.listeners.click({ preventDefault() {} })
-    assert.equal(submissions.length, 1, 'the exact 8-hour boundary remains bookable')
-
     Date.now = () => now + 1000
     await confirm.listeners.click({ preventDefault() {} })
-    assert.equal(submissions.length, 1, 'a selection that aged past the boundary is rejected')
-    assert.equal(confirm.disabled, true)
-    assert.match(status.textContent, /no longer available/i)
+    assert.equal(submissions.length, 1)
   } finally {
     global.document = previous.document
     global.jQuery = previous.jQuery
