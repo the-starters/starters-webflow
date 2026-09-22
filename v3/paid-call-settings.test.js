@@ -514,7 +514,10 @@ function load(options = {}) {
       return { data: snapshot }
     },
     updateMemberJSON: async ({ json }) => {
-      if (options.memberJsonUpdateError) throw options.memberJsonUpdateError
+      const updateError = typeof options.memberJsonUpdateError === 'function'
+        ? options.memberJsonUpdateError()
+        : options.memberJsonUpdateError
+      if (updateError) throw updateError
       if (options.memberJsonUpdateGate) await options.memberJsonUpdateGate
       memberJSON = json
       memberJsonWrites.push(json)
@@ -854,6 +857,61 @@ test('a pending receipt cleanup failure never turns a verified Paid save into an
   assert.equal(result.events.some((event) => event.type === 'starterPaidCallWriteError'), false)
   assert.equal(result.events.some((event) => event.type === 'starterPaidCallWriteSuccess'), true)
   assert.match(result.warnings.join('\n'), /pending Build Profile receipt could not be cleared/)
+})
+
+test('a later Paid disable retires the receipt an earlier best-effort cleanup could not clear', async () => {
+  let failNextUpdate = true
+  const result = load({
+    cardMode: true,
+    memberId: 'member-a',
+    memberJsonUpdateError: () => {
+      if (!failNextUpdate) return null
+      failNextUpdate = false
+      return new Error('Memberstack timeout')
+    },
+    memberJSON: {
+      starter_call_settings_intent_v3: {
+        version: 1,
+        member_id: 'member-a',
+        paid: { enabled: true, title: 'Strategy call', price_dollars: 250 },
+      },
+    },
+    initial: canonical(),
+    routes: {
+      '/starter/paid-call-settings/upsert/v3': ({ body, setState }) => {
+        const saved = service({
+          title: body.title,
+          price_cents: body.price_cents,
+          duration: body.duration_minutes,
+          revision: 1,
+        })
+        setState(canonical({
+          services: [saved],
+          readiness: { paid_call_enabled: true, bookable: true },
+        }))
+        return { ok: true, status: 200, json: async () => ({ service: saved }) }
+      },
+      '/starter/paid-call-settings/disable/v3': ({ setState }) => {
+        setState(canonical())
+        return { ok: true, status: 200, json: async () => ({ ok: true }) }
+      },
+    },
+  })
+  await settle()
+
+  assert.ok(await result.window.StarterPaidCallSettings.submit())
+  await settle()
+
+  assert.equal(result.memberJsonWrites.length, 0, 'the best-effort cleanup write failed')
+  assert.match(result.warnings.join('\n'), /pending Build Profile receipt could not be cleared/)
+
+  assert.ok(await result.window.StarterPaidCallSettings.disable())
+  await settle()
+
+  assert.equal(result.memberJsonWrites.length, 1, 'the disable retries the cleanup the save could not finish')
+  assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
+  assert.equal(result.dom.disabled.checked, true)
+  assert.equal(result.dom.enabled.checked, false)
 })
 
 test('a stale Build Profile Paid change is retired when a canonical service exists', async () => {

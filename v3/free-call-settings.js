@@ -106,7 +106,6 @@
     try {
       await consumePendingBuildIntent()
     } catch (error) {
-      pendingBuildIntent = null
       console.warn('Canonical Free Call Settings were saved, but the pending Build Profile receipt could not be cleared.', error)
     }
   }

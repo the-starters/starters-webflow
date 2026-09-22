@@ -308,7 +308,10 @@ function load(options = {}) {
       return { data: snapshot }
     },
     updateMemberJSON: async ({ json }) => {
-      if (options.memberJsonUpdateError) throw options.memberJsonUpdateError
+      const updateError = typeof options.memberJsonUpdateError === 'function'
+        ? options.memberJsonUpdateError()
+        : options.memberJsonUpdateError
+      if (updateError) throw updateError
       if (options.memberJsonUpdateGate) await options.memberJsonUpdateGate
       memberJSON = json
       memberJsonWrites.push(json)
@@ -579,6 +582,57 @@ test('a pending receipt cleanup failure never turns a verified Free save into an
   assert.equal(result.events.some((event) => event.type === 'starterFreeCallWriteError'), false)
   assert.equal(result.events.some((event) => event.type === 'starterFreeCallWriteSuccess'), true)
   assert.match(result.warnings.join('\n'), /pending Build Profile receipt could not be cleared/)
+})
+
+test('a later Free disable retires the receipt an earlier best-effort cleanup could not clear', async () => {
+  let failNextUpdate = true
+  const result = load({
+    memberId: 'member-free-a',
+    memberJsonUpdateError: () => {
+      if (!failNextUpdate) return null
+      failNextUpdate = false
+      return new Error('Memberstack timeout')
+    },
+    memberJSON: {
+      starter_call_settings_intent_v3: {
+        version: 1,
+        member_id: 'member-free-a',
+        free: { enabled: true, description: 'Quick intro' },
+      },
+    },
+    initial: canonical(),
+    routes: {
+      '/starter/free-call-settings/upsert/v3': ({ body, setState }) => {
+        const saved = service({ revision: 1 })
+        setState(canonical({
+          public_description: body.description,
+          services: [saved],
+          readiness: { free_call_enabled: true, bookable: true },
+        }))
+        return { ok: true, status: 200, json: async () => ({ service: saved }) }
+      },
+      '/starter/free-call-settings/disable/v3': ({ setState }) => {
+        setState(canonical())
+        return { ok: true, status: 200, json: async () => ({ ok: true }) }
+      },
+    },
+  })
+  await settle()
+
+  assert.ok(await result.window.StarterFreeCallSettings.submit())
+  await settle()
+
+  assert.equal(result.memberJsonWrites.length, 0, 'the best-effort cleanup write failed')
+  assert.match(result.warnings.join('\n'), /pending Build Profile receipt could not be cleared/)
+
+  assert.ok(await result.window.StarterFreeCallSettings.disable())
+  await settle()
+
+  assert.equal(result.memberJsonWrites.length, 1, 'the disable retries the cleanup the save could not finish')
+  assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
+  assert.equal(result.dom.no.checked, true)
+  assert.equal(result.dom.yes.checked, false)
+  assert.equal(result.dom.title.value, '', 'the retired Build choice cannot resurrect over the disabled state')
 })
 
 test('a legacy Free off envelope is not a pending create and drives nothing', async () => {
