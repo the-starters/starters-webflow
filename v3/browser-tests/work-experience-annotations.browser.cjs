@@ -236,6 +236,8 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
     holds(await settled(), 'job_title', 0, 'validation reveal')
     assert.equal((await state()).mutations, 0)
     await shot('animated-focus')
+    assert.equal((await state()).rows[1].content, false,
+      'validation reveal closes the other row without leaving its fields over the footer')
     observations.push({ device: 'desktop-gsap', gsap: version,
       checks: 'real GSAP instant opens land focus and stay open past the animation for Add, Add on a collapsed unfinished row, Undo and validation reveal', view: await state() })
     assert.deepEqual(errors, [])

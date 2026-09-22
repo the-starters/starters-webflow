@@ -35,7 +35,12 @@
         if (typeof ScrollTrigger !== "undefined") ScrollTrigger.refresh();
       };
       const tl = typeof gsap !== "undefined"
-        ? gsap.timeline({ paused: true, defaults: { duration: 0.3, ease: "power1.inOut" }, onComplete: refresh, onReverseComplete: refresh })
+        ? gsap.timeline({ paused: true, defaults: { duration: 0.3, ease: "power1.inOut" }, onComplete: refresh, onReverseComplete: function () {
+          // Invalidation can recapture the display tween's starting value as block. A zero
+          // height alone leaves descendants painted outside the collapsed panel.
+          content.style.display = "none";
+          refresh();
+        } })
         : null;
       if (tl) {
         tl.set(content, { display: "block" });
