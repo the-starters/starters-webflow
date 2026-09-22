@@ -303,8 +303,10 @@ branch is still owed one, so the next verified save or disable, and every later
 prerequisite refresh, retries it, re-reading and member-scoping the envelope.
 
 Supersession is session state scoped to the member who caused it: the obligation
-records whose write superseded the receipt, so a sign-in recovery or any other
-reload of the same member keeps it, and only a different member retires it. It is
+records whose write superseded the receipt — the member that write belonged to,
+not whoever the session happens to hold when a failure lands — so a sign-in
+recovery or any other reload of the same member keeps it, while a different
+member neither inherits it nor has their own receipt retired by it. It is
 still session state, because the only place to record it durably is
 the Memberstack write that just failed. If that write never succeeds before the
 member reloads, the stored branch is indistinguishable from a pre-onboarding

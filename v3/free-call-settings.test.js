@@ -308,11 +308,14 @@ function load(options = {}) {
       return { data: snapshot }
     },
     updateMemberJSON: async ({ json }) => {
+      const updateHold = typeof options.memberJsonUpdateGate === 'function'
+        ? options.memberJsonUpdateGate()
+        : options.memberJsonUpdateGate
+      if (updateHold) await updateHold
       const updateError = typeof options.memberJsonUpdateError === 'function'
         ? options.memberJsonUpdateError()
         : options.memberJsonUpdateError
       if (updateError) throw updateError
-      if (options.memberJsonUpdateGate) await options.memberJsonUpdateGate
       memberJSON = json
       memberJsonWrites.push(json)
     },
@@ -631,6 +634,61 @@ test('a prerequisite refresh after a superseding Free disable retries the remova
   )
   assert.equal(result.memberJsonWrites.length, 1, 'the refresh retries the removal the disable still owed')
   assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
+})
+
+test('an account switch during a failed Free cleanup never touches the next member receipt', async () => {
+  const gate = deferred()
+  let updateCalls = 0
+  let failUpdates = true
+  const memberJSON = {
+    starter_call_settings_intent_v3: {
+      version: 1,
+      member_id: 'member-free-a',
+      free: { enabled: true, description: 'Quick intro' },
+    },
+  }
+  const result = load({
+    memberId: 'member-free-a',
+    memberJSON,
+    // The load-time passive cleanup fails outright; only the disable's cleanup is held open.
+    memberJsonUpdateGate: () => (updateCalls++ === 1 ? gate.promise : null),
+    memberJsonUpdateError: () => (failUpdates ? new Error('Memberstack timeout') : null),
+    initial: canonical({
+      public_description: 'Quick intro',
+      services: [service()],
+      readiness: { free_call_enabled: true, bookable: true },
+    }),
+    routes: {
+      '/starter/free-call-settings/disable/v3': ({ setState }) => {
+        setState(canonical({ readiness: { calendar_connected: true, availability_configured: true } }))
+        return { ok: true, status: 200, json: async () => ({ ok: true }) }
+      },
+    },
+  })
+  await settle()
+
+  const turnedOff = result.window.StarterFreeCallSettings.disable()
+  await settle()
+
+  memberJSON.starter_call_settings_intent_v3 = {
+    version: 1,
+    member_id: 'member-free-b',
+    free: { enabled: true, description: 'Second member intro' },
+  }
+  const switched = result.changeMember({ id: 'member-free-b' })
+  gate.resolve()
+  await turnedOff
+  failUpdates = false
+  await switched
+  await settle()
+
+  assert.equal(result.dom.yes.checked, true, 'the incoming member keeps their own pending create')
+  assert.equal(result.dom.title.value, 'Second member intro')
+  assert.equal(
+    result.memberJsonWrites.length,
+    0,
+    'the obligation the previous member owed cannot delete this member receipt',
+  )
 })
 
 test('a sign-in recovery keeps the Free removal the same member still owes', async () => {

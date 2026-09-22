@@ -112,12 +112,12 @@
     return next
   }
 
-  async function consumePendingBuildIntentBestEffort() {
+  async function consumePendingBuildIntentBestEffort(ownerId) {
     try {
       await consumePendingBuildIntent()
     } catch (error) {
-      receiptCleanupOwedBy = sessionMemberId
-      pendingBuildIntent = null
+      receiptCleanupOwedBy = ownerId
+      if (sessionMemberId === ownerId) pendingBuildIntent = null
       console.warn('Canonical Free Call Settings were saved, but the pending Build Profile receipt could not be cleared.', error)
     }
   }
@@ -969,7 +969,7 @@
       if (String(canonical.public_description || '') !== description) {
         throw new Error('Free-call description did not match canonical readback')
       }
-      await consumePendingBuildIntentBestEffort()
+      await consumePendingBuildIntentBestEffort(memberId)
       write.canonical = canonical
       if (!currentRender(version, memberId)) return null
       render(canonical)
@@ -1040,7 +1040,7 @@
       if (canonicalService(canonical)) {
         throw new Error('Free-call service remained active after canonical readback')
       }
-      await consumePendingBuildIntentBestEffort()
+      await consumePendingBuildIntentBestEffort(memberId)
       write.canonical = canonical
       if (!currentRender(version, memberId)) return null
       render(canonical)

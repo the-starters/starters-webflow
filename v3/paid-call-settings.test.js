@@ -514,11 +514,14 @@ function load(options = {}) {
       return { data: snapshot }
     },
     updateMemberJSON: async ({ json }) => {
+      const updateHold = typeof options.memberJsonUpdateGate === 'function'
+        ? options.memberJsonUpdateGate()
+        : options.memberJsonUpdateGate
+      if (updateHold) await updateHold
       const updateError = typeof options.memberJsonUpdateError === 'function'
         ? options.memberJsonUpdateError()
         : options.memberJsonUpdateError
       if (updateError) throw updateError
-      if (options.memberJsonUpdateGate) await options.memberJsonUpdateGate
       memberJSON = json
       memberJsonWrites.push(json)
     },
@@ -905,6 +908,70 @@ test('a prerequisite refresh after a superseding Paid disable retries the remova
   )
   assert.equal(result.memberJsonWrites.length, 1, 'the refresh retries the removal the disable still owed')
   assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
+})
+
+test('an account switch during a failed Paid cleanup never touches the next member receipt', async () => {
+  const gate = deferred()
+  let updateCalls = 0
+  let failUpdates = true
+  const memberJSON = {
+    starter_call_settings_intent_v3: {
+      version: 1,
+      member_id: 'member-a',
+      paid: { enabled: true, title: 'Strategy call', price_dollars: 250 },
+    },
+  }
+  const result = load({
+    cardMode: true,
+    memberId: 'member-a',
+    memberJSON,
+    // The load-time passive cleanup fails outright; only the disable's cleanup is held open.
+    memberJsonUpdateGate: () => (updateCalls++ === 1 ? gate.promise : null),
+    memberJsonUpdateError: () => (failUpdates ? new Error('Memberstack timeout') : null),
+    initial: canonical({
+      services: [service({ title: 'Strategy call', price_cents: 25000 })],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+    routes: {
+      '/starter/paid-call-settings/disable/v3': ({ setState }) => {
+        setState(canonical({
+          readiness: {
+            calendar_connected: true,
+            availability_configured: true,
+            stripe_connect_linked: true,
+            stripe_charges_enabled: true,
+            stripe_readiness_fresh: true,
+          },
+        }))
+        return { ok: true, status: 200, json: async () => ({ ok: true }) }
+      },
+    },
+  })
+  await settle()
+
+  const turnedOff = result.window.StarterPaidCallSettings.disable()
+  await settle()
+
+  memberJSON.starter_call_settings_intent_v3 = {
+    version: 1,
+    member_id: 'member-b',
+    paid: { enabled: true, title: 'Second member call', price_dollars: 300 },
+  }
+  const switched = result.changeMember({ id: 'member-b' })
+  gate.resolve()
+  await turnedOff
+  failUpdates = false
+  await switched
+  await settle()
+
+  assert.equal(result.dom.enabled.checked, true, 'the incoming member keeps their own pending create')
+  assert.equal(result.dom.title.value, 'Second member call')
+  assert.equal(String(result.dom.price.value), '300')
+  assert.equal(
+    result.memberJsonWrites.length,
+    0,
+    'the obligation the previous member owed cannot delete this member receipt',
+  )
 })
 
 test('a sign-in recovery keeps the Paid removal the same member still owes', async () => {
