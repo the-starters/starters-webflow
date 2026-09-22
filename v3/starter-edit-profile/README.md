@@ -375,18 +375,26 @@ The scripts create `profile-items-undo`, `profile-items-removed`, and
 
 `profile-items-status` and `profile-items-check-save` may be authored in Webflow
 inside the section but outside the repeating row, so Designer owns their styling.
-An element authored inside a row is ignored and the script creates its own,
-because each section clones and rebuilds its rows. Each section adopts
-the authored element when it finds one: it sets `role="status"` on the status
-element, and it hides the check element on bind, keeping the label the author
-wrote. The check element may be a plain Link or Button element carrying
+Because each section clones and rebuilds its rows, a marker authored inside a
+row is stripped from that node before the row template is cloned, so no cloned
+row carries it; the script then adopts the first marked element outside the rows
+or creates its own. On adoption it sets `role="status"` on the status element,
+and it hides the check element on bind, keeping the label the author wrote. The
+check element may be a plain Link or Button element carrying
 `profile-items-check-save`; leave it visible in Designer, because the script hides
 and shows it with an inline `display` style that beats the Webflow class rule.
-Never use an instance of the site's Button component: its native `.clickable_btn`
+A class rule that hides the control is handled too: on reveal the script checks
+whether the browser still reports `display: none` and, if it does, sets
+`display: revert`, so the control shows either way — at the cost of the
+`display` value that class was contributing. Never use an instance of the site's Button
+component: its native `.clickable_btn`
 is an empty overlay whose label lives outside it, so marking the overlay would
-hide the clickable node while the caption kept rendering. Any element works — the
-script prevents a link's default action, sets `type="button"` only on a real
-button, and applies the default label only when the element is empty. When
+hide the clickable node while the caption kept rendering. A Link or Button
+element is what the scripts expect: the script prevents a link's default action,
+sets `type="button"` only on a real button, and applies the default label only
+when the element is empty. A `div` is made keyboard-operable by the script,
+which gives it `role="button"`, `tabindex="0"` and Enter/Space activation, but it
+is still not the recommended choice. When
 neither is authored the script creates them as before. It never creates a second
 one.
 
@@ -584,6 +592,10 @@ read no longer shows — the entry switches to the stored media: the object URL 
 or an unknown outcome keeps its rows, so this matters: without it those rows would go on
 rendering from a revoked object URL and holding the file in memory for the page session.
 
+A retained photo or video without a nonblank URL shows a readable preview-unavailable
+message instead of creating a broken media request. It remains retained, with its
+cover, Remove, and Undo controls available.
+
 ### Limits
 
 Services allows three entries. Work Experience allows three entries. Highlights
@@ -592,11 +604,24 @@ each, which is the endpoint limit; the UI allowed 50 MB before 2026-09-17.
 
 ### Test page state
 
-The Designer page "Starter Edit Profile Test" (`/starter-edit-profile-test`,
-unpublished) has Required set on `company-name`, `company-position`,
-`edit-company-name`, `edit-company-position`, `service-name`, `service-price`, and
-`rate-retainer`, and `form-xano-required` on the same seven fields. The markers
-and the script loaders are not installed on it yet.
+Read-only checks on 2026-09-22 confirmed that `/starter-edit-profile-test` and
+`/starter-edit-profile` both return HTTP 200. The duplicate has all three unified
+section markers and loads the unified scripts at `v1.59.579`; the original has
+none of those section markers. Native Required is present on company name,
+service name, and service price; `rate-retainer.required` is true at runtime.
+The runtime observation does not establish the Retainer's authored setting.
+
+The duplicate still needs Designer cleanup. Neither status nor check-save nodes
+are authored. Legacy Highlights `data-highlights`/card and
+`data-add-highlight-dropdown` elements, the Work Experience `company-list`, and
+the `company-edit` dialog remain. Highlights Add, Discard, and row toggle have
+Designer visibility set to false. Services buttons still use the alternate
+`White with border13` class.
+
+The September 18 cutover specification reserves Designer edits and publication
+to the author. Desktop/mobile screenshot approval remains pending, followed by
+the specified staging-qa and manual acceptance. This session did not verify live
+saves or make profile writes. Review Requests remains outside this cutover.
 
 Focused tests:
 
@@ -614,8 +639,6 @@ node --test v3/starter-edit-profile/profile-section-validation.test.js \
   `profile-items-status` and `profile-items-check-save` to give them a class.
 - `v3/build-profile/portfolio-crud.js` still states a 50 MB video limit. That is a
   separate page and was not changed here.
-- `renderMedia` in `unified-highlights.js` has no fallback for a stored media row
-  that arrives without a URL.
 
 ### Test helpers
 

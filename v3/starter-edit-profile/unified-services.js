@@ -1,7 +1,7 @@
 /*
  * Opt-in Services & Rates coordinator. The main profile controller remains the writer.
  *
- * @release v1.59.581
+ * @release v1.59.583
  */
 ;(function () {
   'use strict'
@@ -17,11 +17,20 @@
   function bindServices(section) {
     if (sections.has(section)) return sections.get(section)
     const rows = () => Array.from(section.querySelectorAll(ROW))
-    // A row is cloned and rebuilt, so a marker authored inside one would be detached.
-    const authored = selector => Array.from(section.querySelectorAll(selector)).find(node => !node.closest(ROW))
+    // A row is cloned and rebuilt, so a marker authored inside one is stripped here - before the
+    // template clone - rather than adopted, and every cloned row stays free of it.
+    const authored = attribute => {
+      const selector = '[' + attribute + ']'
+      const outside = []
+      for (const node of section.querySelectorAll(selector)) {
+        if (node.closest(ROW)) node.removeAttribute(attribute)
+        else outside.push(node)
+      }
+      return outside[0]
+    }
     // Webflow may author the status element so Designer owns its look; create one only when
     // it did not, and never a second.
-    let status = authored('[profile-items-status]')
+    let status = authored('profile-items-status')
     if (!status) {
       status = document.createElement('div')
       status.setAttribute('profile-items-status', '')
@@ -32,7 +41,7 @@
     status.textContent = ''
     // Same for the check control: adopt the authored one, keeping the label its author wrote.
     // Adopted before any early return so a halted section never leaves a live check control.
-    let checkSave = authored('[profile-items-check-save]')
+    let checkSave = authored('profile-items-check-save')
     if (!checkSave) {
       checkSave = document.createElement('button')
       checkSave.setAttribute('profile-items-check-save', '')
@@ -41,8 +50,25 @@
     if (checkSave.tagName === 'BUTTON') checkSave.setAttribute('type', 'button')
     // Authored children are the label, so only a wholly empty control gets the default copy.
     if (!checkSave.children.length && !checkSave.textContent.trim()) checkSave.textContent = 'Check saved state'
-    // A Webflow class can set `display`, which beats the [hidden] rule, so write both.
-    const showCheck = visible => { checkSave.hidden = !visible; checkSave.style.display = visible ? '' : 'none' }
+    // A div has no native activation; an anchor activates on Enter but never on Space.
+    if (checkSave.tagName !== 'BUTTON') {
+      if (checkSave.tagName !== 'A') {
+        if (!checkSave.hasAttribute('role')) checkSave.setAttribute('role', 'button')
+        if (!checkSave.hasAttribute('tabindex')) checkSave.setAttribute('tabindex', '0')
+      }
+      const keys = checkSave.tagName === 'A' ? [' '] : ['Enter', ' ']
+      checkSave.addEventListener('keydown', event => {
+        if (event.target !== checkSave || !keys.includes(event.key)) return
+        event.preventDefault()
+        checkSave.dispatchEvent(new Event('click'))
+      })
+    }
+    // Class rules beat [hidden]; write display too, and revert it if a class still hides the control.
+    const showCheck = visible => {
+      checkSave.hidden = !visible
+      checkSave.style.display = visible ? '' : 'none'
+      if (visible && window.getComputedStyle?.(checkSave)?.display === 'none') checkSave.style.display = 'revert'
+    }
     showCheck(false)
     const save = section.querySelector('[data-edit-submit]')
     if (!rows().length || !save) {
@@ -98,12 +124,12 @@
       // An authored control may be an anchor or a submit button, so never let its default run.
       event.preventDefault()
       if (!uncertain || saving || checkSave.disabled || !readbackCheck) return
-      checkSave.disabled = true
+      checkSave.disabled = true; checkSave.setAttribute('aria-disabled', 'true')
       status.textContent = 'Checking saved changes…'
       try {
         if (await readbackCheck()) { controller.finish(true); return }
       } catch (_) { /* Failed reads cannot settle an unknown write. */ }
-      finally { checkSave.disabled = false }
+      finally { checkSave.disabled = false; checkSave.removeAttribute('aria-disabled') }
       status.textContent = 'We could not confirm the save yet. Your draft is kept. You can check again; Save remains paused.'
     })
     function dirty() {
