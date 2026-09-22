@@ -14,8 +14,8 @@ async function mount({ companies = [], fail = null, minimum = true, withRow = tr
   required = ['company_name', 'job_title'], xanoRequired = [], hydrate = true, initialOther = '{}',
   liveAssociationReader = false, associationReadStatus = 200, claim = true, normalize = null,
   answer = null, picker = true, stale = null, strayXanoRequired = false, authored = false,
-  authoredInRow = false, componentMarkup = false, outerActionMarker = false, authoredCheckDiv = false, authoredDuplicate = false,
-  accordions = true } = {}) {
+  authoredInRow = false, componentMarkup = false, authoredUndo = false, authoredCheckDiv = false, authoredDuplicate = false,
+  accordions = true, withToggle = true, withContent = true } = {}) {
   const fields = ['company_name', 'job_title', 'start_date', 'end_date', 'current_work'].map(key => h('input', {
     'profile-company-field': key, name: key, id: key,
     ...(key === 'current_work' ? { type: 'checkbox' } : {}),
@@ -24,15 +24,20 @@ async function mount({ companies = [], fail = null, minimum = true, withRow = tr
   }))
   // A status marker misplaced inside the row, which the section clones and rebuilds.
   const rowStatus = h('div', { 'profile-items-status': '', class: 'form_status' })
+  // The documented Designer shape: a page-local plain wrapper carries the marker and contains
+  // the existing themed Button component.
+  const removeControl = h('button', { type: 'button' })
+  const removeWrap = h('div', { 'data-button-theme': 'danger', 'data-button-style': 'primary' }, [h('div', {}, [removeControl])])
+  const action = h('div', { 'profile-item-remove': '' }, [removeWrap])
   const remove = h('button', { 'profile-item-remove': '', type: 'button' })
-  const removeWrap = h('div', { 'data-button-theme': 'danger', 'data-button-style': 'primary' }, [h('div', {}, [remove])])
-  const action = outerActionMarker ? h('div', { 'profile-item-remove': '' }, [removeWrap]) : removeWrap
-  if (outerActionMarker) remove.removeAttribute('profile-item-remove')
   const undoAction = h('div', { 'profile-items-undo': '' }, [h('div', { 'data-button-theme': 'black' }, [h('button', { type: 'button' }), h('span', { 'data-fixture-undo-label': '' })])])
   undoAction.querySelector('[data-fixture-undo-label]').textContent = 'Undo removal'
+  const toggle = h(componentMarkup ? 'div' : 'button', { 'profile-item-toggle': '', type: 'button' },
+    [h('span', { 'profile-items-summary': '' }), ...(componentMarkup ? [h('div', { 'profile-item-actions': '' }, [action, ...(authoredUndo ? [undoAction] : [])])] : [])])
   const row = h('div', { 'profile-item-row': '' }, [
-    h(componentMarkup ? 'div' : 'button', { 'profile-item-toggle': '', type: 'button' }, [h('span', { 'profile-items-summary': '' }), ...(componentMarkup ? [h('div', { 'profile-item-actions': '' }, [action, ...(outerActionMarker ? [undoAction] : [])])] : [])]),
-    h('div', { 'profile-item-content': '' }, fields), ...(componentMarkup ? [] : [remove]),
+    ...(withToggle ? [toggle] : []),
+    ...(withContent ? [h('div', { 'profile-item-content': '' }, fields)] : fields),
+    ...(componentMarkup ? [] : [remove]),
     ...(authoredInRow ? [rowStatus] : []),
   ])
   const save = h('button', { 'data-edit-submit': 'companies' })
@@ -590,7 +595,7 @@ test('a section missing its row template or Save control reports the gap and dis
   const unusable = 'This section could not load. Reload the page before editing.'
   const missingRow = await mount({ withRow: false })
   assert.equal(missingRow.status(), unusable)
-  assert.ok(missingRow.warnings.some(args => args[0] === '[unified-companies] missing [profile-item-row] or Save control in section'))
+  assert.ok(missingRow.warnings.some(args => args[0] === '[unified-companies] missing [profile-item-row] with [profile-item-toggle] and [profile-item-content], or Save control in section'))
   assert.equal(missingRow.save.getAttribute('disabled'), '')
   assert.equal(missingRow.requests.length, 0)
   const missingSave = await mount({ withSave: false })
@@ -1072,31 +1077,31 @@ test('last company Remove uses disabled theme and Undo replaces the removal acti
   const page = await mount({ componentMarkup: true, companies: [{ id: 1, company_name: 'Acme', company_source: 'custom', job_title: 'Designer' }] })
   const first = page.section.querySelector('[profile-item-row]')
   const remove = first.querySelector('[profile-item-remove]')
-  const theme = remove.closest('[data-button-theme]')
-  assert.equal(remove.disabled, true)
+  const control = remove.querySelector('button')
+  const theme = remove.querySelector('[data-button-theme]')
+  assert.equal(control.disabled, true)
   assert.equal(remove.getAttribute('aria-disabled'), 'true')
   assert.equal(theme.getAttribute('data-button-theme'), 'disabled')
   page.click(remove)
   assert.equal(first.querySelector('[profile-items-undo]').hidden, true)
   // A blank added row is not a second entry, so the only filled one stays unremovable.
   page.click(page.add)
-  assert.equal(remove.disabled, true)
+  assert.equal(control.disabled, true)
   assert.equal(theme.getAttribute('data-button-theme'), 'disabled')
   page.click(remove)
   assert.equal(first.querySelector('[profile-items-undo]').hidden, true)
   page.company('Beta', 1); page.type('job_title', 'Engineer', 1)
-  assert.equal(remove.disabled, false)
+  assert.equal(control.disabled, false)
   assert.equal(theme.getAttribute('data-button-theme'), 'danger')
   page.click(remove)
   const undo = first.querySelector('[profile-items-undo]')
-  assert.equal(first.querySelector('[profile-item-toggle]').hidden, false)
-  assert.equal(theme.style.display, 'none')
+  assert.equal(remove.style.display, 'none')
   assert.ok(first.querySelector('[profile-item-actions]').contains(undo))
   assert.equal(undo.hidden, false)
   page.click(undo)
   assert.equal(page.expanded(0), true)
-  assert.equal(remove.disabled, false)
-  assert.notEqual(theme.style.display, 'none')
+  assert.equal(control.disabled, false)
+  assert.notEqual(remove.style.display, 'none')
   assert.equal(page.mutations().length, 0)
 })
 
@@ -1161,6 +1166,18 @@ test('one Work Experience entry is open at a time, through the shared accordion 
   assert.equal(page.expanded(0), false)
   assert.equal(page.expanded(1), true)
   assert.equal(page.mutations().length, 0)
+})
+
+test('a row the shared accordion cannot open reports the gap and disables Save', async () => {
+  // Without a control and a panel the row would render permanently expanded and inert, so the
+  // section reports the markup gap instead of hydrating into that state.
+  for (const options of [{ withToggle: false }, { withContent: false }]) {
+    const page = await mount(options)
+    assert.equal(page.status(), 'This section could not load. Reload the page before editing.')
+    assert.equal(page.save.getAttribute('disabled'), '')
+    assert.ok(page.warnings.some(args => args[0] === '[unified-companies] missing [profile-item-row] with [profile-item-toggle] and [profile-item-content], or Save control in section'))
+    assert.equal(page.requests.length, 0)
+  }
 })
 
 test('Work Experience halts when the shared accordion script is missing', async () => {
@@ -1247,7 +1264,7 @@ test('a later edit during a confirmed company save retains its row Unsaved statu
 
 
 test('page-local action markers wrap themed components without making Undo remove again', async () => {
-  const page = await mount({ componentMarkup: true, outerActionMarker: true, companies: [
+  const page = await mount({ componentMarkup: true, authoredUndo: true, companies: [
     { id: 1, company_name: 'Acme', company_source: 'custom', job_title: 'Designer' },
     { id: 2, company_name: 'Beta', company_source: 'custom', job_title: 'Engineer' }] })
   const row = page.section.querySelector('[profile-item-row]')

@@ -144,7 +144,8 @@ async function mountCompanies(guard) {
       return { ok: true, json: async () => ({ companies: structuredClone(stored), starter_id: 7 }) }
     },
   })
-  for (const file of ['profile-section-validation.js', 'unified-companies.js', 'company-experience-crud.js']) {
+  for (const file of ['../../global-embeds/accordions/accordions.js', 'profile-section-validation.js',
+    'unified-companies.js', 'company-experience-crud.js']) {
     vm.runInContext(source(file), context, { filename: file })
   }
   await boot

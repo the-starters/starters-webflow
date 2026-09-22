@@ -70,11 +70,15 @@
     const original = section.querySelector(ROW)
     const template = original?.cloneNode(true)
     const parent = original?.parentElement
-    if (!template || !parent || !save) {
+    // The shared accordion opens a row through its control and its panel, so a row carrying
+    // neither is the same kind of markup gap as a missing row: without both, every entry would
+    // render permanently expanded and inert.
+    const openable = !!template?.querySelector('[profile-item-toggle]') && !!template?.querySelector('[profile-item-content]')
+    if (!template || !parent || !save || !openable) {
       // The row is also the template for every added row, and Save is the only route to the
       // writer. Without either, report the markup gap and disable Save instead of leaving a
       // live control that silently does nothing.
-      console.warn('[unified-companies] missing [profile-item-row] or Save control in section')
+      console.warn('[unified-companies] missing [profile-item-row] with [profile-item-toggle] and [profile-item-content], or Save control in section')
       status.textContent = 'This section could not load. Reload the page before editing.'
       save?.setAttribute('disabled', '')
       return
@@ -199,8 +203,8 @@
     }
     function setOpen(record, open) {
       const content = record.row.querySelector('[profile-item-content]')
-      if (open) record.accordion?.open()
-      else record.accordion?.close()
+      if (open) record.accordion.open()
+      else record.accordion.close()
       if (content) content.inert = !open
       refreshRows()
       if (open) active = record
@@ -218,7 +222,7 @@
     }
     function removeRecord(record) {
       record.row.querySelector('[profile-company-field="company_name"]')?._starterCompanySearch?.destroy()
-      record.accordion?.release()
+      record.accordion.release()
       record.row.remove()
       records = records.filter(item => item !== record)
       refreshRows()
@@ -271,29 +275,24 @@
       const toggleRow = event => {
         if (event.target.closest?.('[profile-item-remove], [profile-items-undo]')) return
         event.preventDefault()
-        if (!saving && !record.removed) setOpen(record, !record.accordion?.isOpen())
+        if (!saving && !record.removed) setOpen(record, !record.accordion.isOpen())
       }
       toggle?.addEventListener('click', toggleRow)
       toggle?.addEventListener('keydown', event => {
         if (event.target === toggle && ['Enter', ' '].includes(event.key)) toggleRow(event)
       })
-      if (toggle) toggle.hidden = false
       const summary = row.querySelector('[profile-items-summary]')
       const badge = document.createElement('span')
       badge.setAttribute('profile-items-unsaved', '')
       badge.textContent = 'Unsaved'
-      badge.style.marginLeft = '0.5em'
       const host = summary?.parentElement || toggle || row
       const siblings = Array.from(host.children)
       host.insertBefore(badge, summary ? siblings[siblings.indexOf(summary) + 1] || null : null)
       record.badge = badge
+      // The authored marker is a plain wrapper around the themed Button component, so the
+      // theme lives inside it and the marker itself is what Remove hides.
       const remove = row.querySelector('[profile-item-remove]')
-      // `closest` leaves the row when nothing inside it is themed, and shared page chrome is
-      // not this row's button, so an ancestor outside the row is not accepted.
-      const themed = remove?.closest('[data-button-theme]')
-      const removeWrap = remove?.querySelector('[data-button-theme]')
-        || (themed && row.contains(themed) ? themed : null) || remove
-      const removeShell = remove?.contains(removeWrap) ? remove : removeWrap
+      const removeWrap = remove?.querySelector('[data-button-theme]') || remove
       const removeControl = remove?.matches('button, input, a') ? remove : remove?.querySelector('button, input, a')
       Object.assign(record, { remove, removeWrap, removeControl,
         removeTheme: removeWrap?.getAttribute('data-button-theme') === 'disabled' ? 'black' : removeWrap?.getAttribute('data-button-theme') || 'black' })
@@ -306,13 +305,13 @@
       const undoControl = undo.matches('button, input, a') ? undo : undo.querySelector('button, input, a')
       if (undoControl) { undoControl.disabled = false; undoControl.removeAttribute('disabled'); undoControl.removeAttribute('aria-disabled') }
       show(undo, false)
-      if (!undo.parentElement) (removeShell?.parentElement || toggle || row).appendChild(undo)
+      if (!undo.parentElement) (remove?.parentElement || toggle || row).appendChild(undo)
       remove?.addEventListener('click', event => {
         event.preventDefault()
         if (saving || record.removed || !removable(record)) return
         record.removed = true
         setOpen(record, false)
-        show(removeShell, false); show(undo, true)
+        show(remove, false); show(undo, true)
         if (active === record) active = remaining().at(-1) || null
         dirty()
       })
@@ -322,7 +321,7 @@
         remaining().filter(item => !present(item)).forEach(removeRecord)
         if (remaining().length >= 3) { status.textContent = 'Remove another entry before restoring this one. You can keep up to three.'; return }
         record.removed = false
-        show(removeShell, true); show(undo, false)
+        show(remove, true); show(undo, false)
         setOpen(record, true); company?.focus(); dirty()
       })
       row.addEventListener('focusin', () => { active = record })

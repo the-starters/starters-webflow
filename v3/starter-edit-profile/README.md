@@ -386,6 +386,12 @@ These must exist in Webflow:
 | `profile-items-media="images\|videos"` | Row | Highlights only |
 | `profile-items-summary` | Row | Authored for companies and highlights; created by the script for services |
 | `profile-items-undo` | Row | Companies only; authored so Designer owns the Button component. Created by the script for services and highlights |
+| `profile-item-toggle` | Row | The control that opens the row |
+| `profile-item-content` | Row | The panel the control opens |
+
+Companies treats a row missing `profile-item-toggle` or `profile-item-content` as the same
+markup gap as a missing row: it reports the halted state and disables Save rather than
+rendering every entry permanently expanded and inert.
 
 The scripts create `profile-items-removed`, `profile-items-dirty`, and the
 per-row `profile-items-unsaved` status. None of those three is authored in
@@ -570,7 +576,8 @@ not carry those markers. The visible date fields use the native month ownership
 below, without the legacy `data-input-datepicker` markers. Author the Add action
 after the row template. Page-local plain wrappers carry `profile-items-add`,
 `profile-items-discard`, `data-edit-submit="companies"`, and `profile-item-remove`;
-each wrapper contains its existing themed Button component. The whole footer
+each wrapper contains its existing themed Button component, and the
+theme is read from inside that wrapper - the marker itself is the element Remove hides. The whole footer
 must not carry the Save marker: Discard shares that footer but remains outside
 the Save owner. Author a separate `profile-items-undo` wrapper in the same header
 action slot, containing a small secondary Button labelled `Undo removal`. Give
@@ -630,8 +637,9 @@ only proves that its explicitly authored Save is visible and correctly scoped.
 
 Completed local checks:
 
-- `node --test v3/starter-edit-profile/profile-section-validation.test.js v3/starter-edit-profile/unified-companies.test.js`: 65 tests passed.
-- `node --check v3/starter-edit-profile/unified-companies.js`: passed.
+- `node --test v3/starter-edit-profile/profile-section-validation.test.js v3/starter-edit-profile/unified-companies.test.js v3/starter-edit-profile/unified-section-switching.test.js global-embeds/accordions/accordions.test.js global-embeds/accordions/mobile-accordions.test.js`: 99 tests passed.
+- `node --check v3/starter-edit-profile/unified-companies.js` and
+  `node --check global-embeds/accordions/accordions.js`: passed.
 - `node v3/browser-tests/work-experience-annotations.browser.cjs`: desktop (1200px)
   and mobile (390px) Chrome checks passed, including computed action visibility,
   disabled theme with a blank added row, one-entry-open accordion behavior against the
