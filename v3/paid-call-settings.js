@@ -1675,9 +1675,14 @@
       enabledInput.addEventListener('change', function () {
         if (applyingCanonicalRender) return
         memberEditRevision += 1
-        if (enabledInput.checked) explicitIntent = 'enabled'
-        markEditProfileDirty()
         const disabledInput = disabledField()
+        if (enabledInput.checked) explicitIntent = 'enabled'
+        // The legacy Paid surface authors no Off control, so an unchecked
+        // Enabled box is the only gesture that can decline a pending receipt.
+        else if (!disabledInput && pendingBuildIntent && !canonicalService(settings)) {
+          explicitIntent = 'disabled'
+        }
+        markEditProfileDirty()
         setRadioChecked(enabledInput, enabledInput.checked)
         if ((cardMode || editProfileMode) && enabledInput.checked) setRadioChecked(disabledInput, false)
         clearFieldValidity()

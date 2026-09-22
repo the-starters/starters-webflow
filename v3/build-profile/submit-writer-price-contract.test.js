@@ -340,6 +340,22 @@ test('Build Profile keeps provider call fields out of the profile payload and sa
   }
 })
 
+test('a Paid = No receipt stores only the choice, never a title or rate nothing reads', async () => {
+  const result = load({
+    'free-consulting-calls': 'no',
+    'paid-consulting-calls': 'no',
+    'paid-call-description': 'Strategy call',
+    'paid-call-rate': '250',
+  })
+  await result.submit.click()
+
+  assert.equal(result.memberJsonWrites.length, 1)
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(result.memberJsonWrites[0].json.starter_call_settings_intent_v3.paid)),
+    { enabled: false },
+  )
+})
+
 test('the pending intent write yields to a prior holder of the shared member JSON writer', async () => {
   const result = load({
     'free-consulting-calls': 'yes',

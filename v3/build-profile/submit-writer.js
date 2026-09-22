@@ -90,28 +90,29 @@
 
         if (hasPaid) {
           const paidEnabled = enabled(formData['paid-consulting-calls']);
-          const title = String(formData['paid-call-description'] || '').trim() || 'Paid Consultation Call';
-          const rawRate = String(formData['paid-call-rate'] || '').trim();
-          if (paidEnabled && (title.length < 3 || title.length > 80)) {
-            fieldError(
-              qs('[name="paid-call-description"]', form),
-              'Use a paid-call title between 3 and 80 characters.',
-              'PAID_CALL_TITLE_INVALID',
-            );
+          if (!paidEnabled) {
+            intent.paid = { enabled: false };
+          } else {
+            const title = String(formData['paid-call-description'] || '').trim() || 'Paid Consultation Call';
+            const rawRate = String(formData['paid-call-rate'] || '').trim();
+            if (title.length < 3 || title.length > 80) {
+              fieldError(
+                qs('[name="paid-call-description"]', form),
+                'Use a paid-call title between 3 and 80 characters.',
+                'PAID_CALL_TITLE_INVALID',
+              );
+            }
+            intent.paid = {
+              enabled: true,
+              title,
+              price_dollars: wholeDollar(rawRate, {
+                min: 1,
+                max: 1000,
+                label: 'paid-call rate',
+                selector: '[name="paid-call-rate"]',
+              }),
+            };
           }
-          const paidRate = paidEnabled
-            ? wholeDollar(rawRate, {
-              min: 1,
-              max: 1000,
-              label: 'paid-call rate',
-              selector: '[name="paid-call-rate"]',
-            })
-            : null;
-          intent.paid = {
-            enabled: paidEnabled,
-            title,
-            price_dollars: paidRate,
-          };
         }
 
         return intent;

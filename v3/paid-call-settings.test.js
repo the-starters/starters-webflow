@@ -1055,7 +1055,7 @@ test('a non-card pending Paid off receipt disables an active canonical service',
       starter_call_settings_intent_v3: {
         version: 1,
         member_id: 'member-a',
-        paid: { enabled: false, title: '', price_dollars: null },
+        paid: { enabled: false },
       },
     },
     initial: canonical({
@@ -1125,6 +1125,85 @@ test('Dashboard keeps a gated pending Paid receipt declinable so the member can 
   assert.equal(result.memberJsonWrites.length, 1)
   assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
   assert.equal(result.dom.disabled.checked, true)
+})
+
+test('the legacy non-card Paid surface declines a gated pending enable by unchecking Enabled', async () => {
+  const result = load({
+    memberJSON: {
+      starter_call_settings_intent_v3: {
+        version: 1,
+        member_id: 'member-a',
+        free: { enabled: true, description: 'Quick intro' },
+        paid: { enabled: true, title: 'Strategy call', price_dollars: 250 },
+      },
+    },
+    initial: canonical({ readiness: GATED_PAID_READINESS }),
+  })
+  await settle()
+
+  assert.equal(result.dom.enabled.checked, true, 'the pending Yes is hydrated')
+  assert.equal(
+    result.dom.save.getAttribute('aria-disabled'),
+    'true',
+    'a gated pending Yes offers no Update that could succeed',
+  )
+  assert.equal(result.dom.disable.getAttribute('aria-disabled'), 'true', 'there is no active service to turn off')
+
+  result.dom.enabled.checked = false
+  await result.dom.enabled.dispatch('change')
+  assert.equal(result.dom.save.disabled, false, 'unchecking the authored Enabled box makes the decline submittable')
+  assert.equal(result.dom.save.getAttribute('aria-disabled'), 'false')
+
+  await result.dom.save.dispatch('click')
+  await settle()
+
+  assert.equal(result.calls.some((call) => call.method === 'POST'), false, 'declining writes nothing canonical')
+  assert.equal(result.memberJsonWrites.length, 1)
+  assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3.paid, undefined)
+  assert.deepEqual(
+    result.memberJsonWrites[0].starter_call_settings_intent_v3.free,
+    { enabled: true, description: 'Quick intro' },
+    'the Free branch of the receipt is left for the Free controller',
+  )
+  assert.equal(result.dom.enabled.checked, false, 'the declined choice stays off after the re-render')
+})
+
+test('an unchecked non-card Enabled box never turns an active service off behind Update', async () => {
+  const active = service()
+  const result = load({
+    memberJSON: PENDING_PAID_ENABLE,
+    initial: canonical({
+      services: [active],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+    routes: {
+      '/starter/paid-call-settings/upsert/v3': ({ body, setState }) => {
+        const saved = service({
+          title: body.title,
+          price_cents: body.price_cents,
+          duration: body.duration_minutes,
+          revision: 5,
+        })
+        setState(canonical({
+          services: [saved],
+          readiness: { paid_call_enabled: true, bookable: true },
+        }))
+        return { ok: true, status: 200, json: async () => ({ service: saved }) }
+      },
+    },
+  })
+  await settle()
+
+  result.dom.enabled.checked = false
+  await result.dom.enabled.dispatch('change')
+  await result.dom.save.dispatch('click')
+  await settle()
+
+  assert.equal(
+    result.calls.filter((call) => call.path === '/starter/paid-call-settings/disable/v3').length,
+    0,
+    'an active service is only turned off through the authored Turn off action',
+  )
 })
 
 test('a gated pending Paid Yes re-enables Update only while Off stays selected', async () => {

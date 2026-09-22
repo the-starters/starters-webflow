@@ -16,6 +16,12 @@ rate without becoming canonical state — until Calendar, Availability, Stripe
 linkage, charge readiness, and the freshness gate are all ready, then the member
 must select Update.
 
+The legacy `data-paid-call-element="settings"` surface authors no Off control, so
+while a pending receipt is waiting and no paid service is active, unchecking the
+Enabled checkbox is that Off choice: it makes Update live and submitting it
+records the decline without a canonical write. An active service is still only
+turned off through the authored Disable action.
+
 Everything else about that receipt is branch-agnostic and owned by
 [Call Settings receipt lifecycle](../../v3/build-profile/README.md#call-settings-receipt-lifecycle):
 its shape, how Dashboard and Edit Profile hydrate it, the three ways a

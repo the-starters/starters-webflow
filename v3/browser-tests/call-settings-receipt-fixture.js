@@ -34,7 +34,7 @@ const RECEIPTS = {
     version: 1,
     member_id: MEMBER.id,
     free: { enabled: false, description: '' },
-    paid: { enabled: false, title: '', price_dollars: 0 },
+    paid: { enabled: false },
   },
   'free-off-paid-pending': {
     version: 1,
@@ -62,7 +62,7 @@ const RECEIPTS = {
     version: 1,
     member_id: 'mem_sb_someone_else',
     free: { enabled: false, description: '' },
-    paid: { enabled: false, title: '', price_dollars: 0 },
+    paid: { enabled: false },
   },
   none: null,
 }
