@@ -62,6 +62,9 @@
   let applyingCanonicalRender = false
   let pendingBuildIntent = null
   let memberEditRevision = 0
+  // Retiring a receipt canonical already satisfies is passive: it must never
+  // disable a control or reject a member action, only delay one.
+  let receiptCleanup = null
 
   function memberJsonValue(response) {
     const value = response && Object.prototype.hasOwnProperty.call(response, 'data')
@@ -724,6 +727,23 @@
     flushQueuedPrerequisiteRefresh()
   }
 
+  function startReceiptCleanup(repaint) {
+    const cleanup = consumePendingBuildIntent()
+      .then(repaint)
+      .catch(function () {})
+      .then(function () { if (receiptCleanup === cleanup) receiptCleanup = null })
+    receiptCleanup = cleanup
+    return cleanup
+  }
+
+  async function settleReceiptCleanup() {
+    while (receiptCleanup) {
+      const pending = receiptCleanup
+      await pending
+      if (receiptCleanup === pending) receiptCleanup = null
+    }
+  }
+
   function beginAuthTransition() {
     const transition = {}
     authTransitionPending = transition
@@ -787,16 +807,19 @@
       descriptionInput.setAttribute('aria-readonly', 'false')
     }
     // A receipt canonical already satisfies would repaint the values canonical
-    // just painted, so it is retired in the background instead of overlaid.
-    if (pendingBuildIntent && !canonicalSatisfiesPendingIntent(value)) {
-      setRadioChecked(pair.enabled, pendingBuildIntent.enabled)
-      setRadioChecked(pair.disabled, !pendingBuildIntent.enabled)
-      notifyRadioChange(pendingBuildIntent.enabled ? pair.enabled : pair.disabled)
-      if (descriptionInput && pendingBuildIntent.enabled) {
-        descriptionInput.value = pendingBuildIntent.description
+    // just painted, so it is retired in the background rather than announced.
+    const unsavedIntent = pendingBuildIntent && !canonicalSatisfiesPendingIntent(value)
+      ? pendingBuildIntent
+      : null
+    if (unsavedIntent) {
+      setRadioChecked(pair.enabled, unsavedIntent.enabled)
+      setRadioChecked(pair.disabled, !unsavedIntent.enabled)
+      notifyRadioChange(unsavedIntent.enabled ? pair.enabled : pair.disabled)
+      if (descriptionInput && unsavedIntent.enabled) {
+        descriptionInput.value = unsavedIntent.description
       }
-      explicitIntent = pendingBuildIntent.enabled ? 'enabled' : 'disabled'
-      if (editProfileMode && (service || pendingBuildIntent.enabled) && canSaveSettings(value)) editProfileDirty = true
+      explicitIntent = unsavedIntent.enabled ? 'enabled' : 'disabled'
+      if (editProfileMode && (service || unsavedIntent.enabled) && canSaveSettings(value)) editProfileDirty = true
     }
     root.setAttribute(
       'data-free-call-duration-current',
@@ -822,8 +845,8 @@
     if (priceOutput) priceOutput.textContent = formatFreePrice(service ? servicePriceCents(service) : 0)
     paintStatusPills()
     setMessage(
-      pendingBuildIntent
-        ? pendingBuildIntent.enabled
+      unsavedIntent
+        ? unsavedIntent.enabled
           ? prerequisitesReady(value) || Boolean(service)
             ? 'Your Build Profile choice is ready. Select Update to save free calls.'
             : 'Your Build Profile choice is saved. Connect your calendar and set availability to turn on free calls.'
@@ -878,6 +901,10 @@
       prerequisiteRefreshQueued = true
       return settings
     }
+    if (receiptCleanup) {
+      await settleReceiptCleanup()
+      if (!root || !sessionMemberId) return settings
+    }
     hideNativeError()
     const version = ++refreshVersion
     const memberId = sessionMemberId
@@ -891,12 +918,11 @@
       render(canonical)
       if (pending !== undefined && canonicalSatisfiesPendingIntent(canonical)) {
         const consumeEditRevision = memberEditRevision
-        const consumeWrite = beginWrite(memberId)
-        consumePendingBuildIntent().then(function () {
+        startReceiptCleanup(function () {
           if (currentRender(version, memberId) && !busy && memberEditRevision === consumeEditRevision) {
             renderWithoutProfileDirty(canonical)
           }
-        }).catch(function () {}).then(function () { finishWrite(consumeWrite) })
+        })
       }
       return canonical
     } catch (error) {
@@ -911,6 +937,7 @@
   }
 
   async function save() {
+    if (receiptCleanup) await settleReceiptCleanup()
     if (busy || activeWrite || authTransitionPending) return null
     const pair = radioPair()
     if (!pair.enabled || !pair.disabled) {
@@ -974,6 +1001,7 @@
   }
 
   async function disable() {
+    if (receiptCleanup) await settleReceiptCleanup()
     if (busy || activeWrite || authTransitionPending) return null
     const service = canonicalService(settings)
     if (!service) {
@@ -1225,12 +1253,11 @@
       const rendered = render(canonical)
       if (canonicalSatisfiesPendingIntent(canonical)) {
         const consumeEditRevision = memberEditRevision
-        const consumeWrite = beginWrite(member.id)
-        consumePendingBuildIntent().then(function () {
+        startReceiptCleanup(function () {
           if (currentRender(version, member.id) && !busy && memberEditRevision === consumeEditRevision) {
             renderWithoutProfileDirty(canonical)
           }
-        }).catch(function () {}).then(function () { finishWrite(consumeWrite) })
+        })
       }
       return rendered
     } catch (error) {

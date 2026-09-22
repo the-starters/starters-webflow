@@ -271,9 +271,12 @@ member's choice, in one of three ways:
   description, or Paid's title and whole-dollar USD rate. This is what repairs a
   receipt whose best-effort cleanup failed after a verified save, so it cannot
   re-assert Build Profile values over newer canonical ones. Such a receipt is
-  never painted as a pending choice — the canonical render already shows the
-  same values — so it reports no unsaved edit and an Edit Profile step save
-  landing inside the repair window succeeds untouched;
+  never painted as a pending choice — neither the controls nor the message: the
+  canonical render already shows the same values, so the card keeps reporting
+  the saved canonical state, including any canonical warning the receipt does
+  not speak to. This repair is passive. It never disables a control and never
+  rejects a member action: a save or disable raised while it is in flight waits
+  for it and then proceeds, and an Edit Profile step save lands untouched;
 - with no canonical write, on a submitted off choice while that branch has no
   active service, even when the receipt itself is still an unconsumed enable, so
   a declined Build Profile Yes cannot re-assert itself on the next load.

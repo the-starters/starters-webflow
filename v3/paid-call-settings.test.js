@@ -1654,6 +1654,95 @@ const satisfiedPaidCanonical = () => canonical({
   readiness: { paid_call_enabled: true, bookable: true },
 })
 
+test('a satisfied Paid receipt announces the canonical state, never an unsaved choice', async () => {
+  const cleanupGate = deferred()
+  const result = load({
+    cardMode: true,
+    memberJsonUpdateGate: cleanupGate.promise,
+    memberJSON: SATISFIED_PAID_RECEIPT,
+    initial: satisfiedPaidCanonical(),
+  })
+  await settle()
+
+  assert.equal(
+    result.dom.statusOutput.textContent,
+    'Paid calls are on and bookable.',
+    'the card reports the saved canonical state while the receipt is still being retired',
+  )
+
+  cleanupGate.resolve()
+  await settle()
+
+  assert.equal(result.dom.statusOutput.textContent, 'Paid calls are on and bookable.')
+  assert.equal(result.memberJsonWrites.length, 1)
+  assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
+})
+
+test('a satisfied Paid receipt never masks a canonical service that breaks the contract', async () => {
+  const cleanupGate = deferred()
+  const result = load({
+    cardMode: true,
+    memberJsonUpdateGate: cleanupGate.promise,
+    memberJSON: SATISFIED_PAID_RECEIPT,
+    initial: canonical({
+      services: [service({ title: 'Strategy call', price_cents: 25000, duration: 45 })],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+  })
+  await settle()
+
+  assert.equal(
+    result.dom.statusOutput.textContent,
+    'Update this service to the required 60-minute Paid Call duration.',
+    'the real canonical warning outranks any Build Profile copy',
+  )
+  assert.equal(result.dom.root.getAttribute('data-paid-call-bookable'), 'false')
+})
+
+test('a Paid save during a satisfied auto-consume waits for cleanup instead of failing', async () => {
+  const cleanupGate = deferred()
+  const result = load({
+    editProfile: true,
+    memberId: 'member-a',
+    memberJsonUpdateGate: cleanupGate.promise,
+    memberJSON: SATISFIED_PAID_RECEIPT,
+    initial: satisfiedPaidCanonical(),
+    routes: {
+      '/starter/paid-call-settings/upsert/v3': ({ body, setState }) => {
+        const saved = service({
+          title: body.title,
+          price_cents: body.price_cents,
+          duration: body.duration_minutes,
+          revision: 5,
+        })
+        setState(canonical({
+          services: [saved],
+          readiness: { paid_call_enabled: true, bookable: true },
+        }))
+        return { ok: true, status: 200, json: async () => ({ service: saved }) }
+      },
+    },
+  })
+  await settle()
+
+  result.dom.price.value = '400'
+  await result.dom.price.dispatch('input')
+  assert.equal(result.window.StarterPaidCallSettings.hasChanges(), true, 'the member edit is dirty')
+
+  const submitted = result.window.StarterPaidCallSettings.submit()
+  await settle()
+  cleanupGate.resolve()
+
+  assert.ok(await submitted, 'the member edit is saved rather than rejected by the passive cleanup')
+  await settle()
+
+  assert.equal(
+    result.calls.filter((call) => call.path === '/starter/paid-call-settings/upsert/v3').length,
+    1,
+    'the edit made during cleanup reaches canonical exactly once',
+  )
+})
+
 test('a step-6 save during a satisfied Paid auto-consume succeeds without a canonical write', async () => {
   const cleanupGate = deferred()
   const result = load({

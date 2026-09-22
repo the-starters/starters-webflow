@@ -1090,6 +1090,90 @@ const satisfiedFreeCanonical = () => canonical({
   readiness: { free_call_enabled: true, bookable: true },
 })
 
+test('a satisfied Free receipt announces the canonical state, never an unsaved choice', async () => {
+  const cleanupGate = deferred()
+  const result = load({
+    memberJsonUpdateGate: cleanupGate.promise,
+    memberJSON: SATISFIED_FREE_RECEIPT,
+    initial: satisfiedFreeCanonical(),
+  })
+  await settle()
+
+  assert.equal(
+    result.dom.status.textContent,
+    'Free calls are on and bookable.',
+    'the card reports the saved canonical state while the receipt is still being retired',
+  )
+
+  cleanupGate.resolve()
+  await settle()
+
+  assert.equal(result.dom.status.textContent, 'Free calls are on and bookable.')
+  assert.equal(result.memberJsonWrites.length, 1)
+  assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
+})
+
+test('a satisfied Free receipt never masks a canonical service that breaks the contract', async () => {
+  const cleanupGate = deferred()
+  const result = load({
+    memberJsonUpdateGate: cleanupGate.promise,
+    memberJSON: SATISFIED_FREE_RECEIPT,
+    initial: canonical({
+      public_description: 'Quick intro',
+      services: [service({ duration: 45 })],
+      readiness: { free_call_enabled: true, bookable: true },
+    }),
+  })
+  await settle()
+
+  assert.equal(
+    result.dom.status.textContent,
+    'Update this service to the required 30-minute Free Call settings.',
+    'the real canonical warning outranks any Build Profile copy',
+  )
+  assert.equal(result.dom.root.getAttribute('data-free-call-bookable'), 'false')
+})
+
+test('a Free save during a satisfied auto-consume waits for cleanup instead of failing', async () => {
+  const cleanupGate = deferred()
+  const result = load({
+    editProfile: true,
+    memberId: 'member-free-a',
+    memberJsonUpdateGate: cleanupGate.promise,
+    memberJSON: SATISFIED_FREE_RECEIPT,
+    initial: satisfiedFreeCanonical(),
+    routes: {
+      '/starter/free-call-settings/upsert/v3': ({ body, setState }) => {
+        setState(canonical({
+          public_description: body.description,
+          services: [service()],
+          readiness: { free_call_enabled: true, bookable: true },
+        }))
+        return { ok: true, status: 200, json: async () => ({ service: service() }) }
+      },
+    },
+  })
+  await settle()
+
+  const descriptionInput = result.dom.title
+  descriptionInput.value = 'Edited while the repair ran'
+  await descriptionInput.dispatch('input')
+  assert.equal(result.window.StarterFreeCallSettings.hasChanges(), true, 'the member edit is dirty')
+
+  const submitted = result.window.StarterFreeCallSettings.submit()
+  await settle()
+  cleanupGate.resolve()
+
+  assert.ok(await submitted, 'the member edit is saved rather than rejected by the passive cleanup')
+  await settle()
+
+  assert.equal(
+    result.calls.filter((call) => call.path === '/starter/free-call-settings/upsert/v3').length,
+    1,
+    'the edit made during cleanup reaches canonical exactly once',
+  )
+})
+
 test('a step-6 save during a satisfied Free auto-consume succeeds without a canonical write', async () => {
   const cleanupGate = deferred()
   const result = load({

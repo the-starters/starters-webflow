@@ -69,6 +69,9 @@
   let applyingCanonicalRender = false
   let pendingBuildIntent = null
   let memberEditRevision = 0
+  // Retiring a receipt canonical already satisfies is passive: it must never
+  // disable a control or reject a member action, only delay one.
+  let receiptCleanup = null
 
   function memberJsonValue(response) {
     const value = response && Object.prototype.hasOwnProperty.call(response, 'data')
@@ -1052,6 +1055,23 @@
     flushQueuedPrerequisiteRefresh()
   }
 
+  function startReceiptCleanup(repaint) {
+    const cleanup = consumePendingBuildIntent()
+      .then(repaint)
+      .catch(function () {})
+      .then(function () { if (receiptCleanup === cleanup) receiptCleanup = null })
+    receiptCleanup = cleanup
+    return cleanup
+  }
+
+  async function settleReceiptCleanup() {
+    while (receiptCleanup) {
+      const pending = receiptCleanup
+      await pending
+      if (receiptCleanup === pending) receiptCleanup = null
+    }
+  }
+
   function beginAuthTransition() {
     const transition = {}
     authTransitionPending = transition
@@ -1094,17 +1114,20 @@
     if (priceInput) priceInput.value = confirmedRate ? Number(confirmedRate.price_cents) / 100 : ''
     if (durationInput) durationInput.value = String(FIXED_DURATION_MINUTES)
     // A receipt canonical already satisfies would repaint the values canonical
-    // just painted, so it is retired in the background instead of overlaid.
-    if (pendingBuildIntent && !canonicalSatisfiesPendingIntent(value)) {
-      setRadioChecked(enabledInput, pendingBuildIntent.enabled)
-      setRadioChecked(disabledInput, !pendingBuildIntent.enabled)
-      notifyRadioChange(pendingBuildIntent.enabled ? enabledInput : disabledInput)
-      if (pendingBuildIntent.enabled) {
-        if (titleInput) titleInput.value = pendingBuildIntent.title
-        if (priceInput) priceInput.value = String(pendingBuildIntent.price_dollars)
+    // just painted, so it is retired in the background rather than announced.
+    const unsavedIntent = pendingBuildIntent && !canonicalSatisfiesPendingIntent(value)
+      ? pendingBuildIntent
+      : null
+    if (unsavedIntent) {
+      setRadioChecked(enabledInput, unsavedIntent.enabled)
+      setRadioChecked(disabledInput, !unsavedIntent.enabled)
+      notifyRadioChange(unsavedIntent.enabled ? enabledInput : disabledInput)
+      if (unsavedIntent.enabled) {
+        if (titleInput) titleInput.value = unsavedIntent.title
+        if (priceInput) priceInput.value = String(unsavedIntent.price_dollars)
       }
-      explicitIntent = pendingBuildIntent.enabled ? 'enabled' : 'disabled'
-      if (editProfileMode && (service || pendingBuildIntent.enabled) && canSaveSettings(value)) editProfileDirty = true
+      explicitIntent = unsavedIntent.enabled ? 'enabled' : 'disabled'
+      if (editProfileMode && (service || unsavedIntent.enabled) && canSaveSettings(value)) editProfileDirty = true
     }
     clearFieldValidity()
     root.setAttribute(
@@ -1121,8 +1144,8 @@
 
     root.setAttribute('data-paid-call-enabled', service ? 'true' : 'false')
     root.setAttribute('data-paid-call-bookable', bookable ? 'true' : 'false')
-    const pendingRate = pendingBuildIntent && pendingBuildIntent.enabled
-      ? { price_cents: pendingBuildIntent.price_dollars * 100 }
+    const pendingRate = unsavedIntent && unsavedIntent.enabled
+      ? { price_cents: unsavedIntent.price_dollars * 100 }
       : null
     const suggestion = service || pendingRate ? null : importedRateSuggestion(value)
     const cardStateTarget = uiScope || root
@@ -1146,8 +1169,8 @@
     if (!service && suggestion && priceInput) priceInput.value = Number(suggestion.price_cents) / 100
     paintStatusPills()
     setMessage(
-      pendingBuildIntent
-        ? pendingBuildIntent.enabled
+      unsavedIntent
+        ? unsavedIntent.enabled
           ? prerequisitesReady(value) || Boolean(service)
             ? 'Your Build Profile choice is ready. Select Update to save paid calls.'
             : 'Your Build Profile choice is saved. Complete Calendar, Availability, and Stripe setup to turn on paid calls.'
@@ -1253,6 +1276,7 @@
   }
 
   async function save() {
+    if (receiptCleanup) await settleReceiptCleanup()
     if (busy || activeWrite || authTransitionPending) return null
     const enabledInput = field('enabled')
     if (!canonicalService(settings) && enabledInput && !enabledInput.checked) {
@@ -1317,6 +1341,10 @@
       prerequisiteRefreshQueued = true
       return settings
     }
+    if (receiptCleanup) {
+      await settleReceiptCleanup()
+      if (!root || !sessionMemberId) return settings
+    }
     hideNativeError()
     const version = ++refreshVersion
     const memberId = sessionMemberId
@@ -1330,12 +1358,11 @@
       render(canonical)
       if (pending !== undefined && canonicalSatisfiesPendingIntent(canonical)) {
         const consumeEditRevision = memberEditRevision
-        const consumeWrite = beginWrite(memberId)
-        consumePendingBuildIntent().then(function () {
+        startReceiptCleanup(function () {
           if (currentRender(version, memberId) && !busy && memberEditRevision === consumeEditRevision) {
             renderWithoutProfileDirty(canonical)
           }
-        }).catch(function () {}).then(function () { finishWrite(consumeWrite) })
+        })
       }
       return canonical
     } catch (error) {
@@ -1350,6 +1377,7 @@
   }
 
   async function disable() {
+    if (receiptCleanup) await settleReceiptCleanup()
     if (busy || activeWrite || authTransitionPending) return null
     const service = canonicalService(settings)
     if (!service) {
@@ -1583,12 +1611,11 @@
       const rendered = render(canonical)
       if (canonicalSatisfiesPendingIntent(canonical)) {
         const consumeEditRevision = memberEditRevision
-        const consumeWrite = beginWrite(member.id)
-        consumePendingBuildIntent().then(function () {
+        startReceiptCleanup(function () {
           if (currentRender(version, member.id) && !busy && memberEditRevision === consumeEditRevision) {
             renderWithoutProfileDirty(canonical)
           }
-        }).catch(function () {}).then(function () { finishWrite(consumeWrite) })
+        })
       }
       return rendered
     } catch (error) {
