@@ -3390,19 +3390,13 @@ test('both project dashboards leave remote filtering to the default wf-xano cont
   assert.deepEqual(results, keys)
 })
 
-test('F18 request links parse from the query or hash and normalize #calls to the live anchor', () => {
+test('F18 request links parse from the query and normalize #calls to the live anchor', () => {
   const bookingId = '00d39a7b-40be-436f-b794-a6832215234b'
   assert.deepEqual(api.callDeepLinkLocator({
     hostname: 'www.thestarters.com',
     search: '?booking_id=' + bookingId + '&revision=7&environment=production',
     hash: '#calls',
   }), { bookingId, revision: 7, environment: 'production' })
-  assert.deepEqual(api.callDeepLinkLocator({
-    hostname: 'the-starters-3-0.webflow.io',
-    search: '',
-    hash: '#calls?booking_id=' + bookingId + '&revision=3&environment=test',
-  }), { bookingId, revision: 3, environment: 'test' })
-
   const location = {
     pathname: '/starter-dashboard',
     search: '?booking_id=' + bookingId + '&revision=7&environment=production',
@@ -3418,7 +3412,7 @@ test('F18 request links parse from the query or hash and normalize #calls to the
   )
 })
 
-test('F18 request locators reject malformed, conflicting, and cross-environment values', () => {
+test('F18 request locators reject malformed, fragment-carried, and cross-environment values', () => {
   const bookingId = '00d39a7b-40be-436f-b794-a6832215234b'
   assert.equal(api.callDeepLinkLocator({
     hostname: 'www.thestarters.com',
@@ -3427,8 +3421,8 @@ test('F18 request locators reject malformed, conflicting, and cross-environment 
   }), null)
   assert.equal(api.callDeepLinkLocator({
     hostname: 'www.thestarters.com',
-    search: '?booking_id=' + bookingId + '&revision=7&environment=production',
-    hash: '#calls?revision=8',
+    search: '',
+    hash: '#calls?booking_id=' + bookingId + '&revision=7&environment=production',
   }), null)
   assert.equal(api.callDeepLinkLocator({
     hostname: 'www.thestarters.com',

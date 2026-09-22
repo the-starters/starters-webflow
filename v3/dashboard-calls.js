@@ -98,10 +98,8 @@
     return ''
   }
 
-  function locatorValues(searchParams, hashParams, name) {
-    const values = []
-      .concat(searchParams ? searchParams.getAll(name) : [])
-      .concat(hashParams ? hashParams.getAll(name) : [])
+  function locatorValue(searchParams, name) {
+    const values = (searchParams ? searchParams.getAll(name) : [])
       .map(clean)
       .filter(Boolean)
     if (!values.length || values.some(function (value) { return value !== values[0] })) {
@@ -113,23 +111,17 @@
   /**
    * Parses the F18 request-created dashboard locator. The URL is only a locator:
    * ownership and current state still come from the authenticated canonical feed.
-   * Existing links put the locator in the query string before `#calls`; the hash
-   * query form is accepted so forwarded links keep working.
+   * Existing links put the locator in the query string before `#calls`.
    */
   function callDeepLinkLocator(location) {
     const Params = global.URLSearchParams
     if (!location || typeof Params !== 'function') return null
-    const rawHash = clean(location.hash)
-    const split = rawHash.indexOf('?') >= 0
-      ? rawHash.split(/\?(.+)/, 2)
-      : rawHash.split(/&(.+)/, 2)
-    const anchor = clean(split[0]).toLowerCase()
+    const anchor = clean(location.hash).toLowerCase()
     if (anchor !== '#calls' && anchor !== '#calls-section') return null
     const searchParams = new Params(clean(location.search).replace(/^\?/, ''))
-    const hashParams = new Params(clean(split[1]))
-    const bookingId = locatorValues(searchParams, hashParams, 'booking_id')
-    const revisionValue = locatorValues(searchParams, hashParams, 'revision')
-    const environment = locatorValues(searchParams, hashParams, 'environment').toLowerCase()
+    const bookingId = locatorValue(searchParams, 'booking_id')
+    const revisionValue = locatorValue(searchParams, 'revision')
+    const environment = locatorValue(searchParams, 'environment').toLowerCase()
     const revision = Number(revisionValue)
     if (
       !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(bookingId) ||
@@ -143,7 +135,7 @@
   }
 
   function normalizeCallsAnchor(location, history) {
-    if (!location || !/^#calls(?:[?&]|$)/i.test(clean(location.hash))) return false
+    if (!location || clean(location.hash).toLowerCase() !== '#calls') return false
     const next = clean(location.pathname) + clean(location.search) + '#calls-section'
     if (history && typeof history.replaceState === 'function') {
       history.replaceState(null, '', next)
