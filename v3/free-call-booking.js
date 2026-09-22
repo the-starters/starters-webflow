@@ -347,7 +347,8 @@
       !candidate ||
       typeof candidate.mountPaidCalendar !== 'function' ||
       typeof candidate.createBookingAttempt !== 'function' ||
-      typeof candidate.bookingRequestFingerprint !== 'function'
+      typeof candidate.bookingRequestFingerprint !== 'function' ||
+      typeof candidate.slotMeetsBookingNotice !== 'function'
     ) return null
     return candidate
   }
@@ -730,7 +731,23 @@
                 const result = await bookingSurfaceLifecycle.runBooking(
                   container,
                   fingerprint,
-                  function () { return current.bookingApi.createBookingAttempt(input) },
+                  function () {
+                    const attempt = current.bookingApi.createBookingAttempt(input)
+                    const run = attempt.run
+                    let commandStarted = false
+                    attempt.run = function () {
+                      if (!commandStarted && !current.bookingApi.slotMeetsBookingNotice(slot)) {
+                        if (clearFreeCalendarSelection) clearFreeCalendarSelection()
+                        throw Object.assign(
+                          new Error('This time is no longer available. Please choose another time.'),
+                          { bookingNotSubmitted: true, retrySameBooking: false, staleSlot: true },
+                        )
+                      }
+                      commandStarted = true
+                      return run()
+                    }
+                    return attempt
+                  },
                   function (result) {
                     if (!canonicalBookingId(result)) {
                       throw new Error('The canonical booking response is incomplete')

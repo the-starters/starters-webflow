@@ -344,6 +344,7 @@ function bookingApiFixture(options = {}) {
       state.mounts.push(mount)
       return { slots: [{ start: 1, end: 2 }] }
     },
+    slotMeetsBookingNotice: options.slotMeetsBookingNotice || (() => true),
     readGuestEmails: (popup) => options.guests || popup
       .querySelectorAll('[data-call-guest-email]')
       .filter((field) => !field.disabled && String(field.value || '').trim())
@@ -604,6 +605,22 @@ test('a failed Free request reuses its bounded booking attempt on retry', async 
   assert.equal(booking.state.attempts, 1)
   assert.equal(booking.state.runs, 2)
   assert.equal(fixture.successStep.style.display, 'flex')
+})
+
+test('Free rechecks the 8-hour cutoff before its first canonical booking command', async () => {
+  const fixture = chooserFixture()
+  const booking = bookingApiFixture({ slotMeetsBookingNotice: () => false })
+  await withGlobals({ document: fixture.document }, async () => {
+    api.installFreeBookingController(installSettings(booking.bookingApi))
+    await fixture.cta.onclick(event())
+    fixture.context.value = 'Keep this message'
+    await assert.rejects(
+      booking.state.mounts[0].onConfirm({ start: 1, end: 2, timezone: 'UTC' }),
+      /no longer available/i,
+    )
+    assert.equal(fixture.context.value, 'Keep this message')
+  })
+  assert.equal(booking.state.runs, 0)
 })
 
 test('a newer shared-surface owner prevents a pending Free calendar mount', async () => {

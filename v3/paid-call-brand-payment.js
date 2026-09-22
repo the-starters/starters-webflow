@@ -480,8 +480,12 @@
 
   function normalizeAvailabilitySlots(result, config, nowMs) {
     const durationMs = Number(config && config.duration) * 60 * 1000
-    const minimumStartMs = Number(nowMs === undefined ? Date.now() : nowMs) +
-      minimumBookingNoticeMinutes(config) * 60 * 1000
+    const resolvedNowMs = Number(nowMs === undefined ? Date.now() : nowMs)
+    const minimumStartMs = (
+      String((config && config.booking_id) || '').trim()
+        ? Math.floor(resolvedNowMs / 1000) * 1000
+        : resolvedNowMs
+    ) + minimumBookingNoticeMinutes(config) * 60 * 1000
     const rows = Array.isArray(result && result.time_slots) ? result.time_slots : []
     return rows.map(function (slot) {
       const startSeconds = Number(slot && slot.start_time)

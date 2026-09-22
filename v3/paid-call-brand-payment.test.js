@@ -772,6 +772,15 @@ test('Paid initial booking uses the production 8-hour floor and the exact stagin
     rescheduleQuery.searchParams.get('start_time'),
     String(nowSeconds + 24 * 60 * 60),
   )
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(production.normalizeAvailabilitySlots({
+      time_slots: [{ start_time: nowSeconds + 24 * 60 * 60 }],
+    }, { ...config, booking_id: 'booking_existing' }, now + 999))),
+    [{
+      start: (nowSeconds + 24 * 60 * 60) * 1000,
+      end: (nowSeconds + 25 * 60 * 60) * 1000,
+    }],
+  )
   assert.equal(loadBrowserApi('staging.thestarters.com').minimumBookingNoticeMinutes(), 480)
   assert.equal(loadBrowserApi().minimumBookingNoticeMinutes(), 480)
 })
