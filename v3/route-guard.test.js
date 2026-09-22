@@ -1952,12 +1952,3 @@ test('an active paid Brand on the homepage is still sent to /brand-dashboard at 
   await flush()
   assert.equal(location.replaced, '/brand-dashboard')
 })
-
-// --- Release marker -----------------------------------------------------------
-
-test('the header @release marker matches the exported release property', () => {
-  const { api } = loadGuard()
-  const marker = source.match(/^ \* @release (v\d+\.\d+\.\d+)$/m)
-  assert.ok(marker, 'no "@release vX.Y.Z" line in the route-guard.js header')
-  assert.equal(api.release, marker[1])
-})

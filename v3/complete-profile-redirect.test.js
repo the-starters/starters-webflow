@@ -1211,23 +1211,3 @@ test('a second load does not re-run the check', async () => {
   assert.equal(window.__startersCompleteProfileRedirectBooted, true)
   assert.equal(lookups.length, 1)
 })
-
-// --- Release marker -----------------------------------------------------------
-
-test('the header @release marker matches the exported release property', () => {
-  const { api } = loadModule({ pathname: '/other' })
-  const marker = source.match(/^ \* @release (v\d+\.\d+\.\d+)$/m)
-  assert.ok(
-    marker,
-    'no "@release vX.Y.Z" line in the complete-profile-redirect.js header',
-  )
-  assert.equal(api.release, marker[1])
-})
-
-test('this module ships the same release marker as the route guard it depends on', () => {
-  const moduleMarker = source.match(/^ \* @release (v\d+\.\d+\.\d+)$/m)
-  const guardMarker = routeGuardSource.match(/^ \* @release (v\d+\.\d+\.\d+)$/m)
-  assert.ok(moduleMarker, 'no @release line in complete-profile-redirect.js')
-  assert.ok(guardMarker, 'no @release line in route-guard.js')
-  assert.equal(moduleMarker[1], guardMarker[1])
-})

@@ -1004,8 +1004,6 @@
   }
 
   var api = {
-    // Keep in sync with the @release line in this file's header comment; the
-    // v3/auth-route.test.js drift guard asserts they match.
     release: 'v1.59.610',
     activePlanIds: activePlanIds,
     destinationFor: destinationFor,

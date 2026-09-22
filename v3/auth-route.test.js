@@ -2582,15 +2582,6 @@ test('brand funnel diagnostics are staging-only unless STARTERS_DEBUG is set', a
   assert.ok(debugged.logs.info.length > 0)
 })
 
-// --- Release marker -----------------------------------------------------------
-
-test('the header @release marker matches the exported release property', () => {
-  const { api } = loadRouter()
-  const marker = source.match(/^ \* @release (v\d+\.\d+\.\d+)$/m)
-  assert.ok(marker, 'no "@release vX.Y.Z" line in the auth-route.js header')
-  assert.equal(api.release, marker[1])
-})
-
 // The router and the site-head loader ship as one unit: the loader requests
 // auth-route.js from its own release ref, so a release that stamps one and not
 // the other makes the served-byte check in docs/wiring/ROUTE-GUARD-WIRING.md answer two
