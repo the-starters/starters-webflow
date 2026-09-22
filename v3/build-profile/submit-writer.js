@@ -82,17 +82,17 @@
               'FREE_CALL_DESCRIPTION_TOO_LONG',
             );
           }
-          intent.free = {
-            enabled: freeEnabled,
-            description,
-          };
+          if (freeEnabled) {
+            intent.free = {
+              enabled: true,
+              description,
+            };
+          }
         }
 
         if (hasPaid) {
           const paidEnabled = enabled(formData['paid-consulting-calls']);
-          if (!paidEnabled) {
-            intent.paid = { enabled: false };
-          } else {
+          if (paidEnabled) {
             const title = String(formData['paid-call-description'] || '').trim() || 'Paid Consultation Call';
             const rawRate = String(formData['paid-call-rate'] || '').trim();
             if (title.length < 3 || title.length > 80) {
@@ -139,12 +139,12 @@
           const memberJSON = current && typeof current === 'object' && !Array.isArray(current)
             ? current
             : {};
-          await memberstack.updateMemberJSON({
-            json: {
-              ...memberJSON,
-              [BUILD_CALL_INTENT_KEY]: intent,
-            },
-          });
+          const stored = Boolean(intent.free || intent.paid);
+          if (!stored && !Object.prototype.hasOwnProperty.call(memberJSON, BUILD_CALL_INTENT_KEY)) return;
+          const nextJSON = { ...memberJSON };
+          if (stored) nextJSON[BUILD_CALL_INTENT_KEY] = intent;
+          else delete nextJSON[BUILD_CALL_INTENT_KEY];
+          await memberstack.updateMemberJSON({ json: nextJSON });
         });
         return intent;
       }

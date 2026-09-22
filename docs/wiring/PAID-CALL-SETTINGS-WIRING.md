@@ -32,8 +32,8 @@ Everything else about that receipt is branch-agnostic and owned by
 [Call Settings receipt lifecycle](../../v3/build-profile/README.md#call-settings-receipt-lifecycle):
 its shape, how Dashboard and Edit Profile hydrate it, the three ways a
 controller consumes its own part while leaving the Free part untouched, the
-serialized `window.__tsMemberJsonWrite` boundary, cleanup failure policy, and
-the protection that keeps unsaved member edits from being repainted during cleanup.
+serialized `window.__tsMemberJsonWrite` boundary, and cleanup failure policy.
+Retiring an already-satisfied receipt repaints nothing at all.
 
 ## Script
 

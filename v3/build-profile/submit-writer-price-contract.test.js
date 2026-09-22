@@ -340,7 +340,7 @@ test('Build Profile keeps provider call fields out of the profile payload and sa
   }
 })
 
-test('a Paid = No receipt stores only the choice, never a title or rate nothing reads', async () => {
+test('a submit that declines both branches stores no receipt at all', async () => {
   const result = load({
     'free-consulting-calls': 'no',
     'paid-consulting-calls': 'no',
@@ -349,11 +349,33 @@ test('a Paid = No receipt stores only the choice, never a title or rate nothing 
   })
   await result.submit.click()
 
-  assert.equal(result.memberJsonWrites.length, 1)
+  assert.equal(result.success.style.display, 'block')
+  assert.equal(result.memberJsonWrites.length, 0, 'a decline carries no pending create to store')
+  assert.equal(Object.hasOwn(result.memberJSON(), 'starter_call_settings_intent_v3'), false)
+})
+
+test('a resubmit that turns a branch off removes the part the earlier attempt stored', async () => {
+  const result = load({
+    'free-consulting-calls': 'yes',
+    'free-call-description': 'Free intro',
+    'paid-consulting-calls': 'no',
+  })
+  await result.submit.click()
+
   assert.deepEqual(
-    JSON.parse(JSON.stringify(result.memberJsonWrites[0].json.starter_call_settings_intent_v3.paid)),
-    { enabled: false },
+    JSON.parse(JSON.stringify(result.memberJSON().starter_call_settings_intent_v3)),
+    { version: 1, member_id: 'mem_test', free: { enabled: true, description: 'Free intro' } },
   )
+
+  result.form.values['free-consulting-calls'] = 'no'
+  await result.submit.click()
+
+  assert.equal(
+    Object.hasOwn(result.memberJSON(), 'starter_call_settings_intent_v3'),
+    false,
+    'the superseded Yes must not stay pending for Dashboard to replay',
+  )
+  assert.equal(result.memberJSON().keep, 'member-json')
 })
 
 test('the pending intent write yields to a prior holder of the shared member JSON writer', async () => {
@@ -392,11 +414,8 @@ test('a hidden long free-call description never blocks a Free off choice', async
   await result.submit.click()
   assert.equal(result.error.style.display, 'none')
   assert.equal(result.success.style.display, 'block')
-  assert.equal(result.memberJsonWrites.length, 1)
-  assert.deepEqual(
-    JSON.parse(JSON.stringify(result.memberJsonWrites[0].json.starter_call_settings_intent_v3.free)),
-    { enabled: false, description: '' },
-  )
+  assert.equal(result.memberJsonWrites.length, 0)
+  assert.equal(Object.hasOwn(result.memberJSON(), 'starter_call_settings_intent_v3'), false)
 })
 
 test('Build Profile blocks combined success when enabled Paid intent is invalid', async () => {

@@ -732,11 +732,11 @@
     visual.setAttribute('class', next.join(' '))
   }
 
-  // canonical-profile-loader.js hydrates these same step 6 controls from the legacy profile
-  // record and dispatches native input and change events on each one. Those are not member
-  // gestures, so the shared hydration window - the same one the page dirty state answers with -
-  // decides what counts as an Edit Profile change. Without it a freshly hydrated page reports
-  // unsaved call settings, and a failed canonical read then wedges every other step 6 field.
+  // canonical-profile-loader.js dispatches native input and change events on every step 6
+  // control it restores. Those are not member gestures, so the shared hydration window - the
+  // same one the page dirty state answers with - decides what counts as an Edit Profile change.
+  // Without it a freshly hydrated page reports unsaved call settings, and a failed canonical
+  // read then wedges every other step 6 field.
   function markEditProfileDirty() {
     if (!editProfileMode) return
     const dirtyState = window.__tsProfileDirtyState

@@ -214,8 +214,10 @@ announces its radio answer with a `change` event so the page re-derives the depe
 enabled and visible state, and a controller that reports no changes never gates the step: a
 failed call-settings read must not block Hourly Rate, Availability, Retainer, or Services. Both
 controllers read the same `isHydrating()` window before marking themselves changed, because the
-profile loader replays `input` and `change` on those five controls while it restores the legacy
-record; a hydration write is never a member change. An unconsumed Build Profile Call Settings
+profile loader replays `input` and `change` on every control it restores and a hydration write is
+never a member change. The loader restores none of the five call controls: the legacy profile row
+no longer writes them, so replaying it over a controller's render could silently turn a pending
+Build Profile create into a decline the member never made. An unconsumed Build Profile Call Settings
 receipt is the one hydration that does count: it prefills the Free or Paid controls and marks step 6
 changed once that controller's readiness gates allow the write, so Save materializes the member's
 Build Profile choice through the same guarded upsert or disable. Each contract's Build Profile

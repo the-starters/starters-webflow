@@ -244,7 +244,10 @@ authored controls that branch's receipt part prefills.
 
 Build Profile validates its visible Call Settings controls and stores a
 versioned, member-bound `starter_call_settings_intent_v3` receipt in private
-Memberstack JSON, with a separate `free` part and `paid` part. A receipt is not
+Memberstack JSON, with a separate `free` part and `paid` part. A receipt records
+pending creates only: a branch answered Off stores no part, and a submit that
+turns a branch off removes the part an earlier attempt stored, dropping the whole
+receipt once neither branch is left. A receipt is not
 an active service and is not a `freelancers_v3` projection. The active
 environment-matched `nylas_configurations_v3` row and provider readback remain
 the sole call authority. The visible Free description, Paid title, and Paid
@@ -271,8 +274,8 @@ pending part is preserved. It consumes its part in one of three ways:
 
 - after the canonical Call Settings endpoint returns exact readback;
 - with no canonical write, on load, when there is an active canonical service,
-  regardless of whether its current values match the older Build choice, or
-  when an off choice has no active service. This repairs a receipt whose
+  regardless of whether its current values match the older Build choice. This
+  repairs a receipt whose
   best-effort cleanup failed after a verified save, so it cannot re-assert
   Build Profile values over newer canonical ones. Such a receipt is
   never painted as a pending choice — neither the controls nor the message: the

@@ -26,6 +26,17 @@
         };
     }
 
+    // The Free and Paid Call Settings controllers own these five controls from
+    // canonical call state and any unconsumed Build Profile receipt. The legacy
+    // profile row no longer writes them, so restoring it must not repaint them.
+    var CALL_SETTING_FIELD_NAMES = new Set([
+        'free-consulting-calls',
+        'free-call-description',
+        'paid-consulting-calls',
+        'paid-call-description',
+        'paid-call-rate',
+    ]);
+
     function restoreCanonicalProfileFields(profile, steps, getStepIndex, findFields, applyValue) {
         steps.forEach((step) => {
             const stepIndex = getStepIndex(step);
@@ -38,6 +49,7 @@
             fields.forEach((field) => {
                 const fieldName = field.name;
                 if (!fieldName || !(fieldName in stepData)) return;
+                if (CALL_SETTING_FIELD_NAMES.has(fieldName)) return;
 
                 applyValue(field, stepData[fieldName]);
             });

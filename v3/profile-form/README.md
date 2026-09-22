@@ -18,7 +18,10 @@ Five candidates no longer reconstruct to their published bodies.
   [required-mirror hydration contract](../starter-edit-profile/README.md#canonical-required-mirror-hydration),
   and the
   [browser-native unsaved-change prompt request](../starter-edit-profile/README.md#unsaved-change-warning)
-  including the `isHydrating()` reader that contract documents.
+  including the `isHydrating()` reader that contract documents. Its restore also leaves the five
+  Free and Paid call controls to their settings controllers, because the legacy profile row no
+  longer writes them and replaying it over a controller's render would discard an unconsumed
+  [Build Profile Call Settings receipt](../build-profile/README.md#call-settings-receipt-lifecycle).
 - `draft-state.js` carries the member-bound hydration fix and
   [saved draft recovery contract](#empty-route-seeds-and-saved-draft-recovery).
 - `submit-writer.js` carries the behavior changes owned by the

@@ -148,8 +148,8 @@
       }
     },
     "v3/starter-edit-profile/canonical-profile-loader.js": {
-      "candidateCharacters": 25331,
-      "candidateSha256": "916e8702ac16aac6000d893364bf14bcb58a65e13e2a2f2a1e6cb662a12c7dc8",
+      "candidateCharacters": 25854,
+      "candidateSha256": "5be55e37b30f10765c96d2f42ca71f099787c6ffa56fc2ed00dc906f59daf55f",
       "transformation": {
         "kind": "whitespace_plus_idempotency_guard_plus_behavior_change",
         "guardKey": "canonicalProfileLoader",
@@ -170,8 +170,8 @@
       }
     },
     "v3/build-profile/submit-writer.js": {
-      "candidateCharacters": 24074,
-      "candidateSha256": "690267296c1b1a8be3101608bc7582e81ac67b4cb04a6219e13c0ab467cd6825",
+      "candidateCharacters": 24278,
+      "candidateSha256": "0800a4ce8d9a4d40f31b63e85b68a8cfc4f07722bd920b71f4d2e2768ad341fb",
       "transformation": {
         "kind": "whitespace_plus_idempotency_guard_plus_behavior_change",
         "guardKey": "buildProfileSubmitWriter",

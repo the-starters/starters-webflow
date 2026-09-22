@@ -104,3 +104,54 @@ test('restoration hydrates every required mirror so validation passes', () => {
   )
   assert.equal(mirrorNames.every((name) => fields[name].checkValidity()), true)
 })
+
+test('restoration leaves the five call controls to their settings controllers', () => {
+  const callNames = [
+    'free-consulting-calls',
+    'free-call-description',
+    'paid-consulting-calls',
+    'paid-call-description',
+    'paid-call-rate',
+  ]
+  const fields = Object.fromEntries([...callNames, 'rate'].map((name) => [name, {
+    name,
+    value: name === 'rate' ? '' : 'owned by the call settings controller',
+    attributes: { 'data-input-capture': '' },
+  }]))
+  const steps = [{ index: '6', fields: Object.values(fields) }]
+
+  window.StartersCanonicalProfileLoader.restoreCanonicalProfileFields(
+    {
+      data: {
+        step_6: {
+          rate: '150',
+          'free-consulting-calls': 'no',
+          'free-call-description': '',
+          'paid-consulting-calls': 'no',
+          'paid-call-description': '',
+          'paid-call-rate': '',
+        },
+      },
+    },
+    steps,
+    (step) => step.index,
+    (selector, step) => step.fields.filter((field) => (
+      selector.split(',').some((part) => {
+        const match = part.trim().match(/^\[([^=\]]+)(?:="([^"]+)")?\]$/)
+        if (!match) return false
+        const value = field.attributes[match[1]]
+        return match[2] === undefined ? value !== undefined : value === match[2]
+      })
+    )),
+    (field, value) => { field.value = String(value) },
+  )
+
+  assert.equal(fields.rate.value, '150', 'every other restored step-6 control still hydrates')
+  for (const name of callNames) {
+    assert.equal(
+      fields[name].value,
+      'owned by the call settings controller',
+      name + ' must survive the legacy profile restore',
+    )
+  }
+})

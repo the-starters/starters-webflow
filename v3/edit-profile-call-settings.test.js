@@ -463,8 +463,9 @@ test('the Free controller never reaches profile CRUD controls outside step 6', a
   assert.equal(result.dom.pageOpen.listeners.has('click'), false)
 })
 
-// canonical-profile-loader.js writes the legacy profile record into these same five controls
-// and announces each write with the native input + change pair every restored control gets.
+// canonical-profile-loader.js skips the five call controls, but every control it does restore
+// is announced with the native input + change pair. This replays that pair over them anyway, so
+// the hydration window still has to answer for any other source of a restored-shaped event.
 function replayProfileLoaderHydration(dom) {
   function writeRadio(checked, unchecked) {
     checked.checked = true

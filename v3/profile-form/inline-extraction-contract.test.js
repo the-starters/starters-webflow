@@ -92,7 +92,7 @@ const EXPECTED_CANDIDATE_ASSETS = Object.freeze({
     restoreTrailingWhitespace: Object.freeze({ 4: '  ' }), terminalNewlinesRemoved: 0,
   }),
   'v3/starter-edit-profile/canonical-profile-loader.js': Object.freeze({
-    characters: 25331, sha256: '916e8702ac16aac6000d893364bf14bcb58a65e13e2a2f2a1e6cb662a12c7dc8',
+    characters: 25854, sha256: '5be55e37b30f10765c96d2f42ca71f099787c6ffa56fc2ed00dc906f59daf55f',
     guardKey: 'canonicalProfileLoader',
     liveCaptureAsset: 'v3/profile-form/edit-canonical-profile-loader-published.capture.txt',
     restoreTrailingWhitespace: Object.freeze({}), terminalNewlinesRemoved: 0,
@@ -104,7 +104,7 @@ const EXPECTED_CANDIDATE_ASSETS = Object.freeze({
     restoreTrailingWhitespace: Object.freeze({}), terminalNewlinesRemoved: 1,
   }),
   'v3/build-profile/submit-writer.js': Object.freeze({
-    characters: 24074, sha256: '690267296c1b1a8be3101608bc7582e81ac67b4cb04a6219e13c0ab467cd6825',
+    characters: 24278, sha256: '0800a4ce8d9a4d40f31b63e85b68a8cfc4f07722bd920b71f4d2e2768ad341fb',
     guardKey: 'buildProfileSubmitWriter',
     liveCaptureAsset: 'v3/profile-form/build-submit-writer-published.capture.txt',
     restoreTrailingWhitespace: Object.freeze({ 531: '          ' }), terminalNewlinesRemoved: 0,
