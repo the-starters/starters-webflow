@@ -117,7 +117,7 @@
     const Params = global.URLSearchParams
     if (!location || typeof Params !== 'function') return null
     const anchor = clean(location.hash).toLowerCase()
-    if (anchor !== '#calls' && anchor !== '#calls-section') return null
+    if (anchor !== '' && anchor !== '#calls' && anchor !== '#calls-section') return null
     const searchParams = new Params(clean(location.search).replace(/^\?/, ''))
     const bookingId = locatorValue(searchParams, 'booking_id')
     const revisionValue = locatorValue(searchParams, 'revision')
@@ -135,7 +135,10 @@
   }
 
   function normalizeCallsAnchor(location, history) {
-    if (!location || clean(location.hash).toLowerCase() !== '#calls') return false
+    if (!location) return false
+    const anchor = clean(location.hash).toLowerCase()
+    const exactQueryWithoutAnchor = anchor === '' && Boolean(callDeepLinkLocator(location))
+    if (anchor !== '#calls' && !exactQueryWithoutAnchor) return false
     const next = clean(location.pathname) + clean(location.search) + '#calls-section'
     if (history && typeof history.replaceState === 'function') {
       history.replaceState(null, '', next)

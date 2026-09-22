@@ -2188,7 +2188,11 @@ booking rows and then fails the dashboard closed.
 Request-created notification links may locate one canonical call with
 `?booking_id=<uuid>&revision=<non-negative integer>&environment=<test|production>`
 followed by `#calls` or `#calls-section`. The short anchor is normalized to
-`#calls-section` without dropping the query string. `test` is accepted only on
+`#calls-section` without dropping the query string. When an otherwise exact
+notification locator reaches the dashboard without a fragment, the controller
+also restores `#calls-section`; this recovers a fragment lost during a login or
+canonical-host redirect without accepting an incomplete locator. `test` is
+accepted only on
 `the-starters-3-0.webflow.io`; `production` is accepted only on
 `thestarters.com` and `www.thestarters.com`. Missing, conflicting duplicate, or
 malformed locator values fail closed. The locator never supplies booking state
