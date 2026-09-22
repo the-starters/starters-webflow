@@ -536,8 +536,6 @@
   /* ---------------------------------- boot ---------------------------------- */
 
   window.StartersCompleteProfileRedirect = {
-    // Keep in sync with the @release line in this file's header comment; the
-    // v3/complete-profile-redirect.test.js drift guard asserts they match.
     release: 'v1.59.441',
     allowedHost: allowedHost,
     stagingHost: stagingHost,

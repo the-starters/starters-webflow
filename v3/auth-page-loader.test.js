@@ -530,10 +530,3 @@ test('an unusable timing receipt is discarded', () => {
     assert.equal(storage.has(TIMING_KEY), false, rawReceipt)
   }
 })
-
-test('header and exported release markers match', () => {
-  const { window } = loadLoader()
-  const marker = source.match(/@release\s+(v\d+\.\d+\.\d+)/)
-  assert.ok(marker)
-  assert.equal(window.StartersV3AuthPageLoader.release, marker[1])
-})

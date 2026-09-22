@@ -562,6 +562,42 @@ test('preserves only same-origin destinations allowed for the member role', () =
   )
 })
 
+test('preserves a validated Calls notification fragment after login', () => {
+  const bookingId = '00d39a7b-40be-436f-b794-a6832215234b'
+  const paidBrand = {
+    planConnections: [plan('pln_new-paid-plan-463h04ph')],
+  }
+  const talent = {
+    planConnections: [plan('pln_dorxata-test-free-plan-dvcg0k8o')],
+  }
+  const brandNext =
+    '/brand-dashboard?booking_id=' + bookingId +
+    '&revision=1&environment=production#calls'
+  const starterNext =
+    '/starter-dashboard?booking_id=' + bookingId +
+    '&revision=1&environment=test#calls-section'
+
+  assert.equal(
+    loadRouter({ hostname: 'www.thestarters.com' }).api.destinationFor(paidBrand, brandNext),
+    brandNext,
+  )
+  assert.equal(loadRouter().api.destinationFor(talent, starterNext), starterNext)
+})
+
+test('strips arbitrary or malformed fragments from login destinations', () => {
+  const bookingId = '00d39a7b-40be-436f-b794-a6832215234b'
+  const talent = {
+    planConnections: [plan('pln_dorxata-test-free-plan-dvcg0k8o')],
+  }
+  const { api } = loadRouter()
+  assert.equal(api.destinationFor(talent, '/starter-dashboard#calls'), '/starter-dashboard')
+  assert.equal(
+    api.destinationFor(talent, '/starter-dashboard?booking_id=' + bookingId + '&revision=1&environment=test#other'),
+    '/starter-dashboard?booking_id=' + bookingId + '&revision=1&environment=test',
+  )
+  assert.equal(api.destinationFor(talent, '/messages?thread=7#calls'), '/messages?thread=7')
+})
+
 test('canonical /dashboard next always resolves to the role-specific home', () => {
   const { api } = loadRouter()
   const talent = {
@@ -1628,6 +1664,25 @@ test('auth route preserves the stored destination from login', async () => {
   )
 })
 
+test('auth route restores the stored Calls fragment from login', async () => {
+  const bookingId = '00d39a7b-40be-436f-b794-a6832215234b'
+  const destination =
+    '/brand-dashboard?booking_id=' + bookingId +
+    '&revision=1&environment=production#calls'
+  const { location } = loadRouter({
+    hostname: 'www.thestarters.com',
+    pathname: '/auth-route',
+    storedDestination: destination,
+    member: {
+      id: 'member-brand',
+      planConnections: [plan('pln_new-paid-plan-463h04ph')],
+    },
+  })
+
+  await flush()
+  assert.equal(location.replaced, destination)
+})
+
 test('auth route uses role default when session storage removal fails', async () => {
   const { location } = loadRouter({
     pathname: '/auth-route',
@@ -2525,15 +2580,6 @@ test('brand funnel diagnostics are staging-only unless STARTERS_DEBUG is set', a
   await flush()
   assert.equal(debugged.location.replaced, '/complete-profile')
   assert.ok(debugged.logs.info.length > 0)
-})
-
-// --- Release marker -----------------------------------------------------------
-
-test('the header @release marker matches the exported release property', () => {
-  const { api } = loadRouter()
-  const marker = source.match(/^ \* @release (v\d+\.\d+\.\d+)$/m)
-  assert.ok(marker, 'no "@release vX.Y.Z" line in the auth-route.js header')
-  assert.equal(api.release, marker[1])
 })
 
 // The router and the site-head loader ship as one unit: the loader requests

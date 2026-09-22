@@ -31,7 +31,7 @@ On an approved V3 host, for a page it recognises:
 
 | Member state | Action |
 | --- | --- |
-| Logged out | Replace with `/login?next=<current path+query>`, or with the page's `LOGGED_OUT_DESTINATIONS` override where one is configured |
+| Logged out | Replace with `/login?next=<current path+query+validated Calls fragment>`, or with the page's `LOGGED_OUT_DESTINATIONS` override where one is configured |
 | Mapped member on `/dashboard` | Replace with the role-specific authored page (or Free Brand quiz home) |
 | Role allowed on this page | Stay immediately; set `html[data-route-guard="allowed"]` |
 | Role not allowed on this page | Replace with that role's own default (never the other role's page) |
@@ -42,6 +42,11 @@ On an approved V3 host, for a page it recognises:
 Role defaults (identical to `auth-route.js`): Talent → `/starter-dashboard`,
 Brand paid → `/brand-dashboard`, Brand free → `/quiz` (or `/quiz-results` once
 the quiz is completed — see brand-free routing below).
+
+For `/brand-dashboard` and `/starter-dashboard`, the logged-out redirect keeps
+`#calls` or `#calls-section` only when the full notification locator is valid
+for the current host environment. It strips arbitrary, malformed, and
+cross-environment fragments before storing `next`.
 
 `/dashboard` is deliberately a thin router page. It must contain only a neutral
 loading/error surface, never copies of the Starter or Brand dashboard bodies.
@@ -560,7 +565,7 @@ curl -fsS "https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/r
 ```
 
 ```js
-window.StartersV3RouteGuard.release // -> 'v1.59.441'
+window.StartersV3RouteGuard.release // -> 'v1.59.610'
 window.StartersV3AuthRouter.release
 window.StartersBuildProfileRedirect.release
 window.StartersCompleteProfileRedirect.release

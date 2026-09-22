@@ -1,7 +1,7 @@
 /**
  * Minimal V3 authentication-page runtime loader.
  *
- * @release v1.59.507
+ * @release v1.59.610
  *
  * Install once in the V3 site Head Code after Memberstack, the shared
  * `window.memberReady` initializer, the unconditional sitewide
@@ -203,7 +203,7 @@
   }
 
   var api = {
-    release: 'v1.59.507',
+    release: 'v1.59.610',
     authPaths: Array.from(AUTH_PATHS),
     isApprovedHost: isApprovedHost,
     isAuthPath: isAuthPath,

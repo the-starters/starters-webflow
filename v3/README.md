@@ -143,9 +143,11 @@ gate. The versioned
 documents route access plus the separate Webflow, content, and Xano enforcement
 layers.
 
-The V3 opportunity and Messages guards send logged-out visitors to
-`/login?next=<encoded current path and query>` so the router can restore an
-allowed destination after login.
+The V3 protected-route guard sends logged-out visitors to
+`/login?next=<encoded current path and query>`. For an exact Calls notification
+locator on either dashboard, it also preserves `#calls` or `#calls-section`
+through login. Other fragments are removed, and the router restores only a
+role-allowed same-origin destination.
 
 Talent logins additionally fork on funnel position, read from Xano
 `starters_onboarding/get_build_profile_status`: `build_profile_done` false goes to
