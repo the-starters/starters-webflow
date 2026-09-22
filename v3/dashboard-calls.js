@@ -37,7 +37,12 @@
     'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/'
   const CONFIRM_ATTEMPT_STORAGE_PREFIX = 'starters:dashboard-confirm:v1:'
   const MEMBERSTACK_TIMEOUT_MS = 10000
-  const MEMBER_RETRY_ATTEMPTS = 2
+  // A post-login navigation can expose the Memberstack client before its
+  // authenticated member has hydrated. Keep the dashboard in its loading
+  // state for one bounded readiness window instead of permanently rendering
+  // zero calls after the old 600 ms retry budget.
+  const MEMBER_RETRY_DELAYS_MS = [200, 400]
+  const INITIAL_MEMBER_RETRY_DELAYS_MS = [200, 400, 800, 1200, 1600, 2000, 2000]
   const REQUEST_EXPIRATION_TICK_MS = 10000
   const REQUEST_EXPIRATION_POLL_MS = 30000
   const REQUEST_EXPIRATION_MAX_POLLS = 3
@@ -2526,14 +2531,16 @@
       // refreshes the session. Retry before replacing a successful mutation
       // state with an auth failure. A genuinely missing session still fails
       // closed after the bounded retries.
-      for (
-        let attempt = 0;
-        attempt < MEMBER_RETRY_ATTEMPTS && (!current || !(current.data || current).id);
-        attempt += 1
-      ) {
+      const retryDelays = useSharedMember
+        ? INITIAL_MEMBER_RETRY_DELAYS_MS
+        : MEMBER_RETRY_DELAYS_MS
+      for (const delayMs of retryDelays) {
+        if (current && (current.data || current).id) break
+        if (generation !== currentGeneration()) return
         await new Promise(function (resolve) {
-          global.setTimeout(resolve, 200 * (attempt + 1))
+          global.setTimeout(resolve, delayMs)
         })
+        if (generation !== currentGeneration()) return
         current = await memberstack.getCurrentMember()
       }
       if (generation !== currentGeneration()) return
@@ -2625,17 +2632,15 @@
       return sessionGeneration
     }
     wireBrandProfileRepaint(memberstack, currentGeneration)
-    let restartCount = 0
+    let initialReadinessPending = true
     const restart = function (options) {
       sessionGeneration += 1
-      const useSharedMember = restartCount === 0
-      restartCount += 1
+      const generation = sessionGeneration
+      const useSharedMember = initialReadinessPending
       const preserveExisting = Boolean(options && options.preserveExisting)
       if (!preserveExisting) resetIdentityState(refs, role)
       const onCanonicalRows = deepLinkPending
         ? function (rows, memberId) {
-            deepLinkPending = false
-            const generation = sessionGeneration
             focusCanonicalDeepLinkWhenReady(
               deepLinkLocator,
               rows,
@@ -2644,20 +2649,31 @@
               Date.now(),
               generation,
               currentGeneration,
-            ).catch(function (error) {
-              console.error('[dashboard-calls] deep link focus failed:', error && error.message)
-            })
+            )
+              .then(function (result) {
+                if (result && result.reason !== 'session_changed') {
+                  deepLinkPending = false
+                }
+              })
+              .catch(function (error) {
+                console.error('[dashboard-calls] deep link focus failed:', error && error.message)
+              })
           }
         : null
       return refreshSession(
         memberstack,
         refs,
         role,
-        sessionGeneration,
+        generation,
         currentGeneration,
         useSharedMember,
         { preserveExisting, onCanonicalRows },
-      )
+      ).then(function (refreshed) {
+        if (refreshed === true && generation === currentGeneration()) {
+          initialReadinessPending = false
+        }
+        return refreshed
+      })
     }
     const refreshAfterMutation = function () {
       return restart({ preserveExisting: true })

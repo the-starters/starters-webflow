@@ -107,9 +107,15 @@ function loadGuard(options = {}) {
     location,
     localStorage,
     setInterval,
-    setTimeout,
+    setTimeout: options.setTimeout || setTimeout,
     clearInterval,
     clearTimeout,
+  }
+  if (Object.prototype.hasOwnProperty.call(options, 'memberReady')) {
+    window.memberReady = options.memberReady
+  }
+  if (options.postLoginNavigation === true) {
+    window.__startersV3PostLoginNavigation = true
   }
   // `noStorage` leaves window.sessionStorage undefined, which is the shape an
   // embedded/partitioned context can present. Every other call gets the double,
@@ -519,6 +525,30 @@ test('lets an allowed member stay and marks the page resolved', async () => {
   assert.ok(events.some((e) => e.name === 'starters:v3-route-guard-allowed'))
 })
 
+test('call dashboard guard waits for post-login member hydration', async () => {
+  const delays = []
+  let reads = 0
+  const { location, attributes } = loadGuard({
+    pathname: '/starter-dashboard',
+    memberReady: Promise.resolve({}),
+    postLoginNavigation: true,
+    getCurrentMember: async () => ({
+      data: ++reads < 4 ? null : TALENT,
+    }),
+    setTimeout(callback, delay) {
+      delays.push(delay)
+      callback()
+      return 1
+    },
+  })
+
+  await flush()
+  assert.equal(location.replaced, undefined)
+  assert.equal(attributes['data-route-guard'], 'allowed')
+  assert.equal(reads, 4)
+  assert.deepEqual(delays, [200, 400, 800])
+})
+
 test('shared opportunities waits for a higher allowed plan to hydrate before redirecting', async () => {
   const snapshots = [
     BRAND_FREE,
@@ -699,7 +729,11 @@ test('a logged-out Calls notification keeps its validated fragment through login
     pathname: '/brand-dashboard',
     search,
     hash: '#calls',
+    memberReady: Promise.resolve({}),
     member: null,
+    setTimeout() {
+      throw new Error('signed-out dashboard must not enter readiness retries')
+    },
   })
   await flush()
   assert.equal(location.replaced, '/login?next=' + encodeURIComponent(expectedNext))

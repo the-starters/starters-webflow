@@ -56,6 +56,7 @@
   ])
   var LOGIN_PATH = '/login'
   var MEMBERSTACK_TIMEOUT_MS = 10000
+  var INITIAL_MEMBER_RETRY_DELAYS_MS = [200, 400, 800, 1200, 1600, 2000, 2000]
   var LOG_PREFIX = '[v3-route-guard]'
   var SHARED_OPPORTUNITIES_ROLE_TIMEOUT_MS = 2000
   var SHARED_OPPORTUNITIES_ROLE_POLL_MS = 100
@@ -836,12 +837,38 @@
   }
 
   async function initialMemberSnapshot(memberstack) {
+    var postLoginNavigation =
+      window.__startersV3PostLoginNavigation === true
+    try {
+      delete window.__startersV3PostLoginNavigation
+    } catch (error) {
+      window.__startersV3PostLoginNavigation = false
+    }
+    var sharedSnapshotWasEmpty = false
     if (window.memberReady && typeof window.memberReady.then === 'function') {
       var member = await window.memberReady
       if (member && member.id) return member
+      sharedSnapshotWasEmpty = true
     }
     var response = await memberstack.getCurrentMember()
-    return response && response.data
+    member = response && response.data
+    if (
+      !sharedSnapshotWasEmpty ||
+      !postLoginNavigation ||
+      (window.location.pathname !== '/brand-dashboard' &&
+        window.location.pathname !== '/starter-dashboard')
+    ) {
+      return member
+    }
+    for (var i = 0; i < INITIAL_MEMBER_RETRY_DELAYS_MS.length; i++) {
+      if (member && member.id) break
+      await new Promise(function (resolve) {
+        window.setTimeout(resolve, INITIAL_MEMBER_RETRY_DELAYS_MS[i])
+      })
+      response = await memberstack.getCurrentMember()
+      member = response && response.data
+    }
+    return member
   }
 
   function showGuardError(code) {

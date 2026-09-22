@@ -202,6 +202,8 @@
     } catch (error) {}
   }
 
+  var startedAt = approvedHost ? consumeNavigationTiming(pathname) : null
+  if (startedAt !== null) window.__startersV3PostLoginNavigation = true
   var api = {
     release: 'v1.59.610',
     authPaths: Array.from(AUTH_PATHS),
@@ -228,7 +230,6 @@
     installAuthRouter(pathname)
   }
 
-  var startedAt = consumeNavigationTiming(pathname)
   if (startedAt !== null) {
     if (document.readyState === 'complete') {
       emitNavigationTiming(startedAt)
