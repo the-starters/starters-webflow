@@ -59,13 +59,14 @@
         check.dispatchEvent(new Event('click'))
       })
     }
-    // Class rules beat [hidden]; write display too, and revert it if a class still hides the control.
-    const showCheck = visible => {
-      check.hidden = !visible
-      check.style.display = visible ? '' : 'none'
-      if (visible && window.getComputedStyle?.(check)?.display === 'none') check.style.display = 'revert'
+    // Class rules beat [hidden]; write display too, and revert it if a class still hides the node.
+    const show = (node, visible) => {
+      if (!node) return
+      node.hidden = !visible
+      node.style.display = visible ? '' : 'none'
+      if (visible && window.getComputedStyle?.(node)?.display === 'none') node.style.display = 'revert'
     }
-    showCheck(false)
+    show(check, false)
     const original = section.querySelector(ROW)
     const template = original?.cloneNode(true)
     const parent = original?.parentElement
@@ -88,6 +89,19 @@
       save.setAttribute('disabled', '')
       return
     }
+    // Opening and collapsing a row is the site's accordion behavior, so it comes from the
+    // shared script rather than a second copy living here. Its absence is reported the same
+    // way as missing row markup instead of quietly falling back to a private implementation.
+    if (typeof window.StarterAccordions?.group !== 'function') {
+      console.warn('[unified-companies] missing accordions.js: window.StarterAccordions.group is not a function')
+      status.textContent = 'This section could not load. Reload the page before editing.'
+      save.setAttribute('disabled', '')
+      return
+    }
+    // One Work Experience entry is open at a time. The rows own their own click handling,
+    // because opening depends on save and removal state the accordion cannot see, so the
+    // shared group is asked not to bind a competing handler on the same control.
+    const accordion = window.StarterAccordions.group({ closePrevious: true, bindControl: false })
     let records = []
     let baseline = []
     let active = null
@@ -103,21 +117,15 @@
     anchor.hidden = true
     anchor.style.display = 'none'
     parent.insertBefore(anchor, original)
-    const show = (node, visible) => {
-      if (!node) return
-      node.hidden = !visible
-      node.style.display = visible ? '' : 'none'
-      if (visible && window.getComputedStyle?.(node)?.display === 'none') node.style.display = 'revert'
-    }
     function refreshRows() {
       for (const record of records) {
-        const saved = record.saved
+        const saved = confirmedRow(record)
         const label = saved && [saved.company_name, saved.job_title].filter(Boolean).join(' · ')
         const summary = record.row.querySelector('[profile-items-summary]')
         if (summary) summary.textContent = label ? 'Work Experience (' + label + ')' : 'Work Experience'
         const changed = record.removed || (saved ? !unchanged(saved, values(record)) : present(record))
         show(record.badge, changed)
-        const disabled = remaining().length <= 1
+        const disabled = !removable(record)
         if (record.remove) {
           record.remove.setAttribute('aria-disabled', String(disabled))
           if (record.removeControl) {
@@ -153,6 +161,14 @@
     const remaining = () => records.filter(record => !record.removed)
     const present = record => !!record.id || names.some(key => key === 'current_work'
       ? input(record.row, key)?.checked : String(input(record.row, key)?.value || '').trim())
+    // The baseline is the one record of what the server confirmed, so the heading and the row
+    // status read it rather than a second per-row copy that Save would not agree with.
+    const confirmedRow = record => record.id
+      ? baseline.find(item => String(item.id) === String(record.id)) || null : null
+    // Never leave the section with no row at all, and never let a blank added row make the last
+    // filled entry removable: Save deletes a removed saved row whether or not a blank one exists.
+    const removable = record => remaining().length > 1
+      && (!present(record) || remaining().filter(present).length > 1)
     const copy = value => JSON.parse(JSON.stringify(value))
     // A current role stores 'Present' as its end date and also carries the flag. A row that
     // carries one and not the other is describing the same state, not a different one.
@@ -183,9 +199,9 @@
     }
     function setOpen(record, open) {
       const content = record.row.querySelector('[profile-item-content]')
-      const toggle = record.row.querySelector('[profile-item-toggle]')
-      if (content) { show(content, open); content.inert = !open; content.style.height = open ? 'auto' : '0px' }
-      toggle?.setAttribute('aria-expanded', String(open))
+      if (open) record.accordion?.open()
+      else record.accordion?.close()
+      if (content) content.inert = !open
       refreshRows()
       if (open) active = record
     }
@@ -202,6 +218,7 @@
     }
     function removeRecord(record) {
       record.row.querySelector('[profile-company-field="company_name"]')?._starterCompanySearch?.destroy()
+      record.accordion?.release()
       record.row.remove()
       records = records.filter(item => item !== record)
       refreshRows()
@@ -209,7 +226,7 @@
     function addRow(value = {}, focus = false) {
       const row = template.cloneNode(true)
       Array.from(row.querySelectorAll('[profile-company-search-results]')).forEach(node => node.remove())
-      const record = { row, id: value.id || null, removed: false, dates: {}, saved: value.id ? copy(value) : null }
+      const record = { row, id: value.id || null, removed: false, dates: {} }
       row.setAttribute('data-profile-row-id', 'company-' + ++uid)
       const ids = new Map()
       Array.from(row.querySelectorAll('[id]')).forEach(node => {
@@ -250,10 +267,11 @@
       const toggle = row.querySelector('[profile-item-toggle]')
       toggle?.setAttribute('role', 'button')
       toggle?.setAttribute('tabindex', '0')
+      record.accordion = accordion.register(row, toggle, row.querySelector('[profile-item-content]'))
       const toggleRow = event => {
         if (event.target.closest?.('[profile-item-remove], [profile-items-undo]')) return
         event.preventDefault()
-        if (!saving && !record.removed) setOpen(record, toggle.getAttribute('aria-expanded') !== 'true')
+        if (!saving && !record.removed) setOpen(record, !record.accordion?.isOpen())
       }
       toggle?.addEventListener('click', toggleRow)
       toggle?.addEventListener('keydown', event => {
@@ -261,18 +279,20 @@
       })
       if (toggle) toggle.hidden = false
       const summary = row.querySelector('[profile-items-summary]')
-      const badge = row.querySelector('[profile-items-unsaved]') || document.createElement('span')
+      const badge = document.createElement('span')
       badge.setAttribute('profile-items-unsaved', '')
       badge.textContent = 'Unsaved'
       badge.style.marginLeft = '0.5em'
-      if (!badge.parentElement) {
-        const host = summary?.parentElement || toggle || row
-        const siblings = Array.from(host.children)
-        host.insertBefore(badge, summary ? siblings[siblings.indexOf(summary) + 1] || null : null)
-      }
+      const host = summary?.parentElement || toggle || row
+      const siblings = Array.from(host.children)
+      host.insertBefore(badge, summary ? siblings[siblings.indexOf(summary) + 1] || null : null)
       record.badge = badge
       const remove = row.querySelector('[profile-item-remove]')
-      const removeWrap = remove?.querySelector('[data-button-theme]') || remove?.closest('[data-button-theme]') || remove
+      // `closest` leaves the row when nothing inside it is themed, and shared page chrome is
+      // not this row's button, so an ancestor outside the row is not accepted.
+      const themed = remove?.closest('[data-button-theme]')
+      const removeWrap = remove?.querySelector('[data-button-theme]')
+        || (themed && row.contains(themed) ? themed : null) || remove
       const removeShell = remove?.contains(removeWrap) ? remove : removeWrap
       const removeControl = remove?.matches('button, input, a') ? remove : remove?.querySelector('button, input, a')
       Object.assign(record, { remove, removeWrap, removeControl,
@@ -289,7 +309,7 @@
       if (!undo.parentElement) (removeShell?.parentElement || toggle || row).appendChild(undo)
       remove?.addEventListener('click', event => {
         event.preventDefault()
-        if (saving || record.removed || remaining().length <= 1) return
+        if (saving || record.removed || !removable(record)) return
         record.removed = true
         setOpen(record, false)
         show(removeShell, false); show(undo, true)
@@ -489,7 +509,6 @@
         baseline = baseline.filter(item => String(item.id) !== String(operation.id || '') && String(item.id) !== String(operation.replaceId || ''))
         baseline.push(copy(confirmed))
         operation.record.id = confirmed.id
-        operation.record.saved = copy({ ...operation.value, ...confirmed })
         if (operation.replaceId) records.filter(item => String(item.id) === String(operation.replaceId)).forEach(removeRecord)
       }
       refreshRows()
@@ -504,12 +523,12 @@
         if (confirmed === NOT_LANDED) {
           // A lag behind a received answer is not proof; only a lost response can be settled here.
           if (!unknown.lost) throw new Error('Save not confirmed')
-          unknown = null; showCheck(false)
+          unknown = null; show(check, false)
           status.textContent = NOT_LANDED_MESSAGE
           return
         }
         if (!confirmed) throw new Error('Save not confirmed')
-        confirm(unknown, confirmed); unknown = null; showCheck(false)
+        confirm(unknown, confirmed); unknown = null; show(check, false)
         status.textContent = 'That change is confirmed. Save the section to finish the remaining draft changes.'
       } catch (_) { status.textContent = 'The save is still unconfirmed. Your draft is kept; Save remains paused.' }
       finally { check.disabled = false; check.removeAttribute('aria-disabled') }
@@ -602,7 +621,7 @@
           restore(); updateCleanState(); status.textContent = 'Changes saved.'
         }
       } catch (error) {
-        showCheck(!!unknown)
+        show(check, !!unknown)
         if (error?.known) {
           // The server refused this change, so Save and Discard stay available for the draft.
           status.textContent = error.serverMessage || 'The server rejected this change. Check the entry and try again.'

@@ -14,7 +14,8 @@ async function mount({ companies = [], fail = null, minimum = true, withRow = tr
   required = ['company_name', 'job_title'], xanoRequired = [], hydrate = true, initialOther = '{}',
   liveAssociationReader = false, associationReadStatus = 200, claim = true, normalize = null,
   answer = null, picker = true, stale = null, strayXanoRequired = false, authored = false,
-  authoredInRow = false, componentMarkup = false, outerActionMarker = false, authoredCheckDiv = false, authoredDuplicate = false } = {}) {
+  authoredInRow = false, componentMarkup = false, outerActionMarker = false, authoredCheckDiv = false, authoredDuplicate = false,
+  accordions = true } = {}) {
   const fields = ['company_name', 'job_title', 'start_date', 'end_date', 'current_work'].map(key => h('input', {
     'profile-company-field': key, name: key, id: key,
     ...(key === 'current_work' ? { type: 'checkbox' } : {}),
@@ -149,7 +150,8 @@ async function mount({ companies = [], fail = null, minimum = true, withRow = tr
     windowStub.logoSearchInit = field => { pickerCalls.legacy.push(field) }
   }
   installPicker()
-  const files = ['profile-section-validation.js', 'unified-companies.js', 'company-experience-crud.js']
+  const files = [...(accordions ? ['../../global-embeds/accordions/accordions.js'] : []),
+    'profile-section-validation.js', 'unified-companies.js', 'company-experience-crud.js']
   if (liveAssociationReader) files.unshift('company-autocomplete.js')
   for (const file of files) {
     vm.runInContext(fs.readFileSync(__dirname + '/' + file, 'utf8'), context, { filename: file })
@@ -191,6 +193,8 @@ async function mount({ companies = [], fail = null, minimum = true, withRow = tr
     other, hydrateOther, failOther, editOther, pickerCalls, stray, authoredStatus, authoredCheck, rowStatus,
     duplicateStatus,
     otherRequests: () => requests.filter(item => String(item.url).includes('set_also_worked_with')),
+    // The shared accordion shows and hides a panel with `display`, so "expanded" is read from it.
+    expanded: (index = 0) => section.querySelectorAll('[profile-item-row]')[index].querySelector('[profile-item-content]').style.display !== 'none',
     errors: () => section.querySelectorAll('[profile-validation-error]').map(node => node.textContent),
     checkSave: () => section.querySelector('[profile-items-check-save]'),
     mutations: () => requests.filter(item => item.method !== 'GET'),
@@ -221,7 +225,9 @@ test('Work Experience Add validates, collapses, and focuses one new row without 
   assert.equal(page.field('job_title').getAttribute('aria-invalid'), 'true')
   page.type('job_title', 'Designer'); page.click(page.add)
   assert.equal(page.section.querySelectorAll('[profile-item-row]').length, 2)
-  assert.equal(page.section.querySelector('[profile-item-content]').hidden, true)
+  assert.equal(page.expanded(0), false)
+  assert.equal(page.expanded(1), true)
+  assert.equal(page.section.querySelector('[profile-item-toggle]').getAttribute('aria-expanded'), 'false')
   assert.equal(page.field('company_name', 1).focusCalls.length, 1)
   assert.equal(page.mutations().length, 0)
   page.company('Beta', 1); page.type('job_title', 'Engineer', 1)
@@ -256,7 +262,7 @@ test('retained company rows participate when cleared and Remove, Undo, Discard r
   page.type('company_name', '')
   await page.submit()
   assert.equal(page.mutations().length, 0)
-  assert.equal(page.section.querySelector('[profile-item-content]').hidden, false)
+  assert.equal(page.expanded(0), true)
   page.click(page.discard)
   assert.equal(page.field('company_name').value, 'Acme')
   page.click(page.section.querySelector('[profile-item-remove]'))
@@ -595,15 +601,17 @@ test('a section missing its row template or Save control reports the gap and dis
 test('the presence message opens the blank remaining row rather than the removed one', async () => {
   const page = await mount({ companies: [{ id: 1, company_name: 'Acme', company_source: 'custom', job_title: 'Designer' }] })
   page.click(page.add)
+  page.company('Beta', 1); page.type('job_title', 'Engineer', 1)
   page.click(page.section.querySelector('[profile-item-remove]'))
   const rows = page.section.querySelectorAll('[profile-item-row]')
   assert.equal(rows.length, 2)
+  page.type('company_name', '', 1); page.type('job_title', '', 1)
   await page.submit()
   assert.equal(page.mutations().length, 0)
   assert.equal(page.status(), 'Add at least one work experience entry.')
-  assert.equal(rows[0].querySelector('[profile-item-content]').hidden, true)
+  assert.equal(page.expanded(0), false)
   assert.equal(rows[0].querySelector('[profile-items-undo]').hidden, false)
-  assert.equal(rows[1].querySelector('[profile-item-content]').hidden, false)
+  assert.equal(page.expanded(1), true)
   assert.ok(page.field('company_name', 1).focusCalls.length >= 1)
 })
 
@@ -1070,7 +1078,13 @@ test('last company Remove uses disabled theme and Undo replaces the removal acti
   assert.equal(theme.getAttribute('data-button-theme'), 'disabled')
   page.click(remove)
   assert.equal(first.querySelector('[profile-items-undo]').hidden, true)
+  // A blank added row is not a second entry, so the only filled one stays unremovable.
   page.click(page.add)
+  assert.equal(remove.disabled, true)
+  assert.equal(theme.getAttribute('data-button-theme'), 'disabled')
+  page.click(remove)
+  assert.equal(first.querySelector('[profile-items-undo]').hidden, true)
+  page.company('Beta', 1); page.type('job_title', 'Engineer', 1)
   assert.equal(remove.disabled, false)
   assert.equal(theme.getAttribute('data-button-theme'), 'danger')
   page.click(remove)
@@ -1080,8 +1094,8 @@ test('last company Remove uses disabled theme and Undo replaces the removal acti
   assert.ok(first.querySelector('[profile-item-actions]').contains(undo))
   assert.equal(undo.hidden, false)
   page.click(undo)
-  assert.equal(first.querySelector('[profile-item-content]').hidden, false)
-  assert.equal(remove.disabled, true)
+  assert.equal(page.expanded(0), true)
+  assert.equal(remove.disabled, false)
   assert.notEqual(theme.style.display, 'none')
   assert.equal(page.mutations().length, 0)
 })
@@ -1105,6 +1119,95 @@ test('company heading keeps its saved identity and its row status follows edits 
   await page.submit()
   assert.equal(summary(), 'Work Experience (Acme · Engineer)')
   assert.equal(badge().hidden, true)
+})
+
+test('one Work Experience entry is open at a time, through the shared accordion group', async () => {
+  const page = await mount({ componentMarkup: true, companies: [
+    { id: 1, company_name: 'Acme', company_source: 'custom', job_title: 'Designer' },
+    { id: 2, company_name: 'Beta', company_source: 'custom', job_title: 'Engineer' }] })
+  const toggles = page.section.querySelectorAll('[profile-item-toggle]')
+  assert.equal(page.expanded(0), false)
+  assert.equal(page.expanded(1), false)
+  page.click(toggles[0])
+  assert.equal(page.expanded(0), true)
+  assert.equal(toggles[0].getAttribute('aria-expanded'), 'true')
+  assert.equal(page.section.querySelectorAll('[profile-item-row]')[0].classList.contains('is-active'), true)
+  // Opening another entry closes the one that was open rather than stacking two open panels.
+  page.click(toggles[1])
+  assert.equal(page.expanded(0), false)
+  assert.equal(page.expanded(1), true)
+  assert.equal(toggles[0].getAttribute('aria-expanded'), 'false')
+  // The same rule holds for the keyboard activation the rows add to a non-button toggle.
+  toggles[0].dispatchEvent(makeEvent('keydown', toggles[0], { key: 'Enter', bubbles: true }))
+  assert.equal(page.expanded(0), true)
+  assert.equal(page.expanded(1), false)
+  // A row added after initialization joins the same group.
+  page.click(page.add)
+  assert.equal(page.expanded(0), false)
+  assert.equal(page.expanded(1), false)
+  assert.equal(page.expanded(2), true)
+  // A removed row collapses, and the entry it leaves behind still opens.
+  page.click(page.section.querySelectorAll('[profile-item-row]')[2].querySelector('[profile-item-remove]'))
+  assert.equal(page.expanded(2), false)
+  page.click(toggles[1])
+  assert.equal(page.expanded(1), true)
+  // Discard rebuilds the rows, and the rebuilt ones are collapsed and still exclusive.
+  page.click(page.discard)
+  assert.equal(page.section.querySelectorAll('[profile-item-row]').length, 2)
+  assert.equal(page.expanded(0), false)
+  assert.equal(page.expanded(1), false)
+  const rebuilt = page.section.querySelectorAll('[profile-item-toggle]')
+  page.click(rebuilt[0]); page.click(rebuilt[1])
+  assert.equal(page.expanded(0), false)
+  assert.equal(page.expanded(1), true)
+  assert.equal(page.mutations().length, 0)
+})
+
+test('Work Experience halts when the shared accordion script is missing', async () => {
+  const page = await mount({ accordions: false })
+  assert.equal(page.status(), 'This section could not load. Reload the page before editing.')
+  assert.equal(page.save.getAttribute('disabled'), '')
+  assert.ok(page.warnings.some(args => args[0] === '[unified-companies] missing accordions.js: window.StarterAccordions.group is not a function'))
+  assert.equal(page.requests.length, 0)
+})
+
+test('a company row reports the pending change its next Save would send', async () => {
+  // The first write is lost and the canonical read confirms it from a row Xano stores without
+  // the job title. The second write is refused, so the draft is kept rather than rebuilt: the
+  // row status and Save must still agree about what is left to write.
+  const page = await mount({ componentMarkup: true,
+    companies: [
+      { id: 1, company_name: 'Acme', company_source: 'custom', job_title: 'Designer' },
+      { id: 2, company_name: 'Beta', company_source: 'custom', job_title: 'Engineer' }],
+    fail: (request, { stored, setStored }) => {
+      if (request.method !== 'PATCH') return null
+      if (!String(request.url).endsWith('/1')) return { status: 422, body: { message: 'Rejected' } }
+      // The write lands, but the row Xano stores carries no job title column of its own.
+      setStored(stored.map(item => {
+        if (Number(item.id) !== 1) return item
+        const { job_title, ...rest } = { ...item, ...request.body }
+        return rest
+      }))
+      return 'lose'
+    } })
+  page.type('job_title', 'Lead'); page.type('job_title', 'Principal', 1)
+  await page.submit()
+  const rows = page.section.querySelectorAll('[profile-item-row]')
+  assert.equal(rows[0].querySelector('[profile-items-unsaved]').hidden, false)
+  const before = page.mutations().length
+  await page.submit()
+  assert.ok(page.mutations().length > before, 'Save still has the change the row status reports')
+})
+
+test('adding a blank row never lets Save delete the last saved entry', async () => {
+  const page = await mount({ minimum: false,
+    companies: [{ id: 1, company_name: 'Acme', company_source: 'custom', job_title: 'Designer' }] })
+  page.click(page.add)
+  assert.equal(page.section.querySelectorAll('[profile-item-row]').length, 2)
+  page.click(page.section.querySelector('[profile-item-remove]'))
+  await page.submit()
+  assert.deepEqual(page.mutations().map(item => item.method), [])
+  assert.equal(page.field('company_name').value, 'Acme')
 })
 
 test('a partial company save clears only the confirmed row badge', async () => {
@@ -1157,7 +1260,7 @@ test('page-local action markers wrap themed components without making Undo remov
   page.click(undo)
   assert.equal(undo.hidden, true)
   assert.notEqual(remove.style.display, 'none')
-  assert.equal(row.querySelector('[profile-item-content]').hidden, false)
+  assert.equal(page.expanded(0), true)
   assert.equal(row.querySelector('[profile-items-unsaved]').hidden, true)
   assert.equal(control.disabled, false)
   assert.equal(remove.querySelector('[data-button-theme]').getAttribute('data-button-theme'), 'danger')

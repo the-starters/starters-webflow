@@ -1,4 +1,5 @@
 // node v3/browser-tests/work-experience-annotations.browser.cjs
+// Optional: CHROME_BIN and WORK_EXPERIENCE_BROWSER_EVIDENCE (screenshots/observations).
 // Isolated Chrome, local fixture, in-memory writer; no member session or live writes.
 const assert = require('node:assert/strict')
 const fs = require('node:fs/promises')
@@ -8,9 +9,9 @@ const { spawn } = require('node:child_process')
 const root = path.resolve(__dirname, '../..')
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
 ;(async () => {
-  const evidence = process.env.WORK_EXPERIENCE_BROWSER_EVIDENCE || '/private/tmp/work-experience-annotations/browser'
-  await fs.mkdir(evidence, { recursive: true })
-  const profile = await fs.mkdtemp('/private/tmp/work-experience-chrome-')
+  const profile = await fs.mkdtemp(path.join(root, '.work-experience-browser-'))
+  const evidence = process.env.WORK_EXPERIENCE_BROWSER_EVIDENCE
+  if (evidence) await fs.mkdir(evidence, { recursive: true })
   const server = http.createServer(async (req, res) => {
     const file = path.resolve(root, '.' + new URL(req.url, 'http://local').pathname)
     if (!file.startsWith(root + path.sep)) { res.writeHead(403).end(); return }
@@ -54,6 +55,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
       return result.result.value
     }
     const shot = async label => {
+      if (!evidence) return
       const result = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true })
       await fs.writeFile(path.join(evidence, label + '.png'), Buffer.from(result.data, 'base64'))
     }
@@ -106,8 +108,16 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
       assert.equal(view.stored[0].current_work, true); assert.equal(view.rows[0].badge, false)
       await click('[profile-items-add] button')
       view = await state(); assert.equal(view.rows.length, 2); assert.equal(view.addLast, true)
-      assert.ok(view.rows.every(row => !row.disabled)); assert.equal(view.rows[0].theme, 'danger')
+      // A blank added row is not a second entry, so the only filled one stays unremovable.
+      assert.equal(view.rows[0].disabled, true); assert.equal(view.rows[0].theme, 'disabled')
       await type('company_name', 'Second Company', 1); await type('job_title', 'CMO', 1)
+      view = await state()
+      assert.ok(view.rows.every(row => !row.disabled)); assert.equal(view.rows[0].theme, 'danger')
+      // The shared accordion keeps one entry open: opening a row closes the one that was open.
+      await click('[profile-item-toggle]')
+      view = await state(); assert.equal(view.rows[0].content, true); assert.equal(view.rows[1].content, false)
+      await click('[profile-item-row] ~ [profile-item-row] [profile-item-toggle]')
+      view = await state(); assert.equal(view.rows[0].content, false); assert.equal(view.rows[1].content, true)
       await shot(device + '-two-rows')
       await click('[profile-item-remove] button')
       view = await state(); assert.equal(view.rows[0].remove, false); assert.equal(view.rows[0].undo, true)
@@ -129,11 +139,11 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
       view = await state(); assert.equal(view.rows[0].heading, 'Work Experience (Example Company · Saved title)')
       assert.equal(view.rows[0].badge, false)
       await shot(device + '-saved')
-      observations.push({device,checks:'hydration, Add order, disabled theme, dates/current-role payload, saved heading, row status/revert, Remove/Undo placement and visibility, Discard without save',view})
+      observations.push({device,checks:'hydration, Add order, disabled theme with a blank added row, one-open accordion, dates/current-role payload, saved heading, row status/revert, Remove/Undo placement and visibility, Discard without save',view})
     }
     assert.deepEqual(errors, [])
-    await fs.writeFile(path.join(evidence, 'observations.json'), JSON.stringify({ boundary: 'Isolated local Chrome fixture; in-memory writer; no authenticated-page or real persistence proof', observations }, null, 2))
-    console.log('Desktop and mobile Work Experience component checks passed; evidence: ' + evidence)
+    if (evidence) await fs.writeFile(path.join(evidence, 'observations.json'), JSON.stringify({ boundary: 'Isolated local Chrome fixture; in-memory writer; no authenticated-page or real persistence proof', observations }, null, 2))
+    console.log('Desktop and mobile Work Experience component checks passed' + (evidence ? '; evidence: ' + evidence : ''))
   } finally {
     socket?.close()
     const closed = new Promise(resolve => chrome.once('exit', resolve)); chrome.kill(); await closed

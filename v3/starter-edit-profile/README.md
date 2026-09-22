@@ -342,6 +342,12 @@ marker first breaks the page two ways:
 - `company-autocomplete.js` before `unified-companies.js` and `company-experience-crud.js`. It
   publishes `window.StarterEditLogoSearchInit`, which Work Experience treats as a hard
   prerequisite: a section that binds without it registers the halted state above.
+- [`global-embeds/accordions/accordions.js`](../../global-embeds/accordions/accordions.js)
+  before `unified-companies.js`. It publishes `window.StarterAccordions`, which Work
+  Experience opens and collapses its rows through; a section that binds without it registers
+  the same halted state rather than running a private copy of that behavior. This page must
+  load the shared accordion file even though its own markup carries no `data-accordion`
+  wrapper: Work Experience registers each row with the script directly.
 - `unified-companies.js` before `company-experience-crud.js`.
 - `unified-highlights.js` before `portfolio-crud.js`.
 - `scheduling-bridge.js` before `free-call-settings.js` and `paid-call-settings.js`, all three
@@ -379,9 +385,11 @@ These must exist in Webflow:
 | `profile-items-presence` | Section | Optional; gates Save only when it carries `required` |
 | `profile-items-media="images\|videos"` | Row | Highlights only |
 | `profile-items-summary` | Row | Authored for companies and highlights; created by the script for services |
+| `profile-items-undo` | Row | Companies only; authored so Designer owns the Button component. Created by the script for services and highlights |
 
-The scripts create `profile-items-undo`, `profile-items-removed`, and
-`profile-items-dirty`.
+The scripts create `profile-items-removed`, `profile-items-dirty`, and the
+per-row `profile-items-unsaved` status. None of those three is authored in
+Webflow; style `profile-items-unsaved` from a class-free attribute selector.
 
 `profile-items-status` and `profile-items-check-save` may be authored in Webflow
 inside the section but outside the repeating row, so Designer owns their styling.
@@ -570,12 +578,26 @@ that wrapper the native `hidden` attribute initially; the controller explicitly
 sets its display state. The component's visible label and overlay button remain
 authored together.
 
+Row open and close is the shared accordion's, not this section's: each row is registered
+with `window.StarterAccordions` as a card whose control is `profile-item-toggle` and whose
+panel is `profile-item-content`, so one Work Experience entry is open at a time and any GSAP
+the page loads animates it. The rows keep their own click and keyboard handling, because
+opening depends on save and removal state the accordion cannot see, and the group is asked
+not to bind a second handler on the same control. Hydration, Add, Discard, and Undo all go
+through that group, and a removed row is released from it. The shared contract is documented
+in the [accordions README](../../global-embeds/accordions/README.md#rows-a-script-renders).
+
 Runtime rows stay before Add. Saved headings read `Work Experience (Company · Title)`;
 the confirmed identity stays visible while edits are pending. An `Unsaved` status
-beside each heading reflects that row's draft, including removals and partial saves.
+beside each heading reflects that row's draft, including removals and partial saves. It is
+read from the same confirmed baseline the next Save compares against, so the status and Save
+never disagree about what is left to write - including after a lost response that a canonical
+read confirms from a row Xano stores without every column it was sent.
 Discard restores the confirmed headings and clears row statuses. Remove uses the
-existing disabled button theme while only one active row remains. A pending removal
-keeps its heading and replaces Remove with Undo removal in the same action position.
+existing disabled button theme while only one entry remains, counting filled entries rather
+than rows: adding a blank row never unlocks removing the last saved entry, and the section
+never ends up with no row at all. A pending removal keeps its heading and replaces Remove
+with Undo removal in the same action position.
 
 [`unified-companies.fixture.html`](unified-companies.fixture.html) exercises these
 states with themed Button wrappers and a local, in-memory writer. It does not prove
@@ -593,6 +615,11 @@ wrappers above; obsolete action markers, including the whole-footer Save marker,
 were removed. The separate Undo component is authored with its wrapper initially
 hidden. Save is labelled `Save Changes`.
 
+The rollout also needs the shared accordion file loaded on this page ahead of
+`unified-companies.js`, as the loader-order list above records. That script tag is **not yet
+authored** in the test page's Head Code; without it Work Experience halts with the
+"could not load" message rather than rendering rows. No script pin was changed here.
+
 These Designer edits remain **unpublished**. Script pins were not changed, the
 script retains its existing `v1.59.607` marker pending release, and this work does
 not release or publish the change. Deployment requires the reviewed controller
@@ -607,9 +634,11 @@ Completed local checks:
 - `node --check v3/starter-edit-profile/unified-companies.js`: passed.
 - `node v3/browser-tests/work-experience-annotations.browser.cjs`: desktop (1200px)
   and mobile (390px) Chrome checks passed, including computed action visibility,
-  disabled theme, Add ordering, native month/current-role values sent to the
+  disabled theme with a blank added row, one-entry-open accordion behavior against the
+  actual shared script, Add ordering, native month/current-role values sent to the
   in-memory writer, saved headings, row status, Remove/Undo, and Discard without
-  saving. Screenshots were inspected. This uses fixture colors and simulated
+  saving. Set `WORK_EXPERIENCE_BROWSER_EVIDENCE=<dir>` to write screenshots and
+  observations. This uses fixture colors and simulated
   persistence, not published-page styling or an authenticated account.
 
 ### Work Experience section readiness
