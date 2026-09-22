@@ -61,7 +61,6 @@
   let editProfileReady = false
   let applyingCanonicalRender = false
   let pendingBuildIntent = null
-  let memberEditRevision = 0
   // Retiring a receipt canonical already satisfies is passive: it must never
   // disable a control or reject a member action, only delay one.
   let receiptCleanup = null
@@ -571,14 +570,6 @@
     }
   }
 
-  function renderWithoutProfileDirty(canonical) {
-    const dirtyState = window.__tsProfileDirtyState
-    if (editProfileMode && dirtyState && typeof dirtyState.runHydrationSync === 'function') {
-      return dirtyState.runHydrationSync(function () { return render(canonical) })
-    }
-    return render(canonical)
-  }
-
   function show(element, visible) {
     if (!element) return
     element.hidden = !visible
@@ -727,9 +718,8 @@
     flushQueuedPrerequisiteRefresh()
   }
 
-  function startReceiptCleanup(repaint) {
+  function startReceiptCleanup() {
     const cleanup = consumePendingBuildIntent()
-      .then(repaint)
       .catch(function () {})
       .then(function () { if (receiptCleanup === cleanup) receiptCleanup = null })
     receiptCleanup = cleanup
@@ -850,9 +840,7 @@
           ? prerequisitesReady(value) || Boolean(service)
             ? 'Your Build Profile choice is ready. Select Update to save free calls.'
             : 'Your Build Profile choice is saved. Connect your calendar and set availability to turn on free calls.'
-          : service
-            ? 'Your Build Profile choice is ready. Select Update to turn off free calls.'
-            : 'Free calls are off, matching your Build Profile choice.'
+          : 'Your Build Profile choice is ready. Select Update to turn off free calls.'
         : service
         ? !contractMatches
           ? 'Update this service to the required 30-minute Free Call settings.'
@@ -916,12 +904,7 @@
       if (pending !== undefined) pendingBuildIntent = pending
       render(canonical)
       if (pending !== undefined && canonicalSatisfiesPendingIntent(canonical)) {
-        const consumeEditRevision = memberEditRevision
-        startReceiptCleanup(function () {
-          if (currentRender(version, memberId) && !busy && memberEditRevision === consumeEditRevision) {
-            renderWithoutProfileDirty(canonical)
-          }
-        })
+        startReceiptCleanup()
       }
       return canonical
     } catch (error) {
@@ -1251,12 +1234,7 @@
       if (!currentRender(version, member.id)) return null
       const rendered = render(canonical)
       if (canonicalSatisfiesPendingIntent(canonical)) {
-        const consumeEditRevision = memberEditRevision
-        startReceiptCleanup(function () {
-          if (currentRender(version, member.id) && !busy && memberEditRevision === consumeEditRevision) {
-            renderWithoutProfileDirty(canonical)
-          }
-        })
+        startReceiptCleanup()
       }
       return rendered
     } catch (error) {
@@ -1355,7 +1333,6 @@
     if (pair.enabled) {
       pair.enabled.addEventListener('change', function () {
         if (applyingCanonicalRender) return
-        memberEditRevision += 1
         if (pair.enabled.checked) explicitIntent = 'enabled'
         markEditProfileDirty()
         setRadioChecked(pair.enabled, pair.enabled.checked)
@@ -1366,7 +1343,6 @@
     if (pair.disabled) {
       pair.disabled.addEventListener('change', function () {
         if (applyingCanonicalRender) return
-        memberEditRevision += 1
         if (pair.disabled.checked) explicitIntent = 'disabled'
         markEditProfileDirty()
         setRadioChecked(pair.disabled, pair.disabled.checked)
@@ -1378,7 +1354,6 @@
     if (descriptionInput) {
       descriptionInput.addEventListener('input', function () {
         if (applyingCanonicalRender) return
-        memberEditRevision += 1
         markEditProfileDirty()
       })
     }

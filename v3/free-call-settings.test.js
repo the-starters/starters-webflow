@@ -1047,7 +1047,7 @@ test('a gated pending Free enable never blocks the Edit Profile step save', asyn
   assert.equal(result.memberJsonWrites.length, 0)
 })
 
-test('auto-consuming a satisfied Free off receipt re-renders inside the profile hydration boundary', async () => {
+test('auto-consuming a satisfied Free off receipt leaves step 6 clean without repainting it', async () => {
   let hydrationRuns = 0
   const result = load({
     editProfile: true,
@@ -1072,8 +1072,9 @@ test('auto-consuming a satisfied Free off receipt re-renders inside the profile 
 
   assert.equal(result.memberJsonWrites.length, 1)
   assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
-  assert.equal(hydrationRuns, 1)
+  assert.equal(hydrationRuns, 0, 'retiring the receipt needs no synthetic re-render to stay clean')
   assert.equal(result.window.StarterFreeCallSettings.hasChanges(), false)
+  assert.equal(result.dom.no.checked, true, 'the canonical off state the first render painted still stands')
 })
 
 const SATISFIED_FREE_RECEIPT = {
@@ -1142,6 +1143,51 @@ test('a Free refresh released by the same cleanup never invalidates the save tha
   )
   assert.equal(result.dom.save.getAttribute('aria-disabled'), 'false', 'Update is usable again')
   assert.ok(reads() > readsBefore, 'the refresh queued behind the write still runs afterwards')
+})
+
+test('a settling Free receipt cleanup never repaints its snapshot over a newer canonical render', async () => {
+  const cleanupGate = deferred()
+  let reads = 0
+  const bookable = satisfiedFreeCanonical()
+  const unbookable = canonical({
+    public_description: 'Quick intro',
+    services: [service()],
+    readiness: { calendar_connected: false, free_call_enabled: true, bookable: false },
+  })
+  const result = load({
+    memberJsonUpdateGate: cleanupGate.promise,
+    memberJSON: SATISFIED_FREE_RECEIPT,
+    initial: bookable,
+    routes: {
+      '/starter/free-call-settings/get/v3': () => {
+        reads += 1
+        return { ok: true, status: 200, json: async () => (reads === 1 ? bookable : unbookable) }
+      },
+    },
+  })
+  await settle()
+  assert.equal(result.dom.status.textContent, 'Free calls are on and bookable.')
+
+  await result.rotateAuthScope()
+  await settle()
+
+  assert.equal(
+    result.dom.status.textContent,
+    'Free calls are saved, but a prerequisite needs attention.',
+    'the same-member reconcile paints the newest canonical readiness',
+  )
+
+  cleanupGate.resolve()
+  await settle()
+
+  assert.equal(
+    result.dom.status.textContent,
+    'Free calls are saved, but a prerequisite needs attention.',
+    'the settled cleanup never reverts the card to its captured snapshot',
+  )
+  assert.equal(result.dom.root.getAttribute('data-free-call-bookable'), 'false')
+  assert.equal(result.memberJsonWrites.length, 1)
+  assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
 })
 
 test('a satisfied Free receipt announces the canonical state, never an unsaved choice', async () => {

@@ -1612,7 +1612,7 @@ test('a gated pending Paid enable never blocks the Edit Profile step save', asyn
   assert.equal(result.memberJsonWrites.length, 0)
 })
 
-test('auto-consuming a satisfied Paid off receipt re-renders inside the profile hydration boundary', async () => {
+test('auto-consuming a satisfied Paid off receipt leaves step 6 clean without repainting it', async () => {
   let hydrationRuns = 0
   const result = load({
     editProfile: true,
@@ -1637,8 +1637,9 @@ test('auto-consuming a satisfied Paid off receipt re-renders inside the profile 
 
   assert.equal(result.memberJsonWrites.length, 1)
   assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
-  assert.equal(hydrationRuns, 1)
+  assert.equal(hydrationRuns, 0, 'retiring the receipt needs no synthetic re-render to stay clean')
   assert.equal(result.window.StarterPaidCallSettings.hasChanges(), false)
+  assert.equal(result.dom.disabled.checked, true, 'the canonical off state the first render painted still stands')
 })
 
 const SATISFIED_PAID_RECEIPT = {
@@ -1714,6 +1715,51 @@ test('a Paid refresh released by the same cleanup never invalidates the save tha
   )
   assert.equal(result.dom.save.getAttribute('aria-disabled'), 'false', 'Update is usable again')
   assert.ok(reads() > readsBefore, 'the refresh queued behind the write still runs afterwards')
+})
+
+test('a settling Paid receipt cleanup never repaints its snapshot over a newer canonical render', async () => {
+  const cleanupGate = deferred()
+  let reads = 0
+  const bookable = satisfiedPaidCanonical()
+  const unbookable = canonical({
+    services: [service({ title: 'Strategy call', price_cents: 25000 })],
+    readiness: { calendar_connected: false, paid_call_enabled: true, bookable: false },
+  })
+  const result = load({
+    cardMode: true,
+    memberJsonUpdateGate: cleanupGate.promise,
+    memberJSON: SATISFIED_PAID_RECEIPT,
+    initial: bookable,
+    routes: {
+      '/starter/paid-call-settings/get/v3': () => {
+        reads += 1
+        return { ok: true, status: 200, json: async () => (reads === 1 ? bookable : unbookable) }
+      },
+    },
+  })
+  await settle()
+  assert.equal(result.dom.statusOutput.textContent, 'Paid calls are on and bookable.')
+
+  await result.rotateAuthScope()
+  await settle()
+
+  assert.equal(
+    result.dom.statusOutput.textContent,
+    'Paid calls are saved, but a prerequisite needs attention.',
+    'the same-member reconcile paints the newest canonical readiness',
+  )
+
+  cleanupGate.resolve()
+  await settle()
+
+  assert.equal(
+    result.dom.statusOutput.textContent,
+    'Paid calls are saved, but a prerequisite needs attention.',
+    'the settled cleanup never reverts the card to its captured snapshot',
+  )
+  assert.equal(result.dom.root.getAttribute('data-paid-call-bookable'), 'false')
+  assert.equal(result.memberJsonWrites.length, 1)
+  assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
 })
 
 test('a satisfied Paid receipt announces the canonical state, never an unsaved choice', async () => {

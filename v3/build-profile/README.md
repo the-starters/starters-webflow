@@ -311,13 +311,13 @@ pending-photo commit, so a Call Settings storage failure keeps the accepted
 profile save cached for the resubmit the panel asks for and leaves the pending
 photo uncommitted until an attempt gets past that write.
 
-Consuming a receipt must not invent unsaved work on Edit Profile. When an
-already-satisfied receipt is consumed with no canonical write, the delayed
-re-render runs inside `__tsProfileDirtyState.runHydrationSync`, so the synthetic radio
-change cannot create an unsaved step-6 state. Each controller also records a
-monotonic member-edit revision: if the member changes that branch's choice or
-fields while receipt cleanup is in flight, the delayed re-render is skipped and
-the unsaved member input stays visible and dirty.
+Consuming a receipt must not invent unsaved work on Edit Profile. An
+already-satisfied receipt is consumed with no canonical write and no repaint at
+all: the render that preceded it already showed the canonical values, so the
+cleanup only updates the receipt itself. Nothing synthetic touches the controls
+afterwards, so it cannot create an unsaved step-6 state, and it cannot revert a
+newer render — an auth-scope reconcile that repainted fresher canonical
+readiness in the meantime stays on screen.
 
 The whole handoff — Build Profile storing the receipt, then Dashboard and Edit
 Profile hydrating, consuming, and declining it — is exercised in Chrome against

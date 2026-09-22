@@ -68,7 +68,6 @@
   let editProfileReady = false
   let applyingCanonicalRender = false
   let pendingBuildIntent = null
-  let memberEditRevision = 0
   // Retiring a receipt canonical already satisfies is passive: it must never
   // disable a control or reject a member action, only delay one.
   let receiptCleanup = null
@@ -759,14 +758,6 @@
     }
   }
 
-  function renderWithoutProfileDirty(canonical) {
-    const dirtyState = window.__tsProfileDirtyState
-    if (editProfileMode && dirtyState && typeof dirtyState.runHydrationSync === 'function') {
-      return dirtyState.runHydrationSync(function () { return render(canonical) })
-    }
-    return render(canonical)
-  }
-
   function pillLabel(item) {
     return String(item.textContent || '')
       .replace(/\u00a0/g, ' ')
@@ -1055,9 +1046,8 @@
     flushQueuedPrerequisiteRefresh()
   }
 
-  function startReceiptCleanup(repaint) {
+  function startReceiptCleanup() {
     const cleanup = consumePendingBuildIntent()
-      .then(repaint)
       .catch(function () {})
       .then(function () { if (receiptCleanup === cleanup) receiptCleanup = null })
     receiptCleanup = cleanup
@@ -1174,9 +1164,7 @@
           ? prerequisitesReady(value) || Boolean(service)
             ? 'Your Build Profile choice is ready. Select Update to save paid calls.'
             : 'Your Build Profile choice is saved. Complete Calendar, Availability, and Stripe setup to turn on paid calls.'
-          : service
-            ? 'Your Build Profile choice is ready. Select Update to turn off paid calls.'
-            : 'Paid calls are off, matching your Build Profile choice.'
+          : 'Your Build Profile choice is ready. Select Update to turn off paid calls.'
         : service
         ? rateNeedsCorrection
           ? 'Paid calls are not bookable: update this service to a whole-dollar rate from $1 to $1,000.'
@@ -1356,12 +1344,7 @@
       if (pending !== undefined) pendingBuildIntent = pending
       render(canonical)
       if (pending !== undefined && canonicalSatisfiesPendingIntent(canonical)) {
-        const consumeEditRevision = memberEditRevision
-        startReceiptCleanup(function () {
-          if (currentRender(version, memberId) && !busy && memberEditRevision === consumeEditRevision) {
-            renderWithoutProfileDirty(canonical)
-          }
-        })
+        startReceiptCleanup()
       }
       return canonical
     } catch (error) {
@@ -1609,12 +1592,7 @@
       if (!currentRender(version, member.id)) return null
       const rendered = render(canonical)
       if (canonicalSatisfiesPendingIntent(canonical)) {
-        const consumeEditRevision = memberEditRevision
-        startReceiptCleanup(function () {
-          if (currentRender(version, member.id) && !busy && memberEditRevision === consumeEditRevision) {
-            renderWithoutProfileDirty(canonical)
-          }
-        })
+        startReceiptCleanup()
       }
       return rendered
     } catch (error) {
@@ -1734,7 +1712,6 @@
     if (enabledInput) {
       enabledInput.addEventListener('change', function () {
         if (applyingCanonicalRender) return
-        memberEditRevision += 1
         const disabledInput = disabledField()
         if (enabledInput.checked) explicitIntent = 'enabled'
         // The legacy Paid surface authors no Off control, so a member's uncheck
@@ -1756,7 +1733,6 @@
     if (disabledInput) {
       disabledInput.addEventListener('change', function () {
         if (applyingCanonicalRender) return
-        memberEditRevision += 1
         if (disabledInput.checked) explicitIntent = 'disabled'
         markEditProfileDirty()
         setRadioChecked(disabledInput, disabledInput.checked)
@@ -1770,7 +1746,6 @@
       if (!input) return
       input.addEventListener('input', function () {
         if (applyingCanonicalRender) return
-        memberEditRevision += 1
         markEditProfileDirty()
         setFieldValidity(input, '')
       })
