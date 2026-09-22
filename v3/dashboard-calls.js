@@ -111,7 +111,8 @@
   /**
    * Parses the F18 request-created dashboard locator. The URL is only a locator:
    * ownership and current state still come from the authenticated canonical feed.
-   * Existing links put the locator in the query string before `#calls`.
+   * Existing links put the locator in the query string before `#calls`. A missing
+   * anchor is recovered only for an exact production Starter-dashboard query.
    */
   function callDeepLinkLocator(location) {
     const Params = global.URLSearchParams
