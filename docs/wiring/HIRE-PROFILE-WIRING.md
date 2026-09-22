@@ -102,7 +102,7 @@ shared component. Its other page scripts can remain deferred
 | Call projections (hero, sticky header, Services, and chooser) | owner: live connection state with no booking action · anonymous: public-projection Free/Paid touts plus signup-only Book Call; chooser closed · brand: [readiness contract](#signed-in-brand-readiness) | this file / public compatibility projections for anonymous display; authenticated Xano, Nylas, and Stripe for booking |
 | Free and Paid call cards (hero tout and Services card) | same audiences and states as the row above | `starter-call-offers-services` plus the Header call projection read the dedicated public Xano endpoint `profile/starter/calls/v3`; superseded CMS call cards stay hidden as rollback markup — see [The Free and Paid call cards render from one wf-xano template per surface](#the-free-and-paid-call-cards-render-from-one-wf-xano-template-per-surface) |
 | Rate and next-slot text on those projections | see [canonical rate painting](#call-rate-surfaces-are-repainted-from-the-canonical-source) and [public-view limits](#qa-venue-limits-for-the-call-surface-rules) | this file |
-| Non-call Service cards | everyone; logged-out cards open signup, eligible Brand cards open the project modal, and Talent or owner cards stay inert | native Webflow CMS plus side-by-side `starter-services` wf-xano canary / canonical `freelancers_v3.Services`; this file adds interaction attributes to rendered Xano clones |
+| Non-call Service cards | everyone; logged-out cards open signup, eligible Brand cards open the project modal, Talent cards stay inert, and owner cards remain visible as explained previews | native Webflow CMS plus side-by-side `starter-services` wf-xano canary / canonical `freelancers_v3.Services`; this file adds interaction attributes to rendered Xano clones |
 | Services Freelance rate card | everyone | this file / Algolia record, cloned from the section's own authored Default card — never an element owned by a `[wf-xano-element="wrapper"]`, because every wf-xano adapter stamps the same `data-service-card="component"` / `data-service-card-state="Default"` pair on its template and its rendered clones |
 | Services Retainer rate card | everyone | authored `starter-retainer` wf-xano wrapper / canonical Xano endpoint `profile/starter/retainer/v3`; the Algolia-derived runtime clone remains only as the unresolved/error fallback |
 | Free booking popup | signed-in Brand members | this file + `free-call-booking.js` + shared call calendar / authenticated canonical Xano booking command |
@@ -354,8 +354,9 @@ authored modal. Valid `/hire/<slug>` paths use the host-classified TEST or
 production route map. Generic Book Call controls remain visible across primary,
 sticky, and mobile CTAs when unavailable, with `data-booking-trigger-unavailable`
 and `aria-disabled="true"`. For a paid Brand, hover, keyboard focus, or tap
-reveals “This Starter isn’t accepting calls right now.”; the owner keeps the
-call-settings guidance instead. Signed-out and paywalled viewers never see the
+reveals “This Starter isn’t accepting calls right now.”; the owner's hint first
+explains that clients use the control to book a call, then reports whether calls
+are available and links to call settings. Signed-out and paywalled viewers never see the
 generic hint. Hover and focus are tracked independently
 across the control and hint. Pointer exit allows a cancellable 180ms grace period
 to cross the gap; dismissal waits until neither surface is hovered or focused.
@@ -412,7 +413,7 @@ Those groups retain their authored display, ARIA state, and existing CMS and
 Memberstack role visibility for both authenticated and logged-out viewers. The
 per-trigger unavailable attribute dims and disables Book Call inside mixed
 groups without removing its spacing. The owner-only mobile exception is described
-[below](#the-owner-gets-call-settings-guidance-without-self-booking). Regression coverage in [`hire-profile.test.js`](../../v3/hire-profile.test.js)
+[below](#the-owner-gets-action-explanations-without-self-booking-or-self-hiring). Regression coverage in [`hire-profile.test.js`](../../v3/hire-profile.test.js)
 exercises unavailable and ready calls, including authored hidden groups that
 must stay hidden.
 
@@ -731,8 +732,9 @@ Webflow owns the native `Services` select and all authored options. The adapter
 may add a missing exact option tagged
 `data-xano-service-option="starter-services"`, and it removes only stale options
 with that same adapter-owned tag. It never changes or removes authored options,
-and repeated results do not create duplicates. Talent, the profile owner, and
-unknown roles stay inert. The authored wf-xano template, existing CMS cards,
+and repeated results do not create duplicates. Talent and unknown roles stay
+inert. The profile owner's cards remain visible as explained previews with no
+signup or project-modal hook. The authored wf-xano template, existing CMS cards,
 Free Call, Paid Call, and Freelance behavior remain unchanged.
 CMS services stay visible until a separate cutover decision follows role-matched
 browser parity proof.
@@ -764,7 +766,8 @@ removes that fallback, including when the result is empty, so a disabled or
 unpriced canonical profile cannot leave a stale Retainer card or create a
 duplicate. Logged-out clicks open `signup-modal` with Retainer attribution.
 Eligible signed-in Brands open `generate-contract` with `Monthly retainer`
-selected. Talent, the profile owner, and unknown roles stay inert.
+selected. Talent and unknown roles stay inert; the profile owner sees the card
+as an explained preview with no signup or project-modal hook.
 
 ## Taxonomy empty groups stay hidden
 
@@ -921,7 +924,10 @@ adapter stamps `data-type` on every clone, so an owner preview would otherwise
 match the shortcut selector and get a capture-phase listener that
 `preventDefault()`s every click — cancelling the setup CTA inside the card. The
 owner never self-books, so that shortcut could only ever fail for them. A type
-with a bookable owner record reads `available` with its tooltip hidden. A type
+with a bookable owner record reads `available` with its setup tooltip hidden.
+The card is focusable and `aria-disabled`; pointer, tap, focus, Enter, or Space
+reveals “Clients use this button to book a call with you.” without opening
+booking. A type
 without one reads `setup-required` and gets the exact next step —
 calendar, availability, Stripe link, Stripe charges, Stripe freshness, then the
 service toggle — written into `[data-call-offer-tooltip-text]` / `[hover-text]`,
@@ -1286,11 +1292,12 @@ which the legacy reveal deliberately does not touch; that contract is described
 under [The Free and Paid call cards render from one wf-xano template per
 surface](#the-free-and-paid-call-cards-render-from-one-wf-xano-template-per-surface).
 
-### The owner gets call settings guidance without self-booking
+### The owner gets action explanations without self-booking or self-hiring
 
 A starter reading their own `/hire/<slug>` sees rates read-only and a disabled
-Book Call control. Its hint reports “Your calls are available to brands.” when
-accepted call records exist, otherwise “Your call booking is unavailable.” It
+Book Call control. Its hint begins “Clients use this button to book a call with
+you.” and then reports “Your calls are available to brands.” when accepted call
+records exist, otherwise “Your call booking is unavailable.” It
 includes a **Manage call settings** link to `/starter-dashboard`; booking stays
 closed even when the owner's calls are ready.
 Tab from the disabled control enters this link; Shift+Tab returns to the control,
@@ -1305,16 +1312,19 @@ containing its disabled `[data-profile-book-call]` control with
 All matching ancestors are marked, including nested hero groups. The marked
 `.profile-nav_actions` also receives `data-profile-owner-mobile-call` and becomes
 a fixed, full-width bottom call bar at that breakpoint.
-Hire and Message remain hidden.
+Hire remains visible as a preview; Message remains hidden.
 
-The authored Hire and Message CTAs have no such gate — they are plain Designer
-entry points — so `hire-profile.js` hides them on the same ownership check as
-the paint. Every `[data-signup-trigger-element="hire"]` and
-`[data-signup-trigger-element="message"]` gets `display: none`, `hidden`, and
-`aria-hidden="true"`, and loses its `data-modal-trigger` so a stylesheet
-regression cannot leave a live opener behind. A talent viewing **someone
-else's** profile, a Brand, and a logged-out visitor all keep both CTAs
-untouched, so the anonymous signup-attribution flow is unaffected.
+Every authored Hire and non-call Service control on the owner's profile stays
+visible and focusable with `aria-disabled="true"`. The controller removes its
+signup, booking, and project-modal hooks, then gives it an `aria-describedby`
+hint explaining that clients use Hire or a service to start a project. Pointer,
+tap, focus, Enter, and Space reveal that explanation without opening a workflow.
+The same rule covers every CTA placement and late wf-xano Service clone. Every
+`[data-signup-trigger-element="message"]` instead gets `display: none`, `hidden`,
+and `aria-hidden="true"`, and loses its `data-modal-trigger`, preserving the
+self-Message policy. A talent viewing **someone else's** profile, a Brand, and a
+logged-out visitor keep their existing attributes and routing, so anonymous
+signup attribution is unaffected.
 
 [`messages-profile.js`](../../v3/messages-profile.js) also hides its own trigger for a
 self-view, but only after route-guard resolves a role **and** the CMS identity
