@@ -1831,9 +1831,18 @@ test('reschedule receipts show the selected slot without moving a confirmed book
   const container = { textContent: '' }
   const reasonField = { value: 'Need a later time' }
   let currentId = 'booking-pending-1'
+  const attributes = new Map()
   const modal = {
     getAttribute(name) {
-      return name === 'data-booking-id' ? currentId : null
+      return name === 'data-booking-id' ? currentId : (attributes.get(name) ?? null)
+    },
+    setAttribute(name, value) {
+      if (name === 'data-booking-id') currentId = String(value)
+      else attributes.set(name, String(value))
+    },
+    removeAttribute(name) {
+      if (name === 'data-booking-id') currentId = ''
+      else attributes.delete(name)
     },
     querySelector(selector) {
       if (selector === '[booking-reschedule-calendar]') return container
@@ -1858,7 +1867,6 @@ test('reschedule receipts show the selected slot without moving a confirmed book
     },
   }))
   const originalQuery = modal.querySelector
-  modal.setAttribute = () => {}
   modal.querySelector = selector => panels.find(panel =>
     selector === '[booking-popup-content="' + panel.getAttribute('booking-popup-content') + '"]'
   ) || originalQuery(selector)
@@ -2097,3 +2105,45 @@ for (const role of ['brand', 'starter']) {
     }
   })
 }
+
+test('cancellation hides a legacy proposal form carrying the same panel attribute', () => {
+  function panel(name, actionAttribute, action) {
+    return {
+      hidden: false,
+      style: {},
+      getAttribute() { return name },
+      querySelector(selector) {
+        return selector.split(',').some((part) =>
+          part.trim() === '[' + actionAttribute + '="' + action + '"]',
+        ) ? { getAttribute(attribute) { return attribute === actionAttribute ? action : null } } : null
+      },
+      querySelectorAll() { return [] },
+    }
+  }
+  for (const attribute of ['booking-action-btn', 'booking-card-action-btn']) {
+    const proposal = panel('cancel', attribute, 'switch-confirm')
+    const cancellation = panel('cancel', attribute, 'switch-cancel-reason')
+    const base = panel('base', attribute, 'switch-cancel')
+    const modal = {
+      querySelectorAll(selector) {
+        return selector === '[booking-popup-content]' ? [proposal, cancellation, base] : []
+      },
+    }
+    assert.equal(api.switchPopupContent(modal, 'cancel'), true)
+    assert.equal(cancellation.hidden, false)
+    assert.equal(cancellation.style.display, 'flex')
+    assert.equal(proposal.hidden, true)
+    assert.equal(proposal.style.display, 'none')
+    assert.equal(base.hidden, true)
+    api.switchPopupContent(modal, 'base')
+    assert.equal(base.hidden, false)
+    assert.equal(cancellation.hidden, true)
+    assert.equal(proposal.hidden, true)
+  }
+  const unique = panel('cancel', '', '')
+  assert.equal(api.switchPopupContent({
+    querySelectorAll(selector) { return selector === '[booking-popup-content]' ? [unique] : [] },
+  }, 'cancel'), true)
+  assert.equal(unique.hidden, false)
+  assert.equal(unique.style.display, 'flex')
+})

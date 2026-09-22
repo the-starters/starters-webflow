@@ -2183,6 +2183,23 @@ retries is not a transient failure: on every refresh path, including the
 post-mutation and expiry-tick refreshes, it clears the rendered identity and
 booking rows and then fails the dashboard closed.
 
+Request-created notification links may locate one canonical call with
+`?booking_id=<uuid>&revision=<non-negative integer>&environment=<test|production>`
+followed by `#calls` or `#calls-section`. The short anchor is normalized to
+`#calls-section` without dropping the query string. `test` is accepted only on
+`the-starters-3-0.webflow.io`; `production` is accepted only on
+`thestarters.com` and `www.thestarters.com`. Missing, conflicting duplicate, or
+malformed locator values fail closed. The locator never supplies booking state
+or authorization: after the authenticated feed loads, the controller requires
+an exact booking ID, environment, role-specific participant match, and lifecycle
+revision from that feed. A matching current, unexpired pending request is
+actionable only for its Starter participant. The Brand view, a stale revision,
+or any matching row that is no longer an actionable request opens the canonical
+details read-only with mutation and payment controls hidden. A missing or
+unauthorized canonical row opens nothing. Modal discovery is retried only on a
+bounded readiness schedule, and an account change cancels the pending focus so
+one member's link cannot open under another session.
+
 Webflow owns all call-section markup. Each section must provide:
 
 - `[bookings-section="calls"]` and, on Starter, optionally
@@ -2513,6 +2530,12 @@ confirmed call posts to `booking/reschedule/propose/v3`; a pending Brand request
 posts to `booking/reschedule/request/v3`.
 Confirm and decline responses post the shared identifiers to their matching
 `booking/reschedule/confirm/v3` or `booking/reschedule/decline/v3` endpoint.
+
+If legacy markup contains more than one panel labelled
+`booking-popup-content="cancel"`, opening cancellation selects only the one
+that contains the authored cancellation reason or submit controls. The unrelated
+legacy proposal-confirmation panel stays hidden. A page with one cancel panel
+keeps the existing behavior.
 
 Each action clears any prior module-owned `[data-starters-action-error]` alert
 when a new attempt starts. A failed command shows the server's `message` or
