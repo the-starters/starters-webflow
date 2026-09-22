@@ -71,12 +71,13 @@
   // Storage may still hold this branch after a swallowed cleanup write. That is a
   // retry obligation, not a pending create: a verified canonical write supersedes
   // the member's Build Profile choice whatever the resulting canonical shape is.
-  // It is owed by the member who made that write, so a sign-in recovery keeps it
-  // and only a different member retires it.
-  let receiptCleanupOwedBy = null
+  // Each obligation is keyed by the member whose write created it, so recording,
+  // discharging, and reading one always name a member and no session can record,
+  // discharge, or inherit another member's.
+  const receiptCleanupOwedBy = new Set()
 
   function receiptCleanupOwed() {
-    return Boolean(sessionMemberId) && receiptCleanupOwedBy === sessionMemberId
+    return Boolean(sessionMemberId) && receiptCleanupOwedBy.has(sessionMemberId)
   }
   // Retiring a receipt canonical already satisfies is passive: it must never
   // disable a control or reject a member action, only delay one.
@@ -125,7 +126,7 @@
     try {
       await consumePendingBuildIntent()
     } catch (error) {
-      receiptCleanupOwedBy = ownerId
+      if (ownerId) receiptCleanupOwedBy.add(ownerId)
       if (sessionMemberId === ownerId) pendingBuildIntent = null
       console.warn('Canonical Paid Call Settings were saved, but the pending Build Profile receipt could not be cleared.', error)
     }
@@ -147,7 +148,7 @@
       if (sessionMemberId !== consumeMemberId) return
       if (!envelope || envelope.member_id !== consumeMemberId) {
         pendingBuildIntent = null
-        receiptCleanupOwedBy = null
+        receiptCleanupOwedBy.delete(consumeMemberId)
         return
       }
       const nextEnvelope = Object.assign({}, envelope)
@@ -157,7 +158,7 @@
       else delete nextJson.starter_call_settings_intent_v3
       await memberstack.updateMemberJSON({ json: nextJson })
       pendingBuildIntent = null
-      receiptCleanupOwedBy = null
+      receiptCleanupOwedBy.delete(consumeMemberId)
     })
   }
 

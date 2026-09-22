@@ -636,6 +636,67 @@ test('a prerequisite refresh after a superseding Free disable retries the remova
   assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
 })
 
+test('a Free cleanup by one member cannot discharge the removal another member owes', async () => {
+  const receiptFor = (id, description) => ({
+    starter_call_settings_intent_v3: {
+      version: 1,
+      member_id: id,
+      free: { enabled: true, description: description },
+    },
+  })
+  let failUpdates = true
+  const result = load({
+    memberId: 'member-free-a',
+    memberJSON: receiptFor('member-free-a', 'Quick intro'),
+    memberJsonUpdateError: () => (failUpdates ? new Error('Memberstack timeout') : null),
+    initial: canonical({
+      public_description: 'Quick intro',
+      services: [service()],
+      readiness: { free_call_enabled: true, bookable: true },
+    }),
+    routes: {
+      '/starter/free-call-settings/disable/v3': ({ setState }) => {
+        setState(canonical({ readiness: { calendar_connected: true, availability_configured: true } }))
+        return { ok: true, status: 200, json: async () => ({ ok: true }) }
+      },
+    },
+  })
+  await settle()
+
+  assert.ok(await result.window.StarterFreeCallSettings.disable())
+  await settle()
+  assert.equal(result.memberJsonWrites.length, 0, 'member A still owes the removal')
+
+  failUpdates = false
+  await result.window.$memberstackDom.updateMemberJSON({
+    json: receiptFor('member-free-b', 'Second member intro'),
+  })
+  await result.changeMember({ id: 'member-free-b' })
+  await settle()
+
+  assert.equal(result.dom.yes.checked, true, 'member B sees their own pending create')
+  assert.equal(result.dom.title.value, 'Second member intro')
+
+  result.dom.no.checked = true
+  await result.dom.no.dispatch('change')
+  assert.ok(await result.window.StarterFreeCallSettings.submit())
+  await settle()
+
+  await result.window.$memberstackDom.updateMemberJSON({
+    json: receiptFor('member-free-a', 'Quick intro'),
+  })
+  const writesBefore = result.memberJsonWrites.length
+  await result.changeMember({ id: 'member-free-a' })
+  await settle()
+
+  assert.equal(result.dom.no.checked, true, 'A superseded their own choice, so it is not re-offered')
+  assert.equal(result.dom.yes.checked, false)
+  assert.equal(result.dom.title.value, '')
+  const writes = result.memberJsonWrites.slice(writesBefore)
+  assert.equal(writes.length, 1, 'A signing back in retries the removal A still owed')
+  assert.equal(writes[0].starter_call_settings_intent_v3, undefined)
+})
+
 test('an account switch during a failed Free cleanup never touches the next member receipt', async () => {
   const gate = deferred()
   let updateCalls = 0

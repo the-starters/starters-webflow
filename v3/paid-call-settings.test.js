@@ -910,6 +910,73 @@ test('a prerequisite refresh after a superseding Paid disable retries the remova
   assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
 })
 
+test('a Paid cleanup by one member cannot discharge the removal another member owes', async () => {
+  const receiptFor = (id, title, rate) => ({
+    starter_call_settings_intent_v3: {
+      version: 1,
+      member_id: id,
+      paid: { enabled: true, title: title, price_dollars: rate },
+    },
+  })
+  const readyReadiness = {
+    calendar_connected: true,
+    availability_configured: true,
+    stripe_connect_linked: true,
+    stripe_charges_enabled: true,
+    stripe_readiness_fresh: true,
+  }
+  let failUpdates = true
+  const result = load({
+    cardMode: true,
+    memberId: 'member-a',
+    memberJSON: receiptFor('member-a', 'Strategy call', 250),
+    memberJsonUpdateError: () => (failUpdates ? new Error('Memberstack timeout') : null),
+    initial: canonical({
+      services: [service({ title: 'Strategy call', price_cents: 25000 })],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+    routes: {
+      '/starter/paid-call-settings/disable/v3': ({ setState }) => {
+        setState(canonical({ readiness: readyReadiness }))
+        return { ok: true, status: 200, json: async () => ({ ok: true }) }
+      },
+    },
+  })
+  await settle()
+
+  assert.ok(await result.window.StarterPaidCallSettings.disable())
+  await settle()
+  assert.equal(result.memberJsonWrites.length, 0, 'member A still owes the removal')
+
+  failUpdates = false
+  await result.window.$memberstackDom.updateMemberJSON({
+    json: receiptFor('member-b', 'Second member call', 300),
+  })
+  await result.changeMember({ id: 'member-b' })
+  await settle()
+
+  assert.equal(result.dom.enabled.checked, true, 'member B sees their own pending create')
+  assert.equal(result.dom.title.value, 'Second member call')
+
+  result.dom.disabled.checked = true
+  await result.dom.disabled.dispatch('change')
+  assert.ok(await result.window.StarterPaidCallSettings.submit())
+  await settle()
+
+  await result.window.$memberstackDom.updateMemberJSON({
+    json: receiptFor('member-a', 'Strategy call', 250),
+  })
+  const writesBefore = result.memberJsonWrites.length
+  await result.changeMember({ id: 'member-a' })
+  await settle()
+
+  assert.equal(result.dom.disabled.checked, true, 'A superseded their own choice, so it is not re-offered')
+  assert.equal(result.dom.enabled.checked, false)
+  const writes = result.memberJsonWrites.slice(writesBefore)
+  assert.equal(writes.length, 1, 'A signing back in retries the removal A still owed')
+  assert.equal(writes[0].starter_call_settings_intent_v3, undefined)
+})
+
 test('an account switch during a failed Paid cleanup never touches the next member receipt', async () => {
   const gate = deferred()
   let updateCalls = 0
