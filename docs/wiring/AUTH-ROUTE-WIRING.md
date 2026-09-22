@@ -421,7 +421,7 @@ returning to `/dashboard`, preventing a redirect loop.
 | Role | Allowed `next` pathnames |
 | --- | --- |
 | Talent | `/dashboard` (resolved to home), `/starter-dashboard`, `/starter-onboarding`, `/build-profile/select-profile`, `/build-profile/full-profile`, `/build-profile/consult`, `/starter-edit-profile`, `/messages`, `/opportunities`, `/opportunities/`, `/opportunities-freelancer-view`, `/opportunities/<slug>`, `/generate-invoice`, `/generate-invoice/` |
-| Brand paid | `/dashboard` (resolved to home), `/all-starters`, `/brand-dashboard`, `/opportunities`, `/opportunities/`, `/opportunities-brands-view`, `/messages`, `/opportunities/<slug>`, `/opportunities---create` |
+| Brand paid | `/dashboard` (resolved to home), `/all-starters`, `/brand-dashboard`, `/favorites`, `/favorites/`, `/opportunities`, `/opportunities/`, `/opportunities-brands-view`, `/messages`, `/opportunities/<slug>`, `/opportunities---create` |
 | Brand free | `/dashboard` (resolved to quiz home), `/all-starters`, `/quiz`, `/quiz-results` |
 
 `/starter-onboarding` is allowlisted for Talent because `v3/route-guard.js`
