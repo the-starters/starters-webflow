@@ -673,10 +673,53 @@ authored** in the test page's Head Code; without it Work Experience halts with t
 These Designer edits remain **unpublished**. Script pins were not changed, the
 script retains its existing `v1.59.607` marker pending release, and this work does
 not release or publish the change. Deployment requires the reviewed controller
-release and the corresponding authored markup together. The actual page has not
-been verified with an authenticated member or real persistence. The original
-missing Save button's computed-style cause was not established; the local fixture
-only proves that its explicitly authored Save is visible and correctly scoped.
+release and the corresponding authored markup together. Actual-page desktop
+verification with local overrides and authorized persistence is recorded below;
+it does not establish that the unpublished Designer tree is deployed. The original
+missing Save button's computed-style cause remains unproved.
+
+#### Actual-page desktop acceptance — 2026-09-23
+
+The later user authorization for a signed-in disposable test account, local script
+and markup overrides, temporary saves, and cleanup superseded the earlier
+authentication restriction. The evidence supports the revised non-mobile delivery
+scope; the earlier zero-live-scenarios/authentication-blocked assessment is obsolete.
+This is evidence review of completed actual-page tests, not a new live test run.
+
+The local preview used commit `034b371043fa5b88ea021049766fcb993af08fb2` on the
+actual test page with the real writer. Its record is
+`/private/tmp/work-experience-annotations/local-preview-results.md`; the named
+captures remain outside the repository because they contain account information.
+
+| Desktop behavior | Actual-page evidence in that directory |
+| --- | --- |
+| Add below rows, visible Save, section/row unsaved status | Preview observations and `preview-save-position.png` |
+| Month dates and current-role state save and survive reload | Authorized Save test record and `current-reloaded.png` |
+| Saved/draft removal floor, disabled theme and authored danger restoration | `saved-plus-blank.png` and preview floor/theme observations |
+| Remove/Undo position, Discard, settled Add/Undo/validation focus | `saved-remove.png`, `preview-undo-settled.png`, and authorized Save test observations |
+| Invalid row opens while the other panel hides without footer overlap | `two-invalid-after.png` and measured panel observations |
+| Partial create failure retains drafts; retry writes only the remaining row | `partial-requests.json`, `partial-retry-requests.json`, and documented two-record server readback |
+| Successful create with lost response reconciles without another write | `lost-response-evidence.json`, `lost-result.png`, and documented independent readback/no-write second Save |
+| Desktop section exit/reentry retains the saved row and panel geometry | `reentry-away.png`, `reentry-back.png`, `reentry-open.png` |
+
+The partial-save reload used the deployed reader after overrides failed to attach;
+that readback establishes persistence, not execution of local code after reload.
+Cleanup is recorded for all temporary records; the supplied acceptance decision
+confirms the final server count was zero. No raw captures or service hostnames are
+copied here.
+
+Mobile resize is a **known failure explicitly deferred by the user**, not a pass:
+`local-preview-breakpoints.json` records an expanded panel with zero height across
+768/767/768px transitions. Mobile footer visibility and all shared-group teardown
+paths are not established by actual-page evidence. Fixture coverage remains
+separate. This is not an eight-of-eight acceptance claim or pipeline approval.
+Unpublished markup and the shared-script loader remain rollout dependencies;
+publishing, pin changes, tags, and production release remain unauthorized.
+
+Focused re-verification during this assessment:
+`node --test --test-name-pattern='a partial company save|a lost create is confirmed|validation opens and focuses|visible marked month controls' v3/starter-edit-profile/unified-companies.test.js`
+passed all four selected behavioral tests. No executable failure was reproduced;
+the correction is to the stale acceptance assessment, with no runtime changes.
 
 Completed local checks:
 
