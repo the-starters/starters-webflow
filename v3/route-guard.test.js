@@ -107,9 +107,12 @@ function loadGuard(options = {}) {
     location,
     localStorage,
     setInterval,
-    setTimeout,
+    setTimeout: options.setTimeout || setTimeout,
     clearInterval,
     clearTimeout,
+  }
+  if (Object.prototype.hasOwnProperty.call(options, 'memberReady')) {
+    window.memberReady = options.memberReady
   }
   // `noStorage` leaves window.sessionStorage undefined, which is the shape an
   // embedded/partitioned context can present. Every other call gets the double,
@@ -517,6 +520,29 @@ test('lets an allowed member stay and marks the page resolved', async () => {
   assert.equal(location.replaced, undefined)
   assert.equal(attributes['data-route-guard'], 'allowed')
   assert.ok(events.some((e) => e.name === 'starters:v3-route-guard-allowed'))
+})
+
+test('call dashboard guard waits for post-login member hydration', async () => {
+  const delays = []
+  let reads = 0
+  const { location, attributes } = loadGuard({
+    pathname: '/starter-dashboard',
+    memberReady: Promise.resolve({}),
+    getCurrentMember: async () => ({
+      data: ++reads < 4 ? null : TALENT,
+    }),
+    setTimeout(callback, delay) {
+      delays.push(delay)
+      callback()
+      return 1
+    },
+  })
+
+  await flush()
+  assert.equal(location.replaced, undefined)
+  assert.equal(attributes['data-route-guard'], 'allowed')
+  assert.equal(reads, 4)
+  assert.deepEqual(delays, [200, 400, 800])
 })
 
 test('shared opportunities waits for a higher allowed plan to hydrate before redirecting', async () => {

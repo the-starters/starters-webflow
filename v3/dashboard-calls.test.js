@@ -1215,6 +1215,92 @@ test('initial refresh waits through the post-login Memberstack hydration gap', a
   }
 })
 
+test('transient auth change keeps the initial post-login readiness window', async () => {
+  const source = fs.readFileSync(require.resolve('./dashboard-calls.js'), 'utf8')
+  const retryTimers = []
+  const delays = []
+  const requests = []
+  let authChange
+  let reads = 0
+  const member = { id: 'starter-after-login' }
+  const list = element()
+  const template = element({ 'bookings-item-template': 'calls' })
+  list.querySelectorAll = (selector) =>
+    selector === '[bookings-item-template]' ? [template] : []
+  const section = element({ 'bookings-section': 'calls' })
+  section.querySelector = (selector) =>
+    ({
+      '[bookings-list="calls"]': list,
+      '[bookings-item-template="calls"]': template,
+      '[bookings-loader="calls"]': element(),
+      '[bookings-empty="calls"]': element(),
+      '[bookings-count]': element(),
+      '.tabs-button_component.is-dashboard': element(),
+    })[selector] || null
+  const root = element()
+  const document = {
+    documentElement: root,
+    readyState: 'complete',
+    getElementById() {
+      return null
+    },
+    querySelector() {
+      return null
+    },
+    querySelectorAll(selector) {
+      return selector === '[bookings-section]' ? [section] : []
+    },
+  }
+  const window = {
+    $memberstackDom: {
+      async getCurrentMember() {
+        reads += 1
+        return { data: reads < 5 ? null : member }
+      },
+      onAuthChange(listener) {
+        authChange = listener
+      },
+    },
+    clearInterval() {},
+    document,
+    location: { pathname: '/starter-dashboard', search: '', hash: '' },
+    memberReady: Promise.resolve({}),
+    setInterval() {
+      return 1
+    },
+    setTimeout(callback, delay) {
+      delays.push(delay)
+      retryTimers.push(callback)
+      return retryTimers.length
+    },
+    xanoAuthFetch: async (_url, init) => {
+      requests.push(JSON.parse(init.body).memberstack_id)
+      return { ok: true, json: async () => [] }
+    },
+  }
+
+  vm.runInNewContext(source, {
+    console: { error() {} },
+    document,
+    Intl,
+    URLSearchParams,
+    window,
+  })
+  await until(() => typeof authChange === 'function' && reads === 1)
+  authChange({ data: null })
+
+  for (let step = 0; step < 12 && root.getAttribute('data-dashboard-calls-v3') !== 'ready'; step += 1) {
+    await new Promise(setImmediate)
+    const callback = retryTimers.shift()
+    if (callback) callback()
+  }
+  await until(() => root.getAttribute('data-dashboard-calls-v3') === 'ready')
+
+  assert.deepEqual(requests, ['starter-after-login'])
+  assert.equal(reads, 5)
+  assert.deepEqual(delays.slice(0, 4), [200, 200, 400, 800])
+})
+
 test('a post-mutation refresh still fails closed once the member stays missing', async () => {
   const originalDocument = global.document
   const originalFetch = global.xanoAuthFetch

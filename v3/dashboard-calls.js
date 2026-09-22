@@ -2632,11 +2632,11 @@
       return sessionGeneration
     }
     wireBrandProfileRepaint(memberstack, currentGeneration)
-    let restartCount = 0
+    let initialReadinessPending = true
     const restart = function (options) {
       sessionGeneration += 1
-      const useSharedMember = restartCount === 0
-      restartCount += 1
+      const generation = sessionGeneration
+      const useSharedMember = initialReadinessPending
       const preserveExisting = Boolean(options && options.preserveExisting)
       if (!preserveExisting) resetIdentityState(refs, role)
       const onCanonicalRows = deepLinkPending
@@ -2660,11 +2660,16 @@
         memberstack,
         refs,
         role,
-        sessionGeneration,
+        generation,
         currentGeneration,
         useSharedMember,
         { preserveExisting, onCanonicalRows },
-      )
+      ).then(function (refreshed) {
+        if (refreshed === true && generation === currentGeneration()) {
+          initialReadinessPending = false
+        }
+        return refreshed
+      })
     }
     const refreshAfterMutation = function () {
       return restart({ preserveExisting: true })
