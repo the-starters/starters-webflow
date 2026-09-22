@@ -1,7 +1,7 @@
 /*
  * Opt-in Services & Rates coordinator. The main profile controller remains the writer.
  *
- * @release v1.59.607
+ * @release v1.59.608
  */
 ;(function () {
   'use strict'
@@ -94,6 +94,7 @@
     const fields = row => Array.from(row.querySelectorAll('[data-name]'))
     const meaningful = row => fields(row).some(field => String(field.value || '').trim())
     const retained = new WeakSet(rows().filter(meaningful))
+    const rowBaselines = new WeakMap()
     const template = rows()[0]?.cloneNode(true)
     const rowParent = rows()[0]?.parentElement
     const anchor = rows()[rows().length - 1]?.nextSibling || null
@@ -115,6 +116,7 @@
     let snapshot = null
     let sentPayload = null
     let submittedRows = []
+    let submittedRowStates = []
     let submittedScalars = []
     let readbackCheck = null
     const rowSnapshot = () => remaining().filter(row => retained.has(row) || meaningful(row))
@@ -132,11 +134,18 @@
       finally { checkSave.disabled = false; checkSave.removeAttribute('aria-disabled') }
       status.textContent = 'We could not confirm the save yet. Your draft is kept. You can check again; Save remains paused.'
     })
-    function dirty() {
+    function dirty(event) {
       // Pickers and legacy toggles inside this section replay input and change events while
       // the profile hydrates. Those are not Starter edits, so the shared hydration window -
       // the same one the canonical dirty state uses - decides what counts as a draft change.
-      if (restoring || window.__tsProfileDirtyState?.isHydrating?.()) return
+      if (restoring) return
+      if (window.__tsProfileDirtyState?.isHydrating?.()) {
+        const row = event?.target?.closest?.(ROW)
+        if (row) rowBaselines.set(row, valuesFor(row))
+        refreshHeaders()
+        return
+      }
+      refreshHeaders()
       section.setAttribute('profile-items-dirty', 'true')
       window.__tsProfileDirtyState?.markDirty(6)
       if (!saving && !uncertain && !misconfiguredForm && !unreadable) status.textContent = 'Unsaved changes.'
@@ -174,24 +183,44 @@
       }
       if (open) active = row
     }
-    function summary(row) {
-      const target = row.querySelector('[profile-items-summary]')
-      if (!target) return
-      const name = row.querySelector('[data-name="service-name"]')?.value || 'Service'
-      const price = row.querySelector('[data-name="service-price"]')?.value
-      target.textContent = name + (price ? ' · $' + price : '')
+    function refreshHeaders() {
+      remaining().forEach((row, index) => {
+        row.setAttribute('increment-dropdown', String(index + 1))
+        const label = row.querySelector('[profile-items-label]')
+        if (!label) return
+        label.textContent = 'Service ' + (index + 1)
+        const accepted = rowBaselines.get(row)
+        const current = valuesFor(row)
+        const changed = accepted
+          ? Object.keys(current).some(key => String(current[key] || '') !== String(accepted[key] || ''))
+          : meaningful(row)
+        const badge = row.querySelector('[profile-items-unsaved]')
+        if (badge) { badge.hidden = !changed; badge.style.display = changed ? '' : 'none' }
+      })
     }
     function bindRow(row) {
       row.setAttribute('data-profile-row-id', String(++nextRowId))
-      const text = document.createElement('span')
-      text.setAttribute('profile-items-summary', '')
       const toggle = row.querySelector('[increment-dropdown-toggle]')
-      toggle?.appendChild(text)
+      // The authored label is an explicit contract. Older unmarked headers keep their
+      // label untouched; never append a second name/price summary beside it.
+      const label = row.querySelector('[profile-items-label]')
+      if (toggle && label) {
+        const badge = document.createElement('span')
+        badge.setAttribute('profile-items-unsaved', '')
+        badge.textContent = 'Unsaved'
+        badge.style.marginInlineStart = '0.5rem'
+        const siblings = Array.from(toggle.children)
+        toggle.insertBefore(badge, siblings[siblings.indexOf(label) + 1] || null)
+        toggle.style.display = 'flex'
+        toggle.style.alignItems = 'center'
+        const icon = row.querySelector('[increment-dropdown-icon]')
+        if (icon) { icon.style.marginInlineStart = 'auto'; icon.style.flexShrink = '0' }
+      }
       const toggleRow = event => {
         if (event.target.closest?.('[increment-dropdown-remove], [profile-items-undo]')) return
         event.preventDefault()
         if (saving || row.hasAttribute('profile-items-removed')) return
-        summary(row)
+        refreshHeaders()
         setOpen(row, toggle.getAttribute('aria-expanded') !== 'true')
       }
       toggle?.addEventListener('click', toggleRow)
@@ -239,7 +268,7 @@
       })
       setOpen(row, true)
     }
-    function newRow(saved = null, focus = true) {
+    function newRow(saved = null, focus = true, scroll = false) {
       if (!template || !rowParent) return null
       const clone = template.cloneNode(true)
       const suffix = '--profile-row-' + (nextRowId + 1)
@@ -265,7 +294,12 @@
       window.formatRateInputs?.(clone)
       bindRow(clone)
       if (saved?.retained) retained.add(clone)
-      if (focus) fields(clone)[0]?.focus()
+      if (saved) rowBaselines.set(clone, { ...saved.values })
+      refreshHeaders()
+      if (focus) fields(clone)[0]?.focus({ preventScroll: true })
+      if (scroll) clone.querySelector('[increment-dropdown-toggle]')?.scrollIntoView({
+        block: 'center', behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+      })
       return clone
     }
     function reveal(field) {
@@ -335,10 +369,12 @@
         if (!row) continue
         fields(row).forEach(field => { field.value = saved.values[field.getAttribute('data-name')] || '' })
         retained.add(row)
-        summary(row)
+        refreshHeaders()
       }
       baseline = rows().map(row => ({ values: valuesFor(row), retained: retained.has(row) }))
     }
+    rows().forEach(row => rowBaselines.set(row, valuesFor(row)))
+    refreshHeaders()
     if (unreadable) {
       status.textContent = 'Saved services could not be read. Reload the page before editing.'
       save.setAttribute('disabled', '')
@@ -348,13 +384,13 @@
     add?.addEventListener('click', event => {
       event.preventDefault()
       if (saving) return
-      if (!remaining().length) { newRow(); return }
+      if (!remaining().length) { newRow(null, true, true); return }
       if (!active || !meaningful(active)) { fields(active || rows()[0])[0]?.focus(); return }
       if (!validation.validate(active).valid) return
       if (remaining().length >= 3) { status.textContent = 'You can keep up to three services.'; return }
-      summary(active)
+      refreshHeaders()
       setOpen(active, false)
-      newRow()
+      newRow(null, true, true)
     })
     section.querySelector('[profile-items-discard]')?.addEventListener('click', event => {
       event.preventDefault()
@@ -407,6 +443,8 @@
         snapshot = {}
         controller.prepare(snapshot)
         submittedRows = rowSnapshot()
+        submittedRowStates = remaining().filter(row => retained.has(row) || meaningful(row))
+          .map(row => ({ row, values: { ...valuesFor(row) } }))
         submittedScalars = scalars()
         saving = true
         dispatched = false
@@ -471,10 +509,12 @@
         status.textContent = 'Changes saved.'
         scalarBaseline = submittedScalars
         baseline = submittedRows
+        submittedRowStates.forEach(({ row, values }) => rowBaselines.set(row, values))
         remaining().filter(meaningful).forEach(row => retained.add(row))
         rows().filter(row => row.hasAttribute('profile-items-removed')).forEach(row => row.remove())
         if (!baseline.length) baseline = [{ values: {}, retained: false }]
         if (!remaining().length) newRow(null, false)
+        refreshHeaders()
         if (laterEdits) {
           dirty()
           status.textContent = 'Changes saved. Later edits are still unsaved.'

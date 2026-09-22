@@ -7,7 +7,7 @@ const { createEnvironment, deferred, submit } = require('../test-helpers/edit-pr
 
 function mount(fetchImpl, { rates = false, services = null, readback = null, picker = false, profileType = 'full', hourlyRequired = true,
   rows = true, pickerSearch = false, backendRequired = false, deferProfile = false, saveControl = true,
-  dirtyState = null, retainersOff = false, memberReads = null, callControls = false, authored = false } = {}) {
+  dirtyState = null, retainersOff = false, memberReads = null, callControls = false, authored = false, labelMarker = true, reducedMotion = false } = {}) {
   const readRequests = []
   const timers = []
   const elapsed = { ms: 0 }
@@ -17,7 +17,10 @@ function mount(fetchImpl, { rates = false, services = null, readback = null, pic
   const label = h('label', { for: 'service-name' })
   const hint = h('span', { id: 'service-hint' })
   const content = h('div', { 'increment-dropdown-content': '' }, [label, name, hint, price, description])
-  const toggle = h('div', { 'increment-dropdown-toggle': '' })
+  const rowLabel = h('span', labelMarker ? { 'profile-items-label': '' } : {})
+  rowLabel.textContent = 'Service1'
+  const icon = h('span', { 'increment-dropdown-icon': '' })
+  const toggle = h('div', { 'increment-dropdown-toggle': '' }, [rowLabel, icon])
   const remove = h('button', { 'increment-dropdown-remove': '', type: 'button' })
   const row = h('div', { 'increment-dropdown': '1', 'data-entity': 'Service' }, [toggle, content, remove])
   const add = h('button', { 'profile-items-add': '', type: 'button' })
@@ -78,6 +81,7 @@ function mount(fetchImpl, { rates = false, services = null, readback = null, pic
     dirtyState,
     memberReadSequence: memberReads,
     setupSection({ context, window, document, step, stepFields }) {
+      window.matchMedia = () => ({ matches: reducedMotion })
       context.Event = class {
         constructor(type, options) { Object.assign(this, makeEvent(type, null, options)) }
       }
@@ -460,7 +464,8 @@ test('Add validates then collapses a completed service and focuses one new blank
   const rows = page.root.querySelectorAll('[increment-dropdown]')
   assert.equal(rows.length, 2)
   assert.equal(rows[0].querySelector('[increment-dropdown-toggle]').getAttribute('aria-expanded'), 'false')
-  assert.match(rows[0].querySelector('[profile-items-summary]').textContent, /Audit/)
+  assert.equal(rows[0].querySelector('[profile-items-label]').textContent, 'Service 1')
+  assert.equal(rows[0].querySelector('[profile-items-summary]'), null)
   const nextName = rows[1].querySelector('[data-name="service-name"]')
   assert.equal(nextName.value, '')
   assert.equal(nextName.focusCalls.length, 1)
@@ -825,4 +830,120 @@ test('Services reveals the authored check element when a save cannot be confirme
   assert.equal(page.readRequests.length, 2)
   assert.equal(page.authoredStatus.textContent, 'Changes saved.')
   assert.equal(page.requests.length, 1, 'the confirmed write is never replayed')
+})
+
+
+const serviceRows = page => page.root.querySelectorAll('[increment-dropdown]').filter(row => !row.hasAttribute('profile-items-removed'))
+const rowUnsaved = row => !row.querySelector('[profile-items-unsaved]').hidden
+const serviceLabels = page => serviceRows(page).map(row => row.querySelector('[profile-items-label]').textContent)
+
+test('Service headers number retained rows and mark only edits relative to their saved values', async () => {
+  const page = mount(undefined, { services: {
+    service: { name: 'Audit', price: '500', description: '' },
+    'service-2': { name: 'Strategy', price: '900', description: '' },
+  } })
+  assert.deepEqual(serviceLabels(page), ['Service 1', 'Service 2'])
+  assert.deepEqual(serviceRows(page).map(rowUnsaved), [false, false])
+  assert.equal(page.root.querySelector('[profile-items-summary]'), null)
+  page.type(page.name, 'Changed')
+  assert.deepEqual(serviceRows(page).map(rowUnsaved), [true, false])
+  page.type(page.name, 'Audit')
+  assert.equal(rowUnsaved(page.row), false, 'reverting the value clears its row badge')
+  page.type(page.name, '')
+  assert.equal(rowUnsaved(page.row), true, 'clearing a retained value is an edit, not an unused row')
+  page.click(page.discard)
+  assert.deepEqual(serviceLabels(page), ['Service 1', 'Service 2'])
+  assert.deepEqual(serviceRows(page).map(rowUnsaved), [false, false])
+  assert.equal(serviceRows(page).every(row => row.querySelector('[increment-dropdown-toggle]').scrollCalls.length === 0), true)
+})
+
+test('Add scrolls only the new Service header and leaves the blank row clean', () => {
+  for (const reducedMotion of [false, true]) {
+    const page = mount(undefined, { reducedMotion })
+    assert.equal(rowUnsaved(page.row), false)
+    page.type(page.name, 'Audit'); page.type(page.price, '500')
+    page.click(page.add)
+    assert.deepEqual(serviceLabels(page), ['Service 1', 'Service 2'])
+    assert.deepEqual(serviceRows(page).map(rowUnsaved), [true, false])
+    const row = serviceRows(page)[1], toggle = row.querySelector('[increment-dropdown-toggle]')
+    assert.equal(toggle.scrollCalls.length, 1)
+    assert.equal(toggle.scrollCalls[0].block, 'center')
+    assert.equal(toggle.scrollCalls[0].behavior, reducedMotion ? 'auto' : 'smooth')
+    assert.equal(row.querySelector('[data-name="service-name"]').focusCalls[0].preventScroll, true)
+    assert.equal(toggle.children[1].hasAttribute('profile-items-unsaved'), true, 'badge immediately follows the label')
+    assert.equal(row.querySelector('[increment-dropdown-icon]').style.marginInlineStart, 'auto')
+    page.type(row.querySelector('[data-name="service-name"]'), 'Second')
+    assert.equal(rowUnsaved(row), true)
+    page.type(row.querySelector('[data-name="service-name"]'), '')
+    assert.equal(rowUnsaved(row), false)
+    assert.equal(page.requests.length, 0)
+  }
+})
+
+test('Service remove and Undo renumber visible rows without changing their accepted baseline', () => {
+  const page = mount(undefined, { services: {
+    service: { name: 'First', price: '100' }, 'service-2': { name: 'Second', price: '200' }, 'service-3': { name: 'Third', price: '300' },
+  } })
+  page.click(page.remove)
+  assert.deepEqual(serviceLabels(page), ['Service 1', 'Service 2'])
+  assert.deepEqual(serviceRows(page).map(rowUnsaved), [false, false])
+  page.click(page.row.querySelector('[profile-items-undo]'))
+  assert.deepEqual(serviceLabels(page), ['Service 1', 'Service 2', 'Service 3'])
+  assert.deepEqual(serviceRows(page).map(rowUnsaved), [false, false, false])
+  assert.equal(page.requests.length, 0)
+})
+
+test('row badges survive refused saves and accept only the successful submitted snapshot', async () => {
+  const hold = deferred()
+  let refuse = true
+  const page = mount(async () => refuse
+    ? { ok: false, status: 400, json: async () => ({ message: 'Refused' }) }
+    : hold.promise)
+  page.type(page.name, 'Audit'); page.type(page.price, '500')
+  await submit(page)
+  assert.equal(rowUnsaved(page.row), true)
+  refuse = false
+  const saving = submit(page)
+  await new Promise(resolve => setImmediate(resolve))
+  page.type(page.name, 'Later edit')
+  hold.resolve({ ok: true, status: 200, json: async () => ({ saved: true, projection_pending: false }) })
+  await saving
+  assert.equal(rowUnsaved(page.row), true)
+  page.type(page.name, 'Audit')
+  assert.equal(rowUnsaved(page.row), false, 'the acknowledged snapshot is the new row baseline')
+  page.click(page.discard)
+  assert.equal(rowUnsaved(serviceRows(page)[0]), false)
+})
+
+test('Services preserves an unmarked authored header without adding a duplicate summary', () => {
+  const page = mount(undefined, { labelMarker: false })
+  page.type(page.name, 'Audit'); page.type(page.price, '500'); page.click(page.add)
+  for (const row of serviceRows(page)) {
+    assert.equal(row.querySelector('[increment-dropdown-toggle]').children[0].textContent, 'Service1')
+    assert.equal(row.querySelector('[profile-items-summary]'), null)
+    assert.equal(row.querySelector('[profile-items-unsaved]'), null)
+  }
+})
+
+
+test('service hydration updates the row baseline without an Unsaved badge', () => {
+  const dirtyState = loadDirtyState()
+  const page = mount(undefined, { dirtyState })
+  dirtyState.runHydrationSync(() => {
+    page.type(page.name, 'Hydrated service'); page.type(page.price, '500')
+  })
+  assert.equal(rowUnsaved(page.row), false)
+  dirtyState.finishHydration()
+  page.type(page.name, 'Edit')
+  assert.equal(rowUnsaved(page.row), true)
+  page.type(page.name, 'Hydrated service')
+  assert.equal(rowUnsaved(page.row), false)
+})
+
+test('an uncertain Service save keeps its row badge until saved state is confirmed', async () => {
+  const page = mount(async () => { throw new Error('Connection lost') })
+  page.type(page.name, 'Audit'); page.type(page.price, '500')
+  await submit(page)
+  assert.equal(rowUnsaved(page.row), true)
+  assert.match(page.root.querySelector('[profile-items-status]').textContent, /could not confirm/)
 })
