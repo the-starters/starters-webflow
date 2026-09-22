@@ -24,8 +24,10 @@
   const STRIPE_PUBLIC_KEY_LIVE =
     'pk_live_51MMhu4AW8v1kanawUQQjQTpTWBAsdVusIXoXSA26AcTHtZPYbJt6sr98ishd7cs5DXx4QeSMHw45QqrTuzftXaJm005MjZL3sz'
   const STAGING_HOST = 'the-starters-3-0.webflow.io'
-  const PRODUCTION_MIN_BOOKING_NOTICE_MINUTES = 24 * 60
+  const PRODUCTION_MIN_BOOKING_NOTICE_MINUTES = 8 * 60
+  const PRODUCTION_MIN_RESCHEDULE_NOTICE_MINUTES = 24 * 60
   const STAGING_MIN_BOOKING_NOTICE_MINUTES = 5
+  const STALE_SLOT_ERROR = 'This time is no longer available. Please choose another time.'
   const MAX_KEY_LENGTH = 128
   const MAX_PAYMENT_METHOD_LENGTH = 128
   const MAX_GUEST_EMAILS = 5
@@ -254,11 +256,18 @@
       .toLowerCase() === STAGING_HOST
   }
 
-  function minimumBookingNoticeMinutes() {
-    if (isCommonJs) return PRODUCTION_MIN_BOOKING_NOTICE_MINUTES
-    return isStagingHost()
-      ? STAGING_MIN_BOOKING_NOTICE_MINUTES
+  function minimumBookingNoticeMinutes(config) {
+    if (!isCommonJs && isStagingHost()) return STAGING_MIN_BOOKING_NOTICE_MINUTES
+    return String((config && config.booking_id) || '').trim()
+      ? PRODUCTION_MIN_RESCHEDULE_NOTICE_MINUTES
       : PRODUCTION_MIN_BOOKING_NOTICE_MINUTES
+  }
+
+  function slotMeetsBookingNotice(slot, nowMs) {
+    const start = Number(slot && slot.start)
+    const minimumStartMs = Number(nowMs === undefined ? Date.now() : nowMs) +
+      minimumBookingNoticeMinutes() * 60 * 1000
+    return Number.isFinite(start) && start >= minimumStartMs
   }
 
   function isValidGuestEmail(email) {
@@ -455,7 +464,7 @@
     }
     const start =
       Math.floor(Number(nowMs === undefined ? Date.now() : nowMs) / 1000) +
-      minimumBookingNoticeMinutes() * 60
+      minimumBookingNoticeMinutes(config) * 60
     const end = start + 14 * 24 * 60 * 60
     const query = new URLSearchParams({
       grant_id: grantId,
@@ -471,9 +480,12 @@
 
   function normalizeAvailabilitySlots(result, config, nowMs) {
     const durationMs = Number(config && config.duration) * 60 * 1000
-    const minimumStartMs =
-      (Math.floor(Number(nowMs === undefined ? Date.now() : nowMs) / 1000) +
-        minimumBookingNoticeMinutes() * 60) * 1000
+    const resolvedNowMs = Number(nowMs === undefined ? Date.now() : nowMs)
+    const minimumStartMs = (
+      String((config && config.booking_id) || '').trim()
+        ? Math.floor(resolvedNowMs / 1000) * 1000
+        : resolvedNowMs
+    ) + minimumBookingNoticeMinutes(config) * 60 * 1000
     const rows = Array.isArray(result && result.time_slots) ? result.time_slots : []
     return rows.map(function (slot) {
       const startSeconds = Number(slot && slot.start_time)
@@ -2680,7 +2692,14 @@
       } catch (error) {
         console.error('[paid-call] booking failed', error)
         retrySameBooking = error.retrySameBooking === true
-        setStatus(retrySameBooking ? 'Your request may have been received. Retry to check the same request.' : 'We could not book this call. Please try again.', 'error')
+        setStatus(
+          error.staleSlot === true
+            ? STALE_SLOT_ERROR
+            : retrySameBooking
+              ? 'Your request may have been received. Retry to check the same request.'
+              : 'We could not book this call. Please try again.',
+          'error',
+        )
       } finally {
         confirmationPending = false
         if (isCurrent()) {
@@ -3664,6 +3683,20 @@
             const attempt = createBookingAttempt(bookingInput)
             attempt.review = JSON.parse(JSON.stringify({ input: bookingInput, card: paymentChoice.selected(),
               priceText, starterName: settings.starterName || '' }))
+            const run = attempt.run
+            let commandStarted = false
+            attempt.run = function () {
+              if (!commandStarted && !slotMeetsBookingNotice(slot)) {
+                if (clearPaidCalendarSelection) clearPaidCalendarSelection()
+                throw Object.assign(new Error(STALE_SLOT_ERROR), {
+                  bookingNotSubmitted: true,
+                  retrySameBooking: false,
+                  staleSlot: true,
+                })
+              }
+              commandStarted = true
+              return run()
+            }
             return attempt
           },
         )
@@ -3986,6 +4019,7 @@
     normalizeAvailabilitySlots,
     readGuestEmails,
     requireCanonicalBookingProof,
+    slotMeetsBookingNotice,
     supportedTimezones,
     timezoneLabel,
     validateKey,

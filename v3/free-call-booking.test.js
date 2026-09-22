@@ -344,6 +344,7 @@ function bookingApiFixture(options = {}) {
       state.mounts.push(mount)
       return { slots: [{ start: 1, end: 2 }] }
     },
+    slotMeetsBookingNotice: options.slotMeetsBookingNotice || (() => true),
     readGuestEmails: (popup) => options.guests || popup
       .querySelectorAll('[data-call-guest-email]')
       .filter((field) => !field.disabled && String(field.value || '').trim())
@@ -390,16 +391,38 @@ test('canonical Free reads use one authenticated request and exact V3 routes', a
   assert.equal(new URL(calls[2].url).pathname.endsWith(api.AVAILABILITY_PATH), true)
 })
 
-test('Free availability uses five minutes only on the exact staging host', async () => {
+test('Free initial booking uses the production 8-hour floor and the exact staging exception', async () => {
   const now = Date.UTC(2026, 7, 24, 0, 0, 0)
   const nowSeconds = Math.floor(now / 1000)
-  assert.equal(api.minimumBookingNoticeMinutes(), 1440)
+  assert.equal(api.minimumBookingNoticeMinutes(), 480)
   const staging = loadBrowserApi('the-starters-3-0.webflow.io', async () => response({
     time_slots: [{ start_time: nowSeconds + 5 * 60 }],
   }))
   assert.equal(staging.minimumBookingNoticeMinutes(), 5)
   assert.equal(await staging.getNearestSlot('grant', 'config', now), nowSeconds + 5 * 60)
-  assert.equal(loadBrowserApi('thestarters.com').minimumBookingNoticeMinutes(), 1440)
+  const production = loadBrowserApi('thestarters.com', async () => response({
+    time_slots: [
+      { start_time: nowSeconds + 8 * 60 * 60 - 1 },
+      { start_time: nowSeconds + 8 * 60 * 60 },
+    ],
+  }))
+  assert.equal(production.minimumBookingNoticeMinutes(), 480)
+  assert.equal(
+    await production.getNearestSlot('grant', 'config', now),
+    nowSeconds + 8 * 60 * 60,
+  )
+
+  const fractionalNow = now + 999
+  const fractional = loadBrowserApi('thestarters.com', async () => response({
+    time_slots: [
+      { start_time: nowSeconds + 8 * 60 * 60 },
+      { start_time: nowSeconds + 8 * 60 * 60 + 1 },
+    ],
+  }))
+  assert.equal(
+    await fractional.getNearestSlot('grant', 'config', fractionalNow),
+    nowSeconds + 8 * 60 * 60 + 1,
+  )
 })
 
 test('next-slot text uses an abbreviated month and two-digit day', () => {
@@ -582,6 +605,22 @@ test('a failed Free request reuses its bounded booking attempt on retry', async 
   assert.equal(booking.state.attempts, 1)
   assert.equal(booking.state.runs, 2)
   assert.equal(fixture.successStep.style.display, 'flex')
+})
+
+test('Free rechecks the 8-hour cutoff before its first canonical booking command', async () => {
+  const fixture = chooserFixture()
+  const booking = bookingApiFixture({ slotMeetsBookingNotice: () => false })
+  await withGlobals({ document: fixture.document }, async () => {
+    api.installFreeBookingController(installSettings(booking.bookingApi))
+    await fixture.cta.onclick(event())
+    fixture.context.value = 'Keep this message'
+    await assert.rejects(
+      booking.state.mounts[0].onConfirm({ start: 1, end: 2, timezone: 'UTC' }),
+      /no longer available/i,
+    )
+    assert.equal(fixture.context.value, 'Keep this message')
+  })
+  assert.equal(booking.state.runs, 0)
 })
 
 test('a newer shared-surface owner prevents a pending Free calendar mount', async () => {

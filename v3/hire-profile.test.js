@@ -3586,6 +3586,7 @@ test('a migrated profile without the legacy Book Call button still uses the dire
     bookingRequestFingerprint: () => 'fingerprint',
     createBookingAttempt: () => ({ run: async () => ({}) }),
     mountPaidCalendar: async () => ({ slots: [] }),
+    slotMeetsBookingNotice: () => true,
   }
   vm.createContext(context)
   vm.runInContext(freeBookingSource, context)

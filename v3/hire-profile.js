@@ -397,7 +397,7 @@
   /**
    * One availability request per INSTALLED configuration, asked through the
    * booking controller's exported `getNearestSlot`. That export owns the
-   * minimum booking notice (24h on production, 5 minutes on staging) in both
+   * minimum booking notice (8h on production, 5 minutes on staging) in both
    * the query window it builds and the filter it applies to the answer —
    * fetching availability here instead would silently drop it.
    */

@@ -21,7 +21,7 @@
   // The one copy of this string. hire-profile.js's load-time painter imports it
   // rather than duplicating it, so the two writers cannot drift apart.
   const NO_SLOTS_TEXT = 'No available slots'
-  const PRODUCTION_MIN_BOOKING_NOTICE_MINUTES = 24 * 60
+  const PRODUCTION_MIN_BOOKING_NOTICE_MINUTES = 8 * 60
   const STAGING_MIN_BOOKING_NOTICE_MINUTES = 5
   const chooserBindings = new WeakMap()
   const freeReceiptVisibilityStates = new WeakMap()
@@ -301,8 +301,7 @@
 
   async function getNearestSlot(grantId, configId, nowMs) {
     const result = await authenticatedRequest(availabilityPath(grantId, configId, nowMs), 'GET')
-    const minimum =
-      Math.floor(Number(nowMs === undefined ? Date.now() : nowMs) / 1000) +
+    const minimum = Number(nowMs === undefined ? Date.now() : nowMs) / 1000 +
       minimumBookingNoticeMinutes() * 60
     const slots = Array.isArray(result && result.time_slots) ? result.time_slots : []
     const starts = slots.map(function (slot) {
@@ -348,7 +347,8 @@
       !candidate ||
       typeof candidate.mountPaidCalendar !== 'function' ||
       typeof candidate.createBookingAttempt !== 'function' ||
-      typeof candidate.bookingRequestFingerprint !== 'function'
+      typeof candidate.bookingRequestFingerprint !== 'function' ||
+      typeof candidate.slotMeetsBookingNotice !== 'function'
     ) return null
     return candidate
   }
@@ -731,7 +731,23 @@
                 const result = await bookingSurfaceLifecycle.runBooking(
                   container,
                   fingerprint,
-                  function () { return current.bookingApi.createBookingAttempt(input) },
+                  function () {
+                    const attempt = current.bookingApi.createBookingAttempt(input)
+                    const run = attempt.run
+                    let commandStarted = false
+                    attempt.run = function () {
+                      if (!commandStarted && !current.bookingApi.slotMeetsBookingNotice(slot)) {
+                        if (clearFreeCalendarSelection) clearFreeCalendarSelection()
+                        throw Object.assign(
+                          new Error('This time is no longer available. Please choose another time.'),
+                          { bookingNotSubmitted: true, retrySameBooking: false, staleSlot: true },
+                        )
+                      }
+                      commandStarted = true
+                      return run()
+                    }
+                    return attempt
+                  },
                   function (result) {
                     if (!canonicalBookingId(result)) {
                       throw new Error('The canonical booking response is incomplete')
