@@ -385,11 +385,10 @@
   function canonicalSatisfiesPendingIntent(value) {
     if (!pendingBuildIntent) return false
     const service = canonicalService(value)
-    if (!pendingBuildIntent.enabled) return !service
-    return (
-      Boolean(service) &&
-      String((value && value.public_description) || '') === pendingBuildIntent.description
-    )
+    // Build Profile is a pre-onboarding handoff. Once a canonical service
+    // exists, post-onboarding changes belong to Edit Profile or Dashboard and
+    // a leftover Build receipt must never replace that service's newer state.
+    return Boolean(service) || !pendingBuildIntent.enabled
   }
 
   function radioValue(item) {

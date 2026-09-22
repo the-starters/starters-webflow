@@ -452,12 +452,10 @@
   function canonicalSatisfiesPendingIntent(value) {
     if (!pendingBuildIntent) return false
     const service = canonicalService(value)
-    if (!pendingBuildIntent.enabled) return !service
-    return (
-      Boolean(displayableRate(service)) &&
-      String(service.title || '') === pendingBuildIntent.title &&
-      Number(service.price_cents) === pendingBuildIntent.price_dollars * 100
-    )
+    // Build Profile is a pre-onboarding handoff. Once a canonical service
+    // exists, post-onboarding changes belong to Edit Profile or Dashboard and
+    // a leftover Build receipt must never replace that service's newer state.
+    return Boolean(service) || !pendingBuildIntent.enabled
   }
 
   // Edit Profile gives the Free and Paid controllers one shared step-6 root, so the

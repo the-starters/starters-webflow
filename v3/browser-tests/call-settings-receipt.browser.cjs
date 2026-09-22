@@ -176,13 +176,13 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
     // ------------------------------------------------------------------
     const openEditProfile = async query => {
       await navigate('/starter-edit-profile', query)
-      assert.ok(await settleUntil(`document.documentElement.getAttribute('data-free-call-settings') === 'ready' && document.documentElement.getAttribute('data-paid-call-settings') === 'ready'`), 'both controllers hydrate')
       assert.ok(await settleUntil('window.__tsPendingWriteCount() === 1'), 'the receipt cleanup write is in flight')
+      await evaluate('window.__tsOpenGate()')
+      assert.ok(await settleUntil(`document.documentElement.getAttribute('data-free-call-settings') === 'ready' && document.documentElement.getAttribute('data-paid-call-settings') === 'ready'`), 'both controllers hydrate after the serialized cleanup')
       // The Edit Profile profile hydration completes here, the same point where
       // canonical-profile-loader.js calls finishHydration() in production.
       assert.equal(await evaluate('window.__tsFinishProfileHydration()'), true)
       assert.equal((await evaluate(READ)).unsavedChanges, false, 'step 6 is clean the moment hydration finishes')
-      await evaluate('window.__tsOpenGate()')
       assert.ok(await settleUntil(`!window.__tsMemberJsonState().starter_call_settings_intent_v3`), 'the satisfied receipt is dropped from the member JSON')
     }
 
@@ -281,19 +281,19 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
     record('dashboard-tour-reset-write-serializes-with-receipt-consumption', { memberJson: reset.memberJson })
 
     // ------------------------------------------------------------------
-    // 8. Dashboard Paid card: an unconsumed pending rate never outranks the
-    //    rate the Starter is actually charging.
+    // 8. Dashboard Paid card: active canonical state retires a stale Build
+    //    receipt and remains the sole post-onboarding authority.
     // ------------------------------------------------------------------
     await navigate('/starter-dashboard', 'page=dashboard&paid=1&canonical=paid-active&receipt=paid-pending')
     assert.ok(await settleUntil(`document.documentElement.getAttribute('data-paid-call-settings') === 'ready'`), 'the Paid card hydrates')
     const paidRate = await snapshot('09-dashboard-head-canonical-rate-outranks-receipt', 'HEAD, active $350 canonical service with an unconsumed $250 Build Profile receipt')
     assert.equal(paidRate.paid.enabled, 'true', 'the canonical service is active')
     assert.equal(paidRate.paid.displayedRate, '$350.00', 'the card shows the rate the Starter actually charges, not the pending receipt rate')
-    assert.equal(paidRate.paid.rateInput, '250', 'the pending Build Profile choice still prefills the editable rate for setup')
-    assert.equal(paidRate.paid.titleInput, 'Strategy call', 'the pending Build Profile title still prefills the editable title')
-    assert.deepEqual(paidRate.memberJson.starter_call_settings_intent_v3.paid, { enabled: true, title: 'Strategy call', price_dollars: 250 }, 'the receipt is still pending confirmation')
-    assert.deepEqual(xanoWrites(paidRate), [], 'hydrating the pending rate writes nothing')
-    record('dashboard-confirmed-canonical-rate-outranks-pending-receipt-rate', {
+    assert.equal(paidRate.paid.rateInput, '350', 'the editable rate holds the canonical value')
+    assert.equal(paidRate.paid.titleInput, 'Deep-dive strategy session', 'the editable title holds the canonical value')
+    assert.equal(paidRate.memberJson.starter_call_settings_intent_v3, undefined, 'the stale Build receipt is retired')
+    assert.deepEqual(xanoWrites(paidRate), [], 'retiring the stale receipt writes nothing canonical')
+    record('dashboard-active-canonical-paid-service-retires-stale-build-receipt', {
       displayedRate: paidRate.paid.displayedRate, rateInput: paidRate.paid.rateInput,
     })
 

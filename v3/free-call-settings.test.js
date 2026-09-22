@@ -581,7 +581,7 @@ test('a pending receipt cleanup failure never turns a verified Free save into an
   assert.match(result.warnings.join('\n'), /pending Build Profile receipt could not be cleared/)
 })
 
-test('a pending Build Profile Free off choice disables an existing canonical service', async () => {
+test('a stale Build Profile Free off choice is retired when a canonical service exists', async () => {
   const active = service()
   const result = load({
     memberJSON: {
@@ -595,21 +595,12 @@ test('a pending Build Profile Free off choice disables an existing canonical ser
       services: [active],
       readiness: { free_call_enabled: true, bookable: true },
     }),
-    routes: {
-      '/starter/free-call-settings/disable/v3': ({ setState }) => {
-        setState(canonical())
-        return { ok: true, status: 200, json: async () => ({ disabled: true }) }
-      },
-    },
   })
   await settle()
 
-  assert.equal(result.dom.no.checked, true)
-  assert.match(result.dom.status.textContent, /turn off free calls/)
-  await result.window.StarterFreeCallSettings.submit()
-  await settle()
-
-  assert.ok(result.calls.some((call) => call.path === '/starter/free-call-settings/disable/v3'))
+  assert.equal(result.dom.yes.checked, true)
+  assert.equal(result.dom.no.checked, false)
+  assert.equal(result.calls.some((call) => call.method === 'POST'), false)
   assert.equal(result.memberJsonWrites.at(-1).starter_call_settings_intent_v3, undefined)
 })
 
@@ -1439,7 +1430,7 @@ test('a Free enable receipt canonical already satisfies is consumed on load, not
   assert.equal(result.window.StarterFreeCallSettings.hasChanges(), false)
 })
 
-test('a queued Free receipt consume never deletes the receipt of the member who signs in next', async () => {
+test('a queued Free receipt consume cannot corrupt the next member cleanup', async () => {
   const gate = deferred()
   const receipt = {
     version: 1,
@@ -1470,11 +1461,12 @@ test('a queued Free receipt consume never deletes the receipt of the member who 
   await switched
   await settle()
 
-  assert.equal(result.memberJsonWrites.length, 0, "the previous member's consume writes nothing")
-  assert.equal(result.dom.title.value, 'B intro', "the next member's pending choice survives")
+  assert.equal(result.memberJsonWrites.length, 1, "only the next member's stale receipt is retired")
+  assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
+  assert.equal(result.dom.title.value, 'Quick intro', 'the next member sees the active canonical service')
 })
 
-test('a Free enable receipt canonical does not satisfy stays pending over the canonical description', async () => {
+test('a stale Free enable receipt cannot replace a newer canonical description', async () => {
   const result = load({
     editProfile: true,
     memberId: 'member-free-a',
@@ -1493,8 +1485,10 @@ test('a Free enable receipt canonical does not satisfy stays pending over the ca
   })
   await settle()
 
-  assert.equal(result.memberJsonWrites.length, 0)
-  assert.equal(result.dom.title.value, 'Quick intro')
+  assert.equal(result.memberJsonWrites.length, 1)
+  assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
+  assert.equal(result.dom.title.value, 'Longer saved intro')
+  assert.equal(result.calls.some((call) => call.method === 'POST'), false)
 })
 
 test('a member edit made while a Free off receipt is being consumed is never repainted away', async () => {

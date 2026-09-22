@@ -252,25 +252,29 @@ whole-dollar rate report validation on their exact authored controls. The Paid
 rate reuses the same `$1` through `$1,000` whole-dollar validator as the other
 direct Build Profile price controls.
 
-Dashboard and Edit Profile hydrate the receipt as a pending create, update, or
-disable. A pending enable prefills that branch's controls without becoming
-canonical state, and stays pending until the branch's prerequisites are ready
-and the member selects Update. A pending receipt stays declinable before those
-prerequisites are ready: selecting Off makes Update live so the member can
-change their mind and submit it. A pending Yes leaves Update gated on the
-existing scheduling and Stripe prerequisite checks.
+Dashboard and Edit Profile hydrate the receipt only as a pre-onboarding create
+choice. If that branch has no canonical service, a pending enable prefills its
+controls without becoming canonical state and stays pending until the branch's
+prerequisites are ready and the member selects Update. The choice remains
+declinable before those prerequisites are ready: selecting Off makes Update live
+so the member can change their mind and submit it. A pending Yes leaves Update
+gated on the existing scheduling and Stripe prerequisite checks.
+
+Once an active canonical service exists, that service is the sole authority.
+The consumer removes any leftover Build Profile receipt without painting it or
+writing to Xano. Post-onboarding changes, including disable, belong to Edit
+Profile or Dashboard. This prevents a failed receipt-cleanup attempt from later
+replacing newer canonical settings.
 
 Each consumer removes only its own part of the receipt; the other branch's
-pending part is preserved. It consumes its part once canonical state matches the
-member's choice, in one of three ways:
+pending part is preserved. It consumes its part in one of three ways:
 
 - after the canonical Call Settings endpoint returns exact readback;
-- with no canonical write, on load, when canonical already satisfies the
-  receipt's own choice exactly: an off choice with no active service, or an
-  enable whose values the active service already holds — Free's public
-  description, or Paid's title and whole-dollar USD rate. This is what repairs a
-  receipt whose best-effort cleanup failed after a verified save, so it cannot
-  re-assert Build Profile values over newer canonical ones. Such a receipt is
+- with no canonical write, on load, when there is an active canonical service,
+  regardless of whether its current values match the older Build choice, or
+  when an off choice has no active service. This repairs a receipt whose
+  best-effort cleanup failed after a verified save, so it cannot re-assert
+  Build Profile values over newer canonical ones. Such a receipt is
   never painted as a pending choice — neither the controls nor the message: the
   canonical render already shows the same values, so the card keeps reporting
   the saved canonical state, including any canonical warning the receipt does

@@ -17,9 +17,10 @@ payload.
   Xano returns it as `public_description` and projects the same value to the public Webflow profile
   and Algolia record.
 - Initial and terminal UI state always comes from
-  `GET starter/free-call-settings/get/v3`. The one overlay is an unconsumed
-  Build Profile receipt, which prefills the form controls without becoming
-  canonical state — see [Build Profile handoff](#build-profile-handoff).
+  `GET starter/free-call-settings/get/v3`. With no active service, an unconsumed
+  Build Profile receipt can prefill the form controls without becoming
+  canonical state. An active service retires that receipt and remains the sole
+  post-onboarding authority — see [Build Profile handoff](#build-profile-handoff).
 
 ## Build Profile handoff
 
@@ -28,6 +29,10 @@ private, member-bound `starter_call_settings_intent_v3` Memberstack receipt. The
 Free controller keeps a new enable pending — prefilling the radio and the public
 description without becoming canonical state — until Calendar and Availability
 are ready, then requires the member to select Update.
+
+If an active canonical Free service already exists, the controller consumes any
+leftover Build Profile receipt without overlaying or writing it. Later changes
+must come from Edit Profile or Dashboard.
 
 Everything else about that receipt is branch-agnostic and owned by
 [Call Settings receipt lifecycle](../../v3/build-profile/README.md#call-settings-receipt-lifecycle):

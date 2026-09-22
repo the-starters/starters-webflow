@@ -17,16 +17,16 @@ linkage, charge readiness, and the freshness gate are all ready, then the member
 must select Update.
 
 The legacy `data-paid-call-element="settings"` surface authors no Off control, so
-unchecking the Enabled checkbox is that surface's Off choice whenever there is
-something to say no to — a pending receipt or an active service. With neither,
-an uncheck is only an incomplete form, and Update still asks the member to turn
-paid calls on. While a pending receipt is waiting and no paid service is active,
-that uncheck makes Update live
-and submitting it records the decline without a canonical write. While a service
-is active, an uncheck is never a save: Update neither writes the pending title
-and rate nor turns the service off, and the receipt stays pending until the
-member re-checks Enabled or uses the authored Disable action. A pending Off
-receipt keeps its own Update-driven disable path.
+unchecking the Enabled checkbox is that surface's Off choice when a new pending
+receipt has no active service. With neither, an uncheck is only an incomplete
+form, and Update still asks the member to turn paid calls on. The pending-create
+uncheck makes Update live and submitting it records the decline without a
+canonical write.
+
+If an active canonical Paid service already exists, the controller consumes any
+leftover Build Profile receipt without overlaying, updating, or disabling the
+service. Later changes must come from Edit Profile or Dashboard, including the
+authored Disable action.
 
 Everything else about that receipt is branch-agnostic and owned by
 [Call Settings receipt lifecycle](../../v3/build-profile/README.md#call-settings-receipt-lifecycle):
@@ -188,12 +188,13 @@ The controller sets `data-ready="true|false"` on each row. It also sets these wr
 ## Authority and behavior
 
 - Xano `nylas_configurations_v3` table `#104` is the canonical Paid Call authority.
-- Initial and terminal state comes from `GET starter/paid-call-settings/get/v3` (`#2924`). An
-  unconsumed Build Profile receipt prefills the form controls only; it is never canonical state.
+- Initial and terminal state comes from `GET starter/paid-call-settings/get/v3` (`#2924`). With no
+  active service, an unconsumed Build Profile receipt can prefill the form controls; it is never
+  canonical state.
 - An active service in `services[]` is the confirmed V3 authority. It wins over any imported
   suggestion or pending Build Profile receipt. The card output uses that active service's valid
-  canonical rate, or `Not set` when that canonical rate cannot be displayed. A pending receipt can
-  still prefill the editable form, but it never becomes the displayed rate for an active service.
+  canonical rate, or `Not set` when that canonical rate cannot be displayed. Any leftover Build
+  receipt is retired without overlay or canonical write.
   A service rate is bookable only when it is USD and has an exact whole-dollar integer
   `price_cents` from 100 through 100000 (`price_cents % 100 === 0`).
 - An active service whose stored rate fails that check is never presented as bookable. The browser

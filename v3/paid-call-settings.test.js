@@ -856,7 +856,7 @@ test('a pending receipt cleanup failure never turns a verified Paid save into an
   assert.match(result.warnings.join('\n'), /pending Build Profile receipt could not be cleared/)
 })
 
-test('a pending Build Profile Paid change updates an existing canonical service', async () => {
+test('a stale Build Profile Paid change is retired when a canonical service exists', async () => {
   const active = service({ title: 'Old call', price_cents: 10000 })
   const result = load({
     cardMode: true,
@@ -871,34 +871,12 @@ test('a pending Build Profile Paid change updates an existing canonical service'
       services: [active],
       readiness: { paid_call_enabled: true, bookable: true },
     }),
-    routes: {
-      '/starter/paid-call-settings/upsert/v3': ({ body, setState }) => {
-        const saved = service({
-          title: body.title,
-          price_cents: body.price_cents,
-          duration: body.duration_minutes,
-          revision: 5,
-        })
-        setState(canonical({
-          services: [saved],
-          readiness: { paid_call_enabled: true, bookable: true },
-        }))
-        return { ok: true, status: 200, json: async () => ({ service: saved }) }
-      },
-    },
   })
   await settle()
 
-  assert.equal(result.dom.title.value, 'New strategy call')
-  assert.equal(result.dom.price.value, '300')
-  assert.match(result.dom.statusOutput.textContent, /save paid calls/)
-  await result.window.StarterPaidCallSettings.submit()
-  await settle()
-
-  const upsert = result.calls.find((call) => call.path === '/starter/paid-call-settings/upsert/v3')
-  assert.equal(upsert.body.config_id, 'cfg-paid-1')
-  assert.equal(upsert.body.title, 'New strategy call')
-  assert.equal(upsert.body.price_cents, 30000)
+  assert.equal(result.dom.title.value, 'Old call')
+  assert.equal(result.dom.price.value, 100)
+  assert.equal(result.calls.some((call) => call.method === 'POST'), false)
   assert.equal(result.memberJsonWrites.at(-1).starter_call_settings_intent_v3, undefined)
 })
 
@@ -1055,7 +1033,7 @@ test('declining a pending Paid enable consumes the receipt when canonical has no
   assert.equal(result.dom.enabled.checked, false)
 })
 
-test('a non-card pending Paid off receipt disables an active canonical service', async () => {
+test('a non-card stale Paid off receipt cannot disable an active canonical service', async () => {
   const active = service()
   const result = load({
     memberJSON: {
@@ -1069,23 +1047,13 @@ test('a non-card pending Paid off receipt disables an active canonical service',
       services: [active],
       readiness: { paid_call_enabled: true, bookable: true },
     }),
-    routes: {
-      '/starter/paid-call-settings/disable/v3': ({ setState }) => {
-        setState(canonical())
-        return { ok: true, status: 200, json: async () => ({ service: { active: false } }) }
-      },
-    },
   })
   await settle()
 
-  assert.equal(result.dom.enabled.checked, false, 'the Build Profile Off choice is hydrated')
-  assert.ok(await result.window.StarterPaidCallSettings.submit())
-  await settle()
-
-  assert.equal(result.calls.filter((call) => call.path === '/starter/paid-call-settings/disable/v3').length, 1)
+  assert.equal(result.dom.enabled.checked, true, 'the canonical active service wins')
+  assert.equal(result.calls.filter((call) => call.path === '/starter/paid-call-settings/disable/v3').length, 0)
   assert.equal(result.calls.filter((call) => call.path === '/starter/paid-call-settings/upsert/v3').length, 0)
   assert.equal(result.memberJsonWrites.at(-1).starter_call_settings_intent_v3, undefined)
-  assert.equal(result.dom.enabled.checked, false)
 })
 
 const GATED_PAID_READINESS = {
@@ -1175,7 +1143,7 @@ test('the legacy non-card Paid surface declines a gated pending enable by unchec
   assert.equal(result.dom.enabled.checked, false, 'the declined choice stays off after the re-render')
 })
 
-test('an unchecked non-card Enabled box never writes the pending rate behind Update', async () => {
+test('an unchecked non-card Enabled box never writes a stale receipt behind Update', async () => {
   const active = service({ title: 'Strategy call', price_cents: 20000, revision: 2 })
   const result = load({
     memberJSON: {
@@ -1207,7 +1175,8 @@ test('an unchecked non-card Enabled box never writes the pending rate behind Upd
   })
   await settle()
 
-  assert.equal(result.dom.price.value, '350', 'the pending rate prefills the authored control')
+  assert.equal(result.dom.price.value, 200, 'the canonical rate fills the authored control')
+  assert.equal(result.memberJsonWrites.length, 1, 'the stale receipt is retired on load')
 
   result.dom.enabled.checked = false
   await result.dom.enabled.dispatch('change')
@@ -1217,14 +1186,14 @@ test('an unchecked non-card Enabled box never writes the pending rate behind Upd
   assert.equal(
     result.calls.filter((call) => call.path === '/starter/paid-call-settings/upsert/v3').length,
     0,
-    'an off-shaped gesture never saves the pending title and rate',
+    'an off-shaped gesture never saves the stale receipt title and rate',
   )
   assert.equal(
     result.calls.filter((call) => call.path === '/starter/paid-call-settings/disable/v3').length,
     0,
     'an active service is only turned off through the authored Turn off action',
   )
-  assert.equal(result.memberJsonWrites.length, 0, 'the receipt survives an off-shaped gesture')
+  assert.equal(result.memberJsonWrites.length, 1, 'the off-shaped gesture adds no receipt write')
   assert.equal(
     result.dom.status.textContent,
     'Use Turn off paid calls to disable the active service safely.',
@@ -1242,7 +1211,7 @@ test('an unchecked non-card Enabled box never writes the pending rate behind Upd
   )
 })
 
-test('a queued Paid receipt consume never deletes the receipt of the member who signs in next', async () => {
+test('a queued Paid receipt consume cannot corrupt the next member cleanup', async () => {
   const gate = deferred()
   const receipt = {
     version: 1,
@@ -1271,9 +1240,10 @@ test('a queued Paid receipt consume never deletes the receipt of the member who 
   await switched
   await settle()
 
-  assert.equal(result.memberJsonWrites.length, 0, "the previous member's consume writes nothing")
-  assert.equal(result.dom.title.value, 'Deep-dive session', "the next member's pending choice survives")
-  assert.equal(result.dom.price.value, '350')
+  assert.equal(result.memberJsonWrites.length, 1, "only the next member's stale receipt is retired")
+  assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
+  assert.equal(result.dom.title.value, 'Strategy call', 'the next member sees the active canonical service')
+  assert.equal(result.dom.price.value, 250)
 })
 
 test('a gated pending Paid Yes re-enables Update only while Off stays selected', async () => {
@@ -2006,7 +1976,7 @@ test('a Paid enable receipt canonical already satisfies is consumed on load, not
   assert.equal(result.window.StarterPaidCallSettings.hasChanges(), false)
 })
 
-test('a Paid enable receipt canonical does not satisfy stays pending over the canonical rate', async () => {
+test('a stale Paid enable receipt cannot replace a newer canonical rate', async () => {
   const result = load({
     editProfile: true,
     memberId: 'member-a',
@@ -2024,8 +1994,10 @@ test('a Paid enable receipt canonical does not satisfy stays pending over the ca
   })
   await settle()
 
-  assert.equal(result.memberJsonWrites.length, 0)
-  assert.equal(result.dom.price.value, '250')
+  assert.equal(result.memberJsonWrites.length, 1)
+  assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
+  assert.equal(result.dom.price.value, 400)
+  assert.equal(result.calls.some((call) => call.method === 'POST'), false)
 })
 
 test('a member edit made while a Paid off receipt is being consumed is never repainted away', async () => {
@@ -3173,7 +3145,7 @@ test('an imported V2 suggestion replaces the placeholder but stays off until con
   assert.equal(result.dom.statusOutput.textContent, 'Paid calls are off. Confirm the imported V2 rate to turn them on.')
 })
 
-test('a pending Paid intent never displaces the confirmed canonical rate in the price output', async () => {
+test('a stale Paid intent is retired without displacing confirmed canonical values', async () => {
   const active = service({ title: 'Old call', price_cents: 35000 })
   const result = load({
     cardMode: true,
@@ -3195,8 +3167,10 @@ test('a pending Paid intent never displaces the confirmed canonical rate in the 
   assert.equal(result.dom.priceOutput.textContent, '$350.00')
   assert.equal(result.dom.root.getAttribute('data-paid-call-enabled'), 'true')
   assert.equal(result.dom.root.getAttribute('data-paid-call-bookable'), 'true')
-  assert.equal(result.dom.title.value, 'New strategy call')
-  assert.equal(result.dom.price.value, '250')
+  assert.equal(result.dom.title.value, 'Old call')
+  assert.equal(result.dom.price.value, 350)
+  assert.equal(result.memberJsonWrites.length, 1)
+  assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
 })
 
 test('an active non-USD Paid service never falls through to a pending USD receipt rate', async () => {
@@ -3217,7 +3191,9 @@ test('an active non-USD Paid service never falls through to a pending USD receip
 
   assert.equal(result.dom.priceOutput.textContent, 'Not set')
   assert.equal(result.dom.root.getAttribute('data-paid-call-enabled'), 'true')
-  assert.equal(result.dom.price.value, '250', 'the pending choice still prefills the editable form')
+  assert.equal(result.dom.price.value, '', 'the invalid canonical rate stays blank for correction')
+  assert.equal(result.memberJsonWrites.length, 1, 'the stale receipt is retired')
+  assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
 })
 
 test('a pending Paid intent outranks an imported V2 rate suggestion', async () => {
