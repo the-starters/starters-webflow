@@ -1090,6 +1090,78 @@ const satisfiedFreeCanonical = () => canonical({
   readiness: { free_call_enabled: true, bookable: true },
 })
 
+test('a step-6 save during a satisfied Free auto-consume succeeds without a canonical write', async () => {
+  const cleanupGate = deferred()
+  const result = load({
+    editProfile: true,
+    memberId: 'member-free-a',
+    memberJsonUpdateGate: cleanupGate.promise,
+    memberJSON: SATISFIED_FREE_RECEIPT,
+    initial: satisfiedFreeCanonical(),
+  })
+  await settle()
+
+  assert.equal(
+    result.window.StarterFreeCallSettings.hasChanges(), false,
+    'a receipt canonical already satisfies is never an unsaved step-6 edit',
+  )
+  assert.ok(
+    await result.window.StarterFreeCallSettings.submit(),
+    'a step-6 save landing inside the cleanup window still reports success',
+  )
+  assert.equal(result.calls.some((call) => call.method === 'POST'), false, 'the background repair makes no canonical write')
+
+  cleanupGate.resolve()
+  await settle()
+
+  assert.equal(result.memberJsonWrites.length, 1)
+  assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
+  assert.equal(result.dom.yes.checked, true, 'the canonical on state is what the card shows throughout')
+  assert.equal(result.dom.title.value, 'Quick intro')
+})
+
+test('a transient Free receipt read failure keeps the pending choice visible and declinable', async () => {
+  let failNextRead = false
+  const result = load({
+    memberJsonReadGate: () => (failNextRead ? Promise.reject(new Error('Memberstack unavailable')) : null),
+    memberJSON: {
+      starter_call_settings_intent_v3: {
+        version: 1,
+        member_id: 'member-free-a',
+        free: { enabled: true, description: 'Quick intro' },
+      },
+    },
+    initial: canonical({
+      readiness: { calendar_connected: false, availability_configured: false },
+    }),
+  })
+  await settle()
+  assert.equal(result.dom.yes.checked, true, 'the pending enable is hydrated')
+
+  failNextRead = true
+  await result.dispatchWindowEvent('starterSchedulingConnectionStateChanged')
+  await settle()
+
+  assert.equal(result.dom.yes.checked, true, 'a transient read failure never erases the pending choice')
+  assert.equal(result.dom.title.value, 'Quick intro')
+  assert.equal(result.memberJsonWrites.length, 0, 'a failed read consumes nothing')
+  assert.equal(result.calls.some((call) => call.method === 'POST'), false)
+
+  result.dom.no.checked = true
+  await result.dom.no.dispatch('change')
+  assert.equal(result.dom.save.getAttribute('aria-disabled'), 'false', 'the pending choice stays declinable')
+  result.dom.yes.checked = true
+  await result.dom.yes.dispatch('change')
+
+  failNextRead = false
+  await result.dispatchWindowEvent('starterSchedulingConnectionStateChanged')
+  await settle()
+
+  assert.equal(result.dom.yes.checked, true, 'a later successful refresh reconciles the same choice')
+  assert.equal(result.dom.title.value, 'Quick intro')
+  assert.equal(result.memberJsonWrites.length, 0)
+})
+
 test('a prerequisite refresh during a satisfied Free auto-consume never resurrects the receipt', async () => {
   const cleanupGate = deferred()
   let reads = 0

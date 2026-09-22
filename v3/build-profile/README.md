@@ -270,7 +270,10 @@ member's choice, in one of three ways:
   enable whose values the active service already holds — Free's public
   description, or Paid's title and whole-dollar USD rate. This is what repairs a
   receipt whose best-effort cleanup failed after a verified save, so it cannot
-  re-assert Build Profile values over newer canonical ones;
+  re-assert Build Profile values over newer canonical ones. Such a receipt is
+  never painted as a pending choice — the canonical render already shows the
+  same values — so it reports no unsaved edit and an Edit Profile step save
+  landing inside the repair window succeeds untouched;
 - with no canonical write, on a submitted off choice while that branch has no
   active service, even when the receipt itself is still an unconsumed enable, so
   a declined Build Profile Yes cannot re-assert itself on the next load.
@@ -291,7 +294,10 @@ The submit writer, the draft-state writer, and both receipt consumers share one
 serialized `window.__tsMemberJsonWrite` read-modify-write boundary, so one
 branch cannot overwrite another. Every receipt read joins that same queue, so a
 hydration or prerequisite-refresh read taken while a consume is in flight sees
-the post-consume state rather than resurrecting the branch being deleted. A final-step draft save therefore cannot
+the post-consume state rather than resurrecting the branch being deleted. A
+receipt read that fails is not a confirmed absence: a prerequisite refresh keeps
+the pending choice it is already showing, consumes nothing, and lets a later
+successful refresh reconcile it. A final-step draft save therefore cannot
 overwrite the Call Settings receipt from the same click. A draft write also
 abandons itself when its own Memberstack read fails, rather than persisting a
 blob rebuilt from an empty read, so a transient read error cannot drop the

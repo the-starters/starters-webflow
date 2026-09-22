@@ -786,7 +786,9 @@
       descriptionInput.readOnly = false
       descriptionInput.setAttribute('aria-readonly', 'false')
     }
-    if (pendingBuildIntent) {
+    // A receipt canonical already satisfies would repaint the values canonical
+    // just painted, so it is retired in the background instead of overlaid.
+    if (pendingBuildIntent && !canonicalSatisfiesPendingIntent(value)) {
       setRadioChecked(pair.enabled, pendingBuildIntent.enabled)
       setRadioChecked(pair.disabled, !pendingBuildIntent.enabled)
       notifyRadioChange(pendingBuildIntent.enabled ? pair.enabled : pair.disabled)
@@ -881,11 +883,13 @@
     const memberId = sessionMemberId
     try {
       const canonical = await readCanonicalSettings()
-      const pending = await readPendingBuildIntent().catch(function () { return null })
+      const pending = await readPendingBuildIntent().catch(function () { return undefined })
       if (!currentRender(version, memberId) || busy) return canonical
-      pendingBuildIntent = pending
+      // A failed receipt read is not a confirmed absence: keep the pending
+      // choice on the card and let a later refresh reconcile it.
+      if (pending !== undefined) pendingBuildIntent = pending
       render(canonical)
-      if (canonicalSatisfiesPendingIntent(canonical)) {
+      if (pending !== undefined && canonicalSatisfiesPendingIntent(canonical)) {
         const consumeEditRevision = memberEditRevision
         const consumeWrite = beginWrite(memberId)
         consumePendingBuildIntent().then(function () {
