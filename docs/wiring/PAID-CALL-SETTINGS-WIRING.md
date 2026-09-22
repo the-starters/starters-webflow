@@ -390,6 +390,21 @@ The release owner runs them by hand, in this order, after the PR merges:
    while its request is pending, and a successful canonical refresh must leave the block hidden.
    Reconcile the unchanged fixture in the paid-call dry run. Do not create a booking, payment,
    email, or other workflow side effect, and never run a live-money production charge.
+8. Confirm the [Build Profile handoff](#build-profile-handoff) on a TEST Starter whose private
+   Memberstack JSON holds an unconsumed `starter_call_settings_intent_v3` receipt with a `paid`
+   part and who has no active Paid service. On `Dashboard / Calendar`, confirm the card prefills
+   the Yes radio, the title, and the rate, that the price output shows the pending rate with
+   `data-paid-call-rate-source` empty, that `data-paid-call-enabled` still reads `false`, and that
+   hydration alone sends no Xano mutation and no Memberstack write. With Calendar, Availability,
+   Stripe linkage, charge readiness, and the freshness gate all ready, click the already-checked
+   Yes radio — a click, which emits no `change` event — and confirm that makes Update live without
+   writing anything; then click Update and confirm the canonical readback creates the service and
+   the `paid` part is gone from member JSON while any `free` part survives. Repeat on a second TEST
+   Starter with the same stored receipt: select No — on the legacy
+   `data-paid-call-element="settings"` surface, uncheck the Enabled checkbox — click Update, and
+   confirm no canonical request is sent and the `paid` part is still removed. Run both halves on
+   Edit Profile step 6 as well, where the same click is what marks the step changed. None of this
+   creates a booking, charge, provider mutation, message, or email.
 
 Record the served-asset check and the TEST booking reconciliation result before the
 form is activated for any Starter outside TEST.

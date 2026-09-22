@@ -279,6 +279,18 @@ order, after the PR merges:
    canonical state must stay on. A retry must clear the old message while its request is pending,
    and a successful canonical refresh must leave the block hidden. Do not create a booking for
    this check; use a pre-existing TEST fixture.
+7. Confirm the [Build Profile handoff](#build-profile-handoff) on a TEST Starter whose private
+   Memberstack JSON holds an unconsumed `starter_call_settings_intent_v3` receipt with a `free`
+   part and who has no active Free service. On `Dashboard / Calendar`, confirm the card prefills
+   the Yes radio and the receipt's description while `data-free-call-enabled` still reads `false`,
+   and that hydration alone sends no Xano mutation and no Memberstack write. With Calendar and
+   Availability ready, click the already-checked Yes radio — a click, which emits no `change`
+   event — and confirm that makes Update live without writing anything; then click Update and
+   confirm the canonical readback creates the service and the `free` part is gone from member JSON
+   while any `paid` part survives. Repeat on a second TEST Starter with the same stored receipt:
+   select No, click Update, and confirm no canonical request is sent and the `free` part is still
+   removed. Run both halves on Edit Profile step 6 as well, where the same click is what marks the
+   step changed. None of this creates a booking, charge, provider mutation, message, or email.
 
 Record the served-asset check and the TEST enable and disable results before the Free card is
 activated for any Starter outside TEST.
