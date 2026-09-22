@@ -596,7 +596,7 @@ test('a section missing its row template or Save control reports the gap and dis
   const unusable = 'This section could not load. Reload the page before editing.'
   const missingRow = await mount({ withRow: false })
   assert.equal(missingRow.status(), unusable)
-  assert.ok(missingRow.warnings.some(args => args[0] === '[unified-companies] missing [profile-item-row] with [profile-item-toggle], [profile-item-content], [profile-items-undo] and a [profile-item-remove] button themed with an enabled theme, or Save control in section'))
+  assert.ok(missingRow.warnings.some(args => args[0] === '[unified-companies] missing [profile-item-row] with [profile-item-toggle], [profile-item-content], [profile-items-undo] and a themed [profile-item-remove] button, or Save control in section'))
   assert.equal(missingRow.save.getAttribute('disabled'), '')
   assert.equal(missingRow.requests.length, 0)
   const missingSave = await mount({ withSave: false })
@@ -1152,11 +1152,12 @@ test('one Work Experience entry is open at a time, through the shared accordion 
   assert.equal(page.expanded(0), false)
   assert.equal(page.expanded(1), false)
   assert.equal(page.expanded(2), true)
-  // A removed row collapses, and the entry it leaves behind still opens.
+  // Removing the blank added row drops it, and the entries it leaves behind still open one at a time.
   page.click(page.section.querySelectorAll('[profile-item-row]')[2].querySelector('[profile-item-remove]'))
-  assert.equal(page.expanded(2), false)
+  assert.equal(page.section.querySelectorAll('[profile-item-row]').length, 2)
   page.click(toggles[1])
   assert.equal(page.expanded(1), true)
+  assert.equal(page.expanded(0), false)
   // Discard rebuilds the rows, and the rebuilt ones are collapsed and still exclusive.
   page.click(page.discard)
   assert.equal(page.section.querySelectorAll('[profile-item-row]').length, 2)
@@ -1171,15 +1172,15 @@ test('one Work Experience entry is open at a time, through the shared accordion 
 
 test('a row missing the markup the section drives reports the gap and disables Save', async () => {
   // Without a control and a panel the row would render permanently expanded and inert, and
-  // without the authored Undo a removed row would have no way back. A Remove whose authored
-  // theme is the disabled one has no enabled theme to return to, so a tree saved in that state
-  // is a gap too. Each is reported instead of hydrating into it.
+  // without the authored Undo a removed row would have no way back. A Remove with no theme at
+  // all has nothing to restore after the disabled swap. Each is reported instead of hydrating
+  // into it.
   for (const options of [{ withToggle: false }, { withContent: false }, { withUndo: false },
-    { removeTheme: null }, { removeTheme: '' }, { removeTheme: 'disabled' }, { withRemoveControl: false }]) {
+    { removeTheme: null }, { removeTheme: '' }, { withRemoveControl: false }]) {
     const page = await mount(options)
     assert.equal(page.status(), 'This section could not load. Reload the page before editing.')
     assert.equal(page.save.getAttribute('disabled'), '')
-    assert.ok(page.warnings.some(args => args[0] === '[unified-companies] missing [profile-item-row] with [profile-item-toggle], [profile-item-content], [profile-items-undo] and a [profile-item-remove] button themed with an enabled theme, or Save control in section'))
+    assert.ok(page.warnings.some(args => args[0] === '[unified-companies] missing [profile-item-row] with [profile-item-toggle], [profile-item-content], [profile-items-undo] and a themed [profile-item-remove] button, or Save control in section'))
     assert.equal(page.requests.length, 0)
   }
 })
@@ -1301,6 +1302,72 @@ test('Remove returns to the theme Designer authored once a second entry makes it
   page.company('Gamma', 1); page.type('job_title', 'CTO', 1)
   assert.equal(rebuilt.getAttribute('data-button-theme'), 'danger')
   assert.equal(page.mutations().length, 0)
+})
+
+test('whatever theme Designer authored on Remove is the one restored', async () => {
+  // The section reads the authored value and never substitutes one of its own, so an unusual
+  // authored theme still loads and still comes back after the disabled swap.
+  const page = await mount({ componentMarkup: true, removeTheme: 'disabled',
+    companies: [{ id: 1, company_name: 'Acme', company_source: 'custom', job_title: 'Designer' }] })
+  assert.equal(page.status(), '')
+  assert.equal(page.save.getAttribute('disabled'), null)
+  const theme = page.section.querySelector('[profile-item-remove]').querySelector('[data-button-theme]')
+  assert.equal(theme.getAttribute('data-button-theme'), 'disabled')
+  page.click(page.add)
+  page.company('Beta', 1); page.type('job_title', 'Engineer', 1)
+  assert.equal(theme.getAttribute('data-button-theme'), 'disabled')
+  assert.equal(page.section.querySelector('[profile-item-remove]').querySelector('button').disabled, false)
+})
+
+test('Remove drops a blank added row instead of leaving it stuck behind Undo', async () => {
+  const page = await mount({ componentMarkup: true, companies: [{ id: 1, company_name: 'Acme', company_source: 'custom', job_title: 'Designer' }] })
+  const rows = () => page.section.querySelectorAll('[profile-item-row]')
+  page.click(page.add)
+  assert.equal(rows().length, 2)
+  page.click(rows()[1].querySelector('[profile-item-remove]'))
+  // The blank row is gone, not collapsed into an entry only Undo could reach.
+  assert.equal(rows().length, 1)
+  assert.equal(rows()[0].querySelector('[profile-items-summary]').textContent, 'Work Experience (Acme · Designer)')
+  // Repeating it cannot stack phantoms past the three-entry cap.
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    page.click(page.add)
+    page.click(page.section.querySelectorAll('[profile-item-row]')[1].querySelector('[profile-item-remove]'))
+  }
+  assert.equal(rows().length, 1)
+  page.click(page.add); page.company('Beta', 1); page.type('job_title', 'Engineer', 1)
+  page.click(page.add); page.company('Gamma', 2); page.type('job_title', 'CTO', 2)
+  assert.equal(rows().length, 3)
+  page.click(page.add)
+  assert.equal(page.status(), 'You can keep up to three work experience entries.')
+  assert.equal(rows().length, 3)
+  assert.equal(page.mutations().length, 0)
+})
+
+test('an unsaved row that holds something keeps its Undo', async () => {
+  const page = await mount({ componentMarkup: true, companies: [{ id: 1, company_name: 'Acme', company_source: 'custom', job_title: 'Designer' }] })
+  const rows = () => page.section.querySelectorAll('[profile-item-row]')
+  page.click(page.add)
+  page.company('Beta', 1)
+  page.click(rows()[1].querySelector('[profile-item-remove]'))
+  // It carries data, so removal stays reversible rather than discarding what was typed.
+  assert.equal(rows().length, 2)
+  assert.equal(rows()[1].querySelector('[profile-items-undo]').hidden, false)
+  page.click(rows()[1].querySelector('[profile-items-undo]'))
+  assert.equal(page.field('company_name', 1).value, 'Beta')
+  assert.equal(rows()[1].querySelector('[profile-items-undo]').hidden, true)
+})
+
+test('Add opens the unfinished row it is asking the Starter to finish', async () => {
+  const page = await mount({ componentMarkup: true })
+  const row = page.section.querySelector('[profile-item-row]')
+  const toggle = row.querySelector('[profile-item-toggle]')
+  // The Starter collapsed the only row before pressing Add.
+  page.click(toggle)
+  assert.equal(page.expanded(0), false)
+  page.click(page.add)
+  assert.equal(page.section.querySelectorAll('[profile-item-row]').length, 1)
+  assert.equal(page.expanded(0), true)
+  assert.ok(page.field('company_name').focusCalls.length >= 1)
 })
 
 test('a partial company save clears only the confirmed row badge', async () => {

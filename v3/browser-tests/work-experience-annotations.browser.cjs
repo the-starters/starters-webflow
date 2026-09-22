@@ -1,4 +1,7 @@
-// node v3/browser-tests/work-experience-annotations.browser.cjs
+// GSAP_SOURCE=<path to a GSAP UMD build> node v3/browser-tests/work-experience-annotations.browser.cjs
+// GSAP_SOURCE is required: the animated pass needs the real library, and this repository has no
+// manifest and does not vendor one, so the path is an explicit input rather than a resolution
+// that only succeeds where an undeclared copy happens to sit above the checkout.
 // Optional: CHROME_BIN and WORK_EXPERIENCE_BROWSER_EVIDENCE (screenshots/observations).
 // Isolated Chrome, local fixture, in-memory writer; no member session or live writes.
 const assert = require('node:assert/strict')
@@ -9,15 +12,24 @@ const { spawn } = require('node:child_process')
 const root = path.resolve(__dirname, '../..')
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
 ;(async () => {
+  // Read before anything is spawned or bound, so a missing library fails as a clear message
+  // rather than a mid-run crash that strands Chrome and its profile directory.
+  const gsapSource = process.env.GSAP_SOURCE
+  assert.ok(gsapSource, 'GSAP_SOURCE is required: set it to a GSAP UMD build (for example node_modules/gsap/dist/gsap.js). The animated pass needs the real library and this repository does not vendor one.')
+  let gsapLibrary
+  try {
+    gsapLibrary = await fs.readFile(gsapSource, 'utf8')
+  } catch (error) {
+    assert.fail('GSAP_SOURCE is not readable: ' + gsapSource + ' (' + error.code + ')')
+  }
   const profile = await fs.mkdtemp(path.join(root, '.work-experience-browser-'))
   const evidence = process.env.WORK_EXPERIENCE_BROWSER_EVIDENCE
   if (evidence) await fs.mkdir(evidence, { recursive: true })
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://local')
-    // The animated path needs the real library, not a stand-in that renders when this one does not.
     if (url.pathname === '/gsap.js') {
       res.setHeader('Content-Type', 'text/javascript')
-      res.end(await fs.readFile(process.env.GSAP_SOURCE || require.resolve('gsap'), 'utf8'))
+      res.end(gsapLibrary)
       return
     }
     const file = path.resolve(root, '.' + url.pathname)
@@ -174,6 +186,15 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
     assert.notEqual(landed.panel, 'none')
     assert.ok(landed.width > 0 && landed.height > 0, 'the focused field has layout')
     assert.ok(landed.panelHeight > 0, 'the opened panel has height')
+    // Add on a collapsed unfinished row opens that row and puts the Starter in its Company field.
+    await click('[profile-item-row] ~ [profile-item-row] [profile-item-toggle]')
+    await pause(400)
+    await click('[profile-items-add] button')
+    landed = await focused()
+    assert.equal(landed.field, 'company_name'); assert.equal(landed.row, 1)
+    assert.notEqual(landed.panel, 'none')
+    assert.ok(landed.width > 0 && landed.height > 0, 'the reopened unfinished row has layout')
+    assert.equal((await state()).rows.length, 2, 'the unfinished row is reused rather than joined by another')
     await type('company_name', 'Second Company', 1); await type('job_title', 'CMO', 1)
     // Undo restores the removed row, opens it and focuses its Company field.
     await click('[profile-item-remove] button')

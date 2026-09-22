@@ -388,20 +388,20 @@ These must exist in Webflow:
 | `profile-items-undo` | Row | Required for companies, so Designer owns the Button component; created by the script for services and highlights |
 | `profile-item-toggle` | Row | The control that opens the row |
 | `profile-item-content` | Row | The panel the control opens |
-| `profile-item-remove` | Row | Required for companies; a plain wrapper around the themed Button, authored with the enabled theme (`danger`) and containing the actionable control |
+| `profile-item-remove` | Row | Required for companies; a plain wrapper around the themed Button, authored with a `data-button-theme` (`danger` on this page) and containing the actionable control |
 
 Companies treats a row missing `profile-item-toggle`, `profile-item-content`,
 `profile-items-undo`, or a themed `profile-item-remove` button as the same markup gap as a
 missing row: it reports the halted state and disables Save rather than rendering every entry
-permanently expanded and inert, leaving a removed row with no way back, or having no enabled
-theme to restore. Companies never creates its own Remove or Undo control and never invents a
-theme: Webflow owns those Button components, so the authored ones are the only ones.
+permanently expanded and inert, leaving a removed row with no way back, or having no theme to
+restore. Companies never creates its own Remove or Undo control and never invents a theme:
+Webflow owns those Button components, so the authored ones are the only ones.
 
-`profile-item-remove` must be authored with its **enabled** theme. The disabled look is
-derived at runtime - the script swaps `data-button-theme` to `disabled` while only one entry
-remains and swaps the authored value back when a second entry makes Remove usable - so a
-Designer tree saved while Remove is showing its disabled state is rejected as a markup gap
-rather than adopted as the enabled theme.
+The disabled look is derived at runtime - the script swaps `data-button-theme` to `disabled`
+while only one entry remains and swaps the authored value back when a second entry makes
+Remove usable. Whatever Designer authored is the value restored, so only a *missing* theme is
+a markup gap. The Designer Remove on this page is authored `danger`, which is the intended
+setup; another authored value still loads and is still what Remove returns to.
 
 The scripts create `profile-items-removed`, `profile-items-dirty`, and the
 per-row `profile-items-unsaved` status. None of those three is authored in
@@ -623,6 +623,12 @@ consult `profile-items-presence`, so a section whose presence marker is absent o
 empty section, not whether Remove may take the last filled entry away. A pending removal keeps its heading and replaces Remove
 with Undo removal in the same action position.
 
+Remove means two different things depending on what the row holds. A row that has never been
+saved and holds nothing is dropped outright: there is no confirmed state to restore and
+nothing for Save to delete, so offering Undo would leave a collapsed empty entry that no Save
+ever resolves. A saved row, or an unsaved row carrying any typed value, is marked removed
+instead and keeps its Undo until Save.
+
 Validation opens the first failing row only. The shared validator reveals every failure and
 then focuses the first, and only one Work Experience entry can be open, so revealing each
 failure in turn would collapse the row whose field is about to take focus.
@@ -636,9 +642,13 @@ a Starter's own toggle still animates.
 [`unified-companies.fixture.html`](unified-companies.fixture.html) exercises these
 states with themed Button wrappers and a local, in-memory writer. It does not prove
 published-page wiring or authenticated persistence. Run its desktop/mobile Chrome checks
-with `node v3/browser-tests/work-experience-annotations.browser.cjs`; a third pass reloads the
-fixture with the real GSAP build resolved from `node_modules` (override with `GSAP_SOURCE`) and
-asserts that Add, Undo, and validation reveal still land focus on a field with real layout.
+with `GSAP_SOURCE=<path to a GSAP UMD build> node v3/browser-tests/work-experience-annotations.browser.cjs`.
+`GSAP_SOURCE` is required and is read before Chrome or the local server starts, so an
+unreadable path fails with a clear message instead of a mid-run crash. This repository has no
+manifest and does not vendor GSAP, so the path has to come from the operator - point it at a
+GSAP install of your own (for example `node_modules/gsap/dist/gsap.js`). A third pass reloads
+the fixture with that build and asserts that Add on a collapsed unfinished row, Undo, and
+validation reveal all land focus on a field with real layout inside an open panel.
 
 #### Work Experience annotation rollout state — 2026-09-22
 
@@ -666,17 +676,19 @@ only proves that its explicitly authored Save is visible and correctly scoped.
 
 Completed local checks:
 
-- `node --test v3/starter-edit-profile/profile-section-validation.test.js v3/starter-edit-profile/unified-companies.test.js v3/starter-edit-profile/unified-section-switching.test.js global-embeds/accordions/accordions.test.js global-embeds/accordions/mobile-accordions.test.js`: 105 tests passed.
+- `node --test v3/starter-edit-profile/profile-section-validation.test.js v3/starter-edit-profile/unified-companies.test.js v3/starter-edit-profile/unified-section-switching.test.js global-embeds/accordions/accordions.test.js global-embeds/accordions/mobile-accordions.test.js`: 109 tests passed.
 - `node --check v3/starter-edit-profile/unified-companies.js` and
   `node --check global-embeds/accordions/accordions.js`: passed.
 - `node --test readme-doc-links.test.js`: 81 tests passed.
-- `node v3/browser-tests/work-experience-annotations.browser.cjs`: desktop (1200px)
+- `GSAP_SOURCE=<path> node v3/browser-tests/work-experience-annotations.browser.cjs`: desktop (1200px)
   and mobile (390px) Chrome checks passed, including computed action visibility,
   disabled theme with a blank added row, one-entry-open accordion behavior against the
   actual shared script, Add ordering, native month/current-role values sent to the
   in-memory writer, saved and typed headings, row status, authored Remove/Undo, and
-  Discard without saving, plus an animated pass against real GSAP 3.14.2 asserting that
-  Add, Undo, and validation reveal focus a field with non-zero layout inside an open panel. Set `WORK_EXPERIENCE_BROWSER_EVIDENCE=<dir>` to write screenshots and
+  Discard without saving, plus an animated pass asserting that Add on a collapsed unfinished
+  row, Undo, and validation reveal each focus a field with non-zero layout inside an open
+  panel. That pass was run against a GSAP 3.14.2 build supplied through `GSAP_SOURCE`; the
+  repository declares no GSAP dependency, so reproducing it needs an operator-supplied path. Set `WORK_EXPERIENCE_BROWSER_EVIDENCE=<dir>` to write screenshots and
   observations. This uses fixture colors and simulated
   persistence, not published-page styling or an authenticated account.
 

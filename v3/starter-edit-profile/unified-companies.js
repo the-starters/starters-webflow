@@ -73,19 +73,19 @@
     // Every row control the section drives is Designer's. The accordion opens a row through
     // its control and its panel; Undo replaces Remove in place; and Remove's own themed Button
     // carries the enabled theme the disabled state is swapped back from, so that theme has to
-    // be an enabled one - a tree saved showing the disabled state would otherwise teach every
-    // row that 'disabled' is what Remove looks like when it is usable. A row missing any of
-    // them is the same kind of markup gap as a missing row.
+    // carries the theme the disabled state is swapped back from, so that theme has to exist.
+    // Whatever Designer authored is the value restored; the section never invents one. A row
+    // missing any of them is the same kind of markup gap as a missing row.
     const authoredRemove = template?.querySelector('[profile-item-remove]')
     const authoredTheme = authoredRemove?.querySelector('[data-button-theme]')?.getAttribute('data-button-theme') || ''
     const complete = !!template?.querySelector('[profile-item-toggle]') && !!template?.querySelector('[profile-item-content]')
       && !!template?.querySelector('[profile-items-undo]')
-      && !!authoredTheme && authoredTheme !== 'disabled' && !!authoredRemove.querySelector('button, input, a')
+      && !!authoredTheme && !!authoredRemove.querySelector('button, input, a')
     if (!template || !parent || !save || !complete) {
       // The row is also the template for every added row, and Save is the only route to the
       // writer. Without either, report the markup gap and disable Save instead of leaving a
       // live control that silently does nothing.
-      console.warn('[unified-companies] missing [profile-item-row] with [profile-item-toggle], [profile-item-content], [profile-items-undo] and a [profile-item-remove] button themed with an enabled theme, or Save control in section')
+      console.warn('[unified-companies] missing [profile-item-row] with [profile-item-toggle], [profile-item-content], [profile-items-undo] and a themed [profile-item-remove] button, or Save control in section')
       status.textContent = 'This section could not load. Reload the page before editing.'
       save?.setAttribute('disabled', '')
       return
@@ -316,6 +316,14 @@
       remove.addEventListener('click', event => {
         event.preventDefault()
         if (saving || record.removed || !removable(record)) return
+        // A never-saved row holding nothing has no confirmed state to restore and nothing for
+        // Save to delete, so Remove drops it outright rather than leaving behind a collapsed
+        // row that only Undo could reach and that Save would never resolve.
+        if (!present(record)) {
+          removeRecord(record)
+          if (active === record) active = remaining().at(-1) || null
+          return
+        }
         record.removed = true
         setOpen(record, false)
         show(remove, false); show(undo, true)
@@ -399,7 +407,12 @@
     add?.addEventListener('click', event => {
       event.preventDefault()
       if (saving || loading) return
-      if (!active || !present(active)) { input((active || records[0]).row, 'company_name')?.focus(); return }
+      if (!active || !present(active)) {
+        const target = active || records[0]
+        setOpen(target, true, true)
+        input(target.row, 'company_name')?.focus()
+        return
+      }
       if (!validate(active.row).valid) return
       if (remaining().length >= 3) { status.textContent = 'You can keep up to three work experience entries.'; return }
       setOpen(active, false)
