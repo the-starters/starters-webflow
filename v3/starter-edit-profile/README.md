@@ -620,6 +620,9 @@ using `button big with-border`, with Discard beside Submit inside the existing
 save-owner wrapper. Each also has one empty status block using
 `text-size-14 opacity-75 text-color-secondary` with `role="status"`, and one
 visible native Link labelled `Check saved state`, outside the repeating rows.
+The readback confirmed each section carries exactly one `profile-items-status`
+and one `profile-items-check-save` custom attribute outside its rows, so the
+scripts adopt the authored nodes instead of appending unstyled fallbacks.
 Readback found no unexpected missing elements or changes to retained attributes;
 all 44 retained native inputs kept their settings.
 
@@ -642,8 +645,10 @@ node --test v3/starter-edit-profile/profile-section-validation.test.js \
 ### Open items
 
 - The status node and the "Check saved state" button are unstyled when the
-  scripts fall back to creating them. Author them in Webflow with
-  `profile-items-status` and `profile-items-check-save` to give them a class.
+  scripts fall back to creating them. The test page's saved Designer tree now
+  authors both with `profile-items-status` and `profile-items-check-save`; the
+  live `/starter-edit-profile` page still needs the same authoring before
+  cutover.
 - `v3/build-profile/portfolio-crud.js` still states a 50 MB video limit. That is a
   separate page and was not changed here.
 
