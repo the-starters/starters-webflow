@@ -884,12 +884,18 @@ test('Service remove and Undo renumber visible rows without changing their accep
   const page = mount(undefined, { services: {
     service: { name: 'First', price: '100' }, 'service-2': { name: 'Second', price: '200' }, 'service-3': { name: 'Third', price: '300' },
   } })
+  const toggle = page.row.querySelector('[increment-dropdown-toggle]')
+  assert.equal(toggle.style.display, 'flex')
   page.click(page.remove)
   assert.deepEqual(serviceLabels(page), ['Service 1', 'Service 2'])
   assert.deepEqual(serviceRows(page).map(rowUnsaved), [false, false])
+  assert.equal(toggle.hidden, true)
+  assert.equal(toggle.style.display, 'none', 'an inline flex header cannot rely on [hidden] alone')
   page.click(page.row.querySelector('[profile-items-undo]'))
   assert.deepEqual(serviceLabels(page), ['Service 1', 'Service 2', 'Service 3'])
   assert.deepEqual(serviceRows(page).map(rowUnsaved), [false, false, false])
+  assert.equal(toggle.hidden, false)
+  assert.equal(toggle.style.display, 'flex')
   assert.equal(page.requests.length, 0)
 })
 

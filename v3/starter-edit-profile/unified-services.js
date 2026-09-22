@@ -119,8 +119,8 @@
     let submittedRowStates = []
     let submittedScalars = []
     let readbackCheck = null
-    const rowSnapshot = () => remaining().filter(row => retained.has(row) || meaningful(row))
-      .map(row => ({ values: valuesFor(row), retained: true }))
+    const submittable = () => remaining().filter(row => retained.has(row) || meaningful(row))
+    const rowSnapshot = () => submittable().map(row => ({ values: valuesFor(row), retained: true }))
     const scalarValues = records => records.map(({ value, checked }) => [value, checked])
     checkSave.addEventListener('click', async event => {
       // An authored control may be an anchor or a submit button, so never let its default run.
@@ -185,7 +185,6 @@
     }
     function refreshHeaders() {
       remaining().forEach((row, index) => {
-        row.setAttribute('increment-dropdown', String(index + 1))
         const label = row.querySelector('[profile-items-label]')
         if (!label) return
         label.textContent = 'Service ' + (index + 1)
@@ -204,14 +203,19 @@
       // The authored label is an explicit contract. Older unmarked headers keep their
       // label untouched; never append a second name/price summary beside it.
       const label = row.querySelector('[profile-items-label]')
+      const toggleDisplay = toggle && label ? 'flex' : ''
+      const showToggle = visible => {
+        if (!toggle) return
+        toggle.hidden = !visible
+        toggle.style.display = visible ? toggleDisplay : 'none'
+      }
       if (toggle && label) {
         const badge = document.createElement('span')
         badge.setAttribute('profile-items-unsaved', '')
         badge.textContent = 'Unsaved'
         badge.style.marginInlineStart = '0.5rem'
-        const siblings = Array.from(toggle.children)
-        toggle.insertBefore(badge, siblings[siblings.indexOf(label) + 1] || null)
-        toggle.style.display = 'flex'
+        label.insertAdjacentElement('afterend', badge)
+        showToggle(true)
         toggle.style.alignItems = 'center'
         const icon = row.querySelector('[increment-dropdown-icon]')
         if (icon) { icon.style.marginInlineStart = 'auto'; icon.style.flexShrink = '0' }
@@ -244,7 +248,7 @@
         if (saving) return
         row.setAttribute('profile-items-removed', 'true')
         setOpen(row, false)
-        if (toggle) toggle.hidden = true
+        showToggle(false)
         remove.hidden = true
         undo.hidden = false
         if (active === row) active = remaining()[remaining().length - 1] || null
@@ -259,7 +263,7 @@
           return
         }
         row.removeAttribute('profile-items-removed')
-        if (toggle) toggle.hidden = false
+        showToggle(true)
         if (remove) remove.hidden = false
         undo.hidden = true
         setOpen(row, true)
@@ -442,9 +446,8 @@
         if (saving || uncertain || misconfiguredForm || unreadable) return false
         snapshot = {}
         controller.prepare(snapshot)
-        submittedRows = rowSnapshot()
-        submittedRowStates = remaining().filter(row => retained.has(row) || meaningful(row))
-          .map(row => ({ row, values: { ...valuesFor(row) } }))
+        submittedRowStates = submittable().map(row => ({ row, values: valuesFor(row) }))
+        submittedRows = submittedRowStates.map(({ values }) => ({ values: { ...values }, retained: true }))
         submittedScalars = scalars()
         saving = true
         dispatched = false

@@ -85,7 +85,20 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
       assert.equal(state.overflow, false)
       assert.ok(state.newHeaderTop >= 0 && state.newHeaderTop < height)
       state.headers.forEach(h => assert.ok(h.right - h.iconRight < 25, 'arrow stays at far right'))
-      observations.push({ width, height, ...state })
+      const visibility = await evaluate(`(() => {
+        const row=document.querySelector('[increment-dropdown]'),toggle=row.querySelector('[increment-dropdown-toggle]');
+        const seen=()=>({display:getComputedStyle(toggle).display,height:toggle.getBoundingClientRect().height,label:[...document.querySelectorAll('[increment-dropdown]:not([profile-items-removed]) [profile-items-label]')].map(l=>l.textContent)});
+        const loaded=seen();row.querySelector('[increment-dropdown-remove]').click();const removed=seen();
+        row.querySelector('[profile-items-undo]').click();return {loaded,removed,restored:seen()}
+      })()`)
+      assert.equal(visibility.loaded.display, 'flex')
+      assert.equal(visibility.removed.display, 'none', 'Remove hides the inline flex header')
+      assert.equal(visibility.removed.height, 0)
+      assert.deepEqual(visibility.removed.label, ['Service 1'])
+      assert.equal(visibility.restored.display, 'flex', 'Undo reveals the header again')
+      assert.ok(visibility.restored.height > 0)
+      assert.deepEqual(visibility.restored.label, ['Service 1'], 'Undo drops the unused blank row and restores this one')
+      observations.push({ width, height, ...state, visibility })
       if (evidence) { const shot=await send('Page.captureScreenshot',{format:'png'});await fs.writeFile(path.join(evidence, `services-${width}.png`),Buffer.from(shot.data,'base64')) }
     }
     assert.deepEqual(errors, [])
