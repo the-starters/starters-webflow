@@ -375,11 +375,12 @@ The scripts create `profile-items-undo`, `profile-items-removed`, and
 
 `profile-items-status` and `profile-items-check-save` may be authored in Webflow
 inside the section but outside the repeating row, so Designer owns their styling.
-An element authored inside a row is ignored and the script creates its own,
-because each section clones and rebuilds its rows. Each section adopts
-the authored element when it finds one: it sets `role="status"` on the status
-element, and it hides the check element on bind, keeping the label the author
-wrote. The check element may be a plain Link or Button element carrying
+Because each section clones and rebuilds its rows, a marker authored inside a
+row is stripped from that node before the row template is cloned, so no cloned
+row carries it; the script then adopts the first marked element outside the rows
+or creates its own. On adoption it sets `role="status"` on the status element,
+and it hides the check element on bind, keeping the label the author wrote. The
+check element may be a plain Link or Button element carrying
 `profile-items-check-save`; leave it visible in Designer, because the script hides
 and shows it with an inline `display` style that beats the Webflow class rule.
 A class rule that hides the control is handled too: on reveal the script checks
