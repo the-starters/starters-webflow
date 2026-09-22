@@ -2164,9 +2164,7 @@ test('an override may cover the last general day without sending an empty window
     end: '17:00',
     defaultDays: [3, 4],
   })
-  const configUpdate = calls.find(
-    (call) => call.path === '/scheduler/configurations/update/v3' && call.body.in_availability,
-  )
+  const configUpdate = calls.find((call) => call.path === '/scheduler/configurations/update/v3')
   assert.ok(configUpdate)
   const providerHours = configUpdate.body.in_availability.availability_rules.default_open_hours
   assert.equal(providerHours.some((window) => window.days.length === 0), false)
@@ -2206,9 +2204,7 @@ test('editing an override restores its previous default day', async () => {
   const update = calls.find((call) => call.path === '/starter/update_availability/v3')
   assert.deepEqual(update.body.availability.items.general.days, [3])
   assert.deepEqual(update.body.availability.items.existing.days, [4])
-  const configUpdate = calls.find(
-    (call) => call.path === '/scheduler/configurations/update/v3' && call.body.in_availability,
-  )
+  const configUpdate = calls.find((call) => call.path === '/scheduler/configurations/update/v3')
   assert.deepEqual(
     configUpdate.body.in_availability.availability_rules.default_open_hours.map((window) => window.days),
     [[3], [4]],
@@ -3951,9 +3947,7 @@ test('open-item-remove updates all active configurations without replacing paid 
   assert.equal(dom.notif.steps['availability-removed'].style.display, '')
   assert.notEqual(group.style.pointerEvents, 'none')
 
-  const configUpdates = calls.filter(
-    (call) => call.path === '/scheduler/configurations/update/v3' && call.body.in_availability,
-  )
+  const configUpdates = calls.filter((call) => call.path === '/scheduler/configurations/update/v3')
   assert.deepEqual(configUpdates.map((call) => call.body.config_id), ['cfg-free', 'cfg-paid'])
   assert.deepEqual(configUpdates.map((call) => call.body.in_availability.duration_minutes), [30, 60])
   configUpdates.forEach((call) => {
