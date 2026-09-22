@@ -1145,67 +1145,26 @@ test('staging scheduler configuration creation uses a five-minute booking notice
   assert.equal(configCall.body.in_scheduler.min_booking_notice, 5)
 })
 
-test('existing production Free configurations receive the eight-hour provider notice before preview', async () => {
-  const productionNow = Math.floor(Date.now() / 1000)
-  const existingFree = {
-    config_id: 'cfg-free-existing',
-    grant_id: 'grant-1',
-    duration: 30,
-    is_paid: false,
-    active: true,
-    min_booking_notice: 24 * 60,
-  }
-  const existingPaid = {
-    config_id: 'cfg-paid-existing',
-    grant_id: 'grant-1',
-    duration: 60,
-    is_paid: true,
-    active: true,
-    price_cents: 15000,
-    currency: 'USD',
-  }
+test('opening the availability preview never rewrites existing provider configurations', async () => {
+  const now = Math.floor(Date.now() / 1000)
   const { calls, dom } = loadSection({
     serverState: {
-      grantId: 'grant-1',
-      grantEmail: 'starter@example.com',
-      calendarId: 'primary',
-      configs: [existingFree, existingPaid],
+      grantId: 'grant-1', grantEmail: 'starter@example.com', calendarId: 'primary',
+      configs: [{ config_id: 'cfg-free-existing', grant_id: 'grant-1', duration: 30,
+        is_paid: false, active: true, data_environment: 'production' }],
     },
     postRoutes: {
-      '/scheduler/configurations/update/v3': (body) => {
-        if (body.config_id === existingFree.config_id && body.in_scheduler) {
-          existingFree.min_booking_notice = body.in_scheduler.min_booking_notice
-        }
-        return { status: 200, body: { response: { status: 200 } } }
-      },
+      '/scheduler/configurations/update/v3': () => ({ status: 503, body: {} }),
     },
     getRoutes: {
-      '/scheduler/get_availability/v3': (query) => ({
-        status: 200,
-        body: {
-          time_slots: query.configuration_id === existingFree.config_id && existingFree.min_booking_notice === 480
-            ? [{ start_time: productionNow + 9 * 60 * 60 }]
-            : [{ start_time: productionNow + 25 * 60 * 60 }],
-        },
-      }),
+      '/scheduler/get_availability/v3': () => ({ status: 200,
+        body: { time_slots: [{ start_time: now + 9 * 60 * 60 }] } }),
     },
   })
   await settle()
-
-  const noticeUpdates = calls.filter(
-    (call) => call.path === '/scheduler/configurations/update/v3' && call.body.in_scheduler,
-  )
-  assert.deepEqual(noticeUpdates.map((call) => call.body.config_id), [existingFree.config_id])
-  assert.equal(noticeUpdates[0].body.in_scheduler.min_booking_notice, 480)
-  assert.equal(noticeUpdates[0].body.in_availability, undefined)
-  assert.equal(existingPaid.min_booking_notice, undefined)
-
+  assert.equal(calls.filter((call) => call.path === '/scheduler/configurations/update/v3').length, 0)
   const slotsList = dom.calendarPreview.querySelector('[data-availability-element="slots-list"]')
   assert.equal(slotsList.querySelector('[data-availability-element="preview-times"]').children.length, 1)
-  const previewCall = calls.find(
-    (call) => call.path === '/scheduler/get_availability/v3' && call.query.configuration_id === existingFree.config_id,
-  )
-  assert.ok(calls.indexOf(noticeUpdates[0]) < calls.indexOf(previewCall))
 })
 
 test('accepts any successful provider 2xx status when creating a scheduler configuration', async () => {
