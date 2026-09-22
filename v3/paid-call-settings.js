@@ -1350,18 +1350,24 @@
           setMessage('Paid-call settings could not be confirmed. Reload and try again.')
           return null
         }
-        const version = refreshVersion
+        const version = ++refreshVersion
         const memberId = sessionMemberId
+        const write = beginWrite(memberId)
+        setBusy(true)
         try {
           await consumePendingBuildIntent()
         } catch (error) {
+          write.failed = true
           if (!currentRender(version, memberId)) return null
           setStatus('error')
           setMessage('Your Build Profile choice could not be cleared. Your selection was not saved.')
           return null
+        } finally {
+          if (currentRender(version, memberId)) setBusy(false)
+          finishWrite(write)
         }
-        if (!currentRender(version, memberId) || !settings) return null
-        render(settings)
+        if (memberId !== sessionMemberId || !settings) return null
+        if (currentRender(version, memberId)) render(settings)
       }
       return settings
     }

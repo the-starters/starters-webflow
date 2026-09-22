@@ -770,14 +770,92 @@ test('a fail-closed refresh during a Free decline cleanup is never repainted by 
 
   await result.dispatchWindowEvent('starterSchedulingConnectionStateChanged')
   await settle()
-  assert.equal(result.dom.status.textContent, 'Sign in to manage free calls.')
+  assert.equal(reads, 1, 'the expiring refresh is queued behind the cleanup, not raced against it')
 
   cleanupGate.resolve()
-  assert.equal(await declined, null, 'the stale decline reports no success')
+  await declined
   await settle()
 
+  assert.equal(reads, 2, 'the queued refresh runs once cleanup has finished')
   assert.equal(result.dom.status.textContent, 'Sign in to manage free calls.', 'the signed-out card is never repainted')
   assert.equal(result.dom.save.getAttribute('aria-disabled'), 'true')
+  assert.equal(result.dom.title.value, '', 'the decline continuation never repaints the blanked card')
+})
+
+test('a prerequisite refresh waits for a Free decline cleanup instead of re-asserting the receipt', async () => {
+  const cleanupGate = deferred()
+  const result = load({
+    memberJsonUpdateGate: cleanupGate.promise,
+    memberJSON: {
+      starter_call_settings_intent_v3: {
+        version: 1,
+        member_id: 'member-free-a',
+        free: { enabled: true, description: 'Quick intro' },
+      },
+    },
+    initial: canonical({
+      readiness: { calendar_connected: false, availability_configured: false },
+    }),
+  })
+  await settle()
+
+  const reads = () => result.calls.filter((call) => call.path === '/starter/free-call-settings/get/v3').length
+  const readsAfterLoad = reads()
+
+  result.dom.no.checked = true
+  await result.dom.no.dispatch('change')
+  const declined = result.window.StarterFreeCallSettings.submit()
+  await settle()
+
+  await result.dispatchWindowEvent('starterSchedulingConnectionStateChanged')
+  await settle()
+
+  assert.equal(reads(), readsAfterLoad, 'the prerequisite refresh is held until the receipt cleanup finishes')
+  assert.equal(result.dom.yes.checked, false, 'the declined receipt is never re-asserted mid-cleanup')
+
+  cleanupGate.resolve()
+  assert.ok(await declined)
+  await settle()
+
+  assert.equal(result.memberJsonWrites.length, 1)
+  assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
+  assert.equal(reads(), readsAfterLoad + 1, 'the queued refresh runs once, after cleanup')
+  assert.equal(result.dom.no.checked, true, 'the card keeps the decline the member submitted')
+  assert.equal(result.dom.yes.checked, false)
+  assert.equal(result.calls.some((call) => call.method === 'POST'), false, 'declining makes no canonical write')
+})
+
+test('a queued prerequisite refresh never erases a failed Free decline cleanup', async () => {
+  const result = load({
+    memberJsonUpdateError: new Error('member JSON unavailable'),
+    memberJSON: {
+      starter_call_settings_intent_v3: {
+        version: 1,
+        member_id: 'member-free-a',
+        free: { enabled: true, description: 'Quick intro' },
+      },
+    },
+    initial: canonical({
+      readiness: { calendar_connected: false, availability_configured: false },
+    }),
+  })
+  await settle()
+
+  const reads = () => result.calls.filter((call) => call.path === '/starter/free-call-settings/get/v3').length
+  const readsAfterLoad = reads()
+
+  result.dom.no.checked = true
+  await result.dom.no.dispatch('change')
+  const declined = result.window.StarterFreeCallSettings.submit()
+  const refreshed = result.dispatchWindowEvent('starterSchedulingConnectionStateChanged')
+  assert.equal(await declined, null)
+  await refreshed
+  await settle()
+
+  assert.equal(reads(), readsAfterLoad, 'a failed cleanup does not release the queued refresh')
+  assert.match(result.dom.status.textContent, /could not be cleared/)
+  assert.equal(result.memberJsonWrites.length, 0, 'the pending receipt survives the failure')
+  assert.equal(result.calls.some((call) => call.method === 'POST'), false)
 })
 
 test('a failed no-service Free decline keeps the pending receipt and reports failure', async () => {

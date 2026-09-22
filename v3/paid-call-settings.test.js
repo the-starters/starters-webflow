@@ -1346,18 +1346,20 @@ test('a fail-closed refresh during a Paid decline cleanup is never repainted by 
 
   await result.dispatchWindow('starterSchedulingConnectionStateChanged', {})
   await settle()
-  assert.equal(result.dom.statusOutput.textContent, 'Sign in to manage paid calls.')
+  assert.equal(reads, 1, 'the expiring refresh is queued behind the cleanup, not raced against it')
 
   cleanupGate.resolve()
-  assert.equal(await declined, null, 'the stale decline reports no success')
+  await declined
   await settle()
 
+  assert.equal(reads, 2, 'the queued refresh runs once cleanup has finished')
   assert.equal(
     result.dom.statusOutput.textContent,
     'Sign in to manage paid calls.',
     'the signed-out card is never repainted',
   )
   assert.equal(result.dom.save.getAttribute('aria-disabled'), 'true')
+  assert.equal(result.dom.title.value, '', 'the decline continuation never repaints the blanked card')
 })
 
 test('an empty-state uncheck on the legacy Paid surface still asks the member to turn calls on', async () => {
@@ -1376,6 +1378,68 @@ test('an empty-state uncheck on the legacy Paid surface still asks the member to
   assert.equal(result.dom.status.textContent, 'Turn on paid calls before you save these settings.')
   assert.equal(result.calls.some((call) => call.method === 'POST'), false)
   assert.equal(result.memberJsonWrites.length, 0)
+})
+
+test('a prerequisite refresh waits for a Paid decline cleanup instead of re-asserting the receipt', async () => {
+  const cleanupGate = deferred()
+  const result = load({
+    cardMode: true,
+    memberJsonUpdateGate: cleanupGate.promise,
+    memberJSON: PENDING_PAID_ENABLE,
+    initial: canonical({ readiness: GATED_PAID_READINESS }),
+  })
+  await settle()
+
+  const reads = () => result.calls.filter((call) => call.path === '/starter/paid-call-settings/get/v3').length
+  const readsAfterLoad = reads()
+
+  result.dom.disabled.checked = true
+  await result.dom.disabled.dispatch('change')
+  const declined = result.window.StarterPaidCallSettings.submit()
+  await settle()
+
+  await result.dispatchWindow('starterSchedulingConnectionStateChanged', {})
+  await settle()
+
+  assert.equal(reads(), readsAfterLoad, 'the prerequisite refresh is held until the receipt cleanup finishes')
+  assert.equal(result.dom.enabled.checked, false, 'the declined receipt is never re-asserted mid-cleanup')
+
+  cleanupGate.resolve()
+  assert.ok(await declined)
+  await settle()
+
+  assert.equal(result.memberJsonWrites.length, 1)
+  assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
+  assert.equal(reads(), readsAfterLoad + 1, 'the queued refresh runs once, after cleanup')
+  assert.equal(result.dom.disabled.checked, true, 'the card keeps the decline the member submitted')
+  assert.equal(result.dom.enabled.checked, false)
+  assert.equal(result.calls.some((call) => call.method === 'POST'), false, 'declining makes no canonical write')
+})
+
+test('a queued prerequisite refresh never erases a failed Paid decline cleanup', async () => {
+  const result = load({
+    cardMode: true,
+    memberJsonUpdateError: new Error('member JSON unavailable'),
+    memberJSON: PENDING_PAID_ENABLE,
+    initial: canonical({ readiness: GATED_PAID_READINESS }),
+  })
+  await settle()
+
+  const reads = () => result.calls.filter((call) => call.path === '/starter/paid-call-settings/get/v3').length
+  const readsAfterLoad = reads()
+
+  result.dom.disabled.checked = true
+  await result.dom.disabled.dispatch('change')
+  const declined = result.window.StarterPaidCallSettings.submit()
+  const refreshed = result.dispatchWindow('starterSchedulingConnectionStateChanged', {})
+  assert.equal(await declined, null)
+  await refreshed
+  await settle()
+
+  assert.equal(reads(), readsAfterLoad, 'a failed cleanup does not release the queued refresh')
+  assert.match(result.dom.statusOutput.textContent, /could not be cleared/)
+  assert.equal(result.memberJsonWrites.length, 0, 'the pending receipt survives the failure')
+  assert.equal(result.calls.some((call) => call.method === 'POST'), false)
 })
 
 test('a failed no-service Paid decline keeps the pending receipt and reports failure', async () => {

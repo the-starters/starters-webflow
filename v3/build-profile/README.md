@@ -281,7 +281,11 @@ the unchanged receipt retries on reload. The no-service submitted-Off path is
 different because no canonical write backs up the choice: its cleanup is strict.
 If Memberstack cleanup fails, the controller keeps the receipt pending, reports
 that the selection was not saved, and returns failure to Edit Profile. If the
-latest canonical state is unavailable, it does not consume the receipt.
+latest canonical state is unavailable, it does not consume the receipt. That
+strict cleanup holds the same write lock a canonical save holds, so a
+prerequisite refresh raised while it is in flight is queued and reads the
+post-cleanup state instead of re-asserting the receipt the member just declined;
+a failed cleanup drops that queued refresh so it cannot erase the error.
 
 The submit writer, the draft-state writer, and both receipt consumers share one
 serialized `window.__tsMemberJsonWrite` read-modify-write boundary, so one
