@@ -184,13 +184,14 @@ These live blocks stay unchanged while Elvin owns availability, booking, and pai
 - page validation and rate formatting that is coupled to those fields;
 - Consult and Full Profile call/retainer visibility controllers.
 
-The extracted final submit writer is now a declared behavior-change candidate. It
-keeps the existing normalized profile payload and availability fields. It no
-longer reads or writes call settings: `free_call`, `free_call_desc`,
-`paid_call`, `paid_call_desc`, and `paid_call_rate` are absent from the payload
-and the `[name="paid-call-rate"]` control is neither constrained nor validated
-here, because Dashboard Call Settings and its active environment-matched
-`nylas_configurations_v3` row are the sole call authority. It
+The extracted final submit writer keeps the existing normalized profile payload
+and availability fields. It never sends `free_call`, `free_call_desc`,
+`paid_call`, `paid_call_desc`, or `paid_call_rate` to the profile endpoint.
+Instead, Build Profile validates its visible Call Settings controls and stores a
+private, member-bound Call Settings receipt that Dashboard and Edit Profile
+materialize. [Call Settings receipt lifecycle](#call-settings-receipt-lifecycle)
+owns that contract, including where this writer's receipt write sits relative to
+the canonical profile save and the pending-photo commit. The writer
 also treats the monthly-retainer section as profile-type-inapplicable on
 Consult: hidden hydrated radio/rate values always submit `retainer: false` and
 `retainer_rate: 0`. The hidden hourly rate is inapplicable on Consult in the same
@@ -201,7 +202,8 @@ validate an enabled retainer and its required hourly rate. It enforces the
 on the hourly, retainer, and service prices before it builds the
 request, instead of rounding a parsed number, and reveals the authored error
 block when a submit does not complete. Every failure — a rejected price, a
-rejected request, a non-ok response, a malformed success body, or a failed photo
+rejected request, a non-ok response, a malformed success body, a rejected or
+unstorable Call Settings receipt, or a failed photo
 commit — clears the step loader as it reveals that block, so the error state is
 never left behind a spinner.
 Its other behavior changes are the reviewer-alias compatibility described above,
@@ -230,6 +232,138 @@ inline blocks only. What each candidate changes is recorded once, in
 
 This exclusion is a release boundary, not proof that the remaining inline code is acceptable long term.
 
+## Call Settings receipt lifecycle
+
+This section is the single owner of the branch-agnostic Build Profile Call
+Settings handoff. The
+[Free Call settings contract](../../docs/wiring/FREE-CALL-SETTINGS-WIRING.md#build-profile-handoff)
+and the
+[Paid Call settings contract](../../docs/wiring/PAID-CALL-SETTINGS-WIRING.md#build-profile-handoff)
+own only what differs per branch: which prerequisites gate an enable, and which
+authored controls that branch's receipt part prefills.
+
+Build Profile validates its visible Call Settings controls and stores a
+versioned, member-bound `starter_call_settings_intent_v3` receipt in private
+Memberstack JSON, with a separate `free` part and `paid` part. A receipt records
+pending creates only: a branch answered Off stores no part, and a submit that
+turns a branch off removes the part an earlier attempt stored, dropping the whole
+receipt once neither branch is left. Each consumer reads a branch only as a pending
+create and ignores anything else under that key, so a leftover envelope from an
+older shape can neither paint a control nor drive a canonical write. A receipt is not
+an active service and is not a `freelancers_v3` projection. The active
+environment-matched `nylas_configurations_v3` row and provider readback remain
+the sole call authority. The visible Free description, Paid title, and Paid
+whole-dollar rate report validation on their exact authored controls. The Paid
+rate reuses the same `$1` through `$1,000` whole-dollar validator as the other
+direct Build Profile price controls.
+
+Dashboard and Edit Profile hydrate the receipt only as a pre-onboarding create
+choice. If that branch has no canonical service, a pending enable prefills its
+controls without becoming canonical state and stays pending until the branch's
+prerequisites are ready and the member selects Update. The choice remains
+declinable before those prerequisites are ready: selecting Off makes Update live
+so the member can change their mind and submit it. A pending Yes leaves Update
+gated on the existing scheduling and Stripe prerequisite checks.
+
+Once an active canonical service exists, that service is the sole authority.
+The consumer removes any leftover Build Profile receipt without painting it or
+writing to Xano. Post-onboarding changes, including disable, belong to Edit
+Profile or Dashboard. This prevents a failed receipt-cleanup attempt from later
+replacing newer canonical settings.
+
+Each consumer removes only its own part of the receipt; the other branch's
+pending part is preserved. It consumes its part in one of three ways:
+
+- after the canonical Call Settings endpoint returns exact readback;
+- with no canonical write, on load, when there is an active canonical service,
+  regardless of whether its current values match the older Build choice. This
+  repairs a receipt whose
+  best-effort cleanup failed after a verified save, so it cannot re-assert
+  Build Profile values over newer canonical ones. Such a receipt is
+  never painted as a pending choice — neither the controls nor the message: the
+  canonical render already shows the same values, so the card keeps reporting
+  the saved canonical state, including any canonical warning the receipt does
+  not speak to. This repair is passive. It never disables a control and never
+  rejects a member action: a save or disable raised while it is in flight waits
+  for it and then proceeds, and an Edit Profile step save lands untouched;
+- with no canonical write, on a submitted off choice while that branch has no
+  active service, even when the receipt itself is still an unconsumed enable, so
+  a declined Build Profile Yes cannot re-assert itself on the next load.
+
+Cleanup after a verified canonical readback is best-effort: a failed cleanup
+write never turns a successful canonical save into a profile-step failure. What
+it leaves behind is a retry obligation, not a pending choice. The verified write
+already superseded the member's Build Profile answer, so the consumer stops
+offering that answer whatever canonical shape the write produced — a disable
+whose cleanup also failed still renders as off, and never repaints the Build
+Profile Yes over it. That supersession also survives every later read in the
+session: a load or prerequisite-refresh read that still returns the branch is
+taken as the outstanding removal, never as a fresh pending choice. The stored
+branch is still owed one, so the next verified save or disable, and every later
+prerequisite refresh, retries it, re-reading and member-scoping the envelope.
+
+Supersession is session state scoped to the member who caused it: the obligation
+is keyed by the member whose write superseded the receipt — the member that write
+belonged to, not whoever the session happens to hold when a failure lands. Recording
+one, discharging it, and asking whether it is outstanding each name a member, so a
+sign-in recovery or any other reload of the same member keeps it, while another
+member neither inherits it, nor has their own receipt retired by it, nor discharges
+it by cleaning up their own. It is
+still session state, because the only place to record it durably is
+the Memberstack write that just failed. If that write never succeeds before the
+member reloads, the stored branch is indistinguishable from a pre-onboarding
+pending create and is offered again — retiring it on sight would destroy the
+genuine pending create this receipt exists to carry. What that costs is bounded
+to the offer itself: a pending create is never unsaved work on its own. It
+prefills the branch's controls and waits, and only a member gesture on those
+controls marks step 6 changed, so an Edit Profile save for an unrelated field
+never commits it. Materializing a pending create always takes a deliberate
+answer on the call controls, on either surface. Because the overlay has already
+checked Yes, re-answering it emits a click and no change event, so the controllers
+accept that click as the answer whenever the branch's prerequisites are ready. The no-service submitted-Off path is
+different because no canonical write backs up the choice: its cleanup is strict.
+If Memberstack cleanup fails, the controller keeps the receipt pending, reports
+that the selection was not saved, and returns failure to Edit Profile. If the
+latest canonical state is unavailable, it does not consume the receipt. That
+strict cleanup holds the same write lock a canonical save holds, so a
+prerequisite refresh raised while it is in flight is queued and reads the
+post-cleanup state instead of re-asserting the receipt the member just declined;
+a failed cleanup drops that queued refresh so it cannot erase the error.
+
+The submit writer, the draft-state writer, and both receipt consumers share one
+serialized `window.__tsMemberJsonWrite` read-modify-write boundary, so one
+branch cannot overwrite another. Every receipt read joins that same queue, so a
+hydration or prerequisite-refresh read taken while a consume is in flight sees
+the post-consume state rather than resurrecting the branch being deleted. A
+receipt read that fails is not a confirmed absence: a prerequisite refresh keeps
+the pending choice it is already showing, consumes nothing, and lets a later
+successful refresh reconcile it. A final-step draft save therefore cannot
+overwrite the Call Settings receipt from the same click. A draft write also
+abandons itself when its own Memberstack read fails, rather than persisting a
+blob rebuilt from an empty read, so a transient read error cannot drop the
+receipt or any other member JSON key.
+
+Build Profile writes the receipt after the canonical profile save and before the
+pending-photo commit, so a Call Settings storage failure keeps the accepted
+profile save cached for the resubmit the panel asks for and leaves the pending
+photo uncommitted until an attempt gets past that write.
+
+Consuming a receipt must not invent unsaved work on Edit Profile. An
+already-satisfied receipt is consumed with no canonical write and no repaint at
+all: the render that preceded it already showed the canonical values, so the
+cleanup only updates the receipt itself. Nothing synthetic touches the controls
+afterwards, so it cannot create an unsaved step-6 state, and it cannot revert a
+newer render — an auth-scope reconcile that repainted fresher canonical
+readiness in the meantime stays on screen.
+
+The whole handoff — Build Profile storing the receipt, then Dashboard and Edit
+Profile hydrating, accepting, consuming, and declining it — is exercised in
+Chrome against the authored DOM by
+`node v3/browser-tests/call-settings-receipt.browser.cjs`;
+set `CALL_RECEIPT_BROWSER_EVIDENCE=<dir>` to write screenshots and observations.
+That fixture fakes only the Memberstack session and the Xano responses, so it
+cannot establish production behavior.
+
 ## Release verification
 
 1. Verify every file passes `node --check` and the exposure scan.
@@ -245,7 +379,7 @@ This exclusion is a release boundary, not proof that the remaining inline code i
 5. Recapture both pages and replace only a block whose script position, character count, and SHA-256 match `live-body-provenance.json`.
 6. Publish staging first, then use human-like clicks for photo, portfolio, work history, counters, bio, and grouped selects without submitting the full profile.
 7. Confirm each loaded response is a non-cached current release, then publish production and repeat the safe checks.
-8. With an approved Talent canary on each Build Profile route, use a human-like click to submit the native form. Confirm one writer request and clean authored success copy that stays put with no automatic navigation, then click the authored "Start onboarding" CTA and confirm it lands on `/starter-onboarding`; verify the canonical Xano record and its projection after each submit.
+8. With an approved Talent canary on each Build Profile route, use a human-like click to submit the native form. Confirm one writer request and clean authored success copy that stays put with no automatic navigation, then click the authored "Start onboarding" CTA and confirm it lands on `/starter-onboarding`; verify the canonical Xano record and its projection after each submit. Call settings leave that record untouched, so confirm the visible Free and Paid answers instead through the member-bound receipt described in [Call Settings receipt lifecycle](#call-settings-receipt-lifecycle) — the canary's private member JSON carries them, and no provider state is created until Dashboard or Edit Profile writes it.
 9. Scan both published domains for Airtable, Make, and PAT exposure patterns.
 
 ### Photo upload during profile sync

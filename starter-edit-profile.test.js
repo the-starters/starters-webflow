@@ -313,6 +313,30 @@ async function testStepSixNeverWritesFreeCallAuthority() {
   assert.equal(Object.hasOwn(payload, 'Free_Call_Description'), false)
 }
 
+// A failed canonical call-settings read leaves both published required call radio groups
+// unanswered, because the controllers own those controls and the legacy profile restore no
+// longer fills them in. Step 6 must still save every field the profile PATCH does own.
+async function testStepSixSavesWhileCanonicalCallRadiosAreUnanswered() {
+  const environment = createEnvironment(async () => ({
+    ok: true, status: 200, json: async () => ({ saved: true, projection_pending: false }),
+  }), {
+    stepIndex: 6,
+    fieldOverrides: {
+      '[name="free-consulting-calls"]': { value: '' },
+      '[name="paid-consulting-calls"]': { value: '' },
+    },
+  })
+
+  assert.equal(environment.stepFields['[name="free-consulting-calls"]'].required, false)
+  assert.equal(environment.stepFields['[name="paid-consulting-calls"]'].required, false)
+
+  await submit(environment)
+
+  assert.equal(environment.requests.length, 1, 'an unanswered canonical call radio cannot block the step')
+  assert.equal(environment.stepFields['[name="free-consulting-calls"]'].reportValidityCount, 0)
+  assert.equal(environment.stepFields['[name="paid-consulting-calls"]'].reportValidityCount, 0)
+}
+
 async function testStepSixKeepsCanonicalCallControlsEditable() {
   const environment = saved({ stepIndex: 6 })
   const toggleSelectors = [
@@ -1610,6 +1634,7 @@ Promise.all([
   testOptionalRatesPreserveCanonicalZeroSentinel(),
   testStepSixNeverWritesPaidCallAuthority(),
   testStepSixNeverWritesFreeCallAuthority(),
+  testStepSixSavesWhileCanonicalCallRadiosAreUnanswered(),
   testStepSixKeepsCanonicalCallControlsEditable(),
   testStepSixKeepsSharedCallAndRetainerWrapperVisible(),
   testStepSixKeepsCallControlsEditableAfterProfileHydration(),

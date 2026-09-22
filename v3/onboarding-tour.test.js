@@ -518,6 +518,71 @@ test('memberMarkSeen merges shared JSON and safely persists special tour ids', a
   assert.equal(Object.keys(update.json.tours).includes('__proto__'), true)
 })
 
+test('tour persistence waits for the shared member JSON writer and cannot resurrect a consumed call branch', async () => {
+  let json = {
+    keep: 'private',
+    starter_call_settings_intent_v3: {
+      version: 1,
+      member_id: 'member-1',
+      free: { enabled: false, description: '' },
+      paid: { enabled: true, title: 'Strategy call', price_dollars: 250 },
+    },
+  }
+  let reads = 0
+  let writes = 0
+  let releasePriorWriter
+  const priorWriterGate = new Promise((resolve) => { releasePriorWriter = resolve })
+  const memberstack = {
+    getCurrentMember: async () => ({
+      data: { id: 'member-1', planConnections: [] },
+    }),
+    getMemberJSON: async () => {
+      reads += 1
+      return JSON.parse(JSON.stringify(json))
+    },
+    updateMemberJSON: async (value) => {
+      writes += 1
+      json = value.json
+    },
+  }
+  const { run, window } = loadModule({
+    memberstack,
+    setTimeout(callback) {
+      Promise.resolve().then(callback)
+      return 1
+    },
+    clearTimeout() {},
+    driver: {
+      js: {
+        driver: () => ({ drive() {} }),
+      },
+    },
+    nodes: [fakeElement({ 'data-tour-step': 'welcome:1' })],
+  })
+  window.__tsMemberJsonWrite = priorWriterGate.then(() => {
+    const next = JSON.parse(JSON.stringify(json))
+    delete next.starter_call_settings_intent_v3.free
+    json = next
+  })
+
+  const runPromise = run()
+  for (let index = 0; index < 10; index += 1) await new Promise(setImmediate)
+  assert.equal(reads, 1, 'the seen-state read may run, but the tour write must remain queued')
+  assert.equal(writes, 0)
+
+  releasePriorWriter()
+  await runPromise
+
+  assert.equal(json.starter_call_settings_intent_v3.free, undefined)
+  assert.deepEqual(plain(json.starter_call_settings_intent_v3.paid), {
+    enabled: true,
+    title: 'Strategy call',
+    price_dollars: 250,
+  })
+  assert.equal(typeof json.tours.welcome, 'string')
+  assert.equal(json.keep, 'private')
+})
+
 test('boot marks a show-once tour only after driver starts successfully', async () => {
   const calls = []
   const memberstack = {

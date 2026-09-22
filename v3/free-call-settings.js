@@ -60,6 +60,98 @@
   let editProfileDirty = false
   let editProfileReady = false
   let applyingCanonicalRender = false
+  let pendingBuildIntent = null
+  // Storage may still hold this branch after a swallowed cleanup write. That is a
+  // retry obligation, not a pending create: a verified canonical write supersedes
+  // the member's Build Profile choice whatever the resulting canonical shape is.
+  // Each obligation is keyed by the member whose write created it, so recording,
+  // discharging, and reading one always name a member and no session can record,
+  // discharge, or inherit another member's.
+  const receiptCleanupOwedBy = new Set()
+
+  function receiptCleanupOwed() {
+    return Boolean(sessionMemberId) && receiptCleanupOwedBy.has(sessionMemberId)
+  }
+  // Retiring a receipt canonical already satisfies is passive: it must never
+  // disable a control or reject a member action, only delay one.
+  let receiptCleanup = null
+
+  function memberJsonValue(response) {
+    const value = response && Object.prototype.hasOwnProperty.call(response, 'data')
+      ? response.data
+      : response
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+  }
+
+  async function readPendingBuildIntent() {
+    const memberstack = window.$memberstackDom
+    if (!memberstack || typeof memberstack.getMemberJSON !== 'function') return null
+    const json = memberJsonValue(await queueMemberJsonWrite(function () {
+      return memberstack.getMemberJSON()
+    }))
+    const envelope = json.starter_call_settings_intent_v3
+    if (
+      !envelope ||
+      Number(envelope.version) !== 1 ||
+      envelope.member_id !== sessionMemberId ||
+      !envelope.free ||
+      envelope.free.enabled !== true
+    ) return null
+    return {
+      enabled: true,
+      description: String(envelope.free.description || '').trim().slice(0, 60),
+    }
+  }
+
+  // Memberstack replaces the whole member JSON on every write. Build Profile draft,
+  // submit, Free, and Paid read-modify-write passes must share one writer or a later
+  // write can erase the receipt or resurrect a branch another controller consumed.
+  function queueMemberJsonWrite(task) {
+    const previous = window.__tsMemberJsonWrite || Promise.resolve()
+    const next = previous.then(task, task)
+    window.__tsMemberJsonWrite = next.then(function () {}, function () {})
+    return next
+  }
+
+  async function consumePendingBuildIntentBestEffort(ownerId) {
+    try {
+      await consumePendingBuildIntent()
+    } catch (error) {
+      if (ownerId) receiptCleanupOwedBy.add(ownerId)
+      if (sessionMemberId === ownerId) pendingBuildIntent = null
+      console.warn('Canonical Free Call Settings were saved, but the pending Build Profile receipt could not be cleared.', error)
+    }
+  }
+
+  async function consumePendingBuildIntent() {
+    if (!pendingBuildIntent && !receiptCleanupOwed()) return
+    const memberstack = window.$memberstackDom
+    if (
+      !memberstack ||
+      typeof memberstack.getMemberJSON !== 'function' ||
+      typeof memberstack.updateMemberJSON !== 'function'
+    ) throw new Error('Pending Build Profile Call Settings could not be cleared')
+    const consumeMemberId = sessionMemberId
+    await queueMemberJsonWrite(async function () {
+      if ((!pendingBuildIntent && !receiptCleanupOwed()) || sessionMemberId !== consumeMemberId) return
+      const json = memberJsonValue(await memberstack.getMemberJSON())
+      const envelope = json.starter_call_settings_intent_v3
+      if (sessionMemberId !== consumeMemberId) return
+      if (!envelope || envelope.member_id !== consumeMemberId) {
+        pendingBuildIntent = null
+        receiptCleanupOwedBy.delete(consumeMemberId)
+        return
+      }
+      const nextEnvelope = Object.assign({}, envelope)
+      delete nextEnvelope.free
+      const nextJson = Object.assign({}, json)
+      if (nextEnvelope.paid) nextJson.starter_call_settings_intent_v3 = nextEnvelope
+      else delete nextJson.starter_call_settings_intent_v3
+      await memberstack.updateMemberJSON({ json: nextJson })
+      pendingBuildIntent = null
+      receiptCleanupOwedBy.delete(consumeMemberId)
+    })
+  }
 
   function qs(selector, scope) {
     return (scope || document).querySelector(selector)
@@ -300,6 +392,23 @@
     return Boolean(canonicalService(value)) || prerequisitesReady(value)
   }
 
+  function canSubmitSettings(value) {
+    return canSaveSettings(value) || (Boolean(pendingBuildIntent) && explicitIntent === 'disabled')
+  }
+
+  function pendingCreateOverlay(value) {
+    if (!value || !pendingBuildIntent) return null
+    return canonicalSatisfiesPendingIntent(value) ? null : pendingBuildIntent
+  }
+
+  function canonicalSatisfiesPendingIntent(value) {
+    if (!pendingBuildIntent) return false
+    // Build Profile is a pre-onboarding handoff. Once a canonical service
+    // exists, post-onboarding changes belong to Edit Profile or Dashboard and
+    // a leftover Build receipt must never replace that service's newer state.
+    return Boolean(canonicalService(value))
+  }
+
   function radioValue(item) {
     return String(item.value || item.getAttribute('value') || '').toLowerCase()
   }
@@ -454,11 +563,11 @@
     visual.setAttribute('class', next.join(' '))
   }
 
-  // canonical-profile-loader.js hydrates these same step 6 controls from the legacy profile
-  // record and dispatches native input and change events on each one. Those are not member
-  // gestures, so the shared hydration window - the same one the page dirty state answers with -
-  // decides what counts as an Edit Profile change. Without it a freshly hydrated page reports
-  // unsaved call settings, and a failed canonical read then wedges every other step 6 field.
+  // canonical-profile-loader.js dispatches native input and change events on every step 6
+  // control it restores. Those are not member gestures, so the shared hydration window - the
+  // same one the page dirty state answers with - decides what counts as an Edit Profile change.
+  // Without it a freshly hydrated page reports unsaved call settings, and a failed canonical
+  // read then wedges every other step 6 field.
   function markEditProfileDirty() {
     if (!editProfileMode) return
     const dirtyState = window.__tsProfileDirtyState
@@ -550,11 +659,17 @@
         : qs('button, input', button)
       if (nativeButton) nativeButton.disabled = nextBusy
     })
-    if (!nextBusy && settings) setActionEnabled(action('save'), canSaveSettings(settings))
+    if (!nextBusy && settings) setActionEnabled(action('save'), canSubmitSettings(settings))
+  }
+
+  function refreshSubmitEnabled() {
+    if (busy || !settings) return
+    setActionEnabled(action('save'), canSubmitSettings(settings))
   }
 
   function clearRenderedState(message) {
     settings = null
+    pendingBuildIntent = null
     setBusy(false)
     sessionMemberId = null
     sessionAuthScope = null
@@ -620,6 +735,22 @@
     flushQueuedPrerequisiteRefresh()
   }
 
+  function startReceiptCleanup() {
+    const cleanup = consumePendingBuildIntent()
+      .catch(function () {})
+      .then(function () { if (receiptCleanup === cleanup) receiptCleanup = null })
+    receiptCleanup = cleanup
+    return cleanup
+  }
+
+  async function settleReceiptCleanup() {
+    while (receiptCleanup) {
+      const pending = receiptCleanup
+      await pending
+      if (receiptCleanup === pending) receiptCleanup = null
+    }
+  }
+
   function beginAuthTransition() {
     const transition = {}
     authTransitionPending = transition
@@ -682,6 +813,16 @@
       descriptionInput.readOnly = false
       descriptionInput.setAttribute('aria-readonly', 'false')
     }
+    // A receipt canonical already satisfies would repaint the values canonical
+    // just painted, so it is retired in the background rather than announced.
+    const unsavedIntent = pendingCreateOverlay(value)
+    if (unsavedIntent) {
+      setRadioChecked(pair.enabled, true)
+      setRadioChecked(pair.disabled, false)
+      notifyRadioChange(pair.enabled)
+      if (descriptionInput) descriptionInput.value = unsavedIntent.description
+      explicitIntent = 'enabled'
+    }
     root.setAttribute(
       'data-free-call-duration-current',
       service ? String(serviceDuration(service) || 0) : '',
@@ -698,12 +839,19 @@
         item.setAttribute('data-ready', readiness[name] ? 'true' : 'false')
       })
     })
-    setActionEnabled(action('save'), canSaveSettings(value))
+    // A pending Build Profile receipt must stay declinable even before Calendar
+    // and Availability are ready, so Save is live whenever Off is the current
+    // choice. An enable still needs those prerequisites before Save can run.
+    setActionEnabled(action('save'), canSubmitSettings(value))
     const priceOutput = output('price')
     if (priceOutput) priceOutput.textContent = formatFreePrice(service ? servicePriceCents(service) : 0)
     paintStatusPills()
     setMessage(
-      service
+      unsavedIntent
+        ? prerequisitesReady(value)
+          ? 'Your Build Profile choice is ready. Select Update to save free calls.'
+          : 'Your Build Profile choice is saved. Connect your calendar and set availability to turn on free calls.'
+        : service
         ? !contractMatches
           ? 'Update this service to the required 30-minute Free Call settings.'
           : readiness.bookable
@@ -747,6 +895,9 @@
 
   async function refreshFromPrerequisite() {
     if (!root || !sessionMemberId) return settings
+    if (receiptCleanup) await settleReceiptCleanup()
+    if (!root || !sessionMemberId) return settings
+    // A write may have claimed the controller while the passive cleanup settled.
     if (busy || activeWrite || authTransitionPending) {
       prerequisiteRefreshQueued = true
       return settings
@@ -756,7 +907,15 @@
     const memberId = sessionMemberId
     try {
       const canonical = await readCanonicalSettings()
-      if (currentRender(version, memberId) && !busy) render(canonical)
+      const pending = await readPendingBuildIntent().catch(function () { return undefined })
+      if (!currentRender(version, memberId) || busy) return canonical
+      // A failed receipt read is not a confirmed absence: keep the pending
+      // choice on the card and let a later refresh reconcile it.
+      if (pending !== undefined) pendingBuildIntent = receiptCleanupOwed() ? null : pending
+      render(canonical)
+      if (pending !== undefined && (receiptCleanupOwed() || canonicalSatisfiesPendingIntent(canonical))) {
+        startReceiptCleanup()
+      }
       return canonical
     } catch (error) {
       if (currentRender(version, memberId) && !busy) {
@@ -770,6 +929,7 @@
   }
 
   async function save() {
+    if (receiptCleanup) await settleReceiptCleanup()
     if (busy || activeWrite || authTransitionPending) return null
     const pair = radioPair()
     if (!pair.enabled || !pair.disabled) {
@@ -810,6 +970,7 @@
       if (String(canonical.public_description || '') !== description) {
         throw new Error('Free-call description did not match canonical readback')
       }
+      await consumePendingBuildIntentBestEffort(memberId)
       write.canonical = canonical
       if (!currentRender(version, memberId)) return null
       render(canonical)
@@ -832,9 +993,39 @@
   }
 
   async function disable() {
+    if (receiptCleanup) await settleReceiptCleanup()
     if (busy || activeWrite || authTransitionPending) return null
     const service = canonicalService(settings)
-    if (!service) return settings
+    if (!service) {
+      if (pendingBuildIntent) {
+        if (!settings) {
+          setStatus('error')
+          setMessage('Free-call settings could not be confirmed. Reload and try again.')
+          return null
+        }
+        const version = ++refreshVersion
+        const memberId = sessionMemberId
+        const write = beginWrite(memberId)
+        setBusy(true)
+        setStatus('disabling')
+        try {
+          await consumePendingBuildIntent()
+        } catch (error) {
+          write.failed = true
+          if (!currentRender(version, memberId)) return null
+          setStatus('error')
+          setMessage('Your Build Profile choice could not be cleared. Your selection was not saved.')
+          return null
+        } finally {
+          if (currentRender(version, memberId)) setBusy(false)
+          finishWrite(write)
+        }
+        if (memberId !== sessionMemberId || !settings) return null
+        if (currentRender(version, memberId)) render(settings)
+        else setStatus('ready')
+      }
+      return settings
+    }
     const version = ++refreshVersion
     const memberId = sessionMemberId
     const write = beginWrite(memberId)
@@ -850,6 +1041,7 @@
       if (canonicalService(canonical)) {
         throw new Error('Free-call service remained active after canonical readback')
       }
+      await consumePendingBuildIntentBestEffort(memberId)
       write.canonical = canonical
       if (!currentRender(version, memberId)) return null
       render(canonical)
@@ -983,7 +1175,7 @@
       )
     } finally {
       if (authTransitionPending === transition && settings && sessionMemberId) {
-        setActionEnabled(action('save'), canSaveSettings(settings))
+        setActionEnabled(action('save'), canSubmitSettings(settings))
       }
       finishAuthTransition(transition)
     }
@@ -1004,6 +1196,9 @@
         return null
       }
       sessionMemberId = member.id
+      const pending = await readPendingBuildIntent().catch(function () { return null })
+      if (version !== refreshVersion) return null
+      pendingBuildIntent = receiptCleanupOwed() ? null : pending
       await waitForSchedulingAuth()
       if (version !== refreshVersion) return null
       sessionAuthScope = await currentAuthScope()
@@ -1047,7 +1242,11 @@
         return render(pendingWrite.canonical)
       }
       if (!currentRender(version, member.id)) return null
-      return render(canonical)
+      const rendered = render(canonical)
+      if (receiptCleanupOwed() || canonicalSatisfiesPendingIntent(canonical)) {
+        startReceiptCleanup()
+      }
+      return rendered
     } catch (error) {
       if (version === refreshVersion) {
         setStatus('error')
@@ -1142,12 +1341,21 @@
     }
     const pair = radioPair()
     if (pair.enabled) {
+      // The overlay already checks Yes, so re-answering it emits no change event.
+      pair.enabled.addEventListener('click', function () {
+        if (applyingCanonicalRender) return
+        if (!pendingCreateOverlay(settings) || !canSaveSettings(settings)) return
+        explicitIntent = 'enabled'
+        markEditProfileDirty()
+        refreshSubmitEnabled()
+      })
       pair.enabled.addEventListener('change', function () {
         if (applyingCanonicalRender) return
         if (pair.enabled.checked) explicitIntent = 'enabled'
         markEditProfileDirty()
         setRadioChecked(pair.enabled, pair.enabled.checked)
         if (pair.enabled.checked) setRadioChecked(pair.disabled, false)
+        refreshSubmitEnabled()
       })
     }
     if (pair.disabled) {
@@ -1157,6 +1365,7 @@
         markEditProfileDirty()
         setRadioChecked(pair.disabled, pair.disabled.checked)
         if (pair.disabled.checked) setRadioChecked(pair.enabled, false)
+        refreshSubmitEnabled()
       })
     }
     const descriptionInput = field('description')

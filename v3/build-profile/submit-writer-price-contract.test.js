@@ -28,7 +28,11 @@ class Element {
   async click() { return this.listeners.get('click')?.({ preventDefault() {} }) }
 }
 
-function load(overrides = {}, pathname = '/build-profile/full', { respond = null, errorPanelHoldsMarkup = false } = {}) {
+function load(overrides = {}, pathname = '/build-profile/full', {
+  respond = null,
+  errorPanelHoldsMarkup = false,
+  memberJSON: initialMemberJSON = null,
+} = {}) {
   const values = {
     email: 'starter@example.test',
     'first-name': 'Test',
@@ -65,12 +69,16 @@ function load(overrides = {}, pathname = '/build-profile/full', { respond = null
   const inputs = Object.fromEntries([
     ['[name="rate"]', new Element(values.rate)],
     ['[name="rate-retainer"]', new Element(values['rate-retainer'])],
+    ['[name="free-call-description"]', new Element(values['free-call-description'])],
+    ['[name="paid-call-description"]', new Element(values['paid-call-description'])],
     ['[name="paid-call-rate"]', new Element(values['paid-call-rate'])],
     ['#service', new Element(values.service)],
     ['#service-2', new Element(values['service-2'])],
     ['#service-3', new Element(values['service-3'])],
   ])
   const requests = []
+  const memberJsonWrites = []
+  let memberJSON = { keep: 'member-json', ...(initialMemberJSON || {}) }
   const loaderStates = []
   const MEMBER = {
     id: 'mem_test',
@@ -105,7 +113,15 @@ function load(overrides = {}, pathname = '/build-profile/full', { respond = null
     __tsProfileFormControllers: {},
     location: { pathname },
     intlTelInput: { getInstance: () => ({ getNumber: () => values.phone }) },
-    $memberstackDom: { updateMember: async () => {}, updateMemberAuth: async () => {} },
+    $memberstackDom: {
+      updateMember: async () => {},
+      updateMemberAuth: async () => {},
+      getMemberJSON: async () => ({ data: memberJSON }),
+      updateMemberJSON: async (value) => {
+        memberJSON = value.json
+        memberJsonWrites.push(value)
+      },
+    },
   }
   const domReady = []
   const context = {
@@ -132,7 +148,22 @@ function load(overrides = {}, pathname = '/build-profile/full', { respond = null
   }
   vm.runInNewContext(SOURCE, context, { filename: 'submit-writer.js' })
   domReady.forEach((callback) => callback())
-  return { form, submit, step, success, successCTA, error, errorMessage, errorPanelIcon, inputs, requests, loaderStates }
+  return {
+    form,
+    submit,
+    step,
+    success,
+    successCTA,
+    error,
+    errorMessage,
+    errorPanelIcon,
+    inputs,
+    requests,
+    loaderStates,
+    memberJsonWrites,
+    window,
+    memberJSON: () => memberJSON,
+  }
 }
 
 test('retries one rejected canonical request with the identical payload', async () => {
@@ -282,22 +313,149 @@ test('disabled and non-owned blank rates preserve compatibility zero without acc
   assert.equal(consult.requests[0].body.retainer_rate, 0)
 })
 
-test('Build Profile never emits or validates call settings owned by the Dashboard', async () => {
+test('Build Profile keeps provider call fields out of the profile payload and saves private pending intent', async () => {
   const callFields = ['free_call', 'free_call_desc', 'paid_call', 'paid_call_desc', 'paid_call_rate']
   for (const pathname of ['/build-profile/consult', '/build-profile/full']) {
     const result = load({
       'free-consulting-calls': 'yes',
-      'free-call-description': 'Stale free call copy',
+      'free-call-description': 'Free intro',
       'paid-consulting-calls': 'yes',
-      'paid-call-description': 'Stale paid call copy',
-      'paid-call-rate': 'not-a-price',
+      'paid-call-description': 'Strategy call',
+      'paid-call-rate': '250',
     }, pathname)
     await result.submit.click()
     assert.equal(result.requests.length, 1, pathname)
     for (const field of callFields) assert.equal(Object.hasOwn(result.requests[0].body, field), false, field)
-    assert.equal(result.inputs['[name="paid-call-rate"]'].reportValidityCount, 0)
-    assert.equal(result.inputs['[name="paid-call-rate"]'].validationMessage, '')
+    assert.equal(result.memberJsonWrites.length, 1, pathname)
+    assert.deepEqual(
+      JSON.parse(JSON.stringify(result.memberJsonWrites[0].json.starter_call_settings_intent_v3)),
+      {
+        version: 1,
+        member_id: 'mem_test',
+        free: { enabled: true, description: 'Free intro' },
+        paid: { enabled: true, title: 'Strategy call', price_dollars: 250 },
+      },
+    )
+    assert.equal(result.memberJsonWrites[0].json.keep, 'member-json')
   }
+})
+
+test('a submit that declines both branches stores no receipt at all', async () => {
+  const result = load({
+    'free-consulting-calls': 'no',
+    'paid-consulting-calls': 'no',
+    'paid-call-description': 'Strategy call',
+    'paid-call-rate': '250',
+  })
+  await result.submit.click()
+
+  assert.equal(result.success.style.display, 'block')
+  assert.equal(result.memberJsonWrites.length, 0, 'a decline carries no pending create to store')
+  assert.equal(Object.hasOwn(result.memberJSON(), 'starter_call_settings_intent_v3'), false)
+})
+
+test('a resubmit that turns a branch off removes the part the earlier attempt stored', async () => {
+  const result = load({
+    'free-consulting-calls': 'yes',
+    'free-call-description': 'Free intro',
+    'paid-consulting-calls': 'no',
+  })
+  await result.submit.click()
+
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(result.memberJSON().starter_call_settings_intent_v3)),
+    { version: 1, member_id: 'mem_test', free: { enabled: true, description: 'Free intro' } },
+  )
+
+  result.form.values['free-consulting-calls'] = 'no'
+  await result.submit.click()
+
+  assert.equal(
+    Object.hasOwn(result.memberJSON(), 'starter_call_settings_intent_v3'),
+    false,
+    'the superseded Yes must not stay pending for Dashboard to replay',
+  )
+  assert.equal(result.memberJSON().keep, 'member-json')
+})
+
+test('the pending intent write yields to a prior holder of the shared member JSON writer', async () => {
+  const result = load({
+    'free-consulting-calls': 'yes',
+    'free-call-description': 'Free intro',
+    'paid-consulting-calls': 'no',
+  }, '/build-profile/full', {
+    memberJSON: { build_profile: { step: 7 } },
+  })
+
+  const submitPromise = result.submit.click()
+  const previous = result.window.__tsMemberJsonWrite || Promise.resolve()
+  const draftWrite = previous.then(async () => {
+    const current = (await result.window.$memberstackDom.getMemberJSON()).data
+    await result.window.$memberstackDom.updateMemberJSON({
+      json: { ...current, build_profile: { step: 8, saved: true } },
+    })
+  })
+  result.window.__tsMemberJsonWrite = draftWrite.then(() => {}, () => {})
+
+  await Promise.all([submitPromise, draftWrite])
+
+  assert.deepEqual(JSON.parse(JSON.stringify(result.memberJSON().build_profile)), { step: 8, saved: true })
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(result.memberJSON().starter_call_settings_intent_v3.free)),
+    { enabled: true, description: 'Free intro' },
+  )
+})
+
+test('a hidden long free-call description never blocks a Free off choice', async () => {
+  const result = load({
+    'free-consulting-calls': 'no',
+    'free-call-description': 'x'.repeat(120),
+  })
+  await result.submit.click()
+  assert.equal(result.error.style.display, 'none')
+  assert.equal(result.success.style.display, 'block')
+  assert.equal(result.memberJsonWrites.length, 0)
+  assert.equal(Object.hasOwn(result.memberJSON(), 'starter_call_settings_intent_v3'), false)
+})
+
+test('Build Profile blocks combined success when enabled Paid intent is invalid', async () => {
+  const result = load({
+    'paid-consulting-calls': 'yes',
+    'paid-call-description': 'Strategy call',
+    'paid-call-rate': 'not-a-price',
+  })
+  await result.submit.click()
+  assert.equal(result.requests.length, 0, 'member-repairable receipt input fails before the profile save')
+  assert.equal(result.memberJsonWrites.length, 0)
+  assert.equal(result.success.style.display, 'none')
+  assert.equal(result.error.style.display, 'block')
+  assert.equal(result.inputs['[name="paid-call-rate"]'].validationMessage, 'Use a whole-dollar paid-call rate from $1 to $1,000.')
+  assert.equal(result.inputs['[name="paid-call-rate"]'].focusCount, 1)
+  assert.equal(result.inputs['[name="paid-call-rate"]'].reportValidityCount, 1)
+  assert.equal(result.errorMessage.textContent, 'Something went wrong. Please try again.')
+})
+
+test('Build Profile points invalid Call Settings copy at the exact authored field', async () => {
+  const free = load({
+    'free-consulting-calls': 'yes',
+    'free-call-description': 'x'.repeat(61),
+  })
+  await free.submit.click()
+  assert.equal(free.requests.length, 0)
+  assert.equal(free.inputs['[name="free-call-description"]'].focusCount, 1)
+  assert.equal(free.inputs['[name="free-call-description"]'].reportValidityCount, 1)
+  assert.match(free.inputs['[name="free-call-description"]'].validationMessage, /60 characters or fewer/)
+
+  const paid = load({
+    'paid-consulting-calls': 'yes',
+    'paid-call-description': 'x',
+    'paid-call-rate': '250',
+  })
+  await paid.submit.click()
+  assert.equal(paid.requests.length, 0)
+  assert.equal(paid.inputs['[name="paid-call-description"]'].focusCount, 1)
+  assert.equal(paid.inputs['[name="paid-call-description"]'].reportValidityCount, 1)
+  assert.match(paid.inputs['[name="paid-call-description"]'].validationMessage, /between 3 and 80/)
 })
 
 // A consult save persists Hourly_Rate 0 for the profile-inapplicable control, and

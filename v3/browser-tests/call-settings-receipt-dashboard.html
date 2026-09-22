@@ -1,0 +1,94 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Starter dashboard - call settings receipt and onboarding tour fixture</title>
+<style>
+  body { font: 15px/1.45 system-ui, sans-serif; margin: 0; background: #f6f7f9; color: #182423 }
+  .page { max-width: 760px; margin: 0 auto; padding: 28px 32px 40px }
+  h1 { font-size: 24px; margin: 0 0 4px }
+  .sub { color: #5c6b68; margin: 0 0 24px }
+  .card { background: #fff; border: 1px solid #ccd5d2; border-radius: 14px; padding: 22px 24px; margin-bottom: 18px }
+  .card h2 { font-size: 17px; margin: 0 0 4px }
+  .card p.hint { color: #5c6b68; margin: 0 0 14px; font-size: 13px }
+  .pills { display: flex; gap: 8px; margin-bottom: 12px }
+  .pill { font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 999px; background: #e7efec; color: #186545 }
+  .pill.off { background: #f0eeee; color: #6b6b6b }
+  .radio-row { display: flex; gap: 28px; margin-bottom: 14px }
+  label.w-radio { display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: 500 }
+  .radio-filter_check.w-radio-input { width: 18px; height: 18px; border: 2px solid #9fb0ac; border-radius: 50%; background: #fff; display: inline-block }
+  .radio-filter_check.w-radio-input.w--redirected-checked { border-color: #186545; background: radial-gradient(circle, #186545 0 5px, #fff 6px 100%) }
+  label.w-radio input[type=radio] { position: absolute; opacity: 0; width: 0; height: 0 }
+  .field { display: block; margin-bottom: 12px }
+  .field span { display: block; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: #5c6b68; margin-bottom: 4px }
+  input[type=text] { width: 100%; box-sizing: border-box; padding: 9px 11px; border: 1px solid #ccd5d2; border-radius: 8px; font: inherit; background: #fff }
+  .status { font-size: 13px; color: #5c6b68; min-height: 18px }
+  button { font: inherit; padding: 8px 14px; border-radius: 8px; border: 1px solid #186545; background: #186545; color: #fff; cursor: pointer }
+  button.ghost { background: #fff; color: #186545 }
+  .driver-popover { position: fixed; left: 50%; transform: translateX(-50%); bottom: 32px; max-width: 320px; background: #182423; color: #fff; padding: 14px 16px; border-radius: 12px; box-shadow: 0 12px 30px rgba(0,0,0,.25) }
+  .driver-popover-title { font-weight: 700; margin-bottom: 4px }
+  .driver-popover-close-btn { position: absolute; top: 6px; right: 8px; background: transparent; border: 0; color: #fff; font-size: 16px; padding: 0 4px }
+  .stamp { position: fixed; top: 0; right: 0; background: #182423; color: #fff; font: 12px/1.3 ui-monospace, monospace; padding: 8px 12px; border-bottom-left-radius: 10px; white-space: pre; text-align: right }
+</style>
+<div class="page">
+  <h1 data-tour-step="starter-dashboard:1" data-tour-title="Your dashboard" data-tour-text="Track calls, projects and messages from here.">Dashboard</h1>
+  <p class="sub">Starter dashboard call settings card (<code>/starter-dashboard</code>).</p>
+  <div class="card" data-call-settings-service="free" id="free-card">
+    <h2>Free consulting calls</h2>
+    <p class="hint">Canonical Xano Free Call settings.</p>
+    <div class="pills">
+      <span class="pill" data-availability-element="call-pill-on">On</span>
+      <span class="pill off" data-availability-element="call-pill-on">Off</span>
+    </div>
+    <div data-call-settings-element="panel">
+      <form data-call-settings-element="form" data-name="Call Free Form">
+        <div class="radio-row">
+          <label class="w-radio"><div class="radio-filter_check w-radio-input"></div><input type="radio" id="free-yes" name="consulting-calls-free" value="yes"><span>Yes</span></label>
+          <label class="w-radio"><div class="radio-filter_check w-radio-input w--redirected-checked"></div><input type="radio" id="free-no" name="consulting-calls-free" value="no" checked><span>No</span></label>
+        </div>
+        <label class="field"><span>Free call description</span><input type="text" id="free-call-description" name="call-description" data-call-settings-input="description" maxlength="60" placeholder="Describe your free call"></label>
+        <button type="button" data-call-settings-action="submit">Update</button>
+        <button type="button" class="ghost" data-call-settings-action="close">Cancel</button>
+      </form>
+    </div>
+    <p class="status" data-call-settings-output="status"></p>
+    <button type="button" class="ghost" data-call-settings-action="open">Edit</button>
+  </div>
+  <div class="card" data-call-settings-service="paid" id="paid-card">
+    <h2>Paid consulting calls</h2>
+    <p class="hint">Canonical Xano Paid Call settings.</p>
+    <div class="pills">
+      <span class="pill" data-availability-element="call-pill-on">On</span>
+      <span class="pill off" data-availability-element="call-pill-on">Off</span>
+    </div>
+    <p class="hint">Your rate: <strong id="paid-price-output" data-call-settings-output="price">—</strong></p>
+    <div data-call-settings-element="panel">
+      <form data-call-settings-element="form" data-name="Call Paid Form">
+        <div class="radio-row">
+          <label class="w-radio"><div class="radio-filter_check w-radio-input"></div><input type="radio" id="paid-yes" name="consulting-calls-paid" value="yes"><span>Yes</span></label>
+          <label class="w-radio"><div class="radio-filter_check w-radio-input w--redirected-checked"></div><input type="radio" id="paid-no" name="consulting-calls-paid" value="no" checked><span>No</span></label>
+        </div>
+        <label class="field"><span>Paid call title</span><input type="text" id="paid-call-title" name="call-title" data-call-settings-input="title" maxlength="60" placeholder="Name your paid call"></label>
+        <label class="field"><span>Paid call rate (USD)</span><input type="text" id="paid-call-rate" name="call-price" data-call-settings-input="price" placeholder="Set your rate"></label>
+        <button type="button" data-call-settings-action="submit">Update</button>
+        <button type="button" class="ghost" data-call-settings-action="close">Cancel</button>
+      </form>
+    </div>
+    <p class="status" data-call-settings-output="status"></p>
+    <button type="button" class="ghost" data-call-settings-action="open">Edit</button>
+  </div>
+  <!-- The published legacy (pre-card) Paid settings surface: an Enabled checkbox
+       and no authored Off control. Removed unless ?legacy=1. -->
+  <div class="card" data-paid-call-element="settings" id="paid-legacy">
+    <h2>Paid consulting calls (legacy surface)</h2>
+    <p class="hint">Legacy <code>data-paid-call-element="settings"</code> wiring.</p>
+    <form data-paid-call-element="form">
+      <label class="field"><span>Enabled</span><input type="checkbox" id="legacy-paid-enabled" data-paid-call-input="enabled"></label>
+      <label class="field"><span>Paid call title</span><input type="text" id="legacy-paid-title" data-paid-call-input="title"></label>
+      <label class="field"><span>Paid call rate (USD)</span><input type="text" id="legacy-paid-price" data-paid-call-input="price"></label>
+      <button type="button" id="legacy-paid-save" data-paid-call-action="save">Update</button>
+      <button type="button" class="ghost" id="legacy-paid-disable" data-paid-call-action="disable">Turn off</button>
+    </form>
+    <p class="status" id="legacy-paid-status" data-paid-call-element="status"></p>
+  </div>
+</div>
+<div class="stamp" id="stamp"></div>
+<script src="/v3/browser-tests/call-settings-receipt-fixture.js"></script>

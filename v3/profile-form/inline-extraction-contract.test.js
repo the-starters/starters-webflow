@@ -92,22 +92,22 @@ const EXPECTED_CANDIDATE_ASSETS = Object.freeze({
     restoreTrailingWhitespace: Object.freeze({ 4: '  ' }), terminalNewlinesRemoved: 0,
   }),
   'v3/starter-edit-profile/canonical-profile-loader.js': Object.freeze({
-    characters: 25331, sha256: '916e8702ac16aac6000d893364bf14bcb58a65e13e2a2f2a1e6cb662a12c7dc8',
+    characters: 25854, sha256: '5be55e37b30f10765c96d2f42ca71f099787c6ffa56fc2ed00dc906f59daf55f',
     guardKey: 'canonicalProfileLoader',
     liveCaptureAsset: 'v3/profile-form/edit-canonical-profile-loader-published.capture.txt',
     restoreTrailingWhitespace: Object.freeze({}), terminalNewlinesRemoved: 0,
   }),
   'v3/build-profile/draft-state.js': Object.freeze({
-    characters: 12728, sha256: '9c579a3d47e81a318172c367993c704c2af4c1c43467374b6358aff84887210c',
+    characters: 13300, sha256: '4a301c4080495fac246df82b55b1083b7d96ba7062ea8edefc7c71b501a15813',
     guardKey: 'buildProfileDraftState',
     liveCaptureAsset: 'v3/profile-form/build-draft-state-published.capture.txt',
     restoreTrailingWhitespace: Object.freeze({}), terminalNewlinesRemoved: 1,
   }),
   'v3/build-profile/submit-writer.js': Object.freeze({
-    characters: 19646, sha256: 'd339d9f14e2b8903567f09b564c1a781182b2ad92f7d0f7fd38f6341d22b265e',
+    characters: 24266, sha256: '3f4c6a703e208f4a2a2b997c7228ab3c22e9a8633b2e5a2f905d8f7d42d5bc02',
     guardKey: 'buildProfileSubmitWriter',
     liveCaptureAsset: 'v3/profile-form/build-submit-writer-published.capture.txt',
-    restoreTrailingWhitespace: Object.freeze({ 423: '          ' }), terminalNewlinesRemoved: 0,
+    restoreTrailingWhitespace: Object.freeze({ 531: '          ' }), terminalNewlinesRemoved: 0,
   }),
   'v3/build-profile/locations-consult.js': Object.freeze({
     characters: 11065, sha256: '3c2e09a3a55806e1f4a82af2c3e850c6f53120fc70c1506cbf6315d5f311f160',
@@ -284,7 +284,32 @@ function sha256(value) {
   return crypto.createHash('sha256').update(value).digest('hex')
 }
 
-function restoreCapturedWhitespace(candidate, expected, asset) {
+// A behaviour-changed candidate cannot be compared line for line against its
+// published capture, so the restoration map is verified against the one thing
+// both bodies still share: which lines carried trailing whitespace, in order.
+function assertRestorationAnchors(lines, expected, asset, published) {
+  const carriers = published.split('\n').filter((line) => /[ \t]+$/.test(line))
+  const pins = Object.entries(expected.restoreTrailingWhitespace)
+    .sort(([left], [right]) => Number(left) - Number(right))
+  assert.equal(
+    pins.length, carriers.length,
+    `${asset}: restoration must pin every published trailing-whitespace line`,
+  )
+  pins.forEach(([lineNumber, suffix], position) => {
+    const carrier = carriers[position]
+    const carrierBody = carrier.replace(/[ \t]+$/, '')
+    assert.equal(
+      suffix, carrier.slice(carrierBody.length),
+      `${asset}: restored suffix for line ${lineNumber} does not match its published line`,
+    )
+    assert.equal(
+      lines[Number(lineNumber) - 1] === '', carrierBody === '',
+      `${asset}: restored line ${lineNumber} is not the published whitespace-carrying line`,
+    )
+  })
+}
+
+function restoreCapturedWhitespace(candidate, expected, asset, published) {
   assert.equal(candidate.endsWith('\n'), true, `${asset}: candidate must end with one newline`)
   assert.equal(candidate.endsWith('\n\n'), false, `${asset}: candidate has excess terminal newlines`)
   let normalizedCandidate = candidate
@@ -295,6 +320,7 @@ function restoreCapturedWhitespace(candidate, expected, asset) {
   assert.doesNotMatch(normalizedCandidate, /[ \t]+$/m, `${asset}: candidate has trailing whitespace`)
 
   const lines = normalizedCandidate.split('\n')
+  if (published) assertRestorationAnchors(lines, expected, asset, published)
   for (const [lineNumber, suffix] of Object.entries(expected.restoreTrailingWhitespace)) {
     const index = Number(lineNumber) - 1
     assert.ok(index >= 0 && index < lines.length - 1, `${asset}: invalid restored line ${lineNumber}`)
@@ -341,14 +367,15 @@ function validateLiveCaptureContract(provenance, readAsset = source) {
     const candidate = readAsset(asset)
     assert.equal(candidate.length, expected.characters, `${asset}: candidate length`)
     assert.equal(sha256(candidate), expected.sha256, `${asset}: candidate hash`)
-    const reconstructed = restoreCapturedWhitespace(candidate, expected, asset)
+    const published = expected.liveCaptureAsset ? readAsset(expected.liveCaptureAsset) : null
+    const reconstructed = restoreCapturedWhitespace(candidate, expected, asset, published)
 
     if (!expected.liveCaptureAsset) {
       restoredAssets[asset] = reconstructed
       continue
     }
 
-    restoredAssets[asset] = readAsset(expected.liveCaptureAsset)
+    restoredAssets[asset] = published
     assert.notEqual(
       reconstructed, restoredAssets[asset],
       `${asset}: declared behavior change no longer diverges from its published capture`,
@@ -1505,6 +1532,12 @@ test('build submit writer sends one normalized payload through the authored form
   })
   context.window.location = { pathname: '/build-profile/full-profile' }
   context.window.intlTelInput = { getInstance() { return { getNumber() { return '+15550000000' } } } }
+  context.window.$memberstackDom = {
+    async getMemberJSON() { return { data: { keep: 'member-json' } } },
+    async updateMemberJSON() {},
+    async updateMember() {},
+    async updateMemberAuth() {},
+  }
 
   run('v3/build-profile/submit-writer.js', context)
   run('v3/build-profile/submit-writer.js', context)

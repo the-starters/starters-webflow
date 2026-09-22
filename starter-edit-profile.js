@@ -256,6 +256,11 @@ function configureCanonicalCallSettings() {
 	controls.forEach((control) => {
 		const toggle = control.name === 'free-consulting-calls' || control.name === 'paid-consulting-calls';
 		if (toggle) control.disabled = false;
+		// The canonical controllers are the only writer and the only validator for these five,
+		// and the profile PATCH never sends them. A shared authored wrapper can also hide one
+		// while its own toggle stays on. A native requirement here would only abort the whole
+		// step on a control the member cannot reach, or that a failed canonical read left blank.
+		control.required = false;
 		if (!control.disabled) control.removeAttribute?.('aria-disabled');
 	});
 
@@ -268,10 +273,6 @@ function configureCanonicalCallSettings() {
 	].forEach(([control, enabled]) => {
 		if (!control) return;
 		control.disabled = !enabled;
-		// A shared authored wrapper can hide one of these while its own toggle stays on.
-		// The canonical controller validates them, so a native requirement here would only
-		// abort the whole step on a control the member cannot see or reach.
-		control.required = false;
 		if (enabled) control.removeAttribute?.('aria-disabled');
 	});
 

@@ -7,6 +7,34 @@ always sends `duration_minutes: 60`. Duration choices can be added in a later pr
 active canonical service stored at any other duration reads as not bookable and shows the
 update-the-duration message until it is saved again at 60 minutes.
 
+## Build Profile handoff
+
+Build Profile stores the member's visible Paid choice as the `paid` part of the
+private, member-bound `starter_call_settings_intent_v3` Memberstack receipt. The
+Paid controller keeps a new enable pending — prefilling the radio, title, and
+rate without becoming canonical state — until Calendar, Availability, Stripe
+linkage, charge readiness, and the freshness gate are all ready, then the member
+must select Update.
+
+The legacy `data-paid-call-element="settings"` surface authors no Off control, so
+unchecking the Enabled checkbox is that surface's Off choice when a new pending
+receipt has no active service. With neither, an uncheck is only an incomplete
+form, and Update still asks the member to turn paid calls on. The pending-create
+uncheck makes Update live and submitting it records the decline without a
+canonical write.
+
+If an active canonical Paid service already exists, the controller consumes any
+leftover Build Profile receipt without overlaying, updating, or disabling the
+service. Later changes must come from Edit Profile or Dashboard, including the
+authored Disable action.
+
+Everything else about that receipt is branch-agnostic and owned by
+[Call Settings receipt lifecycle](../../v3/build-profile/README.md#call-settings-receipt-lifecycle):
+its shape, how Dashboard and Edit Profile hydrate it, the three ways a
+controller consumes its own part while leaving the Free part untouched, the
+serialized `window.__tsMemberJsonWrite` boundary, and cleanup failure policy.
+Retiring an already-satisfied receipt repaints nothing at all.
+
 ## Script
 
 Load `v3/paid-call-settings.js` after `v3/scheduling-auth.js`. The local stage component loader already includes it.
@@ -129,8 +157,8 @@ The authored tile is borrowed, not owned, so the fallback is deliberately narrow
   a cents fragment such as `.00` disqualifies the tile, so the amount is never half-rewritten into a
   doubled price. A caption, a `/hr` unit, more than one candidate, and any other shape are never
   rewritten, and such a tile is left entirely to Designer.
-- The canonical output and a resolved authored tile show `Not set` when no valid confirmed or
-  imported rate exists. They never show `$0.00`, a Designer placeholder, or another fallback for a
+- The canonical output and a resolved authored tile show `Not set` when no valid confirmed,
+  pending, or imported rate exists. They never show `$0.00`, a Designer placeholder, or another fallback for a
   blank, zero, invalid, or absent rate.
 
 Optional prerequisite rows use `data-paid-call-prerequisite` with one of these values (authorable
@@ -160,9 +188,14 @@ The controller sets `data-ready="true|false"` on each row. It also sets these wr
 ## Authority and behavior
 
 - Xano `nylas_configurations_v3` table `#104` is the canonical Paid Call authority.
-- Initial and terminal state comes from `GET starter/paid-call-settings/get/v3` (`#2924`).
+- Initial and terminal state comes from `GET starter/paid-call-settings/get/v3` (`#2924`). With no
+  active service, an unconsumed Build Profile receipt can prefill the form controls; it is never
+  canonical state.
 - An active service in `services[]` is the confirmed V3 authority. It wins over any imported
-  suggestion. A service rate is bookable only when it is USD and has an exact whole-dollar integer
+  suggestion or pending Build Profile receipt. The card output uses that active service's valid
+  canonical rate, or `Not set` when that canonical rate cannot be displayed. Any leftover Build
+  receipt is retired without overlay or canonical write.
+  A service rate is bookable only when it is USD and has an exact whole-dollar integer
   `price_cents` from 100 through 100000 (`price_cents % 100 === 0`).
 - An active service whose stored rate fails that check is never presented as bookable. The browser
   does not repair or overwrite it: the canonical value survives until the Starter submits a valid
@@ -179,6 +212,12 @@ The controller sets `data-ready="true|false"` on each row. It also sets these wr
   The suggestion does not cause a write. The Starter must select Yes and submit the existing native
   V3 form before the canonical upsert can confirm it. A missing or rejected suggestion renders
   `Not set` and leaves the rate field blank.
+- An unconsumed Build Profile enable outranks the imported suggestion but never the canonical rate:
+  the receipt's title and rate prefill the form, `data-paid-call-rate-source` stays empty, and the Yes
+  radio is preselected. The price output shows the pending rate only while no active canonical service
+  exists; an active service keeps its own confirmed (or correction-required) rate in that output, so
+  the card never displays a rate the Starter is not actually charging. The receipt itself causes no
+  write, and `data-paid-call-enabled` keeps reporting canonical service state.
 - Save uses revision-guarded `POST starter/paid-call-settings/upsert/v3` (`#2925`).
 - Turn off uses guarded `POST starter/paid-call-settings/disable/v3` (`#2923`).
 - Each mutation gets a new idempotency key and is followed by canonical GET readback.
@@ -281,9 +320,10 @@ the authored status-pill resolution and its drifted-copy diagnostic, the
 rejected rate never blocks a later turn-off, plus the shared native-submit/Update write lock and
 Update busy-state lifecycle, and the scoped native error message with its retry and refresh
 clearing, transient empty-auth recovery, the auth-transition mutation lock, final-`401` clearing,
-the owned fetch fallback, post-write canonical fallback, coalesced prerequisite refresh, and logout
-and account-switch precedence — are executable regressions in
-`v3/paid-call-settings.test.js`. The remaining legs need a live Memberstack session, a live
+the owned fetch fallback, post-write canonical fallback, coalesced prerequisite refresh, logout
+and account-switch precedence, and the pending Build Profile receipt lifecycle owned by
+[Call Settings receipt lifecycle](../../v3/build-profile/README.md#call-settings-receipt-lifecycle) —
+are executable regressions in `v3/paid-call-settings.test.js`. The remaining legs need a live Memberstack session, a live
 Xano TEST configuration, and an asset that only exists once the tag is published, so they
 are not runnable from CI or from a local test phase. Both `the-starters-3-0.webflow.io`
 and `thestarters.com` answer `401` behind the site password, so a local phase cannot even
@@ -292,8 +332,9 @@ The release owner runs them by hand, in this order, after the PR merges:
 
 1. Release through the sequence in [Sync Safety](../../README.md#sync-safety), then confirm
    the served asset is the new build: the served file must contain
-   `data-paid-call-rate-source` together with `data-paid-call-card-state`. The previous build already
-   shipped `data-call-settings-error-message`, `.w-form-fail`,
+   `starter_call_settings_intent_v3`. The previous build already shipped
+   `data-paid-call-rate-source`, `data-paid-call-card-state`,
+   `data-call-settings-error-message`, `.w-form-fail`,
    `data-call-settings-native-spinner`, `data-button-spinner`, `paintSaveBusy`,
    `BUSY_STYLE_ID`, the late-sibling recovery, `paintStatusPills`, and the other compatibility
    markers, so none of those can tell this release from the one before it.
@@ -349,6 +390,21 @@ The release owner runs them by hand, in this order, after the PR merges:
    while its request is pending, and a successful canonical refresh must leave the block hidden.
    Reconcile the unchanged fixture in the paid-call dry run. Do not create a booking, payment,
    email, or other workflow side effect, and never run a live-money production charge.
+8. Confirm the [Build Profile handoff](#build-profile-handoff) on a TEST Starter whose private
+   Memberstack JSON holds an unconsumed `starter_call_settings_intent_v3` receipt with a `paid`
+   part and who has no active Paid service. On `Dashboard / Calendar`, confirm the card prefills
+   the Yes radio, the title, and the rate, that the price output shows the pending rate with
+   `data-paid-call-rate-source` empty, that `data-paid-call-enabled` still reads `false`, and that
+   hydration alone sends no Xano mutation and no Memberstack write. With Calendar, Availability,
+   Stripe linkage, charge readiness, and the freshness gate all ready, click the already-checked
+   Yes radio — a click, which emits no `change` event — and confirm that makes Update live without
+   writing anything; then click Update and confirm the canonical readback creates the service and
+   the `paid` part is gone from member JSON while any `free` part survives. Repeat on a second TEST
+   Starter with the same stored receipt: select No — on the legacy
+   `data-paid-call-element="settings"` surface, uncheck the Enabled checkbox — click Update, and
+   confirm no canonical request is sent and the `paid` part is still removed. Run both halves on
+   Edit Profile step 6 as well, where the same click is what marks the step changed. None of this
+   creates a booking, charge, provider mutation, message, or email.
 
 Record the served-asset check and the TEST booking reconciliation result before the
 form is activated for any Starter outside TEST.

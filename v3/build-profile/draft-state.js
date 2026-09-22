@@ -17,6 +17,13 @@
         'paid-call-description',
         'paid-call-rate',
       ]);
+
+      function queueMemberJsonWrite(task) {
+        const previous = window.__tsMemberJsonWrite || Promise.resolve();
+        const next = previous.then(task, task);
+        window.__tsMemberJsonWrite = next.then(function () {}, function () {});
+        return next;
+      }
       const localProfile = getLocalProfile();
 
       console.log("localProfile", localProfile);
@@ -64,7 +71,11 @@
           saveProfileToLocalStorage(activeProfile);
 
           if (activeProfile === localProfile && (localProfile?.last_update || 0) > (memberProfile?.last_update || 0)) {
-            await saveProfileToMemberJSON(activeProfile, memberJSON);
+            try {
+              await saveProfileToMemberJSON(activeProfile);
+            } catch (error) {
+              console.error('Save profile to MemberJSON error:', error);
+            }
           }
 
           bindNextButtons();
@@ -251,30 +262,36 @@
         field.dispatchEvent(new Event('change', { bubbles: true }));
       }
 
+      async function readMemberJSON() {
+        const response = await window.$memberstackDom.getMemberJSON();
+
+        return response?.data || response || {};
+      }
+
       async function getMemberJSONSafe() {
         try {
-          const response = await window.$memberstackDom.getMemberJSON();
-
-          return response?.data || response || {};
+          return await readMemberJSON();
         } catch (error) {
           console.error('Get MemberJSON error:', error);
           return {};
         }
       }
 
-      async function saveProfileToMemberJSON(profile, memberJSON = null) {
-        const latestMemberJSON = memberJSON || await getMemberJSONSafe();
+      async function saveProfileToMemberJSON(profile) {
+        return queueMemberJsonWrite(async function () {
+          const latestMemberJSON = await readMemberJSON();
+          const updatedMemberJSON = {
+            ...latestMemberJSON,
+            build_profile: profile,
+          };
 
-        const updatedMemberJSON = {
-          ...latestMemberJSON,
-          build_profile: profile,
-        };
+          await window.$memberstackDom.updateMemberJSON({
+            json: updatedMemberJSON,
+          });
 
-        await window.$memberstackDom.updateMemberJSON({
-          json: updatedMemberJSON,
+          memberJSON = updatedMemberJSON;
+          return updatedMemberJSON;
         });
-
-        memberJSON = updatedMemberJSON;
       }
 
       function getLocalProfile() {

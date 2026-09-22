@@ -214,8 +214,18 @@ announces its radio answer with a `change` event so the page re-derives the depe
 enabled and visible state, and a controller that reports no changes never gates the step: a
 failed call-settings read must not block Hourly Rate, Availability, Retainer, or Services. Both
 controllers read the same `isHydrating()` window before marking themselves changed, because the
-profile loader replays `input` and `change` on those five controls while it restores the legacy
-record; a hydration write is never a member change. Retainer controls remain owned by
+profile loader replays `input` and `change` on every control it restores and a hydration write is
+never a member change. The loader restores none of the five call controls: the legacy profile row
+no longer writes them, so replaying it over a controller's render could silently turn a pending
+Build Profile create into a decline the member never made. An unconsumed Build Profile Call Settings
+receipt prefills the Free or Paid controls and waits there: prefilling is not a member change, so it
+never marks step 6 changed on its own and a Save for an unrelated field never commits it. Answering
+either call control is the member gesture that marks the step changed, and that Save then
+materializes the choice through the same guarded upsert or disable. Accepting the prefilled Yes
+counts even though the overlay already checked it and a browser therefore emits only a click:
+the controllers arm on that click once the branch's prerequisites allow the write, so a member
+who agrees with their Build Profile answer needs one gesture, not a decline and a re-answer. Each contract's Build Profile
+handoff section owns that receipt. Retainer controls remain owned by
 the profile form even when Webflow markup places them in a wrapper shared with a call
 field. This contract holds only where `scheduling-auth.js` authenticates this page; its host
 scope is owned by [Load order](#load-order). See the
@@ -434,9 +444,11 @@ belongs to the script that writes that field and never pauses this section's Sav
 profile type, and `starter-edit-profile.js` clears `required` on those fields for the active
 `window.activeProfile.type`.
 
-**The report does not depend on the active profile type.** The only fields whose `required`
-`starter-edit-profile.js` rewrites at runtime are the ones carrying `data-non-required`, and
-those are reported whatever `required` currently says (below). Every other field keeps the
+**The report does not depend on the active profile type.** The fields whose `required`
+`starter-edit-profile.js` rewrites at runtime are the ones carrying `data-non-required` — which
+are reported whatever `required` currently says (below) — and the five canonically owned call
+controls, whose `required` it always clears because the profile PATCH never sends them and the
+call-settings controllers are their only validator. Every other field keeps the
 attribute Webflow authored, so the same page reports the same fields for every Starter and
 whenever the check runs. Inside `[profile-unified-items]`, `starter-edit-profile.js` records the
 authored value once per page load before it rewrites `required` for the active type.

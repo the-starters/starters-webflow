@@ -17,7 +17,29 @@ payload.
   Xano returns it as `public_description` and projects the same value to the public Webflow profile
   and Algolia record.
 - Initial and terminal UI state always comes from
-  `GET starter/free-call-settings/get/v3`.
+  `GET starter/free-call-settings/get/v3`. With no active service, an unconsumed
+  Build Profile receipt can prefill the form controls without becoming
+  canonical state. An active service retires that receipt and remains the sole
+  post-onboarding authority — see [Build Profile handoff](#build-profile-handoff).
+
+## Build Profile handoff
+
+Build Profile stores the member's visible Free choice as the `free` part of the
+private, member-bound `starter_call_settings_intent_v3` Memberstack receipt. The
+Free controller keeps a new enable pending — prefilling the radio and the public
+description without becoming canonical state — until Calendar and Availability
+are ready, then requires the member to select Update.
+
+If an active canonical Free service already exists, the controller consumes any
+leftover Build Profile receipt without overlaying or writing it. Later changes
+must come from Edit Profile or Dashboard.
+
+Everything else about that receipt is branch-agnostic and owned by
+[Call Settings receipt lifecycle](../../v3/build-profile/README.md#call-settings-receipt-lifecycle):
+its shape, how Dashboard and Edit Profile hydrate it, the three ways a
+controller consumes its own part while leaving the Paid part untouched, the
+serialized `window.__tsMemberJsonWrite` boundary, and cleanup failure policy.
+Retiring an already-satisfied receipt repaints nothing at all.
 
 ## Published compatibility contract
 
@@ -210,8 +232,9 @@ Update busy-state lifecycle, the scoped native error message and its retry and r
 off-contract duration or price paint, the expired-session fail-closed writes, the authored
 status-pill resolution and its drifted-copy diagnostic, the `w--redirected-checked` radio sync,
 transient empty-auth recovery, the auth-transition mutation lock, final-`401` clearing, the owned
-fetch fallback, post-write canonical fallback, queued prerequisite refresh, and logout and
-account-switch precedence
+fetch fallback, post-write canonical fallback, queued prerequisite refresh, logout and
+account-switch precedence, and the pending Build Profile receipt lifecycle owned by
+[Call Settings receipt lifecycle](../../v3/build-profile/README.md#call-settings-receipt-lifecycle)
 are executable regressions in `v3/free-call-settings.test.js`. The remaining legs need a live
 Memberstack session, a live Xano TEST configuration, and an asset that only exists once the tag is
 published, so they are not runnable from CI or from a local test phase; both
@@ -221,10 +244,10 @@ order, after the PR merges:
 
 1. Release through the sequence in [Sync Safety](../../README.md#sync-safety), then confirm the served
    asset is the new build: the served `v3/free-call-settings.js` must contain
-   `data-call-settings-error-message` together with `.w-form-fail`. The previous build already
-   shipped `data-call-settings-native-spinner`, `data-button-spinner`, `paintSaveBusy`,
-   `BUSY_STYLE_ID`, the late-sibling recovery, and `paintStatusPills`, so those markers cannot tell
-   this release from the one before it.
+   `starter_call_settings_intent_v3`. The previous build already shipped
+   `data-call-settings-error-message`, `.w-form-fail`, `data-call-settings-native-spinner`,
+   `data-button-spinner`, `paintSaveBusy`, `BUSY_STYLE_ID`, the late-sibling recovery, and
+   `paintStatusPills`, so those markers cannot tell this release from the one before it.
 2. On the published page, load `Dashboard / Calendar` as a Starter and confirm the Free card reaches
    `data-free-call-settings="ready"` with canonical values, including a reload where Webflow or
    Memberstack inserts the card late. Confirm exactly one status pill renders in each state, and
@@ -256,6 +279,18 @@ order, after the PR merges:
    canonical state must stay on. A retry must clear the old message while its request is pending,
    and a successful canonical refresh must leave the block hidden. Do not create a booking for
    this check; use a pre-existing TEST fixture.
+7. Confirm the [Build Profile handoff](#build-profile-handoff) on a TEST Starter whose private
+   Memberstack JSON holds an unconsumed `starter_call_settings_intent_v3` receipt with a `free`
+   part and who has no active Free service. On `Dashboard / Calendar`, confirm the card prefills
+   the Yes radio and the receipt's description while `data-free-call-enabled` still reads `false`,
+   and that hydration alone sends no Xano mutation and no Memberstack write. With Calendar and
+   Availability ready, click the already-checked Yes radio — a click, which emits no `change`
+   event — and confirm that makes Update live without writing anything; then click Update and
+   confirm the canonical readback creates the service and the `free` part is gone from member JSON
+   while any `paid` part survives. Repeat on a second TEST Starter with the same stored receipt:
+   select No, click Update, and confirm no canonical request is sent and the `free` part is still
+   removed. Run both halves on Edit Profile step 6 as well, where the same click is what marks the
+   step changed. None of this creates a booking, charge, provider mutation, message, or email.
 
 Record the served-asset check and the TEST enable and disable results before the Free card is
 activated for any Starter outside TEST.

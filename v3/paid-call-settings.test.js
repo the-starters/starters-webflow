@@ -468,6 +468,8 @@ function load(options = {}) {
   let authScopeGate = null
   let currentMemberReader = () => activeMember
   let authChange = null
+  let memberJSON = options.memberJSON || {}
+  const memberJsonWrites = []
   const routes = options.routes || {}
 
   const document = {
@@ -503,6 +505,26 @@ function load(options = {}) {
 
   const memberstack = {
     getCurrentMember: async () => ({ data: await currentMemberReader() }),
+    // Memberstack serves a read from the state it held when the request was
+    // made, so the snapshot is captured before any optional test hold.
+    getMemberJSON: async () => {
+      const snapshot = memberJSON
+      const hold = options.memberJsonReadGate ? options.memberJsonReadGate() : null
+      if (hold) await hold
+      return { data: snapshot }
+    },
+    updateMemberJSON: async ({ json }) => {
+      const updateHold = typeof options.memberJsonUpdateGate === 'function'
+        ? options.memberJsonUpdateGate()
+        : options.memberJsonUpdateGate
+      if (updateHold) await updateHold
+      const updateError = typeof options.memberJsonUpdateError === 'function'
+        ? options.memberJsonUpdateError()
+        : options.memberJsonUpdateError
+      if (updateError) throw updateError
+      memberJSON = json
+      memberJsonWrites.push(json)
+    },
     onAuthChange(listener) { authChange = listener },
   }
   const schedulingAuthFetch = async (url, init) => {
@@ -553,6 +575,7 @@ function load(options = {}) {
     },
     xanoAuthFetch: schedulingAuthFetch,
   }
+  if (options.profileDirtyState) window.__tsProfileDirtyState = options.profileDirtyState
   if (!options.withoutMemberstackAtLoad) window.$memberstackDom = memberstack
 
   class CustomEvent {
@@ -582,6 +605,7 @@ function load(options = {}) {
   return {
     dom,
     calls,
+    memberJsonWrites,
     events,
     timers,
     warnings,
@@ -739,6 +763,452 @@ test('keeps waiting for the native Paid card after the root deadline expires', a
   assert.equal(result.dom.price.value, 5)
 })
 
+test('hydrates pending Build Profile Paid intent and consumes it after canonical save', async () => {
+  const result = load({
+    cardMode: true,
+    memberId: 'member-a',
+    memberJSON: {
+      keep: 'private',
+      starter_call_settings_intent_v3: {
+        version: 1,
+        member_id: 'member-a',
+        free: { enabled: true, description: 'Saved intro' },
+        paid: { enabled: true, title: 'Strategy call', price_dollars: 250 },
+      },
+    },
+    initial: canonical(),
+    routes: {
+      '/starter/paid-call-settings/upsert/v3': ({ body, setState }) => {
+        const saved = service({
+          title: body.title,
+          price_cents: body.price_cents,
+          duration: body.duration_minutes,
+          revision: 1,
+        })
+        setState(canonical({
+          services: [saved],
+          readiness: { paid_call_enabled: true, bookable: true },
+        }))
+        return { ok: true, status: 200, json: async () => ({ service: saved }) }
+      },
+    },
+  })
+  await settle()
+
+  assert.equal(result.dom.enabled.checked, true)
+  assert.equal(result.dom.disabled.checked, false)
+  assert.equal(result.dom.title.value, 'Strategy call')
+  assert.equal(result.dom.price.value, '250')
+  assert.match(result.dom.statusOutput.textContent, /Build Profile choice is ready/)
+
+  await result.window.StarterPaidCallSettings.submit()
+  await settle()
+
+  const upsert = result.calls.find((call) => call.path === '/starter/paid-call-settings/upsert/v3')
+  assert.deepEqual(
+    JSON.parse(JSON.stringify({
+      title: upsert.body.title,
+      price_cents: upsert.body.price_cents,
+      duration_minutes: upsert.body.duration_minutes,
+    })),
+    { title: 'Strategy call', price_cents: 25000, duration_minutes: 60 },
+  )
+  assert.equal(result.memberJsonWrites.length, 1)
+  assert.equal(result.memberJsonWrites[0].keep, 'private')
+  assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3.paid, undefined)
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(result.memberJsonWrites[0].starter_call_settings_intent_v3.free)),
+    { enabled: true, description: 'Saved intro' },
+  )
+})
+
+test('a pending receipt cleanup failure never turns a verified Paid save into an error', async () => {
+  const result = load({
+    cardMode: true,
+    memberId: 'member-a',
+    memberJsonUpdateError: new Error('Memberstack timeout'),
+    memberJSON: {
+      starter_call_settings_intent_v3: {
+        version: 1,
+        member_id: 'member-a',
+        paid: { enabled: true, title: 'Strategy call', price_dollars: 250 },
+      },
+    },
+    initial: canonical(),
+    routes: {
+      '/starter/paid-call-settings/upsert/v3': ({ body, setState }) => {
+        const saved = service({
+          title: body.title,
+          price_cents: body.price_cents,
+          duration: body.duration_minutes,
+          revision: 1,
+        })
+        setState(canonical({
+          services: [saved],
+          readiness: { paid_call_enabled: true, bookable: true },
+        }))
+        return { ok: true, status: 200, json: async () => ({ service: saved }) }
+      },
+    },
+  })
+  await settle()
+
+  const canonicalResult = await result.window.StarterPaidCallSettings.submit()
+  await settle()
+
+  assert.ok(canonicalResult.services.length)
+  assert.equal(result.events.some((event) => event.type === 'starterPaidCallWriteError'), false)
+  assert.equal(result.events.some((event) => event.type === 'starterPaidCallWriteSuccess'), true)
+  assert.match(result.warnings.join('\n'), /pending Build Profile receipt could not be cleared/)
+})
+
+test('a prerequisite refresh after a superseding Paid disable retries the removal instead of re-offering it', async () => {
+  let failUpdates = true
+  const result = load({
+    cardMode: true,
+    memberId: 'member-a',
+    memberJsonUpdateError: () => (failUpdates ? new Error('Memberstack timeout') : null),
+    memberJSON: {
+      starter_call_settings_intent_v3: {
+        version: 1,
+        member_id: 'member-a',
+        paid: { enabled: true, title: 'Strategy call', price_dollars: 250 },
+      },
+    },
+    initial: canonical({
+      services: [service({ title: 'Strategy call', price_cents: 25000 })],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+    routes: {
+      '/starter/paid-call-settings/disable/v3': ({ setState }) => {
+        setState(canonical())
+        return { ok: true, status: 200, json: async () => ({ ok: true }) }
+      },
+    },
+  })
+  await settle()
+
+  assert.ok(await result.window.StarterPaidCallSettings.disable())
+  await settle()
+
+  assert.equal(result.memberJsonWrites.length, 0, 'the superseding disable could not clear the receipt')
+  assert.equal(result.dom.disabled.checked, true)
+
+  failUpdates = false
+  await result.dispatchWindow('starterSchedulingConnectionStateChanged', {})
+  await settle()
+
+  assert.equal(result.dom.disabled.checked, true, 'the refresh read cannot re-offer the superseded choice')
+  assert.equal(result.dom.enabled.checked, false)
+  assert.equal(result.window.StarterPaidCallSettings.hasChanges(), false)
+  assert.equal(
+    /Build Profile choice/.test(result.dom.statusOutput.textContent),
+    false,
+    'the superseded receipt is never announced again',
+  )
+  assert.equal(result.memberJsonWrites.length, 1, 'the refresh retries the removal the disable still owed')
+  assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
+})
+
+test('a Paid cleanup by one member cannot discharge the removal another member owes', async () => {
+  const receiptFor = (id, title, rate) => ({
+    starter_call_settings_intent_v3: {
+      version: 1,
+      member_id: id,
+      paid: { enabled: true, title: title, price_dollars: rate },
+    },
+  })
+  const readyReadiness = {
+    calendar_connected: true,
+    availability_configured: true,
+    stripe_connect_linked: true,
+    stripe_charges_enabled: true,
+    stripe_readiness_fresh: true,
+  }
+  let failUpdates = true
+  const result = load({
+    cardMode: true,
+    memberId: 'member-a',
+    memberJSON: receiptFor('member-a', 'Strategy call', 250),
+    memberJsonUpdateError: () => (failUpdates ? new Error('Memberstack timeout') : null),
+    initial: canonical({
+      services: [service({ title: 'Strategy call', price_cents: 25000 })],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+    routes: {
+      '/starter/paid-call-settings/disable/v3': ({ setState }) => {
+        setState(canonical({ readiness: readyReadiness }))
+        return { ok: true, status: 200, json: async () => ({ ok: true }) }
+      },
+    },
+  })
+  await settle()
+
+  assert.ok(await result.window.StarterPaidCallSettings.disable())
+  await settle()
+  assert.equal(result.memberJsonWrites.length, 0, 'member A still owes the removal')
+
+  failUpdates = false
+  await result.window.$memberstackDom.updateMemberJSON({
+    json: receiptFor('member-b', 'Second member call', 300),
+  })
+  await result.changeMember({ id: 'member-b' })
+  await settle()
+
+  assert.equal(result.dom.enabled.checked, true, 'member B sees their own pending create')
+  assert.equal(result.dom.title.value, 'Second member call')
+
+  result.dom.disabled.checked = true
+  await result.dom.disabled.dispatch('change')
+  assert.ok(await result.window.StarterPaidCallSettings.submit())
+  await settle()
+
+  await result.window.$memberstackDom.updateMemberJSON({
+    json: receiptFor('member-a', 'Strategy call', 250),
+  })
+  const writesBefore = result.memberJsonWrites.length
+  await result.changeMember({ id: 'member-a' })
+  await settle()
+
+  assert.equal(result.dom.disabled.checked, true, 'A superseded their own choice, so it is not re-offered')
+  assert.equal(result.dom.enabled.checked, false)
+  const writes = result.memberJsonWrites.slice(writesBefore)
+  assert.equal(writes.length, 1, 'A signing back in retries the removal A still owed')
+  assert.equal(writes[0].starter_call_settings_intent_v3, undefined)
+})
+
+test('an account switch during a failed Paid cleanup never touches the next member receipt', async () => {
+  const gate = deferred()
+  let updateCalls = 0
+  let failUpdates = true
+  const memberJSON = {
+    starter_call_settings_intent_v3: {
+      version: 1,
+      member_id: 'member-a',
+      paid: { enabled: true, title: 'Strategy call', price_dollars: 250 },
+    },
+  }
+  const result = load({
+    cardMode: true,
+    memberId: 'member-a',
+    memberJSON,
+    // The load-time passive cleanup fails outright; only the disable's cleanup is held open.
+    memberJsonUpdateGate: () => (updateCalls++ === 1 ? gate.promise : null),
+    memberJsonUpdateError: () => (failUpdates ? new Error('Memberstack timeout') : null),
+    initial: canonical({
+      services: [service({ title: 'Strategy call', price_cents: 25000 })],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+    routes: {
+      '/starter/paid-call-settings/disable/v3': ({ setState }) => {
+        setState(canonical({
+          readiness: {
+            calendar_connected: true,
+            availability_configured: true,
+            stripe_connect_linked: true,
+            stripe_charges_enabled: true,
+            stripe_readiness_fresh: true,
+          },
+        }))
+        return { ok: true, status: 200, json: async () => ({ ok: true }) }
+      },
+    },
+  })
+  await settle()
+
+  const turnedOff = result.window.StarterPaidCallSettings.disable()
+  await settle()
+
+  memberJSON.starter_call_settings_intent_v3 = {
+    version: 1,
+    member_id: 'member-b',
+    paid: { enabled: true, title: 'Second member call', price_dollars: 300 },
+  }
+  const switched = result.changeMember({ id: 'member-b' })
+  gate.resolve()
+  await turnedOff
+  failUpdates = false
+  await switched
+  await settle()
+
+  assert.equal(result.dom.enabled.checked, true, 'the incoming member keeps their own pending create')
+  assert.equal(result.dom.title.value, 'Second member call')
+  assert.equal(String(result.dom.price.value), '300')
+  assert.equal(
+    result.memberJsonWrites.length,
+    0,
+    'the obligation the previous member owed cannot delete this member receipt',
+  )
+})
+
+test('a sign-in recovery keeps the Paid removal the same member still owes', async () => {
+  let failUpdates = true
+  const result = load({
+    cardMode: true,
+    memberId: 'member-a',
+    memberJsonUpdateError: () => (failUpdates ? new Error('Memberstack timeout') : null),
+    memberJSON: {
+      starter_call_settings_intent_v3: {
+        version: 1,
+        member_id: 'member-a',
+        paid: { enabled: true, title: 'Strategy call', price_dollars: 250 },
+      },
+    },
+    initial: canonical({
+      services: [service({ title: 'Strategy call', price_cents: 25000 })],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+    routes: {
+      '/starter/paid-call-settings/disable/v3': ({ setState }) => {
+        setState(canonical())
+        return { ok: true, status: 200, json: async () => ({ ok: true }) }
+      },
+    },
+  })
+  await settle()
+
+  assert.ok(await result.window.StarterPaidCallSettings.disable())
+  await settle()
+
+  assert.equal(result.memberJsonWrites.length, 0, 'the superseding disable could not clear the receipt')
+  assert.equal(result.dom.disabled.checked, true)
+
+  result.expireMemberSilently()
+  await result.notifyAuthChange(null)
+  await settle()
+
+  failUpdates = false
+  await result.changeMember({ id: 'member-a' })
+  await settle()
+
+  assert.equal(result.dom.disabled.checked, true, 'the same member keeps the supersession across the reload')
+  assert.equal(result.dom.enabled.checked, false)
+  assert.equal(
+    /Build Profile choice/.test(result.dom.statusOutput.textContent),
+    false,
+    'the superseded receipt is never re-offered to the member who superseded it',
+  )
+  assert.equal(result.memberJsonWrites.length, 1, 'the reload retries the removal it still owed')
+  assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
+})
+
+test('a Paid disable whose own cleanup also fails never repaints the Build Profile Yes', async () => {
+  const active = service({ title: 'Strategy call', price_cents: 25000 })
+  const result = load({
+    cardMode: true,
+    memberId: 'member-a',
+    memberJsonUpdateError: new Error('Memberstack outage'),
+    memberJSON: {
+      starter_call_settings_intent_v3: {
+        version: 1,
+        member_id: 'member-a',
+        paid: { enabled: true, title: 'Strategy call', price_dollars: 250 },
+      },
+    },
+    initial: canonical({
+      services: [active],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+    routes: {
+      '/starter/paid-call-settings/disable/v3': ({ setState }) => {
+        setState(canonical())
+        return { ok: true, status: 200, json: async () => ({ ok: true }) }
+      },
+    },
+  })
+  await settle()
+
+  assert.equal(result.dom.enabled.checked, true, 'the active canonical service renders first')
+
+  assert.ok(await result.window.StarterPaidCallSettings.disable())
+  await settle()
+
+  assert.equal(result.memberJsonWrites.length, 0, 'both cleanup writes failed')
+  assert.equal(result.dom.disabled.checked, true, 'the verified disable owns the card')
+  assert.equal(result.dom.enabled.checked, false)
+  assert.equal(result.dom.statusOutput.textContent, 'Paid calls are off.')
+  assert.equal(result.window.StarterPaidCallSettings.hasChanges(), false)
+})
+
+test('a later Paid disable retires the receipt an earlier best-effort cleanup could not clear', async () => {
+  let failNextUpdate = true
+  const result = load({
+    cardMode: true,
+    memberId: 'member-a',
+    memberJsonUpdateError: () => {
+      if (!failNextUpdate) return null
+      failNextUpdate = false
+      return new Error('Memberstack timeout')
+    },
+    memberJSON: {
+      starter_call_settings_intent_v3: {
+        version: 1,
+        member_id: 'member-a',
+        paid: { enabled: true, title: 'Strategy call', price_dollars: 250 },
+      },
+    },
+    initial: canonical(),
+    routes: {
+      '/starter/paid-call-settings/upsert/v3': ({ body, setState }) => {
+        const saved = service({
+          title: body.title,
+          price_cents: body.price_cents,
+          duration: body.duration_minutes,
+          revision: 1,
+        })
+        setState(canonical({
+          services: [saved],
+          readiness: { paid_call_enabled: true, bookable: true },
+        }))
+        return { ok: true, status: 200, json: async () => ({ service: saved }) }
+      },
+      '/starter/paid-call-settings/disable/v3': ({ setState }) => {
+        setState(canonical())
+        return { ok: true, status: 200, json: async () => ({ ok: true }) }
+      },
+    },
+  })
+  await settle()
+
+  assert.ok(await result.window.StarterPaidCallSettings.submit())
+  await settle()
+
+  assert.equal(result.memberJsonWrites.length, 0, 'the best-effort cleanup write failed')
+  assert.match(result.warnings.join('\n'), /pending Build Profile receipt could not be cleared/)
+
+  assert.ok(await result.window.StarterPaidCallSettings.disable())
+  await settle()
+
+  assert.equal(result.memberJsonWrites.length, 1, 'the disable retries the cleanup the save could not finish')
+  assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
+  assert.equal(result.dom.disabled.checked, true)
+  assert.equal(result.dom.enabled.checked, false)
+})
+
+test('a stale Build Profile Paid change is retired when a canonical service exists', async () => {
+  const active = service({ title: 'Old call', price_cents: 10000 })
+  const result = load({
+    cardMode: true,
+    memberJSON: {
+      starter_call_settings_intent_v3: {
+        version: 1,
+        member_id: 'member-a',
+        paid: { enabled: true, title: 'New strategy call', price_dollars: 300 },
+      },
+    },
+    initial: canonical({
+      services: [active],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+  })
+  await settle()
+
+  assert.equal(result.dom.title.value, 'Old call')
+  assert.equal(result.dom.price.value, 100)
+  assert.equal(result.calls.some((call) => call.method === 'POST'), false)
+  assert.equal(result.memberJsonWrites.at(-1).starter_call_settings_intent_v3, undefined)
+})
+
 test('renders the active service and prerequisite state from canonical GET', async () => {
   const active = service()
   const result = load({ initial: canonical({
@@ -862,6 +1332,1133 @@ test('the native Paid card binds without generated IDs and upgrades a legacy dur
   assert.equal(result.dom.root.getAttribute('data-paid-call-duration-current'), '60')
   assert.equal(result.dom.root.getAttribute('data-paid-call-bookable'), 'true')
   assert.equal(result.dom.formWrapper.style.display, 'none')
+})
+
+test('declining a pending Paid enable consumes the receipt when canonical has no service', async () => {
+  const result = load({
+    cardMode: true,
+    memberJSON: {
+      starter_call_settings_intent_v3: {
+        version: 1,
+        member_id: 'member-a',
+        paid: { enabled: true, title: 'Strategy call', price_dollars: 250 },
+      },
+    },
+    initial: canonical(),
+  })
+  await settle()
+
+  assert.equal(result.dom.enabled.checked, true)
+
+  result.dom.disabled.checked = true
+  await result.dom.disabled.dispatch('change')
+  assert.ok(await result.window.StarterPaidCallSettings.submit())
+  await settle()
+
+  assert.equal(result.calls.some((call) => call.method === 'POST'), false)
+  assert.equal(result.memberJsonWrites.length, 1)
+  assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
+  assert.equal(result.dom.disabled.checked, true)
+  assert.equal(result.dom.enabled.checked, false)
+})
+
+test('a legacy Paid off envelope is not a pending create and drives nothing', async () => {
+  const active = service()
+  const result = load({
+    memberJSON: {
+      starter_call_settings_intent_v3: {
+        version: 1,
+        member_id: 'member-a',
+        paid: { enabled: false },
+      },
+    },
+    initial: canonical({
+      services: [active],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+  })
+  await settle()
+
+  assert.equal(result.dom.enabled.checked, true, 'the canonical active service wins')
+  assert.equal(result.calls.filter((call) => call.path === '/starter/paid-call-settings/disable/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/starter/paid-call-settings/upsert/v3').length, 0)
+  assert.equal(result.memberJsonWrites.length, 0, 'a declined branch carries no pending create to retire')
+})
+
+test('an unretired Paid receipt cannot disable an active service from an uncheck', async () => {
+  const active = service({ title: 'Strategy call', price_cents: 20000, revision: 2 })
+  const result = load({
+    memberJSON: {
+      starter_call_settings_intent_v3: {
+        version: 1,
+        member_id: 'member-a',
+        paid: { enabled: true, title: 'Deep-dive session', price_dollars: 350 },
+      },
+    },
+    memberJsonUpdateError: new Error('Memberstack timeout'),
+    initial: canonical({
+      services: [active],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+  })
+  await settle()
+
+  assert.equal(result.memberJsonWrites.length, 0, 'the passive cleanup write failed, so the receipt is still held')
+  assert.equal(result.dom.enabled.checked, true, 'the canonical active service still wins the render')
+
+  result.dom.enabled.checked = false
+  await result.dom.enabled.dispatch('change')
+  await result.dom.save.dispatch('click')
+  await settle()
+
+  assert.equal(
+    result.calls.filter((call) => call.path === '/starter/paid-call-settings/disable/v3').length,
+    0,
+    'an active service is only turned off through the authored Turn off action',
+  )
+  assert.equal(
+    result.dom.status.textContent,
+    'Use Turn off paid calls to disable the active service safely.',
+  )
+})
+
+const GATED_PAID_READINESS = {
+  calendar_connected: false,
+  availability_configured: false,
+  stripe_connect_linked: false,
+  stripe_charges_enabled: false,
+  stripe_readiness_fresh: false,
+}
+
+const PENDING_PAID_ENABLE = {
+  starter_call_settings_intent_v3: {
+    version: 1,
+    member_id: 'member-a',
+    paid: { enabled: true, title: 'Strategy call', price_dollars: 250 },
+  },
+}
+
+test('Dashboard keeps a gated pending Paid receipt declinable so the member can decline it', async () => {
+  const result = load({
+    cardMode: true,
+    memberJSON: PENDING_PAID_ENABLE,
+    initial: canonical({ readiness: GATED_PAID_READINESS }),
+  })
+  await settle()
+
+  assert.equal(
+    result.dom.save.getAttribute('aria-disabled'),
+    'true',
+    'a gated pending Yes offers no Update that could succeed',
+  )
+  result.dom.disabled.checked = true
+  await result.dom.disabled.dispatch('change')
+  assert.equal(result.dom.save.disabled, false, 'choosing Off makes the decline submittable')
+  assert.equal(result.dom.save.getAttribute('aria-disabled'), 'false')
+  await result.rotateAuthScope()
+  await settle()
+  result.dom.disabled.checked = true
+  await result.dom.disabled.dispatch('change')
+  assert.equal(result.dom.save.disabled, false, 'same-member auth refresh keeps the decline path actionable')
+  await result.dom.save.dispatch('click')
+  await settle()
+
+  assert.equal(result.memberJsonWrites.length, 1)
+  assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
+  assert.equal(result.dom.disabled.checked, true)
+})
+
+test('the legacy non-card Paid surface declines a gated pending enable by unchecking Enabled', async () => {
+  const result = load({
+    memberJSON: {
+      starter_call_settings_intent_v3: {
+        version: 1,
+        member_id: 'member-a',
+        free: { enabled: true, description: 'Quick intro' },
+        paid: { enabled: true, title: 'Strategy call', price_dollars: 250 },
+      },
+    },
+    initial: canonical({ readiness: GATED_PAID_READINESS }),
+  })
+  await settle()
+
+  assert.equal(result.dom.enabled.checked, true, 'the pending Yes is hydrated')
+  assert.equal(
+    result.dom.save.getAttribute('aria-disabled'),
+    'true',
+    'a gated pending Yes offers no Update that could succeed',
+  )
+  assert.equal(result.dom.disable.getAttribute('aria-disabled'), 'true', 'there is no active service to turn off')
+
+  result.dom.enabled.checked = false
+  await result.dom.enabled.dispatch('change')
+  assert.equal(result.dom.save.disabled, false, 'unchecking the authored Enabled box makes the decline submittable')
+  assert.equal(result.dom.save.getAttribute('aria-disabled'), 'false')
+
+  await result.dom.save.dispatch('click')
+  await settle()
+
+  assert.equal(result.calls.some((call) => call.method === 'POST'), false, 'declining writes nothing canonical')
+  assert.equal(result.memberJsonWrites.length, 1)
+  assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3.paid, undefined)
+  assert.deepEqual(
+    result.memberJsonWrites[0].starter_call_settings_intent_v3.free,
+    { enabled: true, description: 'Quick intro' },
+    'the Free branch of the receipt is left for the Free controller',
+  )
+  assert.equal(result.dom.enabled.checked, false, 'the declined choice stays off after the re-render')
+})
+
+test('an unchecked non-card Enabled box never writes a stale receipt behind Update', async () => {
+  const active = service({ title: 'Strategy call', price_cents: 20000, revision: 2 })
+  const result = load({
+    memberJSON: {
+      starter_call_settings_intent_v3: {
+        version: 1,
+        member_id: 'member-a',
+        paid: { enabled: true, title: 'Deep-dive session', price_dollars: 350 },
+      },
+    },
+    initial: canonical({
+      services: [active],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+    routes: {
+      '/starter/paid-call-settings/upsert/v3': ({ body, setState }) => {
+        const saved = service({
+          title: body.title,
+          price_cents: body.price_cents,
+          duration: body.duration_minutes,
+          revision: 5,
+        })
+        setState(canonical({
+          services: [saved],
+          readiness: { paid_call_enabled: true, bookable: true },
+        }))
+        return { ok: true, status: 200, json: async () => ({ service: saved }) }
+      },
+    },
+  })
+  await settle()
+
+  assert.equal(result.dom.price.value, 200, 'the canonical rate fills the authored control')
+  assert.equal(result.memberJsonWrites.length, 1, 'the stale receipt is retired on load')
+
+  result.dom.enabled.checked = false
+  await result.dom.enabled.dispatch('change')
+  await result.dom.save.dispatch('click')
+  await settle()
+
+  assert.equal(
+    result.calls.filter((call) => call.path === '/starter/paid-call-settings/upsert/v3').length,
+    0,
+    'an off-shaped gesture never saves the stale receipt title and rate',
+  )
+  assert.equal(
+    result.calls.filter((call) => call.path === '/starter/paid-call-settings/disable/v3').length,
+    0,
+    'an active service is only turned off through the authored Turn off action',
+  )
+  assert.equal(result.memberJsonWrites.length, 1, 'the off-shaped gesture adds no receipt write')
+  assert.equal(
+    result.dom.status.textContent,
+    'Use Turn off paid calls to disable the active service safely.',
+  )
+
+  result.dom.enabled.checked = true
+  await result.dom.enabled.dispatch('change')
+  await result.dom.save.dispatch('click')
+  await settle()
+
+  assert.equal(
+    result.calls.filter((call) => call.path === '/starter/paid-call-settings/upsert/v3').length,
+    1,
+    're-checking Enabled restores the confirmed update path',
+  )
+})
+
+test('a queued Paid receipt consume cannot corrupt the next member cleanup', async () => {
+  const gate = deferred()
+  const receipt = {
+    version: 1,
+    member_id: 'member-a',
+    paid: { enabled: true, title: 'Strategy call', price_dollars: 250 },
+  }
+  const result = load({
+    memberId: 'member-a',
+    memberJSON: { starter_call_settings_intent_v3: receipt },
+    initial: canonical({
+      services: [service({ title: 'Strategy call', price_cents: 25000 })],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+  })
+  result.window.__tsMemberJsonWrite = gate.promise
+  await settle()
+
+  assert.equal(result.memberJsonWrites.length, 0, 'the satisfied consume is still queued behind the shared writer')
+
+  receipt.member_id = 'member-b'
+  receipt.paid = { enabled: true, title: 'Deep-dive session', price_dollars: 350 }
+  const switched = result.changeMember({ id: 'member-b' })
+  await settle()
+
+  gate.resolve()
+  await switched
+  await settle()
+
+  assert.equal(result.memberJsonWrites.length, 1, "only the next member's stale receipt is retired")
+  assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
+  assert.equal(result.dom.title.value, 'Strategy call', 'the next member sees the active canonical service')
+  assert.equal(result.dom.price.value, 250)
+})
+
+test('a gated pending Paid Yes re-enables Update only while Off stays selected', async () => {
+  const result = load({
+    cardMode: true,
+    memberJSON: PENDING_PAID_ENABLE,
+    initial: canonical({ readiness: GATED_PAID_READINESS }),
+  })
+  await settle()
+
+  result.dom.disabled.checked = true
+  await result.dom.disabled.dispatch('change')
+  assert.equal(result.dom.save.getAttribute('aria-disabled'), 'false')
+
+  result.dom.enabled.checked = true
+  await result.dom.enabled.dispatch('change')
+  assert.equal(
+    result.dom.save.getAttribute('aria-disabled'),
+    'true',
+    'switching back to Yes re-gates Update on the unmet prerequisites',
+  )
+  await result.dom.save.dispatch('click')
+  await settle()
+  assert.equal(result.calls.some((call) => call.method === 'POST'), false)
+  assert.equal(result.memberJsonWrites.length, 0)
+})
+
+test('a fail-closed Paid session clears the pending Build Profile receipt it painted', async () => {
+  let reads = 0
+  const gated = canonical({ readiness: GATED_PAID_READINESS })
+  const result = load({
+    cardMode: true,
+    memberJSON: PENDING_PAID_ENABLE,
+    initial: gated,
+    routes: {
+      '/starter/paid-call-settings/get/v3': () => {
+        reads += 1
+        return reads === 1
+          ? { ok: true, status: 200, json: async () => gated }
+          : { ok: false, status: 401, json: async () => ({ message: 'Unauthorized' }) }
+      },
+    },
+  })
+  await settle()
+
+  await result.dispatchWindow('starterSchedulingConnectionStateChanged', {})
+  await settle()
+
+  assert.equal(result.dom.statusOutput.textContent, 'Sign in to manage paid calls.')
+  assert.equal(result.dom.disabled.checked, true, 'the fail-closed card resets to Off')
+  assert.equal(result.dom.save.getAttribute('aria-disabled'), 'true')
+})
+
+test('a fail-closed refresh during a Paid decline cleanup is never repainted by the stale continuation', async () => {
+  const cleanupGate = deferred()
+  let reads = 0
+  const gated = canonical({ readiness: GATED_PAID_READINESS })
+  const result = load({
+    cardMode: true,
+    memberJsonUpdateGate: cleanupGate.promise,
+    memberJSON: PENDING_PAID_ENABLE,
+    initial: gated,
+    routes: {
+      '/starter/paid-call-settings/get/v3': () => {
+        reads += 1
+        return reads === 1
+          ? { ok: true, status: 200, json: async () => gated }
+          : { ok: false, status: 401, json: async () => ({ message: 'Unauthorized' }) }
+      },
+    },
+  })
+  await settle()
+
+  result.dom.disabled.checked = true
+  await result.dom.disabled.dispatch('change')
+  const declined = result.window.StarterPaidCallSettings.submit()
+  await settle()
+
+  await result.dispatchWindow('starterSchedulingConnectionStateChanged', {})
+  await settle()
+  assert.equal(reads, 1, 'the expiring refresh is queued behind the cleanup, not raced against it')
+
+  cleanupGate.resolve()
+  await declined
+  await settle()
+
+  assert.equal(reads, 2, 'the queued refresh runs once cleanup has finished')
+  assert.equal(
+    result.dom.statusOutput.textContent,
+    'Sign in to manage paid calls.',
+    'the signed-out card is never repainted',
+  )
+  assert.equal(result.dom.save.getAttribute('aria-disabled'), 'true')
+  assert.equal(result.dom.title.value, '', 'the decline continuation never repaints the blanked card')
+})
+
+test('an empty-state uncheck on the legacy Paid surface still asks the member to turn calls on', async () => {
+  const result = load({
+    initial: canonical(),
+  })
+  await settle()
+
+  result.dom.enabled.checked = true
+  await result.dom.enabled.dispatch('change')
+  result.dom.enabled.checked = false
+  await result.dom.enabled.dispatch('change')
+  await result.dom.save.dispatch('click')
+  await settle()
+
+  assert.equal(result.dom.status.textContent, 'Turn on paid calls before you save these settings.')
+  assert.equal(result.calls.some((call) => call.method === 'POST'), false)
+  assert.equal(result.memberJsonWrites.length, 0)
+})
+
+test('a superseded Paid refresh never resurrects the receipt a decline just consumed', async () => {
+  const readGate = deferred()
+  let holdNextRead = null
+  const result = load({
+    cardMode: true,
+    memberJsonReadGate: () => holdNextRead,
+    memberJSON: PENDING_PAID_ENABLE,
+    initial: canonical({ readiness: GATED_PAID_READINESS }),
+  })
+  await settle()
+  assert.equal(result.dom.enabled.checked, true, 'the pending enable is hydrated')
+
+  holdNextRead = readGate.promise
+  await result.dispatchWindow('starterSchedulingConnectionStateChanged', {})
+  await settle()
+  holdNextRead = null
+
+  result.dom.disabled.checked = true
+  await result.dom.disabled.dispatch('change')
+  const declined = result.window.StarterPaidCallSettings.submit()
+  await settle()
+
+  readGate.resolve()
+  assert.ok(await declined)
+  await settle()
+  assert.equal(result.memberJsonWrites.length, 1)
+  assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
+
+  await result.rotateAuthScope()
+  await settle()
+
+  assert.equal(result.dom.disabled.checked, true, 'a render that does not re-read the receipt keeps the decline')
+  assert.equal(result.dom.enabled.checked, false, 'the consumed receipt is never resurrected in module state')
+  assert.equal(result.dom.price.value, '', 'the declined rate is not repainted')
+  assert.equal(result.window.StarterPaidCallSettings.hasChanges(), false)
+})
+
+test('a Paid receipt decline publishes the disabling status for its whole write window', async () => {
+  const cleanupGate = deferred()
+  const result = load({
+    cardMode: true,
+    memberJsonUpdateGate: cleanupGate.promise,
+    memberJSON: PENDING_PAID_ENABLE,
+    initial: canonical({ readiness: GATED_PAID_READINESS }),
+  })
+  await settle()
+
+  result.dom.disabled.checked = true
+  await result.dom.disabled.dispatch('change')
+  const declined = result.window.StarterPaidCallSettings.submit()
+  await settle()
+
+  assert.equal(
+    result.document.documentElement.getAttribute('data-paid-call-settings'),
+    'disabling',
+    'the published status reports the in-flight receipt cleanup',
+  )
+
+  cleanupGate.resolve()
+  assert.ok(await declined)
+  await settle()
+
+  assert.equal(result.document.documentElement.getAttribute('data-paid-call-settings'), 'ready')
+})
+
+test('a failed Paid receipt decline leaves the published status in error', async () => {
+  const result = load({
+    cardMode: true,
+    memberJsonUpdateError: new Error('member JSON unavailable'),
+    memberJSON: PENDING_PAID_ENABLE,
+    initial: canonical({ readiness: GATED_PAID_READINESS }),
+  })
+  await settle()
+
+  result.dom.disabled.checked = true
+  await result.dom.disabled.dispatch('change')
+  assert.equal(await result.window.StarterPaidCallSettings.submit(), null)
+  await settle()
+
+  assert.equal(result.document.documentElement.getAttribute('data-paid-call-settings'), 'error')
+  assert.match(result.dom.statusOutput.textContent, /could not be cleared/)
+})
+
+test('a prerequisite refresh waits for a Paid decline cleanup instead of re-asserting the receipt', async () => {
+  const cleanupGate = deferred()
+  const result = load({
+    cardMode: true,
+    memberJsonUpdateGate: cleanupGate.promise,
+    memberJSON: PENDING_PAID_ENABLE,
+    initial: canonical({ readiness: GATED_PAID_READINESS }),
+  })
+  await settle()
+
+  const reads = () => result.calls.filter((call) => call.path === '/starter/paid-call-settings/get/v3').length
+  const readsAfterLoad = reads()
+
+  result.dom.disabled.checked = true
+  await result.dom.disabled.dispatch('change')
+  const declined = result.window.StarterPaidCallSettings.submit()
+  await settle()
+
+  await result.dispatchWindow('starterSchedulingConnectionStateChanged', {})
+  await settle()
+
+  assert.equal(reads(), readsAfterLoad, 'the prerequisite refresh is held until the receipt cleanup finishes')
+  assert.equal(result.dom.enabled.checked, false, 'the declined receipt is never re-asserted mid-cleanup')
+
+  cleanupGate.resolve()
+  assert.ok(await declined)
+  await settle()
+
+  assert.equal(result.memberJsonWrites.length, 1)
+  assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
+  assert.equal(reads(), readsAfterLoad + 1, 'the queued refresh runs once, after cleanup')
+  assert.equal(result.dom.disabled.checked, true, 'the card keeps the decline the member submitted')
+  assert.equal(result.dom.enabled.checked, false)
+  assert.equal(result.calls.some((call) => call.method === 'POST'), false, 'declining makes no canonical write')
+})
+
+test('a queued prerequisite refresh never erases a failed Paid decline cleanup', async () => {
+  const result = load({
+    cardMode: true,
+    memberJsonUpdateError: new Error('member JSON unavailable'),
+    memberJSON: PENDING_PAID_ENABLE,
+    initial: canonical({ readiness: GATED_PAID_READINESS }),
+  })
+  await settle()
+
+  const reads = () => result.calls.filter((call) => call.path === '/starter/paid-call-settings/get/v3').length
+  const readsAfterLoad = reads()
+
+  result.dom.disabled.checked = true
+  await result.dom.disabled.dispatch('change')
+  const declined = result.window.StarterPaidCallSettings.submit()
+  const refreshed = result.dispatchWindow('starterSchedulingConnectionStateChanged', {})
+  assert.equal(await declined, null)
+  await refreshed
+  await settle()
+
+  assert.equal(reads(), readsAfterLoad, 'a failed cleanup does not release the queued refresh')
+  assert.match(result.dom.statusOutput.textContent, /could not be cleared/)
+  assert.equal(result.memberJsonWrites.length, 0, 'the pending receipt survives the failure')
+  assert.equal(result.calls.some((call) => call.method === 'POST'), false)
+})
+
+test('a failed no-service Paid decline keeps the pending receipt and reports failure', async () => {
+  const result = load({
+    cardMode: true,
+    memberJsonUpdateError: new Error('member JSON unavailable'),
+    memberJSON: {
+      starter_call_settings_intent_v3: {
+        version: 1,
+        member_id: 'member-a',
+        paid: { enabled: true, title: 'Strategy call', price_dollars: 250 },
+      },
+    },
+    initial: canonical(),
+  })
+  await settle()
+
+  result.dom.disabled.checked = true
+  await result.dom.disabled.dispatch('change')
+  assert.equal(await result.window.StarterPaidCallSettings.submit(), null)
+
+  assert.match(result.dom.statusOutput.textContent, /could not be cleared/)
+  assert.equal(result.calls.some((call) => call.method === 'POST'), false)
+})
+
+test('a Paid decline never consumes its receipt when canonical state is unavailable', async () => {
+  let reads = 0
+  const result = load({
+    editProfile: true,
+    memberJSON: {
+      starter_call_settings_intent_v3: {
+        version: 1,
+        member_id: 'member-b',
+        paid: { enabled: true, title: 'Strategy call', price_dollars: 250 },
+      },
+    },
+    routes: {
+      '/starter/paid-call-settings/get/v3': () => {
+        reads += 1
+        if (reads === 1) return { ok: true, status: 200, json: async () => canonical() }
+        return { ok: false, status: 503, json: async () => ({ message: 'unavailable' }) }
+      },
+    },
+  })
+  await settle()
+  await result.changeMember({ id: 'member-b' })
+  await settle()
+
+  result.dom.disabled.checked = true
+  await result.dom.disabled.dispatch('change')
+  assert.equal(await result.window.StarterPaidCallSettings.submit(), null)
+
+  assert.equal(result.memberJsonWrites.length, 0)
+  assert.equal(result.dom.nativeErrorMessage.textContent, 'Paid-call settings are unavailable. Your account was not changed.')
+  assert.equal(result.dom.nativeError.getAttribute('data-call-settings-error-visible'), 'true')
+})
+
+test('a gated pending Paid enable never blocks the Edit Profile step save', async () => {
+  const result = load({
+    editProfile: true,
+    memberId: 'member-a',
+    memberJSON: {
+      starter_call_settings_intent_v3: {
+        version: 1,
+        member_id: 'member-a',
+        paid: { enabled: true, title: 'Strategy call', price_dollars: 250 },
+      },
+    },
+    initial: canonical({
+      readiness: { stripe_charges_enabled: false, stripe_readiness_fresh: false },
+    }),
+  })
+  await settle()
+
+  assert.equal(result.dom.enabled.checked, true)
+  assert.equal(result.window.StarterPaidCallSettings.hasChanges(), false)
+  assert.ok(await result.window.StarterPaidCallSettings.submit())
+  assert.equal(result.calls.some((call) => call.method === 'POST'), false)
+  assert.equal(result.memberJsonWrites.length, 0)
+})
+
+test('auto-consuming a satisfied Paid off receipt leaves step 6 clean without repainting it', async () => {
+  let hydrationRuns = 0
+  const result = load({
+    editProfile: true,
+    memberId: 'member-a',
+    profileDirtyState: {
+      isHydrating: () => false,
+      runHydrationSync(callback) {
+        hydrationRuns += 1
+        return callback()
+      },
+    },
+    memberJSON: {
+      starter_call_settings_intent_v3: {
+        version: 1,
+        member_id: 'member-a',
+        paid: { enabled: true, title: 'Strategy call', price_dollars: 250 },
+      },
+    },
+    initial: canonical({
+      services: [service({ title: 'Strategy call', price_cents: 25000 })],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+  })
+  await settle()
+
+  assert.equal(result.memberJsonWrites.length, 1)
+  assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
+  assert.equal(hydrationRuns, 0, 'retiring the receipt needs no synthetic re-render to stay clean')
+  assert.equal(result.window.StarterPaidCallSettings.hasChanges(), false)
+  assert.equal(result.dom.enabled.checked, true, 'the canonical state the first render painted still stands')
+})
+
+const SATISFIED_PAID_RECEIPT = {
+  starter_call_settings_intent_v3: {
+    version: 1,
+    member_id: 'member-a',
+    paid: { enabled: true, title: 'Strategy call', price_dollars: 250 },
+  },
+}
+
+const satisfiedPaidCanonical = () => canonical({
+  services: [service({ title: 'Strategy call', price_cents: 25000 })],
+  readiness: { paid_call_enabled: true, bookable: true },
+})
+
+test('a Paid refresh released by the same cleanup never invalidates the save that resumed first', async () => {
+  const cleanupGate = deferred()
+  const result = load({
+    cardMode: true,
+    memberJsonUpdateGate: cleanupGate.promise,
+    memberJSON: SATISFIED_PAID_RECEIPT,
+    initial: satisfiedPaidCanonical(),
+    routes: {
+      '/starter/paid-call-settings/upsert/v3': ({ body, setState }) => {
+        const saved = service({
+          title: body.title,
+          price_cents: body.price_cents,
+          duration: body.duration_minutes,
+          revision: 1,
+        })
+        setState(canonical({
+          services: [saved],
+          readiness: { paid_call_enabled: true, bookable: true },
+        }))
+        return { ok: true, status: 200, json: async () => ({ service: saved }) }
+      },
+    },
+  })
+  await settle()
+
+  const reads = () => result.calls.filter((call) => call.path === '/starter/paid-call-settings/get/v3').length
+  const readsBefore = reads()
+
+  result.dom.enabled.checked = true
+  await result.dom.enabled.dispatch('change')
+  result.dom.title.value = 'Strategy call'
+  result.dom.price.value = '250'
+  const saved = result.window.StarterPaidCallSettings.submit()
+  await settle()
+
+  await result.dispatchWindow('starterSchedulingConnectionStateChanged', {})
+  await settle()
+
+  cleanupGate.resolve()
+  assert.ok(await saved, 'the save is not invalidated by the refresh released from the same cleanup')
+  await settle()
+
+  assert.equal(
+    result.calls.filter((call) => call.path === '/starter/paid-call-settings/upsert/v3').length,
+    1,
+    'the canonical write lands exactly once',
+  )
+  assert.equal(
+    result.document.documentElement.getAttribute('data-paid-call-settings'),
+    'ready',
+    'the controller never stays stuck in its saving state',
+  )
+  assert.equal(result.dom.save.getAttribute('aria-disabled'), 'false', 'Update is usable again')
+  assert.ok(reads() > readsBefore, 'the refresh queued behind the write still runs afterwards')
+})
+
+test('a settling Paid receipt cleanup never repaints its snapshot over a newer canonical render', async () => {
+  const cleanupGate = deferred()
+  let reads = 0
+  const bookable = satisfiedPaidCanonical()
+  const unbookable = canonical({
+    services: [service({ title: 'Strategy call', price_cents: 25000 })],
+    readiness: { calendar_connected: false, paid_call_enabled: true, bookable: false },
+  })
+  const result = load({
+    cardMode: true,
+    memberJsonUpdateGate: cleanupGate.promise,
+    memberJSON: SATISFIED_PAID_RECEIPT,
+    initial: bookable,
+    routes: {
+      '/starter/paid-call-settings/get/v3': () => {
+        reads += 1
+        return { ok: true, status: 200, json: async () => (reads === 1 ? bookable : unbookable) }
+      },
+    },
+  })
+  await settle()
+  assert.equal(result.dom.statusOutput.textContent, 'Paid calls are on and bookable.')
+
+  await result.rotateAuthScope()
+  await settle()
+
+  assert.equal(
+    result.dom.statusOutput.textContent,
+    'Paid calls are saved, but a prerequisite needs attention.',
+    'the same-member reconcile paints the newest canonical readiness',
+  )
+
+  cleanupGate.resolve()
+  await settle()
+
+  assert.equal(
+    result.dom.statusOutput.textContent,
+    'Paid calls are saved, but a prerequisite needs attention.',
+    'the settled cleanup never reverts the card to its captured snapshot',
+  )
+  assert.equal(result.dom.root.getAttribute('data-paid-call-bookable'), 'false')
+  assert.equal(result.memberJsonWrites.length, 1)
+  assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
+})
+
+test('a satisfied Paid receipt announces the canonical state, never an unsaved choice', async () => {
+  const cleanupGate = deferred()
+  const result = load({
+    cardMode: true,
+    memberJsonUpdateGate: cleanupGate.promise,
+    memberJSON: SATISFIED_PAID_RECEIPT,
+    initial: satisfiedPaidCanonical(),
+  })
+  await settle()
+
+  assert.equal(
+    result.dom.statusOutput.textContent,
+    'Paid calls are on and bookable.',
+    'the card reports the saved canonical state while the receipt is still being retired',
+  )
+
+  cleanupGate.resolve()
+  await settle()
+
+  assert.equal(result.dom.statusOutput.textContent, 'Paid calls are on and bookable.')
+  assert.equal(result.memberJsonWrites.length, 1)
+  assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
+})
+
+test('a satisfied Paid receipt never masks a canonical service that breaks the contract', async () => {
+  const cleanupGate = deferred()
+  const result = load({
+    cardMode: true,
+    memberJsonUpdateGate: cleanupGate.promise,
+    memberJSON: SATISFIED_PAID_RECEIPT,
+    initial: canonical({
+      services: [service({ title: 'Strategy call', price_cents: 25000, duration: 45 })],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+  })
+  await settle()
+
+  assert.equal(
+    result.dom.statusOutput.textContent,
+    'Update this service to the required 60-minute Paid Call duration.',
+    'the real canonical warning outranks any Build Profile copy',
+  )
+  assert.equal(result.dom.root.getAttribute('data-paid-call-bookable'), 'false')
+})
+
+test('a Paid save during a satisfied auto-consume waits for cleanup instead of failing', async () => {
+  const cleanupGate = deferred()
+  const result = load({
+    editProfile: true,
+    memberId: 'member-a',
+    memberJsonUpdateGate: cleanupGate.promise,
+    memberJSON: SATISFIED_PAID_RECEIPT,
+    initial: satisfiedPaidCanonical(),
+    routes: {
+      '/starter/paid-call-settings/upsert/v3': ({ body, setState }) => {
+        const saved = service({
+          title: body.title,
+          price_cents: body.price_cents,
+          duration: body.duration_minutes,
+          revision: 5,
+        })
+        setState(canonical({
+          services: [saved],
+          readiness: { paid_call_enabled: true, bookable: true },
+        }))
+        return { ok: true, status: 200, json: async () => ({ service: saved }) }
+      },
+    },
+  })
+  await settle()
+
+  result.dom.price.value = '400'
+  await result.dom.price.dispatch('input')
+  assert.equal(result.window.StarterPaidCallSettings.hasChanges(), true, 'the member edit is dirty')
+
+  const submitted = result.window.StarterPaidCallSettings.submit()
+  await settle()
+  cleanupGate.resolve()
+
+  assert.ok(await submitted, 'the member edit is saved rather than rejected by the passive cleanup')
+  await settle()
+
+  assert.equal(
+    result.calls.filter((call) => call.path === '/starter/paid-call-settings/upsert/v3').length,
+    1,
+    'the edit made during cleanup reaches canonical exactly once',
+  )
+})
+
+test('a step-6 save during a satisfied Paid auto-consume succeeds without a canonical write', async () => {
+  const cleanupGate = deferred()
+  const result = load({
+    editProfile: true,
+    memberId: 'member-a',
+    memberJsonUpdateGate: cleanupGate.promise,
+    memberJSON: SATISFIED_PAID_RECEIPT,
+    initial: satisfiedPaidCanonical(),
+  })
+  await settle()
+
+  assert.equal(
+    result.window.StarterPaidCallSettings.hasChanges(), false,
+    'a receipt canonical already satisfies is never an unsaved step-6 edit',
+  )
+  assert.ok(
+    await result.window.StarterPaidCallSettings.submit(),
+    'a step-6 save landing inside the cleanup window still reports success',
+  )
+  assert.equal(result.calls.some((call) => call.method === 'POST'), false, 'the background repair makes no canonical write')
+
+  cleanupGate.resolve()
+  await settle()
+
+  assert.equal(result.memberJsonWrites.length, 1)
+  assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
+  assert.equal(result.dom.title.value, 'Strategy call', 'the canonical service is what the card shows throughout')
+  assert.equal(Number(result.dom.price.value), 250)
+})
+
+test('a transient Paid receipt read failure keeps the pending choice visible and declinable', async () => {
+  let failNextRead = false
+  const result = load({
+    cardMode: true,
+    memberJsonReadGate: () => (failNextRead ? Promise.reject(new Error('Memberstack unavailable')) : null),
+    memberJSON: PENDING_PAID_ENABLE,
+    initial: canonical({ readiness: GATED_PAID_READINESS }),
+  })
+  await settle()
+  assert.equal(result.dom.enabled.checked, true, 'the pending enable is hydrated')
+
+  failNextRead = true
+  await result.dispatchWindow('starterSchedulingConnectionStateChanged', {})
+  await settle()
+
+  assert.equal(result.dom.enabled.checked, true, 'a transient read failure never erases the pending choice')
+  assert.equal(result.dom.title.value, 'Strategy call')
+  assert.equal(Number(result.dom.price.value), 250)
+  assert.equal(result.memberJsonWrites.length, 0, 'a failed read consumes nothing')
+  assert.equal(result.calls.some((call) => call.method === 'POST'), false)
+
+  result.dom.disabled.checked = true
+  await result.dom.disabled.dispatch('change')
+  assert.equal(result.dom.save.getAttribute('aria-disabled'), 'false', 'the pending choice stays declinable')
+
+  failNextRead = false
+  await result.dispatchWindow('starterSchedulingConnectionStateChanged', {})
+  await settle()
+
+  assert.equal(result.dom.enabled.checked, true, 'a later successful refresh reconciles the same choice')
+  assert.equal(result.memberJsonWrites.length, 0)
+})
+
+test('a prerequisite refresh during a satisfied Paid auto-consume never resurrects the receipt', async () => {
+  const cleanupGate = deferred()
+  let reads = 0
+  const result = load({
+    editProfile: true,
+    memberId: 'member-a',
+    memberJsonUpdateGate: cleanupGate.promise,
+    memberJSON: SATISFIED_PAID_RECEIPT,
+    initial: satisfiedPaidCanonical(),
+    routes: {
+      // The canonical rate moves on while the repair is in flight, so a refresh
+      // that re-reads the receipt can no longer self-heal by consuming it.
+      '/starter/paid-call-settings/get/v3': () => {
+        reads += 1
+        return {
+          ok: true,
+          status: 200,
+          json: async () => (reads === 1 ? satisfiedPaidCanonical() : canonical({
+            services: [service({ title: 'Strategy call', price_cents: 40000 })],
+            readiness: { paid_call_enabled: true, bookable: true },
+          })),
+        }
+      },
+    },
+  })
+  await settle()
+
+  await result.dispatchWindow('starterSchedulingConnectionStateChanged', {})
+  await settle()
+
+  cleanupGate.resolve()
+  await settle()
+
+  assert.equal(result.memberJsonWrites.length, 1, 'the satisfied receipt is consumed exactly once')
+  assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
+  assert.equal(
+    result.window.StarterPaidCallSettings.hasChanges(), false,
+    'the concurrent refresh never repaints the consumed receipt as an unsaved step-6 edit',
+  )
+  assert.equal(result.dom.title.value, 'Strategy call', 'the card keeps the canonical service')
+  assert.equal(Number(result.dom.price.value), 400, 'the newest canonical rate wins over the consumed receipt')
+  assert.equal(result.calls.some((call) => call.method === 'POST'), false, 'a repair makes no canonical write')
+})
+
+test('a satisfied Paid auto-consume and another queued member-JSON writer both keep their own keys', async () => {
+  const result = load({
+    editProfile: true,
+    memberId: 'member-a',
+    memberJSON: SATISFIED_PAID_RECEIPT,
+    initial: satisfiedPaidCanonical(),
+  })
+  const memberstack = result.window.$memberstackDom
+  const unrelatedWrite = (result.window.__tsMemberJsonWrite || Promise.resolve()).then(async () => {
+    const current = (await memberstack.getMemberJSON()).data
+    await memberstack.updateMemberJSON({ json: { ...current, tours: { 'starter-dashboard': 'seen' } } })
+  })
+  result.window.__tsMemberJsonWrite = unrelatedWrite.then(() => {}, () => {})
+  await unrelatedWrite
+  await settle()
+
+  const stored = result.memberJsonWrites.at(-1)
+  assert.equal(stored.starter_call_settings_intent_v3, undefined, 'the consumed branch is not resurrected by the other writer')
+  assert.deepEqual(stored.tours, { 'starter-dashboard': 'seen' }, "the other writer's key survives the consume")
+  assert.equal(result.window.StarterPaidCallSettings.hasChanges(), false)
+  assert.equal(result.calls.some((call) => call.method === 'POST'), false)
+})
+
+test('a Paid enable receipt canonical already satisfies is consumed on load, not re-asserted', async () => {
+  const result = load({
+    editProfile: true,
+    memberId: 'member-a',
+    memberJSON: {
+      starter_call_settings_intent_v3: {
+        version: 1,
+        member_id: 'member-a',
+        paid: { enabled: true, title: 'Strategy call', price_dollars: 250 },
+      },
+    },
+    initial: canonical({
+      services: [service({ title: 'Strategy call', price_cents: 25000 })],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+  })
+  await settle()
+
+  assert.equal(result.memberJsonWrites.length, 1)
+  assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
+  assert.equal(result.dom.title.value, 'Strategy call')
+  assert.equal(Number(result.dom.price.value), 250)
+  assert.equal(result.window.StarterPaidCallSettings.hasChanges(), false)
+})
+
+test('a stale Paid enable receipt cannot replace a newer canonical rate', async () => {
+  const result = load({
+    editProfile: true,
+    memberId: 'member-a',
+    memberJSON: {
+      starter_call_settings_intent_v3: {
+        version: 1,
+        member_id: 'member-a',
+        paid: { enabled: true, title: 'Strategy call', price_dollars: 250 },
+      },
+    },
+    initial: canonical({
+      services: [service({ title: 'Strategy call', price_cents: 40000 })],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+  })
+  await settle()
+
+  assert.equal(result.memberJsonWrites.length, 1)
+  assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
+  assert.equal(result.dom.price.value, 400)
+  assert.equal(result.calls.some((call) => call.method === 'POST'), false)
+})
+
+test('a member edit made while a satisfied Paid receipt is being consumed is never repainted away', async () => {
+  const cleanupGate = deferred()
+  const result = load({
+    editProfile: true,
+    memberId: 'member-a',
+    memberJsonUpdateGate: cleanupGate.promise,
+    memberJSON: SATISFIED_PAID_RECEIPT,
+    initial: satisfiedPaidCanonical(),
+  })
+  await settle()
+
+  result.dom.enabled.checked = true
+  await result.dom.enabled.dispatch('change')
+  result.dom.title.value = 'New strategy choice'
+  await result.dom.title.dispatch('input')
+  result.dom.price.value = '275'
+  await result.dom.price.dispatch('input')
+  cleanupGate.resolve()
+  await settle()
+
+  assert.equal(result.dom.enabled.checked, true)
+  assert.equal(result.dom.disabled.checked, false)
+  assert.equal(result.dom.title.value, 'New strategy choice')
+  assert.equal(result.dom.price.value, '275')
+  assert.equal(result.window.StarterPaidCallSettings.hasChanges(), true)
+})
+
+test('a pending Paid create never commits itself through an unrelated Edit Profile save', async () => {
+  const result = load({
+    editProfile: true,
+    memberId: 'member-a',
+    memberJSON: {
+      starter_call_settings_intent_v3: {
+        version: 1,
+        member_id: 'member-a',
+        paid: { enabled: true, title: 'Strategy call', price_dollars: 250 },
+      },
+    },
+    initial: canonical({
+      readiness: {
+        calendar_connected: true,
+        availability_configured: true,
+        stripe_connect_linked: true,
+        stripe_charges_enabled: true,
+        stripe_readiness_fresh: true,
+      },
+    }),
+    routes: {
+      '/starter/paid-call-settings/upsert/v3': ({ body, setState }) => {
+        const saved = service({
+          title: body.title,
+          price_cents: body.price_cents,
+          duration: body.duration_minutes,
+          revision: 1,
+        })
+        setState(canonical({
+          services: [saved],
+          readiness: { paid_call_enabled: true, bookable: true },
+        }))
+        return { ok: true, status: 200, json: async () => ({ service: saved }) }
+      },
+    },
+  })
+  await settle()
+
+  assert.equal(result.dom.enabled.checked, true, 'the pending create stays visible')
+  assert.equal(result.dom.title.value, 'Strategy call')
+  assert.equal(
+    result.window.StarterPaidCallSettings.hasChanges(),
+    false,
+    'a prefilled pending create is not unsaved step-6 work',
+  )
+
+  assert.ok(await result.window.StarterPaidCallSettings.submit())
+  await settle()
+
+  assert.equal(
+    result.calls.filter((call) => call.path === '/starter/paid-call-settings/upsert/v3').length,
+    0,
+    'an unrelated step-6 save cannot create the service',
+  )
+
+  // The overlay already checked Yes, so a browser emits only click here.
+  await result.dom.enabled.dispatch('click')
+  assert.equal(
+    result.window.StarterPaidCallSettings.hasChanges(),
+    true,
+    're-answering the prefilled Yes is the gesture that accepts it',
+  )
+
+  assert.ok(await result.window.StarterPaidCallSettings.submit())
+  await settle()
+
+  const upsert = result.calls.find((call) => call.path === '/starter/paid-call-settings/upsert/v3')
+  assert.equal(upsert.body.title, 'Strategy call', 'the accepted pending create reaches canonical')
+  assert.equal(upsert.body.price_cents, 25000)
 })
 
 test('Edit Profile hydrates and saves Paid Call settings through the canonical controller', async () => {
@@ -1974,6 +3571,101 @@ test('an imported V2 suggestion replaces the placeholder but stays off until con
   assert.equal(result.dom.enabled.checked, false)
   assert.equal(result.dom.root.getAttribute('data-paid-call-rate-source'), 'legacy_v2')
   assert.equal(result.dom.statusOutput.textContent, 'Paid calls are off. Confirm the imported V2 rate to turn them on.')
+})
+
+test('a stale Paid intent is retired without displacing confirmed canonical values', async () => {
+  const active = service({ title: 'Old call', price_cents: 35000 })
+  const result = load({
+    cardMode: true,
+    memberId: 'member-a',
+    memberJSON: {
+      starter_call_settings_intent_v3: {
+        version: 1,
+        member_id: 'member-a',
+        paid: { enabled: true, title: 'New strategy call', price_dollars: 250 },
+      },
+    },
+    initial: canonical({
+      services: [active],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+  })
+  await settle()
+
+  assert.equal(result.dom.priceOutput.textContent, '$350.00')
+  assert.equal(result.dom.root.getAttribute('data-paid-call-enabled'), 'true')
+  assert.equal(result.dom.root.getAttribute('data-paid-call-bookable'), 'true')
+  assert.equal(result.dom.title.value, 'Old call')
+  assert.equal(result.dom.price.value, 350)
+  assert.equal(result.memberJsonWrites.length, 1)
+  assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
+})
+
+test('an active non-USD Paid service never falls through to a pending USD receipt rate', async () => {
+  const active = service({ currency: 'eur', price_cents: 30000 })
+  const result = load({
+    cardMode: true,
+    memberId: 'member-a',
+    memberJSON: {
+      starter_call_settings_intent_v3: {
+        version: 1,
+        member_id: 'member-a',
+        paid: { enabled: true, title: 'New strategy call', price_dollars: 250 },
+      },
+    },
+    initial: canonical({ services: [active] }),
+  })
+  await settle()
+
+  assert.equal(result.dom.priceOutput.textContent, 'Not set')
+  assert.equal(result.dom.root.getAttribute('data-paid-call-enabled'), 'true')
+  assert.equal(result.dom.price.value, '', 'the invalid canonical rate stays blank for correction')
+  assert.equal(result.memberJsonWrites.length, 1, 'the stale receipt is retired')
+  assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
+})
+
+test('a pending Paid intent outranks an imported V2 rate suggestion', async () => {
+  const result = load({
+    cardMode: true,
+    memberId: 'member-a',
+    priceTile: { canonical: false, authored: true },
+    memberJSON: {
+      starter_call_settings_intent_v3: {
+        version: 1,
+        member_id: 'member-a',
+        paid: { enabled: true, title: 'Strategy call', price_dollars: 250 },
+      },
+    },
+    initial: canonical({ suggestion: importedSuggestion(15000) }),
+    routes: {
+      '/starter/paid-call-settings/upsert/v3': ({ body, setState }) => {
+        const saved = service({
+          title: body.title,
+          price_cents: body.price_cents,
+          duration: body.duration_minutes,
+          revision: 1,
+        })
+        setState(canonical({
+          services: [saved],
+          readiness: { paid_call_enabled: true, bookable: true },
+        }))
+        return { ok: true, status: 200, json: async () => ({ service: saved }) }
+      },
+    },
+  })
+  await settle()
+
+  assert.equal(result.dom.price.value, '250')
+  assert.equal(result.dom.authoredPriceText.textContent, '$250.00')
+  assert.equal(result.dom.root.getAttribute('data-paid-call-rate-source'), '')
+
+  await result.window.StarterPaidCallSettings.submit()
+  await settle()
+
+  const upsert = result.calls.find((call) => call.path === '/starter/paid-call-settings/upsert/v3')
+  assert.equal(upsert.body.price_cents, 25000)
+  assert.equal(upsert.body.title, 'Strategy call')
+  assert.equal(result.memberJsonWrites.at(-1).starter_call_settings_intent_v3, undefined)
 })
 
 test('an imported V2 suggestion writes only after the Starter explicitly turns it on', async () => {

@@ -18,7 +18,10 @@ Five candidates no longer reconstruct to their published bodies.
   [required-mirror hydration contract](../starter-edit-profile/README.md#canonical-required-mirror-hydration),
   and the
   [browser-native unsaved-change prompt request](../starter-edit-profile/README.md#unsaved-change-warning)
-  including the `isHydrating()` reader that contract documents.
+  including the `isHydrating()` reader that contract documents. Its restore also leaves the five
+  Free and Paid call controls to their settings controllers, because the legacy profile row no
+  longer writes them and replaying it over a controller's render would discard an unconsumed
+  [Build Profile Call Settings receipt](../build-profile/README.md#call-settings-receipt-lifecycle).
 - `draft-state.js` carries the member-bound hydration fix and
   [saved draft recovery contract](#empty-route-seeds-and-saved-draft-recovery).
 - `submit-writer.js` carries the behavior changes owned by the
@@ -170,12 +173,26 @@ unconditionally inapplicable on Consult — it always submits `retainer: false, 
 regardless of the hidden radio and regardless of whether the hidden rate satisfies this contract.
 Full Profile authors both controls, so an enabled or required section there stays strict.
 
-The Paid Call rate is not part of Build Profile's contract. Build Profile neither constrains,
-validates, nor submits `free_call`, `free_call_desc`, `paid_call`, `paid_call_desc`, or
-`paid_call_rate`, so whatever hydration left in a hidden call control is inert there. Dashboard Call
-Settings — including the `[name="paid-call-rate"]` control it renders in Edit Profile mode — and the
-active environment-matched `nylas_configurations_v3` row are the sole call authority, and that writer
-enforces the `$1` through `$1,000` whole-dollar Paid Call range on its own.
+The Paid Call rate in Build Profile uses the same `$1` through `$1,000`
+whole-dollar contract as Dashboard and Edit Profile, and the writer stamps the
+same native `type="number"`, `inputmode="numeric"`, `step="1"`, `min`, and `max`
+attributes on `[name="paid-call-rate"]` as on the other price controls. Build
+Profile validates and stores that private setup intent but never sends call
+fields to the profile endpoint and never creates provider state. The receipt is
+validated through the same shared whole-dollar validator as the other prices,
+before the profile request is sent: because the Paid Call rate, the Paid Call
+title, and the Free Call description are all visible authored controls, a
+rejected one names itself on its own control through focus and native constraint
+validation the way the visible Hourly Rate and Monthly Retainer do, and the
+`[build-profile-error]` panel is revealed with its authored copy and nothing
+saved, so a bad rate never turns an accepted profile save into a visible
+failure. The receipt
+*write* still runs after the profile save, and because call fields are not part of
+that payload, a resubmit after a later failure stores the receipt without repeating
+the profile write. Dashboard or Edit Profile completes
+the guarded canonical write after Calendar, Availability, and Stripe are ready.
+The active environment-matched `nylas_configurations_v3` row remains the sole
+call authority.
 
 Wherever a blank is the compatibility-empty state, the canonical zero these same writers persist for
 that field is that same state: a blank, zero, or otherwise out-of-contract profile-type-inapplicable Hourly Rate

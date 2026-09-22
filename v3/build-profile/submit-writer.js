@@ -15,6 +15,7 @@
       [
         { selector: '[name="rate"]', min: 1, max: 1000 },
         { selector: '[name="rate-retainer"]', min: 1, max: 25000 },
+        { selector: '[name="paid-call-rate"]', min: 1, max: 1000 },
       ].forEach(({ selector, min, max }) => {
         const input = qs(selector, form);
         if (!input) return;
@@ -45,6 +46,109 @@
       const authoredErrorMessage = errorMessage ? errorMessage.textContent : '';
       const priceFeedback = new Map();
 
+      // Build Profile can collect call preferences before a new Starter has the
+      // calendar, availability, and (for Paid) Stripe prerequisites required by
+      // the provider-backed Call Settings writers. Keep that pre-activation
+      // intent in the member's private JSON. Dashboard/Edit Profile consume it
+      // as a pending create only; the canonical endpoints remain the only
+      // writers of provider state and freelancers_v3 call projections.
+      const BUILD_CALL_INTENT_KEY = 'starter_call_settings_intent_v3';
+
+      function queueMemberJsonWrite(task) {
+        const previous = window.__tsMemberJsonWrite || Promise.resolve();
+        const next = previous.then(task, task);
+        window.__tsMemberJsonWrite = next.then(function () {}, function () {});
+        return next;
+      }
+
+      function buildCallSettingsIntent(formData, wholeDollar, fieldError) {
+        const hasFree = Object.prototype.hasOwnProperty.call(formData, 'free-consulting-calls');
+        const hasPaid = Object.prototype.hasOwnProperty.call(formData, 'paid-consulting-calls');
+        if (!hasFree && !hasPaid) return null;
+
+        const enabled = (value) => value === 'yes';
+        const intent = {
+          version: 1,
+          member_id: MEMBER.id,
+        };
+
+        if (hasFree) {
+          const freeEnabled = enabled(formData['free-consulting-calls']);
+          const description = freeEnabled ? String(formData['free-call-description'] || '').trim() : '';
+          if (freeEnabled && description.length > 60) {
+            fieldError(
+              qs('[name="free-call-description"]', form),
+              'Free-call description must be 60 characters or fewer.',
+              'FREE_CALL_DESCRIPTION_TOO_LONG',
+            );
+          }
+          if (freeEnabled) {
+            intent.free = {
+              enabled: true,
+              description,
+            };
+          }
+        }
+
+        if (hasPaid) {
+          const paidEnabled = enabled(formData['paid-consulting-calls']);
+          if (paidEnabled) {
+            const title = String(formData['paid-call-description'] || '').trim() || 'Paid Consultation Call';
+            const rawRate = String(formData['paid-call-rate'] || '').trim();
+            if (title.length < 3 || title.length > 80) {
+              fieldError(
+                qs('[name="paid-call-description"]', form),
+                'Use a paid-call title between 3 and 80 characters.',
+                'PAID_CALL_TITLE_INVALID',
+              );
+            }
+            intent.paid = {
+              enabled: true,
+              title,
+              price_dollars: wholeDollar(rawRate, {
+                min: 1,
+                max: 1000,
+                label: 'paid-call rate',
+                selector: '[name="paid-call-rate"]',
+              }),
+            };
+          }
+        }
+
+        return intent;
+      }
+
+      async function saveBuildCallSettingsIntent(intent) {
+        if (!intent) return null;
+        const memberstack = window.$memberstackDom;
+        if (
+          !memberstack ||
+          typeof memberstack.getMemberJSON !== 'function' ||
+          typeof memberstack.updateMemberJSON !== 'function'
+        ) {
+          throw Object.assign(new Error('Member Call Settings storage is unavailable.'), {
+            code: 'CALL_SETTINGS_INTENT_STORAGE_UNAVAILABLE',
+            panelMessage: 'We saved your profile but could not save your Call Settings. Please submit again.',
+          });
+        }
+        await queueMemberJsonWrite(async function () {
+          const response = await memberstack.getMemberJSON();
+          const current = response && Object.prototype.hasOwnProperty.call(response, 'data')
+            ? response.data
+            : response;
+          const memberJSON = current && typeof current === 'object' && !Array.isArray(current)
+            ? current
+            : {};
+          const stored = Boolean(intent.free || intent.paid);
+          if (!stored && !Object.prototype.hasOwnProperty.call(memberJSON, BUILD_CALL_INTENT_KEY)) return;
+          const nextJSON = { ...memberJSON };
+          if (stored) nextJSON[BUILD_CALL_INTENT_KEY] = intent;
+          else delete nextJSON[BUILD_CALL_INTENT_KEY];
+          await memberstack.updateMemberJSON({ json: nextJSON });
+        });
+        return intent;
+      }
+
       function clearPriceFeedback(field) {
         const feedback = priceFeedback.get(field);
         if (!feedback) return;
@@ -58,7 +162,7 @@
         if (feedback && field.value !== feedback.value) clearPriceFeedback(field);
       }
 
-      ['rate', 'rate-retainer'].forEach((name) => {
+      ['rate', 'rate-retainer', 'paid-call-rate', 'paid-call-description', 'free-call-description'].forEach((name) => {
         const field = qs('[name="' + name + '"]', form);
         field?.addEventListener('input', clearChangedPriceFeedback);
         field?.addEventListener('change', clearChangedPriceFeedback);
@@ -155,7 +259,7 @@
           return value;
         };
 
-        const priceError = (field, message, code, mirror) => {
+        const fieldError = (field, message, code, mirror) => {
           if (mirror || !field) {
             throw Object.assign(new Error(message), { code, panelMessage: message });
           }
@@ -194,7 +298,7 @@
             const message = failure === 'PRICE_REQUIRED'
               ? `${label} is required.`
               : `Use a whole-dollar ${label} from $${min.toLocaleString('en-US')} to $${max.toLocaleString('en-US')}.`;
-            return priceError(field, message, failure, mirror);
+            return fieldError(field, message, failure, mirror);
           }
           clearPriceFeedback(field);
           const raw = String(value ?? '').trim();
@@ -237,11 +341,11 @@
           // Validate JSON type before blank detection or numeric conversion:
           // [] is not a remove gesture and [100] is not a scalar price.
           if (typeof data.price !== 'string' && typeof data.price !== 'number') {
-            return priceError(qs(selector, form), 'Use a whole-dollar service price from $1 to $50,000.', 'PRICE_NOT_INTEGER', true);
+            return fieldError(qs(selector, form), 'Use a whole-dollar service price from $1 to $50,000.', 'PRICE_NOT_INTEGER', true);
           }
           if (typeof data.price === 'string' && !data.price.trim()) return null;
           if (!String(data.name ?? '').trim()) {
-            return priceError(qs(selector, form), 'A service name is required when a service price is set.', 'SERVICE_NAME_REQUIRED', true);
+            return fieldError(qs(selector, form), 'A service name is required when a service price is set.', 'SERVICE_NAME_REQUIRED', true);
           }
           data.price = wholeDollar(data.price, {
             min: 1,
@@ -292,6 +396,8 @@
         const retainerRate = retainerEnabled
           ? wholeDollar(formData["rate-retainer"], RETAINER_PRICE)
           : 0;
+
+        const callSettingsIntent = buildCallSettingsIntent(formData, wholeDollar, fieldError);
 
         const payload = {
           member_id: MEMBER.id || "",
@@ -383,6 +489,8 @@
               responseData: await response.json(),
             };
           }
+
+          await saveBuildCallSettingsIntent(callSettingsIntent);
 
           const committedPayload = savedBuildResult.payload;
           const photoUpload = window.StartersBuildProfilePhotoUpload;

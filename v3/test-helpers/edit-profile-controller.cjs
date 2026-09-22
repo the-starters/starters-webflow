@@ -10,6 +10,13 @@ const publishedContract = JSON.parse(fs.readFileSync(
   'utf8',
 ))
 
+function publishedRequiredByName(stepIndex, name) {
+  const step = publishedContract.steps.find(({ index }) => index === String(stepIndex))
+  const controls = step?.controls.filter((candidate) => candidate.name === name) || []
+  assert.ok(controls.length, `published contract step ${stepIndex} must include [name="${name}"]`)
+  return controls.every((control) => control.attributes.required === 'required')
+}
+
 function publishedRequired(stepIndex, id) {
   const step = publishedContract.steps.find(({ index }) => index === String(stepIndex))
   const control = step?.controls.find((candidate) => candidate.id === id)
@@ -163,9 +170,15 @@ function createEnvironment(fetchImpl, {
       '#service-3': createField('#service-3', { value: '' }),
       '#availability-required': createField('#availability-required', { value: '1' }),
       '[select-wrap-entity="availability"]': createGroup('[select-wrap-entity="availability"]', 1),
-      '[name="free-consulting-calls"]': createField('[name="free-consulting-calls"]', { value: 'yes' }),
+      '[name="free-consulting-calls"]': createField('[name="free-consulting-calls"]', {
+        value: 'yes',
+        required: publishedRequiredByName(6, 'free-consulting-calls'),
+      }),
       '[name="free-call-description"]': createField('[name="free-call-description"]', { value: 'Legacy free description' }),
-      '[name="paid-consulting-calls"]': createField('[name="paid-consulting-calls"]', { value: 'yes' }),
+      '[name="paid-consulting-calls"]': createField('[name="paid-consulting-calls"]', {
+        value: 'yes',
+        required: publishedRequiredByName(6, 'paid-consulting-calls'),
+      }),
       '[name="paid-call-description"]': createField('[name="paid-call-description"]', { value: 'Legacy description' }),
       '[name="paid-call-rate"]': createField('[name="paid-call-rate"]', { value: '250' }),
     },
@@ -293,7 +306,9 @@ function createEnvironment(fetchImpl, {
   }
   step.querySelectorAll = (selector) => {
     if (selector === 'input, select, textarea') return Object.values(stepFields)
-    if (selector === '[data-input-capture][required]') return captureFields
+    if (selector === '[data-input-capture][required]') {
+      return [...captureFields, ...Object.values(stepFields).filter((field) => field.required)]
+    }
     if (selector === '[name="free-consulting-calls"],[name="free-call-description"],[name="paid-consulting-calls"],[name="paid-call-description"],[name="paid-call-rate"]') {
       return [
         stepFields['[name="free-consulting-calls"]'],
