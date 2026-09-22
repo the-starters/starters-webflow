@@ -296,9 +296,17 @@ it leaves behind is a retry obligation, not a pending choice. The verified write
 already superseded the member's Build Profile answer, so the consumer stops
 offering that answer whatever canonical shape the write produced — a disable
 whose cleanup also failed still renders as off, and never repaints the Build
-Profile Yes over it. The stored branch is still owed a removal, so the next
-verified save or disable in the same session retries it, re-reading and
-member-scoping the envelope, before a reload ever has to. The no-service submitted-Off path is
+Profile Yes over it. That supersession also survives every later read in the
+session: a load or prerequisite-refresh read that still returns the branch is
+taken as the outstanding removal, never as a fresh pending choice. The stored
+branch is still owed one, so the next verified save or disable, and every later
+prerequisite refresh, retries it, re-reading and member-scoping the envelope.
+
+Supersession is session state, because the only place to record it durably is
+the Memberstack write that just failed. If that write never succeeds before the
+member reloads, the stored branch is indistinguishable from a pre-onboarding
+pending create and is offered again — retiring it on sight would destroy the
+genuine pending create this receipt exists to carry. The no-service submitted-Off path is
 different because no canonical write backs up the choice: its cleanup is strict.
 If Memberstack cleanup fails, the controller keeps the receipt pending, reports
 that the selection was not saved, and returns failure to Edit Profile. If the

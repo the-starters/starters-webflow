@@ -903,9 +903,9 @@
       if (!currentRender(version, memberId) || busy) return canonical
       // A failed receipt read is not a confirmed absence: keep the pending
       // choice on the card and let a later refresh reconcile it.
-      if (pending !== undefined) pendingBuildIntent = pending
+      if (pending !== undefined) pendingBuildIntent = receiptCleanupDeferred ? null : pending
       render(canonical)
-      if (pending !== undefined && canonicalSatisfiesPendingIntent(canonical)) {
+      if (pending !== undefined && (receiptCleanupDeferred || canonicalSatisfiesPendingIntent(canonical))) {
         startReceiptCleanup()
       }
       return canonical
@@ -1190,7 +1190,7 @@
       sessionMemberId = member.id
       const pending = await readPendingBuildIntent().catch(function () { return null })
       if (version !== refreshVersion) return null
-      pendingBuildIntent = pending
+      pendingBuildIntent = receiptCleanupDeferred ? null : pending
       await waitForSchedulingAuth()
       if (version !== refreshVersion) return null
       sessionAuthScope = await currentAuthScope()
@@ -1235,7 +1235,7 @@
       }
       if (!currentRender(version, member.id)) return null
       const rendered = render(canonical)
-      if (canonicalSatisfiesPendingIntent(canonical)) {
+      if (receiptCleanupDeferred || canonicalSatisfiesPendingIntent(canonical)) {
         startReceiptCleanup()
       }
       return rendered

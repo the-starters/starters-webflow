@@ -584,6 +584,55 @@ test('a pending receipt cleanup failure never turns a verified Free save into an
   assert.match(result.warnings.join('\n'), /pending Build Profile receipt could not be cleared/)
 })
 
+test('a prerequisite refresh after a superseding Free disable retries the removal instead of re-offering it', async () => {
+  let failUpdates = true
+  const result = load({
+    memberId: 'member-free-a',
+    memberJsonUpdateError: () => (failUpdates ? new Error('Memberstack timeout') : null),
+    memberJSON: {
+      starter_call_settings_intent_v3: {
+        version: 1,
+        member_id: 'member-free-a',
+        free: { enabled: true, description: 'Quick intro' },
+      },
+    },
+    initial: canonical({
+      public_description: 'Quick intro',
+      services: [service()],
+      readiness: { free_call_enabled: true, bookable: true },
+    }),
+    routes: {
+      '/starter/free-call-settings/disable/v3': ({ setState }) => {
+        setState(canonical())
+        return { ok: true, status: 200, json: async () => ({ ok: true }) }
+      },
+    },
+  })
+  await settle()
+
+  assert.ok(await result.window.StarterFreeCallSettings.disable())
+  await settle()
+
+  assert.equal(result.memberJsonWrites.length, 0, 'the superseding disable could not clear the receipt')
+  assert.equal(result.dom.no.checked, true)
+
+  failUpdates = false
+  await result.dispatchWindowEvent('starterSchedulingConnectionStateChanged')
+  await settle()
+
+  assert.equal(result.dom.no.checked, true, 'the refresh read cannot re-offer the superseded choice')
+  assert.equal(result.dom.yes.checked, false)
+  assert.equal(result.dom.title.value, '')
+  assert.equal(result.window.StarterFreeCallSettings.hasChanges(), false)
+  assert.equal(
+    /Build Profile choice/.test(result.dom.status.textContent),
+    false,
+    'the superseded receipt is never announced again',
+  )
+  assert.equal(result.memberJsonWrites.length, 1, 'the refresh retries the removal the disable still owed')
+  assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
+})
+
 test('a Free disable whose own cleanup also fails never repaints the Build Profile Yes', async () => {
   const active = service()
   const result = load({
