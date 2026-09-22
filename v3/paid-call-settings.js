@@ -1337,13 +1337,12 @@
 
   async function refreshFromPrerequisite() {
     if (!root || !sessionMemberId) return settings
+    if (receiptCleanup) await settleReceiptCleanup()
+    if (!root || !sessionMemberId) return settings
+    // A write may have claimed the controller while the passive cleanup settled.
     if (busy || activeWrite || authTransitionPending) {
       prerequisiteRefreshQueued = true
       return settings
-    }
-    if (receiptCleanup) {
-      await settleReceiptCleanup()
-      if (!root || !sessionMemberId) return settings
     }
     hideNativeError()
     const version = ++refreshVersion

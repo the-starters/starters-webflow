@@ -1090,6 +1090,60 @@ const satisfiedFreeCanonical = () => canonical({
   readiness: { free_call_enabled: true, bookable: true },
 })
 
+test('a Free refresh released by the same cleanup never invalidates the save that resumed first', async () => {
+  const cleanupGate = deferred()
+  const result = load({
+    memberJsonUpdateGate: cleanupGate.promise,
+    memberJSON: {
+      starter_call_settings_intent_v3: {
+        version: 1,
+        member_id: 'member-free-a',
+        free: { enabled: false, description: '' },
+      },
+    },
+    initial: canonical(),
+    routes: {
+      '/starter/free-call-settings/upsert/v3': ({ body, setState }) => {
+        setState(canonical({
+          public_description: body.description,
+          services: [service()],
+          readiness: { free_call_enabled: true, bookable: true },
+        }))
+        return { ok: true, status: 200, json: async () => ({ service: service() }) }
+      },
+    },
+  })
+  await settle()
+
+  const reads = () => result.calls.filter((call) => call.path === '/starter/free-call-settings/get/v3').length
+  const readsBefore = reads()
+
+  result.dom.yes.checked = true
+  await result.dom.yes.dispatch('change')
+  const saved = result.window.StarterFreeCallSettings.submit()
+  await settle()
+
+  await result.dispatchWindowEvent('starterSchedulingConnectionStateChanged')
+  await settle()
+
+  cleanupGate.resolve()
+  assert.ok(await saved, 'the save is not invalidated by the refresh released from the same cleanup')
+  await settle()
+
+  assert.equal(
+    result.calls.filter((call) => call.path === '/starter/free-call-settings/upsert/v3').length,
+    1,
+    'the canonical write lands exactly once',
+  )
+  assert.equal(
+    result.document.documentElement.getAttribute('data-free-call-settings'),
+    'ready',
+    'the controller never stays stuck in its saving state',
+  )
+  assert.equal(result.dom.save.getAttribute('aria-disabled'), 'false', 'Update is usable again')
+  assert.ok(reads() > readsBefore, 'the refresh queued behind the write still runs afterwards')
+})
+
 test('a satisfied Free receipt announces the canonical state, never an unsaved choice', async () => {
   const cleanupGate = deferred()
   const result = load({

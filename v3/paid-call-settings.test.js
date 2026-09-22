@@ -1654,6 +1654,68 @@ const satisfiedPaidCanonical = () => canonical({
   readiness: { paid_call_enabled: true, bookable: true },
 })
 
+test('a Paid refresh released by the same cleanup never invalidates the save that resumed first', async () => {
+  const cleanupGate = deferred()
+  const result = load({
+    cardMode: true,
+    memberJsonUpdateGate: cleanupGate.promise,
+    memberJSON: {
+      starter_call_settings_intent_v3: {
+        version: 1,
+        member_id: 'member-a',
+        paid: { enabled: false },
+      },
+    },
+    initial: canonical(),
+    routes: {
+      '/starter/paid-call-settings/upsert/v3': ({ body, setState }) => {
+        const saved = service({
+          title: body.title,
+          price_cents: body.price_cents,
+          duration: body.duration_minutes,
+          revision: 1,
+        })
+        setState(canonical({
+          services: [saved],
+          readiness: { paid_call_enabled: true, bookable: true },
+        }))
+        return { ok: true, status: 200, json: async () => ({ service: saved }) }
+      },
+    },
+  })
+  await settle()
+
+  const reads = () => result.calls.filter((call) => call.path === '/starter/paid-call-settings/get/v3').length
+  const readsBefore = reads()
+
+  result.dom.enabled.checked = true
+  await result.dom.enabled.dispatch('change')
+  result.dom.title.value = 'Strategy call'
+  result.dom.price.value = '250'
+  const saved = result.window.StarterPaidCallSettings.submit()
+  await settle()
+
+  await result.dispatchWindow('starterSchedulingConnectionStateChanged', {})
+  await settle()
+
+  cleanupGate.resolve()
+  assert.ok(await saved, 'the save is not invalidated by the refresh released from the same cleanup')
+  await settle()
+
+  assert.equal(
+    result.calls.filter((call) => call.path === '/starter/paid-call-settings/upsert/v3').length,
+    1,
+    'the canonical write lands exactly once',
+  )
+  assert.equal(
+    result.document.documentElement.getAttribute('data-paid-call-settings'),
+    'ready',
+    'the controller never stays stuck in its saving state',
+  )
+  assert.equal(result.dom.save.getAttribute('aria-disabled'), 'false', 'Update is usable again')
+  assert.ok(reads() > readsBefore, 'the refresh queued behind the write still runs afterwards')
+})
+
 test('a satisfied Paid receipt announces the canonical state, never an unsaved choice', async () => {
   const cleanupGate = deferred()
   const result = load({
