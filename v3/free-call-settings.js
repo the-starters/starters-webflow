@@ -64,7 +64,13 @@
   // Storage may still hold this branch after a swallowed cleanup write. That is a
   // retry obligation, not a pending create: a verified canonical write supersedes
   // the member's Build Profile choice whatever the resulting canonical shape is.
-  let receiptCleanupDeferred = false
+  // It is owed by the member who made that write, so a sign-in recovery keeps it
+  // and only a different member retires it.
+  let receiptCleanupOwedBy = null
+
+  function receiptCleanupOwed() {
+    return Boolean(sessionMemberId) && receiptCleanupOwedBy === sessionMemberId
+  }
   // Retiring a receipt canonical already satisfies is passive: it must never
   // disable a control or reject a member action, only delay one.
   let receiptCleanup = null
@@ -110,14 +116,14 @@
     try {
       await consumePendingBuildIntent()
     } catch (error) {
-      receiptCleanupDeferred = true
+      receiptCleanupOwedBy = sessionMemberId
       pendingBuildIntent = null
       console.warn('Canonical Free Call Settings were saved, but the pending Build Profile receipt could not be cleared.', error)
     }
   }
 
   async function consumePendingBuildIntent() {
-    if (!pendingBuildIntent && !receiptCleanupDeferred) return
+    if (!pendingBuildIntent && !receiptCleanupOwed()) return
     const memberstack = window.$memberstackDom
     if (
       !memberstack ||
@@ -126,13 +132,13 @@
     ) throw new Error('Pending Build Profile Call Settings could not be cleared')
     const consumeMemberId = sessionMemberId
     await queueMemberJsonWrite(async function () {
-      if ((!pendingBuildIntent && !receiptCleanupDeferred) || sessionMemberId !== consumeMemberId) return
+      if ((!pendingBuildIntent && !receiptCleanupOwed()) || sessionMemberId !== consumeMemberId) return
       const json = memberJsonValue(await memberstack.getMemberJSON())
       const envelope = json.starter_call_settings_intent_v3
       if (sessionMemberId !== consumeMemberId) return
       if (!envelope || envelope.member_id !== consumeMemberId) {
         pendingBuildIntent = null
-        receiptCleanupDeferred = false
+        receiptCleanupOwedBy = null
         return
       }
       const nextEnvelope = Object.assign({}, envelope)
@@ -142,7 +148,7 @@
       else delete nextJson.starter_call_settings_intent_v3
       await memberstack.updateMemberJSON({ json: nextJson })
       pendingBuildIntent = null
-      receiptCleanupDeferred = false
+      receiptCleanupOwedBy = null
     })
   }
 
@@ -387,6 +393,11 @@
 
   function canSubmitSettings(value) {
     return canSaveSettings(value) || (Boolean(pendingBuildIntent) && explicitIntent === 'disabled')
+  }
+
+  function pendingCreateOverlay(value) {
+    if (!value || !pendingBuildIntent) return null
+    return canonicalSatisfiesPendingIntent(value) ? null : pendingBuildIntent
   }
 
   function canonicalSatisfiesPendingIntent(value) {
@@ -658,7 +669,6 @@
   function clearRenderedState(message) {
     settings = null
     pendingBuildIntent = null
-    receiptCleanupDeferred = false
     setBusy(false)
     sessionMemberId = null
     sessionAuthScope = null
@@ -804,9 +814,7 @@
     }
     // A receipt canonical already satisfies would repaint the values canonical
     // just painted, so it is retired in the background rather than announced.
-    const unsavedIntent = pendingBuildIntent && !canonicalSatisfiesPendingIntent(value)
-      ? pendingBuildIntent
-      : null
+    const unsavedIntent = pendingCreateOverlay(value)
     if (unsavedIntent) {
       setRadioChecked(pair.enabled, true)
       setRadioChecked(pair.disabled, false)
@@ -902,9 +910,9 @@
       if (!currentRender(version, memberId) || busy) return canonical
       // A failed receipt read is not a confirmed absence: keep the pending
       // choice on the card and let a later refresh reconcile it.
-      if (pending !== undefined) pendingBuildIntent = receiptCleanupDeferred ? null : pending
+      if (pending !== undefined) pendingBuildIntent = receiptCleanupOwed() ? null : pending
       render(canonical)
-      if (pending !== undefined && (receiptCleanupDeferred || canonicalSatisfiesPendingIntent(canonical))) {
+      if (pending !== undefined && (receiptCleanupOwed() || canonicalSatisfiesPendingIntent(canonical))) {
         startReceiptCleanup()
       }
       return canonical
@@ -1189,7 +1197,7 @@
       sessionMemberId = member.id
       const pending = await readPendingBuildIntent().catch(function () { return null })
       if (version !== refreshVersion) return null
-      pendingBuildIntent = receiptCleanupDeferred ? null : pending
+      pendingBuildIntent = receiptCleanupOwed() ? null : pending
       await waitForSchedulingAuth()
       if (version !== refreshVersion) return null
       sessionAuthScope = await currentAuthScope()
@@ -1234,7 +1242,7 @@
       }
       if (!currentRender(version, member.id)) return null
       const rendered = render(canonical)
-      if (receiptCleanupDeferred || canonicalSatisfiesPendingIntent(canonical)) {
+      if (receiptCleanupOwed() || canonicalSatisfiesPendingIntent(canonical)) {
         startReceiptCleanup()
       }
       return rendered
@@ -1332,6 +1340,14 @@
     }
     const pair = radioPair()
     if (pair.enabled) {
+      // The overlay already checks Yes, so re-answering it emits no change event.
+      pair.enabled.addEventListener('click', function () {
+        if (applyingCanonicalRender) return
+        if (!pendingCreateOverlay(settings) || !canSaveSettings(settings)) return
+        explicitIntent = 'enabled'
+        markEditProfileDirty()
+        refreshSubmitEnabled()
+      })
       pair.enabled.addEventListener('change', function () {
         if (applyingCanonicalRender) return
         if (pair.enabled.checked) explicitIntent = 'enabled'

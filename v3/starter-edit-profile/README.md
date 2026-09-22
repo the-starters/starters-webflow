@@ -221,7 +221,10 @@ Build Profile create into a decline the member never made. An unconsumed Build P
 receipt prefills the Free or Paid controls and waits there: prefilling is not a member change, so it
 never marks step 6 changed on its own and a Save for an unrelated field never commits it. Answering
 either call control is the member gesture that marks the step changed, and that Save then
-materializes the choice through the same guarded upsert or disable. Each contract's Build Profile
+materializes the choice through the same guarded upsert or disable. Accepting the prefilled Yes
+counts even though the overlay already checked it and a browser therefore emits only a click:
+the controllers arm on that click once the branch's prerequisites allow the write, so a member
+who agrees with their Build Profile answer needs one gesture, not a decline and a re-answer. Each contract's Build Profile
 handoff section owns that receipt. Retainer controls remain owned by
 the profile form even when Webflow markup places them in a wrapper shared with a call
 field. This contract holds only where `scheduling-auth.js` authenticates this page; its host

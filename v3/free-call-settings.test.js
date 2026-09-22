@@ -633,6 +633,58 @@ test('a prerequisite refresh after a superseding Free disable retries the remova
   assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
 })
 
+test('a sign-in recovery keeps the Free removal the same member still owes', async () => {
+  let failUpdates = true
+  const result = load({
+    memberId: 'member-free-a',
+    memberJsonUpdateError: () => (failUpdates ? new Error('Memberstack timeout') : null),
+    memberJSON: {
+      starter_call_settings_intent_v3: {
+        version: 1,
+        member_id: 'member-free-a',
+        free: { enabled: true, description: 'Quick intro' },
+      },
+    },
+    initial: canonical({
+      public_description: 'Quick intro',
+      services: [service()],
+      readiness: { free_call_enabled: true, bookable: true },
+    }),
+    routes: {
+      '/starter/free-call-settings/disable/v3': ({ setState }) => {
+        setState(canonical({ readiness: { calendar_connected: true, availability_configured: true } }))
+        return { ok: true, status: 200, json: async () => ({ ok: true }) }
+      },
+    },
+  })
+  await settle()
+
+  assert.ok(await result.window.StarterFreeCallSettings.disable())
+  await settle()
+
+  assert.equal(result.memberJsonWrites.length, 0, 'the superseding disable could not clear the receipt')
+  assert.equal(result.dom.no.checked, true)
+
+  result.expireMember()
+  await result.notifyAuthChange(null)
+  await settle()
+
+  failUpdates = false
+  await result.changeMember({ id: 'member-free-a' })
+  await settle()
+
+  assert.equal(result.dom.no.checked, true, 'the same member keeps the supersession across the reload')
+  assert.equal(result.dom.yes.checked, false)
+  assert.equal(result.dom.title.value, '')
+  assert.equal(
+    /Build Profile choice/.test(result.dom.status.textContent),
+    false,
+    'the superseded receipt is never re-offered to the member who superseded it',
+  )
+  assert.equal(result.memberJsonWrites.length, 1, 'the reload retries the removal it still owed')
+  assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
+})
+
 test('a Free disable whose own cleanup also fails never repaints the Build Profile Yes', async () => {
   const active = service()
   const result = load({
@@ -1667,6 +1719,17 @@ test('a pending Free create never commits itself through an unrelated Edit Profi
       },
     },
     initial: canonical({ readiness: { calendar_connected: true, availability_configured: true } }),
+    routes: {
+      '/starter/free-call-settings/upsert/v3': ({ body, setState }) => {
+        const saved = service({ revision: 1 })
+        setState(canonical({
+          public_description: body.description,
+          services: [saved],
+          readiness: { free_call_enabled: true, bookable: true },
+        }))
+        return { ok: true, status: 200, json: async () => ({ service: saved }) }
+      },
+    },
   })
   await settle()
 
@@ -1687,13 +1750,19 @@ test('a pending Free create never commits itself through an unrelated Edit Profi
     'an unrelated step-6 save cannot create the service',
   )
 
-  result.dom.yes.checked = true
-  await result.dom.yes.dispatch('change')
+  // The overlay already checked Yes, so a browser emits only click here.
+  await result.dom.yes.dispatch('click')
   assert.equal(
     result.window.StarterFreeCallSettings.hasChanges(),
     true,
-    'answering the call control is the gesture that commits it',
+    're-answering the prefilled Yes is the gesture that accepts it',
   )
+
+  assert.ok(await result.window.StarterFreeCallSettings.submit())
+  await settle()
+
+  const upsert = result.calls.find((call) => call.path === '/starter/free-call-settings/upsert/v3')
+  assert.equal(upsert.body.description, 'Quick intro', 'the accepted pending create reaches canonical')
 })
 
 test('Edit Profile hydrates and saves Free Call settings through the canonical controller', async () => {

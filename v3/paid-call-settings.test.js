@@ -907,6 +907,57 @@ test('a prerequisite refresh after a superseding Paid disable retries the remova
   assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
 })
 
+test('a sign-in recovery keeps the Paid removal the same member still owes', async () => {
+  let failUpdates = true
+  const result = load({
+    cardMode: true,
+    memberId: 'member-a',
+    memberJsonUpdateError: () => (failUpdates ? new Error('Memberstack timeout') : null),
+    memberJSON: {
+      starter_call_settings_intent_v3: {
+        version: 1,
+        member_id: 'member-a',
+        paid: { enabled: true, title: 'Strategy call', price_dollars: 250 },
+      },
+    },
+    initial: canonical({
+      services: [service({ title: 'Strategy call', price_cents: 25000 })],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+    routes: {
+      '/starter/paid-call-settings/disable/v3': ({ setState }) => {
+        setState(canonical())
+        return { ok: true, status: 200, json: async () => ({ ok: true }) }
+      },
+    },
+  })
+  await settle()
+
+  assert.ok(await result.window.StarterPaidCallSettings.disable())
+  await settle()
+
+  assert.equal(result.memberJsonWrites.length, 0, 'the superseding disable could not clear the receipt')
+  assert.equal(result.dom.disabled.checked, true)
+
+  result.expireMemberSilently()
+  await result.notifyAuthChange(null)
+  await settle()
+
+  failUpdates = false
+  await result.changeMember({ id: 'member-a' })
+  await settle()
+
+  assert.equal(result.dom.disabled.checked, true, 'the same member keeps the supersession across the reload')
+  assert.equal(result.dom.enabled.checked, false)
+  assert.equal(
+    /Build Profile choice/.test(result.dom.statusOutput.textContent),
+    false,
+    'the superseded receipt is never re-offered to the member who superseded it',
+  )
+  assert.equal(result.memberJsonWrites.length, 1, 'the reload retries the removal it still owed')
+  assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
+})
+
 test('a Paid disable whose own cleanup also fails never repaints the Build Profile Yes', async () => {
   const active = service({ title: 'Strategy call', price_cents: 25000 })
   const result = load({
@@ -2225,6 +2276,21 @@ test('a pending Paid create never commits itself through an unrelated Edit Profi
         stripe_readiness_fresh: true,
       },
     }),
+    routes: {
+      '/starter/paid-call-settings/upsert/v3': ({ body, setState }) => {
+        const saved = service({
+          title: body.title,
+          price_cents: body.price_cents,
+          duration: body.duration_minutes,
+          revision: 1,
+        })
+        setState(canonical({
+          services: [saved],
+          readiness: { paid_call_enabled: true, bookable: true },
+        }))
+        return { ok: true, status: 200, json: async () => ({ service: saved }) }
+      },
+    },
   })
   await settle()
 
@@ -2245,13 +2311,20 @@ test('a pending Paid create never commits itself through an unrelated Edit Profi
     'an unrelated step-6 save cannot create the service',
   )
 
-  result.dom.enabled.checked = true
-  await result.dom.enabled.dispatch('change')
+  // The overlay already checked Yes, so a browser emits only click here.
+  await result.dom.enabled.dispatch('click')
   assert.equal(
     result.window.StarterPaidCallSettings.hasChanges(),
     true,
-    'answering the call control is the gesture that commits it',
+    're-answering the prefilled Yes is the gesture that accepts it',
   )
+
+  assert.ok(await result.window.StarterPaidCallSettings.submit())
+  await settle()
+
+  const upsert = result.calls.find((call) => call.path === '/starter/paid-call-settings/upsert/v3')
+  assert.equal(upsert.body.title, 'Strategy call', 'the accepted pending create reaches canonical')
+  assert.equal(upsert.body.price_cents, 25000)
 })
 
 test('Edit Profile hydrates and saves Paid Call settings through the canonical controller', async () => {
