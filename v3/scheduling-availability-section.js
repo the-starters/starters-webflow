@@ -2625,6 +2625,21 @@
     return configs.filter(isCanonicalFreeConfig)
   }
 
+  async function updateFreeConfigBookingNotices() {
+    for (const config of activeFreeConfigs()) {
+      const response = await xanoPost('/scheduler/configurations/update/v3', {
+        config_id: config.config_id,
+        grant_id: grantId,
+        in_scheduler: {
+          min_booking_notice: minimumBookingNoticeMinutes(),
+        },
+      })
+      if (!providerRequestSucceeded(response)) {
+        throw new Error('Free scheduler booking notice update failed')
+      }
+    }
+  }
+
   function previewDuration(config) {
     const duration = Number(config && config.duration)
     return Number.isInteger(duration) && duration > 0 ? duration : null
@@ -3111,6 +3126,7 @@
       renderAvailabilityItems()
 
       const state = await refreshCanonicalConnectionState()
+      await updateFreeConfigBookingNotices()
       renderAvailabilityItems()
       renderSlotsPreview()
 

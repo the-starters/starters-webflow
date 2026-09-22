@@ -1145,6 +1145,69 @@ test('staging scheduler configuration creation uses a five-minute booking notice
   assert.equal(configCall.body.in_scheduler.min_booking_notice, 5)
 })
 
+test('existing production Free configurations receive the eight-hour provider notice before preview', async () => {
+  const productionNow = Math.floor(Date.now() / 1000)
+  const existingFree = {
+    config_id: 'cfg-free-existing',
+    grant_id: 'grant-1',
+    duration: 30,
+    is_paid: false,
+    active: true,
+    min_booking_notice: 24 * 60,
+  }
+  const existingPaid = {
+    config_id: 'cfg-paid-existing',
+    grant_id: 'grant-1',
+    duration: 60,
+    is_paid: true,
+    active: true,
+    price_cents: 15000,
+    currency: 'USD',
+  }
+  const { calls, dom } = loadSection({
+    serverState: {
+      grantId: 'grant-1',
+      grantEmail: 'starter@example.com',
+      calendarId: 'primary',
+      configs: [existingFree, existingPaid],
+    },
+    postRoutes: {
+      '/scheduler/configurations/update/v3': (body) => {
+        if (body.config_id === existingFree.config_id && body.in_scheduler) {
+          existingFree.min_booking_notice = body.in_scheduler.min_booking_notice
+        }
+        return { status: 200, body: { response: { status: 200 } } }
+      },
+    },
+    getRoutes: {
+      '/scheduler/get_availability/v3': (query) => ({
+        status: 200,
+        body: {
+          time_slots: query.configuration_id === existingFree.config_id && existingFree.min_booking_notice === 480
+            ? [{ start_time: productionNow + 9 * 60 * 60 }]
+            : [{ start_time: productionNow + 25 * 60 * 60 }],
+        },
+      }),
+    },
+  })
+  await settle()
+
+  const noticeUpdates = calls.filter(
+    (call) => call.path === '/scheduler/configurations/update/v3' && call.body.in_scheduler,
+  )
+  assert.deepEqual(noticeUpdates.map((call) => call.body.config_id), [existingFree.config_id])
+  assert.equal(noticeUpdates[0].body.in_scheduler.min_booking_notice, 480)
+  assert.equal(noticeUpdates[0].body.in_availability, undefined)
+  assert.equal(existingPaid.min_booking_notice, undefined)
+
+  const slotsList = dom.calendarPreview.querySelector('[data-availability-element="slots-list"]')
+  assert.equal(slotsList.querySelector('[data-availability-element="preview-times"]').children.length, 1)
+  const previewCall = calls.find(
+    (call) => call.path === '/scheduler/get_availability/v3' && call.query.configuration_id === existingFree.config_id,
+  )
+  assert.ok(calls.indexOf(noticeUpdates[0]) < calls.indexOf(previewCall))
+})
+
 test('accepts any successful provider 2xx status when creating a scheduler configuration', async () => {
   const { dom } = loadSection({
     serverState: { availability: { items: {}, manager: null } },
@@ -2142,7 +2205,9 @@ test('an override may cover the last general day without sending an empty window
     end: '17:00',
     defaultDays: [3, 4],
   })
-  const configUpdate = calls.find((call) => call.path === '/scheduler/configurations/update/v3')
+  const configUpdate = calls.find(
+    (call) => call.path === '/scheduler/configurations/update/v3' && call.body.in_availability,
+  )
   assert.ok(configUpdate)
   const providerHours = configUpdate.body.in_availability.availability_rules.default_open_hours
   assert.equal(providerHours.some((window) => window.days.length === 0), false)
@@ -2182,7 +2247,9 @@ test('editing an override restores its previous default day', async () => {
   const update = calls.find((call) => call.path === '/starter/update_availability/v3')
   assert.deepEqual(update.body.availability.items.general.days, [3])
   assert.deepEqual(update.body.availability.items.existing.days, [4])
-  const configUpdate = calls.find((call) => call.path === '/scheduler/configurations/update/v3')
+  const configUpdate = calls.find(
+    (call) => call.path === '/scheduler/configurations/update/v3' && call.body.in_availability,
+  )
   assert.deepEqual(
     configUpdate.body.in_availability.availability_rules.default_open_hours.map((window) => window.days),
     [[3], [4]],
@@ -3925,7 +3992,9 @@ test('open-item-remove updates all active configurations without replacing paid 
   assert.equal(dom.notif.steps['availability-removed'].style.display, '')
   assert.notEqual(group.style.pointerEvents, 'none')
 
-  const configUpdates = calls.filter((call) => call.path === '/scheduler/configurations/update/v3')
+  const configUpdates = calls.filter(
+    (call) => call.path === '/scheduler/configurations/update/v3' && call.body.in_availability,
+  )
   assert.deepEqual(configUpdates.map((call) => call.body.config_id), ['cfg-free', 'cfg-paid'])
   assert.deepEqual(configUpdates.map((call) => call.body.in_availability.duration_minutes), [30, 60])
   configUpdates.forEach((call) => {
