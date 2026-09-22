@@ -1978,9 +1978,10 @@ Current safety boundary:
   their initial identity snapshot and `window.getXanoAuthToken` for the
   Opportunities, Points, Messages, and Stripe reads. This keeps one shared
   Memberstack bootstrap and one in-flight Xano token trade per member session.
-  The call dashboard keeps its initial loading state through a bounded eight-second
-  Memberstack hydration window after login. Later refreshes retain the shorter
-  retry budget and all missing-session paths still fail closed.
+  If that initial snapshot is empty after login, the call dashboard keeps its
+  loading state through a bounded Memberstack retry schedule with 8.2 seconds
+  of delays between reads. Later refreshes retain the shorter 600 ms retry
+  schedule, and all missing-session paths still fail closed.
   The Free and Paid settings controllers use the bridge-owned auth scope and fetch reference for
   auth-triggered refreshes and writes, so a transient Memberstack DOM null cannot block the current
   owner. A logout or account switch changes that scope and still fails closed.
