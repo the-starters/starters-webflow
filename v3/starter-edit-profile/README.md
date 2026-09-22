@@ -376,9 +376,11 @@ The scripts create `profile-items-undo`, `profile-items-removed`, and
 
 Services keeps its authored numbered header without adding a name/price summary.
 Its existing label must carry `profile-items-label`; older unmarked labels are
-left untouched. The existing `increment-dropdown-icon` moves to the far right
-within this section only. A generated `profile-items-unsaved` badge sits beside
-the label when that row differs from its last accepted save. Editing back to the
+left untouched. Keep that label and the existing `increment-dropdown-icon` as
+direct children of `increment-dropdown-toggle` so the flex layout places the
+arrow at the far right within this section only. A generated
+`profile-items-unsaved` badge sits beside the label when that row differs from
+its last accepted save. Editing back to the
 saved values clears the badge; a new untouched blank row stays clean and remains
 excluded from the payload. Removing or undoing a row renumbers visible rows
 without changing their saved identities or values. Failed or uncertain saves do
@@ -391,7 +393,6 @@ bar. Reduced-motion users get an immediate scroll. Hydration and Discard do not
 scroll or move focus. Local native-browser checks and screenshot capture run with
 `EDIT_PROFILE_BROWSER_EVIDENCE=<dir> node v3/browser-tests/services-row-headers.browser.cjs`;
 this synthetic fixture is not published-page or live-save acceptance.
-
 
 `profile-items-status` and `profile-items-check-save` may be authored in Webflow
 inside the section but outside the repeating row, so Designer owns their styling.
