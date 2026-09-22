@@ -2205,6 +2205,55 @@ test('a member edit made while a satisfied Paid receipt is being consumed is nev
   assert.equal(result.window.StarterPaidCallSettings.hasChanges(), true)
 })
 
+test('a pending Paid create never commits itself through an unrelated Edit Profile save', async () => {
+  const result = load({
+    editProfile: true,
+    memberId: 'member-a',
+    memberJSON: {
+      starter_call_settings_intent_v3: {
+        version: 1,
+        member_id: 'member-a',
+        paid: { enabled: true, title: 'Strategy call', price_dollars: 250 },
+      },
+    },
+    initial: canonical({
+      readiness: {
+        calendar_connected: true,
+        availability_configured: true,
+        stripe_connect_linked: true,
+        stripe_charges_enabled: true,
+        stripe_readiness_fresh: true,
+      },
+    }),
+  })
+  await settle()
+
+  assert.equal(result.dom.enabled.checked, true, 'the pending create stays visible')
+  assert.equal(result.dom.title.value, 'Strategy call')
+  assert.equal(
+    result.window.StarterPaidCallSettings.hasChanges(),
+    false,
+    'a prefilled pending create is not unsaved step-6 work',
+  )
+
+  assert.ok(await result.window.StarterPaidCallSettings.submit())
+  await settle()
+
+  assert.equal(
+    result.calls.filter((call) => call.path === '/starter/paid-call-settings/upsert/v3').length,
+    0,
+    'an unrelated step-6 save cannot create the service',
+  )
+
+  result.dom.enabled.checked = true
+  await result.dom.enabled.dispatch('change')
+  assert.equal(
+    result.window.StarterPaidCallSettings.hasChanges(),
+    true,
+    'answering the call control is the gesture that commits it',
+  )
+})
+
 test('Edit Profile hydrates and saves Paid Call settings through the canonical controller', async () => {
   const active = service()
   const result = load({

@@ -1119,7 +1119,6 @@
       if (titleInput) titleInput.value = unsavedIntent.title
       if (priceInput) priceInput.value = String(unsavedIntent.price_dollars)
       explicitIntent = 'enabled'
-      if (editProfileMode && canSaveSettings(value)) editProfileDirty = true
     }
     clearFieldValidity()
     root.setAttribute(

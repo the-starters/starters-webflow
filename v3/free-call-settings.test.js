@@ -1655,6 +1655,47 @@ test('a member edit made while a satisfied Free receipt is being consumed is nev
   assert.equal(result.window.StarterFreeCallSettings.hasChanges(), true)
 })
 
+test('a pending Free create never commits itself through an unrelated Edit Profile save', async () => {
+  const result = load({
+    editProfile: true,
+    memberId: 'member-free-a',
+    memberJSON: {
+      starter_call_settings_intent_v3: {
+        version: 1,
+        member_id: 'member-free-a',
+        free: { enabled: true, description: 'Quick intro' },
+      },
+    },
+    initial: canonical({ readiness: { calendar_connected: true, availability_configured: true } }),
+  })
+  await settle()
+
+  assert.equal(result.dom.yes.checked, true, 'the pending create stays visible')
+  assert.equal(result.dom.title.value, 'Quick intro')
+  assert.equal(
+    result.window.StarterFreeCallSettings.hasChanges(),
+    false,
+    'a prefilled pending create is not unsaved step-6 work',
+  )
+
+  assert.ok(await result.window.StarterFreeCallSettings.submit())
+  await settle()
+
+  assert.equal(
+    result.calls.filter((call) => call.path === '/starter/free-call-settings/upsert/v3').length,
+    0,
+    'an unrelated step-6 save cannot create the service',
+  )
+
+  result.dom.yes.checked = true
+  await result.dom.yes.dispatch('change')
+  assert.equal(
+    result.window.StarterFreeCallSettings.hasChanges(),
+    true,
+    'answering the call control is the gesture that commits it',
+  )
+})
+
 test('Edit Profile hydrates and saves Free Call settings through the canonical controller', async () => {
   const active = service()
   const result = load({

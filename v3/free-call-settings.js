@@ -813,7 +813,6 @@
       notifyRadioChange(pair.enabled)
       if (descriptionInput) descriptionInput.value = unsavedIntent.description
       explicitIntent = 'enabled'
-      if (editProfileMode && canSaveSettings(value)) editProfileDirty = true
     }
     root.setAttribute(
       'data-free-call-duration-current',

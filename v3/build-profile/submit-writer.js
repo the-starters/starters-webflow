@@ -50,8 +50,8 @@
       // calendar, availability, and (for Paid) Stripe prerequisites required by
       // the provider-backed Call Settings writers. Keep that pre-activation
       // intent in the member's private JSON. Dashboard/Edit Profile consume it
-      // as create, update, or disable intent; the canonical endpoints remain
-      // the only writers of provider state and freelancers_v3 call projections.
+      // as a pending create only; the canonical endpoints remain the only
+      // writers of provider state and freelancers_v3 call projections.
       const BUILD_CALL_INTENT_KEY = 'starter_call_settings_intent_v3';
 
       function queueMemberJsonWrite(task) {

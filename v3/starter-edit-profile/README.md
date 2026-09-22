@@ -218,9 +218,10 @@ profile loader replays `input` and `change` on every control it restores and a h
 never a member change. The loader restores none of the five call controls: the legacy profile row
 no longer writes them, so replaying it over a controller's render could silently turn a pending
 Build Profile create into a decline the member never made. An unconsumed Build Profile Call Settings
-receipt is the one hydration that does count: it prefills the Free or Paid controls and marks step 6
-changed once that controller's readiness gates allow the write, so Save materializes the member's
-Build Profile choice through the same guarded upsert or disable. Each contract's Build Profile
+receipt prefills the Free or Paid controls and waits there: prefilling is not a member change, so it
+never marks step 6 changed on its own and a Save for an unrelated field never commits it. Answering
+either call control is the member gesture that marks the step changed, and that Save then
+materializes the choice through the same guarded upsert or disable. Each contract's Build Profile
 handoff section owns that receipt. Retainer controls remain owned by
 the profile form even when Webflow markup places them in a wrapper shared with a call
 field. This contract holds only where `scheduling-auth.js` authenticates this page; its host
