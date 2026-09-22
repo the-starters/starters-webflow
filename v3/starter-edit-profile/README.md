@@ -682,9 +682,9 @@ missing Save button's computed-style cause remains unproved.
 
 The later user authorization for a signed-in disposable test account, local script
 and markup overrides, temporary saves, and cleanup superseded the earlier
-authentication restriction. The evidence supports the revised non-mobile delivery
-scope; the earlier zero-live-scenarios/authentication-blocked assessment is obsolete.
-This is evidence review of completed actual-page tests, not a new live test run.
+authentication restriction. The earlier zero-live-scenarios/authentication-blocked
+assessment is obsolete. The following historical evidence review is superseded
+for current acceptance by the direct desktop run below.
 
 The local preview used commit `034b371043fa5b88ea021049766fcb993af08fb2` on the
 actual test page with the real writer. Its record is
@@ -716,7 +716,38 @@ separate. This is not an eight-of-eight acceptance claim or pipeline approval.
 Unpublished markup and the shared-script loader remain rollout dependencies;
 publishing, pin changes, tags, and production release remain unauthorized.
 
-Focused re-verification during this assessment:
+##### Direct desktop run at `e8862c39` — acceptance blocked
+
+The authorized disposable account was exercised directly through Chrome with
+both exact CDN requests overridden before initialization and cache disabled.
+The preview marker confirmed `e8862c39b30a8127717cbf2a87daecc3ec99fb1a`.
+Independent server reads confirmed an empty baseline and zero records after
+cleanup. An initial loading refusal cleared on reload; its cause is unconfirmed.
+
+Live checks established Add below the rows, visible Save, section/row unsaved
+status, native month input, current-role disabling of End Date, the last-filled
+draft removal floor with a blank row present, authored danger restoration,
+Remove/Undo placement, and Discard. Add and Undo kept Company focused with a
+280px panel after 600ms. Validation focused the invalid second row with a 314px
+panel after 600ms; the first panel was hidden with zero height and no footer
+overlap.
+
+However, a valid create returned `WORK_HISTORY_CREATE_PROFILE_EVENT_INVALID`.
+The draft remained available and server readback remained empty. This is a new
+live save blocker, not the obsolete authentication restriction. The backend
+contract responsible for that rejection has not been established; no speculative
+writer change was made. Saved-entry persistence/reload, partial-create retry,
+and successful-write lost-response reconciliation remain unverified in this run.
+Historical successes above do not override this current failure.
+
+All drafts were discarded, empty fields/current-role false were verified, and
+focus/cache emulation was reset. No records required deletion. Sensitive captures
+and the detailed report remain outside Git under the test run's evidence directory
+(`live-desktop/`). Mobile was neither tested nor changed and remains deferred.
+Shared-group component fixture results are not live product acceptance. The
+desktop acceptance verdict remains **blocked**, with no pipeline approval.
+
+Focused re-verification during the earlier evidence assessment:
 `node --test --test-name-pattern='a partial company save|a lost create is confirmed|validation opens and focuses|visible marked month controls' v3/starter-edit-profile/unified-companies.test.js`
 passed all four selected behavioral tests. No executable failure was reproduced;
 the correction is to the stale acceptance assessment, with no runtime changes.
