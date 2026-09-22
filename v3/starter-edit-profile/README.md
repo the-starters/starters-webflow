@@ -604,24 +604,31 @@ each, which is the endpoint limit; the UI allowed 50 MB before 2026-09-17.
 
 ### Test page state
 
-Read-only checks on 2026-09-22 confirmed that `/starter-edit-profile-test` and
-`/starter-edit-profile` both return HTTP 200. The duplicate has all three unified
-section markers and loads the unified scripts at `v1.59.579`; the original has
-none of those section markers. Native Required is present on company name,
-service name, and service price; `rate-retainer.required` is true at runtime.
-The runtime observation does not establish the Retainer's authored setting.
+On 2026-09-22, the published `/starter-edit-profile-test` and
+`/starter-edit-profile` routes both returned HTTP 200. The test page's published
+inventory loaded the three unified sections at `v1.59.579`; the original had no
+unified section markers. Native Required was present on company name, service
+name, and service price; `rate-retainer.required` was true at runtime. That last
+observation does not establish the Retainer's authored setting.
 
-The duplicate still needs Designer cleanup. Neither status nor check-save nodes
-are authored. Legacy Highlights `data-highlights`/card and
-`data-add-highlight-dropdown` elements, the Work Experience `company-list`, and
-the `company-edit` dialog remain. Highlights Add, Discard, and row toggle have
-Designer visibility set to false. Services buttons still use the alternate
-`White with border13` class.
+After the author delegated the cleanup, the test page's saved Designer tree was
+updated and read back. The six specified legacy targets were removed: the
+Highlights card wrapper, old add dropdown, unmarked Add and Discard component
+instances, Work Experience list, and company-edit dialog. Highlights Add,
+Discard, and row toggle are visible. Each section has one visible Add and Discard
+using `button big with-border`, with Discard beside Submit inside the existing
+save-owner wrapper. Each also has one empty status block using
+`text-size-14 opacity-75 text-color-secondary` with `role="status"`, and one
+visible native Link labelled `Check saved state`, outside the repeating rows.
+Readback found no unexpected missing elements or changes to retained attributes;
+all 44 retained native inputs kept their settings.
 
-The September 18 cutover specification reserves Designer edits and publication
-to the author. Desktop/mobile screenshot approval remains pending, followed by
-the specified staging-qa and manual acceptance. This session did not verify live
-saves or make profile writes. Review Requests remains outside this cutover.
+These Designer changes have not been published. The test page's script pins
+still need the reviewed release before the authored status and check elements
+can be used. Desktop/mobile screenshot approval, staging-qa save-flow checks,
+and manual acceptance remain pending. No live save was verified or profile data
+written during this cleanup. Publication remains a separate step; Review
+Requests remains outside this cutover.
 
 Focused tests:
 
