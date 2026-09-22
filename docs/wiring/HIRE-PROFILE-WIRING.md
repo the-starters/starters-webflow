@@ -1248,7 +1248,11 @@ compatibility, and entry behavior for rejected guest markup.
 
 The [shared booking details contract](../../v3/README.md#booking-details-and-guests)
 owns Free and Paid receipt fields, group visibility, Starter identity, and
-restoration on close or reuse.
+restoration on close or reuse. After canonical Free booking proof, the authored
+`[booking-success-text]` tells the Brand that the request was shared with the
+named Starter (falling back to `the Starter`) and that confirmation is typically
+within 24 hours. This 24-hour copy applies only to the Free receipt; the Paid
+success-state contract remains owned by the shared payment client.
 
 ## The owner paints from their own settings
 

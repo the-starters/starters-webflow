@@ -486,7 +486,7 @@ test('Free click mounts the authored calendar and canonical command', async () =
   })
   assert.equal(fixture.defaultStep.style.display, 'none')
   assert.equal(fixture.successStep.style.display, 'flex')
-  assert.match(fixture.successText.textContent, /typically within 48 hours/i)
+  assert.match(fixture.successText.textContent, /typically within 24 hours/i)
   assert.equal(fixture.successCallType.textContent, 'Free')
   assert.equal(fixture.receiptFields.context.textContent, 'Review the launch plan')
   assert.equal(fixture.receiptFields['start-date'].textContent, 'May 29, 2026')

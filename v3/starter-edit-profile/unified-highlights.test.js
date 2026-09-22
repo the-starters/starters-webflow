@@ -496,6 +496,63 @@ test('a failed canonical read after a successful write keeps the unconfirmed pat
   assert.equal(page.mutations().filter(request => request.endpoint === 'Update_portfolio').length, 1, 'Save stays paused rather than replaying the write')
 })
 
+test('retained media without URLs stays editable without creating broken previews', async () => {
+  for (const missing of [undefined, null, '', '   ']) {
+    const page = await mount({ portfolios: [{ id: 1, title: 'Saved', description: '', cover_image_id: 2,
+      images: [{ id: 2, image_url: missing, is_cover: true }, { id: 3, image_url: 'https://example.test/photo.png' }],
+      videos: [{ id: 4, video_url: missing }, { id: 5, video_url: 'https://example.test/video.mp4' }],
+    }] })
+    for (const [kind, tag, message, source] of [
+      ['images', 'img', 'Photo preview unavailable.', 'https://example.test/photo.png'],
+      ['videos', 'video', 'Video preview unavailable.', 'https://example.test/video.mp4'],
+    ]) {
+      const [unavailable, available] = page.media(kind)
+      assert.equal(unavailable.querySelector('img, video'), null, 'no media source is requested for a missing URL')
+      assert.equal(unavailable.querySelector('[profile-media-unavailable]').textContent, message)
+      assert.equal(available.querySelector(tag).getAttribute('src'), source)
+      assert.equal(available.querySelector('[profile-media-unavailable]'), null)
+      page.click(unavailable.querySelector('[profile-media-remove]'))
+      page.click(page.media(kind)[0].querySelector('[profile-media-undo]'))
+      assert.equal(page.media(kind)[0].querySelector('[profile-media-unavailable]').textContent, message)
+    }
+    page.click(page.media('images')[0].querySelector('[profile-media-cover]'))
+    assert.equal(page.media('images')[0].querySelector('[profile-media-cover]').getAttribute('aria-pressed'), 'true')
+    assert.equal(page.mutations().length, 0, 'preview availability never mutates the retained media')
+    page.click(page.media('images')[0].querySelector('[profile-media-remove]'))
+    page.click(page.media('videos')[0].querySelector('[profile-media-remove]'))
+    await page.submit()
+    assert.equal(page.status(), 'Changes saved.')
+    assert.equal(page.mutations().find(request => request.endpoint === 'Delete_portfolio_image').body.image_id, 2)
+    assert.equal(page.mutations().find(request => request.endpoint === 'Delete_portfolio_video').body.video_id, 4)
+    assert.equal(page.mutations().find(request => request.endpoint === 'Update_portfolio').body.cover_image_id, 3)
+  }
+})
+
+test('a lost update that landed is confirmed when the retained cover has no URL', async () => {
+  let lose = true
+  const page = await mount({
+    portfolios: [{ id: 1, title: 'Saved', description: '', cover_image_id: 2, thumbnail_url: null,
+      images: [{ id: 2, image_url: null, is_cover: true }], videos: [] }],
+    // The server applied the update; only its answer was lost.
+    fail: (request, stored) => {
+      if (request.endpoint !== 'Update_portfolio' || !lose) return null
+      lose = false
+      Object.assign(stored.find(row => row.id === Number(request.body.id)), request.body)
+      return 'lose'
+    },
+  })
+  page.type('title', 'Renamed')
+  await page.submit()
+  assert.equal(page.status(), 'Changes saved.')
+  assert.equal(page.section.querySelector('[profile-items-check-save]').hidden, true)
+  const update = page.mutations().find(request => request.endpoint === 'Update_portfolio')
+  assert.equal(update.body.cover_image_id, 2, 'the retained cover is kept')
+  assert.equal(page.media('images')[0].querySelector('[profile-media-cover]').getAttribute('aria-pressed'), 'true')
+  await page.submit()
+  assert.equal(page.mutations().filter(request => request.endpoint === 'Update_portfolio').length, 1,
+    'the confirmed update is not repeated')
+})
+
 test('a confirmed attachment renders from the stored file and frees the local one', async () => {
   // The second row is refused, so the save ends without the reset that Discard-style restore
   // would do. The first row's confirmed photo must already be living off its stored URL.
@@ -800,8 +857,8 @@ test('Highlights writes its status into the authored element instead of adding a
 })
 
 test('Highlights reveals the authored check element when a save cannot be confirmed', async () => {
-  let lose = true, storedRows
-  const page = await mount({ authored: true, fail: (request, stored) => {
+  let lose = true, storedRows, held = null
+  const page = await mount({ authored: true, hold: request => held?.(request), fail: (request, stored) => {
     storedRows = stored
     if (request.endpoint === 'upload-image' && lose) { lose = false; return 'lose' }
   } })
@@ -820,9 +877,16 @@ test('Highlights reveals the authored check element when a save cannot be confir
   assert.equal(page.section.querySelectorAll('[profile-items-check-save]').length, 1)
   // Clicking the authored control runs the same canonical check the created one runs.
   storedRows[0].images.push({ id: 200, image: { name: 'photo.png', size: 1000 }, image_url: 'https://example.test/photo.png', is_cover: false })
+  // Hold the canonical read so the in-flight state of the control is observable.
+  const gate = deferred()
+  held = () => gate.promise
   const clicked = makeEvent('click', page.authoredCheck, { bubbles: true })
   page.authoredCheck.dispatchEvent(clicked)
   assert.equal(clicked.defaultPrevented, true, 'an authored anchor never follows its href')
   await tick()
+  assert.equal(page.authoredCheck.getAttribute('aria-disabled'), 'true', 'the control reports itself busy while checking')
+  held = null; gate.resolve()
+  await tick(); await tick(); await tick()
+  assert.equal(page.authoredCheck.getAttribute('aria-disabled'), null, 'the busy state clears once the check settles')
   assert.match(page.status(), /That change is confirmed/)
 })
