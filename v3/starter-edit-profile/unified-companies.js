@@ -73,12 +73,15 @@
     // The shared accordion opens a row through its control and its panel, so a row carrying
     // neither is the same kind of markup gap as a missing row: without both, every entry would
     // render permanently expanded and inert.
+    // Undo joins them: Webflow owns its themed Button, so a row without the authored control
+    // has no Remove-position replacement to show and removal would strand the row.
     const openable = !!template?.querySelector('[profile-item-toggle]') && !!template?.querySelector('[profile-item-content]')
+      && !!template?.querySelector('[profile-items-undo]')
     if (!template || !parent || !save || !openable) {
       // The row is also the template for every added row, and Save is the only route to the
       // writer. Without either, report the markup gap and disable Save instead of leaving a
       // live control that silently does nothing.
-      console.warn('[unified-companies] missing [profile-item-row] with [profile-item-toggle] and [profile-item-content], or Save control in section')
+      console.warn('[unified-companies] missing [profile-item-row] with [profile-item-toggle], [profile-item-content] and [profile-items-undo], or Save control in section')
       status.textContent = 'This section could not load. Reload the page before editing.'
       save?.setAttribute('disabled', '')
       return
@@ -114,6 +117,9 @@
     let unknown = null
     let misconfigured = false
     let warned = false
+    // The shared validator reveals every failure and then focuses the first one. Only one row
+    // can be open, so a later reveal would collapse the row whose field is about to take focus.
+    let revealed = null
     const add = section.querySelector('[profile-items-add]')
     const discard = section.querySelector('[profile-items-discard]')
     // Keep every generated row in the authored template's position, ahead of Add.
@@ -124,7 +130,13 @@
     function refreshRows() {
       for (const record of records) {
         const saved = confirmedRow(record)
-        const label = saved && [saved.company_name, saved.job_title].filter(Boolean).join(' · ')
+        // A saved row keeps the identity the server confirmed while its edits are pending. A row
+        // that has never been saved has no confirmed identity, so its heading follows what has
+        // been typed into it - otherwise every new row would read the same bare heading.
+        const identity = saved || { company_name: input(record.row, 'company_name')?.value,
+          job_title: input(record.row, 'job_title')?.value }
+        const label = [identity.company_name, identity.job_title]
+          .map(part => String(part || '').trim()).filter(Boolean).join(' · ')
         const summary = record.row.querySelector('[profile-items-summary]')
         if (summary) summary.textContent = label ? 'Work Experience (' + label + ')' : 'Work Experience'
         const changed = record.removed || (saved ? !unchanged(saved, values(record)) : present(record))
@@ -296,16 +308,10 @@
       const removeControl = remove?.matches('button, input, a') ? remove : remove?.querySelector('button, input, a')
       Object.assign(record, { remove, removeWrap, removeControl,
         removeTheme: removeWrap?.getAttribute('data-button-theme') === 'disabled' ? 'black' : removeWrap?.getAttribute('data-button-theme') || 'black' })
-      // Webflow owns the Button's separate visual label and overlay control. Adopt a
-      // complete authored Undo component instead of cloning Remove and guessing its label.
-      const undo = row.querySelector('[profile-items-undo]') || document.createElement('button')
-      undo.setAttribute('profile-items-undo', '')
-      if (undo.tagName === 'BUTTON') undo.setAttribute('type', 'button')
-      if (!undo.children.length && !undo.textContent.trim()) undo.textContent = 'Undo removal'
-      const undoControl = undo.matches('button, input, a') ? undo : undo.querySelector('button, input, a')
-      if (undoControl) { undoControl.disabled = false; undoControl.removeAttribute('disabled'); undoControl.removeAttribute('aria-disabled') }
+      // Webflow owns the Button's separate visual label and overlay control, so the authored
+      // component is the only Undo: the section refuses to bind without it.
+      const undo = row.querySelector('[profile-items-undo]')
       show(undo, false)
-      if (!undo.parentElement) (remove?.parentElement || toggle || row).appendChild(undo)
       remove?.addEventListener('click', event => {
         event.preventDefault()
         if (saving || record.removed || !removable(record)) return
@@ -361,8 +367,15 @@
         }
         return ''
       },
-      reveal(field) { const record = records.find(item => item.row.contains(field)); if (record) setOpen(record, true) },
+      reveal(field) {
+        if (revealed) return
+        const record = records.find(item => item.row.contains(field))
+        if (!record) return
+        revealed = record
+        setOpen(record, true)
+      },
     })
+    const validate = scope => { revealed = null; return validation.validate(scope) }
     function updateCleanState() {
       if (!writer.hasOtherChanges()) {
         section.removeAttribute('profile-items-dirty')
@@ -386,7 +399,7 @@
       event.preventDefault()
       if (saving || loading) return
       if (!active || !present(active)) { input((active || records[0]).row, 'company_name')?.focus(); return }
-      if (!validation.validate(active.row).valid) return
+      if (!validate(active.row).valid) return
       if (remaining().length >= 3) { status.textContent = 'You can keep up to three work experience entries.'; return }
       setOpen(active, false)
       addRow({}, true)
@@ -536,7 +549,7 @@
       event.preventDefault()
       if (saving || loading || unknown) return
       if (checkMisconfigured()) return
-      if (!validation.validate().valid) return
+      if (!validate().valid) return
       const kept = remaining().filter(present)
       const submitted = kept.map(record => ({ record, value: copy(values(record)) }))
       const presence = section.querySelector('[profile-items-presence]')

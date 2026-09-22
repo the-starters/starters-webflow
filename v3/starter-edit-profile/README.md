@@ -385,13 +385,15 @@ These must exist in Webflow:
 | `profile-items-presence` | Section | Optional; gates Save only when it carries `required` |
 | `profile-items-media="images\|videos"` | Row | Highlights only |
 | `profile-items-summary` | Row | Authored for companies and highlights; created by the script for services |
-| `profile-items-undo` | Row | Companies only; authored so Designer owns the Button component. Created by the script for services and highlights |
+| `profile-items-undo` | Row | Required for companies, so Designer owns the Button component; created by the script for services and highlights |
 | `profile-item-toggle` | Row | The control that opens the row |
 | `profile-item-content` | Row | The panel the control opens |
 
-Companies treats a row missing `profile-item-toggle` or `profile-item-content` as the same
-markup gap as a missing row: it reports the halted state and disables Save rather than
-rendering every entry permanently expanded and inert.
+Companies treats a row missing `profile-item-toggle`, `profile-item-content`, or
+`profile-items-undo` as the same markup gap as a missing row: it reports the halted state and
+disables Save rather than rendering every entry permanently expanded and inert, or leaving a
+removed row with no way back. Companies never creates its own Undo control: Webflow owns that
+themed Button, so the authored one is the only one.
 
 The scripts create `profile-items-removed`, `profile-items-dirty`, and the
 per-row `profile-items-unsaved` status. None of those three is authored in
@@ -595,7 +597,10 @@ through that group, and a removed row is released from it. The shared contract i
 in the [accordions README](../../global-embeds/accordions/README.md#rows-a-script-renders).
 
 Runtime rows stay before Add. Saved headings read `Work Experience (Company · Title)`;
-the confirmed identity stays visible while edits are pending. An `Unsaved` status
+the confirmed identity stays visible while edits are pending, so a saved row's heading does
+not follow a draft the server has not taken. A row that has never been saved has no confirmed
+identity, so its heading follows the Company and Title being typed into it and two new rows
+stay distinguishable while collapsed. An `Unsaved` status
 beside each heading reflects that row's draft, including removals and partial saves. It is
 read from the same confirmed baseline the next Save compares against, so the status and Save
 never disagree about what is left to write - including after a lost response that a canonical
@@ -605,6 +610,10 @@ existing disabled button theme while only one entry remains, counting filled ent
 than rows: adding a blank row never unlocks removing the last saved entry, and the section
 never ends up with no row at all. A pending removal keeps its heading and replaces Remove
 with Undo removal in the same action position.
+
+Validation opens the first failing row only. The shared validator reveals every failure and
+then focuses the first, and only one Work Experience entry can be open, so revealing each
+failure in turn would collapse the row whose field is about to take focus.
 
 [`unified-companies.fixture.html`](unified-companies.fixture.html) exercises these
 states with themed Button wrappers and a local, in-memory writer. It does not prove
@@ -637,15 +646,16 @@ only proves that its explicitly authored Save is visible and correctly scoped.
 
 Completed local checks:
 
-- `node --test v3/starter-edit-profile/profile-section-validation.test.js v3/starter-edit-profile/unified-companies.test.js v3/starter-edit-profile/unified-section-switching.test.js global-embeds/accordions/accordions.test.js global-embeds/accordions/mobile-accordions.test.js`: 99 tests passed.
+- `node --test v3/starter-edit-profile/profile-section-validation.test.js v3/starter-edit-profile/unified-companies.test.js v3/starter-edit-profile/unified-section-switching.test.js global-embeds/accordions/accordions.test.js global-embeds/accordions/mobile-accordions.test.js`: 104 tests passed.
 - `node --check v3/starter-edit-profile/unified-companies.js` and
   `node --check global-embeds/accordions/accordions.js`: passed.
+- `node --test readme-doc-links.test.js`: 81 tests passed.
 - `node v3/browser-tests/work-experience-annotations.browser.cjs`: desktop (1200px)
   and mobile (390px) Chrome checks passed, including computed action visibility,
   disabled theme with a blank added row, one-entry-open accordion behavior against the
   actual shared script, Add ordering, native month/current-role values sent to the
-  in-memory writer, saved headings, row status, Remove/Undo, and Discard without
-  saving. Set `WORK_EXPERIENCE_BROWSER_EVIDENCE=<dir>` to write screenshots and
+  in-memory writer, saved and typed headings, row status, authored Remove/Undo, and
+  Discard without saving. Set `WORK_EXPERIENCE_BROWSER_EVIDENCE=<dir>` to write screenshots and
   observations. This uses fixture colors and simulated
   persistence, not published-page styling or an authenticated account.
 

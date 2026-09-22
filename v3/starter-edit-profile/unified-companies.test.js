@@ -14,8 +14,8 @@ async function mount({ companies = [], fail = null, minimum = true, withRow = tr
   required = ['company_name', 'job_title'], xanoRequired = [], hydrate = true, initialOther = '{}',
   liveAssociationReader = false, associationReadStatus = 200, claim = true, normalize = null,
   answer = null, picker = true, stale = null, strayXanoRequired = false, authored = false,
-  authoredInRow = false, componentMarkup = false, authoredUndo = false, authoredCheckDiv = false, authoredDuplicate = false,
-  accordions = true, withToggle = true, withContent = true } = {}) {
+  authoredInRow = false, componentMarkup = false, authoredCheckDiv = false, authoredDuplicate = false,
+  accordions = true, withToggle = true, withContent = true, withUndo = true } = {}) {
   const fields = ['company_name', 'job_title', 'start_date', 'end_date', 'current_work'].map(key => h('input', {
     'profile-company-field': key, name: key, id: key,
     ...(key === 'current_work' ? { type: 'checkbox' } : {}),
@@ -33,11 +33,11 @@ async function mount({ companies = [], fail = null, minimum = true, withRow = tr
   const undoAction = h('div', { 'profile-items-undo': '' }, [h('div', { 'data-button-theme': 'black' }, [h('button', { type: 'button' }), h('span', { 'data-fixture-undo-label': '' })])])
   undoAction.querySelector('[data-fixture-undo-label]').textContent = 'Undo removal'
   const toggle = h(componentMarkup ? 'div' : 'button', { 'profile-item-toggle': '', type: 'button' },
-    [h('span', { 'profile-items-summary': '' }), ...(componentMarkup ? [h('div', { 'profile-item-actions': '' }, [action, ...(authoredUndo ? [undoAction] : [])])] : [])])
+    [h('span', { 'profile-items-summary': '' }), ...(componentMarkup ? [h('div', { 'profile-item-actions': '' }, [action, ...(withUndo ? [undoAction] : [])])] : [])])
   const row = h('div', { 'profile-item-row': '' }, [
     ...(withToggle ? [toggle] : []),
     ...(withContent ? [h('div', { 'profile-item-content': '' }, fields)] : fields),
-    ...(componentMarkup ? [] : [remove]),
+    ...(componentMarkup ? [] : [remove, ...(withUndo ? [undoAction] : [])]),
     ...(authoredInRow ? [rowStatus] : []),
   ])
   const save = h('button', { 'data-edit-submit': 'companies' })
@@ -595,7 +595,7 @@ test('a section missing its row template or Save control reports the gap and dis
   const unusable = 'This section could not load. Reload the page before editing.'
   const missingRow = await mount({ withRow: false })
   assert.equal(missingRow.status(), unusable)
-  assert.ok(missingRow.warnings.some(args => args[0] === '[unified-companies] missing [profile-item-row] with [profile-item-toggle] and [profile-item-content], or Save control in section'))
+  assert.ok(missingRow.warnings.some(args => args[0] === '[unified-companies] missing [profile-item-row] with [profile-item-toggle], [profile-item-content] and [profile-items-undo], or Save control in section'))
   assert.equal(missingRow.save.getAttribute('disabled'), '')
   assert.equal(missingRow.requests.length, 0)
   const missingSave = await mount({ withSave: false })
@@ -1168,14 +1168,15 @@ test('one Work Experience entry is open at a time, through the shared accordion 
   assert.equal(page.mutations().length, 0)
 })
 
-test('a row the shared accordion cannot open reports the gap and disables Save', async () => {
-  // Without a control and a panel the row would render permanently expanded and inert, so the
-  // section reports the markup gap instead of hydrating into that state.
-  for (const options of [{ withToggle: false }, { withContent: false }]) {
+test('a row missing the markup the section drives reports the gap and disables Save', async () => {
+  // Without a control and a panel the row would render permanently expanded and inert, and
+  // without the authored Undo a removed row would have no way back, so the section reports the
+  // markup gap instead of hydrating into that state.
+  for (const options of [{ withToggle: false }, { withContent: false }, { withUndo: false }]) {
     const page = await mount(options)
     assert.equal(page.status(), 'This section could not load. Reload the page before editing.')
     assert.equal(page.save.getAttribute('disabled'), '')
-    assert.ok(page.warnings.some(args => args[0] === '[unified-companies] missing [profile-item-row] with [profile-item-toggle] and [profile-item-content], or Save control in section'))
+    assert.ok(page.warnings.some(args => args[0] === '[unified-companies] missing [profile-item-row] with [profile-item-toggle], [profile-item-content] and [profile-items-undo], or Save control in section'))
     assert.equal(page.requests.length, 0)
   }
 })
@@ -1227,6 +1228,60 @@ test('adding a blank row never lets Save delete the last saved entry', async () 
   assert.equal(page.field('company_name').value, 'Acme')
 })
 
+test('validation opens and focuses the first failing company row, not the last', async () => {
+  const page = await mount({ componentMarkup: true, companies: [
+    { id: 1, company_name: 'Acme', company_source: 'custom', job_title: 'Designer' },
+    { id: 2, company_name: 'Beta', company_source: 'custom', job_title: 'Engineer' }] })
+  const toggles = page.section.querySelectorAll('[profile-item-toggle]')
+  page.click(toggles[0]); page.type('job_title', '')
+  page.click(toggles[1]); page.type('job_title', '', 1)
+  await page.submit()
+  assert.equal(page.mutations().length, 0)
+  // Only one row can be open, so the row the validator focuses has to be the one left open.
+  assert.equal(page.expanded(0), true)
+  assert.equal(page.expanded(1), false)
+  assert.ok(page.field('job_title').focusCalls.length >= 1)
+  assert.equal(page.field('job_title').getAttribute('aria-invalid'), 'true')
+  assert.equal(page.field('job_title', 1).getAttribute('aria-invalid'), 'true')
+  // A second pass starts over rather than staying pinned to the first row it ever revealed.
+  page.type('job_title', 'Designer')
+  await page.submit()
+  assert.equal(page.expanded(1), true)
+  assert.equal(page.expanded(0), false)
+  assert.ok(page.field('job_title', 1).focusCalls.length >= 1)
+})
+
+test('Add reveals the first failing field in the row it is validating', async () => {
+  const page = await mount({ componentMarkup: true, companies: [
+    { id: 1, company_name: 'Acme', company_source: 'custom', job_title: 'Designer' },
+    { id: 2, company_name: 'Beta', company_source: 'custom', job_title: 'Engineer' }] })
+  const toggles = page.section.querySelectorAll('[profile-item-toggle]')
+  page.click(toggles[1]); page.type('job_title', '', 1)
+  page.click(page.add)
+  assert.equal(page.section.querySelectorAll('[profile-item-row]').length, 2)
+  assert.equal(page.expanded(1), true)
+  assert.equal(page.field('job_title', 1).getAttribute('aria-invalid'), 'true')
+})
+
+test('an unsaved company row heads with what was typed while saved rows keep their confirmed identity', async () => {
+  const page = await mount({ componentMarkup: true, companies: [{ id: 1, company_name: 'Acme', company_source: 'custom', job_title: 'Designer' }] })
+  const heading = index => page.section.querySelectorAll('[profile-item-row]')[index].querySelector('[profile-items-summary]').textContent
+  page.click(page.add)
+  assert.equal(heading(1), 'Work Experience')
+  page.company('Beta', 1); page.type('job_title', 'Engineer', 1)
+  assert.equal(heading(1), 'Work Experience (Beta · Engineer)')
+  // The saved row still reads its confirmed identity even though its draft has changed.
+  page.type('job_title', 'Lead')
+  assert.equal(heading(0), 'Work Experience (Acme · Designer)')
+  // Two unsaved rows are told apart by what each holds.
+  page.click(page.add)
+  assert.equal(heading(1), 'Work Experience (Beta · Engineer)')
+  assert.equal(heading(2), 'Work Experience')
+  page.company('Gamma', 2)
+  assert.equal(heading(2), 'Work Experience (Gamma)')
+  assert.equal(page.mutations().length, 0)
+})
+
 test('a partial company save clears only the confirmed row badge', async () => {
   const page = await mount({ componentMarkup: true, fail: request => request.method === 'POST' && request.body.company_name === 'Beta' ? {status: 422, body: {message: 'Rejected'}} : null })
   page.company('Acme'); page.type('job_title', 'Designer'); page.click(page.add)
@@ -1264,7 +1319,7 @@ test('a later edit during a confirmed company save retains its row Unsaved statu
 
 
 test('page-local action markers wrap themed components without making Undo remove again', async () => {
-  const page = await mount({ componentMarkup: true, authoredUndo: true, companies: [
+  const page = await mount({ componentMarkup: true, companies: [
     { id: 1, company_name: 'Acme', company_source: 'custom', job_title: 'Designer' },
     { id: 2, company_name: 'Beta', company_source: 'custom', job_title: 'Engineer' }] })
   const row = page.section.querySelector('[profile-item-row]')

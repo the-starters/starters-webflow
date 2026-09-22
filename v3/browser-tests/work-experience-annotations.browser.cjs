@@ -110,9 +110,13 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
       view = await state(); assert.equal(view.rows.length, 2); assert.equal(view.addLast, true)
       // A blank added row is not a second entry, so the only filled one stays unremovable.
       assert.equal(view.rows[0].disabled, true); assert.equal(view.rows[0].theme, 'disabled')
+      assert.equal(view.rows[1].heading, 'Work Experience')
       await type('company_name', 'Second Company', 1); await type('job_title', 'CMO', 1)
       view = await state()
       assert.ok(view.rows.every(row => !row.disabled)); assert.equal(view.rows[0].theme, 'danger')
+      // A row that has never been saved heads with what was typed; the saved one does not move.
+      assert.equal(view.rows[1].heading, 'Work Experience (Second Company · CMO)')
+      assert.equal(view.rows[0].heading, 'Work Experience (Example Company · Designer)')
       // The shared accordion keeps one entry open: opening a row closes the one that was open.
       await click('[profile-item-toggle]')
       view = await state(); assert.equal(view.rows[0].content, true); assert.equal(view.rows[1].content, false)
@@ -139,7 +143,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
       view = await state(); assert.equal(view.rows[0].heading, 'Work Experience (Example Company · Saved title)')
       assert.equal(view.rows[0].badge, false)
       await shot(device + '-saved')
-      observations.push({device,checks:'hydration, Add order, disabled theme with a blank added row, one-open accordion, dates/current-role payload, saved heading, row status/revert, Remove/Undo placement and visibility, Discard without save',view})
+      observations.push({device,checks:'hydration, Add order, disabled theme with a blank added row, one-open accordion, dates/current-role payload, saved and typed headings, row status/revert, authored Remove/Undo placement and visibility, Discard without save',view})
     }
     assert.deepEqual(errors, [])
     if (evidence) await fs.writeFile(path.join(evidence, 'observations.json'), JSON.stringify({ boundary: 'Isolated local Chrome fixture; in-memory writer; no authenticated-page or real persistence proof', observations }, null, 2))

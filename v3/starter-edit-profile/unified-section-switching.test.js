@@ -114,6 +114,7 @@ async function mountCompanies(guard) {
   const row = h('div', { 'profile-item-row': '' }, [
     h('button', { 'profile-item-toggle': '', type: 'button' }, [h('span', { 'profile-items-summary': '' })]),
     h('div', { 'profile-item-content': '' }, fields), h('button', { 'profile-item-remove': '', type: 'button' }),
+    h('div', { 'profile-items-undo': '' }, [h('button', { type: 'button' })]),
   ])
   const save = h('button', { 'data-edit-submit': 'companies' })
   const add = h('button', { 'profile-items-add': '' })
