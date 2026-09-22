@@ -6846,6 +6846,10 @@ function addContactActions(page) {
     'data-modal-trigger': 'signup-modal',
     'data-signup-trigger-element': 'hire',
   })
+  const hireSecondary = makeElement('div', {
+    'data-modal-trigger': 'generate-contract',
+    'data-signup-trigger-element': 'hire',
+  })
   const message = makeElement('div', {
     'data-modal-trigger': 'messages-profile-modal',
     'data-signup-trigger-element': 'message',
@@ -6856,10 +6860,17 @@ function addContactActions(page) {
     'data-signup-trigger-element': 'service',
     'data-signup-trigger-value': 'Ongoing Advisory Retainer',
   })
+  const serviceSecondary = makeElement('div', {
+    'data-modal-trigger': 'generate-contract',
+    'data-signup-trigger-element': 'service',
+    'data-signup-trigger-value': 'Secondary project service',
+  })
   page.root.appendChild(hire)
+  page.root.appendChild(hireSecondary)
   page.root.appendChild(message)
   page.root.appendChild(service)
-  return { hire, message, service }
+  page.root.appendChild(serviceSecondary)
+  return { hire, hireSecondary, message, service, serviceSecondary }
 }
 
 /** What a viewer can actually do with one of those CTAs. */
@@ -6915,7 +6926,9 @@ test('owner actions: Hire and project services stay visible as explained preview
   assert.match(hireHint.textContent, /Clients use this button to start a project with you/)
   assert.match(serviceHint.textContent, /Clients use this service to start a project with you/)
 
-  for (const action of [actions.hire, actions.service]) {
+  for (const action of [actions.hire, actions.hireSecondary, actions.service, actions.serviceSecondary]) {
+    assert.equal(action.getAttribute('aria-disabled'), 'true', 'every authored placement is disabled')
+    assert.equal(action.getAttribute('data-modal-trigger'), null, 'every authored placement loses its workflow hook')
     let prevented = false
     action.listeners.click.forEach(fn => fn({
       preventDefault() { prevented = true },
@@ -6926,15 +6939,18 @@ test('owner actions: Hire and project services stay visible as explained preview
     const hint = page.root.querySelector('#' + action.getAttribute('aria-describedby'))
     assert.equal(hint.style.display, 'block', 'owner preview activation explains the control')
     hint.style.display = 'none'
-    let keyboardPrevented = false
-    action.listeners.keydown.forEach(fn => fn({
-      key: 'Enter',
-      preventDefault() { keyboardPrevented = true },
-      stopPropagation() {},
-      stopImmediatePropagation() {},
-    }))
-    assert.equal(keyboardPrevented, true, 'keyboard activation is consumed')
-    assert.equal(hint.style.display, 'block', 'keyboard activation explains the control')
+    for (const key of ['Enter', ' ']) {
+      hint.style.display = 'none'
+      let keyboardPrevented = false
+      action.listeners.keydown.forEach(fn => fn({
+        key,
+        preventDefault() { keyboardPrevented = true },
+        stopPropagation() {},
+        stopImmediatePropagation() {},
+      }))
+      assert.equal(keyboardPrevented, true, `${key === ' ' ? 'Space' : key} activation is consumed`)
+      assert.equal(hint.style.display, 'block', `${key === ' ' ? 'Space' : key} activation explains the control`)
+    }
   }
 
   // Message keeps the pre-existing self-contact policy.
