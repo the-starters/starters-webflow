@@ -1319,6 +1319,65 @@ test('a fail-closed Paid session clears the pending Build Profile receipt it pai
   assert.equal(result.dom.save.getAttribute('aria-disabled'), 'true')
 })
 
+test('a fail-closed refresh during a Paid decline cleanup is never repainted by the stale continuation', async () => {
+  const cleanupGate = deferred()
+  let reads = 0
+  const gated = canonical({ readiness: GATED_PAID_READINESS })
+  const result = load({
+    cardMode: true,
+    memberJsonUpdateGate: cleanupGate.promise,
+    memberJSON: PENDING_PAID_ENABLE,
+    initial: gated,
+    routes: {
+      '/starter/paid-call-settings/get/v3': () => {
+        reads += 1
+        return reads === 1
+          ? { ok: true, status: 200, json: async () => gated }
+          : { ok: false, status: 401, json: async () => ({ message: 'Unauthorized' }) }
+      },
+    },
+  })
+  await settle()
+
+  result.dom.disabled.checked = true
+  await result.dom.disabled.dispatch('change')
+  const declined = result.window.StarterPaidCallSettings.submit()
+  await settle()
+
+  await result.dispatchWindow('starterSchedulingConnectionStateChanged', {})
+  await settle()
+  assert.equal(result.dom.statusOutput.textContent, 'Sign in to manage paid calls.')
+
+  cleanupGate.resolve()
+  assert.equal(await declined, null, 'the stale decline reports no success')
+  await settle()
+
+  assert.equal(
+    result.dom.statusOutput.textContent,
+    'Sign in to manage paid calls.',
+    'the signed-out card is never repainted',
+  )
+  assert.equal(result.dom.save.getAttribute('aria-disabled'), 'true')
+})
+
+test('an empty-state uncheck on the legacy Paid surface still asks the member to turn calls on', async () => {
+  const result = load({
+    initial: canonical(),
+  })
+  await settle()
+
+  result.dom.enabled.checked = true
+  await result.dom.enabled.dispatch('change')
+  result.dom.enabled.checked = false
+  await result.dom.enabled.dispatch('change')
+  await result.dom.save.dispatch('click')
+  await settle()
+
+  assert.equal(result.dom.status.textContent, 'Turn on paid calls before you save these settings.')
+  assert.equal(result.calls.some((call) => call.method === 'POST'), false)
+  assert.equal(result.memberJsonWrites.length, 0)
+})
+
 test('a failed no-service Paid decline keeps the pending receipt and reports failure', async () => {
   const result = load({
     cardMode: true,

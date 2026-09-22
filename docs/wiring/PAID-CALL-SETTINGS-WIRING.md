@@ -17,8 +17,11 @@ linkage, charge readiness, and the freshness gate are all ready, then the member
 must select Update.
 
 The legacy `data-paid-call-element="settings"` surface authors no Off control, so
-unchecking the Enabled checkbox is that surface's Off choice. While a pending
-receipt is waiting and no paid service is active, that uncheck makes Update live
+unchecking the Enabled checkbox is that surface's Off choice whenever there is
+something to say no to — a pending receipt or an active service. With neither,
+an uncheck is only an incomplete form, and Update still asks the member to turn
+paid calls on. While a pending receipt is waiting and no paid service is active,
+that uncheck makes Update live
 and submitting it records the decline without a canonical write. While a service
 is active, an uncheck is never a save: Update neither writes the pending title
 and rate nor turns the service off, and the receipt stays pending until the

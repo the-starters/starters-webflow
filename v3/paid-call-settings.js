@@ -1350,13 +1350,17 @@
           setMessage('Paid-call settings could not be confirmed. Reload and try again.')
           return null
         }
+        const version = refreshVersion
+        const memberId = sessionMemberId
         try {
           await consumePendingBuildIntent()
         } catch (error) {
+          if (!currentRender(version, memberId)) return null
           setStatus('error')
           setMessage('Your Build Profile choice could not be cleared. Your selection was not saved.')
           return null
         }
+        if (!currentRender(version, memberId) || !settings) return null
         render(settings)
       }
       return settings
@@ -1688,8 +1692,10 @@
         const disabledInput = disabledField()
         if (enabledInput.checked) explicitIntent = 'enabled'
         // The legacy Paid surface authors no Off control, so a member's uncheck
-        // is the off choice there.
-        else if (!disabledInput) explicitIntent = 'disabled'
+        // is the off choice there for a pending receipt or an active service.
+        else if (!disabledInput && (pendingBuildIntent || canonicalService(settings))) {
+          explicitIntent = 'disabled'
+        }
         markEditProfileDirty()
         setRadioChecked(enabledInput, enabledInput.checked)
         if ((cardMode || editProfileMode) && enabledInput.checked) setRadioChecked(disabledInput, false)

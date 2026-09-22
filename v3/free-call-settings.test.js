@@ -736,6 +736,50 @@ test('a fail-closed Free session clears the pending Build Profile receipt it pai
   assert.equal(result.dom.save.getAttribute('aria-disabled'), 'true')
 })
 
+test('a fail-closed refresh during a Free decline cleanup is never repainted by the stale continuation', async () => {
+  const cleanupGate = deferred()
+  let reads = 0
+  const gated = canonical({
+    readiness: { calendar_connected: false, availability_configured: false },
+  })
+  const result = load({
+    memberJsonUpdateGate: cleanupGate.promise,
+    memberJSON: {
+      starter_call_settings_intent_v3: {
+        version: 1,
+        member_id: 'member-free-a',
+        free: { enabled: true, description: 'Quick intro' },
+      },
+    },
+    initial: gated,
+    routes: {
+      '/starter/free-call-settings/get/v3': () => {
+        reads += 1
+        return reads === 1
+          ? { ok: true, status: 200, json: async () => gated }
+          : { ok: false, status: 401, json: async () => ({ message: 'Unauthorized' }) }
+      },
+    },
+  })
+  await settle()
+
+  result.dom.no.checked = true
+  await result.dom.no.dispatch('change')
+  const declined = result.window.StarterFreeCallSettings.submit()
+  await settle()
+
+  await result.dispatchWindowEvent('starterSchedulingConnectionStateChanged')
+  await settle()
+  assert.equal(result.dom.status.textContent, 'Sign in to manage free calls.')
+
+  cleanupGate.resolve()
+  assert.equal(await declined, null, 'the stale decline reports no success')
+  await settle()
+
+  assert.equal(result.dom.status.textContent, 'Sign in to manage free calls.', 'the signed-out card is never repainted')
+  assert.equal(result.dom.save.getAttribute('aria-disabled'), 'true')
+})
+
 test('a failed no-service Free decline keeps the pending receipt and reports failure', async () => {
   const result = load({
     memberJsonUpdateError: new Error('member JSON unavailable'),

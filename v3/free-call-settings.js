@@ -974,13 +974,17 @@
           setMessage('Free-call settings could not be confirmed. Reload and try again.')
           return null
         }
+        const version = refreshVersion
+        const memberId = sessionMemberId
         try {
           await consumePendingBuildIntent()
         } catch (error) {
+          if (!currentRender(version, memberId)) return null
           setStatus('error')
           setMessage('Your Build Profile choice could not be cleared. Your selection was not saved.')
           return null
         }
+        if (!currentRender(version, memberId) || !settings) return null
         render(settings)
       }
       return settings
