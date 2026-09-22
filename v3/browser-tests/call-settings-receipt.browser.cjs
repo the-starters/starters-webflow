@@ -171,8 +171,9 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
     const xanoWrites = state => state.network.filter(entry => entry.method !== 'GET')
 
     // ------------------------------------------------------------------
-    // 1. Edit Profile: an already-satisfied off receipt is consumed without
-    //    creating an unsaved step-6 state, so leaving the page is silent.
+    // 1. Edit Profile: a receipt the live canonical service already satisfies is
+    //    retired on load without creating an unsaved step-6 state, so leaving the
+    //    page is silent.
     // ------------------------------------------------------------------
     const openEditProfile = async query => {
       await navigate('/starter-edit-profile', query)
@@ -186,11 +187,12 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
       assert.ok(await settleUntil(`!window.__tsMemberJsonState().starter_call_settings_intent_v3`), 'the satisfied receipt is dropped from the member JSON')
     }
 
-    await openEditProfile('page=edit&receipt=off-both&gate=1')
+    await openEditProfile('page=edit&receipt=free-pending&canonical=free-active&gate=1')
     const pendingSeen = observations.length
     assert.ok(await settleUntil(`!window.__tsMemberJsonState().starter_call_settings_intent_v3`), 'the consumed receipt is absent')
-    const consumed = await snapshot('01-edit-head-consumed-no-unsaved-changes', 'HEAD, satisfied off receipt consumed, step 6 still clean')
-    assert.equal(consumed.free.no, true, 'the Free card reads the No the member chose in Build Profile')
+    const consumed = await snapshot('01-edit-head-consumed-no-unsaved-changes', 'HEAD, receipt the canonical Free service satisfies retired, step 6 still clean')
+    assert.equal(consumed.free.yes, true, 'the Free card reads the live canonical service, not the retired receipt')
+    assert.equal(consumed.free.description, 'Quick intro', 'the canonical description is what the member sees')
     assert.equal(consumed.unsavedChanges, false, 'auto-consuming the receipt leaves no unsaved step-6 state')
     assert.equal(await evaluate('window.StarterFreeCallSettings.hasChanges()'), false, 'the Free controller reports nothing to save')
     assert.equal(await evaluate('window.StarterPaidCallSettings.hasChanges()'), false, 'the Paid controller reports nothing to save')
@@ -200,7 +202,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
     await clickHeading()
     const quietExit = await leavePage()
     assert.deepEqual(quietExit, [], 'leaving the page raises no unsaved-changes prompt')
-    record('edit-profile-off-receipt-auto-consume-leaves-step-6-clean', {
+    record('edit-profile-satisfied-receipt-auto-consume-leaves-step-6-clean', {
       unsavedChanges: consumed.unsavedChanges, leavePagePrompt: quietExit, memberJson: consumed.memberJson, pendingSeen,
     })
 
@@ -208,13 +210,13 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
     // 2. Same page, same member: a real member edit after the consume still
     //    marks step 6 dirty and still guards navigation.
     // ------------------------------------------------------------------
-    await openEditProfile('page=edit&receipt=off-both&gate=1')
-    const yesBox = await evaluate(`(() => { const r = document.getElementById('free-yes').closest('label').getBoundingClientRect(); return { x: r.x + 10, y: r.y + r.height / 2 } })()`)
-    await send('Input.dispatchMouseEvent', { type: 'mousePressed', ...yesBox, button: 'left', clickCount: 1 })
-    await send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...yesBox, button: 'left', clickCount: 1 })
+    await openEditProfile('page=edit&receipt=free-pending&canonical=free-active&gate=1')
+    const noBoxAfterConsume = await evaluate(`(() => { const r = document.getElementById('free-no').closest('label').getBoundingClientRect(); return { x: r.x + 10, y: r.y + r.height / 2 } })()`)
+    await send('Input.dispatchMouseEvent', { type: 'mousePressed', ...noBoxAfterConsume, button: 'left', clickCount: 1 })
+    await send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...noBoxAfterConsume, button: 'left', clickCount: 1 })
     await pause(200)
-    const edited = await snapshot('02-edit-head-real-edit-marks-dirty', 'HEAD, member clicks Free = Yes after the consume')
-    assert.equal(edited.free.yes, true, 'the click lands on the Free Yes radio')
+    const edited = await snapshot('02-edit-head-real-edit-marks-dirty', 'HEAD, member clicks Free = No after the consume')
+    assert.equal(edited.free.no, true, 'the click lands on the Free No radio')
     assert.equal(edited.unsavedChanges, true, 'a real member edit still marks step 6 dirty')
     const guardedExit = await leavePage()
     assert.equal(guardedExit.length, 1, 'a real member edit still raises the browser unsaved-changes prompt')
@@ -240,7 +242,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
     // 5. Dashboard: the onboarding tour's seen write waits for the in-flight
     //    receipt consumption instead of replaying its pre-consume snapshot.
     // ------------------------------------------------------------------
-    await navigate('/starter-dashboard', 'page=dashboard&receipt=free-off-paid-pending&gate=1')
+    await navigate('/starter-dashboard', 'page=dashboard&receipt=both-pending&canonical=free-active&gate=1')
     assert.ok(await settleUntil(`document.documentElement.getAttribute('data-free-call-settings') === 'ready'`), 'the Free card hydrates')
     assert.ok(await settleUntil('window.__tsPendingWriteCount() === 1'), 'the receipt cleanup write is in flight')
     assert.ok(await settleUntil(`!!document.querySelector('.driver-popover')`, 200), 'the onboarding tour starts')
@@ -264,7 +266,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
     // ------------------------------------------------------------------
     // 7. Dashboard tour reset (?tour=reset) serializes with the consumption.
     // ------------------------------------------------------------------
-    await navigate('/starter-dashboard', 'page=dashboard&receipt=free-off-paid-pending&gate=1&seen=1&tour=reset')
+    await navigate('/starter-dashboard', 'page=dashboard&receipt=both-pending&canonical=free-active&gate=1&seen=1&tour=reset')
     assert.ok(await settleUntil(`document.documentElement.getAttribute('data-free-call-settings') === 'ready'`), 'the Free card hydrates')
     assert.ok(await settleUntil('window.__tsPendingWriteCount() >= 1'), 'a member JSON write is in flight')
     assert.equal(await evaluate('window.__tsPendingWriteCount()'), 1, 'reset and cleanup never hold two writes at once')
@@ -311,7 +313,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
     const receipt = submitted.memberJson.starter_call_settings_intent_v3
     assert.equal(receipt.version, 1, 'the receipt carries its envelope version')
     assert.equal(receipt.member_id, 'mem_sb_918receipt', 'the receipt is bound to the submitting member')
-    assert.deepEqual(receipt.free, { enabled: false, description: '' }, 'the Free = No choice is stored')
+    assert.equal(receipt.free, undefined, 'a branch answered Off stores no receipt part at all')
     assert.deepEqual(receipt.paid, { enabled: true, title: 'Strategy call', price_dollars: 250 }, 'the Paid = Yes choice and its rate are stored')
     assert.deepEqual(errors, [], 'no uncaught browser errors')
     record('build-profile-submit-writes-member-bound-receipt-and-keeps-onboarding-cta', {
@@ -379,6 +381,61 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
     })
 
     // ------------------------------------------------------------------
+    // 10b. Edit Profile: the member who agrees with their Build Profile Yes must
+    //      have a gesture that commits it. The overlay has already checked the
+    //      Yes radio, so re-answering it emits a click and no change event - and
+    //      the overlay alone must never mark step 6 changed on its own.
+    // ------------------------------------------------------------------
+    const clickFreeYes = async () => {
+      const box = await evaluate(`(() => { const r = document.getElementById('free-yes').closest('label').getBoundingClientRect(); return { x: r.x + 10, y: r.y + r.height / 2 } })()`)
+      await send('Input.dispatchMouseEvent', { type: 'mousePressed', ...box, button: 'left', clickCount: 1 })
+      await send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...box, button: 'left', clickCount: 1 })
+      await pause(250)
+    }
+    await navigate('/starter-edit-profile', 'page=edit&receipt=free-pending&canonical=free-ready')
+    assert.ok(await settleUntil(`document.getElementById('free-yes').checked`), 'the pending create prefills the Yes radio once Calendar and Availability are ready')
+    assert.equal(await evaluate('window.__tsFinishProfileHydration()'), true)
+    const beforeAccept = await snapshot('16-edit-head-pending-create-awaits-a-gesture', 'HEAD, pending Free = Yes with Calendar and Availability ready, before the member answers')
+    assert.equal(beforeAccept.free.yes, true, 'the Build Profile Yes is the pre-checked answer')
+    assert.equal(beforeAccept.free.description, 'Quick intro', 'the Build Profile description prefills the authored control')
+    assert.equal(beforeAccept.unsavedChanges, false, 'the overlay on its own leaves step 6 clean')
+    assert.equal(await evaluate('window.StarterFreeCallSettings.hasChanges()'), false, 'a step-6 save for an unrelated field never commits the pending create')
+    assert.equal(beforeAccept.pendingWrites, 0, 'an unconsumed pending create is never auto-consumed')
+
+    await clickFreeYes()
+    const accepted = await snapshot('16b-edit-head-pending-create-accepted-by-re-answering-yes', 'HEAD, the member re-answers the already-checked Yes and step 6 now has a call-settings change to save')
+    assert.equal(accepted.free.yes, true, 'the answer stays Yes')
+    assert.equal(await evaluate('window.StarterFreeCallSettings.hasChanges()'), true, 'clicking the already-checked Yes is a gesture the step-6 save acts on')
+    // hasChanges() is what starter-edit-profile.js submitCanonicalCallSettings branches
+    // on, so this is the reachable accept gesture. Re-answering a radio the overlay
+    // already checked emits no native change event, so the page-level unsaved-changes
+    // guard stays quiet; nothing is lost either way because the receipt survives until
+    // a verified canonical write retires it.
+    assert.ok(accepted.memberJson.starter_call_settings_intent_v3, 'accepting does not consume the receipt before a verified canonical write')
+    assert.deepEqual(xanoWrites(accepted), [], 'the gesture itself makes no canonical write')
+    assert.deepEqual(errors, [], 'no uncaught browser errors')
+    record('edit-profile-pending-create-is-acceptable-by-re-answering-the-prefilled-yes', {
+      before: { hasChanges: false, receipt: beforeAccept.memberJson.starter_call_settings_intent_v3 },
+      after: { hasChanges: true, receipt: accepted.memberJson.starter_call_settings_intent_v3 },
+    })
+
+    // Adversarial: the same click must not arm a save the prerequisites cannot
+    // honour. With no Calendar or Availability the pending Yes stays pending.
+    await navigate('/starter-edit-profile', 'page=edit&receipt=free-pending')
+    assert.ok(await settleUntil(`document.getElementById('free-yes').checked`), 'the pending create still prefills the Yes radio')
+    assert.equal(await evaluate('window.__tsFinishProfileHydration()'), true)
+    await clickFreeYes()
+    const gated = await snapshot('16c-edit-head-pending-create-click-gated-on-prerequisites', 'HEAD, re-answering the prefilled Yes with no Calendar or Availability')
+    assert.equal(await evaluate('window.StarterFreeCallSettings.hasChanges()'), false, 'the acceptance gesture is inert while the prerequisites are unmet')
+    assert.equal(gated.unsavedChanges, false, 'no unsaved step-6 state is created behind an unusable save')
+    assert.ok(gated.memberJson.starter_call_settings_intent_v3.free, 'the pending create survives so the choice is not lost')
+    assert.deepEqual(xanoWrites(gated), [], 'no canonical write is attempted behind the missing prerequisites')
+    assert.deepEqual(errors, [], 'no uncaught browser errors')
+    record('edit-profile-pending-create-acceptance-stays-gated-on-prerequisites', {
+      hasChanges: false, receipt: gated.memberJson.starter_call_settings_intent_v3,
+    })
+
+    // ------------------------------------------------------------------
     // 11. Adversarial: a pending Paid "Yes" cannot buy its way past the
     //     Stripe and scheduling prerequisites.
     // ------------------------------------------------------------------
@@ -434,6 +491,47 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
     record('dashboard-declining-a-gated-pending-paid-receipt-persists-off', {
       memberJson: dashboardDecline.memberJson,
       paidEnabled: dashboardDecline.paid.enabled,
+    })
+
+    // The same must hold on the published legacy (pre-card) Paid surface, which
+    // authors an Enabled checkbox and no Off control at all.
+    await navigate('/starter-dashboard', 'page=dashboard&legacy=1&receipt=both-pending&seen=1')
+    assert.ok(await settleUntil(`document.documentElement.getAttribute('data-paid-call-settings') === 'ready'`), 'the legacy Paid surface hydrates')
+    const legacyState = () => evaluate(`({
+      enabled: document.getElementById('legacy-paid-enabled').checked,
+      title: document.getElementById('legacy-paid-title').value,
+      price: document.getElementById('legacy-paid-price').value,
+      saveDisabled: document.getElementById('legacy-paid-save').getAttribute('aria-disabled'),
+      status: document.getElementById('legacy-paid-status').textContent,
+      receipt: window.__tsMemberJsonState().starter_call_settings_intent_v3,
+      network: window.__tsNetworkLog,
+    })`)
+    const legacyPending = await legacyState()
+    observations.push({ label: '19b-dashboard-head-legacy-paid-pending-visible', note: 'HEAD, pending Paid = Yes on the legacy non-card Paid surface with no Stripe or scheduling setup', ...legacyPending })
+    if (evidence) await fs.writeFile(path.join(evidence, '19b-dashboard-head-legacy-paid-pending-visible.png'), Buffer.from((await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true })).data, 'base64'))
+    assert.equal(legacyPending.enabled, true, 'the pending Build Profile Yes is visible on the legacy surface')
+    assert.equal(legacyPending.title, 'Strategy call', 'the pending title prefills the legacy control')
+    assert.equal(legacyPending.price, '250', 'the pending rate prefills the legacy control')
+    assert.equal(legacyPending.saveDisabled, 'true', 'a gated pending Yes offers no Update that could succeed')
+
+    // Unchecking the authored Enabled box is the only decline gesture this
+    // surface has, and it has to make the decline submittable.
+    await evaluate(`document.getElementById('legacy-paid-enabled').click()`)
+    await pause(300)
+    assert.equal((await legacyState()).saveDisabled, 'false', 'unchecking Enabled makes the decline submittable on a surface with no Off control')
+    await evaluate(`document.getElementById('legacy-paid-save').click()`)
+    assert.ok(await settleUntil(`!(window.__tsMemberJsonState().starter_call_settings_intent_v3 || {}).paid`), 'the declined Paid branch is consumed')
+    const legacyDeclined = await legacyState()
+    observations.push({ label: '19c-dashboard-head-legacy-paid-decline-persists', note: 'HEAD, the legacy surface decline is saved and the Paid receipt branch is gone', ...legacyDeclined })
+    if (evidence) await fs.writeFile(path.join(evidence, '19c-dashboard-head-legacy-paid-decline-persists.png'), Buffer.from((await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true })).data, 'base64'))
+    assert.equal(legacyDeclined.enabled, false, 'the declined choice stays off after the re-render')
+    assert.deepEqual(legacyDeclined.receipt.free, { enabled: true, description: 'Quick intro' }, "the legacy Paid decline removes only its own branch; the Free pending create is left for the Free controller")
+    assert.equal(await evaluate(`document.getElementById('free-yes').checked`), true, 'the Free pending create is still offered on the same page')
+    assert.deepEqual(legacyDeclined.network.filter(entry => entry.method !== 'GET'), [], 'declining on the legacy surface makes no canonical provider write')
+    assert.deepEqual(errors, [], 'no uncaught browser errors')
+    record('legacy-non-card-paid-surface-shows-and-declines-a-gated-pending-create', {
+      pending: { enabled: legacyPending.enabled, title: legacyPending.title, price: legacyPending.price, saveDisabled: legacyPending.saveDisabled },
+      declined: { enabled: legacyDeclined.enabled, receipt: legacyDeclined.receipt },
     })
 
     // ------------------------------------------------------------------
@@ -517,6 +615,83 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
     })
 
     // ------------------------------------------------------------------
+    // 15. Adversarial, two members in one tab: a receipt whose best-effort
+    //     cleanup failed after a verified canonical write is a retry obligation
+    //     owed by the member who made that write. It must never be re-offered to
+    //     that member as a fresh pending create, must never be inherited by the
+    //     next member to sign in, and must never be discharged by them either.
+    // ------------------------------------------------------------------
+    const clickFree = async action => {
+      const box = await evaluate(`(() => { const el = document.querySelector('[data-call-settings-service="free"] [data-call-settings-action="${action}"]'); el.scrollIntoView(); const r = el.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 } })()`)
+      await send('Input.dispatchMouseEvent', { type: 'mousePressed', ...box, button: 'left', clickCount: 1 })
+      await send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...box, button: 'left', clickCount: 1 })
+      await pause(400)
+    }
+    const freeStatus = `document.querySelector('[data-call-settings-service="free"] [data-call-settings-output="status"]').textContent`
+    await navigate('/starter-dashboard', 'page=dashboard&receipt=free-pending&canonical=free-ready&writable=1&second=1&seen=1')
+    assert.ok(await settleUntil(`document.documentElement.getAttribute('data-free-call-settings') === 'ready'`), 'the Free card hydrates for the first member')
+    const ids = await evaluate('window.__tsMemberIds()')
+    assert.ok(await settleUntil(`document.getElementById('free-yes').checked`), 'the first member sees their pending Build Profile Yes')
+
+    // The member accepts it and saves. The canonical write is verified; only the
+    // receipt cleanup write fails.
+    await clickFree('open')
+    await evaluate('window.__tsFailNextMemberJsonWrite()')
+    await clickFree('submit')
+    assert.ok(await settleUntil(`${freeStatus}.startsWith('Free calls are on')`), 'the verified canonical save still succeeds when the receipt cleanup write fails')
+    const owed = await snapshot('24-dashboard-head-failed-cleanup-after-verified-save', 'HEAD, member A saved free calls, the receipt cleanup write failed and the receipt is still stored')
+    assert.equal(owed.free.yes, true, 'the canonical Free service is on')
+    assert.ok(owed.memberJson.starter_call_settings_intent_v3.free, 'the receipt survives the failed cleanup write')
+
+    // The same member turns free calls off again; that cleanup write fails too.
+    // Canonical now has no service, so nothing but the obligation can stop the
+    // still-stored receipt being re-offered as a pending create.
+    await clickFree('open')
+    await evaluate(`document.getElementById('free-no').click()`)
+    await evaluate('window.__tsFailNextMemberJsonWrite()')
+    await clickFree('submit')
+    assert.ok(await settleUntil(`${freeStatus}.startsWith('Free calls are off')`), 'the verified canonical disable succeeds too')
+    const superseded = await snapshot('25-dashboard-head-superseded-receipt-is-not-repainted', 'HEAD, member A turned free calls off; the still-stored receipt is an outstanding removal, not a pending Yes')
+    assert.equal(superseded.free.no, true, 'the card shows the off the member just chose, never the Build Profile Yes repainted over it')
+    assert.equal(superseded.free.description, '', 'the superseded Build Profile description is not re-asserted')
+    assert.ok(superseded.memberJson.starter_call_settings_intent_v3.free, "the receipt is still stored, so only session state distinguishes it from a fresh pending create")
+
+    // A different member signs in in the same tab.
+    await evaluate(`window.__tsSwitchMember('b')`)
+    assert.ok(await settleUntil(`document.documentElement.getAttribute('data-free-call-settings') === 'ready'`), "the second member's card hydrates")
+    assert.ok(await settleUntil(`document.getElementById('free-yes').checked`), 'the second member is offered their own pending Build Profile Yes')
+    const switched = await snapshot('26-dashboard-head-second-member-keeps-own-pending-create', "HEAD, a different member signs in: they neither inherit the first member's obligation nor lose their own pending create")
+    assert.equal(await evaluate('window.__tsActiveMemberId()'), ids.b, 'the session is the second member')
+    assert.equal(switched.free.description, 'Coffee chat', "the second member sees their own Build Profile description, not the first member's")
+    assert.deepEqual(await evaluate(`window.__tsMemberJsonState(window.__tsMemberIds().b).starter_call_settings_intent_v3.free`), { enabled: true, description: 'Coffee chat' }, "the second member's own receipt is never written away by the first member's outstanding obligation")
+    assert.ok(await evaluate(`!!window.__tsMemberJsonState(window.__tsMemberIds().a).starter_call_settings_intent_v3`), "the first member's receipt is not removed by the second member's session")
+
+    // The second member acts on their own receipt. Cleaning up their own receipt
+    // must not discharge an obligation that belongs to someone else.
+    await clickFree('open')
+    await evaluate(`document.getElementById('free-no').click()`)
+    await clickFree('submit')
+    assert.ok(await settleUntil(`!window.__tsMemberJsonState(window.__tsMemberIds().b).starter_call_settings_intent_v3`), "the second member's own decline consumes their own receipt")
+    assert.ok(await evaluate(`!!window.__tsMemberJsonState(window.__tsMemberIds().a).starter_call_settings_intent_v3`), "the second member's consume does not touch the first member's stored receipt")
+
+    // The first member signs back in. The obligation they own is still theirs, so
+    // the stored branch is retried as a removal, never re-offered as a choice.
+    await evaluate(`window.__tsSwitchMember('a')`)
+    assert.ok(await settleUntil(`document.documentElement.getAttribute('data-free-call-settings') === 'ready'`), 'the first member\'s card hydrates again')
+    assert.ok(await settleUntil(`!window.__tsMemberJsonState(window.__tsMemberIds().a).starter_call_settings_intent_v3`), 'the outstanding removal is retried and finally lands')
+    const retried = await snapshot('27-dashboard-head-obligation-survives-the-round-trip', 'HEAD, the first member signs back in: their owed removal is retried, not re-offered')
+    assert.equal(retried.free.no, true, 'the first member still sees free calls off, never the Build Profile Yes resurrected')
+    assert.equal(retried.free.description, '', 'no superseded Build Profile description comes back')
+    assert.equal(await evaluate(`window.__tsMemberJsonState(window.__tsMemberIds().b).starter_call_settings_intent_v3`), undefined, "the second member's own decline stays decided; the first member's retry does not resurrect it")
+    assert.equal(await evaluate(`window.__tsMemberJsonState(window.__tsMemberIds().b).keep`), 'private-b', "the second member's unrelated private JSON survives every write in the run")
+    assert.deepEqual(errors, [], 'no uncaught browser errors')
+    record('receipt-cleanup-obligation-is-owed-by-one-member-and-survives-an-account-switch', {
+      afterFailedCleanup: { free: superseded.free, receiptStillStored: true },
+      secondMember: { description: switched.free.description, ownDeclineKept: true },
+      afterSwitchBack: { free: retried.free, receiptRetired: true },
+    })
+
+    // ------------------------------------------------------------------
     // 16. Boundary: every Xano call made across the run.
     // ------------------------------------------------------------------
     const allCalls = observations.flatMap(entry => entry.network.map(call => `${call.method} ${new URL(call.url).pathname}`))
@@ -525,7 +700,9 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
       'GET /api:g1vmSLWh/auth/trade-token/v3',
       'GET /api:tCpV3oqd/starter/free-call-settings/get/v3',
       'GET /api:tCpV3oqd/starter/paid-call-settings/get/v3',
-    ], 'only the canonical call-settings reads and the auth trade happen; no booking, charge, message or email call')
+      'POST /api:tCpV3oqd/starter/free-call-settings/disable/v3',
+      'POST /api:tCpV3oqd/starter/free-call-settings/upsert/v3',
+    ], 'only the canonical call-settings endpoints and the auth trade are ever reached; no booking, charge, message or email call, and the two writes are the ones scenario 15 deliberately drives')
     record('receipt-handoff-touches-only-canonical-call-settings-endpoints', { endpoints: unique })
 
     if (evidence) await fs.writeFile(path.join(evidence, 'observations.json'), JSON.stringify({

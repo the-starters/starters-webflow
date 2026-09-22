@@ -10,11 +10,16 @@
 //
 // Query params:
 //   page=edit|dashboard|build  which authored surface to wire
-//   receipt=off-both|free-off-paid-pending|free-pending|paid-pending|paid-satisfied|foreign|none
-//   canonical=none|paid-active|free-active  which canonical services Xano answers with
+//   receipt=off-both|free-off-paid-pending|free-pending|both-pending|paid-pending|paid-satisfied|foreign|none
+//   canonical=none|paid-active|free-active|free-ready  which canonical services Xano answers with
 //   paid=1                     also wire the dashboard Paid card and controller
 //   gate=1                     hold every Memberstack member-JSON write until released
 //   seen=1                     seed an existing tours seen-stamp in the member JSON
+//   writable=1                 route the canonical Free upsert so a verified save can be
+//                              driven; the fake Xano flips its own Free state, no request
+//                              leaves the browser and no provider is contacted
+//   second=1                   seed a second signed-out member with their own pending
+//                              receipt so an in-tab account switch can be driven
 const params = new URLSearchParams(location.search)
 const page = params.get('page') || 'edit'
 const receipt = params.get('receipt') || 'off-both'
@@ -52,6 +57,14 @@ const RECEIPTS = {
     member_id: MEMBER.id,
     paid: { enabled: true, title: 'Strategy call', price_dollars: 250 },
   },
+  // Both branches answered Yes in Build Profile. Used with canonical=free-active
+  // so exactly one branch's receipt part is retired and the other must survive.
+  'both-pending': {
+    version: 1,
+    member_id: MEMBER.id,
+    free: { enabled: true, description: 'Quick intro' },
+    paid: { enabled: true, title: 'Strategy call', price_dollars: 250 },
+  },
   // The same Yes the canonical paid-active service already satisfies exactly.
   'paid-satisfied': {
     version: 1,
@@ -67,9 +80,32 @@ const RECEIPTS = {
   none: null,
 }
 
+// A second member the same tab can be switched to, with their own private member
+// JSON and their own genuine pending Free create.
+const OTHER_MEMBER = {
+  id: 'mem_sb_918receipt_b',
+  auth: { email: 'jaindolwani+testbuild918receiptb@example.invalid' },
+  planConnections: MEMBER.planConnections,
+}
+let activeMember = MEMBER
+
 let memberJson = { keep: 'private' }
 if (RECEIPTS[receipt]) memberJson.starter_call_settings_intent_v3 = clone(RECEIPTS[receipt])
 if (params.get('seen') === '1') memberJson.tours = { 'starter-dashboard': '2026-09-01T00:00:00.000Z' }
+
+// Memberstack answers with the signed-in member's own JSON, so each member keeps
+// their own store and a switch mid-flight lands on the store it really would.
+const memberJsonById = { [MEMBER.id]: memberJson }
+if (params.get('second') === '1') {
+  memberJsonById[OTHER_MEMBER.id] = {
+    keep: 'private-b',
+    starter_call_settings_intent_v3: {
+      version: 1,
+      member_id: OTHER_MEMBER.id,
+      free: { enabled: true, description: 'Coffee chat' },
+    },
+  }
+}
 
 const pendingWrites = []
 // Lets a scenario make the very next Memberstack member-JSON write reject, which
@@ -80,16 +116,19 @@ window.__tsNetworkLog = []
 
 window.__tsAuthChangeHandlers = []
 window.$memberstackDom = {
-  getCurrentMember: async () => ({ data: MEMBER }),
-  getMemberCookie: async () => 'ms-session-cookie-918receipt',
+  getCurrentMember: async () => ({ data: activeMember }),
+  getMemberCookie: async () => 'ms-session-cookie-' + activeMember.id,
   onAuthChange(handler) { window.__tsAuthChangeHandlers.push(handler) },
   getMemberJSON: async () => {
-    window.__tsMemberJsonLog.push({ op: 'read', json: clone(memberJson) })
-    return { data: clone(memberJson) }
+    const owner = activeMember.id
+    const stored = memberJsonById[owner] || {}
+    window.__tsMemberJsonLog.push({ op: 'read', member: owner, json: clone(stored) })
+    return { data: clone(stored) }
   },
   updateMemberJSON: async value => {
+    const owner = activeMember.id
     const payload = clone(value && value.json) || {}
-    const entry = { op: 'write', json: payload, released: !gate }
+    const entry = { op: 'write', member: owner, json: payload, released: !gate }
     window.__tsMemberJsonLog.push(entry)
     if (failNextWrite) {
       failNextWrite = false
@@ -99,12 +138,22 @@ window.$memberstackDom = {
     if (gate) {
       await new Promise(resolve => pendingWrites.push(() => { entry.released = true; resolve() }))
     }
-    memberJson = payload
+    memberJsonById[owner] = payload
+    if (owner === MEMBER.id) memberJson = payload
   },
 }
 
 window.__tsFailNextMemberJsonWrite = () => { failNextWrite = true }
-window.__tsMemberJsonState = () => clone(memberJson)
+window.__tsMemberJsonState = memberId => clone(memberJsonById[memberId || activeMember.id] || null)
+window.__tsMemberIds = () => ({ a: MEMBER.id, b: OTHER_MEMBER.id })
+window.__tsActiveMemberId = () => activeMember.id
+// The in-tab account switch Memberstack performs: the session member changes and
+// every registered onAuthChange handler is notified, exactly once.
+window.__tsSwitchMember = which => {
+  activeMember = which === 'b' ? OTHER_MEMBER : MEMBER
+  window.__tsAuthChangeHandlers.forEach(handler => handler({ id: activeMember.id, ...activeMember }))
+  return activeMember.id
+}
 window.__tsPendingWriteCount = () => pendingWrites.length
 window.__tsReleaseNextWrite = () => {
   const next = pendingWrites.shift()
@@ -131,17 +180,53 @@ window.__tsBeforeUnloadPrompts = () => {
 // By default no canonical Free or Paid service exists: the off receipt is
 // already satisfied. canonical=free-active answers with a live Free service
 // whose public description matches the free-pending receipt exactly.
-const FREE_SETTINGS = params.get('canonical') === 'free-active'
-  ? {
+const FREE_CANONICAL = {
+  'free-active': {
     public_description: 'Quick intro',
     readiness: { calendar_connected: true, availability_configured: true, free_call_enabled: true, bookable: true },
     services: [{ config_id: 'cfg-free-1', title: 'Intro call', price_cents: 0, currency: 'usd', duration: 30, active: true, revision: 3 }],
-  }
-  : {
+  },
+  // Calendar and Availability are done but no Free service exists yet: the state a
+  // pre-onboarding pending create becomes actionable in.
+  'free-ready': {
     public_description: '',
-    readiness: { calendar_connected: false, availability_configured: false, free_call_enabled: false, bookable: false },
+    readiness: { calendar_connected: true, availability_configured: true, free_call_enabled: false, bookable: false },
+    services: [],
+  },
+}
+const FREE_DEFAULT = FREE_CANONICAL[params.get('canonical')] || {
+  public_description: '',
+  readiness: { calendar_connected: false, availability_configured: false, free_call_enabled: false, bookable: false },
+  services: [],
+}
+// Canonical Free state belongs to a member, so each member gets their own. The
+// second member always starts prerequisite-ready with no service, which is the
+// state their own pending create is offered in.
+const freeByMember = {
+  [MEMBER.id]: clone(FREE_DEFAULT),
+  [OTHER_MEMBER.id]: clone(FREE_CANONICAL['free-ready']),
+}
+const freeSettings = () => freeByMember[activeMember.id] || clone(FREE_DEFAULT)
+// writable=1 lets a scenario drive a real verified save or disable through the
+// controller. The canonical Free upsert/disable is answered locally and this fake
+// Xano state is what the controller's own readback then reads, so the
+// verified-write path runs end to end without any provider, booking, charge,
+// message or email.
+const freeWritable = params.get('writable') === '1'
+function applyFreeUpsert(body) {
+  freeByMember[activeMember.id] = {
+    public_description: String((body && body.description) || ''),
+    readiness: { calendar_connected: true, availability_configured: true, free_call_enabled: true, bookable: true },
+    services: [{ config_id: 'cfg-free-upserted', title: 'Intro call', price_cents: 0, currency: 'usd', duration: 30, active: true, revision: 1 }],
+  }
+}
+function applyFreeDisable() {
+  freeByMember[activeMember.id] = {
+    public_description: '',
+    readiness: { calendar_connected: true, availability_configured: true, free_call_enabled: false, bookable: false },
     services: [],
   }
+}
 const PAID_SETTINGS = params.get('canonical') === 'paid-active'
   ? {
     readiness: { calendar_connected: true, availability_configured: true, stripe_connected: true, stripe_charges_enabled: true, paid_call_enabled: true, bookable: true },
@@ -173,7 +258,15 @@ window.fetch = async function (input, init) {
   })
   if (url.origin !== XANO) throw new Error('unexpected origin ' + url.origin)
   if (url.pathname === '/api:g1vmSLWh/auth/trade-token/v3') return json({ authToken: 'xano-session-token' })
-  if (url.pathname === '/api:tCpV3oqd/starter/free-call-settings/get/v3') return json(FREE_SETTINGS)
+  if (url.pathname === '/api:tCpV3oqd/starter/free-call-settings/get/v3') return json(freeSettings())
+  if (freeWritable && url.pathname === '/api:tCpV3oqd/starter/free-call-settings/upsert/v3') {
+    applyFreeUpsert(JSON.parse((await request.clone().text()) || '{}'))
+    return json({ saved: true })
+  }
+  if (freeWritable && url.pathname === '/api:tCpV3oqd/starter/free-call-settings/disable/v3') {
+    applyFreeDisable()
+    return json({ disabled: true })
+  }
   if (url.pathname === '/api:tCpV3oqd/starter/paid-call-settings/get/v3') {
     if (expirePaidReads) {
       return new Response(JSON.stringify({ message: 'Unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json' } })
@@ -257,7 +350,14 @@ function sourceFor(file) {
 // The dashboard tour scenarios wire the Free card alone so the receipt's Paid
 // branch has no controller that could touch it.
 const withPaid = params.get('paid') === '1'
-if (page === 'dashboard' && !withPaid) document.getElementById('paid-card').remove()
+// legacy=1 swaps the Paid card for the published pre-card Paid settings surface,
+// which authors an Enabled checkbox and no Off control.
+const withLegacyPaid = params.get('legacy') === '1'
+if (page === 'dashboard') {
+  if (!withPaid && !withLegacyPaid) document.getElementById('paid-card').remove()
+  if (withLegacyPaid) document.getElementById('paid-card').remove()
+  if (!withLegacyPaid) document.getElementById('paid-legacy').remove()
+}
 
 if (page === 'build' && params.get('rate')) document.getElementById('paid-call-rate').value = params.get('rate')
 
@@ -265,7 +365,7 @@ window.__tsControllersReady = (async () => {
   await loadScript('/v3/scheduling-auth.js')
   if (page === 'edit') await loadScript('/v3/starter-edit-profile/canonical-profile-loader.js')
   await loadScript(sourceFor('free-call-settings.js'))
-  if (page === 'edit' || withPaid) await loadScript(sourceFor('paid-call-settings.js'))
+  if (page === 'edit' || withPaid || withLegacyPaid) await loadScript(sourceFor('paid-call-settings.js'))
   if (page === 'dashboard') await loadScript(sourceFor('onboarding-tour.js'))
   if (page === 'build') {
     await loadScript(sourceFor('build-profile/submit-writer.js'))
@@ -280,15 +380,17 @@ const stamp = document.getElementById('stamp')
 function paintStamp() {
   const html = document.documentElement
   const success = document.querySelector('[build-profile-success]')
+  const activeJson = memberJsonById[activeMember.id] || {}
   stamp.textContent = [
     'page: ' + page,
     'sources: working tree',
     'receipt: ' + receipt,
+    'signed in: ' + (activeMember === OTHER_MEMBER ? 'member B' : 'member A'),
     'data-free-call-settings: ' + (html.getAttribute('data-free-call-settings') || '—'),
-    'member JSON receipt: ' + (memberJson.starter_call_settings_intent_v3
-      ? Object.keys(memberJson.starter_call_settings_intent_v3).filter(key => key === 'free' || key === 'paid').join('+') || 'empty'
+    'member JSON receipt: ' + (activeJson.starter_call_settings_intent_v3
+      ? Object.keys(activeJson.starter_call_settings_intent_v3).filter(key => key === 'free' || key === 'paid').join('+') || 'empty'
       : 'consumed'),
-    'tours seen: ' + (memberJson.tours ? Object.keys(memberJson.tours).join(',') : '—'),
+    'tours seen: ' + (activeJson.tours ? Object.keys(activeJson.tours).join(',') : '—'),
     'member-JSON writes pending: ' + pendingWrites.length,
     'canonical profile saves: ' + window.__tsProfileRequests.length,
     'success panel: ' + (success ? (success.style.display || 'authored default') : 'n/a'),

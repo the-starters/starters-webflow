@@ -75,6 +75,20 @@
     <p class="status" data-call-settings-output="status"></p>
     <button type="button" class="ghost" data-call-settings-action="open">Edit</button>
   </div>
+  <!-- The published legacy (pre-card) Paid settings surface: an Enabled checkbox
+       and no authored Off control. Removed unless ?legacy=1. -->
+  <div class="card" data-paid-call-element="settings" id="paid-legacy">
+    <h2>Paid consulting calls (legacy surface)</h2>
+    <p class="hint">Legacy <code>data-paid-call-element="settings"</code> wiring.</p>
+    <form data-paid-call-element="form">
+      <label class="field"><span>Enabled</span><input type="checkbox" id="legacy-paid-enabled" data-paid-call-input="enabled"></label>
+      <label class="field"><span>Paid call title</span><input type="text" id="legacy-paid-title" data-paid-call-input="title"></label>
+      <label class="field"><span>Paid call rate (USD)</span><input type="text" id="legacy-paid-price" data-paid-call-input="price"></label>
+      <button type="button" id="legacy-paid-save" data-paid-call-action="save">Update</button>
+      <button type="button" class="ghost" id="legacy-paid-disable" data-paid-call-action="disable">Turn off</button>
+    </form>
+    <p class="status" id="legacy-paid-status" data-paid-call-element="status"></p>
+  </div>
 </div>
 <div class="stamp" id="stamp"></div>
 <script src="/v3/browser-tests/call-settings-receipt-fixture.js"></script>
