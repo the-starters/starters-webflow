@@ -320,9 +320,10 @@ the authored status-pill resolution and its drifted-copy diagnostic, the
 rejected rate never blocks a later turn-off, plus the shared native-submit/Update write lock and
 Update busy-state lifecycle, and the scoped native error message with its retry and refresh
 clearing, transient empty-auth recovery, the auth-transition mutation lock, final-`401` clearing,
-the owned fetch fallback, post-write canonical fallback, coalesced prerequisite refresh, and logout
-and account-switch precedence — are executable regressions in
-`v3/paid-call-settings.test.js`. The remaining legs need a live Memberstack session, a live
+the owned fetch fallback, post-write canonical fallback, coalesced prerequisite refresh, logout
+and account-switch precedence, and the pending Build Profile receipt lifecycle owned by
+[Call Settings receipt lifecycle](../../v3/build-profile/README.md#call-settings-receipt-lifecycle) —
+are executable regressions in `v3/paid-call-settings.test.js`. The remaining legs need a live Memberstack session, a live
 Xano TEST configuration, and an asset that only exists once the tag is published, so they
 are not runnable from CI or from a local test phase. Both `the-starters-3-0.webflow.io`
 and `thestarters.com` answer `401` behind the site password, so a local phase cannot even
@@ -331,8 +332,9 @@ The release owner runs them by hand, in this order, after the PR merges:
 
 1. Release through the sequence in [Sync Safety](../../README.md#sync-safety), then confirm
    the served asset is the new build: the served file must contain
-   `data-paid-call-rate-source` together with `data-paid-call-card-state`. The previous build already
-   shipped `data-call-settings-error-message`, `.w-form-fail`,
+   `starter_call_settings_intent_v3`. The previous build already shipped
+   `data-paid-call-rate-source`, `data-paid-call-card-state`,
+   `data-call-settings-error-message`, `.w-form-fail`,
    `data-call-settings-native-spinner`, `data-button-spinner`, `paintSaveBusy`,
    `BUSY_STYLE_ID`, the late-sibling recovery, `paintStatusPills`, and the other compatibility
    markers, so none of those can tell this release from the one before it.

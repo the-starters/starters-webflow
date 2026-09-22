@@ -357,8 +357,9 @@ newer render — an auth-scope reconcile that repainted fresher canonical
 readiness in the meantime stays on screen.
 
 The whole handoff — Build Profile storing the receipt, then Dashboard and Edit
-Profile hydrating, consuming, and declining it — is exercised in Chrome against
-the authored DOM by `node v3/browser-tests/call-settings-receipt.browser.cjs`;
+Profile hydrating, accepting, consuming, and declining it — is exercised in
+Chrome against the authored DOM by
+`node v3/browser-tests/call-settings-receipt.browser.cjs`;
 set `CALL_RECEIPT_BROWSER_EVIDENCE=<dir>` to write screenshots and observations.
 That fixture fakes only the Memberstack session and the Xano responses, so it
 cannot establish production behavior.
@@ -378,7 +379,7 @@ cannot establish production behavior.
 5. Recapture both pages and replace only a block whose script position, character count, and SHA-256 match `live-body-provenance.json`.
 6. Publish staging first, then use human-like clicks for photo, portfolio, work history, counters, bio, and grouped selects without submitting the full profile.
 7. Confirm each loaded response is a non-cached current release, then publish production and repeat the safe checks.
-8. With an approved Talent canary on each Build Profile route, use a human-like click to submit the native form. Confirm one writer request and clean authored success copy that stays put with no automatic navigation, then click the authored "Start onboarding" CTA and confirm it lands on `/starter-onboarding`; verify the canonical Xano record and its projection after each submit.
+8. With an approved Talent canary on each Build Profile route, use a human-like click to submit the native form. Confirm one writer request and clean authored success copy that stays put with no automatic navigation, then click the authored "Start onboarding" CTA and confirm it lands on `/starter-onboarding`; verify the canonical Xano record and its projection after each submit. Call settings leave that record untouched, so confirm the visible Free and Paid answers instead through the member-bound receipt described in [Call Settings receipt lifecycle](#call-settings-receipt-lifecycle) — the canary's private member JSON carries them, and no provider state is created until Dashboard or Edit Profile writes it.
 9. Scan both published domains for Airtable, Make, and PAT exposure patterns.
 
 ### Photo upload during profile sync
