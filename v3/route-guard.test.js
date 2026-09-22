@@ -683,6 +683,40 @@ test('every other guarded page keeps the /login?next= round trip', () => {
   )
 })
 
+test('a logged-out Calls notification keeps its validated fragment through login', async () => {
+  const bookingId = '00d39a7b-40be-436f-b794-a6832215234b'
+  const search =
+    '?booking_id=' + bookingId + '&revision=1&environment=production'
+  const expectedNext = '/brand-dashboard' + search + '#calls'
+  const { api } = loadGuard({ hostname: 'www.thestarters.com' })
+  assert.equal(
+    api.loggedOutDestinationFor('/brand-dashboard', search, '#calls'),
+    '/login?next=' + encodeURIComponent(expectedNext),
+  )
+
+  const { location } = loadGuard({
+    hostname: 'www.thestarters.com',
+    pathname: '/brand-dashboard',
+    search,
+    hash: '#calls',
+    member: null,
+  })
+  await flush()
+  assert.equal(location.replaced, '/login?next=' + encodeURIComponent(expectedNext))
+})
+
+test('only an exact Calls locator may preserve a login fragment', () => {
+  const bookingId = '00d39a7b-40be-436f-b794-a6832215234b'
+  const valid =
+    '/starter-dashboard?booking_id=' + bookingId +
+    '&revision=1&environment=test#calls-section'
+  const { api } = loadGuard()
+  assert.equal(api.localPath(valid), valid)
+  assert.equal(api.localPath('/starter-dashboard?booking_id=' + bookingId + '#calls'), '/starter-dashboard?booking_id=' + bookingId)
+  assert.equal(api.localPath('/starter-dashboard?booking_id=' + bookingId + '&revision=1&environment=production#calls'), '/starter-dashboard?booking_id=' + bookingId + '&revision=1&environment=production')
+  assert.equal(api.localPath('/messages?thread=7#calls'), '/messages?thread=7')
+})
+
 test('a logged-out build-profile visitor is sent to the homepage, not to login', async () => {
   const { location, attributes } = loadGuard({
     pathname: '/build-profile/full-profile',

@@ -1,7 +1,7 @@
 /**
  * V3 login router.
  *
- * @release v1.59.507
+ * @release v1.59.610
  *
  * Loaded by the site-head v3/auth-page-loader.js on the V3 login pages
  * (/login and /starter-login) and /auth-route only. Every V3 login form must
@@ -390,6 +390,44 @@
 
   ROLE_DESTINATIONS['brand-paid'].add('/opportunities---create')
 
+  function callNotificationFragment(url) {
+    if (
+      url.pathname !== '/brand-dashboard' &&
+      url.pathname !== '/starter-dashboard'
+    ) return ''
+    var anchor = String(url.hash || '').trim().toLowerCase()
+    if (anchor !== '#calls' && anchor !== '#calls-section') return ''
+
+    function one(name) {
+      var values = url.searchParams
+        .getAll(name)
+        .map(function (value) { return String(value || '').trim() })
+        .filter(Boolean)
+      if (!values.length) return ''
+      for (var i = 1; i < values.length; i++) {
+        if (values[i] !== values[0]) return ''
+      }
+      return values[0]
+    }
+
+    var bookingId = one('booking_id')
+    var revisionValue = one('revision')
+    var environment = one('environment').toLowerCase()
+    var revision = Number(revisionValue)
+    var expectedEnvironment =
+      window.location.hostname === 'the-starters-3-0.webflow.io'
+        ? 'test'
+        : 'production'
+    if (
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(bookingId) ||
+      !/^\d+$/.test(revisionValue) ||
+      !Number.isSafeInteger(revision) ||
+      revision < 0 ||
+      environment !== expectedEnvironment
+    ) return ''
+    return anchor
+  }
+
   function localPath(rawValue) {
     if (!rawValue || typeof rawValue !== 'string') return null
 
@@ -397,8 +435,8 @@
       var url = new URL(rawValue, window.location.origin)
       if (url.origin !== window.location.origin) return null
       if (url.username || url.password) return null
-      if (url.hash) url.hash = ''
-      return url.pathname + url.search
+      var fragment = callNotificationFragment(url)
+      return url.pathname + url.search + fragment
     } catch (error) {
       return null
     }
@@ -968,7 +1006,7 @@
   var api = {
     // Keep in sync with the @release line in this file's header comment; the
     // v3/auth-route.test.js drift guard asserts they match.
-    release: 'v1.59.507',
+    release: 'v1.59.610',
     activePlanIds: activePlanIds,
     destinationFor: destinationFor,
     hasCompletedQuiz: hasCompletedQuiz,
