@@ -1155,6 +1155,66 @@ test('session refresh tolerates a bounded transient empty Memberstack member', a
   }
 })
 
+test('initial refresh waits through the post-login Memberstack hydration gap', async () => {
+  const originalDocument = global.document
+  const originalFetch = global.xanoAuthFetch
+  const originalMemberReady = global.memberReady
+  const originalSetTimeout = global.setTimeout
+  const root = element({ 'data-dashboard-calls-v3': 'loading' })
+  const refs = {
+    name: 'calls',
+    filter: 'all',
+    rows: [],
+    rendered: 0,
+    list: element(),
+    template: element(),
+    loader: element(),
+    empty: element(),
+    loadMore: element(),
+    filters: element(),
+    count: element(),
+    section: element(),
+  }
+  let reads = 0
+  const delays = []
+  try {
+    global.document = { documentElement: root, querySelector: () => null }
+    // The shared site-head promise resolves an empty object while the new
+    // page's Memberstack client is still hydrating the authenticated session.
+    global.memberReady = Promise.resolve({})
+    global.setTimeout = (callback, delay) => {
+      delays.push(delay)
+      callback()
+      return 1
+    }
+    global.xanoAuthFetch = async () => ({ ok: true, json: async () => [] })
+    const memberstack = {
+      async getCurrentMember() {
+        reads += 1
+        return reads < 5 ? { data: null } : { data: { id: 'starter-after-login' } }
+      },
+    }
+
+    assert.equal(await api.refreshSession(
+      memberstack,
+      [refs],
+      'starter',
+      1,
+      () => 1,
+      true,
+      {},
+    ), true)
+    assert.equal(reads, 5)
+    assert.deepEqual(delays.slice(0, 4), [200, 400, 800, 1200])
+    assert.equal(root.getAttribute('data-dashboard-calls-v3'), 'ready')
+  } finally {
+    global.document = originalDocument
+    global.xanoAuthFetch = originalFetch
+    global.memberReady = originalMemberReady
+    global.setTimeout = originalSetTimeout
+  }
+})
+
 test('a post-mutation refresh still fails closed once the member stays missing', async () => {
   const originalDocument = global.document
   const originalFetch = global.xanoAuthFetch
