@@ -715,16 +715,16 @@ test('paid availability uses one authenticated read with no booking authority', 
   }
 })
 
-test('Paid availability uses five minutes only on the exact staging host', async () => {
+test('Paid initial booking uses the production 8-hour floor and the exact staging exception', async () => {
   const now = Date.UTC(2026, 7, 24, 0, 0, 0)
   const nowSeconds = Math.floor(now / 1000)
   const config = { config_id: 'config_paid', grant_id: 'grant_test', duration: 60 }
 
-  assert.equal(api.minimumBookingNoticeMinutes(), 1440)
+  assert.equal(api.minimumBookingNoticeMinutes(), 480)
   assert.equal(
     new URL('https://example.test' + api.availabilityQuery(config, now))
       .searchParams.get('start_time'),
-    String(nowSeconds + 1440 * 60),
+    String(nowSeconds + 480 * 60),
   )
 
   const staging = loadBrowserApi(
@@ -747,9 +747,25 @@ test('Paid availability uses five minutes only on the exact staging host', async
     [{ start: (nowSeconds + 5 * 60) * 1000, end: (nowSeconds + 65 * 60) * 1000 }],
   )
 
-  assert.equal(loadBrowserApi('thestarters.com').minimumBookingNoticeMinutes(), 1440)
-  assert.equal(loadBrowserApi('staging.thestarters.com').minimumBookingNoticeMinutes(), 1440)
-  assert.equal(loadBrowserApi().minimumBookingNoticeMinutes(), 1440)
+  const production = loadBrowserApi(
+    'thestarters.com',
+    async () => response({
+      time_slots: [
+        { start_time: nowSeconds + 8 * 60 * 60 - 1 },
+        { start_time: nowSeconds + 8 * 60 * 60 },
+      ],
+    }),
+  )
+  assert.equal(production.minimumBookingNoticeMinutes(), 480)
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(await production.getPaidAvailability(config, now))),
+    [{
+      start: (nowSeconds + 8 * 60 * 60) * 1000,
+      end: (nowSeconds + 9 * 60 * 60) * 1000,
+    }],
+  )
+  assert.equal(loadBrowserApi('staging.thestarters.com').minimumBookingNoticeMinutes(), 480)
+  assert.equal(loadBrowserApi().minimumBookingNoticeMinutes(), 480)
 })
 
 test('paid availability fails closed before a request when service identity is incomplete', () => {
@@ -757,6 +773,101 @@ test('paid availability fails closed before a request when service identity is i
     () => api.availabilityQuery({ config_id: 'config_paid', duration: 15 }),
     /valid paid-call service/,
   )
+})
+
+test('shared calendar rechecks the 8-hour boundary when the selected slot is submitted', async () => {
+  const previous = {
+    document: global.document,
+    jQuery: global.jQuery,
+    now: Date.now,
+    xanoAuthFetch: global.xanoAuthFetch,
+  }
+  const now = Date.UTC(2026, 7, 24, 0, 0, 0)
+  const startSeconds = Math.floor(now / 1000) + 8 * 60 * 60
+  const container = new CalendarElement('div')
+  const submissions = []
+  global.document = calendarDocument()
+  global.jQuery = undefined
+  Date.now = () => now
+  global.xanoAuthFetch = async () => response({
+    time_slots: [{ start_time: startSeconds, end_time: startSeconds + 30 * 60 }],
+  })
+
+  try {
+    await api.mountPaidCalendar({
+      container,
+      config: { config_id: 'config_paid', grant_id: 'grant_test', duration: 30 },
+      async onConfirm(slot) { submissions.push(slot) },
+    })
+    const slot = container.querySelectorAll('[data-paid-calendar-slot]')[0]
+    const confirm = container.querySelectorAll('[data-paid-calendar-element]')
+      .find((node) => node.getAttribute('data-paid-calendar-element') === 'confirm')
+    const status = container.querySelectorAll('[data-paid-calendar-element]')
+      .find((node) => node.getAttribute('data-paid-calendar-element') === 'status')
+
+    slot.listeners.click()
+    await confirm.listeners.click({ preventDefault() {} })
+    assert.equal(submissions.length, 1, 'the exact 8-hour boundary remains bookable')
+
+    Date.now = () => now + 1000
+    await confirm.listeners.click({ preventDefault() {} })
+    assert.equal(submissions.length, 1, 'a selection that aged past the boundary is rejected')
+    assert.equal(confirm.disabled, true)
+    assert.match(status.textContent, /no longer available/i)
+  } finally {
+    global.document = previous.document
+    global.jQuery = previous.jQuery
+    Date.now = previous.now
+    global.xanoAuthFetch = previous.xanoAuthFetch
+  }
+})
+
+test('shared calendar keeps the stale-time message from a final booking recheck', async () => {
+  const previous = {
+    document: global.document,
+    jQuery: global.jQuery,
+    now: Date.now,
+    xanoAuthFetch: global.xanoAuthFetch,
+  }
+  const now = Date.UTC(2026, 7, 24, 0, 0, 0)
+  const startSeconds = Math.floor(now / 1000) + 8 * 60 * 60
+  const container = new CalendarElement('div')
+  global.document = calendarDocument()
+  global.jQuery = undefined
+  Date.now = () => now
+  global.xanoAuthFetch = async () => response({
+    time_slots: [{ start_time: startSeconds, end_time: startSeconds + 30 * 60 }],
+  })
+
+  try {
+    await api.mountPaidCalendar({
+      container,
+      config: { config_id: 'config_paid', grant_id: 'grant_test', duration: 30 },
+      async onConfirm() {
+        throw Object.assign(
+          new Error('This time is no longer available. Please choose another time.'),
+          { bookingNotSubmitted: true, retrySameBooking: false, staleSlot: true },
+        )
+      },
+    })
+    const slot = container.querySelectorAll('[data-paid-calendar-slot]')[0]
+    const confirm = container.querySelectorAll('[data-paid-calendar-element]')
+      .find((node) => node.getAttribute('data-paid-calendar-element') === 'confirm')
+    const status = container.querySelectorAll('[data-paid-calendar-element]')
+      .find((node) => node.getAttribute('data-paid-calendar-element') === 'status')
+
+    slot.listeners.click()
+    await confirm.listeners.click({ preventDefault() {} })
+    assert.equal(
+      status.textContent,
+      'This time is no longer available. Please choose another time.',
+    )
+  } finally {
+    global.document = previous.document
+    global.jQuery = previous.jQuery
+    Date.now = previous.now
+    global.xanoAuthFetch = previous.xanoAuthFetch
+  }
 })
 
 test('shared call calendar renders dates and times and submits only the selected slot', async () => {
@@ -2987,6 +3098,8 @@ test('Paid installation stays bookable without optional guest markup', async () 
     xanoAuthFetch: global.xanoAuthFetch,
   }
   const requests = []
+  const start = Date.now() + 9 * 60 * 60 * 1000
+  const end = start + 60 * 60 * 1000
   let confirmSlot
   const price = { textContent: '$50' }
   const item = {
@@ -3033,7 +3146,7 @@ test('Paid installation stays bookable without optional guest markup', async () 
       starterEmail: 'starter@example.com',
       mountCalendar({ onConfirm, onSelectionChange }) {
         confirmSlot = onConfirm
-        onSelectionChange({ start: 1000, end: 1900, timezone: 'Asia/Manila' })
+        onSelectionChange({ start, end, timezone: 'Asia/Manila' })
         return Promise.resolve({})
       },
     }), true)
@@ -3041,17 +3154,17 @@ test('Paid installation stays bookable without optional guest markup', async () 
     assert.equal(item.style.display, 'block')
     assert.equal(cta.getAttribute('data-paid-call-v3'), 'ready')
     await cta.onclick({ preventDefault() {} })
-    await confirmSlot({ start: 1000, end: 1900, timezone: 'Asia/Manila' })
+    await confirmSlot({ start, end, timezone: 'Asia/Manila' })
     assert.equal(requests.filter(request => request.url.endsWith(api.BOOKING_PATH)).length, 0)
     await payment.choose()
-    await confirmSlot({ start: 1000, end: 1900, timezone: 'Asia/Manila' })
+    await confirmSlot({ start, end, timezone: 'Asia/Manila' })
     const bookingBody = JSON.parse(requests.find(request => request.url.endsWith(api.BOOKING_PATH)).options.body)
     assert.deepEqual(bookingBody, {
       expected_payment_method_id: 'pm_reviewed',
       starter_slug: 'starter-one',
       config_id: 'config_paid',
-      start: 1000,
-      end: 1900,
+      start,
+      end,
       timezone: 'Asia/Manila',
       idempotency_key: bookingBody.idempotency_key,
     })
@@ -3177,6 +3290,8 @@ test('paid calendar selection is owned by one canonical Xano command', async () 
     xanoAuthFetch: global.xanoAuthFetch,
   }
   const requests = []
+  const start = Date.now() + 9 * 60 * 60 * 1000
+  const end = start + 30 * 60 * 1000
   const priceText = { textContent: '$50' }
   const item = {
     style: {},
@@ -3305,8 +3420,8 @@ test('paid calendar selection is owned by one canonical Xano command', async () 
     assert.equal(guestUi.wrapper.style.display, 'none')
     assert.equal(guestUi.wrapper.getAttribute('aria-hidden'), 'true')
     calendarOptions.onSelectionChange({
-      start: 1787000000000,
-      end: 1787001800000,
+      start,
+      end,
     })
     assert.equal(guestUi.wrapper.style.display, 'none', 'selection alone does not open details')
     calendarOptions.onDetailsChange(true)
@@ -3317,16 +3432,16 @@ test('paid calendar selection is owned by one canonical Xano command', async () 
     assert.equal(guestUi.wrapper.style.display, 'none')
     assert.equal(guestField.value, 'preserve-on-back@example.com')
     calendarOptions.onSelectionChange({
-      start: 1787000000000,
-      end: 1787001800000,
+      start,
+      end,
     })
     calendarOptions.onDetailsChange(true)
     assert.equal(guestUi.wrapper.style.display, 'flex')
     guestField.value = 'not-an-email'
     await assert.rejects(
       calendarOptions.onConfirm({
-        start: 1787000000000,
-        end: 1787001800000,
+        start,
+        end,
         timezone: 'Pacific/Auckland',
       }),
       /valid guest email/,
@@ -3348,20 +3463,20 @@ test('paid calendar selection is owned by one canonical Xano command', async () 
     })
     await Promise.all([
       calendarOptions.onConfirm({
-        start: 1787000000000,
-        end: 1787001800000,
+        start,
+        end,
         timezone: 'Pacific/Auckland',
       }),
       calendarOptions.onConfirm({
-        start: 1787000000000,
-        end: 1787001800000,
+        start,
+        end,
         timezone: 'Pacific/Auckland',
       }),
     ])
     assert.equal(requests.filter(({ url }) => url.endsWith(api.BOOKING_PATH)).length, 0)
     await payment.choose()
     await Promise.all([1, 2].map(() => calendarOptions.onConfirm({
-      start: 1787000000000, end: 1787001800000, timezone: 'Pacific/Auckland',
+      start, end, timezone: 'Pacific/Auckland',
     })))
     const bookingRequests = requests.filter(({ url }) => url.endsWith(api.BOOKING_PATH))
     assert.equal(bookingRequests.length, 1)
@@ -3610,9 +3725,11 @@ test('a newer Paid selection runs after a Paid to Free to Paid switch', async ()
 function makePaidLifecycleFixture(fetch, fixtureOptions = {}) {
   const previous = {
     document: global.document,
+    now: Date.now,
     Stripe: global.Stripe,
     xanoAuthFetch: global.xanoAuthFetch,
   }
+  Date.now = () => Date.UTC(2026, 0, 1)
   const container = new CalendarElement('div')
   const calendars = []
   const steps = [
@@ -3692,6 +3809,7 @@ function makePaidLifecycleFixture(fetch, fixtureOptions = {}) {
   }
   const topic = { value: '' }
   const context = { value: '' }
+  const guestUi = fixtureOptions.guestUi || null
   const paidText = { textContent: 'Choose a time for your paid call.' }
   const popup = {
     querySelector(selector) {
@@ -3699,6 +3817,7 @@ function makePaidLifecycleFixture(fetch, fixtureOptions = {}) {
       if (selector === '[name="topic"], [booking-topic]') return topic
       if (selector === '[name="context"], [booking-context]') return context
       if (selector === '[paid-call-text]') return paidText
+      if (guestUi) return guestQuery(guestUi, selector)
       return null
     },
     querySelectorAll(selector) {
@@ -3706,6 +3825,7 @@ function makePaidLifecycleFixture(fetch, fixtureOptions = {}) {
         return closeControls.concat([bookingBackdrop])
       }
       if (selector === '[schedule-step]') return steps
+      if (guestUi) return guestQueryAll(guestUi, selector)
       return []
     },
   }
@@ -3838,6 +3958,7 @@ function makePaidLifecycleFixture(fetch, fixtureOptions = {}) {
     getCardCreates: () => cardCreates,
     getOpenCount: () => openCount,
     getSaveBindings: () => saveBindings,
+    guestUi,
     mainClose,
     paid,
     paidText,
@@ -3847,6 +3968,7 @@ function makePaidLifecycleFixture(fetch, fixtureOptions = {}) {
     paymentModal,
     restore() {
       global.document = previous.document
+      Date.now = previous.now
       global.Stripe = previous.Stripe
       global.xanoAuthFetch = previous.xanoAuthFetch
     },
@@ -3876,6 +3998,49 @@ test('selected-slot readiness opens card choices without mounting secure inputs'
     assert.equal(readinessCount, 1)
     assert.equal(fixture.getCardCreates(), 0)
     assert.equal(fixture.payment.modal.openCount, 1)
+  } finally {
+    fixture.restore()
+  }
+})
+
+test('card-required Paid booking rechecks the cutoff before the canonical booking request', async () => {
+  const selectedAt = Date.UTC(2026, 7, 24, 0, 0, 0)
+  const slot = {
+    start: selectedAt + 8 * 60 * 60 * 1000,
+    end: selectedAt + 9 * 60 * 60 * 1000,
+    timezone: 'UTC',
+  }
+  let readinessCount = 0
+  let bookingCount = 0
+  const guestUi = makeGuestUi(['guest@example.com'])
+  const fixture = makePaidLifecycleFixture(async (url) => {
+    if (url.endsWith(api.READINESS_PATH)) {
+      readinessCount += 1
+      return response({ environment: 'test', bookable: readinessCount >= 2 })
+    }
+    if (url.endsWith(api.BOOKING_PATH)) {
+      bookingCount += 1
+      return response({ booking: { booking_id: 'unexpected', row_id: 1 } })
+    }
+    throw new Error('Unexpected request: ' + url)
+  }, { guestUi })
+  try {
+    Date.now = () => selectedAt
+    await fixture.paid.onclick({ preventDefault() {} })
+    guestUi.rows[0].field.value = 'guest@example.com'
+    await fixture.calendars[0].options.onConfirm(slot)
+    assert.equal(fixture.payment.modal.openCount, 1)
+    await fixture.payment.choose()
+
+    Date.now = () => selectedAt + 1000
+    await assert.rejects(
+      fixture.calendars[0].options.onConfirm(slot),
+      /no longer available/i,
+    )
+    assert.equal(bookingCount, 0)
+    assert.equal(fixture.calendars[0].clearCount, 1)
+    assert.equal(guestUi.rows[0].field.value, 'guest@example.com')
+    assert.equal(global.StartersBookingSurfaceLifecycle.getBookingRecovery(fixture.container), null)
   } finally {
     fixture.restore()
   }
@@ -4171,9 +4336,11 @@ test('booking retry retains the reviewed card, draft, and booking attempt', asyn
     assert.equal(bookingBodies.length, 0, 'confirming a card never creates a booking')
     await assert.rejects(fixture.calendars[0].options.onConfirm(slot), /temporary booking failure/)
     assert.equal(draftClears, 0, 'failed booking retains the generated draft')
+    assert.ok(global.StartersBookingSurfaceLifecycle.getBookingRecovery(fixture.container))
+    Date.now = () => slot.start - 7 * 60 * 60 * 1000
     await fixture.calendars[0].options.onConfirm(slot)
+    assert.equal(bookingBodies.length, 2, 'an uncertain idempotent retry remains available after cutoff')
     assert.equal(fixture.getCardConfirmations(), 0, 'retry does not create or confirm a new card')
-    assert.equal(bookingBodies.length, 2)
     assert.equal(new Set(bookingBodies).size, 1)
     assert.equal(JSON.parse(bookingBodies[0]).expected_payment_method_id, 'pm_reviewed')
     assert.equal(JSON.parse(bookingBodies[0]).context, draft.context)

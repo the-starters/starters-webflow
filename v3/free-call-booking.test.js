@@ -390,16 +390,26 @@ test('canonical Free reads use one authenticated request and exact V3 routes', a
   assert.equal(new URL(calls[2].url).pathname.endsWith(api.AVAILABILITY_PATH), true)
 })
 
-test('Free availability uses five minutes only on the exact staging host', async () => {
+test('Free initial booking uses the production 8-hour floor and the exact staging exception', async () => {
   const now = Date.UTC(2026, 7, 24, 0, 0, 0)
   const nowSeconds = Math.floor(now / 1000)
-  assert.equal(api.minimumBookingNoticeMinutes(), 1440)
+  assert.equal(api.minimumBookingNoticeMinutes(), 480)
   const staging = loadBrowserApi('the-starters-3-0.webflow.io', async () => response({
     time_slots: [{ start_time: nowSeconds + 5 * 60 }],
   }))
   assert.equal(staging.minimumBookingNoticeMinutes(), 5)
   assert.equal(await staging.getNearestSlot('grant', 'config', now), nowSeconds + 5 * 60)
-  assert.equal(loadBrowserApi('thestarters.com').minimumBookingNoticeMinutes(), 1440)
+  const production = loadBrowserApi('thestarters.com', async () => response({
+    time_slots: [
+      { start_time: nowSeconds + 8 * 60 * 60 - 1 },
+      { start_time: nowSeconds + 8 * 60 * 60 },
+    ],
+  }))
+  assert.equal(production.minimumBookingNoticeMinutes(), 480)
+  assert.equal(
+    await production.getNearestSlot('grant', 'config', now),
+    nowSeconds + 8 * 60 * 60,
+  )
 })
 
 test('next-slot text uses an abbreviated month and two-digit day', () => {

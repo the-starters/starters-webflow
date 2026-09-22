@@ -24,8 +24,9 @@
   const STRIPE_PUBLIC_KEY_LIVE =
     'pk_live_51MMhu4AW8v1kanawUQQjQTpTWBAsdVusIXoXSA26AcTHtZPYbJt6sr98ishd7cs5DXx4QeSMHw45QqrTuzftXaJm005MjZL3sz'
   const STAGING_HOST = 'the-starters-3-0.webflow.io'
-  const PRODUCTION_MIN_BOOKING_NOTICE_MINUTES = 24 * 60
+  const PRODUCTION_MIN_BOOKING_NOTICE_MINUTES = 8 * 60
   const STAGING_MIN_BOOKING_NOTICE_MINUTES = 5
+  const STALE_SLOT_ERROR = 'This time is no longer available. Please choose another time.'
   const MAX_KEY_LENGTH = 128
   const MAX_PAYMENT_METHOD_LENGTH = 128
   const MAX_GUEST_EMAILS = 5
@@ -259,6 +260,14 @@
     return isStagingHost()
       ? STAGING_MIN_BOOKING_NOTICE_MINUTES
       : PRODUCTION_MIN_BOOKING_NOTICE_MINUTES
+  }
+
+  function slotMeetsBookingNotice(slot, nowMs) {
+    const start = Number(slot && slot.start)
+    const minimumStartMs =
+      (Math.floor(Number(nowMs === undefined ? Date.now() : nowMs) / 1000) +
+        minimumBookingNoticeMinutes() * 60) * 1000
+    return Number.isFinite(start) && start >= minimumStartMs
   }
 
   function isValidGuestEmail(email) {
@@ -2632,6 +2641,11 @@
     confirmButton.addEventListener('click', async function (event) {
       if (event) event.preventDefault()
       if (!isCurrent() || !selectedSlot || confirmButton.disabled || confirmationPending) return
+      if (!slotMeetsBookingNotice(selectedSlot)) {
+        clearSelection()
+        setStatus(STALE_SLOT_ERROR, 'error')
+        return
+      }
       if (details && !showingDetails) {
         setDetailsVisible(true)
         return
@@ -2680,7 +2694,14 @@
       } catch (error) {
         console.error('[paid-call] booking failed', error)
         retrySameBooking = error.retrySameBooking === true
-        setStatus(retrySameBooking ? 'Your request may have been received. Retry to check the same request.' : 'We could not book this call. Please try again.', 'error')
+        setStatus(
+          error.staleSlot === true
+            ? STALE_SLOT_ERROR
+            : retrySameBooking
+              ? 'Your request may have been received. Retry to check the same request.'
+              : 'We could not book this call. Please try again.',
+          'error',
+        )
       } finally {
         confirmationPending = false
         if (isCurrent()) {
@@ -3664,6 +3685,20 @@
             const attempt = createBookingAttempt(bookingInput)
             attempt.review = JSON.parse(JSON.stringify({ input: bookingInput, card: paymentChoice.selected(),
               priceText, starterName: settings.starterName || '' }))
+            const run = attempt.run
+            let commandStarted = false
+            attempt.run = function () {
+              if (!commandStarted && !slotMeetsBookingNotice(slot)) {
+                if (clearPaidCalendarSelection) clearPaidCalendarSelection()
+                throw Object.assign(new Error(STALE_SLOT_ERROR), {
+                  bookingNotSubmitted: true,
+                  retrySameBooking: false,
+                  staleSlot: true,
+                })
+              }
+              commandStarted = true
+              return run()
+            }
             return attempt
           },
         )
@@ -3986,6 +4021,7 @@
     normalizeAvailabilitySlots,
     readGuestEmails,
     requireCanonicalBookingProof,
+    slotMeetsBookingNotice,
     supportedTimezones,
     timezoneLabel,
     validateKey,

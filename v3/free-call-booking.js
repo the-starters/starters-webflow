@@ -21,7 +21,7 @@
   // The one copy of this string. hire-profile.js's load-time painter imports it
   // rather than duplicating it, so the two writers cannot drift apart.
   const NO_SLOTS_TEXT = 'No available slots'
-  const PRODUCTION_MIN_BOOKING_NOTICE_MINUTES = 24 * 60
+  const PRODUCTION_MIN_BOOKING_NOTICE_MINUTES = 8 * 60
   const STAGING_MIN_BOOKING_NOTICE_MINUTES = 5
   const chooserBindings = new WeakMap()
   const freeReceiptVisibilityStates = new WeakMap()
