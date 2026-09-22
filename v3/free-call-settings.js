@@ -115,11 +115,13 @@
       typeof memberstack.getMemberJSON !== 'function' ||
       typeof memberstack.updateMemberJSON !== 'function'
     ) throw new Error('Pending Build Profile Call Settings could not be cleared')
+    const consumeMemberId = sessionMemberId
     await queueMemberJsonWrite(async function () {
-      if (!pendingBuildIntent) return
+      if (!pendingBuildIntent || sessionMemberId !== consumeMemberId) return
       const json = memberJsonValue(await memberstack.getMemberJSON())
       const envelope = json.starter_call_settings_intent_v3
-      if (!envelope || envelope.member_id !== sessionMemberId) {
+      if (sessionMemberId !== consumeMemberId) return
+      if (!envelope || envelope.member_id !== consumeMemberId) {
         pendingBuildIntent = null
         return
       }

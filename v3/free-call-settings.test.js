@@ -868,6 +868,40 @@ test('a Free enable receipt canonical already satisfies is consumed on load, not
   assert.equal(result.window.StarterFreeCallSettings.hasChanges(), false)
 })
 
+test('a queued Free receipt consume never deletes the receipt of the member who signs in next', async () => {
+  const gate = deferred()
+  const receipt = {
+    version: 1,
+    member_id: 'member-free-a',
+    free: { enabled: true, description: 'Quick intro' },
+  }
+  const result = load({
+    editProfile: true,
+    memberId: 'member-free-a',
+    memberJSON: { starter_call_settings_intent_v3: receipt },
+    initial: canonical({
+      public_description: 'Quick intro',
+      services: [service()],
+      readiness: { free_call_enabled: true, bookable: true },
+    }),
+  })
+  result.window.__tsMemberJsonWrite = gate.promise
+  await settle()
+
+  assert.equal(result.memberJsonWrites.length, 0, 'the satisfied consume is still queued behind the shared writer')
+
+  receipt.member_id = 'member-free-b'
+  receipt.free = { enabled: true, description: 'B intro' }
+  await result.changeMember({ id: 'member-free-b' })
+  await settle()
+
+  gate.resolve()
+  await settle()
+
+  assert.equal(result.memberJsonWrites.length, 0, "the previous member's consume writes nothing")
+  assert.equal(result.dom.title.value, 'B intro', "the next member's pending choice survives")
+})
+
 test('a Free enable receipt canonical does not satisfy stays pending over the canonical description', async () => {
   const result = load({
     editProfile: true,

@@ -17,10 +17,13 @@ linkage, charge readiness, and the freshness gate are all ready, then the member
 must select Update.
 
 The legacy `data-paid-call-element="settings"` surface authors no Off control, so
-while a pending receipt is waiting and no paid service is active, unchecking the
-Enabled checkbox is that Off choice: it makes Update live and submitting it
-records the decline without a canonical write. An active service is still only
-turned off through the authored Disable action.
+unchecking the Enabled checkbox is that surface's Off choice. While a pending
+receipt is waiting and no paid service is active, that uncheck makes Update live
+and submitting it records the decline without a canonical write. While a service
+is active, an uncheck is never a save: Update neither writes the pending title
+and rate nor turns the service off, and the receipt stays pending until the
+member re-checks Enabled or uses the authored Disable action. A pending Off
+receipt keeps its own Update-driven disable path.
 
 Everything else about that receipt is branch-agnostic and owned by
 [Call Settings receipt lifecycle](../../v3/build-profile/README.md#call-settings-receipt-lifecycle):

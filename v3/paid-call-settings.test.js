@@ -1168,10 +1168,16 @@ test('the legacy non-card Paid surface declines a gated pending enable by unchec
   assert.equal(result.dom.enabled.checked, false, 'the declined choice stays off after the re-render')
 })
 
-test('an unchecked non-card Enabled box never turns an active service off behind Update', async () => {
-  const active = service()
+test('an unchecked non-card Enabled box never writes the pending rate behind Update', async () => {
+  const active = service({ title: 'Strategy call', price_cents: 20000, revision: 2 })
   const result = load({
-    memberJSON: PENDING_PAID_ENABLE,
+    memberJSON: {
+      starter_call_settings_intent_v3: {
+        version: 1,
+        member_id: 'member-a',
+        paid: { enabled: true, title: 'Deep-dive session', price_dollars: 350 },
+      },
+    },
     initial: canonical({
       services: [active],
       readiness: { paid_call_enabled: true, bookable: true },
@@ -1194,16 +1200,72 @@ test('an unchecked non-card Enabled box never turns an active service off behind
   })
   await settle()
 
+  assert.equal(result.dom.price.value, '350', 'the pending rate prefills the authored control')
+
   result.dom.enabled.checked = false
   await result.dom.enabled.dispatch('change')
   await result.dom.save.dispatch('click')
   await settle()
 
   assert.equal(
+    result.calls.filter((call) => call.path === '/starter/paid-call-settings/upsert/v3').length,
+    0,
+    'an off-shaped gesture never saves the pending title and rate',
+  )
+  assert.equal(
     result.calls.filter((call) => call.path === '/starter/paid-call-settings/disable/v3').length,
     0,
     'an active service is only turned off through the authored Turn off action',
   )
+  assert.equal(result.memberJsonWrites.length, 0, 'the receipt survives an off-shaped gesture')
+  assert.equal(
+    result.dom.status.textContent,
+    'Use Turn off paid calls to disable the active service safely.',
+  )
+
+  result.dom.enabled.checked = true
+  await result.dom.enabled.dispatch('change')
+  await result.dom.save.dispatch('click')
+  await settle()
+
+  assert.equal(
+    result.calls.filter((call) => call.path === '/starter/paid-call-settings/upsert/v3').length,
+    1,
+    're-checking Enabled restores the confirmed update path',
+  )
+})
+
+test('a queued Paid receipt consume never deletes the receipt of the member who signs in next', async () => {
+  const gate = deferred()
+  const receipt = {
+    version: 1,
+    member_id: 'member-a',
+    paid: { enabled: true, title: 'Strategy call', price_dollars: 250 },
+  }
+  const result = load({
+    memberId: 'member-a',
+    memberJSON: { starter_call_settings_intent_v3: receipt },
+    initial: canonical({
+      services: [service({ title: 'Strategy call', price_cents: 25000 })],
+      readiness: { paid_call_enabled: true, bookable: true },
+    }),
+  })
+  result.window.__tsMemberJsonWrite = gate.promise
+  await settle()
+
+  assert.equal(result.memberJsonWrites.length, 0, 'the satisfied consume is still queued behind the shared writer')
+
+  receipt.member_id = 'member-b'
+  receipt.paid = { enabled: true, title: 'Deep-dive session', price_dollars: 350 }
+  await result.changeMember({ id: 'member-b' })
+  await settle()
+
+  gate.resolve()
+  await settle()
+
+  assert.equal(result.memberJsonWrites.length, 0, "the previous member's consume writes nothing")
+  assert.equal(result.dom.title.value, 'Deep-dive session', "the next member's pending choice survives")
+  assert.equal(result.dom.price.value, '350')
 })
 
 test('a gated pending Paid Yes re-enables Update only while Off stays selected', async () => {

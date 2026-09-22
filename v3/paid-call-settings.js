@@ -125,11 +125,13 @@
       typeof memberstack.getMemberJSON !== 'function' ||
       typeof memberstack.updateMemberJSON !== 'function'
     ) throw new Error('Pending Build Profile Call Settings could not be cleared')
+    const consumeMemberId = sessionMemberId
     await queueMemberJsonWrite(async function () {
-      if (!pendingBuildIntent) return
+      if (!pendingBuildIntent || sessionMemberId !== consumeMemberId) return
       const json = memberJsonValue(await memberstack.getMemberJSON())
       const envelope = json.starter_call_settings_intent_v3
-      if (!envelope || envelope.member_id !== sessionMemberId) {
+      if (sessionMemberId !== consumeMemberId) return
+      if (!envelope || envelope.member_id !== consumeMemberId) {
         pendingBuildIntent = null
         return
       }
@@ -1218,6 +1220,14 @@
   async function submitIntent() {
     if (editProfileMode && !editProfileDirty) return settings
     if (explicitIntent === 'disabled') {
+      // Where the surface has no Off control of its own, only the authored
+      // Disable action or the member's own pending Off receipt may turn an
+      // active service off.
+      const pendingOff = Boolean(pendingBuildIntent) && !pendingBuildIntent.enabled
+      if (canonicalService(settings) && !disabledField() && !pendingOff) {
+        setMessage('Use Turn off paid calls to disable the active service safely.')
+        return settings
+      }
       const result = await disable()
       if (result && !editProfileMode) setCardEditorOpen(false)
       return result
@@ -1677,11 +1687,9 @@
         memberEditRevision += 1
         const disabledInput = disabledField()
         if (enabledInput.checked) explicitIntent = 'enabled'
-        // The legacy Paid surface authors no Off control, so an unchecked
-        // Enabled box is the only gesture that can decline a pending receipt.
-        else if (!disabledInput && pendingBuildIntent && !canonicalService(settings)) {
-          explicitIntent = 'disabled'
-        }
+        // The legacy Paid surface authors no Off control, so a member's uncheck
+        // is the off choice there.
+        else if (!disabledInput) explicitIntent = 'disabled'
         markEditProfileDirty()
         setRadioChecked(enabledInput, enabledInput.checked)
         if ((cardMode || editProfileMode) && enabledInput.checked) setRadioChecked(disabledInput, false)
