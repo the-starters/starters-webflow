@@ -155,12 +155,20 @@
         label.textContent = item.file?.name || (kind === 'images' ? 'Saved photo' : 'Saved video')
         entry.appendChild(label)
         if (!item.removed) {
-          const preview = document.createElement(kind === 'images' ? 'img' : 'video')
-          preview.setAttribute('src', item.preview || item.url)
-          if (kind === 'images') preview.setAttribute('alt', item.file?.name || 'Highlight photo')
-          else { preview.setAttribute('controls', ''); preview.setAttribute('preload', 'metadata') }
-          preview.style.maxWidth = '100%'
-          entry.appendChild(preview)
+          const source = item.preview || item.url
+          if (typeof source === 'string' && source.trim()) {
+            const preview = document.createElement(kind === 'images' ? 'img' : 'video')
+            preview.setAttribute('src', source)
+            if (kind === 'images') preview.setAttribute('alt', item.file?.name || 'Highlight photo')
+            else { preview.setAttribute('controls', ''); preview.setAttribute('preload', 'metadata') }
+            preview.style.maxWidth = '100%'
+            entry.appendChild(preview)
+          } else {
+            const unavailable = document.createElement('span')
+            unavailable.setAttribute('profile-media-unavailable', '')
+            unavailable.textContent = kind === 'images' ? 'Photo preview unavailable.' : 'Video preview unavailable.'
+            entry.appendChild(unavailable)
+          }
           if (kind === 'images') {
             const cover = document.createElement('button')
             cover.setAttribute('type', 'button'); cover.setAttribute('profile-media-cover', '')

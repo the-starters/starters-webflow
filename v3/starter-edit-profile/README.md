@@ -591,6 +591,10 @@ read no longer shows — the entry switches to the stored media: the object URL 
 or an unknown outcome keeps its rows, so this matters: without it those rows would go on
 rendering from a revoked object URL and holding the file in memory for the page session.
 
+A retained photo or video without a nonblank URL shows a readable preview-unavailable
+message instead of creating a broken media request. It remains retained, with its
+cover, Remove, and Undo controls available.
+
 ### Limits
 
 Services allows three entries. Work Experience allows three entries. Highlights
@@ -599,11 +603,24 @@ each, which is the endpoint limit; the UI allowed 50 MB before 2026-09-17.
 
 ### Test page state
 
-The Designer page "Starter Edit Profile Test" (`/starter-edit-profile-test`,
-unpublished) has Required set on `company-name`, `company-position`,
-`edit-company-name`, `edit-company-position`, `service-name`, `service-price`, and
-`rate-retainer`, and `form-xano-required` on the same seven fields. The markers
-and the script loaders are not installed on it yet.
+Read-only checks on 2026-09-22 confirmed that `/starter-edit-profile-test` and
+`/starter-edit-profile` both return HTTP 200. The duplicate has all three unified
+section markers and loads the unified scripts at `v1.59.579`; the original has
+none of those section markers. Native Required is present on company name,
+service name, and service price; `rate-retainer.required` is true at runtime.
+The runtime observation does not establish the Retainer's authored setting.
+
+The duplicate still needs Designer cleanup. Neither status nor check-save nodes
+are authored. Legacy Highlights `data-highlights`/card and
+`data-add-highlight-dropdown` elements, the Work Experience `company-list`, and
+the `company-edit` dialog remain. Highlights Add, Discard, and row toggle have
+Designer visibility set to false. Services buttons still use the alternate
+`White with border13` class.
+
+The September 18 cutover specification reserves Designer edits and publication
+to the author. Desktop/mobile screenshot approval remains pending, followed by
+the specified staging-qa and manual acceptance. This session did not verify live
+saves or make profile writes. Review Requests remains outside this cutover.
 
 Focused tests:
 
@@ -621,8 +638,6 @@ node --test v3/starter-edit-profile/profile-section-validation.test.js \
   `profile-items-status` and `profile-items-check-save` to give them a class.
 - `v3/build-profile/portfolio-crud.js` still states a 50 MB video limit. That is a
   separate page and was not changed here.
-- `renderMedia` in `unified-highlights.js` has no fallback for a stored media row
-  that arrives without a URL.
 
 ### Test helpers
 

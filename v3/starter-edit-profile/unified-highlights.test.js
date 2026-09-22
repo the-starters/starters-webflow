@@ -496,6 +496,38 @@ test('a failed canonical read after a successful write keeps the unconfirmed pat
   assert.equal(page.mutations().filter(request => request.endpoint === 'Update_portfolio').length, 1, 'Save stays paused rather than replaying the write')
 })
 
+test('retained media without URLs stays editable without creating broken previews', async () => {
+  for (const missing of [undefined, null, '', '   ']) {
+    const page = await mount({ portfolios: [{ id: 1, title: 'Saved', description: '', cover_image_id: 2,
+      images: [{ id: 2, image_url: missing, is_cover: true }, { id: 3, image_url: 'https://example.test/photo.png' }],
+      videos: [{ id: 4, video_url: missing }, { id: 5, video_url: 'https://example.test/video.mp4' }],
+    }] })
+    for (const [kind, tag, message, source] of [
+      ['images', 'img', 'Photo preview unavailable.', 'https://example.test/photo.png'],
+      ['videos', 'video', 'Video preview unavailable.', 'https://example.test/video.mp4'],
+    ]) {
+      const [unavailable, available] = page.media(kind)
+      assert.equal(unavailable.querySelector('img, video'), null, 'no media source is requested for a missing URL')
+      assert.equal(unavailable.querySelector('[profile-media-unavailable]').textContent, message)
+      assert.equal(available.querySelector(tag).getAttribute('src'), source)
+      assert.equal(available.querySelector('[profile-media-unavailable]'), null)
+      page.click(unavailable.querySelector('[profile-media-remove]'))
+      page.click(page.media(kind)[0].querySelector('[profile-media-undo]'))
+      assert.equal(page.media(kind)[0].querySelector('[profile-media-unavailable]').textContent, message)
+    }
+    page.click(page.media('images')[0].querySelector('[profile-media-cover]'))
+    assert.equal(page.media('images')[0].querySelector('[profile-media-cover]').getAttribute('aria-pressed'), 'true')
+    assert.equal(page.mutations().length, 0, 'preview availability never mutates the retained media')
+    page.click(page.media('images')[0].querySelector('[profile-media-remove]'))
+    page.click(page.media('videos')[0].querySelector('[profile-media-remove]'))
+    await page.submit()
+    assert.equal(page.status(), 'Changes saved.')
+    assert.equal(page.mutations().find(request => request.endpoint === 'Delete_portfolio_image').body.image_id, 2)
+    assert.equal(page.mutations().find(request => request.endpoint === 'Delete_portfolio_video').body.video_id, 4)
+    assert.equal(page.mutations().find(request => request.endpoint === 'Update_portfolio').body.cover_image_id, 3)
+  }
+})
+
 test('a confirmed attachment renders from the stored file and frees the local one', async () => {
   // The second row is refused, so the save ends without the reset that Discard-style restore
   // would do. The first row's confirmed photo must already be living off its stored URL.
