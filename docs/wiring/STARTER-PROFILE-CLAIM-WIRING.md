@@ -67,14 +67,19 @@ testing. The controller writes only the short-lived one-use exchange code to the
 input. It never puts the raw QR capability in DOM, Memberstack, storage, logs,
 or analytics, and it does not accept a value authored in Webflow.
 
-Load the controller with `defer` on the Hire CMS template:
+Load the controller synchronously in the Hire CMS template page head, before the
+existing sitewide PostHog initialization:
 
 ```html
-<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/starter-profile-claim.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/starter-profile-claim.js"></script>
+<!-- Existing sitewide PostHog initialization follows this script. -->
 ```
 
-Pin an immutable release tag in production. Do not publish this script reference
-while the backend route does not exist.
+Do not add `async`, `defer`, or place the controller after PostHog. At evaluation
+time it captures one strict token into closure memory and scrubs `claim` before
+querying body markup. After parsing, `DOMContentLoaded` binds and evaluates the
+authored wrapper. Pin an immutable release tag in production. Do not publish
+this script reference while the backend route does not exist.
 
 ## Browser state machine
 
@@ -82,6 +87,7 @@ while the backend route does not exist.
 | --- | --- | --- |
 | no `claim` query | stays hidden; no request | `closed` |
 | malformed or repeated query | stays hidden; no request | `closed` |
+| trailing-slash or other non-canonical profile path | stays hidden; no request | `misconfigured` |
 | missing form, exchange input, or endpoint attribute | stays hidden | `misconfigured` |
 | request in flight | stays hidden | `validating` |
 | active invitation and strict exchange for this exact profile path | remove `hide` and `hidden`; set `aria-hidden="false"` | `ready` |
@@ -148,7 +154,7 @@ Request:
 
 The endpoint hashes the token, locks the invitation row for the read, checks
 active status and expiry, reads the exact `freelancers_v3` row, and compares the
-current canonical profile path. It then mints a cryptographically random,
+current canonical no-trailing-slash `/hire/<slug>` profile path. It then mints a cryptographically random,
 short-lived one-use exchange code, stores only its digest in the child ledger,
 and returns the raw code once. It never returns an email, Memberstack ID,
 Starter ID, or profile record.
@@ -222,8 +228,9 @@ claim state fails closed and must not fall through to create another profile.
 7. Published Hire pages without `claim` issue no prepare request and keep the
    component hidden.
 8. Browser readback confirms the valid QR path removes only the `claim` query
-   value before the prepare request, reveals the intended component only with a
-   valid exchange, and stays scrubbed and hidden on network failure.
+   value before the following PostHog initialization and prepare request,
+   reveals the intended component only with a valid exchange, rejects the
+   trailing-slash alias, and stays scrubbed and hidden on network failure.
 
 Run the local frontend checks with:
 
