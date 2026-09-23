@@ -1110,14 +1110,23 @@
         scope = await currentAuthScope()
         if (authTransitionPending !== transition) return null
         const canonical = await readCanonicalSettings(scope)
+        const cleanupPending = Boolean(receiptCleanup)
+        const pending = cleanupPending
+          ? undefined
+          : await readPendingBuildIntent().catch(function () { return undefined })
         if (
           authTransitionPending !== transition ||
           notifiedMember.id !== sessionMemberId ||
           !settings
         ) return null
+        if (pending !== undefined) pendingBuildIntent = receiptCleanupOwed() ? null : pending
         sessionAuthScope = scope
         prerequisiteRefreshQueued = false
-        return render(canonical)
+        const rendered = render(canonical)
+        if (!cleanupPending && (receiptCleanupOwed() || canonicalSatisfiesPendingIntent(canonical))) {
+          startReceiptCleanup()
+        }
+        return rendered
       } catch (error) {
         if (authTransitionPending !== transition) return null
         if (error && error.code !== 'MEMBER_SCOPE_CHANGED' && failClosedSession(error)) return null
@@ -1283,6 +1292,12 @@
     return new Promise(function (resolve) { memberstackReadyResolvers.push(resolve) })
   }
 
+  function waitForSiteMemberReady() {
+    const memberReady = window.memberReady
+    if (!memberReady || typeof memberReady.then !== 'function') return Promise.resolve()
+    return Promise.resolve(memberReady).then(function () {}, function () {})
+  }
+
   let schedulingAuthWait = null
 
   function schedulingAuthReady() {
@@ -1404,6 +1419,7 @@
       if (!editProfileMode) setCardEditorOpen(false)
       bind()
       await waitForMemberstack()
+      await waitForSiteMemberReady()
       return loadSession(undefined, false)
     })()
     try {
