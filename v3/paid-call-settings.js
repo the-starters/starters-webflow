@@ -1461,14 +1461,29 @@
         scope = await currentAuthScope()
         if (authTransitionPending !== transition) return null
         const canonical = await readCanonicalSettings(scope)
+        // Do not queue a read behind a receipt cleanup already in flight. Its
+        // canonical owner is settled independently, and auth recovery must not
+        // delay that newer canonical render.
+        const cleanupPending = Boolean(receiptCleanup)
+        const pending = cleanupPending
+          ? undefined
+          : await readPendingBuildIntent().catch(function () { return undefined })
         if (
           authTransitionPending !== transition ||
           notifiedMember.id !== sessionMemberId ||
           !settings
         ) return null
+        // Memberstack can identify the signed-in member before its custom JSON is
+        // ready. Re-read the private Build receipt on same-member auth recovery so
+        // a missed first read does not turn a saved Paid choice into No/blank.
+        if (pending !== undefined) pendingBuildIntent = receiptCleanupOwed() ? null : pending
         sessionAuthScope = scope
         prerequisiteRefreshQueued = false
-        return render(canonical)
+        const rendered = render(canonical)
+        if (!cleanupPending && (receiptCleanupOwed() || canonicalSatisfiesPendingIntent(canonical))) {
+          startReceiptCleanup()
+        }
+        return rendered
       } catch (error) {
         if (authTransitionPending !== transition) return null
         if (error && error.code !== 'MEMBER_SCOPE_CHANGED' && failClosedSession(error)) return null
@@ -1639,6 +1654,15 @@
     })
   }
 
+  function waitForSiteMemberReady() {
+    const memberReady = window.memberReady
+    if (!memberReady || typeof memberReady.then !== 'function') return Promise.resolve()
+    // This site signal marks Memberstack bootstrap completion, but it resolves
+    // an empty object for every visitor. Use it only as a barrier; loadSession
+    // still takes a fresh live Memberstack identity snapshot after it settles.
+    return Promise.resolve(memberReady).then(function () {}, function () {})
+  }
+
   let schedulingAuthWait = null
 
   function schedulingAuthReady() {
@@ -1793,6 +1817,7 @@
       if (cardMode && !editProfileMode) setCardEditorOpen(false)
       bind()
       await waitForMemberstack()
+      await waitForSiteMemberReady()
       return loadSession(undefined, false)
     })()
     try {
