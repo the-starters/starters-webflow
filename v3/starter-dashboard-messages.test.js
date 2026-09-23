@@ -406,6 +406,28 @@ test('the dashboard tile opens through the shared authenticated session owner', 
   assert.equal(loaded.calls.sessions.length, 1)
 })
 
+test('session invalidation clears cards and blocks stale request repaint', async () => {
+  const recent = {
+    id: 'one:mem_me|mem_other',
+    participant_name: 'Prior Member Brand',
+    participant_photo_url: null,
+    last_message_text: 'Protected preview',
+    last_message_at: 1,
+    unread: false,
+  }
+  const state = loadRenderedRecent(recent, [], { deferRecent: true })
+  await settle(5)
+
+  assert.equal(state.calls.authSessions.length, 1)
+  state.calls.authSessions[0].onInvalidate()
+  assert.equal(state.list.children.length, 0)
+
+  state.resolveRecent()
+  await settle()
+  assert.equal(state.list.children.length, 0)
+  assert.equal(state.total.textContent, '0')
+})
+
 test('the recent-messages retry refreshes a cached Xano bearer', async () => {
   const recent = {
     id: 'one:mem_me|mem_other',

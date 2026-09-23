@@ -666,6 +666,7 @@
     }
 
     const state = { recent: [], recentSettled: false, unreads: [] }
+    let invalidated = false
     const rerender = () => {
       instances.forEach((refs) => {
         try {
@@ -690,11 +691,13 @@
       const initial = !state.recentSettled
       recentRequest = fetchRecentConversations(memberstack)
         .then((items) => {
+          if (invalidated) return
           state.recent = items
           state.recentSettled = true
           rerender()
         })
         .catch((error) => {
+          if (invalidated) return
           console.warn(
             initial
               ? '[starter-dashboard] Recent conversations unavailable, hiding message cards'
@@ -709,7 +712,7 @@
         })
         .finally(() => {
           recentRequest = null
-          if (refreshQueued) {
+          if (!invalidated && refreshQueued) {
             refreshQueued = false
             refreshRecent()
           }
@@ -730,14 +733,24 @@
       me,
       clientOwner: 'dashboard-messages-v3',
       onReconnect: mountTile,
+      onInvalidate: () => {
+        invalidated = true
+        refreshQueued = false
+        state.recent = []
+        state.recentSettled = true
+        state.unreads = []
+        rerender()
+      },
     })
 
     session.onMessage(() => {
+      if (invalidated) return
       refreshRecent()
     })
 
     let unreadActivitySignature = null
     session.unreads.onChange((unreads) => {
+      if (invalidated) return
       const nextUnreads = unreads || []
       const nextSignature = JSON.stringify(
         nextUnreads.map((unread) => [

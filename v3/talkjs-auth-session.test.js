@@ -36,7 +36,7 @@ function harness(options = {}) {
       ? 'memberstack-cookie-a'
       : options.memberstackCookie
   let authListener
-  const calls = { fetches: [], sessions: [], destroys: 0, reconnects: 0, xanoTokens: 0, xanoTokenArgs: [] }
+  const calls = { fetches: [], sessions: [], destroys: 0, reconnects: 0, invalidations: 0, xanoTokens: 0, xanoTokenArgs: [] }
   const config = {
     getAttribute(name) {
       if (name === 'data-token-url') return 'https://untrusted.example/token'
@@ -156,6 +156,7 @@ async function open(state, overrides = {}) {
     me: { id: member.id },
     clientOwner: overrides.clientOwner || 'messages-v3',
     onReconnect: overrides.onReconnect,
+    onInvalidate: overrides.onInvalidate,
   })
 }
 
@@ -634,6 +635,44 @@ test('logout during token issuance cannot construct a TalkJS session', async () 
   release()
 
   await assert.rejects(opening, /Member changed during TalkJS session opening/)
+  assert.equal(state.calls.sessions.length, 0)
+  assert.equal(state.api.debugSnapshot(), null)
+})
+
+test('changed-cookie auth event supersedes and invalidates a pending opening', async () => {
+  let release
+  let startedResolve
+  const started = new Promise((resolve) => {
+    startedResolve = resolve
+  })
+  const gate = new Promise((resolve) => {
+    release = resolve
+  })
+  const state = harness({
+    fetch: async () => {
+      startedResolve()
+      await gate
+      return jsonResponse({
+        token: token(),
+        me_id: 'mem_sb_membera',
+        data_environment: 'test',
+        expires_in_seconds: 300,
+      })
+    },
+  })
+  const opening = open(state, {
+    onInvalidate: () => {
+      state.calls.invalidations += 1
+    },
+  })
+  await started
+
+  state.memberstackCookie('memberstack-cookie-b')
+  await state.authChange()
+
+  assert.equal(state.calls.invalidations, 1)
+  release()
+  await assert.rejects(opening, /superseded/)
   assert.equal(state.calls.sessions.length, 0)
   assert.equal(state.api.debugSnapshot(), null)
 })

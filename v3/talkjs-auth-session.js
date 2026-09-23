@@ -158,11 +158,24 @@
     if (typeof reconnect === 'function') target[owner] = reconnect
   }
 
+  function addInvalidator(target, owner, invalidate) {
+    if (typeof invalidate === 'function') target[owner] = invalidate
+  }
+
   async function reconnectViews(reconnectors) {
     var owners = Object.keys(reconnectors)
     for (var index = 0; index < owners.length; index += 1) {
       try {
         await reconnectors[owners[index]]()
+      } catch (error) {}
+    }
+  }
+
+  async function invalidateViews(invalidators) {
+    var owners = Object.keys(invalidators)
+    for (var index = 0; index < owners.length; index += 1) {
+      try {
+        await invalidators[owners[index]]()
       } catch (error) {}
     }
   }
@@ -416,20 +429,30 @@
   }
 
   async function reconcileMemberstack() {
-    if (!active) return
     var owned = active
+    var opening = pending
+    if (!owned && !opening) return
+    var lifecycle = owned || opening
     var cookie
     try {
-      cookie = await owned.memberstack.getMemberCookie()
+      cookie = await lifecycle.memberstack.getMemberCookie()
     } catch (error) {
       return
     }
-    if (active !== owned || cookie === owned.memberstackCookie) return
-    var reconnectors = owned.reconnectors
-    var memberstack = owned.memberstack
-    var memberId = owned.memberId
+    if (
+      (owned && active !== owned) ||
+      (!owned && pending !== opening) ||
+      cookie === lifecycle.memberstackCookie
+    ) {
+      return
+    }
+    var reconnectors = owned && owned.reconnectors
+    var invalidators = lifecycle.invalidators
+    var memberstack = lifecycle.memberstack
+    var memberId = lifecycle.memberId
     destroy(cookie ? 'credential-change' : 'logout')
-    if (!cookie) return
+    await invalidateViews(invalidators)
+    if (!owned || !cookie) return
     var identity = await stableIdentity(memberstack, memberId)
     if (identity.status === 'same') await reconnectViews(reconnectors)
   }
@@ -481,6 +504,11 @@
         options.clientOwner,
         options.onReconnect,
       )
+      addInvalidator(
+        active.invalidators,
+        options.clientOwner,
+        options.onInvalidate,
+      )
       return active.session
     }
     if (pending) {
@@ -493,6 +521,11 @@
         options.clientOwner,
         options.onReconnect,
       )
+      addInvalidator(
+        pending.invalidators,
+        options.clientOwner,
+        options.onInvalidate,
+      )
       return pending.promise
     }
 
@@ -500,8 +533,11 @@
     var pendingState = {
       memberId: memberId,
       environment: environment,
+      memberstack: options.memberstack,
+      memberstackCookie: memberstackCookie,
       clientOwners: {},
       reconnectors: {},
+      invalidators: {},
       promise: null,
     }
     pendingState.clientOwners[options.clientOwner] = true
@@ -509,6 +545,11 @@
       pendingState.reconnectors,
       options.clientOwner,
       options.onReconnect,
+    )
+    addInvalidator(
+      pendingState.invalidators,
+      options.clientOwner,
+      options.onInvalidate,
     )
     pending = pendingState
     pendingState.promise = (async function () {
@@ -568,6 +609,7 @@
         memberstackCookie: identity.cookie,
         clientOwners: pendingState.clientOwners,
         reconnectors: pendingState.reconnectors,
+        invalidators: pendingState.invalidators,
       }
       return session
     })()
