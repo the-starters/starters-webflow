@@ -857,21 +857,14 @@ the authorized desktop local preview, not a published production release.
 
 ##### Release status — 2026-09-23
 
-This is the current status and supersedes the earlier acceptance and
-authorization wording in the subsections above. After PR 943 merged, the user
-authorized the release. Desktop acceptance is complete on the strength of the
-final run at `449b3ee2` recorded directly above, not the older preview table;
-the interim **blocked** and **not full acceptance** verdicts in the historical
-run records are superseded and are not current blockers. Mobile resize stays
-parked as the user directed and is not part of this release.
-
-Release is authorized and in progress, **not** completed: this branch only
-stamps the `v1.59.614` marker on the two changed browser scripts and updates
-this documentation. The tag, CDN purge, test-page publishing, and post-release
-verification are handled outside this branch, as is the shared accordion loader
-tag noted above, which is being authored in Webflow before publication. Nothing
-here should be read as a claim that the scripts or markup are deployed until
-that verification is recorded.
+The `v1.59.614` release-status record above covered the shared accordion and
+Work Experience script markers. After the merged Work Highlights Save hotfix,
+this branch prepares the `v1.59.615` candidate for `portfolio-crud.js` only: it
+stamps that controller's release header and refreshes the candidate provenance.
+The tag, CDN purge, Webflow edits, site publish, and post-release verification
+remain outside this branch and require separate explicit approval. Nothing here
+should be read as a claim that the script or markup is deployed until that
+verification is recorded.
 
 ### Work Experience section readiness
 
