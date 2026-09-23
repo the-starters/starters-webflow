@@ -18,6 +18,14 @@ for entry in entries:
     if path.suffix == '.js':
         subprocess.run(['node', '--check', str(path)], check=True, stdout=subprocess.DEVNULL)
 runtime = root / 'runtime'
-present = {str(item.relative_to(runtime)) for item in runtime.rglob('*') if item.is_file()}
-assert present == known, f'runtime holds unpinned files: {sorted(present - known)}'
+# Hidden files are editor and Finder droppings, not bundle content. Every script the
+# runtime serves is a manifest path, so anything else visible here is unpinned.
+present = {
+    str(item.relative_to(runtime)) for item in runtime.rglob('*')
+    if item.is_file() and not any(part.startswith('.') for part in item.relative_to(runtime).parts)
+}
+assert present == known, (
+    f'runtime does not match the manifest: unpinned {sorted(present - known)}, '
+    f'missing {sorted(known - present)}'
+)
 print(f'Bundle verified: {len(entries)} scripts')
