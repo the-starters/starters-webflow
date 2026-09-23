@@ -38,8 +38,8 @@ Do not discard local changes unless the user explicitly asks.
 - Do not force-push.
 - Do not overwrite remote changes with stale local files.
 - If a push is rejected, fetch and review the remote changes before trying again.
-- For Webflow browser code, put the implementation in this GitHub repo and keep Webflow thin. Load the jsDelivr asset once from Page/Site Settings -> Custom Code -> Head Code with `defer`. During soft launch, prefer the env-switch loader where the page already uses it: staging reads `@main`, production reads a pinned semver tag, and the previous production tag is the rollback target.
-- `@latest` resolves the highest semver tag. If a legacy page still uses `@latest`, the production release sequence is merge to `main` -> semver tag/release -> purge `@latest` -> verify the served bytes; merge + purge without a newer tag will continue serving the previous release.
+- For Webflow browser code, put the implementation in this GitHub repo and keep Webflow thin. Load the jsDelivr asset once from Page/Site Settings -> Custom Code -> Head Code using `@latest` with `defer`, so future tagged releases do not require another Webflow edit.
+- `@latest` resolves the highest semver tag. The production release sequence is merge to `main` -> semver tag/release -> purge `@latest` -> verify the served bytes; merge + purge without a newer tag will continue serving the previous release.
 - Before adding a script here, check whether native Webflow, `wf-xano`, `wf-algolia`, or another established shared library already owns the behavior. Prefer extending the appropriate library when the capability will be reused. One-off page scripts belong here only when the behavior is genuinely page-specific or cannot fit a shared attribute contract without distorting it.
 - Browser behavior must connect to Webflow elements through custom attributes, not styling classes or generated IDs. Reuse the owning library's vocabulary; do not invent a parallel attribute dialect.
 
@@ -97,7 +97,7 @@ tighter predicate that `STARTERS_DEBUG` cannot unlock, and says so where it live
 - `v3/opp-alerts-unsubscribe.js` — explicit unsubscribe and re-subscribe controller for the V3 opportunity-alert email page; the authoritative Webflow markup, request, and user-state contract lives in [`v3/README.md`](v3/README.md#opportunity-alert-email-preferences)
 - `v3/all-starters-favorites.js` — paid-Brand favourites controls and Designer-built All/Favourites filtering for `/all-starters`, backed by sitewide `wf-xano` and `wf-algolia`
 - `v3/hire-profile-favorites.js` — paid-Brand favourite hydration for Designer-authored hearts on `/hire/<slug>`; does not use `data-starters-list`; the authoritative module contract lives in [`v3/README.md`](v3/README.md#hire-profile-favorites) and the hire-template install in [`docs/wiring/HIRE-PROFILE-WIRING.md`](docs/wiring/HIRE-PROFILE-WIRING.md#install)
-- `v3/starter-profile-claim.js` — fail-closed premade Starter profile claim gate for normal `/hire/<slug>` URLs; Kaeser's slug allowlist controls whether the existing signup form is revealed and which exact profile slug it submits. The authoritative markup, backend, install, and release contract lives in [`docs/wiring/STARTER-PROFILE-CLAIM-WIRING.md`](docs/wiring/STARTER-PROFILE-CLAIM-WIRING.md)
+- `v3/starter-profile-claim.js` — fail-closed premade Starter profile claim gate for normal `/hire/<slug>` URLs; Xano claim-status controls whether the existing signup form is revealed and which exact profile slug it submits. The authoritative markup, backend, install, and release contract lives in [`docs/wiring/STARTER-PROFILE-CLAIM-WIRING.md`](docs/wiring/STARTER-PROFILE-CLAIM-WIRING.md)
 - `v3/ai-recruiter.js` — lower-right, role-gated V3 AI Recruiter controller;
   binds native Webflow markup and sends authenticated requests only through
   Xano. The authoritative access, markup, monitoring, release, and rollback
@@ -308,7 +308,6 @@ Attribute-driven components published for reuse across pages. Most carry a
 - `global-embeds/step-flow/panel-nav-flow.js` — panel navigation beside the step engine: swaps sibling panels inside `[data-panel-parent]` with a per-parent history stack for `[data-panel-nav-back-button]`, toggling `display` instantly ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/step-flow/panel-nav-flow))
 - `global-embeds/tabs/tabs.js` — attribute-driven tabs for multi-step forms and layouts (`[data-tab-component="wrapper"]`): global or per-panel prev/next, optional link locking until reached via Next, and optional per-panel validation ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/tabs))
 - `global-embeds/modal/modal.js` — the `lumos.modal` dialog system: inits every `.modal_dialog`, adds GSAP open/close timelines per `data-wf--modal--variant` (side-panel, full-screen), and manages focus restore. A `data-modal-close` control never reopens the modal it dismisses (matched by `data-modal-target`, so CMS-duplicated dialogs are covered), while one naming a different modal closes and opens as a hand-off; a close anchor's navigation is suppressed only for `#`, an empty href, and hashes naming a registered modal, so section anchors and real links still work. Closing always leaves the entrance timeline rewound: a close that lands before the animation has moved skips the exit animation, and without the rewind that entrance would play on to the end on the hidden dialog and make the next open snap in fully opaque instead of fading ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/modal))
-  A link with the exact `href="#join-starters-cta"` and `data-join-starters-link` on the link or a containing element scrolls normally when the section exists. Otherwise it opens `join-starters-modal` when available, then a page-owned `signup-modal` only when it has both monthly and yearly `join-cta` offers. If neither membership dialog opens, it goes to `/why-us#join-starters-cta` rather than Quiz Results. Links to other pages and fragments keep native navigation. In the generic dialog, `join-cta-tabs="monthly"` and `join-cta-tabs="yearly"` switch the matching `join-cta` offer without changing its Memberstack action or an article signup dialog.
 - `global-embeds/modal/reset-on-close.js` — opt-in `data-modal-reload-on-submit` reload once a modal's form really succeeded, detected from Webflow hiding the `<form>` **and** showing `.w-form-done` so a Designer-visible done block cannot false-positive ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/modal/reset-on-close))
 - `global-embeds/accordions/accordions.js` — shared attribute-driven accordions; authoritative setup and behavior live in the [accordion README](global-embeds/accordions/README.md)
 - `global-embeds/accordions/mobile-accordions.js` — mobile membership accordions for Join CTA and Signup Modal, with optional animation and desktop teardown
@@ -586,15 +585,11 @@ live in
 ## Opportunities 3.0 Create and Edit Forms
 
 Before releasing either opportunity controller, publish
-`data-opp-form="create"` on each full Webflow create/edit opportunity form
-rendered on the supported pages, including `/opportunities---create`, the
-Brand feed's post-opportunity modal, and the Brand detail page's Edit
-Opportunity modal. Both `opportunities-3.0.js` and
-`opportunities---create.js` resolve these forms only through this stable role;
+`data-opp-form="create"` on the one full Webflow create form rendered on each
+supported page, including `/opportunities---create` and the Brand feed's
+post-opportunity modal. Both `opportunities-3.0.js` and
+`opportunities---create.js` resolve that form only through this stable role;
 generated form IDs and styling classes are not supported selector fallbacks.
-The dedicated `/opportunities---create` page controller skips any
-`data-opp-form="create"` form inside `[data-modal-target="edit-opportunity"]`
-so the shared detail-page edit handler remains the only owner of that modal.
 
 The dedicated page controller shares a run-once guard with the core controller,
 so loading both scripts does not submit twice. Keep the existing load order:
@@ -654,11 +649,6 @@ authored default radio cannot replace the opportunity's current Project Type
 when the modal reopens. Project Type prefill also emits the native change event
 used by the authored tab controller, keeping its active pill and conditional
 panel aligned with the checked radio.
-Duration remains required for every Project Type. Until Designer moves the
-Duration radio group out of the authored one-time panel, the controller promotes
-a Duration-only `.app-form_input_group` to just before `[data-project-type-list]`
-once per form. This is a no-op when the group is already outside the conditional
-panels or when the group owns any non-Duration field.
 
 After a successful create or edit, the controller paints the Webflow-authored
 review success screen in place; it binds only existing elements and generates no
@@ -668,21 +658,17 @@ placeholder span or an empty span inside `.heading-style-h1` when that attribute
 is absent. It also rewrites the `.text-size-medium` confirmation message to
 opportunity-specific copy when the authored text still reads as application copy,
 so both flows read "Our team is carefully reviewing your opportunity."
-After a successful edit on the opportunity detail page, the controller also
-repaints the CMS-authored category chip list at `data-opp-bind="category-list"`
-from the submitted category names, then non-fatally confirms them from
-`brand/opportunities/get` when that response includes `category_names`.
 
 Keep `utils/wf-validate.js` on these forms. The controller registers the authored
 field through `window.WfValidate.refresh(form)`, so category and estimated-hours
 failures use the form's normal inline error treatment. Client-side checks remain
 UX only; Xano retains authority over accepted payloads.
 
-Run the focused form-selector, feedback, validation, create-page authentication,
-and edit Duration/category regressions with:
+Run the focused form-selector, feedback, validation, and create-page authentication
+regressions with:
 
 ```sh
-node --test opportunities-form-contract.test.js opportunities-create-auth.test.js opportunities-create-feedback.test.js opportunities-edit-duration-categories.test.js wf-validate.test.js
+node --test opportunities-form-contract.test.js opportunities-create-auth.test.js opportunities-create-feedback.test.js wf-validate.test.js
 ```
 
 ## V3 Scheduling Authentication
@@ -986,13 +972,6 @@ form-flow steps, so author the confirmation title with
 `data-opp-state="not-applied"`. A successful withdrawal shows the success title;
 opening the modal again resets its titles to the confirmation state.
 
-The Apply Opportunity and Edit Application success screens are owned by
-`data-modal-target="apply-opportunity"` and `data-modal-target="edit-application"`.
-Their authored Back to opportunities button always returns to the merged
-`/opportunities` feed. Their authored View Application button keeps the current
-detail page open when already on `/opportunities/<slug>`, or navigates from a feed
-card to that card's active opportunity detail URL.
-
 Brand-side application archiving is private bookkeeping and does not add an
 `archived` talent UI state. An archived application still paints as `applied` or
 `edited`, so Withdraw and Edit Application remain available; if its opportunity is
@@ -1121,8 +1100,8 @@ the same trimmed, case-insensitive identity check the create path applies, so a
 padded enum value cannot send the two paths to different routes. Any canonical
 row with `handoff_type=final` is a final invoice, whether it is a current
 `kind=payment_link` row or a legacy `kind=stripe_invoice` row: its prompt reads
-`Type CANCEL to cancel this final invoice. The payment link will stop working.`,
-it posts to `invoices/final-cancel/v3`, and its idempotency key is
+`Type CANCEL to void this final invoice. The hosted invoice will stop accepting
+payment.`, it posts to `invoices/final-cancel/v3`, and its idempotency key is
 prefixed `final-invoice-cancel-ui:`. Every other eligible row keeps the ordinary
 prompt, `invoices/cancel/v3`, and the `invoice-cancel-ui:` prefix. Both routes
 post the same `invoice_id`,
@@ -1314,32 +1293,51 @@ native `dialog[data-modal-target="generate-invoice"]` component, opened through
 `window.lumos.modal`'s registry so its paused GSAP entrance timeline, scroll
 lock, and focus restore all still run; direct `showModal()` remains only as a
 fallback for pages without `modal.js`. Completed project rows keep this invoice
-entry point: the browser treats them as billable unless their canonical
-`lifecycle_state` or fallback `status` is an ended state. The modal always
-opens, and Xano remains the authority for whether the signed-in Starter can bill
-the selected project.
+entry point: the browser never hides Generate Invoice because the project is in
+a terminal lifecycle state, and the modal always opens. Xano remains the
+authority for whether the signed-in Starter can bill the selected project.
 
-Opening resolves the invoice mode from the canonical row (JP decision 1a,
-2026-10-02: a final invoice has no requirement that differs from an ordinary
-Payment Link):
+Opening resolves one of four invoice modes from the canonical row, and the mode
+decides the submit contract. A `final_invoice` row is recognised as the project's
+final-invoice handoff when `handoff_type=final` and `sync_origin=v3`, regardless
+of `kind`; this covers both an ungenerated legacy-shaped `stripe_invoice`
+placeholder and its committed `payment_link` row. Its `status` then chooses
+between the two completed modes:
 
-- `standard` — every project that is not ended, including `active`,
-  `completion_requested`, and `completed` V3 projects and `active` or
-  `completed` `v2_legacy` projects. The ordinary create contract below applies,
-  whether or not the row carries a `final_invoice` placeholder. A placeholder's
-  stored amount and description are never prefilled, and the fields stay
-  editable.
-- `unavailable` — the project has ended: the canonical `lifecycle_state` (or,
-  when it is absent, the dashboard `status`) is `terminated`,
-  `termination_requested`, `canceled`, or `cancelled`. The modal still opens,
-  and the submit fails closed with `This project has ended, so it cannot be
-  invoiced. Contact The Starters if you need help.` before any request.
-  `invoices/create/v3` rejects these states too.
+- `standard` — the project is not completed. The ordinary create contract below
+  applies unchanged.
+- `final` — the project is completed and its final-invoice handoff is still
+  open, meaning `status` is `unknown` or `unpaid`. The submit routes to the
+  final-invoice contract below.
+- `final_closed` — the project is completed and its final-invoice handoff is
+  already terminal. The submit fails closed and never issues a replacement final
+  invoice: `paid` shows `The final invoice for this project has already been
+  paid. It cannot be billed again.`, and `void` shows `The final invoice for this
+  project was cancelled. It cannot be billed again.`. Neither message asks the
+  member to refresh, because no refresh reopens a terminal handoff.
+- `unavailable` — the project is completed but no usable final-invoice handoff
+  has arrived yet: the row is missing, fails the identity check above, or carries
+  a status that is neither open nor terminal. The modal still opens, and the
+  submit fails closed with `The final invoice is not ready yet. Refresh the
+  dashboard and try again.` rather than billing the completed project through the
+  ordinary create route.
 
-New invoices never post to `invoices/final-create/v3`. The `final` and
-`final_closed` submit branches described below are unreachable from the
-canonical row and are kept only so a rollback is one line; existing final rows
-still display as before and still cancel through `invoices/final-cancel/v3`.
+A project counts as completed when **either** the canonical `lifecycle_state`
+**or** the legacy dashboard `status` reads `completed`, so a projection carrying
+only one of the two fields still reaches its final-invoice route.
+
+A `final` placeholder marked `recovery_ready=true` prefills the modal's `Amount`
+and `Description` from its stored values, so a stalled final invoice can be
+regenerated without retyping. Recovery fields are read-only, and submission uses
+the canonical recovery values even if the DOM is edited. Reopening an ordinary
+or new final invoice restores editable fields. Recovery amounts are normalized
+to cents and checked against the billable range; recovery descriptions are
+trimmed and checked against the final-description rule below. Invalid values
+are left blank, remain read-only, and block submission until the canonical data
+is corrected and reloaded. Without the flag both fields are left blank: a placeholder
+the projection has not marked recoverable never leaks a stale amount or
+description into a new submit. The browser sends no provider identity — the
+placeholder's own id and any Stripe reference stay server-side.
 
 Before opening on the Starter dashboard, the controller resolves the selected
 id against the canonical project-list row, waiting for the current list load when
@@ -1366,23 +1364,29 @@ with a console warning instead of turning another button into an invoice submit
 settle it. A wrapper marked disabled by attribute (`data-validate-disabled`,
 `data-button-theme="disabled"`, `aria-disabled="true"`) is never converted.
 
-`Amount` and `Description` are resolved by id or input name. The ordinary invoice
-amount is rounded to cents and must land between $0.01 and $1,000,000, otherwise
-the inline message `Enter an amount between $0.01 and $1,000,000.` is shown and
+`Amount` and `Description` are resolved by id or input name. New final invoices
+require a decimal amount between $0.01 and $1,000,000 with no more than two
+decimal places; they never silently round the entered amount. Invalid amounts
+in `final` mode show `Enter a final invoice amount between $0.01 and $1,000,000,
+with no more than two decimal places.` before any request. The ordinary invoice
+amount is rounded to cents and must land between $0.01 and $1,000,000, otherwise the
+inline message `Enter an amount between $0.01 and $1,000,000.` is shown and
 nothing is sent. A submit from a modal that was opened without a project card
 fails closed with `Open Generate Invoice from the project you want to bill, so
-we know which project to invoice.`. An `unavailable` submit fails closed with
-that mode's message above, before any request. `standard` mode keeps its
-existing trimmed, unvalidated description. The dormant `final` rollback branch
-keeps the old stricter amount and 1..500-character description guards alongside
-its `final_closed` message, but canonical rows no longer reach those modes.
+we know which project to invoice.`. An `unavailable` or `final_closed` submit
+fails closed with that mode's message above, before any request. In `final`
+mode the description carries Xano's own contract and is trimmed to 1..500
+characters; an empty, blank, or longer value shows `Enter a final invoice
+description between 1 and 500 characters.` and nothing is sent. `standard` mode
+keeps its existing trimmed, unvalidated description.
 
 A valid submit posts `project_id`, `amount`, `description`, and
 `idempotency_key` through the same authenticated Memberstack-to-Xano bridge as
 the rest of the file. `standard` mode posts to Xano `POST invoices/create/v3`
-with an `invoice-v3-<project_id>-<uuid>` idempotency key; new submits do not
-call `POST invoices/final-create/v3`. The key is stored on the form, so a retry
-after a failure reuses it and is cleared once an invoice is created. The
+with an `invoice-v3-<project_id>-<uuid>` idempotency key; `final` mode posts the
+same four fields to `POST invoices/final-create/v3` with a
+`final-invoice-v3-<project_id>-<uuid>` key. The key is stored on the form, so a
+retry after a failure reuses it and is cleared once an invoice is created. The
 resolved submit control is disabled while the request is in flight, by the same
 design-system convention `form-validation.js` uses: the wrapper takes
 `aria-disabled="true"`; when it already has a `data-button-theme`, that theme is
