@@ -724,7 +724,7 @@ release were still unauthorized. **Both of those statements are superseded** by
 the release status recorded at the end of this section; they are kept as the
 record of this run, not as current blockers.
 
-##### Direct desktop run at `e8862c39` — acceptance blocked
+##### Direct desktop run at `e8862c39` — acceptance blocked (historical)
 
 The authorized disposable account was exercised directly through Chrome with
 both exact CDN requests overridden before initialization and cache disabled.
@@ -754,8 +754,10 @@ and the detailed report remain outside Git under the test run's evidence directo
 (`live-desktop/`). Mobile was neither tested nor changed and remains deferred.
 Shared-group component fixture results are not live product acceptance. The
 desktop acceptance verdict for that run was **blocked**, with no pipeline approval.
+That verdict is an interim historical result for that run only; it is
+**superseded** by *Release status — 2026-09-23* below.
 
-##### Focused live create recheck at `d1d0c3f` — failure not reproduced
+##### Focused live create recheck at `d1d0c3f` — failure not reproduced (historical)
 
 On 2026-09-23, the authorized disposable account started with an independently
 verified empty server baseline. A selected company, temporary job title, and
@@ -769,8 +771,11 @@ returned HTTP 200; a subsequent independent read confirmed zero records.
 The earlier `WORK_HISTORY_CREATE_PROFILE_EVENT_INVALID` rejection did not
 reproduce; its cause remains unknown. No runtime or test change was justified.
 This focused persistence check passes, but partial-create retry and lost-response
-reconciliation were not rerun, so this is not full desktop acceptance or pipeline
-approval. Mobile remains deferred. Redacted results and private screenshots are
+reconciliation were not rerun, so this recheck on its own is not full desktop
+acceptance or pipeline approval; that scoping statement is **superseded** by
+*Release status — 2026-09-23* below, which records the completed gate. Those two
+scenarios are covered by the local-preview evidence in the table above and were
+not re-executed here. Mobile remains deferred. Redacted results and private screenshots are
 in the current run's external evidence directory as `create-reproduction.json`,
 `create-reproduction-result.json`, and `repro-persisted-dates.png`.
 
@@ -799,11 +804,14 @@ Completed local checks:
 
 ##### Release status — 2026-09-23
 
-This is the current status and supersedes the earlier "remain unauthorized"
-wording above. After PR 943 merged, the user authorized the release. The prior
-gate passed all eight desktop actual-page scenarios listed in the table above,
-so desktop acceptance is complete; mobile resize stays parked as the user
-directed and is not part of this release.
+This is the current status and supersedes the earlier acceptance and
+authorization wording in the subsections above. After PR 943 merged, the user
+authorized the release. The PR 943 gate passed all eight desktop actual-page
+scenarios listed in the table above, taken together with the run records in
+this section, so desktop acceptance is complete; the interim **blocked** and
+**not full acceptance** verdicts in those run records are historical and are not
+current blockers. Mobile resize stays parked as the user directed and is not
+part of this release.
 
 Release is authorized and in progress, **not** completed: this branch only
 stamps the `v1.59.614` marker on the two changed browser scripts and updates
