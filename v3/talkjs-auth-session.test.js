@@ -493,30 +493,36 @@ test('logout destroys and clears the session owner', async () => {
   assert.equal(state.api.debugSnapshot(), null)
 })
 
-test('transient empty member notification preserves the signed session', async () => {
+test('empty member auth notification closes and invalidates the signed session', async () => {
   const state = harness()
-  const session = await open(state)
+  await open(state, {
+    onInvalidate: () => {
+      state.calls.invalidations += 1
+    },
+  })
 
   state.member(null)
   await state.authChange()
 
-  assert.equal(state.calls.destroys, 0)
-  assert.equal(state.api.debugSnapshot().memberId, 'mem_sb_membera')
-  state.member({ id: 'mem_sb_membera' })
-  assert.equal(await open(state), session)
+  assert.equal(state.calls.destroys, 1)
+  assert.equal(state.calls.invalidations, 1)
+  assert.equal(state.api.debugSnapshot(), null)
 })
 
-test('transient member lookup error preserves the signed session', async () => {
+test('member lookup error auth notification closes and invalidates the signed session', async () => {
   const state = harness()
-  const session = await open(state)
+  await open(state, {
+    onInvalidate: () => {
+      state.calls.invalidations += 1
+    },
+  })
 
   state.memberError(new Error('Memberstack DOM is refreshing'))
   await state.authChange()
 
-  assert.equal(state.calls.destroys, 0)
-  assert.equal(state.api.debugSnapshot().memberId, 'mem_sb_membera')
-  state.memberError(null)
-  assert.equal(await open(state), session)
+  assert.equal(state.calls.destroys, 1)
+  assert.equal(state.calls.invalidations, 1)
+  assert.equal(state.api.debugSnapshot(), null)
 })
 
 test('unchanged-cookie auth callback catches a deferred account switch', async () => {
@@ -528,6 +534,10 @@ test('unchanged-cookie auth callback catches a deferred account switch', async (
   })
 
   const reconciliation = state.authChange()
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(state.calls.destroys, 1)
+  assert.equal(state.calls.invalidations, 1)
+  assert.equal(state.api.debugSnapshot(), null)
   setTimeout(() => {
     state.member({ id: 'mem_sb_memberb' })
     state.memberstackCookie('memberstack-cookie-b')
@@ -537,6 +547,23 @@ test('unchanged-cookie auth callback catches a deferred account switch', async (
   assert.equal(state.calls.destroys, 1)
   assert.equal(state.calls.invalidations, 1)
   assert.equal(state.api.debugSnapshot(), null)
+})
+
+test('unchanged auth notification closes then reconnects the same member', async () => {
+  const state = harness()
+  let reconnect
+  reconnect = async () => {
+    state.calls.reconnects += 1
+    await open(state, { onReconnect: reconnect })
+  }
+  const session = await open(state, { onReconnect: reconnect })
+
+  await state.authChange()
+
+  assert.equal(state.calls.destroys, 1)
+  assert.equal(state.calls.reconnects, 1)
+  assert.equal(state.calls.sessions.length, 2)
+  assert.notEqual(await open(state), session)
 })
 
 test('cookie lookup failure invalidates the active session', async () => {
@@ -572,6 +599,26 @@ test('same-member cookie rotation closes and reconnects the signed session', asy
   assert.equal(state.calls.sessions.length, 2)
   assert.equal(state.api.debugSnapshot().memberId, 'mem_sb_membera')
   assert.notEqual(await open(state), session)
+})
+
+test('active session reuse refuses a different current cookie', async () => {
+  const state = harness()
+  await open(state, {
+    onInvalidate: () => {
+      state.calls.invalidations += 1
+    },
+  })
+  state.memberstackCookie('memberstack-cookie-b')
+
+  await assert.rejects(
+    open(state, { clientOwner: 'messages-profile-v3' }),
+    /foreign TalkJS session/,
+  )
+
+  assert.equal(state.calls.sessions.length, 1)
+  assert.equal(state.calls.destroys, 1)
+  assert.equal(state.calls.invalidations, 1)
+  assert.equal(state.api.debugSnapshot(), null)
 })
 
 test('changed cookie closes immediately then reconnects after identity resolves', async () => {
@@ -959,6 +1006,61 @@ test('conversation authorization cannot dispatch after bearer identity switches'
   )
 
   assert.equal(state.calls.fetches.length, before)
+})
+
+test('stale authorization cannot destroy a reconnected session', async () => {
+  let releaseAuthorization
+  let authorizationStartedResolve
+  const authorizationStarted = new Promise((resolve) => {
+    authorizationStartedResolve = resolve
+  })
+  const authorizationGate = new Promise((resolve) => {
+    releaseAuthorization = resolve
+  })
+  const state = harness({
+    fetch: async (url) => {
+      if (url.endsWith('/user-token/v3')) {
+        return jsonResponse({
+          token: token(),
+          me_id: 'mem_sb_membera',
+          data_environment: 'test',
+          expires_in_seconds: 300,
+        })
+      }
+      authorizationStartedResolve()
+      await authorizationGate
+      return jsonResponse({
+        authorized: true,
+        actor_id: 'mem_sb_membera',
+        counterpart_id: 'mem_sb_memberb',
+        participant_ids: ['mem_sb_membera', 'mem_sb_memberb'],
+        conversation_id: 'dm_v1_0123456789abcdef',
+        data_environment: 'test',
+      })
+    },
+  })
+  let reconnect
+  reconnect = async () => {
+    state.calls.reconnects += 1
+    await open(state, { onReconnect: reconnect })
+  }
+  await open(state, { onReconnect: reconnect })
+  const authorization = state.api.authorizeConversation({
+    clientOwner: 'messages-v3',
+    counterpartId: 'mem_sb_memberb',
+  })
+  await authorizationStarted
+
+  await state.authChange()
+  assert.equal(state.calls.destroys, 1)
+  assert.equal(state.calls.reconnects, 1)
+  assert.equal(state.calls.sessions.length, 2)
+  assert.equal(state.api.debugSnapshot().memberId, 'mem_sb_membera')
+
+  releaseAuthorization()
+  await assert.rejects(authorization, /changed during/)
+  assert.equal(state.calls.destroys, 1)
+  assert.equal(state.api.debugSnapshot().memberId, 'mem_sb_membera')
 })
 
 test('nonparticipant C cannot accept an A/B conversation receipt', async () => {

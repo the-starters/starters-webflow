@@ -134,6 +134,7 @@
   }
 
   async function stableIdentity(memberstack, memberId) {
+    var confirmedCookie = null
     for (var attempt = 0; attempt < MAX_IDENTITY_ATTEMPTS; attempt += 1) {
       try {
         var beforeCookie = await memberstack.getMemberCookie()
@@ -142,9 +143,13 @@
         var afterCookie = await memberstack.getMemberCookie()
         if (!afterCookie) return { status: 'logout' }
         if (beforeCookie === afterCookie) {
-          return member.id === memberId
-            ? { status: 'same', cookie: afterCookie }
-            : { status: 'changed' }
+          if (member.id !== memberId) return { status: 'changed' }
+          if (confirmedCookie === afterCookie) {
+            return { status: 'same', cookie: afterCookie }
+          }
+          confirmedCookie = afterCookie
+        } else {
+          confirmedCookie = null
         }
       } catch (error) {}
       if (attempt + 1 < MAX_IDENTITY_ATTEMPTS) {
@@ -358,7 +363,7 @@
     var owned = active
     var member = await currentMember(owned.memberstack)
     if (member.id !== owned.memberId) {
-      await destroyAndInvalidate('member-change')
+      await destroyAndInvalidate('member-change', owned)
       throw identityError('Member changed before conversation authorization')
     }
 
@@ -401,7 +406,7 @@
 
     var after = await currentMember(owned.memberstack)
     if (active !== owned || after.id !== owned.memberId) {
-      await destroyAndInvalidate('member-change')
+      await destroyAndInvalidate('member-change', owned)
       throw identityError('Member changed during conversation authorization')
     }
     var returnedConversationId = String(
@@ -448,7 +453,8 @@
     return reason || 'destroyed'
   }
 
-  async function destroyAndInvalidate(reason) {
+  async function destroyAndInvalidate(reason, expectedOwner) {
+    if (expectedOwner && active !== expectedOwner) return
     var invalidators = active ? active.invalidators : {}
     destroy(reason)
     await invalidateViews(invalidators)
@@ -459,57 +465,14 @@
     var opening = pending
     if (!owned && !opening) return
     var lifecycle = owned || opening
-    var cookie
-    try {
-      cookie = await lifecycle.memberstack.getMemberCookie()
-    } catch (error) {
-      var failedInvalidators = lifecycle.invalidators
-      destroy('auth-unavailable')
-      await invalidateViews(failedInvalidators)
-      return
-    }
-    if (cookie === lifecycle.memberstackCookie) {
-      await wait(IDENTITY_RETRY_DELAY_MS)
-      var deferredIdentity = await stableIdentity(
-        lifecycle.memberstack,
-        lifecycle.memberId,
-      )
-      if (
-        (owned && active !== owned) ||
-        (!owned && pending !== opening)
-      ) {
-        return
-      }
-      if (
-        deferredIdentity.status === 'same' &&
-        deferredIdentity.cookie === lifecycle.memberstackCookie
-      ) {
-        return
-      }
-      if (deferredIdentity.status === 'unresolved') {
-        try {
-          cookie = await lifecycle.memberstack.getMemberCookie()
-          if (cookie === lifecycle.memberstackCookie) return
-        } catch (error) {
-          cookie = null
-        }
-      } else {
-        cookie = deferredIdentity.cookie || null
-      }
-    }
-    if (
-      (owned && active !== owned) ||
-      (!owned && pending !== opening)
-    ) {
-      return
-    }
     var reconnectors = owned && owned.reconnectors
     var invalidators = lifecycle.invalidators
     var memberstack = lifecycle.memberstack
     var memberId = lifecycle.memberId
-    destroy(cookie ? 'credential-change' : 'logout')
+    destroy('auth-change')
     await invalidateViews(invalidators)
-    if (!owned || !cookie) return
+    if (!owned) return
+    await wait(IDENTITY_RETRY_DELAY_MS)
     var identity = await stableIdentity(memberstack, memberId)
     if (identity.status === 'same') await reconnectViews(reconnectors)
   }
@@ -551,8 +514,12 @@
     wireMemberstack(options.memberstack)
 
     if (active) {
-      if (active.memberId !== memberId || active.environment !== environment) {
-        destroy('foreign-client')
+      if (
+        active.memberId !== memberId ||
+        active.environment !== environment ||
+        active.memberstackCookie !== memberstackCookie
+      ) {
+        await destroyAndInvalidate('foreign-client', active)
         throw identityError('A foreign TalkJS session was refused')
       }
       active.clientOwners[options.clientOwner] = true
@@ -633,6 +600,7 @@
       }
       var initialToken = initial.token
       var expectedAppId = initial.appId
+      var sessionOwnerState = null
       var tokenFetcher = async function () {
         if (openingGeneration !== generation) {
           throw identityError('TalkJS session is no longer current')
@@ -652,7 +620,7 @@
           }
           return refreshed.token
         } catch (error) {
-          await destroyAndInvalidate('refresh-failed')
+          await destroyAndInvalidate('refresh-failed', sessionOwnerState)
           throw error
         }
       }
@@ -672,6 +640,7 @@
         reconnectors: pendingState.reconnectors,
         invalidators: pendingState.invalidators,
       }
+      sessionOwnerState = active
       return session
     })()
 
