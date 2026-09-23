@@ -154,10 +154,10 @@ Request:
 
 The endpoint hashes the token, locks the invitation row for the read, checks
 active status and expiry, reads the exact `freelancers_v3` row, and compares the
-current canonical no-trailing-slash `/hire/<slug>` profile path. It then mints a cryptographically random,
-short-lived one-use exchange code, stores only its digest in the child ledger,
-and returns the raw code once. It never returns an email, Memberstack ID,
-Starter ID, or profile record.
+current canonical no-trailing-slash `/hire/<slug>` profile path. It then mints a
+cryptographically random, short-lived one-use exchange code, stores only its
+digest in the child ledger, and returns the raw code once. It never returns an
+email, Memberstack ID, Starter ID, or profile record.
 
 Success:
 
@@ -188,8 +188,8 @@ unavailable.
 
 ### Signup consumption in endpoint `1513`
 
-Read `customFields.starter-claim-exchange` from the Memberstack webhook. Inside the
-existing transaction and before the Talent email fallback or create path:
+Read `customFields.starter-claim-exchange` from the Memberstack webhook. Inside
+the existing transaction and before the Talent email fallback or create path:
 
 1. Hash the exchange code and lock its matching exchange row and parent claim row.
 2. If the exchange and claim are already consumed by this webhook's Memberstack

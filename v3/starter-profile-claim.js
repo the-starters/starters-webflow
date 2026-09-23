@@ -7,7 +7,8 @@
  * is still usable. No query, malformed input, incomplete markup, a failed
  * request, or a negative response leaves the wrapper closed.
  *
- * Designer contract and backend response shape: see v3/README.md.
+ * Wiring, Designer, and backend contracts:
+ * docs/wiring/STARTER-PROFILE-CLAIM-WIRING.md.
  */
 ;(function () {
   'use strict'
