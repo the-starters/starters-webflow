@@ -674,10 +674,11 @@ The rollout also needs the shared accordion file loaded on this page ahead of
 authored** in the test page's Head Code; without it Work Experience halts with the
 "could not load" message rather than rendering rows. No script pin was changed here.
 
-These Designer edits remain **unpublished**. Script pins were not changed, the
-script retains its existing `v1.59.607` marker pending release, and this work does
-not release or publish the change. Deployment requires the reviewed controller
-release and the corresponding authored markup together. Actual-page desktop
+These Designer edits remain **unpublished**. Script pins were not changed.
+The shared accordion and Work Experience scripts now carry the `v1.59.614`
+release marker; preparing these markers does not publish the scripts or markup.
+Deployment requires the reviewed controller release and the corresponding
+authored markup together. Actual-page desktop
 verification with local overrides and authorized persistence is recorded below;
 it does not establish that the unpublished Designer tree is deployed. The original
 missing Save button's computed-style cause remains unproved.
