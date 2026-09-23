@@ -417,6 +417,8 @@ test('a unified-row company selection fires change so its section can mark itsel
 function createCrudHarness(file, { deferredWrites = false, alsoWorkedWithStatuses = [], companyCreateStatuses = [], companyGetStatuses = [], initialCompanies = [], companyCreateGate = null } = {}) {
   let readyPromise
   let baselineTimer
+  let nextTimerId = 1
+  const timers = new Map()
   const requests = []
   const modalCounts = { success: 0, error: 0 }
   const dirtyStateCalls = []
@@ -562,9 +564,12 @@ function createCrudHarness(file, { deferredWrites = false, alsoWorkedWithStatuse
     qsa() { return [] },
     setTimeout(callback, delay) {
       if (alsoWorkedWithStatuses.length && delay === 1500) baselineTimer = callback
-      return 0
+      const id = nextTimerId
+      nextTimerId += 1
+      timers.set(id, { callback, delay })
+      return id
     },
-    clearTimeout() {},
+    clearTimeout(id) { timers.delete(id) },
     setInterval() { return 0 },
     clearInterval() {},
     waitForMember(callback) { readyPromise = callback() },
@@ -590,6 +595,15 @@ function createCrudHarness(file, { deferredWrites = false, alsoWorkedWithStatuse
   return {
     companyInput,
     addButtonText,
+    runTimer(delay) {
+      for (const [id, timer] of timers) {
+        if (timer.delay !== delay) continue
+        timers.delete(id)
+        timer.callback()
+        return true
+      }
+      return false
+    },
     editCompanyInput,
     requests,
     modalCounts,
@@ -917,7 +931,7 @@ test('Build Profile defers projection when deleting Company experience', async (
   assert.deepEqual(JSON.parse(deleteRequest.options.body), { defer_projection: true })
 })
 
-test('Build Profile shows Saving while creating Work History and restores the button', async () => {
+test('Build Profile shows Saving then Added while creating Work History', async () => {
   let started
   let release
   const whenStarted = new Promise((resolve) => { started = resolve })
@@ -937,10 +951,12 @@ test('Build Profile shows Saving while creating Work History and restores the bu
   release()
   await save
 
+  assert.equal(harness.addButtonText.textContent, 'Added')
+  assert.equal(harness.runTimer(2000), true)
   assert.equal(harness.addButtonText.textContent, 'Add company')
 })
 
-test('Build Profile restores the Work History button after a failed save', async () => {
+test('Build Profile shows Error then restores the Work History button after a failed save', async () => {
   const file = path.join(__dirname, '../build-profile/company-experience-crud.js')
   const harness = createCrudHarness(file, {
     deferredWrites: false,
@@ -951,6 +967,8 @@ test('Build Profile restores the Work History button after a failed save', async
 
   await harness.queueAdd()
 
+  assert.equal(harness.addButtonText.textContent, 'Error')
+  assert.equal(harness.runTimer(1200), true)
   assert.equal(harness.addButtonText.textContent, 'Add company')
 })
 
