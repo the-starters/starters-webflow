@@ -34,6 +34,8 @@
   var TRANSIENT_STATUSES = { 408: true, 425: true, 429: true }
   var MAX_ATTEMPTS = 2
   var MAX_TOKEN_TTL_SECONDS = 600
+  var MAX_IDENTITY_ATTEMPTS = 3
+  var IDENTITY_RETRY_DELAY_MS = 25
 
   var active = null
   var pending = null
@@ -124,6 +126,12 @@
   function meId(me) {
     var value = me && (me.id || (me.fields && me.fields.id))
     return value === undefined || value === null ? '' : String(value)
+  }
+
+  function wait(ms) {
+    return new Promise(function (resolve) {
+      window.setTimeout(resolve, ms)
+    })
   }
 
   function decodePart(value) {
@@ -275,6 +283,9 @@
   async function authorizeConversation(options) {
     options = options || {}
     if (!active) throw authenticationError('No authenticated TalkJS session')
+    if (active.identityPending) {
+      throw authenticationError('TalkJS identity reconciliation is pending')
+    }
     if (!CLIENT_OWNERS[options.clientOwner]) {
       throw identityError('Unknown TalkJS client owner')
     }
@@ -377,29 +388,41 @@
   async function reconcileMemberstack() {
     if (!active) return
     var owned = active
-    var cookie
-    try {
-      cookie = await owned.memberstack.getMemberCookie()
-    } catch (error) {
-      return
+    for (var attempt = 0; attempt < MAX_IDENTITY_ATTEMPTS; attempt += 1) {
+      var cookie
+      try {
+        cookie = await owned.memberstack.getMemberCookie()
+      } catch (error) {
+        return
+      }
+      if (active !== owned) return
+      if (!cookie) {
+        destroy('logout')
+        return
+      }
+      if (cookie === owned.memberstackCookie) {
+        owned.identityPending = false
+        return
+      }
+      owned.identityPending = true
+      try {
+        var member = await currentMember(owned.memberstack)
+        if (active !== owned) return
+        if (member.id !== owned.memberId) {
+          destroy('member-change')
+          return
+        }
+        owned.memberstackCookie = cookie
+        owned.identityPending = false
+        return
+      } catch (error) {
+        if (attempt + 1 >= MAX_IDENTITY_ATTEMPTS) {
+          destroy('identity-unresolved')
+          return
+        }
+      }
+      await wait(IDENTITY_RETRY_DELAY_MS)
     }
-    if (active !== owned) return
-    if (!cookie) {
-      destroy('logout')
-      return
-    }
-    var member
-    try {
-      member = await currentMember(owned.memberstack)
-    } catch (error) {
-      return
-    }
-    if (active !== owned) return
-    if (member.id !== owned.memberId) {
-      destroy('member-change')
-      return
-    }
-    owned.memberstackCookie = cookie
   }
 
   function wireMemberstack(memberstack) {
@@ -473,11 +496,20 @@
       if (openingGeneration !== generation) {
         throw identityError('TalkJS session opening was superseded')
       }
+      var latestMemberstackCookie = await currentSessionCookie(
+        options.memberstack,
+      )
+      if (openingGeneration !== generation) {
+        throw identityError('TalkJS session opening was superseded')
+      }
       var initialToken = initial.token
       var expectedAppId = initial.appId
       var tokenFetcher = async function () {
         if (openingGeneration !== generation) {
           throw identityError('TalkJS session is no longer current')
+        }
+        if (active && active.session === session && active.identityPending) {
+          throw authenticationError('TalkJS identity reconciliation is pending')
         }
         if (initialToken) {
           var token = initialToken
@@ -509,7 +541,8 @@
         memberId: memberId,
         appId: expectedAppId,
         environment: environment,
-        memberstackCookie: memberstackCookie,
+        memberstackCookie: latestMemberstackCookie,
+        identityPending: false,
         clientOwners: pendingState.clientOwners,
       }
       wireMemberstack(options.memberstack)

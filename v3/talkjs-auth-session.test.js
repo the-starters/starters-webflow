@@ -30,6 +30,7 @@ function jsonResponse(body, status = 200) {
 function harness(options = {}) {
   let member = options.member || { id: 'mem_sb_membera' }
   let memberError = null
+  let memberLookup = null
   let memberstackCookie =
     options.memberstackCookie === undefined
       ? 'memberstack-cookie-a'
@@ -48,6 +49,7 @@ function harness(options = {}) {
   }
   const memberstack = {
     async getCurrentMember() {
+      if (memberLookup) return memberLookup()
       if (memberError) throw memberError
       return { data: member }
     },
@@ -60,6 +62,7 @@ function harness(options = {}) {
   }
   const window = {
     location: { hostname: options.hostname || 'the-starters-3-0.webflow.io' },
+    setTimeout,
     atob(value) {
       return Buffer.from(value, 'base64').toString('utf8')
     },
@@ -131,6 +134,9 @@ function harness(options = {}) {
     },
     memberError(value) {
       memberError = value
+    },
+    memberLookup(value) {
+      memberLookup = value
     },
     memberstackCookie(value) {
       memberstackCookie = value
@@ -549,6 +555,60 @@ test('same-member cookie rotation preserves the signed session', async () => {
   assert.equal(await open(state), session)
 })
 
+test('changed cookie resolves from empty member to the same identity', async () => {
+  const state = harness()
+  const session = await open(state)
+  const lookups = [
+    { data: null },
+    { data: { id: 'mem_sb_membera' } },
+  ]
+  state.memberstackCookie('memberstack-cookie-b')
+  state.memberLookup(() => lookups.shift())
+
+  await state.authChange()
+
+  assert.equal(state.calls.destroys, 0)
+  state.memberLookup(null)
+  assert.equal(await open(state), session)
+})
+
+test('changed cookie resolves from error to a different identity', async () => {
+  const state = harness()
+  await open(state)
+  const lookups = [
+    new Error('Memberstack DOM is refreshing'),
+    { data: { id: 'mem_sb_memberb' } },
+  ]
+  state.memberstackCookie('memberstack-cookie-b')
+  state.memberLookup(() => {
+    const value = lookups.shift()
+    if (value instanceof Error) throw value
+    return value
+  })
+
+  await state.authChange()
+
+  assert.equal(state.calls.destroys, 1)
+  assert.equal(state.api.debugSnapshot(), null)
+})
+
+test('bounded unresolved changed-cookie identity destroys the session', async () => {
+  const state = harness()
+  await open(state)
+  let lookups = 0
+  state.memberstackCookie('memberstack-cookie-b')
+  state.memberLookup(() => {
+    lookups += 1
+    return { data: null }
+  })
+
+  await state.authChange()
+
+  assert.equal(lookups, 3)
+  assert.equal(state.calls.destroys, 1)
+  assert.equal(state.api.debugSnapshot(), null)
+})
+
 test('changed member and cookie destroy the old session', async () => {
   const state = harness()
   await open(state)
@@ -556,6 +616,38 @@ test('changed member and cookie destroy the old session', async () => {
   state.memberstackCookie('memberstack-cookie-b')
   await state.authChange()
   assert.equal(state.calls.destroys, 1)
+  assert.equal(state.api.debugSnapshot(), null)
+})
+
+test('logout during token issuance cannot construct a TalkJS session', async () => {
+  let release
+  let startedResolve
+  const started = new Promise((resolve) => {
+    startedResolve = resolve
+  })
+  const gate = new Promise((resolve) => {
+    release = resolve
+  })
+  const state = harness({
+    fetch: async () => {
+      startedResolve()
+      await gate
+      return jsonResponse({
+        token: token(),
+        me_id: 'mem_sb_membera',
+        data_environment: 'test',
+        expires_in_seconds: 300,
+      })
+    },
+  })
+
+  const opening = open(state)
+  await started
+  state.memberstackCookie(null)
+  release()
+
+  await assert.rejects(opening, /No authenticated Memberstack session/)
+  assert.equal(state.calls.sessions.length, 0)
   assert.equal(state.api.debugSnapshot(), null)
 })
 
