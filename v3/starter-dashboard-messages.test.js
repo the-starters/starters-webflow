@@ -39,7 +39,7 @@ function element(overrides = {}) {
  * options.member — Memberstack member (null = logged out)
  */
 function loadTile(options = {}) {
-  const calls = { users: [], sessions: [] }
+  const calls = { users: [], sessions: [], authSessions: [], memberCookies: 0 }
   const warnings = []
   const errors = []
 
@@ -74,9 +74,22 @@ function loadTile(options = {}) {
       }),
       // No session cookie: the Xano recent-messages fetch fails early and
       // the tile degrades to unreads-only, which is all this suite needs.
-      getMemberCookie: async () => null,
+      getMemberCookie: async () => {
+        calls.memberCookies += 1
+        return null
+      },
     },
     Talk,
+    StartersTalkJsSessionOwner: {
+      openSession: async (sessionOptions) => {
+        calls.authSessions.push(sessionOptions)
+        return new sessionOptions.Talk.Session({
+          appId: 'test-app',
+          me: sessionOptions.me,
+          tokenFetcher: async () => 'test-token',
+        })
+      },
+    },
     addEventListener() {},
     location: { assign() {} },
     setInterval,
@@ -117,8 +130,20 @@ function loadTile(options = {}) {
   return { calls, warnings, errors, window }
 }
 
+test('missing shared auth bridge never reads a Memberstack credential for a URL fallback', async () => {
+  const state = loadTile({ member: { id: MY_ID, customFields: {} } })
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(state.calls.memberCookies, 0)
+})
+
 function loadRenderedRecent(recent, unreads = [], options = {}) {
-  const calls = { windows: [], conversations: 0, fetches: 0, aborts: 0 }
+  const calls = {
+    windows: [],
+    conversations: 0,
+    fetches: 0,
+    aborts: 0,
+    authSessions: [],
+  }
   let messageHandler
   let resolveRecentFetch
   let unreadHandler
@@ -229,6 +254,16 @@ function loadRenderedRecent(recent, unreads = [], options = {}) {
     },
     getXanoAuthToken: async () => 'xano-token',
     Talk,
+    StartersTalkJsSessionOwner: {
+      openSession: async (sessionOptions) => {
+        calls.authSessions.push(sessionOptions)
+        return new sessionOptions.Talk.Session({
+          appId: 'test-app',
+          me: sessionOptions.me,
+          tokenFetcher: async () => 'test-token',
+        })
+      },
+    },
     open(...args) {
       calls.windows.push(args)
     },
@@ -341,6 +376,23 @@ async function settle(turns = 25) {
     await new Promise((resolve) => setImmediate(resolve))
   }
 }
+
+test('the dashboard tile opens through the shared authenticated session owner', async () => {
+  const current = {
+    id: MY_ID,
+    customFields: { 'free-user': 'Starter' },
+  }
+  const loaded = loadTile({ member: current })
+  await settle()
+
+  assert.equal(loaded.calls.authSessions.length, 1)
+  const request = loaded.calls.authSessions[0]
+  assert.equal(request.clientOwner, 'dashboard-messages-v3')
+  assert.equal(request.memberstack, loaded.window.$memberstackDom)
+  assert.equal(request.member, current)
+  assert.equal(request.me.fields.id, current.id)
+  assert.equal(loaded.calls.sessions.length, 1)
+})
 
 test('the display name is the first name alone, never the last name', async () => {
   const { calls, errors } = loadTile({

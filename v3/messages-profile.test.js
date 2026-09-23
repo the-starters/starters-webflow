@@ -117,7 +117,15 @@ function load(options = {}) {
   const closed = []
   const opened = []
   const openedSignup = []
-  const calls = { users: [], conversations: [], mounted: [], selected: [], chatbox: 0 }
+  const calls = {
+    users: [],
+    conversations: [],
+    mounted: [],
+    selected: [],
+    chatbox: 0,
+    authSessions: [],
+    conversationAuthorizations: [],
+  }
   const windowListeners = []
   const modalId = options.modalId || MODAL_ID
 
@@ -247,6 +255,23 @@ function load(options = {}) {
     },
     clearTimeout,
     Talk,
+    StartersTalkJsSessionOwner: {
+      openSession: async (sessionOptions) => {
+        calls.authSessions.push(sessionOptions)
+        return new sessionOptions.Talk.Session({
+          appId: 'test-app',
+          me: sessionOptions.me,
+          tokenFetcher: async () => 'test-token',
+        })
+      },
+      authorizeConversation: async (intent) => {
+        calls.conversationAuthorizations.push(intent)
+        return {
+          conversationId: 'dm_v1_server_authorized_pair',
+          counterpartId: intent.counterpartId,
+        }
+      },
+    },
   }
 
   if (options.memberstack !== false) {
@@ -396,15 +421,31 @@ test('a paid Brand gets the chatbox mounted into the container', async () => {
 
   assert.equal(loaded.calls.chatbox, 1)
   assert.deepEqual(loaded.calls.mounted, [loaded.container])
-  assert.equal(loaded.calls.conversations.length, 1)
+  assert.equal(loaded.calls.conversations.length, 0)
+  assert.deepEqual(loaded.calls.selected, ['dm_v1_server_authorized_pair'])
+  assert.deepEqual(plain(loaded.calls.conversationAuthorizations), [
+    { clientOwner: 'messages-profile-v3', counterpartId: STARTER_ID },
+  ])
+})
 
-  const conversation = loaded.calls.conversations[0]
-  assert.equal(conversation.id, 'one:' + [VIEWER_ID, STARTER_ID].sort().join('|'))
-  assert.equal(conversation.participants.length, 2)
-  assert.deepEqual(plain(conversation.attributes), {
-    custom: { source: 'hire-page', slug: 'kaeser-valencerina' },
+test('the profile chat opens through the shared authenticated session owner', async () => {
+  const current = { id: VIEWER_ID, customFields: { 'free-user': 'Brand' } }
+  const loaded = load({
+    triggers: [starterTrigger()],
+    member: current,
+    role: 'brand-paid',
   })
-  assert.deepEqual(loaded.calls.selected, [conversation])
+  await settle()
+  loaded.openModal()
+  await settle()
+
+  assert.equal(loaded.calls.authSessions.length, 1)
+  const request = loaded.calls.authSessions[0]
+  assert.equal(request.clientOwner, 'messages-profile-v3')
+  assert.equal(request.memberstack, loaded.window.$memberstackDom)
+  assert.equal(request.member, current)
+  assert.equal(request.me.fields.id, current.id)
+  assert.equal(loaded.calls.chatbox, 1)
 })
 
 test('the viewer display name is the first name alone, never the last name', async () => {
@@ -564,7 +605,7 @@ test('a Talent viewer without a company keeps a blank company', async () => {
   assert.deepEqual(plain(loaded.calls.users[0]).custom, { company: '' })
 })
 
-test('the starter is synced with the CMS name and photo', async () => {
+test('the browser does not sync the starter CMS name or photo', async () => {
   const loaded = load({
     triggers: [starterTrigger()],
     member: { id: VIEWER_ID },
@@ -574,14 +615,12 @@ test('the starter is synced with the CMS name and photo', async () => {
   loaded.openModal()
   await settle()
 
-  assert.deepEqual(plain(loaded.calls.users[1]), {
-    id: STARTER_ID,
-    name: 'Kaeser Valencerina',
-    photoUrl: PHOTO,
-  })
+  assert.equal(loaded.calls.users.length, 1)
+  assert.equal(loaded.calls.conversations.length, 0)
+  assert.equal(loaded.calls.conversationAuthorizations[0].counterpartId, STARTER_ID)
 })
 
-test('with no CMS name the starter is referenced by id alone', async () => {
+test('missing CMS name cannot change the server-owned conversation intent', async () => {
   const loaded = load({
     triggers: [starterTrigger({ [NAME_ATTRIBUTE]: '' })],
     member: { id: VIEWER_ID },
@@ -591,10 +630,11 @@ test('with no CMS name the starter is referenced by id alone', async () => {
   loaded.openModal()
   await settle()
 
-  assert.equal(loaded.calls.users[1], STARTER_ID)
+  assert.equal(loaded.calls.users.length, 1)
+  assert.equal(loaded.calls.conversationAuthorizations[0].counterpartId, STARTER_ID)
 })
 
-test('a non-https CMS photo is dropped before reaching TalkJS', async () => {
+test('a non-https CMS photo never reaches TalkJS conversation mutation', async () => {
   const loaded = load({
     triggers: [starterTrigger({ [PHOTO_ATTRIBUTE]: 'javascript:alert(1)' })],
     member: { id: VIEWER_ID },
@@ -604,10 +644,9 @@ test('a non-https CMS photo is dropped before reaching TalkJS', async () => {
   loaded.openModal()
   await settle()
 
-  assert.deepEqual(plain(loaded.calls.users[1]), {
-    id: STARTER_ID,
-    name: 'Kaeser Valencerina',
-  })
+  assert.equal(loaded.calls.users.length, 1)
+  assert.equal(loaded.calls.conversations.length, 0)
+  assert.equal(loaded.calls.conversationAuthorizations[0].counterpartId, STARTER_ID)
 })
 
 test('reopening the modal does not mount a second chatbox', async () => {
@@ -805,10 +844,10 @@ test('the pressed trigger decides the conversation, not the first in the DOM', a
   second.click()
   await settle()
 
-  assert.equal(loaded.calls.conversations.length, 1)
+  assert.equal(loaded.calls.conversations.length, 0)
   assert.equal(
-    loaded.calls.conversations[0].id,
-    'one:' + [VIEWER_ID, OTHER].sort().join('|'),
+    loaded.calls.conversationAuthorizations[0].counterpartId,
+    OTHER,
     'used the trigger that was clicked',
   )
 })

@@ -53,9 +53,10 @@
   if (window.__startersMessages3Booted) return
   window.__startersMessages3Booted = true
 
-  const TALKJS_APP_ID = 'LmYV8DIA'
   const TALKJS_THEME = 'the-starters-3-0'
   const TALKJS_SCRIPT_URL = 'https://cdn.talkjs.com/talk.js'
+  const TALKJS_AUTH_HELPER_URL =
+    'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/talkjs-auth-session.js'
   const MEMBERSTACK_TIMEOUT_MS = 10000
   const TALKJS_TIMEOUT_MS = 15000
   const TALKJS_MAX_LOAD_ATTEMPTS = 2
@@ -312,6 +313,57 @@
     notice.appendChild(message)
     notice.appendChild(retry)
     container.appendChild(notice)
+  }
+
+  function waitForTalkJsSessionOwner(timeoutMs = TALKJS_TIMEOUT_MS) {
+    if (
+      window.StartersTalkJsSessionOwner &&
+      typeof window.StartersTalkJsSessionOwner.openSession === 'function'
+    ) {
+      return Promise.resolve(window.StartersTalkJsSessionOwner)
+    }
+    if (window.__startersTalkJsAuthHelperPromise) {
+      return window.__startersTalkJsAuthHelperPromise
+    }
+
+    let loading
+    loading = new Promise((resolve, reject) => {
+      const script = document.createElement('script')
+      let settled = false
+      const fail = (error) => {
+        if (settled) return
+        settled = true
+        window.clearTimeout(timer)
+        if (window.__startersTalkJsAuthHelperPromise === loading) {
+          window.__startersTalkJsAuthHelperPromise = null
+        }
+        reject(error)
+      }
+      const timer = window.setTimeout(() => {
+        fail(new Error('TalkJS authentication helper did not become ready'))
+      }, timeoutMs)
+      script.async = true
+      script.src = TALKJS_AUTH_HELPER_URL
+      script.dataset.startersTalkjsAuth = 'true'
+      script.onload = () => {
+        if (
+          window.StartersTalkJsSessionOwner &&
+          typeof window.StartersTalkJsSessionOwner.openSession === 'function'
+        ) {
+          settled = true
+          window.clearTimeout(timer)
+          resolve(window.StartersTalkJsSessionOwner)
+        } else {
+          fail(new Error('TalkJS authentication helper is invalid'))
+        }
+      }
+      script.onerror = () => {
+        fail(new Error('TalkJS authentication helper failed to load'))
+      }
+      document.head.appendChild(script)
+    })
+    window.__startersTalkJsAuthHelperPromise = loading
+    return loading
   }
 
   // Replicated from v3/route-guard.js PLAN_ROLES — that file is the canonical
@@ -891,16 +943,19 @@
   }
 
   /**
-   * Select an existing `?conversation=` thread without mutation, or open the
-   * `?with=` one-on-one conversation, creating it when needed. Returns
-   * immediately when neither supported deep-link parameter is present.
+   * Ask Xano to authorize an existing thread or provision a two-person thread,
+   * then select only the returned id. Conversation and participant mutation is
+   * server-owned because TalkJS browser conversation synchronization is off.
    */
   async function openDeepLinkConversation(Talk, session, inbox, me, myId, identity) {
     const conversationId = deepLinkConversationId()
     if (conversationId) {
-      // TalkJS accepts an existing conversation id directly. This selects it
-      // without creating a new conversation or mutating its participants.
-      await inbox.select(conversationId)
+      const receipt = await window.StartersTalkJsSessionOwner.authorizeConversation({
+        clientOwner: 'messages-v3',
+        conversationId,
+      })
+      if (identity) identity.prefetch(receipt.counterpartId)
+      await inbox.select(receipt.conversationId)
       return
     }
 
@@ -914,22 +969,12 @@
     // member arriving from a /hire page is most likely to click.
     if (identity) identity.prefetch(otherId)
 
-    const handoff = consumeHandoff(otherId)
-    const conversation = session.getOrCreateConversation(
-      Talk.oneOnOneId(myId, otherId),
-    )
-    conversation.setParticipant(me)
-    conversation.setParticipant(otherParticipant(Talk, otherId, handoff))
-    // Attribution for conversations started from a profile page. Custom values
-    // must be strings; this cannot be backfilled onto existing conversations.
-    conversation.setAttributes({
-      custom: {
-        source: CONVERSATION_SOURCE,
-        slug: (handoff && handoff.slug) || '',
-      },
+    consumeHandoff(otherId)
+    const receipt = await window.StartersTalkJsSessionOwner.authorizeConversation({
+      clientOwner: 'messages-v3',
+      counterpartId: otherId,
     })
-
-    await inbox.select(conversation)
+    await inbox.select(receipt.conversationId)
   }
 
   async function mountMessages() {
@@ -948,9 +993,13 @@
 
     const Talk = await waitForTalkJs()
     const me = new Talk.User(talkUserFields(member))
-    const session = new Talk.Session({
-      appId: TALKJS_APP_ID,
+    const sessionOwner = await waitForTalkJsSessionOwner()
+    const session = await sessionOwner.openSession({
+      Talk,
+      memberstack,
+      member,
       me,
+      clientOwner: 'messages-v3',
     })
     const inbox = session.createInbox({
       theme: { name: TALKJS_THEME },
