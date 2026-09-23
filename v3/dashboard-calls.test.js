@@ -1155,6 +1155,265 @@ test('session refresh tolerates a bounded transient empty Memberstack member', a
   }
 })
 
+test('initial refresh waits through the post-login Memberstack hydration gap', async () => {
+  const originalDocument = global.document
+  const originalFetch = global.xanoAuthFetch
+  const originalMemberReady = global.memberReady
+  const originalSetTimeout = global.setTimeout
+  const root = element({ 'data-dashboard-calls-v3': 'loading' })
+  const refs = {
+    name: 'calls',
+    filter: 'all',
+    rows: [],
+    rendered: 0,
+    list: element(),
+    template: element(),
+    loader: element(),
+    empty: element(),
+    loadMore: element(),
+    filters: element(),
+    count: element(),
+    section: element(),
+  }
+  let reads = 0
+  const delays = []
+  try {
+    global.document = { documentElement: root, querySelector: () => null }
+    // The shared site-head promise resolves an empty object while the new
+    // page's Memberstack client is still hydrating the authenticated session.
+    global.memberReady = Promise.resolve({})
+    global.setTimeout = (callback, delay) => {
+      delays.push(delay)
+      callback()
+      return 1
+    }
+    global.xanoAuthFetch = async () => ({ ok: true, json: async () => [] })
+    const memberstack = {
+      async getCurrentMember() {
+        reads += 1
+        return reads < 5 ? { data: null } : { data: { id: 'starter-after-login' } }
+      },
+    }
+
+    assert.equal(await api.refreshSession(
+      memberstack,
+      [refs],
+      'starter',
+      1,
+      () => 1,
+      true,
+      {},
+    ), true)
+    assert.equal(reads, 5)
+    assert.deepEqual(delays.slice(0, 4), [200, 400, 800, 1200])
+    assert.equal(root.getAttribute('data-dashboard-calls-v3'), 'ready')
+  } finally {
+    global.document = originalDocument
+    global.xanoAuthFetch = originalFetch
+    global.memberReady = originalMemberReady
+    global.setTimeout = originalSetTimeout
+  }
+})
+
+test('transient auth change keeps the initial post-login readiness window', async () => {
+  const source = fs.readFileSync(require.resolve('./dashboard-calls.js'), 'utf8')
+  const retryTimers = []
+  const delays = []
+  const requests = []
+  let authChange
+  let reads = 0
+  const member = { id: 'starter-after-login' }
+  const list = element()
+  const template = element({ 'bookings-item-template': 'calls' })
+  list.querySelectorAll = (selector) =>
+    selector === '[bookings-item-template]' ? [template] : []
+  const section = element({ 'bookings-section': 'calls' })
+  section.querySelector = (selector) =>
+    ({
+      '[bookings-list="calls"]': list,
+      '[bookings-item-template="calls"]': template,
+      '[bookings-loader="calls"]': element(),
+      '[bookings-empty="calls"]': element(),
+      '[bookings-count]': element(),
+      '.tabs-button_component.is-dashboard': element(),
+    })[selector] || null
+  const root = element()
+  const document = {
+    documentElement: root,
+    readyState: 'complete',
+    getElementById() {
+      return null
+    },
+    querySelector() {
+      return null
+    },
+    querySelectorAll(selector) {
+      return selector === '[bookings-section]' ? [section] : []
+    },
+  }
+  const window = {
+    $memberstackDom: {
+      async getCurrentMember() {
+        reads += 1
+        return { data: reads < 5 ? null : member }
+      },
+      onAuthChange(listener) {
+        authChange = listener
+      },
+    },
+    clearInterval() {},
+    document,
+    location: { pathname: '/starter-dashboard', search: '', hash: '' },
+    memberReady: Promise.resolve({}),
+    setInterval() {
+      return 1
+    },
+    setTimeout(callback, delay) {
+      delays.push(delay)
+      retryTimers.push(callback)
+      return retryTimers.length
+    },
+    xanoAuthFetch: async (_url, init) => {
+      requests.push(JSON.parse(init.body).memberstack_id)
+      return { ok: true, json: async () => [] }
+    },
+  }
+
+  vm.runInNewContext(source, {
+    console: { error() {} },
+    document,
+    Intl,
+    URLSearchParams,
+    window,
+  })
+  await until(() => typeof authChange === 'function' && reads === 1)
+  authChange({ data: null })
+
+  for (let step = 0; step < 12 && root.getAttribute('data-dashboard-calls-v3') !== 'ready'; step += 1) {
+    await new Promise(setImmediate)
+    const callback = retryTimers.shift()
+    if (callback) callback()
+  }
+  await until(() => root.getAttribute('data-dashboard-calls-v3') === 'ready')
+
+  assert.deepEqual(requests, ['starter-after-login'])
+  assert.equal(reads, 5)
+  assert.deepEqual(delays.slice(0, 4), [200, 200, 400, 800])
+})
+
+test('auth change during delayed deep-link focus retries after canonical reload', async () => {
+  const source = fs.readFileSync(require.resolve('./dashboard-calls.js'), 'utf8')
+  const bookingId = '00d39a7b-40be-436f-b794-a6832215234b'
+  const retryTimers = []
+  const requests = []
+  let authChange
+  let opened = 0
+  const member = { id: 'starter-after-login' }
+  const booking = {
+    booking_id: bookingId,
+    lifecycle_revision: 1,
+    data_environment: 'production',
+    status: 'confirmed',
+    start: Date.now() + 86_400_000,
+    starter_data: { memberstack_id: member.id },
+  }
+  const view = detailModalHarness()
+  const list = element()
+  const template = element({ 'bookings-item-template': 'calls' })
+  list.querySelectorAll = (selector) =>
+    selector === '[bookings-item-template]' ? [template] : []
+  const section = element({ 'bookings-section': 'calls' })
+  section.querySelector = (selector) =>
+    ({
+      '[bookings-list="calls"]': list,
+      '[bookings-item-template="calls"]': template,
+      '[bookings-loader="calls"]': element(),
+      '[bookings-empty="calls"]': element(),
+      '[bookings-count]': element(),
+      '.tabs-button_component.is-dashboard': element(),
+    })[selector] || null
+  const root = element()
+  const document = {
+    documentElement: root,
+    readyState: 'complete',
+    getElementById() {
+      return null
+    },
+    querySelector(selector) {
+      return selector === '[popup-booking-info], dialog[data-modal-target="popup-booking-info"]'
+        ? view.modal
+        : null
+    },
+    querySelectorAll(selector) {
+      return selector === '[bookings-section]' ? [section] : []
+    },
+  }
+  const window = {
+    $memberstackDom: {
+      async getCurrentMember() {
+        return { data: member }
+      },
+      onAuthChange(listener) {
+        authChange = listener
+      },
+    },
+    URLSearchParams,
+    clearInterval() {},
+    document,
+    history: { replaceState() {} },
+    location: {
+      hostname: 'www.thestarters.com',
+      pathname: '/starter-dashboard',
+      search: '?booking_id=' + bookingId + '&revision=1&environment=production',
+      hash: '#calls',
+    },
+    memberReady: Promise.resolve(member),
+    setInterval() {
+      return 1
+    },
+    setTimeout(callback) {
+      retryTimers.push(callback)
+      return retryTimers.length
+    },
+    xanoAuthFetch: async (_url, init) => {
+      requests.push(JSON.parse(init.body).memberstack_id)
+      return { ok: true, json: async () => [booking] }
+    },
+  }
+
+  vm.runInNewContext(source, {
+    console: { error() {} },
+    document,
+    Intl,
+    URLSearchParams,
+    window,
+  })
+  await until(() => requests.length === 1 && retryTimers.length === 1)
+  authChange({ data: null })
+  await until(() => requests.length === 2 && retryTimers.length === 2)
+
+  window.lumos = {
+    modal: {
+      list: { 'popup-booking-info': {} },
+      open() {
+        opened += 1
+      },
+    },
+  }
+  while (retryTimers.length) {
+    retryTimers.shift()()
+    await new Promise(setImmediate)
+  }
+  await until(() => opened === 1)
+
+  assert.deepEqual(requests, [member.id, member.id])
+  assert.equal(view.modal.getAttribute('data-booking-id'), bookingId)
+  assert.equal(
+    view.modal.getAttribute('data-booking-deep-link'),
+    'current_state_read_only',
+  )
+})
+
 test('a post-mutation refresh still fails closed once the member stays missing', async () => {
   const originalDocument = global.document
   const originalFetch = global.xanoAuthFetch
@@ -3412,6 +3671,80 @@ test('F18 request links parse from the query and normalize #calls to the live an
   )
 })
 
+test('F18 exact query-only request links recover a lost fragment and normalize to the live anchor', () => {
+  const bookingId = '2f3bec74-0f47-4a98-ae8b-c6d38a1d5fa8'
+  const search = '?booking_id=' + bookingId + '&revision=1&environment=production'
+  const location = {
+    hostname: 'www.thestarters.com',
+    pathname: '/starter-dashboard',
+    search,
+    hash: '',
+  }
+  assert.deepEqual(api.callDeepLinkLocator(location), {
+    bookingId,
+    revision: 1,
+    environment: 'production',
+  })
+  let replaced = ''
+  assert.equal(api.normalizeCallsAnchor(location, {
+    replaceState(_state, _title, url) { replaced = url },
+  }), true)
+  assert.equal(replaced, '/starter-dashboard' + search + '#calls-section')
+})
+
+test('F18 query-only recovery rejects incomplete, malformed, and non-call locators', () => {
+  const bookingId = '2f3bec74-0f47-4a98-ae8b-c6d38a1d5fa8'
+  const base = {
+    hostname: 'www.thestarters.com',
+    pathname: '/starter-dashboard',
+    hash: '',
+  }
+  ;[
+    '?booking_id=' + bookingId + '&revision=1',
+    '?booking_id=' + bookingId + '&revision=one&environment=production',
+    '?booking_id=not-a-uuid&revision=1&environment=production',
+    '?booking_id=' + bookingId + '&revision=1&environment=test',
+    '?booking_id=' + bookingId + '&booking_id=00000000-0000-4000-8000-000000000000&revision=1&environment=production',
+    '?booking_id=' + bookingId + '&booking_id=' + bookingId + '&revision=1&environment=production',
+    '?booking_id=' + bookingId + '&booking_id=&revision=1&environment=production',
+    '?booking_id=' + bookingId + '&revision=1&environment=production&thread=7',
+    '?thread=7',
+  ].forEach((search) => {
+    const location = { ...base, search }
+    assert.equal(api.callDeepLinkLocator(location), null)
+    assert.equal(api.normalizeCallsAnchor(location, { replaceState() {} }), false)
+  })
+})
+
+test('F18 query-only recovery is limited to the production Starter dashboard', () => {
+  const bookingId = '2f3bec74-0f47-4a98-ae8b-c6d38a1d5fa8'
+  const search = '?booking_id=' + bookingId + '&revision=1&environment=production'
+  ;[
+    { hostname: 'www.thestarters.com', pathname: '/brand-dashboard', search, hash: '' },
+    { hostname: 'www.thestarters.com', pathname: '/starter-dashboard---availability-stage', search, hash: '' },
+    {
+      hostname: 'the-starters-3-0.webflow.io',
+      pathname: '/starter-dashboard',
+      search: search.replace('production', 'test'),
+      hash: '',
+    },
+  ].forEach((location) => {
+    assert.equal(api.callDeepLinkLocator(location), null)
+    assert.equal(api.normalizeCallsAnchor(location, { replaceState() {} }), false)
+  })
+})
+
+test('F18 fragment-based links retain their existing dashboard and query behavior', () => {
+  const bookingId = '2f3bec74-0f47-4a98-ae8b-c6d38a1d5fa8'
+  const locator = api.callDeepLinkLocator({
+    hostname: 'the-starters-3-0.webflow.io',
+    pathname: '/brand-dashboard',
+    search: '?booking_id=' + bookingId + '&revision=1&environment=test&thread=7',
+    hash: '#calls-section',
+  })
+  assert.deepEqual(locator, { bookingId, revision: 1, environment: 'test' })
+})
+
 test('F18 request locators reject malformed, fragment-carried, and cross-environment values', () => {
   const bookingId = '00d39a7b-40be-436f-b794-a6832215234b'
   assert.equal(api.callDeepLinkLocator({
@@ -3508,6 +3841,55 @@ test('F18 canonical focus binds participant, environment, revision, and current 
     'starter',
     2_000,
   ).readOnly, true)
+})
+
+test('F18 booking 1072 query-only stale receipt opens canonical cancelled details read-only', () => {
+  const originalDocument = global.document
+  const originalLumos = global.lumos
+  const bookingId = '2f3bec74-0f47-4a98-ae8b-c6d38a1d5fa8'
+  const view = detailModalHarness()
+  let opened = 0
+  try {
+    global.document = { querySelector: () => view.modal }
+    global.lumos = {
+      modal: {
+        list: { 'popup-booking-info': {} },
+        open() { opened += 1 },
+      },
+    }
+    const locator = api.callDeepLinkLocator({
+      hostname: 'www.thestarters.com',
+      pathname: '/starter-dashboard',
+      search: '?booking_id=' + bookingId + '&revision=1&environment=production',
+      hash: '',
+    })
+    const result = api.focusCanonicalDeepLink(locator, [{
+      booking_id: bookingId,
+      lifecycle_revision: 3,
+      data_environment: 'production',
+      status: 'cancelled',
+      start: 1_790_225_100_000,
+      end: 1_790_226_900_000,
+      paid_meeting: false,
+      starter_data: { memberstack_id: 'mem_starter', name: 'Starter', timezone: 'UTC' },
+      brand_data: { memberstack_id: 'mem_brand', name: 'Brand', timezone: 'UTC' },
+    }], 'mem_starter', 'starter', 1_790_088_200_000)
+
+    assert.deepEqual(result, { focused: true, readOnly: true, reason: 'stale_revision' })
+    assert.equal(opened, 1)
+    assert.equal(view.modal.getAttribute('data-booking-status'), 'cancelled')
+    assert.equal(view.modal.getAttribute('data-booking-deep-link'), 'stale_revision')
+    assert.equal(view.fields.status.textContent, 'Cancelled')
+    assert.equal(view.cancelledPanel.hidden, false)
+    assert.equal(view.actions[2].hidden, true)
+    assert.equal(view.actions[3].hidden, true)
+    assert.equal(view.actions[4].hidden, true)
+    assert.equal(view.actions[0].hidden, false)
+    assert.equal(view.message.hidden, false)
+  } finally {
+    global.document = originalDocument
+    global.lumos = originalLumos
+  }
 })
 
 test('F18 read-only focus disables mutation controls and restores their original state', () => {

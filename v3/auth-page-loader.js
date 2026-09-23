@@ -1,7 +1,7 @@
 /**
  * Minimal V3 authentication-page runtime loader.
  *
- * @release v1.59.507
+ * @release v1.59.610
  *
  * Install once in the V3 site Head Code after Memberstack, the shared
  * `window.memberReady` initializer, the unconditional sitewide
@@ -202,8 +202,10 @@
     } catch (error) {}
   }
 
+  var startedAt = approvedHost ? consumeNavigationTiming(pathname) : null
+  if (startedAt !== null) window.__startersV3PostLoginNavigation = true
   var api = {
-    release: 'v1.59.507',
+    release: 'v1.59.610',
     authPaths: Array.from(AUTH_PATHS),
     isApprovedHost: isApprovedHost,
     isAuthPath: isAuthPath,
@@ -228,7 +230,6 @@
     installAuthRouter(pathname)
   }
 
-  var startedAt = consumeNavigationTiming(pathname)
   if (startedAt !== null) {
     if (document.readyState === 'complete') {
       emitNavigationTiming(startedAt)

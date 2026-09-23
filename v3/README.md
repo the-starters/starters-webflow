@@ -143,9 +143,11 @@ gate. The versioned
 documents route access plus the separate Webflow, content, and Xano enforcement
 layers.
 
-The V3 opportunity and Messages guards send logged-out visitors to
-`/login?next=<encoded current path and query>` so the router can restore an
-allowed destination after login.
+The V3 protected-route guard sends logged-out visitors to
+`/login?next=<encoded current path and query>`. For an exact Calls notification
+locator on either dashboard, it also preserves `#calls` or `#calls-section`
+through login. Other fragments are removed, and the router restores only a
+role-allowed same-origin destination.
 
 Talent logins additionally fork on funnel position, read from Xano
 `starters_onboarding/get_build_profile_status`: `build_profile_done` false goes to
@@ -1976,6 +1978,10 @@ Current safety boundary:
   their initial identity snapshot and `window.getXanoAuthToken` for the
   Opportunities, Points, Messages, and Stripe reads. This keeps one shared
   Memberstack bootstrap and one in-flight Xano token trade per member session.
+  The source-backed post-login wait is owned by the
+  [protected-route guard](#protected-route-guard), and the call reader's initial
+  and later-refresh behavior is owned by the
+  [dashboard call section](#dashboard-call-sections).
   The Free and Paid settings controllers use the bridge-owned auth scope and fetch reference for
   auth-triggered refreshes and writes, so a transient Memberstack DOM null cannot block the current
   owner. A logout or account switch changes that scope and still fails closed.
@@ -2174,8 +2180,12 @@ identity data and booking rows; a response started under the prior session can
 never repaint the page.
 
 Memberstack can briefly hand back an empty member while its client refreshes the
-session, so an empty read is retried on a bounded budget of three total member
-reads with a 200ms then 400ms backoff before the identity is treated as missing.
+session. On the initial load, an empty shared `memberReady` snapshot keeps the
+dashboard loading through the bounded 200, 400, 800, 1200, 1600, 2000, and
+2000ms readiness schedule. A transient auth notification before the first
+successful canonical load restarts that initial window instead of shortening
+it. Later refreshes retain the three-total-read budget with 200ms then 400ms
+backoff before the identity is treated as missing.
 A refresh that follows a successful cancel, decline, confirm, or reschedule
 keeps the rendered list and the success panel in place when the canonical read
 itself fails, and logs instead. A member that is still absent after the bounded
@@ -2186,7 +2196,12 @@ booking rows and then fails the dashboard closed.
 Request-created notification links may locate one canonical call with
 `?booking_id=<uuid>&revision=<non-negative integer>&environment=<test|production>`
 followed by `#calls` or `#calls-section`. The short anchor is normalized to
-`#calls-section` without dropping the query string. `test` is accepted only on
+`#calls-section` without dropping the query string. When an otherwise exact
+notification locator reaches the dashboard without a fragment, the controller
+also restores `#calls-section` on the production Starter dashboard; this
+recovers a fragment lost during a login or canonical-host redirect only when
+the query contains each locator parameter exactly once and no unrelated
+parameters. `test` is accepted only on
 `the-starters-3-0.webflow.io`; `production` is accepted only on
 `thestarters.com` and `www.thestarters.com`. Missing, conflicting duplicate, or
 malformed locator values fail closed. The locator never supplies booking state
@@ -2197,8 +2212,9 @@ actionable only for its Starter participant. The Brand view, a stale revision,
 or any matching row that is no longer an actionable request opens the canonical
 details read-only with mutation and payment controls hidden. A missing or
 unauthorized canonical row opens nothing. Modal discovery is retried only on a
-bounded readiness schedule, and an account change cancels the pending focus so
-one member's link cannot open under another session.
+bounded readiness schedule. A transient auth restart keeps the locator pending
+until a new canonical load can retry it; a definitive mismatch after an account
+change opens nothing, so one member's link cannot open under another session.
 
 Webflow owns all call-section markup. Each section must provide:
 
@@ -3017,14 +3033,15 @@ to prevent duplicate Brand and Starter messages. Guest calendar invitations
 belong to the canonical backend event lifecycle after organizer confirmation,
 not to the Scheduler configuration email flags.
 
-Minimum booking notice: the exact TEST/staging host
-`the-starters-3-0.webflow.io` uses five minutes in new Scheduler
-configurations and browser availability query floors. Booking Preview states
-the five-minute minimum there and the 24-hour minimum on `thestarters.com` and
-`www.thestarters.com`. Production, unknown
-hosts, and CommonJS contexts fail closed to 1,440 minutes (24 hours). An
-availability-only configuration update never sends `in_scheduler`, so it does
-not change the existing provider booking policy. The Paid configuration is
+Minimum booking notice: in the non-modal Dashboard / Calendar section, the
+exact TEST/staging host `the-starters-3-0.webflow.io` uses five minutes in new
+Free Scheduler configurations and browser availability query floors;
+production, unknown hosts, and CommonJS contexts use eight hours. Booking
+Preview states the five-minute minimum on staging and the eight-hour minimum
+on `thestarters.com` and `www.thestarters.com`. Opening the preview does not
+mutate provider configurations. Existing provider notice corrections belong
+to the bounded backend reconciliation; availability-only updates and Paid
+configurations remain unchanged. The Paid configuration is
 created server-side through `/starter/paid-call-settings/upsert/v3`, which the
 browser calls with product intent only, so that record's provider-side
 `min_booking_notice` is owned by Xano: the staging five-minute value narrows

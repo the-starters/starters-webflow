@@ -1,7 +1,7 @@
 /**
  * V3 protected-route guard.
  *
- * @release v1.59.441
+ * @release v1.59.610
  *
  * A thin, sitewide companion to v3/auth-route.js. auth-route.js only runs at
  * /login, /starter-login, and /auth-route, so a logged-in member can still reach
@@ -13,7 +13,8 @@
  *   - replace the retired `/memberstack/search-freelancers` destination with
  *     `/all-starters` on approved V3 hosts before waiting for Memberstack,
  *     preserving the query and fragment,
- *   - send logged-out visitors to /login?next=<current path+query>, or to the
+ *   - send logged-out visitors to /login?next=<current path+query>, preserving
+ *     the validated Calls notification fragment when present, or to the
  *     per-page destination in LOGGED_OUT_DESTINATIONS where a funnel page wants
  *     the homepage instead of a login form,
  *   - route /dashboard to the authenticated member's role-specific home,
@@ -55,6 +56,7 @@
   ])
   var LOGIN_PATH = '/login'
   var MEMBERSTACK_TIMEOUT_MS = 10000
+  var INITIAL_MEMBER_RETRY_DELAYS_MS = [200, 400, 800, 1200, 1600, 2000, 2000]
   var LOG_PREFIX = '[v3-route-guard]'
   var SHARED_OPPORTUNITIES_ROLE_TIMEOUT_MS = 2000
   var SHARED_OPPORTUNITIES_ROLE_POLL_MS = 100
@@ -525,21 +527,61 @@
     return roleHome(member)
   }
 
-  function loginPathWithNext(pathname, search) {
-    return LOGIN_PATH + '?next=' + encodeURIComponent(pathname + (search || ''))
+  function callNotificationFragment(pathname, search, hash) {
+    if (pathname !== '/brand-dashboard' && pathname !== '/starter-dashboard') {
+      return ''
+    }
+    var anchor = String(hash || '').trim().toLowerCase()
+    if (anchor !== '#calls' && anchor !== '#calls-section') return ''
+    var params = new URLSearchParams(String(search || '').replace(/^\?/, ''))
+
+    function one(name) {
+      var values = params
+        .getAll(name)
+        .map(function (value) { return String(value || '').trim() })
+        .filter(Boolean)
+      if (!values.length) return ''
+      for (var i = 1; i < values.length; i++) {
+        if (values[i] !== values[0]) return ''
+      }
+      return values[0]
+    }
+
+    var bookingId = one('booking_id')
+    var revisionValue = one('revision')
+    var environment = one('environment').toLowerCase()
+    var revision = Number(revisionValue)
+    var expectedEnvironment =
+      window.location.hostname === 'the-starters-3-0.webflow.io'
+        ? 'test'
+        : 'production'
+    if (
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(bookingId) ||
+      !/^\d+$/.test(revisionValue) ||
+      !Number.isSafeInteger(revision) ||
+      revision < 0 ||
+      environment !== expectedEnvironment
+    ) return ''
+    return anchor
+  }
+
+  function loginPathWithNext(pathname, search, hash) {
+    var next = pathname + (search || '')
+    next += callNotificationFragment(pathname, search, hash)
+    return LOGIN_PATH + '?next=' + encodeURIComponent(next)
   }
 
   /**
    * Where a logged-out visitor to a guarded page goes: the LOGGED_OUT_DESTINATIONS
    * override when one exists, else the default login round trip.
    */
-  function loggedOutDestinationFor(pathname, search) {
+  function loggedOutDestinationFor(pathname, search, hash) {
     if (
       Object.prototype.hasOwnProperty.call(LOGGED_OUT_DESTINATIONS, pathname)
     ) {
       return LOGGED_OUT_DESTINATIONS[pathname]
     }
-    return loginPathWithNext(pathname, search)
+    return loginPathWithNext(pathname, search, hash)
   }
 
   function isMemberBouncePage(pathname) {
@@ -646,8 +688,8 @@
       var url = new URL(rawValue, window.location.origin)
       if (url.origin !== window.location.origin) return null
       if (url.username || url.password) return null
-      if (url.hash) url.hash = ''
-      return url.pathname + url.search
+      var fragment = callNotificationFragment(url.pathname, url.search, url.hash)
+      return url.pathname + url.search + fragment
     } catch (error) {
       return null
     }
@@ -795,12 +837,38 @@
   }
 
   async function initialMemberSnapshot(memberstack) {
+    var postLoginNavigation =
+      window.__startersV3PostLoginNavigation === true
+    try {
+      delete window.__startersV3PostLoginNavigation
+    } catch (error) {
+      window.__startersV3PostLoginNavigation = false
+    }
+    var sharedSnapshotWasEmpty = false
     if (window.memberReady && typeof window.memberReady.then === 'function') {
       var member = await window.memberReady
       if (member && member.id) return member
+      sharedSnapshotWasEmpty = true
     }
     var response = await memberstack.getCurrentMember()
-    return response && response.data
+    member = response && response.data
+    if (
+      !sharedSnapshotWasEmpty ||
+      !postLoginNavigation ||
+      (window.location.pathname !== '/brand-dashboard' &&
+        window.location.pathname !== '/starter-dashboard')
+    ) {
+      return member
+    }
+    for (var i = 0; i < INITIAL_MEMBER_RETRY_DELAYS_MS.length; i++) {
+      if (member && member.id) break
+      await new Promise(function (resolve) {
+        window.setTimeout(resolve, INITIAL_MEMBER_RETRY_DELAYS_MS[i])
+      })
+      response = await memberstack.getCurrentMember()
+      member = response && response.data
+    }
+    return member
   }
 
   function showGuardError(code) {
@@ -901,6 +969,7 @@
         loggedOutDestinationFor(
           window.location.pathname,
           window.location.search,
+          window.location.hash,
         ),
       )
       return
@@ -993,9 +1062,7 @@
   }
 
   var api = {
-    // Keep in sync with the @release line in this file's header comment; the
-    // v3/route-guard.test.js drift guard asserts they match.
-    release: 'v1.59.441',
+    release: 'v1.59.610',
     activePlanIds: activePlanIds,
     roleResolution: roleResolution,
     memberRole: memberRole,

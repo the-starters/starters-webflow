@@ -37,7 +37,12 @@
     'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/'
   const CONFIRM_ATTEMPT_STORAGE_PREFIX = 'starters:dashboard-confirm:v1:'
   const MEMBERSTACK_TIMEOUT_MS = 10000
-  const MEMBER_RETRY_ATTEMPTS = 2
+  // A post-login navigation can expose the Memberstack client before its
+  // authenticated member has hydrated. Keep the dashboard in its loading
+  // state for one bounded readiness window instead of permanently rendering
+  // zero calls after the old 600 ms retry budget.
+  const MEMBER_RETRY_DELAYS_MS = [200, 400]
+  const INITIAL_MEMBER_RETRY_DELAYS_MS = [200, 400, 800, 1200, 1600, 2000, 2000]
   const REQUEST_EXPIRATION_TICK_MS = 10000
   const REQUEST_EXPIRATION_POLL_MS = 30000
   const REQUEST_EXPIRATION_MAX_POLLS = 3
@@ -111,14 +116,34 @@
   /**
    * Parses the F18 request-created dashboard locator. The URL is only a locator:
    * ownership and current state still come from the authenticated canonical feed.
-   * Existing links put the locator in the query string before `#calls`.
+   * Existing links put the locator in the query string before `#calls`. A missing
+   * anchor is recovered only for an exact production Starter-dashboard query.
    */
   function callDeepLinkLocator(location) {
     const Params = global.URLSearchParams
     if (!location || typeof Params !== 'function') return null
     const anchor = clean(location.hash).toLowerCase()
-    if (anchor !== '#calls' && anchor !== '#calls-section') return null
+    if (anchor !== '' && anchor !== '#calls' && anchor !== '#calls-section') return null
     const searchParams = new Params(clean(location.search).replace(/^\?/, ''))
+    if (anchor === '') {
+      if (
+        normalizedPath(location.pathname) !== '/starter-dashboard' ||
+        dashboardEnvironment(location) !== 'production'
+      ) return null
+      const locatorNames = ['booking_id', 'revision', 'environment']
+      let parameterCount = 0
+      searchParams.forEach(function (_value, name) {
+        parameterCount += 1
+        if (!locatorNames.includes(name)) parameterCount = Number.NaN
+      })
+      if (
+        parameterCount !== locatorNames.length ||
+        locatorNames.some(function (name) {
+          const values = searchParams.getAll(name)
+          return values.length !== 1 || clean(values[0]) === ''
+        })
+      ) return null
+    }
     const bookingId = locatorValue(searchParams, 'booking_id')
     const revisionValue = locatorValue(searchParams, 'revision')
     const environment = locatorValue(searchParams, 'environment').toLowerCase()
@@ -135,7 +160,10 @@
   }
 
   function normalizeCallsAnchor(location, history) {
-    if (!location || clean(location.hash).toLowerCase() !== '#calls') return false
+    if (!location) return false
+    const anchor = clean(location.hash).toLowerCase()
+    const exactQueryWithoutAnchor = anchor === '' && Boolean(callDeepLinkLocator(location))
+    if (anchor !== '#calls' && !exactQueryWithoutAnchor) return false
     const next = clean(location.pathname) + clean(location.search) + '#calls-section'
     if (history && typeof history.replaceState === 'function') {
       history.replaceState(null, '', next)
@@ -2503,14 +2531,16 @@
       // refreshes the session. Retry before replacing a successful mutation
       // state with an auth failure. A genuinely missing session still fails
       // closed after the bounded retries.
-      for (
-        let attempt = 0;
-        attempt < MEMBER_RETRY_ATTEMPTS && (!current || !(current.data || current).id);
-        attempt += 1
-      ) {
+      const retryDelays = useSharedMember
+        ? INITIAL_MEMBER_RETRY_DELAYS_MS
+        : MEMBER_RETRY_DELAYS_MS
+      for (const delayMs of retryDelays) {
+        if (current && (current.data || current).id) break
+        if (generation !== currentGeneration()) return
         await new Promise(function (resolve) {
-          global.setTimeout(resolve, 200 * (attempt + 1))
+          global.setTimeout(resolve, delayMs)
         })
+        if (generation !== currentGeneration()) return
         current = await memberstack.getCurrentMember()
       }
       if (generation !== currentGeneration()) return
@@ -2602,17 +2632,15 @@
       return sessionGeneration
     }
     wireBrandProfileRepaint(memberstack, currentGeneration)
-    let restartCount = 0
+    let initialReadinessPending = true
     const restart = function (options) {
       sessionGeneration += 1
-      const useSharedMember = restartCount === 0
-      restartCount += 1
+      const generation = sessionGeneration
+      const useSharedMember = initialReadinessPending
       const preserveExisting = Boolean(options && options.preserveExisting)
       if (!preserveExisting) resetIdentityState(refs, role)
       const onCanonicalRows = deepLinkPending
         ? function (rows, memberId) {
-            deepLinkPending = false
-            const generation = sessionGeneration
             focusCanonicalDeepLinkWhenReady(
               deepLinkLocator,
               rows,
@@ -2621,20 +2649,31 @@
               Date.now(),
               generation,
               currentGeneration,
-            ).catch(function (error) {
-              console.error('[dashboard-calls] deep link focus failed:', error && error.message)
-            })
+            )
+              .then(function (result) {
+                if (result && result.reason !== 'session_changed') {
+                  deepLinkPending = false
+                }
+              })
+              .catch(function (error) {
+                console.error('[dashboard-calls] deep link focus failed:', error && error.message)
+              })
           }
         : null
       return refreshSession(
         memberstack,
         refs,
         role,
-        sessionGeneration,
+        generation,
         currentGeneration,
         useSharedMember,
         { preserveExisting, onCanonicalRows },
-      )
+      ).then(function (refreshed) {
+        if (refreshed === true && generation === currentGeneration()) {
+          initialReadinessPending = false
+        }
+        return refreshed
+      })
     }
     const refreshAfterMutation = function () {
       return restart({ preserveExisting: true })

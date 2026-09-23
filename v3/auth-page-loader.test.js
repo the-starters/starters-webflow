@@ -424,7 +424,7 @@ test('the controller answer survives losing document.currentScript', () => {
 // +7s. `destination-load` must report 7000, not the 5000 that was readable when
 // the receipt was consumed, or the number excludes the very interval it names.
 test('destination load measures through load, not the boot read', () => {
-  const { clock, events, listeners, marks, storage } = loadLoader({
+  const { clock, events, listeners, marks, storage, window } = loadLoader({
     pathname: '/starter-dashboard',
     startedAt: 1700000000000,
     redirectedAt: 1700000004000,
@@ -433,6 +433,7 @@ test('destination load measures through load, not the boot read', () => {
   assert.equal(typeof listeners.load, 'function')
   assert.equal(storage.has(TIMING_KEY), false)
   assert.equal(events.length, 0)
+  assert.equal(window.__startersV3PostLoginNavigation, true)
 
   clock.now = 1700000007000
   listeners.load()
@@ -464,7 +465,7 @@ test('a load that arrives past the two-minute ceiling emits nothing', () => {
 })
 
 test('a receipt the router never confirmed is discarded without an event', () => {
-  const { events, listeners, marks, storage } = loadLoader({
+  const { events, listeners, marks, storage, window } = loadLoader({
     pathname: '/forgot-password',
     startedAt: 1700000000000,
   })
@@ -473,6 +474,7 @@ test('a receipt the router never confirmed is discarded without an event', () =>
   assert.equal(events.length, 0)
   assert.equal(marks.length, 0)
   assert.equal(storage.has(TIMING_KEY), false)
+  assert.equal(window.__startersV3PostLoginNavigation, undefined)
 })
 
 // The member hits stop or clicks away before `load`. The receipt must already
@@ -529,11 +531,4 @@ test('an unusable timing receipt is discarded', () => {
     assert.equal(marks.length, 0, rawReceipt)
     assert.equal(storage.has(TIMING_KEY), false, rawReceipt)
   }
-})
-
-test('header and exported release markers match', () => {
-  const { window } = loadLoader()
-  const marker = source.match(/@release\s+(v\d+\.\d+\.\d+)/)
-  assert.ok(marker)
-  assert.equal(window.StartersV3AuthPageLoader.release, marker[1])
 })

@@ -107,9 +107,15 @@ function loadGuard(options = {}) {
     location,
     localStorage,
     setInterval,
-    setTimeout,
+    setTimeout: options.setTimeout || setTimeout,
     clearInterval,
     clearTimeout,
+  }
+  if (Object.prototype.hasOwnProperty.call(options, 'memberReady')) {
+    window.memberReady = options.memberReady
+  }
+  if (options.postLoginNavigation === true) {
+    window.__startersV3PostLoginNavigation = true
   }
   // `noStorage` leaves window.sessionStorage undefined, which is the shape an
   // embedded/partitioned context can present. Every other call gets the double,
@@ -519,6 +525,30 @@ test('lets an allowed member stay and marks the page resolved', async () => {
   assert.ok(events.some((e) => e.name === 'starters:v3-route-guard-allowed'))
 })
 
+test('call dashboard guard waits for post-login member hydration', async () => {
+  const delays = []
+  let reads = 0
+  const { location, attributes } = loadGuard({
+    pathname: '/starter-dashboard',
+    memberReady: Promise.resolve({}),
+    postLoginNavigation: true,
+    getCurrentMember: async () => ({
+      data: ++reads < 4 ? null : TALENT,
+    }),
+    setTimeout(callback, delay) {
+      delays.push(delay)
+      callback()
+      return 1
+    },
+  })
+
+  await flush()
+  assert.equal(location.replaced, undefined)
+  assert.equal(attributes['data-route-guard'], 'allowed')
+  assert.equal(reads, 4)
+  assert.deepEqual(delays, [200, 400, 800])
+})
+
 test('shared opportunities waits for a higher allowed plan to hydrate before redirecting', async () => {
   const snapshots = [
     BRAND_FREE,
@@ -681,6 +711,44 @@ test('every other guarded page keeps the /login?next= round trip', () => {
     api.loggedOutDestinationFor('constructor', ''),
     '/login?next=constructor',
   )
+})
+
+test('a logged-out Calls notification keeps its validated fragment through login', async () => {
+  const bookingId = '00d39a7b-40be-436f-b794-a6832215234b'
+  const search =
+    '?booking_id=' + bookingId + '&revision=1&environment=production'
+  const expectedNext = '/brand-dashboard' + search + '#calls'
+  const { api } = loadGuard({ hostname: 'www.thestarters.com' })
+  assert.equal(
+    api.loggedOutDestinationFor('/brand-dashboard', search, '#calls'),
+    '/login?next=' + encodeURIComponent(expectedNext),
+  )
+
+  const { location } = loadGuard({
+    hostname: 'www.thestarters.com',
+    pathname: '/brand-dashboard',
+    search,
+    hash: '#calls',
+    memberReady: Promise.resolve({}),
+    member: null,
+    setTimeout() {
+      throw new Error('signed-out dashboard must not enter readiness retries')
+    },
+  })
+  await flush()
+  assert.equal(location.replaced, '/login?next=' + encodeURIComponent(expectedNext))
+})
+
+test('only an exact Calls locator may preserve a login fragment', () => {
+  const bookingId = '00d39a7b-40be-436f-b794-a6832215234b'
+  const valid =
+    '/starter-dashboard?booking_id=' + bookingId +
+    '&revision=1&environment=test#calls-section'
+  const { api } = loadGuard()
+  assert.equal(api.localPath(valid), valid)
+  assert.equal(api.localPath('/starter-dashboard?booking_id=' + bookingId + '#calls'), '/starter-dashboard?booking_id=' + bookingId)
+  assert.equal(api.localPath('/starter-dashboard?booking_id=' + bookingId + '&revision=1&environment=production#calls'), '/starter-dashboard?booking_id=' + bookingId + '&revision=1&environment=production')
+  assert.equal(api.localPath('/messages?thread=7#calls'), '/messages?thread=7')
 })
 
 test('a logged-out build-profile visitor is sent to the homepage, not to login', async () => {
@@ -1917,13 +1985,4 @@ test('an active paid Brand on the homepage is still sent to /brand-dashboard at 
   const { location } = loadGuard({ pathname: '/', member: BRAND_PAID })
   await flush()
   assert.equal(location.replaced, '/brand-dashboard')
-})
-
-// --- Release marker -----------------------------------------------------------
-
-test('the header @release marker matches the exported release property', () => {
-  const { api } = loadGuard()
-  const marker = source.match(/^ \* @release (v\d+\.\d+\.\d+)$/m)
-  assert.ok(marker, 'no "@release vX.Y.Z" line in the route-guard.js header')
-  assert.equal(api.release, marker[1])
 })

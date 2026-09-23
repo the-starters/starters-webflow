@@ -4399,6 +4399,12 @@ test('the profile owner gets Default only for call cards that pass every readine
     assert.equal(card.root.getAttribute('data-service-card-state'), 'Default')
     assert.equal(card.root.getAttribute('data-call-offer-state'), 'available')
     assert.equal(card.root.getAttribute('data-call-owner-preview'), '')
+    assert.equal(card.root.getAttribute('data-owner-preview-action'), 'call')
+    assert.equal(card.root.getAttribute('aria-disabled'), 'true')
+    assert.equal(card.root.getAttribute('data-modal-trigger'), null)
+    assert.equal(card.root.getAttribute('booking-popup-open'), null)
+    const hint = page.root.querySelector('#' + card.root.getAttribute('aria-describedby'))
+    assert.match(hint.textContent, /Clients use this button to book a call with you/)
     assert.equal(card.tooltip.style.display, 'none')
   }
 })
@@ -6840,14 +6846,31 @@ function addContactActions(page) {
     'data-modal-trigger': 'signup-modal',
     'data-signup-trigger-element': 'hire',
   })
+  const hireSecondary = makeElement('div', {
+    'data-modal-trigger': 'generate-contract',
+    'data-signup-trigger-element': 'hire',
+  })
   const message = makeElement('div', {
     'data-modal-trigger': 'messages-profile-modal',
     'data-signup-trigger-element': 'message',
     'messages-profile-message': 'mem_canary',
   })
+  const service = makeElement('div', {
+    'data-modal-trigger': 'generate-contract',
+    'data-signup-trigger-element': 'service',
+    'data-signup-trigger-value': 'Ongoing Advisory Retainer',
+  })
+  const serviceSecondary = makeElement('div', {
+    'data-modal-trigger': 'generate-contract',
+    'data-signup-trigger-element': 'service',
+    'data-signup-trigger-value': 'Secondary project service',
+  })
   page.root.appendChild(hire)
+  page.root.appendChild(hireSecondary)
   page.root.appendChild(message)
-  return { hire, message }
+  page.root.appendChild(service)
+  page.root.appendChild(serviceSecondary)
+  return { hire, hireSecondary, message, service, serviceSecondary }
 }
 
 /** What a viewer can actually do with one of those CTAs. */
@@ -6856,11 +6879,14 @@ function actionState(element) {
     display: element.style.display,
     hidden: element.getAttribute('hidden'),
     ariaHidden: element.getAttribute('aria-hidden'),
+    ariaDisabled: element.getAttribute('aria-disabled'),
+    describedBy: element.getAttribute('aria-describedby'),
+    previewAction: element.getAttribute('data-owner-preview-action'),
     modalTrigger: element.getAttribute('data-modal-trigger'),
   }
 }
 
-test('owner actions: the owner gets call settings without a self-booking, Hire or Message action', async () => {
+test('owner actions: Hire and project services stay visible as explained previews while Message stays hidden', async () => {
   const page = makePage()
   addContractDialog(page)
   const actions = addContactActions(page)
@@ -6869,18 +6895,72 @@ test('owner actions: the owner gets call settings without a self-booking, Hire o
   vm.createContext(context)
   vm.runInContext(source, context)
   await settle()
+  const hireHintId = actions.hire.getAttribute('aria-describedby')
+  const serviceHintId = actions.service.getAttribute('aria-describedby')
+  assert.match(hireHintId, /^owner-preview-hint-/)
+  assert.match(serviceHintId, /^owner-preview-hint-/)
+  assert.notEqual(hireHintId, serviceHintId)
 
-  // Hire and Message are hidden outright and cannot open their modals.
+  // Hire and service cards are useful previews of the Brand experience. They
+  // stay visible and focusable, but their delegate hooks are removed.
   assert.deepEqual(actionState(actions.hire), {
-    display: 'none',
-    hidden: 'hidden',
-    ariaHidden: 'true',
+    display: '',
+    hidden: null,
+    ariaHidden: 'false',
+    ariaDisabled: 'true',
+    describedBy: hireHintId,
+    previewAction: 'hire',
     modalTrigger: null,
   })
+  assert.deepEqual(actionState(actions.service), {
+    display: '',
+    hidden: null,
+    ariaHidden: 'false',
+    ariaDisabled: 'true',
+    describedBy: serviceHintId,
+    previewAction: 'service',
+    modalTrigger: null,
+  })
+  const hireHint = page.root.querySelector('#' + hireHintId)
+  const serviceHint = page.root.querySelector('#' + serviceHintId)
+  assert.match(hireHint.textContent, /Clients use this button to start a project with you/)
+  assert.match(serviceHint.textContent, /Clients use this service to start a project with you/)
+
+  for (const action of [actions.hire, actions.hireSecondary, actions.service, actions.serviceSecondary]) {
+    assert.equal(action.getAttribute('aria-disabled'), 'true', 'every authored placement is disabled')
+    assert.equal(action.getAttribute('data-modal-trigger'), null, 'every authored placement loses its workflow hook')
+    let prevented = false
+    action.listeners.click.forEach(fn => fn({
+      preventDefault() { prevented = true },
+      stopPropagation() {},
+      stopImmediatePropagation() {},
+    }))
+    assert.equal(prevented, true, 'owner preview activation is consumed')
+    const hint = page.root.querySelector('#' + action.getAttribute('aria-describedby'))
+    assert.equal(hint.style.display, 'block', 'owner preview activation explains the control')
+    hint.style.display = 'none'
+    for (const key of ['Enter', ' ']) {
+      hint.style.display = 'none'
+      let keyboardPrevented = false
+      action.listeners.keydown.forEach(fn => fn({
+        key,
+        preventDefault() { keyboardPrevented = true },
+        stopPropagation() {},
+        stopImmediatePropagation() {},
+      }))
+      assert.equal(keyboardPrevented, true, `${key === ' ' ? 'Space' : key} activation is consumed`)
+      assert.equal(hint.style.display, 'block', `${key === ' ' ? 'Space' : key} activation explains the control`)
+    }
+  }
+
+  // Message keeps the pre-existing self-contact policy.
   assert.deepEqual(actionState(actions.message), {
     display: 'none',
     hidden: 'hidden',
     ariaHidden: 'true',
+    ariaDisabled: null,
+    describedBy: null,
+    previewAction: null,
     modalTrigger: null,
   })
   // The third action in the same sentence of the contract: Book Call stays
@@ -6921,14 +7001,21 @@ test('owner actions: a talent on someone else\'s profile keeps Hire and Message'
     display: undefined,
     hidden: null,
     ariaHidden: null,
+    ariaDisabled: null,
+    describedBy: null,
+    previewAction: null,
     modalTrigger: 'signup-modal',
   })
   assert.deepEqual(actionState(actions.message), {
     display: undefined,
     hidden: null,
     ariaHidden: null,
+    ariaDisabled: null,
+    describedBy: null,
+    previewAction: null,
     modalTrigger: 'messages-profile-modal',
   })
+  assert.equal(actions.service.getAttribute('data-modal-trigger'), 'generate-contract')
 })
 
 test('owner actions: a logged-out visitor keeps the Hire and Message signup CTAs', async () => {
@@ -6949,6 +7036,34 @@ test('owner actions: a logged-out visitor keeps the Hire and Message signup CTAs
   assert.equal(actions.hire.getAttribute('hidden'), null)
   assert.equal(actions.message.getAttribute('data-modal-trigger'), 'messages-profile-modal')
   assert.equal(actions.message.getAttribute('hidden'), null)
+  assert.equal(actions.service.getAttribute('data-modal-trigger'), 'generate-contract')
+  assert.equal(actions.service.getAttribute('hidden'), null)
+})
+
+test('owner actions: a late project service is converted to an explained preview', async () => {
+  const page = makePage()
+  const context = ownerContext(page, ownerController())
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  const service = makeElement('div', {
+    'data-modal-trigger': 'generate-contract',
+    'data-signup-trigger-element': 'service',
+    'data-signup-trigger-value': 'Late service',
+  })
+  page.servicesList.appendChild(service)
+  context.mutationObserverCallbacks.forEach(callback => callback([{
+    type: 'childList',
+    addedNodes: [service],
+  }]))
+
+  assert.equal(service.getAttribute('data-owner-preview-action'), 'service')
+  assert.equal(service.getAttribute('aria-disabled'), 'true')
+  assert.equal(service.getAttribute('data-modal-trigger'), null)
+  assert.equal(service.getAttribute('data-signup-trigger-element'), null)
+  const hint = page.root.querySelector('#' + service.getAttribute('aria-describedby'))
+  assert.match(hint.textContent, /Clients use this service to start a project with you/)
 })
 
 /* -------------------- WAVE-1 owner-path paint: admission gates ------------- */
@@ -8044,6 +8159,7 @@ test('owner Book Call explanation links to existing call settings', async () => 
   await settle()
   const hint = page.root.querySelector('[data-call-availability-hint]')
   assert.equal(page.bookingButton.getAttribute('aria-disabled'), 'true')
+  assert.match(hint.textContent, /Clients use this button to book a call with you/)
   assert.match(hint.textContent, /Your call/)
   assert.equal(hint.querySelector('a').getAttribute('href'), '/starter-dashboard')
   assert.equal(hint.querySelector('a').textContent, 'Manage call settings')

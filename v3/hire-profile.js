@@ -1,7 +1,7 @@
 /**
  * V3 hire-profile renderer — /hire/<slug>
  *
- * @release v1.59.603
+ * @release v1.59.610
  *
  * Ported from the page-level FOOTER custom code on the hire template (page
  * 69f241ed147b71addb6f153d), so that the remaining runtime logic lives in
@@ -668,7 +668,8 @@
       trigger.setAttribute('aria-describedby', entry.hint.getAttribute('id'));
       const owner = bookingOwner;
       entry.hint.textContent = owner
-          ? (ownerBookingReady ? 'Your calls are available to brands. ' : 'Your call booking is unavailable. ')
+          ? ('Clients use this button to book a call with you. ' +
+              (ownerBookingReady ? 'Your calls are available to brands. ' : 'Your call booking is unavailable. '))
           : 'This Starter isn’t accepting calls right now.';
       if (owner) {
           const settings = document.createElement('a');
@@ -1248,6 +1249,7 @@
               return record && record.type === 'childList' && record.addedNodes && record.addedNodes.length;
           })) return;
           neutralizeUnavailableCompanyLinks();
+          decorateOwnerPreviewActions();
           wireCallServiceCardsToDirectEntry();
           // Chooser rows and the back arrow arrive on the same late-node paths
           // as the cards. Both are guarded against rebinding, so re-running
@@ -1924,11 +1926,10 @@
 
   /* ---- owner-path actions ----
      The owner's own /hire page is a preview of what a brand is shown, not a
-     surface they can act on. Book Call stays disabled and offers settings
-     guidance, including inside the native mobile-hidden action groups.
-     The authored Hire and Message CTAs have
-     no such gate — they are plain Designer entry points — so a starter could
-     open a contact surface pointed at themselves.
+     surface they can act on. Book Call stays disabled and offers an explanation,
+     including inside the native mobile-hidden action groups. Hire and project
+     service controls stay visible as previews and explain how clients use them.
+     Message stays hidden because it is not a useful self-preview.
 
      Gated on ownership, not on role, exactly like paintOwnerCallSurfaces: a
      talent viewing SOMEONE ELSE's profile keeps every action untouched.
@@ -1938,13 +1939,135 @@
      trigger parse. This gate needs neither — the two Memberstack ids are
      already on the page — so the owner stays covered when that module is
      absent or its Designer bindings are incomplete. Both writers make the
-     same hide, so running both is idempotent. */
-  const OWNER_HIDDEN_ACTIONS = ['hire', 'message'];
+     same Message hide, so running both is idempotent. */
+  const OWNER_HIDDEN_ACTIONS = ['message'];
+  const OWNER_PREVIEW_ACTIONS = ['hire', 'service'];
+  const ownerPreviewHints = new Map();
+
+  function ownerPreviewCopy(kind) {
+      if (kind === 'call') return 'Clients use this button to book a call with you.';
+      if (kind === 'service') return 'Clients use this service to start a project with you.';
+      return 'Clients use this button to start a project with you.';
+  }
+
+  /**
+   * Keep an owner preview visible and keyboard-discoverable while removing every
+   * delegate hook that can open a booking, signup or project surface. The click
+   * guard is capture-phase on the exact control, so older bubble delegates cannot
+   * run even when they were registered first.
+   */
+  function decorateOwnerPreviewAction(action, kind) {
+      if (!action) return;
+      if (kind !== 'call') action.style.display = '';
+      action.removeAttribute('hidden');
+      action.setAttribute('aria-hidden', 'false');
+      action.setAttribute('aria-disabled', 'true');
+      action.setAttribute('tabindex', '0');
+      action.setAttribute('role', 'button');
+      action.setAttribute('data-owner-preview-action', kind);
+      action.removeAttribute('data-modal-trigger');
+      action.removeAttribute('booking-popup-open');
+      // signup-attribution listens on document capture. Removing its selector
+      // before any interaction keeps that earlier listener from opening signup.
+      action.removeAttribute('data-signup-trigger-element');
+
+      let entry = ownerPreviewHints.get(action);
+      if (!entry) {
+          const hint = document.createElement('div');
+          hint.setAttribute('id', 'owner-preview-hint-' + (ownerPreviewHints.size + 1));
+          hint.setAttribute('data-owner-preview-hint', '');
+          hint.setAttribute('role', 'note');
+          hint.style.cssText = 'position:fixed;z-index:1000;background:#fff;color:#20241f;border:1px solid #ccc;border-radius:4px;padding:12px;max-width:280px;font-size:14px;line-height:1.4;box-shadow:0 4px 16px #0002';
+          hint.style.display = 'none';
+          document.body.appendChild(hint);
+          entry = { hint: hint };
+          ownerPreviewHints.set(action, entry);
+
+          let dismissalTimer;
+          let hovered = false;
+          let focused = false;
+          const isInside = function (target) {
+              return !!target && (action.contains(target) || hint.contains(target));
+          };
+          const dismissInactive = function () {
+              if (!hovered && !focused) hint.style.display = 'none';
+          };
+          const reveal = function () {
+              clearTimeout(dismissalTimer);
+              hint.style.display = 'block';
+              if (!action.getBoundingClientRect || !hint.getBoundingClientRect) return;
+              const rect = action.getBoundingClientRect();
+              const width = window.innerWidth || document.documentElement.clientWidth;
+              const height = window.innerHeight || document.documentElement.clientHeight;
+              hint.style.maxWidth = Math.max(0, Math.min(280, width - 24)) + 'px';
+              const box = hint.getBoundingClientRect();
+              hint.style.left = Math.max(12, Math.min(rect.left, width - box.width - 12)) + 'px';
+              hint.style.top = Math.max(12, rect.bottom + box.height + 8 <= height - 12
+                  ? rect.bottom + 8 : rect.top - box.height - 8) + 'px';
+          };
+
+          [action, hint].forEach(function (surface) {
+              surface.addEventListener('mouseenter', function () {
+                  hovered = true;
+                  reveal();
+              });
+              surface.addEventListener('mouseleave', function (event) {
+                  hovered = isInside(event.relatedTarget);
+                  clearTimeout(dismissalTimer);
+                  dismissalTimer = setTimeout(dismissInactive, 180);
+              });
+              surface.addEventListener('focusin', function () {
+                  focused = true;
+                  reveal();
+              });
+              surface.addEventListener('focusout', function (event) {
+                  focused = isInside(event.relatedTarget);
+                  dismissInactive();
+              });
+          });
+          action.addEventListener('click', function (event) {
+              event.preventDefault();
+              if (event.stopPropagation) event.stopPropagation();
+              if (event.stopImmediatePropagation) event.stopImmediatePropagation();
+              reveal();
+          }, true);
+          action.addEventListener('keydown', function (event) {
+              if (event.key === 'Escape') {
+                  hint.style.display = 'none';
+                  return;
+              }
+              if (event.key !== 'Enter' && event.key !== ' ') return;
+              event.preventDefault();
+              if (event.stopPropagation) event.stopPropagation();
+              if (event.stopImmediatePropagation) event.stopImmediatePropagation();
+              reveal();
+          }, true);
+      }
+
+      entry.hint.textContent = ownerPreviewCopy(kind);
+      action.setAttribute('aria-describedby', entry.hint.getAttribute('id'));
+  }
+
+  function decorateOwnerPreviewActions() {
+      if (!isProfileOwner(MEMBER)) return;
+      OWNER_PREVIEW_ACTIONS.forEach(function (kind) {
+          qsa('[data-signup-trigger-element="' + kind + '"]').forEach(function (action) {
+              const callType = action.getAttribute('data-type') ||
+                  action.getAttribute('has-connection') ||
+                  action.getAttribute('no-connection');
+              // Call cards need the settings read before "available" can be
+              // asserted. applyOwnerCallCardStates decorates only that state.
+              if (kind === 'service' && (callType === 'free' || callType === 'paid')) return;
+              decorateOwnerPreviewAction(action, kind);
+          });
+      });
+  }
 
   function hideOwnerContactActions() {
       if (!isProfileOwner(MEMBER)) return;
       bookingOwner = true;
       setBookingButtonAvailable(false);
+      decorateOwnerPreviewActions();
 
       OWNER_HIDDEN_ACTIONS.forEach(function (element) {
           qsa('[data-signup-trigger-element="' + element + '"]').forEach(function (action) {
@@ -2727,6 +2850,7 @@
           card.removeAttribute('data-call-service-direct');
           card.setAttribute('data-call-owner-preview', '');
           if (record) {
+              decorateOwnerPreviewAction(card, 'call');
               card.setAttribute('data-service-card-state', 'Default');
               card.setAttribute('has-connection', type);
               card.removeAttribute('no-connection');

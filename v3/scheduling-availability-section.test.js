@@ -816,7 +816,7 @@ test('applyDayBadges reverts to the default variant when no days are selected', 
 /* ------------------------------------------------------------------ */
 
 test('getUpcomingTimeSlots sorts, drops past slots, and slices to the limit', async () => {
-  // Matches the production lead-time rule (Date.now() + 24h floor): slot offsets
+  // Matches the production lead-time rule (Date.now() + 8h floor): slot offsets
   // here are in whole days so they clear that floor comfortably.
   const nowSeconds = Math.floor(Date.now() / 1000)
   const past = nowSeconds - 3600
@@ -873,8 +873,8 @@ test('slot preview applies the host-locked booking notice floor', async () => {
   assert.ok(Number(stagingQuery.start_time) <= Math.floor(Date.now() / 1000) + 5 * 60)
 
   const productionNow = Math.floor(Date.now() / 1000)
-  const productionTooSoon = productionNow + 23 * 60 * 60
-  const productionAllowed = productionNow + 25 * 60 * 60
+  const productionTooSoon = productionNow + 7 * 60 * 60
+  const productionAllowed = productionNow + 9 * 60 * 60
   const production = loadSection({
     getRoutes: {
       '/scheduler/get_availability/v3': () => ({
@@ -891,6 +891,11 @@ test('slot preview applies the host-locked booking notice floor', async () => {
     }),
     [productionAllowed],
   )
+  const productionQuery = production.calls.filter(
+    (call) => call.path === '/scheduler/get_availability/v3',
+  ).at(-1).query
+  assert.ok(Number(productionQuery.start_time) >= productionNow + 8 * 60 * 60)
+  assert.ok(Number(productionQuery.start_time) <= Math.floor(Date.now() / 1000) + 8 * 60 * 60)
 })
 
 test('getUpcomingTimeSlots returns an empty array without grantId/configId', async () => {
@@ -1120,7 +1125,7 @@ test('connecting for the first time (no items at all) seeds a default Mon-Fri 09
   assert.deepEqual(configCall.body.in_availability.availability_rules.default_open_hours, [
     { days: [1, 2, 3, 4, 5], start: '09:00', end: '18:00' },
   ])
-  assert.equal(configCall.body.in_scheduler.min_booking_notice, 1440)
+  assert.equal(configCall.body.in_scheduler.min_booking_notice, 480)
 })
 
 test('staging scheduler configuration creation uses a five-minute booking notice', async () => {
@@ -1138,6 +1143,28 @@ test('staging scheduler configuration creation uses a five-minute booking notice
   const configCall = calls.find((call) => call.path === '/scheduler/configurations/create/v3')
   assert.ok(configCall)
   assert.equal(configCall.body.in_scheduler.min_booking_notice, 5)
+})
+
+test('opening the availability preview never rewrites existing provider configurations', async () => {
+  const now = Math.floor(Date.now() / 1000)
+  const { calls, dom } = loadSection({
+    serverState: {
+      grantId: 'grant-1', grantEmail: 'starter@example.com', calendarId: 'primary',
+      configs: [{ config_id: 'cfg-free-existing', grant_id: 'grant-1', duration: 30,
+        is_paid: false, active: true, data_environment: 'production' }],
+    },
+    postRoutes: {
+      '/scheduler/configurations/update/v3': () => ({ status: 503, body: {} }),
+    },
+    getRoutes: {
+      '/scheduler/get_availability/v3': () => ({ status: 200,
+        body: { time_slots: [{ start_time: now + 9 * 60 * 60 }] } }),
+    },
+  })
+  await settle()
+  assert.equal(calls.filter((call) => call.path === '/scheduler/configurations/update/v3').length, 0)
+  const slotsList = dom.calendarPreview.querySelector('[data-availability-element="slots-list"]')
+  assert.equal(slotsList.querySelector('[data-availability-element="preview-times"]').children.length, 1)
 })
 
 test('accepts any successful provider 2xx status when creating a scheduler configuration', async () => {
@@ -2504,7 +2531,7 @@ test('calendar-preview renders canonical active free services and their live slo
   assert.equal(
     dom.calendarPreview.querySelector('[data-availability-element="preview-booking-notice"]')
       .textContent,
-    "Bookings require at least 24 hours' notice.",
+    "Bookings require at least 8 hours' notice.",
   )
 
   const slotsList = dom.calendarPreview.querySelector('[data-availability-element="slots-list"]')
@@ -2562,7 +2589,7 @@ test('calendar-preview explains the five-minute staging booking notice', async (
   )
 })
 
-test('calendar-preview explains the 24-hour notice on both production hosts', async () => {
+test('calendar-preview explains the eight-hour notice on both production hosts', async () => {
   for (const hostname of ['thestarters.com', 'www.thestarters.com']) {
     const { dom } = loadSection({
       hostname,
@@ -2588,7 +2615,7 @@ test('calendar-preview explains the 24-hour notice on both production hosts', as
     assert.equal(
       dom.calendarPreview.querySelector('[data-availability-element="preview-booking-notice"]')
         .textContent,
-      "Bookings require at least 24 hours' notice.",
+      "Bookings require at least 8 hours' notice.",
       hostname,
     )
   }

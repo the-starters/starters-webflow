@@ -84,7 +84,7 @@ moved to `get_build_profile_status` on 2026-08-04.
       - Find the loader's own element, not any page-level tag:
         `document.querySelector('script[data-starters-auth-runtime="auth-route"]').src`
         must be exactly
-        `https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v1.59.507/v3/auth-route.js`.
+        `https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v1.59.610/v3/auth-route.js`.
       - That request must have a successful (2xx, non-`from disk cache`-only)
         network response in the Network panel.
       - The served bytes must match the release: compare
@@ -101,7 +101,7 @@ moved to `get_build_profile_status` on 2026-08-04.
       This is the actual gate, and it is the first step that observes the
       loader's copy executing. For one path: remove its page-level
       `auth-route.js` tag, then confirm `window.StartersV3AuthRouter.release`
-      reports `v1.59.507`, the form carries both `data-ms-redirect` and
+      reports `v1.59.610`, the form carries both `data-ms-redirect` and
       `redirect` set to `/auth-route`, and one real login completes end to end
       through `/auth-route`. Repeat per path; do not batch.
    5. **Scope.** Steps 2–4 all edit and save Webflow custom code. They are out
@@ -410,6 +410,9 @@ bounce a fresh completer. `/complete-profile` is deliberately **not** an allowed
 An optional `?next=` destination survives login only when it is same-origin and
 allowlisted for the authenticated role. This prevents an open redirect and prevents
 Talent/Brand cross-role routing. Query strings are preserved and fragments are
+removed, except for a validated Calls notification locator on
+`/brand-dashboard` or `/starter-dashboard`. That locator may keep `#calls` or
+`#calls-section`; malformed, cross-environment, and all other fragments are
 removed. Invalid or disallowed destinations fall back to the role default.
 `/dashboard` is a special canonical destination: every mapped role may request
 it, but the auth router resolves it directly to that role's home instead of
@@ -418,7 +421,7 @@ returning to `/dashboard`, preventing a redirect loop.
 | Role | Allowed `next` pathnames |
 | --- | --- |
 | Talent | `/dashboard` (resolved to home), `/starter-dashboard`, `/starter-onboarding`, `/build-profile/select-profile`, `/build-profile/full-profile`, `/build-profile/consult`, `/starter-edit-profile`, `/messages`, `/opportunities`, `/opportunities/`, `/opportunities-freelancer-view`, `/opportunities/<slug>`, `/generate-invoice`, `/generate-invoice/` |
-| Brand paid | `/dashboard` (resolved to home), `/all-starters`, `/brand-dashboard`, `/opportunities`, `/opportunities/`, `/opportunities-brands-view`, `/messages`, `/opportunities/<slug>`, `/opportunities---create` |
+| Brand paid | `/dashboard` (resolved to home), `/all-starters`, `/brand-dashboard`, `/favorites`, `/favorites/`, `/opportunities`, `/opportunities/`, `/opportunities-brands-view`, `/messages`, `/opportunities/<slug>`, `/opportunities---create` |
 | Brand free | `/dashboard` (resolved to quiz home), `/all-starters`, `/quiz`, `/quiz-results` |
 
 `/starter-onboarding` is allowlisted for Talent because `v3/route-guard.js`
@@ -440,10 +443,17 @@ An unauthenticated visitor to `/auth-route` returns to `/login`, preserving a
 valid `next` value. The value is held in session storage only until the routing
 attempt is consumed.
 
-V3 logged-out guards construct the login URL from the current path and query:
+V3 logged-out guards construct the login URL from the current path and query.
+They append `#calls` or `#calls-section` only after the route guard validates
+the complete Calls notification locator:
 
 ```js
-const next = window.location.pathname + window.location.search
+const callsHash = callNotificationFragment(
+  window.location.pathname,
+  window.location.search,
+  window.location.hash
+)
+const next = window.location.pathname + window.location.search + callsHash
 const loginPath = '/login?next=' + encodeURIComponent(next)
 ```
 
@@ -544,7 +554,7 @@ Production stays silent apart from the configuration errors in the table above.
   `data-auth-page-loader-error`, no `starters:v3-auth-page-loader-error` event,
   and a clean console.
 - Separately, block only the exact loader-inserted
-  `https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v1.59.507/v3/auth-route.js`
+  `https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v1.59.610/v3/auth-route.js`
   request in devtools while leaving `auth-page-loader.js` and the page-level
   fallback tag's distinct URL reachable, then load each auth path. The loader executes,
   its child request fails, and
@@ -558,7 +568,7 @@ Production stays silent apart from the configuration errors in the table above.
   which state was tested.
 - Walk step 6 in order. Step 6.3 records delivery evidence only (the loader's
   own `script[data-starters-auth-runtime="auth-route"]` element, its exact
-  `@v1.59.507` src, a successful response, and a matching served-byte hash);
+  `@v1.59.610` src, a successful response, and a matching served-byte hash);
   step 6.4 is the behavioral gate and is the first step that can observe the
   loader's copy executing, one path at a time. Keep the step-6.1 readback until
   the release is signed off. All of step 6 is deferred to a separately
