@@ -403,8 +403,8 @@ Remove usable. Whatever Designer authored is the value restored, so only a *miss
 a markup gap. The Designer Remove on this page is authored `danger`, which is the intended
 setup; another authored value still loads and is still what Remove returns to.
 
-The scripts create `profile-items-removed`, `profile-items-dirty`, and the
-per-row `profile-items-unsaved` status. None of those three is authored in
+The scripts create `profile-items-removed` and `profile-items-dirty`; companies
+also creates the per-row `profile-items-unsaved` status. None of those three is authored in
 Webflow; style `profile-items-unsaved` from a class-free attribute selector.
 
 `profile-items-status` and `profile-items-check-save` may be authored in Webflow
@@ -648,8 +648,8 @@ with `GSAP_SOURCE=<path to a GSAP UMD build> node v3/browser-tests/work-experien
 Append `--undo-only` for the focused desktop animated pass, including delayed legacy
 click/second-click interference with Remove and Undo.
 `GSAP_SOURCE` is required and is read before Chrome or the local server starts, so an
-unreadable path fails with a clear message instead of a mid-run crash. This repository has no
-manifest and does not vendor GSAP, so the path has to come from the operator - point it at a
+unreadable path fails with a clear message instead of a mid-run crash. These standalone scripts
+have no package manifest and do not vendor GSAP, so the path has to come from the operator - point it at a
 GSAP install of your own (for example `node_modules/gsap/dist/gsap.js`). A third pass reloads
 the fixture with that build and asserts that Add, Add on a collapsed unfinished row, Undo, and
 validation reveal all land focus on a field with real layout inside an open panel, and that the
@@ -687,8 +687,9 @@ missing Save button's computed-style cause remains unproved.
 The later user authorization for a signed-in disposable test account, local script
 and markup overrides, temporary saves, and cleanup superseded the earlier
 authentication restriction. The earlier zero-live-scenarios/authentication-blocked
-assessment is obsolete. The following historical evidence review is superseded
-for current acceptance by the direct desktop run below.
+assessment is obsolete. The historical evidence review, subsequent direct desktop
+run, and focused create recheck below record distinct coverage; the latest recheck
+did not rerun the full desktop acceptance scope.
 
 The local preview used commit `034b371043fa5b88ea021049766fcb993af08fb2` on the
 actual test page with the real writer. Its record is
@@ -737,19 +738,19 @@ panel after 600ms; the first panel was hidden with zero height and no footer
 overlap.
 
 However, a valid create returned `WORK_HISTORY_CREATE_PROFILE_EVENT_INVALID`.
-The draft remained available and server readback remained empty. This is a new
-live save blocker, not the obsolete authentication restriction. The backend
+The draft remained available and server readback remained empty. This blocked
+that run independently of the obsolete authentication restriction. The backend
 contract responsible for that rejection has not been established; no speculative
 writer change was made. Saved-entry persistence/reload, partial-create retry,
 and successful-write lost-response reconciliation remain unverified in this run.
-Historical successes above do not override this current failure.
+The focused create recheck below records the subsequent result.
 
 All drafts were discarded, empty fields/current-role false were verified, and
 focus/cache emulation was reset. No records required deletion. Sensitive captures
 and the detailed report remain outside Git under the test run's evidence directory
 (`live-desktop/`). Mobile was neither tested nor changed and remains deferred.
 Shared-group component fixture results are not live product acceptance. The
-desktop acceptance verdict remains **blocked**, with no pipeline approval.
+desktop acceptance verdict for that run was **blocked**, with no pipeline approval.
 
 ##### Focused live create recheck at `d1d0c3f` — failure not reproduced
 

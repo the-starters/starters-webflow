@@ -72,7 +72,6 @@
     const parent = original?.parentElement
     // Every row control the section drives is Designer's. The accordion opens a row through
     // its control and its panel; Undo replaces Remove in place; and Remove's own themed Button
-    // carries the enabled theme the disabled state is swapped back from, so that theme has to
     // carries the theme the disabled state is swapped back from, so that theme has to exist.
     // Whatever Designer authored is the value restored; the section never invents one. A row
     // missing any of them is the same kind of markup gap as a missing row.

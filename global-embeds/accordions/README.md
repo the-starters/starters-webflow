@@ -84,10 +84,8 @@ Call `release()` when the page discards a card: it stops `closePrevious` reachin
 back into a detached one and kills that card's GSAP timeline, which would
 otherwise stay attached to the global timeline holding the detached panel.
 
-`v3/starter-edit-profile/unified-companies.js` is the first consumer: its Work
-Experience rows are cloned at runtime, it registers each row with
-`bindControl: false` because opening a row depends on save and removal state the
-accordion cannot see, and it uses `closePrevious: true` to keep one entry open.
+For the Work Experience consumer's setup and behavior, see
+[Work Experience accordion actions](../../v3/starter-edit-profile/README.md#work-experience-accordion-actions).
 
 ### Designer styles and regression coverage
 
