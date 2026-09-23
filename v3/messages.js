@@ -1000,6 +1000,7 @@
       member,
       me,
       clientOwner: 'messages-v3',
+      onReconnect: mountMessages,
     })
     const inbox = session.createInbox({
       theme: { name: TALKJS_THEME },

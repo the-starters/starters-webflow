@@ -729,6 +729,7 @@
       member,
       me,
       clientOwner: 'dashboard-messages-v3',
+      onReconnect: mountTile,
     })
 
     session.onMessage(() => {

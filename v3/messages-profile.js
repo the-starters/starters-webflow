@@ -686,6 +686,11 @@
         member: state.member,
         me: me,
         clientOwner: 'messages-profile-v3',
+        onReconnect: function () {
+          chatMounted = false
+          emptyContainer(container)
+          return openChat()
+        },
       })
       var receipt = await sessionOwner.authorizeConversation({
         clientOwner: 'messages-profile-v3',

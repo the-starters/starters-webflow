@@ -26,7 +26,6 @@
   var MEMBER_ID_PATTERN = /^mem_(?:sb_)?[A-Za-z0-9]+$/
   var CONVERSATION_ID_PATTERN = /^[A-Za-z0-9_:.|~-]{1,1024}$/
   var CLIENT_OWNERS = {
-    'messages-v2': true,
     'messages-v3': true,
     'messages-profile-v3': true,
     'dashboard-messages-v3': true,
@@ -132,6 +131,40 @@
     return new Promise(function (resolve) {
       window.setTimeout(resolve, ms)
     })
+  }
+
+  async function stableIdentity(memberstack, memberId) {
+    for (var attempt = 0; attempt < MAX_IDENTITY_ATTEMPTS; attempt += 1) {
+      try {
+        var beforeCookie = await memberstack.getMemberCookie()
+        if (!beforeCookie) return { status: 'logout' }
+        var member = await currentMember(memberstack)
+        var afterCookie = await memberstack.getMemberCookie()
+        if (!afterCookie) return { status: 'logout' }
+        if (beforeCookie === afterCookie) {
+          return member.id === memberId
+            ? { status: 'same', cookie: afterCookie }
+            : { status: 'changed' }
+        }
+      } catch (error) {}
+      if (attempt + 1 < MAX_IDENTITY_ATTEMPTS) {
+        await wait(IDENTITY_RETRY_DELAY_MS)
+      }
+    }
+    return { status: 'unresolved' }
+  }
+
+  function addReconnect(target, owner, reconnect) {
+    if (typeof reconnect === 'function') target[owner] = reconnect
+  }
+
+  async function reconnectViews(reconnectors) {
+    var owners = Object.keys(reconnectors)
+    for (var index = 0; index < owners.length; index += 1) {
+      try {
+        await reconnectors[owners[index]]()
+      } catch (error) {}
+    }
   }
 
   function decodePart(value) {
@@ -283,9 +316,6 @@
   async function authorizeConversation(options) {
     options = options || {}
     if (!active) throw authenticationError('No authenticated TalkJS session')
-    if (active.identityPending) {
-      throw authenticationError('TalkJS identity reconciliation is pending')
-    }
     if (!CLIENT_OWNERS[options.clientOwner]) {
       throw identityError('Unknown TalkJS client owner')
     }
@@ -388,41 +418,20 @@
   async function reconcileMemberstack() {
     if (!active) return
     var owned = active
-    for (var attempt = 0; attempt < MAX_IDENTITY_ATTEMPTS; attempt += 1) {
-      var cookie
-      try {
-        cookie = await owned.memberstack.getMemberCookie()
-      } catch (error) {
-        return
-      }
-      if (active !== owned) return
-      if (!cookie) {
-        destroy('logout')
-        return
-      }
-      if (cookie === owned.memberstackCookie) {
-        owned.identityPending = false
-        return
-      }
-      owned.identityPending = true
-      try {
-        var member = await currentMember(owned.memberstack)
-        if (active !== owned) return
-        if (member.id !== owned.memberId) {
-          destroy('member-change')
-          return
-        }
-        owned.memberstackCookie = cookie
-        owned.identityPending = false
-        return
-      } catch (error) {
-        if (attempt + 1 >= MAX_IDENTITY_ATTEMPTS) {
-          destroy('identity-unresolved')
-          return
-        }
-      }
-      await wait(IDENTITY_RETRY_DELAY_MS)
+    var cookie
+    try {
+      cookie = await owned.memberstack.getMemberCookie()
+    } catch (error) {
+      return
     }
+    if (active !== owned || cookie === owned.memberstackCookie) return
+    var reconnectors = owned.reconnectors
+    var memberstack = owned.memberstack
+    var memberId = owned.memberId
+    destroy(cookie ? 'credential-change' : 'logout')
+    if (!cookie) return
+    var identity = await stableIdentity(memberstack, memberId)
+    if (identity.status === 'same') await reconnectViews(reconnectors)
   }
 
   function wireMemberstack(memberstack) {
@@ -459,6 +468,7 @@
     }
     var config = scriptConfig()
     var environment = expectedEnvironment(memberId, config.environment)
+    wireMemberstack(options.memberstack)
 
     if (active) {
       if (active.memberId !== memberId || active.environment !== environment) {
@@ -466,6 +476,11 @@
         throw identityError('A foreign TalkJS session was refused')
       }
       active.clientOwners[options.clientOwner] = true
+      addReconnect(
+        active.reconnectors,
+        options.clientOwner,
+        options.onReconnect,
+      )
       return active.session
     }
     if (pending) {
@@ -473,6 +488,11 @@
         throw identityError('A foreign TalkJS session opening was refused')
       }
       pending.clientOwners[options.clientOwner] = true
+      addReconnect(
+        pending.reconnectors,
+        options.clientOwner,
+        options.onReconnect,
+      )
       return pending.promise
     }
 
@@ -481,9 +501,15 @@
       memberId: memberId,
       environment: environment,
       clientOwners: {},
+      reconnectors: {},
       promise: null,
     }
     pendingState.clientOwners[options.clientOwner] = true
+    addReconnect(
+      pendingState.reconnectors,
+      options.clientOwner,
+      options.onReconnect,
+    )
     pending = pendingState
     pendingState.promise = (async function () {
       var requestOptions = {
@@ -496,20 +522,18 @@
       if (openingGeneration !== generation) {
         throw identityError('TalkJS session opening was superseded')
       }
-      var latestMemberstackCookie = await currentSessionCookie(
-        options.memberstack,
-      )
+      var identity = await stableIdentity(options.memberstack, memberId)
       if (openingGeneration !== generation) {
         throw identityError('TalkJS session opening was superseded')
+      }
+      if (identity.status !== 'same') {
+        throw identityError('Member changed during TalkJS session opening')
       }
       var initialToken = initial.token
       var expectedAppId = initial.appId
       var tokenFetcher = async function () {
         if (openingGeneration !== generation) {
           throw identityError('TalkJS session is no longer current')
-        }
-        if (active && active.session === session && active.identityPending) {
-          throw authenticationError('TalkJS identity reconciliation is pending')
         }
         if (initialToken) {
           var token = initialToken
@@ -541,11 +565,10 @@
         memberId: memberId,
         appId: expectedAppId,
         environment: environment,
-        memberstackCookie: latestMemberstackCookie,
-        identityPending: false,
+        memberstackCookie: identity.cookie,
         clientOwners: pendingState.clientOwners,
+        reconnectors: pendingState.reconnectors,
       }
-      wireMemberstack(options.memberstack)
       return session
     })()
 

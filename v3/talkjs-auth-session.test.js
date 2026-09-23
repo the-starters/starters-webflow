@@ -36,7 +36,7 @@ function harness(options = {}) {
       ? 'memberstack-cookie-a'
       : options.memberstackCookie
   let authListener
-  const calls = { fetches: [], sessions: [], destroys: 0, xanoTokens: 0, xanoTokenArgs: [] }
+  const calls = { fetches: [], sessions: [], destroys: 0, reconnects: 0, xanoTokens: 0, xanoTokenArgs: [] }
   const config = {
     getAttribute(name) {
       if (name === 'data-token-url') return 'https://untrusted.example/token'
@@ -155,6 +155,7 @@ async function open(state, overrides = {}) {
     member,
     me: { id: member.id },
     clientOwner: overrides.clientOwner || 'messages-v3',
+    onReconnect: overrides.onReconnect,
   })
 }
 
@@ -298,7 +299,6 @@ test('same member clients reuse one session and record exact owners', async () =
 test('all served client owners share one session and logout destroys it once', async () => {
   const state = harness()
   const owners = [
-    'messages-v2',
     'messages-v3',
     'messages-profile-v3',
     'dashboard-messages-v3',
@@ -472,41 +472,6 @@ test('production page refuses a sandbox member before network', async () => {
   assert.equal(state.calls.fetches.length, 0)
 })
 
-test('active V2 www origin accepts a production member', async () => {
-  const liveMember = { id: 'mem_membera' }
-  const state = harness({
-    hostname: 'www.hirethestarters.com',
-    member: liveMember,
-    fetch: async () =>
-      jsonResponse({
-        token: token({ appId: 'live-app', memberId: liveMember.id }),
-        me_id: liveMember.id,
-        data_environment: 'production',
-        expires_in_seconds: 300,
-      }),
-  })
-  await open(state, { member: liveMember, clientOwner: 'messages-v2' })
-  assert.equal(state.calls.sessions[0].appId, 'live-app')
-  assert.equal(state.api.debugSnapshot().environment, 'production')
-})
-
-test('active V2 apex origin accepts a production member', async () => {
-  const liveMember = { id: 'mem_membera' }
-  const state = harness({
-    hostname: 'hirethestarters.com',
-    member: liveMember,
-    fetch: async () =>
-      jsonResponse({
-        token: token({ appId: 'live-app', memberId: liveMember.id }),
-        me_id: liveMember.id,
-        data_environment: 'production',
-        expires_in_seconds: 300,
-      }),
-  })
-  await open(state, { member: liveMember, clientOwner: 'messages-v2' })
-  assert.equal(state.calls.sessions[0].appId, 'live-app')
-})
-
 test('logout destroys and clears the session owner', async () => {
   const state = harness()
   await open(state)
@@ -543,38 +508,59 @@ test('transient member lookup error preserves the signed session', async () => {
   assert.equal(await open(state), session)
 })
 
-test('same-member cookie rotation preserves the signed session', async () => {
+test('same-member cookie rotation closes and reconnects the signed session', async () => {
   const state = harness()
-  const session = await open(state)
+  let reconnect
+  reconnect = async () => {
+    state.calls.reconnects += 1
+    await open(state, { onReconnect: reconnect })
+  }
+  const session = await open(state, { onReconnect: reconnect })
 
   state.memberstackCookie('memberstack-cookie-b')
   await state.authChange()
 
-  assert.equal(state.calls.destroys, 0)
+  assert.equal(state.calls.destroys, 1)
+  assert.equal(state.calls.reconnects, 1)
+  assert.equal(state.calls.sessions.length, 2)
   assert.equal(state.api.debugSnapshot().memberId, 'mem_sb_membera')
-  assert.equal(await open(state), session)
+  assert.notEqual(await open(state), session)
 })
 
-test('changed cookie resolves from empty member to the same identity', async () => {
+test('changed cookie closes immediately then reconnects after identity resolves', async () => {
   const state = harness()
-  const session = await open(state)
-  const lookups = [
-    { data: null },
-    { data: { id: 'mem_sb_membera' } },
-  ]
+  let resolveMember
+  const memberGate = new Promise((resolve) => {
+    resolveMember = resolve
+  })
+  let reconnect
+  reconnect = async () => {
+    state.calls.reconnects += 1
+    state.memberLookup(null)
+    await open(state, { onReconnect: reconnect })
+  }
+  await open(state, { onReconnect: reconnect })
   state.memberstackCookie('memberstack-cookie-b')
-  state.memberLookup(() => lookups.shift())
+  state.memberLookup(() => memberGate)
 
-  await state.authChange()
+  const reconciliation = state.authChange()
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(state.calls.destroys, 1)
+  assert.equal(state.api.debugSnapshot(), null)
 
-  assert.equal(state.calls.destroys, 0)
-  state.memberLookup(null)
-  assert.equal(await open(state), session)
+  resolveMember({ data: { id: 'mem_sb_membera' } })
+  await reconciliation
+  assert.equal(state.calls.reconnects, 1)
+  assert.equal(state.api.debugSnapshot().memberId, 'mem_sb_membera')
 })
 
 test('changed cookie resolves from error to a different identity', async () => {
   const state = harness()
-  await open(state)
+  await open(state, {
+    onReconnect: () => {
+      state.calls.reconnects += 1
+    },
+  })
   const lookups = [
     new Error('Memberstack DOM is refreshing'),
     { data: { id: 'mem_sb_memberb' } },
@@ -589,6 +575,7 @@ test('changed cookie resolves from error to a different identity', async () => {
   await state.authChange()
 
   assert.equal(state.calls.destroys, 1)
+  assert.equal(state.calls.reconnects, 0)
   assert.equal(state.api.debugSnapshot(), null)
 })
 
@@ -646,7 +633,28 @@ test('logout during token issuance cannot construct a TalkJS session', async () 
   state.memberstackCookie(null)
   release()
 
-  await assert.rejects(opening, /No authenticated Memberstack session/)
+  await assert.rejects(opening, /Member changed during TalkJS session opening/)
+  assert.equal(state.calls.sessions.length, 0)
+  assert.equal(state.api.debugSnapshot(), null)
+})
+
+test('account switch during opening cannot construct the old member session', async () => {
+  const state = harness()
+  let lookups = 0
+  state.memberLookup(() => {
+    lookups += 1
+    if (lookups === 3) {
+      state.member({ id: 'mem_sb_memberb' })
+      state.memberstackCookie('memberstack-cookie-b')
+      return { data: { id: 'mem_sb_membera' } }
+    }
+    return { data: { id: lookups < 3 ? 'mem_sb_membera' : 'mem_sb_memberb' } }
+  })
+
+  await assert.rejects(
+    open(state),
+    /Member changed during TalkJS session opening/,
+  )
   assert.equal(state.calls.sessions.length, 0)
   assert.equal(state.api.debugSnapshot(), null)
 })
