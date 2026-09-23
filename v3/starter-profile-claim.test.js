@@ -7,7 +7,8 @@ const source = fs.readFileSync(require.resolve('./starter-profile-claim.js'), 'u
 
 const WRAPPER_SELECTOR = '[data-starter-claim="wrapper"]'
 const FORM_SELECTOR = 'form[data-starter-claim="form"][data-ms-form="signup"]'
-const TOKEN_FIELD_SELECTOR = '[data-ms-member="starter-claim-token"]'
+const TOKEN_FIELD_SELECTOR = 'input[type="hidden"][data-ms-member="starter-claim-token"]'
+const LOOSE_TOKEN_FIELD_SELECTOR = '[data-ms-member="starter-claim-token"]'
 const ENDPOINT =
   'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/starter_profile_claim/validate'
 const TOKEN = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef0123456789_-A'
@@ -62,7 +63,9 @@ function response(body, ok = true) {
 function load(options = {}) {
   const tokenField = options.tokenField === false ? null : element()
   const form = options.form === false ? null : element()
-  if (form && tokenField) form.setQuery(TOKEN_FIELD_SELECTOR, tokenField)
+  if (form && tokenField) {
+    form.setQuery(options.tokenSelector || TOKEN_FIELD_SELECTOR, tokenField)
+  }
 
   const wrapper = options.wrapper === false
     ? null
@@ -197,6 +200,7 @@ test('rejects malformed and repeated claim values without a request', async () =
   for (const search of [
     '?claim=short',
     `?claim=${TOKEN}!`,
+    `?claim=%20${TOKEN}%20`,
     `?claim=${TOKEN}&claim=${TOKEN}`,
   ]) {
     const harness = load({ search })
@@ -209,15 +213,17 @@ test('rejects malformed and repeated claim values without a request', async () =
 })
 
 test('requires the exact hire profile path returned by Xano', async () => {
-  const harness = load({
-    response: response({ valid: true, status: 'active', profile_path: '/hire/someone-else' }),
-  })
-  const result = await harness.api.init()
+  for (const profilePath of ['/hire/someone-else', ' /hire/jane-doe ']) {
+    const harness = load({
+      response: response({ valid: true, status: 'active', profile_path: profilePath }),
+    })
+    const result = await harness.api.init()
 
-  assert.equal(result.state, 'unavailable')
-  assert.equal(harness.wrapper.classList.contains('hide'), true)
-  assert.equal(harness.tokenField.value, '')
-  assert.equal(harness.replacements.length, 1)
+    assert.equal(result.state, 'unavailable', profilePath)
+    assert.equal(harness.wrapper.classList.contains('hide'), true, profilePath)
+    assert.equal(harness.tokenField.value, '', profilePath)
+    assert.equal(harness.replacements.length, 1, profilePath)
+  }
 })
 
 test('keeps expired, used, and revoked claims closed', async () => {
@@ -247,7 +253,11 @@ test('keeps the wrapper closed on request and response failures', async () => {
 })
 
 test('fails closed when the form or token field is not authored', async () => {
-  for (const options of [{ form: false }, { tokenField: false }]) {
+  for (const options of [
+    { form: false },
+    { tokenField: false },
+    { tokenSelector: LOOSE_TOKEN_FIELD_SELECTOR },
+  ]) {
     const harness = load(options)
     const result = await harness.api.init()
     assert.equal(result.state, 'misconfigured')
@@ -256,11 +266,13 @@ test('fails closed when the form or token field is not authored', async () => {
   }
 })
 
-test('accepts only the fixed Xano origin and claim endpoint namespace', async () => {
+test('accepts only the exact validation endpoint', async () => {
   for (const endpoint of [
     'https://evil.example/api:KZf7nFnk/starter_profile_claim/validate',
     'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/other/validate',
+    'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/starter_profile_claim/alternate',
     ENDPOINT + '?forward=evil',
+    ` ${ENDPOINT} `,
     '//x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/starter_profile_claim/validate',
   ]) {
     const harness = load({ endpoint })
