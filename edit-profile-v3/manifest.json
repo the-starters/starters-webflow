@@ -48,7 +48,7 @@
       "path": "v3/starter-edit-profile/unified-companies.js",
       "baseline_tag": "v1.59.614",
       "role": "work experience rows",
-      "sha256": "349bdf5018a625a225657fa1b4a51e542adb12adaf280ecfd2fab72a466edca1",
+      "sha256": "f761ec1ca57f92c95c63065f9ff910a746ade50cb9396ca0d11e0c2637cc927f",
       "bytes": 40052,
       "overlay": "isolated Work Experience month-picker changes"
     },
@@ -95,13 +95,6 @@
       "bytes": 64244
     },
     {
-      "path": "v3/starter-edit-profile/portfolio-list.js",
-      "baseline_tag": "v1.59.607",
-      "role": "portfolio list extraction candidate",
-      "sha256": "f559928f524705d1fcce022a1213b0a637c233cbd55f4973dc376457e0ab74ff",
-      "bytes": 4013
-    },
-    {
       "path": "v3/starter-edit-profile/company-autocomplete.js",
       "baseline_tag": "v1.59.607",
       "role": "company selection",
@@ -112,8 +105,8 @@
       "path": "v3/starter-edit-profile/company-experience-crud.js",
       "baseline_tag": "v1.59.607",
       "role": "company writer and month picker",
-      "sha256": "0f52df4b530b50abaeb52b7a576443da38105c92c502bae07df3c12ef90cf967",
-      "bytes": 99340,
+      "sha256": "5a3d0963a16f2f6d6706881550782eb5e687dfde60b327e6fa628457aa44e515",
+      "bytes": 99315,
       "overlay": "isolated Work Experience month-picker changes"
     },
     {
@@ -127,13 +120,14 @@
       "path": "starter-edit-profile.js",
       "baseline_tag": "v1.59.607",
       "role": "main edit profile controller",
-      "sha256": "60bfc80ee9588a5c30f0a1f95b3a818b11da2aa25a460d945889427b406a98f8",
-      "bytes": 76653
+      "sha256": "22063b5632fdca41c6c36398449edfefbfd1f2558f73c2d18d96ea5cd5a3bac5",
+      "bytes": 76479,
+      "overlay": "diagnostics loader resolves relative to this script instead of the CDN repository root"
     },
     {
       "path": "utils/workflow-diagnostics.js",
       "baseline_tag": "v1.59.614",
-      "role": "diagnostic loader resolved relative to starter-edit-profile.js",
+      "role": "diagnostic loader dependency fetched relative to starter-edit-profile.js",
       "sha256": "9a27cfaef729e743f9bfe97f3862941ffc415be289282952159557fdcba95098",
       "bytes": 9749
     }

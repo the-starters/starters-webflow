@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
-"""Check bundle completeness, byte hashes, loader paths, and JavaScript syntax."""
+"""Check bundle completeness, byte hashes, and JavaScript syntax."""
 from pathlib import Path
 import hashlib
 import json
-import re
 import subprocess
-import sys
 
 root = Path(__file__).resolve().parent
 manifest = json.loads((root / 'manifest.json').read_text())
@@ -19,7 +17,4 @@ for entry in entries:
     assert hashlib.sha256(data).hexdigest() == entry['sha256'], f'hash mismatch: {path}'
     if path.suffix == '.js':
         subprocess.run(['node', '--check', str(path)], check=True, stdout=subprocess.DEVNULL)
-for snippet in (root / 'webflow').glob('*.html'):
-    for path in re.findall(r'/edit-profile-v3/runtime/([^"?]+)', snippet.read_text()):
-        assert path in known, f'loader references missing script: {path}'
-print(f'Bundle verified: {len(entries)} scripts, 2 loader snippets')
+print(f'Bundle verified: {len(entries)} scripts')

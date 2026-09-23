@@ -1,14 +1,5 @@
 --- a/v3/starter-edit-profile/unified-companies.js
 +++ b/v3/starter-edit-profile/unified-companies.js
-@@ -1,7 +1,7 @@
- /*
-  * Opt-in Work Experience rows. Persistence stays in company-experience-crud.js.
-  *
-- * @release v1.59.614
-+ * @release v1.59.615
-  */
- ;(function () {
-   'use strict'
 @@ -206,6 +206,10 @@
          // month into a literal end date the Starter never entered.
          const saved = record.dates?.[key]
@@ -66,12 +57,7 @@
        toggle?.setAttribute('role', 'button')
 --- a/v3/starter-edit-profile/company-experience-crud.js
 +++ b/v3/starter-edit-profile/company-experience-crud.js
-@@ -1,3 +1,4 @@
-+/* @release v1.59.615 */
- function isStarterProfileCompanyPresentDate(value) {
-     return String(value || '').trim().toLowerCase() === 'present';
- }
-@@ -298,18 +299,15 @@
+@@ -298,18 +298,15 @@
          closePicker();
          if (typeof input.focus === 'function') input.focus({ preventScroll: true });
      });
@@ -94,7 +80,7 @@
      if (event.key === 'Escape') {
        event.preventDefault();
        event.stopPropagation();
-@@ -325,20 +323,44 @@
+@@ -325,20 +322,44 @@
        : (currentIndex < 0 || currentIndex === controls.length - 1 ? 0 : currentIndex + 1);
      event.preventDefault();
      controls[nextIndex].focus({ preventScroll: true });
@@ -146,7 +132,7 @@
          setValue(value) {
              if (isStarterProfileCompanyPresentDate(value)) return;
              const date = starterProfileCompanyDatepickerValue(value);
-@@ -375,8 +397,10 @@
+@@ -375,8 +396,10 @@
      input.setAttribute('aria-expanded', 'false');
      input.setAttribute('aria-label', labelText);
  
@@ -159,7 +145,7 @@
          label.htmlFor = input.id;
          label.textContent = labelText;
      }
-@@ -419,7 +443,7 @@
+@@ -419,7 +442,7 @@
      if (endInput && typeof endInput.reportValidity === 'function') endInput.reportValidity();
  }
  
@@ -168,7 +154,7 @@
      if (!startInput || !endInput) return;
  
      // Constrain only the end picker. A reciprocal maximum on the start picker can
-@@ -435,11 +459,13 @@
+@@ -435,11 +458,13 @@
          endInput._starterProfileCompanyMonthPicker.setMinimum(startDate);
      }
      startInput.removeAttribute('max');
@@ -187,7 +173,7 @@
  }
  
  function isStarterProfileCompanyMonthRangeValid(startInput, endInput, isCurrent) {
-@@ -456,7 +482,7 @@
+@@ -456,7 +481,7 @@
              (endDate.getFullYear() * 12 + endDate.getMonth());
  }
  
@@ -196,7 +182,7 @@
      if (!startInput || !endInput) return;
  
      endInput._starterProfileCompanyMinimumResolver = function () {
-@@ -467,7 +493,8 @@
+@@ -467,7 +492,8 @@
          syncStarterProfileCompanyMonthRange(
              startInput,
              endInput,
@@ -206,3 +192,17 @@
          );
      };
  
+--- a/starter-edit-profile.js
++++ b/starter-edit-profile.js
+@@ -165,10 +165,7 @@
+ 	if (!source || !document.createElement) return Promise.resolve(null);
+ 	let url = '';
+ 	try {
+-		const cdnRoot = source.match(/^(https:\/\/cdn\.jsdelivr\.net\/gh\/the-starters\/starters-webflow@[^/]+\/)/);
+-		url = cdnRoot
+-			? `${cdnRoot[1]}utils/workflow-diagnostics.js`
+-			: new URL('utils/workflow-diagnostics.js', source).href;
++		url = new URL('utils/workflow-diagnostics.js', source).href;
+ 	} catch (_) {
+ 		return Promise.resolve(null);
+ 	}
