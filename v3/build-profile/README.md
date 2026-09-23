@@ -269,6 +269,16 @@ declinable before those prerequisites are ready: selecting Off makes Update live
 so the member can change their mind and submit it. A pending Yes leaves Update
 gated on the existing scheduling and Stripe prerequisite checks.
 
+Initial hydration waits for the site-level `memberReady` promise to settle before
+reading private Memberstack JSON, then takes a fresh live Memberstack identity
+snapshot instead of trusting the promise's value as identity. Memberstack can
+identify the session before its custom JSON is ready, so same-member auth
+revalidation re-reads both the canonical settings and the private receipt. A
+failed receipt refresh keeps an already-read pending choice rather than treating
+the failure as confirmed absence. While canonical-satisfied receipt cleanup is
+already in flight, auth recovery skips its queued receipt read so the newer
+canonical render does not wait behind that Memberstack JSON write.
+
 Once an active canonical service exists, that service is the sole authority.
 The consumer removes any leftover Build Profile receipt without painting it or
 writing to Xano. Post-onboarding changes, including disable, belong to Edit
