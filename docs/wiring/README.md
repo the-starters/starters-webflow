@@ -48,6 +48,7 @@ explain how source changes reach Webflow.
 ### Public profiles, hiring, and projects
 
 - [Hire profile](HIRE-PROFILE-WIRING.md) — public profile data, ownership, and service routing.
+- [Starter profile claim](STARTER-PROFILE-CLAIM-WIRING.md) — premade-profile QR claim wiring, authority, and release proof.
 - [Agency profile](AGENCY-PROFILE-WIRING.md) — the public profile's Agency section.
 - [Profile portfolio](PROFILE-PORTFOLIO-WIRING.md) — Highlights and case studies.
 - [Direct-hire project form](PROJECT-FORM-WIRING.md) — Brand Contract Generation form.

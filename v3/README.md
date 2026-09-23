@@ -670,9 +670,9 @@ template. The outer wrapper remains authored with its `hide` class,
 one opaque `?claim=` capability from the URL, sends it only to Xano's exact
 prepare route, and removes the authored hiding only after Xano returns a strict
 one-use exchange code for the exact canonical no-trailing-slash `/hire/<slug>`
-path. No query,
-malformed or repeated input, incomplete markup, an expired, claimed, or revoked
-token, a path mismatch, timeout, or network failure stays fail-closed.
+path. A missing query, malformed or repeated input, incomplete markup, an
+expired, claimed, or revoked token, a path mismatch, timeout, or network failure
+all stay fail-closed.
 
 Load the controller synchronously in the page head before the existing sitewide
 PostHog initialization. Do not use `async` or `defer`: script evaluation captures
