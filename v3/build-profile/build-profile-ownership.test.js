@@ -45,7 +45,7 @@ const EXPECTED_CAPTURE = {
   },
 }
 const EXPECTED_CANDIDATES = {
-  sourceCommit: 'working-tree@fa560ed66349681801f8cc7042911fc34bb1499f',
+  sourceCommit: 'working-tree@8deed7eff6ca7198310c9170b4d627e76a5c38d2',
   files: {
     'profile-photo.js': { path: 'v3/build-profile/profile-photo.js', bytes: 16563, sha256: '988c84c6391241f2aa3969f4acdeb77258831bd7332e5137046e2a8f4440fcf5' },
     'portfolio-crud.js': { path: 'v3/build-profile/portfolio-crud.js', bytes: 38590, sha256: '3dfcfb698d22179b3dac58053676d808e46ecbb1886f9ab73e1e603a1fdf6908' },
