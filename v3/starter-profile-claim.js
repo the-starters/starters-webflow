@@ -17,17 +17,20 @@
 
   var WRAPPER_SELECTOR = '[data-starter-claim="wrapper"]'
   var FORM_SELECTOR = 'form[data-starter-claim="form"][data-ms-form="signup"]'
-  var TOKEN_FIELD_SELECTOR = 'input[type="hidden"][data-ms-member="starter-claim-token"]'
-  var ENDPOINT_ATTRIBUTE = 'data-starter-claim-validate-url'
+  var EXCHANGE_FIELD_SELECTOR =
+    'input[type="hidden"][data-ms-member="starter-claim-exchange"]'
+  var ENDPOINT_ATTRIBUTE = 'data-starter-claim-prepare-url'
   var QUERY_PARAMETER = 'claim'
-  var VALIDATION_URL =
-    'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/starter_profile_claim/validate'
+  var PREPARE_URL =
+    'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/starter_profile_claim/prepare'
   var TOKEN_PATTERN = /^[A-Za-z0-9_-]{32,128}$/
+  var EXCHANGE_CODE_PATTERN = /^[A-Za-z0-9_-]{32,128}$/
   var PROFILE_PATH_PATTERN = /^\/hire\/[A-Za-z0-9][A-Za-z0-9-]*\/?$/
   var REQUEST_TIMEOUT_MS = 12000
   var LOG_PREFIX = '[starter-profile-claim]'
   var STAGING_HOSTS = ['localhost', '127.0.0.1']
   var STAGING_SUFFIXES = ['webflow.io', 'trycloudflare.com']
+  var capturedClaim = captureClaim()
 
   function diagnosticsEnabled() {
     if (window.STARTERS_DEBUG === true) return true
@@ -66,15 +69,17 @@
     wrapper.setAttribute('data-starter-claim-state', 'ready')
   }
 
-  function claimToken() {
+  function captureClaim() {
     try {
       var params = new URLSearchParams(window.location.search || '')
       var values = params.getAll(QUERY_PARAMETER)
-      if (values.length !== 1) return ''
-      var token = values[0]
-      return TOKEN_PATTERN.test(token) ? token : ''
+      if (values.length === 0) return { present: false, token: '' }
+
+      var token = values.length === 1 && TOKEN_PATTERN.test(values[0]) ? values[0] : ''
+      if (!scrubClaimFromUrl()) return { present: true, token: '' }
+      return { present: true, token: token }
     } catch (error) {
-      return ''
+      return { present: false, token: '' }
     }
   }
 
@@ -85,20 +90,23 @@
     return pathname.length > 1 && pathname.endsWith('/') ? pathname.slice(0, -1) : pathname
   }
 
-  function validationUrl(wrapper) {
+  function prepareUrl(wrapper) {
     var raw = wrapper && wrapper.getAttribute(ENDPOINT_ATTRIBUTE)
-    return raw === VALIDATION_URL ? raw : ''
+    return raw === PREPARE_URL ? raw : ''
   }
 
-  function scrubTokenFromUrl() {
-    if (!window.history || typeof window.history.replaceState !== 'function') return
+  function scrubClaimFromUrl() {
+    if (!window.history || typeof window.history.replaceState !== 'function') return false
 
     try {
       var current = new URL(window.location.href)
       current.searchParams.delete(QUERY_PARAMETER)
       var next = current.pathname + current.search + current.hash
       window.history.replaceState(window.history.state, '', next)
-    } catch (error) {}
+      return true
+    } catch (error) {
+      return false
+    }
   }
 
   function fetchWithDeadline(url, options) {
@@ -110,7 +118,7 @@
     var deadline = new Promise(function (_, reject) {
       timer = window.setTimeout(function () {
         if (controller) controller.abort()
-        reject(new Error('claim validation timed out'))
+        reject(new Error('claim prepare timed out'))
       }, REQUEST_TIMEOUT_MS)
     })
 
@@ -119,77 +127,81 @@
     })
   }
 
-  function responseMatches(body, path) {
-    if (!body || body.valid !== true || body.status !== 'active') return false
-    return body.profile_path === path
+  function responseExchangeCode(body, path) {
+    if (!body || body.valid !== true || body.status !== 'active') return ''
+    if (body.profile_path !== path) return ''
+    return typeof body.exchange_code === 'string' && EXCHANGE_CODE_PATTERN.test(body.exchange_code)
+      ? body.exchange_code
+      : ''
   }
 
   async function init() {
+    var claim = capturedClaim
+    capturedClaim = { present: false, token: '' }
     var wrapper = document.querySelector(WRAPPER_SELECTOR)
     if (!wrapper) return { state: 'absent' }
 
     close(wrapper, 'closed')
 
-    var rawClaimPresent = false
-    try {
-      rawClaimPresent = new URLSearchParams(window.location.search || '').has(QUERY_PARAMETER)
-    } catch (error) {}
-
-    var token = claimToken()
+    var token = claim.token
     if (!token) {
-      if (rawClaimPresent) warn('claim value is malformed or repeated; keeping the wrapper hidden.')
-      return { state: rawClaimPresent ? 'invalid_query' : 'no_query' }
+      if (claim.present) warn('claim value is malformed, repeated, or could not be removed; keeping the wrapper hidden.')
+      return { state: claim.present ? 'invalid_query' : 'no_query' }
     }
 
     var path = profilePath()
     var form = wrapper.querySelector(FORM_SELECTOR)
-    var tokenField = form && form.querySelector(TOKEN_FIELD_SELECTOR)
-    var endpoint = validationUrl(wrapper)
+    var exchangeField = form && form.querySelector(EXCHANGE_FIELD_SELECTOR)
+    var endpoint = prepareUrl(wrapper)
 
-    if (!path || !form || !tokenField || !endpoint) {
-      warn('claim markup, profile path, or validation endpoint is incomplete; keeping the wrapper hidden.')
+    if (!path || !form || !exchangeField || !endpoint) {
+      warn('claim markup, profile path, or prepare endpoint is incomplete; keeping the wrapper hidden.')
       close(wrapper, 'misconfigured')
       return { state: 'misconfigured' }
     }
 
+    exchangeField.value = ''
+    exchangeField.removeAttribute('value')
     close(wrapper, 'validating')
 
     try {
+      var requestBody = JSON.stringify({ token: token, profile_path: path })
+      token = ''
+      claim.token = ''
       var response = await fetchWithDeadline(endpoint, {
         method: 'POST',
         credentials: 'omit',
         referrerPolicy: 'no-referrer',
         cache: 'no-store',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token: token, profile_path: path }),
+        body: requestBody,
       })
 
-      if (!response || !response.ok) throw new Error('claim validation failed')
+      requestBody = ''
+      if (!response || !response.ok) throw new Error('claim prepare failed')
       var body = await response.json()
-      if (!responseMatches(body, path)) {
+      var exchangeCode = responseExchangeCode(body, path)
+      if (!exchangeCode) {
         close(wrapper, 'unavailable')
-        scrubTokenFromUrl()
         return { state: 'unavailable' }
       }
 
-      tokenField.value = token
-      tokenField.setAttribute('value', token)
-      scrubTokenFromUrl()
+      exchangeField.value = exchangeCode
+      exchangeField.setAttribute('value', exchangeCode)
       reveal(wrapper)
       return { state: 'ready' }
     } catch (error) {
       close(wrapper, 'unavailable')
-      warn('claim validation was unavailable; keeping the wrapper hidden.')
+      warn('claim prepare was unavailable; keeping the wrapper hidden.')
       return { state: 'unavailable' }
     }
   }
 
   window.StarterProfileClaim = {
     init: init,
-    claimToken: claimToken,
     profilePath: profilePath,
-    validationUrl: validationUrl,
-    responseMatches: responseMatches,
+    prepareUrl: prepareUrl,
+    responseExchangeCode: responseExchangeCode,
   }
 
   if (document.readyState === 'loading') {

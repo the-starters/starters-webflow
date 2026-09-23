@@ -7,11 +7,13 @@ const source = fs.readFileSync(require.resolve('./starter-profile-claim.js'), 'u
 
 const WRAPPER_SELECTOR = '[data-starter-claim="wrapper"]'
 const FORM_SELECTOR = 'form[data-starter-claim="form"][data-ms-form="signup"]'
-const TOKEN_FIELD_SELECTOR = 'input[type="hidden"][data-ms-member="starter-claim-token"]'
-const LOOSE_TOKEN_FIELD_SELECTOR = '[data-ms-member="starter-claim-token"]'
+const EXCHANGE_FIELD_SELECTOR =
+  'input[type="hidden"][data-ms-member="starter-claim-exchange"]'
+const LOOSE_EXCHANGE_FIELD_SELECTOR = '[data-ms-member="starter-claim-exchange"]'
 const ENDPOINT =
-  'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/starter_profile_claim/validate'
+  'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/starter_profile_claim/prepare'
 const TOKEN = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef0123456789_-A'
+const EXCHANGE_CODE = 'zyxwvutsrqponmlkjihgfedcba9876543210_-ZYXWV'
 
 function element(attributes = {}) {
   const own = Object.assign({}, attributes)
@@ -61,10 +63,10 @@ function response(body, ok = true) {
 }
 
 function load(options = {}) {
-  const tokenField = options.tokenField === false ? null : element()
+  const exchangeField = options.exchangeField === false ? null : element()
   const form = options.form === false ? null : element()
-  if (form && tokenField) {
-    form.setQuery(options.tokenSelector || TOKEN_FIELD_SELECTOR, tokenField)
+  if (form && exchangeField) {
+    form.setQuery(options.exchangeSelector || EXCHANGE_FIELD_SELECTOR, exchangeField)
   }
 
   const wrapper = options.wrapper === false
@@ -74,7 +76,7 @@ function load(options = {}) {
         hidden: 'hidden',
         'aria-hidden': 'true',
         'data-starter-claim': 'wrapper',
-        'data-starter-claim-validate-url':
+        'data-starter-claim-prepare-url':
           options.endpoint === undefined ? ENDPOINT : options.endpoint,
       })
   if (wrapper && form) wrapper.setQuery(FORM_SELECTOR, form)
@@ -112,9 +114,18 @@ function load(options = {}) {
       },
     },
     fetch: async (url, requestOptions) => {
-      requests.push({ url, options: requestOptions })
+      requests.push({
+        url,
+        options: requestOptions,
+        replacementsAtRequest: replacements.slice(),
+      })
       if (options.fetchError) throw options.fetchError
-      return options.response || response({ valid: true, status: 'active', profile_path: pathname })
+      return options.response || response({
+        valid: true,
+        status: 'active',
+        profile_path: pathname,
+        exchange_code: EXCHANGE_CODE,
+      })
     },
     setTimeout,
     clearTimeout,
@@ -142,7 +153,7 @@ function load(options = {}) {
     listeners,
     replacements,
     requests,
-    tokenField,
+    exchangeField,
     warnings,
     window,
     wrapper,
@@ -160,7 +171,7 @@ test('keeps the authored hide class when there is no claim query', async () => {
   assert.equal(harness.requests.length, 0)
 })
 
-test('validates one opaque claim token and only then reveals the wrapper', async () => {
+test('prepares one opaque claim token and only then reveals the wrapper', async () => {
   const harness = load()
   const result = await harness.api.init()
 
@@ -174,8 +185,8 @@ test('validates one opaque claim token and only then reveals the wrapper', async
     token: TOKEN,
     profile_path: '/hire/jane-doe',
   })
-  assert.equal(harness.tokenField.value, TOKEN)
-  assert.equal(harness.tokenField.getAttribute('value'), TOKEN)
+  assert.equal(harness.exchangeField.value, EXCHANGE_CODE)
+  assert.equal(harness.exchangeField.getAttribute('value'), EXCHANGE_CODE)
   assert.equal(harness.wrapper.classList.contains('hide'), false)
   assert.equal(harness.wrapper.hidden, false)
   assert.equal(harness.wrapper.getAttribute('hidden'), null)
@@ -183,9 +194,8 @@ test('validates one opaque claim token and only then reveals the wrapper', async
   assert.equal(harness.wrapper.getAttribute('data-starter-claim-state'), 'ready')
 })
 
-test('scrubs only the claim value after successful validation', async () => {
+test('scrubs only the claim value before preparing the exchange', async () => {
   const harness = load({ search: `?claim=${TOKEN}&utm_source=gift#ignored` })
-  await harness.api.init()
 
   assert.deepEqual(harness.replacements, [
     {
@@ -194,6 +204,9 @@ test('scrubs only the claim value after successful validation', async () => {
       next: '/hire/jane-doe?utm_source=gift#ignored',
     },
   ])
+
+  await harness.api.init()
+  assert.deepEqual(harness.requests[0].replacementsAtRequest, harness.replacements)
 })
 
 test('rejects malformed and repeated claim values without a request', async () => {
@@ -208,6 +221,7 @@ test('rejects malformed and repeated claim values without a request', async () =
 
     assert.equal(result.state, 'invalid_query', search)
     assert.equal(harness.requests.length, 0, search)
+    assert.equal(harness.replacements.length, 1, search)
     assert.equal(harness.wrapper.classList.contains('hide'), true, search)
   }
 })
@@ -221,7 +235,7 @@ test('requires the exact hire profile path returned by Xano', async () => {
 
     assert.equal(result.state, 'unavailable', profilePath)
     assert.equal(harness.wrapper.classList.contains('hide'), true, profilePath)
-    assert.equal(harness.tokenField.value, '', profilePath)
+    assert.equal(harness.exchangeField.value, '', profilePath)
     assert.equal(harness.replacements.length, 1, profilePath)
   }
 })
@@ -233,15 +247,21 @@ test('keeps expired, used, and revoked claims closed', async () => {
 
     assert.equal(result.state, 'unavailable', status)
     assert.equal(harness.wrapper.classList.contains('hide'), true, status)
-    assert.equal(harness.tokenField.value, '', status)
+    assert.equal(harness.exchangeField.value, '', status)
   }
 })
 
-test('keeps the wrapper closed on request and response failures', async () => {
+test('keeps the wrapper closed and URL scrubbed on request and response failures', async () => {
   const cases = [
     { fetchError: new Error('offline') },
     { response: response({}, false) },
     { response: { ok: true, async json() { throw new Error('bad json') } } },
+    { response: response({
+      valid: true,
+      status: 'active',
+      profile_path: '/hire/jane-doe',
+      exchange_code: 'short',
+    }) },
   ]
 
   for (const options of cases) {
@@ -249,14 +269,16 @@ test('keeps the wrapper closed on request and response failures', async () => {
     const result = await harness.api.init()
     assert.equal(result.state, 'unavailable')
     assert.equal(harness.wrapper.classList.contains('hide'), true)
+    assert.equal(harness.exchangeField.value, '')
+    assert.equal(harness.replacements.length, 1)
   }
 })
 
-test('fails closed when the form or token field is not authored', async () => {
+test('fails closed when the form or exchange field is not authored', async () => {
   for (const options of [
     { form: false },
-    { tokenField: false },
-    { tokenSelector: LOOSE_TOKEN_FIELD_SELECTOR },
+    { exchangeField: false },
+    { exchangeSelector: LOOSE_EXCHANGE_FIELD_SELECTOR },
   ]) {
     const harness = load(options)
     const result = await harness.api.init()
@@ -266,14 +288,14 @@ test('fails closed when the form or token field is not authored', async () => {
   }
 })
 
-test('accepts only the exact validation endpoint', async () => {
+test('accepts only the exact prepare endpoint', async () => {
   for (const endpoint of [
-    'https://evil.example/api:KZf7nFnk/starter_profile_claim/validate',
-    'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/other/validate',
+    'https://evil.example/api:KZf7nFnk/starter_profile_claim/prepare',
+    'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/other/prepare',
     'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/starter_profile_claim/alternate',
     ENDPOINT + '?forward=evil',
     ` ${ENDPOINT} `,
-    '//x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/starter_profile_claim/validate',
+    '//x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/starter_profile_claim/prepare',
   ]) {
     const harness = load({ endpoint })
     const result = await harness.api.init()
