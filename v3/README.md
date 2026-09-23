@@ -1958,7 +1958,7 @@ Current safety boundary:
   reads and writes the same canonical Free and Paid call settings the Starter
   dashboard already owns; it adds no route to the authenticated list below.
 - Authenticates only explicit reviewed `/v3` routes on the configured Xano
-  origin, including the two Brand paid-call payment-method paths documented
+  origin, including the three Brand paid-call payment-method paths documented
   below. It does not use a group-wide prefix allowlist.
 - Temporarily retains the exact legacy configuration, availability, and Starter
   paths that this shared module authenticated before the stage adapter existed.
@@ -3867,6 +3867,7 @@ and outstanding provider evidence.
 
 The scheduling auth bridge allowlists these paid-call paths:
 
+- `GET /brand/payment-methods/v3`
 - `POST /brand/payment-method/setup/v3`
 - `POST /brand/payment-method/set-default/v3`
 - `GET /brand/payment-readiness/v3`
@@ -3878,8 +3879,10 @@ The browser sends neither field.
 
 Saving a card, new or already saved, is one off-session SetupIntent bound to the
 Brand's explicit consent. The client renders a consent control (an authored
-`[payment-consent]` checkbox wins over the generated one) and keeps **Add card**
-and **Use this card** closed until it is checked. It then posts
+`[payment-consent]` checkbox wins over the generated one); the generated fallback
+is a visible checkbox-and-label row even under the site's input reset. The client
+keeps **Add card** and **Use this card** closed until consent is checked. It then
+posts
 `off_session_consent: true` and `consent_version: "paid-call-off-session-v1"` to
 `POST /brand/payment-method/setup/v3`, confirms the returned SetupIntent with
 Stripe.js (`confirmCardSetup` with the entered card or the selected saved
