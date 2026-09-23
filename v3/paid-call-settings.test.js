@@ -1488,6 +1488,39 @@ test('continues Paid settings hydration when site Memberstack readiness never se
   assert.equal(result.memberJsonWrites.length, 0)
 })
 
+test('reconciles the Paid Build intent when site Memberstack readiness settles after timeout', async () => {
+  const memberReady = deferred()
+  const memberJSON = {}
+  const result = load({
+    cardMode: true,
+    memberId: 'member-a',
+    memberJSON,
+    memberReady: memberReady.promise,
+    initial: canonical({ readiness: GATED_PAID_READINESS }),
+  })
+  await settle()
+
+  result.flushTimers()
+  await settle()
+
+  assert.equal(result.dom.disabled.checked, true)
+  assert.equal(result.dom.title.value, 'Paid Consultation Call')
+  assert.equal(result.dom.price.value, '')
+
+  Object.assign(memberJSON, PENDING_PAID_ENABLE)
+  memberReady.resolve({ id: 'stale-shared-member' })
+  await settle()
+
+  assert.equal(result.dom.enabled.checked, true)
+  assert.equal(result.dom.disabled.checked, false)
+  assert.equal(result.dom.title.value, 'Strategy call')
+  assert.equal(result.dom.price.value, '250')
+  assert.match(result.dom.statusOutput.textContent, /Build Profile choice is saved/)
+  assert.equal(result.calls.filter((call) => call.method === 'GET').length, 2)
+  assert.equal(result.calls.some((call) => call.method === 'POST'), false)
+  assert.equal(result.memberJsonWrites.length, 0)
+})
+
 test('rehydrates a pending Paid Build Profile choice after the same member becomes ready', async () => {
   const memberJSON = {}
   const result = load({

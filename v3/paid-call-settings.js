@@ -1665,6 +1665,7 @@
     return new Promise(function (resolve) {
       let readyTimer = null
       let settled = false
+      let timedOut = false
       function finish() {
         if (settled) return
         settled = true
@@ -1673,8 +1674,20 @@
         }
         resolve()
       }
-      readyTimer = window.setTimeout(finish, SITE_MEMBER_READY_WAIT_MS)
-      Promise.resolve(memberReady).then(finish, finish)
+      function settleReady() {
+        if (!timedOut) {
+          finish()
+          return
+        }
+        currentMember(true)
+          .then(function (member) { return handleAuthChange(member) })
+          .catch(function () {})
+      }
+      readyTimer = window.setTimeout(function () {
+        timedOut = true
+        finish()
+      }, SITE_MEMBER_READY_WAIT_MS)
+      Promise.resolve(memberReady).then(settleReady, settleReady)
     })
   }
 

@@ -610,6 +610,35 @@ test('continues Free settings hydration when site Memberstack readiness never se
   assert.equal(result.memberJsonWrites.length, 0)
 })
 
+test('reconciles the Free Build intent when site Memberstack readiness settles after timeout', async () => {
+  const memberReady = deferred()
+  const memberJSON = {}
+  const result = load({
+    memberJSON,
+    memberReady: memberReady.promise,
+    initial: canonical({ readiness: GATED_FREE_READINESS }),
+  })
+  await settle()
+
+  result.flushTimers()
+  await settle()
+
+  assert.equal(result.dom.no.checked, true)
+  assert.equal(result.dom.title.value, '')
+
+  Object.assign(memberJSON, PENDING_FREE_ENABLE)
+  memberReady.resolve({ id: 'stale-shared-member' })
+  await settle()
+
+  assert.equal(result.dom.yes.checked, true)
+  assert.equal(result.dom.no.checked, false)
+  assert.equal(result.dom.title.value, 'Quick intro')
+  assert.match(result.dom.status.textContent, /Build Profile choice is saved/)
+  assert.equal(result.calls.filter((call) => call.method === 'GET').length, 2)
+  assert.equal(result.calls.some((call) => call.method === 'POST'), false)
+  assert.equal(result.memberJsonWrites.length, 0)
+})
+
 test('rehydrates a pending Free Build Profile choice after the same member becomes ready', async () => {
   const memberJSON = {}
   const result = load({
