@@ -1982,12 +1982,12 @@ Current safety boundary:
   [protected-route guard](#protected-route-guard), and the call reader's initial
   and later-refresh behavior is owned by the
   [dashboard call section](#dashboard-call-sections).
-  The Free and Paid settings controllers use `window.memberReady` only as a
-  readiness hint, bounded to two seconds, then read identity from the live
-  Memberstack SDK. They use the bridge-owned auth scope and fetch reference for
-  refreshes and writes, so a transient Memberstack DOM null cannot block the
-  current owner. A logout or account switch changes that scope and still fails
-  closed.
+  The Free and Paid settings controllers instead follow the member-bound
+  identity and readiness contract owned by the
+  [Call Settings receipt lifecycle](build-profile/README.md#call-settings-receipt-lifecycle).
+  They use the bridge-owned auth scope and fetch reference for refreshes and
+  writes, so a transient Memberstack DOM null cannot block the current owner. A
+  logout or account switch changes that scope and still fails closed.
 - The Starter **Contract Generation** modal also depends on
   `window.getXanoAuthToken` when a browser session holds a cached
   `opportunities-3.0.js` without `Opp30.API.starterProfile`, so keep

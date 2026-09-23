@@ -35,11 +35,6 @@ controller consumes its own part while leaving the Free part untouched, the
 serialized `window.__tsMemberJsonWrite` boundary, and cleanup failure policy.
 Retiring an already-satisfied receipt repaints nothing at all.
 
-At boot, the controller waits up to two seconds for the site-level
-`window.memberReady` signal, then reads identity from the live Memberstack SDK.
-The bounded signal is a readiness hint only; it cannot keep settings from
-loading forever or supply the member identity.
-
 ## Script
 
 Load `v3/paid-call-settings.js` after `v3/scheduling-auth.js`. The local stage component loader already includes it.

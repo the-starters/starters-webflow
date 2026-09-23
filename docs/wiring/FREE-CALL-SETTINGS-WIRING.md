@@ -41,11 +41,6 @@ controller consumes its own part while leaving the Paid part untouched, the
 serialized `window.__tsMemberJsonWrite` boundary, and cleanup failure policy.
 Retiring an already-satisfied receipt repaints nothing at all.
 
-At boot, the controller waits up to two seconds for the site-level
-`window.memberReady` signal, then reads identity from the live Memberstack SDK.
-The bounded signal is a readiness hint only; it cannot keep settings from
-loading forever or supply the member identity.
-
 ## Published compatibility contract
 
 The current Designer form works without generated IDs or styling selectors:
