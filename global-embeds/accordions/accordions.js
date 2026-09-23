@@ -1,3 +1,4 @@
+// @release v1.59.614
 // Docs: global-embeds/accordions/README.md
 ;(function () {
   if (window.StarterAccordions) return;
