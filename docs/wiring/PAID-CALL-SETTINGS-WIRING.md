@@ -234,6 +234,13 @@ The controller sets `data-ready="true|false"` on each row. It also sets these wr
   readback, that verified result remains the fallback when the extra auth-triggered settings read
   fails. Readiness refreshes wait for the write and auth reconciliation, then coalesce into one
   canonical re-read.
+- Same-member auth revalidation also re-reads the private Build Profile intent. Memberstack may
+  identify the session before its custom JSON is ready, so an empty first read must not erase the
+  saved Paid choice. Initial Dashboard hydration waits for the site-level `memberReady` signal as a
+  readiness barrier, then takes a fresh live Memberstack identity snapshot; the signal's value is
+  not trusted as identity. A failed refresh keeps an already-read receipt. A refresh also skips a
+  queued intent read while its canonical-satisfied receipt cleanup is in flight, so canonical auth
+  recovery does not wait behind that Memberstack JSON write.
 - A confirmed missing or changed Memberstack session, or the final `401` after the bridge's one token
   refresh, still fails closed. An upsert, a turn off, or a readiness refresh with that result clears
   the cached Paid state instead of leaving stale enabled controls: inputs reset, both actions
