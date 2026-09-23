@@ -140,7 +140,7 @@ Suggested child table: `core_starter_profile_claim_exchanges_v3`.
 | Field | Contract |
 | --- | --- |
 | `id` | Xano row ID |
-| `starter_profile_claim_id` | required reference to the invitation ledger row |
+| `claim_id` | required reference to the invitation ledger row |
 | `exchange_digest` | required SHA-256 digest; unique; raw code is never stored |
 | `expires_at` | required short expiry |
 | `consumed_at` | nullable timestamp |
