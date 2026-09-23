@@ -10,6 +10,7 @@ const FORM_SELECTOR = 'form[data-starter-claim="form"][data-ms-form="signup"]'
 const EXCHANGE_FIELD_SELECTOR =
   'input[type="hidden"][data-ms-member="starter-claim-exchange"]'
 const LOOSE_EXCHANGE_FIELD_SELECTOR = '[data-ms-member="starter-claim-exchange"]'
+const GOOGLE_AUTH_SELECTOR = '[data-ms-auth-provider="google"]'
 const ENDPOINT =
   'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/starter_profile_claim/prepare'
 const TOKEN = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef0123456789_-A'
@@ -64,6 +65,9 @@ function response(body, ok = true) {
 
 function load(options = {}) {
   const exchangeField = options.exchangeField === false ? null : element()
+  const googleAuth = options.googleAuth === false ? null : element({
+    'data-ms-auth-provider': 'google',
+  })
   const form = options.form === false ? null : element()
   if (form && exchangeField) {
     form.setQuery(options.exchangeSelector || EXCHANGE_FIELD_SELECTOR, exchangeField)
@@ -80,6 +84,7 @@ function load(options = {}) {
           options.endpoint === undefined ? ENDPOINT : options.endpoint,
       })
   if (wrapper && form) wrapper.setQuery(FORM_SELECTOR, form)
+  if (wrapper && googleAuth) wrapper.setQuery(GOOGLE_AUTH_SELECTOR, googleAuth)
 
   const listeners = []
   const warnings = []
@@ -162,6 +167,7 @@ function load(options = {}) {
     replacements,
     requests,
     exchangeField,
+    googleAuth,
     warnings,
     window,
     wrapper,
@@ -201,6 +207,10 @@ test('prepares one opaque claim token and only then reveals the wrapper', async 
   assert.equal(harness.wrapper.getAttribute('hidden'), null)
   assert.equal(harness.wrapper.getAttribute('aria-hidden'), 'false')
   assert.equal(harness.wrapper.getAttribute('data-starter-claim-state'), 'ready')
+  assert.equal(harness.googleAuth.hidden, true)
+  assert.equal(harness.googleAuth.getAttribute('hidden'), '')
+  assert.equal(harness.googleAuth.getAttribute('aria-hidden'), 'true')
+  assert.equal(harness.googleAuth.getAttribute('tabindex'), '-1')
 })
 
 test('scrubs only the claim value before preparing the exchange', async () => {

@@ -67,6 +67,19 @@ testing. The controller writes only the short-lived one-use exchange code to the
 input. It never puts the raw QR capability in DOM, Memberstack, storage, logs,
 or analytics, and it does not accept a value authored in Webflow.
 
+Keep the existing Google element's Memberstack attribute, and author it hidden:
+
+| Attribute | Value |
+| --- | --- |
+| `data-ms-auth-provider` | `google` |
+| `hidden` | `hidden` |
+| `aria-hidden` | `true` |
+
+The controller also forces this element hidden and removes it from keyboard
+navigation. Do not reveal it until an observed Memberstack Test webhook proves
+that Google signup carries `starter-claim-exchange`; then update this controller
+and its tests in a separately reviewed release.
+
 Load the controller synchronously in the Hire CMS template page head, before the
 existing sitewide PostHog initialization:
 

@@ -36,6 +36,7 @@ function markup() {
             <input type="email" data-ms-member="email">
             <input type="hidden" data-ms-member="starter-claim-exchange" autocomplete="off">
             <button type="submit">Claim profile</button>
+            <button type="button" data-ms-auth-provider="google">Continue with Google</button>
           </form>
         </section>
       </body>
@@ -103,6 +104,8 @@ function markup() {
       hidden: wrapper.hidden,
       exchangeCode: wrapper.querySelector('[data-ms-member="starter-claim-exchange"]').value,
       postHogObservedUrl: window.__postHogObservedUrl,
+      googleHidden: wrapper.querySelector('[data-ms-auth-provider="google"]').hidden,
+      googleAriaHidden: wrapper.querySelector('[data-ms-auth-provider="google"]').getAttribute('aria-hidden'),
       url: location.href,
     }))
 
@@ -116,6 +119,8 @@ function markup() {
       hasHide: false,
       hidden: false,
       exchangeCode,
+      googleAriaHidden: 'true',
+      googleHidden: true,
       postHogObservedUrl: 'https://www.thestarters.com/hire/jane-doe?utm_source=gift',
       url: 'https://www.thestarters.com/hire/jane-doe?utm_source=gift',
     })
