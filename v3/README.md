@@ -3871,7 +3871,23 @@ The scheduling auth bridge allowlists these paid-call paths:
 - `POST /brand/booking/request/v3`
 
 Xano derives the Brand identity and payment environment from the Bearer token.
-The browser sends neither field. The controller uses this sequence:
+The browser sends neither field.
+
+Saving a card, new or already saved, is one off-session SetupIntent bound to the
+Brand's explicit consent. The client renders a consent control (an authored
+`[payment-consent]` checkbox wins over the generated one) and keeps **Add card**
+and **Use this card** closed until it is checked. It then posts
+`off_session_consent: true` and `consent_version: "paid-call-off-session-v1"` to
+`POST /brand/payment-method/setup/v3`, confirms the returned SetupIntent with
+Stripe.js (`confirmCardSetup` with the entered card or the selected saved
+`pm_…`), and posts `setup_intent_id` plus `payment_method_id` to
+`POST /brand/payment-method/set-default/v3`. That route verifies the succeeded
+SetupIntent and records the receipt `POST /brand/booking/request/v3` requires
+for every Paid request; a request refused for a missing receipt invalidates the
+reviewed card so the Brand chooses and confirms a card again. Retries reuse the
+same SetupIntent and the same idempotency keys.
+
+The controller uses this sequence:
 
 ```mermaid
 flowchart TD
