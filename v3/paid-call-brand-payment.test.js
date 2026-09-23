@@ -5079,18 +5079,31 @@ test('a receipt refusal from the request route invalidates the reviewed card', a
   }
 })
 
-test('the generated consent checkbox stays visible under a site-wide appearance:none reset', () => {
-  const doc = { createElement: tag => new CalendarElement(tag) }
-  const modal = { querySelector: () => null }
-  const control = api.buildConsentControl(doc, modal, 'saved-card')
+test('the generated consent checkbox stays visible under a site-wide !important input reset', () => {
+  // Webflow's reset applies appearance:none and a zero height with !important, so plain inline
+  // styles lose; every visibility property must be set with important priority.
+  function importantStyle() {
+    const values = {}
+    return {
+      values,
+      setProperty(name, value, priority) { values[name] = { value, priority } },
+    }
+  }
+  const doc = { createElement: tag => { const el = new CalendarElement(tag); el.style = importantStyle(); return el } }
+  const control = api.buildConsentControl(doc, { querySelector: () => null }, 'saved-card')
   assert.equal(control.generated, true)
-  const input = control.input
-  assert.equal(input.getAttribute('type'), 'checkbox')
-  // Webflow's reset sets appearance:none on inputs, which collapses an unstyled checkbox to 0x0.
-  assert.equal(input.style.appearance, 'auto')
-  assert.equal(input.style.webkitAppearance, 'checkbox')
-  assert.equal(input.style.width, '16px')
-  assert.equal(input.style.height, '16px')
-  assert.equal(input.style.opacity, '1')
-  assert.equal(control.wrap.style.display, 'flex', 'checkbox and text sit on one clickable row')
+  const input = control.input.style.values
+  for (const [name, value] of [['appearance', 'auto'], ['-webkit-appearance', 'checkbox'], ['width', '16px'], ['height', '16px'],
+    ['min-width', '16px'], ['min-height', '16px'], ['opacity', '1'], ['visibility', 'visible'], ['display', 'inline-block'], ['position', 'static']]) {
+    assert.deepEqual(input[name], { value, priority: 'important' }, `${name} must be ${value} !important`)
+  }
+  assert.deepEqual(control.wrap.style.values.display, { value: 'flex', priority: 'important' })
+
+  const fallbackDoc = { createElement: tag => { const el = new CalendarElement(tag); el.style = {}; return el } }
+  const fallback = api.buildConsentControl(fallbackDoc, { querySelector: () => null }, 'saved-card')
+  assert.equal(fallback.input.style.appearance, 'auto')
+  assert.equal(fallback.input.style.webkitAppearance, 'checkbox')
+  assert.equal(fallback.input.style.minWidth, '16px')
+  assert.equal(fallback.input.style.minHeight, '16px')
+  assert.equal(fallback.wrap.style.alignItems, 'flex-start')
 })

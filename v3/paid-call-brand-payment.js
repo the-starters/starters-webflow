@@ -738,30 +738,26 @@
     const wrap = document.createElement('label')
     wrap.setAttribute('data-payment-consent', marker)
     wrap.setAttribute('class', 'payment-consent')
-    // One clickable row; the site's input reset must not hide the checkbox.
-    if (wrap.style) {
-      wrap.style.display = 'flex'
-      wrap.style.alignItems = 'flex-start'
-      wrap.style.gap = '0.5rem'
-      wrap.style.cursor = 'pointer'
+    // One clickable row. The site's input reset uses !important, so each
+    // visibility property is set with important priority.
+    function forceStyles(node, entries) {
+      if (!node || !node.style) return
+      entries.forEach(function (entry) {
+        if (typeof node.style.setProperty === 'function') node.style.setProperty(entry[0], entry[1], 'important')
+        else node.style[entry[0].replace(/^-/, '').replace(/-([a-z])/g, function (m, c) { return c.toUpperCase() })] = entry[1]
+      })
     }
+    forceStyles(wrap, [['display', 'flex'], ['align-items', 'flex-start'], ['gap', '0.5rem'], ['cursor', 'pointer']])
     const input = document.createElement('input')
     input.type = 'checkbox'
     input.setAttribute('type', 'checkbox')
     input.setAttribute('data-payment-consent-input', '')
     input.setAttribute('aria-label', 'Payment authorization')
     input.checked = false
-    if (input.style) {
-      // Webflow's reset sets appearance:none on inputs, which collapses an unstyled checkbox to 0x0.
-      input.style.appearance = 'auto'
-      input.style.webkitAppearance = 'checkbox'
-      input.style.width = '16px'
-      input.style.height = '16px'
-      input.style.minWidth = '16px'
-      input.style.margin = '0.2rem 0 0'
-      input.style.opacity = '1'
-      input.style.flex = '0 0 auto'
-    }
+    // Webflow's reset sets appearance:none and a zero size on inputs, which hides an unstyled checkbox.
+    forceStyles(input, [['appearance', 'auto'], ['-webkit-appearance', 'checkbox'], ['width', '16px'], ['height', '16px'],
+      ['min-width', '16px'], ['min-height', '16px'], ['margin', '0.2rem 0 0'], ['opacity', '1'], ['visibility', 'visible'],
+      ['display', 'inline-block'], ['position', 'static'], ['flex', '0 0 auto']])
     const text = document.createElement('span')
     text.setAttribute('data-payment-consent-text', '')
     text.textContent = CONSENT_TEXT
