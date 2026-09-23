@@ -567,8 +567,11 @@
       if (openingGeneration !== generation) {
         throw identityError('TalkJS session opening was superseded')
       }
-      if (identity.status !== 'same') {
-        throw identityError('Member changed during TalkJS session opening')
+      if (
+        identity.status !== 'same' ||
+        identity.cookie !== pendingState.memberstackCookie
+      ) {
+        throw identityError('TalkJS session opening was superseded')
       }
       var initialToken = initial.token
       var expectedAppId = initial.appId

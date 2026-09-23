@@ -721,27 +721,34 @@
       return recentRequest
     }
 
-    refreshRecent()
-
     const Talk = await waitForTalkJs()
     const me = new Talk.User(talkUserFields(member))
     const sessionOwner = await waitForTalkJsSessionOwner()
-    const session = await sessionOwner.openSession({
-      Talk,
-      memberstack,
-      member,
-      me,
-      clientOwner: 'dashboard-messages-v3',
-      onReconnect: mountTile,
-      onInvalidate: () => {
-        invalidated = true
-        refreshQueued = false
-        state.recent = []
-        state.recentSettled = true
-        state.unreads = []
-        rerender()
-      },
-    })
+    let session
+    const invalidate = () => {
+      invalidated = true
+      refreshQueued = false
+      state.recent = []
+      state.recentSettled = true
+      state.unreads = []
+      rerender()
+    }
+    try {
+      session = await sessionOwner.openSession({
+        Talk,
+        memberstack,
+        member,
+        me,
+        clientOwner: 'dashboard-messages-v3',
+        onReconnect: mountTile,
+        onInvalidate: invalidate,
+      })
+    } catch (error) {
+      invalidate()
+      throw error
+    }
+
+    refreshRecent()
 
     session.onMessage(() => {
       if (invalidated) return

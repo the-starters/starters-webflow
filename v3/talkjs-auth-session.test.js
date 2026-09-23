@@ -634,7 +634,7 @@ test('logout during token issuance cannot construct a TalkJS session', async () 
   state.memberstackCookie(null)
   release()
 
-  await assert.rejects(opening, /Member changed during TalkJS session opening/)
+  await assert.rejects(opening, /superseded/)
   assert.equal(state.calls.sessions.length, 0)
   assert.equal(state.api.debugSnapshot(), null)
 })
@@ -677,6 +677,39 @@ test('changed-cookie auth event supersedes and invalidates a pending opening', a
   assert.equal(state.api.debugSnapshot(), null)
 })
 
+test('cookie rotation after an early auth callback supersedes opening', async () => {
+  let release
+  let startedResolve
+  const started = new Promise((resolve) => {
+    startedResolve = resolve
+  })
+  const gate = new Promise((resolve) => {
+    release = resolve
+  })
+  const state = harness({
+    fetch: async () => {
+      startedResolve()
+      await gate
+      return jsonResponse({
+        token: token(),
+        me_id: 'mem_sb_membera',
+        data_environment: 'test',
+        expires_in_seconds: 300,
+      })
+    },
+  })
+  const opening = open(state)
+  await started
+
+  await state.authChange()
+  state.memberstackCookie('memberstack-cookie-b')
+  release()
+
+  await assert.rejects(opening, /superseded/)
+  assert.equal(state.calls.sessions.length, 0)
+  assert.equal(state.api.debugSnapshot(), null)
+})
+
 test('account switch during opening cannot construct the old member session', async () => {
   const state = harness()
   let lookups = 0
@@ -692,7 +725,7 @@ test('account switch during opening cannot construct the old member session', as
 
   await assert.rejects(
     open(state),
-    /Member changed during TalkJS session opening/,
+    /superseded/,
   )
   assert.equal(state.calls.sessions.length, 0)
   assert.equal(state.api.debugSnapshot(), null)

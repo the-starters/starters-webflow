@@ -148,6 +148,14 @@ function loadRenderedRecent(recent, unreads = [], options = {}) {
   let messageHandler
   let resolveRecentFetch
   let unreadHandler
+  let completeAuthSession
+  let failAuthSession
+  const authSessionGate = options.deferAuthSession
+    ? new Promise((resolve, reject) => {
+        completeAuthSession = resolve
+        failAuthSession = reject
+      })
+    : null
   const recentTimeouts = []
   let scheduledTimeouts = 0
   const makeClassList = () => ({
@@ -263,6 +271,7 @@ function loadRenderedRecent(recent, unreads = [], options = {}) {
     StartersTalkJsSessionOwner: {
       openSession: async (sessionOptions) => {
         calls.authSessions.push(sessionOptions)
+        if (authSessionGate) await authSessionGate
         return new sessionOptions.Talk.Session({
           appId: 'test-app',
           me: sessionOptions.me,
@@ -282,7 +291,7 @@ function loadRenderedRecent(recent, unreads = [], options = {}) {
       if (
         options.manualRecentTimeout &&
         delay === 15000 &&
-        scheduledTimeouts !== 2
+        scheduledTimeouts !== 1
       ) {
         recentTimeouts.push(callback)
         return recentTimeouts.length
@@ -366,6 +375,12 @@ function loadRenderedRecent(recent, unreads = [], options = {}) {
     resolveRecent() {
       resolveRecentFetch()
     },
+    resolveAuthSession() {
+      completeAuthSession()
+    },
+    rejectAuthSession(error) {
+      failAuthSession(error)
+    },
     runRecentTimeout() {
       const timeout = recentTimeouts.shift()
       if (!timeout) throw new Error('No recent timeout is pending')
@@ -424,6 +439,32 @@ test('session invalidation clears cards and blocks stale request repaint', async
 
   state.resolveRecent()
   await settle()
+  assert.equal(state.list.children.length, 0)
+  assert.equal(state.total.textContent, '0')
+})
+
+test('account switch while session owner opens cannot expose message cards', async () => {
+  const state = loadRenderedRecent(
+    {
+      id: 'one:mem_me|mem_other',
+      participant_name: 'Prior Member Brand',
+      participant_photo_url: null,
+      last_message_text: 'Protected preview',
+      last_message_at: 1,
+      unread: false,
+    },
+    [],
+    { deferAuthSession: true },
+  )
+  await settle(5)
+
+  assert.equal(state.calls.authSessions.length, 1)
+  assert.equal(state.calls.fetches, 0)
+  assert.equal(state.list.children.length, 0)
+
+  state.rejectAuthSession(new Error('Member changed during opening'))
+  await settle()
+  assert.equal(state.calls.fetches, 0)
   assert.equal(state.list.children.length, 0)
   assert.equal(state.total.textContent, '0')
 })
@@ -1057,7 +1098,7 @@ test('a stalled bulk request aborts and settles the empty state', async () => {
     { hangRecent: true, manualRecentTimeout: true },
   )
 
-  await settle(5)
+  await settle(15)
   runRecentTimeout()
   await settle(5)
   runRecentTimeout()
@@ -1084,7 +1125,7 @@ test('a timed-out bulk request retries before showing an empty state', async () 
     { hangAttempts: 1, manualRecentTimeout: true },
   )
 
-  await settle(5)
+  await settle(15)
   runRecentTimeout()
   await settle()
 
@@ -1095,8 +1136,8 @@ test('a timed-out bulk request retries before showing an empty state', async () 
   assert.equal(empty.style.display, 'none')
 })
 
-test('bulk recent conversations render when TalkJS initialization fails', async () => {
-  const { list } = loadRenderedRecent(
+test('protected recent conversations stay hidden when TalkJS initialization fails', async () => {
+  const { calls, list } = loadRenderedRecent(
     {
       id: 'one:mem_me|mem_other',
       participant_name: 'Acme Brand',
@@ -1111,9 +1152,8 @@ test('bulk recent conversations render when TalkJS initialization fails', async 
 
   await settle()
 
-  const card = list.children[list.children.length - 1]
-  assert.equal(card.fields.name.textContent, 'Acme Brand')
-  assert.equal(card.fields.preview.textContent, 'Still available')
+  assert.equal(calls.fetches, 0)
+  assert.equal(list.children.length, 0)
 })
 
 test('a message card links to its focused conversation in a new tab', async () => {
