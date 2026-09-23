@@ -78,6 +78,7 @@
       let existingImages = [];
       let existingVideos = [];
       let autoOpenedCreateDropdown = false;
+      let isCreatingPortfolio = false;
 
       function getAssetUrl(value) {
         if (!value) return '';
@@ -590,12 +591,15 @@
       }
 
       function disableDropdownToggle(state) {
+        if (!profileDropdown) return;
         profileDropdown.style.pointerEvents = state ? 'none' : 'auto';
         profileDropdown.style.opacity = state ? '0.6' : '1';
       }
 
       async function handlePortfolioCreate(event) {
         event.preventDefault();
+        if (isCreatingPortfolio) return;
+        isCreatingPortfolio = true;
         try {
           disableDropdownToggle(true);
           const portfolios = await getPortfolios();
@@ -653,6 +657,7 @@
           openNotificationModal(getErrorMessage(error, 'Portfolio creation failed'));
         } finally {
           disableDropdownToggle(false);
+          isCreatingPortfolio = false;
         }
       }
 
