@@ -1,4 +1,5 @@
 /**
+ * @release v1.59.616
  * GitHub-owned copy of the Build Profile Webflow controller block.
  * Original live inline body SHA-256: 7ab803c9890b802f154c6f5c3f0a6d5906624f71b9683153b2f5798617e1070d
  * Captured read-only from /build-profile/consult on 2026-08-12.
