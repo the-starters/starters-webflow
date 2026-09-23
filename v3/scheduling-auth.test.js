@@ -12,6 +12,7 @@ const BRAND_PAYMENT_URLS = [
   `${XANO_ORIGIN}/api:tCpV3oqd/brand/booking/payment-method-replace/v3`,
   `${XANO_ORIGIN}/api:tCpV3oqd/brand/payment-method/setup/v3`,
   `${XANO_ORIGIN}/api:tCpV3oqd/brand/payment-method/set-default/v3`,
+  `${XANO_ORIGIN}/api:tCpV3oqd/brand/payment-methods/v3`,
   `${XANO_ORIGIN}/api:tCpV3oqd/brand/payment-readiness/v3`,
   `${XANO_ORIGIN}/api:tCpV3oqd/brand/booking/request/v3`,
 ]

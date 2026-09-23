@@ -5078,3 +5078,19 @@ test('a receipt refusal from the request route invalidates the reviewed card', a
     fixture.restore()
   }
 })
+
+test('the generated consent checkbox stays visible under a site-wide appearance:none reset', () => {
+  const doc = { createElement: tag => new CalendarElement(tag) }
+  const modal = { querySelector: () => null }
+  const control = api.buildConsentControl(doc, modal, 'saved-card')
+  assert.equal(control.generated, true)
+  const input = control.input
+  assert.equal(input.getAttribute('type'), 'checkbox')
+  // Webflow's reset sets appearance:none on inputs, which collapses an unstyled checkbox to 0x0.
+  assert.equal(input.style.appearance, 'auto')
+  assert.equal(input.style.webkitAppearance, 'checkbox')
+  assert.equal(input.style.width, '16px')
+  assert.equal(input.style.height, '16px')
+  assert.equal(input.style.opacity, '1')
+  assert.equal(control.wrap.style.display, 'flex', 'checkbox and text sit on one clickable row')
+})
