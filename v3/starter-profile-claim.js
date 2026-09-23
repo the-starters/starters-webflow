@@ -20,6 +20,7 @@
   var FORM_SELECTOR = 'form[data-starter-claim="form"][data-ms-form="signup"]'
   var EXCHANGE_FIELD_SELECTOR =
     'input[type="hidden"][data-ms-member="starter-claim-exchange"]'
+  var GOOGLE_AUTH_SELECTOR = '[data-ms-auth-provider="google"]'
   var ENDPOINT_ATTRIBUTE = 'data-starter-claim-prepare-url'
   var QUERY_PARAMETER = 'claim'
   var PREPARE_URL =
@@ -68,6 +69,15 @@
     wrapper.removeAttribute('hidden')
     wrapper.setAttribute('aria-hidden', 'false')
     wrapper.setAttribute('data-starter-claim-state', 'ready')
+  }
+
+  function hideUnverifiedGoogle(wrapper) {
+    var googleAuth = wrapper && wrapper.querySelector(GOOGLE_AUTH_SELECTOR)
+    if (!googleAuth) return
+    googleAuth.hidden = true
+    googleAuth.setAttribute('hidden', '')
+    googleAuth.setAttribute('aria-hidden', 'true')
+    googleAuth.setAttribute('tabindex', '-1')
   }
 
   function captureClaim() {
@@ -143,6 +153,7 @@
     if (!wrapper) return { state: 'absent' }
 
     close(wrapper, 'closed')
+    hideUnverifiedGoogle(wrapper)
 
     var token = claim.token
     if (!token) {
