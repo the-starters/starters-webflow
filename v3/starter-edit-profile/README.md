@@ -689,11 +689,14 @@ The later user authorization for a signed-in disposable test account, local scri
 and markup overrides, temporary saves, and cleanup superseded the earlier
 authentication restriction. The earlier zero-live-scenarios/authentication-blocked
 assessment is obsolete. The historical evidence review, subsequent direct desktop
-run, and focused create recheck below record distinct coverage; the latest recheck
-did not rerun the full desktop acceptance scope.
+run, and focused create recheck below record distinct coverage; none of them ran
+against the final runtime commit. The acceptance record for the released code is
+the final desktop run at `449b3ee2` below; everything before it is historical.
 
 The local preview used commit `034b371043fa5b88ea021049766fcb993af08fb2` on the
-actual test page with the real writer. Its record is
+actual test page with the real writer, before the click-propagation fix in
+`449b3ee2`, so this table is a historical record and not the acceptance evidence
+for the released code. Its record is
 `/private/tmp/work-experience-annotations/local-preview-results.md`; the named
 captures remain outside the repository because they contain account information.
 
@@ -772,10 +775,9 @@ The earlier `WORK_HISTORY_CREATE_PROFILE_EVENT_INVALID` rejection did not
 reproduce; its cause remains unknown. No runtime or test change was justified.
 This focused persistence check passes, but partial-create retry and lost-response
 reconciliation were not rerun, so this recheck on its own is not full desktop
-acceptance or pipeline approval; that scoping statement is **superseded** by
-*Release status — 2026-09-23* below, which records the completed gate. Those two
-scenarios are covered by the local-preview evidence in the table above and were
-not re-executed here. Mobile remains deferred. Redacted results and private screenshots are
+acceptance or pipeline approval; that scoping statement is **superseded** by the
+final desktop run at `449b3ee2` below, which covers both of those scenarios
+against the released code. Mobile remains deferred. Redacted results and private screenshots are
 in the current run's external evidence directory as `create-reproduction.json`,
 `create-reproduction-result.json`, and `repro-persisted-dates.png`.
 
@@ -802,16 +804,58 @@ Completed local checks:
   observations. This uses fixture colors and simulated
   persistence, not published-page styling or an authenticated account.
 
+##### Final desktop acceptance at `449b3ee2` — passed
+
+This is the acceptance record for the code being released. It ran on the
+authorized disposable account against the actual test page at 1196px, with both
+exact CDN script responses replaced by worktree source before initialization and
+the target commit marker verified, at
+`449b3ee2e82fc3093898fed00235072701a74cca` — the commit that added the row-toggle
+click-propagation fix, which the earlier records above predate. No deployed pin
+or Webflow content was changed. Its report and artifacts are in the gate run's
+external evidence directory under `desktop-final/` for run
+`01M34F5T0F5S9E5JFHHRSKVK1R`; captures stay outside Git because they contain
+account information.
+
+All eight desktop scenarios passed:
+
+1. Add follows the rows, Save is visible, and editing shows both section and
+   per-row unsaved status.
+2. A valid selected-company create persists the title and both month dates; a
+   verified-target reload preserves them, and the current-role checkbox disables
+   End Date, saves, and reloads as current with a blank disabled End Date.
+3. The saved last entry stays protected beside a blank draft — disabled theme,
+   Remove refused — and populating the second draft restores authored danger.
+4. Remove hides itself and places Undo in the same header position; Discard
+   removes the unsaved row and restores the saved baseline.
+5. Undo restores the saved row with Company focused and a 280.23px panel both
+   immediately and after 800ms, and Add on a collapsed unfinished row reopens
+   and focuses that row with the same lasting geometry and no extra row. This
+   directly reruns the earlier zero-height failure and passes.
+6. Save with a closed invalid second row focuses Job Title, shows required
+   validation, and expands that panel to 297.19px while the first finishes
+   hidden at zero height with footer controls visible and no overlap.
+7. A partial create failure retains the remaining draft and explains retry;
+   retry writes only that row, and an independent read shows no duplicates.
+8. A successful create whose response is dropped reconciles to saved, an
+   independent read shows exactly one matching record, and a second Save sends
+   no write.
+
+`node --test global-embeds/accordions/accordions.test.js v3/starter-edit-profile/unified-companies.test.js v3/starter-edit-profile/unified-section-switching.test.js`: 97 focused tests passed. Those are component tests, not live evidence. All temporary records were
+removed and the final independent server count was zero. Mobile resize was
+neither tested nor fixed and remains the user-deferred failure. Shared-group
+teardown and hover behavior still have component coverage only. This validates
+the authorized desktop local preview, not a published production release.
+
 ##### Release status — 2026-09-23
 
 This is the current status and supersedes the earlier acceptance and
 authorization wording in the subsections above. After PR 943 merged, the user
-authorized the release. The PR 943 gate passed all eight desktop actual-page
-scenarios listed in the table above, taken together with the run records in
-this section, so desktop acceptance is complete; the interim **blocked** and
-**not full acceptance** verdicts in those run records are historical and are not
-current blockers. Mobile resize stays parked as the user directed and is not
-part of this release.
+authorized the release. Desktop acceptance is complete on the strength of the
+final run at `449b3ee2` recorded directly above, not the older preview table;
+the interim **blocked** and **not full acceptance** verdicts in the historical
+run records are superseded and are not current blockers. Mobile resize stays
+parked as the user directed and is not part of this release.
 
 Release is authorized and in progress, **not** completed: this branch only
 stamps the `v1.59.614` marker on the two changed browser scripts and updates
