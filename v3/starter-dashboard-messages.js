@@ -364,11 +364,17 @@
     if (refs.loadingCard) refs.loadingCard.style.display = ''
   }
 
-  async function requestRecentConversations(memberstack, signal) {
+  async function requestRecentConversations(
+    memberstack,
+    signal,
+    forceRefresh,
+  ) {
     if (typeof window.getXanoAuthToken !== 'function') {
       throw new Error('shared auth bridge is unavailable')
     }
-    const xanoToken = await window.getXanoAuthToken(false)
+    const xanoToken = await window.getXanoAuthToken(
+      forceRefresh ? { forceRefresh: true } : false,
+    )
     if (!xanoToken) throw new Error('shared auth bridge returned no token')
 
     const res = await fetch(XANO_OPP_BASE + RECENT_MESSAGES_PATH, {
@@ -384,7 +390,7 @@
     return (data && data.items) || []
   }
 
-  async function fetchRecentConversationsOnce(memberstack) {
+  async function fetchRecentConversationsOnce(memberstack, forceRefresh) {
     const controller =
       typeof window.AbortController === 'function'
         ? new window.AbortController()
@@ -402,6 +408,7 @@
         requestRecentConversations(
           memberstack,
           controller ? controller.signal : undefined,
+          forceRefresh,
         ),
         timeout,
       ])
@@ -414,7 +421,7 @@
     let lastError
     for (let attempt = 0; attempt < RECENT_MESSAGES_MAX_ATTEMPTS; attempt += 1) {
       try {
-        return await fetchRecentConversationsOnce(memberstack)
+        return await fetchRecentConversationsOnce(memberstack, attempt > 0)
       } catch (error) {
         lastError = error
       }

@@ -33,9 +33,9 @@ function harness(options = {}) {
   const calls = { fetches: [], sessions: [], destroys: 0, xanoTokens: 0, xanoTokenArgs: [] }
   const config = {
     getAttribute(name) {
-      if (name === 'data-token-url') return 'https://xano.example/talkjs/user-token/v3'
+      if (name === 'data-token-url') return 'https://untrusted.example/token'
       if (name === 'data-conversation-url') {
-        return 'https://xano.example/talkjs/conversation/v3'
+        return 'https://untrusted.example/conversation'
       }
       if (name === 'data-environment') return options.environment || ''
       return null
@@ -145,6 +145,10 @@ test('creates one signed session with exact member and app mapping', async () =>
   assert.equal(state.calls.sessions[0].appId, 'test-app')
   assert.equal(state.calls.sessions[0].me.id, 'mem_sb_membera')
   assert.equal(typeof state.calls.sessions[0].tokenFetcher, 'function')
+  assert.equal(
+    state.calls.fetches[0].url,
+    'https://x08a-5ko8-jj1r.n7c.xano.io/api:tCpV3oqd/talkjs/user-token/v3',
+  )
   assert.equal(await state.calls.sessions[0].tokenFetcher(), token())
   assert.equal(session, state.calls.sessions[0] && session)
   assert.deepEqual(JSON.parse(JSON.stringify(state.api.debugSnapshot())), {
@@ -529,7 +533,10 @@ test('authorizes a pair with server-derived actor and accepts exact two-party re
     counterpartId: 'mem_sb_memberb',
   })
   const request = state.calls.fetches.at(-1)
-  assert.equal(request.url, 'https://xano.example/talkjs/conversation/v3')
+  assert.equal(
+    request.url,
+    'https://x08a-5ko8-jj1r.n7c.xano.io/api:tCpV3oqd/talkjs/conversation/v3',
+  )
   assert.deepEqual(JSON.parse(request.init.body), {
     mode: 'pair',
     counterpart_id: 'mem_sb_memberb',

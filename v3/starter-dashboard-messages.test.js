@@ -143,6 +143,7 @@ function loadRenderedRecent(recent, unreads = [], options = {}) {
     fetches: 0,
     aborts: 0,
     authSessions: [],
+    xanoTokenArgs: [],
   }
   let messageHandler
   let resolveRecentFetch
@@ -252,7 +253,12 @@ function loadRenderedRecent(recent, unreads = [], options = {}) {
     $memberstackDom: {
       getCurrentMember: async () => ({ data: { id: MY_ID } }),
     },
-    getXanoAuthToken: async () => 'xano-token',
+    getXanoAuthToken: async (tokenOptions) => {
+      calls.xanoTokenArgs.push(tokenOptions)
+      return tokenOptions && tokenOptions.forceRefresh
+        ? 'fresh-xano-token'
+        : 'cached-xano-token'
+    },
     Talk,
     StartersTalkJsSessionOwner: {
       openSession: async (sessionOptions) => {
@@ -311,8 +317,14 @@ function loadRenderedRecent(recent, unreads = [], options = {}) {
     console,
     document,
     encodeURIComponent,
-    fetch: async () => {
+    fetch: async (_url, init) => {
       calls.fetches += 1
+      if (
+        options.rejectCachedBearer &&
+        init.headers.Authorization === 'Bearer cached-xano-token'
+      ) {
+        return { ok: false, json: async () => ({ error: 'expired' }) }
+      }
       if (calls.fetches <= (options.hangAttempts || 0)) {
         return new Promise(() => {})
       }
@@ -392,6 +404,30 @@ test('the dashboard tile opens through the shared authenticated session owner', 
   assert.equal(request.member, current)
   assert.equal(request.me.fields.id, current.id)
   assert.equal(loaded.calls.sessions.length, 1)
+})
+
+test('the recent-messages retry refreshes a cached Xano bearer', async () => {
+  const recent = {
+    id: 'one:mem_me|mem_other',
+    participant_name: 'Recovered Brand',
+    participant_photo_url: null,
+    last_message_text: 'Loaded after bearer refresh',
+    last_message_at: 1,
+    unread: false,
+  }
+  const { calls, list } = loadRenderedRecent(recent, [], {
+    rejectCachedBearer: true,
+  })
+
+  await settle()
+
+  assert.deepEqual(plain(calls.xanoTokenArgs), [
+    false,
+    { forceRefresh: true },
+    false,
+    { forceRefresh: true },
+  ])
+  assert.equal(list.children.at(-1).fields.name.textContent, 'Recovered Brand')
 })
 
 test('the display name is the first name alone, never the last name', async () => {

@@ -8,7 +8,6 @@
  *
  * Optional configuration belongs on the helper script element:
  *   data-starters-talkjs-auth
- *   data-token-url="https://.../talkjs/user-token/v3"
  *   data-environment="test|production" (localhost QA only)
  *
  * Tokens remain only in closures. They are never written to storage, the DOM,
@@ -44,11 +43,8 @@
   function scriptConfig() {
     var script = document.querySelector('script[data-starters-talkjs-auth]')
     return {
-      tokenUrl:
-        (script && script.getAttribute('data-token-url')) || DEFAULT_TOKEN_URL,
-      conversationUrl:
-        (script && script.getAttribute('data-conversation-url')) ||
-        DEFAULT_CONVERSATION_URL,
+      tokenUrl: DEFAULT_TOKEN_URL,
+      conversationUrl: DEFAULT_CONVERSATION_URL,
       environment:
         (script && script.getAttribute('data-environment')) || '',
     }
