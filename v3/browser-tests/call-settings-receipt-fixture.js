@@ -20,6 +20,8 @@
 //                              leaves the browser and no provider is contacted
 //   second=1                   seed a second signed-out member with their own pending
 //                              receipt so an in-tab account switch can be driven
+//   memberready=late           expose the member immediately but hold member JSON
+//                              hydration until the site memberReady barrier releases
 const params = new URLSearchParams(location.search)
 const page = params.get('page') || 'edit'
 const receipt = params.get('receipt') || 'off-both'
@@ -90,7 +92,8 @@ const OTHER_MEMBER = {
 let activeMember = MEMBER
 
 let memberJson = { keep: 'private' }
-if (RECEIPTS[receipt]) memberJson.starter_call_settings_intent_v3 = clone(RECEIPTS[receipt])
+const lateMemberReady = params.get('memberready') === 'late'
+if (RECEIPTS[receipt] && !lateMemberReady) memberJson.starter_call_settings_intent_v3 = clone(RECEIPTS[receipt])
 if (params.get('seen') === '1') memberJson.tours = { 'starter-dashboard': '2026-09-01T00:00:00.000Z' }
 
 // Memberstack answers with the signed-in member's own JSON, so each member keeps
@@ -115,6 +118,10 @@ window.__tsMemberJsonLog = []
 window.__tsNetworkLog = []
 
 window.__tsAuthChangeHandlers = []
+let releaseMemberReady
+if (lateMemberReady) {
+  window.memberReady = new Promise(resolve => { releaseMemberReady = resolve })
+}
 window.$memberstackDom = {
   getCurrentMember: async () => ({ data: activeMember }),
   getMemberCookie: async () => 'ms-session-cookie-' + activeMember.id,
@@ -147,6 +154,15 @@ window.__tsFailNextMemberJsonWrite = () => { failNextWrite = true }
 window.__tsMemberJsonState = memberId => clone(memberJsonById[memberId || activeMember.id] || null)
 window.__tsMemberIds = () => ({ a: MEMBER.id, b: OTHER_MEMBER.id })
 window.__tsActiveMemberId = () => activeMember.id
+window.__tsReleaseMemberReady = () => {
+  if (!lateMemberReady || !releaseMemberReady) return false
+  if (RECEIPTS[receipt]) {
+    memberJsonById[MEMBER.id].starter_call_settings_intent_v3 = clone(RECEIPTS[receipt])
+  }
+  releaseMemberReady({})
+  releaseMemberReady = null
+  return true
+}
 // The in-tab account switch Memberstack performs: the session member changes and
 // every registered onAuthChange handler is notified, exactly once.
 window.__tsSwitchMember = which => {
