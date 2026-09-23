@@ -1,11 +1,12 @@
 // Behavior of the patched Work Experience runtime this bundle ships.
 //
-// `manifest.json` declares the exact bytes the bundle serves. Those bytes are not
-// committed (see .gitignore), so this file rebuilds them the way materialize.py does —
-// tracked source plus the tracked patch — and then runs them. The rebuild uses the
-// working-tree sources rather than the manifest's baseline tags so the suite needs no
-// Git history, no tags and no network; the hash assertion below is what proves the two
-// routes still produce the same file.
+// `manifest.json` declares the exact bytes the bundle serves and `materialize.py` is the
+// single definition of how they are produced: every file from its own `baseline_tag`, then
+// the tracked patch. This suite runs that script instead of rebuilding the runtime a second
+// way, so what it executes is the bundle's own output rather than the working tree — those
+// differ today for `starter-edit-profile.js`, whose pinned v1.59.607 copy is not the one on
+// this branch. The baseline tags therefore have to be fetched; the tests workflow fetches
+// exactly the ones `manifest.json` names.
 const assert = require('node:assert/strict')
 const crypto = require('node:crypto')
 const fs = require('node:fs')
@@ -21,18 +22,16 @@ const REPO = path.resolve(BUNDLE, '..')
 const MANIFEST = JSON.parse(fs.readFileSync(path.join(BUNDLE, 'manifest.json'), 'utf8'))
 const PATCHED = ['v3/starter-edit-profile/unified-companies.js', 'v3/starter-edit-profile/company-experience-crud.js']
 const SUPPORT = ['global-embeds/accordions/accordions.js', 'v3/starter-edit-profile/profile-section-validation.js']
+const CONTROLLER = 'starter-edit-profile.js'
+const LOADED = [...SUPPORT, ...PATCHED, CONTROLLER]
 const tick = () => new Promise(resolve => setImmediate(resolve))
 
 const runtime = materialize()
 
-// Rebuilds the bundle's runtime into a scratch directory and hands back its file text.
+// Runs the bundle's own build step into a scratch directory and hands back its file text.
 function materialize() {
-  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'edit-profile-v3-'))
-  for (const file of [...PATCHED, ...SUPPORT, 'starter-edit-profile.js']) {
-    fs.mkdirSync(path.join(out, path.dirname(file)), { recursive: true })
-    fs.copyFileSync(path.join(REPO, file), path.join(out, file))
-  }
-  execFileSync('patch', ['-p1', '-s', '-i', path.join(BUNDLE, 'patches/work-experience-month-picker.patch')], { cwd: out })
+  const out = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'edit-profile-v3-')), 'runtime')
+  execFileSync('python3', [path.join(BUNDLE, 'materialize.py'), out], { cwd: REPO, stdio: 'pipe' })
   return { dir: out, read: file => fs.readFileSync(path.join(out, file), 'utf8') }
 }
 
@@ -167,7 +166,7 @@ async function mount(t, { companies = [], wrappingLabel = false, separateLabel =
   })
   windowStub.StarterEditLogoSearchInit = () => {}
 
-  for (const file of [SUPPORT[0], SUPPORT[1], PATCHED[0], PATCHED[1]]) {
+  for (const file of [...SUPPORT, ...PATCHED]) {
     vm.runInContext(runtime.read(file), context, { filename: file })
   }
 
@@ -227,8 +226,8 @@ async function mount(t, { companies = [], wrappingLabel = false, separateLabel =
 const SAVED = [{ id: 1, company_name: 'Example Company', company_source: 'custom', job_title: 'Designer',
   start_date: '2022-03-01', end_date: '2025-08-01' }]
 
-test('the tracked patch rebuilds exactly the bytes manifest.json declares', () => {
-  for (const file of PATCHED) {
+test('every script this suite executes is the bytes manifest.json declares', () => {
+  for (const file of LOADED) {
     const declared = entry(file)
     const bytes = fs.readFileSync(path.join(runtime.dir, file))
     assert.equal(bytes.length, declared.bytes, file)
@@ -406,13 +405,17 @@ test('the diagnostics loader fetches the copy pinned beside it, not the CDN repo
   }
 
   assert.deepEqual(
-    [...new Set(load(runtime.read('starter-edit-profile.js')))],
+    [...new Set(load(runtime.read(CONTROLLER)))],
     ['https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v0.0.0-bundle/edit-profile-v3/runtime/utils/workflow-diagnostics.js'],
   )
   // Without the patch the same src reaches for the repository root, where the bundle has
-  // pinned nothing — which is the failure this overlay exists to prevent.
+  // pinned nothing — which is the failure this overlay exists to prevent. The counterfactual
+  // is the baseline the manifest pins, so an unrelated edit to the tracked loader cannot
+  // move it.
+  const baseline = execFileSync('git', ['show', `${entry(CONTROLLER).baseline_tag}:${CONTROLLER}`],
+    { cwd: REPO, encoding: 'utf8', maxBuffer: 1 << 24 })
   assert.deepEqual(
-    [...new Set(load(fs.readFileSync(path.join(REPO, 'starter-edit-profile.js'), 'utf8')))],
+    [...new Set(load(baseline))],
     ['https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v0.0.0-bundle/utils/workflow-diagnostics.js'],
   )
 })

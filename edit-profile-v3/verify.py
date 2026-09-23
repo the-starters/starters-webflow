@@ -17,4 +17,7 @@ for entry in entries:
     assert hashlib.sha256(data).hexdigest() == entry['sha256'], f'hash mismatch: {path}'
     if path.suffix == '.js':
         subprocess.run(['node', '--check', str(path)], check=True, stdout=subprocess.DEVNULL)
+runtime = root / 'runtime'
+present = {str(item.relative_to(runtime)) for item in runtime.rglob('*') if item.is_file()}
+assert present == known, f'runtime holds unpinned files: {sorted(present - known)}'
 print(f'Bundle verified: {len(entries)} scripts')

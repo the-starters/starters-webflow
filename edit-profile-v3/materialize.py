@@ -3,12 +3,21 @@
 from pathlib import Path
 import hashlib
 import json
+import shutil
 import subprocess
 import sys
 
 bundle = Path(__file__).resolve().parent
 repo = bundle.parent
-output = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else bundle / 'runtime'
+default_output = bundle / 'runtime'
+output = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else default_output
+# The output directory is the manifest and nothing else, so a rebuild replaces it rather
+# than writing over it: otherwise a path dropped from the manifest survives as an unpinned
+# file that verify.py would not list and a release artifact would still publish.
+if output.exists() and any(output.iterdir()):
+    if output != default_output:
+        raise SystemExit(f'Output directory is not empty: {output}')
+    shutil.rmtree(output)
 manifest = json.loads((bundle / 'manifest.json').read_text())
 for entry in manifest['runtime']:
     data = subprocess.check_output(['git', 'show', f"{entry['baseline_tag']}:{entry['path']}"], cwd=repo)

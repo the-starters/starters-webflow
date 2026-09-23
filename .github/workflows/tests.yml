@@ -33,6 +33,20 @@ jobs:
         with:
           node-version: '22'
 
+      # edit-profile-v3 pins each of its scripts to the release tag the Edit Profile test
+      # page loads today, and its suite runs materialize.py to rebuild exactly those bytes.
+      # The checkout above is shallow and carries no tags, so fetch the ones the manifest
+      # names — reading them from the manifest keeps this in step with the bundle.
+      - name: Fetch edit-profile-v3 baseline tags
+        shell: bash
+        run: |
+          set -euo pipefail
+          tags=$(python3 -c "import json;print('\n'.join(sorted({e['baseline_tag'] for e in json.load(open('edit-profile-v3/manifest.json'))['runtime']})))")
+          echo "baseline tags: $(echo "$tags" | tr '\n' ' ')"
+          while IFS= read -r tag; do
+            git fetch --no-tags --depth=1 origin "refs/tags/$tag:refs/tags/$tag"
+          done <<< "$tags"
+
       # The file list comes from git rather than a shell glob so an uncommitted
       # or ignored file can never join the run, and so a new test file is picked
       # up with no workflow edit.
