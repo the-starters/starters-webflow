@@ -21,6 +21,7 @@
   const STATUS_ATTRIBUTE = 'data-free-call-settings'
   const FIXED_DURATION_MINUTES = 30
   const ROOT_WAIT_TIMEOUT_MS = 10000
+  const SITE_MEMBER_READY_WAIT_MS = 2000
   const AUTH_BRIDGE_WAIT_INTERVAL_MS = 100
   const AUTH_BRIDGE_WAIT_ATTEMPTS = 100
   const FREE_RADIO_GROUP_NAMES = ['consulting-calls-free', 'free-consulting-calls']
@@ -1110,14 +1111,23 @@
         scope = await currentAuthScope()
         if (authTransitionPending !== transition) return null
         const canonical = await readCanonicalSettings(scope)
+        const cleanupPending = Boolean(receiptCleanup)
+        const pending = cleanupPending
+          ? undefined
+          : await readPendingBuildIntent().catch(function () { return undefined })
         if (
           authTransitionPending !== transition ||
           notifiedMember.id !== sessionMemberId ||
           !settings
         ) return null
+        if (pending !== undefined) pendingBuildIntent = receiptCleanupOwed() ? null : pending
         sessionAuthScope = scope
         prerequisiteRefreshQueued = false
-        return render(canonical)
+        const rendered = render(canonical)
+        if (!cleanupPending && (receiptCleanupOwed() || canonicalSatisfiesPendingIntent(canonical))) {
+          startReceiptCleanup()
+        }
+        return rendered
       } catch (error) {
         if (authTransitionPending !== transition) return null
         if (error && error.code !== 'MEMBER_SCOPE_CHANGED' && failClosedSession(error)) return null
@@ -1283,6 +1293,40 @@
     return new Promise(function (resolve) { memberstackReadyResolvers.push(resolve) })
   }
 
+  function waitForSiteMemberReady() {
+    const memberReady = window.memberReady
+    if (!memberReady || typeof memberReady.then !== 'function') return Promise.resolve()
+    // Use this shared signal only as a readiness hint, never as identity. The
+    // live Memberstack read below remains authoritative if this promise hangs.
+    return new Promise(function (resolve) {
+      let readyTimer = null
+      let settled = false
+      let timedOut = false
+      function finish() {
+        if (settled) return
+        settled = true
+        if (readyTimer !== null && typeof window.clearTimeout === 'function') {
+          window.clearTimeout(readyTimer)
+        }
+        resolve()
+      }
+      function settleReady() {
+        if (!timedOut) {
+          finish()
+          return
+        }
+        currentMember(true)
+          .then(function (member) { return handleAuthChange(member) })
+          .catch(function () {})
+      }
+      readyTimer = window.setTimeout(function () {
+        timedOut = true
+        finish()
+      }, SITE_MEMBER_READY_WAIT_MS)
+      Promise.resolve(memberReady).then(settleReady, settleReady)
+    })
+  }
+
   let schedulingAuthWait = null
 
   function schedulingAuthReady() {
@@ -1404,6 +1448,7 @@
       if (!editProfileMode) setCardEditorOpen(false)
       bind()
       await waitForMemberstack()
+      await waitForSiteMemberReady()
       return loadSession(undefined, false)
     })()
     try {

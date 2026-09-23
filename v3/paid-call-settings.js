@@ -24,6 +24,7 @@
   const FIXED_DURATION_MINUTES = 60
   const VALIDATED_FIELD_NAMES = ['title', 'price']
   const ROOT_WAIT_TIMEOUT_MS = 10000
+  const SITE_MEMBER_READY_WAIT_MS = 2000
   const AUTH_BRIDGE_WAIT_INTERVAL_MS = 100
   const AUTH_BRIDGE_WAIT_ATTEMPTS = 100
   const BUSY_STYLE_ID = 'ts-call-settings-busy-style'
@@ -1461,14 +1462,29 @@
         scope = await currentAuthScope()
         if (authTransitionPending !== transition) return null
         const canonical = await readCanonicalSettings(scope)
+        // Do not queue a read behind a receipt cleanup already in flight. Its
+        // canonical owner is settled independently, and auth recovery must not
+        // delay that newer canonical render.
+        const cleanupPending = Boolean(receiptCleanup)
+        const pending = cleanupPending
+          ? undefined
+          : await readPendingBuildIntent().catch(function () { return undefined })
         if (
           authTransitionPending !== transition ||
           notifiedMember.id !== sessionMemberId ||
           !settings
         ) return null
+        // Memberstack can identify the signed-in member before its custom JSON is
+        // ready. Re-read the private Build receipt on same-member auth recovery so
+        // a missed first read does not turn a saved Paid choice into No/blank.
+        if (pending !== undefined) pendingBuildIntent = receiptCleanupOwed() ? null : pending
         sessionAuthScope = scope
         prerequisiteRefreshQueued = false
-        return render(canonical)
+        const rendered = render(canonical)
+        if (!cleanupPending && (receiptCleanupOwed() || canonicalSatisfiesPendingIntent(canonical))) {
+          startReceiptCleanup()
+        }
+        return rendered
       } catch (error) {
         if (authTransitionPending !== transition) return null
         if (error && error.code !== 'MEMBER_SCOPE_CHANGED' && failClosedSession(error)) return null
@@ -1639,6 +1655,42 @@
     })
   }
 
+  function waitForSiteMemberReady() {
+    const memberReady = window.memberReady
+    if (!memberReady || typeof memberReady.then !== 'function') return Promise.resolve()
+    // This site signal marks Memberstack bootstrap completion, but it resolves
+    // an empty object for every visitor. Use it only as a barrier; loadSession
+    // still takes a fresh live Memberstack identity snapshot after it settles.
+    // A missing site-level signal must not leave settings in Loading forever.
+    return new Promise(function (resolve) {
+      let readyTimer = null
+      let settled = false
+      let timedOut = false
+      function finish() {
+        if (settled) return
+        settled = true
+        if (readyTimer !== null && typeof window.clearTimeout === 'function') {
+          window.clearTimeout(readyTimer)
+        }
+        resolve()
+      }
+      function settleReady() {
+        if (!timedOut) {
+          finish()
+          return
+        }
+        currentMember(true)
+          .then(function (member) { return handleAuthChange(member) })
+          .catch(function () {})
+      }
+      readyTimer = window.setTimeout(function () {
+        timedOut = true
+        finish()
+      }, SITE_MEMBER_READY_WAIT_MS)
+      Promise.resolve(memberReady).then(settleReady, settleReady)
+    })
+  }
+
   let schedulingAuthWait = null
 
   function schedulingAuthReady() {
@@ -1793,6 +1845,7 @@
       if (cardMode && !editProfileMode) setCardEditorOpen(false)
       bind()
       await waitForMemberstack()
+      await waitForSiteMemberReady()
       return loadSession(undefined, false)
     })()
     try {

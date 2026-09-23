@@ -234,6 +234,8 @@ The controller sets `data-ready="true|false"` on each row. It also sets these wr
   readback, that verified result remains the fallback when the extra auth-triggered settings read
   fails. Readiness refreshes wait for the write and auth reconciliation, then coalesce into one
   canonical re-read.
+- Initial hydration and same-member auth revalidation follow the shared
+  [Call Settings receipt lifecycle](../../v3/build-profile/README.md#call-settings-receipt-lifecycle).
 - A confirmed missing or changed Memberstack session, or the final `401` after the bridge's one token
   refresh, still fails closed. An upsert, a turn off, or a readiness refresh with that result clears
   the cached Paid state instead of leaving stale enabled controls: inputs reset, both actions
@@ -321,7 +323,8 @@ rejected rate never blocks a later turn-off, plus the shared native-submit/Updat
 Update busy-state lifecycle, and the scoped native error message with its retry and refresh
 clearing, transient empty-auth recovery, the auth-transition mutation lock, final-`401` clearing,
 the owned fetch fallback, post-write canonical fallback, coalesced prerequisite refresh, logout
-and account-switch precedence, and the pending Build Profile receipt lifecycle owned by
+and account-switch precedence, the never-settling `memberReady` timeout fallback, and
+the pending Build Profile receipt lifecycle owned by
 [Call Settings receipt lifecycle](../../v3/build-profile/README.md#call-settings-receipt-lifecycle) —
 are executable regressions in `v3/paid-call-settings.test.js`. The remaining legs need a live Memberstack session, a live
 Xano TEST configuration, and an asset that only exists once the tag is published, so they

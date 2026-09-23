@@ -106,6 +106,19 @@ function service(overrides = {}) {
   }
 }
 
+const GATED_FREE_READINESS = {
+  calendar_connected: false,
+  availability_configured: false,
+}
+
+const PENDING_FREE_ENABLE = {
+  starter_call_settings_intent_v3: {
+    version: 1,
+    member_id: 'member-free-a',
+    free: { enabled: true, description: 'Quick intro' },
+  },
+}
+
 function buildDom(withRoot = true, publishedRoot = false, authoredPills = false, pillLabels = {}) {
   if (!withRoot) return { root: null }
   const card = new El('section')
@@ -550,6 +563,103 @@ test('hydrates pending Build Profile Free intent and consumes it after canonical
     JSON.parse(JSON.stringify(result.memberJsonWrites[0].starter_call_settings_intent_v3.paid)),
     { enabled: true, title: 'Strategy call', price_dollars: 250 },
   )
+})
+
+test('waits for site Memberstack readiness before reading the initial Free Build intent', async () => {
+  const memberReady = deferred()
+  const memberJSON = {}
+  const result = load({
+    memberJSON,
+    memberReady: memberReady.promise,
+    initial: canonical({ readiness: GATED_FREE_READINESS }),
+  })
+  await settle()
+
+  Object.assign(memberJSON, PENDING_FREE_ENABLE)
+  memberReady.resolve({})
+  await settle()
+
+  assert.equal(result.dom.yes.checked, true)
+  assert.equal(result.dom.no.checked, false)
+  assert.equal(result.dom.title.value, 'Quick intro')
+  assert.match(result.dom.status.textContent, /Build Profile choice is saved/)
+  assert.equal(result.calls.some((call) => call.method === 'POST'), false)
+  assert.equal(result.memberJsonWrites.length, 0)
+})
+
+test('continues Free settings hydration when site Memberstack readiness never settles', async () => {
+  const result = load({
+    memberJSON: PENDING_FREE_ENABLE,
+    memberReady: new Promise(() => {}),
+    initial: canonical({ readiness: GATED_FREE_READINESS }),
+  })
+  await settle()
+
+  assert.equal(result.calls.length, 0)
+
+  result.flushTimers()
+  await settle()
+
+  assert.equal(result.document.documentElement.getAttribute('data-free-call-settings'), 'ready')
+  assert.deepEqual(result.calls.map(({ path, method }) => ({ path, method })), [
+    { path: '/starter/free-call-settings/get/v3', method: 'GET' },
+  ])
+  assert.equal(result.dom.yes.checked, true)
+  assert.equal(result.dom.title.value, 'Quick intro')
+  assert.match(result.dom.status.textContent, /Build Profile choice is saved/)
+  assert.equal(result.memberJsonWrites.length, 0)
+})
+
+test('reconciles the Free Build intent when site Memberstack readiness settles after timeout', async () => {
+  const memberReady = deferred()
+  const memberJSON = {}
+  const result = load({
+    memberJSON,
+    memberReady: memberReady.promise,
+    initial: canonical({ readiness: GATED_FREE_READINESS }),
+  })
+  await settle()
+
+  result.flushTimers()
+  await settle()
+
+  assert.equal(result.dom.no.checked, true)
+  assert.equal(result.dom.title.value, '')
+
+  Object.assign(memberJSON, PENDING_FREE_ENABLE)
+  memberReady.resolve({ id: 'stale-shared-member' })
+  await settle()
+
+  assert.equal(result.dom.yes.checked, true)
+  assert.equal(result.dom.no.checked, false)
+  assert.equal(result.dom.title.value, 'Quick intro')
+  assert.match(result.dom.status.textContent, /Build Profile choice is saved/)
+  assert.equal(result.calls.filter((call) => call.method === 'GET').length, 2)
+  assert.equal(result.calls.some((call) => call.method === 'POST'), false)
+  assert.equal(result.memberJsonWrites.length, 0)
+})
+
+test('rehydrates a pending Free Build Profile choice after the same member becomes ready', async () => {
+  const memberJSON = {}
+  const result = load({
+    memberJSON,
+    initial: canonical({ readiness: GATED_FREE_READINESS }),
+  })
+  await settle()
+
+  assert.equal(result.dom.no.checked, true)
+  assert.equal(result.dom.title.value, '')
+
+  Object.assign(memberJSON, PENDING_FREE_ENABLE)
+  await result.notifyAuthChange({ id: 'member-free-a' })
+  await settle()
+
+  assert.equal(result.dom.yes.checked, true)
+  assert.equal(result.dom.no.checked, false)
+  assert.equal(result.dom.title.value, 'Quick intro')
+  assert.match(result.dom.status.textContent, /Build Profile choice is saved/)
+  assert.equal(result.calls.some((call) => call.method === 'POST'), false)
+  assert.equal(result.memberJsonWrites.length, 0)
 })
 
 test('a pending receipt cleanup failure never turns a verified Free save into an error', async () => {

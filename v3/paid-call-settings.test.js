@@ -1438,6 +1438,116 @@ const PENDING_PAID_ENABLE = {
   },
 }
 
+test('waits for site Memberstack readiness before reading the initial Paid Build intent', async () => {
+  const memberReady = deferred()
+  const memberJSON = {}
+  const result = load({
+    cardMode: true,
+    memberId: 'member-a',
+    memberJSON,
+    memberReady: memberReady.promise,
+    initial: canonical({ readiness: GATED_PAID_READINESS }),
+  })
+  await settle()
+
+  Object.assign(memberJSON, PENDING_PAID_ENABLE)
+  memberReady.resolve({})
+  await settle()
+
+  assert.equal(result.dom.enabled.checked, true)
+  assert.equal(result.dom.disabled.checked, false)
+  assert.equal(result.dom.title.value, 'Strategy call')
+  assert.equal(result.dom.price.value, '250')
+  assert.match(result.dom.statusOutput.textContent, /Build Profile choice is saved/)
+  assert.equal(result.calls.some((call) => call.method === 'POST'), false)
+  assert.equal(result.memberJsonWrites.length, 0)
+})
+
+test('continues Paid settings hydration when site Memberstack readiness never settles', async () => {
+  const result = load({
+    cardMode: true,
+    memberJSON: PENDING_PAID_ENABLE,
+    memberReady: new Promise(() => {}),
+    initial: canonical({ readiness: GATED_PAID_READINESS }),
+  })
+  await settle()
+
+  assert.equal(result.calls.length, 0)
+
+  result.flushTimers()
+  await settle()
+
+  assert.equal(result.document.documentElement.getAttribute('data-paid-call-settings'), 'ready')
+  assert.deepEqual(result.calls.map(({ path, method }) => ({ path, method })), [
+    { path: '/starter/paid-call-settings/get/v3', method: 'GET' },
+  ])
+  assert.equal(result.dom.enabled.checked, true)
+  assert.equal(result.dom.title.value, 'Strategy call')
+  assert.equal(result.dom.price.value, '250')
+  assert.match(result.dom.statusOutput.textContent, /Build Profile choice is saved/)
+  assert.equal(result.memberJsonWrites.length, 0)
+})
+
+test('reconciles the Paid Build intent when site Memberstack readiness settles after timeout', async () => {
+  const memberReady = deferred()
+  const memberJSON = {}
+  const result = load({
+    cardMode: true,
+    memberId: 'member-a',
+    memberJSON,
+    memberReady: memberReady.promise,
+    initial: canonical({ readiness: GATED_PAID_READINESS }),
+  })
+  await settle()
+
+  result.flushTimers()
+  await settle()
+
+  assert.equal(result.dom.disabled.checked, true)
+  assert.equal(result.dom.title.value, 'Paid Consultation Call')
+  assert.equal(result.dom.price.value, '')
+
+  Object.assign(memberJSON, PENDING_PAID_ENABLE)
+  memberReady.resolve({ id: 'stale-shared-member' })
+  await settle()
+
+  assert.equal(result.dom.enabled.checked, true)
+  assert.equal(result.dom.disabled.checked, false)
+  assert.equal(result.dom.title.value, 'Strategy call')
+  assert.equal(result.dom.price.value, '250')
+  assert.match(result.dom.statusOutput.textContent, /Build Profile choice is saved/)
+  assert.equal(result.calls.filter((call) => call.method === 'GET').length, 2)
+  assert.equal(result.calls.some((call) => call.method === 'POST'), false)
+  assert.equal(result.memberJsonWrites.length, 0)
+})
+
+test('rehydrates a pending Paid Build Profile choice after the same member becomes ready', async () => {
+  const memberJSON = {}
+  const result = load({
+    cardMode: true,
+    memberId: 'member-a',
+    memberJSON,
+    initial: canonical({ readiness: GATED_PAID_READINESS }),
+  })
+  await settle()
+
+  assert.equal(result.dom.disabled.checked, true, 'the first empty member JSON read keeps Paid off')
+  assert.equal(result.dom.title.value, 'Paid Consultation Call')
+  assert.equal(result.dom.price.value, '')
+
+  Object.assign(memberJSON, PENDING_PAID_ENABLE)
+  await result.notifyAuthChange({ id: 'member-a' })
+  await settle()
+
+  assert.equal(result.dom.enabled.checked, true)
+  assert.equal(result.dom.disabled.checked, false)
+  assert.equal(result.dom.title.value, 'Strategy call')
+  assert.equal(result.dom.price.value, '250')
+  assert.match(result.dom.statusOutput.textContent, /Build Profile choice is saved/)
+  assert.equal(result.calls.some((call) => call.method === 'POST'), false)
+  assert.equal(result.memberJsonWrites.length, 0)
+})
+
 test('Dashboard keeps a gated pending Paid receipt declinable so the member can decline it', async () => {
   const result = load({
     cardMode: true,

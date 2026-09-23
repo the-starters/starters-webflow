@@ -91,6 +91,8 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
       paid: document.getElementById('paid-price-output') ? {
         enabled: document.querySelector('[data-call-settings-service="paid"]').getAttribute('data-paid-call-enabled'),
         bookable: document.querySelector('[data-call-settings-service="paid"]').getAttribute('data-paid-call-bookable'),
+        yes: document.getElementById('paid-yes').checked,
+        no: document.getElementById('paid-no').checked,
         displayedRate: document.getElementById('paid-price-output').textContent,
         rateInput: document.getElementById('paid-call-rate').value,
         titleInput: document.getElementById('paid-call-title').value,
@@ -169,6 +171,109 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
     }
     const record = (name, detail) => { results.push({ name, detail }); console.log(`  ok  ${name}`) }
     const xanoWrites = state => state.network.filter(entry => entry.method !== 'GET')
+
+    // ------------------------------------------------------------------
+    // 0. Dashboard reload: Memberstack identity can be visible before its
+    //    custom JSON has hydrated. Both controllers must wait for the site's
+    //    readiness barrier, then paint the pending Build Profile choices.
+    // ------------------------------------------------------------------
+    await navigate('/starter-dashboard', 'page=dashboard&paid=1&receipt=both-pending&memberready=late&seen=1')
+    const waitingForMemberJson = await snapshot('00-dashboard-head-waits-for-member-json', 'HEAD, signed-in identity visible while site memberReady is still pending')
+    assert.notEqual(waitingForMemberJson.callStatus.free, 'ready', 'the Free card does not finalize from pre-hydration JSON')
+    assert.notEqual(waitingForMemberJson.callStatus.paid, 'ready', 'the Paid card does not finalize from pre-hydration JSON')
+    assert.equal(waitingForMemberJson.reads, 0, 'neither controller reads the pre-hydration empty member JSON')
+    assert.equal(await evaluate('window.__tsReleaseMemberReady()'), true, 'the fixture releases the site readiness barrier')
+    assert.ok(await settleUntil(`document.getElementById('free-yes').checked && document.getElementById('paid-yes').checked`), 'both pending Build Profile choices hydrate after memberReady')
+    await evaluate(`Array.from(document.querySelectorAll('[data-call-settings-action="open"]')).forEach(button => button.click())`)
+    await pause(200)
+    const hydratedAfterMemberReady = await snapshot('00b-dashboard-head-hydrates-after-member-ready', 'HEAD, same Dashboard reload after member JSON hydration completes')
+    assert.equal(hydratedAfterMemberReady.free.yes, true, 'Free = Yes survives the reload')
+    assert.equal(hydratedAfterMemberReady.free.description, 'Quick intro', 'the Free description survives the reload')
+    assert.equal(hydratedAfterMemberReady.paid.yes, true, 'Paid = Yes survives the reload')
+    assert.equal(hydratedAfterMemberReady.paid.titleInput, 'Strategy call', 'the Paid title survives the reload')
+    assert.equal(hydratedAfterMemberReady.paid.rateInput, '250', 'the Paid rate survives the reload')
+    assert.deepEqual(xanoWrites(hydratedAfterMemberReady), [], 'hydration does not activate a canonical service or contact a provider')
+    assert.equal(hydratedAfterMemberReady.writes, 0, 'hydration does not mutate private member JSON')
+    assert.deepEqual(errors, [], 'no uncaught browser errors')
+    record('dashboard-reload-waits-for-member-json-before-hydrating-both-build-choices', {
+      free: hydratedAfterMemberReady.free,
+      paid: hydratedAfterMemberReady.paid,
+      network: hydratedAfterMemberReady.network,
+    })
+
+    // ------------------------------------------------------------------
+    // 0b. A never-settling shared readiness promise must not strand either
+    //     controller. Both still read the live member and the existing receipt.
+    // ------------------------------------------------------------------
+    await navigate('/starter-dashboard', 'page=dashboard&paid=1&receipt=both-pending&memberready=never&seen=1')
+    const beforeReadinessTimeout = await snapshot(
+      '00c-dashboard-head-never-settling-member-ready-before-timeout',
+      'HEAD, pending receipt exists but the shared Memberstack readiness promise never settles',
+    )
+    assert.notEqual(beforeReadinessTimeout.callStatus.free, 'ready', 'Free has not bypassed the bounded readiness hint')
+    assert.notEqual(beforeReadinessTimeout.callStatus.paid, 'ready', 'Paid has not bypassed the bounded readiness hint')
+    assert.equal(beforeReadinessTimeout.reads, 0, 'neither controller reads private JSON before the bounded wait ends')
+    assert.ok(await settleUntil(
+      `document.documentElement.getAttribute('data-free-call-settings') === 'ready' && document.documentElement.getAttribute('data-paid-call-settings') === 'ready'`,
+      100,
+    ), 'both controllers continue after the never-settling readiness promise times out')
+    await evaluate(`Array.from(document.querySelectorAll('[data-call-settings-action="open"]')).forEach(button => button.click())`)
+    await pause(200)
+    const hydratedAfterReadinessTimeout = await snapshot(
+      '00d-dashboard-head-hydrates-after-member-ready-timeout',
+      'HEAD, both pending receipt branches hydrate after the bounded wait and a fresh live identity read',
+    )
+    assert.equal(hydratedAfterReadinessTimeout.free.yes, true, 'Free = Yes survives the never-settling signal')
+    assert.equal(hydratedAfterReadinessTimeout.free.description, 'Quick intro', 'the Free description survives')
+    assert.equal(hydratedAfterReadinessTimeout.paid.yes, true, 'Paid = Yes survives the never-settling signal')
+    assert.equal(hydratedAfterReadinessTimeout.paid.titleInput, 'Strategy call', 'the Paid title survives')
+    assert.equal(hydratedAfterReadinessTimeout.paid.rateInput, '250', 'the Paid rate survives')
+    assert.deepEqual(xanoWrites(hydratedAfterReadinessTimeout), [], 'timeout hydration makes no canonical writes or provider calls')
+    assert.equal(hydratedAfterReadinessTimeout.writes, 0, 'timeout hydration does not mutate private member JSON')
+    assert.deepEqual(errors, [], 'no uncaught browser errors')
+    record('dashboard-reload-bounds-a-never-settling-member-ready-promise', {
+      free: hydratedAfterReadinessTimeout.free,
+      paid: hydratedAfterReadinessTimeout.paid,
+      network: hydratedAfterReadinessTimeout.network,
+    })
+
+    // ------------------------------------------------------------------
+    // 0c. The shared readiness hint can settle just after the bounded fallback
+    //     has rendered empty member JSON. Its late settlement must trigger a
+    //     fresh live identity/receipt read and repaint both saved choices.
+    // ------------------------------------------------------------------
+    await navigate('/starter-dashboard', 'page=dashboard&paid=1&receipt=both-pending&memberready=late&seen=1')
+    assert.ok(await settleUntil(
+      `document.documentElement.getAttribute('data-free-call-settings') === 'ready' && document.documentElement.getAttribute('data-paid-call-settings') === 'ready'`,
+      100,
+    ), 'both controllers complete their bounded fallback before memberReady settles')
+    await evaluate(`Array.from(document.querySelectorAll('[data-call-settings-action="open"]')).forEach(button => button.click())`)
+    await pause(200)
+    const emptyFallback = await snapshot(
+      '00e-dashboard-head-late-member-ready-after-timeout',
+      'HEAD, the bounded fallback rendered before late member JSON hydration',
+    )
+    assert.equal(emptyFallback.free.no, true, 'Free initially reflects the empty fallback read')
+    assert.equal(emptyFallback.paid.no, true, 'Paid initially reflects the empty fallback read')
+    assert.equal(await evaluate('window.__tsReleaseMemberReady()'), true, 'member JSON hydrates after the timeout fallback')
+    assert.ok(await settleUntil(`document.getElementById('free-yes').checked && document.getElementById('paid-yes').checked`), 'late readiness triggers fresh receipt reconciliation')
+    const reconciledAfterLateReady = await snapshot(
+      '00f-dashboard-head-reconciles-after-late-member-ready',
+      'HEAD, late memberReady settlement repaints both Build Profile choices from fresh member JSON',
+    )
+    assert.equal(reconciledAfterLateReady.free.description, 'Quick intro', 'late Free reconciliation restores the saved description')
+    assert.equal(reconciledAfterLateReady.paid.titleInput, 'Strategy call', 'late Paid reconciliation restores the saved title')
+    assert.equal(reconciledAfterLateReady.paid.rateInput, '250', 'late Paid reconciliation restores the saved rate')
+    assert.ok(reconciledAfterLateReady.reads >= 4, 'both controllers re-read member JSON after late readiness')
+    assert.deepEqual(xanoWrites(reconciledAfterLateReady), [], 'late reconciliation creates no canonical/provider state')
+    assert.equal(reconciledAfterLateReady.writes, 0, 'late reconciliation does not mutate private member JSON')
+    assert.deepEqual(errors, [], 'no uncaught browser errors')
+    record('dashboard-reload-reconciles-both-build-choices-after-late-member-ready', {
+      free: reconciledAfterLateReady.free,
+      paid: reconciledAfterLateReady.paid,
+      reads: reconciledAfterLateReady.reads,
+      network: reconciledAfterLateReady.network,
+    })
 
     // ------------------------------------------------------------------
     // 1. Edit Profile: a receipt the live canonical service already satisfies is
