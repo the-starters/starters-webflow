@@ -1974,17 +1974,20 @@ Current safety boundary:
   code. It also retains its own auth-fetch reference for the stage adapter,
   because another page bundle can replace the public compatibility global
   after this bridge installs.
-- Dashboard controllers reuse the site-head `window.memberReady` promise for
-  their initial identity snapshot and `window.getXanoAuthToken` for the
+- Dashboard data controllers reuse the site-head `window.memberReady` promise
+  for their initial identity snapshot and `window.getXanoAuthToken` for the
   Opportunities, Points, Messages, and Stripe reads. This keeps one shared
   Memberstack bootstrap and one in-flight Xano token trade per member session.
   The source-backed post-login wait is owned by the
   [protected-route guard](#protected-route-guard), and the call reader's initial
   and later-refresh behavior is owned by the
   [dashboard call section](#dashboard-call-sections).
-  The Free and Paid settings controllers use the bridge-owned auth scope and fetch reference for
-  auth-triggered refreshes and writes, so a transient Memberstack DOM null cannot block the current
-  owner. A logout or account switch changes that scope and still fails closed.
+  The Free and Paid settings controllers use `window.memberReady` only as a
+  readiness hint, bounded to two seconds, then read identity from the live
+  Memberstack SDK. They use the bridge-owned auth scope and fetch reference for
+  refreshes and writes, so a transient Memberstack DOM null cannot block the
+  current owner. A logout or account switch changes that scope and still fails
+  closed.
 - The Starter **Contract Generation** modal also depends on
   `window.getXanoAuthToken` when a browser session holds a cached
   `opportunities-3.0.js` without `Opp30.API.starterProfile`, so keep

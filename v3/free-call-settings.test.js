@@ -587,6 +587,29 @@ test('waits for site Memberstack readiness before reading the initial Free Build
   assert.equal(result.memberJsonWrites.length, 0)
 })
 
+test('continues Free settings hydration when site Memberstack readiness never settles', async () => {
+  const result = load({
+    memberJSON: PENDING_FREE_ENABLE,
+    memberReady: new Promise(() => {}),
+    initial: canonical({ readiness: GATED_FREE_READINESS }),
+  })
+  await settle()
+
+  assert.equal(result.calls.length, 0)
+
+  result.flushTimers()
+  await settle()
+
+  assert.equal(result.document.documentElement.getAttribute('data-free-call-settings'), 'ready')
+  assert.deepEqual(result.calls.map(({ path, method }) => ({ path, method })), [
+    { path: '/starter/free-call-settings/get/v3', method: 'GET' },
+  ])
+  assert.equal(result.dom.yes.checked, true)
+  assert.equal(result.dom.title.value, 'Quick intro')
+  assert.match(result.dom.status.textContent, /Build Profile choice is saved/)
+  assert.equal(result.memberJsonWrites.length, 0)
+})
+
 test('rehydrates a pending Free Build Profile choice after the same member becomes ready', async () => {
   const memberJSON = {}
   const result = load({

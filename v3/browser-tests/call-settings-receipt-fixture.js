@@ -22,6 +22,8 @@
 //                              receipt so an in-tab account switch can be driven
 //   memberready=late           expose the member immediately but hold member JSON
 //                              hydration until the site memberReady barrier releases
+//   memberready=never          expose the pending receipt but never settle the shared
+//                              readiness promise, exercising the controller timeout
 const params = new URLSearchParams(location.search)
 const page = params.get('page') || 'edit'
 const receipt = params.get('receipt') || 'off-both'
@@ -92,7 +94,9 @@ const OTHER_MEMBER = {
 let activeMember = MEMBER
 
 let memberJson = { keep: 'private' }
-const lateMemberReady = params.get('memberready') === 'late'
+const memberReadyMode = params.get('memberready')
+const lateMemberReady = memberReadyMode === 'late'
+const neverMemberReady = memberReadyMode === 'never'
 if (RECEIPTS[receipt] && !lateMemberReady) memberJson.starter_call_settings_intent_v3 = clone(RECEIPTS[receipt])
 if (params.get('seen') === '1') memberJson.tours = { 'starter-dashboard': '2026-09-01T00:00:00.000Z' }
 
@@ -119,7 +123,7 @@ window.__tsNetworkLog = []
 
 window.__tsAuthChangeHandlers = []
 let releaseMemberReady
-if (lateMemberReady) {
+if (lateMemberReady || neverMemberReady) {
   window.memberReady = new Promise(resolve => { releaseMemberReady = resolve })
 }
 window.$memberstackDom = {

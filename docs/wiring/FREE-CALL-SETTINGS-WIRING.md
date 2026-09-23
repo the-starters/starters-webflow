@@ -41,6 +41,11 @@ controller consumes its own part while leaving the Paid part untouched, the
 serialized `window.__tsMemberJsonWrite` boundary, and cleanup failure policy.
 Retiring an already-satisfied receipt repaints nothing at all.
 
+At boot, the controller waits up to two seconds for the site-level
+`window.memberReady` signal, then reads identity from the live Memberstack SDK.
+The bounded signal is a readiness hint only; it cannot keep settings from
+loading forever or supply the member identity.
+
 ## Published compatibility contract
 
 The current Designer form works without generated IDs or styling selectors:
@@ -233,7 +238,8 @@ off-contract duration or price paint, the expired-session fail-closed writes, th
 status-pill resolution and its drifted-copy diagnostic, the `w--redirected-checked` radio sync,
 transient empty-auth recovery, the auth-transition mutation lock, final-`401` clearing, the owned
 fetch fallback, post-write canonical fallback, queued prerequisite refresh, logout and
-account-switch precedence, and the pending Build Profile receipt lifecycle owned by
+account-switch precedence, the never-settling `memberReady` timeout fallback, and
+the pending Build Profile receipt lifecycle owned by
 [Call Settings receipt lifecycle](../../v3/build-profile/README.md#call-settings-receipt-lifecycle)
 are executable regressions in `v3/free-call-settings.test.js`. The remaining legs need a live
 Memberstack session, a live Xano TEST configuration, and an asset that only exists once the tag is

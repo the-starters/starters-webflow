@@ -24,6 +24,7 @@
   const FIXED_DURATION_MINUTES = 60
   const VALIDATED_FIELD_NAMES = ['title', 'price']
   const ROOT_WAIT_TIMEOUT_MS = 10000
+  const SITE_MEMBER_READY_WAIT_MS = 2000
   const AUTH_BRIDGE_WAIT_INTERVAL_MS = 100
   const AUTH_BRIDGE_WAIT_ATTEMPTS = 100
   const BUSY_STYLE_ID = 'ts-call-settings-busy-style'
@@ -1660,7 +1661,21 @@
     // This site signal marks Memberstack bootstrap completion, but it resolves
     // an empty object for every visitor. Use it only as a barrier; loadSession
     // still takes a fresh live Memberstack identity snapshot after it settles.
-    return Promise.resolve(memberReady).then(function () {}, function () {})
+    // A missing site-level signal must not leave settings in Loading forever.
+    return new Promise(function (resolve) {
+      let readyTimer = null
+      let settled = false
+      function finish() {
+        if (settled) return
+        settled = true
+        if (readyTimer !== null && typeof window.clearTimeout === 'function') {
+          window.clearTimeout(readyTimer)
+        }
+        resolve()
+      }
+      readyTimer = window.setTimeout(finish, SITE_MEMBER_READY_WAIT_MS)
+      Promise.resolve(memberReady).then(finish, finish)
+    })
   }
 
   let schedulingAuthWait = null

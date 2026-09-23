@@ -202,6 +202,42 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
     })
 
     // ------------------------------------------------------------------
+    // 0b. A never-settling shared readiness promise must not strand either
+    //     controller. Both still read the live member and the existing receipt.
+    // ------------------------------------------------------------------
+    await navigate('/starter-dashboard', 'page=dashboard&paid=1&receipt=both-pending&memberready=never&seen=1')
+    const beforeReadinessTimeout = await snapshot(
+      '00c-dashboard-head-never-settling-member-ready-before-timeout',
+      'HEAD, pending receipt exists but the shared Memberstack readiness promise never settles',
+    )
+    assert.notEqual(beforeReadinessTimeout.callStatus.free, 'ready', 'Free has not bypassed the bounded readiness hint')
+    assert.notEqual(beforeReadinessTimeout.callStatus.paid, 'ready', 'Paid has not bypassed the bounded readiness hint')
+    assert.equal(beforeReadinessTimeout.reads, 0, 'neither controller reads private JSON before the bounded wait ends')
+    assert.ok(await settleUntil(
+      `document.documentElement.getAttribute('data-free-call-settings') === 'ready' && document.documentElement.getAttribute('data-paid-call-settings') === 'ready'`,
+      100,
+    ), 'both controllers continue after the never-settling readiness promise times out')
+    await evaluate(`Array.from(document.querySelectorAll('[data-call-settings-action="open"]')).forEach(button => button.click())`)
+    await pause(200)
+    const hydratedAfterReadinessTimeout = await snapshot(
+      '00d-dashboard-head-hydrates-after-member-ready-timeout',
+      'HEAD, both pending receipt branches hydrate after the bounded wait and a fresh live identity read',
+    )
+    assert.equal(hydratedAfterReadinessTimeout.free.yes, true, 'Free = Yes survives the never-settling signal')
+    assert.equal(hydratedAfterReadinessTimeout.free.description, 'Quick intro', 'the Free description survives')
+    assert.equal(hydratedAfterReadinessTimeout.paid.yes, true, 'Paid = Yes survives the never-settling signal')
+    assert.equal(hydratedAfterReadinessTimeout.paid.titleInput, 'Strategy call', 'the Paid title survives')
+    assert.equal(hydratedAfterReadinessTimeout.paid.rateInput, '250', 'the Paid rate survives')
+    assert.deepEqual(xanoWrites(hydratedAfterReadinessTimeout), [], 'timeout hydration makes no canonical writes or provider calls')
+    assert.equal(hydratedAfterReadinessTimeout.writes, 0, 'timeout hydration does not mutate private member JSON')
+    assert.deepEqual(errors, [], 'no uncaught browser errors')
+    record('dashboard-reload-bounds-a-never-settling-member-ready-promise', {
+      free: hydratedAfterReadinessTimeout.free,
+      paid: hydratedAfterReadinessTimeout.paid,
+      network: hydratedAfterReadinessTimeout.network,
+    })
+
+    // ------------------------------------------------------------------
     // 1. Edit Profile: a receipt the live canonical service already satisfies is
     //    retired on load without creating an unsaved step-6 state, so leaving the
     //    page is silent.

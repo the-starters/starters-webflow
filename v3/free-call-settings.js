@@ -21,6 +21,7 @@
   const STATUS_ATTRIBUTE = 'data-free-call-settings'
   const FIXED_DURATION_MINUTES = 30
   const ROOT_WAIT_TIMEOUT_MS = 10000
+  const SITE_MEMBER_READY_WAIT_MS = 2000
   const AUTH_BRIDGE_WAIT_INTERVAL_MS = 100
   const AUTH_BRIDGE_WAIT_ATTEMPTS = 100
   const FREE_RADIO_GROUP_NAMES = ['consulting-calls-free', 'free-consulting-calls']
@@ -1295,7 +1296,22 @@
   function waitForSiteMemberReady() {
     const memberReady = window.memberReady
     if (!memberReady || typeof memberReady.then !== 'function') return Promise.resolve()
-    return Promise.resolve(memberReady).then(function () {}, function () {})
+    // Use this shared signal only as a readiness hint, never as identity. The
+    // live Memberstack read below remains authoritative if this promise hangs.
+    return new Promise(function (resolve) {
+      let readyTimer = null
+      let settled = false
+      function finish() {
+        if (settled) return
+        settled = true
+        if (readyTimer !== null && typeof window.clearTimeout === 'function') {
+          window.clearTimeout(readyTimer)
+        }
+        resolve()
+      }
+      readyTimer = window.setTimeout(finish, SITE_MEMBER_READY_WAIT_MS)
+      Promise.resolve(memberReady).then(finish, finish)
+    })
   }
 
   let schedulingAuthWait = null
