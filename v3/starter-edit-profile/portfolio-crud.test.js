@@ -95,6 +95,12 @@ function createFixture() {
     async saveHighlight() {
       await addHighlight.dispatchEvent({ type: 'click', preventDefault() {} });
     },
+    async doubleClickSave() {
+      await Promise.all([
+        addHighlight.dispatchEvent({ type: 'click', preventDefault() {} }),
+        addHighlight.dispatchEvent({ type: 'click', preventDefault() {} }),
+      ]);
+    },
     cards,
     title,
     videos,
@@ -142,4 +148,19 @@ test('legacy highlight keeps the published 50 MB video limit', async () => {
   fixture.videos.files = [{ name: 'too-large.mov', size: 55 * 1024 * 1024 }];
   await fixture.videos.dispatchEvent({ type: 'change' });
   assert.deepEqual(fixture.notifications, ['Video exceeds 50MB upload size limit']);
+});
+
+
+test('legacy highlight ignores a second click while the first is in flight', async () => {
+  const fixture = createFixture();
+  await fixture.boot();
+  await fixture.selectImage();
+  const readsBeforeSave = fixture.reads;
+
+  await fixture.doubleClickSave();
+
+  assert.equal(fixture.reads, readsBeforeSave + 2);
+  assert.equal(fixture.cards.length, 1);
+  assert.equal(fixture.title.value, '');
+  assert.deepEqual(fixture.errors, []);
 });

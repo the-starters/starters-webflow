@@ -261,6 +261,7 @@ async function commitStarterEditPortfolioDrafts(options) {
         autoOpenedCreateDropdown = false,
         editFormResetTimer = null;
       const portfolioSubmitGuard = createStarterEditPortfolioSubmitGuard();
+      const portfolioCreateGuard = createStarterEditPortfolioSubmitGuard();
       const portfolioDraftDirtyController = createStarterEditPortfolioDraftDirtyController({
         getDirtyState: function () { return window.__tsProfileDirtyState; },
         stepIndex: 4,
@@ -1131,6 +1132,7 @@ async function commitStarterEditPortfolioDrafts(options) {
 
       async function handlePortfolioCreate(event) {
         event.preventDefault();
+        if (!portfolioCreateGuard.begin()) return;
         try {
           disableDropdownToggle(true);
           const portfolios = await getPortfolios();
@@ -1152,6 +1154,7 @@ async function commitStarterEditPortfolioDrafts(options) {
           openNotifyModal(getErrorMessage(error, 'Portfolio creation failed'));
         } finally {
           disableDropdownToggle(false);
+          portfolioCreateGuard.finish();
         }
       }
 
