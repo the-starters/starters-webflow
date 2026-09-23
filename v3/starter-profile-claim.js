@@ -1,10 +1,9 @@
 /**
- * Show the signup form on the approved premade Starter profiles.
+ * Show the signup form on approved premade Starter profiles.
  *
- * QR codes use the normal public `/hire/<slug>` URL. The Hire template supplies
- * the slug list approved by Kaeser. This client-side list only
- * controls form visibility; Xano must still require an admin-prebuilt,
- * unclaimed profile and atomically bind its first successful signup.
+ * QR codes use the normal public `/hire/<slug>` URL. Xano decides whether the
+ * current slug is still claimable. Any failed, slow, malformed, or mismatched
+ * response leaves the form hidden.
  *
  * Webflow authors the wrapper with `hide`, `hidden`, and `aria-hidden=true`.
  * No query parameter or per-QR token is required.
@@ -15,17 +14,16 @@
   if (window.__starterProfileClaimBooted) return
   window.__starterProfileClaimBooted = true
 
-  // Fail closed until the Hire template supplies Kaeser's approved profile slugs.
-  var CLAIMABLE_SLUGS = Array.isArray(window.STARTER_PROFILE_CLAIM_SLUGS)
-    ? window.STARTER_PROFILE_CLAIM_SLUGS
-    : []
-  var CLAIMABLE_SLUG_SET = new Set(CLAIMABLE_SLUGS)
   var WRAPPER_SELECTOR = '[data-starter-claim="wrapper"]'
   var FORM_SELECTOR = 'form[data-starter-claim="form"][data-ms-form="signup"]'
   var PROFILE_SLUG_FIELD_SELECTOR =
     'input[type="hidden"][data-ms-member="starter-claim-profile-slug"]'
   var GOOGLE_AUTH_SELECTOR = '[data-ms-auth-provider="google"]'
   var PROFILE_PATH_PATTERN = /^\/hire\/([a-z0-9]+(?:-[a-z0-9]+)*)$/
+  var CLAIM_STATUS_URL =
+    'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/profile/starter/claim-status/v3'
+  var CLAIM_STATUS_SCHEMA = 'starter_profile_claim_status_v3'
+  var CLAIM_STATUS_TIMEOUT_MS = 8000
 
   function close(wrapper) {
     if (!wrapper) return
@@ -67,8 +65,61 @@
     return match ? match[1] : ''
   }
 
-  function isClaimableSlug(slug) {
-    return typeof slug === 'string' && CLAIMABLE_SLUG_SET.has(slug)
+  function buildClaimStatusUrl(slug) {
+    return CLAIM_STATUS_URL + '?slug=' + encodeURIComponent(slug)
+  }
+
+  function fetchClaimStatus(slug) {
+    if (typeof window.fetch !== 'function') return Promise.resolve(null)
+
+    var controller = null
+    var timeoutId = null
+    var options = {}
+
+    function clearTimer() {
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId)
+        timeoutId = null
+      }
+    }
+
+    if (typeof window.AbortController === 'function') {
+      controller = new window.AbortController()
+      options.signal = controller.signal
+    }
+
+    var timeout = new Promise(function (resolve) {
+      timeoutId = window.setTimeout(function () {
+        if (controller) controller.abort()
+        resolve(null)
+      }, CLAIM_STATUS_TIMEOUT_MS)
+    })
+
+    var request = window.fetch(buildClaimStatusUrl(slug), options)
+      .then(function (response) {
+        if (!response || response.status !== 200 || typeof response.json !== 'function') {
+          return null
+        }
+        return response.json().catch(function () {
+          return null
+        })
+      })
+      .catch(function () {
+        return null
+      })
+
+    return Promise.race([request, timeout])
+      .then(function (body) {
+        clearTimer()
+        return body
+      })
+  }
+
+  function isClaimableResponse(body, slug) {
+    return body &&
+      body.schema === CLAIM_STATUS_SCHEMA &&
+      body.slug === slug &&
+      body.claimable === true
   }
 
   function init() {
@@ -80,15 +131,18 @@
 
     var path = profilePath()
     var slug = profileSlug(path)
-    if (!path || !isClaimableSlug(slug)) return
+    if (!path || !slug) return
 
     var form = wrapper.querySelector(FORM_SELECTOR)
     var profileSlugField = form && form.querySelector(PROFILE_SLUG_FIELD_SELECTOR)
     if (!form || !profileSlugField) return
 
-    profileSlugField.value = slug
-    profileSlugField.setAttribute('value', slug)
-    reveal(wrapper)
+    fetchClaimStatus(slug).then(function (body) {
+      if (!isClaimableResponse(body, slug)) return
+      profileSlugField.value = slug
+      profileSlugField.setAttribute('value', slug)
+      reveal(wrapper)
+    })
   }
 
   if (document.readyState === 'loading') {

@@ -8,30 +8,25 @@ QR codes point to the normal public Hire profile URL, for example:
 https://www.thestarters.com/hire/jane-doe
 ```
 
-The Hire frontend has an allowlist of profile slugs supplied by Kaeser. It shows
-the claim signup form only when the current `/hire/<slug>` is in that list. The
-QR has no token or special query parameter, and signup does not need a
-pre-existing email address or admin confirmation.
+The Hire frontend asks Xano whether the current `/hire/<slug>` is claimable. It
+shows the claim signup form only when Xano returns an exact positive status for
+that slug. The QR has no token or special query parameter, and signup does not
+need a pre-existing email address or admin confirmation.
 
-This is intentionally first-claim-wins. The public URL and frontend allowlist
-control visibility, not identity. Anyone who reaches an eligible unclaimed
-profile can attempt to claim it. On successful signup, Xano must verify that the
-exact profile is admin-prebuilt and still unclaimed, then bind its first
-Memberstack ID only from a fresh `member.created` event. An existing account
-cannot establish or switch a claim through a later update. Xano must reject a
-later or conflicting claim without creating a second profile.
+This is intentionally first-claim-wins. The public URL and Xano claim-status
+endpoint control visibility, not identity. Anyone who reaches an eligible
+unclaimed profile can attempt to claim it. On successful signup, Xano must
+verify that the exact profile is admin-prebuilt and still unclaimed, then bind
+its first Memberstack ID only from a fresh `member.created` event. An existing
+account cannot establish or switch a claim through a later update. Xano must
+reject a later or conflicting claim without creating a second profile.
 
 ## Frontend contract
 
-The Hire template supplies the approved slugs as data before loading the shared
-controller. The list is currently empty so the controller fails closed until
-Kaeser supplies it. Use canonical Webflow slugs exactly as they appear in
-`/hire/<slug>`.
-
-```html
-<script>window.STARTER_PROFILE_CLAIM_SLUGS = [];</script>
-<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/starter-profile-claim.js"></script>
-```
+The Hire template does not supply an allowlist and does not need a direct
+`starter-profile-claim.js` script tag. The shared `v3/hire-profile.js` loader
+injects the claim controller once when it finds a Claim Profile wrapper. Rollout
+is controlled in Xano by the claim-status endpoint response.
 
 Keep the Claim Profile wrapper authored with class `hide`, `hidden="hidden"`,
 and `aria-hidden="true"`. Add these attributes to the outer wrapper:
@@ -57,16 +52,31 @@ Add one hidden input inside that form:
 | `data-ms-member` | `starter-claim-profile-slug` |
 | autocomplete | `off` |
 
-The controller sets this field to the current slug only for an allowlisted
-profile, then reveals the form. It does not make a network request or change the
-URL. A visitor can edit any browser field, so the backend must independently
-validate the slug against the canonical Xano profile.
+The controller calls:
+
+```text
+GET https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/profile/starter/claim-status/v3?slug=<slug>
+```
+
+The response must be HTTP 200 JSON:
+
+```json
+{"schema":"starter_profile_claim_status_v3","slug":"<slug>","claimable":true}
+```
+
+The controller sets the hidden field to the current slug and reveals the form
+only when the schema matches, the response slug equals the page slug, and
+`claimable` is `true`. `claimable: false`, a wrong schema, wrong slug, non-200,
+bad JSON, a network error, timeout, missing form markup, or a non-`/hire/<slug>`
+path keeps the form hidden. The controller makes one request per page and does
+not change the URL. A visitor can edit any browser field, so the backend must
+independently validate the slug against the canonical Xano profile.
 
 Keep the Google signup control hidden until its Memberstack webhook behavior
 has been verified. The normal email signup path is the launch path.
 
-Load the released controller through the Hire template's thin custom-code
-loader. Keep the `hide` class as the no-JavaScript and pre-initialization state.
+Load `v3/hire-profile.js` through the existing Hire template script tag. Keep
+the `hide` class as the no-JavaScript and pre-initialization state.
 
 ## Backend contract
 
@@ -76,9 +86,13 @@ existing unique account binding. Do not add a claim table or duplicate claim
 boolean for this design.
 
 Preserve endpoint `#1513`'s existing atomic event-timestamp watermark gate as
-the first durable side-effect boundary. An exact duplicate or older event must
-return `skipped_stale_or_replay` before claim resolution, user or profile writes,
-projections, or outbox work. Only a fresh event continues.
+the first durable side-effect boundary for committed canonical writes. When a
+prior delivery committed its user, profile, or event watermark, an exact
+duplicate or older event must return `skipped_stale_or_replay` before claim
+resolution, user or profile writes, projections, or outbox work. A competing
+first claim that loses the conditional bind rolls back without a claim ledger or
+receipt, so its exact retry may re-evaluate the claim and reject again without
+profile, projection, or outbox side effects.
 
 Keep the existing event plan resolution unchanged. Resolve a fresh
 `member.created` from its `planConnections`, as observed on recent Live Talent
@@ -119,21 +133,26 @@ signup with no claim slug continues through the existing normal signup path.
 
 ## Acceptance checks
 
-- An allowlisted slug shows the form on the normal profile URL and fills the
+- A claimable slug shows the form on the normal profile URL and fills the
   hidden signup field with that slug.
-- A slug not on the list, a non-profile URL, or missing form markup stays
-  hidden; the no-JavaScript initial state also stays hidden.
-- The browser sends no claim-validation request and does not modify the URL.
+- `claimable: false`, a wrong schema, wrong slug, non-200, bad JSON, network
+  error, timeout, non-profile URL, or missing form markup stays hidden; the
+  no-JavaScript initial state also stays hidden.
+- The browser sends one claim-status request only on pages with the Claim
+  Profile wrapper and does not modify the URL.
 - A fresh Talent `member.created` event with a newly created `user_v3` mirror,
   no preexisting role row, and an unclaimed admin-prebuilt target claims that
   exact profile; the Memberstack ID and submitted email are saved once.
-- An exact or older webhook delivery returns `skipped_stale_or_replay` before
-  claim, profile, projection, or outbox side effects.
+- An exact or older webhook delivery with committed canonical writes returns
+  `skipped_stale_or_replay` before claim, profile, projection, or outbox side
+  effects.
 - A later fresh `member.updated` event reuses only the same bound profile and
   continues normal propagation with stable row IDs. It cannot first-bind an
   unclaimed profile, switch targets, or create dual-role ownership.
 - A competing first claim or conflicting member is rejected without a fallback
-  profile or duplicate.
+  profile or duplicate; an exact retry of a rolled-back competing first claim
+  may re-evaluate and reject again without profile, projection, or outbox side
+  effects.
 - Ordinary signup without the profile-slug field keeps its existing behavior,
   and a fresh `member.updated` without `planConnections` keeps the existing plan
   fallback.

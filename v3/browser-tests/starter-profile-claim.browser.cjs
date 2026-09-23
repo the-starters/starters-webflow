@@ -1,5 +1,5 @@
-// Focused rendered acceptance. This uses a local slug allowlist and does not
-// prove Webflow publication or Memberstack webhook behavior.
+// Focused rendered acceptance. This mocks Xano claim-status and does not prove
+// Webflow publication or Memberstack webhook behavior.
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const path = require('node:path')
@@ -8,6 +8,8 @@ const { chromium } = require('playwright')
 const root = path.resolve(__dirname, '../..')
 const scriptPath = path.join(root, 'v3/starter-profile-claim.js')
 const controllerUrl = 'https://cdn.example/starter-profile-claim.js'
+const claimStatusUrl =
+  'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/profile/starter/claim-status/v3'
 const source = fs.readFileSync(scriptPath, 'utf8')
 
 function markup() {
@@ -15,7 +17,6 @@ function markup() {
     <html>
       <head>
         <meta charset="utf-8">
-        <script>window.STARTER_PROFILE_CLAIM_SLUGS = ["jane-doe"]</script>
         <script src="${controllerUrl}" defer></script>
         <style>
           body { margin: 0; font-family: sans-serif; }
@@ -48,7 +49,7 @@ function markup() {
     headless: true,
   })
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
-  const remoteRequests = []
+  const claimRequests = []
 
   try {
     await page.route('https://www.thestarters.com/**', (route) =>
@@ -57,12 +58,20 @@ function markup() {
     await page.route(controllerUrl, (route) =>
       route.fulfill({ status: 200, contentType: 'application/javascript', body: source }),
     )
-    page.on('request', (request) => {
-      if (request.isNavigationRequest() && request.resourceType() === 'document') return
-      if (request.url() === controllerUrl) return
-      remoteRequests.push(request.url())
+    await page.route(`${claimStatusUrl}**`, (route) => {
+      const url = new URL(route.request().url())
+      const slug = url.searchParams.get('slug')
+      claimRequests.push(route.request().url())
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          schema: 'starter_profile_claim_status_v3',
+          slug,
+          claimable: slug === 'jane-doe',
+        }),
+      })
     })
-
     const listedUrl = 'https://www.thestarters.com/hire/jane-doe?claim=unused&first=1&utm_source=qr'
     await page.goto(listedUrl)
     await page.waitForSelector('[data-starter-claim="wrapper"]', { state: 'visible' })
@@ -95,7 +104,7 @@ function markup() {
       controllerExported: false,
       url: listedUrl,
     })
-    assert.deepEqual(remoteRequests, [])
+    assert.deepEqual(claimRequests, [`${claimStatusUrl}?slug=jane-doe`])
 
     const unlistedUrl = 'https://www.thestarters.com/hire/john-smith?claim=unused&utm_source=qr'
     await page.goto(unlistedUrl)
@@ -119,9 +128,12 @@ function markup() {
       profileSlug: '',
       url: unlistedUrl,
     })
-    assert.deepEqual(remoteRequests, [])
+    assert.deepEqual(claimRequests, [
+      `${claimStatusUrl}?slug=jane-doe`,
+      `${claimStatusUrl}?slug=john-smith`,
+    ])
 
-    console.log(JSON.stringify({ ready, unlisted, remoteRequests }))
+    console.log(JSON.stringify({ ready, unlisted, claimRequests }))
   } finally {
     await browser.close()
   }

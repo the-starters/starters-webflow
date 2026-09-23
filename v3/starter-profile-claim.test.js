@@ -42,6 +42,10 @@ function element(attributes = {}) {
   }
 }
 
+function jsonResponse(body, status = 200) {
+  return { status, json: () => Promise.resolve(body) }
+}
+
 function load(options = {}) {
   const profileSlugField = options.profileSlugField === false ? null : element()
   const googleAuth = options.googleAuth === false
@@ -64,6 +68,7 @@ function load(options = {}) {
   if (wrapper && googleAuth) wrapper.setQuery(GOOGLE_AUTH_SELECTOR, googleAuth)
 
   const listeners = []
+  const requests = []
   const pathname = options.pathname || '/hire/jane-doe'
   const location = {
     pathname,
@@ -79,15 +84,30 @@ function load(options = {}) {
       return selector === WRAPPER_SELECTOR ? wrapper : null
     },
   }
-
+  const timers = []
   const window = {
     document,
     location,
-    STARTER_PROFILE_CLAIM_SLUGS: options.allowedSlugs || [],
+    fetch: options.fetch || ((url) => {
+      requests.push(String(url))
+      return Promise.resolve(jsonResponse({
+        schema: 'starter_profile_claim_status_v3',
+        slug: 'jane-doe',
+        claimable: true,
+      }))
+    }),
+    setTimeout(fn, delay) {
+      timers.push({ fn, delay })
+      return timers.length
+    },
+    clearTimeout(id) {
+      if (timers[id - 1]) timers[id - 1].cleared = true
+    },
+    AbortController: options.AbortController,
   }
-  vm.runInNewContext(source, { document, window })
+  vm.runInNewContext(source, { document, window, Promise, URL, encodeURIComponent })
 
-  function dispatch(type) {
+  async function dispatch(type) {
     for (const listener of [...listeners]) {
       if (listener.type !== type) continue
       listener.handler()
@@ -95,32 +115,33 @@ function load(options = {}) {
         listeners.splice(listeners.indexOf(listener), 1)
       }
     }
+    await settle()
   }
 
-  return { dispatch, form, listeners, profileSlugField, googleAuth, wrapper, window }
+  return { dispatch, form, listeners, profileSlugField, googleAuth, wrapper, window, requests, timers }
 }
 
-test('keeps the wrapper hidden for a normal profile not in the allowlist', () => {
+async function settle(times = 8) {
+  for (let index = 0; index < times; index += 1) await Promise.resolve()
+}
+
+function assertHidden(harness) {
+  assert.equal(harness.wrapper.classList.contains('hide'), true)
+  assert.equal(harness.wrapper.hidden, true)
+  assert.equal(harness.wrapper.getAttribute('aria-hidden'), 'true')
+}
+
+test('claimable true reveals the form and puts the page slug in the signup field', async () => {
   const harness = load({ search: '?utm_source=gift' })
-  harness.dispatch('DOMContentLoaded')
 
-  assert.equal(harness.wrapper.classList.contains('hide'), true)
-  assert.equal(harness.wrapper.hidden, true)
-  assert.equal(harness.wrapper.getAttribute('aria-hidden'), 'true')
-  assert.equal(harness.profileSlugField.value, '')
-  assert.equal(harness.googleAuth.classList.contains('hide'), true)
-  assert.equal(harness.googleAuth.hidden, true)
-})
+  assertHidden(harness)
+  await harness.dispatch('DOMContentLoaded')
 
-test('shows the form for an allowlisted slug and puts that slug in the signup field', () => {
-  const harness = load({ allowedSlugs: ['jane-doe'] })
-
-  assert.equal(harness.wrapper.classList.contains('hide'), true)
-  assert.equal(harness.wrapper.hidden, true)
-  assert.equal(harness.wrapper.getAttribute('aria-hidden'), 'true')
-
-  harness.dispatch('DOMContentLoaded')
-
+  assert.equal(harness.requests.length, 1)
+  assert.equal(
+    harness.requests[0],
+    'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/profile/starter/claim-status/v3?slug=jane-doe',
+  )
   assert.equal(harness.profileSlugField.value, 'jane-doe')
   assert.equal(harness.profileSlugField.getAttribute('value'), 'jane-doe')
   assert.equal(harness.wrapper.classList.contains('hide'), false)
@@ -132,31 +153,84 @@ test('shows the form for an allowlisted slug and puts that slug in the signup fi
   assert.equal(harness.googleAuth.getAttribute('hidden'), '')
   assert.equal(harness.googleAuth.getAttribute('aria-hidden'), 'true')
   assert.equal(harness.googleAuth.getAttribute('tabindex'), '-1')
+  assert.equal(harness.window.location.search, '?utm_source=gift')
 })
 
-test('uses only the profile slug when unrelated query parameters are present', () => {
+test('claimable false keeps the form hidden', async () => {
   const harness = load({
-    allowedSlugs: ['jane-doe'],
-    search: '?utm_source=gift&utm_campaign=profile',
+    fetch: () => Promise.resolve(jsonResponse({
+      schema: 'starter_profile_claim_status_v3',
+      slug: 'jane-doe',
+      claimable: false,
+    })),
   })
-  harness.dispatch('DOMContentLoaded')
-
-  assert.equal(harness.profileSlugField.value, 'jane-doe')
-  assert.equal(harness.window.location.search, '?utm_source=gift&utm_campaign=profile')
-})
-
-test('does not show the form for another slug even when one profile is allowlisted', () => {
-  const harness = load({
-    pathname: '/hire/john-smith',
-    allowedSlugs: ['jane-doe'],
-  })
-  harness.dispatch('DOMContentLoaded')
-
-  assert.equal(harness.wrapper.classList.contains('hide'), true)
+  await harness.dispatch('DOMContentLoaded')
+  assertHidden(harness)
   assert.equal(harness.profileSlugField.value, '')
 })
 
-test('fails closed for non-profile paths and non-canonical slugs', () => {
+test('network error keeps the form hidden', async () => {
+  const harness = load({ fetch: () => Promise.reject(new Error('offline')) })
+  await harness.dispatch('DOMContentLoaded')
+  assertHidden(harness)
+})
+
+test('timeout keeps the form hidden', async () => {
+  const harness = load({ fetch: () => new Promise(() => {}) })
+  await harness.dispatch('DOMContentLoaded')
+
+  assert.equal(harness.timers.length, 1)
+  assert.equal(harness.timers[0].delay, 8000)
+  harness.timers[0].fn()
+  await settle()
+
+  assertHidden(harness)
+  assert.equal(harness.profileSlugField.value, '')
+})
+
+test('wrong slug keeps the form hidden', async () => {
+  const harness = load({
+    fetch: () => Promise.resolve(jsonResponse({
+      schema: 'starter_profile_claim_status_v3',
+      slug: 'john-smith',
+      claimable: true,
+    })),
+  })
+  await harness.dispatch('DOMContentLoaded')
+  assertHidden(harness)
+})
+
+test('wrong schema keeps the form hidden', async () => {
+  const harness = load({
+    fetch: () => Promise.resolve(jsonResponse({
+      schema: 'starter_profile_claim_status_v2',
+      slug: 'jane-doe',
+      claimable: true,
+    })),
+  })
+  await harness.dispatch('DOMContentLoaded')
+  assertHidden(harness)
+})
+
+test('non-200 and bad JSON keep the form hidden', async () => {
+  for (const fetch of [
+    () => Promise.resolve(jsonResponse({ ok: true }, 500)),
+    () => Promise.resolve({ status: 200, json: () => Promise.reject(new Error('bad json')) }),
+  ]) {
+    const harness = load({ fetch })
+    await harness.dispatch('DOMContentLoaded')
+    assertHidden(harness)
+  }
+})
+
+test('no wrapper means no request', async () => {
+  let calls = 0
+  const harness = load({ wrapper: false, fetch: () => { calls += 1; return Promise.resolve(jsonResponse({})) } })
+  await harness.dispatch('DOMContentLoaded')
+  assert.equal(calls, 0)
+})
+
+test('fails closed for non-profile paths and non-canonical slugs without a request', async () => {
   for (const pathname of [
     '/hire',
     '/all-starters',
@@ -164,30 +238,26 @@ test('fails closed for non-profile paths and non-canonical slugs', () => {
     '/hire/jane_doe',
     '/hire/jane-doe/',
   ]) {
-    const harness = load({ pathname, allowedSlugs: ['jane-doe'] })
-    harness.dispatch('DOMContentLoaded')
-    assert.equal(harness.wrapper.classList.contains('hide'), true, pathname)
+    let calls = 0
+    const harness = load({ pathname, fetch: () => { calls += 1; return Promise.resolve(jsonResponse({})) } })
+    await harness.dispatch('DOMContentLoaded')
+    assertHidden(harness)
+    assert.equal(calls, 0, pathname)
   }
 })
 
-test('fails closed when the allowed form or slug field is not authored', () => {
+test('fails closed when the form or slug field is not authored', async () => {
   for (const options of [
     { form: false },
     { profileSlugField: false },
     { fieldSelector: '[data-ms-member="starter-claim-profile-slug"]' },
   ]) {
-    const harness = load({ ...options, allowedSlugs: ['jane-doe'] })
-    harness.dispatch('DOMContentLoaded')
-    assert.equal(harness.wrapper.classList.contains('hide'), true)
-    assert.equal(harness.wrapper.hidden, true)
-    assert.equal(harness.wrapper.getAttribute('aria-hidden'), 'true')
+    let calls = 0
+    const harness = load({ ...options, fetch: () => { calls += 1; return Promise.resolve(jsonResponse({})) } })
+    await harness.dispatch('DOMContentLoaded')
+    assertHidden(harness)
+    assert.equal(calls, 0)
   }
-})
-
-test('does not require the slug field on profiles outside the allowlist', () => {
-  const harness = load({ profileSlugField: false })
-  harness.dispatch('DOMContentLoaded')
-  assert.equal(harness.wrapper.classList.contains('hide'), true)
 })
 
 test('registers one DOMContentLoaded boot while the document is loading', () => {
@@ -197,16 +267,18 @@ test('registers one DOMContentLoaded boot while the document is loading', () => 
   assert.equal(harness.listeners[0].config.once, true)
 })
 
-test('boots immediately when the document is already ready', () => {
-  const harness = load({ readyState: 'complete', allowedSlugs: ['jane-doe'] })
+test('boots immediately when the document is already ready', async () => {
+  const harness = load({ readyState: 'complete' })
+  await settle()
   assert.equal(harness.listeners.length, 0)
   assert.equal(harness.wrapper.classList.contains('hide'), false)
   assert.equal(harness.wrapper.hidden, false)
   assert.equal(harness.profileSlugField.value, 'jane-doe')
 })
 
-test('keeps controller helpers private', () => {
-  const harness = load({ readyState: 'complete', allowedSlugs: ['jane-doe'] })
+test('keeps controller helpers private', async () => {
+  const harness = load({ readyState: 'complete' })
+  await settle()
   assert.equal(Object.prototype.hasOwnProperty.call(harness.window, 'StarterProfileClaim'), false)
 })
 
@@ -215,6 +287,9 @@ test('second evaluation respects the global boot guard', () => {
   vm.runInNewContext(source, {
     document: harness.window.document,
     window: harness.window,
+    Promise,
+    URL,
+    encodeURIComponent,
   })
   assert.equal(harness.listeners.length, 1)
 })
