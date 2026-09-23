@@ -2,6 +2,7 @@
  * GitHub-owned copy of the Starter Edit Profile Webflow controller block.
  * Original live inline body SHA-256: 8def2d83a95789431895634566199088cae153f1d517210abcb917977dd02e5d
  * Captured read-only from /starter-edit-profile on 2026-08-12.
+ * @release v1.59.615
  */
 function getStarterEditPortfolioSuccessCopy(updatedHighlightCount) {
   if (!Number.isInteger(updatedHighlightCount) || updatedHighlightCount < 1) return null;
