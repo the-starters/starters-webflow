@@ -10,12 +10,15 @@ const token = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef0123456789_-A'
 const exchangeCode = 'zyxwvutsrqponmlkjihgfedcba9876543210_-ZYXWV'
 const prepareUrl =
   'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/starter_profile_claim/prepare'
+const controllerUrl = 'https://cdn.example/starter-profile-claim.js'
 
 function markup() {
   return `<!doctype html>
     <html>
       <head>
         <meta charset="utf-8">
+        <script src="${controllerUrl}"></script>
+        <script>window.__postHogObservedUrl = location.href</script>
         <style>
           body { margin: 0; font-family: sans-serif; }
           .hide { display: none !important; }
@@ -54,6 +57,9 @@ function markup() {
     await page.route('https://www.thestarters.com/**', (route) =>
       route.fulfill({ status: 200, contentType: 'text/html', body: markup() }),
     )
+    await page.route(controllerUrl, (route) =>
+      route.fulfill({ status: 200, contentType: 'application/javascript', path: scriptPath }),
+    )
     await page.route(prepareUrl, async (route) => {
       const request = route.request()
       const corsHeaders = {
@@ -88,7 +94,6 @@ function markup() {
     })
 
     await page.goto(`https://www.thestarters.com/hire/jane-doe?claim=${token}&utm_source=gift`)
-    await page.addScriptTag({ path: scriptPath })
     await page.waitForSelector('[data-starter-claim-state="ready"]')
 
     const ready = await page.locator('[data-starter-claim="wrapper"]').evaluate((wrapper) => ({
@@ -97,6 +102,7 @@ function markup() {
       hasHide: wrapper.classList.contains('hide'),
       hidden: wrapper.hidden,
       exchangeCode: wrapper.querySelector('[data-ms-member="starter-claim-exchange"]').value,
+      postHogObservedUrl: window.__postHogObservedUrl,
       url: location.href,
     }))
 
@@ -110,18 +116,19 @@ function markup() {
       hasHide: false,
       hidden: false,
       exchangeCode,
+      postHogObservedUrl: 'https://www.thestarters.com/hire/jane-doe?utm_source=gift',
       url: 'https://www.thestarters.com/hire/jane-doe?utm_source=gift',
     })
 
     failPrepare = true
     await page.goto(`https://www.thestarters.com/hire/jane-doe?claim=${token}&utm_source=retry#bio`)
-    await page.addScriptTag({ path: scriptPath })
     await page.waitForSelector('[data-starter-claim-state="unavailable"]', { state: 'attached' })
 
     const failed = await page.locator('[data-starter-claim="wrapper"]').evaluate((wrapper) => ({
       exchangeCode: wrapper.querySelector('[data-ms-member="starter-claim-exchange"]').value,
       hasHide: wrapper.classList.contains('hide'),
       hidden: wrapper.hidden,
+      postHogObservedUrl: window.__postHogObservedUrl,
       url: location.href,
     }))
 
@@ -129,6 +136,7 @@ function markup() {
       exchangeCode: '',
       hasHide: true,
       hidden: true,
+      postHogObservedUrl: 'https://www.thestarters.com/hire/jane-doe?utm_source=retry#bio',
       url: 'https://www.thestarters.com/hire/jane-doe?utm_source=retry#bio',
     })
     assert.deepEqual(requestPageUrls, [
@@ -136,8 +144,30 @@ function markup() {
       'https://www.thestarters.com/hire/jane-doe?utm_source=retry#bio',
     ])
 
+    failPrepare = false
+    await page.goto(`https://www.thestarters.com/hire/jane-doe/?claim=${token}&utm_source=slash`)
+    await page.waitForSelector('[data-starter-claim-state="misconfigured"]', {
+      state: 'attached',
+    })
+
+    const nonCanonical = await page.locator('[data-starter-claim="wrapper"]').evaluate((wrapper) => ({
+      hasHide: wrapper.classList.contains('hide'),
+      hidden: wrapper.hidden,
+      postHogObservedUrl: window.__postHogObservedUrl,
+      state: wrapper.getAttribute('data-starter-claim-state'),
+      url: location.href,
+    }))
+
+    assert.equal(prepareRequests.length, 2)
+    assert.deepEqual(nonCanonical, {
+      hasHide: true,
+      hidden: true,
+      postHogObservedUrl: 'https://www.thestarters.com/hire/jane-doe/?utm_source=slash',
+      state: 'misconfigured',
+      url: 'https://www.thestarters.com/hire/jane-doe/?utm_source=slash',
+    })
+
     await page.goto('https://www.thestarters.com/hire/jane-doe?utm_source=gift')
-    await page.addScriptTag({ path: scriptPath })
 
     const closed = await page.locator('[data-starter-claim="wrapper"]').evaluate((wrapper) => ({
       ariaHidden: wrapper.getAttribute('aria-hidden'),
@@ -156,7 +186,14 @@ function markup() {
       state: 'closed',
     })
 
-    console.log(JSON.stringify({ ready, failed, closed, prepareRequests, requestPageUrls }))
+    console.log(JSON.stringify({
+      ready,
+      failed,
+      nonCanonical,
+      closed,
+      prepareRequests,
+      requestPageUrls,
+    }))
   } finally {
     await browser.close()
   }

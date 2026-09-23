@@ -85,9 +85,16 @@ function load(options = {}) {
   const warnings = []
   const requests = []
   const replacements = []
+  const bodyQueryUrls = []
   const search = options.search === undefined ? `?claim=${TOKEN}&utm_source=qr` : options.search
   const pathname = options.pathname || '/hire/jane-doe'
   const href = `https://${options.hostname || 'the-starters-3-0.webflow.io'}${pathname}${search}`
+  const location = {
+    href,
+    hostname: options.hostname || 'the-starters-3-0.webflow.io',
+    pathname,
+    search,
+  }
 
   const document = {
     readyState: 'loading',
@@ -95,22 +102,22 @@ function load(options = {}) {
       listeners.push({ type, handler, config })
     },
     querySelector(selector) {
+      bodyQueryUrls.push(location.href)
       return selector === WRAPPER_SELECTOR ? wrapper : null
     },
   }
 
   const window = {
     document,
-    location: {
-      href,
-      hostname: options.hostname || 'the-starters-3-0.webflow.io',
-      pathname,
-      search,
-    },
+    location,
     history: {
       state: { preserved: true },
       replaceState(state, title, next) {
         replacements.push({ state, title, next })
+        const replaced = new URL(next, location.href)
+        location.href = replaced.href
+        location.pathname = replaced.pathname
+        location.search = replaced.search
       },
     },
     fetch: async (url, requestOptions) => {
@@ -149,6 +156,7 @@ function load(options = {}) {
 
   return {
     api: window.StarterProfileClaim,
+    bodyQueryUrls,
     form,
     listeners,
     replacements,
@@ -180,6 +188,7 @@ test('prepares one opaque claim token and only then reveals the wrapper', async 
   assert.equal(harness.requests[0].url, ENDPOINT)
   assert.equal(harness.requests[0].options.method, 'POST')
   assert.equal(harness.requests[0].options.credentials, 'omit')
+  assert.equal(harness.requests[0].options.redirect, 'error')
   assert.equal(harness.requests[0].options.referrerPolicy, 'no-referrer')
   assert.deepEqual(JSON.parse(harness.requests[0].options.body), {
     token: TOKEN,
@@ -197,6 +206,8 @@ test('prepares one opaque claim token and only then reveals the wrapper', async 
 test('scrubs only the claim value before preparing the exchange', async () => {
   const harness = load({ search: `?claim=${TOKEN}&utm_source=gift#ignored` })
 
+  assert.equal(harness.window.location.href, 'https://the-starters-3-0.webflow.io/hire/jane-doe?utm_source=gift#ignored')
+  assert.deepEqual(harness.bodyQueryUrls, [])
   assert.deepEqual(harness.replacements, [
     {
       state: { preserved: true },
@@ -206,6 +217,7 @@ test('scrubs only the claim value before preparing the exchange', async () => {
   ])
 
   await harness.api.init()
+  assert.deepEqual(harness.bodyQueryUrls, [harness.window.location.href])
   assert.deepEqual(harness.requests[0].replacementsAtRequest, harness.replacements)
 })
 
@@ -304,8 +316,14 @@ test('accepts only the exact prepare endpoint', async () => {
   }
 })
 
-test('rejects non-profile routes before sending the capability', async () => {
-  for (const pathname of ['/hire', '/all-starters', '/hire/../admin', '/hire/jane_doe']) {
+test('rejects non-canonical profile routes before sending the capability', async () => {
+  for (const pathname of [
+    '/hire',
+    '/all-starters',
+    '/hire/../admin',
+    '/hire/jane_doe',
+    '/hire/jane-doe/',
+  ]) {
     const harness = load({ pathname })
     const result = await harness.api.init()
     assert.equal(result.state, 'misconfigured', pathname)

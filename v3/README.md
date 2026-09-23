@@ -669,9 +669,15 @@ template. The outer wrapper remains authored with its `hide` class,
 `hidden="hidden"`, and `aria-hidden="true"`. The controller synchronously removes
 one opaque `?claim=` capability from the URL, sends it only to Xano's exact
 prepare route, and removes the authored hiding only after Xano returns a strict
-one-use exchange code for the exact current `/hire/<slug>` path. No query,
+one-use exchange code for the exact canonical no-trailing-slash `/hire/<slug>`
+path. No query,
 malformed or repeated input, incomplete markup, an expired, claimed, or revoked
 token, a path mismatch, timeout, or network failure stays fail-closed.
+
+Load the controller synchronously in the page head before the existing sitewide
+PostHog initialization. Do not use `async` or `defer`: script evaluation captures
+and scrubs the capability before analytics can observe the URL, then waits for
+`DOMContentLoaded` before querying the authored body markup.
 
 The complete Designer attribute contract, Xano claim-ledger contract, endpoint
 shapes, signup-consumption order, and release proof are in
