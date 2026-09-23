@@ -245,6 +245,8 @@ async function commitStarterEditPortfolioDrafts(options) {
         return;
       }
       if (!grid || !template) return;
+      // The legacy Work Highlights form keeps its published 50 MB video limit.
+      const legacyMaxVideoSize = 50 * 1024 * 1024;
       let selectedFiles = [],
         selectedVideos = [],
         coverIndex = 0,
@@ -259,6 +261,7 @@ async function commitStarterEditPortfolioDrafts(options) {
         autoOpenedCreateDropdown = false,
         editFormResetTimer = null;
       const portfolioSubmitGuard = createStarterEditPortfolioSubmitGuard();
+      const portfolioCreateGuard = createStarterEditPortfolioSubmitGuard();
       const portfolioDraftDirtyController = createStarterEditPortfolioDraftDirtyController({
         getDirtyState: function () { return window.__tsProfileDirtyState; },
         stepIndex: 4,
@@ -1122,12 +1125,14 @@ async function commitStarterEditPortfolioDrafts(options) {
       }
 
       function disableDropdownToggle(state) {
+        if (!profileDrop) return;
         profileDrop.style.pointerEvents = state ? 'none' : 'auto';
         profileDrop.style.opacity = state ? '0.6' : '1';
       }
 
       async function handlePortfolioCreate(event) {
         event.preventDefault();
+        if (!portfolioCreateGuard.begin()) return;
         try {
           disableDropdownToggle(true);
           const portfolios = await getPortfolios();
@@ -1149,6 +1154,7 @@ async function commitStarterEditPortfolioDrafts(options) {
           openNotifyModal(getErrorMessage(error, 'Portfolio creation failed'));
         } finally {
           disableDropdownToggle(false);
+          portfolioCreateGuard.finish();
         }
       }
 
@@ -1519,11 +1525,11 @@ async function commitStarterEditPortfolioDrafts(options) {
         videosInp.addEventListener('change', function () {
           const files = Array.from(videosInp.files);
           const oversizedFiles = files.filter(function (file) {
-            return file.size > MAX_VIDEO_SIZE;
+            return file.size > legacyMaxVideoSize;
           });
 
           if (oversizedFiles.length) {
-            openNotifyModal('Video exceeds 40MB upload size limit');
+            openNotifyModal('Video exceeds 50MB upload size limit');
             videosInp.value = '';
             selectedVideos = [];
             if (videosPreviewWrap) videosPreviewWrap.innerHTML = '';
@@ -1584,11 +1590,11 @@ async function commitStarterEditPortfolioDrafts(options) {
         editVideosInp.addEventListener('change', function () {
           const files = Array.from(editVideosInp.files);
           const oversizedFiles = files.filter(function (file) {
-            return file.size > MAX_VIDEO_SIZE;
+            return file.size > legacyMaxVideoSize;
           });
 
           if (oversizedFiles.length) {
-            openNotifyModal('Video exceeds 40MB upload size limit');
+            openNotifyModal('Video exceeds 50MB upload size limit');
             editVideosInp.value = '';
             return;
           }

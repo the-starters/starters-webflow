@@ -1,6 +1,6 @@
 # 🧭 Starter Profile Reliability Progress Checklist
 
-Last updated: 2026-09-19
+Last updated: 2026-09-23
 
 This checklist tracks release-safe implementation evidence for the
 `/starter-edit-profile` reliability workflow. The workspace operator checklist
@@ -56,6 +56,9 @@ in [README.md](README.md) and in the root
       [In-place loader replacements](README.md#in-place-loader-replacements).
 - [x] Make exactly one Work Highlight image authoritative as the cover and send it as
       `cover_image_id`. Contract: [Work Highlight cover image](README.md#work-highlight-cover-image).
+- [x] Let legacy Work Highlights create without the removed add accordion, guard the
+      create click while its request is pending, and keep the live 50 MB video gate.
+      Contract: [In-place loader replacements](README.md#in-place-loader-replacements).
 
 ## 🧪 Automated evidence
 
@@ -93,6 +96,9 @@ in [README.md](README.md) and in the root
       and a progress or error message is never cached as a result for its query.
 - [x] The Work Highlight editor normalizes to exactly one cover from either source and
       sends that stored image's ID as `cover_image_id`.
+- [x] Legacy Work Highlights create reaches validation and queues a draft without
+      `#profile-dropdown` or `[data-add-highlight-dropdown]`, preserves the 50 MB
+      video message, and ignores a second create click while the first is in flight.
 
 Run this coverage with:
 
@@ -107,6 +113,7 @@ node --test v3/profile-form/incremental-dropdowns-capture-sync.test.js
 node --test v3/build-profile/profile-photo-upload-intent.test.js
 node --test v3/starter-edit-profile/portfolio-pending-success.test.js
 node --test v3/starter-edit-profile/portfolio-modal-state.test.js
+node --test v3/starter-edit-profile/portfolio-crud.test.js
 ```
 
 ## 🚀 Release and live verification

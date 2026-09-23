@@ -26,6 +26,14 @@ succeeds, the portfolio controller replaces the shared generic message with
 when it closes. Keep the pending and rejected status-badge rendering until the
 legacy rows with those statuses have been backfilled.
 
+The live legacy Work Highlights form no longer has its add accordion. Its
+`#profile-dropdown` and `[data-add-highlight-dropdown]` elements are optional;
+creating a highlight must still queue a draft when they are absent. Because the
+accordion no longer dims to block repeat clicks, the create handler holds its own
+in-flight guard: a second click while the first create is pending queues nothing.
+The legacy form keeps its published 50 MB video limit. The opted-in unified Highlights
+section uses its own controller and 40 MB limit.
+
 ### Work Highlight cover image
 
 A Work Highlight has exactly one cover. Whenever the editor loads its images —
