@@ -159,13 +159,19 @@ Read `customFields.starter-claim-token` from the Memberstack webhook. Inside the
 existing transaction and before the Talent email fallback or create path:
 
 1. Hash the raw value and lock the matching claim row.
-2. Require `status=active`, `expires_at > now`, and an unclaimed member ID.
-3. Lock the referenced `freelancers_v3` row.
-4. Require its `memberstack_id` to be empty or already equal to this webhook
+2. If the claim is already `claimed` by this webhook's Memberstack member, lock
+   its referenced `freelancers_v3` row, require that row to still belong to the
+   same member, and continue the current user and profile update logic using
+   that row without mutating the claim again. A claimed row owned by any other
+   member fails closed.
+3. Otherwise require `status=active`, `expires_at > now`, and an empty
+   `claimed_memberstack_id`.
+4. Lock the referenced `freelancers_v3` row.
+5. Require its `memberstack_id` to be empty or already equal to this webhook
    member. Never move a profile from a different member.
-5. Set that exact profile's `memberstack_id` and normalized webhook email.
-6. Mark the claim `claimed` with the same Memberstack ID and timestamp.
-7. Continue the current user and profile update logic using the adopted row.
+6. Set that exact profile's `memberstack_id` and normalized webhook email.
+7. Mark the claim `claimed` with the same Memberstack ID and timestamp.
+8. Continue the current user and profile update logic using the adopted row.
 
 The transaction must be replay-safe. A webhook retry from the same Memberstack
 member returns the already-claimed profile. Any different member, target, or

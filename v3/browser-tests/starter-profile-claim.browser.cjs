@@ -52,10 +52,24 @@ function markup() {
       route.fulfill({ status: 200, contentType: 'text/html', body: markup() }),
     )
     await page.route(validationUrl, async (route) => {
-      validationRequests.push(route.request().postDataJSON())
+      const request = route.request()
+      const corsHeaders = {
+        'Access-Control-Allow-Origin': 'https://www.thestarters.com',
+        'Access-Control-Allow-Methods': 'POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type',
+      }
+
+      if (request.method() === 'OPTIONS') {
+        await route.fulfill({ status: 204, headers: corsHeaders })
+        return
+      }
+
+      assert.equal(request.method(), 'POST')
+      validationRequests.push(request.postDataJSON())
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
+        headers: corsHeaders,
         body: JSON.stringify({
           valid: true,
           status: 'active',

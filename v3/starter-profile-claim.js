@@ -17,11 +17,11 @@
 
   var WRAPPER_SELECTOR = '[data-starter-claim="wrapper"]'
   var FORM_SELECTOR = 'form[data-starter-claim="form"][data-ms-form="signup"]'
-  var TOKEN_FIELD_SELECTOR = '[data-ms-member="starter-claim-token"]'
+  var TOKEN_FIELD_SELECTOR = 'input[type="hidden"][data-ms-member="starter-claim-token"]'
   var ENDPOINT_ATTRIBUTE = 'data-starter-claim-validate-url'
   var QUERY_PARAMETER = 'claim'
-  var ALLOWED_API_ORIGIN = 'https://x08a-5ko8-jj1r.n7c.xano.io'
-  var ALLOWED_API_PREFIX = '/api:KZf7nFnk/starter_profile_claim/'
+  var VALIDATION_URL =
+    'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/starter_profile_claim/validate'
   var TOKEN_PATTERN = /^[A-Za-z0-9_-]{32,128}$/
   var PROFILE_PATH_PATTERN = /^\/hire\/[A-Za-z0-9][A-Za-z0-9-]*\/?$/
   var REQUEST_TIMEOUT_MS = 12000
@@ -43,10 +43,6 @@
     try {
       console.warn(LOG_PREFIX + ' ' + message)
     } catch (error) {}
-  }
-
-  function clean(value) {
-    return typeof value === 'string' ? value.trim() : ''
   }
 
   function close(wrapper, state) {
@@ -75,7 +71,7 @@
       var params = new URLSearchParams(window.location.search || '')
       var values = params.getAll(QUERY_PARAMETER)
       if (values.length !== 1) return ''
-      var token = clean(values[0])
+      var token = values[0]
       return TOKEN_PATTERN.test(token) ? token : ''
     } catch (error) {
       return ''
@@ -83,24 +79,15 @@
   }
 
   function profilePath() {
-    var pathname = clean(window.location && window.location.pathname)
+    var pathname = window.location && window.location.pathname
+    if (typeof pathname !== 'string') return ''
     if (!PROFILE_PATH_PATTERN.test(pathname)) return ''
     return pathname.length > 1 && pathname.endsWith('/') ? pathname.slice(0, -1) : pathname
   }
 
   function validationUrl(wrapper) {
-    var raw = clean(wrapper && wrapper.getAttribute(ENDPOINT_ATTRIBUTE))
-    if (!raw) return ''
-
-    try {
-      var parsed = new URL(raw)
-      if (parsed.origin !== ALLOWED_API_ORIGIN) return ''
-      if (parsed.pathname.indexOf(ALLOWED_API_PREFIX) !== 0) return ''
-      if (parsed.search || parsed.hash || parsed.username || parsed.password) return ''
-      return parsed.href
-    } catch (error) {
-      return ''
-    }
+    var raw = wrapper && wrapper.getAttribute(ENDPOINT_ATTRIBUTE)
+    return raw === VALIDATION_URL ? raw : ''
   }
 
   function scrubTokenFromUrl() {
@@ -134,7 +121,7 @@
 
   function responseMatches(body, path) {
     if (!body || body.valid !== true || body.status !== 'active') return false
-    return clean(body.profile_path) === path
+    return body.profile_path === path
   }
 
   async function init() {
