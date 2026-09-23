@@ -705,6 +705,8 @@ test('allows reviewed Brand payment routes on dashboards and Hire', async () => 
     'brand/booking/payment-method-replace/v3',
     'brand/payment-method/setup/v3',
     'brand/payment-method/set-default/v3',
+    // Saved-card list used by the Paid card picker (GET, Brand-authenticated).
+    'brand/payment-methods/v3',
   ]
 
   for (const route of paymentRoutes) {

@@ -738,12 +738,30 @@
     const wrap = document.createElement('label')
     wrap.setAttribute('data-payment-consent', marker)
     wrap.setAttribute('class', 'payment-consent')
+    // One clickable row; the site's input reset must not hide the checkbox.
+    if (wrap.style) {
+      wrap.style.display = 'flex'
+      wrap.style.alignItems = 'flex-start'
+      wrap.style.gap = '0.5rem'
+      wrap.style.cursor = 'pointer'
+    }
     const input = document.createElement('input')
     input.type = 'checkbox'
     input.setAttribute('type', 'checkbox')
     input.setAttribute('data-payment-consent-input', '')
     input.setAttribute('aria-label', 'Payment authorization')
     input.checked = false
+    if (input.style) {
+      // Webflow's reset sets appearance:none on inputs, which collapses an unstyled checkbox to 0x0.
+      input.style.appearance = 'auto'
+      input.style.webkitAppearance = 'checkbox'
+      input.style.width = '16px'
+      input.style.height = '16px'
+      input.style.minWidth = '16px'
+      input.style.margin = '0.2rem 0 0'
+      input.style.opacity = '1'
+      input.style.flex = '0 0 auto'
+    }
     const text = document.createElement('span')
     text.setAttribute('data-payment-consent-text', '')
     text.textContent = CONSENT_TEXT

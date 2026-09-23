@@ -60,6 +60,7 @@
     '/api:tCpV3oqd/brand/booking/payment-method-replace/v3',
     '/api:tCpV3oqd/brand/payment-method/setup/v3',
     '/api:tCpV3oqd/brand/payment-method/set-default/v3',
+    '/api:tCpV3oqd/brand/payment-methods/v3',
     '/api:tCpV3oqd/brand/payment-readiness/v3',
     '/api:tCpV3oqd/brand/booking/request/v3',
     '/api:tCpV3oqd/brands/customer/get/v3',

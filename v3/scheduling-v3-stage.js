@@ -51,6 +51,7 @@
     'brand/booking/request': 'brand/booking/request/v3',
     'brand/payment-method/setup': 'brand/payment-method/setup/v3',
     'brand/payment-method/set-default': 'brand/payment-method/set-default/v3',
+    'brand/payment-methods': 'brand/payment-methods/v3',
     'brand/payment-readiness': 'brand/payment-readiness/v3',
     'brands/customer/get': 'brands/customer/get/v3',
     'brands/update/customer_id': 'brands/update/customer_id/v3',
