@@ -31,6 +31,8 @@ function harness(options = {}) {
   let member = options.member || { id: 'mem_sb_membera' }
   let memberError = null
   let memberLookup = null
+  let memberstackCookieError = null
+  let xanoTokenLookup = null
   let memberstackCookie =
     options.memberstackCookie === undefined
       ? 'memberstack-cookie-a'
@@ -54,6 +56,7 @@ function harness(options = {}) {
       return { data: member }
     },
     async getMemberCookie() {
+      if (memberstackCookieError) throw memberstackCookieError
       return memberstackCookie
     },
     onAuthChange(listener) {
@@ -69,6 +72,7 @@ function harness(options = {}) {
     async getXanoAuthToken(options) {
       calls.xanoTokens += 1
       calls.xanoTokenArgs.push(options)
+      if (xanoTokenLookup) return xanoTokenLookup(options)
       return 'xano-bearer'
     },
     async fetch(url, init) {
@@ -140,6 +144,12 @@ function harness(options = {}) {
     },
     memberstackCookie(value) {
       memberstackCookie = value
+    },
+    memberstackCookieError(value) {
+      memberstackCookieError = value
+    },
+    xanoTokenLookup(value) {
+      xanoTokenLookup = value
     },
     async authChange() {
       await authListener()
@@ -509,6 +519,42 @@ test('transient member lookup error preserves the signed session', async () => {
   assert.equal(await open(state), session)
 })
 
+test('unchanged-cookie auth callback catches a deferred account switch', async () => {
+  const state = harness()
+  await open(state, {
+    onInvalidate: () => {
+      state.calls.invalidations += 1
+    },
+  })
+
+  const reconciliation = state.authChange()
+  setTimeout(() => {
+    state.member({ id: 'mem_sb_memberb' })
+    state.memberstackCookie('memberstack-cookie-b')
+  }, 5)
+  await reconciliation
+
+  assert.equal(state.calls.destroys, 1)
+  assert.equal(state.calls.invalidations, 1)
+  assert.equal(state.api.debugSnapshot(), null)
+})
+
+test('cookie lookup failure invalidates the active session', async () => {
+  const state = harness()
+  await open(state, {
+    onInvalidate: () => {
+      state.calls.invalidations += 1
+    },
+  })
+  state.memberstackCookieError(new Error('Memberstack unavailable'))
+
+  await state.authChange()
+
+  assert.equal(state.calls.destroys, 1)
+  assert.equal(state.calls.invalidations, 1)
+  assert.equal(state.api.debugSnapshot(), null)
+})
+
 test('same-member cookie rotation closes and reconnects the signed session', async () => {
   const state = harness()
   let reconnect
@@ -725,7 +771,7 @@ test('account switch during opening cannot construct the old member session', as
 
   await assert.rejects(
     open(state),
-    /superseded/,
+    /Member changed before authenticated request/,
   )
   assert.equal(state.calls.sessions.length, 0)
   assert.equal(state.api.debugSnapshot(), null)
@@ -733,12 +779,17 @@ test('account switch during opening cannot construct the old member session', as
 
 test('identity change during refresh destroys the old session', async () => {
   const state = harness()
-  await open(state)
+  await open(state, {
+    onInvalidate: () => {
+      state.calls.invalidations += 1
+    },
+  })
   const fetcher = state.calls.sessions[0].tokenFetcher
   await fetcher()
   state.member({ id: 'mem_sb_memberb' })
   await assert.rejects(fetcher(), /changed before/)
   assert.equal(state.calls.destroys, 1)
+  assert.equal(state.calls.invalidations, 1)
 })
 
 test('authentication denial is not retried', async () => {
@@ -887,6 +938,27 @@ test('conversation authorization denial is not retried', async () => {
     { forceRefresh: false },
     { forceRefresh: false },
   ])
+})
+
+test('conversation authorization cannot dispatch after bearer identity switches', async () => {
+  const state = harness()
+  await open(state)
+  const before = state.calls.fetches.length
+  state.xanoTokenLookup(() => {
+    state.member({ id: 'mem_sb_memberb' })
+    state.memberstackCookie('memberstack-cookie-b')
+    return 'member-b-bearer'
+  })
+
+  await assert.rejects(
+    state.api.authorizeConversation({
+      clientOwner: 'messages-v3',
+      counterpartId: 'mem_sb_memberb',
+    }),
+    /Member changed before authenticated request/,
+  )
+
+  assert.equal(state.calls.fetches.length, before)
 })
 
 test('nonparticipant C cannot accept an A/B conversation receipt', async () => {

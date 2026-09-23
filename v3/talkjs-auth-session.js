@@ -236,12 +236,31 @@
     return sharedToken
   }
 
-  async function xanoRequest(memberstack, url, init, forceRefresh) {
+  async function assertExpectedIdentity(memberstack, memberId, cookie) {
+    var beforeCookie = await memberstack.getMemberCookie()
+    var member = await currentMember(memberstack)
+    var afterCookie = await memberstack.getMemberCookie()
+    if (
+      !cookie ||
+      beforeCookie !== cookie ||
+      afterCookie !== cookie ||
+      member.id !== memberId
+    ) {
+      throw identityError('Member changed before authenticated request')
+    }
+  }
+
+  async function xanoRequest(memberstack, url, init, forceRefresh, identity) {
     var response
     for (var attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
       var bearer = await xanoBearer(
         memberstack,
         forceRefresh || attempt > 0,
+      )
+      await assertExpectedIdentity(
+        memberstack,
+        identity.memberId,
+        identity.memberstackCookie,
       )
       response = await window.fetch(
         url,
@@ -280,7 +299,7 @@
           },
           body: '{}',
           credentials: 'omit',
-        }, attempt > 0)
+        }, attempt > 0, options)
         var body = await response.json().catch(function () {
           return null
         })
@@ -336,9 +355,10 @@
       throw identityError('TalkJS client does not own the active session')
     }
 
-    var member = await currentMember(active.memberstack)
-    if (member.id !== active.memberId) {
-      destroy('member-change')
+    var owned = active
+    var member = await currentMember(owned.memberstack)
+    if (member.id !== owned.memberId) {
+      await destroyAndInvalidate('member-change')
       throw identityError('Member changed before conversation authorization')
     }
 
@@ -363,7 +383,7 @@
     var body = pairMode
       ? { mode: 'pair', counterpart_id: counterpartId }
       : { mode: 'existing', conversation_id: conversationId }
-    var response = await xanoRequest(active.memberstack, config.conversationUrl, {
+    var response = await xanoRequest(owned.memberstack, config.conversationUrl, {
       method: 'POST',
       headers: {
         Accept: 'application/json',
@@ -371,7 +391,7 @@
       },
       body: JSON.stringify(body),
       credentials: 'omit',
-    }, false)
+    }, false, owned)
     var receipt = await response.json().catch(function () {
       return null
     })
@@ -379,9 +399,9 @@
       throw responseError('TalkJS conversation authorization failed', response.status)
     }
 
-    var after = await currentMember(active.memberstack)
-    if (!active || after.id !== active.memberId) {
-      destroy('member-change')
+    var after = await currentMember(owned.memberstack)
+    if (active !== owned || after.id !== owned.memberId) {
+      await destroyAndInvalidate('member-change')
       throw identityError('Member changed during conversation authorization')
     }
     var returnedConversationId = String(
@@ -393,13 +413,13 @@
     if (
       !receipt ||
       receipt.authorized !== true ||
-      receipt.actor_id !== active.memberId ||
-      receipt.data_environment !== active.environment ||
+      receipt.actor_id !== owned.memberId ||
+      receipt.data_environment !== owned.environment ||
       !CONVERSATION_ID_PATTERN.test(returnedConversationId) ||
       !MEMBER_ID_PATTERN.test(returnedCounterpartId) ||
       !exactParticipantPair(
         receipt.participant_ids,
-        active.memberId,
+        owned.memberId,
         returnedCounterpartId,
       ) ||
       (pairMode && returnedCounterpartId !== counterpartId) ||
@@ -428,6 +448,12 @@
     return reason || 'destroyed'
   }
 
+  async function destroyAndInvalidate(reason) {
+    var invalidators = active ? active.invalidators : {}
+    destroy(reason)
+    await invalidateViews(invalidators)
+  }
+
   async function reconcileMemberstack() {
     var owned = active
     var opening = pending
@@ -437,12 +463,43 @@
     try {
       cookie = await lifecycle.memberstack.getMemberCookie()
     } catch (error) {
+      var failedInvalidators = lifecycle.invalidators
+      destroy('auth-unavailable')
+      await invalidateViews(failedInvalidators)
       return
+    }
+    if (cookie === lifecycle.memberstackCookie) {
+      await wait(IDENTITY_RETRY_DELAY_MS)
+      var deferredIdentity = await stableIdentity(
+        lifecycle.memberstack,
+        lifecycle.memberId,
+      )
+      if (
+        (owned && active !== owned) ||
+        (!owned && pending !== opening)
+      ) {
+        return
+      }
+      if (
+        deferredIdentity.status === 'same' &&
+        deferredIdentity.cookie === lifecycle.memberstackCookie
+      ) {
+        return
+      }
+      if (deferredIdentity.status === 'unresolved') {
+        try {
+          cookie = await lifecycle.memberstack.getMemberCookie()
+          if (cookie === lifecycle.memberstackCookie) return
+        } catch (error) {
+          cookie = null
+        }
+      } else {
+        cookie = deferredIdentity.cookie || null
+      }
     }
     if (
       (owned && active !== owned) ||
-      (!owned && pending !== opening) ||
-      cookie === lifecycle.memberstackCookie
+      (!owned && pending !== opening)
     ) {
       return
     }
@@ -556,6 +613,7 @@
       var requestOptions = {
         memberstack: options.memberstack,
         memberId: memberId,
+        memberstackCookie: memberstackCookie,
         environment: environment,
         tokenUrl: config.tokenUrl,
       }
@@ -594,7 +652,7 @@
           }
           return refreshed.token
         } catch (error) {
-          destroy('refresh-failed')
+          await destroyAndInvalidate('refresh-failed')
           throw error
         }
       }
