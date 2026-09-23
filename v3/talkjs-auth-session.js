@@ -112,6 +112,15 @@
     return member
   }
 
+  async function currentSessionCookie(memberstack) {
+    if (!memberstack || typeof memberstack.getMemberCookie !== 'function') {
+      throw authenticationError('Memberstack session is unavailable')
+    }
+    var cookie = await memberstack.getMemberCookie()
+    if (!cookie) throw authenticationError('No authenticated Memberstack session')
+    return cookie
+  }
+
   function meId(me) {
     var value = me && (me.id || (me.fields && me.fields.id))
     return value === undefined || value === null ? '' : String(value)
@@ -367,11 +376,25 @@
 
   async function reconcileMemberstack() {
     if (!active) return
+    var cookie
+    try {
+      cookie = await active.memberstack.getMemberCookie()
+    } catch (error) {
+      return
+    }
+    if (!active) return
+    if (!cookie) {
+      destroy('logout')
+      return
+    }
+    if (cookie !== active.memberstackCookie) {
+      destroy('member-change')
+      return
+    }
     var member
     try {
       member = await currentMember(active.memberstack)
     } catch (error) {
-      destroy('logout')
       return
     }
     if (!active || member.id !== active.memberId) destroy('member-change')
@@ -387,7 +410,7 @@
     }
     wiredMemberstack = memberstack
     memberstack.onAuthChange(function () {
-      reconcileMemberstack()
+      return reconcileMemberstack()
     })
   }
 
@@ -399,6 +422,7 @@
     if (!options.Talk || typeof options.Talk.Session !== 'function') {
       throw new Error('TalkJS is unavailable')
     }
+    var memberstackCookie = await currentSessionCookie(options.memberstack)
     var member = await currentMember(options.memberstack)
     var memberId = String(member.id)
     if (
@@ -483,6 +507,7 @@
         memberId: memberId,
         appId: expectedAppId,
         environment: environment,
+        memberstackCookie: memberstackCookie,
         clientOwners: pendingState.clientOwners,
       }
       wireMemberstack(options.memberstack)

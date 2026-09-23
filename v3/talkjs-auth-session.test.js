@@ -29,6 +29,11 @@ function jsonResponse(body, status = 200) {
 
 function harness(options = {}) {
   let member = options.member || { id: 'mem_sb_membera' }
+  let memberError = null
+  let memberstackCookie =
+    options.memberstackCookie === undefined
+      ? 'memberstack-cookie-a'
+      : options.memberstackCookie
   let authListener
   const calls = { fetches: [], sessions: [], destroys: 0, xanoTokens: 0, xanoTokenArgs: [] }
   const config = {
@@ -43,7 +48,11 @@ function harness(options = {}) {
   }
   const memberstack = {
     async getCurrentMember() {
+      if (memberError) throw memberError
       return { data: member }
+    },
+    async getMemberCookie() {
+      return memberstackCookie
     },
     onAuthChange(listener) {
       authListener = listener
@@ -120,9 +129,14 @@ function harness(options = {}) {
     member(value) {
       member = value
     },
+    memberError(value) {
+      memberError = value
+    },
+    memberstackCookie(value) {
+      memberstackCookie = value
+    },
     async authChange() {
-      authListener()
-      await new Promise((resolve) => setImmediate(resolve))
+      await authListener()
     },
   }
 }
@@ -297,6 +311,7 @@ test('all served client owners share one session and logout destroys it once', a
   )
 
   state.member(null)
+  state.memberstackCookie(null)
   await state.authChange()
 
   assert.equal(state.calls.destroys, 1)
@@ -490,15 +505,43 @@ test('logout destroys and clears the session owner', async () => {
   const state = harness()
   await open(state)
   state.member(null)
+  state.memberstackCookie(null)
   await state.authChange()
   assert.equal(state.calls.destroys, 1)
   assert.equal(state.api.debugSnapshot(), null)
+})
+
+test('transient empty member notification preserves the signed session', async () => {
+  const state = harness()
+  const session = await open(state)
+
+  state.member(null)
+  await state.authChange()
+
+  assert.equal(state.calls.destroys, 0)
+  assert.equal(state.api.debugSnapshot().memberId, 'mem_sb_membera')
+  state.member({ id: 'mem_sb_membera' })
+  assert.equal(await open(state), session)
+})
+
+test('transient member lookup error preserves the signed session', async () => {
+  const state = harness()
+  const session = await open(state)
+
+  state.memberError(new Error('Memberstack DOM is refreshing'))
+  await state.authChange()
+
+  assert.equal(state.calls.destroys, 0)
+  assert.equal(state.api.debugSnapshot().memberId, 'mem_sb_membera')
+  state.memberError(null)
+  assert.equal(await open(state), session)
 })
 
 test('identity change destroys the old session', async () => {
   const state = harness()
   await open(state)
   state.member({ id: 'mem_sb_memberb' })
+  state.memberstackCookie('memberstack-cookie-b')
   await state.authChange()
   assert.equal(state.calls.destroys, 1)
   assert.equal(state.api.debugSnapshot(), null)
