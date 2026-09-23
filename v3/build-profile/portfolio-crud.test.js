@@ -29,7 +29,10 @@ function createFixture({ dropdown = false } = {}) {
   const grid = element({
     querySelector(selector) { return selector === '.portfolio_card' ? template : null; },
   });
-  const createSubmit = element();
+  const createSubmitLabel = element({ textContent: 'Save Work Highlight' });
+  const createSubmit = element({
+    querySelector(selector) { return selector === 'div:first-child' ? createSubmitLabel : null; },
+  });
   const titleInput = element({ value: 'A new highlight' });
   const imagesInput = element({ files: [{ name: 'cover.png', size: 1 }] });
   const profileDropdown = dropdown ? element() : null;
@@ -58,6 +61,7 @@ function createFixture({ dropdown = false } = {}) {
   let boot;
   let created = 0;
   let failNextCreate = false;
+  let heldCreate = null;
   const context = vm.createContext({
     document,
     window,
@@ -73,6 +77,11 @@ function createFixture({ dropdown = false } = {}) {
     async fetch(url) {
       if (url.includes('/Create_portfolio')) {
         created += 1;
+        if (heldCreate) {
+          heldCreate.started();
+          await heldCreate.wait;
+          heldCreate = null;
+        }
         if (failNextCreate) {
           failNextCreate = false;
           return { ok: false, json: async () => ({ message: 'Create failed' }) };
@@ -104,7 +113,17 @@ function createFixture({ dropdown = false } = {}) {
       ]);
     },
     failNextCreate() { failNextCreate = true; },
+    holdNextCreate() {
+      let started;
+      let release;
+      const whenStarted = new Promise((resolve) => { started = resolve; });
+      const wait = new Promise((resolve) => { release = resolve; });
+      heldCreate = { started, wait };
+      return { whenStarted, release };
+    },
     get created() { return created; },
+    createSubmit,
+    createSubmitLabel,
     titleInput,
     profileDropdown,
     errors,
@@ -134,6 +153,24 @@ test('Build Profile ignores a second save click while creation is in flight', as
   assert.deepEqual(fixture.errors, []);
 });
 
+test('Build Profile shows Saving while a highlight is being created', async () => {
+  const fixture = createFixture();
+  await fixture.boot();
+  await fixture.selectImage();
+  const pendingCreate = fixture.holdNextCreate();
+
+  const save = fixture.save();
+  await pendingCreate.whenStarted;
+
+  assert.equal(fixture.createSubmitLabel.textContent, 'Saving...');
+  assert.equal(fixture.createSubmit.style.pointerEvents, 'none');
+  pendingCreate.release();
+  await save;
+
+  assert.equal(fixture.createSubmitLabel.textContent, 'Save Work Highlight');
+  assert.equal(fixture.createSubmit.style.pointerEvents, 'none');
+});
+
 test('Build Profile can retry after a failed creation', async () => {
   const fixture = createFixture({ dropdown: true });
   await fixture.boot();
@@ -141,6 +178,8 @@ test('Build Profile can retry after a failed creation', async () => {
   fixture.failNextCreate();
 
   await fixture.save();
+  assert.equal(fixture.createSubmitLabel.textContent, 'Save Work Highlight');
+  assert.equal(fixture.createSubmit.style.pointerEvents, 'auto');
   await fixture.save();
 
   assert.equal(fixture.created, 2);

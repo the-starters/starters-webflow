@@ -921,7 +921,7 @@ function starterProfileCompanyMonthYearLabel(value) {
             if (submitAction === 'deleting') {
               ctaText = 'Deleting...';
             } else if (submitAction === 'adding') {
-              ctaText = 'Adding...';
+              ctaText = 'Saving...';
             }
           }
 
