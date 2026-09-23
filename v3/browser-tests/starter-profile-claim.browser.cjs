@@ -7,8 +7,9 @@ const { chromium } = require('playwright')
 const root = path.resolve(__dirname, '../..')
 const scriptPath = path.join(root, 'v3/starter-profile-claim.js')
 const token = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef0123456789_-A'
-const validationUrl =
-  'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/starter_profile_claim/validate'
+const exchangeCode = 'zyxwvutsrqponmlkjihgfedcba9876543210_-ZYXWV'
+const prepareUrl =
+  'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/starter_profile_claim/prepare'
 
 function markup() {
   return `<!doctype html>
@@ -26,11 +27,11 @@ function markup() {
         <main>Starter profile</main>
         <section class="claim-modal hide" hidden aria-hidden="true"
           data-starter-claim="wrapper"
-          data-starter-claim-validate-url="${validationUrl}">
+          data-starter-claim-prepare-url="${prepareUrl}">
           <form data-starter-claim="form" data-ms-form="signup">
             <h1>Claim your profile</h1>
             <input type="email" data-ms-member="email">
-            <input type="hidden" data-ms-member="starter-claim-token" autocomplete="off">
+            <input type="hidden" data-ms-member="starter-claim-exchange" autocomplete="off">
             <button type="submit">Claim profile</button>
           </form>
         </section>
@@ -45,13 +46,15 @@ function markup() {
     headless: true,
   })
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
-  const validationRequests = []
+  const prepareRequests = []
+  const requestPageUrls = []
+  let failPrepare = false
 
   try {
     await page.route('https://www.thestarters.com/**', (route) =>
       route.fulfill({ status: 200, contentType: 'text/html', body: markup() }),
     )
-    await page.route(validationUrl, async (route) => {
+    await page.route(prepareUrl, async (route) => {
       const request = route.request()
       const corsHeaders = {
         'Access-Control-Allow-Origin': 'https://www.thestarters.com',
@@ -65,7 +68,12 @@ function markup() {
       }
 
       assert.equal(request.method(), 'POST')
-      validationRequests.push(request.postDataJSON())
+      prepareRequests.push(request.postDataJSON())
+      requestPageUrls.push(page.url())
+      if (failPrepare) {
+        await route.abort('failed')
+        return
+      }
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -74,6 +82,7 @@ function markup() {
           valid: true,
           status: 'active',
           profile_path: '/hire/jane-doe',
+          exchange_code: exchangeCode,
         }),
       })
     })
@@ -87,19 +96,45 @@ function markup() {
       display: getComputedStyle(wrapper).display,
       hasHide: wrapper.classList.contains('hide'),
       hidden: wrapper.hidden,
-      token: wrapper.querySelector('[data-ms-member="starter-claim-token"]').value,
+      exchangeCode: wrapper.querySelector('[data-ms-member="starter-claim-exchange"]').value,
       url: location.href,
     }))
 
-    assert.deepEqual(validationRequests, [{ token, profile_path: '/hire/jane-doe' }])
+    assert.deepEqual(prepareRequests, [{ token, profile_path: '/hire/jane-doe' }])
+    assert.deepEqual(requestPageUrls, [
+      'https://www.thestarters.com/hire/jane-doe?utm_source=gift',
+    ])
     assert.deepEqual(ready, {
       ariaHidden: 'false',
       display: 'grid',
       hasHide: false,
       hidden: false,
-      token,
+      exchangeCode,
       url: 'https://www.thestarters.com/hire/jane-doe?utm_source=gift',
     })
+
+    failPrepare = true
+    await page.goto(`https://www.thestarters.com/hire/jane-doe?claim=${token}&utm_source=retry#bio`)
+    await page.addScriptTag({ path: scriptPath })
+    await page.waitForSelector('[data-starter-claim-state="unavailable"]', { state: 'attached' })
+
+    const failed = await page.locator('[data-starter-claim="wrapper"]').evaluate((wrapper) => ({
+      exchangeCode: wrapper.querySelector('[data-ms-member="starter-claim-exchange"]').value,
+      hasHide: wrapper.classList.contains('hide'),
+      hidden: wrapper.hidden,
+      url: location.href,
+    }))
+
+    assert.deepEqual(failed, {
+      exchangeCode: '',
+      hasHide: true,
+      hidden: true,
+      url: 'https://www.thestarters.com/hire/jane-doe?utm_source=retry#bio',
+    })
+    assert.deepEqual(requestPageUrls, [
+      'https://www.thestarters.com/hire/jane-doe?utm_source=gift',
+      'https://www.thestarters.com/hire/jane-doe?utm_source=retry#bio',
+    ])
 
     await page.goto('https://www.thestarters.com/hire/jane-doe?utm_source=gift')
     await page.addScriptTag({ path: scriptPath })
@@ -112,7 +147,7 @@ function markup() {
       state: wrapper.getAttribute('data-starter-claim-state'),
     }))
 
-    assert.equal(validationRequests.length, 1, 'a normal Hire view must not call validation')
+    assert.equal(prepareRequests.length, 2, 'a normal Hire view must not call prepare')
     assert.deepEqual(closed, {
       ariaHidden: 'true',
       display: 'none',
@@ -121,7 +156,7 @@ function markup() {
       state: 'closed',
     })
 
-    console.log(JSON.stringify({ ready, closed, validationRequests }))
+    console.log(JSON.stringify({ ready, failed, closed, prepareRequests, requestPageUrls }))
   } finally {
     await browser.close()
   }

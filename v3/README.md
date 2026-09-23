@@ -666,17 +666,18 @@ node --test v3/starters-ms-redirect.test.js
 
 `starter-profile-claim.js` controls the Claim Profile component on the Hire CMS
 template. The outer wrapper remains authored with its `hide` class,
-`hidden="hidden"`, and `aria-hidden="true"`. The controller removes those only
-after Xano validates one opaque `?claim=` capability for the exact current
-`/hire/<slug>` path. No query, malformed or repeated input, incomplete markup,
-an expired, claimed, or revoked token, a path mismatch, timeout, or network
-failure stays fail-closed.
+`hidden="hidden"`, and `aria-hidden="true"`. The controller synchronously removes
+one opaque `?claim=` capability from the URL, sends it only to Xano's exact
+prepare route, and removes the authored hiding only after Xano returns a strict
+one-use exchange code for the exact current `/hire/<slug>` path. No query,
+malformed or repeated input, incomplete markup, an expired, claimed, or revoked
+token, a path mismatch, timeout, or network failure stays fail-closed.
 
 The complete Designer attribute contract, Xano claim-ledger contract, endpoint
 shapes, signup-consumption order, and release proof are in
 [STARTER-PROFILE-CLAIM-WIRING.md](../docs/wiring/STARTER-PROFILE-CLAIM-WIRING.md).
 Do not install or publish this frontend before that backend contract and the
-Memberstack `starter-claim-token` custom field are deployed and tested.
+Memberstack `starter-claim-exchange` custom field are deployed and tested.
 
 Run its focused test with:
 
