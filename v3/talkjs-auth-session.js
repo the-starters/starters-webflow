@@ -173,6 +173,26 @@
     return sharedToken
   }
 
+  async function xanoRequest(memberstack, url, init, forceRefresh) {
+    var response
+    for (var attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+      var bearer = await xanoBearer(
+        memberstack,
+        forceRefresh || attempt > 0,
+      )
+      response = await window.fetch(
+        url,
+        Object.assign({}, init, {
+          headers: Object.assign({}, init.headers, {
+            Authorization: 'Bearer ' + bearer,
+          }),
+        }),
+      )
+      if (response.status !== 401 || attempt + 1 >= MAX_ATTEMPTS) return response
+    }
+    return response
+  }
+
   function transient(error) {
     return (
       !error.status ||
@@ -189,17 +209,15 @@
         if (before.id !== options.memberId) {
           throw identityError('Member changed before TalkJS token refresh')
         }
-        var bearer = await xanoBearer(options.memberstack, attempt > 0)
-        var response = await window.fetch(options.tokenUrl, {
+        var response = await xanoRequest(options.memberstack, options.tokenUrl, {
           method: 'POST',
           headers: {
             Accept: 'application/json',
-            Authorization: 'Bearer ' + bearer,
             'Content-Type': 'application/json',
           },
           body: '{}',
           credentials: 'omit',
-        })
+        }, attempt > 0)
         var body = await response.json().catch(function () {
           return null
         })
@@ -279,20 +297,18 @@
     }
 
     var config = scriptConfig()
-    var bearer = await xanoBearer(active.memberstack, false)
     var body = pairMode
       ? { mode: 'pair', counterpart_id: counterpartId }
       : { mode: 'existing', conversation_id: conversationId }
-    var response = await window.fetch(config.conversationUrl, {
+    var response = await xanoRequest(active.memberstack, config.conversationUrl, {
       method: 'POST',
       headers: {
         Accept: 'application/json',
-        Authorization: 'Bearer ' + bearer,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(body),
       credentials: 'omit',
-    })
+    }, false)
     var receipt = await response.json().catch(function () {
       return null
     })

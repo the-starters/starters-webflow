@@ -205,6 +205,31 @@ test('Xano bridge receives the force-refresh option on retry', async () => {
   ])
 })
 
+test('token issuance retries one 401 with a refreshed Xano bearer', async () => {
+  let requests = 0
+  const state = harness({
+    fetch: async () => {
+      requests += 1
+      if (requests === 1) return jsonResponse({ error: 'expired bearer' }, 401)
+      return jsonResponse({
+        token: token(),
+        me_id: 'mem_sb_membera',
+        data_environment: 'test',
+        expires_in_seconds: 300,
+      })
+    },
+  })
+
+  await open(state)
+
+  assert.equal(state.calls.sessions.length, 1)
+  assert.equal(state.calls.fetches.length, 2)
+  assert.deepEqual(JSON.parse(JSON.stringify(state.calls.xanoTokenArgs)), [
+    { forceRefresh: false },
+    { forceRefresh: true },
+  ])
+})
+
 test('missing Xano auth bridge fails closed without putting Memberstack credentials in a URL', async () => {
   const state = harness({ noXanoBridge: true })
   state.memberstack.getMemberCookie = async () => 'memberstack-secret'
@@ -553,6 +578,88 @@ test('authorizes an existing deep link before returning its exact id', async () 
   })
   assert.equal(receipt.conversationId, 'legacy:membera|memberb')
   assert.equal(receipt.counterpartId, 'mem_sb_memberb')
+})
+
+test('conversation authorization retries one 401 without changing its intent', async () => {
+  let authorizationRequests = 0
+  const state = harness({
+    fetch: async (url, init) => {
+      if (url.endsWith('/user-token/v3')) {
+        return jsonResponse({
+          token: token(),
+          me_id: 'mem_sb_membera',
+          data_environment: 'test',
+          expires_in_seconds: 300,
+        })
+      }
+      authorizationRequests += 1
+      if (authorizationRequests === 1) {
+        return jsonResponse({ error: 'expired bearer' }, 401)
+      }
+      return jsonResponse({
+        authorized: true,
+        actor_id: 'mem_sb_membera',
+        counterpart_id: 'mem_sb_memberb',
+        participant_ids: ['mem_sb_membera', 'mem_sb_memberb'],
+        conversation_id: 'dm_v1_0123456789abcdef',
+        data_environment: 'test',
+      })
+    },
+  })
+  await open(state)
+
+  const receipt = await state.api.authorizeConversation({
+    clientOwner: 'messages-v3',
+    counterpartId: 'mem_sb_memberb',
+  })
+
+  assert.equal(receipt.conversationId, 'dm_v1_0123456789abcdef')
+  assert.equal(authorizationRequests, 2)
+  assert.deepEqual(JSON.parse(JSON.stringify(state.calls.xanoTokenArgs)), [
+    { forceRefresh: false },
+    { forceRefresh: false },
+    { forceRefresh: true },
+  ])
+  const authorizationBodies = state.calls.fetches
+    .filter(({ url }) => url.endsWith('/conversation/v3'))
+    .map(({ init }) => JSON.parse(init.body))
+  assert.deepEqual(authorizationBodies, [
+    { mode: 'pair', counterpart_id: 'mem_sb_memberb' },
+    { mode: 'pair', counterpart_id: 'mem_sb_memberb' },
+  ])
+})
+
+test('conversation authorization denial is not retried', async () => {
+  let authorizationRequests = 0
+  const state = harness({
+    fetch: async (url) => {
+      if (url.endsWith('/user-token/v3')) {
+        return jsonResponse({
+          token: token(),
+          me_id: 'mem_sb_membera',
+          data_environment: 'test',
+          expires_in_seconds: 300,
+        })
+      }
+      authorizationRequests += 1
+      return jsonResponse({ error: 'forbidden' }, 403)
+    },
+  })
+  await open(state)
+
+  await assert.rejects(
+    state.api.authorizeConversation({
+      clientOwner: 'messages-v3',
+      counterpartId: 'mem_sb_memberb',
+    }),
+    /authorization failed/,
+  )
+
+  assert.equal(authorizationRequests, 1)
+  assert.deepEqual(JSON.parse(JSON.stringify(state.calls.xanoTokenArgs)), [
+    { forceRefresh: false },
+    { forceRefresh: false },
+  ])
 })
 
 test('nonparticipant C cannot accept an A/B conversation receipt', async () => {
