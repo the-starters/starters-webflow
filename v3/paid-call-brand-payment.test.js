@@ -14,17 +14,19 @@ test('shared card setup refuses invalid or changed payment modes', async () => {
   const calls = []
   global.xanoAuthFetch = async (url, options) => {
     calls.push(url)
-    if (url.endsWith(api.SETUP_PATH)) return response({ client_secret: 'seti_test' })
+    if (url.endsWith(api.SETUP_PATH)) return response({ client_secret: 'seti_test_secret', setup_intent_id: 'seti_test' })
     if (url.endsWith(api.SET_DEFAULT_PATH)) return response({ bookable: true, environment: 'test' })
     if (url.endsWith(api.READINESS_PATH)) return response({ bookable: true, environment: 'live' })
     throw new Error('Unexpected command')
   }
   try {
     const attempt = {}
-    const settings = { environment: 'invalid', isCurrent: () => true,
-      stripe: { confirmCardSetup: async () => ({ setupIntent: { payment_method: 'pm_test' } }) }, card: {} }
+    const settings = { environment: 'invalid', isCurrent: () => true, consent: true,
+      stripe: { confirmCardSetup: async () => ({ setupIntent: { id: 'seti_test', payment_method: 'pm_test' } }) }, card: {} }
     await assert.rejects(api.completeCardSetupAttempt(attempt, settings), /environment is invalid/)
     assert.equal(calls.length, 0)
+    await assert.rejects(api.completeCardSetupAttempt(attempt, { ...settings, environment: 'test', consent: false }), /confirm the payment authorization/)
+    assert.equal(calls.length, 0, 'no setup request without explicit consent')
     await assert.rejects(api.completeCardSetupAttempt(attempt, { ...settings, environment: 'test' }), /environment changed/)
     assert.equal(attempt.ready, undefined)
     assert.ok(attempt.setupAttempt, 'failed readback keeps retry identity')
@@ -38,11 +40,17 @@ test('shared card setup refuses invalid or changed payment modes', async () => {
 test('saved card selection verifies the default and preserves command identity on retry', async () => {
   const previous = global.xanoAuthFetch
   const posts = []
+  const setups = []
+  const confirmations = []
   let currentDefault = 'pm_one'
   let failReadback = false
   const cards = () => ['pm_one', 'pm_two'].map(id => ({ id, brand: 'visa', last4: '4242',
     exp_month: 12, exp_year: 2030, is_default: currentDefault === id }))
   global.xanoAuthFetch = async (url, options) => {
+    if (options.method === 'POST' && url.endsWith(api.SETUP_PATH)) {
+      setups.push(JSON.parse(options.body))
+      return response({ environment: 'test', setup_intent_id: 'seti_saved' + setups.length, client_secret: 'secret_' + setups.length })
+    }
     if (options.method === 'POST') {
       posts.push(JSON.parse(options.body))
       currentDefault = posts.at(-1).payment_method_id
@@ -51,29 +59,41 @@ test('saved card selection verifies the default and preserves command identity o
     if (failReadback) { failReadback = false; throw new Error('readback unavailable') }
     return response({ environment: 'test', items: cards(), has_more: false, next_cursor: '' })
   }
+  const stripe = { confirmCardSetup: async (secret, options) => {
+    confirmations.push({ secret, payment_method: options.payment_method })
+    return { setupIntent: { id: 'seti_saved' + setups.length, payment_method: options.payment_method, status: 'succeeded' } }
+  } }
   try {
-    const selection = api.createSavedCardSelection('test')
+    const selection = api.createSavedCardSelection('test', { stripe: () => stripe })
     await selection.load()
     assert.equal(selection.snapshot().selectedId, 'pm_one')
     assert.equal(selection.select('pm_unknown'), false)
     assert.equal(selection.select('pm_two'), true)
+    await assert.rejects(selection.save(), /confirm the payment authorization/)
+    assert.equal(setups.length, 0, 'no SetupIntent without consent')
     failReadback = true
-    const first = selection.save()
-    assert.equal(selection.save(), first, 'double click reuses the in-flight operation')
+    const first = selection.save({ consent: true })
+    assert.equal(selection.save({ consent: true }), first, 'double click reuses the in-flight operation')
     assert.equal(selection.select('pm_one'), false)
     await assert.rejects(selection.load(), /busy/)
     await assert.rejects(first, /readback unavailable/)
     assert.equal(selection.snapshot().busy, false)
     assert.equal(selection.snapshot().cards.find(card => card.is_default).id, 'pm_one', 'no optimistic default label')
-    const saved = await selection.save()
+    const saved = await selection.save({ consent: true })
     assert.equal(saved.busy, false)
     assert.equal(saved.cards.find(card => card.is_default).id, 'pm_two')
     assert.deepEqual(posts[1], posts[0], 'readback failure retains the same idempotency key')
+    assert.equal(setups.length, 1, 'the retry reuses the confirmed SetupIntent instead of creating another')
+    assert.deepEqual(setups[0], { idempotency_key: setups[0].idempotency_key, off_session_consent: true, consent_version: api.CONSENT_VERSION })
+    assert.deepEqual(confirmations, [{ secret: 'secret_1', payment_method: 'pm_two' }], 'the chosen saved card is confirmed off-session once')
+    assert.deepEqual(posts[0], { setup_intent_id: 'seti_saved1', payment_method_id: 'pm_two', idempotency_key: posts[0].idempotency_key })
     saved.cards[0].last4 = '0000'
     assert.equal(selection.snapshot().cards[0].last4, '4242', 'callers cannot mutate internal display state')
     selection.select('pm_one')
-    await selection.save()
+    await selection.save({ consent: true })
     assert.notEqual(posts[2].idempotency_key, posts[1].idempotency_key)
+    assert.equal(posts[2].setup_intent_id, 'seti_saved2', 'a different card gets its own SetupIntent')
+    assert.notEqual(setups[1].idempotency_key, setups[0].idempotency_key)
     currentDefault = 'pm_two'
     await selection.load()
     assert.equal(selection.snapshot().selectedId, 'pm_one', 'Back preserves the selected card')
@@ -405,14 +425,58 @@ function attachPaymentModal(document, environment = 'test') {
   modal.appendChild(content)
   document.querySelector = selector => selector === '[popup-stripe-card]' ? modal : originalQuery(selector)
   const fetch = global.xanoAuthFetch
+  const setupPosts = []
+  const defaultPosts = []
   global.xanoAuthFetch = (url, options) => {
     if (url.includes(api.PAYMENT_METHODS_PATH)) return Promise.resolve(response({ environment, items: [
       { id: 'pm_reviewed', brand: 'visa', last4: '0042', exp_month: 12, exp_year: 2030, is_default: true },
     ], has_more: false, next_cursor: '' }))
-    if (url.endsWith(api.SET_DEFAULT_PATH)) return Promise.resolve(response({ environment, bookable: true }))
+    if (url.endsWith(api.SETUP_PATH)) {
+      setupPosts.push(JSON.parse(options.body))
+      return Promise.resolve(response({ environment, setup_intent_id: 'seti_reviewed', client_secret: 'seti_reviewed_secret' }))
+    }
+    if (url.endsWith(api.SET_DEFAULT_PATH)) {
+      defaultPosts.push(JSON.parse(options.body))
+      return Promise.resolve(response({ environment, bookable: true }))
+    }
     return fetch(url, options)
   }
-  return { modal, use, choose: () => use.click() }
+  // The saved-card path confirms an off-session SetupIntent for the chosen
+  // card. A test that installs no Stripe stub gets one that echoes the card.
+  if (typeof global.Stripe !== 'function') global.Stripe = stripeEchoStub()
+  function consentInput() { return modal.querySelector('[data-payment-consent-input]') }
+  return {
+    modal,
+    use,
+    setupPosts,
+    defaultPosts,
+    consentInput,
+    consent(checked = true) {
+      const input = consentInput()
+      if (!input) throw new Error('The consent control was not rendered')
+      input.checked = checked
+      if (input.listeners.change) input.listeners.change({ type: 'change' })
+    },
+    choose: () => {
+      const input = consentInput()
+      if (input) {
+        input.checked = true
+        if (input.listeners.change) input.listeners.change({ type: 'change' })
+      }
+      return use.click()
+    },
+  }
+}
+
+function stripeEchoStub(counter) {
+  return () => ({
+    elements: () => ({ create: () => ({ clear() {}, mount() {}, destroy() {}, on() {} }) }),
+    confirmCardSetup: async (secret, options) => {
+      if (counter) counter.confirmations += 1
+      const method = options && typeof options.payment_method === 'string' ? options.payment_method : 'pm_lifecycle'
+      return { setupIntent: { id: 'seti_reviewed', payment_method: method, status: 'succeeded' } }
+    },
+  })
 }
 
 function guestControl() {
@@ -565,17 +629,21 @@ test('setup retries reuse one bounded attempt key', async () => {
   }
 
   try {
-    const attempt = api.createSetupAttempt('setup-attempt-123')
+    assert.throws(() => api.createSetupAttempt('setup-attempt-123'), /confirm the payment authorization/)
+    assert.throws(() => api.createSetupAttempt('setup-attempt-123', { consent: 'yes' }), /confirm the payment authorization/)
+    assert.equal(requests.length, 0, 'consent is checked before any request')
+    const attempt = api.createSetupAttempt('setup-attempt-123', { consent: true })
     await attempt.run()
     await attempt.run()
 
     assert.equal(attempt.idempotencyKey, 'setup-attempt-123')
+    assert.equal(attempt.consentVersion, 'paid-call-off-session-v1')
     assert.equal(requests.length, 2)
     assert.deepEqual(
       requests.map(({ options }) => JSON.parse(options.body)),
       [
-        { idempotency_key: 'setup-attempt-123' },
-        { idempotency_key: 'setup-attempt-123' },
+        { idempotency_key: 'setup-attempt-123', off_session_consent: true, consent_version: 'paid-call-off-session-v1' },
+        { idempotency_key: 'setup-attempt-123', off_session_consent: true, consent_version: 'paid-call-off-session-v1' },
       ],
     )
   } finally {
@@ -595,12 +663,14 @@ test('default-card retries reuse a key and send no client identity or environmen
     const attempt = api.createDefaultSelectionAttempt(
       'pm_card_one',
       'default-attempt-123',
+      'seti_cardone',
     )
     await attempt.run()
     await attempt.run()
 
     assert.equal(requests[0].url, api.XANO_BASE + api.SET_DEFAULT_PATH)
     assert.deepEqual(JSON.parse(requests[0].options.body), {
+      setup_intent_id: 'seti_cardone',
       payment_method_id: 'pm_card_one',
       idempotency_key: 'default-attempt-123',
     })
@@ -615,9 +685,9 @@ test('default-card retries reuse a key and send no client identity or environmen
 
 test('A to B to A selections receive three independent attempt keys', () => {
   const attempts = [
-    api.createDefaultSelectionAttempt('pm_a'),
-    api.createDefaultSelectionAttempt('pm_b'),
-    api.createDefaultSelectionAttempt('pm_a'),
+    api.createDefaultSelectionAttempt('pm_a', undefined, 'seti_a'),
+    api.createDefaultSelectionAttempt('pm_b', undefined, 'seti_b'),
+    api.createDefaultSelectionAttempt('pm_a', undefined, 'seti_a2'),
   ]
   const keys = attempts.map(({ idempotencyKey }) => idempotencyKey)
   assert.equal(new Set(keys).size, 3)
@@ -628,13 +698,34 @@ test('A to B to A selections receive three independent attempt keys', () => {
 
 test('invalid payment methods and keys fail before any request', () => {
   assert.throws(
-    () => api.createDefaultSelectionAttempt('card_not_a_payment_method'),
+    () => api.createDefaultSelectionAttempt('card_not_a_payment_method', undefined, 'seti_valid'),
     /valid Stripe PaymentMethod/,
   )
   assert.throws(
-    () => api.createDefaultSelectionAttempt('pm_valid', 'x'.repeat(129)),
+    () => api.createDefaultSelectionAttempt('pm_valid', 'x'.repeat(129), 'seti_valid'),
     /bounded idempotency key/,
   )
+  assert.throws(
+    () => api.createDefaultSelectionAttempt('pm_valid', 'key'),
+    /valid Stripe SetupIntent/,
+  )
+  assert.throws(
+    () => api.createDefaultSelectionAttempt('pm_valid', 'key', 'pi_not_a_setup_intent'),
+    /valid Stripe SetupIntent/,
+  )
+  assert.throws(
+    () => api.createDefaultSelectionAttempt('pm_valid', 'key', 'seti_' + 'x'.repeat(130)),
+    /valid Stripe SetupIntent/,
+  )
+})
+
+test('the SetupIntent handed to set-default is the confirmed one and a disagreement stops', () => {
+  assert.equal(api.resolveSetupIntentId({ setup_intent_id: 'seti_route' }, { setupIntent: { id: 'seti_route' } }), 'seti_route')
+  assert.equal(api.resolveSetupIntentId({ setup_intent_id: 'seti_route' }, { setupIntent: {} }), 'seti_route', 'an older route echo covers a Stripe object without id')
+  assert.equal(api.resolveSetupIntentId({}, { setupIntent: { id: 'seti_stripe' } }), 'seti_stripe', 'the published route without an echo still binds Stripe\'s object')
+  assert.throws(() => api.resolveSetupIntentId({ setup_intent_id: 'seti_route' }, { setupIntent: { id: 'seti_other' } }), /changed during confirmation/)
+  assert.throws(() => api.resolveSetupIntentId({}, { setupIntent: {} }), /did not return a SetupIntent/)
+  assert.throws(() => api.resolveSetupIntentId({ setup_intent_id: 'pi_wrong' }, {}), /valid Stripe SetupIntent/)
 })
 
 test('the shared token bridge fallback sends a Bearer-authenticated request', async () => {
@@ -653,7 +744,7 @@ test('the shared token bridge fallback sends a Bearer-authenticated request', as
 
   try {
     await api
-      .createDefaultSelectionAttempt('pm_valid', 'attempt-123')
+      .createDefaultSelectionAttempt('pm_valid', 'attempt-123', 'seti_valid')
       .run()
     assert.equal(requests[0].options.headers.Authorization, 'Bearer xano-token')
   } finally {
@@ -3918,9 +4009,10 @@ function makePaidLifecycleFixture(fetch, fixtureOptions = {}) {
         }
       },
     }),
-    confirmCardSetup: async () => {
+    confirmCardSetup: async (secret, options) => {
       cardConfirmations += 1
-      return { setupIntent: { payment_method: 'pm_lifecycle' } }
+      const method = options && typeof options.payment_method === 'string' ? options.payment_method : 'pm_lifecycle'
+      return { setupIntent: { id: 'seti_reviewed', payment_method: method, status: 'succeeded' } }
     },
   })
   global.xanoAuthFetch = fetch
@@ -4356,13 +4448,17 @@ test('booking retry retains the reviewed card, draft, and booking attempt', asyn
     assert.equal(bookingBodies.length, 0, 'payment review never creates a booking')
     await fixture.payment.choose()
     assert.equal(bookingBodies.length, 0, 'confirming a card never creates a booking')
+    assert.equal(fixture.getCardConfirmations(), 1, 'the saved card is confirmed off-session exactly once')
+    assert.deepEqual(fixture.payment.setupPosts, [{ idempotency_key: fixture.payment.setupPosts[0].idempotency_key, off_session_consent: true, consent_version: api.CONSENT_VERSION }])
+    assert.deepEqual(fixture.payment.defaultPosts, [{ setup_intent_id: 'seti_reviewed', payment_method_id: 'pm_reviewed', idempotency_key: fixture.payment.defaultPosts[0].idempotency_key }])
     await assert.rejects(fixture.calendars[0].options.onConfirm(slot), /temporary booking failure/)
     assert.equal(draftClears, 0, 'failed booking retains the generated draft')
     assert.ok(global.StartersBookingSurfaceLifecycle.getBookingRecovery(fixture.container))
     Date.now = () => slot.start - 7 * 60 * 60 * 1000
     await fixture.calendars[0].options.onConfirm(slot)
     assert.equal(bookingBodies.length, 2, 'an uncertain idempotent retry remains available after cutoff')
-    assert.equal(fixture.getCardConfirmations(), 0, 'retry does not create or confirm a new card')
+    assert.equal(fixture.getCardConfirmations(), 1, 'retry does not create or confirm a new card')
+    assert.equal(fixture.payment.setupPosts.length, 1, 'retry does not start another SetupIntent')
     assert.equal(new Set(bookingBodies).size, 1)
     assert.equal(JSON.parse(bookingBodies[0]).expected_payment_method_id, 'pm_reviewed')
     assert.equal(JSON.parse(bookingBodies[0]).context, draft.context)
@@ -4922,3 +5018,63 @@ for (const reset of ['close', 'reuse', 'reinstall']) {
     } finally { fixture.restore() }
   })
 }
+
+test('Use this card stays closed until the Brand gives off-session consent', async () => {
+  const fixture = makePaidLifecycleFixture(async (url) => {
+    if (url.endsWith(api.READINESS_PATH)) return response({ environment: 'test', bookable: true })
+    throw new Error('Unexpected request: ' + url)
+  })
+  try {
+    const slot = { start: 1787000000000, end: 1787003600000, timezone: 'UTC' }
+    await fixture.paid.onclick({ preventDefault() {} })
+    await fixture.calendars[0].options.onConfirm(slot)
+    assert.equal(fixture.payment.modal.openCount, 1)
+    const input = fixture.payment.consentInput()
+    assert.ok(input, 'the client renders its consent control inside the card dialog')
+    assert.equal(input.checked, false)
+    assert.equal(fixture.payment.modal.querySelector('[data-payment-consent-text]').textContent, api.CONSENT_TEXT)
+    assert.equal(fixture.payment.use.getAttribute('aria-disabled'), 'true', 'a selected card without consent cannot be used')
+    await fixture.payment.use.click()
+    assert.equal(fixture.payment.setupPosts.length, 0, 'no SetupIntent without consent')
+    assert.equal(fixture.payment.defaultPosts.length, 0, 'no default selection without consent')
+    assert.equal(fixture.getCardConfirmations(), 0)
+    assert.equal(fixture.payment.modal.querySelector('[data-payment-selection-status]').textContent, 'Please confirm the payment authorization to continue.')
+    fixture.payment.consent(true)
+    assert.equal(fixture.payment.use.getAttribute('aria-disabled'), 'false')
+    await fixture.payment.use.click()
+    assert.deepEqual(fixture.payment.setupPosts, [{ idempotency_key: fixture.payment.setupPosts[0].idempotency_key, off_session_consent: true, consent_version: 'paid-call-off-session-v1' }])
+    assert.deepEqual(fixture.payment.defaultPosts, [{ setup_intent_id: 'seti_reviewed', payment_method_id: 'pm_reviewed', idempotency_key: fixture.payment.defaultPosts[0].idempotency_key }])
+    assert.equal(fixture.getCardConfirmations(), 1, 'the saved card is confirmed off-session once')
+    assert.equal(fixture.getCardCreates(), 0, 'confirming a saved card mounts no secure inputs')
+  } finally {
+    fixture.restore()
+  }
+})
+
+test('a receipt refusal from the request route invalidates the reviewed card', async () => {
+  let bookingCount = 0
+  const fixture = makePaidLifecycleFixture(async (url) => {
+    if (url.endsWith(api.READINESS_PATH)) return response({ environment: 'test', bookable: true })
+    if (url.endsWith(api.BOOKING_PATH)) {
+      bookingCount += 1
+      const error = new Error('Paid-call SetupIntent and off-session consent receipt is missing')
+      error.status = 403
+      error.data = { code: 'ERROR_CODE_ACCESS_DENIED', message: 'Paid-call SetupIntent and off-session consent receipt is missing' }
+      throw error
+    }
+    throw new Error('Unexpected request: ' + url)
+  })
+  try {
+    const slot = { start: 1787000000000, end: 1787003600000, timezone: 'UTC' }
+    await fixture.paid.onclick({ preventDefault() {} })
+    await fixture.calendars[0].options.onConfirm(slot)
+    await fixture.payment.choose()
+    await assert.rejects(fixture.calendars[0].options.onConfirm(slot), /consent receipt is missing/)
+    assert.equal(bookingCount, 1)
+    await fixture.calendars[0].options.onConfirm(slot)
+    assert.equal(bookingCount, 1, 'after the refusal the next confirm reopens card selection instead of re-posting')
+    assert.equal(fixture.payment.modal.openCount, 2)
+  } finally {
+    fixture.restore()
+  }
+})

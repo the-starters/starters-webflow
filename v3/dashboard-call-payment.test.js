@@ -221,7 +221,7 @@ test('payment module requires an explicit Brand booking context to activate', as
 
 async function paymentRaceHarness(run) {
   const client = require('./paid-call-brand-payment.js')
-  const previous = { client: global.StartersPaidCallBrandPayment, actions: global.StartersDashboardCallActions, fetch: global.xanoAuthFetch }
+  const previous = { client: global.StartersPaidCallBrandPayment, actions: global.StartersDashboardCallActions, fetch: global.xanoAuthFetch, Stripe: global.Stripe }
   class Node {
     constructor() { this.listeners = {}; this.style = {}; this.attrs = {}; this.children = [] }
     setAttribute(key, value) { this.attrs[key] = value }
@@ -238,7 +238,10 @@ async function paymentRaceHarness(run) {
     cloneNode() { return new Node() }
   }
   const document = new Node()
-  document.createElement = () => new Node()
+  const created = []
+  document.createElement = () => { const node = new Node(); created.push(node); return node }
+  // A reopened picker renders a fresh consent control; the newest one is live.
+  const consentInput = () => created.filter(node => node.attrs['data-payment-consent-input'] !== undefined).at(-1)
   const panel = new Node(), use = new Node(), list = new Node(), template = new Node()
   list.parentNode = new Node()
   panel.ownerDocument = document
@@ -258,7 +261,10 @@ async function paymentRaceHarness(run) {
   global.StartersPaidCallBrandPayment = { ...client, getReadiness: async () => ({ environment: 'test' }),
     stripeForPaymentEnvironment: async () => ({}), installCardSetupForm: () => { forms++; return { dispose() {} } } }
   global.StartersDashboardCallActions = { switchPopupContent() {} }
+  // The saved-card path confirms an off-session SetupIntent for the chosen card.
+  global.Stripe = () => ({ confirmCardSetup: async (secret, options) => ({ setupIntent: { id: 'seti_dashboard', payment_method: options.payment_method, status: 'succeeded' } }) })
   global.xanoAuthFetch = async url => {
+    if (url.endsWith(client.SETUP_PATH)) return { ok: true, json: async () => ({ environment: 'test', setup_intent_id: 'seti_dashboard', client_secret: 'secret' }) }
     if (url.endsWith(client.SET_DEFAULT_PATH)) { defaults++; return { ok: true, json: async () => ({ environment: 'test', bookable: true }) } }
     if (url.endsWith(client.PAYMENT_METHODS_PATH)) {
       lists++
@@ -282,7 +288,11 @@ async function paymentRaceHarness(run) {
     await api.wire({ document, role: 'brand', getBooking: () => booking, restart: async () => { refreshes++ } })
     await click('change-card')
     await run({ click, tick, modal, nativeAdd, cardModal,
-      save: () => use.listeners.click(event(use)),
+      save: () => {
+        const input = consentInput()
+        if (input) { input.checked = true; input.listeners.change?.({ type: 'change' }) }
+        return use.listeners.click(event(use))
+      },
       close: () => { modal.open = false; document.listeners.close(event(modal)); modal.open = true },
       holdRead: () => { holdRead = true }, releaseRead: () => { holdRead = false; releaseRead() },
       holdRecovery: () => { holdRecovery = true }, releaseRecovery: () => { holdRecovery = false; releaseRecovery() },
@@ -291,6 +301,7 @@ async function paymentRaceHarness(run) {
     global.StartersPaidCallBrandPayment = previous.client
     global.StartersDashboardCallActions = previous.actions
     global.xanoAuthFetch = previous.fetch
+    global.Stripe = previous.Stripe
   }
 }
 

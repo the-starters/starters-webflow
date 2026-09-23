@@ -19,6 +19,15 @@
   const PAYMENT_METHODS_PATH = '/brand/payment-methods/v3'
   const AVAILABILITY_PATH = '/scheduler/get_availability/v3'
   const BOOKING_PATH = '/brand/booking/request/v3'
+  // The request route (`brand/booking/request/v3`) admits a Paid request only
+  // when the Brand's card was saved through an off-session SetupIntent bound to
+  // this exact consent version. Both card paths below therefore collect the
+  // Brand's explicit consent, run the SetupIntent, and hand its ID to the
+  // set-default route, which verifies the succeeded SetupIntent and records the
+  // receipt the request route later requires.
+  const CONSENT_VERSION = 'paid-call-off-session-v1'
+  const CONSENT_TEXT = 'I authorize The Starters to save this card and charge it for this call and any applicable cancellation fee under the booking terms.'
+  const MAX_SETUP_INTENT_LENGTH = 128
   const STRIPE_PUBLIC_KEY_TEST =
     'pk_test_51MMhu4AW8v1kanawI48Is1kTMhsz4XbB1XVOjw5xxLiFlKXuehHSFWhApJiUKquc8bmwjtuSTlTMitYjjShjB6aQ00Dhe2oFlX'
   const STRIPE_PUBLIC_KEY_LIVE =
@@ -323,6 +332,22 @@
     return value
   }
 
+  function validateSetupIntentId(value) {
+    if (
+      typeof value !== 'string' ||
+      !/^seti_[A-Za-z0-9]+$/.test(value) ||
+      value.length > MAX_SETUP_INTENT_LENGTH
+    ) {
+      throw new Error('A valid Stripe SetupIntent ID is required')
+    }
+    return value
+  }
+
+  function requireConsent(value) {
+    if (value !== true) throw new Error('Please confirm the payment authorization to continue')
+    return true
+  }
+
   function normalizeGuestEmails(values, excludedEmails) {
     const excluded = new Set((excludedEmails || []).map(function (value) {
       return String(value || '').trim().toLowerCase()
@@ -511,28 +536,60 @@
     return normalizeAvailabilitySlots(result, config, resolvedNowMs)
   }
 
-  function createSetupAttempt(idempotencyKey) {
+  function createSetupAttempt(idempotencyKey, options) {
+    const settings = options || {}
+    requireConsent(settings.consent)
     const key = validateKey(
       idempotencyKey || createAttemptKey('brand-payment-setup'),
     )
     return {
       idempotencyKey: key,
-      run: function () {
-        return authenticatedPost(SETUP_PATH, { idempotency_key: key })
+      consentVersion: CONSENT_VERSION,
+      run: async function () {
+        const result = await authenticatedPost(SETUP_PATH, {
+          idempotency_key: key,
+          off_session_consent: true,
+          consent_version: CONSENT_VERSION,
+        })
+        if (!result || typeof result.client_secret !== 'string' || !result.client_secret) {
+          throw new Error('Card setup could not be started')
+        }
+        if (result.setup_intent_id !== undefined && result.setup_intent_id !== null && result.setup_intent_id !== '') {
+          validateSetupIntentId(result.setup_intent_id)
+        }
+        return result
       },
     }
   }
 
-  function createDefaultSelectionAttempt(paymentMethodId, idempotencyKey) {
+  /**
+   * The SetupIntent ID the set-default route must verify: Stripe's confirmed
+   * object is authoritative, the setup route's echo is the fallback for an
+   * older route, and a disagreement between the two is a stop.
+   */
+  function resolveSetupIntentId(setup, confirmed) {
+    const fromStripe = confirmed && confirmed.setupIntent && confirmed.setupIntent.id
+    const fromRoute = setup && setup.setup_intent_id
+    const chosen = fromStripe || fromRoute
+    if (!chosen) throw new Error('The card setup did not return a SetupIntent')
+    validateSetupIntentId(chosen)
+    if (fromStripe && fromRoute && fromStripe !== fromRoute) throw new Error('The card setup changed during confirmation')
+    return chosen
+  }
+
+  function createDefaultSelectionAttempt(paymentMethodId, idempotencyKey, setupIntentId) {
     const methodId = validatePaymentMethodId(paymentMethodId)
+    const setupId = validateSetupIntentId(setupIntentId)
     const key = validateKey(
       idempotencyKey || createAttemptKey('brand-default-card'),
     )
     return {
       paymentMethodId: methodId,
+      setupIntentId: setupId,
       idempotencyKey: key,
       run: function () {
         return authenticatedPost(SET_DEFAULT_PATH, {
+          setup_intent_id: setupId,
           payment_method_id: methodId,
           idempotency_key: key,
         })
@@ -540,7 +597,8 @@
     }
   }
 
-  function createSavedCardSelection(environment) {
+  function createSavedCardSelection(environment, options) {
+    const settings = options || {}
     let cards = []
     let selectedId = ''
     let attempt = null
@@ -577,13 +635,28 @@
         selectedId = id
         return true
       },
-      save: function () {
+      save: function (saveOptions) {
+        const request = saveOptions || {}
         return exclusive('save', async function () {
           if (!cards.some(card => card.id === selectedId)) throw new Error('Select a saved card')
-          // Retain this command identity after an ambiguous response or failed
-          // readback. A retry must not become a second default-selection intent.
-          if (!attempt) attempt = createDefaultSelectionAttempt(selectedId)
-          await attempt.run()
+          requireConsent(request.consent)
+          const stripeProvider = request.stripe || settings.stripe
+          // Retain every command identity after an ambiguous response or failed
+          // readback. A retry must not become a second setup or default intent.
+          if (!attempt) attempt = { paymentMethodId: selectedId, setup: createSetupAttempt(undefined, { consent: true }) }
+          if (!attempt.setupIntentId) {
+            const setup = await attempt.setup.run()
+            const stripe = typeof stripeProvider === 'function' ? await stripeProvider() : stripeProvider
+            if (!stripe || typeof stripe.confirmCardSetup !== 'function') throw new Error('Stripe is unavailable for the saved card')
+            const confirmed = await stripe.confirmCardSetup(setup.client_secret, { payment_method: selectedId })
+            if (confirmed.error) throw new Error(confirmed.error.message || 'The saved card could not be confirmed')
+            const confirmedMethod = confirmed.setupIntent && confirmed.setupIntent.payment_method
+            const confirmedMethodId = confirmedMethod && typeof confirmedMethod === 'object' ? confirmedMethod.id : confirmedMethod
+            if (confirmedMethodId && confirmedMethodId !== selectedId) throw new Error('The confirmed card does not match the selected card')
+            attempt.setupIntentId = resolveSetupIntentId(setup, confirmed)
+          }
+          if (!attempt.default) attempt.default = createDefaultSelectionAttempt(selectedId, undefined, attempt.setupIntentId)
+          await attempt.default.run()
           const result = await getSavedPaymentMethods(environment)
           if (!result.items.some(card => card.id === selectedId && card.is_default)) {
             throw new Error('The selected default card could not be verified')
@@ -603,7 +676,8 @@
     if (!['test', 'live'].includes(settings.environment)) throw new Error('Card setup environment is invalid')
     if (!isCurrent()) return false
     if (paymentAttempt.ready) return true
-    if (!paymentAttempt.setupAttempt) paymentAttempt.setupAttempt = createSetupAttempt()
+    requireConsent(settings.consent)
+    if (!paymentAttempt.setupAttempt) paymentAttempt.setupAttempt = createSetupAttempt(undefined, { consent: true })
     const setup = await paymentAttempt.setupAttempt.run()
     if (!isCurrent()) return false
     const confirmed = await settings.stripe.confirmCardSetup(setup.client_secret, {
@@ -614,10 +688,13 @@
     })
     if (!isCurrent()) return false
     if (confirmed.error) throw new Error(confirmed.error.message || 'Card setup failed')
-    const paymentMethod = confirmed.setupIntent && confirmed.setupIntent.payment_method
-    if (!paymentAttempt.defaultAttempt || paymentAttempt.defaultPaymentMethod !== paymentMethod) {
+    const confirmedMethod = confirmed.setupIntent && confirmed.setupIntent.payment_method
+    const paymentMethod = confirmedMethod && typeof confirmedMethod === 'object' ? confirmedMethod.id : confirmedMethod
+    const setupIntentId = resolveSetupIntentId(setup, confirmed)
+    if (!paymentAttempt.defaultAttempt || paymentAttempt.defaultPaymentMethod !== paymentMethod || paymentAttempt.defaultSetupIntent !== setupIntentId) {
       paymentAttempt.defaultPaymentMethod = paymentMethod
-      paymentAttempt.defaultAttempt = createDefaultSelectionAttempt(paymentMethod)
+      paymentAttempt.defaultSetupIntent = setupIntentId
+      paymentAttempt.defaultAttempt = createDefaultSelectionAttempt(paymentMethod, undefined, setupIntentId)
     }
     await paymentAttempt.defaultAttempt.run()
     if (!isCurrent()) return false
@@ -629,12 +706,51 @@
     paymentAttempt.setupAttempt = null
     paymentAttempt.defaultAttempt = null
     paymentAttempt.defaultPaymentMethod = ''
+    paymentAttempt.defaultSetupIntent = ''
     paymentAttempt.ready = true
     return true
   }
 
   const savedCardPickerInstallations = new WeakMap()
   const cardSetupFormInstallations = new WeakMap()
+
+  /**
+   * The Brand's explicit off-session consent, rendered by the client next to
+   * the authored card controls. It is a required step of both card paths, so
+   * the client owns it rather than depending on an authored checkbox that a
+   * page may not carry. An authored `[payment-consent]` control is adopted
+   * when present so a designed checkbox wins over the generated one.
+   */
+  function placeBefore(node, anchor, fallbackParent) {
+    const parent = anchor && anchor.parentNode
+    if (parent && typeof parent.insertBefore === 'function') { parent.insertBefore(node, anchor); return }
+    if (fallbackParent && typeof fallbackParent.appendChild === 'function') fallbackParent.appendChild(node)
+  }
+
+  function buildConsentControl(document, modal, marker) {
+    const authored = modal && typeof modal.querySelector === 'function' ? modal.querySelector('[payment-consent]') : null
+    if (authored) {
+      const authoredInput = authored.tagName && String(authored.tagName).toLowerCase() === 'input'
+        ? authored
+        : (typeof authored.querySelector === 'function' ? authored.querySelector('input') : null)
+      if (authoredInput) return { wrap: authored, input: authoredInput, generated: false }
+    }
+    const wrap = document.createElement('label')
+    wrap.setAttribute('data-payment-consent', marker)
+    wrap.setAttribute('class', 'payment-consent')
+    const input = document.createElement('input')
+    input.type = 'checkbox'
+    input.setAttribute('type', 'checkbox')
+    input.setAttribute('data-payment-consent-input', '')
+    input.setAttribute('aria-label', 'Payment authorization')
+    input.checked = false
+    const text = document.createElement('span')
+    text.setAttribute('data-payment-consent-text', '')
+    text.textContent = CONSENT_TEXT
+    wrap.appendChild(input)
+    wrap.appendChild(text)
+    return { wrap, input, generated: true }
+  }
 
   function installCardSetupForm(modal, options) {
     const settings = options || {}
@@ -657,6 +773,8 @@
     back.wrap.setAttribute('data-payment-card-back', '')
     save.parentNode.insertBefore(back.wrap, save)
     host.parentNode.insertBefore(error, host)
+    const consent = buildConsentControl(document, modal, 'card-setup')
+    if (consent.generated) placeBefore(consent.wrap, back.wrap, modal)
     error.setAttribute('role', 'alert')
     status.setAttribute('role', 'status')
     const title = modal.querySelector('[booking-popup-title]')
@@ -665,7 +783,7 @@
     labelCardSaveControl(save)
     function paint() {
       if (disposed) return
-      const disabled = busy || !ownsContext() || (!complete && !attempt.ready)
+      const disabled = busy || !ownsContext() || (!complete && !attempt.ready) || (!attempt.ready && consent.input.checked !== true)
       save.disabled = disabled
       save.setAttribute('aria-disabled', String(disabled))
       save.querySelectorAll('button').forEach(button => { button.disabled = disabled })
@@ -685,8 +803,14 @@
       busy = false
       complete = false
       fields.clear()
+      consent.input.checked = false
       paintCardError(error, '')
       status.textContent = ''
+      paint()
+    }
+    function consentChanged() {
+      if (disposed) return
+      paintCardError(error, '')
       paint()
     }
     function goBack(event) {
@@ -708,6 +832,7 @@
         const done = await completeCardSetupAttempt(attempt, {
           stripe: settings.stripe, card: fields.card, environment: settings.environment,
           brandName: settings.brandName, brandEmail: settings.brandEmail, isCurrent,
+          consent: consent.input.checked === true,
         })
         if (!done || !isCurrent()) return
         status.textContent = 'Card saved.'
@@ -726,6 +851,7 @@
     }
     save.addEventListener('click', submit, true)
     back.button.addEventListener('click', goBack)
+    consent.input.addEventListener('change', consentChanged)
     const closeControls = Array.from(modal.querySelectorAll('[data-modal-close], [popup-stripe-card-close]'))
     closeControls.forEach(control => control.addEventListener('click', reset))
     modal.addEventListener('cancel', reset)
@@ -740,10 +866,12 @@
         fields.destroy()
         save.removeEventListener('click', submit, true)
         back.button.removeEventListener('click', goBack)
+        if (typeof consent.input.removeEventListener === 'function') consent.input.removeEventListener('change', consentChanged)
         closeControls.forEach(control => control.removeEventListener('click', reset))
         modal.removeEventListener('cancel', reset)
         modal.removeEventListener('close', reset)
         back.wrap.remove()
+        if (consent.generated && typeof consent.wrap.remove === 'function') consent.wrap.remove()
         if (cardSetupFormInstallations.get(modal) === controller) cardSetupFormInstallations.delete(modal)
       },
     }
@@ -763,12 +891,19 @@
     use.querySelectorAll('button').forEach(button => button.setAttribute('aria-label', 'Use this card'))
     panel.querySelectorAll('[popup-stripe-card-open] button').forEach(button => button.setAttribute('aria-label', 'Add payment method'))
     const document = panel.ownerDocument
-    const selection = createSavedCardSelection(settings.environment)
+    const stripeProvider = () => {
+      if (typeof settings.stripe === 'function') return settings.stripe()
+      if (settings.stripe) return settings.stripe
+      return stripeForPaymentEnvironment(settings.environment)
+    }
+    const selection = createSavedCardSelection(settings.environment, { stripe: stripeProvider })
     const status = document.createElement('p')
     status.setAttribute('data-payment-selection-status', '')
     status.setAttribute('role', 'status')
     status.setAttribute('aria-live', 'polite')
     list.parentNode.insertBefore(status, list)
+    const consent = buildConsentControl(document, panel, 'saved-card')
+    if (consent.generated) placeBefore(consent.wrap, use, panel)
     template.hidden = true
     template.style.display = 'none'
     list.setAttribute('role', 'radiogroup')
@@ -783,9 +918,10 @@
       if (disposed) return
       const state = selection.snapshot()
       const busy = loading || saving || state.busy || !loaded || !ownsContext()
+      const unconsented = verifiedDefaultId !== state.selectedId && consent.input.checked !== true
       panel.setAttribute('aria-busy', String(loading || saving || state.busy))
-      use.setAttribute('aria-disabled', String(busy || !state.selectedId))
-      use.querySelectorAll('button').forEach(button => { button.disabled = busy || !state.selectedId })
+      use.setAttribute('aria-disabled', String(busy || !state.selectedId || unconsented))
+      use.querySelectorAll('button').forEach(button => { button.disabled = busy || !state.selectedId || unconsented })
       rows.forEach(function (row) {
         const selected = row.getAttribute('data-id') === state.selectedId
         row.setAttribute('aria-checked', String(selected))
@@ -859,10 +995,15 @@
     async function save(event) {
       event.preventDefault()
       if (disposed || loading || saving || !loaded || selection.snapshot().busy || !selection.snapshot().selectedId || !ownsContext()) return
+      const snapshot = selection.snapshot()
+      if (verifiedDefaultId !== snapshot.selectedId && consent.input.checked !== true) {
+        status.textContent = 'Please confirm the payment authorization to continue.'
+        paint()
+        return
+      }
       if (typeof settings.acquire === 'function' && !settings.acquire()) return
       saving = true
-      const snapshot = selection.snapshot()
-      const request = verifiedDefaultId === snapshot.selectedId ? Promise.resolve(snapshot) : selection.save()
+      const request = verifiedDefaultId === snapshot.selectedId ? Promise.resolve(snapshot) : selection.save({ consent: consent.input.checked === true, stripe: stripeProvider })
       status.textContent = 'Updating your default card…'
       paint()
       try {
@@ -883,7 +1024,9 @@
         paint()
       }
     }
+    function consentChanged() { if (!disposed) { if (consent.input.checked) status.textContent = ''; paint() } }
     use.addEventListener('click', save)
+    consent.input.addEventListener('change', consentChanged)
     paint()
     const controller = {
       load,
@@ -891,9 +1034,11 @@
         if (disposed) return
         disposed = true
         use.removeEventListener('click', save)
+        if (typeof consent.input.removeEventListener === 'function') consent.input.removeEventListener('change', consentChanged)
         rows = []
         list.replaceChildren()
         status.remove()
+        if (consent.generated && typeof consent.wrap.remove === 'function') consent.wrap.remove()
         if (savedCardPickerInstallations.get(panel) === controller) savedCardPickerInstallations.delete(panel)
       },
     }
@@ -3203,6 +3348,7 @@
       paintMode()
       picker = installSavedCardPicker(modal, {
         environment, isCurrent: () => current(token) && mode === 'picker',
+        stripe: () => stripeForPaymentEnvironment(environment),
         acquire: () => { if (busy) return false; busy = true; add.button.disabled = true; return true },
         release: () => { busy = false; add.button.disabled = false },
         onSaved: async (id, state) => {
@@ -3854,7 +4000,7 @@
       try {
         await submitBooking(slot, generation, confirmation)
       } catch (error) {
-        if (ownsSurface(generation) && !pendingBookingInput && /payment_method|payment method|selected card/i.test(String(error.data && error.data.code) + ' ' + String(error.data && error.data.message) + ' ' + (error.message || ''))) paymentChoice.invalidate()
+        if (ownsSurface(generation) && !pendingBookingInput && /payment_method|payment method|selected card|SetupIntent|consent receipt/i.test(String(error.data && error.data.code) + ' ' + String(error.data && error.data.message) + ' ' + (error.message || ''))) paymentChoice.invalidate()
         throw error
       }
     }
@@ -4004,6 +4150,11 @@
     stripeForPaymentEnvironment,
     installSavedCardPicker,
     createSetupAttempt,
+    buildConsentControl,
+    CONSENT_VERSION,
+    CONSENT_TEXT,
+    resolveSetupIntentId,
+    validateSetupIntentId,
     availabilityQuery,
     getReadiness,
     getSavedPaymentMethods,
