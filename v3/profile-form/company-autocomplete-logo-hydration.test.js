@@ -957,6 +957,31 @@ test('Build Profile shows Saving then Added while creating Work History', async 
   assert.equal(harness.addButtonText.textContent, 'Add company')
 })
 
+test('Build Profile accepts only one Work History save while the first is pending', async () => {
+  let started
+  let release
+  const whenStarted = new Promise((resolve) => { started = resolve })
+  const wait = new Promise((resolve) => { release = resolve })
+  const file = path.join(__dirname, '../build-profile/company-experience-crud.js')
+  const harness = createCrudHarness(file, {
+    companyCreateStatuses: [200],
+    companyCreateGate: { started, wait },
+  })
+  await harness.start()
+  harness.prepareAdd()
+
+  const firstSave = harness.queueAdd()
+  await whenStarted
+  await harness.queueAdd()
+
+  assert.equal(harness.addButtonText.textContent, 'Saving...')
+  assert.equal(harness.requests.filter(({ url, options }) => url.endsWith('/companies') && options.method === 'POST').length, 1)
+
+  release()
+  await firstSave
+  assert.equal(harness.addButtonText.textContent, 'Added')
+})
+
 test('Build Profile shows Added on the third Work History item, then hides the button', async () => {
   const existingCompanies = [
     { id: 'company-1', company_name: 'QA Wolf', job_title: 'Engineer' },
@@ -996,6 +1021,10 @@ test('Build Profile shows Error then restores the Work History button after a fa
   assert.equal(harness.addButtonText.textContent, 'Error')
   assert.equal(harness.runTimer(1200), true)
   assert.equal(harness.addButtonText.textContent, 'Add company')
+  assert.equal(harness.addButton.style.pointerEvents, '')
+
+  await harness.queueAdd()
+  assert.equal(harness.requests.filter(({ url, options }) => url.endsWith('/companies') && options.method === 'POST').length, 2)
 })
 
 // The Work Experience section cannot read its own baseline until the picker that owns the
