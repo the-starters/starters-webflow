@@ -86,9 +86,10 @@
   var MODAL_PARAM = 'modal-id'
   var SIGNUP_MODAL_ID = 'signup-modal'
 
-  var TALKJS_APP_ID = 'LmYV8DIA'
   var TALKJS_THEME = 'the-starters-3-0-profile'
   var TALKJS_SCRIPT_URL = 'https://cdn.talkjs.com/talk.js'
+  var TALKJS_AUTH_HELPER_URL =
+    'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/talkjs-auth-session.js'
   var TALKJS_TIMEOUT_MS = 15000
   var MEMBERSTACK_TIMEOUT_MS = 10000
   var MEMBERSTACK_POLL_MS = 100
@@ -402,6 +403,7 @@
     viewer = {
       resolved: true,
       member: signedIn,
+      memberstack: memberstack,
       role: resolution.role,
       guarded: resolution.guarded,
     }
@@ -459,6 +461,57 @@
         },
       )
     })
+  }
+
+  function waitForTalkJsSessionOwner() {
+    if (
+      window.StartersTalkJsSessionOwner &&
+      typeof window.StartersTalkJsSessionOwner.openSession === 'function'
+    ) {
+      return Promise.resolve(window.StartersTalkJsSessionOwner)
+    }
+    if (window.__startersTalkJsAuthHelperPromise) {
+      return window.__startersTalkJsAuthHelperPromise
+    }
+
+    var loading = new Promise(function (resolve, reject) {
+      var script = document.createElement('script')
+      var settled = false
+      var timer
+      function fail(error) {
+        if (settled) return
+        settled = true
+        window.clearTimeout(timer)
+        if (window.__startersTalkJsAuthHelperPromise === loading) {
+          window.__startersTalkJsAuthHelperPromise = null
+        }
+        reject(error)
+      }
+      timer = window.setTimeout(function () {
+        fail(new Error('TalkJS authentication helper did not become ready'))
+      }, TALKJS_TIMEOUT_MS)
+      script.async = true
+      script.src = TALKJS_AUTH_HELPER_URL
+      script.dataset.startersTalkjsAuth = 'true'
+      script.onload = function () {
+        if (
+          window.StartersTalkJsSessionOwner &&
+          typeof window.StartersTalkJsSessionOwner.openSession === 'function'
+        ) {
+          settled = true
+          window.clearTimeout(timer)
+          resolve(window.StartersTalkJsSessionOwner)
+        } else {
+          fail(new Error('TalkJS authentication helper is invalid'))
+        }
+      }
+      script.onerror = function () {
+        fail(new Error('TalkJS authentication helper failed to load'))
+      }
+      document.head.appendChild(script)
+    })
+    window.__startersTalkJsAuthHelperPromise = loading
+    return loading
   }
 
   /** Mirrors v3/messages.js so the viewer syncs identically from either page. */
@@ -626,20 +679,21 @@
 
       var Talk = await waitForTalkJs()
       var me = new Talk.User(talkUserFields(state.member))
-      var session = new Talk.Session({ appId: TALKJS_APP_ID, me: me })
-      var conversation = session.getOrCreateConversation(
-        Talk.oneOnOneId(state.member.id, identity.id),
-      )
-      conversation.setParticipant(me)
-      conversation.setParticipant(starterUser(Talk, identity))
-      // Attribution for conversations opened from a profile. Custom values must
-      // be strings, and this cannot be backfilled onto existing conversations.
-      conversation.setAttributes({
-        custom: { source: CONVERSATION_SOURCE, slug: currentSlug() },
+      var sessionOwner = await waitForTalkJsSessionOwner()
+      var session = await sessionOwner.openSession({
+        Talk: Talk,
+        memberstack: state.memberstack,
+        member: state.member,
+        me: me,
+        clientOwner: 'messages-profile-v3',
+      })
+      var receipt = await sessionOwner.authorizeConversation({
+        clientOwner: 'messages-profile-v3',
+        counterpartId: identity.id,
       })
 
       var chatbox = session.createChatbox({ theme: { name: TALKJS_THEME } })
-      chatbox.select(conversation)
+      chatbox.select(receipt.conversationId)
       emptyContainer(container)
       await chatbox.mount(container)
       chatMounted = true

@@ -60,6 +60,8 @@ function loadMessages(options = {}) {
     timers: [],
     scripts: [],
     reloads: 0,
+    authSessions: [],
+    conversationAuthorizations: [],
   }
   function element(tagName) {
     return {
@@ -228,6 +230,24 @@ function loadMessages(options = {}) {
       return setTimeout(fn, ms, ...rest)
     },
     clearTimeout,
+    StartersTalkJsSessionOwner: {
+      openSession: async (sessionOptions) => {
+        calls.authSessions.push(sessionOptions)
+        return new sessionOptions.Talk.Session({
+          appId: 'test-app',
+          me: sessionOptions.me,
+          tokenFetcher: async () => 'test-token',
+        })
+      },
+      authorizeConversation: async (intent) => {
+        calls.conversationAuthorizations.push(intent)
+        return {
+          conversationId:
+            intent.conversationId || 'dm_v1_server_authorized_pair',
+          counterpartId: intent.counterpartId || OTHER_ID,
+        }
+      },
+    },
   }
   if (options.talk !== false) window.Talk = Talk
 
@@ -449,6 +469,20 @@ test('a slow TalkJS SDK fails once rather than waiting out a second timeout', as
   ])
 })
 
+test('the inbox opens through the shared authenticated session owner', async () => {
+  const current = member()
+  const loaded = loadMessages({ member: current })
+  await settle()
+
+  assert.equal(loaded.calls.authSessions.length, 1)
+  const request = loaded.calls.authSessions[0]
+  assert.equal(request.clientOwner, 'messages-v3')
+  assert.equal(request.memberstack, loaded.window.$memberstackDom)
+  assert.equal(request.member, current)
+  assert.equal(request.me.fields.id, current.id)
+  assert.equal(loaded.calls.mounted.length, 1)
+})
+
 test('?conversation= selects that existing conversation without mutating it', async () => {
   const conversationId = 'one:mem_me|mem_other'
   const { calls } = loadMessages({
@@ -459,6 +493,9 @@ test('?conversation= selects that existing conversation without mutating it', as
 
   assert.deepEqual(calls.selected, [conversationId])
   assert.equal(calls.conversations.length, 0)
+  assert.deepEqual(plain(calls.conversationAuthorizations), [
+    { clientOwner: 'messages-v3', conversationId },
+  ])
 })
 
 test('?conversation= takes precedence over ?with=', async () => {
@@ -471,6 +508,9 @@ test('?conversation= takes precedence over ?with=', async () => {
 
   assert.deepEqual(calls.selected, ['existing-thread'])
   assert.equal(calls.conversations.length, 0)
+  assert.deepEqual(plain(calls.conversationAuthorizations), [
+    { clientOwner: 'messages-v3', conversationId: 'existing-thread' },
+  ])
 })
 
 test('a malformed conversation id is ignored without breaking the inbox', async () => {
@@ -674,7 +714,7 @@ test('conflicting plan roles fail closed to a blank company', async () => {
   assert.deepEqual(plain(calls.users[0]).custom, { company: '' })
 })
 
-test('?with= opens the one-on-one conversation and selects it', async () => {
+test('?with= asks the server for a conversation and selects only its opaque id', async () => {
   const { calls } = loadMessages({
     search: '?with=' + OTHER_ID,
     handoff: {
@@ -687,21 +727,12 @@ test('?with= opens the one-on-one conversation and selects it', async () => {
 
   await settle()
 
-  assert.equal(calls.conversations.length, 1)
-  const conversation = calls.conversations[0]
-  assert.equal(conversation.id, 'one:' + [MY_ID, OTHER_ID].sort().join('|'))
-  assert.equal(conversation.participants.length, 2)
-  assert.deepEqual(plain(conversation.attributes), {
-    custom: { source: 'hire-page', slug: 'kaeser-valencerina' },
-  })
-  assert.deepEqual(calls.selected, [conversation])
-
-  // Second Talk.User is the starter, built from the handoff fields.
-  assert.deepEqual(plain(calls.users[1]), {
-    id: OTHER_ID,
-    name: 'Kaeser Valencerina',
-    photoUrl: 'https://x08a.example/vault/freelancer-5.jpg',
-  })
+  assert.equal(calls.conversations.length, 0)
+  assert.deepEqual(calls.selected, ['dm_v1_server_authorized_pair'])
+  assert.deepEqual(plain(calls.conversationAuthorizations), [
+    { clientOwner: 'messages-v3', counterpartId: OTHER_ID },
+  ])
+  assert.equal(calls.users.length, 1, 'browser creates only the authenticated me user')
 })
 
 test('the handoff is consumed so it cannot be replayed', async () => {
@@ -715,16 +746,15 @@ test('the handoff is consumed so it cannot be replayed', async () => {
   assert.equal(storage.has(HANDOFF_KEY), false)
 })
 
-test('with no handoff the starter is referenced by id alone', async () => {
+test('with no handoff the server receives only the counterpart intent', async () => {
   const { calls } = loadMessages({ search: '?with=' + OTHER_ID })
 
   await settle()
 
-  assert.equal(calls.conversations.length, 1)
-  assert.equal(calls.users[1], OTHER_ID)
-  assert.deepEqual(plain(calls.conversations[0].attributes), {
-    custom: { source: 'hire-page', slug: '' },
-  })
+  assert.equal(calls.conversations.length, 0)
+  assert.deepEqual(plain(calls.conversationAuthorizations), [
+    { clientOwner: 'messages-v3', counterpartId: OTHER_ID },
+  ])
 })
 
 test('a handoff naming a different member is ignored, not applied', async () => {
@@ -740,12 +770,13 @@ test('a handoff naming a different member is ignored, not applied', async () => 
 
   await settle()
 
-  assert.equal(calls.users[1], OTHER_ID)
-  assert.equal(calls.conversations[0].attributes.custom.slug, '')
+  assert.equal(calls.users.length, 1)
+  assert.equal(calls.conversations.length, 0)
+  assert.equal(calls.conversationAuthorizations[0].counterpartId, OTHER_ID)
   assert.equal(storage.has(HANDOFF_KEY), false)
 })
 
-test('a non-https handoff photo is dropped and the name kept', async () => {
+test('handoff display fields never reach browser-side TalkJS mutation', async () => {
   const { calls } = loadMessages({
     search: '?with=' + OTHER_ID,
     handoff: {
@@ -758,10 +789,12 @@ test('a non-https handoff photo is dropped and the name kept', async () => {
 
   await settle()
 
-  assert.deepEqual(plain(calls.users[1]), { id: OTHER_ID, name: 'Kaeser Valencerina' })
+  assert.equal(calls.users.length, 1)
+  assert.equal(calls.conversations.length, 0)
+  assert.equal(calls.conversationAuthorizations[0].counterpartId, OTHER_ID)
 })
 
-test('corrupt handoff JSON degrades to an id-only reference', async () => {
+test('corrupt handoff JSON still uses the server-authorized pair', async () => {
   const { calls } = loadMessages({
     search: '?with=' + OTHER_ID,
     handoff: '{not json',
@@ -769,8 +802,8 @@ test('corrupt handoff JSON degrades to an id-only reference', async () => {
 
   await settle()
 
-  assert.equal(calls.conversations.length, 1)
-  assert.equal(calls.users[1], OTHER_ID)
+  assert.equal(calls.conversations.length, 0)
+  assert.equal(calls.conversationAuthorizations[0].counterpartId, OTHER_ID)
 })
 
 test('a sandbox (Test Mode) ?with= id opens the conversation like a live id', async () => {
@@ -779,8 +812,8 @@ test('a sandbox (Test Mode) ?with= id opens the conversation like a live id', as
 
   await settle()
 
-  assert.equal(calls.conversations.length, 1)
-  assert.equal(calls.users[1], SANDBOX_ID)
+  assert.equal(calls.conversations.length, 0)
+  assert.equal(calls.conversationAuthorizations[0].counterpartId, SANDBOX_ID)
 })
 
 test('a malformed ?with= value is ignored', async () => {
@@ -827,7 +860,8 @@ test('sessionStorage being unavailable degrades to an id-only reference', async 
 
   await settle()
 
-  assert.equal(loaded.calls.conversations.length, 1)
+  assert.equal(loaded.calls.conversations.length, 0)
+  assert.equal(loaded.calls.conversationAuthorizations[0].counterpartId, OTHER_ID)
 })
 
 /* --------------------------- Clickable Identity --------------------------- */

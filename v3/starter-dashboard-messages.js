@@ -29,10 +29,9 @@
   if (window.__startersDashboardMessagesBooted) return
   window.__startersDashboardMessagesBooted = true
 
-  const TALKJS_APP_ID = 'LmYV8DIA'
   const TALKJS_SCRIPT_URL = 'https://cdn.talkjs.com/talk.js'
-  const XANO_AUTH_BASE = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:g1vmSLWh'
-  const XANO_TRADE_TOKEN_PATH = '/auth/trade-token/v3'
+  const TALKJS_AUTH_HELPER_URL =
+    'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/talkjs-auth-session.js'
   const XANO_OPP_BASE = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30'
   const RECENT_MESSAGES_PATH = '/starter/messages/recent'
   const MEMBERSTACK_TIMEOUT_MS = 10000
@@ -121,6 +120,57 @@
         },
       )
     })
+  }
+
+  function waitForTalkJsSessionOwner(timeoutMs = TALKJS_TIMEOUT_MS) {
+    if (
+      window.StartersTalkJsSessionOwner &&
+      typeof window.StartersTalkJsSessionOwner.openSession === 'function'
+    ) {
+      return Promise.resolve(window.StartersTalkJsSessionOwner)
+    }
+    if (window.__startersTalkJsAuthHelperPromise) {
+      return window.__startersTalkJsAuthHelperPromise
+    }
+
+    let loading
+    loading = new Promise((resolve, reject) => {
+      const script = document.createElement('script')
+      let settled = false
+      const fail = (error) => {
+        if (settled) return
+        settled = true
+        window.clearTimeout(timer)
+        if (window.__startersTalkJsAuthHelperPromise === loading) {
+          window.__startersTalkJsAuthHelperPromise = null
+        }
+        reject(error)
+      }
+      const timer = window.setTimeout(() => {
+        fail(new Error('TalkJS authentication helper did not become ready'))
+      }, timeoutMs)
+      script.async = true
+      script.src = TALKJS_AUTH_HELPER_URL
+      script.dataset.startersTalkjsAuth = 'true'
+      script.onload = () => {
+        if (
+          window.StartersTalkJsSessionOwner &&
+          typeof window.StartersTalkJsSessionOwner.openSession === 'function'
+        ) {
+          settled = true
+          window.clearTimeout(timer)
+          resolve(window.StartersTalkJsSessionOwner)
+        } else {
+          fail(new Error('TalkJS authentication helper is invalid'))
+        }
+      }
+      script.onerror = () => {
+        fail(new Error('TalkJS authentication helper failed to load'))
+      }
+      document.head.appendChild(script)
+    })
+    window.__startersTalkJsAuthHelperPromise = loading
+    return loading
   }
 
   // Replicated from v3/route-guard.js PLAN_ROLES — that file is the canonical
@@ -314,34 +364,12 @@
     if (refs.loadingCard) refs.loadingCard.style.display = ''
   }
 
-  async function getMemberstackToken(memberstack) {
-    const token = await memberstack.getMemberCookie()
-    if (!token) throw new Error('No Memberstack session')
-    return token
-  }
-
   async function requestRecentConversations(memberstack, signal) {
-    let xanoToken
-    if (typeof window.getXanoAuthToken === 'function') {
-      xanoToken = await window.getXanoAuthToken()
-      if (!xanoToken) throw new Error('shared auth bridge returned no token')
-    } else {
-      const msToken = await getMemberstackToken(memberstack)
-      const tradeRes = await fetch(
-        XANO_AUTH_BASE +
-          XANO_TRADE_TOKEN_PATH +
-          '?token=' +
-          encodeURIComponent(msToken),
-        { signal },
-      )
-      const tradeData = await tradeRes.json().catch(() => null)
-      if (!tradeRes.ok) throw new Error('trade-token failed')
-      xanoToken =
-        typeof tradeData === 'string'
-          ? tradeData
-          : tradeData && (tradeData.authToken || tradeData.token)
-      if (!xanoToken) throw new Error('trade-token returned no token')
+    if (typeof window.getXanoAuthToken !== 'function') {
+      throw new Error('shared auth bridge is unavailable')
     }
+    const xanoToken = await window.getXanoAuthToken(false)
+    if (!xanoToken) throw new Error('shared auth bridge returned no token')
 
     const res = await fetch(XANO_OPP_BASE + RECENT_MESSAGES_PATH, {
       method: 'POST',
@@ -687,9 +715,13 @@
 
     const Talk = await waitForTalkJs()
     const me = new Talk.User(talkUserFields(member))
-    const session = new Talk.Session({
-      appId: TALKJS_APP_ID,
+    const sessionOwner = await waitForTalkJsSessionOwner()
+    const session = await sessionOwner.openSession({
+      Talk,
+      memberstack,
+      member,
       me,
+      clientOwner: 'dashboard-messages-v3',
     })
 
     session.onMessage(() => {
