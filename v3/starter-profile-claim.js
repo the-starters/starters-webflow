@@ -25,7 +25,7 @@
     'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/starter_profile_claim/prepare'
   var TOKEN_PATTERN = /^[A-Za-z0-9_-]{32,128}$/
   var EXCHANGE_CODE_PATTERN = /^[A-Za-z0-9_-]{32,128}$/
-  var PROFILE_PATH_PATTERN = /^\/hire\/[A-Za-z0-9][A-Za-z0-9-]*\/?$/
+  var PROFILE_PATH_PATTERN = /^\/hire\/[A-Za-z0-9][A-Za-z0-9-]*$/
   var REQUEST_TIMEOUT_MS = 12000
   var LOG_PREFIX = '[starter-profile-claim]'
   var STAGING_HOSTS = ['localhost', '127.0.0.1']
@@ -87,7 +87,7 @@
     var pathname = window.location && window.location.pathname
     if (typeof pathname !== 'string') return ''
     if (!PROFILE_PATH_PATTERN.test(pathname)) return ''
-    return pathname.length > 1 && pathname.endsWith('/') ? pathname.slice(0, -1) : pathname
+    return pathname
   }
 
   function prepareUrl(wrapper) {
@@ -171,6 +171,7 @@
       var response = await fetchWithDeadline(endpoint, {
         method: 'POST',
         credentials: 'omit',
+        redirect: 'error',
         referrerPolicy: 'no-referrer',
         cache: 'no-store',
         headers: { 'Content-Type': 'application/json' },
