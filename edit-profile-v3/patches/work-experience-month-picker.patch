@@ -1,0 +1,208 @@
+--- a/v3/starter-edit-profile/unified-companies.js
++++ b/v3/starter-edit-profile/unified-companies.js
+@@ -206,6 +206,10 @@
+         // month into a literal end date the Starter never entered.
+         const saved = record.dates?.[key]
+         if (saved && saved.display === value[key] && writer.parseDate(saved.raw)) value[key] = saved.raw
++        else if (value[key]) {
++          const date = writer.parseDate(value[key])
++          if (date) value[key] = date.getFullYear() + '-' + String(date.getMonth() + 1).padStart(2, '0')
++        }
+       }
+       if (value.current_work) value.end_date = 'Present'
+       return { ...value, ...(selection(record.row) || { company_domain: '', company_logo_url: '', company_entity_id: 0, company_source: '' }) }
+@@ -234,6 +238,7 @@
+     }
+     function removeRecord(record) {
+       record.row.querySelector('[profile-company-field="company_name"]')?._starterCompanySearch?.destroy()
++      for (const key of ['start_date', 'end_date']) input(record.row, key)?._starterProfileCompanyMonthPicker?.destroy()
+       record.accordion.release()
+       record.row.remove()
+       records = records.filter(item => item !== record)
+@@ -260,16 +265,6 @@
+         field.setAttribute('name', key + '--company-' + uid)
+         if (key === 'current_work') { field.checked = endsNow(value); return }
+         field.value = value[key] || ''
+-        if (key === 'start_date' || key === 'end_date') {
+-          const raw = value[key] || ''
+-          const date = writer.parseDate(raw)
+-          const display = date ? date.getFullYear() + '-' + String(date.getMonth() + 1).padStart(2, '0') : raw === 'Present' ? '' : raw
+-          // Malformed retained dates stay visible so validation can identify them.
+-          field.setAttribute('type', !raw || date || raw === 'Present' ? 'month' : 'text')
+-          field.removeAttribute('readonly')
+-          field.value = display
+-          record.dates[key] = { display, raw }
+-        }
+       })
+       const company = input(row, 'company_name')
+       if (company) Object.assign(company.dataset, {
+@@ -279,6 +274,18 @@
+         selectedCompanySource: value.company_source || value.source || (value.company_entity_id ? 'platform' : ''),
+       })
+       parent.insertBefore(row, anchor)
++      for (const key of ['start_date', 'end_date']) {
++        const field = input(row, key)
++        if (!field) continue
++        enableStarterProfileCompanyMonthInput(field, key === 'start_date' ? 'Start month and year' : 'End month and year')
++        const raw = value[key] || ''
++        const date = writer.parseDate(raw)
++        // Malformed retained dates stay visible so validation can identify them.
++        if (date && field._starterProfileCompanyMonthPicker) field._starterProfileCompanyMonthPicker.setValue(raw)
++        else field.value = date ? starterProfileCompanyMonthYearLabel(raw) : raw === 'Present' ? '' : raw
++        record.dates[key] = { display: field.value, raw }
++      }
++      bindStarterProfileCompanyMonthRange(input(row, 'start_date'), input(row, 'end_date'), input(row, 'current_work'), { minimumOnly: true })
+       records.push(record)
+       const toggle = row.querySelector('[profile-item-toggle]')
+       toggle?.setAttribute('role', 'button')
+--- a/v3/starter-edit-profile/company-experience-crud.js
++++ b/v3/starter-edit-profile/company-experience-crud.js
+@@ -298,18 +298,15 @@
+         closePicker();
+         if (typeof input.focus === 'function') input.focus({ preventScroll: true });
+     });
+-    input.addEventListener('click', openPicker);
+-    ['beforeinput', 'paste', 'drop'].forEach(function (type) {
+-        input.addEventListener(type, function (event) { event.preventDefault(); });
+-    });
+-    input.addEventListener('keydown', function (event) {
++    const preventManualEntry = function (event) { event.preventDefault(); };
++    const onInputKeydown = function (event) {
+         if (event.key === 'Escape') closePicker();
+         if (event.key === 'Enter' || event.key === ' ' || event.key === 'ArrowDown') {
+             event.preventDefault();
+             openPicker();
+         }
+-    });
+-  popup.addEventListener('keydown', function (event) {
++    };
++    const onPopupKeydown = function (event) {
+     if (event.key === 'Escape') {
+       event.preventDefault();
+       event.stopPropagation();
+@@ -325,20 +322,44 @@
+       : (currentIndex < 0 || currentIndex === controls.length - 1 ? 0 : currentIndex + 1);
+     event.preventDefault();
+     controls[nextIndex].focus({ preventScroll: true });
+-    });
+-    document.addEventListener('mousedown', function (event) {
++    };
++    const onDocumentMouseDown = function (event) {
+         if (open && event.target !== input && !popup.contains(event.target)) closePicker();
+-    });
+-  window.addEventListener('resize', function () { if (open) positionPicker(); });
+-  window.addEventListener('scroll', function () { if (open) positionPicker(); }, true);
++    };
++    const onViewportChange = function () { if (open) positionPicker(); };
++    input.addEventListener('click', openPicker);
++    ['beforeinput', 'paste', 'drop'].forEach(function (type) { input.addEventListener(type, preventManualEntry); });
++    input.addEventListener('keydown', onInputKeydown);
++    popup.addEventListener('keydown', onPopupKeydown);
++    document.addEventListener('mousedown', onDocumentMouseDown);
++    window.addEventListener('resize', onViewportChange);
++    window.addEventListener('scroll', onViewportChange, true);
+   if (window.visualViewport) {
+-    window.visualViewport.addEventListener('resize', function () { if (open) positionPicker(); });
+-    window.visualViewport.addEventListener('scroll', function () { if (open) positionPicker(); });
++    window.visualViewport.addEventListener('resize', onViewportChange);
++    window.visualViewport.addEventListener('scroll', onViewportChange);
+   }
+ 
+     input._starterProfileCompanyMonthPicker = {
+         popup,
+         open: openPicker,
++        destroy() {
++            closePicker();
++            input.removeEventListener('click', openPicker);
++            ['beforeinput', 'paste', 'drop'].forEach(function (type) { input.removeEventListener(type, preventManualEntry); });
++            input.removeEventListener('keydown', onInputKeydown);
++            popup.removeEventListener('keydown', onPopupKeydown);
++            document.removeEventListener('mousedown', onDocumentMouseDown);
++            window.removeEventListener('resize', onViewportChange);
++            window.removeEventListener('scroll', onViewportChange, true);
++            if (window.visualViewport) {
++                window.visualViewport.removeEventListener('resize', onViewportChange);
++                window.visualViewport.removeEventListener('scroll', onViewportChange);
++            }
++            popup.remove();
++            delete input._starterProfileCompanyMinimumResolver;
++            delete input._starterProfileCompanyMonthPicker;
++            input.removeAttribute('aria-controls');
++        },
+         setValue(value) {
+             if (isStarterProfileCompanyPresentDate(value)) return;
+             const date = starterProfileCompanyDatepickerValue(value);
+@@ -375,8 +396,10 @@
+     input.setAttribute('aria-expanded', 'false');
+     input.setAttribute('aria-label', labelText);
+ 
+-    const label = document.querySelector(`label[for="${input.id}"]`) || input.closest('[form-group]')?.querySelector('label');
+-    if (label) {
++    // A wrapping label owns the input as a child, so replacing its text would remove
++    // the control. Only relabel a separate label explicitly associated with this input.
++    const label = input.id ? document.querySelector(`label[for="${input.id}"]`) : null;
++    if (label && !label.contains(input)) {
+         label.htmlFor = input.id;
+         label.textContent = labelText;
+     }
+@@ -419,7 +442,7 @@
+     if (endInput && typeof endInput.reportValidity === 'function') endInput.reportValidity();
+ }
+ 
+-function syncStarterProfileCompanyMonthRange(startInput, endInput, isCurrent) {
++function syncStarterProfileCompanyMonthRange(startInput, endInput, isCurrent, minimumOnly) {
+     if (!startInput || !endInput) return;
+ 
+     // Constrain only the end picker. A reciprocal maximum on the start picker can
+@@ -435,11 +458,13 @@
+         endInput._starterProfileCompanyMonthPicker.setMinimum(startDate);
+     }
+     startInput.removeAttribute('max');
+-    setStarterProfileCompanyMonthRangeError(
+-        startInput,
+-        endInput,
+-        !isStarterProfileCompanyMonthRangeValid(startInput, endInput, isCurrent)
+-    );
++    if (!minimumOnly) {
++        setStarterProfileCompanyMonthRangeError(
++            startInput,
++            endInput,
++            !isStarterProfileCompanyMonthRangeValid(startInput, endInput, isCurrent)
++        );
++    }
+ }
+ 
+ function isStarterProfileCompanyMonthRangeValid(startInput, endInput, isCurrent) {
+@@ -456,7 +481,7 @@
+             (endDate.getFullYear() * 12 + endDate.getMonth());
+ }
+ 
+-function bindStarterProfileCompanyMonthRange(startInput, endInput, currentCheckbox) {
++function bindStarterProfileCompanyMonthRange(startInput, endInput, currentCheckbox, options) {
+     if (!startInput || !endInput) return;
+ 
+     endInput._starterProfileCompanyMinimumResolver = function () {
+@@ -467,7 +492,8 @@
+         syncStarterProfileCompanyMonthRange(
+             startInput,
+             endInput,
+-            !!(currentCheckbox && currentCheckbox.checked)
++            !!(currentCheckbox && currentCheckbox.checked),
++            !!(options && options.minimumOnly)
+         );
+     };
+ 
+--- a/starter-edit-profile.js
++++ b/starter-edit-profile.js
+@@ -165,10 +165,7 @@
+ 	if (!source || !document.createElement) return Promise.resolve(null);
+ 	let url = '';
+ 	try {
+-		const cdnRoot = source.match(/^(https:\/\/cdn\.jsdelivr\.net\/gh\/the-starters\/starters-webflow@[^/]+\/)/);
+-		url = cdnRoot
+-			? `${cdnRoot[1]}utils/workflow-diagnostics.js`
+-			: new URL('utils/workflow-diagnostics.js', source).href;
++		url = new URL('utils/workflow-diagnostics.js', source).href;
+ 	} catch (_) {
+ 		return Promise.resolve(null);
+ 	}

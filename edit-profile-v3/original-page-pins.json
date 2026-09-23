@@ -1,0 +1,94 @@
+{
+  "purpose": "Original non-test Starter Edit Profile page first-party script pins, recorded before v3 bundle cutover",
+  "observed": "2026-09-23",
+  "captureMethod": "Webflow page custom-code readback of external <script src> pins; each entry is the Git tag and repository path named by its jsDelivr URL",
+  "page": {
+    "path": "/starter-edit-profile",
+    "pageId": "6a44b2477e93b2d11b905de0",
+    "siteId": "69c573f20f82bd0f3384032c"
+  },
+  "relatedRecords": [
+    {
+      "record": "v3/starter-edit-profile/live-body-provenance.json",
+      "capturedAt": "2026-08-12T11:43:00+08:00",
+      "note": "A different, earlier observation of the same page. It captured six controllers as inline body embeds hashed from the published HTML; this file captures externally pinned tag URLs read on 2026-09-23. The two records describe the page at different times and by different capture methods, so their hashes are not comparable and neither supersedes the other. Whether those six embeds were replaced by the external pins listed here is not established by either record."
+    }
+  ],
+  "scripts": [
+    {
+      "path": "v3/profile-form/shared-foundation.js",
+      "tag": "v1.59.534",
+      "sha256": "a24c018b4d015a5d667023bca62bb0b05278e5eb4faef133b9503e5e3aed756c"
+    },
+    {
+      "path": "v3/profile-form/incremental-dropdowns.js",
+      "tag": "v1.59.533",
+      "sha256": "015173062d8bfbeeaf9222e149edad5a34e709ad04c4e39506414e752e6eb39e"
+    },
+    {
+      "path": "v3/starter-edit-profile/locations.js",
+      "tag": "v1.59.328",
+      "sha256": "69794b67fd9359f16427ad36fae3e2dd5dca4dc8729b0eaab66ca6b4be5bd8de"
+    },
+    {
+      "path": "v3/starter-edit-profile/canonical-profile-loader.js",
+      "tag": "v1.59.522",
+      "sha256": "0987ddd56267c76c39fcb9a7b06dd17d50df6d69958ae69dcc2af37d091ff661"
+    },
+    {
+      "path": "starter-edit-profile.js",
+      "tag": "v1.59.588",
+      "sha256": "60bfc80ee9588a5c30f0a1f95b3a818b11da2aa25a460d945889427b406a98f8"
+    },
+    {
+      "path": "v3/scheduling-bridge.js",
+      "tag": "v1.59.593",
+      "sha256": "00d341b097684a841d9032f1243b6f692095648b66cf70bf84608e3771348444"
+    },
+    {
+      "path": "v3/free-call-settings.js",
+      "tag": "v1.59.608",
+      "sha256": "6fa9cbd6575b1ab2b1a4872f0c057999f0eb730348b8a5895a519f3c7e4cedd5"
+    },
+    {
+      "path": "v3/paid-call-settings.js",
+      "tag": "v1.59.608",
+      "sha256": "f67eaf20f5e71461841ba7f074ddffd9ed80a282d0cf666d18f3b62ade11bc80"
+    },
+    {
+      "path": "profile-image-auth-shim.js",
+      "tag": "v1.59.343",
+      "sha256": "d6e380bdb87ec41764cda80936e460294d8e57d7064edbc3c6b5e49d93825a41"
+    },
+    {
+      "path": "v3/build-profile/profile-photo.js",
+      "tag": "v1.59.546",
+      "sha256": "988c84c6391241f2aa3969f4acdeb77258831bd7332e5137046e2a8f4440fcf5"
+    },
+    {
+      "path": "v3/starter-edit-profile/portfolio-crud.js",
+      "tag": "v1.59.615",
+      "sha256": "9279f7678f9909e3ee32ea208f8d06366e3be360e07bf878687df8a83b68692a"
+    },
+    {
+      "path": "v3/starter-edit-profile/portfolio-list.js",
+      "tag": "v1.59.195",
+      "sha256": "f559928f524705d1fcce022a1213b0a637c233cbd55f4973dc376457e0ab74ff"
+    },
+    {
+      "path": "v3/starter-edit-profile/company-autocomplete.js",
+      "tag": "v1.59.501",
+      "sha256": "eeadcf42be5c4388fa8cd5aa7ec0fe74e648d13b6ae64386d3446d3c9c97b94b"
+    },
+    {
+      "path": "v3/starter-edit-profile/company-experience-crud.js",
+      "tag": "v1.59.519",
+      "sha256": "873981f2bb50b183b084118df606d330377e30fb8be03e081b2954370077e21e"
+    },
+    {
+      "path": "v3/build-profile/work-dates.js",
+      "tag": "v1.59.515",
+      "sha256": "4bf43605286b1f6dd796f8227a3f72e7c43aea5f41131f21bd78c283473002b6"
+    }
+  ]
+}
