@@ -1,6 +1,6 @@
 # `v3/hire-profile.js` — wiring and ownership
 
-Last updated: 2026-09-21
+Last updated: 2026-09-23
 Status: Free Brands and every other signed-in non-paid viewer are paywalled into
 `signup-modal` on all paid CTAs (see [Paywalled viewers](#paywalled-viewers)).
 Call projections and Free Call behavior are GitHub-owned; the Free/Paid
@@ -32,6 +32,11 @@ projection. `hire-profile.js` only neutralizes unresolved custom-Company links
 that do not yet have a public Company page.
 
 ## Install
+
+The premade-profile claim candidate has a separate, security-sensitive head
+placement and release gate. Follow
+[`STARTER-PROFILE-CLAIM-WIRING.md`](STARTER-PROFILE-CLAIM-WIRING.md) for that
+controller; do not add it to the scheduling embed below.
 
 Webflow → hire template → Page Settings → Custom Code → **Head**:
 
