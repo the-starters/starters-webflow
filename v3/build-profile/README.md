@@ -2,14 +2,15 @@
 
 The native Webflow forms and their authored success/error elements stay in Webflow. Browser logic lives in this directory and is loaded from GitHub through jsDelivr.
 
-The remaining inline Build Profile bodies now also have GitHub-owned extraction candidates. The
-authoritative ownership, provenance, atomic page-Head-Code cutover, loader-order, and verification contract
-lives in [`../profile-form/README.md`](../profile-form/README.md). This repository change does not
-install or publish those candidates.
+The Build Profile controllers were extracted from earlier inline bodies. The
+authoritative ownership, provenance, page-Head-Code loader order, and verification contract
+lives in [`../profile-form/README.md`](../profile-form/README.md). Both published Build routes
+load `portfolio-crud.js` through jsDelivr `@latest`; changes to this file reach them only
+after a new semver tag and CDN purge.
 
 ## Scoped migration
 
-The files below are source-controlled candidates for self-contained controller blocks that are currently inline on both `/build-profile/consult` and `/build-profile/full-profile`. [`live-body-provenance.json`](./live-body-provenance.json) keeps the authenticated live-body capture separate from the instrumented Git candidate hashes. Its `pages` records are immutable readback evidence; its `candidateAssets` records identify the reviewed files that replace those blocks. Both pages produced the same nine captured body hashes.
+The files below are source-controlled controllers extracted from the earlier inline bodies on both `/build-profile/consult` and `/build-profile/full-profile`. [`live-body-provenance.json`](./live-body-provenance.json) keeps that historical authenticated capture separate from the Git asset hashes. Its `pages` records are immutable readback evidence; its `candidateAssets` records identify the reviewed files. Both pages produced the same nine captured body hashes.
 
 | Original order | GitHub asset | Live inline body SHA-256 | Responsibility |
 | --- | --- | --- | --- |
@@ -32,6 +33,9 @@ This route gate prevents a nested or stale Build loader from claiming the native
 Edit Profile Work Highlights controls. Do not replace it with a DOM marker or a
 first-loader-wins flag because Build and Edit intentionally share the same
 Designer selectors.
+On both published Build routes, the add accordion `#profile-dropdown` is absent.
+The Work Highlights create handler must allow that element to be missing and
+must accept only one in-flight creation per form.
 
 `bio-editor.js`, `field-counters.js`, `company-autocomplete.js`, `work-dates.js`, and
 `company-experience-crud.js` have
