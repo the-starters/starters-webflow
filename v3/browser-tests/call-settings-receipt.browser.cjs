@@ -91,6 +91,8 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
       paid: document.getElementById('paid-price-output') ? {
         enabled: document.querySelector('[data-call-settings-service="paid"]').getAttribute('data-paid-call-enabled'),
         bookable: document.querySelector('[data-call-settings-service="paid"]').getAttribute('data-paid-call-bookable'),
+        yes: document.getElementById('paid-yes').checked,
+        no: document.getElementById('paid-no').checked,
         displayedRate: document.getElementById('paid-price-output').textContent,
         rateInput: document.getElementById('paid-call-rate').value,
         titleInput: document.getElementById('paid-call-title').value,
@@ -169,6 +171,35 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
     }
     const record = (name, detail) => { results.push({ name, detail }); console.log(`  ok  ${name}`) }
     const xanoWrites = state => state.network.filter(entry => entry.method !== 'GET')
+
+    // ------------------------------------------------------------------
+    // 0. Dashboard reload: Memberstack identity can be visible before its
+    //    custom JSON has hydrated. Both controllers must wait for the site's
+    //    readiness barrier, then paint the pending Build Profile choices.
+    // ------------------------------------------------------------------
+    await navigate('/starter-dashboard', 'page=dashboard&paid=1&receipt=both-pending&memberready=late&seen=1')
+    const waitingForMemberJson = await snapshot('00-dashboard-head-waits-for-member-json', 'HEAD, signed-in identity visible while site memberReady is still pending')
+    assert.notEqual(waitingForMemberJson.callStatus.free, 'ready', 'the Free card does not finalize from pre-hydration JSON')
+    assert.notEqual(waitingForMemberJson.callStatus.paid, 'ready', 'the Paid card does not finalize from pre-hydration JSON')
+    assert.equal(waitingForMemberJson.reads, 0, 'neither controller reads the pre-hydration empty member JSON')
+    assert.equal(await evaluate('window.__tsReleaseMemberReady()'), true, 'the fixture releases the site readiness barrier')
+    assert.ok(await settleUntil(`document.getElementById('free-yes').checked && document.getElementById('paid-yes').checked`), 'both pending Build Profile choices hydrate after memberReady')
+    await evaluate(`Array.from(document.querySelectorAll('[data-call-settings-action="open"]')).forEach(button => button.click())`)
+    await pause(200)
+    const hydratedAfterMemberReady = await snapshot('00b-dashboard-head-hydrates-after-member-ready', 'HEAD, same Dashboard reload after member JSON hydration completes')
+    assert.equal(hydratedAfterMemberReady.free.yes, true, 'Free = Yes survives the reload')
+    assert.equal(hydratedAfterMemberReady.free.description, 'Quick intro', 'the Free description survives the reload')
+    assert.equal(hydratedAfterMemberReady.paid.yes, true, 'Paid = Yes survives the reload')
+    assert.equal(hydratedAfterMemberReady.paid.titleInput, 'Strategy call', 'the Paid title survives the reload')
+    assert.equal(hydratedAfterMemberReady.paid.rateInput, '250', 'the Paid rate survives the reload')
+    assert.deepEqual(xanoWrites(hydratedAfterMemberReady), [], 'hydration does not activate a canonical service or contact a provider')
+    assert.equal(hydratedAfterMemberReady.writes, 0, 'hydration does not mutate private member JSON')
+    assert.deepEqual(errors, [], 'no uncaught browser errors')
+    record('dashboard-reload-waits-for-member-json-before-hydrating-both-build-choices', {
+      free: hydratedAfterMemberReady.free,
+      paid: hydratedAfterMemberReady.paid,
+      network: hydratedAfterMemberReady.network,
+    })
 
     // ------------------------------------------------------------------
     // 1. Edit Profile: a receipt the live canonical service already satisfies is
