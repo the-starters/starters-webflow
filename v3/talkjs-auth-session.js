@@ -376,28 +376,30 @@
 
   async function reconcileMemberstack() {
     if (!active) return
+    var owned = active
     var cookie
     try {
-      cookie = await active.memberstack.getMemberCookie()
+      cookie = await owned.memberstack.getMemberCookie()
     } catch (error) {
       return
     }
-    if (!active) return
+    if (active !== owned) return
     if (!cookie) {
       destroy('logout')
       return
     }
-    if (cookie !== active.memberstackCookie) {
-      destroy('member-change')
-      return
-    }
     var member
     try {
-      member = await currentMember(active.memberstack)
+      member = await currentMember(owned.memberstack)
     } catch (error) {
       return
     }
-    if (!active || member.id !== active.memberId) destroy('member-change')
+    if (active !== owned) return
+    if (member.id !== owned.memberId) {
+      destroy('member-change')
+      return
+    }
+    owned.memberstackCookie = cookie
   }
 
   function wireMemberstack(memberstack) {

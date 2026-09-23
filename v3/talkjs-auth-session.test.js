@@ -537,7 +537,19 @@ test('transient member lookup error preserves the signed session', async () => {
   assert.equal(await open(state), session)
 })
 
-test('identity change destroys the old session', async () => {
+test('same-member cookie rotation preserves the signed session', async () => {
+  const state = harness()
+  const session = await open(state)
+
+  state.memberstackCookie('memberstack-cookie-b')
+  await state.authChange()
+
+  assert.equal(state.calls.destroys, 0)
+  assert.equal(state.api.debugSnapshot().memberId, 'mem_sb_membera')
+  assert.equal(await open(state), session)
+})
+
+test('changed member and cookie destroy the old session', async () => {
   const state = harness()
   await open(state)
   state.member({ id: 'mem_sb_memberb' })
