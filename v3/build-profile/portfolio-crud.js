@@ -1,4 +1,5 @@
 /**
+ * @release v1.59.616
  * GitHub-owned copy of the Build Profile Webflow controller block.
  * Original live inline body SHA-256: 7ab803c9890b802f154c6f5c3f0a6d5906624f71b9683153b2f5798617e1070d
  * Captured read-only from /build-profile/consult on 2026-08-12.
@@ -78,6 +79,7 @@
       let existingImages = [];
       let existingVideos = [];
       let autoOpenedCreateDropdown = false;
+      let isCreatingPortfolio = false;
 
       function getAssetUrl(value) {
         if (!value) return '';
@@ -590,12 +592,15 @@
       }
 
       function disableDropdownToggle(state) {
+        if (!profileDropdown) return;
         profileDropdown.style.pointerEvents = state ? 'none' : 'auto';
         profileDropdown.style.opacity = state ? '0.6' : '1';
       }
 
       async function handlePortfolioCreate(event) {
         event.preventDefault();
+        if (isCreatingPortfolio) return;
+        isCreatingPortfolio = true;
         try {
           disableDropdownToggle(true);
           const portfolios = await getPortfolios();
@@ -653,6 +658,7 @@
           openNotificationModal(getErrorMessage(error, 'Portfolio creation failed'));
         } finally {
           disableDropdownToggle(false);
+          isCreatingPortfolio = false;
         }
       }
 
