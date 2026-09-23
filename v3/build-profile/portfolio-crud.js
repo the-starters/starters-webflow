@@ -306,7 +306,7 @@
 
         const titleIsFilled = Boolean(titleInput && titleInput.value.trim());
         const hasImage = selectedFiles.length > 0;
-        const canSubmit = titleIsFilled && hasImage && !isCreatingPortfolio;
+        const canSubmit = titleIsFilled && hasImage;
         if (createSubmitText) createSubmitText.textContent = isCreatingPortfolio ? 'Saving...' : defaultCreateSubmitText;
         createSubmit.style.opacity = canSubmit ? '1' : '0.5';
         createSubmit.style.pointerEvents = canSubmit ? 'auto' : 'none';

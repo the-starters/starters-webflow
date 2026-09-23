@@ -594,6 +594,7 @@ function createCrudHarness(file, { deferredWrites = false, alsoWorkedWithStatuse
 
   return {
     companyInput,
+    addButton,
     addButtonText,
     runTimer(delay) {
       for (const [id, timer] of timers) {
@@ -954,6 +955,31 @@ test('Build Profile shows Saving then Added while creating Work History', async 
   assert.equal(harness.addButtonText.textContent, 'Added')
   assert.equal(harness.runTimer(2000), true)
   assert.equal(harness.addButtonText.textContent, 'Add company')
+})
+
+test('Build Profile shows Added on the third Work History item, then hides the button', async () => {
+  const existingCompanies = [
+    { id: 'company-1', company_name: 'QA Wolf', job_title: 'Engineer' },
+    { id: 'company-2', company_name: 'Acme', job_title: 'Designer' },
+  ]
+  const file = path.join(__dirname, '../build-profile/company-experience-crud.js')
+  const harness = createCrudHarness(file, {
+    deferredWrites: false,
+    companyCreateStatuses: [200],
+    initialCompanies: existingCompanies,
+  })
+  await harness.start()
+  harness.prepareAdd()
+
+  await harness.queueAdd()
+
+  assert.equal(harness.addButtonText.textContent, 'Added')
+  assert.notEqual(harness.addButton.style.display, 'none')
+
+  assert.equal(harness.runTimer(2000), true)
+
+  assert.equal(harness.addButtonText.textContent, 'Max 3 companies')
+  assert.equal(harness.addButton.style.display, 'none')
 })
 
 test('Build Profile shows Error then restores the Work History button after a failed save', async () => {

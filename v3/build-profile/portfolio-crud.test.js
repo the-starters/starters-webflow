@@ -163,7 +163,8 @@ test('Build Profile shows Saving while a highlight is being created', async () =
   await pendingCreate.whenStarted;
 
   assert.equal(fixture.createSubmitLabel.textContent, 'Saving...');
-  assert.equal(fixture.createSubmit.style.pointerEvents, 'none');
+  assert.equal(fixture.createSubmit.style.pointerEvents, 'auto');
+  assert.equal(fixture.createSubmit.style.opacity, '1');
   pendingCreate.release();
   await save;
 

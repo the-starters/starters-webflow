@@ -900,8 +900,9 @@ function starterProfileCompanyMonthYearLabel(value) {
         isLimitReached = companiesCount >= MAX;
         const isFormReady = hasRequiredCompanyFields();
         const isDisabled = isLimitReached || !isFormReady || isSubmitting;
+        const isShowingFeedback = addCompanyFeedbackTimeout !== null;
 
-        addCompanyButton.style.display = isLimitReached ? 'none' : 'flex';
+        addCompanyButton.style.display = isLimitReached && !isShowingFeedback ? 'none' : 'flex';
         addCompanyButton.style.pointerEvents = isDisabled ? 'none' : '';
         addCompanyButton.style.opacity = isDisabled ? '0.5' : '';
         addCompanyButton.setAttribute('aria-disabled', isDisabled ? 'true' : 'false');
@@ -929,7 +930,7 @@ function starterProfileCompanyMonthYearLabel(value) {
           }
         }
 
-        if (addCompanyFeedbackTimeout === null) setButtonText(ctaText);
+        if (!isShowingFeedback) setButtonText(ctaText);
 
         updateDropdownLabel();
       }
