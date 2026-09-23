@@ -604,6 +604,8 @@ opening depends on save and removal state the accordion cannot see, and the grou
 not to bind a second handler on the same control. Hydration, Add, Discard, and Undo all go
 through that group, and a removed row is released from it. The shared contract is documented
 in the [accordions README](../../global-embeds/accordions/README.md#rows-a-script-renders).
+Owned header clicks, including nested Remove and Undo, stop bubbling so Webflow's delegated
+legacy accordion interaction cannot overwrite the shared owner's panel height.
 
 Runtime rows stay before Add. Saved headings read `Work Experience (Company · Title)`;
 the confirmed identity stays visible while edits are pending, so a saved row's heading does
@@ -643,6 +645,8 @@ a Starter's own toggle still animates.
 states with themed Button wrappers and a local, in-memory writer. It does not prove
 published-page wiring or authenticated persistence. Run its desktop/mobile Chrome checks
 with `GSAP_SOURCE=<path to a GSAP UMD build> node v3/browser-tests/work-experience-annotations.browser.cjs`.
+Append `--undo-only` for the focused desktop animated pass, including delayed legacy
+click/second-click interference with Remove and Undo.
 `GSAP_SOURCE` is required and is read before Chrome or the local server starts, so an
 unreadable path fails with a clear message instead of a mid-run crash. This repository has no
 manifest and does not vendor GSAP, so the path has to come from the operator - point it at a

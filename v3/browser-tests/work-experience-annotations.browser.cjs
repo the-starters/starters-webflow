@@ -2,6 +2,7 @@
 // GSAP_SOURCE is required: the animated pass needs the real library, and this repository has no
 // manifest and does not vendor one, so the path is an explicit input rather than a resolution
 // that only succeeds where an undeclared copy happens to sit above the checkout.
+// Add --undo-only to run only the desktop animated focus/removal regression.
 // Optional: CHROME_BIN and WORK_EXPERIENCE_BROWSER_EVIDENCE (screenshots/observations).
 // Isolated Chrome, local fixture, in-memory writer; no member session or live writes.
 const assert = require('node:assert/strict')
@@ -97,7 +98,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
     const type = (key, value, index = 0) => evaluate(`(()=>{const row=document.querySelectorAll('[profile-item-row]')[${index}];const el=row.querySelector('[profile-company-field="${key}"]');el.value=${JSON.stringify(value)};el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));})()`)
     await send('Runtime.enable')
     await send('Emulation.setEmulatedMedia', {features:[{name:'prefers-reduced-motion',value:'reduce'}]})
-    for (const [device, width, height] of [['desktop', 1200, 1000], ['mobile', 390, 844]]) {
+    for (const [device, width, height] of (process.argv.includes('--undo-only') ? [] : [['desktop', 1200, 1000], ['mobile', 390, 844]])) {
       await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: device === 'mobile' })
       await send('Page.navigate', { url: `http://127.0.0.1:${server.address().port}/v3/starter-edit-profile/unified-companies.fixture.html` })
       await pause(250)
@@ -224,6 +225,26 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
     assert.notEqual(landed.panel, 'none')
     assert.ok(landed.width > 0 && landed.height > 0, 'the restored row focused field has layout')
     holds(await settled(), 'company_name', 0, 'Undo')
+    // Webflow's legacy click/second-click interaction can register after hydration. It
+    // listens above the row and also treats its nested Remove/Undo controls as toggles.
+    // Reproduce its delayed height write without requiring Webflow or a member session.
+    await evaluate(`(()=>{
+      const toggle=document.querySelector('[profile-item-toggle]');
+      const panel=document.querySelector('[profile-item-content]');
+      let clicks=0;
+      window.legacyAccordionClick=event=>{
+        if (!toggle.contains(event.target)) return;
+        const height=++clicks%2 ? 'auto' : '0px';
+        setTimeout(()=>{panel.style.height=height},200);
+      };
+      document.addEventListener('click',window.legacyAccordionClick);
+    })()`)
+    await click('[profile-item-remove] button')
+    await pause(400)
+    await click('[profile-items-undo] button')
+    holds(await focused(), 'company_name', 0, 'Undo with legacy interaction')
+    holds(await settled(), 'company_name', 0, 'settled Undo with legacy interaction')
+    await evaluate("document.removeEventListener('click',window.legacyAccordionClick);delete window.legacyAccordionClick")
     // A failing field in a collapsed row: validation opens that row and focuses into it.
     await type('job_title', '', 0)
     await click('[profile-item-row] ~ [profile-item-row] [profile-item-toggle]')
@@ -242,7 +263,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
       checks: 'real GSAP instant opens land focus and stay open past the animation for Add, Add on a collapsed unfinished row, Undo and validation reveal', view: await state() })
     assert.deepEqual(errors, [])
     if (evidence) await fs.writeFile(path.join(evidence, 'observations.json'), JSON.stringify({ boundary: 'Isolated local Chrome fixture; in-memory writer; no authenticated-page or real persistence proof', observations }, null, 2))
-    console.log('Desktop and mobile Work Experience component checks passed' + (evidence ? '; evidence: ' + evidence : ''))
+    console.log((process.argv.includes('--undo-only') ? 'Desktop animated Work Experience regression passed' : 'Desktop and mobile Work Experience component checks passed') + (evidence ? '; evidence: ' + evidence : ''))
   } finally {
     socket?.close()
     const closed = new Promise(resolve => chrome.once('exit', resolve)); chrome.kill(); await closed

@@ -1106,6 +1106,28 @@ test('last company Remove uses disabled theme and Undo replaces the removal acti
   assert.equal(page.mutations().length, 0)
 })
 
+test('owned row clicks do not reach a delegated legacy accordion handler', async () => {
+  const page = await mount({ componentMarkup: true, companies: [
+    { id: 1, company_name: 'Acme', company_source: 'custom', job_title: 'Designer' },
+    { id: 2, company_name: 'Beta', company_source: 'custom', job_title: 'Engineer' },
+  ] })
+  const first = page.section.querySelector('[profile-item-row]')
+  let legacyClicks = 0
+  page.section.addEventListener('click', event => {
+    if (first.querySelector('[profile-item-toggle]').contains(event.target)) legacyClicks++
+  })
+  page.click(first.querySelector('[profile-items-summary]'))
+  assert.equal(page.expanded(0), true)
+  page.click(first.querySelector('[profile-item-remove]').querySelector('button'))
+  assert.equal(page.expanded(0), false)
+  assert.equal(first.querySelector('[profile-items-undo]').hidden, false)
+  page.click(first.querySelector('[profile-items-undo]').querySelector('button'))
+  assert.equal(page.expanded(0), true)
+  assert.equal(first.querySelector('[profile-items-undo]').hidden, true)
+  assert.equal(legacyClicks, 0)
+  assert.equal(page.mutations().length, 0)
+})
+
 test('company heading keeps its saved identity and its row status follows edits and discard', async () => {
   const page = await mount({ componentMarkup: true, companies: [{ id: 1, company_name: 'Acme', company_source: 'custom', job_title: 'Designer' }] })
   const summary = () => page.section.querySelector('[profile-items-summary]').textContent

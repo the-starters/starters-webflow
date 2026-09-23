@@ -286,6 +286,9 @@
       toggle?.setAttribute('tabindex', '0')
       record.accordion = accordion.register(row, toggle, row.querySelector('[profile-item-content]'))
       const toggleRow = event => {
+        // This row owns its toggle and nested actions. Webflow's delegated legacy
+        // click/second-click interaction must not animate the same panel afterward.
+        event.stopPropagation()
         if (event.target.closest?.('[profile-item-remove], [profile-items-undo]')) return
         event.preventDefault()
         if (!saving && !record.removed) setOpen(record, !record.accordion.isOpen())
