@@ -744,7 +744,7 @@
       if (!node || !node.style) return
       entries.forEach(function (entry) {
         if (typeof node.style.setProperty === 'function') node.style.setProperty(entry[0], entry[1], 'important')
-        else node.style[entry[0].replace(/-([a-z])/g, function (m, c) { return c.toUpperCase() })] = entry[1]
+        else node.style[entry[0].replace(/^-/, '').replace(/-([a-z])/g, function (m, c) { return c.toUpperCase() })] = entry[1]
       })
     }
     forceStyles(wrap, [['display', 'flex'], ['align-items', 'flex-start'], ['gap', '0.5rem'], ['cursor', 'pointer']])

@@ -5098,4 +5098,12 @@ test('the generated consent checkbox stays visible under a site-wide !important 
     assert.deepEqual(input[name], { value, priority: 'important' }, `${name} must be ${value} !important`)
   }
   assert.deepEqual(control.wrap.style.values.display, { value: 'flex', priority: 'important' })
+
+  const fallbackDoc = { createElement: tag => { const el = new CalendarElement(tag); el.style = {}; return el } }
+  const fallback = api.buildConsentControl(fallbackDoc, { querySelector: () => null }, 'saved-card')
+  assert.equal(fallback.input.style.appearance, 'auto')
+  assert.equal(fallback.input.style.webkitAppearance, 'checkbox')
+  assert.equal(fallback.input.style.minWidth, '16px')
+  assert.equal(fallback.input.style.minHeight, '16px')
+  assert.equal(fallback.wrap.style.alignItems, 'flex-start')
 })
