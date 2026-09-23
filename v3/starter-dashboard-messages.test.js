@@ -89,6 +89,7 @@ function loadTile(options = {}) {
           tokenFetcher: async () => 'test-token',
         })
       },
+      captureIdentityGuard: () => async () => {},
     },
     addEventListener() {},
     location: { assign() {} },
@@ -143,6 +144,8 @@ function loadRenderedRecent(recent, unreads = [], options = {}) {
     fetches: 0,
     aborts: 0,
     authSessions: [],
+    identityChecks: 0,
+    identityGuardOwners: [],
     xanoTokenArgs: [],
   }
   let messageHandler
@@ -150,6 +153,7 @@ function loadRenderedRecent(recent, unreads = [], options = {}) {
   let unreadHandler
   let completeAuthSession
   let failAuthSession
+  let ownerValid = true
   const authSessionGate = options.deferAuthSession
     ? new Promise((resolve, reject) => {
         completeAuthSession = resolve
@@ -278,6 +282,16 @@ function loadRenderedRecent(recent, unreads = [], options = {}) {
           tokenFetcher: async () => 'test-token',
         })
       },
+      captureIdentityGuard(clientOwner) {
+        calls.identityGuardOwners.push(clientOwner)
+        const sessionOptions = calls.authSessions.at(-1)
+        return async () => {
+          calls.identityChecks += 1
+          if (ownerValid) return
+          sessionOptions.onInvalidate()
+          throw new Error('TalkJS session identity changed')
+        }
+      },
     },
     open(...args) {
       calls.windows.push(args)
@@ -381,6 +395,9 @@ function loadRenderedRecent(recent, unreads = [], options = {}) {
     rejectAuthSession(error) {
       failAuthSession(error)
     },
+    switchOwner() {
+      ownerValid = false
+    },
     runRecentTimeout() {
       const timeout = recentTimeouts.shift()
       if (!timeout) throw new Error('No recent timeout is pending')
@@ -443,6 +460,31 @@ test('session invalidation clears cards and blocks stale request repaint', async
   assert.equal(state.total.textContent, '0')
 })
 
+test('owner switch after response clears and rejects stale message cards', async () => {
+  const state = loadRenderedRecent(
+    {
+      id: 'one:mem_me|mem_other',
+      participant_name: 'Prior Member Brand',
+      participant_photo_url: null,
+      last_message_text: 'Protected preview',
+      last_message_at: 1,
+      unread: false,
+    },
+    [],
+    { deferRecent: true },
+  )
+  await settle(5)
+
+  assert.equal(state.calls.fetches, 1)
+  state.switchOwner()
+  state.resolveRecent()
+  await settle()
+
+  assert.equal(state.calls.identityGuardOwners[0], 'dashboard-messages-v3')
+  assert.equal(state.list.children.length, 0)
+  assert.equal(state.total.textContent, '0')
+})
+
 test('account switch while session owner opens cannot expose message cards', async () => {
   const state = loadRenderedRecent(
     {
@@ -487,10 +529,24 @@ test('the recent-messages retry refreshes a cached Xano bearer', async () => {
   assert.deepEqual(plain(calls.xanoTokenArgs), [
     false,
     { forceRefresh: true },
-    false,
-    { forceRefresh: true },
   ])
   assert.equal(list.children.at(-1).fields.name.textContent, 'Recovered Brand')
+})
+
+test('a normal mount requests one recent conversation snapshot', async () => {
+  const { calls, list } = loadRenderedRecent({
+    id: 'one:mem_me|mem_other',
+    participant_name: 'Acme Brand',
+    last_message_text: 'Hello',
+    last_message_at: 1,
+    unread: false,
+  })
+
+  await settle()
+
+  assert.equal(calls.fetches, 1)
+  assert.deepEqual(plain(calls.xanoTokenArgs), [false])
+  assert.equal(list.children.length, 1)
 })
 
 test('the display name is the first name alone, never the last name', async () => {
@@ -661,7 +717,7 @@ test('participant identity overrides conversation metadata', async () => {
   assert.equal(card.fields.avatar.src, 'https://cdn.example/acme.jpg')
   assert.equal(card.fields.avatar.alt, 'Acme Brand')
   assert.equal(card.fields.initials.style.display, 'none')
-  assert.equal(calls.fetches, 2)
+  assert.equal(calls.fetches, 1)
   assert.equal(calls.conversations, 0)
 })
 
@@ -843,7 +899,7 @@ test('SDK activity refreshes cards in authoritative proxy order', async () => {
     initialRecent,
     [],
     {
-      recentResponses: [initialRecent, initialRecent, refreshedRecent],
+      recentResponses: [initialRecent, refreshedRecent],
     },
   )
 
@@ -857,7 +913,7 @@ test('SDK activity refreshes cards in authoritative proxy order', async () => {
   ])
   await settle()
 
-  assert.equal(calls.fetches, 3)
+  assert.equal(calls.fetches, 2)
   assert.deepEqual(
     list.children.map((card) => card.fields.name.textContent),
     ['Newly Active Brand', 'First Brand', 'Second Brand'],
@@ -903,7 +959,7 @@ test('message activity refreshes proxy order without an unread change', async ()
     initialRecent,
     [],
     {
-      recentResponses: [initialRecent, initialRecent, refreshedRecent],
+      recentResponses: [initialRecent, refreshedRecent],
     },
   )
 
@@ -911,15 +967,22 @@ test('message activity refreshes proxy order without an unread change', async ()
   emitMessage({ senderId: MY_ID })
   await settle()
 
-  assert.equal(calls.fetches, 3)
+  assert.equal(calls.fetches, 2)
   assert.deepEqual(
     list.children.map((card) => card.fields.name.textContent),
     ['Third Brand', 'First Brand', 'Second Brand'],
   )
 })
 
-test('subscription startup closes the initial proxy snapshot gap', async () => {
-  const initialRecent = [
+test('subscription startup requests one current proxy snapshot', async () => {
+  const currentRecent = [
+    {
+      id: 'one:mem_me|mem_fourth',
+      participant_name: 'Fourth Brand',
+      last_message_text: 'Sent from another tab during load',
+      last_message_at: 4,
+      unread: false,
+    },
     {
       id: 'one:mem_me|mem_first',
       participant_name: 'First Brand',
@@ -934,31 +997,11 @@ test('subscription startup closes the initial proxy snapshot gap', async () => {
       last_message_at: 2,
       unread: false,
     },
-    {
-      id: 'one:mem_me|mem_third',
-      participant_name: 'Third Brand',
-      last_message_text: 'Third message',
-      last_message_at: 1,
-      unread: false,
-    },
   ]
   const { calls, list, resolveRecent } = loadRenderedRecent(
-    initialRecent,
+    currentRecent,
     [],
-    {
-      deferRecent: true,
-      refreshedRecent: [
-        {
-          id: 'one:mem_me|mem_fourth',
-          participant_name: 'Fourth Brand',
-          last_message_text: 'Sent from another tab during load',
-          last_message_at: 4,
-          unread: false,
-        },
-        initialRecent[0],
-        initialRecent[1],
-      ],
-    },
+    { deferRecent: true },
   )
 
   await settle(5)
@@ -967,17 +1010,24 @@ test('subscription startup closes the initial proxy snapshot gap', async () => {
   resolveRecent()
   await settle()
 
-  assert.equal(calls.fetches, 2)
+  assert.equal(calls.fetches, 1)
   assert.deepEqual(
     list.children.map((card) => card.fields.name.textContent),
     ['Fourth Brand', 'First Brand', 'Second Brand'],
   )
 })
 
-test('the first SDK snapshot reconciles a stale in-flight proxy snapshot', async () => {
+test('the first SDK snapshot merges with the initial proxy snapshot', async () => {
   const activeId = 'one:mem_me|mem_active_during_load'
   const { calls, list, resolveRecent } = loadRenderedRecent(
     [
+      {
+        id: activeId,
+        participant_name: 'Newly Active Brand',
+        last_message_text: 'Arrived during load',
+        last_message_at: 4,
+        unread: true,
+      },
       {
         id: 'one:mem_me|mem_first',
         participant_name: 'First Brand',
@@ -992,13 +1042,6 @@ test('the first SDK snapshot reconciles a stale in-flight proxy snapshot', async
         last_message_at: 2,
         unread: false,
       },
-      {
-        id: 'one:mem_me|mem_third',
-        participant_name: 'Third Brand',
-        last_message_text: 'Third message',
-        last_message_at: 1,
-        unread: false,
-      },
     ],
     [
       {
@@ -1006,32 +1049,7 @@ test('the first SDK snapshot reconciles a stale in-flight proxy snapshot', async
         lastMessage: { timestamp: 4, body: 'Arrived during load' },
       },
     ],
-    {
-      deferRecent: true,
-      refreshedRecent: [
-        {
-          id: activeId,
-          participant_name: 'Newly Active Brand',
-          last_message_text: 'Arrived during load',
-          last_message_at: 4,
-          unread: true,
-        },
-        {
-          id: 'one:mem_me|mem_first',
-          participant_name: 'First Brand',
-          last_message_text: 'First message',
-          last_message_at: 3,
-          unread: false,
-        },
-        {
-          id: 'one:mem_me|mem_second',
-          participant_name: 'Second Brand',
-          last_message_text: 'Second message',
-          last_message_at: 2,
-          unread: false,
-        },
-      ],
-    },
+    { deferRecent: true },
   )
 
   await settle(5)
@@ -1040,7 +1058,7 @@ test('the first SDK snapshot reconciles a stale in-flight proxy snapshot', async
   resolveRecent()
   await settle()
 
-  assert.equal(calls.fetches, 2)
+  assert.equal(calls.fetches, 1)
   assert.deepEqual(
     list.children.map((card) => card.fields.name.textContent),
     ['Newly Active Brand', 'First Brand', 'Second Brand'],
@@ -1105,7 +1123,7 @@ test('a stalled bulk request aborts and settles the empty state', async () => {
   await settle()
 
   assert.equal(calls.aborts, 2)
-  assert.equal(calls.fetches, 3)
+  assert.equal(calls.fetches, 2)
   assert.equal(list.children.length, 0)
   assert.equal(loading.style.display, 'none')
   assert.equal(empty.style.display, '')
@@ -1130,7 +1148,7 @@ test('a timed-out bulk request retries before showing an empty state', async () 
   await settle()
 
   assert.equal(calls.aborts, 1)
-  assert.equal(calls.fetches, 3)
+  assert.equal(calls.fetches, 2)
   assert.equal(list.children.length, 1)
   assert.equal(list.children[0].fields.name.textContent, 'Recovered Brand')
   assert.equal(empty.style.display, 'none')

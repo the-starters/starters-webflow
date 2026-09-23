@@ -368,6 +368,7 @@
     memberstack,
     signal,
     forceRefresh,
+    identityGuard,
   ) {
     if (typeof window.getXanoAuthToken !== 'function') {
       throw new Error('shared auth bridge is unavailable')
@@ -376,6 +377,7 @@
       forceRefresh ? { forceRefresh: true } : false,
     )
     if (!xanoToken) throw new Error('shared auth bridge returned no token')
+    await identityGuard()
 
     const res = await fetch(XANO_OPP_BASE + RECENT_MESSAGES_PATH, {
       method: 'POST',
@@ -386,11 +388,16 @@
       signal,
     })
     const data = await res.json().catch(() => null)
+    await identityGuard()
     if (!res.ok) throw new Error('recent messages request failed')
     return (data && data.items) || []
   }
 
-  async function fetchRecentConversationsOnce(memberstack, forceRefresh) {
+  async function fetchRecentConversationsOnce(
+    memberstack,
+    forceRefresh,
+    identityGuard,
+  ) {
     const controller =
       typeof window.AbortController === 'function'
         ? new window.AbortController()
@@ -409,6 +416,7 @@
           memberstack,
           controller ? controller.signal : undefined,
           forceRefresh,
+          identityGuard,
         ),
         timeout,
       ])
@@ -417,11 +425,15 @@
     }
   }
 
-  async function fetchRecentConversations(memberstack) {
+  async function fetchRecentConversations(memberstack, identityGuard) {
     let lastError
     for (let attempt = 0; attempt < RECENT_MESSAGES_MAX_ATTEMPTS; attempt += 1) {
       try {
-        return await fetchRecentConversationsOnce(memberstack, attempt > 0)
+        return await fetchRecentConversationsOnce(
+          memberstack,
+          attempt > 0,
+          identityGuard,
+        )
       } catch (error) {
         lastError = error
       }
@@ -682,6 +694,7 @@
 
     let recentRequest = null
     let refreshQueued = false
+    let identityGuard = null
     const refreshRecent = () => {
       if (recentRequest) {
         refreshQueued = true
@@ -689,7 +702,7 @@
       }
 
       const initial = !state.recentSettled
-      recentRequest = fetchRecentConversations(memberstack)
+      recentRequest = fetchRecentConversations(memberstack, identityGuard)
         .then((items) => {
           if (invalidated) return
           state.recent = items
@@ -743,12 +756,13 @@
         onReconnect: mountTile,
         onInvalidate: invalidate,
       })
+      identityGuard = sessionOwner.captureIdentityGuard(
+        'dashboard-messages-v3',
+      )
     } catch (error) {
       invalidate()
       throw error
     }
-
-    refreshRecent()
 
     session.onMessage(() => {
       if (invalidated) return

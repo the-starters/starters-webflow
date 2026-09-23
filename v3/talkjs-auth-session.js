@@ -255,18 +255,42 @@
     }
   }
 
-  async function xanoRequest(memberstack, url, init, forceRefresh, identity) {
+  async function validateCapturedIdentity(identity, expectedOwner) {
+    if (expectedOwner && active !== expectedOwner) {
+      throw identityError('TalkJS session is no longer current')
+    }
+    try {
+      await assertExpectedIdentity(
+        identity.memberstack,
+        identity.memberId,
+        identity.memberstackCookie,
+      )
+    } catch (error) {
+      if (expectedOwner) {
+        await destroyAndInvalidate('member-change', expectedOwner)
+      }
+      throw error
+    }
+    if (expectedOwner && active !== expectedOwner) {
+      throw identityError('TalkJS session is no longer current')
+    }
+  }
+
+  async function xanoRequest(
+    memberstack,
+    url,
+    init,
+    forceRefresh,
+    identity,
+    expectedOwner,
+  ) {
     var response
     for (var attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
       var bearer = await xanoBearer(
         memberstack,
         forceRefresh || attempt > 0,
       )
-      await assertExpectedIdentity(
-        memberstack,
-        identity.memberId,
-        identity.memberstackCookie,
-      )
+      await validateCapturedIdentity(identity, expectedOwner)
       response = await window.fetch(
         url,
         Object.assign({}, init, {
@@ -275,6 +299,7 @@
           }),
         }),
       )
+      await validateCapturedIdentity(identity, expectedOwner)
       if (response.status !== 401 || attempt + 1 >= MAX_ATTEMPTS) return response
     }
     return response
@@ -304,7 +329,7 @@
           },
           body: '{}',
           credentials: 'omit',
-        }, attempt > 0, options)
+        }, attempt > 0, options, options.ownerState)
         var body = await response.json().catch(function () {
           return null
         })
@@ -396,7 +421,7 @@
       },
       body: JSON.stringify(body),
       credentials: 'omit',
-    }, false, owned)
+    }, false, owned, owned)
     var receipt = await response.json().catch(function () {
       return null
     })
@@ -458,6 +483,17 @@
     var invalidators = active ? active.invalidators : {}
     destroy(reason)
     await invalidateViews(invalidators)
+  }
+
+  function captureIdentityGuard(clientOwner) {
+    if (!active) throw authenticationError('No authenticated TalkJS session')
+    if (!active.clientOwners[clientOwner]) {
+      throw identityError('TalkJS client does not own the active session')
+    }
+    var owned = active
+    return function () {
+      return validateCapturedIdentity(owned, owned)
+    }
   }
 
   async function reconcileMemberstack() {
@@ -611,6 +647,7 @@
           return token
         }
         try {
+          requestOptions.ownerState = sessionOwnerState
           var refreshed = await requestToken(requestOptions)
           if (refreshed.appId !== expectedAppId) {
             throw identityError('TalkJS application changed during refresh')
@@ -664,6 +701,7 @@
   window.StartersTalkJsSessionOwner = {
     openSession: openSession,
     authorizeConversation: authorizeConversation,
+    captureIdentityGuard: captureIdentityGuard,
     destroy: destroy,
     debugSnapshot: debugSnapshot,
   }

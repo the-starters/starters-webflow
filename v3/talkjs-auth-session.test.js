@@ -391,7 +391,7 @@ test('a foreign member cannot join another member pending opening', async () => 
     /foreign TalkJS session opening/,
   )
   release()
-  await assert.rejects(first, /changed during/)
+  await assert.rejects(first, { code: 'TALKJS_IDENTITY_MISMATCH' })
   assert.equal(state.calls.sessions.length, 0)
 })
 
@@ -727,7 +727,7 @@ test('logout during token issuance cannot construct a TalkJS session', async () 
   state.memberstackCookie(null)
   release()
 
-  await assert.rejects(opening, /superseded/)
+  await assert.rejects(opening, { code: 'TALKJS_IDENTITY_MISMATCH' })
   assert.equal(state.calls.sessions.length, 0)
   assert.equal(state.api.debugSnapshot(), null)
 })
@@ -765,7 +765,7 @@ test('changed-cookie auth event supersedes and invalidates a pending opening', a
 
   assert.equal(state.calls.invalidations, 1)
   release()
-  await assert.rejects(opening, /superseded/)
+  await assert.rejects(opening, { code: 'TALKJS_IDENTITY_MISMATCH' })
   assert.equal(state.calls.sessions.length, 0)
   assert.equal(state.api.debugSnapshot(), null)
 })
@@ -798,7 +798,7 @@ test('cookie rotation after an early auth callback supersedes opening', async ()
   state.memberstackCookie('memberstack-cookie-b')
   release()
 
-  await assert.rejects(opening, /superseded/)
+  await assert.rejects(opening, { code: 'TALKJS_IDENTITY_MISMATCH' })
   assert.equal(state.calls.sessions.length, 0)
   assert.equal(state.api.debugSnapshot(), null)
 })
@@ -1008,6 +1008,61 @@ test('conversation authorization cannot dispatch after bearer identity switches'
   assert.equal(state.calls.fetches.length, before)
 })
 
+test('conversation response rejects an owner switch after dispatch', async () => {
+  let releaseAuthorization
+  let authorizationStartedResolve
+  const authorizationStarted = new Promise((resolve) => {
+    authorizationStartedResolve = resolve
+  })
+  const authorizationGate = new Promise((resolve) => {
+    releaseAuthorization = resolve
+  })
+  const state = harness({
+    fetch: async (url) => {
+      if (url.endsWith('/user-token/v3')) {
+        return jsonResponse({
+          token: token(),
+          me_id: 'mem_sb_membera',
+          data_environment: 'test',
+          expires_in_seconds: 300,
+        })
+      }
+      authorizationStartedResolve()
+      await authorizationGate
+      return jsonResponse({
+        authorized: true,
+        actor_id: 'mem_sb_membera',
+        counterpart_id: 'mem_sb_memberb',
+        participant_ids: ['mem_sb_membera', 'mem_sb_memberb'],
+        conversation_id: 'dm_v1_0123456789abcdef',
+        data_environment: 'test',
+      })
+    },
+  })
+  await open(state, {
+    onInvalidate: () => {
+      state.calls.invalidations += 1
+    },
+  })
+  const authorization = state.api.authorizeConversation({
+    clientOwner: 'messages-v3',
+    counterpartId: 'mem_sb_memberb',
+  })
+  await authorizationStarted
+
+  state.member({ id: 'mem_sb_memberb' })
+  state.memberstackCookie('memberstack-cookie-b')
+  releaseAuthorization()
+
+  await assert.rejects(
+    authorization,
+    /Member changed before authenticated request/,
+  )
+  assert.equal(state.calls.destroys, 1)
+  assert.equal(state.calls.invalidations, 1)
+  assert.equal(state.api.debugSnapshot(), null)
+})
+
 test('stale authorization cannot destroy a reconnected session', async () => {
   let releaseAuthorization
   let authorizationStartedResolve
@@ -1058,7 +1113,7 @@ test('stale authorization cannot destroy a reconnected session', async () => {
   assert.equal(state.api.debugSnapshot().memberId, 'mem_sb_membera')
 
   releaseAuthorization()
-  await assert.rejects(authorization, /changed during/)
+  await assert.rejects(authorization, /no longer current/)
   assert.equal(state.calls.destroys, 1)
   assert.equal(state.api.debugSnapshot().memberId, 'mem_sb_membera')
 })
@@ -1198,7 +1253,7 @@ test('member change during conversation authorization destroys the active sessio
       clientOwner: 'messages-v3',
       counterpartId: 'mem_sb_memberb',
     }),
-    /changed during/,
+    { code: 'TALKJS_IDENTITY_MISMATCH' },
   )
   assert.equal(state.calls.destroys, 1)
   assert.equal(state.api.debugSnapshot(), null)
