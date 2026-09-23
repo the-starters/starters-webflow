@@ -771,7 +771,7 @@ function starterProfileCompanyMonthYearLabel(value) {
       }
 
       function clearAddCompanyFeedbackTimeout() {
-        if (!addCompanyFeedbackTimeout) return;
+        if (addCompanyFeedbackTimeout === null) return;
 
         clearTimeout(addCompanyFeedbackTimeout);
         addCompanyFeedbackTimeout = null;
@@ -900,37 +900,37 @@ function starterProfileCompanyMonthYearLabel(value) {
         isLimitReached = companiesCount >= MAX;
         const isFormReady = hasRequiredCompanyFields();
         const isDisabled = isLimitReached || !isFormReady || isSubmitting;
+        const isShowingFeedback = addCompanyFeedbackTimeout !== null;
 
-        addCompanyButton.style.display = isLimitReached ? 'none' : 'flex';
+        addCompanyButton.style.display = isLimitReached && !isShowingFeedback ? 'none' : 'flex';
         addCompanyButton.style.pointerEvents = isDisabled ? 'none' : '';
         addCompanyButton.style.opacity = isDisabled ? '0.5' : '';
         addCompanyButton.setAttribute('aria-disabled', isDisabled ? 'true' : 'false');
 
         const currentAccordion = addCompanyButton.previousElementSibling;
+        let ctaText = defaultButtonText;
 
         if (isLimitReached) {
-          setButtonText('Max 3 companies');
+          ctaText = 'Max 3 companies';
 
           if (currentAccordion && currentAccordion.classList.contains("profile-dropdown")) {
             currentAccordion.style.display = 'none';
           }
         } else {
-          let ctaText = defaultButtonText;
-
           if (isSubmitting) {
             if (submitAction === 'deleting') {
               ctaText = 'Deleting...';
             } else if (submitAction === 'adding') {
-              ctaText = 'Adding...';
+              ctaText = 'Saving...';
             }
           }
-
-          setButtonText(ctaText);
 
           if (currentAccordion && currentAccordion.classList.contains("profile-dropdown")) {
             currentAccordion.style.display = '';
           }
         }
+
+        if (!isShowingFeedback) setButtonText(ctaText);
 
         updateDropdownLabel();
       }
@@ -1568,8 +1568,6 @@ function starterProfileCompanyMonthYearLabel(value) {
             return;
           }
 
-          let successTiemout = null;
-
           try {
             isSubmitting = true;
             submitAction = 'adding';
@@ -1586,17 +1584,15 @@ function starterProfileCompanyMonthYearLabel(value) {
               addCompanyFeedbackTimeout = null;
               updateAddCompanyButtonState();
             }, 2000);
-            successTiemout = addCompanyFeedbackTimeout;
 
           } catch (error) {
             console.error('[Companies] submit failed:', error);
             clearAddCompanyFeedbackTimeout();
             setButtonText('Error');
 
-            if (successTiemout) clearTimeout(successTiemout);
             addCompanyFeedbackTimeout = setTimeout(function () {
               addCompanyFeedbackTimeout = null;
-              setButtonText(defaultButtonText);
+              updateAddCompanyButtonState();
             }, 1200);
 
           } finally {

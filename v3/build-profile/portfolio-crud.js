@@ -48,6 +48,8 @@
       const notificationText = notificationModal ? qs('[notification-text]', notificationModal) : null;
 
       const createSubmit = qs('#add-highlight');
+      const createSubmitText = createSubmit ? qs('div:first-child', createSubmit) : null;
+      const defaultCreateSubmitText = createSubmitText ? createSubmitText.textContent : '';
       const editForm = qs('#wf-form-Portfolio-update');
       const editSubmit = qs('[free-edit-submit]');
 
@@ -305,6 +307,7 @@
         const titleIsFilled = Boolean(titleInput && titleInput.value.trim());
         const hasImage = selectedFiles.length > 0;
         const canSubmit = titleIsFilled && hasImage;
+        if (createSubmitText) createSubmitText.textContent = isCreatingPortfolio ? 'Saving...' : defaultCreateSubmitText;
         createSubmit.style.opacity = canSubmit ? '1' : '0.5';
         createSubmit.style.pointerEvents = canSubmit ? 'auto' : 'none';
       }
@@ -601,6 +604,7 @@
         event.preventDefault();
         if (isCreatingPortfolio) return;
         isCreatingPortfolio = true;
+        updateCreateSubmitState();
         try {
           disableDropdownToggle(true);
           const portfolios = await getPortfolios();
@@ -659,6 +663,7 @@
         } finally {
           disableDropdownToggle(false);
           isCreatingPortfolio = false;
+          updateCreateSubmitState();
         }
       }
 

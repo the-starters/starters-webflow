@@ -414,9 +414,11 @@ test('a unified-row company selection fires change so its section can mark itsel
   assert.deepEqual(harness.dispatchedEvents(), ['change'])
 })
 
-function createCrudHarness(file, { deferredWrites = false, alsoWorkedWithStatuses = [], companyCreateStatuses = [], companyGetStatuses = [], initialCompanies = [] } = {}) {
+function createCrudHarness(file, { deferredWrites = false, alsoWorkedWithStatuses = [], companyCreateStatuses = [], companyGetStatuses = [], initialCompanies = [], companyCreateGate = null } = {}) {
   let readyPromise
   let baselineTimer
+  let nextTimerId = 1
+  const timers = new Map()
   const requests = []
   const modalCounts = { success: 0, error: 0 }
   const dirtyStateCalls = []
@@ -453,6 +455,7 @@ function createCrudHarness(file, { deferredWrites = false, alsoWorkedWithStatuse
   const startDateInput = element('2025-01')
   const endDateInput = element('2026-08')
   const addButton = element()
+  const addButtonText = { textContent: 'Add company' }
   const companyList = element()
   companyList.appendChild = (card) => { renderedCards.push(card) }
   const companyTemplate = element()
@@ -516,6 +519,10 @@ function createCrudHarness(file, { deferredWrites = false, alsoWorkedWithStatuse
     },
     fetch: async (url, options = {}) => {
       requests.push({ url, options })
+      if (url.endsWith('/companies') && options.method === 'POST' && companyCreateGate) {
+        companyCreateGate.started()
+        await companyCreateGate.wait
+      }
       if (url.includes('/starter/set_also_worked_with')) {
         const status = alsoWorkedWithStatuses.shift() || 200
         return {
@@ -549,7 +556,7 @@ function createCrudHarness(file, { deferredWrites = false, alsoWorkedWithStatuse
     jQuery: undefined,
     MEMBER: { id: 'member-1' },
     qs(selector, root) {
-      if (selector === 'div:first-child' && root === addButton) return { textContent: 'Add company' }
+      if (selector === 'div:first-child' && root === addButton) return addButtonText
       if (selector === '.company-card' && root === companyList) return companyTemplate
       if (selector === '[data-modal-close]' && root === removeModal) return removeModalClose
       return elements.get(selector) || null
@@ -557,9 +564,12 @@ function createCrudHarness(file, { deferredWrites = false, alsoWorkedWithStatuse
     qsa() { return [] },
     setTimeout(callback, delay) {
       if (alsoWorkedWithStatuses.length && delay === 1500) baselineTimer = callback
-      return 0
+      const id = nextTimerId
+      nextTimerId += 1
+      timers.set(id, { callback, delay })
+      return id
     },
-    clearTimeout() {},
+    clearTimeout(id) { timers.delete(id) },
     setInterval() { return 0 },
     clearInterval() {},
     waitForMember(callback) { readyPromise = callback() },
@@ -584,6 +594,17 @@ function createCrudHarness(file, { deferredWrites = false, alsoWorkedWithStatuse
 
   return {
     companyInput,
+    addButton,
+    addButtonText,
+    runTimer(delay) {
+      for (const [id, timer] of timers) {
+        if (timer.delay !== delay) continue
+        timers.delete(id)
+        timer.callback()
+        return true
+      }
+      return false
+    },
     editCompanyInput,
     requests,
     modalCounts,
@@ -909,6 +930,101 @@ test('Build Profile defers projection when deleting Company experience', async (
   const deleteRequest = harness.requests.find(({ options }) => options.method === 'DELETE')
   assert.equal(deleteRequest.url.endsWith('/7'), true)
   assert.deepEqual(JSON.parse(deleteRequest.options.body), { defer_projection: true })
+})
+
+test('Build Profile shows Saving then Added while creating Work History', async () => {
+  let started
+  let release
+  const whenStarted = new Promise((resolve) => { started = resolve })
+  const wait = new Promise((resolve) => { release = resolve })
+  const file = path.join(__dirname, '../build-profile/company-experience-crud.js')
+  const harness = createCrudHarness(file, {
+    deferredWrites: false,
+    companyCreateStatuses: [200],
+    companyCreateGate: { started, wait },
+  })
+  await harness.start()
+  harness.prepareAdd()
+
+  const save = harness.queueAdd()
+  await whenStarted
+  assert.equal(harness.addButtonText.textContent, 'Saving...')
+  release()
+  await save
+
+  assert.equal(harness.addButtonText.textContent, 'Added')
+  assert.equal(harness.runTimer(2000), true)
+  assert.equal(harness.addButtonText.textContent, 'Add company')
+})
+
+test('Build Profile accepts only one Work History save while the first is pending', async () => {
+  let started
+  let release
+  const whenStarted = new Promise((resolve) => { started = resolve })
+  const wait = new Promise((resolve) => { release = resolve })
+  const file = path.join(__dirname, '../build-profile/company-experience-crud.js')
+  const harness = createCrudHarness(file, {
+    companyCreateStatuses: [200],
+    companyCreateGate: { started, wait },
+  })
+  await harness.start()
+  harness.prepareAdd()
+
+  const firstSave = harness.queueAdd()
+  await whenStarted
+  await harness.queueAdd()
+
+  assert.equal(harness.addButtonText.textContent, 'Saving...')
+  assert.equal(harness.requests.filter(({ url, options }) => url.endsWith('/companies') && options.method === 'POST').length, 1)
+
+  release()
+  await firstSave
+  assert.equal(harness.addButtonText.textContent, 'Added')
+})
+
+test('Build Profile shows Added on the third Work History item, then hides the button', async () => {
+  const existingCompanies = [
+    { id: 'company-1', company_name: 'QA Wolf', job_title: 'Engineer' },
+    { id: 'company-2', company_name: 'Acme', job_title: 'Designer' },
+  ]
+  const file = path.join(__dirname, '../build-profile/company-experience-crud.js')
+  const harness = createCrudHarness(file, {
+    deferredWrites: false,
+    companyCreateStatuses: [200],
+    initialCompanies: existingCompanies,
+  })
+  await harness.start()
+  harness.prepareAdd()
+
+  await harness.queueAdd()
+
+  assert.equal(harness.addButtonText.textContent, 'Added')
+  assert.notEqual(harness.addButton.style.display, 'none')
+
+  assert.equal(harness.runTimer(2000), true)
+
+  assert.equal(harness.addButtonText.textContent, 'Max 3 companies')
+  assert.equal(harness.addButton.style.display, 'none')
+})
+
+test('Build Profile shows Error then restores the Work History button after a failed save', async () => {
+  const file = path.join(__dirname, '../build-profile/company-experience-crud.js')
+  const harness = createCrudHarness(file, {
+    deferredWrites: false,
+    companyCreateStatuses: [500],
+  })
+  await harness.start()
+  harness.prepareAdd()
+
+  await harness.queueAdd()
+
+  assert.equal(harness.addButtonText.textContent, 'Error')
+  assert.equal(harness.runTimer(1200), true)
+  assert.equal(harness.addButtonText.textContent, 'Add company')
+  assert.equal(harness.addButton.style.pointerEvents, '')
+
+  await harness.queueAdd()
+  assert.equal(harness.requests.filter(({ url, options }) => url.endsWith('/companies') && options.method === 'POST').length, 2)
 })
 
 // The Work Experience section cannot read its own baseline until the picker that owns the
