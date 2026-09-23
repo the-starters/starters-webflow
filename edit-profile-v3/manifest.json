@@ -1,0 +1,141 @@
+{
+  "purpose": "Isolated Starter Edit Profile v3 test-page bundle",
+  "source": "Currently published immutable profile script tags, plus the proposed Work Experience picker overlay",
+  "runtime": [
+    {
+      "path": "global-embeds/accordions/accordions.js",
+      "baseline_tag": "v1.59.614",
+      "role": "profile dependency",
+      "sha256": "18cd5c518dd48faeeb9075a35af0ad7c100c3ff981a32d6a1533712b729c395b",
+      "bytes": 6622
+    },
+    {
+      "path": "v3/profile-form/shared-foundation.js",
+      "baseline_tag": "v1.59.607",
+      "role": "profile foundation",
+      "sha256": "9a7d541a134a9aa30a14cab62c3c3d44af0a692b0098295130e7f13025b80828",
+      "bytes": 25578
+    },
+    {
+      "path": "v3/profile-form/incremental-dropdowns.js",
+      "baseline_tag": "v1.59.607",
+      "role": "profile dropdowns",
+      "sha256": "62b83394cbd428ce42fa3e6ad404956073260df547406140bfde932b7694de73",
+      "bytes": 14956
+    },
+    {
+      "path": "v3/starter-edit-profile/locations.js",
+      "baseline_tag": "v1.59.607",
+      "role": "profile locations",
+      "sha256": "69794b67fd9359f16427ad36fae3e2dd5dca4dc8729b0eaab66ca6b4be5bd8de",
+      "bytes": 9847
+    },
+    {
+      "path": "v3/starter-edit-profile/profile-section-validation.js",
+      "baseline_tag": "v1.59.607",
+      "role": "section validation",
+      "sha256": "b9b2a23e2f031eb6416a9760db4bde4251a206a29e67d8e121f76f984be39036",
+      "bytes": 8293
+    },
+    {
+      "path": "v3/starter-edit-profile/unified-services.js",
+      "baseline_tag": "v1.59.607",
+      "role": "service rows",
+      "sha256": "ff69303ba3c4749a6e9d66ec1d6013e886bca011d6987d72d56802c3eec3e828",
+      "bytes": 28140
+    },
+    {
+      "path": "v3/starter-edit-profile/unified-companies.js",
+      "baseline_tag": "v1.59.614",
+      "role": "work experience rows",
+      "sha256": "349bdf5018a625a225657fa1b4a51e542adb12adaf280ecfd2fab72a466edca1",
+      "bytes": 40052,
+      "overlay": "isolated Work Experience month-picker changes"
+    },
+    {
+      "path": "v3/starter-edit-profile/unified-highlights.js",
+      "baseline_tag": "v1.59.607",
+      "role": "highlight rows",
+      "sha256": "fbb25c5052a9cc56ae56db7ddb12b5d6ca02539a7c604a0481ef824f9c969fc3",
+      "bytes": 36055
+    },
+    {
+      "path": "v3/starter-edit-profile/canonical-profile-loader.js",
+      "baseline_tag": "v1.59.607",
+      "role": "canonical profile loader",
+      "sha256": "916e8702ac16aac6000d893364bf14bcb58a65e13e2a2f2a1e6cb662a12c7dc8",
+      "bytes": 25331
+    },
+    {
+      "path": "v3/build-profile/canonical-profile-hydrator.js",
+      "baseline_tag": "v1.59.607",
+      "role": "canonical profile hydration",
+      "sha256": "a5fff770a14ea7c53756024abdcb2f52a29182c56cfb79b6e51893fcc232a88a",
+      "bytes": 18701
+    },
+    {
+      "path": "profile-image-auth-shim.js",
+      "baseline_tag": "v1.59.607",
+      "role": "profile image requests",
+      "sha256": "d6e380bdb87ec41764cda80936e460294d8e57d7064edbc3c6b5e49d93825a41",
+      "bytes": 18581
+    },
+    {
+      "path": "v3/build-profile/profile-photo.js",
+      "baseline_tag": "v1.59.607",
+      "role": "profile photo upload",
+      "sha256": "988c84c6391241f2aa3969f4acdeb77258831bd7332e5137046e2a8f4440fcf5",
+      "bytes": 16563
+    },
+    {
+      "path": "v3/starter-edit-profile/portfolio-crud.js",
+      "baseline_tag": "v1.59.607",
+      "role": "portfolio writer",
+      "sha256": "a58367e0ec99b75b018f319a7d1b490f8571d39c82e73d9f63e47625b946d600",
+      "bytes": 64244
+    },
+    {
+      "path": "v3/starter-edit-profile/portfolio-list.js",
+      "baseline_tag": "v1.59.607",
+      "role": "portfolio list extraction candidate",
+      "sha256": "f559928f524705d1fcce022a1213b0a637c233cbd55f4973dc376457e0ab74ff",
+      "bytes": 4013
+    },
+    {
+      "path": "v3/starter-edit-profile/company-autocomplete.js",
+      "baseline_tag": "v1.59.607",
+      "role": "company selection",
+      "sha256": "bf32125ed4c18825016209a5c20da4bfe0fb93842913f3069e0c66234eed354e",
+      "bytes": 25596
+    },
+    {
+      "path": "v3/starter-edit-profile/company-experience-crud.js",
+      "baseline_tag": "v1.59.607",
+      "role": "company writer and month picker",
+      "sha256": "0f52df4b530b50abaeb52b7a576443da38105c92c502bae07df3c12ef90cf967",
+      "bytes": 99340,
+      "overlay": "isolated Work Experience month-picker changes"
+    },
+    {
+      "path": "v3/build-profile/work-dates.js",
+      "baseline_tag": "v1.59.607",
+      "role": "work date validation",
+      "sha256": "4bf43605286b1f6dd796f8227a3f72e7c43aea5f41131f21bd78c283473002b6",
+      "bytes": 2700
+    },
+    {
+      "path": "starter-edit-profile.js",
+      "baseline_tag": "v1.59.607",
+      "role": "main edit profile controller",
+      "sha256": "60bfc80ee9588a5c30f0a1f95b3a818b11da2aa25a460d945889427b406a98f8",
+      "bytes": 76653
+    },
+    {
+      "path": "utils/workflow-diagnostics.js",
+      "baseline_tag": "v1.59.614",
+      "role": "diagnostic loader resolved relative to starter-edit-profile.js",
+      "sha256": "9a27cfaef729e743f9bfe97f3862941ffc415be289282952159557fdcba95098",
+      "bytes": 9749
+    }
+  ]
+}
