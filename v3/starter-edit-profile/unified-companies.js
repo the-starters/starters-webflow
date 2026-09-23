@@ -59,21 +59,32 @@
         check.dispatchEvent(new Event('click'))
       })
     }
-    // Class rules beat [hidden]; write display too, and revert it if a class still hides the control.
-    const showCheck = visible => {
-      check.hidden = !visible
-      check.style.display = visible ? '' : 'none'
-      if (visible && window.getComputedStyle?.(check)?.display === 'none') check.style.display = 'revert'
+    // Class rules beat [hidden]; write display too, and revert it if a class still hides the node.
+    const show = (node, visible) => {
+      if (!node) return
+      node.hidden = !visible
+      node.style.display = visible ? '' : 'none'
+      if (visible && window.getComputedStyle?.(node)?.display === 'none') node.style.display = 'revert'
     }
-    showCheck(false)
+    show(check, false)
     const original = section.querySelector(ROW)
     const template = original?.cloneNode(true)
     const parent = original?.parentElement
-    if (!template || !parent || !save) {
+    // Every row control the section drives is Designer's. The accordion opens a row through
+    // its control and its panel; Undo replaces Remove in place; and Remove's own themed Button
+    // carries the theme the disabled state is swapped back from, so that theme has to exist.
+    // Whatever Designer authored is the value restored; the section never invents one. A row
+    // missing any of them is the same kind of markup gap as a missing row.
+    const authoredRemove = template?.querySelector('[profile-item-remove]')
+    const authoredTheme = authoredRemove?.querySelector('[data-button-theme]')?.getAttribute('data-button-theme') || ''
+    const complete = !!template?.querySelector('[profile-item-toggle]') && !!template?.querySelector('[profile-item-content]')
+      && !!template?.querySelector('[profile-items-undo]')
+      && !!authoredTheme && !!authoredRemove.querySelector('button, input, a')
+    if (!template || !parent || !save || !complete) {
       // The row is also the template for every added row, and Save is the only route to the
       // writer. Without either, report the markup gap and disable Save instead of leaving a
       // live control that silently does nothing.
-      console.warn('[unified-companies] missing [profile-item-row] or Save control in section')
+      console.warn('[unified-companies] missing [profile-item-row] with [profile-item-toggle], [profile-item-content], [profile-items-undo] and a themed [profile-item-remove] button, or Save control in section')
       status.textContent = 'This section could not load. Reload the page before editing.'
       save?.setAttribute('disabled', '')
       return
@@ -88,6 +99,19 @@
       save.setAttribute('disabled', '')
       return
     }
+    // Opening and collapsing a row is the site's accordion behavior, so it comes from the
+    // shared script rather than a second copy living here. Its absence is reported the same
+    // way as missing row markup instead of quietly falling back to a private implementation.
+    if (typeof window.StarterAccordions?.group !== 'function') {
+      console.warn('[unified-companies] missing accordions.js: window.StarterAccordions.group is not a function')
+      status.textContent = 'This section could not load. Reload the page before editing.'
+      save.setAttribute('disabled', '')
+      return
+    }
+    // One Work Experience entry is open at a time. The rows own their own click handling,
+    // because opening depends on save and removal state the accordion cannot see, so the
+    // shared group is asked not to bind a competing handler on the same control.
+    const accordion = window.StarterAccordions.group({ closePrevious: true, bindControl: false })
     let records = []
     let baseline = []
     let active = null
@@ -96,8 +120,37 @@
     let unknown = null
     let misconfigured = false
     let warned = false
+    // The shared validator reveals every failure and then focuses the first one. Only one row
+    // can be open, so a later reveal would collapse the row whose field is about to take focus.
+    let revealed = null
     const add = section.querySelector('[profile-items-add]')
     const discard = section.querySelector('[profile-items-discard]')
+    // Keep every generated row in the authored template's position, ahead of Add.
+    const anchor = document.createElement('span')
+    anchor.hidden = true
+    anchor.style.display = 'none'
+    parent.insertBefore(anchor, original)
+    function refreshRows() {
+      for (const record of records) {
+        const saved = confirmedRow(record)
+        // A saved row keeps the identity the server confirmed while its edits are pending. A row
+        // that has never been saved has no confirmed identity, so its heading follows what has
+        // been typed into it - otherwise every new row would read the same bare heading.
+        const identity = saved || { company_name: input(record.row, 'company_name')?.value,
+          job_title: input(record.row, 'job_title')?.value }
+        const label = [identity.company_name, identity.job_title]
+          .map(part => String(part || '').trim()).filter(Boolean).join(' · ')
+        const summary = record.row.querySelector('[profile-items-summary]')
+        if (summary) summary.textContent = label ? 'Work Experience (' + label + ')' : 'Work Experience'
+        const changed = record.removed || (saved ? !unchanged(saved, values(record)) : present(record))
+        show(record.badge, changed)
+        const disabled = !removable(record)
+        record.remove.setAttribute('aria-disabled', String(disabled))
+        record.removeControl.disabled = disabled
+        record.removeControl.setAttribute('aria-disabled', String(disabled))
+        record.removeWrap.setAttribute('data-button-theme', disabled ? 'disabled' : record.removeTheme)
+      }
+    }
     // A field authored `form-xano-required` without the Webflow Required checkbox would let a
     // Starter submit a blank value the Xano writer refuses. Requiredness still comes only from
     // Required; this pauses Save on the mismatch instead of inventing a JavaScript requirement.
@@ -121,6 +174,14 @@
     const remaining = () => records.filter(record => !record.removed)
     const present = record => !!record.id || names.some(key => key === 'current_work'
       ? input(record.row, key)?.checked : String(input(record.row, key)?.value || '').trim())
+    // The baseline is the one record of what the server confirmed, so the heading and the row
+    // status read it rather than a second per-row copy that Save would not agree with.
+    const confirmedRow = record => record.id
+      ? baseline.find(item => String(item.id) === String(record.id)) || null : null
+    // Never leave the section with no row at all, and never let a blank added row make the last
+    // filled entry removable: Save deletes a removed saved row whether or not a blank one exists.
+    const removable = record => remaining().length > 1
+      && (!present(record) || remaining().filter(present).length > 1)
     const copy = value => JSON.parse(JSON.stringify(value))
     // A current role stores 'Present' as its end date and also carries the flag. A row that
     // carries one and not the other is describing the same state, not a different one.
@@ -149,17 +210,20 @@
       if (value.current_work) value.end_date = 'Present'
       return { ...value, ...(selection(record.row) || { company_domain: '', company_logo_url: '', company_entity_id: 0, company_source: '' }) }
     }
-    function setOpen(record, open) {
+    // An animated open renders on the next frame, so a panel opened that way is still
+    // `display: none` when this function returns. Anything that focuses or scrolls into the row
+    // it just opened has to open it instantly instead, or the focus lands on nothing.
+    function setOpen(record, open, instant) {
       const content = record.row.querySelector('[profile-item-content]')
-      const toggle = record.row.querySelector('[profile-item-toggle]')
-      if (content) { content.hidden = !open; content.inert = !open; content.style.height = open ? 'auto' : '0px' }
-      toggle?.setAttribute('aria-expanded', String(open))
-      const summary = record.row.querySelector('[profile-items-summary]')
-      if (summary) summary.textContent = [input(record.row, 'company_name')?.value, input(record.row, 'job_title')?.value].filter(Boolean).join(' · ') || 'Work experience'
+      if (open) record.accordion.open(instant)
+      else record.accordion.close()
+      if (content) content.inert = !open
+      refreshRows()
       if (open) active = record
     }
     function dirty() {
       if (loading) return
+      refreshRows()
       section.setAttribute('profile-items-dirty', 'true')
       window.__tsProfileDirtyState?.markDirty(3)
       if (!saving && !unknown && !misconfigured) status.textContent = 'Unsaved changes.'
@@ -170,8 +234,10 @@
     }
     function removeRecord(record) {
       record.row.querySelector('[profile-company-field="company_name"]')?._starterCompanySearch?.destroy()
+      record.accordion.release()
       record.row.remove()
       records = records.filter(item => item !== record)
+      refreshRows()
     }
     function addRow(value = {}, focus = false) {
       const row = template.cloneNode(true)
@@ -212,47 +278,68 @@
         selectedCompanyEntityId: String(value.company_entity_id || 0),
         selectedCompanySource: value.company_source || value.source || (value.company_entity_id ? 'platform' : ''),
       })
-      parent.appendChild(row)
+      parent.insertBefore(row, anchor)
       records.push(record)
       const toggle = row.querySelector('[profile-item-toggle]')
       toggle?.setAttribute('role', 'button')
       toggle?.setAttribute('tabindex', '0')
+      record.accordion = accordion.register(row, toggle, row.querySelector('[profile-item-content]'))
       const toggleRow = event => {
-        if (event.target.closest?.('[profile-item-remove]')) return
+        // This row owns its toggle and nested actions. Webflow's delegated legacy
+        // click/second-click interaction must not animate the same panel afterward.
+        event.stopPropagation()
+        if (event.target.closest?.('[profile-item-remove], [profile-items-undo]')) return
         event.preventDefault()
-        if (!saving && !record.removed) setOpen(record, toggle.getAttribute('aria-expanded') !== 'true')
+        if (!saving && !record.removed) setOpen(record, !record.accordion.isOpen())
       }
       toggle?.addEventListener('click', toggleRow)
       toggle?.addEventListener('keydown', event => {
         if (event.target === toggle && ['Enter', ' '].includes(event.key)) toggleRow(event)
       })
+      const summary = row.querySelector('[profile-items-summary]')
+      const badge = document.createElement('span')
+      badge.setAttribute('profile-items-unsaved', '')
+      badge.textContent = 'Unsaved'
+      const host = summary?.parentElement || toggle || row
+      const siblings = Array.from(host.children)
+      host.insertBefore(badge, summary ? siblings[siblings.indexOf(summary) + 1] || null : null)
+      record.badge = badge
+      // The authored marker is a plain wrapper around the themed Button component, so the
+      // theme lives inside it and the marker itself is what Remove hides.
       const remove = row.querySelector('[profile-item-remove]')
-      const undo = document.createElement('button')
-      undo.setAttribute('type', 'button')
-      undo.setAttribute('profile-items-undo', '')
-      undo.textContent = 'Undo removal'
-      undo.hidden = true
-      row.appendChild(undo)
-      remove?.addEventListener('click', event => {
+      const removeWrap = remove.querySelector('[data-button-theme]')
+      const removeControl = remove.querySelector('button, input, a')
+      Object.assign(record, { remove, removeWrap, removeControl,
+        removeTheme: removeWrap.getAttribute('data-button-theme') })
+      // Webflow owns the Button's separate visual label and overlay control, so the authored
+      // component is the only Undo: the section refuses to bind without it.
+      const undo = row.querySelector('[profile-items-undo]')
+      show(undo, false)
+      remove.addEventListener('click', event => {
         event.preventDefault()
-        if (saving) return
+        if (saving || record.removed || !removable(record)) return
+        // A never-saved row holding nothing has no confirmed state to restore and nothing for
+        // Save to delete, so Remove drops it outright rather than leaving behind a collapsed
+        // row that only Undo could reach and that Save would never resolve.
+        if (!present(record)) {
+          removeRecord(record)
+          if (active === record) active = remaining().at(-1) || null
+          return
+        }
         record.removed = true
         setOpen(record, false)
-        if (toggle) toggle.hidden = true
-        remove.hidden = true; undo.hidden = false
+        show(remove, false); show(undo, true)
         if (active === record) active = remaining().at(-1) || null
-        if (!remaining().length) addRow({}, true)
         dirty()
       })
-      undo.addEventListener('click', () => {
+      undo.addEventListener('click', event => {
+        event.preventDefault()
         if (saving) return
         remaining().filter(item => !present(item)).forEach(removeRecord)
         if (remaining().length >= 3) { status.textContent = 'Remove another entry before restoring this one. You can keep up to three.'; return }
         record.removed = false
-        if (toggle) toggle.hidden = false
-        if (remove) remove.hidden = false
-        undo.hidden = true
-        setOpen(record, true); company?.focus(); dirty()
+        show(remove, true); show(undo, false)
+        setOpen(record, true, true); company?.focus(); dirty()
       })
       row.addEventListener('focusin', () => { active = record })
       input(row, 'current_work')?.addEventListener('change', () => syncCurrent(record))
@@ -261,7 +348,7 @@
       // both the later script wins `window.logoSearchInit`. These rows need the Edit picker,
       // which is published under its own name, so only that name is called here.
       window.StarterEditLogoSearchInit(company)
-      setOpen(record, !record.id)
+      setOpen(record, !record.id, focus)
       if (focus) company?.focus()
       return record
     }
@@ -291,8 +378,15 @@
         }
         return ''
       },
-      reveal(field) { const record = records.find(item => item.row.contains(field)); if (record) setOpen(record, true) },
+      reveal(field) {
+        if (revealed) return
+        const record = records.find(item => item.row.contains(field))
+        if (!record) return
+        revealed = record
+        setOpen(record, true, true)
+      },
     })
+    const validate = scope => { revealed = null; return validation.validate(scope) }
     function updateCleanState() {
       if (!writer.hasOtherChanges()) {
         section.removeAttribute('profile-items-dirty')
@@ -315,8 +409,13 @@
     add?.addEventListener('click', event => {
       event.preventDefault()
       if (saving || loading) return
-      if (!active || !present(active)) { input((active || records[0]).row, 'company_name')?.focus(); return }
-      if (!validation.validate(active.row).valid) return
+      if (!active || !present(active)) {
+        const target = active || records[0]
+        setOpen(target, true, true)
+        input(target.row, 'company_name')?.focus()
+        return
+      }
+      if (!validate(active.row).valid) return
       if (remaining().length >= 3) { status.textContent = 'You can keep up to three work experience entries.'; return }
       setOpen(active, false)
       addRow({}, true)
@@ -440,6 +539,7 @@
         operation.record.id = confirmed.id
         if (operation.replaceId) records.filter(item => String(item.id) === String(operation.replaceId)).forEach(removeRecord)
       }
+      refreshRows()
     }
     check.addEventListener('click', async event => {
       // An authored control may be an anchor or a submit button, so never let its default run.
@@ -451,12 +551,12 @@
         if (confirmed === NOT_LANDED) {
           // A lag behind a received answer is not proof; only a lost response can be settled here.
           if (!unknown.lost) throw new Error('Save not confirmed')
-          unknown = null; showCheck(false)
+          unknown = null; show(check, false)
           status.textContent = NOT_LANDED_MESSAGE
           return
         }
         if (!confirmed) throw new Error('Save not confirmed')
-        confirm(unknown, confirmed); unknown = null; showCheck(false)
+        confirm(unknown, confirmed); unknown = null; show(check, false)
         status.textContent = 'That change is confirmed. Save the section to finish the remaining draft changes.'
       } catch (_) { status.textContent = 'The save is still unconfirmed. Your draft is kept; Save remains paused.' }
       finally { check.disabled = false; check.removeAttribute('aria-disabled') }
@@ -465,7 +565,7 @@
       event.preventDefault()
       if (saving || loading || unknown) return
       if (checkMisconfigured()) return
-      if (!validation.validate().valid) return
+      if (!validate().valid) return
       const kept = remaining().filter(present)
       const submitted = kept.map(record => ({ record, value: copy(values(record)) }))
       const presence = section.querySelector('[profile-items-presence]')
@@ -473,7 +573,7 @@
         // Never reopen a row the Starter is removing: point at a usable row, adding one if needed.
         const target = remaining()[0] || addRow({}, true)
         status.textContent = 'Add at least one work experience entry.'
-        setOpen(target, true); input(target.row, 'company_name')?.focus(); return
+        setOpen(target, true, true); input(target.row, 'company_name')?.focus(); return
       }
       const deletions = records.filter(record => record.removed && record.id)
       const operations = []
@@ -549,7 +649,7 @@
           restore(); updateCleanState(); status.textContent = 'Changes saved.'
         }
       } catch (error) {
-        showCheck(!!unknown)
+        show(check, !!unknown)
         if (error?.known) {
           // The server refused this change, so Save and Discard stay available for the draft.
           status.textContent = error.serverMessage || 'The server rejected this change. Check the entry and try again.'

@@ -342,6 +342,12 @@ marker first breaks the page two ways:
 - `company-autocomplete.js` before `unified-companies.js` and `company-experience-crud.js`. It
   publishes `window.StarterEditLogoSearchInit`, which Work Experience treats as a hard
   prerequisite: a section that binds without it registers the halted state above.
+- [`global-embeds/accordions/accordions.js`](../../global-embeds/accordions/accordions.js)
+  before `unified-companies.js`. It publishes `window.StarterAccordions`, which Work
+  Experience opens and collapses its rows through; a section that binds without it registers
+  the same halted state rather than running a private copy of that behavior. This page must
+  load the shared accordion file even though its own markup carries no `data-accordion`
+  wrapper: Work Experience registers each row with the script directly.
 - `unified-companies.js` before `company-experience-crud.js`.
 - `unified-highlights.js` before `portfolio-crud.js`.
 - `scheduling-bridge.js` before `free-call-settings.js` and `paid-call-settings.js`, all three
@@ -376,12 +382,30 @@ These must exist in Webflow:
 | `profile-unified-items="services\|companies\|highlights"` | Section | Opts the section in |
 | `profile-items-add` | Section | Add-entry control |
 | `profile-items-discard` | Section | Discard-changes control |
-| `profile-items-presence` | Section | Optional; gates Save only when it carries `required` |
+| `profile-items-presence` | Section | Optional; gates Save only when it carries `required`. For companies it never weakens the Remove floor below - a section without it still keeps one filled entry |
 | `profile-items-media="images\|videos"` | Row | Highlights only |
 | `profile-items-summary` | Row | Authored for companies and highlights; created by the script for services |
+| `profile-items-undo` | Row | Required for companies, so Designer owns the Button component; created by the script for services and highlights |
+| `profile-item-toggle` | Row | The control that opens the row |
+| `profile-item-content` | Row | The panel the control opens |
+| `profile-item-remove` | Row | Required for companies; a plain wrapper around the themed Button, authored with a `data-button-theme` (`danger` on this page) and containing the actionable control |
 
-The scripts create `profile-items-undo`, `profile-items-removed`, and
-`profile-items-dirty`.
+Companies treats a row missing `profile-item-toggle`, `profile-item-content`,
+`profile-items-undo`, or a themed `profile-item-remove` button as the same markup gap as a
+missing row: it reports the halted state and disables Save rather than rendering every entry
+permanently expanded and inert, leaving a removed row with no way back, or having no theme to
+restore. Companies never creates its own Remove or Undo control and never invents a theme:
+Webflow owns those Button components, so the authored ones are the only ones.
+
+The disabled look is derived at runtime - the script swaps `data-button-theme` to `disabled`
+while only one entry remains and swaps the authored value back when a second entry makes
+Remove usable. Whatever Designer authored is the value restored, so only a *missing* theme is
+a markup gap. The Designer Remove on this page is authored `danger`, which is the intended
+setup; another authored value still loads and is still what Remove returns to.
+
+The scripts create `profile-items-removed` and `profile-items-dirty`; companies
+also creates the per-row `profile-items-unsaved` status. None of those three is authored in
+Webflow; style `profile-items-unsaved` from a class-free attribute selector.
 
 `profile-items-status` and `profile-items-check-save` may be authored in Webflow
 inside the section but outside the repeating row, so Designer owns their styling.
@@ -554,6 +578,221 @@ picker publish an empty baseline.
 
 A failed initial load leaves the section readable rather than inert. Save and
 Discard are refused until the page is reloaded.
+
+### Work Experience accordion actions
+
+The visible row controls carry `profile-company-field`; obsolete hidden copies must
+not carry those markers. The visible date fields use the native month ownership
+below, without the legacy `data-input-datepicker` markers. Author the Add action
+after the row template. Page-local plain wrappers carry `profile-items-add`,
+`profile-items-discard`, `data-edit-submit="companies"`, and `profile-item-remove`;
+each wrapper contains its existing themed Button component, and the
+theme and the actionable control are both read from inside that wrapper - the marker itself is
+the element Remove hides. The whole footer
+must not carry the Save marker: Discard shares that footer but remains outside
+the Save owner. Author a separate `profile-items-undo` wrapper in the same header
+action slot, containing a small secondary Button labelled `Undo removal`. Give
+that wrapper the native `hidden` attribute initially; the controller explicitly
+sets its display state. The component's visible label and overlay button remain
+authored together.
+
+Row open and close is the shared accordion's, not this section's: each row is registered
+with `window.StarterAccordions` as a card whose control is `profile-item-toggle` and whose
+panel is `profile-item-content`, so one Work Experience entry is open at a time and any GSAP
+the page loads animates it. The rows keep their own click and keyboard handling, because
+opening depends on save and removal state the accordion cannot see, and the group is asked
+not to bind a second handler on the same control. Hydration, Add, Discard, and Undo all go
+through that group, and a removed row is released from it. The shared contract is documented
+in the [accordions README](../../global-embeds/accordions/README.md#rows-a-script-renders).
+Owned header clicks, including nested Remove and Undo, stop bubbling so Webflow's delegated
+legacy accordion interaction cannot overwrite the shared owner's panel height.
+
+Runtime rows stay before Add. Saved headings read `Work Experience (Company · Title)`;
+the confirmed identity stays visible while edits are pending, so a saved row's heading does
+not follow a draft the server has not taken. A row that has never been saved has no confirmed
+identity, so its heading follows the Company and Title being typed into it and two new rows
+stay distinguishable while collapsed. An `Unsaved` status
+beside each heading reflects that row's draft, including removals and partial saves. It is
+read from the same confirmed baseline the next Save compares against, so the status and Save
+never disagree about what is left to write - including after a lost response that a canonical
+read confirms from a row Xano stores without every column it was sent.
+Discard restores the confirmed headings and clears row statuses. Remove uses the
+existing disabled button theme while only one entry remains, counting filled entries rather
+than rows: adding a blank row never unlocks removing the last saved entry, and the section
+never ends up with no row at all. That floor is unconditional and deliberate. It does not
+consult `profile-items-presence`, so a section whose presence marker is absent or not
+`required` still cannot be emptied through Remove: presence decides whether Save refuses an
+empty section, not whether Remove may take the last filled entry away. A pending removal keeps its heading and replaces Remove
+with Undo removal in the same action position.
+
+Remove means two different things depending on what the row holds. A row that has never been
+saved and holds nothing is dropped outright: there is no confirmed state to restore and
+nothing for Save to delete, so offering Undo would leave a collapsed empty entry that no Save
+ever resolves. A saved row, or an unsaved row carrying any typed value, is marked removed
+instead and keeps its Undo until Save.
+
+Validation opens the first failing row only. The shared validator reveals every failure and
+then focuses the first, and only one Work Experience entry can be open, so revealing each
+failure in turn would collapse the row whose field is about to take focus.
+
+Any row the section opens and then immediately focuses or scrolls to is opened instantly, not
+animated. When GSAP is on the page the shared accordion renders an animated open on the next
+frame, so the panel is still `display: none` when the call returns and a focus into it would
+be a no-op. Add, Undo, the presence message, and validation reveal all take the instant path;
+a Starter's own toggle still animates.
+
+[`unified-companies.fixture.html`](unified-companies.fixture.html) exercises these
+states with themed Button wrappers and a local, in-memory writer. It does not prove
+published-page wiring or authenticated persistence. Run its desktop/mobile Chrome checks
+with `GSAP_SOURCE=<path to a GSAP UMD build> node v3/browser-tests/work-experience-annotations.browser.cjs`.
+Append `--undo-only` for the focused desktop animated pass, including delayed legacy
+click/second-click interference with Remove and Undo.
+`GSAP_SOURCE` is required and is read before Chrome or the local server starts, so an
+unreadable path fails with a clear message instead of a mid-run crash. These standalone scripts
+have no package manifest and do not vendor GSAP, so the path has to come from the operator - point it at a
+GSAP install of your own (for example `node_modules/gsap/dist/gsap.js`). A third pass reloads
+the fixture with that build and asserts that Add, Add on a collapsed unfinished row, Undo, and
+validation reveal all land focus on a field with real layout inside an open panel, and that the
+panel is still open once the animation budget has passed. A reversed timeline leaves a panel at
+`display: block` with `height: 0` while its children still paint outside the box, so the pass
+measures the panel box against its own content rather than trusting `display` or a non-zero
+rectangle.
+
+#### Work Experience annotation rollout state — 2026-09-22
+
+The test page's saved Designer tree now has the visible start/end inputs marked
+`profile-company-field` and authored as native month inputs. The old datepicker
+attributes/group were removed, legacy hidden field markers and custom IDs were
+removed, and the obsolete decorative calendar icons were hidden. Existing Add,
+Discard, Save, and Remove Button components were moved into the plain action
+wrappers above; obsolete action markers, including the whole-footer Save marker,
+were removed. The separate Undo component is authored with its wrapper initially
+hidden. Save is labelled `Save Changes`.
+
+The rollout also needs the shared accordion file loaded on this page ahead of
+`unified-companies.js`, as the loader-order list above records. That script tag is **not yet
+authored** in the test page's Head Code; without it Work Experience halts with the
+"could not load" message rather than rendering rows. No script pin was changed here.
+
+These Designer edits remain **unpublished**. Script pins were not changed, the
+script retains its existing `v1.59.607` marker pending release, and this work does
+not release or publish the change. Deployment requires the reviewed controller
+release and the corresponding authored markup together. Actual-page desktop
+verification with local overrides and authorized persistence is recorded below;
+it does not establish that the unpublished Designer tree is deployed. The original
+missing Save button's computed-style cause remains unproved.
+
+#### Actual-page desktop acceptance — 2026-09-23
+
+The later user authorization for a signed-in disposable test account, local script
+and markup overrides, temporary saves, and cleanup superseded the earlier
+authentication restriction. The earlier zero-live-scenarios/authentication-blocked
+assessment is obsolete. The historical evidence review, subsequent direct desktop
+run, and focused create recheck below record distinct coverage; the latest recheck
+did not rerun the full desktop acceptance scope.
+
+The local preview used commit `034b371043fa5b88ea021049766fcb993af08fb2` on the
+actual test page with the real writer. Its record is
+`/private/tmp/work-experience-annotations/local-preview-results.md`; the named
+captures remain outside the repository because they contain account information.
+
+| Desktop behavior | Actual-page evidence in that directory |
+| --- | --- |
+| Add below rows, visible Save, section/row unsaved status | Preview observations and `preview-save-position.png` |
+| Month dates and current-role state save and survive reload | Authorized Save test record and `current-reloaded.png` |
+| Saved/draft removal floor, disabled theme and authored danger restoration | `saved-plus-blank.png` and preview floor/theme observations |
+| Remove/Undo position, Discard, settled Add/Undo/validation focus | `saved-remove.png`, `preview-undo-settled.png`, and authorized Save test observations |
+| Invalid row opens while the other panel hides without footer overlap | `two-invalid-after.png` and measured panel observations |
+| Partial create failure retains drafts; retry writes only the remaining row | `partial-requests.json`, `partial-retry-requests.json`, and documented two-record server readback |
+| Successful create with lost response reconciles without another write | `lost-response-evidence.json`, `lost-result.png`, and documented independent readback/no-write second Save |
+| Desktop section exit/reentry retains the saved row and panel geometry | `reentry-away.png`, `reentry-back.png`, `reentry-open.png` |
+
+The partial-save reload used the deployed reader after overrides failed to attach;
+that readback establishes persistence, not execution of local code after reload.
+Cleanup is recorded for all temporary records; the supplied acceptance decision
+confirms the final server count was zero. No raw captures or service hostnames are
+copied here.
+
+Mobile resize is a **known failure explicitly deferred by the user**, not a pass:
+`local-preview-breakpoints.json` records an expanded panel with zero height across
+768/767/768px transitions. Mobile footer visibility and all shared-group teardown
+paths are not established by actual-page evidence. Fixture coverage remains
+separate. This is not an eight-of-eight acceptance claim or pipeline approval.
+Unpublished markup and the shared-script loader remain rollout dependencies;
+publishing, pin changes, tags, and production release remain unauthorized.
+
+##### Direct desktop run at `e8862c39` — acceptance blocked
+
+The authorized disposable account was exercised directly through Chrome with
+both exact CDN requests overridden before initialization and cache disabled.
+The preview marker confirmed `e8862c39b30a8127717cbf2a87daecc3ec99fb1a`.
+Independent server reads confirmed an empty baseline and zero records after
+cleanup. An initial loading refusal cleared on reload; its cause is unconfirmed.
+
+Live checks established Add below the rows, visible Save, section/row unsaved
+status, native month input, current-role disabling of End Date, the last-filled
+draft removal floor with a blank row present, authored danger restoration,
+Remove/Undo placement, and Discard. Add and Undo kept Company focused with a
+280px panel after 600ms. Validation focused the invalid second row with a 314px
+panel after 600ms; the first panel was hidden with zero height and no footer
+overlap.
+
+However, a valid create returned `WORK_HISTORY_CREATE_PROFILE_EVENT_INVALID`.
+The draft remained available and server readback remained empty. This blocked
+that run independently of the obsolete authentication restriction. The backend
+contract responsible for that rejection has not been established; no speculative
+writer change was made. Saved-entry persistence/reload, partial-create retry,
+and successful-write lost-response reconciliation remain unverified in this run.
+The focused create recheck below records the subsequent result.
+
+All drafts were discarded, empty fields/current-role false were verified, and
+focus/cache emulation was reset. No records required deletion. Sensitive captures
+and the detailed report remain outside Git under the test run's evidence directory
+(`live-desktop/`). Mobile was neither tested nor changed and remains deferred.
+Shared-group component fixture results are not live product acceptance. The
+desktop acceptance verdict for that run was **blocked**, with no pipeline approval.
+
+##### Focused live create recheck at `d1d0c3f` — failure not reproduced
+
+On 2026-09-23, the authorized disposable account started with an independently
+verified empty server baseline. A selected company, temporary job title, and
+January 2024–February 2025 dates were saved through the actual desktop UI.
+The create returned HTTP 200, the UI reported Changes saved, and an independent
+read confirmed exactly one matching record. Reloading with both exact local
+script overrides and the target commit marker verified preserved the confirmed
+heading and both native month values. Deleting only that newly created record
+returned HTTP 200; a subsequent independent read confirmed zero records.
+
+The earlier `WORK_HISTORY_CREATE_PROFILE_EVENT_INVALID` rejection did not
+reproduce; its cause remains unknown. No runtime or test change was justified.
+This focused persistence check passes, but partial-create retry and lost-response
+reconciliation were not rerun, so this is not full desktop acceptance or pipeline
+approval. Mobile remains deferred. Redacted results and private screenshots are
+in the current run's external evidence directory as `create-reproduction.json`,
+`create-reproduction-result.json`, and `repro-persisted-dates.png`.
+
+Focused re-verification during the earlier evidence assessment:
+`node --test --test-name-pattern='a partial company save|a lost create is confirmed|validation opens and focuses|visible marked month controls' v3/starter-edit-profile/unified-companies.test.js`
+passed all four selected behavioral tests. No executable failure was reproduced;
+the correction is to the stale acceptance assessment, with no runtime changes.
+
+Completed local checks:
+
+- `node --test v3/starter-edit-profile/profile-section-validation.test.js v3/starter-edit-profile/unified-companies.test.js v3/starter-edit-profile/unified-section-switching.test.js global-embeds/accordions/accordions.test.js global-embeds/accordions/mobile-accordions.test.js`: 110 tests passed.
+- `node --check v3/starter-edit-profile/unified-companies.js` and
+  `node --check global-embeds/accordions/accordions.js`: passed.
+- `node --test readme-doc-links.test.js`: 81 tests passed.
+- `GSAP_SOURCE=<path> node v3/browser-tests/work-experience-annotations.browser.cjs`: desktop (1200px)
+  and mobile (390px) Chrome checks passed, including computed action visibility,
+  disabled theme with a blank added row, one-entry-open accordion behavior against the
+  actual shared script, Add ordering, native month/current-role values sent to the
+  in-memory writer, saved and typed headings, row status, authored Remove/Undo, and
+  Discard without saving, plus an animated pass asserting that Add, Add on a collapsed
+  unfinished row, Undo, and validation reveal each focus a field inside a panel whose box
+  covers its content, both immediately and after the animation budget has passed. That pass was run against a GSAP 3.14.2 build supplied through `GSAP_SOURCE`; the
+  repository declares no GSAP dependency, so reproducing it needs an operator-supplied path. Set `WORK_EXPERIENCE_BROWSER_EVIDENCE=<dir>` to write screenshots and
+  observations. This uses fixture colors and simulated
+  persistence, not published-page styling or an authenticated account.
 
 ### Work Experience section readiness
 

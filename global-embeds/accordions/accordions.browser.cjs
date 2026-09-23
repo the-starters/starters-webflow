@@ -114,12 +114,20 @@ async function main() {
       await navigate(animated ? '?animated=1' : '')
       await expect('join', [true, false, false]); await expect('signup', [true, false, false]); await expect('generic', [false, true, false])
       await record(mode + '-defaults')
+      if (animated) await evaluate(`(()=>{
+        const panel=document.querySelector('#join article:nth-child(3) [data-accordion-content-wrap]');
+        window.animationHeights=[];
+        const until=performance.now()+700;
+        const sample=()=>{window.animationHeights.push(panel.getBoundingClientRect().height);
+          if(performance.now()<until)requestAnimationFrame(sample)};
+        requestAnimationFrame(sample);
+      })()`)
       await click('join', 1, !animated)
       if (animated) {
-        await pause(70)
-        const mid = (await state('join'))[1].height
-        await pause(450)
-        assert.ok(mid > 0 && mid < (await state('join'))[1].height, 'GSAP visibly animates intermediate height')
+        await pause(750)
+        const heights = await evaluate('window.animationHeights')
+        const finalHeight = (await state('join'))[1].height
+        assert.ok(heights.some(height => height > 0 && height < finalHeight), 'GSAP visibly animates intermediate height')
       }
       await expect('join', [false, true, false]); await expect('signup', [true, false, false])
       await click('signup', 2)

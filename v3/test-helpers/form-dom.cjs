@@ -249,6 +249,9 @@ function makeEvent(type, target, extra) {
     stopImmediatePropagation() {
       this.stopped = true
     },
+    stopPropagation() {
+      this.stopped = true
+    },
   }, extra || {})
 }
 

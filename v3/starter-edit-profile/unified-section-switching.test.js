@@ -113,7 +113,9 @@ async function mountCompanies(guard) {
   }))
   const row = h('div', { 'profile-item-row': '' }, [
     h('button', { 'profile-item-toggle': '', type: 'button' }, [h('span', { 'profile-items-summary': '' })]),
-    h('div', { 'profile-item-content': '' }, fields), h('button', { 'profile-item-remove': '', type: 'button' }),
+    h('div', { 'profile-item-content': '' }, fields),
+    h('div', { 'profile-item-remove': '' }, [h('div', { 'data-button-theme': 'danger' }, [h('button', { type: 'button' })])]),
+    h('div', { 'profile-items-undo': '' }, [h('button', { type: 'button' })]),
   ])
   const save = h('button', { 'data-edit-submit': 'companies' })
   const add = h('button', { 'profile-items-add': '' })
@@ -144,7 +146,8 @@ async function mountCompanies(guard) {
       return { ok: true, json: async () => ({ companies: structuredClone(stored), starter_id: 7 }) }
     },
   })
-  for (const file of ['profile-section-validation.js', 'unified-companies.js', 'company-experience-crud.js']) {
+  for (const file of ['../../global-embeds/accordions/accordions.js', 'profile-section-validation.js',
+    'unified-companies.js', 'company-experience-crud.js']) {
     vm.runInContext(source(file), context, { filename: file })
   }
   await boot

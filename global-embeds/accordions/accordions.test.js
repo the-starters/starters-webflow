@@ -39,6 +39,7 @@ function mount({ animated = false, attrs = {}, scrollTrigger = false, groups = 1
   let refreshes = 0
   const context = {
     console,
+    window: {},
     document: {
       querySelectorAll: (selector) => body.querySelectorAll(selector),
       addEventListener(type, listener) {
@@ -62,10 +63,14 @@ function mount({ animated = false, attrs = {}, scrollTrigger = false, groups = 1
             this.steps.push(['fromTo', target, { ...from }, { ...to }])
             return this
           },
-          play() { this.actions.push('play'); return this },
-          reverse() { this.actions.push('reverse'); return this },
+          reversed: false,
+          play() { this.actions.push('play'); this.reversed = false; return this },
+          reverse() { this.actions.push('reverse'); this.reversed = true; return this },
+          // Seeking does not change direction in GSAP, so the double does not either.
           progress(value) { this.actions.push(['progress', value]); return this },
           invalidate() { this.invalidations += 1; return this },
+          killed: false,
+          kill() { this.killed = true; return this },
         }
         timelines.push(timeline)
         return timeline
@@ -73,6 +78,11 @@ function mount({ animated = false, attrs = {}, scrollTrigger = false, groups = 1
     }
   }
   vm.runInNewContext(source, context, { filename: 'accordions.js' })
+  const card = () => {
+    const button = element('button', { 'data-accordion': 'toggle-button' })
+    const content = element('div', { 'data-accordion': 'content-wrap' })
+    return { card: element('div', { 'data-accordion': 'component' }, [button, content]), button, content }
+  }
   const boot = () => {
     for (const listener of listeners.get('DOMContentLoaded') || []) {
       listener(makeEvent('DOMContentLoaded', null))
@@ -83,6 +93,8 @@ function mount({ animated = false, attrs = {}, scrollTrigger = false, groups = 1
     cards,
     timelines,
     boot,
+    card,
+    accordions: context.window.StarterAccordions,
     get refreshes() { return refreshes },
     fire(index, type = 'click') {
       const button = cards[index].button
@@ -160,12 +172,12 @@ for (const animated of [false, true]) {
     assertOpen(env, 0, false)
     assertOpen(env, 1, true)
     assertOpen(env, 2, false)
-    if (animated) assert.deepEqual(env.timelines[1].actions, [['progress', 1]])
+    if (animated) assert.deepEqual(env.timelines[1].actions, ['play', ['progress', 1]])
     env.fire(2)
     assertOpen(env, 1, false)
     assertOpen(env, 2, true)
     if (animated) {
-      assert.deepEqual(env.timelines[1].actions, [['progress', 1], 'reverse'])
+      assert.deepEqual(env.timelines[1].actions, ['play', ['progress', 1], 'reverse'])
       assert.deepEqual(env.timelines[2].actions, ['play'])
     }
   })
@@ -177,7 +189,7 @@ for (const animated of [false, true]) {
       'data-close-on-second-click': 'true',
     } })
     env.cards.forEach((_, index) => assertOpen(env, index, true))
-    if (animated) env.timelines.forEach((timeline) => assert.deepEqual(timeline.actions, [['progress', 1]]))
+    if (animated) env.timelines.forEach((timeline) => assert.deepEqual(timeline.actions, ['play', ['progress', 1]]))
     env.fire(1)
     assertOpen(env, 0, true)
     assertOpen(env, 1, false)
@@ -245,4 +257,135 @@ test('GSAP receives the height animation and completion hooks tolerate optional 
     assert.equal(timeline.invalidations, 2)
     assert.equal(env.refreshes, scrollTrigger ? 2 : 0)
   }
+})
+
+function assertEntryOpen(entry, open, animated) {
+  assert.equal(entry.isOpen(), open)
+  assert.equal(entry.button.getAttribute('aria-expanded'), String(open))
+  assert.equal(entry.card.classList.contains('is-active'), open)
+  if (!animated) assert.equal(entry.content.style.display, open ? 'block' : 'none')
+}
+
+for (const animated of [false, true]) {
+  const mode = animated ? 'with GSAP' : 'without GSAP'
+
+  test(`${mode}: a group registered after initialization keeps one card open`, () => {
+    const env = mount({ animated })
+    const group = env.accordions.group({ closePrevious: true })
+    const first = env.card()
+    const second = env.card()
+    const one = group.register(first.card, first.button, first.content)
+    const two = group.register(second.card, second.button, second.content)
+    assertEntryOpen(one, false, animated)
+    assertEntryOpen(two, false, animated)
+    one.open()
+    assertEntryOpen(one, true, animated)
+    two.open()
+    assertEntryOpen(one, false, animated)
+    assertEntryOpen(two, true, animated)
+    // A card added later joins the same rule rather than opening alongside the others.
+    const third = env.card()
+    const three = group.register(third.card, third.button, third.content)
+    three.open()
+    assertEntryOpen(two, false, animated)
+    assertEntryOpen(three, true, animated)
+    if (animated) {
+      assert.deepEqual(env.timelines.at(-3).actions, ['play', 'reverse'])
+      assert.deepEqual(env.timelines.at(-2).actions, ['play', 'reverse'])
+      assert.deepEqual(env.timelines.at(-1).actions, ['play'])
+    }
+  })
+}
+
+test('an instant open after a close leaves the card playing forward, not reversed', () => {
+  const env = mount({ animated: true })
+  const group = env.accordions.group({ closePrevious: true })
+  const built = env.card()
+  const entry = group.register(built.card, built.button, built.content)
+  const timeline = env.timelines.at(-1)
+  entry.open()
+  assert.equal(timeline.reversed, false)
+  entry.close()
+  assert.equal(timeline.reversed, true, 'closing runs the timeline backwards')
+  // Seeking alone would leave the card running backwards, so it would collapse again on its own.
+  entry.open(true)
+  assert.equal(entry.isOpen(), true)
+  assert.equal(timeline.reversed, false, 'an instant open restores forward direction before seeking')
+  assert.deepEqual(timeline.actions, ['play', 'reverse', 'play', ['progress', 1]])
+})
+
+test('a released card is no longer the one close-previous closes', () => {
+  const env = mount()
+  const group = env.accordions.group({ closePrevious: true })
+  const first = env.card()
+  const second = env.card()
+  const one = group.register(first.card, first.button, first.content)
+  const two = group.register(second.card, second.button, second.content)
+  one.open()
+  // The page discarded this card, so opening another must not reach back into it.
+  one.release()
+  two.open()
+  assert.equal(one.isOpen(), true)
+  assert.equal(two.isOpen(), true)
+})
+
+test('releasing a card also releases the animation it registered', () => {
+  const env = mount({ animated: true })
+  const group = env.accordions.group({ closePrevious: true })
+  const first = env.card()
+  const second = env.card()
+  const one = group.register(first.card, first.button, first.content)
+  const two = group.register(second.card, second.button, second.content)
+  const discarded = env.timelines.at(-2)
+  const kept = env.timelines.at(-1)
+  one.open()
+  assert.equal(discarded.killed, false)
+  one.release()
+  assert.equal(discarded.killed, true)
+  // Releasing one card leaves every other card in the group animating as before.
+  assert.equal(kept.killed, false)
+  two.open()
+  assert.equal(two.isOpen(), true)
+  assert.deepEqual(kept.actions, ['play'])
+  assert.equal(kept.killed, false)
+})
+
+test('releasing a card without GSAP on the page is still safe', () => {
+  const env = mount()
+  const group = env.accordions.group({ closePrevious: true })
+  const built = env.card()
+  const entry = group.register(built.card, built.button, built.content)
+  entry.open()
+  entry.release()
+  assert.equal(env.timelines.length, 0)
+  assert.equal(entry.isOpen(), true)
+})
+
+test('a group that does not bind the control leaves activation to the page', () => {
+  const env = mount()
+  const owned = env.accordions.group({ closePrevious: true, bindControl: false })
+  const built = env.card()
+  const entry = owned.register(built.card, built.button, built.content)
+  built.button._listeners.get('click')?.forEach((listener) => listener(makeEvent('click', built.button)))
+  assert.equal(entry.isOpen(), false)
+  assert.equal(built.content.style.display, 'none')
+  entry.open()
+  assert.equal(entry.isOpen(), true)
+  assert.equal(built.content.style.display, 'block')
+  entry.close()
+  assert.equal(entry.isOpen(), false)
+})
+
+test('registration needs a card, a control, and a panel, and ids never repeat', () => {
+  const env = mount()
+  const group = env.accordions.group({})
+  const built = env.card()
+  assert.equal(group.register(null, built.button, built.content), null)
+  assert.equal(group.register(built.card, null, built.content), null)
+  assert.equal(group.register(built.card, built.button, null), null)
+  const entry = group.register(built.card, built.button, built.content)
+  const ids = new Set([...env.cards, entry].flatMap(({ button, content }) => [button.id, content.id]))
+  assert.equal(ids.size, (env.cards.length + 1) * 2)
+  assert.equal(entry.button.getAttribute('aria-controls'), entry.content.id)
+  assert.equal(entry.content.getAttribute('aria-labelledby'), entry.button.id)
 })

@@ -54,6 +54,39 @@ animation is wanted; loading it afterward does not upgrade existing cards.
 The generic script has no viewport breakpoint and uses the `data-accordion`
 markup above. It does not bind the separate `data-accordion-item-*` mobile markup.
 
+### Rows a script renders
+
+The `DOMContentLoaded` scan only sees the cards that exist when it runs, so a page
+that renders its own cards builds a group directly instead. The script publishes
+`window.StarterAccordions` as soon as it loads, and a second copy of the file on
+the same page keeps the first one's groups rather than replacing them.
+
+```js
+const group = window.StarterAccordions.group({ closePrevious: true, bindControl: false })
+const entry = group.register(card, control, panel)
+```
+
+`group(settings)` takes `closePrevious`, `closeOnSecondClick`, and `openOnHover`
+with the same meaning as the wrapper attributes, plus `bindControl`. Leave
+`bindControl` unset to get the click (and hover) handler the scanned cards get;
+set it to `false` when the page already owns that control's click, so the two do
+not both act on one activation.
+
+`register(card, control, panel)` applies the same ARIA wiring, generated ids, and
+optional GSAP timeline the scan applies, starts the card collapsed, and returns
+`{ card, button, content, open(instant), close(), isOpen(), release() }`. It
+returns `null` when any of the three elements is missing. `open(true)` lays the
+panel out synchronously, for a caller that focuses or scrolls to the card it just
+opened; it restores forward playback before seeking, so a card that was closed
+stays open instead of animating back shut. Registering later joins
+the same group, so a card added after initialization obeys `closePrevious` too.
+Call `release()` when the page discards a card: it stops `closePrevious` reaching
+back into a detached one and kills that card's GSAP timeline, which would
+otherwise stay attached to the global timeline holding the detached panel.
+
+For the Work Experience consumer's setup and behavior, see
+[Work Experience accordion actions](../../v3/starter-edit-profile/README.md#work-experience-accordion-actions).
+
 ### Designer styles and regression coverage
 
 `accordion.css` exposes accordion content in Webflow Designer and applies the
@@ -61,7 +94,8 @@ existing Designer-only filter-card colors. Its selectors are scoped to
 `.wf-design-mode`.
 
 Executable coverage for initialization, clicks, defaults, grouping, hover,
-reinitialization, and optional animation hooks lives in
+reinitialization, cards registered after initialization, and optional animation
+hooks lives in
 [`accordions.test.js`](accordions.test.js). Run it from the repository root with
 `node --test global-embeds/accordions/accordions.test.js`.
 
