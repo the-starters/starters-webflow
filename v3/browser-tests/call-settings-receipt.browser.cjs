@@ -238,6 +238,44 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
     })
 
     // ------------------------------------------------------------------
+    // 0c. The shared readiness hint can settle just after the bounded fallback
+    //     has rendered empty member JSON. Its late settlement must trigger a
+    //     fresh live identity/receipt read and repaint both saved choices.
+    // ------------------------------------------------------------------
+    await navigate('/starter-dashboard', 'page=dashboard&paid=1&receipt=both-pending&memberready=late&seen=1')
+    assert.ok(await settleUntil(
+      `document.documentElement.getAttribute('data-free-call-settings') === 'ready' && document.documentElement.getAttribute('data-paid-call-settings') === 'ready'`,
+      100,
+    ), 'both controllers complete their bounded fallback before memberReady settles')
+    await evaluate(`Array.from(document.querySelectorAll('[data-call-settings-action="open"]')).forEach(button => button.click())`)
+    await pause(200)
+    const emptyFallback = await snapshot(
+      '00e-dashboard-head-late-member-ready-after-timeout',
+      'HEAD, the bounded fallback rendered before late member JSON hydration',
+    )
+    assert.equal(emptyFallback.free.no, true, 'Free initially reflects the empty fallback read')
+    assert.equal(emptyFallback.paid.no, true, 'Paid initially reflects the empty fallback read')
+    assert.equal(await evaluate('window.__tsReleaseMemberReady()'), true, 'member JSON hydrates after the timeout fallback')
+    assert.ok(await settleUntil(`document.getElementById('free-yes').checked && document.getElementById('paid-yes').checked`), 'late readiness triggers fresh receipt reconciliation')
+    const reconciledAfterLateReady = await snapshot(
+      '00f-dashboard-head-reconciles-after-late-member-ready',
+      'HEAD, late memberReady settlement repaints both Build Profile choices from fresh member JSON',
+    )
+    assert.equal(reconciledAfterLateReady.free.description, 'Quick intro', 'late Free reconciliation restores the saved description')
+    assert.equal(reconciledAfterLateReady.paid.titleInput, 'Strategy call', 'late Paid reconciliation restores the saved title')
+    assert.equal(reconciledAfterLateReady.paid.rateInput, '250', 'late Paid reconciliation restores the saved rate')
+    assert.ok(reconciledAfterLateReady.reads >= 4, 'both controllers re-read member JSON after late readiness')
+    assert.deepEqual(xanoWrites(reconciledAfterLateReady), [], 'late reconciliation creates no canonical/provider state')
+    assert.equal(reconciledAfterLateReady.writes, 0, 'late reconciliation does not mutate private member JSON')
+    assert.deepEqual(errors, [], 'no uncaught browser errors')
+    record('dashboard-reload-reconciles-both-build-choices-after-late-member-ready', {
+      free: reconciledAfterLateReady.free,
+      paid: reconciledAfterLateReady.paid,
+      reads: reconciledAfterLateReady.reads,
+      network: reconciledAfterLateReady.network,
+    })
+
+    // ------------------------------------------------------------------
     // 1. Edit Profile: a receipt the live canonical service already satisfies is
     //    retired on load without creating an unsaved step-6 state, so leaving the
     //    page is silent.
