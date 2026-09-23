@@ -718,9 +718,11 @@ Mobile resize is a **known failure explicitly deferred by the user**, not a pass
 `local-preview-breakpoints.json` records an expanded panel with zero height across
 768/767/768px transitions. Mobile footer visibility and all shared-group teardown
 paths are not established by actual-page evidence. Fixture coverage remains
-separate. This is not an eight-of-eight acceptance claim or pipeline approval.
-Unpublished markup and the shared-script loader remain rollout dependencies;
-publishing, pin changes, tags, and production release remain unauthorized.
+separate. When this run was recorded it was not an eight-of-eight acceptance
+claim or pipeline approval, and publishing, pin changes, tags, and production
+release were still unauthorized. **Both of those statements are superseded** by
+the release status recorded at the end of this section; they are kept as the
+record of this run, not as current blockers.
 
 ##### Direct desktop run at `e8862c39` — acceptance blocked
 
@@ -794,6 +796,22 @@ Completed local checks:
   repository declares no GSAP dependency, so reproducing it needs an operator-supplied path. Set `WORK_EXPERIENCE_BROWSER_EVIDENCE=<dir>` to write screenshots and
   observations. This uses fixture colors and simulated
   persistence, not published-page styling or an authenticated account.
+
+##### Release status — 2026-09-23
+
+This is the current status and supersedes the earlier "remain unauthorized"
+wording above. After PR 943 merged, the user authorized the release. The prior
+gate passed all eight desktop actual-page scenarios listed in the table above,
+so desktop acceptance is complete; mobile resize stays parked as the user
+directed and is not part of this release.
+
+Release is authorized and in progress, **not** completed: this branch only
+stamps the `v1.59.614` marker on the two changed browser scripts and updates
+this documentation. The tag, CDN purge, test-page publishing, and post-release
+verification are handled outside this branch, as is the shared accordion loader
+tag noted above, which is being authored in Webflow before publication. Nothing
+here should be read as a claim that the scripts or markup are deployed until
+that verification is recorded.
 
 ### Work Experience section readiness
 
