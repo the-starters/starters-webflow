@@ -1060,3 +1060,28 @@ test('passes signed TalkJS routes through untouched on dashboards and Hire profi
     assert.equal(lookalike.status, 410)
   }
 })
+
+test('passes signed TalkJS routes through the direct auth helper untouched', async () => {
+  const stage = loadStage({
+    hostname: 'www.thestarters.com',
+    pathname: '/starter-dashboard',
+  })
+
+  for (const route of ['talkjs/user-token/v3', 'talkjs/conversation/v3']) {
+    const res = await stage.window.xanoAuthFetch(`${API_BASE}${route}`, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer signed-session', 'Content-Type': 'application/json' },
+      body: '{"mode":"pair"}',
+    })
+    assert.notEqual(res.status, 410, route)
+    const forwarded = stage.authenticatedRequests[stage.authenticatedRequests.length - 1]
+    assert.equal(new URL(forwarded.url).pathname, `/api:tCpV3oqd/${route}`)
+    assert.equal(forwarded.headers.get('Authorization'), 'Bearer signed-session')
+    assert.equal(await forwarded.text(), '{"mode":"pair"}')
+  }
+
+  assert.equal(stage.nativeRequests.length, 0)
+  const lookalike = await stage.window.xanoAuthFetch(`${API_BASE}talkjs/user-token/v4`)
+  assert.equal(lookalike.status, 410)
+  assert.equal(stage.authenticatedRequests.length, 2)
+})
