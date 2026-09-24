@@ -5,8 +5,9 @@
  *
  * Self-contained page controller for /messages. It waits for Memberstack,
  * redirects logged-out visitors through the V3 login router while preserving
- * the current path and query, loads TalkJS, syncs the current member's public
- * profile, and mounts the 3.0-themed inbox into #talkjs-container.
+ * the current path and query, loads TalkJS and the shared signed-session owner,
+ * syncs the current member's public profile, and mounts the 3.0-themed inbox
+ * into #talkjs-container.
  *
  * Bootstrap recovery: a TalkJS script that fails outright (onerror) is removed
  * and retried once in this document. A readiness timeout is ambiguous instead,
@@ -20,15 +21,15 @@
  *
  * Deep linking: `/messages?conversation=<TalkJS conversation id>` selects an
  * existing conversation (used by dashboard preview cards). The existing
- * `/messages?with=<memberstack id>` contract opens — creating if needed — the
- * one-on-one conversation with that member and selects it in the inbox.
+ * `/messages?with=<memberstack id>` contract asks Xano to resolve or provision
+ * the exact two-person conversation and selects only the authorized id.
  * `v3/hire-message.js` produces these links from the /hire/<slug> profile pages
  * and may leave a legacy one-shot sessionStorage handoff, which this module
  * clears without using it to mutate a TalkJS participant. Xano authorizes or
  * provisions the exact thread, and the browser selects only the returned id.
- * Without the query parameter nothing below runs and the page behaves exactly
- * as it did before; the deep link resolves after the inbox is mounted, so a
- * failure leaves a working inbox.
+ * Without either deep-link parameter no conversation authorization request
+ * runs; the inbox still mounts normally. A deep link resolves after the inbox
+ * is mounted, so a failure leaves a working inbox.
  *
  * Clickable Identity: the 3.0 chat theme wraps the chat-header photo and name,
  * and the avatar beside a received message, in TalkJS ActionButtons carrying
@@ -72,7 +73,6 @@
   // truncated URL and must not reach TalkJS, which would create a real user
   // record for it.
   const MEMBER_ID_PATTERN = /^mem_(?:sb_)?[A-Za-z0-9]+$/
-  const CONVERSATION_SOURCE = 'hire-page'
   const FEED_FILTER_ACTIONS = {
     'messages-filter-all': {},
     'messages-filter-unread': { isUnread: true },
@@ -927,28 +927,11 @@
   }
 
   /**
-   * The other side of the conversation. Passing fields updates that user's stored
-   * TalkJS record, so fields are only ever passed when they came from the CMS via
-   * the handoff; otherwise the existing user is referenced by id alone and TalkJS
-   * keeps whatever they synced themselves.
-   * @param {object} Talk
-   * @param {string} memberId
-   * @param {{name: string, photo: string}|null} handoff
-   */
-  function otherParticipant(Talk, memberId, handoff) {
-    if (!handoff || !handoff.name) return new Talk.User(memberId)
-
-    const fields = { id: memberId, name: handoff.name }
-    if (handoff.photo) fields.photoUrl = handoff.photo
-    return new Talk.User(fields)
-  }
-
-  /**
    * Ask Xano to authorize an existing thread or provision a two-person thread,
    * then select only the returned id. Conversation and participant mutation is
    * server-owned because TalkJS browser conversation synchronization is off.
    */
-  async function openDeepLinkConversation(Talk, session, inbox, me, myId, identity) {
+  async function openDeepLinkConversation(inbox, myId, identity) {
     const conversationId = deepLinkConversationId()
     if (conversationId) {
       const receipt = await window.StartersTalkJsSessionOwner.authorizeConversation({
@@ -1026,7 +1009,7 @@
       // Deliberately after mount and deliberately not awaited: the inbox is already
       // usable, so a deep-link failure degrades to "your normal inbox" instead of
       // taking the page down with it.
-      openDeepLinkConversation(Talk, session, inbox, me, member.id, identity).catch((error) => {
+      openDeepLinkConversation(inbox, member.id, identity).catch((error) => {
         console.warn(
           '[messages-3.0] Unable to open the requested conversation',
           error,

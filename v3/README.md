@@ -1096,27 +1096,41 @@ node --test v3/signup-attribution.test.js
 inbox, profile chat, and Brand/Starter dashboard Messages tile. Each client
 loads it lazily from the same jsDelivr ref, so no separate Webflow script tag is
 required. The helper exchanges the current Memberstack session through the
-shared Xano bridge for a short-lived TalkJS user token, verifies that token's
-public member, app, expiry, and environment claims, and gives all three clients
-one `Talk.Session` for that exact member. Test members are accepted only on the
-V3 staging host, production members only on the production hosts, and localhost
-requires an explicit `data-environment="test|production"` on a helper script
-element.
+shared Xano bridge for a TalkJS user token with a maximum 600-second lifetime,
+using `talkjs/user-token/v3`. It verifies that token's public member, app,
+expiry, and environment claims, and gives all three clients one `Talk.Session`
+for that exact member. Test members are accepted only on the V3 staging host,
+production members only on the production hosts, and localhost requires an
+explicit `data-environment="test|production"` on a helper script element.
 
-Token and conversation requests retry once when eligible. The retry obtains its
-bearer with `window.getXanoAuthToken({ forceRefresh: true })`; tokens stay in
-closures and never enter storage, the DOM, URLs, logs, analytics, or the public
-debug snapshot. Every protected response is rechecked against the captured
-Memberstack member, cookie, and active owner after its body is read. An auth
-notification immediately closes and invalidates the old signed session, and a
-replacement mounts only after the identity is stable.
+Each protected request retries one `401` once with a fresh bearer; token issuance
+also retries one eligible transient failure. The fresh bearer comes from
+`window.getXanoAuthToken({ forceRefresh: true })`; tokens stay in closures and
+never enter storage, the DOM, URLs, logs, analytics, or the public debug
+snapshot. Every protected response is rechecked against the captured Memberstack
+member, cookie, and active owner after its body is read. An auth notification
+immediately closes and invalidates the old signed session, and a replacement
+mounts only after the identity is stable.
 
-Conversation selection is also server-owned. The browser sends exactly one
-intent to Xano: a counterpart Memberstack id for a two-person thread, or an
-existing TalkJS conversation id. It accepts only an authorized receipt for the
-signed actor, matching environment, exact counterpart or conversation, and
-exact two-member participant set. The browser then selects only the returned
-conversation id; it never creates a conversation or changes participants.
+The public `window.StartersTalkJsSessionOwner` API exposes `openSession`,
+`authorizeConversation`, `captureIdentityGuard`, `destroy`, and
+`debugSnapshot`. The debug snapshot contains only the TalkJS app, environment,
+and registered client-owner names; it never exposes the member id.
+
+Conversation selection is also server-owned through
+`talkjs/conversation/v3`. The browser sends exactly one intent to Xano: a
+counterpart Memberstack id for a two-person thread, or an existing TalkJS
+conversation id. It accepts only an authorized receipt for the signed actor,
+matching environment, exact counterpart or conversation, and exact two-member
+participant set. The browser then selects only the returned conversation id; it
+never creates a conversation or changes participants. Pair mode lets Xano adopt
+the legacy `Talk.oneOnOneId` thread when that is where the pair's existing
+history lives.
+
+TalkJS dashboard Identity Verification and browser conversation synchronization
+remain disabled until the V2 cutover. The clients still use signed sessions and
+server-authorized conversation receipts while those TalkJS enforcement switches
+are off; enabling either switch is a separate post-cutover release decision.
 
 ## Profile message modal
 
@@ -1970,8 +1984,9 @@ script tag instead of carrying a duplicate copy in page head/footer code.
 
 The retained V2 site shares the live TalkJS app. On `hirethestarters.com` and
 `www.hirethestarters.com` the bridge installs only on `/messages`, so the shared
-TalkJS session owner (`talkjs-auth-session.js`) can obtain a signed user token.
-No other V2 path installs it.
+TalkJS session owner (`talkjs-auth-session.js`) can obtain a signed user token
+when the future V2 signing client is installed. No other V2 path installs the
+bridge, and this change does not otherwise alter V2 Messages behavior.
 
 The live `detail_hire` template is the timing exception. Install
 [`scheduling-v3-hire-template-head.html`](scheduling-v3-hire-template-head.html)

@@ -33,8 +33,9 @@
  * modal that does not contain the chat container, and a `?modal-id=<id>` in the
  * URL has modal.js open the modal on load with the chat mounting clicklessly.
  *
- * TalkJS loads lazily, on the first open. `/hire/<slug>` pages are public and
- * SEO-relevant, so visitors who never press Message never pay for the SDK.
+ * TalkJS and the shared authentication helper load lazily on the first open.
+ * `/hire/<slug>` pages are public and SEO-relevant, so visitors who never press
+ * Message download neither script.
  *
  * Who gets through:
  *   logged out    -> the hire-page signup modal (`data-modal-target="signup-modal"`).
@@ -93,7 +94,6 @@
   var MEMBERSTACK_TIMEOUT_MS = 10000
   var MEMBERSTACK_POLL_MS = 100
 
-  var CONVERSATION_SOURCE = 'hire-page'
   // Memberstack ids are `mem_` + an alphanumeric cuid, with an extra `sb_`
   // segment for Test Mode (sandbox) members. Anything else is an unbound
   // Designer placeholder and must never reach TalkJS, which would happily
@@ -590,19 +590,6 @@
     if (email) fields.email = email
     if (member.profileImage) fields.photoUrl = member.profileImage
     return fields
-  }
-
-  /**
-   * The starter side of the conversation. Passing fields updates that user's
-   * stored TalkJS record, so only CMS-sourced values are ever passed; with no
-   * name we reference the existing user by id and leave their record alone.
-   */
-  function starterUser(Talk, identity) {
-    if (!identity.name) return new Talk.User(identity.id)
-
-    var fields = { id: identity.id, name: identity.name }
-    if (identity.photo) fields.photoUrl = identity.photo
-    return new Talk.User(fields)
   }
 
   function deepLinkPath(memberId) {
