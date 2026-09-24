@@ -2394,7 +2394,7 @@
       groups.get(request).push(row)
     })
     groups.forEach(function (group, request) {
-      actions.bindCanonicalClock(group, request.started)
+      actions.bindCanonicalClock(group, request.started, request.wallStarted)
     })
   }
 
@@ -2404,7 +2404,7 @@
     }
     let requestStarted = null
     try { requestStarted = global.performance && global.performance.now() } catch (_error) {}
-    const clockRequest = {started: requestStarted}
+    const clockRequest = {started: requestStarted, wallStarted: Date.now()}
     const response = await global.xanoAuthFetch(
       XANO_SCHEDULING_BASE + BOOKINGS_PATH,
       {

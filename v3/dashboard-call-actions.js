@@ -24,17 +24,32 @@
     } catch (_error) { return null }
   }
 
-  function bindCanonicalClock(rows, requestStarted) {
+  function wallNow() {
+    const value = Date.now()
+    return Number.isFinite(value) ? value : null
+  }
+
+  function bindCanonicalClock(rows, requestStarted, requestWallStarted) {
     if (!Array.isArray(rows)) return false
     rows.forEach(function (row) { if (row && typeof row === 'object') canonicalClocks.delete(row) })
     if (rows.length === 0) return true
     const stamp = rows[0] && rows[0].server_now_ms
     const received = monotonicNow()
+    const wallReceived = wallNow()
     if (!Number.isSafeInteger(stamp) || stamp <= 0 ||
       !Number.isFinite(requestStarted) || requestStarted < 0 ||
-      received == null || received < requestStarted ||
+      received == null || received < requestStarted || wallReceived == null ||
       !rows.every(function (row) { return row && row.server_now_ms === stamp })) return false
-    const clock = {stamp, started: requestStarted, last: received, valid: true}
+    const wallStarted = Number.isFinite(requestWallStarted) ? requestWallStarted : wallReceived
+    const elapsed = Math.max(received - requestStarted, Math.max(0, wallReceived - wallStarted))
+    const clock = {
+      stamp,
+      started: requestStarted,
+      wallStarted,
+      lastMonotonic: received,
+      lastCanonical: stamp + elapsed,
+      valid: true,
+    }
     rows.forEach(function (row) { canonicalClocks.set(row, clock) })
     return true
   }
@@ -42,14 +57,19 @@
   function canonicalNow(booking) {
     const clock = booking && canonicalClocks.get(booking)
     const current = monotonicNow()
+    const wallCurrent = wallNow()
     if (!clock || !clock.valid) return null
-    if (current == null || current < clock.last) {
+    if (current == null || wallCurrent == null || current < clock.lastMonotonic) {
       clock.valid = false
       return null
     }
-    clock.last = current
-    // Charge the full request duration so transport cannot extend the cutoff.
-    return clock.stamp + current - clock.started
+    clock.lastMonotonic = current
+    const elapsed = Math.max(
+      current - clock.started,
+      Math.max(0, wallCurrent - clock.wallStarted),
+    )
+    clock.lastCanonical = Math.max(clock.lastCanonical, clock.stamp + elapsed)
+    return clock.lastCanonical
   }
 
   function rescheduleWindowOpen(booking) {

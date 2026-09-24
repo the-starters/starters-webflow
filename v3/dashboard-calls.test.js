@@ -4905,10 +4905,12 @@ test('F12 canonical clock binds whether the action module loads before or after 
     document: global.document, fetch: global.xanoAuthFetch,
     actions: global.StartersDashboardCallActions,
     performance: Object.getOwnPropertyDescriptor(global, 'performance'),
+    wallNow: Date.now,
   }
   let mono = 100
   try {
     Object.defineProperty(global, 'performance', { configurable: true, value: { now: () => mono } })
+    Date.now = () => F12_SERVER_NOW
     global.document = { documentElement: element(), querySelector: () => null, addEventListener() {} }
     global.xanoAuthFetch = async () => ({ ok: true, json: async () => [f12ClockRow()] })
     const memberstack = { getCurrentMember: async () => ({ id: 'brand-f12' }) }
@@ -4935,6 +4937,7 @@ test('F12 canonical clock binds whether the action module loads before or after 
     global.xanoAuthFetch = original.fetch
     global.StartersDashboardCallActions = original.actions
     Object.defineProperty(global, 'performance', original.performance)
+    Date.now = original.wallNow
   }
 })
 
@@ -4944,6 +4947,7 @@ test('F12 clock-only refresh retains the rendered row and replaces or invalidate
     document: global.document, fetch: global.xanoAuthFetch,
     actions: global.StartersDashboardCallActions,
     performance: Object.getOwnPropertyDescriptor(global, 'performance'),
+    wallNow: Date.now,
   }
   let mono = 100
   let stamp = F12_SERVER_NOW
@@ -4951,6 +4955,7 @@ test('F12 clock-only refresh retains the rendered row and replaces or invalidate
   const memberstack = { getCurrentMember: async () => ({ id: 'brand-f12' }) }
   try {
     Object.defineProperty(global, 'performance', { configurable: true, value: { now: () => mono } })
+    Date.now = () => F12_SERVER_NOW
     global.document = { documentElement: element(), querySelector: () => null }
     global.StartersDashboardCallActions = actions
     global.xanoAuthFetch = async () => ({ ok: true, json: async () => [f12ClockRow(stamp)] })
@@ -4974,5 +4979,6 @@ test('F12 clock-only refresh retains the rendered row and replaces or invalidate
     global.xanoAuthFetch = original.fetch
     global.StartersDashboardCallActions = original.actions
     Object.defineProperty(global, 'performance', original.performance)
+    Date.now = original.wallNow
   }
 })

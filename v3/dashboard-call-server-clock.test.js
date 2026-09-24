@@ -16,9 +16,15 @@ test('slow device clock cannot open rescheduling at exact server cutoff', () => 
 
 function withClock(fn) {
   const original=Object.getOwnPropertyDescriptor(global,'performance')
+  const originalWall=Date.now
   let mono=100
+  let wall=SERVER
   Object.defineProperty(global,'performance',{configurable:true,value:{now:()=>mono}})
-  try { fn(value=>{mono=value}) } finally {Object.defineProperty(global,'performance',original)}
+  Date.now=()=>wall
+  try { fn(value=>{mono=value},value=>{wall=value}) } finally {
+    Date.now=originalWall
+    Object.defineProperty(global,'performance',original)
+  }
 }
 test('both roles use strict eight-hour cutoff with a bound clock', () => withClock(() => {
   for(const delta of [-1,0,1]) for(const role of ['brand','starter']) {
@@ -27,11 +33,12 @@ test('both roles use strict eight-hour cutoff with a bound clock', () => withClo
     assert.equal(api.canProposeReschedule(role,b),delta>0)
   }
 }))
-test('wall-clock drift does not change bound eligibility', () => withClock(() => {
-  const b=booking(1); api.bindCanonicalClock([b],100)
-  const original=Date.now
-  try {for(const drift of [-3600000,3600000]) { Date.now=()=>SERVER+drift;assert.equal(api.canProposeReschedule('brand',b),true) }}
-  finally {Date.now=original}
+test('slow and fast device clocks do not change bound eligibility', () => withClock((setMono,setWall) => {
+  for(const drift of [-3600000,3600000]) {
+    setWall(SERVER+drift)
+    const b=booking(1); api.bindCanonicalClock([b],100,SERVER+drift)
+    assert.equal(api.canProposeReschedule('brand',b),true)
+  }
 }))
 test('full request latency closes a crossed cutoff', () => withClock(set => {
   const b=booking(500);set(1100);api.bindCanonicalClock([b],100)
@@ -56,6 +63,32 @@ test('backwards monotonic clock invalidates the binding permanently', () => with
   set(99);assert.equal(api.canProposeReschedule('brand',b),false)
   set(101);assert.equal(api.canProposeReschedule('brand',b),false)
 }))
+test('wall time crossing the cutoff closes proposals and confirmations during suspension', () => withClock((setMono,setWall) => {
+  const proposals=[]
+  const confirmations=[]
+  for(const role of ['brand','starter']) {
+    const proposal=booking(30*60000)
+    api.bindCanonicalClock([proposal],100,SERVER)
+    assert.equal(api.canProposeReschedule(role,proposal),true)
+    proposals.push([role,proposal])
+
+    const confirmation=booking(30*60000)
+    confirmation.status='rescheduled';confirmation.rescheduled_by=role==='brand'?'starter':'brand';confirmation.start_old=confirmation.start
+    confirmation.start=SERVER+9*3600000
+    api.bindCanonicalClock([confirmation],100,SERVER)
+    assert.equal(api.canConfirmReschedule(role,confirmation),true)
+    confirmations.push([role,confirmation])
+  }
+
+  setWall(SERVER+3600000)
+  for(const [role,proposal] of proposals) assert.equal(api.canProposeReschedule(role,proposal),false)
+  for(const [role,confirmation] of confirmations) assert.equal(api.canConfirmReschedule(role,confirmation),false)
+
+  setWall(SERVER-3600000)
+  setMono(101)
+  for(const [role,proposal] of proposals) assert.equal(api.canProposeReschedule(role,proposal),false)
+  for(const [role,confirmation] of confirmations) assert.equal(api.canConfirmReschedule(role,confirmation),false)
+}))
 test('confirmation checks original cutoff and keeps decline eligibility separate', () => withClock(() => {
   const b=booking(3600000);b.status='rescheduled';b.rescheduled_by='starter';b.start_old=SERVER+8*3600000
   api.bindCanonicalClock([b],100)
@@ -71,6 +104,7 @@ test('calendar load and confirmation recheck a cutoff crossed while waiting', as
     calendar: global.StartersPaidCallBrandPayment,
     fetch: global.xanoAuthFetch,
     setTimeout: global.setTimeout,
+    wallNow: Date.now,
   }
   let mono = 100
   let submitCount = 0
@@ -95,6 +129,7 @@ test('calendar load and confirmation recheck a cutoff crossed while waiting', as
   }
   try {
     Object.defineProperty(global, 'performance', { configurable: true, value: { now: () => mono } })
+    Date.now = () => SERVER
     global.setTimeout = () => 1
     global.xanoAuthFetch = async () => { submitCount++; throw new Error('unexpected provider request') }
     global.StartersPaidCallBrandPayment = undefined
@@ -127,5 +162,6 @@ test('calendar load and confirmation recheck a cutoff crossed while waiting', as
     global.StartersPaidCallBrandPayment = originals.calendar
     global.xanoAuthFetch = originals.fetch
     global.setTimeout = originals.setTimeout
+    Date.now = originals.wallNow
   }
 })
