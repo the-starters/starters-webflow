@@ -543,6 +543,8 @@ test('keeps the protected production Test profile inert with both synchronous sc
   assert.equal(attributes['data-scheduling-v3-stage'], 'disabled')
   const blocked = await window.fetch(`${API_BASE}nylas_configurations/get_all`)
   assert.equal(blocked.status, 410)
+  const blockedTalkJs = await window.fetch(`${API_BASE}talkjs/user-token/v3`)
+  assert.equal(blockedTalkJs.status, 410)
   assert.equal(requests.length, 0)
 })
 
@@ -1030,4 +1032,56 @@ test('fails closed when the scheduling auth bridge is missing', async () => {
   assert.equal(result.status, 410)
   assert.equal(attributes['data-scheduling-v3-stage'], 'auth-unavailable')
   assert.equal(nativeRequests.length, 0)
+})
+
+test('passes signed TalkJS routes through untouched on dashboards and Hire profiles', async () => {
+  const cases = [
+    { hostname: 'www.thestarters.com', pathname: '/starter-dashboard' },
+    { hostname: 'thestarters.com', pathname: '/brand-dashboard' },
+    { hostname: 'www.thestarters.com', pathname: '/hire/jp-testiz-d' },
+    { hostname: 'the-starters-3-0.webflow.io', pathname: '/hire/test-starter' },
+  ]
+  for (const options of cases) {
+    const stage = loadStage(options)
+    for (const route of ['talkjs/user-token/v3', 'talkjs/conversation/v3']) {
+      const res = await stage.window.fetch(`${API_BASE}${route}`, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer signed-session', 'Content-Type': 'application/json' },
+        body: '{"mode":"pair"}',
+      })
+      assert.notEqual(res.status, 410, `${options.pathname} ${route}`)
+      const forwarded = stage.nativeRequests[stage.nativeRequests.length - 1]
+      assert.equal(new URL(forwarded.url).pathname, `/api:tCpV3oqd/${route}`)
+      assert.equal(forwarded.headers.get('Authorization'), 'Bearer signed-session')
+      assert.equal(await forwarded.text(), '{"mode":"pair"}')
+    }
+    assert.equal(stage.authenticatedRequests.length, 0)
+    const lookalike = await stage.window.fetch(`${API_BASE}talkjs/user-token/v4`)
+    assert.equal(lookalike.status, 410)
+  }
+})
+
+test('passes signed TalkJS routes through the direct auth helper untouched', async () => {
+  const stage = loadStage({
+    hostname: 'www.thestarters.com',
+    pathname: '/starter-dashboard',
+  })
+
+  for (const route of ['talkjs/user-token/v3', 'talkjs/conversation/v3']) {
+    const res = await stage.window.xanoAuthFetch(`${API_BASE}${route}`, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer signed-session', 'Content-Type': 'application/json' },
+      body: '{"mode":"pair"}',
+    })
+    assert.notEqual(res.status, 410, route)
+    const forwarded = stage.authenticatedRequests[stage.authenticatedRequests.length - 1]
+    assert.equal(new URL(forwarded.url).pathname, `/api:tCpV3oqd/${route}`)
+    assert.equal(forwarded.headers.get('Authorization'), 'Bearer signed-session')
+    assert.equal(await forwarded.text(), '{"mode":"pair"}')
+  }
+
+  assert.equal(stage.nativeRequests.length, 0)
+  const lookalike = await stage.window.xanoAuthFetch(`${API_BASE}talkjs/user-token/v4`)
+  assert.equal(lookalike.status, 410)
+  assert.equal(stage.authenticatedRequests.length, 2)
 })

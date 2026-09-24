@@ -2098,7 +2098,11 @@ unparseable scheduler booking identity still warn when encountered.
 ## Scheduling V3 stage adapter
 
 `scheduling-v3-stage.js` is the compatibility layer for the existing Webflow
-scheduling component. It installs on these exact staging paths:
+scheduling component. It answers unclassified `api:tCpV3oqd` routes with a
+local 410. The signed TalkJS routes `talkjs/user-token/v3` and
+`talkjs/conversation/v3` share that group but are not scheduling actions, so
+they pass through unchanged with the TalkJS session owner's own bearer on
+non-inert surfaces. It installs on these exact staging paths:
 
 - `/starter-dashboard---availability-stage`
 - `/brand-dashboard---availability-stage`
@@ -2114,8 +2118,9 @@ single-segment `/hire/<slug>` path plus `/starter-dashboard` and
 every `*-stage` path remains staging-host only. The live `detail_hire` template
 loads the adapter, which activates from the rendered `/hire/<slug>` URL.
 Production `/hire/jp-dionisio` is explicitly contained by
-both synchronous scripts: scheduling-group requests return HTTP `410` without
-installing authentication, discovery overrides, or booking identity. The
+both synchronous scripts: all scheduling-group requests, including TalkJS,
+return HTTP `410` without installing authentication, discovery overrides, or
+booking identity. The
 adapter maps the reviewed unversioned scheduling paths and the environment-bound
 `starter/get_stripe_connect_id` lookup to their exact `/v3` routes, preserves
 request method, body, headers, and query parameters, and sends the rewritten

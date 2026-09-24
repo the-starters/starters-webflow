@@ -88,6 +88,13 @@
     'starter/get_by_memberstack': 'starter/get_booking_profile/v3',
     'starter/get_by_memberstack/v3': 'starter/get_booking_profile/v3',
   }
+  // Signed TalkJS routes live in this Xano group but are not scheduling
+  // actions. The shared TalkJS session owner sends its own user_v3 bearer, so
+  // these requests pass through unchanged instead of being blocked (F05).
+  const PASSTHROUGH_ROUTES = new Set([
+    'talkjs/user-token/v3',
+    'talkjs/conversation/v3',
+  ])
   const LEGACY_PROVIDER_PATH = /^stripe\/(?:live\/)?(?:customer|payment_intent|payment_method|setup_intent)(?:\/|$)/
 
   function normalizedPagePath() {
@@ -329,7 +336,7 @@
   async function stageFetch(input, init) {
     const request = new Request(input, init)
     const scheduling = schedulingRoute(request)
-    if (!scheduling) return originalFetch(request)
+    if (!scheduling || PASSTHROUGH_ROUTES.has(scheduling.route)) return originalFetch(request)
 
     const target = activeRouteMap[scheduling.route]
     if (target) {
@@ -357,7 +364,7 @@
   async function stageXanoAuthFetch(input, init) {
     const request = new Request(input, init)
     const scheduling = schedulingRoute(request)
-    if (!scheduling) return originalXanoAuthFetch(request)
+    if (!scheduling || PASSTHROUGH_ROUTES.has(scheduling.route)) return originalXanoAuthFetch(request)
 
     const target = activeRouteMap[scheduling.route]
     if (target) {
