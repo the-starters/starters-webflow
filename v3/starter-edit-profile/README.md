@@ -32,7 +32,8 @@ creating a highlight must still queue a draft when they are absent. Because the
 accordion no longer dims to block repeat clicks, the create handler holds its own
 in-flight guard: a second click while the first create is pending queues nothing.
 The legacy form keeps its published 50 MB video limit. The opted-in unified Highlights
-section uses its own controller and 40 MB limit.
+section uses its own controller and 40 MB limit. Saving a legacy Work Highlight
+does not scroll the page.
 
 The legacy Work Experience add control reads `Saving...` while a draft is being
 added. When the effective item count reaches three, the entire add form is

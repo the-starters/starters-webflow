@@ -39,9 +39,10 @@ must accept only one in-flight creation per form.
 
 While a new Work Highlight is being saved, its create button reads `Saving...`
 and is disabled; the in-flight guard also prevents a second creation. The button
-restores its authored label after success or failure. After a successful create
-renders the new card, Build Profile scrolls to the highlight grid. A failed save
-does not scroll, and Edit Profile has no matching scroll behavior.
+restores its authored label after success or failure. After a successful create,
+the page scrolls to the highlight grid once the new card is rendered. A failed
+save does not scroll.
+
 Work Experience uses `Saving...` while adding a company and also accepts only one
 in-flight save. It shows `Added` for two seconds after success or `Error` for
 1.2 seconds after failure, then restores the normal button state. At the

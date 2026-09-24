@@ -1072,6 +1072,29 @@ for (const [label, file, deferredWrites] of [
   ['Build Profile', path.join(__dirname, '../build-profile/company-experience-crud.js'), false],
   ['Edit Profile', path.join(__dirname, '../starter-edit-profile/company-experience-crud.js'), true],
 ]) {
+  test(label + ' rejects a fourth Work Experience add even if its hidden button receives a click', async () => {
+    const harness = createCrudHarness(file, {
+      deferredWrites,
+      initialCompanies: [
+        { id: 'company-1', company_name: 'QA Wolf' },
+        { id: 'company-2', company_name: 'Acme' },
+        { id: 'company-3', company_name: 'Orbit' },
+      ],
+    })
+    await harness.start()
+    harness.prepareAdd()
+
+    await harness.queueAdd()
+
+    assert.equal(harness.renderedCards.length, 3)
+    assert.equal(harness.requests.some(({ url, options }) => url.endsWith('/companies') && options.method === 'POST'), false)
+  })
+}
+
+for (const [label, file, deferredWrites] of [
+  ['Build Profile', path.join(__dirname, '../build-profile/company-experience-crud.js'), false],
+  ['Edit Profile', path.join(__dirname, '../starter-edit-profile/company-experience-crud.js'), true],
+]) {
   test(label + ' restores the Work Experience add form after removing one of three items', async () => {
     const companies = [
       { id: 'company-1', company_name: 'QA Wolf' },
