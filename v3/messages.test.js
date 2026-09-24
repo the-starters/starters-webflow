@@ -26,6 +26,7 @@ function member(id = MY_ID) {
  * options.search    — window.location.search
  * options.handoff   — value stored under the handoff key (object or string)
  * options.onSelect  — override inbox.select (e.g. to throw)
+ * options.onMount   — override inbox.mount (e.g. to defer completion)
  * options.talk      — false to omit the TalkJS stub entirely
  * options.actions   — false to omit the custom-action methods (older SDK)
  * options.fetch     — replaces window.fetch for the Clickable Identity handler
@@ -103,6 +104,7 @@ function loadMessages(options = {}) {
   const inbox = {
     mount(target) {
       calls.mounted.push(target)
+      if (options.onMount) return options.onMount(target, calls)
     },
     select(conversation) {
       if (options.onSelect) return options.onSelect(conversation)
@@ -481,6 +483,34 @@ test('the inbox opens through the shared authenticated session owner', async () 
   assert.equal(request.member, current)
   assert.equal(request.me.fields.id, current.id)
   assert.equal(loaded.calls.mounted.length, 1)
+})
+
+test('a stale mount failure cannot replace the reconnected inbox', async () => {
+  let rejectFirstMount
+  let mountAttempt = 0
+  const firstMount = new Promise((resolve, reject) => {
+    rejectFirstMount = reject
+  })
+  const loaded = loadMessages({
+    onMount: () => {
+      mountAttempt += 1
+      return mountAttempt === 1 ? firstMount : Promise.resolve()
+    },
+  })
+  await settle(2)
+
+  assert.equal(loaded.calls.mounted.length, 1)
+  const firstLifecycle = loaded.calls.authSessions[0]
+  firstLifecycle.onInvalidate()
+  await firstLifecycle.onReconnect()
+  await settle(2)
+  assert.equal(loaded.calls.mounted.length, 2)
+
+  rejectFirstMount(new Error('stale mount failed'))
+  await settle(2)
+
+  assert.deepEqual(loaded.errors, [])
+  assert.equal(loaded.container.children.length, 0)
 })
 
 test('?conversation= selects that existing conversation without mutating it', async () => {

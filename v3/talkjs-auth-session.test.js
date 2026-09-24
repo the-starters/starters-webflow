@@ -888,6 +888,63 @@ test('identity change during refresh destroys the old session', async () => {
   assert.equal(state.calls.invalidations, 1)
 })
 
+test('token body parsing revalidates the captured owner identity', async () => {
+  let releaseBody
+  let bodyStartedResolve
+  const bodyStarted = new Promise((resolve) => {
+    bodyStartedResolve = resolve
+  })
+  const bodyGate = new Promise((resolve) => {
+    releaseBody = resolve
+  })
+  let requests = 0
+  const state = harness({
+    fetch: async () => {
+      requests += 1
+      if (requests === 1) {
+        return jsonResponse({
+          token: token(),
+          me_id: 'mem_sb_membera',
+          data_environment: 'test',
+          expires_in_seconds: 300,
+        })
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => {
+          bodyStartedResolve()
+          await bodyGate
+          return {
+            token: token(),
+            me_id: 'mem_sb_membera',
+            data_environment: 'test',
+            expires_in_seconds: 300,
+          }
+        },
+      }
+    },
+  })
+  await open(state, {
+    onInvalidate: () => {
+      state.calls.invalidations += 1
+    },
+  })
+  const fetcher = state.calls.sessions[0].tokenFetcher
+  await fetcher()
+  const refresh = fetcher()
+  await bodyStarted
+
+  state.member({ id: 'mem_sb_memberb' })
+  state.memberstackCookie('memberstack-cookie-b')
+  releaseBody()
+
+  await assert.rejects(refresh, /Member changed before authenticated request/)
+  assert.equal(state.calls.destroys, 1)
+  assert.equal(state.calls.invalidations, 1)
+  assert.equal(state.api.debugSnapshot(), null)
+})
+
 test('authentication denial is not retried', async () => {
   const state = harness({ fetch: async () => jsonResponse({}, 403) })
   await assert.rejects(open(state), /token request failed/)
@@ -1102,6 +1159,67 @@ test('conversation response rejects an owner switch after dispatch', async () =>
   state.member({ id: 'mem_sb_memberb' })
   state.memberstackCookie('memberstack-cookie-b')
   releaseAuthorization()
+
+  await assert.rejects(
+    authorization,
+    /Member changed before authenticated request/,
+  )
+  assert.equal(state.calls.destroys, 1)
+  assert.equal(state.calls.invalidations, 1)
+  assert.equal(state.api.debugSnapshot(), null)
+})
+
+test('conversation body parsing revalidates the captured owner identity', async () => {
+  let releaseBody
+  let bodyStartedResolve
+  const bodyStarted = new Promise((resolve) => {
+    bodyStartedResolve = resolve
+  })
+  const bodyGate = new Promise((resolve) => {
+    releaseBody = resolve
+  })
+  const state = harness({
+    fetch: async (url) => {
+      if (url.endsWith('/user-token/v3')) {
+        return jsonResponse({
+          token: token(),
+          me_id: 'mem_sb_membera',
+          data_environment: 'test',
+          expires_in_seconds: 300,
+        })
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => {
+          bodyStartedResolve()
+          await bodyGate
+          return {
+            authorized: true,
+            actor_id: 'mem_sb_membera',
+            counterpart_id: 'mem_sb_memberb',
+            participant_ids: ['mem_sb_membera', 'mem_sb_memberb'],
+            conversation_id: 'dm_v1_0123456789abcdef',
+            data_environment: 'test',
+          }
+        },
+      }
+    },
+  })
+  await open(state, {
+    onInvalidate: () => {
+      state.calls.invalidations += 1
+    },
+  })
+  const authorization = state.api.authorizeConversation({
+    clientOwner: 'messages-v3',
+    counterpartId: 'mem_sb_memberb',
+  })
+  await bodyStarted
+
+  state.member({ id: 'mem_sb_memberb' })
+  state.memberstackCookie('memberstack-cookie-b')
+  releaseBody()
 
   await assert.rejects(
     authorization,

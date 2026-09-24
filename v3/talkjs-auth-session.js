@@ -333,6 +333,7 @@
         var body = await response.json().catch(function () {
           return null
         })
+        await validateCapturedIdentity(options, options.ownerState)
         if (!response.ok) {
           throw responseError('TalkJS token request failed', response.status)
         }
@@ -425,6 +426,7 @@
     var receipt = await response.json().catch(function () {
       return null
     })
+    await validateCapturedIdentity(owned, owned)
     if (!response.ok) {
       throw responseError('TalkJS conversation authorization failed', response.status)
     }

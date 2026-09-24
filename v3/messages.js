@@ -78,6 +78,7 @@
     'messages-filter-unread': { isUnread: true },
     'messages-filter-read': { isUnread: false },
   }
+  let messagesGeneration = 0
 
   /* --------------------------- staging diagnostics -------------------------- */
 
@@ -978,52 +979,63 @@
   }
 
   async function mountMessages() {
+    const openingGeneration = ++messagesGeneration
     const container = document.getElementById('talkjs-container')
-    if (!container) throw new Error('Missing #talkjs-container')
+    try {
+      if (!container) throw new Error('Missing #talkjs-container')
 
-    const memberstack = await waitForMemberstackDom()
-    if (!memberstack) throw new Error('Memberstack did not become ready')
+      const memberstack = await waitForMemberstackDom()
+      if (!memberstack) throw new Error('Memberstack did not become ready')
 
-    const response = await memberstack.getCurrentMember()
-    const member = response && response.data
-    if (!member || !member.id) {
-      window.location.replace(loginPathWithNext())
-      return
+      const response = await memberstack.getCurrentMember()
+      const member = response && response.data
+      if (!member || !member.id) {
+        window.location.replace(loginPathWithNext())
+        return
+      }
+
+      const Talk = await waitForTalkJs()
+      const me = new Talk.User(talkUserFields(member))
+      const sessionOwner = await waitForTalkJsSessionOwner()
+      const session = await sessionOwner.openSession({
+        Talk,
+        memberstack,
+        member,
+        me,
+        clientOwner: 'messages-v3',
+        onInvalidate: () => {
+          if (messagesGeneration === openingGeneration) messagesGeneration += 1
+        },
+        onReconnect: mountMessages,
+      })
+      if (messagesGeneration !== openingGeneration) return
+      const inbox = session.createInbox({
+        theme: { name: TALKJS_THEME },
+      })
+
+      installFeedFilterActions(inbox)
+      const identity = installIdentityActions(inbox)
+      const calls = window.StartersMessagesCalls && window.StartersMessagesCalls.install({
+        inbox, member, container, identity,
+      })
+      await inbox.mount(container)
+      if (messagesGeneration !== openingGeneration) return
+      clearTalkJsRecoveryReload()
+
+
+      // Deliberately after mount and deliberately not awaited: the inbox is already
+      // usable, so a deep-link failure degrades to "your normal inbox" instead of
+      // taking the page down with it.
+      openDeepLinkConversation(Talk, session, inbox, me, member.id, identity).catch((error) => {
+        console.warn(
+          '[messages-3.0] Unable to open the requested conversation',
+          error,
+        )
+      })
+    } catch (error) {
+      if (messagesGeneration !== openingGeneration) return
+      throw error
     }
-
-    const Talk = await waitForTalkJs()
-    const me = new Talk.User(talkUserFields(member))
-    const sessionOwner = await waitForTalkJsSessionOwner()
-    const session = await sessionOwner.openSession({
-      Talk,
-      memberstack,
-      member,
-      me,
-      clientOwner: 'messages-v3',
-      onReconnect: mountMessages,
-    })
-    const inbox = session.createInbox({
-      theme: { name: TALKJS_THEME },
-    })
-
-    installFeedFilterActions(inbox)
-    const identity = installIdentityActions(inbox)
-    const calls = window.StartersMessagesCalls && window.StartersMessagesCalls.install({
-      inbox, member, container, identity,
-    })
-    await inbox.mount(container)
-    clearTalkJsRecoveryReload()
-
-
-    // Deliberately after mount and deliberately not awaited: the inbox is already
-    // usable, so a deep-link failure degrades to "your normal inbox" instead of
-    // taking the page down with it.
-    openDeepLinkConversation(Talk, session, inbox, me, member.id, identity).catch((error) => {
-      console.warn(
-        '[messages-3.0] Unable to open the requested conversation',
-        error,
-      )
-    })
   }
 
   function start() {
