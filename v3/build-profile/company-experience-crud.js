@@ -536,6 +536,7 @@ function starterProfileCompanyMonthYearLabel(value) {
       const firstCompanyInput = qs('#first-company');
       const currentWorkCheckbox = qs('#company-current');
       const addCompanyButton = qs('#add-company');
+      const addCompanyForm = addCompanyButton ? addCompanyButton.closest('[edit-form-input]') : null;
       const dropdownToggleLabel = qs('[dropdown-toggle-label]');
 
       const editCompanyWrapper = qs('#edit-company-wrapper');
@@ -902,6 +903,7 @@ function starterProfileCompanyMonthYearLabel(value) {
         const isDisabled = isLimitReached || !isFormReady || isSubmitting;
         const isShowingFeedback = addCompanyFeedbackTimeout !== null;
 
+        if (addCompanyForm) addCompanyForm.style.display = isLimitReached ? 'none' : '';
         addCompanyButton.style.display = isLimitReached && !isShowingFeedback ? 'none' : 'flex';
         addCompanyButton.style.pointerEvents = isDisabled ? 'none' : '';
         addCompanyButton.style.opacity = isDisabled ? '0.5' : '';

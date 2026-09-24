@@ -1,11 +1,8 @@
 // Behavior of the patched Work Experience scripts this bundle ships.
 //
-// These four scripts are still byte-identical in the working tree to the tags
-// `manifest.json` pins them to, so tracked source plus the tracked patch reproduces exactly
-// the bytes the bundle serves — with no tags, no network and no Python. `materialize()`
-// checks that reproduction against the manifest and refuses to run the suite otherwise, so
-// the day someone edits one of these sources the suite stops rather than quietly testing
-// unpinned code. `starter-edit-profile.js` is deliberately out of scope here: its pinned
+// The active company controller has changed since this historical bundle was pinned.
+// A tracked reverse patch restores its previous source before the month-picker overlay.
+// The manifest still checks the exact bytes this bundle serves, with no tags or network. `starter-edit-profile.js` is deliberately out of scope here: its pinned
 // v1.59.607 copy is not the one on this branch, so a shallow CI checkout cannot reach it.
 // materialize.py and verify.py cover it, and every other manifest entry, from the tags.
 const assert = require('node:assert/strict')
@@ -35,6 +32,8 @@ function materialize() {
     fs.mkdirSync(path.join(out, path.dirname(file)), { recursive: true })
     fs.copyFileSync(path.join(REPO, file), path.join(out, file))
   }
+  const feedbackDelta = fs.readFileSync(path.join(BUNDLE, 'patches/profile-save-feedback.patch'))
+  execFileSync('patch', ['-p1', '-s', '-R'], { cwd: out, input: feedbackDelta })
   execFileSync('patch', ['-p1', '-s'], { cwd: out, input: sectionsFor(PATCHED) })
   for (const file of LOADED) {
     const declared = entry(file)

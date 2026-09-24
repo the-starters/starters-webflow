@@ -31,7 +31,7 @@ const EXPECTED_CANDIDATES = {
     'portfolio-crud.js': { path: 'v3/starter-edit-profile/portfolio-crud.js', bytes: 64607, sha256: '9279f7678f9909e3ee32ea208f8d06366e3be360e07bf878687df8a83b68692a' },
     'portfolio-list.js': { path: 'v3/starter-edit-profile/portfolio-list.js', bytes: 4013, sha256: 'f559928f524705d1fcce022a1213b0a637c233cbd55f4973dc376457e0ab74ff' },
     'company-autocomplete.js': { path: 'v3/starter-edit-profile/company-autocomplete.js', bytes: 25596, sha256: 'bf32125ed4c18825016209a5c20da4bfe0fb93842913f3069e0c66234eed354e' },
-    'company-experience-crud.js': { path: 'v3/starter-edit-profile/company-experience-crud.js', bytes: 97854, sha256: '997eb67429c971d467602391d26081876eb0c5314f504c3bfa1ed1ad35b0996e' },
+    'company-experience-crud.js': { path: 'v3/starter-edit-profile/company-experience-crud.js', bytes: 98039, sha256: '6a80ff070767dd88252e4f2ec385c7fcbd89e805edd92648d8b47a63cdc9e423' },
     'work-dates.js': { path: 'v3/build-profile/work-dates.js', bytes: 2700, sha256: '4bf43605286b1f6dd796f8227a3f72e7c43aea5f41131f21bd78c283473002b6' },
   },
 }

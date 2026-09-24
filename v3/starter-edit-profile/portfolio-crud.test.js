@@ -27,10 +27,12 @@ function element(properties = {}) {
 function createFixture() {
   const template = element();
   const cards = [];
+  const scrollCalls = [];
   const grid = element({
     appendChild(card) { cards.push(card); },
     querySelector(selector) { return selector === '.portfolio_card' ? template : null; },
     querySelectorAll() { return []; },
+    scrollIntoView(options) { scrollCalls.push(options); },
   });
   const addHighlight = element();
   const title = element({ value: 'A new highlight' });
@@ -102,6 +104,7 @@ function createFixture() {
       ]);
     },
     cards,
+    scrollCalls,
     title,
     videos,
     notifications,
@@ -133,6 +136,7 @@ test('legacy highlight queues a draft without an accordion', async () => {
   assert.equal(fixture.reads, readsBeforeSave + 2);
   assert.equal(fixture.cards.length, 1);
   assert.equal(fixture.title.value, '');
+  assert.deepEqual(fixture.scrollCalls, []);
   assert.deepEqual(fixture.errors, []);
 });
 
