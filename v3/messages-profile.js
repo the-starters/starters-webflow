@@ -135,6 +135,7 @@
   var pendingIdentity = null
   var chatMounted = false
   var chatOpening = false
+  var chatReconnectQueued = false
 
   function diagnosticsEnabled() {
     if (window.STARTERS_DEBUG === true) return true
@@ -689,6 +690,10 @@
         onReconnect: function () {
           chatMounted = false
           emptyContainer(container)
+          if (chatOpening) {
+            chatReconnectQueued = true
+            return
+          }
           return openChat()
         },
       })
@@ -707,6 +712,10 @@
       renderFallback(container, identity)
     } finally {
       chatOpening = false
+      if (chatReconnectQueued) {
+        chatReconnectQueued = false
+        await openChat()
+      }
     }
   }
 

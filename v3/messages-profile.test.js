@@ -266,6 +266,9 @@ function load(options = {}) {
       },
       authorizeConversation: async (intent) => {
         calls.conversationAuthorizations.push(intent)
+        if (options.authorizeConversation) {
+          return options.authorizeConversation(intent, calls)
+        }
         return {
           conversationId: 'dm_v1_server_authorized_pair',
           counterpartId: intent.counterpartId,
@@ -446,6 +449,41 @@ test('the profile chat opens through the shared authenticated session owner', as
   assert.equal(request.member, current)
   assert.equal(request.me.fields.id, current.id)
   assert.equal(loaded.calls.chatbox, 1)
+})
+
+test('same-member reconnect waits for an in-flight authorization', async () => {
+  let rejectFirstAuthorization
+  let authorizationAttempts = 0
+  const firstAuthorization = new Promise((resolve, reject) => {
+    rejectFirstAuthorization = reject
+  })
+  const loaded = load({
+    triggers: [starterTrigger()],
+    member: { id: VIEWER_ID, customFields: { 'free-user': 'Brand' } },
+    role: 'brand-paid',
+    authorizeConversation: async (intent) => {
+      authorizationAttempts += 1
+      if (authorizationAttempts === 1) return firstAuthorization
+      return {
+        conversationId: 'dm_v1_reconnected_pair',
+        counterpartId: intent.counterpartId,
+      }
+    },
+  })
+  await settle()
+
+  loaded.openModal()
+  await settle(5)
+  assert.equal(loaded.calls.conversationAuthorizations.length, 1)
+
+  loaded.calls.authSessions[0].onReconnect()
+  rejectFirstAuthorization(new Error('TalkJS session is no longer current'))
+  await settle()
+
+  assert.equal(loaded.calls.authSessions.length, 2)
+  assert.equal(loaded.calls.conversationAuthorizations.length, 2)
+  assert.deepEqual(loaded.calls.selected, ['dm_v1_reconnected_pair'])
+  assert.equal(loaded.calls.mounted.length, 1)
 })
 
 test('the viewer display name is the first name alone, never the last name', async () => {
