@@ -1968,6 +1968,11 @@ script tag instead of carrying a duplicate copy in page head/footer code.
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/scheduling-auth.js"></script>
 ```
 
+The retained V2 site shares the live TalkJS app. On `hirethestarters.com` and
+`www.hirethestarters.com` the bridge installs only on `/messages`, so the shared
+TalkJS session owner (`talkjs-auth-session.js`) can obtain a signed user token.
+No other V2 path installs it.
+
 The live `detail_hire` template is the timing exception. Install
 [`scheduling-v3-hire-template-head.html`](scheduling-v3-hire-template-head.html)
 in its Page Settings head so `scheduling-auth.js`, `scheduling-v3-stage.js`, and
