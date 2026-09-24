@@ -136,6 +136,7 @@
   var chatMounted = false
   var chatOpening = false
   var chatReconnectQueued = false
+  var chatGeneration = 0
 
   function diagnosticsEnabled() {
     if (window.STARTERS_DEBUG === true) return true
@@ -656,6 +657,7 @@
     }
 
     chatOpening = true
+    var openingGeneration = chatGeneration
     try {
       var state = viewer.resolved ? viewer : await resolveViewer()
 
@@ -688,6 +690,7 @@
         me: me,
         clientOwner: 'messages-profile-v3',
         onReconnect: function () {
+          chatGeneration += 1
           chatMounted = false
           emptyContainer(container)
           if (chatOpening) {
@@ -706,14 +709,18 @@
       chatbox.select(receipt.conversationId)
       emptyContainer(container)
       await chatbox.mount(container)
+      if (openingGeneration !== chatGeneration) return
       chatMounted = true
     } catch (error) {
       warn('could not mount the chat: ' + (error && error.message))
-      renderFallback(container, identity)
+      if (openingGeneration === chatGeneration) {
+        renderFallback(container, identity)
+      }
     } finally {
       chatOpening = false
       if (chatReconnectQueued) {
         chatReconnectQueued = false
+        chatMounted = false
         await openChat()
       }
     }

@@ -200,6 +200,9 @@ function load(options = {}) {
           },
           mount(target) {
             calls.mounted.push(target)
+            if (options.mountChatbox) {
+              return options.mountChatbox(target, calls)
+            }
             return Promise.resolve()
           },
         }
@@ -484,6 +487,41 @@ test('same-member reconnect waits for an in-flight authorization', async () => {
   assert.equal(loaded.calls.conversationAuthorizations.length, 2)
   assert.deepEqual(loaded.calls.selected, ['dm_v1_reconnected_pair'])
   assert.equal(loaded.calls.mounted.length, 1)
+})
+
+test('same-member reconnect supersedes an in-flight stale mount', async () => {
+  let releaseFirstMount
+  let mountAttempts = 0
+  const firstMount = new Promise((resolve) => {
+    releaseFirstMount = resolve
+  })
+  const loaded = load({
+    triggers: [starterTrigger()],
+    member: { id: VIEWER_ID, customFields: { 'free-user': 'Brand' } },
+    role: 'brand-paid',
+    mountChatbox: async () => {
+      mountAttempts += 1
+      if (mountAttempts === 1) await firstMount
+    },
+  })
+  await settle()
+
+  loaded.openModal()
+  await settle(5)
+  assert.equal(loaded.calls.mounted.length, 1)
+
+  loaded.calls.authSessions[0].onReconnect()
+  releaseFirstMount()
+  await settle()
+
+  assert.equal(loaded.calls.authSessions.length, 2)
+  assert.equal(loaded.calls.chatbox, 2)
+  assert.equal(loaded.calls.mounted.length, 2)
+  assert.deepEqual(loaded.calls.selected, [
+    'dm_v1_server_authorized_pair',
+    'dm_v1_server_authorized_pair',
+  ])
+  assert.equal(loaded.container.children.length, 0)
 })
 
 test('the viewer display name is the first name alone, never the last name', async () => {

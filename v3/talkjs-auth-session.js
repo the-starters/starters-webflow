@@ -496,18 +496,38 @@
     }
   }
 
+  function reconnectPending(opening) {
+    Promise.resolve(opening.promise)
+      .catch(function () {})
+      .then(function () {
+        return wait(0)
+      })
+      .then(function () {
+        return stableIdentity(opening.memberstack, opening.memberId)
+      })
+      .then(function (identity) {
+        if (identity.status === 'same') {
+          return reconnectViews(opening.reconnectors)
+        }
+      })
+      .catch(function () {})
+  }
+
   async function reconcileMemberstack() {
     var owned = active
     var opening = pending
     if (!owned && !opening) return
     var lifecycle = owned || opening
-    var reconnectors = owned && owned.reconnectors
+    var reconnectors = lifecycle.reconnectors
     var invalidators = lifecycle.invalidators
     var memberstack = lifecycle.memberstack
     var memberId = lifecycle.memberId
     destroy('auth-change')
     await invalidateViews(invalidators)
-    if (!owned) return
+    if (!owned) {
+      reconnectPending(opening)
+      return
+    }
     await wait(IDENTITY_RETRY_DELAY_MS)
     var identity = await stableIdentity(memberstack, memberId)
     if (identity.status === 'same') await reconnectViews(reconnectors)

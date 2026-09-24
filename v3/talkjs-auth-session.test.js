@@ -770,6 +770,55 @@ test('changed-cookie auth event supersedes and invalidates a pending opening', a
   assert.equal(state.api.debugSnapshot(), null)
 })
 
+test('same-member auth notification reconnects a pending opening', async () => {
+  let release
+  let startedResolve
+  let requests = 0
+  const started = new Promise((resolve) => {
+    startedResolve = resolve
+  })
+  const gate = new Promise((resolve) => {
+    release = resolve
+  })
+  const state = harness({
+    fetch: async () => {
+      requests += 1
+      if (requests === 1) {
+        startedResolve()
+        await gate
+      }
+      return jsonResponse({
+        token: token(),
+        me_id: 'mem_sb_membera',
+        data_environment: 'test',
+        expires_in_seconds: 300,
+      })
+    },
+  })
+  let reconnect
+  reconnect = async () => {
+    state.calls.reconnects += 1
+    await open(state, { onReconnect: reconnect })
+  }
+  const opening = open(state, {
+    onReconnect: reconnect,
+    onInvalidate: () => {
+      state.calls.invalidations += 1
+    },
+  })
+  await started
+
+  await state.authChange()
+  release()
+  await assert.rejects(opening, { code: 'TALKJS_IDENTITY_MISMATCH' })
+  await new Promise((resolve) => setTimeout(resolve, 125))
+
+  assert.equal(state.calls.invalidations, 1)
+  assert.equal(state.calls.reconnects, 1)
+  assert.equal(state.calls.sessions.length, 1)
+  assert.equal(state.api.debugSnapshot().memberId, 'mem_sb_membera')
+})
+
 test('cookie rotation after an early auth callback supersedes opening', async () => {
   let release
   let startedResolve
