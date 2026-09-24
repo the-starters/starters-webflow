@@ -1031,3 +1031,31 @@ test('fails closed when the scheduling auth bridge is missing', async () => {
   assert.equal(attributes['data-scheduling-v3-stage'], 'auth-unavailable')
   assert.equal(nativeRequests.length, 0)
 })
+
+test('passes signed TalkJS routes through untouched on dashboards, Hire profiles and the inert profile', async () => {
+  const cases = [
+    { hostname: 'www.thestarters.com', pathname: '/starter-dashboard' },
+    { hostname: 'thestarters.com', pathname: '/brand-dashboard' },
+    { hostname: 'www.thestarters.com', pathname: '/hire/jp-testiz-d' },
+    { hostname: 'the-starters-3-0.webflow.io', pathname: '/hire/test-starter' },
+    { hostname: 'www.thestarters.com', pathname: '/hire/jp-dionisio' },
+  ]
+  for (const options of cases) {
+    const stage = loadStage(options)
+    for (const route of ['talkjs/user-token/v3', 'talkjs/conversation/v3']) {
+      const res = await stage.window.fetch(`${API_BASE}${route}`, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer signed-session', 'Content-Type': 'application/json' },
+        body: '{"mode":"pair"}',
+      })
+      assert.notEqual(res.status, 410, `${options.pathname} ${route}`)
+      const forwarded = stage.nativeRequests[stage.nativeRequests.length - 1]
+      assert.equal(new URL(forwarded.url).pathname, `/api:tCpV3oqd/${route}`)
+      assert.equal(forwarded.headers.get('Authorization'), 'Bearer signed-session')
+      assert.equal(await forwarded.text(), '{"mode":"pair"}')
+    }
+    assert.equal(stage.authenticatedRequests.length, 0)
+    const lookalike = await stage.window.fetch(`${API_BASE}talkjs/user-token/v4`)
+    assert.equal(lookalike.status, 410)
+  }
+})
