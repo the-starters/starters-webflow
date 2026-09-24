@@ -5,16 +5,15 @@
  *
  * Mounts a TalkJS chatbox with the profiled starter inside the page's existing
  * modal, so a brand can start or resume the conversation without leaving the
- * profile. The conversation is created on first open when it does not exist.
+ * profile. Xano authorizes or provisions the exact two-person conversation;
+ * this browser selects only the returned id and never mutates participants.
  *
- * Designer wiring, three CMS-bound custom attributes on the trigger link:
+ * Designer wiring, CMS-bound custom attributes on the trigger link:
  *   messages-profile-message  -> "Memberstack id"     (PlainText, required)
- *   messages-profile-name     -> "Name"               (PlainText, optional)
- *   messages-profile-photo    -> "Profile Photo Xano" (PlainText, optional)
- * All three must be *field bindings*, not literal values, or every profile ships
- * the same starter's id. `Profile Photo` is an Image field and is not reliably
- * offered for attribute binding; `Profile Photo Xano` is PlainText and holds the
- * durable Xano vault URL, so bind that one.
+ *   messages-profile-name     -> "Name" (retained for shared Hire call UI)
+ *   messages-profile-photo    -> legacy; not sent to TalkJS
+ * The signed conversation path uses only the Memberstack id. It never sends
+ * CMS display fields to TalkJS or mutates the counterpart's global user record.
  *
  * Plus one empty container inside the modal, which is where the chat mounts:
  *   <div messages-profile-chat></div>
@@ -34,8 +33,9 @@
  * modal that does not contain the chat container, and a `?modal-id=<id>` in the
  * URL has modal.js open the modal on load with the chat mounting clicklessly.
  *
- * TalkJS loads lazily, on the first open. `/hire/<slug>` pages are public and
- * SEO-relevant, so visitors who never press Message never pay for the SDK.
+ * TalkJS and the shared authentication helper load lazily on the first open.
+ * `/hire/<slug>` pages are public and SEO-relevant, so visitors who never press
+ * Message download neither script.
  *
  * Who gets through:
  *   logged out    -> the hire-page signup modal (`data-modal-target="signup-modal"`).
@@ -51,9 +51,9 @@
  * Role comes from `window.StartersV3RouteGuard.memberRole`, so route-guard.js has
  * to be on the page for role rules to apply at all: with it absent every
  * signed-in viewer reaches the chat, as before. With it present, only
- * `brand-paid` does. Every check here is client-side, and unlike the
- * `/messages` route this modal never passes through route-guard, so treat
- * these as product gating and not as an authorization boundary.
+ * `brand-paid` does. These role checks are product gating, not the authorization
+ * boundary: the shared signed-session owner independently binds Memberstack
+ * identity and requires Xano conversation authorization.
  *
  * The trigger keeps `href="/messages?with=<id>"` as a fallback: if this module
  * never boots, the link still reaches the conversation through the deep link
@@ -86,14 +86,14 @@
   var MODAL_PARAM = 'modal-id'
   var SIGNUP_MODAL_ID = 'signup-modal'
 
-  var TALKJS_APP_ID = 'LmYV8DIA'
   var TALKJS_THEME = 'the-starters-3-0-profile'
   var TALKJS_SCRIPT_URL = 'https://cdn.talkjs.com/talk.js'
+  var TALKJS_AUTH_HELPER_URL =
+    'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/talkjs-auth-session.js'
   var TALKJS_TIMEOUT_MS = 15000
   var MEMBERSTACK_TIMEOUT_MS = 10000
   var MEMBERSTACK_POLL_MS = 100
 
-  var CONVERSATION_SOURCE = 'hire-page'
   // Memberstack ids are `mem_` + an alphanumeric cuid, with an extra `sb_`
   // segment for Test Mode (sandbox) members. Anything else is an unbound
   // Designer placeholder and must never reach TalkJS, which would happily
@@ -134,6 +134,9 @@
   var pendingIdentity = null
   var chatMounted = false
   var chatOpening = false
+  var chatOpeningGeneration = null
+  var chatReconnectQueued = false
+  var chatGeneration = 0
 
   function diagnosticsEnabled() {
     if (window.STARTERS_DEBUG === true) return true
@@ -402,6 +405,7 @@
     viewer = {
       resolved: true,
       member: signedIn,
+      memberstack: memberstack,
       role: resolution.role,
       guarded: resolution.guarded,
     }
@@ -459,6 +463,57 @@
         },
       )
     })
+  }
+
+  function waitForTalkJsSessionOwner() {
+    if (
+      window.StartersTalkJsSessionOwner &&
+      typeof window.StartersTalkJsSessionOwner.openSession === 'function'
+    ) {
+      return Promise.resolve(window.StartersTalkJsSessionOwner)
+    }
+    if (window.__startersTalkJsAuthHelperPromise) {
+      return window.__startersTalkJsAuthHelperPromise
+    }
+
+    var loading = new Promise(function (resolve, reject) {
+      var script = document.createElement('script')
+      var settled = false
+      var timer
+      function fail(error) {
+        if (settled) return
+        settled = true
+        window.clearTimeout(timer)
+        if (window.__startersTalkJsAuthHelperPromise === loading) {
+          window.__startersTalkJsAuthHelperPromise = null
+        }
+        reject(error)
+      }
+      timer = window.setTimeout(function () {
+        fail(new Error('TalkJS authentication helper did not become ready'))
+      }, TALKJS_TIMEOUT_MS)
+      script.async = true
+      script.src = TALKJS_AUTH_HELPER_URL
+      script.dataset.startersTalkjsAuth = 'true'
+      script.onload = function () {
+        if (
+          window.StartersTalkJsSessionOwner &&
+          typeof window.StartersTalkJsSessionOwner.openSession === 'function'
+        ) {
+          settled = true
+          window.clearTimeout(timer)
+          resolve(window.StartersTalkJsSessionOwner)
+        } else {
+          fail(new Error('TalkJS authentication helper is invalid'))
+        }
+      }
+      script.onerror = function () {
+        fail(new Error('TalkJS authentication helper failed to load'))
+      }
+      document.head.appendChild(script)
+    })
+    window.__startersTalkJsAuthHelperPromise = loading
+    return loading
   }
 
   /** Mirrors v3/messages.js so the viewer syncs identically from either page. */
@@ -537,19 +592,6 @@
     return fields
   }
 
-  /**
-   * The starter side of the conversation. Passing fields updates that user's
-   * stored TalkJS record, so only CMS-sourced values are ever passed; with no
-   * name we reference the existing user by id and leave their record alone.
-   */
-  function starterUser(Talk, identity) {
-    if (!identity.name) return new Talk.User(identity.id)
-
-    var fields = { id: identity.id, name: identity.name }
-    if (identity.photo) fields.photoUrl = identity.photo
-    return new Talk.User(fields)
-  }
-
   function deepLinkPath(memberId) {
     return MESSAGES_PATH + '?' + DEEP_LINK_PARAM + '=' + encodeURIComponent(memberId)
   }
@@ -602,6 +644,8 @@
     }
 
     chatOpening = true
+    var openingGeneration = chatGeneration
+    chatOpeningGeneration = openingGeneration
     try {
       var state = viewer.resolved ? viewer : await resolveViewer()
 
@@ -626,28 +670,59 @@
 
       var Talk = await waitForTalkJs()
       var me = new Talk.User(talkUserFields(state.member))
-      var session = new Talk.Session({ appId: TALKJS_APP_ID, me: me })
-      var conversation = session.getOrCreateConversation(
-        Talk.oneOnOneId(state.member.id, identity.id),
-      )
-      conversation.setParticipant(me)
-      conversation.setParticipant(starterUser(Talk, identity))
-      // Attribution for conversations opened from a profile. Custom values must
-      // be strings, and this cannot be backfilled onto existing conversations.
-      conversation.setAttributes({
-        custom: { source: CONVERSATION_SOURCE, slug: currentSlug() },
+      var sessionOwner = await waitForTalkJsSessionOwner()
+      var session = await sessionOwner.openSession({
+        Talk: Talk,
+        memberstack: state.memberstack,
+        member: state.member,
+        me: me,
+        clientOwner: 'messages-profile-v3',
+        onInvalidate: function () {
+          chatGeneration += 1
+          chatMounted = false
+          chatOpening = false
+          chatOpeningGeneration = null
+          chatReconnectQueued = false
+          viewer = { resolved: false, member: null, role: null, guarded: false }
+          emptyContainer(container)
+        },
+        onReconnect: function () {
+          chatGeneration += 1
+          chatMounted = false
+          emptyContainer(container)
+          if (chatOpening) {
+            chatReconnectQueued = true
+            return
+          }
+          return openChat()
+        },
+      })
+      var receipt = await sessionOwner.authorizeConversation({
+        clientOwner: 'messages-profile-v3',
+        counterpartId: identity.id,
       })
 
       var chatbox = session.createChatbox({ theme: { name: TALKJS_THEME } })
-      chatbox.select(conversation)
+      chatbox.select(receipt.conversationId)
       emptyContainer(container)
       await chatbox.mount(container)
+      if (openingGeneration !== chatGeneration) return
       chatMounted = true
     } catch (error) {
       warn('could not mount the chat: ' + (error && error.message))
-      renderFallback(container, identity)
+      if (openingGeneration === chatGeneration) {
+        renderFallback(container, identity)
+      }
     } finally {
-      chatOpening = false
+      if (chatOpeningGeneration === openingGeneration) {
+        chatOpening = false
+        chatOpeningGeneration = null
+      }
+      if (!chatOpening && chatReconnectQueued) {
+        chatReconnectQueued = false
+        chatMounted = false
+        await openChat()
+      }
     }
   }
 

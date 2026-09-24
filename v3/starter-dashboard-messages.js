@@ -18,7 +18,8 @@
  * `avatar` container inside the template. `data-messages-format="uppercase|
  * lowercase"` transforms a bound element's text. Optional
  * `data-messages-limit="<n>"` on the wrapper can lower the 3-card maximum.
- * All instances share one TalkJS session and the same serialized bulk request.
+ * All instances share the signed TalkJS session owned with the Messages inbox
+ * and profile chat, plus the same serialized bulk request.
  * Each request allows two attempts with a 15-second timeout, and message or
  * unread activity refreshes the proxy snapshot. The original class-based
  * selectors remain as fallbacks (legacy wrapper: `#messages`).
@@ -29,10 +30,9 @@
   if (window.__startersDashboardMessagesBooted) return
   window.__startersDashboardMessagesBooted = true
 
-  const TALKJS_APP_ID = 'LmYV8DIA'
   const TALKJS_SCRIPT_URL = 'https://cdn.talkjs.com/talk.js'
-  const XANO_AUTH_BASE = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:g1vmSLWh'
-  const XANO_TRADE_TOKEN_PATH = '/auth/trade-token/v3'
+  const TALKJS_AUTH_HELPER_URL =
+    'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/talkjs-auth-session.js'
   const XANO_OPP_BASE = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30'
   const RECENT_MESSAGES_PATH = '/starter/messages/recent'
   const MEMBERSTACK_TIMEOUT_MS = 10000
@@ -121,6 +121,57 @@
         },
       )
     })
+  }
+
+  function waitForTalkJsSessionOwner(timeoutMs = TALKJS_TIMEOUT_MS) {
+    if (
+      window.StartersTalkJsSessionOwner &&
+      typeof window.StartersTalkJsSessionOwner.openSession === 'function'
+    ) {
+      return Promise.resolve(window.StartersTalkJsSessionOwner)
+    }
+    if (window.__startersTalkJsAuthHelperPromise) {
+      return window.__startersTalkJsAuthHelperPromise
+    }
+
+    let loading
+    loading = new Promise((resolve, reject) => {
+      const script = document.createElement('script')
+      let settled = false
+      const fail = (error) => {
+        if (settled) return
+        settled = true
+        window.clearTimeout(timer)
+        if (window.__startersTalkJsAuthHelperPromise === loading) {
+          window.__startersTalkJsAuthHelperPromise = null
+        }
+        reject(error)
+      }
+      const timer = window.setTimeout(() => {
+        fail(new Error('TalkJS authentication helper did not become ready'))
+      }, timeoutMs)
+      script.async = true
+      script.src = TALKJS_AUTH_HELPER_URL
+      script.dataset.startersTalkjsAuth = 'true'
+      script.onload = () => {
+        if (
+          window.StartersTalkJsSessionOwner &&
+          typeof window.StartersTalkJsSessionOwner.openSession === 'function'
+        ) {
+          settled = true
+          window.clearTimeout(timer)
+          resolve(window.StartersTalkJsSessionOwner)
+        } else {
+          fail(new Error('TalkJS authentication helper is invalid'))
+        }
+      }
+      script.onerror = () => {
+        fail(new Error('TalkJS authentication helper failed to load'))
+      }
+      document.head.appendChild(script)
+    })
+    window.__startersTalkJsAuthHelperPromise = loading
+    return loading
   }
 
   // Replicated from v3/route-guard.js PLAN_ROLES — that file is the canonical
@@ -314,34 +365,20 @@
     if (refs.loadingCard) refs.loadingCard.style.display = ''
   }
 
-  async function getMemberstackToken(memberstack) {
-    const token = await memberstack.getMemberCookie()
-    if (!token) throw new Error('No Memberstack session')
-    return token
-  }
-
-  async function requestRecentConversations(memberstack, signal) {
-    let xanoToken
-    if (typeof window.getXanoAuthToken === 'function') {
-      xanoToken = await window.getXanoAuthToken()
-      if (!xanoToken) throw new Error('shared auth bridge returned no token')
-    } else {
-      const msToken = await getMemberstackToken(memberstack)
-      const tradeRes = await fetch(
-        XANO_AUTH_BASE +
-          XANO_TRADE_TOKEN_PATH +
-          '?token=' +
-          encodeURIComponent(msToken),
-        { signal },
-      )
-      const tradeData = await tradeRes.json().catch(() => null)
-      if (!tradeRes.ok) throw new Error('trade-token failed')
-      xanoToken =
-        typeof tradeData === 'string'
-          ? tradeData
-          : tradeData && (tradeData.authToken || tradeData.token)
-      if (!xanoToken) throw new Error('trade-token returned no token')
+  async function requestRecentConversations(
+    memberstack,
+    signal,
+    forceRefresh,
+    identityGuard,
+  ) {
+    if (typeof window.getXanoAuthToken !== 'function') {
+      throw new Error('shared auth bridge is unavailable')
     }
+    const xanoToken = await window.getXanoAuthToken(
+      forceRefresh ? { forceRefresh: true } : false,
+    )
+    if (!xanoToken) throw new Error('shared auth bridge returned no token')
+    await identityGuard()
 
     const res = await fetch(XANO_OPP_BASE + RECENT_MESSAGES_PATH, {
       method: 'POST',
@@ -352,11 +389,16 @@
       signal,
     })
     const data = await res.json().catch(() => null)
+    await identityGuard()
     if (!res.ok) throw new Error('recent messages request failed')
     return (data && data.items) || []
   }
 
-  async function fetchRecentConversationsOnce(memberstack) {
+  async function fetchRecentConversationsOnce(
+    memberstack,
+    forceRefresh,
+    identityGuard,
+  ) {
     const controller =
       typeof window.AbortController === 'function'
         ? new window.AbortController()
@@ -374,6 +416,8 @@
         requestRecentConversations(
           memberstack,
           controller ? controller.signal : undefined,
+          forceRefresh,
+          identityGuard,
         ),
         timeout,
       ])
@@ -382,11 +426,15 @@
     }
   }
 
-  async function fetchRecentConversations(memberstack) {
+  async function fetchRecentConversations(memberstack, identityGuard) {
     let lastError
     for (let attempt = 0; attempt < RECENT_MESSAGES_MAX_ATTEMPTS; attempt += 1) {
       try {
-        return await fetchRecentConversationsOnce(memberstack)
+        return await fetchRecentConversationsOnce(
+          memberstack,
+          attempt > 0,
+          identityGuard,
+        )
       } catch (error) {
         lastError = error
       }
@@ -590,10 +638,16 @@
     })
   }
 
+  let mountedInstances = null
+
   async function mountTile() {
-    const instances = findWrappers()
+    const collectedInstances = findWrappers()
       .map(collectInstanceRefs)
       .filter(Boolean)
+    if (collectedInstances.length) mountedInstances = collectedInstances
+    const instances = collectedInstances.length
+      ? collectedInstances
+      : mountedInstances || []
     if (!instances.length) return
 
     instances.forEach((refs) => {
@@ -631,6 +685,7 @@
     }
 
     const state = { recent: [], recentSettled: false, unreads: [] }
+    let invalidated = false
     const rerender = () => {
       instances.forEach((refs) => {
         try {
@@ -646,6 +701,7 @@
 
     let recentRequest = null
     let refreshQueued = false
+    let identityGuard = null
     const refreshRecent = () => {
       if (recentRequest) {
         refreshQueued = true
@@ -653,13 +709,15 @@
       }
 
       const initial = !state.recentSettled
-      recentRequest = fetchRecentConversations(memberstack)
+      recentRequest = fetchRecentConversations(memberstack, identityGuard)
         .then((items) => {
+          if (invalidated) return
           state.recent = items
           state.recentSettled = true
           rerender()
         })
         .catch((error) => {
+          if (invalidated) return
           console.warn(
             initial
               ? '[starter-dashboard] Recent conversations unavailable, hiding message cards'
@@ -674,7 +732,7 @@
         })
         .finally(() => {
           recentRequest = null
-          if (refreshQueued) {
+          if (!invalidated && refreshQueued) {
             refreshQueued = false
             refreshRecent()
           }
@@ -683,21 +741,44 @@
       return recentRequest
     }
 
-    refreshRecent()
-
     const Talk = await waitForTalkJs()
     const me = new Talk.User(talkUserFields(member))
-    const session = new Talk.Session({
-      appId: TALKJS_APP_ID,
-      me,
-    })
+    const sessionOwner = await waitForTalkJsSessionOwner()
+    let session
+    const invalidate = () => {
+      invalidated = true
+      refreshQueued = false
+      state.recent = []
+      state.recentSettled = true
+      state.unreads = []
+      rerender()
+    }
+    try {
+      session = await sessionOwner.openSession({
+        Talk,
+        memberstack,
+        member,
+        me,
+        clientOwner: 'dashboard-messages-v3',
+        onReconnect: mountTile,
+        onInvalidate: invalidate,
+      })
+      identityGuard = sessionOwner.captureIdentityGuard(
+        'dashboard-messages-v3',
+      )
+    } catch (error) {
+      invalidate()
+      throw error
+    }
 
     session.onMessage(() => {
+      if (invalidated) return
       refreshRecent()
     })
 
     let unreadActivitySignature = null
     session.unreads.onChange((unreads) => {
+      if (invalidated) return
       const nextUnreads = unreads || []
       const nextSignature = JSON.stringify(
         nextUnreads.map((unread) => [

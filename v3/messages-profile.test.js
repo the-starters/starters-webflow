@@ -117,9 +117,18 @@ function load(options = {}) {
   const closed = []
   const opened = []
   const openedSignup = []
-  const calls = { users: [], conversations: [], mounted: [], selected: [], chatbox: 0 }
+  const calls = {
+    users: [],
+    conversations: [],
+    mounted: [],
+    selected: [],
+    chatbox: 0,
+    authSessions: [],
+    conversationAuthorizations: [],
+  }
   const windowListeners = []
   const modalId = options.modalId || MODAL_ID
+  let currentMember = options.member === undefined ? null : options.member
 
   const container =
     options.container === false
@@ -192,6 +201,9 @@ function load(options = {}) {
           },
           mount(target) {
             calls.mounted.push(target)
+            if (options.mountChatbox) {
+              return options.mountChatbox(target, calls)
+            }
             return Promise.resolve()
           },
         }
@@ -247,12 +259,32 @@ function load(options = {}) {
     },
     clearTimeout,
     Talk,
+    StartersTalkJsSessionOwner: {
+      openSession: async (sessionOptions) => {
+        calls.authSessions.push(sessionOptions)
+        return new sessionOptions.Talk.Session({
+          appId: 'test-app',
+          me: sessionOptions.me,
+          tokenFetcher: async () => 'test-token',
+        })
+      },
+      authorizeConversation: async (intent) => {
+        calls.conversationAuthorizations.push(intent)
+        if (options.authorizeConversation) {
+          return options.authorizeConversation(intent, calls)
+        }
+        return {
+          conversationId: 'dm_v1_server_authorized_pair',
+          counterpartId: intent.counterpartId,
+        }
+      },
+    },
   }
 
   if (options.memberstack !== false) {
     window.$memberstackDom = {
       getCurrentMember: async () => ({
-        data: options.member === undefined ? null : options.member,
+        data: currentMember,
       }),
     }
   }
@@ -297,6 +329,9 @@ function load(options = {}) {
     container,
     dialog,
     openModal,
+    member(value) {
+      currentMember = value
+    },
     window,
   }
 }
@@ -396,15 +431,135 @@ test('a paid Brand gets the chatbox mounted into the container', async () => {
 
   assert.equal(loaded.calls.chatbox, 1)
   assert.deepEqual(loaded.calls.mounted, [loaded.container])
-  assert.equal(loaded.calls.conversations.length, 1)
+  assert.equal(loaded.calls.conversations.length, 0)
+  assert.deepEqual(loaded.calls.selected, ['dm_v1_server_authorized_pair'])
+  assert.deepEqual(plain(loaded.calls.conversationAuthorizations), [
+    { clientOwner: 'messages-profile-v3', counterpartId: STARTER_ID },
+  ])
+})
 
-  const conversation = loaded.calls.conversations[0]
-  assert.equal(conversation.id, 'one:' + [VIEWER_ID, STARTER_ID].sort().join('|'))
-  assert.equal(conversation.participants.length, 2)
-  assert.deepEqual(plain(conversation.attributes), {
-    custom: { source: 'hire-page', slug: 'kaeser-valencerina' },
+test('the profile chat opens through the shared authenticated session owner', async () => {
+  const current = { id: VIEWER_ID, customFields: { 'free-user': 'Brand' } }
+  const loaded = load({
+    triggers: [starterTrigger()],
+    member: current,
+    role: 'brand-paid',
   })
-  assert.deepEqual(loaded.calls.selected, [conversation])
+  await settle()
+  loaded.openModal()
+  await settle()
+
+  assert.equal(loaded.calls.authSessions.length, 1)
+  const request = loaded.calls.authSessions[0]
+  assert.equal(request.clientOwner, 'messages-profile-v3')
+  assert.equal(request.memberstack, loaded.window.$memberstackDom)
+  assert.equal(request.member, current)
+  assert.equal(request.me.fields.id, current.id)
+  assert.equal(loaded.calls.chatbox, 1)
+})
+
+test('profile invalidation clears the cached viewer before another open', async () => {
+  const firstMember = {
+    id: VIEWER_ID,
+    customFields: { 'free-user': 'Brand' },
+  }
+  const secondMember = {
+    id: 'mem_secondviewer000000000',
+    customFields: { 'free-user': 'Second' },
+  }
+  const loaded = load({
+    triggers: [starterTrigger()],
+    member: firstMember,
+    role: 'brand-paid',
+  })
+  await settle()
+  loaded.openModal()
+  await settle()
+
+  assert.equal(loaded.calls.authSessions.length, 1)
+  loaded.container.children.push({ stale: true })
+  loaded.member(secondMember)
+  loaded.calls.authSessions[0].onInvalidate()
+
+  assert.equal(loaded.container.children.length, 0)
+  loaded.openModal()
+  await settle()
+
+  assert.equal(loaded.calls.authSessions.length, 2)
+  assert.equal(loaded.calls.authSessions[1].member, secondMember)
+  assert.equal(loaded.calls.authSessions[1].me.fields.id, secondMember.id)
+  assert.equal(loaded.calls.chatbox, 2)
+  assert.equal(loaded.calls.mounted.length, 2)
+})
+
+test('same-member reconnect waits for an in-flight authorization', async () => {
+  let rejectFirstAuthorization
+  let authorizationAttempts = 0
+  const firstAuthorization = new Promise((resolve, reject) => {
+    rejectFirstAuthorization = reject
+  })
+  const loaded = load({
+    triggers: [starterTrigger()],
+    member: { id: VIEWER_ID, customFields: { 'free-user': 'Brand' } },
+    role: 'brand-paid',
+    authorizeConversation: async (intent) => {
+      authorizationAttempts += 1
+      if (authorizationAttempts === 1) return firstAuthorization
+      return {
+        conversationId: 'dm_v1_reconnected_pair',
+        counterpartId: intent.counterpartId,
+      }
+    },
+  })
+  await settle()
+
+  loaded.openModal()
+  await settle(5)
+  assert.equal(loaded.calls.conversationAuthorizations.length, 1)
+
+  loaded.calls.authSessions[0].onReconnect()
+  rejectFirstAuthorization(new Error('TalkJS session is no longer current'))
+  await settle()
+
+  assert.equal(loaded.calls.authSessions.length, 2)
+  assert.equal(loaded.calls.conversationAuthorizations.length, 2)
+  assert.deepEqual(loaded.calls.selected, ['dm_v1_reconnected_pair'])
+  assert.equal(loaded.calls.mounted.length, 1)
+})
+
+test('same-member reconnect supersedes an in-flight stale mount', async () => {
+  let releaseFirstMount
+  let mountAttempts = 0
+  const firstMount = new Promise((resolve) => {
+    releaseFirstMount = resolve
+  })
+  const loaded = load({
+    triggers: [starterTrigger()],
+    member: { id: VIEWER_ID, customFields: { 'free-user': 'Brand' } },
+    role: 'brand-paid',
+    mountChatbox: async () => {
+      mountAttempts += 1
+      if (mountAttempts === 1) await firstMount
+    },
+  })
+  await settle()
+
+  loaded.openModal()
+  await settle(5)
+  assert.equal(loaded.calls.mounted.length, 1)
+
+  loaded.calls.authSessions[0].onReconnect()
+  releaseFirstMount()
+  await settle()
+
+  assert.equal(loaded.calls.authSessions.length, 2)
+  assert.equal(loaded.calls.chatbox, 2)
+  assert.equal(loaded.calls.mounted.length, 2)
+  assert.deepEqual(loaded.calls.selected, [
+    'dm_v1_server_authorized_pair',
+    'dm_v1_server_authorized_pair',
+  ])
+  assert.equal(loaded.container.children.length, 0)
 })
 
 test('the viewer display name is the first name alone, never the last name', async () => {
@@ -564,7 +719,7 @@ test('a Talent viewer without a company keeps a blank company', async () => {
   assert.deepEqual(plain(loaded.calls.users[0]).custom, { company: '' })
 })
 
-test('the starter is synced with the CMS name and photo', async () => {
+test('the browser does not sync the starter CMS name or photo', async () => {
   const loaded = load({
     triggers: [starterTrigger()],
     member: { id: VIEWER_ID },
@@ -574,14 +729,12 @@ test('the starter is synced with the CMS name and photo', async () => {
   loaded.openModal()
   await settle()
 
-  assert.deepEqual(plain(loaded.calls.users[1]), {
-    id: STARTER_ID,
-    name: 'Kaeser Valencerina',
-    photoUrl: PHOTO,
-  })
+  assert.equal(loaded.calls.users.length, 1)
+  assert.equal(loaded.calls.conversations.length, 0)
+  assert.equal(loaded.calls.conversationAuthorizations[0].counterpartId, STARTER_ID)
 })
 
-test('with no CMS name the starter is referenced by id alone', async () => {
+test('missing CMS name cannot change the server-owned conversation intent', async () => {
   const loaded = load({
     triggers: [starterTrigger({ [NAME_ATTRIBUTE]: '' })],
     member: { id: VIEWER_ID },
@@ -591,10 +744,11 @@ test('with no CMS name the starter is referenced by id alone', async () => {
   loaded.openModal()
   await settle()
 
-  assert.equal(loaded.calls.users[1], STARTER_ID)
+  assert.equal(loaded.calls.users.length, 1)
+  assert.equal(loaded.calls.conversationAuthorizations[0].counterpartId, STARTER_ID)
 })
 
-test('a non-https CMS photo is dropped before reaching TalkJS', async () => {
+test('a non-https CMS photo never reaches TalkJS conversation mutation', async () => {
   const loaded = load({
     triggers: [starterTrigger({ [PHOTO_ATTRIBUTE]: 'javascript:alert(1)' })],
     member: { id: VIEWER_ID },
@@ -604,10 +758,9 @@ test('a non-https CMS photo is dropped before reaching TalkJS', async () => {
   loaded.openModal()
   await settle()
 
-  assert.deepEqual(plain(loaded.calls.users[1]), {
-    id: STARTER_ID,
-    name: 'Kaeser Valencerina',
-  })
+  assert.equal(loaded.calls.users.length, 1)
+  assert.equal(loaded.calls.conversations.length, 0)
+  assert.equal(loaded.calls.conversationAuthorizations[0].counterpartId, STARTER_ID)
 })
 
 test('reopening the modal does not mount a second chatbox', async () => {
@@ -805,10 +958,10 @@ test('the pressed trigger decides the conversation, not the first in the DOM', a
   second.click()
   await settle()
 
-  assert.equal(loaded.calls.conversations.length, 1)
+  assert.equal(loaded.calls.conversations.length, 0)
   assert.equal(
-    loaded.calls.conversations[0].id,
-    'one:' + [VIEWER_ID, OTHER].sort().join('|'),
+    loaded.calls.conversationAuthorizations[0].counterpartId,
+    OTHER,
     'used the trigger that was clicked',
   )
 })

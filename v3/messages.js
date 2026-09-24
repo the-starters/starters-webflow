@@ -5,8 +5,9 @@
  *
  * Self-contained page controller for /messages. It waits for Memberstack,
  * redirects logged-out visitors through the V3 login router while preserving
- * the current path and query, loads TalkJS, syncs the current member's public
- * profile, and mounts the 3.0-themed inbox into #talkjs-container.
+ * the current path and query, loads TalkJS and the shared signed-session owner,
+ * syncs the current member's public profile, and mounts the 3.0-themed inbox
+ * into #talkjs-container.
  *
  * Bootstrap recovery: a TalkJS script that fails outright (onerror) is removed
  * and retried once in this document. A readiness timeout is ambiguous instead,
@@ -20,15 +21,15 @@
  *
  * Deep linking: `/messages?conversation=<TalkJS conversation id>` selects an
  * existing conversation (used by dashboard preview cards). The existing
- * `/messages?with=<memberstack id>` contract opens — creating if needed — the
- * one-on-one conversation with that member and selects it in the inbox.
+ * `/messages?with=<memberstack id>` contract asks Xano to resolve or provision
+ * the exact two-person conversation and selects only the authorized id.
  * `v3/hire-message.js` produces these links from the /hire/<slug> profile pages
- * and leaves the starter's name and photo in a one-shot sessionStorage entry
- * (`starters:hire-message-handoff`) for this module to consume, because TalkJS
- * writes any display fields it is given onto that user's global record and a
- * URL-carried name would therefore be forgeable. Without the query parameter
- * nothing below runs and the page behaves exactly as it did before; the deep
- * link resolves after the inbox is mounted, so a failure leaves a working inbox.
+ * and may leave a legacy one-shot sessionStorage handoff, which this module
+ * clears without using it to mutate a TalkJS participant. Xano authorizes or
+ * provisions the exact thread, and the browser selects only the returned id.
+ * Without either deep-link parameter no conversation authorization request
+ * runs; the inbox still mounts normally. A deep link resolves after the inbox
+ * is mounted, so a failure leaves a working inbox.
  *
  * Clickable Identity: the 3.0 chat theme wraps the chat-header photo and name,
  * and the avatar beside a received message, in TalkJS ActionButtons carrying
@@ -53,9 +54,10 @@
   if (window.__startersMessages3Booted) return
   window.__startersMessages3Booted = true
 
-  const TALKJS_APP_ID = 'LmYV8DIA'
   const TALKJS_THEME = 'the-starters-3-0'
   const TALKJS_SCRIPT_URL = 'https://cdn.talkjs.com/talk.js'
+  const TALKJS_AUTH_HELPER_URL =
+    'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/talkjs-auth-session.js'
   const MEMBERSTACK_TIMEOUT_MS = 10000
   const TALKJS_TIMEOUT_MS = 15000
   const TALKJS_MAX_LOAD_ATTEMPTS = 2
@@ -71,12 +73,12 @@
   // truncated URL and must not reach TalkJS, which would create a real user
   // record for it.
   const MEMBER_ID_PATTERN = /^mem_(?:sb_)?[A-Za-z0-9]+$/
-  const CONVERSATION_SOURCE = 'hire-page'
   const FEED_FILTER_ACTIONS = {
     'messages-filter-all': {},
     'messages-filter-unread': { isUnread: true },
     'messages-filter-read': { isUnread: false },
   }
+  let messagesGeneration = 0
 
   /* --------------------------- staging diagnostics -------------------------- */
 
@@ -312,6 +314,57 @@
     notice.appendChild(message)
     notice.appendChild(retry)
     container.appendChild(notice)
+  }
+
+  function waitForTalkJsSessionOwner(timeoutMs = TALKJS_TIMEOUT_MS) {
+    if (
+      window.StartersTalkJsSessionOwner &&
+      typeof window.StartersTalkJsSessionOwner.openSession === 'function'
+    ) {
+      return Promise.resolve(window.StartersTalkJsSessionOwner)
+    }
+    if (window.__startersTalkJsAuthHelperPromise) {
+      return window.__startersTalkJsAuthHelperPromise
+    }
+
+    let loading
+    loading = new Promise((resolve, reject) => {
+      const script = document.createElement('script')
+      let settled = false
+      const fail = (error) => {
+        if (settled) return
+        settled = true
+        window.clearTimeout(timer)
+        if (window.__startersTalkJsAuthHelperPromise === loading) {
+          window.__startersTalkJsAuthHelperPromise = null
+        }
+        reject(error)
+      }
+      const timer = window.setTimeout(() => {
+        fail(new Error('TalkJS authentication helper did not become ready'))
+      }, timeoutMs)
+      script.async = true
+      script.src = TALKJS_AUTH_HELPER_URL
+      script.dataset.startersTalkjsAuth = 'true'
+      script.onload = () => {
+        if (
+          window.StartersTalkJsSessionOwner &&
+          typeof window.StartersTalkJsSessionOwner.openSession === 'function'
+        ) {
+          settled = true
+          window.clearTimeout(timer)
+          resolve(window.StartersTalkJsSessionOwner)
+        } else {
+          fail(new Error('TalkJS authentication helper is invalid'))
+        }
+      }
+      script.onerror = () => {
+        fail(new Error('TalkJS authentication helper failed to load'))
+      }
+      document.head.appendChild(script)
+    })
+    window.__startersTalkJsAuthHelperPromise = loading
+    return loading
   }
 
   // Replicated from v3/route-guard.js PLAN_ROLES — that file is the canonical
@@ -874,33 +927,19 @@
   }
 
   /**
-   * The other side of the conversation. Passing fields updates that user's stored
-   * TalkJS record, so fields are only ever passed when they came from the CMS via
-   * the handoff; otherwise the existing user is referenced by id alone and TalkJS
-   * keeps whatever they synced themselves.
-   * @param {object} Talk
-   * @param {string} memberId
-   * @param {{name: string, photo: string}|null} handoff
+   * Ask Xano to authorize an existing thread or provision a two-person thread,
+   * then select only the returned id. Conversation and participant mutation is
+   * server-owned because TalkJS browser conversation synchronization is off.
    */
-  function otherParticipant(Talk, memberId, handoff) {
-    if (!handoff || !handoff.name) return new Talk.User(memberId)
-
-    const fields = { id: memberId, name: handoff.name }
-    if (handoff.photo) fields.photoUrl = handoff.photo
-    return new Talk.User(fields)
-  }
-
-  /**
-   * Select an existing `?conversation=` thread without mutation, or open the
-   * `?with=` one-on-one conversation, creating it when needed. Returns
-   * immediately when neither supported deep-link parameter is present.
-   */
-  async function openDeepLinkConversation(Talk, session, inbox, me, myId, identity) {
+  async function openDeepLinkConversation(inbox, myId, identity) {
     const conversationId = deepLinkConversationId()
     if (conversationId) {
-      // TalkJS accepts an existing conversation id directly. This selects it
-      // without creating a new conversation or mutating its participants.
-      await inbox.select(conversationId)
+      const receipt = await window.StartersTalkJsSessionOwner.authorizeConversation({
+        clientOwner: 'messages-v3',
+        conversationId,
+      })
+      if (identity) identity.prefetch(receipt.counterpartId)
+      await inbox.select(receipt.conversationId)
       return
     }
 
@@ -914,70 +953,76 @@
     // member arriving from a /hire page is most likely to click.
     if (identity) identity.prefetch(otherId)
 
-    const handoff = consumeHandoff(otherId)
-    const conversation = session.getOrCreateConversation(
-      Talk.oneOnOneId(myId, otherId),
-    )
-    conversation.setParticipant(me)
-    conversation.setParticipant(otherParticipant(Talk, otherId, handoff))
-    // Attribution for conversations started from a profile page. Custom values
-    // must be strings; this cannot be backfilled onto existing conversations.
-    conversation.setAttributes({
-      custom: {
-        source: CONVERSATION_SOURCE,
-        slug: (handoff && handoff.slug) || '',
-      },
+    consumeHandoff(otherId)
+    const receipt = await window.StartersTalkJsSessionOwner.authorizeConversation({
+      clientOwner: 'messages-v3',
+      counterpartId: otherId,
     })
-
-    await inbox.select(conversation)
+    await inbox.select(receipt.conversationId)
   }
 
   async function mountMessages() {
+    const openingGeneration = ++messagesGeneration
     const container = document.getElementById('talkjs-container')
-    if (!container) throw new Error('Missing #talkjs-container')
+    try {
+      if (!container) throw new Error('Missing #talkjs-container')
 
-    const memberstack = await waitForMemberstackDom()
-    if (!memberstack) throw new Error('Memberstack did not become ready')
+      const memberstack = await waitForMemberstackDom()
+      if (!memberstack) throw new Error('Memberstack did not become ready')
 
-    const response = await memberstack.getCurrentMember()
-    const member = response && response.data
-    if (!member || !member.id) {
-      window.location.replace(loginPathWithNext())
-      return
+      const response = await memberstack.getCurrentMember()
+      const member = response && response.data
+      if (!member || !member.id) {
+        window.location.replace(loginPathWithNext())
+        return
+      }
+
+      const Talk = await waitForTalkJs()
+      const me = new Talk.User(talkUserFields(member))
+      const sessionOwner = await waitForTalkJsSessionOwner()
+      const session = await sessionOwner.openSession({
+        Talk,
+        memberstack,
+        member,
+        me,
+        clientOwner: 'messages-v3',
+        onInvalidate: () => {
+          if (messagesGeneration === openingGeneration) messagesGeneration += 1
+        },
+        onReconnect: mountWithFailureHandling,
+      })
+      if (messagesGeneration !== openingGeneration) return
+      const inbox = session.createInbox({
+        theme: { name: TALKJS_THEME },
+      })
+
+      installFeedFilterActions(inbox)
+      const identity = installIdentityActions(inbox)
+      const calls = window.StartersMessagesCalls && window.StartersMessagesCalls.install({
+        inbox, member, container, identity,
+      })
+      await inbox.mount(container)
+      if (messagesGeneration !== openingGeneration) return
+      clearTalkJsRecoveryReload()
+
+
+      // Deliberately after mount and deliberately not awaited: the inbox is already
+      // usable, so a deep-link failure degrades to "your normal inbox" instead of
+      // taking the page down with it.
+      openDeepLinkConversation(inbox, member.id, identity).catch((error) => {
+        console.warn(
+          '[messages-3.0] Unable to open the requested conversation',
+          error,
+        )
+      })
+    } catch (error) {
+      if (messagesGeneration !== openingGeneration) return
+      throw error
     }
-
-    const Talk = await waitForTalkJs()
-    const me = new Talk.User(talkUserFields(member))
-    const session = new Talk.Session({
-      appId: TALKJS_APP_ID,
-      me,
-    })
-    const inbox = session.createInbox({
-      theme: { name: TALKJS_THEME },
-    })
-
-    installFeedFilterActions(inbox)
-    const identity = installIdentityActions(inbox)
-    const calls = window.StartersMessagesCalls && window.StartersMessagesCalls.install({
-      inbox, member, container, identity,
-    })
-    await inbox.mount(container)
-    clearTalkJsRecoveryReload()
-
-
-    // Deliberately after mount and deliberately not awaited: the inbox is already
-    // usable, so a deep-link failure degrades to "your normal inbox" instead of
-    // taking the page down with it.
-    openDeepLinkConversation(Talk, session, inbox, me, member.id, identity).catch((error) => {
-      console.warn(
-        '[messages-3.0] Unable to open the requested conversation',
-        error,
-      )
-    })
   }
 
-  function start() {
-    mountMessages().catch((error) => {
+  function mountWithFailureHandling() {
+    return mountMessages().catch((error) => {
       console.error('[messages-3.0] Unable to mount TalkJS inbox', error)
       if (
         error &&
@@ -989,6 +1034,10 @@
       }
       renderTalkJsFailure(document.getElementById('talkjs-container'))
     })
+  }
+
+  function start() {
+    mountWithFailureHandling()
   }
 
   if (document.readyState === 'loading') {
