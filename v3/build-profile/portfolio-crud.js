@@ -306,10 +306,11 @@
 
         const titleIsFilled = Boolean(titleInput && titleInput.value.trim());
         const hasImage = selectedFiles.length > 0;
-        const canSubmit = titleIsFilled && hasImage;
+        const canSubmit = titleIsFilled && hasImage && !isCreatingPortfolio;
         if (createSubmitText) createSubmitText.textContent = isCreatingPortfolio ? 'Saving...' : defaultCreateSubmitText;
         createSubmit.style.opacity = canSubmit ? '1' : '0.5';
         createSubmit.style.pointerEvents = canSubmit ? 'auto' : 'none';
+        createSubmit.setAttribute('aria-disabled', canSubmit ? 'false' : 'true');
       }
 
       function updateCreateDropdownState(portfoliosCount) {
@@ -573,6 +574,7 @@
         portfolios.forEach(function (portfolio) {
           grid.appendChild(createCard(portfolio));
         });
+        return portfolios;
       }
 
       function resetCreateForm() {
@@ -648,7 +650,7 @@
               sort_order: Number(index),
             });
           }
-          await renderPortfolios();
+          const renderedPortfolios = await renderPortfolios();
           window.dispatchEvent(
             new CustomEvent('portfolio-created', {
               detail: portfolio,
@@ -657,6 +659,9 @@
           resetCreateForm();
 
           closeCreateDropdown();
+          if (renderedPortfolios.some((item) => String(item.id) === String(portfolio.id))) {
+            grid.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }
         } catch (error) {
           console.error(error);
           openNotificationModal(getErrorMessage(error, 'Portfolio creation failed'));

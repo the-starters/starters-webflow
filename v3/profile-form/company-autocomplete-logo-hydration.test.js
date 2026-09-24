@@ -455,6 +455,8 @@ function createCrudHarness(file, { deferredWrites = false, alsoWorkedWithStatuse
   const startDateInput = element('2025-01')
   const endDateInput = element('2026-08')
   const addButton = element()
+  const addForm = element()
+  addButton.closest = (selector) => selector === '[edit-form-input]' ? addForm : null
   const addButtonText = { textContent: 'Add company' }
   const companyList = element()
   companyList.appendChild = (card) => { renderedCards.push(card) }
@@ -522,6 +524,12 @@ function createCrudHarness(file, { deferredWrites = false, alsoWorkedWithStatuse
       if (url.endsWith('/companies') && options.method === 'POST' && companyCreateGate) {
         companyCreateGate.started()
         await companyCreateGate.wait
+      }
+      if (url.includes('/companies/') && options.method === 'DELETE') {
+        const companyId = decodeURIComponent(url.slice(url.lastIndexOf('/') + 1))
+        const index = canonicalCompanies.findIndex((company) => String(company.id) === companyId)
+        if (index !== -1) canonicalCompanies.splice(index, 1)
+        return { ok: true, status: 200, json: async () => ({}) }
       }
       if (url.includes('/starter/set_also_worked_with')) {
         const status = alsoWorkedWithStatuses.shift() || 200
@@ -595,6 +603,7 @@ function createCrudHarness(file, { deferredWrites = false, alsoWorkedWithStatuse
   return {
     companyInput,
     addButton,
+    addForm,
     addButtonText,
     runTimer(delay) {
       for (const [id, timer] of timers) {
@@ -982,7 +991,7 @@ test('Build Profile accepts only one Work History save while the first is pendin
   assert.equal(harness.addButtonText.textContent, 'Added')
 })
 
-test('Build Profile shows Added on the third Work History item, then hides the button', async () => {
+test('Build Profile hides the Work Experience form after a third item is added', async () => {
   const existingCompanies = [
     { id: 'company-1', company_name: 'QA Wolf', job_title: 'Engineer' },
     { id: 'company-2', company_name: 'Acme', job_title: 'Designer' },
@@ -999,12 +1008,96 @@ test('Build Profile shows Added on the third Work History item, then hides the b
   await harness.queueAdd()
 
   assert.equal(harness.addButtonText.textContent, 'Added')
-  assert.notEqual(harness.addButton.style.display, 'none')
+  assert.equal(harness.addForm.style.display, 'none')
 
   assert.equal(harness.runTimer(2000), true)
 
   assert.equal(harness.addButtonText.textContent, 'Max 3 companies')
   assert.equal(harness.addButton.style.display, 'none')
+  assert.equal(harness.addForm.style.display, 'none')
+})
+
+test('Build Profile hides the Work Experience add form at three items', async () => {
+  const file = path.join(__dirname, '../build-profile/company-experience-crud.js')
+  const harness = createCrudHarness(file, {
+    initialCompanies: [
+      { id: 'company-1', company_name: 'QA Wolf' },
+      { id: 'company-2', company_name: 'Acme' },
+      { id: 'company-3', company_name: 'Orbit' },
+    ],
+  })
+
+  await harness.start()
+
+  assert.equal(harness.addForm.style.display, 'none')
+  assert.equal(harness.renderedCards.length, 3)
+})
+
+test('Edit Profile hides the Work Experience form after a third draft is added', async () => {
+  const file = path.join(__dirname, '../starter-edit-profile/company-experience-crud.js')
+  const harness = createCrudHarness(file, {
+    deferredWrites: true,
+    initialCompanies: [
+      { id: 'company-1', company_name: 'QA Wolf' },
+      { id: 'company-2', company_name: 'Acme' },
+    ],
+  })
+  await harness.start()
+  assert.notEqual(harness.addForm.style.display, 'none')
+  harness.prepareAdd()
+
+  await harness.queueAdd()
+
+  assert.equal(harness.addForm.style.display, 'none')
+})
+
+test('Edit Profile hides the Work Experience add form at three items', async () => {
+  const file = path.join(__dirname, '../starter-edit-profile/company-experience-crud.js')
+  const harness = createCrudHarness(file, {
+    deferredWrites: true,
+    initialCompanies: [
+      { id: 'company-1', company_name: 'QA Wolf' },
+      { id: 'company-2', company_name: 'Acme' },
+      { id: 'company-3', company_name: 'Orbit' },
+    ],
+  })
+
+  await harness.start()
+
+  assert.equal(harness.addForm.style.display, 'none')
+  assert.equal(harness.renderedCards.length, 3)
+})
+
+for (const [label, file, deferredWrites] of [
+  ['Build Profile', path.join(__dirname, '../build-profile/company-experience-crud.js'), false],
+  ['Edit Profile', path.join(__dirname, '../starter-edit-profile/company-experience-crud.js'), true],
+]) {
+  test(label + ' restores the Work Experience add form after removing one of three items', async () => {
+    const companies = [
+      { id: 'company-1', company_name: 'QA Wolf' },
+      { id: 'company-2', company_name: 'Acme' },
+      { id: 'company-3', company_name: 'Orbit' },
+    ]
+    const harness = createCrudHarness(file, { deferredWrites, initialCompanies: companies })
+    await harness.start()
+    assert.equal(harness.addForm.style.display, 'none')
+
+    await harness.queueDelete(companies[2])
+
+    assert.equal(harness.addForm.style.display, '')
+    assert.notEqual(harness.addButton.style.display, 'none')
+  })
+}
+
+test('Edit Profile says Saving while adding Work Experience', async () => {
+  const file = path.join(__dirname, '../starter-edit-profile/company-experience-crud.js')
+  const harness = createCrudHarness(file, { deferredWrites: true })
+  await harness.start()
+  harness.prepareAdd()
+
+  const save = harness.queueAdd()
+  assert.equal(harness.addButtonText.textContent, 'Saving...')
+  await save
 })
 
 test('Build Profile shows Error then restores the Work History button after a failed save', async () => {
@@ -1022,6 +1115,7 @@ test('Build Profile shows Error then restores the Work History button after a fa
   assert.equal(harness.runTimer(1200), true)
   assert.equal(harness.addButtonText.textContent, 'Add company')
   assert.equal(harness.addButton.style.pointerEvents, '')
+  assert.notEqual(harness.addForm.style.display, 'none')
 
   await harness.queueAdd()
   assert.equal(harness.requests.filter(({ url, options }) => url.endsWith('/companies') && options.method === 'POST').length, 2)

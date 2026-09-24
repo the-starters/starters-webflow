@@ -666,6 +666,7 @@ function createStarterEditCompanyDraftDirtyController(options) {
             const firstCompanyInput = qs('#first-company');
             const currentWorkCheckbox = qs('#company-current');
             const addBtn = qs('#add-company');
+            const addCompanyForm = addBtn ? addBtn.closest('[edit-form-input]') : null;
             const dropdownToggleLabel = qs('[dropdown-toggle-label]');
 
             const editCompanyWrapper = qs('#edit-company-wrapper');
@@ -1142,6 +1143,7 @@ function createStarterEditCompanyDraftDirtyController(options) {
                 const isFormReady = hasRequiredCompanyFields();
                 const isDisabled = isLimitReached || !isFormReady || isSubmitting;
 
+                if (addCompanyForm) addCompanyForm.style.display = isLimitReached ? 'none' : '';
                 addBtn.style.display = isLimitReached ? 'none' : 'flex';
                 addBtn.style.pointerEvents = isDisabled ? 'none' : '';
                 addBtn.style.opacity = isDisabled ? '0.5' : '';
@@ -1162,7 +1164,7 @@ function createStarterEditCompanyDraftDirtyController(options) {
                         if (submitAction === 'deleting') {
                             ctaText = 'Deleting...';
                         } else if (submitAction === 'adding') {
-                            ctaText = 'Adding...';
+                            ctaText = 'Saving...';
                         }
                     }
 

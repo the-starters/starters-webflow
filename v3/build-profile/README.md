@@ -38,13 +38,15 @@ The Work Highlights create handler must allow that element to be missing and
 must accept only one in-flight creation per form.
 
 While a new Work Highlight is being saved, its create button reads `Saving...`
-and keeps its normal enabled appearance; the in-flight guard prevents a second
-creation. The button restores its authored label after success or failure.
-Work History uses `Saving...` while adding a company and also accepts only one
+and is disabled; the in-flight guard also prevents a second creation. The button
+restores its authored label after success or failure. After a successful create
+renders the new card, Build Profile scrolls to the highlight grid. A failed save
+does not scroll, and Edit Profile has no matching scroll behavior.
+Work Experience uses `Saving...` while adding a company and also accepts only one
 in-flight save. It shows `Added` for two seconds after success or `Error` for
-1.2 seconds after failure, then restores the normal button state. When a save
-reaches the three-company limit, `Added` stays visible for those two seconds
-before the button hides.
+1.2 seconds after failure, then restores the normal button state. At the
+three-company limit, the whole add form is hidden as soon as the third item is
+saved; removing an item brings the form back.
 
 `bio-editor.js`, `field-counters.js`, `company-autocomplete.js`, `work-dates.js`, and
 `company-experience-crud.js` have

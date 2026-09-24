@@ -34,6 +34,10 @@ in-flight guard: a second click while the first create is pending queues nothing
 The legacy form keeps its published 50 MB video limit. The opted-in unified Highlights
 section uses its own controller and 40 MB limit.
 
+The legacy Work Experience add control reads `Saving...` while a draft is being
+added. When the effective item count reaches three, the entire add form is
+hidden; removing an item brings it back.
+
 ### Work Highlight cover image
 
 A Work Highlight has exactly one cover. Whenever the editor loads its images —

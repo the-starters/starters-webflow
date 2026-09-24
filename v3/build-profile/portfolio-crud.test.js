@@ -10,6 +10,8 @@ function element(properties = {}) {
   const listeners = new Map();
   return {
     style: {},
+    classList: { add() {}, remove() {} },
+    attributes: {},
     value: '',
     addEventListener(type, listener) {
       listeners.set(type, [...(listeners.get(type) || []), listener]);
@@ -17,17 +19,27 @@ function element(properties = {}) {
     async dispatchEvent(event) {
       await Promise.all((listeners.get(event.type) || []).map((listener) => listener(event)));
     },
-    setAttribute() {},
+    setAttribute(name, value) { this.attributes[name] = value; },
+    getAttribute(name) { return this.attributes[name]; },
     querySelector() { return null; },
     querySelectorAll() { return []; },
+    cloneNode() { return element(); },
     ...properties,
   };
 }
 
-function createFixture({ dropdown = false } = {}) {
+function createFixture({ dropdown = false, staleAfterCreate = false } = {}) {
   const template = element();
+  const portfolios = [];
+  const cards = [];
+  const scrollCalls = [];
   const grid = element({
     querySelector(selector) { return selector === '.portfolio_card' ? template : null; },
+    querySelectorAll(selector) {
+      return selector === '.portfolio_card:not(:first-child)' ? cards : [];
+    },
+    appendChild(card) { cards.push(card); },
+    scrollIntoView(options) { scrollCalls.push({ ...options, visibleCards: cards.length }); },
   });
   const createSubmitLabel = element({ textContent: 'Save Work Highlight' });
   const createSubmit = element({
@@ -86,12 +98,13 @@ function createFixture({ dropdown = false } = {}) {
           failNextCreate = false;
           return { ok: false, json: async () => ({ message: 'Create failed' }) };
         }
+        portfolios.push({ id: created, title: 'A new highlight' });
         return { ok: true, json: async () => ({ id: created }) };
       }
       if (url.includes('/upload-image')) {
         return { ok: true, json: async () => ({ path: '/cover.png' }) };
       }
-      return { ok: true, json: async () => url.includes('/Get_my_portfolios') ? [] : {} };
+      return { ok: true, json: async () => url.includes('/Get_my_portfolios') ? (staleAfterCreate ? [] : portfolios) : {} };
     },
     Event: class Event { constructor(type) { this.type = type; } },
     CustomEvent: class CustomEvent { constructor(type, options) { this.type = type; this.detail = options.detail; } },
@@ -124,6 +137,8 @@ function createFixture({ dropdown = false } = {}) {
     get created() { return created; },
     createSubmit,
     createSubmitLabel,
+    cards,
+    scrollCalls,
     titleInput,
     profileDropdown,
     errors,
@@ -163,8 +178,9 @@ test('Build Profile shows Saving while a highlight is being created', async () =
   await pendingCreate.whenStarted;
 
   assert.equal(fixture.createSubmitLabel.textContent, 'Saving...');
-  assert.equal(fixture.createSubmit.style.pointerEvents, 'auto');
-  assert.equal(fixture.createSubmit.style.opacity, '1');
+  assert.equal(fixture.createSubmit.style.pointerEvents, 'none');
+  assert.equal(fixture.createSubmit.style.opacity, '0.5');
+  assert.equal(fixture.createSubmit.getAttribute('aria-disabled'), 'true');
   pendingCreate.release();
   await save;
 
@@ -181,9 +197,47 @@ test('Build Profile can retry after a failed creation', async () => {
   await fixture.save();
   assert.equal(fixture.createSubmitLabel.textContent, 'Save Work Highlight');
   assert.equal(fixture.createSubmit.style.pointerEvents, 'auto');
+  assert.equal(fixture.createSubmit.getAttribute('aria-disabled'), 'false');
   await fixture.save();
 
   assert.equal(fixture.created, 2);
   assert.equal(fixture.profileDropdown.style.pointerEvents, 'auto');
   assert.equal(fixture.titleInput.value, '');
+});
+
+test('Build Profile scrolls to the highlight boxes after the new box is visible', async () => {
+  const fixture = createFixture();
+  await fixture.boot();
+  await fixture.selectImage();
+
+  await fixture.save();
+
+  assert.equal(fixture.cards.length, 1);
+  assert.deepEqual(fixture.scrollCalls, [
+    { behavior: 'smooth', block: 'start', visibleCards: 1 },
+  ]);
+});
+
+test('Build Profile stays at the highlight form when saving fails', async () => {
+  const fixture = createFixture();
+  await fixture.boot();
+  await fixture.selectImage();
+  fixture.failNextCreate();
+
+  await fixture.save();
+
+  assert.equal(fixture.cards.length, 0);
+  assert.deepEqual(fixture.scrollCalls, []);
+});
+
+test('Build Profile does not scroll before the new highlight box appears', async () => {
+  const fixture = createFixture({ staleAfterCreate: true });
+  await fixture.boot();
+  await fixture.selectImage();
+
+  await fixture.save();
+
+  assert.equal(fixture.created, 1);
+  assert.equal(fixture.cards.length, 0);
+  assert.deepEqual(fixture.scrollCalls, []);
 });
