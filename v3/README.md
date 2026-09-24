@@ -4677,3 +4677,20 @@ rem sizes to pixels inside its secure frames.
 **Do not release the frontend before the backend contract is deployed and tested.** The backend XanoScript deployment candidate and remaining runtime checks are documented in [the backend deployment guide](xano-workspace/PAID-CALL-CARD-SELECTION.md). Committing these files does not update Xano. This implementation does not change pricing or charge timing.
 
 Verification: `node --test v3/paid-call-brand-payment.test.js v3/dashboard-call-payment.test.js` and `node v3/browser-tests/booking-details.browser.cjs`. The browser fixture uses real controllers and synthetic API/Stripe boundaries; it cannot establish provider behavior. The previous auto-book-after-save tests have been replaced with explicit review and cancellation cases at this browser boundary.
+
+### Confirmed-call server clock
+
+The canonical booking reader adds one epoch-millisecond `server_now_ms` to each
+returned booking, preserving the array response. Release that additive reader
+change before the matching dashboard clients. Confirmed proposal and acceptance
+controls fail closed until a valid canonical clock is bound; pending-request
+edits and proposal declines retain their separate policies.
+
+The dashboard captures monotonic time before the read, then advances the server
+stamp by the full elapsed request time. This conservatively includes transport
+latency and avoids device wall-clock skew extending the strict eight-hour window.
+Acceptance checks the original call time (`start_old`) and a future proposed
+start. The clock is rechecked before calendar mounting, calendar confirmation,
+and command submission. Clock-only refreshes preserve rendered booking identity.
+This does not replace server authorization, provider availability, or settlement
+checks. It does not activate the separately unreleased counterproposal feature.

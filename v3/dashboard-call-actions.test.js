@@ -723,7 +723,7 @@ test('an ambiguous cancel retains the same idempotency key', async () => {
 })
 
 function rescheduleBooking(overrides) {
-  return Object.assign(
+  const row = Object.assign(
     {
       booking_id: 'booking-test-3',
       config_id: 'config-test-1',
@@ -732,12 +732,16 @@ function rescheduleBooking(overrides) {
       is_paid: false,
       data_environment: 'test',
       status: 'confirmed',
-      start: Date.now() + 60 * 60 * 1000,
+      start: Date.now() + 24 * 60 * 60 * 1000,
+      start_old: Date.now() + 24 * 60 * 60 * 1000,
+      server_now_ms: Date.now(),
       starter_data: { memberstack_id: 'mem_sb_starter' },
       brand_data: { memberstack_id: 'mem_sb_brand' },
     },
     overrides || {},
   )
+  api.bindCanonicalClock([row], api.monotonicNow())
+  return row
 }
 
 test('reschedule proposal eligibility requires a booked future call with calendar identity', () => {
@@ -745,15 +749,15 @@ test('reschedule proposal eligibility requires a booked future call with calenda
   assert.equal(api.canProposeReschedule('starter', booking), true)
   assert.equal(api.canProposeReschedule('brand', booking), true)
   assert.equal(api.canProposeReschedule('guest', booking), false)
-  assert.equal(api.canProposeReschedule('starter', { ...booking, status: 'rescheduled' }), false)
-  assert.equal(api.canProposeReschedule('starter', { ...booking, start: Date.now() - 1000 }), false)
-  assert.equal(api.canProposeReschedule('starter', { ...booking, grant_id: '' }), false)
-  assert.equal(api.canProposeReschedule('starter', { ...booking, duration: 0 }), false)
-  assert.equal(api.canProposeReschedule('starter', { ...booking, is_paid: true }), false)
-  assert.equal(api.canProposeReschedule('starter', { ...booking, is_paid: 'true' }), false)
-  assert.equal(api.canProposeReschedule('starter', { ...booking, is_paid: undefined, paid_meeting: true }), false)
-  assert.equal(api.canProposeReschedule('starter', { ...booking, is_paid: undefined, paid_meeting: false }), true)
-  assert.equal(api.canProposeReschedule('starter', { ...booking, is_paid: undefined, paid_meeting: undefined }), false)
+  assert.equal(api.canProposeReschedule('starter', rescheduleBooking({ status: 'rescheduled' })), false)
+  assert.equal(api.canProposeReschedule('starter', rescheduleBooking({ start: Date.now() - 1000 })), false)
+  assert.equal(api.canProposeReschedule('starter', rescheduleBooking({ grant_id: '' })), false)
+  assert.equal(api.canProposeReschedule('starter', rescheduleBooking({ duration: 0 })), false)
+  assert.equal(api.canProposeReschedule('starter', rescheduleBooking({ is_paid: true })), false)
+  assert.equal(api.canProposeReschedule('starter', rescheduleBooking({ is_paid: 'true' })), false)
+  assert.equal(api.canProposeReschedule('starter', rescheduleBooking({ is_paid: undefined, paid_meeting: true })), false)
+  assert.equal(api.canProposeReschedule('starter', rescheduleBooking({ is_paid: undefined, paid_meeting: false })), true)
+  assert.equal(api.canProposeReschedule('starter', rescheduleBooking({ is_paid: undefined, paid_meeting: undefined })), false)
 })
 
 test('only the counterpart can respond to a pending proposal', () => {

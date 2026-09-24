@@ -548,18 +548,21 @@ test('Details exposes the reschedule propose and respond chains by eligibility',
     is_paid: false,
     data_environment: 'test',
     status: 'confirmed',
-    start: Date.now() + 60 * 60 * 1000,
+    start: Date.now() + 24 * 60 * 60 * 1000,
+    server_now_ms: Date.now(),
     starter_data: { memberstack_id: 'mem_sb_starter' },
     brand_data: { memberstack_id: 'mem_sb_brand' },
   }
 
+  global.StartersDashboardCallActions.bindCanonicalClock([confirmedBooking], performance.now())
   dashboard.configureDetailActions(modal, 'starter', 'confirmed', confirmedBooking, Date.now())
   assert.equal(propose.hidden, false)
   assert.equal(proposeContinue.hidden, false)
   assert.equal(accept.hidden, true)
   assert.equal(keep.hidden, true)
 
-  const proposedBooking = { ...confirmedBooking, status: 'rescheduled', rescheduled_by: 'starter' }
+  const proposedBooking = { ...confirmedBooking, start_old: confirmedBooking.start, status: 'rescheduled', rescheduled_by: 'starter' }
+  global.StartersDashboardCallActions.bindCanonicalClock([proposedBooking], performance.now())
   dashboard.configureDetailActions(modal, 'brand', 'confirmed', proposedBooking, Date.now())
   assert.equal(propose.hidden, true)
   assert.equal(accept.hidden, false)
@@ -591,6 +594,9 @@ test('Details creates and exposes the module-rendered decline response action', 
         return true
       },
       canRespondReschedule() {
+        return true
+      },
+      canConfirmReschedule() {
         return true
       },
     }
@@ -639,10 +645,12 @@ test('the authored Reschedule entry click reaches the actions module in real lis
     is_paid: false,
     grant_id: 'grant-int-1',
     duration: 30,
-    start: Date.now() + 60 * 60 * 1000,
+    start: Date.now() + 24 * 60 * 60 * 1000,
+    server_now_ms: Date.now(),
     starter_data: { memberstack_id: 'mem_sb_starter' },
     brand_data: { memberstack_id: 'mem_sb_brand' },
   }
+  global.StartersDashboardCallActions.bindCanonicalClock([eligibleBooking], performance.now())
   let currentBooking = eligibleBooking
   const rows = [eligibleBooking]
   const card = {
