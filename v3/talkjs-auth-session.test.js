@@ -911,6 +911,24 @@ test('identity change during refresh destroys the old session', async () => {
   assert.equal(state.calls.invalidations, 1)
 })
 
+test('the cached initial token revalidates identity before delivery', async () => {
+  const state = harness()
+  await open(state, {
+    onInvalidate: () => {
+      state.calls.invalidations += 1
+    },
+  })
+  const fetcher = state.calls.sessions[0].tokenFetcher
+  state.member({ id: 'mem_sb_memberb' })
+  state.memberstackCookie('memberstack-cookie-b')
+
+  await assert.rejects(fetcher(), /Member changed before authenticated request/)
+
+  assert.equal(state.calls.destroys, 1)
+  assert.equal(state.calls.invalidations, 1)
+  assert.equal(state.api.debugSnapshot(), null)
+})
+
 test('token body parsing revalidates the captured owner identity', async () => {
   let releaseBody
   let bodyStartedResolve

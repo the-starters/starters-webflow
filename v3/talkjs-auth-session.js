@@ -668,13 +668,14 @@
         if (openingGeneration !== generation) {
           throw identityError('TalkJS session is no longer current')
         }
-        if (initialToken) {
-          var token = initialToken
-          initialToken = null
-          return token
-        }
         try {
           requestOptions.ownerState = sessionOwnerState
+          if (initialToken) {
+            await validateCapturedIdentity(requestOptions, sessionOwnerState)
+            var token = initialToken
+            initialToken = null
+            return token
+          }
           var refreshed = await requestToken(requestOptions)
           if (refreshed.appId !== expectedAppId) {
             throw identityError('TalkJS application changed during refresh')

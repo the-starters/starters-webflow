@@ -1006,7 +1006,7 @@
         onInvalidate: () => {
           if (messagesGeneration === openingGeneration) messagesGeneration += 1
         },
-        onReconnect: mountMessages,
+        onReconnect: mountWithFailureHandling,
       })
       if (messagesGeneration !== openingGeneration) return
       const inbox = session.createInbox({
@@ -1038,8 +1038,8 @@
     }
   }
 
-  function start() {
-    mountMessages().catch((error) => {
+  function mountWithFailureHandling() {
+    return mountMessages().catch((error) => {
       console.error('[messages-3.0] Unable to mount TalkJS inbox', error)
       if (
         error &&
@@ -1051,6 +1051,10 @@
       }
       renderTalkJsFailure(document.getElementById('talkjs-container'))
     })
+  }
+
+  function start() {
+    mountWithFailureHandling()
   }
 
   if (document.readyState === 'loading') {

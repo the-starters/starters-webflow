@@ -513,6 +513,32 @@ test('a stale mount failure cannot replace the reconnected inbox', async () => {
   assert.equal(loaded.container.children.length, 0)
 })
 
+test('a reconnect mount failure uses the normal Messages failure UI', async () => {
+  let mountAttempt = 0
+  const loaded = loadMessages({
+    onMount: () => {
+      mountAttempt += 1
+      if (mountAttempt === 2) throw new Error('replacement mount failed')
+    },
+  })
+  await settle()
+
+  const firstLifecycle = loaded.calls.authSessions[0]
+  firstLifecycle.onInvalidate()
+  await firstLifecycle.onReconnect()
+  await settle()
+
+  assert.equal(loaded.calls.mounted.length, 2)
+  assert.deepEqual(loaded.errors, [
+    '[messages-3.0] Unable to mount TalkJS inbox Error: replacement mount failed',
+  ])
+  assert.equal(loaded.container.children.length, 1)
+  assert.equal(
+    loaded.container.children[0].attributes['data-starters-messages-error'],
+    '',
+  )
+})
+
 test('?conversation= selects that existing conversation without mutating it', async () => {
   const conversationId = 'one:mem_me|mem_other'
   const { calls } = loadMessages({

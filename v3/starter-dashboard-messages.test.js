@@ -210,9 +210,11 @@ function loadRenderedRecent(recent, unreads = [], options = {}) {
   const template = makeCard()
   list = {
     style: {},
-    children: [],
+    children: [template],
     querySelector: (selector) =>
-      selector === TEMPLATE_SELECTOR ? template : null,
+      selector === TEMPLATE_SELECTOR && list.children.includes(template)
+        ? template
+        : null,
     querySelectorAll() {
       return this.children.slice()
     },
@@ -458,6 +460,34 @@ test('session invalidation clears cards and blocks stale request repaint', async
   await settle()
   assert.equal(state.list.children.length, 0)
   assert.equal(state.total.textContent, '0')
+})
+
+test('same-member reconnect reuses the preserved dashboard template', async () => {
+  const state = loadRenderedRecent({
+    id: 'one:mem_me|mem_other',
+    participant_name: 'Reconnected Brand',
+    participant_photo_url: null,
+    last_message_text: 'Protected preview',
+    last_message_at: 1,
+    unread: false,
+  })
+  await settle()
+
+  assert.equal(state.list.children.length, 1)
+  const firstLifecycle = state.calls.authSessions[0]
+  firstLifecycle.onInvalidate()
+  assert.equal(state.list.children.length, 0)
+
+  await firstLifecycle.onReconnect()
+  await settle()
+
+  assert.equal(state.calls.authSessions.length, 2)
+  assert.equal(state.calls.fetches, 2)
+  assert.equal(state.list.children.length, 1)
+  assert.equal(
+    state.list.children[0].fields.name.textContent,
+    'Reconnected Brand',
+  )
 })
 
 test('owner switch after response clears and rejects stale message cards', async () => {

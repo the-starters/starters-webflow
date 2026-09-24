@@ -637,10 +637,16 @@
     })
   }
 
+  let mountedInstances = null
+
   async function mountTile() {
-    const instances = findWrappers()
+    const collectedInstances = findWrappers()
       .map(collectInstanceRefs)
       .filter(Boolean)
+    if (collectedInstances.length) mountedInstances = collectedInstances
+    const instances = collectedInstances.length
+      ? collectedInstances
+      : mountedInstances || []
     if (!instances.length) return
 
     instances.forEach((refs) => {
