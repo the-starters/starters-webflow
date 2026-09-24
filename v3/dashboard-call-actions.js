@@ -16,6 +16,68 @@
   const XANO_SCHEDULING_BASE =
     'https://x08a-5ko8-jj1r.n7c.xano.io/api:tCpV3oqd'
 
+  const canonicalClocks = new WeakMap()
+  function monotonicNow() {
+    try {
+      const value = global.performance && global.performance.now()
+      return Number.isFinite(value) && value >= 0 ? value : null
+    } catch (_error) { return null }
+  }
+
+  function wallNow() {
+    const value = Date.now()
+    return Number.isFinite(value) ? value : null
+  }
+
+  function bindCanonicalClock(rows, requestStarted, requestWallStarted) {
+    if (!Array.isArray(rows)) return false
+    rows.forEach(function (row) { if (row && typeof row === 'object') canonicalClocks.delete(row) })
+    if (rows.length === 0) return true
+    const stamp = rows[0] && rows[0].server_now_ms
+    const received = monotonicNow()
+    const wallReceived = wallNow()
+    if (!Number.isSafeInteger(stamp) || stamp <= 0 ||
+      !Number.isFinite(requestStarted) || requestStarted < 0 ||
+      received == null || received < requestStarted || wallReceived == null ||
+      !rows.every(function (row) { return row && row.server_now_ms === stamp })) return false
+    const wallStarted = Number.isFinite(requestWallStarted) ? requestWallStarted : wallReceived
+    const elapsed = Math.max(received - requestStarted, Math.max(0, wallReceived - wallStarted))
+    const clock = {
+      stamp,
+      started: requestStarted,
+      wallStarted,
+      lastMonotonic: received,
+      lastCanonical: stamp + elapsed,
+      valid: true,
+    }
+    rows.forEach(function (row) { canonicalClocks.set(row, clock) })
+    return true
+  }
+
+  function canonicalNow(booking) {
+    const clock = booking && canonicalClocks.get(booking)
+    const current = monotonicNow()
+    const wallCurrent = wallNow()
+    if (!clock || !clock.valid) return null
+    if (current == null || wallCurrent == null || current < clock.lastMonotonic) {
+      clock.valid = false
+      return null
+    }
+    clock.lastMonotonic = current
+    const elapsed = Math.max(
+      current - clock.started,
+      Math.max(0, wallCurrent - clock.wallStarted),
+    )
+    clock.lastCanonical = Math.max(clock.lastCanonical, clock.stamp + elapsed)
+    return clock.lastCanonical
+  }
+
+  function rescheduleWindowOpen(booking) {
+    const reference = canonicalNow(booking)
+    const start = Number(booking && (booking.status === 'rescheduled' ? booking.start_old : booking.start))
+    return reference != null && Number.isFinite(start) && start - reference > 8 * 3600000
+  }
+
   const KINDS = {
     decline: {
       path: '/booking/decline/v3',
@@ -175,7 +237,6 @@
   function canProposeReschedule(role, booking, now) {
     const start = Number(booking && booking.start)
     const duration = Number(booking && booking.duration)
-    const reference = Number.isFinite(Number(now)) ? Number(now) : Date.now()
     return (
       (role === 'starter' || role === 'brand') &&
       freeBooking(booking) &&
@@ -185,7 +246,7 @@
       Number.isFinite(duration) &&
       duration > 0 &&
       Number.isFinite(start) &&
-      start > reference &&
+      rescheduleWindowOpen(booking) &&
       bookingIdentified(booking)
     )
   }
@@ -238,14 +299,19 @@
     )
   }
 
+  function canConfirmReschedule(role, booking) {
+    const reference = canonicalNow(booking)
+    return canRespondReschedule(role, booking) && rescheduleWindowOpen(booking) &&
+      reference != null && Number(booking.start) > reference
+  }
+
   function canAct(kind, role, booking, now) {
     if (kind === 'decline') return canDecline(role, booking)
     if (kind === 'cancel') return canCancel(role, booking, now)
     if (kind === 'reschedule-propose') return canProposeReschedule(role, booking, now)
     if (kind === 'reschedule-request') return canRequestReschedule(role, booking, now)
-    if (kind === 'reschedule-confirm' || kind === 'reschedule-decline') {
-      return canRespondReschedule(role, booking)
-    }
+    if (kind === 'reschedule-confirm') return canConfirmReschedule(role, booking)
+    if (kind === 'reschedule-decline') return canRespondReschedule(role, booking)
     return false
   }
 
@@ -1207,6 +1273,7 @@
   ) {
     const container = modal && modal.querySelector('[booking-reschedule-calendar]')
     if (!container) return false
+    if (!rescheduleKindFor(role, booking)) return false
     const bookingId = clean(booking && booking.booking_id)
     const mountToken = {}
     modal.__startersRescheduleCalendarToken = mountToken
@@ -1224,6 +1291,7 @@
     if (!authoredLoader) container.textContent = 'Loading available times...'
     const calendarModule = await loadCalendarModule(document)
     if (!isCurrent()) return false
+    if (!rescheduleKindFor(role, booking)) { showCalendarLoader(modal, false); return false }
     if (!calendarModule) {
       showCalendarLoader(modal, false)
       container.textContent = 'The calendar could not load. Please try again.'
@@ -1247,7 +1315,8 @@
         // The booking decides the contract, and with it the failure copy and
         // the success view: a pending request lands on "time updated", not on
         // "waiting for the other participant".
-        const kind = rescheduleKindFor(role, booking) || 'reschedule-propose'
+        const kind = rescheduleKindFor(role, booking)
+        if (!kind) return null
         const config = KINDS[kind]
         let result
         try {
@@ -1506,6 +1575,10 @@
     canDecline,
     counterpartName,
     fillCounterpartPlaceholders,
+    bindCanonicalClock,
+    canonicalNow,
+    monotonicNow,
+    canConfirmReschedule,
     canProposeReschedule,
     canRequestReschedule,
     rescheduleKindFor,

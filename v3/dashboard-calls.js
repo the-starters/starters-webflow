@@ -361,10 +361,17 @@
   }
 
   function normalizeBooking(booking) {
-    return Object.assign({}, booking, {
+    const row = Object.assign({}, booking, {
       start: normalizeTimestamp(booking && booking.start),
       end: normalizeTimestamp(booking && booking.end),
     })
+    if (booking && Object.prototype.hasOwnProperty.call(booking, 'start_old')) {
+      row.start_old = normalizeTimestamp(booking.start_old)
+    }
+    if (booking && Object.prototype.hasOwnProperty.call(booking, 'end_old')) {
+      row.end_old = normalizeTimestamp(booking.end_old)
+    }
+    return row
   }
 
   function bookingStatus(booking, now) {
@@ -421,7 +428,8 @@
     }
     return current.every(function (booking, index) {
       try {
-        return JSON.stringify(booking) === JSON.stringify(next[index])
+        const withoutClock = function (key, value) { return key === 'server_now_ms' ? undefined : value }
+        return JSON.stringify(booking, withoutClock) === JSON.stringify(next[index], withoutClock)
       } catch (_error) {
         return false
       }
@@ -1428,8 +1436,11 @@
         const respondReschedule =
           (action === 'confirm-reschedule' || action === 'reschedule-decline') &&
           validDashboardModule(global.StartersDashboardCallActions) &&
-          typeof global.StartersDashboardCallActions.canRespondReschedule === 'function' &&
-          global.StartersDashboardCallActions.canRespondReschedule(role, booking)
+          (action === 'confirm-reschedule'
+            ? typeof global.StartersDashboardCallActions.canConfirmReschedule === 'function' &&
+              global.StartersDashboardCallActions.canConfirmReschedule(role, booking)
+            : typeof global.StartersDashboardCallActions.canRespondReschedule === 'function' &&
+              global.StartersDashboardCallActions.canRespondReschedule(role, booking))
         const media =
           action === 'notetaker-media' &&
           validDashboardModule(global.StartersDashboardCallMedia) &&
@@ -2371,10 +2382,29 @@
     })
   }
 
+  const bookingClockRequests = new WeakMap()
+  function bindBookingClocks(rows) {
+    const actions = global.StartersDashboardCallActions
+    if (!actions || typeof actions.bindCanonicalClock !== 'function') return
+    const groups = new Map()
+    rows.forEach(function (row) {
+      const request = bookingClockRequests.get(row)
+      if (!request) { actions.bindCanonicalClock([row], null); return }
+      if (!groups.has(request)) groups.set(request, [])
+      groups.get(request).push(row)
+    })
+    groups.forEach(function (group, request) {
+      actions.bindCanonicalClock(group, request.started, request.wallStarted)
+    })
+  }
+
   async function fetchBookings(memberId) {
     if (typeof global.xanoAuthFetch !== 'function') {
       throw new Error('Scheduling authentication bridge unavailable')
     }
+    let requestStarted = null
+    try { requestStarted = global.performance && global.performance.now() } catch (_error) {}
+    const clockRequest = {started: requestStarted, wallStarted: Date.now()}
     const response = await global.xanoAuthFetch(
       XANO_SCHEDULING_BASE + BOOKINGS_PATH,
       {
@@ -2389,7 +2419,13 @@
     if (!response.ok || !Array.isArray(body)) {
       throw new Error('Canonical bookings request failed')
     }
-    return body.map(normalizeBooking)
+    const rows = body.map(normalizeBooking)
+    const stamp = rows[0] && rows[0].server_now_ms
+    if (rows.every(function (row) { return row.server_now_ms === stamp })) {
+      rows.forEach(function (row) { bookingClockRequests.set(row, clockRequest) })
+      bindBookingClocks(rows)
+    }
+    return rows
   }
 
   function wireBookingActions(refs, role, restart) {
@@ -2558,7 +2594,17 @@
       if (generation !== currentGeneration()) return
       refs.forEach(function (section) {
         const nextRows = sectionBookings(rows, role, section.name)
-        if (preserveExisting && sameBookingRows(section.rows, nextRows)) return
+        if (preserveExisting && sameBookingRows(section.rows, nextRows)) {
+          section.rows.forEach(function (row, index) {
+            const next = nextRows[index]
+            row.server_now_ms = next.server_now_ms
+            bookingClockRequests.delete(row)
+            const request = bookingClockRequests.get(next)
+            if (request) bookingClockRequests.set(row, request)
+          })
+          bindBookingClocks(section.rows)
+          return
+        }
         const previousRendered = preserveExisting ? section.rendered : 0
         section.rows = nextRows
         renderSection(section, role, true)
@@ -2707,6 +2753,7 @@
         return populateDetailModal(modal, booking, role, undefined, content)
       },
       onAvailable: function () {
+        bindBookingClocks(refs.flatMap(function (section) { return section.rows || [] }))
         refreshDetailExpiration(refs, role)
       },
     }
@@ -2734,6 +2781,7 @@
     refreshDetailExpiration,
     startRequestExpirationTicker,
     refreshSession,
+    bindBookingClocks,
     canConfirmBooking,
     statusLabel,
     statusVariantClass,

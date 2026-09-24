@@ -4803,6 +4803,8 @@ test('reschedule responses refresh receipt and base without retaining proposal-o
     modal.appendChild(base)
     actions.ensureRescheduleViews(document, modal)
     const booking = { booking_id: 'accept-' + role, config_id: 'config', data_environment: 'test', status: 'rescheduled', rescheduled_by: role === 'brand' ? 'starter' : 'brand', start: Date.now() + 172800000, end: Date.now() + 174600000, start_old: Date.now() + 86400000, duration: 30, price: 0, is_paid: false, brand_data: { memberstack_id: 'mem-brand', timezone: 'UTC' }, starter_data: { memberstack_id: 'mem-starter', timezone: 'Asia/Manila' } }
+    booking.server_now_ms = Date.now()
+    actions.bindCanonicalClock([booking], actions.monotonicNow())
     api.populateDetailModal(modal, booking, role)
     const receipt = modal.querySelector('[booking-popup-content="' + (kind === 'confirm' ? 'reschedule-accepted' : 'reschedule-declined') + '"]')
     assert.ok(receipt.querySelector('[data-starters-call-summary-row="start-date-old"]'))
@@ -4853,5 +4855,130 @@ test('reschedule responses refresh receipt and base without retaining proposal-o
     assert.equal(receipt.querySelector('[data-starters-call-summary-row="start-date-old"]'), null)
     assert.equal(base.querySelector('[data-starters-call-summary-row="start-date-old"]'), null)
     assert.equal(receipt.hidden, false)
+  }
+})
+
+
+test('canonical reschedule originals normalize seconds without losing clock metadata', () => {
+  const row=api.normalizeBooking({start:1800090000,end:1800091800,start_old:1800086400,end_old:1800088200,server_now_ms:1800000000000})
+  assert.equal(row.start_old,1800086400000)
+  assert.equal(row.end_old,1800088200000)
+  assert.equal(row.server_now_ms,1800000000000)
+})
+test('clock-only refresh preserves rendered row identity comparisons', () => {
+  const a={booking_id:'clock',start:1800090000000,server_now_ms:1800000000000}
+  assert.equal(api.sameBookingRows([a],[{...a,server_now_ms:1800000001000}]),true)
+  assert.equal(api.sameBookingRows([a],[{...a,start:a.start+1,server_now_ms:1800000001000}]),false)
+})
+
+const F12_SERVER_NOW = 1800000000000
+function f12ClockRow(stamp = F12_SERVER_NOW) {
+  const row = {
+    booking_id: 'f12-clock-booking', config_id: 'f12-config',
+    data_environment: 'test', status: 'confirmed', paid_meeting: false,
+    grant_id: 'f12-grant', duration: 30,
+    start: F12_SERVER_NOW + 8 * 3600000 + 5000,
+    end: F12_SERVER_NOW + 8 * 3600000 + 1805000,
+    brand_data: { memberstack_id: 'brand-f12' },
+    starter_data: { memberstack_id: 'starter-f12' },
+  }
+  if (stamp != null) row.server_now_ms = stamp
+  return row
+}
+function f12ClockRefs() {
+  const list = element()
+  let appendCount = 0
+  list.appendChild = () => { appendCount++ }
+  return {
+    refs: {
+      name: 'calls', filter: 'all', rows: [], rendered: 0,
+      list, template: element(), loader: element(), empty: element(),
+      loadMore: element(), filters: element(), count: element(), section: element(),
+    },
+    appendCount: () => appendCount,
+  }
+}
+
+test('F12 canonical clock binds whether the action module loads before or after the authenticated read', async () => {
+  const actions = require('./dashboard-call-actions.js')
+  const original = {
+    document: global.document, fetch: global.xanoAuthFetch,
+    actions: global.StartersDashboardCallActions,
+    performance: Object.getOwnPropertyDescriptor(global, 'performance'),
+    wallNow: Date.now,
+  }
+  let mono = 100
+  try {
+    Object.defineProperty(global, 'performance', { configurable: true, value: { now: () => mono } })
+    Date.now = () => F12_SERVER_NOW
+    global.document = { documentElement: element(), querySelector: () => null, addEventListener() {} }
+    global.xanoAuthFetch = async () => ({ ok: true, json: async () => [f12ClockRow()] })
+    const memberstack = { getCurrentMember: async () => ({ id: 'brand-f12' }) }
+    for (const moduleFirst of [true, false]) {
+      const { refs } = f12ClockRefs()
+      global.StartersDashboardCallActions = moduleFirst ? actions : undefined
+      assert.equal(await api.refreshSession(memberstack, [refs], 'brand', 1, () => 1, false), true)
+      assert.equal(refs.rows.length, 1)
+      assert.equal(actions.canProposeReschedule('brand', refs.rows[0]), moduleFirst)
+      if (!moduleFirst) {
+        global.StartersDashboardCallActions = actions
+        await api.wireDashboardCallModules({
+          document: global.document, getBooking: () => null,
+          onAvailable(_module, key) {
+            if (key === 'actions') api.bindBookingClocks(refs.rows)
+          },
+        })
+        assert.equal(actions.canProposeReschedule('brand', refs.rows[0]), true)
+      }
+      mono += 100
+    }
+  } finally {
+    global.document = original.document
+    global.xanoAuthFetch = original.fetch
+    global.StartersDashboardCallActions = original.actions
+    Object.defineProperty(global, 'performance', original.performance)
+    Date.now = original.wallNow
+  }
+})
+
+test('F12 clock-only refresh retains the rendered row and replaces or invalidates its binding', async () => {
+  const actions = require('./dashboard-call-actions.js')
+  const original = {
+    document: global.document, fetch: global.xanoAuthFetch,
+    actions: global.StartersDashboardCallActions,
+    performance: Object.getOwnPropertyDescriptor(global, 'performance'),
+    wallNow: Date.now,
+  }
+  let mono = 100
+  let stamp = F12_SERVER_NOW
+  const view = f12ClockRefs()
+  const memberstack = { getCurrentMember: async () => ({ id: 'brand-f12' }) }
+  try {
+    Object.defineProperty(global, 'performance', { configurable: true, value: { now: () => mono } })
+    Date.now = () => F12_SERVER_NOW
+    global.document = { documentElement: element(), querySelector: () => null }
+    global.StartersDashboardCallActions = actions
+    global.xanoAuthFetch = async () => ({ ok: true, json: async () => [f12ClockRow(stamp)] })
+    assert.equal(await api.refreshSession(memberstack, [view.refs], 'brand', 1, () => 1, false), true)
+    const retained = view.refs.rows[0]
+    const painted = view.appendCount()
+    assert.equal(actions.canonicalNow(retained), F12_SERVER_NOW)
+    mono = 1100
+    stamp = F12_SERVER_NOW + 1000
+    assert.equal(await api.refreshSession(memberstack, [view.refs], 'brand', 1, () => 1, false, { preserveExisting: true }), true)
+    assert.equal(view.refs.rows[0], retained)
+    assert.equal(view.appendCount(), painted)
+    assert.equal(actions.canonicalNow(retained), F12_SERVER_NOW + 1000)
+    stamp = null
+    assert.equal(await api.refreshSession(memberstack, [view.refs], 'brand', 1, () => 1, false, { preserveExisting: true }), true)
+    assert.equal(view.refs.rows[0], retained)
+    assert.equal(actions.canonicalNow(retained), null)
+    assert.equal(actions.canProposeReschedule('brand', retained), false)
+  } finally {
+    global.document = original.document
+    global.xanoAuthFetch = original.fetch
+    global.StartersDashboardCallActions = original.actions
+    Object.defineProperty(global, 'performance', original.performance)
+    Date.now = original.wallNow
   }
 })
