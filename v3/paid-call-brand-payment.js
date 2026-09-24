@@ -487,9 +487,14 @@
     if (!configId || !grantId || !Number.isInteger(duration) || duration <= 0) {
       throw new Error('A valid paid-call service is required')
     }
+    const confirmedReschedule = config.mode === 'confirmed_reschedule'
+    const bookingId = String((config && config.booking_id) || '').trim()
+    if (confirmedReschedule && !bookingId) {
+      throw new Error('A confirmed booking is required for reschedule availability')
+    }
     const start =
       Math.floor(Number(nowMs === undefined ? Date.now() : nowMs) / 1000) +
-      minimumBookingNoticeMinutes(config) * 60
+      (confirmedReschedule ? 1 : minimumBookingNoticeMinutes(config) * 60)
     const end = start + 14 * 24 * 60 * 60
     const query = new URLSearchParams({
       grant_id: grantId,
@@ -498,12 +503,13 @@
       end_time: String(end),
       region: 'us',
     })
-    const bookingId = String((config && config.booking_id) || '').trim()
     if (bookingId) query.set('booking_id', bookingId)
+    if (confirmedReschedule) query.set('mode', 'confirmed_reschedule')
     return AVAILABILITY_PATH + '?' + query.toString()
   }
 
   function normalizeAvailabilitySlots(result, config, nowMs) {
+    const confirmedReschedule = config && config.mode === 'confirmed_reschedule'
     const durationMs = Number(config && config.duration) * 60 * 1000
     const resolvedNowMs = Number(nowMs === undefined ? Date.now() : nowMs)
     const minimumStartMs = (
@@ -516,7 +522,9 @@
       const startSeconds = Number(slot && slot.start_time)
       const endSeconds = Number(slot && slot.end_time)
       const start = startSeconds * 1000
-      const end = Number.isFinite(endSeconds) && endSeconds > startSeconds
+      const end = confirmedReschedule
+        ? endSeconds * 1000
+        : Number.isFinite(endSeconds) && endSeconds > startSeconds
         ? endSeconds * 1000
         : start + durationMs
       return { start, end }
@@ -524,7 +532,9 @@
       return Number.isFinite(slot.start) &&
         Number.isFinite(slot.end) &&
         slot.end > slot.start &&
-        slot.start >= minimumStartMs
+        (confirmedReschedule
+          ? slot.start > resolvedNowMs && slot.end - slot.start === durationMs
+          : slot.start >= minimumStartMs)
     }).sort(function (a, b) {
       return a.start - b.start
     })

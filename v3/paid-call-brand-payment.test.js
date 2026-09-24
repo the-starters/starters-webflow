@@ -876,6 +876,50 @@ test('Paid initial booking uses the production 8-hour floor and the exact stagin
   assert.equal(loadBrowserApi().minimumBookingNoticeMinutes(), 480)
 })
 
+test('confirmed availability is booking-bound and accepts exact future full-day intervals without notice', async () => {
+  const now = Date.UTC(2026, 8, 24, 0, 0, 0)
+  const nowSeconds = now / 1000
+  const config = { config_id: 'config_free', grant_id: 'grant_test', duration: 30,
+    booking_id: 'booking_confirmed', mode: 'confirmed_reschedule' }
+  const requests = []
+  const startTimes = [nowSeconds - 1, nowSeconds, nowSeconds + 1,
+    nowSeconds + 30 * 60, nowSeconds + 23.5 * 60 * 60]
+  for (const host of ['thestarters.com', 'the-starters-3-0.webflow.io']) {
+    const browserApi = loadBrowserApi(host, async (url, options) => {
+      requests.push({ url: new URL(url), options })
+      return response({ time_slots: [
+        ...startTimes.map(start => ({ start_time: start, end_time: start + 30 * 60 })),
+        { start_time: nowSeconds + 60 },
+        { start_time: nowSeconds + 60, end_time: nowSeconds + 60 },
+        { start_time: nowSeconds + 60, end_time: nowSeconds + 31 * 60 + 1 },
+      ] })
+    })
+    for (const reference of [now, now + 999]) {
+      const slots = await browserApi.getPaidAvailability(config, reference)
+      const request = requests.at(-1)
+      assert.equal(request.options.method, 'GET')
+      assert.equal(request.url.searchParams.get('mode'), 'confirmed_reschedule')
+      assert.equal(request.url.searchParams.get('booking_id'), config.booking_id)
+      assert.equal(request.url.searchParams.get('start_time'), String(nowSeconds + 1))
+      assert.equal(request.url.searchParams.get('end_time'), String(nowSeconds + 1 + 14 * 86400))
+      assert.deepEqual(JSON.parse(JSON.stringify(slots)), startTimes.slice(2).map(start => ({
+        start: start * 1000, end: (start + 30 * 60) * 1000,
+      })))
+    }
+    const before = requests.length
+    await assert.rejects(browserApi.getPaidAvailability({ ...config, booking_id: '' }, now), /confirmed booking/)
+    assert.equal(requests.length, before)
+    const ordinary = new URL('https://example.test' + browserApi.availabilityQuery({
+      config_id: config.config_id, grant_id: config.grant_id, duration: config.duration,
+    }, now))
+    assert.equal(ordinary.searchParams.has('mode'), false)
+    const pending = new URL('https://example.test' + browserApi.availabilityQuery({ ...config, mode: undefined }, now))
+    assert.equal(pending.searchParams.has('mode'), false)
+    assert.equal(pending.searchParams.get('start_time'), String(nowSeconds +
+      (host === 'thestarters.com' ? 24 * 60 * 60 : 5 * 60)))
+  }
+})
+
 test('paid availability fails closed before a request when service identity is incomplete', () => {
   assert.throws(
     () => api.availabilityQuery({ config_id: 'config_paid', duration: 15 }),

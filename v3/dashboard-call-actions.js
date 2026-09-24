@@ -1294,7 +1294,8 @@
     if (!authoredLoader) container.textContent = 'Loading available times...'
     const calendarModule = await loadCalendarModule(document)
     if (!isCurrent()) return false
-    if (!rescheduleKindFor(role, booking)) { showCalendarLoader(modal, false); return false }
+    const calendarKind = rescheduleKindFor(role, booking)
+    if (!calendarKind) { showCalendarLoader(modal, false); return false }
     if (!calendarModule) {
       showCalendarLoader(modal, false)
       container.textContent = 'The calendar could not load. Please try again.'
@@ -1309,6 +1310,7 @@
         config_id: clean(booking && booking.config_id),
         grant_id: clean(booking && booking.grant_id),
         duration: Number(booking && booking.duration),
+        ...(calendarKind === 'reschedule-propose' ? { mode: 'confirmed_reschedule' } : {}),
       },
       confirmText: 'Propose new time',
       isCurrent,
