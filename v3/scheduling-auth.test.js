@@ -174,6 +174,20 @@ test('installs on valid Hire profiles, canonical dashboards, and Edit Profile ac
   }
 })
 
+test('installs on the V2 production Messages page only, for the signed TalkJS session', () => {
+  for (const hostname of ['hirethestarters.com', 'www.hirethestarters.com']) {
+    const nativeFetch = async () => response({})
+    const { window } = loadBridge(nativeFetch, { hostname, pathname: '/messages' })
+    assert.equal(window.__tsSchedulingAuthBridgeOwner, 'scheduling-auth')
+    assert.equal(typeof window.getXanoAuthToken, 'function')
+    for (const pathname of ['/', '/brand-dashboard', '/hire/jp-dionisio', '/messages/extra']) {
+      const other = loadBridge(async () => response({}), { hostname, pathname })
+      assert.equal(other.window.__tsSchedulingAuthBridgeOwner, undefined)
+      assert.equal(other.window.getXanoAuthToken, undefined)
+    }
+  }
+})
+
 test('authorized scheduling requests pass through without Memberstack', async () => {
   const requests = []
   const nativeFetch = async (request) => {

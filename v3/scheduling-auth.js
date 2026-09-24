@@ -9,6 +9,11 @@
     '/messages',
     '/starter-edit-profile',
   ])
+  // The retained V2 site shares the live TalkJS app. Its Messages page needs
+  // this bridge only so the shared TalkJS session owner can obtain a signed
+  // user token (F05). No other V2 path installs it.
+  const V2_PRODUCTION_HOSTS = new Set(['hirethestarters.com', 'www.hirethestarters.com'])
+  const V2_PRODUCTION_PATHS = new Set(['/messages'])
   const BLOCKED_PRODUCTION_PATHS = new Set(['/hire/jp-dionisio'])
   const XANO_ORIGIN = 'https://x08a-5ko8-jj1r.n7c.xano.io'
   const API_PREFIX = '/api:tCpV3oqd/'
@@ -25,7 +30,10 @@
     installBlockedRoute()
     return
   }
-  if (!isStagingHost && !isApprovedProductionPath) return
+  const isApprovedV2Path =
+    V2_PRODUCTION_HOSTS.has(window.location.hostname) &&
+    V2_PRODUCTION_PATHS.has(activePath)
+  if (!isStagingHost && !isApprovedProductionPath && !isApprovedV2Path) return
   const legacyBridgeInstalled =
     window.__tsSchedulingAuthBridgeOwner === 'opportunities-3.0'
   if (
