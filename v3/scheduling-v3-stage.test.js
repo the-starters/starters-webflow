@@ -543,6 +543,8 @@ test('keeps the protected production Test profile inert with both synchronous sc
   assert.equal(attributes['data-scheduling-v3-stage'], 'disabled')
   const blocked = await window.fetch(`${API_BASE}nylas_configurations/get_all`)
   assert.equal(blocked.status, 410)
+  const blockedTalkJs = await window.fetch(`${API_BASE}talkjs/user-token/v3`)
+  assert.equal(blockedTalkJs.status, 410)
   assert.equal(requests.length, 0)
 })
 
@@ -1032,13 +1034,12 @@ test('fails closed when the scheduling auth bridge is missing', async () => {
   assert.equal(nativeRequests.length, 0)
 })
 
-test('passes signed TalkJS routes through untouched on dashboards, Hire profiles and the inert profile', async () => {
+test('passes signed TalkJS routes through untouched on dashboards and Hire profiles', async () => {
   const cases = [
     { hostname: 'www.thestarters.com', pathname: '/starter-dashboard' },
     { hostname: 'thestarters.com', pathname: '/brand-dashboard' },
     { hostname: 'www.thestarters.com', pathname: '/hire/jp-testiz-d' },
     { hostname: 'the-starters-3-0.webflow.io', pathname: '/hire/test-starter' },
-    { hostname: 'www.thestarters.com', pathname: '/hire/jp-dionisio' },
   ]
   for (const options of cases) {
     const stage = loadStage(options)

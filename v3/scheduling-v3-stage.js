@@ -159,7 +159,7 @@
     window.fetch = async function (input, init) {
       const request = new Request(input, init)
       const scheduling = schedulingRoute(request)
-      if (!scheduling || PASSTHROUGH_ROUTES.has(scheduling.route)) return originalFetch(request)
+      if (!scheduling) return originalFetch(request)
       return new Response(
         JSON.stringify({
           code: 'SCHEDULING_V3_ROUTE_DISABLED',
