@@ -185,7 +185,6 @@ test('creates one signed session with exact member and app mapping', async () =>
   assert.equal(session, state.calls.sessions[0] && session)
   assert.deepEqual(JSON.parse(JSON.stringify(state.api.debugSnapshot())), {
     appId: 'test-app',
-    memberId: 'mem_sb_membera',
     environment: 'test',
     clientOwners: ['messages-v3'],
   })
@@ -597,7 +596,7 @@ test('same-member cookie rotation closes and reconnects the signed session', asy
   assert.equal(state.calls.destroys, 1)
   assert.equal(state.calls.reconnects, 1)
   assert.equal(state.calls.sessions.length, 2)
-  assert.equal(state.api.debugSnapshot().memberId, 'mem_sb_membera')
+  assert.equal(state.api.debugSnapshot().appId, 'test-app')
   assert.notEqual(await open(state), session)
 })
 
@@ -668,7 +667,7 @@ test('changed cookie closes immediately then reconnects after identity resolves'
   resolveMember({ data: { id: 'mem_sb_membera' } })
   await reconciliation
   assert.equal(state.calls.reconnects, 1)
-  assert.equal(state.api.debugSnapshot().memberId, 'mem_sb_membera')
+  assert.equal(state.api.debugSnapshot().appId, 'test-app')
 })
 
 test('changed cookie resolves from error to a different identity', async () => {
@@ -839,7 +838,7 @@ test('same-member auth notification reconnects a pending opening', async () => {
   assert.equal(state.calls.invalidations, 1)
   assert.equal(state.calls.reconnects, 1)
   assert.equal(state.calls.sessions.length, 1)
-  assert.equal(state.api.debugSnapshot().memberId, 'mem_sb_membera')
+  assert.equal(state.api.debugSnapshot().appId, 'test-app')
 })
 
 test('cookie rotation after an early auth callback supersedes opening', async () => {
@@ -1011,10 +1010,12 @@ test('one transient failure retries without changing identity', async () => {
   assert.equal(state.calls.xanoTokens, 2)
 })
 
-test('debug state contains no bearer or TalkJS token', async () => {
+test('debug state exposes no member id or authentication tokens', async () => {
   const state = harness()
   await open(state)
-  const serialized = JSON.stringify(state.api.debugSnapshot())
+  const snapshot = state.api.debugSnapshot()
+  const serialized = JSON.stringify(snapshot)
+  assert.deepEqual(Object.keys(snapshot).sort(), ['appId', 'clientOwners', 'environment'])
   assert.doesNotMatch(serialized, /xano-bearer|synthetic-signature|token/i)
 })
 
@@ -1318,12 +1319,12 @@ test('stale authorization cannot destroy a reconnected session', async () => {
   assert.equal(state.calls.destroys, 1)
   assert.equal(state.calls.reconnects, 1)
   assert.equal(state.calls.sessions.length, 2)
-  assert.equal(state.api.debugSnapshot().memberId, 'mem_sb_membera')
+  assert.equal(state.api.debugSnapshot().appId, 'test-app')
 
   releaseAuthorization()
   await assert.rejects(authorization, /no longer current/)
   assert.equal(state.calls.destroys, 1)
-  assert.equal(state.api.debugSnapshot().memberId, 'mem_sb_membera')
+  assert.equal(state.api.debugSnapshot().appId, 'test-app')
 })
 
 test('nonparticipant C cannot accept an A/B conversation receipt', async () => {

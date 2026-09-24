@@ -720,7 +720,6 @@
     if (!active) return null
     return {
       appId: active.appId,
-      memberId: active.memberId,
       environment: active.environment,
       clientOwners: Object.keys(active.clientOwners).sort(),
     }
