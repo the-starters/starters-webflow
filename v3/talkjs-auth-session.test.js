@@ -621,6 +621,29 @@ test('active session reuse refuses a different current cookie', async () => {
   assert.equal(state.api.debugSnapshot(), null)
 })
 
+test('active reuse revalidates the cookie after reading the member', async () => {
+  const state = harness()
+  await open(state, {
+    onInvalidate: () => {
+      state.calls.invalidations += 1
+    },
+  })
+  state.memberLookup(() => {
+    state.memberstackCookie('memberstack-cookie-b')
+    return { data: { id: 'mem_sb_membera' } }
+  })
+
+  await assert.rejects(
+    open(state, { clientOwner: 'messages-profile-v3' }),
+    /Member changed before authenticated request/,
+  )
+
+  assert.equal(state.calls.sessions.length, 1)
+  assert.equal(state.calls.destroys, 1)
+  assert.equal(state.calls.invalidations, 1)
+  assert.equal(state.api.debugSnapshot(), null)
+})
+
 test('changed cookie closes immediately then reconnects after identity resolves', async () => {
   const state = harness()
   let resolveMember

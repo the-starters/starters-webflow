@@ -135,6 +135,7 @@
   var pendingIdentity = null
   var chatMounted = false
   var chatOpening = false
+  var chatOpeningGeneration = null
   var chatReconnectQueued = false
   var chatGeneration = 0
 
@@ -658,6 +659,7 @@
 
     chatOpening = true
     var openingGeneration = chatGeneration
+    chatOpeningGeneration = openingGeneration
     try {
       var state = viewer.resolved ? viewer : await resolveViewer()
 
@@ -689,6 +691,15 @@
         member: state.member,
         me: me,
         clientOwner: 'messages-profile-v3',
+        onInvalidate: function () {
+          chatGeneration += 1
+          chatMounted = false
+          chatOpening = false
+          chatOpeningGeneration = null
+          chatReconnectQueued = false
+          viewer = { resolved: false, member: null, role: null, guarded: false }
+          emptyContainer(container)
+        },
         onReconnect: function () {
           chatGeneration += 1
           chatMounted = false
@@ -717,8 +728,11 @@
         renderFallback(container, identity)
       }
     } finally {
-      chatOpening = false
-      if (chatReconnectQueued) {
+      if (chatOpeningGeneration === openingGeneration) {
+        chatOpening = false
+        chatOpeningGeneration = null
+      }
+      if (!chatOpening && chatReconnectQueued) {
         chatReconnectQueued = false
         chatMounted = false
         await openChat()

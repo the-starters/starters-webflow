@@ -580,6 +580,11 @@
         await destroyAndInvalidate('foreign-client', active)
         throw identityError('A foreign TalkJS session was refused')
       }
+      await validateCapturedIdentity({
+        memberstack: options.memberstack,
+        memberId: memberId,
+        memberstackCookie: memberstackCookie,
+      }, active)
       active.clientOwners[options.clientOwner] = true
       addReconnect(
         active.reconnectors,

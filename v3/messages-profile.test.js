@@ -128,6 +128,7 @@ function load(options = {}) {
   }
   const windowListeners = []
   const modalId = options.modalId || MODAL_ID
+  let currentMember = options.member === undefined ? null : options.member
 
   const container =
     options.container === false
@@ -283,7 +284,7 @@ function load(options = {}) {
   if (options.memberstack !== false) {
     window.$memberstackDom = {
       getCurrentMember: async () => ({
-        data: options.member === undefined ? null : options.member,
+        data: currentMember,
       }),
     }
   }
@@ -328,6 +329,9 @@ function load(options = {}) {
     container,
     dialog,
     openModal,
+    member(value) {
+      currentMember = value
+    },
     window,
   }
 }
@@ -452,6 +456,40 @@ test('the profile chat opens through the shared authenticated session owner', as
   assert.equal(request.member, current)
   assert.equal(request.me.fields.id, current.id)
   assert.equal(loaded.calls.chatbox, 1)
+})
+
+test('profile invalidation clears the cached viewer before another open', async () => {
+  const firstMember = {
+    id: VIEWER_ID,
+    customFields: { 'free-user': 'Brand' },
+  }
+  const secondMember = {
+    id: 'mem_secondviewer000000000',
+    customFields: { 'free-user': 'Second' },
+  }
+  const loaded = load({
+    triggers: [starterTrigger()],
+    member: firstMember,
+    role: 'brand-paid',
+  })
+  await settle()
+  loaded.openModal()
+  await settle()
+
+  assert.equal(loaded.calls.authSessions.length, 1)
+  loaded.container.children.push({ stale: true })
+  loaded.member(secondMember)
+  loaded.calls.authSessions[0].onInvalidate()
+
+  assert.equal(loaded.container.children.length, 0)
+  loaded.openModal()
+  await settle()
+
+  assert.equal(loaded.calls.authSessions.length, 2)
+  assert.equal(loaded.calls.authSessions[1].member, secondMember)
+  assert.equal(loaded.calls.authSessions[1].me.fields.id, secondMember.id)
+  assert.equal(loaded.calls.chatbox, 2)
+  assert.equal(loaded.calls.mounted.length, 2)
 })
 
 test('same-member reconnect waits for an in-flight authorization', async () => {
