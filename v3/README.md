@@ -2475,8 +2475,10 @@ fields to `booking/reschedule/request/v3` with a durable
 `dashboard-reschedule-request:` key, then opens `reschedule-updated`; it has no
 response actions and does not enter the proposal lifecycle. Direct transcript
 access and every payment control also stay hidden. There is no hard 24-hour
-cutoff on cancel or reschedule; late-change copy can warn the participant but
-must never block the action.
+cutoff on cancel or pending-request reschedule. Confirmed-call proposals and
+acceptance instead use the strict eight-hour server-clock cutoff documented in
+[Confirmed-call server clock](#confirmed-call-server-clock); late-change copy
+does not create an additional blocking threshold.
 
 The authored reschedule-calendar panels can include a
 `[booking-calendar-loader]` wrapper. The controller shows it as flex while it
@@ -2793,6 +2795,7 @@ Run its focused test with:
 node --test \
   v3/dashboard-calls.test.js \
   v3/dashboard-call-actions.test.js \
+  v3/dashboard-call-server-clock.test.js \
   v3/dashboard-call-media.test.js \
   v3/dashboard-call-payment.test.js \
   v3/dashboard-call-modules-integration.test.js
@@ -4686,9 +4689,12 @@ change before the matching dashboard clients. Confirmed proposal and acceptance
 controls fail closed until a valid canonical clock is bound; pending-request
 edits and proposal declines retain their separate policies.
 
-The dashboard captures monotonic time before the read, then advances the server
-stamp by the full elapsed request time. This conservatively includes transport
-latency and avoids device wall-clock skew extending the strict eight-hour window.
+The dashboard captures monotonic and wall time before the read, then advances
+the server stamp by the larger of monotonic elapsed time and nonnegative wall
+elapsed time. This conservatively includes transport latency and browser or
+system suspension. The derived clock never decreases, so a backward wall-clock
+adjustment cannot reopen the strict eight-hour window; initial device wall-clock
+skew does not affect the elapsed calculation.
 Acceptance checks the original call time (`start_old`) and a future proposed
 start. The clock is rechecked before calendar mounting, calendar confirmation,
 and command submission. Clock-only refreshes preserve rendered booking identity.
