@@ -5,16 +5,15 @@
  *
  * Mounts a TalkJS chatbox with the profiled starter inside the page's existing
  * modal, so a brand can start or resume the conversation without leaving the
- * profile. The conversation is created on first open when it does not exist.
+ * profile. Xano authorizes or provisions the exact two-person conversation;
+ * this browser selects only the returned id and never mutates participants.
  *
- * Designer wiring, three CMS-bound custom attributes on the trigger link:
+ * Designer wiring, CMS-bound custom attributes on the trigger link:
  *   messages-profile-message  -> "Memberstack id"     (PlainText, required)
- *   messages-profile-name     -> "Name"               (PlainText, optional)
- *   messages-profile-photo    -> "Profile Photo Xano" (PlainText, optional)
- * All three must be *field bindings*, not literal values, or every profile ships
- * the same starter's id. `Profile Photo` is an Image field and is not reliably
- * offered for attribute binding; `Profile Photo Xano` is PlainText and holds the
- * durable Xano vault URL, so bind that one.
+ *   messages-profile-name     -> "Name" (retained for shared Hire call UI)
+ *   messages-profile-photo    -> legacy; not sent to TalkJS
+ * The signed conversation path uses only the Memberstack id. It never sends
+ * CMS display fields to TalkJS or mutates the counterpart's global user record.
  *
  * Plus one empty container inside the modal, which is where the chat mounts:
  *   <div messages-profile-chat></div>
@@ -51,9 +50,9 @@
  * Role comes from `window.StartersV3RouteGuard.memberRole`, so route-guard.js has
  * to be on the page for role rules to apply at all: with it absent every
  * signed-in viewer reaches the chat, as before. With it present, only
- * `brand-paid` does. Every check here is client-side, and unlike the
- * `/messages` route this modal never passes through route-guard, so treat
- * these as product gating and not as an authorization boundary.
+ * `brand-paid` does. These role checks are product gating, not the authorization
+ * boundary: the shared signed-session owner independently binds Memberstack
+ * identity and requires Xano conversation authorization.
  *
  * The trigger keeps `href="/messages?with=<id>"` as a fallback: if this module
  * never boots, the link still reaches the conversation through the deep link

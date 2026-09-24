@@ -18,7 +18,8 @@
  * `avatar` container inside the template. `data-messages-format="uppercase|
  * lowercase"` transforms a bound element's text. Optional
  * `data-messages-limit="<n>"` on the wrapper can lower the 3-card maximum.
- * All instances share one TalkJS session and the same serialized bulk request.
+ * All instances share the signed TalkJS session owned with the Messages inbox
+ * and profile chat, plus the same serialized bulk request.
  * Each request allows two attempts with a 15-second timeout, and message or
  * unread activity refreshes the proxy snapshot. The original class-based
  * selectors remain as fallbacks (legacy wrapper: `#messages`).

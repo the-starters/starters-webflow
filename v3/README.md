@@ -1090,12 +1090,41 @@ Run its focused tests with:
 node --test v3/signup-attribution.test.js
 ```
 
+## Shared TalkJS authentication
+
+`talkjs-auth-session.js` is the single signed-session owner for the V3 Messages
+inbox, profile chat, and Brand/Starter dashboard Messages tile. Each client
+loads it lazily from the same jsDelivr ref, so no separate Webflow script tag is
+required. The helper exchanges the current Memberstack session through the
+shared Xano bridge for a short-lived TalkJS user token, verifies that token's
+public member, app, expiry, and environment claims, and gives all three clients
+one `Talk.Session` for that exact member. Test members are accepted only on the
+V3 staging host, production members only on the production hosts, and localhost
+requires an explicit `data-environment="test|production"` on a helper script
+element.
+
+Token and conversation requests retry once when eligible. The retry obtains its
+bearer with `window.getXanoAuthToken({ forceRefresh: true })`; tokens stay in
+closures and never enter storage, the DOM, URLs, logs, analytics, or the public
+debug snapshot. Every protected response is rechecked against the captured
+Memberstack member, cookie, and active owner after its body is read. An auth
+notification immediately closes and invalidates the old signed session, and a
+replacement mounts only after the identity is stable.
+
+Conversation selection is also server-owned. The browser sends exactly one
+intent to Xano: a counterpart Memberstack id for a two-person thread, or an
+existing TalkJS conversation id. It accepts only an authorized receipt for the
+signed actor, matching environment, exact counterpart or conversation, and
+exact two-member participant set. The browser then selects only the returned
+conversation id; it never creates a conversation or changes participants.
+
 ## Profile message modal
 
 `messages-profile.js` mounts a TalkJS chatbox with the profiled starter inside
 the page's modal, so a brand can start or resume the conversation without
-leaving `/hire/<slug>`. The conversation is created on first open when it does
-not already exist.
+leaving `/hire/<slug>`. On first open it asks the
+[shared signed-session owner](#shared-talkjs-authentication) to authorize or
+provision the exact two-person conversation, then selects only the returned id.
 
 Install it in the footer of the `detail_hire` template. It is inert everywhere
 else, so a sitewide embed is safe but pointless:
@@ -1153,22 +1182,23 @@ And an empty container inside that modal, which is where the chat renders:
 
 | attribute | bind to CMS field | field type |
 | --- | --- | --- |
-| `messages-profile-message` | Memberstack id | PlainText (required) |
-| `messages-profile-name` | Name | PlainText (optional) |
-| `messages-profile-photo` | Profile Photo Xano | PlainText (optional) |
+| `messages-profile-message` | Memberstack id | PlainText (required conversation counterpart) |
+| `messages-profile-name` | Name | PlainText (retained for shared Hire call UI; not sent to TalkJS) |
+| `messages-profile-photo` | Profile Photo Xano | PlainText (legacy; not sent to TalkJS) |
 
 The identity guard accepts both live `mem_<cuid>` ids and Memberstack Test Mode
 `mem_sb_<cuid>` ids. It rejects empty suffixes, hyphens, and any other extra
 underscore so Designer placeholders or hand-edited deep links cannot create
 unintended TalkJS users.
 
-The three identity attributes must be *field bindings*, not literal values, or
-every profile ships the same starter's id. Bind `Profile Photo Xano` rather than
-`Profile Photo`: the latter is an Image field and is not reliably offered for
-attribute binding, while the former is PlainText holding the durable Xano vault
-URL. Give the container a height in the Designer; a zero-height box renders a
-zero-height chat. The former `messages-profile-upgrade` attribute is retired
-(2026-09-21) and ignored wherever it still appears in published markup.
+The Memberstack id and any retained display attributes must be *field bindings*,
+not literal values, or every profile ships the same starter's data. The signed
+conversation path uses only `messages-profile-message`; it never sends the CMS
+name or photo to TalkJS. Keep `messages-profile-name` field-bound because the
+shared Hire call UI also reads it. Give the container a height in the Designer;
+a zero-height box renders a zero-height chat. The former
+`messages-profile-upgrade` attribute is retired (2026-09-21) and ignored
+wherever it still appears in published markup.
 
 Keep `href="/messages"` on an anchor trigger. The module rewrites it to
 `/messages?with=<memberstack id>`, which the `/messages` deep link in
@@ -1178,8 +1208,9 @@ into a wrapper div, and it never fires while the module is running because the
 click is always suppressed. If TalkJS fails after the modal is already open, that same
 link is rendered inside the container rather than leaving an empty box.
 
-TalkJS is loaded lazily on the first open. `/hire/<slug>` is public and
-SEO-relevant, so visitors who never press Message never download the SDK.
+TalkJS and the shared authentication helper are loaded lazily on the first
+open. `/hire/<slug>` is public and SEO-relevant, so visitors who never press
+Message download neither script.
 
 Who gets through:
 
@@ -1203,9 +1234,10 @@ window opens the message modal and is handled there instead. On `/hire/<slug>`
 [HIRE-PROFILE-WIRING.md](../docs/wiring/HIRE-PROFILE-WIRING.md#paywalled-viewers)),
 so the two agree on the outcome whichever one sees the click first.
 
-Every check here is client-side, and unlike the `/messages` route this modal
-never passes through route-guard. Treat the rules as product gating, not as an
-authorization boundary.
+The audience rules above are client-side product gating, not the authorization
+boundary. The shared owner independently binds the session to the current
+Memberstack identity, and Xano authorizes the exact conversation before the
+modal can select it.
 
 Known data gap: the Webflow mirror of `Memberstack id` stopped being written
 around xano-id 1004, so roughly 7 percent of `hire` items have an empty field.
@@ -1224,8 +1256,9 @@ Triggers injected after `DOMContentLoaded` are out of scope; call
 `window.StartersMessagesProfile.apply()` after injecting one. Warnings name the
 offending slug and appear on
 [staging hosts only](../README.md#staging-only-console-diagnostics).
-Conversations opened this way carry `custom.source = "hire-page"` and
-`custom.slug`, which cannot be backfilled onto conversations created earlier.
+Conversation creation and conversation-participant mutation never occur in
+this browser module; Xano owns that boundary through the shared authorization
+contract.
 
 Run its focused tests with:
 
@@ -3508,8 +3541,9 @@ waits for the shared bulk recent-conversations load, with no per-card API
 requests, so SDK timing cannot bypass the participant-identity boundary. A
 failed attempt is retried once; each attempt has a 15-second timeout and aborts
 if it stalls. When both attempts fail, the tile shows no message cards rather
-than rendering identity-incomplete SDK-only entries. All instances share one
-TalkJS session and the same serialized bulk request. The browser refreshes the
+than rendering identity-incomplete SDK-only entries. All instances share the
+signed TalkJS session owned with the Messages inbox and profile chat, plus the
+same serialized bulk request. The browser refreshes the
 proxy snapshot after the SDK subscriptions start and after message or unread
 activity; a failed refresh keeps the current cards.
 
@@ -3531,8 +3565,10 @@ last-activity order and are capped at the three newest conversations. Each
 rendered card opens
 `/messages?conversation=<TalkJS conversation id>` in a new tab;
 `messages.js` selects that existing conversation after mounting the inbox
-without creating or mutating a conversation. The existing
-`/messages?with=<memberstack id>` create-or-open flow remains unchanged.
+without creating or mutating a conversation. The
+`/messages?with=<memberstack id>` flow asks Xano to authorize or provision that
+exact two-person thread and then selects only the returned conversation id; a
+foreign or altered receipt is rejected.
 
 Wiring is wf-xano-style and multi-instance: each
 `data-messages-element="wrapper"` scopes one rendered instance containing
@@ -3543,8 +3579,8 @@ the template. `data-messages-format="uppercase|lowercase"` transforms a bound
 element's text, an optional `data-messages-limit="<n>"` on the wrapper can lower
 the default and maximum of 3 rendered cards, and `data-messages-class-unread`
 — on the wrapper or on the template card — renames the class toggled on an
-unread card (default `is-new`). All instances share one TalkJS session and the
-same serialized bulk recent-conversations request; the original class-based
+unread card (default `is-new`). The instances share one serialized bulk
+recent-conversations request; the original class-based
 selectors (legacy wrapper `#messages`) remain as fallbacks.
 
 Run its focused test with:

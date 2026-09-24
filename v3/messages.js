@@ -23,12 +23,12 @@
  * `/messages?with=<memberstack id>` contract opens — creating if needed — the
  * one-on-one conversation with that member and selects it in the inbox.
  * `v3/hire-message.js` produces these links from the /hire/<slug> profile pages
- * and leaves the starter's name and photo in a one-shot sessionStorage entry
- * (`starters:hire-message-handoff`) for this module to consume, because TalkJS
- * writes any display fields it is given onto that user's global record and a
- * URL-carried name would therefore be forgeable. Without the query parameter
- * nothing below runs and the page behaves exactly as it did before; the deep
- * link resolves after the inbox is mounted, so a failure leaves a working inbox.
+ * and may leave a legacy one-shot sessionStorage handoff, which this module
+ * clears without using it to mutate a TalkJS participant. Xano authorizes or
+ * provisions the exact thread, and the browser selects only the returned id.
+ * Without the query parameter nothing below runs and the page behaves exactly
+ * as it did before; the deep link resolves after the inbox is mounted, so a
+ * failure leaves a working inbox.
  *
  * Clickable Identity: the 3.0 chat theme wraps the chat-header photo and name,
  * and the avatar beside a received message, in TalkJS ActionButtons carrying
