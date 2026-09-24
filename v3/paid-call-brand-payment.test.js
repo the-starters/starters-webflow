@@ -979,6 +979,57 @@ test('dashboard rescheduling retains its existing submit behavior', async () => 
   }
 })
 
+test('confirmed rescheduling clears a slot that expires before submission', async () => {
+  const previous = {
+    document: global.document,
+    jQuery: global.jQuery,
+    xanoAuthFetch: global.xanoAuthFetch,
+  }
+  const loadedAt = Date.UTC(2026, 7, 24, 0, 0, 0)
+  const start = loadedAt + 1000
+  let canonicalNow = loadedAt
+  const container = new CalendarElement('div')
+  const submissions = []
+  global.document = calendarDocument()
+  global.jQuery = undefined
+  global.xanoAuthFetch = async () => response({
+    time_slots: [{ start_time: start / 1000, end_time: start / 1000 + 30 * 60 }],
+  })
+
+  try {
+    await api.mountPaidCalendar({
+      container,
+      config: {
+        booking_id: 'booking_confirmed',
+        config_id: 'config_free',
+        grant_id: 'grant_test',
+        duration: 30,
+        mode: 'confirmed_reschedule',
+      },
+      now: () => canonicalNow,
+      async onConfirm(slot) { submissions.push(slot) },
+    })
+    const slot = container.querySelectorAll('[data-paid-calendar-slot]')[0]
+    const confirm = container.querySelectorAll('[data-paid-calendar-element]')
+      .find((node) => node.getAttribute('data-paid-calendar-element') === 'confirm')
+    const status = container.querySelectorAll('[data-paid-calendar-element]')
+      .find((node) => node.getAttribute('data-paid-calendar-element') === 'status')
+
+    slot.listeners.click()
+    canonicalNow = start + 1
+    await confirm.listeners.click({ preventDefault() {} })
+
+    assert.equal(submissions.length, 0)
+    assert.equal(slot.getAttribute('aria-pressed'), 'false')
+    assert.equal(confirm.disabled, true)
+    assert.equal(status.textContent, 'This time is no longer available. Please choose another time.')
+  } finally {
+    global.document = previous.document
+    global.jQuery = previous.jQuery
+    global.xanoAuthFetch = previous.xanoAuthFetch
+  }
+})
+
 test('shared calendar keeps the stale-time message from a final booking recheck', async () => {
   const previous = {
     document: global.document,

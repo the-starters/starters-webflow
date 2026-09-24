@@ -1314,6 +1314,7 @@
       },
       confirmText: 'Propose new time',
       isCurrent,
+      ...(calendarKind === 'reschedule-propose' ? { now: function () { return canonicalNow(booking) } } : {}),
       onConfirm: async function (slot) {
         if (!isCurrent()) return null
         showActionError(modal, '')

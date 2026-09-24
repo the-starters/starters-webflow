@@ -2330,11 +2330,21 @@
     if (!container || !global.document || typeof onConfirm !== 'function') {
       throw new Error('The authored paid-call calendar is unavailable')
     }
+    const confirmedReschedule = config && config.mode === 'confirmed_reschedule'
+    const currentTime = typeof settings.now === 'function' ? settings.now : Date.now
+    function currentTimeMs() {
+      const value = Number(currentTime())
+      return Number.isFinite(value) && value > 0 ? value : null
+    }
     let timezone = String(
       settings.initialTimezone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
     ).trim() || 'UTC'
     const bookingError = String(settings.bookingError || '').trim()
-    const slots = bookingError ? [] : await getPaidAvailability(config)
+    const availabilityNow = confirmedReschedule ? currentTimeMs() : undefined
+    if (confirmedReschedule && availabilityNow == null) {
+      throw new Error('Confirmed reschedule time is unavailable')
+    }
+    const slots = bookingError ? [] : await getPaidAvailability(config, availabilityNow)
     if (!isCurrent()) return { slots: [], stale: true }
     container.textContent = ''
     container.setAttribute('data-paid-calendar-state', bookingError ? 'error' : slots.length ? 'ready' : 'empty')
@@ -2813,6 +2823,14 @@
     confirmButton.addEventListener('click', async function (event) {
       if (event) event.preventDefault()
       if (!isCurrent() || !selectedSlot || confirmButton.disabled || confirmationPending) return
+      if (confirmedReschedule) {
+        const nowMs = currentTimeMs()
+        if (nowMs == null || selectedSlot.start <= nowMs) {
+          clearSelection()
+          setStatus(STALE_SLOT_ERROR, 'error')
+          return
+        }
+      }
       if (details && !showingDetails) {
         setDetailsVisible(true)
         return
