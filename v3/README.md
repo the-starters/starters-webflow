@@ -2359,15 +2359,20 @@ unit is absent, the price field carries the `/ Call` suffix without generating
 markup. One content state and one applicable pending message can be visible.
 `base` is the acting view for live calls and the fallback everywhere else, but a
 terminal booking opens on its authored terminal panel so the Designer view is
-what the member reads instead of a module-composed base view: `completed` where
-authored, and for a cancelled booking the `declined` panel when that raw status
-and panel are present, otherwise the shared `cancelled` panel. Expiry is stored
-as `status = "cancelled"` with `cancelled_by = "expired"`, so it also opens the
-shared `cancelled` panel; a compatibility row carrying a raw `expired` status
-does the same even if the Designer authors an `expired` panel. Because that
-panel is the opening view rather than one the member navigated to, the authored
-`switch-base` back control stays hidden until a chain leaves the panel, keeping
-the doubled close icon off the entry view.
+what the member reads instead of a module-composed base view. For a Free
+completed booking, the controller selects the one authored `completed` panel
+without a `[result-confirmed-text]` descendant and hides the older
+proposal-result panel carrying that marker; when that terminal panel is missing
+or ambiguous, it falls back to `base`. Paid completed bookings keep their
+existing authored `completed` behavior. For a cancelled booking, the `declined`
+panel opens when that raw status and panel are present, otherwise the shared
+`cancelled` panel.
+Expiry is stored as `status = "cancelled"` with `cancelled_by = "expired"`, so it
+also opens the shared `cancelled` panel; a compatibility row carrying a raw
+`expired` status does the same even if the Designer authors an `expired` panel.
+Because a terminal panel is the opening view rather than one the member
+navigated to, the authored `switch-base` back control stays hidden until a chain
+leaves the panel, keeping the doubled close icon off the entry view.
 
 In call details for a canonical `rescheduled` row, `[booking-element="start-date-old"]`
 shows `start_old` as the current confirmed time and `start-date` shows `start`

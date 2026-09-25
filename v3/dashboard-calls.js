@@ -1571,10 +1571,10 @@
 
   /**
    * Panel the details modal opens on. Terminal bookings open their authored
-   * terminal panel (`cancelled`, `declined`, `completed`) so the
-   * Designer view renders instead of a module-composed base view; `base` stays
-   * the acting view for live calls and the fallback for any panel the Designer
-   * has not authored.
+   * terminal panel so the Designer view renders instead of a module-composed
+   * base view. Free completed calls require one unambiguous terminal panel;
+   * Paid completed calls retain the shared library's existing selection.
+   * `base` stays the acting view for live calls and the safe fallback.
    */
   function detailOpenPanel(modal, booking, status) {
     const raw = clean(booking && booking.status).toLowerCase()
@@ -1669,9 +1669,8 @@
     modal.setAttribute('data-booking-status', status)
     modal.setAttribute('data-booking-payment', isPaid ? 'paid' : 'free')
 
-    // A terminal booking opens on its authored terminal panel so the Designer
-    // view stays authoritative; `base` remains the acting view for live calls
-    // and the fallback wherever a terminal panel is not authored.
+    // Keep terminal selection centralized so the Free-only disambiguation and
+    // Paid compatibility behavior apply on every populate pass.
     const openPanel = detailOpenPanel(modal, booking, status)
     const actionsModule = global.StartersDashboardCallActions
     if (
