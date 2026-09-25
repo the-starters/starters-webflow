@@ -2438,7 +2438,7 @@ only when that canonical ID is known, and a click the delegate cannot resolve
 is left untouched rather than swallowed. Every other authored payment or
 booking action stays hidden except Close, Back, the
 Starter's eligible pending-call Accept and Decline actions, the participant
-Cancel chain for eligible Free booked calls, and owner-scoped recording access
+Cancel chain for eligible Free calls, and owner-scoped recording access
 for eligible completed or archived calls. Card-level cancel, media, and other
 unsupported legacy controls stay hidden. Card-level Decline and the exact
 Cancel and reschedule eligibility and feedback rules live in the
@@ -2547,9 +2547,10 @@ This label applies to eligible Free and Paid requests; cancellation labels
 are unchanged.
 Pending Starter rescheduling remains unsupported.
 
-Cancel is available
-to either participant only on a canonical Free
-confirmed or rescheduled row whose start is in the future. Xano
+Cancel is available to either participant on a canonical Free confirmed or
+rescheduled row whose start is in the future. A Brand can also cancel its own
+canonical Free pending request before its start; a Starter declines a pending
+request instead. Xano
 `booking/cancel/v3` rejects Paid cancellation until the paid-cancel follow-up
 ships, so an explicitly Paid row hides Cancel and shows `Paid call cancellation
 is not available yet.` below the authored control. For Cancel eligibility only,

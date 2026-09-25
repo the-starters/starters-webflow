@@ -226,7 +226,10 @@
       // fast follow ships; hide the button instead of offering an action the
       // server always refuses with a 400.
       !paidFlag(booking) &&
-      ['confirmed', 'rescheduled'].includes(bookingStatus(booking)) &&
+      // A Brand may also withdraw its own pending request: #1545 routes
+      // pending state to the Brand-only #2126 owner. A Starter declines instead.
+      (['confirmed', 'rescheduled'].includes(bookingStatus(booking)) ||
+        (role === 'brand' && bookingStatus(booking) === 'pending')) &&
       actorMemberId(role, booking) !== '' &&
       Number.isFinite(start) &&
       start > reference &&
