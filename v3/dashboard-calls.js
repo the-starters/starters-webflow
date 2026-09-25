@@ -812,6 +812,25 @@
       // Pending Starter rescheduling still has no supported contract.
       show(button, details || accept || decline || message)
     })
+
+    // The Starter request template has an authored, read-only View details
+    // trigger without a booking-action attribute. Its parent is hidden by the
+    // base Webflow style, so the action loop above never exposes it. Show only
+    // that exact trigger for a pending request; the detail modal already
+    // binds the updated time and reschedule reason from the canonical booking.
+    if (role !== 'starter' || status !== 'pending' ||
+        typeof card.querySelector !== 'function') return
+    const detailsTrigger = card.querySelector(
+      '[data-modal-trigger="popup-booking-info"]:not([booking-action-btn]):not([booking-card-action-btn])',
+    )
+    const detailsWrapper = detailsTrigger && detailsTrigger.parentElement
+    if (!detailsWrapper) return
+    // Do not expose a whole legacy action row if another template puts
+    // unsupported mutation controls beside this read-only trigger.
+    if (typeof detailsWrapper.querySelectorAll === 'function' &&
+        detailsWrapper.querySelectorAll('[booking-action-btn], [booking-card-action-btn]').length) return
+    detailsWrapper.setAttribute('display-flex', '')
+    show(detailsWrapper, true)
   }
 
   function bindCard(card, booking, role) {
