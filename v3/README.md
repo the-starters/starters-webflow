@@ -662,6 +662,36 @@ Run its focused test with:
 node --test v3/starters-ms-redirect.test.js
 ```
 
+## Premade Starter profile claim gate
+
+`starter-profile-claim.js` controls the Claim Profile component on the Hire CMS
+template. The outer wrapper remains authored with its `hide` class,
+`hidden="hidden"`, and `aria-hidden="true"`. The controller synchronously removes
+one opaque `?claim=` capability from the URL, sends it only to Xano's exact
+prepare route, and removes the authored hiding only after Xano returns a strict
+one-use exchange code for the exact canonical no-trailing-slash `/hire/<slug>`
+path. A missing query, malformed or repeated input, incomplete markup, an
+expired, claimed, or revoked token, a path mismatch, timeout, or network failure
+all stay fail-closed.
+
+Load the controller synchronously in the page head before the existing sitewide
+PostHog initialization. Do not use `async` or `defer`: script evaluation captures
+and scrubs the capability before analytics can observe the URL, then waits for
+`DOMContentLoaded` before querying the authored body markup.
+
+The complete Designer attribute contract, Xano claim-ledger contract, endpoint
+shapes, signup-consumption order, and release proof are in
+[STARTER-PROFILE-CLAIM-WIRING.md](../docs/wiring/STARTER-PROFILE-CLAIM-WIRING.md).
+Do not install or publish this frontend before that backend contract and the
+Memberstack `starter-claim-exchange` custom field are deployed and tested.
+
+Run its focused test with:
+
+```sh
+node --test v3/starter-profile-claim.test.js
+node v3/browser-tests/starter-profile-claim.browser.cjs
+```
+
 ## Signup attribution
 
 `signup-attribution.js` captures paid-click attribution, reports the signup back
