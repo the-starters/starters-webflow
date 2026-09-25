@@ -1918,6 +1918,30 @@ function detailModalHarness() {
   }
 }
 
+function completedDetailModalHarness(panelKinds) {
+  const view = detailModalHarness()
+  const panels = panelKinds.map((kind) => {
+    const panel = element({ 'booking-popup-content': 'completed' })
+    panel.querySelector = (selector) =>
+      selector === '[result-confirmed-text]' && kind === 'proposal-result' ? {} : null
+    return panel
+  })
+  const originalQuerySelector = view.modal.querySelector
+  const originalQuerySelectorAll = view.modal.querySelectorAll
+  view.modal.querySelector = (selector) =>
+    selector === '[booking-popup-content="completed"]'
+      ? panels[0] || null
+      : originalQuerySelector(selector)
+  view.modal.querySelectorAll = (selector) => {
+    if (selector === '[booking-popup-content="completed"]') return panels
+    if (selector === '[booking-popup-content]') {
+      return originalQuerySelectorAll(selector).concat(panels)
+    }
+    return originalQuerySelectorAll(selector)
+  }
+  return { ...view, completedPanels: panels }
+}
+
 test('Free Call details hide paid copy, duplicate copy, and unsupported actions', (context) => {
   const originalActions = global.StartersDashboardCallActions
   global.StartersDashboardCallActions = require('./dashboard-call-actions.js')
@@ -4560,6 +4584,87 @@ test('detailOpenPanel routes terminal bookings to authored panels', () => {
   }
   // a view without a declined panel falls back to the cancelled panel
   assert.equal(api.detailOpenPanel(brandModal, { status: 'declined' }, 'cancelled'), 'cancelled')
+})
+
+test('completed details show only the authored terminal panel in both dashboard orders', (context) => {
+  const originalActions = global.StartersDashboardCallActions
+  global.StartersDashboardCallActions = require('./dashboard-call-actions.js')
+  context.after(function () {
+    global.StartersDashboardCallActions = originalActions
+  })
+  const booking = {
+    booking_id: 'completed-duplicate-panels',
+    status: 'completed',
+    start: 10_000,
+    end: 11_000,
+    duration: 30,
+    brand_data: { name: 'Brand', timezone: 'UTC' },
+    starter_data: { name: 'Starter', timezone: 'UTC' },
+  }
+  for (const [role, order] of [
+    ['starter', ['proposal-result', 'terminal']],
+    ['brand', ['terminal', 'proposal-result']],
+  ]) {
+    const view = completedDetailModalHarness(order)
+    assert.equal(api.detailOpenPanel(view.modal, booking, 'completed'), 'completed')
+    assert.equal(api.populateDetailModal(view.modal, booking, role, 20_000), true)
+    assert.equal(view.base.hidden, true, role + ' base panel is hidden')
+    for (const [index, kind] of order.entries()) {
+      const panel = view.completedPanels[index]
+      assert.equal(panel.hidden, kind !== 'terminal', role + ' ' + kind + ' visibility')
+      assert.equal(panel.style.display, kind === 'terminal' ? 'flex' : 'none')
+    }
+  }
+})
+
+test('completed details fall back to base if the terminal panel is missing or ambiguous', (context) => {
+  const originalActions = global.StartersDashboardCallActions
+  global.StartersDashboardCallActions = require('./dashboard-call-actions.js')
+  context.after(function () {
+    global.StartersDashboardCallActions = originalActions
+  })
+  const booking = {
+    booking_id: 'completed-panel-fallback',
+    status: 'completed',
+    start: 10_000,
+    end: 11_000,
+    duration: 30,
+    brand_data: { name: 'Brand', timezone: 'UTC' },
+    starter_data: { name: 'Starter', timezone: 'UTC' },
+  }
+  for (const order of [
+    ['proposal-result'],
+    ['terminal', 'terminal'],
+  ]) {
+    const view = completedDetailModalHarness(order)
+    assert.equal(api.detailOpenPanel(view.modal, booking, 'completed'), 'base')
+    assert.equal(api.populateDetailModal(view.modal, booking, 'starter', 20_000), true)
+    assert.equal(view.base.hidden, false)
+    for (const panel of view.completedPanels) assert.equal(panel.hidden, true)
+  }
+})
+
+test('completed details hide the proposal result when the actions module is unavailable', (context) => {
+  const originalActions = global.StartersDashboardCallActions
+  global.StartersDashboardCallActions = null
+  context.after(function () {
+    global.StartersDashboardCallActions = originalActions
+  })
+  const view = completedDetailModalHarness(['proposal-result', 'terminal'])
+  const booking = {
+    booking_id: 'completed-no-actions-module',
+    status: 'completed',
+    start: 10_000,
+    end: 11_000,
+    duration: 30,
+    brand_data: { name: 'Brand', timezone: 'UTC' },
+    starter_data: { name: 'Starter', timezone: 'UTC' },
+  }
+  assert.equal(api.populateDetailModal(view.modal, booking, 'starter', 20_000), true)
+  assert.equal(view.base.hidden, true)
+  assert.equal(view.completedPanels[0].hidden, true)
+  assert.equal(view.completedPanels[0].style.display, 'none')
+  assert.equal(view.completedPanels[1].hidden, false)
 })
 
 test('details open the authored cancelled panel for a cancelled booking', () => {

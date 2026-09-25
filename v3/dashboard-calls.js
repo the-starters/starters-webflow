@@ -1532,12 +1532,28 @@
   }
 
   function authoredDetailPanel(modal, name) {
+    if (name === 'completed') return Boolean(uniqueCompletedDetailPanel(modal))
     return (
       Boolean(name) &&
       Boolean(modal) &&
       typeof modal.querySelector === 'function' &&
       Boolean(modal.querySelector('[booking-popup-content="' + name + '"]'))
     )
+  }
+
+  function uniqueCompletedDetailPanel(modal) {
+    if (!modal || typeof modal.querySelectorAll !== 'function') return null
+    // Both dashboards also have an older proposal-result panel labelled
+    // `completed`. Its existing result marker distinguishes it from the
+    // authored Call Completed panel, regardless of their DOM order.
+    const panels = Array.prototype.filter.call(
+      modal.querySelectorAll('[booking-popup-content="completed"]'),
+      function (panel) {
+        return typeof panel.querySelector === 'function' &&
+          !panel.querySelector('[result-confirmed-text]')
+      },
+    )
+    return panels.length === 1 ? panels[0] : null
   }
 
   /**
@@ -1665,6 +1681,12 @@
     } else {
       modal.querySelectorAll('[booking-popup-content]').forEach(function (content) {
         show(content, content.getAttribute('booking-popup-content') === openPanel)
+      })
+    }
+    if (openPanel === 'completed') {
+      const terminalPanel = uniqueCompletedDetailPanel(modal)
+      modal.querySelectorAll('[booking-popup-content="completed"]').forEach(function (panel) {
+        if (panel !== terminalPanel) show(panel, false)
       })
     }
     if (openPanel !== 'base') {
