@@ -1,0 +1,68 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Dashboard completed call panel verification</title>
+<style>
+  * { box-sizing: border-box }
+  body { margin: 0; padding: 32px; background: #eeefeb; color: #20221f; font: 16px/1.45 Arial, sans-serif }
+  main { max-width: 920px; margin: auto }
+  .scenario { display: flex; gap: 12px; margin: 18px 0 }
+  button { border: 0; border-radius: 5px; padding: 12px 18px; background: #20221f; color: white; font: inherit; cursor: pointer }
+  dialog { width: min(760px, calc(100% - 32px)); border: 0; border-radius: 10px; padding: 0; box-shadow: 0 20px 60px #0003 }
+  dialog::backdrop { background: #20221f66 }
+  header { display: flex; justify-content: space-between; align-items: center; padding: 20px 24px; border-bottom: 1px solid #ddd }
+  header h1 { margin: 0; font-size: 22px }
+  [booking-popup-content] { min-height: 360px; padding: 36px; flex-direction: column; justify-content: center }
+  [booking-popup-content] h2 { margin: 0 0 14px; font-size: 38px }
+  .facts { display: grid; grid-template-columns: 150px 1fr; gap: 10px; margin-top: 24px }
+  .facts strong { color: #666 }
+  .proposal { background: #fff4df }
+  .completed { background: #f7f8f4 }
+  .base { background: white }
+  .eyebrow { color: #66705d; font-size: 13px; font-weight: bold; letter-spacing: .08em; text-transform: uppercase }
+</style>
+<main>
+  <p class="eyebrow">Local rendered acceptance fixture</p>
+  <h1>Dashboard call details</h1>
+  <p>Real dashboard controllers, synthetic bookings, no API requests.</p>
+  <div class="scenario">
+    <div data-booking-id="free-completed"><button data-booking-details>Open completed Free call</button></div>
+    <div data-booking-id="paid-completed"><button data-booking-details>Open completed Paid call</button></div>
+    <div data-booking-id="free-confirmed"><button data-booking-details>Open confirmed Free call</button></div>
+  </div>
+</main>
+<dialog popup-booking-info data-modal-target="popup-booking-info">
+  <header><h1>Call details</h1><button id="close" type="button">Close</button></header>
+  <div booking-popup-content="base" class="base">
+    <p class="eyebrow">Current call</p><h2>Call details</h2>
+    <div class="facts"><strong>Type</strong><span booking-element="paid-meeting"></span><strong>Status</strong><span booking-element="status"></span><strong>With</strong><span booking-element="starter-name"></span><strong>Date</strong><span booking-element="start-date"></span></div>
+  </div>
+  <div booking-popup-content="completed" class="proposal">
+    <p class="eyebrow">New time proposed</p><h2>New time proposed</h2>
+    <p result-confirmed-text>This legacy proposal-result panel shares the completed key.</p>
+  </div>
+  <div booking-popup-content="completed" class="completed">
+    <p class="eyebrow">Figma authored outcome</p><h2>Call Completed</h2>
+    <p>Your call is complete. You can return to Messages to continue the conversation.</p>
+    <div class="facts"><strong>Type</strong><span booking-element="paid-meeting"></span><strong>Status</strong><span booking-element="status"></span><strong>Brand</strong><span booking-element="brand-name"></span><strong>Starter</strong><span booking-element="starter-name"></span><strong>Date</strong><span booking-element="start-date"></span></div>
+  </div>
+</dialog>
+<script src="../dashboard-call-actions.js"></script>
+<script>window.module = { exports: {} }</script>
+<script src="../dashboard-calls.js"></script>
+<script>
+  const fixtureCalls = module.exports
+  const bookings = [
+    { booking_id: 'free-completed', status: 'confirmed', start: Date.now() - 3600000, end: Date.now() - 1800000, duration: 30, is_paid: false, call_context: 'Soft launch review', brand_data: { name: 'Brand10', timezone: 'Asia/Manila' }, starter_data: { name: 'Starter10', timezone: 'Asia/Manila' } },
+    { booking_id: 'paid-completed', status: 'confirmed', start: Date.now() - 3600000, end: Date.now() - 1800000, duration: 30, is_paid: true, price: 120, call_context: 'Paid consultation', brand_data: { name: 'Brand10', timezone: 'Asia/Manila' }, starter_data: { name: 'Starter10', timezone: 'Asia/Manila' } },
+    { booking_id: 'free-confirmed', status: 'confirmed', start: Date.now() + 86400000, end: Date.now() + 88200000, duration: 30, is_paid: false, call_context: 'Upcoming Free call', brand_data: { name: 'Brand10', timezone: 'Asia/Manila' }, starter_data: { name: 'Starter10', timezone: 'Asia/Manila' } },
+  ]
+  const role = new URLSearchParams(location.search).get('role') === 'brand' ? 'brand' : 'starter'
+  fixtureCalls.wireBookingDetails([{ rows: bookings }], role)
+  document.addEventListener('click', event => {
+    if (!event.target.closest('[data-booking-details]')) return
+    const dialog = document.querySelector('dialog')
+    if (!dialog.open) dialog.showModal()
+  })
+  document.getElementById('close').addEventListener('click', () => document.querySelector('dialog').close())
+  window.fixtureState = { role, bookings }
+</script>

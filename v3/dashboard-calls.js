@@ -1540,6 +1540,21 @@
     )
   }
 
+  function uniqueCompletedDetailPanel(modal) {
+    if (!modal || typeof modal.querySelectorAll !== 'function') return null
+    // Both dashboards also have an older proposal-result panel labelled
+    // `completed`. Its existing result marker distinguishes it from the
+    // authored Call Completed panel, regardless of their DOM order.
+    const panels = Array.prototype.filter.call(
+      modal.querySelectorAll('[booking-popup-content="completed"]'),
+      function (panel) {
+        return typeof panel.querySelector === 'function' &&
+          !panel.querySelector('[result-confirmed-text]')
+      },
+    )
+    return panels.length === 1 ? panels[0] : null
+  }
+
   /**
    * Raw statuses bookingStatus folds into `cancelled` that the Designer can
    * author their own panel for. Each resolves to that panel when it exists and
@@ -1556,10 +1571,10 @@
 
   /**
    * Panel the details modal opens on. Terminal bookings open their authored
-   * terminal panel (`cancelled`, `declined`, `completed`) so the
-   * Designer view renders instead of a module-composed base view; `base` stays
-   * the acting view for live calls and the fallback for any panel the Designer
-   * has not authored.
+   * terminal panel so the Designer view renders instead of a module-composed
+   * base view. Free completed calls require one unambiguous terminal panel;
+   * Paid completed calls retain the shared library's existing selection.
+   * `base` stays the acting view for live calls and the safe fallback.
    */
   function detailOpenPanel(modal, booking, status) {
     const raw = clean(booking && booking.status).toLowerCase()
@@ -1571,7 +1586,9 @@
           ? authoredRawPanel
           : 'cancelled'
     } else if (status === 'completed') {
-      candidate = 'completed'
+      candidate = paidBooking(booking) || uniqueCompletedDetailPanel(modal)
+        ? 'completed'
+        : ''
     }
     return authoredDetailPanel(modal, candidate) ? candidate : 'base'
   }
@@ -1652,9 +1669,8 @@
     modal.setAttribute('data-booking-status', status)
     modal.setAttribute('data-booking-payment', isPaid ? 'paid' : 'free')
 
-    // A terminal booking opens on its authored terminal panel so the Designer
-    // view stays authoritative; `base` remains the acting view for live calls
-    // and the fallback wherever a terminal panel is not authored.
+    // Keep terminal selection centralized so the Free-only disambiguation and
+    // Paid compatibility behavior apply on every populate pass.
     const openPanel = detailOpenPanel(modal, booking, status)
     const actionsModule = global.StartersDashboardCallActions
     if (
@@ -1665,6 +1681,12 @@
     } else {
       modal.querySelectorAll('[booking-popup-content]').forEach(function (content) {
         show(content, content.getAttribute('booking-popup-content') === openPanel)
+      })
+    }
+    if (openPanel === 'completed' && !isPaid) {
+      const terminalPanel = uniqueCompletedDetailPanel(modal)
+      modal.querySelectorAll('[booking-popup-content="completed"]').forEach(function (panel) {
+        if (panel !== terminalPanel) show(panel, false)
       })
     }
     if (openPanel !== 'base') {
