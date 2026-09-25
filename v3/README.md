@@ -2348,6 +2348,11 @@ The authored View Details trigger opens the existing `popup-booking-info`
 dialog. Before Webflow opens it, the controller binds the selected canonical
 row to the authored fields. When the base, cancel, and cancelled panels repeat
 a `[booking-element]` name, every copy receives the same value and visibility.
+On a Starter pending-request card, the controller also reveals the authored
+read-only `[data-modal-trigger="popup-booking-info"]` control when it has no
+booking-action attribute and its hidden wrapper contains no legacy booking
+actions. This keeps the edited time and Brand reschedule reason available from
+the normal details path without exposing unsupported mutation controls.
 `is_paid` is authoritative when present, with `paid_meeting` retained as the
 compatibility fallback. Free calls never show price, payment, charge, or refund
 copy: the Designer's static charge and refund sentences are suppressed only on a

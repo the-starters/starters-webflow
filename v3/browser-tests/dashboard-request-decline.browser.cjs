@@ -26,11 +26,45 @@ const root = path.resolve(__dirname, '../..')
       return route.continue()
     })
     await page.goto(`http://127.0.0.1:${server.address().port}/v3/fixtures/dashboard-request-decline.html`)
+    await page.reload()
     const card = page.locator('#fixture-request')
     const decline = card.locator('[booking-action-btn="switch-decline"]')
     const modal = page.locator('dialog')
     const panel = modal.locator('[booking-popup-content="decline"]')
     const observations = []
+    await page.evaluate(() => {
+      booking.rescheduled_reason = 'Brand availability changed after the original request'
+      fixtureCalls.bindCard(document.getElementById('fixture-request'), booking, 'starter')
+      fixtureCalls.wireBookingDetails([{ rows: [booking] }], 'starter')
+    })
+    const details = card.locator('[data-modal-trigger="popup-booking-info"]:not([booking-action-btn]):not([booking-card-action-btn])')
+    assert.equal(await details.isVisible(), true)
+    assert.equal(await card.locator('[booking-action-btn="switch-confirm"]').isVisible(), true)
+    assert.equal(await decline.isVisible(), true)
+    const message = card.locator('[booking-action-btn="message"]')
+    assert.equal(await message.isVisible(), true)
+    assert.match(await message.locator('a').getAttribute('href'), /synthetic-brand/)
+    await details.locator('button').click()
+    assert.equal(await modal.evaluate(e => e.open), true)
+    assert.equal(await modal.getAttribute('data-booking-id'), 'synthetic-booking')
+    const base = modal.locator('[booking-popup-content="base"]')
+    assert.equal(await base.isVisible(), true)
+    assert.match(await base.innerText(), /Brand availability changed after the original request/)
+    assert.match(await base.innerText(), /Example Brand/)
+    assert.match(await base.locator('[booking-element="brand-message-link"]').last().getAttribute('href'), /synthetic-brand/)
+    assert.equal(await base.locator('[booking-action-btn="reschedule"]:visible').count(), 0)
+    assert.equal(await base.locator('[payment-action-btn]:visible, [booking-pm-action]:visible, [data-btn-payment]:visible').count(), 0)
+    observations.push({
+      scenario: 'pending-free-details',
+      booking: await modal.getAttribute('data-booking-id'),
+      visiblePanel: await base.innerText(),
+    })
+    if (process.env.DECLINE_EVIDENCE) {
+      await fs.mkdir(process.env.DECLINE_EVIDENCE, { recursive: true })
+      await page.screenshot({ path: path.join(process.env.DECLINE_EVIDENCE, 'pending-free-details.png') })
+    }
+    await modal.locator('[booking-popup-info-close], [data-modal-close]').first().click()
+    assert.equal(await modal.evaluate(e => e.open), false)
     for (const paid of [false, true]) {
       await page.evaluate(paid => {
         const dialog = document.querySelector('dialog')

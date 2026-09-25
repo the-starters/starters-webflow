@@ -641,6 +641,41 @@ test('read-only details stay available while expired requests cannot be accepted
   assert.equal(reschedule.hidden, true)
 })
 
+test('Starter pending request exposes the authored read-only details trigger', () => {
+  const wrapper = element()
+  wrapper.hidden = true
+  wrapper.style.display = 'none'
+  const trigger = { parentElement: wrapper }
+  const card = {
+    querySelectorAll() { return [] },
+    querySelector(selector) {
+      assert.equal(
+        selector,
+        '[data-modal-trigger="popup-booking-info"]:not([booking-action-btn]):not([booking-card-action-btn])',
+      )
+      return trigger
+    },
+  }
+
+  api.configureActionButtons(card, 'brand', 'pending')
+  assert.equal(wrapper.hidden, true)
+  api.configureActionButtons(card, 'starter', 'confirmed')
+  assert.equal(wrapper.hidden, true)
+
+  api.configureActionButtons(card, 'starter', 'pending')
+  assert.equal(wrapper.hidden, false)
+  assert.equal(wrapper.style.display, 'flex')
+
+  const mixedWrapper = element()
+  mixedWrapper.hidden = true
+  mixedWrapper.style.display = 'none'
+  mixedWrapper.querySelectorAll = () => [element({ 'booking-action-btn': 'reschedule' })]
+  trigger.parentElement = mixedWrapper
+  api.configureActionButtons(card, 'starter', 'pending')
+  assert.equal(mixedWrapper.hidden, true)
+  assert.equal(mixedWrapper.style.display, 'none')
+})
+
 test('request expiration uses the canonical confirmation deadline before the call start', () => {
   assert.equal(api.responseDeadline({
     confirmation_expires_at: 2_000_000_000,
