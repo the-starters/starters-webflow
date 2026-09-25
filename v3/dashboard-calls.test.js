@@ -4667,6 +4667,34 @@ test('completed details hide the proposal result when the actions module is unav
   assert.equal(view.completedPanels[1].hidden, false)
 })
 
+test('naturally completed Paid details preserve both authored completed panels', (context) => {
+  const originalActions = global.StartersDashboardCallActions
+  global.StartersDashboardCallActions = require('./dashboard-call-actions.js')
+  context.after(function () {
+    global.StartersDashboardCallActions = originalActions
+  })
+  const view = completedDetailModalHarness(['proposal-result', 'terminal'])
+  const booking = {
+    booking_id: 'paid-completed-panels',
+    status: 'confirmed',
+    start: 10_000,
+    end: 11_000,
+    duration: 30,
+    is_paid: true,
+    price: 120,
+    brand_data: { name: 'Brand', timezone: 'UTC' },
+    starter_data: { name: 'Starter', timezone: 'UTC' },
+  }
+  assert.equal(api.bookingStatus(booking, 20_000), 'completed')
+  assert.equal(api.detailOpenPanel(view.modal, booking, 'completed'), 'completed')
+  assert.equal(api.populateDetailModal(view.modal, booking, 'brand', 20_000), true)
+  assert.equal(view.base.hidden, true)
+  for (const panel of view.completedPanels) {
+    assert.equal(panel.hidden, false)
+    assert.equal(panel.style.display, 'flex')
+  }
+})
+
 test('details open the authored cancelled panel for a cancelled booking', () => {
   const view = detailModalHarness()
   const booking = {

@@ -1532,7 +1532,6 @@
   }
 
   function authoredDetailPanel(modal, name) {
-    if (name === 'completed') return Boolean(uniqueCompletedDetailPanel(modal))
     return (
       Boolean(name) &&
       Boolean(modal) &&
@@ -1587,7 +1586,9 @@
           ? authoredRawPanel
           : 'cancelled'
     } else if (status === 'completed') {
-      candidate = 'completed'
+      candidate = paidBooking(booking) || uniqueCompletedDetailPanel(modal)
+        ? 'completed'
+        : ''
     }
     return authoredDetailPanel(modal, candidate) ? candidate : 'base'
   }
@@ -1683,7 +1684,7 @@
         show(content, content.getAttribute('booking-popup-content') === openPanel)
       })
     }
-    if (openPanel === 'completed') {
+    if (openPanel === 'completed' && !isPaid) {
       const terminalPanel = uniqueCompletedDetailPanel(modal)
       modal.querySelectorAll('[booking-popup-content="completed"]').forEach(function (panel) {
         if (panel !== terminalPanel) show(panel, false)
