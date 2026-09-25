@@ -4586,11 +4586,13 @@ test('detailOpenPanel routes terminal bookings to authored panels', () => {
   assert.equal(api.detailOpenPanel(brandModal, { status: 'declined' }, 'cancelled'), 'cancelled')
 })
 
-test('completed details show only the authored terminal panel in both dashboard orders', (context) => {
+test('completed details stay canonical after clicks and reload for both roles', (context) => {
   const originalActions = global.StartersDashboardCallActions
+  const originalDocument = global.document
   global.StartersDashboardCallActions = require('./dashboard-call-actions.js')
   context.after(function () {
     global.StartersDashboardCallActions = originalActions
+    global.document = originalDocument
   })
   const booking = {
     booking_id: 'completed-duplicate-panels',
@@ -4605,14 +4607,46 @@ test('completed details show only the authored terminal panel in both dashboard 
     ['starter', ['proposal-result', 'terminal']],
     ['brand', ['terminal', 'proposal-result']],
   ]) {
-    const view = completedDetailModalHarness(order)
-    assert.equal(api.detailOpenPanel(view.modal, booking, 'completed'), 'completed')
-    assert.equal(api.populateDetailModal(view.modal, booking, role, 20_000), true)
-    assert.equal(view.base.hidden, true, role + ' base panel is hidden')
-    for (const [index, kind] of order.entries()) {
-      const panel = view.completedPanels[index]
-      assert.equal(panel.hidden, kind !== 'terminal', role + ' ' + kind + ' visibility')
-      assert.equal(panel.style.display, kind === 'terminal' ? 'flex' : 'none')
+    for (const load of ['initial', 'reload']) {
+      const view = completedDetailModalHarness(order)
+      let clickListener
+      global.document = {
+        addEventListener(name, listener, capture) {
+          assert.equal(name, 'click')
+          assert.equal(capture, true)
+          clickListener = listener
+        },
+        querySelector() {
+          return view.modal
+        },
+      }
+      const card = {
+        getAttribute(name) {
+          return name === 'data-booking-id' ? booking.booking_id : null
+        },
+      }
+      const details = {
+        closest(selector) {
+          return selector === '[data-booking-id]' ? card : null
+        },
+      }
+      api.wireBookingDetails([{ rows: [booking] }], role)
+      clickListener({
+        target: {
+          closest(selector) {
+            if (selector.includes('reschedule')) return null
+            if (selector.includes('popup-booking-info')) return details
+            return null
+          },
+        },
+      })
+
+      assert.equal(view.base.hidden, true, role + ' ' + load + ' base panel')
+      for (const [index, kind] of order.entries()) {
+        const panel = view.completedPanels[index]
+        assert.equal(panel.hidden, kind !== 'terminal', role + ' ' + load + ' ' + kind)
+        assert.equal(panel.style.display, kind === 'terminal' ? 'flex' : 'none')
+      }
     }
   }
 })
