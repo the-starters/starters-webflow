@@ -538,7 +538,11 @@
     return Number.isFinite(duration) && duration > 0 ? duration + 'min' : ''
   }
 
-  function statusLabel(status, role) {
+  function statusLabel(status, role, booking) {
+    // Expiry writers record `cancelled` with `cancelled_by = "expired"`; show that as Expired.
+    if (status === 'cancelled' && clean(booking && booking.cancelled_by).toLowerCase() === 'expired') {
+      return 'Expired'
+    }
     return {
       pending: role === 'starter' ? 'Pending' : 'Requested',
       rescheduled: 'Pending',
@@ -568,14 +572,14 @@
     }
   }
 
-  function paintStatusPill(card, status, role) {
+  function paintStatusPill(card, status, role, booking) {
     const pill = card && card.querySelector('[booking-element="status"]')
     if (!pill) return
     STATUS_VARIANT_CLASSES.forEach(function (className) {
       setClass(pill, className, className === statusVariantClass(status))
     })
-    text(pill, '[label-text]', statusLabel(status, role))
-    if (!pill.querySelector('[label-text]')) pill.textContent = statusLabel(status, role)
+    text(pill, '[label-text]', statusLabel(status, role, booking))
+    if (!pill.querySelector('[label-text]')) pill.textContent = statusLabel(status, role, booking)
     show(pill, true)
     let group = pill.closest && pill.closest('[booking-element-wrap="status"]')
     if (!group && pill.closest) {
@@ -841,7 +845,7 @@
     card.removeAttribute('bookings-item-template')
     card.setAttribute('data-booking-id', clean(booking.booking_id || booking.id))
     card.setAttribute('data-booking-status', status)
-    paintStatusPill(card, status, role)
+    paintStatusPill(card, status, role, booking)
     let meetingHref = ''
     if (['confirmed', 'rescheduled'].includes(status)) {
       try {
@@ -1718,7 +1722,7 @@
       }
     }
     setBookingField(modal, 'paid-meeting', isPaid ? 'Paid Call' : 'Free Call', true)
-    setBookingField(modal, 'status', statusLabel(status, role), true)
+    setBookingField(modal, 'status', statusLabel(status, role, booking), true)
     setBookingField(modal, 'brand-name', booking.brand_data && booking.brand_data.name, true)
     setBookingField(modal, 'starter-name', booking.starter_data && booking.starter_data.name, true)
     setBookingField(modal, 'title', booking.call_context || 'Call', true)
