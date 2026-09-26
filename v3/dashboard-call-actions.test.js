@@ -38,6 +38,56 @@ test('decline eligibility is Starter-only, pending, scoped, and identified', () 
   assert.equal(api.canDecline('starter', { ...booking, config_id: '' }), false)
 })
 
+// Soft launch (JP, 2026-09-26): Paid decline and its settlement are hard-launch
+// work, so the dashboard must not offer a Paid decline the cohort can click.
+// Free and legacy rows without a paid flag keep Decline exactly as before.
+test('decline eligibility excludes explicitly Paid requests only', () => {
+  const booking = pendingBooking()
+  assert.equal(api.canDecline('starter', { ...booking, is_paid: true }), false)
+  assert.equal(api.canDecline('starter', { ...booking, is_paid: 'true' }), false)
+  assert.equal(api.canDecline('starter', { ...booking, paid_meeting: true }), false)
+  assert.equal(api.canDecline('starter', { ...booking, is_paid: false }), true)
+  assert.equal(api.canDecline('starter', { ...booking, paid_meeting: false }), true)
+  assert.equal(api.canDecline('starter', booking), true)
+})
+
+test('a Paid decline never reaches the decline endpoint; Free still does', async () => {
+  const originalFetch = global.xanoAuthFetch
+  const originalStorage = global.sessionStorage
+  const originalCrypto = global.crypto
+  const requests = []
+  try {
+    global.sessionStorage = storage()
+    global.crypto = {
+      subtle: originalCrypto.subtle,
+      randomUUID() {
+        return '00000000-0000-4000-8000-000000000001'
+      },
+    }
+    global.xanoAuthFetch = async function (url) {
+      requests.push(url)
+      return {
+        ok: true,
+        async json() {
+          return { decline: { booking_id: 'booking-test-1', status: 'declined', revision: 2 } }
+        },
+      }
+    }
+    const paid = await api.declineBooking({ ...pendingBooking(), is_paid: true }, 'Not available')
+    assert.equal(paid, null)
+    assert.deepEqual(requests, [])
+
+    const free = await api.declineBooking({ ...pendingBooking(), is_paid: false }, 'Not available')
+    assert.equal(free.decline.status, 'declined')
+    assert.equal(requests.length, 1)
+    assert.match(requests[0], /\/booking\/decline\/v3$/)
+  } finally {
+    global.xanoAuthFetch = originalFetch
+    global.sessionStorage = originalStorage
+    global.crypto = originalCrypto
+  }
+})
+
 test('decline payload requires a reason and bounded durable idempotency key', () => {
   const booking = pendingBooking()
   const key = 'dashboard-decline:00000000-0000-4000-8000-000000000001'
