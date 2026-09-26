@@ -1861,11 +1861,12 @@
   /**
    * The identity of a canonical final-invoice row, normalized identically on the
    * create and the cancel path so a padded enum value cannot split the two.
+   * Identity is the handoff type only: a final row is a legacy Stripe Invoice or,
+   * since 2026-09-26, a Payment Link, and both cancel through final-cancel.
    */
   function isFinalInvoiceRow(invoice) {
     return Boolean(
       invoice &&
-      String(invoice.kind || '').trim().toLowerCase() === 'stripe_invoice' &&
       String(invoice.handoff_type || '').trim().toLowerCase() === 'final',
     )
   }

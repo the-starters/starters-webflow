@@ -6165,6 +6165,83 @@ test('a whitespace-padded final invoice row still cancels through the final void
   assert.match(requests[0].idempotency_key, /^final-invoice-cancel-ui:961:/)
 })
 
+// Final invoices now use a Payment Link (2026-09-26). The row keeps handoff_type
+// final but carries kind payment_link, and must still cancel through final-cancel.
+test('a final invoice row that is a Payment Link cancels through the final route', async () => {
+  const action = el('button', { 'data-project-invoice-action': 'cancel' })
+  const wrap = el('div', { class: 'button_main-wrap' }, [action])
+  const row = el('div', { 'data-wf-xano-nest-clone': '' }, [wrap])
+  const invoices = el(
+    'div',
+    { 'wf-xano-element': 'nest-target', 'wf-xano-field': 'invoices' },
+    [row],
+  )
+  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '746' }, [invoices])
+  const root = el('div', { 'wf-xano-instance': 'dash-projects' }, [card])
+  const state = {
+    status: 'success',
+    data: {
+      items: [{
+        id: 746,
+        status: 'completed',
+        lifecycle_state: 'completed',
+        invoices: [{
+          id: 961,
+          status: 'unpaid',
+          kind: 'payment_link',
+          handoff_type: 'final',
+          stripe_ref: 'plink_test_final_961',
+          sync_origin: 'v3',
+          cancel_eligible: true,
+        }],
+      }],
+    },
+    query: { page: 1, perPage: 12 },
+  }
+  const instance = {
+    getState: () => state,
+    refresh: () => Promise.resolve(state),
+    subscribe(handler) {
+      handler(state)
+      return () => {}
+    },
+  }
+  const requests = []
+  let promptText = ''
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/invoices/final-cancel/v3')) {
+        requests.push(JSON.parse(init.body))
+        return response({ invoice_id: 961, status: 'void' })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: talentMember,
+      pathname: '/starter-dashboard',
+      promptImpl: (message) => {
+        promptText = message
+        return 'CANCEL'
+      },
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+      wfXano: { get: (key) => key === 'dash-projects' ? instance : null },
+    },
+  )
+
+  assert.ok(await waitFor(() => action.getAttribute('data-project-invoice-id') === '961'))
+  bridge.dispatchDocument('click', clickEvent(action).event)
+
+  assert.ok(await waitFor(() => requests.length === 1))
+  assert.match(promptText, /void this final invoice/i)
+  assert.match(requests[0].idempotency_key, /^final-invoice-cancel-ui:961:/)
+})
+
 test('completed-project invoice submit uses final-create and accepts invoice_link', async () => {
   const dom = invoiceSubmitDom()
   const requests = []
