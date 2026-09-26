@@ -2543,7 +2543,11 @@ contracts.
 
 `dashboard-call-actions.js` owns the details-dialog navigation plus the
 supported decline, cancel, and Free-call reschedule commands. Decline is
-available only to the Starter on a canonical pending row. The authored card
+available only to the Starter on a canonical pending row that is not explicitly
+Paid. Paid decline and its settlement are hard-launch work, so an `is_paid` or
+`paid_meeting` request hides every decline step and, while the request can
+still be answered, the details modal shows `Paid call decline is not available
+yet.` below the authored Decline control. Accept is unchanged. The authored card
 Decline control also requires an open response window and a loaded, valid
 action module that approves the booking through `canDecline`. Clicking it
 populates the existing details modal with the selected booking and counterpart,
@@ -2553,8 +2557,7 @@ In the decline panel, the authored `switch-decline-reason` control reads
 `Decline Call` and opens the reason step for the selected booking. Both
 `booking-action-btn` and `booking-card-action-btn` hooks use the shared
 `setAuthoredActionLabel` formatter to preserve the nested button structure.
-This label applies to eligible Free and Paid requests; cancellation labels
-are unchanged.
+This label applies to eligible requests; cancellation labels are unchanged.
 Pending Starter rescheduling remains unsupported.
 
 Cancel is available to either participant on a canonical Free confirmed or
@@ -2562,8 +2565,11 @@ rescheduled row whose start is in the future. A Brand can also cancel its own
 canonical Free pending request before its start; a Starter declines a pending
 request instead. Xano
 `booking/cancel/v3` rejects Paid cancellation until the paid-cancel follow-up
-ships, so an explicitly Paid row hides Cancel and shows `Paid call cancellation
-is not available yet.` below the authored control. For Cancel eligibility only,
+ships, so an explicitly Paid row hides Cancel. An upcoming Paid confirmed or
+rescheduled row, and the Brand's own upcoming Paid pending request, show
+`Paid call cancellation is not available yet.` below the authored control; the
+Starter's pending view gets no Cancel hint because the Starter declines a
+pending request instead. For Cancel eligibility only,
 a row with neither `is_paid` nor `paid_meeting` is treated as legacy Free so
 older Free bookings keep the action. Reschedule keeps a stricter shared gate:
 the row must be in the future, have an explicit Free flag, a grant, and positive

@@ -1419,6 +1419,9 @@
       respondShown: false,
       cancelAnchor: null,
       cancelShown: false,
+      declineAnchor: null,
+      declineFallback: null,
+      declineShown: false,
     }
     modal
       .querySelectorAll(DETAIL_ACTION_SELECTOR)
@@ -1487,6 +1490,17 @@
           if (!gates.cancelAnchor) gates.cancelAnchor = button
           if (cancel) gates.cancelShown = true
         }
+        if (
+          action === 'switch-decline' ||
+          action === 'switch-decline-reason' ||
+          action === 'decline'
+        ) {
+          // Anchor on the base-panel entry when the page authors one, so the
+          // hint sits where the Starter looks for Decline.
+          if (action === 'switch-decline' && !gates.declineAnchor) gates.declineAnchor = button
+          if (!gates.declineFallback) gates.declineFallback = button
+          if (decline) gates.declineShown = true
+        }
         show(
           button,
           action === 'switch-close' ||
@@ -1525,9 +1539,29 @@
       'Paid call cancellation is not available yet.',
       Boolean(gates.cancelAnchor) &&
         paidBooking(booking) &&
-        ['confirmed', 'rescheduled'].includes(status) &&
+        // A Brand's own pending Paid request is also withdrawn through Cancel
+        // (canCancel), and Paid pending cancellation is hard-launch work, so
+        // the hidden control gets the same explanation. The Starter declines
+        // a pending request instead, so no Cancel hint applies to that role.
+        (['confirmed', 'rescheduled'].includes(status) ||
+          (role === 'brand' && status === 'pending')) &&
         upcoming &&
         !gates.cancelShown,
+    )
+    const declineAnchor = gates.declineAnchor || gates.declineFallback
+    ensureActionHint(
+      modal,
+      declineAnchor,
+      'decline',
+      'Paid call decline is not available yet.',
+      // Paid decline is hard-launch work (JP, 2026-09-26): canDecline hides
+      // it, and the Starter reads why while the request can still be answered.
+      Boolean(declineAnchor) &&
+        role === 'starter' &&
+        paidBooking(booking) &&
+        status === 'pending' &&
+        responseWindowOpen(booking, now) &&
+        !gates.declineShown,
     )
     const deepLinkState =
       typeof modal.getAttribute === 'function'
