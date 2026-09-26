@@ -1096,13 +1096,14 @@ eligibility before showing the prompt. It does not trust a missing or stale
 
 The resolved canonical invoice decides which void route the click takes, using
 the same trimmed, case-insensitive identity check the create path applies, so a
-padded enum value cannot send the two paths to different routes. A canonical
-`kind=stripe_invoice` row with `handoff_type=final` is a final invoice: its
-prompt reads `Type CANCEL to void this final invoice. The hosted invoice will
-stop accepting payment.`, it posts to `invoices/final-cancel/v3`, and its
-idempotency key is prefixed `final-invoice-cancel-ui:`. Every other eligible
-row keeps the ordinary prompt, `invoices/cancel/v3`, and the
-`invoice-cancel-ui:` prefix. Both routes post the same `invoice_id`,
+padded enum value cannot send the two paths to different routes. Any canonical
+row with `handoff_type=final` is a final invoice, whether it is a current
+`kind=payment_link` row or a legacy `kind=stripe_invoice` row: its prompt reads
+`Type CANCEL to void this final invoice. The hosted invoice will stop accepting
+payment.`, it posts to `invoices/final-cancel/v3`, and its idempotency key is
+prefixed `final-invoice-cancel-ui:`. Every other eligible row keeps the ordinary
+prompt, `invoices/cancel/v3`, and the `invoice-cancel-ui:` prefix. Both routes
+post the same `invoice_id`,
 `expected_status=unpaid`, `dry_run=false`, and retry-stable idempotency key to
 authenticated Xano. Xano remains the authority for Starter ownership, V3
 Starter-generated origin, current unpaid status, and the provider mapping. A
@@ -1297,8 +1298,10 @@ authority for whether the signed-in Starter can bill the selected project.
 
 Opening resolves one of four invoice modes from the canonical row, and the mode
 decides the submit contract. A `final_invoice` row is recognised as the project's
-final-invoice handoff when `kind=stripe_invoice`, `handoff_type=final`, and
-`sync_origin=v3`; its `status` then chooses between the two completed modes:
+final-invoice handoff when `handoff_type=final` and `sync_origin=v3`, regardless
+of `kind`; this covers both an ungenerated legacy-shaped `stripe_invoice`
+placeholder and its committed `payment_link` row. Its `status` then chooses
+between the two completed modes:
 
 - `standard` — the project is not completed. The ordinary create contract below
   applies unchanged.
