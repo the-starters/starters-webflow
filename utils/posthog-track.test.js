@@ -287,6 +287,37 @@ test('unhandled rejections are marked unhandled', () => {
   assert.equal(captured[0].properties.starters_error_source, 'onunhandledrejection')
 })
 
+test('network failure rejections share one tag and fingerprint', () => {
+  const { listeners, captured } = load()
+  const loadFailed = new TypeError('Load failed')
+  loadFailed.stack = ''
+  listeners.unhandledrejection({ reason: loadFailed })
+  listeners.unhandledrejection({ reason: new TypeError('Failed to fetch') })
+  listeners.unhandledrejection({ reason: new TypeError('NetworkError when attempting to fetch resource.') })
+  listeners.unhandledrejection({ reason: { message: 'Network Error', code: 'network-error' } })
+
+  assert.equal(captured.length, 4)
+  assert.equal(captured[0].error, loadFailed)
+  for (const { properties } of captured) {
+    assert.equal(properties.starters_error_source, 'onunhandledrejection')
+    assert.equal(properties.starters_error_kind, 'network')
+    assert.equal(properties.$exception_fingerprint, 'starters-network-rejection')
+    assert.equal(properties.$exception_list[0].mechanism.handled, false)
+  }
+})
+
+test('other rejections keep default grouping', () => {
+  const { listeners, captured } = load()
+  listeners.unhandledrejection({ reason: new TypeError('Failed to fetch dynamically imported module: https://cdn.example/x.js') })
+  listeners.unhandledrejection({ reason: new Error('boom') })
+
+  assert.equal(captured.length, 2)
+  for (const { properties } of captured) {
+    assert.equal(properties.starters_error_kind, undefined)
+    assert.equal(properties.$exception_fingerprint, undefined)
+  }
+})
+
 test('object promise rejections retain safe diagnostics without leaking arbitrary fields', () => {
   const listeners = {}
   const captured = []
