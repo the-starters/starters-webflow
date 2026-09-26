@@ -213,6 +213,10 @@
     return (
       role === 'starter' &&
       bookingStatus(booking) === 'pending' &&
+      // Paid decline and its settlement are hard-launch work (JP, 2026-09-26),
+      // so an explicitly Paid request hides Decline and dashboard-calls shows
+      // why. Same lenient flag as canCancel: an unflagged legacy row is Free.
+      !paidFlag(booking) &&
       bookingIdentified(booking)
     )
   }
