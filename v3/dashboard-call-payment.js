@@ -73,6 +73,8 @@
     return validReplacementKey(key) ? key : ''
   }
 
+  const CHANGE_CARD_ERROR = 'Your payment methods could not be opened. Please try again.'
+
   async function canonicalPost(path, payload) {
     if (typeof global.xanoAuthFetch !== 'function') {
       throw new Error('Scheduling authentication bridge unavailable')
@@ -89,7 +91,7 @@
       return null
     })
     if (!response.ok || !body) {
-      throw new Error(path + ' failed')
+      throw Object.assign(new Error('The payment request failed'), { path, status: response.status })
     }
     return body
   }
@@ -300,8 +302,10 @@
         cardModal.showModal()
       } catch (error) {
         if (active) { active.adding = false; paintAdd(active) }
+        // Internal errors can carry route paths; keep them for support only.
+        if (typeof console !== 'undefined') console.warn('Change card failed:', error?.message || error)
         if (active && active.isCurrent() && typeof actions.showActionError === 'function') {
-          actions.showActionError(modal, error.message || 'Payment methods unavailable')
+          actions.showActionError(modal, CHANGE_CARD_ERROR)
         }
       } finally { opening = false }
     }, true)
