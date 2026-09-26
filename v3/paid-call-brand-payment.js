@@ -2879,6 +2879,7 @@
       } catch (error) {
         console.error('[paid-call] booking failed', error)
         retrySameBooking = error.retrySameBooking === true
+        if (error.staleSlot === true) clearSelection()
         setStatus(
           error.staleSlot === true
             ? STALE_SLOT_ERROR

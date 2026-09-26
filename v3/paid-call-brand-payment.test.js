@@ -1030,53 +1030,72 @@ test('confirmed rescheduling clears a slot that expires before submission', asyn
   }
 })
 
-test('shared calendar keeps the stale-time message from a final booking recheck', async () => {
-  const previous = {
-    document: global.document,
-    jQuery: global.jQuery,
-    now: Date.now,
-    xanoAuthFetch: global.xanoAuthFetch,
-  }
-  const now = Date.UTC(2026, 7, 24, 0, 0, 0)
-  const startSeconds = Math.floor(now / 1000) + 8 * 60 * 60
-  const container = new CalendarElement('div')
-  global.document = calendarDocument()
-  global.jQuery = undefined
-  Date.now = () => now
-  global.xanoAuthFetch = async () => response({
-    time_slots: [{ start_time: startSeconds, end_time: startSeconds + 30 * 60 }],
-  })
-
-  try {
-    await api.mountPaidCalendar({
-      container,
-      config: { config_id: 'config_paid', grant_id: 'grant_test', duration: 30 },
-      async onConfirm() {
-        throw Object.assign(
-          new Error('This time is no longer available. Please choose another time.'),
-          { bookingNotSubmitted: true, retrySameBooking: false, staleSlot: true },
-        )
-      },
+for (const role of ['brand', 'starter']) {
+  test(`shared calendar clears ${role} selection after delayed final stale refusal`, async () => {
+    const previous = {
+      document: global.document,
+      jQuery: global.jQuery,
+      now: Date.now,
+      xanoAuthFetch: global.xanoAuthFetch,
+    }
+    const now = Date.UTC(2026, 7, 24, 0, 0, 0)
+    const startSeconds = Math.floor(now / 1000) + 8 * 60 * 60
+    const container = new CalendarElement('div')
+    const selections = []
+    let rejectConfirmation
+    global.document = calendarDocument()
+    global.jQuery = undefined
+    Date.now = () => now
+    global.xanoAuthFetch = async () => response({
+      time_slots: [{ start_time: startSeconds, end_time: startSeconds + 30 * 60 }],
     })
-    const slot = container.querySelectorAll('[data-paid-calendar-slot]')[0]
-    const confirm = container.querySelectorAll('[data-paid-calendar-element]')
-      .find((node) => node.getAttribute('data-paid-calendar-element') === 'confirm')
-    const status = container.querySelectorAll('[data-paid-calendar-element]')
-      .find((node) => node.getAttribute('data-paid-calendar-element') === 'status')
 
-    slot.listeners.click()
-    await confirm.listeners.click({ preventDefault() {} })
-    assert.equal(
-      status.textContent,
-      'This time is no longer available. Please choose another time.',
-    )
-  } finally {
-    global.document = previous.document
-    global.jQuery = previous.jQuery
-    Date.now = previous.now
-    global.xanoAuthFetch = previous.xanoAuthFetch
-  }
-})
+    try {
+      await api.mountPaidCalendar({
+        container,
+        config: {
+          booking_id: `booking_confirmed_${role}`,
+          config_id: 'config_paid',
+          grant_id: 'grant_test',
+          duration: 30,
+          mode: 'confirmed_reschedule',
+        },
+        now: () => now,
+        onSelectionChange(selection) { selections.push(selection) },
+        onConfirm() {
+          return new Promise((resolve, reject) => { rejectConfirmation = reject })
+        },
+      })
+      const slot = container.querySelectorAll('[data-paid-calendar-slot]')[0]
+      const confirm = container.querySelectorAll('[data-paid-calendar-element]')
+        .find((node) => node.getAttribute('data-paid-calendar-element') === 'confirm')
+      const status = container.querySelectorAll('[data-paid-calendar-element]')
+        .find((node) => node.getAttribute('data-paid-calendar-element') === 'status')
+
+      slot.listeners.click()
+      const pending = confirm.listeners.click({ preventDefault() {} })
+      assert.equal(confirm.disabled, true)
+      rejectConfirmation(Object.assign(
+        new Error('This time is no longer available. Please choose another time.'),
+        { bookingNotSubmitted: true, retrySameBooking: false, staleSlot: true },
+      ))
+      await pending
+
+      assert.equal(slot.getAttribute('aria-pressed'), 'false')
+      assert.equal(confirm.disabled, true)
+      assert.equal(selections.at(-1), null)
+      assert.equal(
+        status.textContent,
+        'This time is no longer available. Please choose another time.',
+      )
+    } finally {
+      global.document = previous.document
+      global.jQuery = previous.jQuery
+      Date.now = previous.now
+      global.xanoAuthFetch = previous.xanoAuthFetch
+    }
+  })
+}
 
 test('shared call calendar renders dates and times and submits only the selected slot', async () => {
   const previous = {
