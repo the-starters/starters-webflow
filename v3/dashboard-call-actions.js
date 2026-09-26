@@ -516,6 +516,17 @@
     const attemptKey = await actionAttemptKey(kind, booking, attemptScope, role)
     const payload = actionPayload(kind, role, booking, reason, attemptKey, now, extra)
     if (!payload) return null
+    // Preparing the durable key waits for hashing. The selected confirmed
+    // slot must still be strictly in the future when the request starts.
+    if (kind === 'reschedule-propose') {
+      const reference = canonicalNow(booking)
+      const selectedStart = Number(payload.new_start)
+      if (reference == null || !Number.isFinite(selectedStart) || selectedStart <= reference) {
+        throw Object.assign(new Error('This time is no longer available. Please choose another time.'), {
+          staleSlot: true,
+        })
+      }
+    }
     const response = await global.xanoAuthFetch(
       XANO_SCHEDULING_BASE + config.path,
       {
@@ -1294,7 +1305,8 @@
     if (!authoredLoader) container.textContent = 'Loading available times...'
     const calendarModule = await loadCalendarModule(document)
     if (!isCurrent()) return false
-    if (!rescheduleKindFor(role, booking)) { showCalendarLoader(modal, false); return false }
+    const calendarKind = rescheduleKindFor(role, booking)
+    if (!calendarKind) { showCalendarLoader(modal, false); return false }
     if (!calendarModule) {
       showCalendarLoader(modal, false)
       container.textContent = 'The calendar could not load. Please try again.'
@@ -1309,9 +1321,11 @@
         config_id: clean(booking && booking.config_id),
         grant_id: clean(booking && booking.grant_id),
         duration: Number(booking && booking.duration),
+        ...(calendarKind === 'reschedule-propose' ? { mode: 'confirmed_reschedule' } : {}),
       },
       confirmText: 'Propose new time',
       isCurrent,
+      ...(calendarKind === 'reschedule-propose' ? { now: function () { return canonicalNow(booking) } } : {}),
       onConfirm: async function (slot) {
         if (!isCurrent()) return null
         showActionError(modal, '')

@@ -2467,13 +2467,21 @@ accessible textarea label `Why do you need a new time?`. It loads
 `/hire`.
 
 Dashboard availability reads pass the canonical booking's `booking_id` through
-the shared calendar config to `scheduler/get_availability/v3`. The query helper
-trims and URL-encodes this optional identifier; new-booking queries omit it.
-This supplies the identity needed for backend participant validation and private
-retained-booking availability when Free Call is Off. That backend support in
-endpoint #1658 remains a separate draft requiring native runtime tests and
-individual publication; this frontend change does not establish backend or
-production proof.
+the shared calendar config to `scheduler/get_availability/v3`. Confirmed-call
+proposals additionally send `mode=confirmed_reschedule`; that mode requires the
+booking ID and requests the next 14 days beginning one second after the current
+canonical server time. The backend mode supplies all 24/7 candidates outside
+posted availability while retaining busy exclusions. The client accepts only
+exact-duration intervals whose start is strictly future. It rechecks the
+selected start against the advancing canonical clock when the member confirms
+and again at the final shared request boundary after durable-key hashing. An
+expired selection is cleared without submission and shows `This time is no
+longer available. Please choose another time.` Pending-request edits retain the
+ordinary booking-bound availability query and its existing notice floor, while
+new-booking queries continue to omit the booking ID and mode. Backend candidate
+#1658 and the coordinated #5756 → #2621 → #5759 chain remain unpublished
+pending native provider/runtime proof; never publish #2621 alone. This frontend
+change does not establish backend or production proof.
 
 A confirmed-call proposal posts `booking/reschedule/propose/v3` with a required
 reason, the selected slot's unchanged timestamps, the selected IANA timezone,
@@ -3991,8 +3999,9 @@ flowchart TD
    the provider credential and private Scheduler session off the browser.
    Production initial Paid booking availability begins eight hours ahead, with
    a slot exactly eight hours away allowed; the exact staging host keeps its
-   five-minute exception. Dashboard rescheduling keeps its existing 24-hour
-   availability floor.
+   five-minute exception. The distinct confirmed- and pending-call dashboard
+   availability contracts are owned by
+   [Dashboard call sections](#dashboard-call-sections).
 2. Render the month calendar, timezone dropdown, time buttons and confirmation
    row inside the authored `[nylas-container]` mount. In a wide mount, the month
    calendar spans the left column. The timezone dropdown sits at the top of the
