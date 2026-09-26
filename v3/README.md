@@ -2472,15 +2472,16 @@ proposals additionally send `mode=confirmed_reschedule`; that mode requires the
 booking ID and requests the next 14 days beginning one second after the current
 canonical server time. The backend mode supplies all 24/7 candidates outside
 posted availability while retaining busy exclusions. The client accepts only
-exact-duration intervals whose start is strictly future, and rechecks the
-selected start against the advancing canonical clock when the member confirms.
-An expired selection is cleared without submission and shows `This time is no
+exact-duration intervals whose start is strictly future. It rechecks the
+selected start against the advancing canonical clock when the member confirms
+and again at the final shared request boundary after durable-key hashing. An
+expired selection is cleared without submission and shows `This time is no
 longer available. Please choose another time.` Pending-request edits retain the
 ordinary booking-bound availability query and its existing notice floor, while
-new-booking queries continue to omit the booking ID and mode. The corresponding
-backend support in endpoint candidates #1658 and #2621 remains separately
-unpublished and requires native runtime proof; this frontend change does not
-establish backend or production proof.
+new-booking queries continue to omit the booking ID and mode. Backend candidate
+#1658 and the coordinated #5756 → #2621 → #5759 chain remain unpublished
+pending native provider/runtime proof; never publish #2621 alone. This frontend
+change does not establish backend or production proof.
 
 A confirmed-call proposal posts `booking/reschedule/propose/v3` with a required
 reason, the selected slot's unchanged timestamps, the selected IANA timezone,
