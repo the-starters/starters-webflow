@@ -358,7 +358,8 @@ test('a failed Change card open shows a Brand-facing message, never a route path
   const shown = []
   const warned = []
   const booking = paidBooking('card_or_payment_declined')
-  const modal = { open: true, querySelector: () => ({}) }
+  const basePanel = {}
+  const modal = { open: true, querySelector: selector => selector === '[booking-popup-content="base"]' ? basePanel : {} }
   const button = { getAttribute: () => 'change-card', hasAttribute: () => false,
     closest: selector => selector === '[popup-booking-info]' ? modal : button }
   const document = { addEventListener: (event, fn) => { listener = fn } }
@@ -368,14 +369,15 @@ test('a failed Change card open shows a Brand-facing message, never a route path
     installSavedCardPicker() { throw new Error('picker must not install after a failed readiness read') },
     installCardSetupForm() {}, stripeForPaymentEnvironment() {},
   }
-  global.StartersDashboardCallActions = { switchPopupContent() {}, showActionError: (root, message) => shown.push(message) }
+  global.StartersDashboardCallActions = { switchPopupContent() {}, showActionError: (root, message) => shown.push({ root, message }) }
   console.warn = (...args) => warned.push(args.join(' '))
   try {
     assert.equal(await api.wire({ document, role: 'brand', getBooking: () => booking }), true)
     await listener({ target: button, preventDefault() {}, stopImmediatePropagation() {} })
     assert.equal(shown.length, 1)
-    assert.doesNotMatch(shown[0], /\/|v3|returned no data/)
-    assert.equal(shown[0], 'Your payment methods could not be opened. Please try again.')
+    assert.equal(shown[0].root, basePanel)
+    assert.doesNotMatch(shown[0].message, /\/|v3|returned no data/)
+    assert.equal(shown[0].message, 'Your payment methods could not be opened. Please try again.')
     // The diagnostic detail stays available to support in the console.
     assert.ok(warned.some(line => line.includes('/brand/payment/readiness/v3 returned no data')))
   } finally {

@@ -305,7 +305,8 @@
         // Internal errors can carry route paths; keep them for support only.
         if (typeof console !== 'undefined') console.warn('Change card failed:', error?.message || error)
         if (active && active.isCurrent() && typeof actions.showActionError === 'function') {
-          actions.showActionError(modal, CHANGE_CARD_ERROR)
+          const content = modal.querySelector('[booking-popup-content="base"]') || modal
+          actions.showActionError(content, CHANGE_CARD_ERROR)
         }
       } finally { opening = false }
     }, true)
