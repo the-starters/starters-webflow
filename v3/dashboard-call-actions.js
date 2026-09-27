@@ -1373,6 +1373,18 @@
     return true
   }
 
+  // The panel switchPopupContent left open. A root with no nested panels
+  // (the payment module passes the base panel itself) returns null.
+  function openPopupContent(modal) {
+    if (typeof modal.querySelectorAll !== 'function') return null
+    return Array.prototype.find.call(
+      modal.querySelectorAll('[booking-popup-content]'),
+      function (content) {
+        return !content.hidden && !(content.style && content.style.display === 'none')
+      },
+    ) || null
+  }
+
   /**
    * Shows (or clears, with an empty message) a module-owned error line inside
    * the details modal. A failed command must never end as a console-only
@@ -1383,18 +1395,28 @@
     const text = clean(message)
     let note = modal.querySelector('[data-starters-action-error]')
     if (!text) {
-      if (note) {
-        note.hidden = true
-        note.style.display = 'none'
-      }
+      // The note moves between panels and the payment module keeps its own
+      // in the base panel, so a clear must reach every note, not the first.
+      const notes = typeof modal.querySelectorAll === 'function'
+        ? modal.querySelectorAll('[data-starters-action-error]')
+        : [note]
+      Array.prototype.forEach.call(notes, function (each) {
+        if (!each) return
+        each.hidden = true
+        each.style.display = 'none'
+      })
       return
     }
+    // F21: the dialog root clips to the viewport, so a note appended there
+    // sat below the fold. Place it in the open panel, next to the failed
+    // action, and keep the root when no open panel is found.
+    const host = openPopupContent(modal) || modal
     if (!note) {
       const document = modal.ownerDocument || global.document
       if (
         !document ||
         typeof document.createElement !== 'function' ||
-        typeof modal.appendChild !== 'function'
+        typeof host.appendChild !== 'function'
       ) return
       note = document.createElement('div')
       note.setAttribute('data-starters-action-error', '')
@@ -1403,11 +1425,19 @@
       note.style.fontSize = '14px'
       note.style.lineHeight = '1.4'
       note.style.margin = '12px 24px'
-      modal.appendChild(note)
+      host.appendChild(note)
+    } else if (host !== modal && note.parentNode !== host && typeof host.appendChild === 'function') {
+      host.appendChild(note)
     }
     note.textContent = text
     note.hidden = false
     note.style.display = ''
+    // The open panel scrolls inside the dialog; bring the note into view.
+    if (typeof note.scrollIntoView === 'function') {
+      try {
+        note.scrollIntoView({ block: 'nearest' })
+      } catch (_error) {}
+    }
   }
 
   function wire(options) {
