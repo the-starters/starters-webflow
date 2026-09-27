@@ -2572,7 +2572,7 @@ ships, so an explicitly Paid row hides Cancel. An upcoming Paid confirmed or
 rescheduled row, and the Brand's own upcoming Paid pending request, show
 `Paid call cancellation is not available yet.` below the authored control; the
 Starter's pending view gets no Cancel hint because the Starter declines a
-pending request instead. For Cancel eligibility only,
+pending request instead. For Decline and Cancel eligibility,
 a row with neither `is_paid` nor `paid_meeting` is treated as legacy Free so
 older Free bookings keep the action. Reschedule keeps a stricter shared gate:
 the row must be in the future, have an explicit Free flag, a grant, and positive
@@ -2587,7 +2587,7 @@ For an active upcoming initial request or confirmed row where neither a
 reschedule action nor a response is available, the modal shows
 `Rescheduling is available for Free calls.` below the authored Reschedule
 control. A rescheduled proposal hides this hint for both roles, including when
-reusing a modal that previously showed it. Both eligibility explanations are
+reusing a modal that previously showed it. All eligibility explanations are
 module-owned `data-starters-action-hint` nodes inserted after the authored
 buttons; the script does not edit Designer markup. The early Reschedule guard
 resolves the confirmed proposal or pending direct-update contract and passes an

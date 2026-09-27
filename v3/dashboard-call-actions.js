@@ -199,8 +199,8 @@
 
   /**
    * Lenient paid check matching dashboard-calls' paidBooking: a missing flag
-   * counts as Free. canCancel must not hide Cancel on Free rows that never
-   * stamped the flag, so it gates on this instead of the strict freeBooking.
+   * counts as Free. Decline and Cancel must not disappear on Free rows that
+   * never stamped the flag, so they gate on this instead of strict freeBooking.
    */
   function paidFlag(booking) {
     const value = booking && (
