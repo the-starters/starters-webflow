@@ -601,6 +601,122 @@ test('showActionError renders a module-owned alert and clears it again', () => {
   assert.equal(created[0].hidden, false)
 })
 
+// F21: a details dialog with authored panels. Notes record their parent so a
+// test can prove where the alert renders.
+function actionErrorModal(panelNames, noteOptions = {}) {
+  const created = []
+  const ownerDocument = {
+    createElement() {
+      const node = {
+        hidden: false,
+        style: {},
+        textContent: '',
+        attributes: {},
+        scrolls: [],
+        setAttribute(name, value) { this.attributes[name] = value },
+      }
+      if (noteOptions.scroll === 'record') node.scrollIntoView = function (options) { this.scrolls.push(options) }
+      if (noteOptions.scroll === 'throw') node.scrollIntoView = function () { throw new Error('no layout') }
+      created.push(node)
+      return node
+    },
+  }
+  function container(extra, nested) {
+    return Object.assign({
+      children: [],
+      ownerDocument,
+      appendChild(node) {
+        if (node.parentNode) node.parentNode.children.splice(node.parentNode.children.indexOf(node), 1)
+        node.parentNode = this
+        this.children.push(node)
+      },
+      notes() {
+        return this.children.filter(node => node.attributes && 'data-starters-action-error' in node.attributes)
+      },
+      querySelector(selector) {
+        return this.querySelectorAll(selector)[0] || null
+      },
+      querySelectorAll(selector) {
+        if (selector === '[booking-popup-content]') return nested
+        if (selector === '[data-starters-action-error]') {
+          return nested.flatMap(panel => panel.notes()).concat(this.notes())
+        }
+        return []
+      },
+    }, extra)
+  }
+  const panels = panelNames.map(name => container({
+    hidden: false,
+    style: {},
+    getAttribute(attribute) { return attribute === 'booking-popup-content' ? name : null },
+  }, []))
+  const modal = container({}, panels)
+  function open(name) {
+    panels.forEach(panel => {
+      const active = panel.getAttribute('booking-popup-content') === name
+      panel.hidden = !active
+      panel.style.display = active ? 'flex' : 'none'
+    })
+  }
+  return { created, modal, open, panel: name => panels.find(panel => panel.getAttribute('booking-popup-content') === name) }
+}
+
+test('F21: a shown action error renders in the open panel and scrolls into view once', () => {
+  const { created, modal, open, panel } = actionErrorModal(['base', 'cancel-reason'], { scroll: 'record' })
+  open('cancel-reason')
+  api.showActionError(modal, 'Confirmed Free cancellation claim changed before provider cancellation')
+  assert.equal(created.length, 1)
+  assert.equal(created[0].parentNode, panel('cancel-reason'))
+  assert.equal(modal.notes().length, 0, 'The clipped dialog root never holds the alert')
+  assert.equal(created[0].hidden, false)
+  assert.deepEqual(created[0].scrolls, [{ block: 'nearest' }])
+})
+
+test('F21: clearing an action error never scrolls', () => {
+  const { created, modal, open } = actionErrorModal(['base', 'cancel-reason'], { scroll: 'record' })
+  open('cancel-reason')
+  api.showActionError(modal, '')
+  assert.equal(created.length, 0)
+  api.showActionError(modal, 'First failure')
+  api.showActionError(modal, '')
+  assert.equal(created[0].hidden, true)
+  assert.equal(created[0].style.display, 'none')
+  assert.equal(created[0].scrolls.length, 1, 'Only the shown message scrolled')
+})
+
+test('F21: a note without a working scrollIntoView still shows the message', () => {
+  for (const scroll of ['absent', 'throw']) {
+    const { created, modal, open } = actionErrorModal(['base', 'cancel-reason'], { scroll })
+    open('cancel-reason')
+    assert.doesNotThrow(() => api.showActionError(modal, 'Cancellation failed'))
+    assert.equal(created[0].textContent, 'Cancellation failed')
+    assert.equal(created[0].hidden, false)
+  }
+})
+
+test('F21: the alert follows the open panel, falls back to the root, and clears everywhere', () => {
+  const { created, modal, open, panel } = actionErrorModal(['base', 'cancel-reason', 'reschedule-calendar'])
+  open('cancel-reason')
+  api.showActionError(modal, 'Cancellation failed')
+  open('reschedule-calendar')
+  api.showActionError(modal, 'That time is no longer available.')
+  assert.equal(created.length, 1, 'One note is reused across panels')
+  assert.equal(created[0].parentNode, panel('reschedule-calendar'))
+  assert.equal(panel('cancel-reason').notes().length, 0)
+  // The payment module scopes its own note to the base panel.
+  open('base')
+  api.showActionError(panel('base'), 'Your payment methods could not be opened. Please try again.')
+  assert.equal(created.length, 2)
+  assert.equal(created[1].parentNode, panel('base'))
+  api.showActionError(modal, '')
+  assert.deepEqual(created.map(note => note.hidden), [true, true])
+  // With no open panel the root keeps the alert, as before.
+  const bare = actionErrorModal(['base'])
+  bare.panel('base').hidden = true
+  api.showActionError(bare.modal, 'Cancellation failed')
+  assert.equal(bare.created[0].parentNode, bare.modal)
+})
+
 test('a blocked legacy Free booking is reported as unpaid', async () => {
   const originalWarn = console.warn
   let clickHandler

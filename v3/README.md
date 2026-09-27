@@ -2639,6 +2639,10 @@ keeps the existing behavior.
 Each action clears any prior module-owned `[data-starters-action-error]` alert
 when a new attempt starts. A failed command shows the server's `message` or
 `error` text in that alert, falling back to the action's generic failure text.
+The alert renders inside the open `booking-popup-content` panel, below its
+buttons, and scrolls into view with `block: 'nearest'`. The dialog root clips
+to the viewport, so an alert there was invisible. With no open panel, the alert
+stays on the dialog root.
 A click rejected by the client eligibility gate does not open an authored
 legacy action. It writes a PII-free console warning with only role, booking
 status, paid state, and whether the booking has the required identity.
