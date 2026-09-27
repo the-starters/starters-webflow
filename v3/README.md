@@ -2705,6 +2705,9 @@ default command. Closing or replacing the booking modal permanently invalidates
 that owner, including when the same booking is reopened. Add card saves through
 the shared setup flow and reloads the picker with the new default selected;
 booking recovery still requires “Use this card”. Back returns to the picker.
+If **Change card** cannot open the payment methods, the Brand sees only
+“Your payment methods could not be opened. Please try again.”; the underlying
+failure message remains a support diagnostic in the browser console.
 The `auth_required` helper for `brand/booking/payment-action/v3` remains available
 without activating authentication-confirmation UI. Paid cancellation, reschedule
 policy, charging and payout policy are unchanged.
