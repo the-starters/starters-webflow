@@ -2318,9 +2318,12 @@ Reschedule proposals retain the distinct canonical `rescheduled` state and stay
 in both roles' calls lists, without initial-request expiry or initial Accept
 actions. Once their end time passes, they display as completed. Completed,
 ordinary cancelled, and archived rows use `Completed`, `Cancelled`, and
-`Archived`. When the canonical expiry marker described below is present, both
-roles instead see `Expired` on the card and in call details. The label never
-infers expiry from timestamps or missing fields.
+`Archived`. A Free booking whose exact canonical raw status is `declined`
+remains in the normalized `cancelled` category but displays `Declined` for both
+roles on the card and in call details; Paid bookings keep `Cancelled`. When the
+canonical expiry marker described below is present, both roles instead see
+`Expired` on the card and in call details. The label never infers expiry from
+timestamps or missing fields.
 The selected `[booking-filter]` is the only control with `is-active`,
 `aria-pressed="true"`, and the matching checked visual state.
 
@@ -2655,10 +2658,13 @@ malformed result keeps the key for safe replay. Only an exact nested result for
 the same booking clears the matching key: decline must be `declined`, cancel
 must be `cancelled`, a proposal must be `rescheduled`, a pending-request update
 must remain `pending`, acceptance must be `confirmed`, and the nested
-`reschedule_decline` response must be `cancelled`. The success
-panel replaces `[Starter]` and `[Brand]` in its leaf text nodes with the
-counterpart's canonical booking name, or `the other participant` when that name
-is blank. Before the pending direct-update panel opens, the module updates the
+`reschedule_decline` response must be `cancelled`. Authored action-result and
+terminal panels replace `[Starter]` and `[Brand]` in their leaf text nodes with
+the counterpart's canonical booking name, or `the other participant` when that
+name is blank. Free panels also replace the exact authored lowercase `[brand]`
+token; Paid panels leave that token authored, including after a modal is reused
+from a Free booking. Other casing variants are not placeholders. Before the
+pending direct-update panel opens, the module updates the
 open modal from the new start, end, and reason, so its booking fields do not show
 the pre-change time. For either Brand or Starter, a confirmed-call proposal
 renders the selected date and reason only in the `reschedule-proposed` receipt,
