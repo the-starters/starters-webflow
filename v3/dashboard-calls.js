@@ -543,6 +543,9 @@
     if (status === 'cancelled' && clean(booking && booking.cancelled_by).toLowerCase() === 'expired') {
       return 'Expired'
     }
+    if (status === 'cancelled' && clean(booking && booking.status).toLowerCase() === 'declined') {
+      return 'Declined'
+    }
     return {
       pending: role === 'starter' ? 'Pending' : 'Requested',
       rescheduled: 'Pending',

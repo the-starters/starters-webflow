@@ -605,13 +605,11 @@
           if (node.nodeType === 3) {
             const current = String(node.nodeValue == null ? '' : node.nodeValue)
             const template = counterpartPlaceholderTemplates.get(node) || current
-            if (template.indexOf('[Starter]') === -1 && template.indexOf('[Brand]') === -1) return
+            if (!/\[(?:starter|brand)\]/i.test(template)) return
             counterpartPlaceholderTemplates.set(node, template)
-            node.nodeValue = template
-              .split('[Starter]')
-              .join(name)
-              .split('[Brand]')
-              .join(name)
+            node.nodeValue = template.replace(/\[(?:starter|brand)\]/gi, function () {
+              return name
+            })
             replaced += 1
             return
           }
