@@ -851,3 +851,211 @@ test('gated Reschedule and paid Cancel render an explanation hint', () => {
     global.StartersDashboardCallActions = originalActions
   }
 })
+
+// Soft launch (2026-09-28): Paid pending cancellation is hard-launch work, so
+// canCancel hides the Brand's Cancel on a Paid pending request. The hidden
+// button must be explained exactly like the confirmed Paid case, and nothing
+// may change for Free requests or for the Starter, who declines instead.
+test('Brand pending Paid request explains that cancellation is not available yet', () => {
+  const originalActions = global.StartersDashboardCallActions
+  const realActions = require('./dashboard-call-actions.js')
+  function hintButton(action) {
+    const node = button(action)
+    node.insertAdjacentElement = function (position, element) {
+      assert.equal(position, 'afterend')
+    }
+    return node
+  }
+  function hintModal(buttons) {
+    const hints = {}
+    return {
+      hints,
+      querySelectorAll() {
+        return buttons
+      },
+      querySelector(selector) {
+        const match = /data-starters-action-hint="([^"]+)"/.exec(selector)
+        return match ? hints[match[1]] || null : null
+      },
+      ownerDocument: {
+        createElement() {
+          return {
+            hidden: false,
+            style: {},
+            textContent: '',
+            setAttribute(name, value) {
+              if (name === 'data-starters-action-hint') hints[value] = this
+            },
+          }
+        },
+      },
+    }
+  }
+  const now = Date.now()
+  const pending = {
+    booking_id: 'booking-pending-hint',
+    config_id: 'config-pending-hint',
+    data_environment: 'production',
+    status: 'pending',
+    start: now + 48 * 60 * 60 * 1000,
+    brand_data: { memberstack_id: 'mem_brand' },
+    starter_data: { memberstack_id: 'mem_starter' },
+  }
+  try {
+    global.StartersDashboardCallActions = {
+      wire() {},
+      ensureRescheduleViews() { return true },
+      canDecline: realActions.canDecline,
+      canCancel: realActions.canCancel,
+      rescheduleKindFor() { return '' },
+      canRespondReschedule() { return false },
+    }
+
+    const paidCancel = hintButton('switch-cancel')
+    const paidModal = hintModal([paidCancel])
+    dashboard.configureDetailActions(paidModal, 'brand', 'pending', { ...pending, is_paid: true }, now)
+    assert.equal(paidCancel.hidden, true)
+    assert.ok(paidModal.hints.cancel, 'the hidden Paid Cancel carries a hint')
+    assert.equal(paidModal.hints.cancel.textContent, 'Paid call cancellation is not available yet.')
+    assert.equal(paidModal.hints.cancel.hidden, false)
+
+    // Free pending: the Brand keeps its working Cancel and gets no hint.
+    const freeCancel = hintButton('switch-cancel')
+    const freeModal = hintModal([freeCancel])
+    dashboard.configureDetailActions(freeModal, 'brand', 'pending', { ...pending, is_paid: false }, now)
+    assert.equal(freeCancel.hidden, false)
+    assert.equal(freeModal.hints.cancel, undefined)
+
+    // Re-rendering the same modal for a Free request hides a stale Paid hint.
+    dashboard.configureDetailActions(paidModal, 'brand', 'pending', { ...pending, is_paid: false }, now)
+    assert.equal(paidCancel.hidden, false)
+    assert.equal(paidModal.hints.cancel.hidden, true)
+
+    // The Starter never cancels a pending request, Paid or Free.
+    const starterCancel = hintButton('switch-cancel')
+    const starterModal = hintModal([starterCancel])
+    dashboard.configureDetailActions(starterModal, 'starter', 'pending', { ...pending, is_paid: true }, now)
+    assert.equal(starterCancel.hidden, true)
+    assert.equal(starterModal.hints.cancel, undefined)
+
+    // A Paid request whose start has passed renders no hint.
+    const pastCancel = hintButton('switch-cancel')
+    const pastModal = hintModal([pastCancel])
+    dashboard.configureDetailActions(
+      pastModal, 'brand', 'pending', { ...pending, is_paid: true, start: now - 1000 }, now,
+    )
+    assert.equal(pastModal.hints.cancel, undefined)
+  } finally {
+    global.StartersDashboardCallActions = originalActions
+  }
+})
+
+// Soft launch (JP, 2026-09-26): Paid decline is hard-launch work. The Starter
+// keeps Accept on a Paid request, loses Decline, and the details modal says
+// why. Free requests keep Decline and show no hint.
+test('Starter Paid request hides Decline and explains it; Free keeps Decline', () => {
+  const originalActions = global.StartersDashboardCallActions
+  function hintButton(action) {
+    const node = button(action)
+    node.insertAdjacentElement = function (position) {
+      assert.equal(position, 'afterend')
+    }
+    return node
+  }
+  function hintModal(buttons) {
+    const hints = {}
+    return {
+      hints,
+      querySelectorAll() {
+        return buttons
+      },
+      querySelector(selector) {
+        const match = /data-starters-action-hint="([^"]+)"/.exec(selector)
+        return match ? hints[match[1]] || null : null
+      },
+      ownerDocument: {
+        createElement() {
+          return {
+            hidden: false,
+            style: {},
+            textContent: '',
+            setAttribute(name, value) {
+              if (name === 'data-starters-action-hint') hints[value] = this
+            },
+          }
+        },
+      },
+    }
+  }
+  const now = Date.now()
+  const pending = {
+    booking_id: 'booking-decline-hint',
+    config_id: 'config-decline-hint',
+    data_environment: 'production',
+    status: 'pending',
+    start: now + 48 * 60 * 60 * 1000,
+    confirmation_expires_at: now + 24 * 60 * 60 * 1000,
+    brand_data: { memberstack_id: 'mem_brand' },
+    starter_data: { memberstack_id: 'mem_starter' },
+  }
+  try {
+    global.StartersDashboardCallActions = require('./dashboard-call-actions.js')
+
+    // Card: Accept stays, Decline goes, for Paid only.
+    const cardAccept = button('switch-confirm')
+    const cardDecline = button('switch-decline')
+    const card = { querySelectorAll() { return [cardAccept, cardDecline] } }
+    dashboard.configureActionButtons(card, 'starter', 'pending', { ...pending, is_paid: true }, now)
+    assert.equal(cardAccept.hidden, false)
+    assert.equal(cardDecline.hidden, true)
+    dashboard.configureActionButtons(card, 'starter', 'pending', { ...pending, is_paid: false }, now)
+    assert.equal(cardAccept.hidden, false)
+    assert.equal(cardDecline.hidden, false)
+
+    // Details: every authored decline step hides and one hint explains it.
+    const accept = hintButton('switch-confirm')
+    const decline = hintButton('switch-decline')
+    const declineReason = hintButton('switch-decline-reason')
+    const declineSubmit = hintButton('decline')
+    const modal = hintModal([accept, decline, declineReason, declineSubmit])
+    dashboard.configureDetailActions(modal, 'starter', 'pending', { ...pending, is_paid: true }, now)
+    assert.equal(accept.hidden, false)
+    assert.equal(decline.hidden, true)
+    assert.equal(declineReason.hidden, true)
+    assert.equal(declineSubmit.hidden, true)
+    assert.ok(modal.hints.decline, 'the hidden Paid Decline carries a hint')
+    assert.equal(modal.hints.decline.textContent, 'Paid call decline is not available yet.')
+    assert.equal(modal.hints.decline.hidden, false)
+
+    // Reusing the modal for a Free request restores Decline and hides the hint.
+    dashboard.configureDetailActions(modal, 'starter', 'pending', { ...pending, is_paid: false }, now)
+    assert.equal(decline.hidden, false)
+    assert.equal(declineReason.hidden, false)
+    assert.equal(declineSubmit.hidden, false)
+    assert.equal(modal.hints.decline.hidden, true)
+
+    // A Free request never creates the hint.
+    const freeDecline = hintButton('switch-decline')
+    const freeModal = hintModal([freeDecline])
+    dashboard.configureDetailActions(freeModal, 'starter', 'pending', { ...pending, is_paid: false }, now)
+    assert.equal(freeDecline.hidden, false)
+    assert.equal(freeModal.hints.decline, undefined)
+
+    // The Brand never declines, and an expired Paid request is read-only.
+    for (const [role, booking] of [
+      ['brand', { ...pending, is_paid: true }],
+      ['starter', { ...pending, is_paid: true, confirmation_expires_at: now - 1000 }],
+      ['starter', { ...pending, is_paid: true, status: 'confirmed' }],
+    ]) {
+      const other = hintButton('switch-decline')
+      const otherModal = hintModal([other])
+      dashboard.configureDetailActions(
+        otherModal, role, dashboard.bookingStatus(booking, now), booking, now,
+      )
+      assert.equal(other.hidden, true)
+      assert.equal(otherModal.hints.decline, undefined)
+    }
+  } finally {
+    global.StartersDashboardCallActions = originalActions
+  }
+})

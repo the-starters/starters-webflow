@@ -199,8 +199,8 @@
 
   /**
    * Lenient paid check matching dashboard-calls' paidBooking: a missing flag
-   * counts as Free. canCancel must not hide Cancel on Free rows that never
-   * stamped the flag, so it gates on this instead of the strict freeBooking.
+   * counts as Free. Decline and Cancel must not disappear on Free rows that
+   * never stamped the flag, so they gate on this instead of strict freeBooking.
    */
   function paidFlag(booking) {
     const value = booking && (
@@ -213,6 +213,10 @@
     return (
       role === 'starter' &&
       bookingStatus(booking) === 'pending' &&
+      // Paid decline and its settlement are hard-launch work (JP, 2026-09-26),
+      // so an explicitly Paid request hides Decline and dashboard-calls shows
+      // why. Same lenient flag as canCancel: an unflagged legacy row is Free.
+      !paidFlag(booking) &&
       bookingIdentified(booking)
     )
   }
