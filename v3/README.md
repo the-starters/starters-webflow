@@ -2317,7 +2317,10 @@ rescheduled is `Pending` for both roles on cards and in call details.
 Reschedule proposals retain the distinct canonical `rescheduled` state and stay
 in both roles' calls lists, without initial-request expiry or initial Accept
 actions. Once their end time passes, they display as completed. Completed,
-cancelled, and archived use `Completed`, `Cancelled`, and `Archived`.
+ordinary cancelled, and archived rows use `Completed`, `Cancelled`, and
+`Archived`. When the canonical expiry marker described below is present, both
+roles instead see `Expired` on the card and in call details. The label never
+infers expiry from timestamps or missing fields.
 The selected `[booking-filter]` is the only control with `is-active`,
 `aria-pressed="true"`, and the matching checked visual state.
 

@@ -5184,3 +5184,14 @@ test('F12 clock-only refresh retains the rendered row and replaces or invalidate
     Date.now = original.wallNow
   }
 })
+
+test('F13: an expired cancellation shows Expired; other cancellations stay Cancelled', () => {
+  const expired = { status: 'cancelled', cancelled_by: 'expired', start: 10_000, end: 20_000 }
+  const cancelled = { status: 'cancelled', cancelled_by: 'brand', start: 10_000, end: 20_000 }
+  for (const role of ['starter', 'brand']) {
+    assert.equal(api.statusLabel(api.bookingStatus(expired, 30_000), role, expired), 'Expired')
+    assert.equal(api.statusLabel(api.bookingStatus(cancelled, 30_000), role, cancelled), 'Cancelled')
+    assert.equal(api.statusLabel('cancelled', role), 'Cancelled')
+    assert.equal(api.statusLabel('confirmed', role, expired), 'Upcoming')
+  }
+})
