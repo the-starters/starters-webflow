@@ -543,7 +543,12 @@
     if (status === 'cancelled' && clean(booking && booking.cancelled_by).toLowerCase() === 'expired') {
       return 'Expired'
     }
-    if (status === 'cancelled' && clean(booking && booking.status).toLowerCase() === 'declined') {
+    if (
+      status === 'cancelled' &&
+      booking &&
+      booking.status === 'declined' &&
+      !paidBooking(booking)
+    ) {
       return 'Declined'
     }
     return {

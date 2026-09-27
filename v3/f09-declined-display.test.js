@@ -33,7 +33,7 @@ test('both roles see Declined while the status category and actions stay termina
 
 test('the authored list pill shows Declined with the unchanged terminal variant', () => {
   const booking = declinedBooking()
-  for (const nested of [true, false]) {
+  for (const [role, nested] of [['starter', true], ['brand', false]]) {
     const label = { textContent: '' }
     const classStates = new Map()
     const pill = {
@@ -50,7 +50,7 @@ test('the authored list pill shows Declined with the unchanged terminal variant'
         return pill
       },
     }
-    calls.paintStatusPill(card, 'cancelled', 'starter', booking)
+    calls.paintStatusPill(card, 'cancelled', role, booking)
     assert.equal(nested ? label.textContent : pill.textContent, 'Declined')
     assert.equal(pill.hidden, false)
     assert.equal(classStates.get(calls.statusVariantClass('cancelled')), true)
@@ -60,7 +60,10 @@ test('the authored list pill shows Declined with the unchanged terminal variant'
 test('Expired priority and ordinary cancellation labels remain unchanged', () => {
   for (const role of ['starter', 'brand']) {
     const booking = declinedBooking()
-    assert.equal(calls.statusLabel('cancelled', role, { ...booking, status: ' DECLINED ' }), 'Declined')
+    assert.equal(calls.statusLabel('cancelled', role, booking), 'Declined')
+    assert.equal(calls.statusLabel('cancelled', role, { ...booking, status: ' DECLINED ' }), 'Cancelled')
+    assert.equal(calls.statusLabel('cancelled', role, { ...booking, status: 'DECLINED' }), 'Cancelled')
+    assert.equal(calls.statusLabel('cancelled', role, { ...booking, is_paid: true }), 'Cancelled')
     assert.equal(calls.statusLabel('cancelled', role, { ...booking, cancelled_by: 'expired' }), 'Expired')
     assert.equal(calls.statusLabel('cancelled', role, { ...booking, status: 'cancelled' }), 'Cancelled')
     assert.equal(calls.statusLabel('cancelled', role), 'Cancelled')
@@ -77,29 +80,44 @@ function authoredPanel(nodes) {
   }
 }
 
-test('lowercase and mixed-case authored placeholders use the role counterpart', () => {
-  for (const [role, expected] of [['starter', 'Bella Brand'], ['brand', 'Sam Starter']]) {
-    const nodes = ['[brand] declined this call.', '[bRaNd] receives the update.', '[Starter] receives the update.']
+test('only contracted placeholder spellings use the role counterpart', () => {
+  for (const [role, paid, expected] of [
+    ['starter', false, 'Bella Brand'],
+    ['brand', false, 'Sam Starter'],
+    ['starter', true, 'Bella Brand'],
+    ['brand', true, 'Sam Starter'],
+  ]) {
+    const nodes = [
+      '[brand] declined this call.',
+      '[Brand] receives the update.',
+      '[Starter] receives the update.',
+      '[starter] stays authored.',
+      '[bRaNd] stays authored.',
+    ]
       .map((nodeValue) => ({ nodeType: 3, nodeValue }))
-    assert.equal(actions.fillCounterpartPlaceholders(authoredPanel(nodes), 'declined', role, declinedBooking()), 3)
+    const booking = { ...declinedBooking(), is_paid: paid }
+    assert.equal(actions.fillCounterpartPlaceholders(authoredPanel(nodes), 'declined', role, booking), paid ? 2 : 3)
     assert.deepEqual(nodes.map((node) => node.nodeValue), [
-      expected + ' declined this call.',
+      (paid ? '[brand]' : expected) + ' declined this call.',
       expected + ' receives the update.',
       expected + ' receives the update.',
+      '[starter] stays authored.',
+      '[bRaNd] stays authored.',
     ])
   }
 })
 
-test('reused authored text restores its template and keeps names and other copy literal', () => {
-  const nameNode = { nodeType: 3, nodeValue: '[brand] declined this call.' }
+test('reused authored text restores Free-only tokens for Paid bookings', () => {
+  const nameNode = { nodeType: 3, nodeValue: '[brand] declined; [Brand] receives the update.' }
   const untouched = { nodeType: 3, nodeValue: 'Reason: [other] with unchanged punctuation.' }
   const panel = authoredPanel([nameNode, { nodeType: 1, childNodes: [untouched] }])
   const first = { brand_data: { name: 'Brand $& $1' } }
   assert.equal(actions.fillCounterpartPlaceholders(panel, 'declined', 'starter', first), 1)
-  assert.equal(nameNode.nodeValue, 'Brand $& $1 declined this call.')
-  assert.equal(actions.fillCounterpartPlaceholders(panel, 'declined', 'brand', declinedBooking()), 1)
-  assert.equal(nameNode.nodeValue, 'Sam Starter declined this call.')
+  assert.equal(nameNode.nodeValue, 'Brand $& $1 declined; Brand $& $1 receives the update.')
+  const paid = { ...declinedBooking(), is_paid: true }
+  assert.equal(actions.fillCounterpartPlaceholders(panel, 'declined', 'brand', paid), 1)
+  assert.equal(nameNode.nodeValue, '[brand] declined; Sam Starter receives the update.')
   assert.equal(actions.fillCounterpartPlaceholders(panel, 'declined', 'starter', {}), 1)
-  assert.equal(nameNode.nodeValue, 'the other participant declined this call.')
+  assert.equal(nameNode.nodeValue, 'the other participant declined; the other participant receives the update.')
   assert.equal(untouched.nodeValue, 'Reason: [other] with unchanged punctuation.')
 })

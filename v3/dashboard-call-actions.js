@@ -605,12 +605,23 @@
           if (node.nodeType === 3) {
             const current = String(node.nodeValue == null ? '' : node.nodeValue)
             const template = counterpartPlaceholderTemplates.get(node) || current
-            if (!/\[(?:starter|brand)\]/i.test(template)) return
+            const hasSharedPlaceholder =
+              template.indexOf('[Starter]') !== -1 || template.indexOf('[Brand]') !== -1
+            const hasFreeBrandPlaceholder = template.indexOf('[brand]') !== -1
+            if (!hasSharedPlaceholder && !hasFreeBrandPlaceholder) return
             counterpartPlaceholderTemplates.set(node, template)
-            node.nodeValue = template.replace(/\[(?:starter|brand)\]/gi, function () {
-              return name
-            })
-            replaced += 1
+            const paid = paidFlag(booking)
+            node.nodeValue = template
+              .split('[Starter]')
+              .join(name)
+              .split('[Brand]')
+              .join(name)
+            if (!paid) {
+              node.nodeValue = node.nodeValue.split('[brand]').join(name)
+            }
+            if (hasSharedPlaceholder || (hasFreeBrandPlaceholder && !paid)) {
+              replaced += 1
+            }
             return
           }
           Array.prototype.forEach.call(node.childNodes || [], render)
