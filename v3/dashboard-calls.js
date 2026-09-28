@@ -16,6 +16,7 @@
     'https://x08a-5ko8-jj1r.n7c.xano.io/api:tCpV3oqd'
   const BOOKINGS_PATH = '/booking_record/get/v3'
   const CONFIRM_PATH = '/booking/confirm/v3'
+  const CONFIRM_FAILURE_COPY = 'The call could not be confirmed. Please try again.'
   const DASHBOARD_CALL_MODULES = [
     {
       globalName: 'StartersDashboardCallActions',
@@ -2644,6 +2645,11 @@
         }
       }
       showError('')
+      // Only a server answer's own message or error text reaches the alert.
+      // The fallback and client-side errors show plain copy instead of
+      // internal wording; the technical text stays in the console.
+      let serverMessage = ''
+      let confirmed = false
       try {
         if (!button.__startersBookingActionKey) {
           button.__startersBookingActionKey = await storedConfirmAttemptKey(booking) || await createConfirmAttemptKey(booking)
@@ -2661,16 +2667,18 @@
         const body = await response.json().catch(function () { return null })
         if (!response.ok || !confirmSucceeded(body)) {
           // Prefer the server's own message, as the other call actions do.
-          throw new Error(
-            clean(body && (body.message || body.error)) || 'Canonical booking confirmation failed',
-          )
+          serverMessage = clean(body && (body.message || body.error))
+          throw new Error(serverMessage || 'Canonical booking confirmation failed')
         }
+        confirmed = true
         await clearConfirmAttemptKey(booking, button.__startersBookingActionKey)
         button.__startersBookingActionKey = ''
         await restart()
       } catch (error) {
         console.error('[dashboard-calls] confirmation failed closed:', error && error.message)
-        showError((error && error.message) || 'Canonical booking confirmation failed')
+        // A failure after the server confirmed (key cleanup or the list
+        // refresh) must not tell the Starter the call was not confirmed.
+        if (!confirmed) showError(serverMessage || CONFIRM_FAILURE_COPY)
       } finally {
         button.__startersBookingActionBusy = false
         if (releaseBusy) releaseBusy()

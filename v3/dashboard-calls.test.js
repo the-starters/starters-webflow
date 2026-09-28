@@ -652,6 +652,115 @@ test('Starter Accept shows Confirming… in flight and a visible failure', async
   }
 })
 
+// The alert shows the server's own text only for a server answer. The
+// fallback and client-side errors show plain copy, never internal wording,
+// and a failure after the server confirmed shows no "not confirmed" alert.
+test('Starter Accept alert shows server text only for server answers', async () => {
+  const actions = require('./dashboard-call-actions.js')
+  const configId = '11111111-2222-3333-4444-555555555555'
+  const bookingId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+  const uuidBytes = (value) => Buffer.from(value.replace(/-/g, ''), 'hex')
+  const original = {
+    document: global.document,
+    crypto: global.crypto,
+    fetch: global.xanoAuthFetch,
+    storage: global.sessionStorage,
+    actions: global.StartersDashboardCallActions,
+    error: console.error,
+  }
+  const scenarios = [
+    { name: 'server message', respond: async () => ({ ok: false, json: async () => ({ error: 'Controlled server error' }) }), alert: 'Controlled server error' },
+    { name: 'no server text', respond: async () => ({ ok: false, json: async () => ({}) }), alert: 'The call could not be confirmed. Please try again.' },
+    { name: 'unreadable body', respond: async () => ({ ok: true, json: async () => { throw new Error('bad json') } }), alert: 'The call could not be confirmed. Please try again.' },
+    { name: 'transport error', respond: async () => { throw new Error('Internal transport detail') }, alert: 'The call could not be confirmed. Please try again.' },
+    {
+      name: 'refresh after confirm fails',
+      respond: async () => ({ ok: true, json: async () => ({ status: 'confirmed' }) }),
+      restart: async () => { throw new Error('Refresh failed') },
+      alert: null,
+    },
+  ]
+  const logged = []
+  try {
+    global.StartersDashboardCallActions = actions
+    global.sessionStorage = memoryStorage()
+    console.error = (...args) => logged.push(args.join(' '))
+    let uuid = 0
+    global.crypto = {
+      subtle: original.crypto && original.crypto.subtle,
+      randomUUID: () => '00000000-0000-4000-8000-0000000008' + String(uuid += 1).padStart(2, '0'),
+    }
+    for (const scenario of scenarios) {
+      const booking = {
+        booking_id: bookingId,
+        config_id: configId,
+        booking_ref: Buffer.concat([
+          uuidBytes(configId),
+          uuidBytes(bookingId),
+          Buffer.from('bounded-salt'),
+        ]).toString('base64url'),
+        data_environment: 'production',
+        starter_data: { memberstack_id: 'mem_starter-one' },
+        status: 'pending',
+      }
+      const card = {
+        children: [],
+        ownerDocument: {
+          createElement() {
+            return { hidden: false, style: {}, textContent: '', attributes: {}, setAttribute(name, value) { this.attributes[name] = value } }
+          },
+        },
+        getAttribute(name) { return name === 'data-booking-id' ? bookingId : null },
+        appendChild(node) { node.parentNode = this; this.children.push(node) },
+        querySelector(selector) { return this.querySelectorAll(selector)[0] || null },
+        querySelectorAll(selector) {
+          return selector === '[data-starters-action-error]'
+            ? this.children.filter((node) => 'data-starters-action-error' in node.attributes)
+            : []
+        },
+      }
+      const label = { textContent: 'Accept' }
+      const button = {
+        attributes: {},
+        setAttribute(name, value) { this.attributes[name] = value },
+        querySelectorAll(selector) {
+          if (selector === 'button') return []
+          return selector.includes('.button_main-text') ? [label] : []
+        },
+        closest(selector) {
+          if (selector === '[data-booking-id]') return card
+          if (selector.includes('popup-booking-info')) return null
+          return this
+        },
+      }
+      const listeners = []
+      global.document = { addEventListener(_type, listener) { listeners.push(listener) } }
+      global.xanoAuthFetch = scenario.respond
+      api.wireBookingActions([{ rows: [booking] }], 'starter', scenario.restart || (async () => {}))
+      await listeners[0]({ target: button, preventDefault() {}, stopImmediatePropagation() {} })
+      const notes = card.children.filter((node) => !node.hidden)
+      if (scenario.alert === null) {
+        assert.equal(notes.length, 0, scenario.name + ': no alert after the server confirmed')
+      } else {
+        assert.equal(notes.length, 1, scenario.name)
+        assert.equal(notes[0].textContent, scenario.alert, scenario.name)
+        assert.doesNotMatch(notes[0].textContent, /Canonical/)
+      }
+      assert.equal(label.textContent, 'Accept', scenario.name + ': label restored')
+    }
+    // The technical text still reaches the console.
+    assert.ok(logged.some((line) => line.includes('Internal transport detail')))
+    assert.ok(logged.some((line) => line.includes('Canonical booking confirmation failed')))
+  } finally {
+    global.document = original.document
+    global.crypto = original.crypto
+    global.xanoAuthFetch = original.fetch
+    global.sessionStorage = original.storage
+    global.StartersDashboardCallActions = original.actions
+    console.error = original.error
+  }
+})
+
 test('Starter Accept rechecks the response window immediately before mutation', async () => {
   const configId = '11111111-2222-3333-4444-555555555555'
   const bookingId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'

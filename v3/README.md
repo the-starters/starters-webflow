@@ -2674,7 +2674,11 @@ same proposal, so while either is in flight both respond controls in the open
 panel are busy and disabled; only the clicked one changes its label. The Starter's Accept on
 `dashboard-calls.js` uses the same `markActionBusy` state with "Confirming…" and
 shows its failure through the same alert, in the open details panel or on the
-card for a card-level Accept, preferring the server's `message` or `error` text.
+card for a card-level Accept. The alert shows the server's `message` or `error`
+text only for a server answer. With no server text, or for a client-side
+error, it shows "The call could not be confirmed. Please try again."; the
+technical text stays in the console. A failure after the server confirmed,
+such as the list refresh, shows no alert.
 A click rejected by the client eligibility gate does not open an authored
 legacy action. It writes a PII-free console warning with only role, booking
 status, paid state, and whether the booking has the required identity.
