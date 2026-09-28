@@ -1359,7 +1359,7 @@
       document,
       modal,
       'confirm-reschedule',
-      'Accept new time',
+      'Accept New Time',
     )
     accept.setAttribute('data-starters-reschedule-respond', '')
     const decline = styledActionButton(
