@@ -935,6 +935,112 @@ test('dashboard rescheduling retains its existing submit behavior', async () => 
   }
 })
 
+// F04 (v1.59.634): the dashboard mounts this engine for a pending Brand edit
+// and passes its isCurrent. #5921 answers with a replacement booking id, and
+// the actions module moves the modal to it. The engine's cleanup must still
+// run on the real calendar: the status clears and the controls come back.
+test('a replaced pending booking still clears the real calendar status and controls', async () => {
+  const actions = require('./dashboard-call-actions.js')
+  const previous = {
+    calendar: global.StartersPaidCallBrandPayment,
+    crypto: global.crypto,
+    document: global.document,
+    jQuery: global.jQuery,
+    storage: global.sessionStorage,
+    xanoAuthFetch: global.xanoAuthFetch,
+  }
+  const startSeconds =
+    Math.floor((Date.now() + 2 * 24 * 60 * 60 * 1000) / 86400000) * 86400 + 12 * 60 * 60
+  const container = new CalendarElement('div')
+  const attributes = { 'data-booking-id': '2e9f08a2' }
+  const panels = ['base', 'reschedule-calendar', 'reschedule-updated'].map((name) => ({
+    hidden: name !== 'reschedule-calendar',
+    style: {},
+    getAttribute(attribute) { return attribute === 'booking-popup-content' ? name : null },
+    querySelectorAll() { return [] },
+  }))
+  const modal = {
+    getAttribute(name) { return attributes[name] ?? null },
+    setAttribute(name, value) { attributes[name] = String(value) },
+    querySelector(selector) {
+      return selector === '[booking-reschedule-calendar]' ? container : null
+    },
+    querySelectorAll(selector) {
+      return selector === '[booking-popup-content]' ? panels : []
+    },
+  }
+  const values = new Map()
+  const posts = []
+  global.document = calendarDocument()
+  global.jQuery = undefined
+  global.StartersPaidCallBrandPayment = api
+  global.sessionStorage = {
+    getItem: (key) => (values.has(key) ? values.get(key) : null),
+    setItem: (key, value) => values.set(key, String(value)),
+    removeItem: (key) => values.delete(key),
+  }
+  global.crypto = {
+    subtle: previous.crypto.subtle,
+    randomUUID: () => '00000000-0000-4000-8000-000000000503',
+  }
+  global.xanoAuthFetch = async (url, options) => {
+    if (String(url).endsWith('/booking/reschedule/request/v3')) {
+      posts.push(JSON.parse(options.body))
+      return response({
+        reschedule_request: { booking_id: '0984c0fb', replaced_booking_id: '2e9f08a2', status: 'pending' },
+      })
+    }
+    return response({ time_slots: [{ start_time: startSeconds, end_time: startSeconds + 30 * 60 }] })
+  }
+  try {
+    const booking = {
+      booking_id: '2e9f08a2',
+      config_id: 'config-test-1',
+      grant_id: 'grant-test-1',
+      duration: 30,
+      is_paid: false,
+      data_environment: 'test',
+      status: 'pending',
+      start: Date.now() + 24 * 60 * 60 * 1000,
+      server_now_ms: Date.now(),
+      starter_data: { memberstack_id: 'mem_sb_starter' },
+      brand_data: { memberstack_id: 'mem_sb_brand' },
+    }
+    actions.bindCanonicalClock([booking], actions.monotonicNow())
+    assert.equal(
+      await actions.mountRescheduleCalendar({}, modal, booking, 'brand', 'Earlier suits us'),
+      true,
+    )
+    const role = (name) => container.querySelectorAll('[data-paid-calendar-element]')
+      .find((node) => node.getAttribute('data-paid-calendar-element') === name)
+    const slot = container.querySelectorAll('[data-paid-calendar-slot]')[0]
+    slot.listeners.click()
+    await role('confirm').listeners.click({ preventDefault() {} })
+
+    assert.equal(posts.length, 1)
+    assert.equal(posts[0].booking_id, '2e9f08a2')
+    assert.equal(booking.booking_id, '0984c0fb')
+    assert.equal(attributes['data-booking-id'], '0984c0fb')
+    assert.equal(panels[2].hidden, false, 'the updated receipt opened')
+    assert.equal(role('status').textContent, '', 'Sending your request... cleared')
+    assert.equal(role('confirm').disabled, false, 'confirm is live again')
+    assert.equal(role('timezone').disabled, false, 'timezone is live again')
+    container.querySelectorAll('[data-paid-calendar-slot]').forEach((button) => {
+      assert.equal(button.disabled, false, 'slots are live again')
+    })
+    container.querySelectorAll('[data-paid-calendar-date]').forEach((button) => {
+      assert.equal(button.disabled, false, 'dates are live again')
+    })
+  } finally {
+    global.StartersPaidCallBrandPayment = previous.calendar
+    global.crypto = previous.crypto
+    global.document = previous.document
+    global.jQuery = previous.jQuery
+    global.sessionStorage = previous.storage
+    global.xanoAuthFetch = previous.xanoAuthFetch
+  }
+})
+
 test('shared calendar keeps the stale-time message from a final booking recheck', async () => {
   const previous = {
     document: global.document,

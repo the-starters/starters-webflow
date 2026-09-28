@@ -2202,6 +2202,103 @@ test('a replaced pending booking moves the modal, card, and row to the new id', 
     assert.deepEqual(refreshed, [{ target: modal, id: '0984c0fb', modalId: '0984c0fb' }])
     assert.equal(panels[2].hidden, false)
     assert.equal(panels[1].hidden, true)
+    // The engine's post-success cleanup (status, slots, confirm) runs only
+    // while the mount reads as current, so it must follow the adopted id.
+    assert.equal(mounts[0].isCurrent(), true, 'the mount follows the adopted id')
+  } finally {
+    global.StartersPaidCallBrandPayment = originalCalendar
+    global.xanoAuthFetch = originalFetch
+    global.sessionStorage = originalStorage
+    global.crypto = originalCrypto
+  }
+})
+
+// F04 retry edge: the member switched bookings during the ~10 s #5921 call.
+// The attempt key under the sent id is already cleared, so the local row and
+// its card must still leave the dead id, and the list re-reads on close.
+test('a replacement that lands after the modal moved on still retires the sent id', async () => {
+  const originalCalendar = global.StartersPaidCallBrandPayment
+  const originalFetch = global.xanoAuthFetch
+  const originalStorage = global.sessionStorage
+  const originalCrypto = global.crypto
+  function carrier(id) {
+    const attributes = new Map([['data-booking-id', id]])
+    return {
+      getAttribute(name) { return attributes.has(name) ? attributes.get(name) : null },
+      setAttribute(name, value) { attributes.set(name, String(value)) },
+    }
+  }
+  const container = { textContent: '' }
+  const panels = ['base', 'reschedule-calendar', 'reschedule-updated'].map((name) => ({
+    hidden: name !== 'reschedule-calendar',
+    style: {},
+    getAttribute(attribute) { return attribute === 'booking-popup-content' ? name : null },
+    querySelectorAll() { return [] },
+  }))
+  const modalListeners = {}
+  const modal = Object.assign(carrier('2e9f08a2'), {
+    querySelector(selector) {
+      if (selector === '[booking-reschedule-calendar]') return container
+      return null
+    },
+    querySelectorAll(selector) {
+      return selector === '[booking-popup-content]' ? panels : []
+    },
+    addEventListener(type, listener) { modalListeners[type] = listener },
+    removeEventListener(type) { delete modalListeners[type] },
+  })
+  const card = carrier('2e9f08a2')
+  const otherCard = carrier('other-booking')
+  const document = {
+    querySelectorAll(selector) {
+      return selector === '[data-booking-id]' ? [card, otherCard, modal] : []
+    },
+    addEventListener() {},
+    removeEventListener() {},
+  }
+  const mounts = []
+  const refreshed = []
+  const response = deferred()
+  let restarts = 0
+  try {
+    global.StartersPaidCallBrandPayment = {
+      async mountPaidCalendar(options) { mounts.push(options) },
+    }
+    global.sessionStorage = storage()
+    global.crypto = {
+      subtle: originalCrypto.subtle,
+      randomUUID() { return '00000000-0000-4000-8000-000000000502' },
+    }
+    global.xanoAuthFetch = async () => response.promise
+    const booking = rescheduleBooking({ booking_id: '2e9f08a2', status: 'pending' })
+    await api.mountRescheduleCalendar(document, modal, booking, 'brand', 'Earlier suits us',
+      function () { restarts += 1 },
+      function (target, row) { refreshed.push(row.booking_id) })
+    const start = Date.now() + 5 * 60 * 60 * 1000
+    const confirm = mounts[0].onConfirm({ start, end: start + 30 * 60 * 1000, timezone: 'Asia/Dubai' })
+    // Mid-request the member opens another booking in the same modal.
+    modal.setAttribute('data-booking-id', 'other-booking')
+    response.resolve({
+      ok: true,
+      async json() {
+        return {
+          reschedule_request: { booking_id: '0984c0fb', replaced_booking_id: '2e9f08a2', status: 'pending' },
+        }
+      },
+    })
+    await confirm
+
+    assert.equal(booking.booking_id, '0984c0fb', 'the row leaves the replaced id')
+    assert.equal(card.getAttribute('data-booking-id'), '0984c0fb', 'its card follows')
+    assert.equal(modal.getAttribute('data-booking-id'), 'other-booking', 'the other booking is untouched')
+    assert.equal(otherCard.getAttribute('data-booking-id'), 'other-booking')
+    assert.deepEqual(refreshed, [], 'the other booking keeps its details')
+    assert.equal(panels[2].hidden, true, 'no receipt over the other booking')
+    assert.equal(mounts[0].isCurrent(), false)
+    assert.equal(typeof modalListeners.close, 'function', 'the list re-reads on close')
+    modalListeners.close()
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(restarts, 1)
   } finally {
     global.StartersPaidCallBrandPayment = originalCalendar
     global.xanoAuthFetch = originalFetch

@@ -1416,13 +1416,16 @@
     const container = modal && modal.querySelector('[booking-reschedule-calendar]')
     if (!container) return false
     if (!rescheduleKindFor(role, booking)) return false
-    const bookingId = clean(booking && booking.booking_id)
     const mountToken = {}
     modal.__startersRescheduleCalendarToken = mountToken
+    // The row's id, not the id at mount: a F04 replacement moves the row and
+    // the modal to the new id together, and the engine's post-success cleanup
+    // still needs this mount to read as current.
     const isCurrent = function () {
       return (
         modal.__startersRescheduleCalendarToken === mountToken &&
-        clean(modal.getAttribute && modal.getAttribute('data-booking-id')) === bookingId &&
+        clean(modal.getAttribute && modal.getAttribute('data-booking-id')) ===
+          clean(booking && booking.booking_id) &&
         modal.querySelector('[booking-reschedule-calendar]') === container
       )
     }
@@ -1472,22 +1475,28 @@
           showActionError(modal, (error && error.message) || config.failureMessage)
           throw error
         }
-        if (!isCurrent()) return result
+        // F04: the update replaces the provider booking, so the row now
+        // lives under the new id. The attempt key was already cleared under
+        // the sent id inside submitAction. Adopt before the currency check:
+        // a member who moved on mid-request must not leave the row, or a card
+        // still keyed by the sent id, holding a dead booking_id.
+        const replaced = kind === 'reschedule-request' && adoptReplacementBooking(
+          document,
+          modal,
+          booking,
+          replacementBookingId(kind, result, booking),
+        )
+        if (!isCurrent()) {
+          // The card still shows the old slot, so re-read the list on close.
+          if (replaced) restartAfterModalClose(document, modal, restart)
+          return result
+        }
         const reasonField = modal.querySelector('[booking-reschedule-reason]')
         if (reasonField) reasonField.value = ''
         // The receipt describes the selected slot. A pending request moves
         // immediately; a confirmed call keeps its canonical time until the
         // counterpart accepts, so render its proposal from a separate model.
         if (kind === 'reschedule-request' && booking) {
-          // F04: the update replaces the provider booking, so the row now
-          // lives under the new id. The attempt key was already cleared
-          // under the sent id inside submitAction.
-          adoptReplacementBooking(
-            document,
-            modal,
-            booking,
-            replacementBookingId(kind, result, booking),
-          )
           booking.start = Number(slot && slot.start)
           booking.end = Number(slot && slot.end)
           booking.rescheduled_reason = reason || booking.rescheduled_reason

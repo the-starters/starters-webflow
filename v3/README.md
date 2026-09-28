@@ -2684,7 +2684,12 @@ replaces the provider booking (#5921), so its result may instead carry the new
 `booking_id` with `replaced_booking_id` equal to the sent id; only that contract
 accepts the replacement form, and the new id must be non-empty. The module then
 moves the row, the open modal, and every list card keyed by the sent id to the
-new id before it refreshes the details. Authored action-result and
+new id before it refreshes the details. The calendar mount compares the modal
+with the row's current id, so the calendar's own cleanup (status, slots, and
+confirm) still runs after the move. When the member opened another booking
+before the answer arrived, the row and its card still move to the new id, the
+other booking's details stay as they are, and the list re-reads when the modal
+closes. Authored action-result and
 terminal panels replace `[Starter]` and `[Brand]` in their leaf text nodes with
 the counterpart's canonical booking name, or `the other participant` when that
 name is blank. Free panels also replace the exact authored lowercase `[brand]`
