@@ -839,6 +839,87 @@ test('decline and proposal responses show a busy label, then restore it and show
   }
 })
 
+// Keep Current Time and Accept New Time answer the same proposal. With only
+// the clicked control busy, a click on its sibling sent the opposite command
+// while the first was still in flight.
+test('while one proposal response is in flight both respond controls are busy', async () => {
+  const originalFetch = global.xanoAuthFetch
+  const originalStorage = global.sessionStorage
+  const originalCrypto = global.crypto
+  try {
+    global.sessionStorage = storage()
+    let uuid = 0
+    global.crypto = {
+      subtle: originalCrypto.subtle,
+      randomUUID() {
+        uuid += 1
+        return '00000000-0000-4000-8000-0000000007' + String(uuid).padStart(2, '0')
+      },
+    }
+    for (const clicked of ['confirm-reschedule', 'reschedule-decline']) {
+      const booking = rescheduleBooking({
+        status: 'rescheduled',
+        rescheduled_by: 'starter',
+        start: Date.now() + 48 * 60 * 60 * 1000,
+      })
+      const { modal, open, panel } = actionErrorModal(['base'])
+      open('base')
+      modal.getAttribute = (name) => name === 'data-booking-id' ? booking.booking_id : null
+      const accept = busyControl('confirm-reschedule', 'Accept New Time')
+      const keep = busyControl('reschedule-decline', 'Keep Current Time')
+      const base = panel('base')
+      const queryBase = base.querySelectorAll
+      base.querySelectorAll = (selector) =>
+        selector.includes('"confirm-reschedule"') && selector.includes('"reschedule-decline"')
+          ? [accept, keep]
+          : queryBase.call(base, selector)
+      for (const control of [accept, keep]) {
+        control.closest = (selector) => selector.includes('popup-booking-info') ? modal : control
+      }
+      const handlers = []
+      api.wire({
+        document: { addEventListener(type, handler) { if (type === 'click') handlers.push(handler) } },
+        role: 'brand',
+        getBooking: () => booking,
+      })
+      const response = deferred()
+      let posts = 0
+      global.xanoAuthFetch = async () => {
+        posts += 1
+        return response.promise
+      }
+      const [first, sibling] = clicked === 'confirm-reschedule' ? [accept, keep] : [keep, accept]
+      const event = (target) => ({ target, preventDefault() {}, stopImmediatePropagation() {} })
+      const click = handlers[0](event(first))
+      await new Promise((resolve) => setImmediate(resolve))
+      await new Promise((resolve) => setImmediate(resolve))
+      assert.equal(first.label.textContent, clicked === 'confirm-reschedule' ? 'Accepting…' : 'Keeping current time…')
+      assert.equal(sibling.label.textContent, clicked === 'confirm-reschedule' ? 'Keep Current Time' : 'Accept New Time',
+        clicked + ': the sibling keeps its label')
+      for (const control of [first, sibling]) {
+        assert.equal(control.inner.disabled, true, clicked + ': both are disabled')
+        assert.equal(control.attributes['aria-disabled'], 'true')
+      }
+      // A sibling click mid-flight sends nothing.
+      await handlers[0](event(sibling))
+      response.resolve({ ok: false, json: async () => ({ message: 'Controlled refusal' }) })
+      await click
+      assert.equal(posts, 1, clicked + ': one command only')
+      assert.equal(accept.label.textContent, 'Accept New Time')
+      assert.equal(keep.label.textContent, 'Keep Current Time')
+      for (const control of [first, sibling]) {
+        assert.equal(control.inner.disabled, false, clicked + ': both are released')
+        assert.equal(control.attributes['aria-busy'], 'false')
+        assert.equal(control.attributes['aria-disabled'], 'false')
+      }
+    }
+  } finally {
+    global.xanoAuthFetch = originalFetch
+    global.sessionStorage = originalStorage
+    global.crypto = originalCrypto
+  }
+})
+
 test('a blocked legacy Free booking is reported as unpaid', async () => {
   const originalWarn = console.warn
   let clickHandler

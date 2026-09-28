@@ -1541,6 +1541,25 @@
     ) || null
   }
 
+  const RESPOND_SELECTOR =
+    '[booking-action-btn="confirm-reschedule"], [booking-card-action-btn="confirm-reschedule"], ' +
+    '[booking-action-btn="reschedule-decline"], [booking-card-action-btn="reschedule-decline"]'
+
+  /**
+   * The clicked proposal response plus every other response control in the
+   * open panel (authored or module-rendered), clicked control first.
+   * @param {HTMLElement|null} modal Detail modal.
+   * @param {HTMLElement} button Clicked response control.
+   * @returns {HTMLElement[]} Response controls to hold busy together.
+   */
+  function respondControlsInOpenPanel(modal, button) {
+    const panel = modal && openPopupContent(modal)
+    const siblings = panel && typeof panel.querySelectorAll === 'function'
+      ? Array.prototype.slice.call(panel.querySelectorAll(RESPOND_SELECTOR))
+      : []
+    return [button].concat(siblings.filter(function (control) { return control !== button }))
+  }
+
   /**
    * Shows (or clears, with an empty message) a module-owned error line inside
    * the details modal. A failed command must never end as a console-only
@@ -1696,8 +1715,18 @@
         }
         if (button.__startersActionBusy) return
         if (step.step === 'respond') {
-          button.__startersActionBusy = true
-          const releaseBusy = markActionBusy(button, config.busyLabel)
+          // Keep Current Time and Accept New Time answer the same proposal.
+          // While either is in flight, both are busy, so the sibling cannot
+          // send the opposite command; only the clicked one changes its label.
+          const respondControls = respondControlsInOpenPanel(modal, button)
+          const releases = respondControls.map(function (control) {
+            control.__startersActionBusy = true
+            return markActionBusy(control, control === button ? config.busyLabel : '')
+          })
+          const releaseBusy = function () {
+            respondControls.forEach(function (control) { control.__startersActionBusy = false })
+            releases.forEach(function (release) { release() })
+          }
           showActionError(modal, '')
           try {
             const result = await respondReschedule(step.kind, booking, settings.role)
@@ -1721,7 +1750,6 @@
             )
             showActionError(modal, (error && error.message) || config.failureMessage)
           } finally {
-            button.__startersActionBusy = false
             releaseBusy()
           }
           return

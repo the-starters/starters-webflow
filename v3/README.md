@@ -2665,7 +2665,9 @@ stays on the dialog root.
 While a decline, cancel, or proposal response is in flight, its control reads
 "Declining…", "Cancelling…", "Accepting…", or "Keeping current time…", is
 `aria-busy`, and it and any button inside it are disabled; the authored label and
-state return when the command settles. The Starter's Accept on
+state return when the command settles. The two proposal responses answer the
+same proposal, so while either is in flight both respond controls in the open
+panel are busy and disabled; only the clicked one changes its label. The Starter's Accept on
 `dashboard-calls.js` uses the same `markActionBusy` state with "Confirming…" and
 shows its failure through the same alert, in the open details panel or on the
 card for a card-level Accept, preferring the server's `message` or `error` text.
