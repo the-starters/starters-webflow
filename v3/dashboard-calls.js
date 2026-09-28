@@ -1160,9 +1160,10 @@
 
   function detailSupplementRows(booking, role, timezone, panelName) {
     const counterpart = detailCounterpart(role, booking)
-    // A decline writes its reason to cancelled_reason. On the declined panel
-    // that is the decline reason, and an earlier edit's reason is stale.
-    const declinedPanel = panelName === 'declined'
+    // A decline writes its reason to cancelled_reason. On a Free declined
+    // panel that is the decline reason, and an earlier edit's reason is
+    // stale. Paid keeps its display unchanged, as PR #974 scoped F09.
+    const declinedPanel = panelName === 'declined' && !paidBooking(booking)
     return [
       {
         field: role === 'starter' ? 'brand-name' : 'starter-name',
@@ -1742,6 +1743,53 @@
     setBookingField(root, 'reschedule-reason', booking.rescheduled_reason, Boolean(booking.rescheduled_reason))
   }
 
+  // Authored state of each decline-reason hook and its wrap from before a
+  // Free fill first changed it, so a reused modal can put it back for Paid.
+  const authoredDeclineReasons = new WeakMap()
+
+  function displayState(node) {
+    return node ? { node: node, hidden: node.hidden, display: node.style && node.style.display } : null
+  }
+
+  /**
+   * The authored declined panels carry a decline-reason hook. A Free booking
+   * fills it, which keeps the supplement from adding a second reason row
+   * there. Paid keeps its v1.59.633 display (PR #974 scoped F09 to Free): the
+   * hook stays as authored, restored when a Free booking changed it first.
+   * @param {HTMLElement} modal Detail modal being populated.
+   * @param {object} booking Canonical booking row.
+   * @param {boolean} isPaid Whether the booking is a Paid call.
+   */
+  function populateDeclineReason(modal, booking, isPaid) {
+    const fields = bookingFields(modal, 'decline-reason')
+    if (isPaid) {
+      fields.forEach(function (field) {
+        const authored = authoredDeclineReasons.get(field)
+        if (!authored) return
+        field.textContent = authored.text
+        authored.states.forEach(function (state) {
+          state.node.hidden = state.hidden
+          if (state.node.style) state.node.style.display = state.display
+        })
+      })
+      return
+    }
+    fields.forEach(function (field) {
+      if (authoredDeclineReasons.has(field)) return
+      const group = field.closest && field.closest('[booking-element-wrap]')
+      authoredDeclineReasons.set(field, {
+        text: field.textContent,
+        states: [displayState(field), displayState(group)].filter(Boolean),
+      })
+    })
+    setBookingField(
+      modal,
+      'decline-reason',
+      booking.cancelled_reason,
+      clean(booking.status).toLowerCase() === 'declined' && Boolean(booking.cancelled_reason),
+    )
+  }
+
   function populateDetailModal(modal, booking, role, now, content) {
     if (!modal || !booking) return false
     const timezone = viewerTimezone(role, booking)
@@ -1809,14 +1857,7 @@
     setBookingPrice(modal, formatPrice(booking.price, isPaid), isPaid)
     setBookingField(modal, 'payment-status-text', paymentText, isPaid)
     setBookingField(modal, 'cancel-reason', booking.cancelled_reason, Boolean(booking.cancelled_reason))
-    // The authored declined panels carry a decline-reason hook; filling it
-    // keeps the supplement from adding a second reason row there.
-    setBookingField(
-      modal,
-      'decline-reason',
-      booking.cancelled_reason,
-      clean(booking.status).toLowerCase() === 'declined' && Boolean(booking.cancelled_reason),
-    )
+    populateDeclineReason(modal, booking, isPaid)
 
     const showMeeting = ['confirmed', 'rescheduled'].includes(status) && clean(booking.meeting_link) !== ''
     bookingFields(modal, 'meeting-link').forEach(function (meetingLink) {

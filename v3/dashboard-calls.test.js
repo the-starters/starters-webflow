@@ -2329,6 +2329,69 @@ test('declined panels label the decline reason and drop the stale edit reason', 
   assert.equal(reason.hidden, true)
 })
 
+// PR #974 kept the Paid declined display unchanged on purpose, so the F09
+// labels and the decline-reason fill apply to Free bookings only. A reused
+// modal puts back the authored hook a Free booking filled before.
+test('Paid declined details keep their labels and the authored decline-reason hook', () => {
+  const paid = {
+    booking_id: 'paid-declined',
+    status: 'declined',
+    is_paid: true,
+    start: 10_000,
+    duration: 30,
+    rescheduled_reason: 'Earlier suits us',
+    cancelled_reason: 'I am not available that day',
+    brand_data: { name: 'Northwind', memberstack_id: 'mem_brand', timezone: 'UTC' },
+    starter_data: { name: 'Sam', memberstack_id: 'mem_starter', timezone: 'UTC' },
+  }
+  const free = { ...paid, booking_id: 'free-declined', is_paid: false, cancelled_reason: 'Free reason' }
+  const reasonRows = (booking, panel) => api.detailSupplementRows(booking, 'starter', 'UTC', panel)
+    .map((row) => [row.field, row.label])
+    .filter(([field]) => field.endsWith('-reason'))
+  assert.deepEqual(reasonRows(paid, 'declined'), [
+    ['reschedule-reason', 'Reschedule reason'],
+    ['cancel-reason', 'Cancellation reason'],
+  ])
+  assert.deepEqual(reasonRows(free, 'declined'), [['decline-reason', 'Decline reason']])
+
+  const modal = domElement('dialog', { 'popup-booking-info': '' })
+  modal.ownerDocument = { createElement: (tag) => domElement(tag) }
+  const declined = domElement('div', { 'booking-popup-content': 'declined' })
+  const wrap = domElement('div', { 'booking-element-wrap': '' })
+  const reason = domElement('p', { 'booking-element': 'decline-reason' })
+  reason.textContent = 'Authored placeholder'
+  wrap.appendChild(reason)
+  declined.appendChild(wrap)
+  modal.appendChild(domElement('div', { 'booking-popup-content': 'base' }))
+  modal.appendChild(declined)
+  const summary = () =>
+    declined.querySelectorAll('[data-starters-call-summary-row]').map((row) => [
+      row.getAttribute('data-starters-call-summary-row'),
+      row.children[0].textContent,
+    ]).filter(([field]) => field.endsWith('-reason'))
+
+  api.populateDetailModal(modal, paid, 'starter', 5_000)
+  assert.equal(reason.textContent, 'Authored placeholder', 'Paid never fills the hook')
+  assert.equal(reason.hidden, false)
+  assert.equal(wrap.hidden, false)
+  assert.deepEqual(summary(), [
+    ['reschedule-reason', 'Reschedule reason'],
+    ['cancel-reason', 'Cancellation reason'],
+  ])
+
+  // A Free booking fills the hook; the next Paid booking gets the authored hook back.
+  api.populateDetailModal(modal, free, 'starter', 5_000)
+  assert.equal(reason.textContent, 'Free reason')
+  api.populateDetailModal(modal, { ...free, booking_id: 'free-cancelled', status: 'cancelled' }, 'starter', 5_000)
+  assert.equal(reason.hidden, true)
+  api.populateDetailModal(modal, paid, 'starter', 5_000)
+  assert.equal(reason.textContent, 'Authored placeholder', 'no Free reason leaks into Paid')
+  assert.equal(reason.hidden, false)
+  assert.equal(wrap.hidden, false)
+  assert.notEqual(reason.style.display, 'none')
+  assert.notEqual(wrap.style.display, 'none')
+})
+
 test('missing panel details and role-correct Message actions are supplied without duplicates', () => {
   const document = { createElement: (tag) => domElement(tag) }
   const modal = domElement('dialog')
