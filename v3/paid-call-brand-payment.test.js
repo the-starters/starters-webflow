@@ -1366,6 +1366,50 @@ test('booking details wait for Continue, preserve the draft on Back, and validat
   assert.deepEqual(fixture.result.readDetails(), { context: '', guest_emails: [] })
 })
 
+// F01 team test 2026-09-28: Request Call clicks that made no booking left no
+// trace. An ignored confirm now warns with its reason and changes nothing else.
+test('an ignored calendar confirm warns with its reason', async () => {
+  const originalWarn = console.warn
+  const warnings = []
+  let requests = 0
+  let finishRequest
+  try {
+    console.warn = (...args) => warnings.push(args)
+    const fixture = await mountFooterFixture({
+      bookingDetails: { name: 'Brand Member', email: 'brand@example.com', starterEmail: 'starter@example.com', generateGuests: true, generateContext: true },
+      onConfirm: async () => {
+        requests += 1
+        await new Promise(resolve => { finishRequest = resolve })
+      },
+    })
+    const roles = name => fixture.container.querySelectorAll('[data-paid-calendar-element]')
+      .filter(node => node.getAttribute('data-paid-calendar-element') === name)
+    const submit = () => fixture.confirmParts.button.listeners.click({ preventDefault() {} })
+    const ignored = () => warnings
+      .filter(args => args[0] === '[paid-call] confirm ignored')
+      .map(args => args[1])
+
+    await submit()
+    assert.deepEqual(ignored(), ['no-slot'])
+    fixture.container.querySelectorAll('[data-paid-calendar-slot]')[0].listeners.click()
+    await submit()
+    assert.deepEqual(ignored(), ['no-slot'], 'opening the details step is not an ignored confirm')
+    roles('guest-email')[0].value = 'not-an-email'
+    await submit()
+    assert.deepEqual(ignored(), ['no-slot', 'details-invalid'])
+    roles('guest-email')[0].value = 'guest@example.com'
+    const request = submit()
+    assert.equal(requests, 1)
+    await submit()
+    assert.equal(requests, 1)
+    assert.deepEqual(ignored(), ['no-slot', 'details-invalid', 'pending'], 'a double click is named')
+    finishRequest()
+    await request
+  } finally {
+    console.warn = originalWarn
+  }
+})
+
 test('the calendar footer puts Back beside the confirm control', async () => {
   const { document, shell, footer, back, confirm, status, backParts } = await mountFooterFixture()
   const role = (name) => shell.querySelectorAll('[data-paid-calendar-element]')

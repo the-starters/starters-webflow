@@ -561,6 +561,10 @@
   const bookingHints = new Map();
   let bookingOwner = false;
   let ownerBookingReady = false;
+  // The fail-closed start disables Book Call before canonical discovery has
+  // answered. Until it does, a Brand reads a loading hint, not the
+  // "isn't accepting calls" verdict that only an empty result may give.
+  let callDiscoveryPending = true;
   function explainBookingAvailability(trigger, available) {
       let entry = bookingHints.get(trigger);
       if (!entry) {
@@ -654,6 +658,7 @@
       }
       if (available) {
           entry.hint.style.display = 'none';
+          trigger.removeAttribute('aria-busy');
           trigger.removeAttribute('aria-describedby');
           if (entry.signup) trigger.setAttribute('data-signup-trigger-element', entry.signup);
           if (entry.modal && !trigger.hasAttribute('data-logged-out-book-call')) trigger.setAttribute('data-modal-trigger', entry.modal);
@@ -667,10 +672,15 @@
       trigger.setAttribute('aria-label', 'Book a Call');
       trigger.setAttribute('aria-describedby', entry.hint.getAttribute('id'));
       const owner = bookingOwner;
+      const pending = !owner && callDiscoveryPending;
+      if (pending) trigger.setAttribute('aria-busy', 'true');
+      else trigger.removeAttribute('aria-busy');
       entry.hint.textContent = owner
           ? ('Clients use this button to book a call with you. ' +
               (ownerBookingReady ? 'Your calls are available to brands. ' : 'Your call booking is unavailable. '))
-          : 'This Starter isn’t accepting calls right now.';
+          : pending
+              ? 'Checking this Starter’s call times…'
+              : 'This Starter isn’t accepting calls right now.';
       if (owner) {
           const settings = document.createElement('a');
           settings.textContent = 'Manage call settings';
@@ -713,6 +723,23 @@
               dialog.removeAttribute('data-booking-surface-unavailable');
           } else {
               dialog.setAttribute('data-booking-surface-unavailable', '');
+          }
+      });
+  }
+
+  /**
+   * Ends the discovery-pending state once canonical call discovery has
+   * answered, on every exit path. Triggers that stayed closed get the final
+   * hint; triggers discovery opened only lose their busy marker.
+   */
+  function endCallDiscoveryPending() {
+      if (!callDiscoveryPending) return;
+      callDiscoveryPending = false;
+      bookingHints.forEach(function (_entry, trigger) {
+          if (trigger.getAttribute('aria-disabled') === 'true') {
+              explainBookingAvailability(trigger, false);
+          } else {
+              trigger.removeAttribute('aria-busy');
           }
       });
   }
@@ -1168,6 +1195,8 @@
 
   function settleEmptyCallDiscovery() {
       paintedCallState = { configs: [], slots: {} };
+      // An empty result is the answer the unavailable hint describes.
+      endCallDiscoveryPending();
       return syncCanonicalCallSurfaces([]);
   }
 
@@ -2189,7 +2218,10 @@
   waitForMember(ownPaywalledViewerClicks);
 
   waitForMember(async function () {
-      if (viewerSeesPublicProjection(MEMBER)) return;
+      if (viewerSeesPublicProjection(MEMBER)) {
+          endCallDiscoveryPending();
+          return;
+      }
 
       /* BOOKING (viewer-specific; stays behind the member gate) */
       (async function () {
@@ -2285,8 +2317,11 @@
               return;
           }
 
-          startersBooking_handler(bookingStarterMemberstackId(), brand_name, brand_email);
-      })();
+          return startersBooking_handler(bookingStarterMemberstackId(), brand_name, brand_email);
+      })()
+          // Every exit of the member booking flow, including the early returns
+          // and a failed lookup, ends the discovery-pending state.
+          .finally(endCallDiscoveryPending);
   });
 
   /* PUBLIC-RECORD CMS SERVICES (anonymous + brand viewers)
@@ -3630,6 +3665,19 @@
   });
 
   async function startersBooking_handler(bookingStarterId, brand_name, brand_email) {
+      try {
+          return await discoverStarterBooking(bookingStarterId, brand_name, brand_email);
+      } catch (error) {
+          // Surfaces keep whatever state discovery reached; the fail-closed
+          // start already closed them. Warn instead of an unhandled rejection.
+          console.warn('[hire-profile] call discovery failed:', error && error.message);
+      } finally {
+          // Every exit, including a thrown lookup, ends discovery-pending.
+          endCallDiscoveryPending();
+      }
+  }
+
+  async function discoverStarterBooking(bookingStarterId, brand_name, brand_email) {
 
       if (!validBookingDiscovery(freeCallBooking)) {
           settleEmptyCallDiscovery();

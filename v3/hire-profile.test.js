@@ -2150,6 +2150,8 @@ test('the TEST fixture uses canonical Free and Paid configs to reveal the author
   assert.equal(page.bookingButton.getAttribute('data-modal-trigger'), 'popup-booking-main')
   assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), null)
   assert.equal(page.bookingButton.getAttribute('aria-disabled'), null)
+  // Discovery answered, so the entry is no longer busy.
+  assert.equal(page.bookingButton.getAttribute('aria-busy'), null)
   assert.equal(page.freeModalCta.getAttribute('data-config'), 'config_free_test')
   assert.equal(page.paidModalCta.getAttribute('data-config'), 'config_paid_test')
 })
@@ -8149,6 +8151,66 @@ test('unavailable Book Call explains on focus and tap without opening booking', 
   button.listeners.click.forEach(fn => fn({ preventDefault() { prevented = true }, stopPropagation() {}, stopImmediatePropagation() {} }))
   assert.equal(prevented, true)
   assert.equal(hint.style.display, 'block')
+})
+
+// F01 team test 2026-09-28: during the fail-closed start a Brand already read
+// "This Starter isn't accepting calls right now." while discovery was still
+// running. Until discovery ends the entry is busy and says it is checking.
+test('Book Call reads as checking until discovery answers, on every exit path', async () => {
+  for (const outcome of ['empty', 'thrown', 'no-configs']) {
+    const page = makePage()
+    let answer
+    const lookup = new Promise((resolve, reject) => {
+      answer = outcome === 'thrown'
+        ? () => reject(new Error('Controlled lookup failure'))
+        : () => resolve(outcome === 'empty' ? null : { nylas_grant_id: 'grant-pending' })
+    })
+    lookup.catch(() => {})
+    const context = makeContext({
+      page,
+      member: BRAND_MEMBER,
+      record: { 'free-consulting-calls-t-f': true, 'paid-consulting-calls-t-f': false },
+      getStarterByMemberId: () => lookup,
+      getConfigs: async () => [],
+    })
+    vm.createContext(context)
+    vm.runInContext(source, context)
+    await settle()
+    const button = page.bookingButton
+    const hint = page.root.querySelector('[data-call-availability-hint]')
+    assert.equal(button.getAttribute('aria-disabled'), 'true', outcome)
+    assert.equal(button.getAttribute('aria-busy'), 'true', outcome + ': busy while discovery runs')
+    button.listeners.focusin.forEach(fn => fn({}))
+    assert.equal(hint.textContent, 'Checking this Starter’s call times…', outcome)
+    assert.doesNotMatch(hint.textContent, /isn’t accepting calls/)
+
+    answer()
+    await settle()
+    assert.equal(button.getAttribute('aria-disabled'), 'true', outcome + ': still closed')
+    assert.equal(button.getAttribute('aria-busy'), null, outcome + ': pending cleared')
+    assert.equal(hint.textContent, 'This Starter isn’t accepting calls right now.', outcome)
+  }
+})
+
+test('Book Call leaves the checking state when the booking controller never loads', async () => {
+  const page = makePage()
+  const context = makeContext({
+    page,
+    member: BRAND_MEMBER,
+    record: { 'free-consulting-calls-t-f': true, 'paid-consulting-calls-t-f': false },
+    getStarterByMemberId: undefined,
+    freeControllerLoadFails: true,
+    omitInitialFreeController: true,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle(60)
+  const button = page.bookingButton
+  const hint = page.root.querySelector('[data-call-availability-hint]')
+  assert.equal(button.getAttribute('aria-disabled'), 'true')
+  assert.equal(button.getAttribute('aria-busy'), null)
+  button.listeners.focusin.forEach(fn => fn({}))
+  assert.equal(hint.textContent, 'This Starter isn’t accepting calls right now.')
 })
 
 test('owner Book Call explanation links to existing call settings', async () => {

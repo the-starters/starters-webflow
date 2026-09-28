@@ -353,8 +353,12 @@ authenticated authored calendar. Paid uses the booking flow owned by
 authored modal. Valid `/hire/<slug>` paths use the host-classified TEST or
 production route map. Generic Book Call controls remain visible across primary,
 sticky, and mobile CTAs when unavailable, with `data-booking-trigger-unavailable`
-and `aria-disabled="true"`. For a paid Brand, hover, keyboard focus, or tap
-reveals “This Starter isn’t accepting calls right now.”; the owner's hint first
+and `aria-disabled="true"`. Until canonical call discovery answers, a paid
+Brand's closed control also carries `aria-busy="true"` and its hint reads
+“Checking this Starter’s call times…”. Discovery clears that state on every exit
+path, including a failed lookup or a missing booking controller. Only then do
+hover, keyboard focus, or tap reveal “This Starter isn’t accepting calls right
+now.” for a control that stayed closed; the owner's hint first
 explains that clients use the control to book a call, then reports whether calls
 are available and links to call settings. Signed-out and paywalled viewers never see the
 generic hint. Hover and focus are tracked independently

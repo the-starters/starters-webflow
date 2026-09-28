@@ -698,7 +698,14 @@
               if (
                 !bookingSurfaceOwnership.owns(container, generation) ||
                 bookingLocks.has(generation)
-              ) return
+              ) {
+                // Diagnostics only: a silently ignored confirm read as a dead button.
+                console.warn(
+                  '[free-call-booking] confirm ignored',
+                  bookingSurfaceOwnership.owns(container, generation) ? 'locked' : 'stale-surface',
+                )
+                return
+              }
               let guests
               let details = {}
               try {

@@ -2802,13 +2802,26 @@
 
     confirmButton.addEventListener('click', async function (event) {
       if (event) event.preventDefault()
-      if (!isCurrent() || !selectedSlot || confirmButton.disabled || confirmationPending) return
+      if (!isCurrent() || !selectedSlot || confirmButton.disabled || confirmationPending) {
+        // Diagnostics only: a silently ignored confirm read as a dead button.
+        console.warn('[paid-call] confirm ignored', !isCurrent()
+          ? 'stale-surface'
+          : !selectedSlot
+            ? 'no-slot'
+            : confirmationPending ? 'pending' : 'disabled')
+        return
+      }
       if (details && !showingDetails) {
         setDetailsVisible(true)
         return
       }
       if (details) {
-        try { details.read() } catch (_error) { return }
+        try {
+          details.read()
+        } catch (_error) {
+          console.warn('[paid-call] confirm ignored', 'details-invalid')
+          return
+        }
         details.setBusy(true)
         setSiteButtonDisabled(detailsBack, true)
       }
