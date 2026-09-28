@@ -717,6 +717,121 @@ test('F21: the alert follows the open panel, falls back to the root, and clears 
   assert.equal(bare.created[0].parentNode, bare.modal)
 })
 
+// Kaeser QA P5 (2026-09-28): call actions only set aria-busy, so a slow
+// command read as a dead button. A busy control now reads its action label
+// and is disabled until the command settles.
+function deferred() {
+  let resolve
+  const promise = new Promise((done) => { resolve = done })
+  return { promise, resolve }
+}
+
+function busyControl(action, authoredLabel) {
+  const label = { textContent: authoredLabel }
+  const inner = { disabled: false }
+  return {
+    label,
+    inner,
+    attributes: {},
+    getAttribute(name) {
+      return name === 'booking-action-btn' ? action : (this.attributes[name] ?? null)
+    },
+    setAttribute(name, value) { this.attributes[name] = String(value) },
+    querySelectorAll(selector) {
+      if (selector === 'button') return [inner]
+      if (selector.includes('.button_main-text')) return [label]
+      return []
+    },
+  }
+}
+
+test('markActionBusy shows a visible busy label and disables the control until release', () => {
+  const control = busyControl('decline', 'Decline Call')
+  control.inner.disabled = false
+  const release = api.markActionBusy(control, 'Declining…')
+  assert.equal(control.label.textContent, 'Declining…')
+  assert.equal(control.inner.disabled, true)
+  assert.equal(control.attributes['aria-busy'], 'true')
+  assert.equal(control.attributes['aria-disabled'], 'true')
+  release()
+  release()
+  assert.equal(control.label.textContent, 'Decline Call')
+  assert.equal(control.inner.disabled, false)
+  assert.equal(control.attributes['aria-busy'], 'false')
+  assert.equal(control.attributes['aria-disabled'], 'false')
+
+  // A plain generated button carries its label as its own text.
+  const plain = { textContent: 'Keep current time', disabled: true, setAttribute() {} }
+  const releasePlain = api.markActionBusy(plain, 'Keeping current time…')
+  assert.equal(plain.textContent, 'Keeping current time…')
+  releasePlain()
+  assert.equal(plain.textContent, 'Keep current time')
+  assert.equal(plain.disabled, true, 'a control disabled before stays disabled')
+  assert.doesNotThrow(() => api.markActionBusy(null, 'Busy')())
+})
+
+test('decline and proposal responses show a busy label, then restore it and show failures', async () => {
+  const originalFetch = global.xanoAuthFetch
+  const originalStorage = global.sessionStorage
+  const originalCrypto = global.crypto
+  try {
+    global.sessionStorage = storage()
+    let uuid = 0
+    global.crypto = {
+      subtle: originalCrypto.subtle,
+      randomUUID() {
+        uuid += 1
+        return '00000000-0000-4000-8000-0000000006' + String(uuid).padStart(2, '0')
+      },
+    }
+    for (const scenario of [
+      { action: 'decline', label: 'Decline Call', busy: 'Declining…', panel: 'decline-reason', booking: pendingBooking(), role: 'starter' },
+      {
+        action: 'confirm-reschedule',
+        label: 'Accept New Time',
+        busy: 'Accepting…',
+        panel: 'base',
+        booking: rescheduleBooking({ status: 'rescheduled', rescheduled_by: 'starter', start: Date.now() + 48 * 60 * 60 * 1000 }),
+        role: 'brand',
+      },
+    ]) {
+      const { modal, open, panel } = actionErrorModal(['base', 'decline-reason'])
+      open(scenario.panel)
+      const reasonField = { value: 'Not available' }
+      const queryModal = modal.querySelector
+      modal.querySelector = (selector) =>
+        selector === '[booking-decline-reason]' ? reasonField : queryModal.call(modal, selector)
+      modal.getAttribute = (name) => name === 'data-booking-id' ? scenario.booking.booking_id : null
+      const handlers = []
+      api.wire({
+        document: { addEventListener(type, handler) { if (type === 'click') handlers.push(handler) } },
+        role: scenario.role,
+        getBooking: () => scenario.booking,
+      })
+      const control = busyControl(scenario.action, scenario.label)
+      control.closest = (selector) => selector.includes('popup-booking-info') ? modal : control
+      const response = deferred()
+      global.xanoAuthFetch = async () => response.promise
+      const click = handlers[0]({ target: control, preventDefault() {}, stopImmediatePropagation() {} })
+      await new Promise((resolve) => setImmediate(resolve))
+      await new Promise((resolve) => setImmediate(resolve))
+      assert.equal(control.label.textContent, scenario.busy, scenario.action + ' shows its busy label')
+      assert.equal(control.inner.disabled, true)
+      response.resolve({ ok: false, json: async () => ({ message: 'Controlled refusal' }) })
+      await click
+      assert.equal(control.label.textContent, scenario.label)
+      assert.equal(control.inner.disabled, false)
+      const note = panel(scenario.panel).notes()[0]
+      assert.equal(note && note.textContent, 'Controlled refusal')
+      assert.equal(note.hidden, false)
+    }
+  } finally {
+    global.xanoAuthFetch = originalFetch
+    global.sessionStorage = originalStorage
+    global.crypto = originalCrypto
+  }
+})
+
 test('a blocked legacy Free booking is reported as unpaid', async () => {
   const originalWarn = console.warn
   let clickHandler

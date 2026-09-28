@@ -2561,30 +2561,52 @@
       button.__startersBookingActionBusy = true
       button.setAttribute('aria-busy', 'true')
       button.setAttribute('aria-disabled', 'true')
+      // P5: the confirm can take a minute, and aria-busy alone was invisible,
+      // so the Starter read it as "unable to accept". The actions module owns
+      // the visible busy label and the F21 action-error alert; the alert sits
+      // in the open details panel, or on the card for a card-level Accept.
+      const actionsModule = global.StartersDashboardCallActions
+      const actionsReady = validDashboardModule(actionsModule)
+      const releaseBusy = actionsReady && typeof actionsModule.markActionBusy === 'function'
+        ? actionsModule.markActionBusy(button, 'Confirming…')
+        : null
+      const errorHost = (button.closest && button.closest(DETAIL_MODAL_SELECTOR)) || card
+      const showError = function (message) {
+        if (actionsReady && typeof actionsModule.showActionError === 'function') {
+          actionsModule.showActionError(errorHost, message)
+        }
+      }
+      showError('')
       try {
         if (!button.__startersBookingActionKey) {
           button.__startersBookingActionKey = await storedConfirmAttemptKey(booking) || await createConfirmAttemptKey(booking)
         }
         const payload = confirmPayload(booking, button.__startersBookingActionKey)
-        if (
-          !payload ||
-          typeof global.xanoAuthFetch !== 'function' ||
-          !canConfirmBooking(role, booking)
-        ) return
+        if (!canConfirmBooking(role, booking)) return
+        if (!payload || typeof global.xanoAuthFetch !== 'function') {
+          throw new Error('Canonical booking confirmation failed')
+        }
         const response = await global.xanoAuthFetch(XANO_SCHEDULING_BASE + CONFIRM_PATH, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
         })
         const body = await response.json().catch(function () { return null })
-        if (!response.ok || !confirmSucceeded(body)) throw new Error('Canonical booking confirmation failed')
+        if (!response.ok || !confirmSucceeded(body)) {
+          // Prefer the server's own message, as the other call actions do.
+          throw new Error(
+            clean(body && (body.message || body.error)) || 'Canonical booking confirmation failed',
+          )
+        }
         await clearConfirmAttemptKey(booking, button.__startersBookingActionKey)
         button.__startersBookingActionKey = ''
         await restart()
       } catch (error) {
         console.error('[dashboard-calls] confirmation failed closed:', error && error.message)
+        showError((error && error.message) || 'Canonical booking confirmation failed')
       } finally {
         button.__startersBookingActionBusy = false
+        if (releaseBusy) releaseBusy()
         button.setAttribute('aria-busy', 'false')
         button.setAttribute('aria-disabled', 'false')
       }

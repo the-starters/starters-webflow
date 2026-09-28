@@ -534,6 +534,124 @@ test('Starter Accept sends one canonical request and blocks a double click', asy
   }
 })
 
+// Kaeser QA P5 (2026-09-28): the Starter confirm can take a minute. Accept
+// only set aria-busy and logged a failure to the console, so the Starter read
+// it as "unable to accept". The F21 alert pattern now shows the failure.
+test('Starter Accept shows Confirming… in flight and a visible failure', async () => {
+  const actions = require('./dashboard-call-actions.js')
+  const configId = '11111111-2222-3333-4444-555555555555'
+  const bookingId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+  const uuidBytes = (value) => Buffer.from(value.replace(/-/g, ''), 'hex')
+  const booking = {
+    booking_id: bookingId,
+    config_id: configId,
+    booking_ref: Buffer.concat([
+      uuidBytes(configId),
+      uuidBytes(bookingId),
+      Buffer.from('bounded-salt'),
+    ]).toString('base64url'),
+    data_environment: 'production',
+    starter_data: { memberstack_id: 'mem_starter-one' },
+    status: 'pending',
+  }
+  const original = {
+    document: global.document,
+    crypto: global.crypto,
+    fetch: global.xanoAuthFetch,
+    storage: global.sessionStorage,
+    actions: global.StartersDashboardCallActions,
+    error: console.error,
+  }
+  function host(panels) {
+    return {
+      children: [],
+      ownerDocument: {
+        createElement() {
+          return {
+            hidden: false,
+            style: {},
+            textContent: '',
+            attributes: {},
+            setAttribute(name, value) { this.attributes[name] = value },
+          }
+        },
+      },
+      getAttribute(name) { return name === 'data-booking-id' ? bookingId : null },
+      appendChild(node) { node.parentNode = this; this.children.push(node) },
+      notes() {
+        return this.children.filter((node) => node.attributes && 'data-starters-action-error' in node.attributes)
+      },
+      querySelector(selector) { return this.querySelectorAll(selector)[0] || null },
+      querySelectorAll(selector) {
+        if (selector === '[booking-popup-content]') return panels
+        if (selector === '[data-starters-action-error]') {
+          return panels.flatMap((panel) => panel.notes()).concat(this.notes())
+        }
+        return []
+      },
+    }
+  }
+  try {
+    global.StartersDashboardCallActions = actions
+    global.crypto = {
+      subtle: original.crypto && original.crypto.subtle,
+      randomUUID: () => '00000000-0000-4000-8000-000000000071',
+    }
+    global.sessionStorage = memoryStorage()
+    console.error = () => {}
+    for (const where of ['modal', 'card']) {
+      const basePanel = Object.assign(host([]), {
+        hidden: false,
+        style: {},
+      })
+      basePanel.getAttribute = (name) => name === 'booking-popup-content' ? 'base' : null
+      const modal = host([basePanel])
+      const card = host([])
+      const label = { textContent: 'Accept' }
+      const inner = { disabled: false }
+      const button = {
+        attributes: {},
+        setAttribute(name, value) { this.attributes[name] = value },
+        querySelectorAll(selector) {
+          if (selector === 'button') return [inner]
+          return selector.includes('.button_main-text') ? [label] : []
+        },
+        closest(selector) {
+          if (selector === '[data-booking-id]') return where === 'modal' ? modal : card
+          if (selector.includes('popup-booking-info')) return where === 'modal' ? modal : null
+          return this
+        },
+      }
+      const listeners = []
+      global.document = { addEventListener(_type, listener) { listeners.push(listener) } }
+      const response = deferred()
+      global.xanoAuthFetch = async () => response.promise
+      api.wireBookingActions([{ rows: [booking] }], 'starter', async () => {})
+      const click = listeners[0]({ target: button, preventDefault() {}, stopImmediatePropagation() {} })
+      await until(() => label.textContent === 'Confirming…')
+      assert.equal(inner.disabled, true)
+      assert.equal(button.attributes['aria-busy'], 'true')
+      response.resolve({ ok: false, json: async () => ({ message: 'Controlled confirm refusal' }) })
+      await click
+      assert.equal(label.textContent, 'Accept')
+      assert.equal(inner.disabled, false)
+      assert.equal(button.attributes['aria-busy'], 'false')
+      const notes = where === 'modal' ? basePanel.notes() : card.notes()
+      assert.equal(notes.length, 1, where + ': one visible alert')
+      assert.equal(notes[0].textContent, 'Controlled confirm refusal')
+      assert.equal(notes[0].hidden, false)
+      assert.equal(notes[0].attributes.role, 'alert')
+    }
+  } finally {
+    global.document = original.document
+    global.crypto = original.crypto
+    global.xanoAuthFetch = original.fetch
+    global.sessionStorage = original.storage
+    global.StartersDashboardCallActions = original.actions
+    console.error = original.error
+  }
+})
+
 test('Starter Accept rechecks the response window immediately before mutation', async () => {
   const configId = '11111111-2222-3333-4444-555555555555'
   const bookingId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'

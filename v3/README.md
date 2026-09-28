@@ -2659,6 +2659,13 @@ The alert renders inside the open `booking-popup-content` panel, below its
 buttons, and scrolls into view with `block: 'nearest'`. The dialog root clips
 to the viewport, so an alert there was invisible. With no open panel, the alert
 stays on the dialog root.
+While a decline, cancel, or proposal response is in flight, its control reads
+"Declining…", "Cancelling…", "Accepting…", or "Keeping current time…", is
+`aria-busy`, and it and any button inside it are disabled; the authored label and
+state return when the command settles. The Starter's Accept on
+`dashboard-calls.js` uses the same `markActionBusy` state with "Confirming…" and
+shows its failure through the same alert, in the open details panel or on the
+card for a card-level Accept, preferring the server's `message` or `error` text.
 A click rejected by the client eligibility gate does not open an authored
 legacy action. It writes a PII-free console warning with only role, booking
 status, paid state, and whether the booking has the required identity.

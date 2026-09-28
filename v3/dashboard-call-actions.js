@@ -91,6 +91,7 @@
       reasonContent: 'decline-reason',
       successContent: 'declined',
       failureMessage: 'Canonical booking decline failed',
+      busyLabel: 'Declining…',
     },
     cancel: {
       path: '/booking/cancel/v3',
@@ -104,6 +105,7 @@
       reasonContent: 'cancel-reason',
       successContent: 'cancelled',
       failureMessage: 'Canonical booking cancel failed',
+      busyLabel: 'Cancelling…',
     },
     'reschedule-propose': {
       path: '/booking/reschedule/propose/v3',
@@ -147,6 +149,7 @@
       successStatus: 'confirmed',
       successContent: 'reschedule-accepted',
       failureMessage: 'Canonical reschedule confirmation failed',
+      busyLabel: 'Accepting…',
     },
     'reschedule-decline': {
       path: '/booking/reschedule/decline/v3',
@@ -160,6 +163,7 @@
       successStatus: 'confirmed',
       successContent: 'reschedule-declined',
       failureMessage: 'Canonical reschedule response failed',
+      busyLabel: 'Keeping current time…',
     },
   }
 
@@ -967,13 +971,13 @@
     return button
   }
 
+  const ACTION_LABEL_SELECTOR = '.button_main-text, [button-text], [data-button-text]'
+
   function setAuthoredActionLabel(control, label) {
     if (!control) return false
     const labels =
       typeof control.querySelectorAll === 'function'
-        ? Array.prototype.slice.call(
-            control.querySelectorAll('.button_main-text, [button-text], [data-button-text]'),
-          )
+        ? Array.prototype.slice.call(control.querySelectorAll(ACTION_LABEL_SELECTOR))
         : []
     if (labels.length) {
       labels.forEach(function (node) {
@@ -983,6 +987,55 @@
       control.textContent = label
     }
     return true
+  }
+
+  /**
+   * Shows a visible in-flight state on an action control until the returned
+   * release runs: the authored label reads `label`, and the control and any
+   * button inside it are disabled. aria-busy alone was invisible, so a slow
+   * command read as a dead button (Kaeser QA P5, 2026-09-28). Release
+   * restores the authored label and each button's prior disabled state.
+   * @param {HTMLElement|null} control Clicked action control.
+   * @param {string} label Busy label, for example "Confirming…".
+   * @returns {function(): void} Idempotent release.
+   */
+  function markActionBusy(control, label) {
+    if (!control) return function () {}
+    const labels =
+      typeof control.querySelectorAll === 'function'
+        ? Array.prototype.slice.call(control.querySelectorAll(ACTION_LABEL_SELECTOR))
+        : []
+    const textNodes = labels.length ? labels : [control]
+    const authoredText = textNodes.map(function (node) { return node.textContent })
+    const buttons = [control]
+      .concat(
+        typeof control.querySelectorAll === 'function'
+          ? Array.prototype.slice.call(control.querySelectorAll('button'))
+          : [],
+      )
+      .filter(function (node) { return node && 'disabled' in node })
+    const wasDisabled = buttons.map(function (node) { return node.disabled })
+    if (typeof control.setAttribute === 'function') {
+      control.setAttribute('aria-busy', 'true')
+      control.setAttribute('aria-disabled', 'true')
+    }
+    if (clean(label)) {
+      textNodes.forEach(function (node) { node.textContent = label })
+    }
+    buttons.forEach(function (node) { node.disabled = true })
+    let released = false
+    return function release() {
+      if (released) return
+      released = true
+      if (clean(label)) {
+        textNodes.forEach(function (node, index) { node.textContent = authoredText[index] })
+      }
+      buttons.forEach(function (node, index) { node.disabled = wasDisabled[index] })
+      if (typeof control.setAttribute === 'function') {
+        control.setAttribute('aria-busy', 'false')
+        control.setAttribute('aria-disabled', 'false')
+      }
+    }
   }
 
   function replaceAuthoredPlaceholder(root, replacement) {
@@ -1628,8 +1681,7 @@
         if (button.__startersActionBusy) return
         if (step.step === 'respond') {
           button.__startersActionBusy = true
-          button.setAttribute('aria-busy', 'true')
-          button.setAttribute('aria-disabled', 'true')
+          const releaseBusy = markActionBusy(button, config.busyLabel)
           showActionError(modal, '')
           try {
             const result = await respondReschedule(step.kind, booking, settings.role)
@@ -1654,16 +1706,14 @@
             showActionError(modal, (error && error.message) || config.failureMessage)
           } finally {
             button.__startersActionBusy = false
-            button.setAttribute('aria-busy', 'false')
-            button.setAttribute('aria-disabled', 'false')
+            releaseBusy()
           }
           return
         }
         const reason = reasonValue(modal, step.kind)
         if (!validateReason(reason.field, reason.value)) return
         button.__startersActionBusy = true
-        button.setAttribute('aria-busy', 'true')
-        button.setAttribute('aria-disabled', 'true')
+        const releaseBusy = markActionBusy(button, config.busyLabel)
         showActionError(modal, '')
         try {
           const result = await submitAction(
@@ -1685,8 +1735,7 @@
           showActionError(modal, (error && error.message) || config.failureMessage)
         } finally {
           button.__startersActionBusy = false
-          button.setAttribute('aria-busy', 'false')
-          button.setAttribute('aria-disabled', 'false')
+          releaseBusy()
         }
       },
       true,
@@ -1727,6 +1776,7 @@
     declineStorageKey,
     closeDetailModal,
     declineSucceeded,
+    markActionBusy,
     showActionError,
     switchPopupContent,
     validAttemptKey,
