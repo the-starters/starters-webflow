@@ -510,9 +510,10 @@
 
   /**
    * Timezone the signed-in viewer reads call times in: the viewer's own stored
-   * zone, then this browser's zone, and the counterpart's zone only as a last
-   * resort. A Brand with no stored zone used to fall back to the Starter's
-   * zone first, so a Dubai Brand saw a different date than it booked (P6).
+   * zone first. A Brand then uses this browser's zone, and the counterpart's
+   * zone only as a last resort. A Brand with no stored zone used to fall back
+   * to the Starter's zone first, so a Dubai Brand saw a different date than it
+   * booked (P6). A Starter keeps its own zone, then the Brand's.
    * @param {string} role Signed-in member's role.
    * @param {object} booking Canonical booking row.
    * @returns {string} IANA timezone, or '' for the formatter default.
@@ -524,7 +525,9 @@
     const other = role === 'starter'
       ? booking && booking.brand_data
       : booking && booking.starter_data
-    return clean(own && own.timezone) || browserTimezone() || clean(other && other.timezone)
+    return clean(own && own.timezone) ||
+      (role === 'brand' ? browserTimezone() : '') ||
+      clean(other && other.timezone)
   }
 
   function formatDate(value, timezone) {

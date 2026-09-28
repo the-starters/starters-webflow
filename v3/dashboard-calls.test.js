@@ -2217,6 +2217,46 @@ test('call times use the viewer zone, then the browser zone, then the counterpar
   })
 })
 
+// P6 is a Brand fix. A Starter with no stored zone keeps the Brand's zone,
+// as before, and never switches to the browser zone.
+test('a Starter with no stored zone keeps the Brand zone, not the browser zone', () => {
+  const RealIntl = Intl
+  global.Intl = {
+    DateTimeFormat: function (locales, options) {
+      if (locales === undefined && options === undefined) {
+        return { resolvedOptions: () => ({ timeZone: 'Asia/Dubai' }) }
+      }
+      return new RealIntl.DateTimeFormat(locales, options)
+    },
+  }
+  try {
+    // 2026-10-01 01:30 UTC is Sep 30 in Los Angeles and Oct 1 in Dubai.
+    const start = Date.parse('2026-10-01T01:30:00Z')
+    const booking = {
+      booking_id: 'starter-timezone-order',
+      status: 'confirmed',
+      start,
+      end: start + 1800000,
+      brand_data: { name: 'Brand', timezone: 'America/Los_Angeles' },
+      starter_data: { name: 'Starter', timezone: '' },
+    }
+    const view = detailModalHarness()
+    api.populateDetailModal(view.modal, booking, 'starter', start - 86400000)
+    assert.equal(view.fields['start-date'].textContent, 'Wed, Sep 30, 6:30 PM PDT')
+    const startDate = element({ 'booking-element': 'start-date' })
+    const card = element()
+    card.querySelector = (selector) => selector === '[booking-element="start-date"]' ? startDate : null
+    api.bindCard(card, booking, 'starter')
+    assert.equal(startDate.textContent, 'Wed, Sep 30, 6:30 PM PDT')
+    // The Brand on the same row still reads its browser zone.
+    const brandView = detailModalHarness()
+    api.populateDetailModal(brandView.modal, { ...booking, brand_data: { name: 'Brand', timezone: '' } }, 'brand', start - 86400000)
+    assert.equal(brandView.fields['start-date'].textContent, 'Thu, Oct 01, 5:30 AM GMT+4')
+  } finally {
+    global.Intl = RealIntl
+  }
+})
+
 test('proposal details hide unavailable old time and unknown proposer copy', () => {
   const view = detailModalHarness()
   api.populateDetailModal(view.modal, { booking_id: 'missing-old', status: 'rescheduled', start: Date.now() + 86400000, start_old: null }, 'starter')
