@@ -1917,6 +1917,154 @@ test('a pending reschedule posts the update contract and keeps the booking pendi
   }
 })
 
+// F04 (Kaeser Call 1, 2026-09-28): #5921 replaces the provider booking and
+// answers with the NEW booking_id plus replaced_booking_id = the sent id. The
+// client used to require the sent id in booking_id, so a successful edit
+// showed "Canonical reschedule request failed" and every retry replayed it.
+test('a pending update accepts the replacement booking the server returns', async () => {
+  const originalFetch = global.xanoAuthFetch
+  const originalStorage = global.sessionStorage
+  const originalCrypto = global.crypto
+  const keys = []
+  let response = null
+  try {
+    global.sessionStorage = storage()
+    let uuid = 0
+    global.crypto = {
+      subtle: originalCrypto.subtle,
+      randomUUID() {
+        uuid += 1
+        return '00000000-0000-4000-8000-0000000004' + String(uuid).padStart(2, '0')
+      },
+    }
+    global.xanoAuthFetch = async function (_url, options) {
+      keys.push(JSON.parse(options.body).idempotency_key)
+      return { ok: true, async json() { return response } }
+    }
+    const start = Date.now() + 3 * 60 * 60 * 1000
+    const slot = { start, end: start + 30 * 60 * 1000, timezone: 'Asia/Dubai' }
+    const booking = () => rescheduleBooking({ booking_id: '2e9f08a2', status: 'pending' })
+
+    // Negative cases keep the key for a safe replay of the same attempt.
+    for (const result of [
+      { booking_id: 'other-booking', replaced_booking_id: 'another-booking', status: 'pending' },
+      { booking_id: '', replaced_booking_id: '2e9f08a2', status: 'pending' },
+      { booking_id: '0984c0fb', replaced_booking_id: '2e9f08a2', status: 'confirmed' },
+    ]) {
+      response = { reschedule_request: result }
+      await assert.rejects(
+        api.proposeReschedule(booking(), 'brand', 'Earlier suits us', slot),
+        /Canonical reschedule request failed/,
+      )
+    }
+    assert.equal(new Set(keys).size, 1)
+
+    response = {
+      reschedule_request: { booking_id: '0984c0fb', replaced_booking_id: '2e9f08a2', status: 'pending' },
+    }
+    const accepted = await api.proposeReschedule(booking(), 'brand', 'Earlier suits us', slot)
+    assert.equal(accepted.reschedule_request.booking_id, '0984c0fb')
+    // The success cleared the attempt key stored under the sent id.
+    await api.proposeReschedule(booking(), 'brand', 'Earlier suits us', slot)
+    assert.equal(keys.length, 5)
+    assert.equal(keys[3], keys[0])
+    assert.notEqual(keys[4], keys[3])
+
+    // Only the replacing contract may answer with another booking id.
+    response = {
+      reschedule: { booking_id: 'other-booking', replaced_booking_id: 'booking-test-3', status: 'rescheduled' },
+    }
+    await assert.rejects(
+      api.proposeReschedule(rescheduleBooking(), 'brand', 'Conflict came up', slot),
+      /Canonical reschedule proposal failed/,
+    )
+  } finally {
+    global.xanoAuthFetch = originalFetch
+    global.sessionStorage = originalStorage
+    global.crypto = originalCrypto
+  }
+})
+
+test('a replaced pending booking moves the modal, card, and row to the new id', async () => {
+  const originalCalendar = global.StartersPaidCallBrandPayment
+  const originalFetch = global.xanoAuthFetch
+  const originalStorage = global.sessionStorage
+  const originalCrypto = global.crypto
+  function carrier(id) {
+    const attributes = new Map([['data-booking-id', id]])
+    return {
+      getAttribute(name) { return attributes.has(name) ? attributes.get(name) : null },
+      setAttribute(name, value) { attributes.set(name, String(value)) },
+    }
+  }
+  const container = { textContent: '' }
+  const panels = ['base', 'reschedule-calendar', 'reschedule-updated'].map((name) => ({
+    hidden: name !== 'reschedule-calendar',
+    style: {},
+    getAttribute(attribute) { return attribute === 'booking-popup-content' ? name : null },
+    querySelectorAll() { return [] },
+  }))
+  const modal = Object.assign(carrier('2e9f08a2'), {
+    querySelector(selector) {
+      if (selector === '[booking-reschedule-calendar]') return container
+      return null
+    },
+    querySelectorAll(selector) {
+      return selector === '[booking-popup-content]' ? panels : []
+    },
+  })
+  const card = carrier('2e9f08a2')
+  const otherCard = carrier('unrelated-booking')
+  const document = {
+    querySelectorAll(selector) {
+      return selector === '[data-booking-id]' ? [card, otherCard, modal] : []
+    },
+  }
+  const mounts = []
+  const refreshed = []
+  try {
+    global.StartersPaidCallBrandPayment = {
+      async mountPaidCalendar(options) { mounts.push(options) },
+    }
+    global.sessionStorage = storage()
+    global.crypto = {
+      subtle: originalCrypto.subtle,
+      randomUUID() { return '00000000-0000-4000-8000-000000000501' },
+    }
+    global.xanoAuthFetch = async function () {
+      return {
+        ok: true,
+        async json() {
+          return {
+            reschedule_request: { booking_id: '0984c0fb', replaced_booking_id: '2e9f08a2', status: 'pending' },
+          }
+        },
+      }
+    }
+    const booking = rescheduleBooking({ booking_id: '2e9f08a2', status: 'pending' })
+    await api.mountRescheduleCalendar(document, modal, booking, 'brand', 'Earlier suits us', undefined,
+      function (target, row) {
+        refreshed.push({ target, id: row.booking_id, modalId: target.getAttribute('data-booking-id') })
+      })
+    const start = Date.now() + 5 * 60 * 60 * 1000
+    await mounts[0].onConfirm({ start, end: start + 30 * 60 * 1000, timezone: 'Asia/Dubai' })
+
+    assert.equal(booking.booking_id, '0984c0fb')
+    assert.equal(booking.start, start)
+    assert.equal(modal.getAttribute('data-booking-id'), '0984c0fb')
+    assert.equal(card.getAttribute('data-booking-id'), '0984c0fb')
+    assert.equal(otherCard.getAttribute('data-booking-id'), 'unrelated-booking')
+    assert.deepEqual(refreshed, [{ target: modal, id: '0984c0fb', modalId: '0984c0fb' }])
+    assert.equal(panels[2].hidden, false)
+    assert.equal(panels[1].hidden, true)
+  } finally {
+    global.StartersPaidCallBrandPayment = originalCalendar
+    global.xanoAuthFetch = originalFetch
+    global.sessionStorage = originalStorage
+    global.crypto = originalCrypto
+  }
+})
+
 test('a confirmed reschedule still posts the propose contract', async () => {
   const originalFetch = global.xanoAuthFetch
   const originalStorage = global.sessionStorage

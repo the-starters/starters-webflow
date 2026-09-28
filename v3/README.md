@@ -2658,7 +2658,12 @@ malformed result keeps the key for safe replay. Only an exact nested result for
 the same booking clears the matching key: decline must be `declined`, cancel
 must be `cancelled`, a proposal must be `rescheduled`, a pending-request update
 must remain `pending`, acceptance must be `confirmed`, and the nested
-`reschedule_decline` response must be `cancelled`. Authored action-result and
+`reschedule_decline` response must be `cancelled`. A pending-request update
+replaces the provider booking (#5921), so its result may instead carry the new
+`booking_id` with `replaced_booking_id` equal to the sent id; only that contract
+accepts the replacement form, and the new id must be non-empty. The module then
+moves the row, the open modal, and every list card keyed by the sent id to the
+new id before it refreshes the details. Authored action-result and
 terminal panels replace `[Starter]` and `[Brand]` in their leaf text nodes with
 the counterpart's canonical booking name, or `the other participant` when that
 name is blank. Free panels also replace the exact authored lowercase `[brand]`

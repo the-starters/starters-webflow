@@ -129,6 +129,9 @@
       reasonField: 'rescheduled_reason',
       reasonAttribute: 'booking-reschedule-reason',
       responseKey: 'reschedule_request',
+      // #5921 replaces the provider booking: its result carries the NEW
+      // booking_id and names the sent one as replaced_booking_id.
+      replacesBooking: true,
       // The booking is deliberately still pending afterwards; a status change
       // here would mean the handshake contract ran by mistake.
       successStatus: 'pending',
@@ -492,13 +495,72 @@
   function actionSucceeded(kind, body, bookingId) {
     const config = KINDS[kind]
     const result = config && body && body[config.responseKey]
+    const sent = clean(bookingId)
+    // A replacing contract answers with the new id and names the sent one as
+    // replaced; that new id must be present for the caller to adopt it.
+    const replaced = Boolean(
+      config &&
+      config.replacesBooking &&
+      result &&
+      clean(result.replaced_booking_id) === sent &&
+      clean(result.booking_id) !== ''
+    )
     return Boolean(
       config &&
       result &&
-      clean(result.booking_id) === clean(bookingId) &&
-      clean(bookingId) !== '' &&
+      sent !== '' &&
+      (clean(result.booking_id) === sent || replaced) &&
       clean(result.status).toLowerCase() === config.successStatus
     )
+  }
+
+  /**
+   * The booking id a successful replacing command left in place of `booking`,
+   * or '' when the booking kept its id.
+   * @param {string} kind Action kind that succeeded.
+   * @param {object|null} body Validated command response.
+   * @param {object|null} booking Booking the command was sent for.
+   * @returns {string} Replacement booking id, or ''.
+   */
+  function replacementBookingId(kind, body, booking) {
+    const config = KINDS[kind]
+    const result = config && config.replacesBooking && body && body[config.responseKey]
+    const sent = clean(booking && booking.booking_id)
+    const next = clean(result && result.booking_id)
+    return result && sent !== '' && next !== '' && next !== sent &&
+      clean(result.replaced_booking_id) === sent
+      ? next
+      : ''
+  }
+
+  /**
+   * Moves the local booking and every element keyed by its old id to the
+   * replacement id, so the open modal and the list card keep resolving the
+   * same row until the next canonical read.
+   * @param {Document|null} document Page document.
+   * @param {HTMLElement|null} modal Detail modal being populated.
+   * @param {object} booking Canonical row to update in place.
+   * @param {string} nextId Replacement booking id.
+   * @returns {boolean} Whether the booking id changed.
+   */
+  function adoptReplacementBooking(document, modal, booking, nextId) {
+    const previous = clean(booking && booking.booking_id)
+    const next = clean(nextId)
+    if (!booking || !previous || !next || previous === next) return false
+    booking.booking_id = next
+    const carriers = document && typeof document.querySelectorAll === 'function'
+      ? Array.prototype.slice.call(document.querySelectorAll('[data-booking-id]'))
+      : []
+    if (modal && carriers.indexOf(modal) === -1) carriers.push(modal)
+    carriers.forEach(function (carrier) {
+      if (
+        carrier &&
+        typeof carrier.getAttribute === 'function' &&
+        typeof carrier.setAttribute === 'function' &&
+        clean(carrier.getAttribute('data-booking-id')) === previous
+      ) carrier.setAttribute('data-booking-id', next)
+    })
+    return true
   }
 
   function declineSucceeded(body, bookingId) {
@@ -1353,6 +1415,15 @@
         // immediately; a confirmed call keeps its canonical time until the
         // counterpart accepts, so render its proposal from a separate model.
         if (kind === 'reschedule-request' && booking) {
+          // F04: the update replaces the provider booking, so the row now
+          // lives under the new id. The attempt key was already cleared
+          // under the sent id inside submitAction.
+          adoptReplacementBooking(
+            document,
+            modal,
+            booking,
+            replacementBookingId(kind, result, booking),
+          )
           booking.start = Number(slot && slot.start)
           booking.end = Number(slot && slot.end)
           booking.rescheduled_reason = reason || booking.rescheduled_reason
