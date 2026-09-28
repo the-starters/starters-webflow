@@ -2615,12 +2615,13 @@ pending path's `reschedule-updated` result. A modal that lacks that panel receiv
 a module fallback, so the direct-update success cannot switch to a missing
 target. A modal with no authored `reschedule` view receives the module fallback
 instead.
-The module uses the base "Accept new time" and "Cancel call" responses
-authored beside the reschedule trigger, normalizing authored decline labels to
-"Cancel call". Declining a proposed time cancels the confirmed call under the
-responding actor policy; it does not retain the original appointment. See the
+The module uses the base "Accept New Time" and "Keep Current Time" responses
+authored beside the reschedule trigger and keeps their authored labels.
+Declining a proposed time on a Free call keeps the original confirmed call: the
+published F13 `booking/reschedule/decline/v3` (#5760) restores `start_old` and
+`end_old`, sets `confirmed`, and makes no provider change. See the
 [CS-17 backend release prerequisite](#cs-17-backend-release-prerequisite) for the
-required backend prerequisite. If either control is missing from the
+backend history. If either control is missing from the
 base panel, it creates the fallback pair once per modal and marks both controls
 with `data-starters-reschedule-respond`. Decline, cancel, and both reschedule
 commands require a non-empty reason. Decline posts `booking_id`, `config_id`,
@@ -2658,7 +2659,7 @@ malformed result keeps the key for safe replay. Only an exact nested result for
 the same booking clears the matching key: decline must be `declined`, cancel
 must be `cancelled`, a proposal must be `rescheduled`, a pending-request update
 must remain `pending`, acceptance must be `confirmed`, and the nested
-`reschedule_decline` response must be `cancelled`. A pending-request update
+`reschedule_decline` response must be `confirmed`. A pending-request update
 replaces the provider booking (#5921), so its result may instead carry the new
 `booking_id` with `replaced_booking_id` equal to the sent id; only that contract
 accepts the replacement form, and the new id must be non-empty. The module then
@@ -2681,10 +2682,9 @@ After a validated response for either role, the module applies the returned
 status and valid returned start/end times to the booking and runs the shared
 detail formatter before opening `reschedule-accepted` or `reschedule-declined`.
 Both the receipt and base omit proposal-only fields and summary rows while
-retaining counterpart and call-context fields. The declined receipt says
-"Call cancelled" and "The proposed time was declined and the call was cancelled."
-The module also normalizes the known legacy authored receipt copy before
-reusing existing views. A delayed confirm or
+retaining counterpart and call-context fields. The declined receipt keeps its
+authored "Proposal declined" and "The call keeps its original time." copy; the
+module fallback uses the same words. A delayed confirm or
 decline response, whether successful or failed, does not replace the displayed
 details, switch panels, or show an error if the modal now holds another booking.
 Other authored content stays unchanged. The panel remains visible until the
@@ -4694,6 +4694,12 @@ published, with exact source readback and both-role native Test cancellation
 and provider evidence. See [release evidence](fixtures/RESCHEDULE-DECLINE-RELEASE-PROOF.md)
 for revisions, scope, cleanup, and remaining verification limits. This replaces
 the earlier supplied status in which endpoint5760 restored `confirmed`.
+
+F13 soft launch (published #5760 `4d5e3f86`, 2026-09-26) supersedes that
+cancellation for Free bookings: a Free decline restores the original confirmed
+call and answers `reschedule_decline.status = confirmed` with
+`original_restored: true`. Other bookings keep the prior #2099 handoff, which the
+dashboard never reaches because it offers the response on Free calls only.
 
 The frontend remains subject to no-mistakes review and CI before merge/release.
 Backend evidence does not establish Paid settlement, production canaries, or

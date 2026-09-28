@@ -4993,7 +4993,9 @@ test('reschedule responses refresh receipt and base without retaining proposal-o
   context.after(() => { global.xanoAuthFetch = previous.fetch; global.sessionStorage = previous.storage; global.StartersDashboardCallActions = previous.actions })
   global.StartersDashboardCallActions = actions
   for (const kind of ['confirm', 'decline']) for (const role of ['brand', 'starter']) for (const scenario of ['success', 'failure', 'transport-failure', 'switched-success', 'switched-failure', 'switched-transport-failure']) {
-    const expectedStatus = kind === 'confirm' ? 'confirmed' : 'cancelled'
+    // Both answers leave a confirmed call: #5760 restores a declined Free
+    // proposal to its original confirmed time.
+    const expectedStatus = 'confirmed'
     const values = new Map()
     global.sessionStorage = { getItem: key => values.get(key), setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key) }
     const handlers = []
@@ -5036,7 +5038,7 @@ test('reschedule responses refresh receipt and base without retaining proposal-o
     if (scenario.includes('transport')) {
       response.reject(new Error('Controlled transport failure'))
     } else {
-      response.resolve({ ok: !scenario.endsWith('failure'), json: async () => scenario.endsWith('failure') ? { message: 'Controlled failure' } : { ['reschedule_' + kind]: { booking_id: booking.booking_id, status: expectedStatus, start: booking.start, end: booking.end } } })
+      response.resolve({ ok: !scenario.endsWith('failure'), json: async () => scenario.endsWith('failure') ? { message: 'Controlled failure' } : { ['reschedule_' + kind]: { booking_id: booking.booking_id, status: expectedStatus, start: kind === 'decline' ? booking.start_old : booking.start, end: kind === 'decline' ? booking.start_old + 1800000 : booking.end } } })
     }
     await action
     if (scenario.endsWith('failure')) assert.deepEqual(Array.from(values.entries()), retryKeys, 'Failed attempt retains the same retry key')
@@ -5054,6 +5056,7 @@ test('reschedule responses refresh receipt and base without retaining proposal-o
       continue
     }
     assert.equal(booking.status, expectedStatus)
+    if (kind === 'decline') assert.equal(booking.start, booking.start_old, 'Decline restores the original time')
     assert.equal(receipt.querySelector('[data-starters-call-summary-row="start-date-old"]'), null)
     assert.equal(base.querySelector('[data-starters-call-summary-row="start-date-old"]'), null)
     assert.equal(receipt.hidden, false)

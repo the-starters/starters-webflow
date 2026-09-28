@@ -992,7 +992,10 @@ test('a reschedule proposal posts slot, reason, and a durable propose key', asyn
   }
 })
 
-test('reschedule responses require confirmed acceptance and cancelled decline', async () => {
+// F13 soft launch: published #5760 restores a Free call to its original
+// confirmed time, so a declined proposal also answers `confirmed`. The old
+// `cancelled` answer belongs to the retired decline-cancels contract.
+test('reschedule responses require confirmed acceptance and a confirmed decline', async () => {
   const originalFetch = global.xanoAuthFetch
   const originalStorage = global.sessionStorage
   const originalCrypto = global.crypto
@@ -1009,18 +1012,30 @@ test('reschedule responses require confirmed acceptance and cancelled decline', 
       requests.push({ url, options })
       const key = url.includes('/confirm/') ? 'reschedule_confirm' : 'reschedule_decline'
       const body = {}
-      body[key] = { booking_id: 'booking-test-3', status: key === 'reschedule_confirm' ? 'confirmed' : 'cancelled', revision: 4 }
+      body[key] = {
+        booking_id: 'booking-test-3',
+        status: declineStatus && key === 'reschedule_decline' ? declineStatus : 'confirmed',
+        revision: 4,
+      }
+      if (key === 'reschedule_decline') body[key].original_restored = true
       body.duplicate = false
       return { ok: true, async json() { return body } }
     }
+    let declineStatus = ''
     const booking = rescheduleBooking({ status: 'rescheduled', rescheduled_by: 'starter' })
     const confirmed = await api.respondReschedule('reschedule-confirm', booking, 'brand')
     assert.equal(confirmed.reschedule_confirm.status, 'confirmed')
     assert.match(requests[0].url, /\/booking\/reschedule\/confirm\/v3$/)
     assert.match(JSON.parse(requests[0].options.body).idempotency_key, /^dashboard-reschedule-confirm:/)
     const declined = await api.respondReschedule('reschedule-decline', booking, 'brand')
-    assert.equal(declined.reschedule_decline.status, 'cancelled')
+    assert.equal(declined.reschedule_decline.status, 'confirmed')
     assert.match(requests[1].url, /\/booking\/reschedule\/decline\/v3$/)
+    // The retired decline-cancels answer is no longer a success.
+    declineStatus = 'cancelled'
+    await assert.rejects(
+      api.respondReschedule('reschedule-decline', booking, 'brand'),
+      /Canonical reschedule response failed/,
+    )
     assert.equal(await api.respondReschedule('reschedule-confirm', booking, 'starter'), null)
     assert.equal(await api.respondReschedule('cancel', booking, 'brand'), null)
   } finally {
@@ -1319,6 +1334,11 @@ test('respond controls are rendered into the base view for the counterpart', () 
     inserted.map((child) => child.attributes['booking-action-btn']).sort(),
     ['confirm-reschedule', 'reschedule-decline'],
   )
+  // Declining a Free proposal keeps the original time (#5760).
+  assert.equal(
+    inserted.find((child) => child.attributes['booking-action-btn'] === 'reschedule-decline').textContent,
+    'Keep current time',
+  )
   assert.equal(api.ensureRescheduleViews(doc, modal), true)
   assert.equal(
     group.children.filter(
@@ -1382,6 +1402,7 @@ test('authored respond controls in the base view are not duplicated', () => {
   group.appendChild(authoredAccept)
   const authoredDecline = fakeElement('a')
   authoredDecline.setAttribute('booking-action-btn', 'reschedule-decline')
+  authoredDecline.textContent = 'Keep Current Time'
   group.appendChild(authoredDecline)
   const modal = {
     querySelector(selector) {
@@ -1409,6 +1430,8 @@ test('authored respond controls in the base view are not duplicated', () => {
     0,
   )
   assert.equal(group.children.length, 3)
+  // The authored label matches the #5760 keep-original contract and stays.
+  assert.equal(authoredDecline.textContent, 'Keep Current Time')
 })
 
 test('authored reschedule controls and field label replace Webflow placeholder copy', () => {
@@ -2404,7 +2427,7 @@ test('availability rejection renders an error only for the current booking mount
 })
 
 for (const role of ['brand', 'starter']) {
-  test(`${role} authored declined receipt is normalized before the existing-view return`, () => {
+  test(`${role} authored declined receipt keeps its original-time copy`, () => {
     const title = { textContent: 'Proposal declined', children: [] }
     const body = { textContent: 'The call keeps its original time.', children: [] }
     const detail = { textContent: 'Date and time', children: [] }
@@ -2421,8 +2444,8 @@ for (const role of ['brand', 'starter']) {
     const document = { createElement() { throw new Error('Authored views must be reused') } }
     for (let attempt = 0; attempt < 2; attempt += 1) {
       assert.equal(api.ensureRescheduleViews(document, modal), true)
-      assert.equal(title.textContent, 'Call cancelled')
-      assert.equal(body.textContent, 'The proposed time was declined and the call was cancelled.')
+      assert.equal(title.textContent, 'Proposal declined')
+      assert.equal(body.textContent, 'The call keeps its original time.')
       assert.equal(detail.textContent, 'Date and time')
     }
   })

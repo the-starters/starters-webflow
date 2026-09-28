@@ -154,7 +154,10 @@
       attemptPrefix: 'dashboard-reschedule-decline',
       reasonField: null,
       responseKey: 'reschedule_decline',
-      successStatus: 'cancelled',
+      // F13 soft launch: published #5760 restores a Free call to its original
+      // confirmed time (original_restored true). Only Free calls reach this
+      // action (canRespondReschedule), so `confirmed` is the success status.
+      successStatus: 'confirmed',
       successContent: 'reschedule-declined',
       failureMessage: 'Canonical reschedule response failed',
     },
@@ -1116,17 +1119,8 @@
       typeof modal.querySelector !== 'function' ||
       typeof document.createElement !== 'function'
     ) return false
-    const declinedReceipt = modal.querySelector('[booking-popup-content="reschedule-declined"]')
-    if (declinedReceipt && typeof declinedReceipt.querySelectorAll === 'function') {
-      Array.prototype.forEach.call(declinedReceipt.querySelectorAll('p, h1, h2, h3'), function (node) {
-        if (node.children && node.children.length) return
-        const text = clean(node.textContent)
-        if (text === 'Proposal declined') node.textContent = 'Call cancelled'
-        if (text === 'The call keeps its original time.') {
-          node.textContent = 'The proposed time was declined and the call was cancelled.'
-        }
-      })
-    }
+    // The authored declined receipt ("The call keeps its original time.")
+    // matches the #5760 Free contract again, so it is no longer rewritten.
     const hasAuthoredRescheduleView = normalizeRescheduleViewCopy(modal)
     if (modal.querySelector('[data-starters-reschedule-views]')) {
       ensureRespondButtons(document, modal)
@@ -1217,9 +1211,9 @@
 
     if (!modal.querySelector('[booking-popup-content="reschedule-declined"]')) {
       const declinedPanel = reschedulePanel(document, 'reschedule-declined')
-      declinedPanel.appendChild(panelText(document, 'h3', 'Call cancelled'))
+      declinedPanel.appendChild(panelText(document, 'h3', 'Proposal declined'))
       declinedPanel.appendChild(
-        panelText(document, 'p', 'The proposed time was declined and the call was cancelled.', true),
+        panelText(document, 'p', 'The call keeps its original time.', true),
       )
       host.appendChild(declinedPanel)
     }
@@ -1259,11 +1253,8 @@
       typeof modal.querySelector !== 'function' ||
       typeof document.createElement !== 'function'
     ) return false
-    if (typeof modal.querySelectorAll === 'function') {
-      modal.querySelectorAll('[booking-action-btn="reschedule-decline"], [booking-card-action-btn="reschedule-decline"]').forEach(function (control) {
-        setAuthoredActionLabel(control, 'Cancel call')
-      })
-    }
+    // Declining a Free proposal keeps the original time (#5760), so the
+    // authored "Keep Current Time" label stays; it is no longer renamed.
     if (modal.querySelector('[data-starters-reschedule-respond]')) return true
     /* Both views now author the respond pair in the base panel, where the
        member can reach it. Generating a second pair there left four controls
@@ -1299,7 +1290,7 @@
       document,
       modal,
       'reschedule-decline',
-      'Cancel call',
+      'Keep current time',
     )
     decline.setAttribute('data-starters-reschedule-respond', '')
     anchor.parentNode.insertBefore(accept, anchor.nextSibling)
