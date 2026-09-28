@@ -1545,7 +1545,11 @@
       // Brands can now also restate the time on their own pending request, so
       // the old "confirmed only" wording would misdescribe the gate.
       'Rescheduling is available for Free calls.',
+      // The hint explains the Paid gate. A Free call with no reschedule
+      // control for this viewer (a Starter's pending request, or a call
+      // inside the reschedule window) would read it as a false promise.
       Boolean(gates.rescheduleAnchor) &&
+        paidBooking(booking) &&
         active &&
         status !== 'rescheduled' &&
         upcoming &&

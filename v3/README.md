@@ -2596,10 +2596,12 @@ contracts never claim the same booking. Every command requires a booking ID,
 configuration ID, participant identity, and exact `test` or `production` data
 environment.
 
-For an active upcoming initial request or confirmed row where neither a
+For an active upcoming initial request or confirmed Paid row where neither a
 reschedule action nor a response is available, the modal shows
 `Rescheduling is available for Free calls.` below the authored Reschedule
-control. A rescheduled proposal hides this hint for both roles, including when
+control. A Free row never shows it: with no control for that viewer (a
+Starter's pending request, or a call inside the reschedule window) the words
+would be false. A rescheduled proposal hides this hint for both roles, including when
 reusing a modal that previously showed it. All eligibility explanations are
 module-owned `data-starters-action-hint` nodes inserted after the authored
 buttons; the script does not edit Designer markup. The early Reschedule guard

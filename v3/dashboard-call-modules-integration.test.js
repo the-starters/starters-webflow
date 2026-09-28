@@ -912,6 +912,80 @@ test('gated Reschedule and paid Cancel render an explanation hint', () => {
   }
 })
 
+// Kaeser 2026-09-28 (P4): a Starter's Free pending request showed
+// "Rescheduling is available for Free calls." with no reschedule control.
+// The hint explains the Paid gate only.
+test('a Free call with no reschedule control for the viewer shows no Free-calls hint', () => {
+  const realActions = require('./dashboard-call-actions.js')
+  const originalActions = global.StartersDashboardCallActions
+  function hintModal() {
+    const hints = {}
+    const reschedule = button('reschedule')
+    reschedule.insertAdjacentElement = function () {}
+    return {
+      hints,
+      reschedule,
+      querySelectorAll() { return [reschedule] },
+      querySelector(selector) {
+        const match = /data-starters-action-hint="([^"]+)"/.exec(selector)
+        return match ? hints[match[1]] || null : null
+      },
+      ownerDocument: {
+        createElement() {
+          return {
+            hidden: false,
+            style: {},
+            textContent: '',
+            setAttribute(name, value) {
+              if (name === 'data-starters-action-hint') hints[value] = this
+            },
+          }
+        },
+      },
+    }
+  }
+  const now = Date.now()
+  const base = {
+    booking_id: 'booking-free-hint',
+    config_id: 'config-free-hint',
+    grant_id: 'grant-free-hint',
+    duration: 30,
+    data_environment: 'production',
+    start: now + 48 * 60 * 60 * 1000,
+    confirmation_expires_at: now + 24 * 60 * 60 * 1000,
+    starter_data: { memberstack_id: 'mem_starter' },
+    brand_data: { memberstack_id: 'mem_brand' },
+  }
+  try {
+    global.StartersDashboardCallActions = realActions
+    for (const [role, status, isPaid, start, expected] of [
+      // Free: the Starter cannot restate a pending request.
+      ['starter', 'pending', false, base.start, undefined],
+      // Free: inside the reschedule window nobody gets a control.
+      ['brand', 'confirmed', false, now + 60 * 60 * 1000, undefined],
+      // Paid: the gate is real, so the hint explains it.
+      ['brand', 'confirmed', true, base.start, 'Rescheduling is available for Free calls.'],
+    ]) {
+      const modal = hintModal()
+      const booking = { ...base, status, is_paid: isPaid, start, server_now_ms: now }
+      realActions.bindCanonicalClock([booking], realActions.monotonicNow())
+      dashboard.configureDetailActions(modal, role, status, booking, now)
+      assert.equal(modal.reschedule.hidden, true, role + ' ' + status + ': no reschedule control')
+      const hint = modal.hints.reschedule
+      assert.equal(hint && !hint.hidden ? hint.textContent : undefined, expected, role + ' ' + status + ' paid=' + isPaid)
+    }
+    // A Free call that does offer the control still shows no hint.
+    const modal = hintModal()
+    const eligible = { ...base, status: 'confirmed', is_paid: false, server_now_ms: now }
+    realActions.bindCanonicalClock([eligible], realActions.monotonicNow())
+    dashboard.configureDetailActions(modal, 'brand', 'confirmed', eligible, now)
+    assert.equal(modal.reschedule.hidden, false)
+    assert.equal(modal.hints.reschedule, undefined)
+  } finally {
+    global.StartersDashboardCallActions = originalActions
+  }
+})
+
 // Soft launch (2026-09-28): Paid pending cancellation is hard-launch work, so
 // canCancel hides the Brand's Cancel on a Paid pending request. The hidden
 // button must be explained exactly like the confirmed Paid case, and nothing
