@@ -1366,7 +1366,7 @@
       document,
       modal,
       'reschedule-decline',
-      'Keep current time',
+      'Keep Current Time',
     )
     decline.setAttribute('data-starters-reschedule-respond', '')
     anchor.parentNode.insertBefore(accept, anchor.nextSibling)

@@ -761,11 +761,11 @@ test('markActionBusy shows a visible busy label and disables the control until r
   assert.equal(control.attributes['aria-disabled'], 'false')
 
   // A plain generated button carries its label as its own text.
-  const plain = { textContent: 'Keep current time', disabled: true, setAttribute() {} }
+  const plain = { textContent: 'Keep Current Time', disabled: true, setAttribute() {} }
   const releasePlain = api.markActionBusy(plain, 'Keeping current time…')
   assert.equal(plain.textContent, 'Keeping current time…')
   releasePlain()
-  assert.equal(plain.textContent, 'Keep current time')
+  assert.equal(plain.textContent, 'Keep Current Time')
   assert.equal(plain.disabled, true, 'a control disabled before stays disabled')
   // Markup without a label hook is never flattened into text.
   const icon = { textContent: 'Accept' }
@@ -1456,10 +1456,11 @@ test('respond controls are rendered into the base view for the counterpart', () 
     inserted.map((child) => child.attributes['booking-action-btn']).sort(),
     ['confirm-reschedule', 'reschedule-decline'],
   )
-  // Declining a Free proposal keeps the original time (#5760).
+  // Declining a Free proposal keeps the original time (#5760). The fallback
+  // reads exactly like the authored "Keep Current Time" button.
   assert.equal(
     inserted.find((child) => child.attributes['booking-action-btn'] === 'reschedule-decline').textContent,
-    'Keep current time',
+    'Keep Current Time',
   )
   assert.equal(api.ensureRescheduleViews(doc, modal), true)
   assert.equal(
