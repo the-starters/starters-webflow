@@ -1005,7 +1005,11 @@
       typeof control.querySelectorAll === 'function'
         ? Array.prototype.slice.call(control.querySelectorAll(ACTION_LABEL_SELECTOR))
         : []
-    const textNodes = labels.length ? labels : [control]
+    // A control with element children but no label hook keeps its markup;
+    // it still gets the busy and disabled state below.
+    const textNodes = labels.length
+      ? labels
+      : control.children && control.children.length ? [] : [control]
     const authoredText = textNodes.map(function (node) { return node.textContent })
     const buttons = [control]
       .concat(

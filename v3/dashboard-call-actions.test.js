@@ -767,6 +767,13 @@ test('markActionBusy shows a visible busy label and disables the control until r
   releasePlain()
   assert.equal(plain.textContent, 'Keep current time')
   assert.equal(plain.disabled, true, 'a control disabled before stays disabled')
+  // Markup without a label hook is never flattened into text.
+  const icon = { textContent: 'Accept' }
+  const structured = { textContent: 'Accept', children: [icon], setAttribute() {}, querySelectorAll: () => [] }
+  const releaseStructured = api.markActionBusy(structured, 'Accepting…')
+  assert.equal(structured.textContent, 'Accept')
+  assert.equal(structured.children[0], icon)
+  releaseStructured()
   assert.doesNotThrow(() => api.markActionBusy(null, 'Busy')())
 })
 
