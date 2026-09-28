@@ -2406,12 +2406,15 @@ copy. Binding a non-rescheduled row hides both proposal-only fields.
 
 Not every authored panel repeats every booking hook, so each authored
 `[booking-popup-content]` panel also receives a module-owned
-`data-starters-call-summary` block inserted before the authored Close control's
-group when that group is a direct child of the panel, otherwise appended after
-the authored content. A modal that authors no such panel receives one block on
-the modal itself. Generated content uses no classes or generated IDs. The block
-lists only the fields that panel has no usable `[booking-element]` hook for and
-that the canonical row has a value for — counterpart name, date and time
+`data-starters-call-summary` block inserted before the panel's direct-child
+footer. The authored `switch-close` control's group is preferred; otherwise the
+footer is the first direct child that contains a `[booking-action-btn]` and no
+`[booking-element]`. When neither attribute-driven anchor exists, the block is
+appended after the authored content. A modal that authors no such panel receives
+one block on the modal itself. Generated content uses no classes or generated
+IDs. The block lists only the fields that panel has no usable
+`[booking-element]` hook for and that the canonical row has a value for —
+counterpart name, date and time
 (including the current confirmed and proposed times described above),
 duration, call context, reschedule reason, and cancellation reason — as
 `data-starters-call-summary-row` lines keyed by that field name. A Free
@@ -2420,10 +2423,14 @@ booking's `declined` panel is the exception: a decline stores its reason in
 "Decline reason", and an earlier edit's reschedule reason is left out. A
 declined Free booking also fills the authored
 `[booking-element="decline-reason"]` hook, so a panel that authors it gets no
-second reason row. Other panels keep both labels. A Paid booking keeps both
-labels on every panel and leaves the authored hook as authored, restoring it
-when a reused modal showed a Free booking first, as PR #974 scoped F09. A hook counts
-as usable only while it renders: a hook that is itself hidden, that sits inside
+second reason row. The Free `cancel` and `decline` confirmation steps likewise
+hide an authored `[booking-element="reschedule-reason"]` and omit that summary
+row, because an earlier edit's reason is not the reason for the pending cancel
+or decline. Free base, cancelled, completed, and reschedule panels retain the
+reschedule reason. A Paid booking keeps both labels on every panel and leaves
+the authored hook as authored, restoring it when a reused modal showed a Free
+booking first, as PR #974 scoped F09. A hook counts as usable only while it
+renders: a hook that is itself hidden, that sits inside
 a hidden `[booking-element-wrap]` group, or that generates no box of its own
 inside a panel that does generate one, is treated as absent, so the module
 renders its own visible row instead of leaving the value unreadable. Geometry is
