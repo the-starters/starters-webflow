@@ -3665,12 +3665,11 @@
   });
 
   async function startersBooking_handler(bookingStarterId, brand_name, brand_email) {
+      // No catch: a thrown lookup still rejects, so it reaches the PostHog
+      // frontend-exceptions capture. Surfaces keep whatever state discovery
+      // reached; the fail-closed start already closed them.
       try {
           return await discoverStarterBooking(bookingStarterId, brand_name, brand_email);
-      } catch (error) {
-          // Surfaces keep whatever state discovery reached; the fail-closed
-          // start already closed them. Warn instead of an unhandled rejection.
-          console.warn('[hire-profile] call discovery failed:', error && error.message);
       } finally {
           // Every exit, including a thrown lookup, ends discovery-pending.
           endCallDiscoveryPending();

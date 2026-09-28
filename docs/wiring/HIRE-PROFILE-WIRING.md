@@ -356,7 +356,8 @@ sticky, and mobile CTAs when unavailable, with `data-booking-trigger-unavailable
 and `aria-disabled="true"`. Until canonical call discovery answers, a paid
 Brand's closed control also carries `aria-busy="true"` and its hint reads
 “Checking this Starter’s call times…”. Discovery clears that state on every exit
-path, including a failed lookup or a missing booking controller. Only then do
+path, including a failed lookup or a missing booking controller. A failed
+lookup still rejects, so frontend error monitoring counts it. Only then do
 hover, keyboard focus, or tap reveal “This Starter isn’t accepting calls right
 now.” for a control that stayed closed; the owner's hint first
 explains that clients use the control to book a call, then reports whether calls

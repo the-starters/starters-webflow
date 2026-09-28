@@ -8184,8 +8184,26 @@ test('Book Call reads as checking until discovery answers, on every exit path', 
     assert.equal(hint.textContent, 'Checking this Starter’s call times…', outcome)
     assert.doesNotMatch(hint.textContent, /isn’t accepting calls/)
 
-    answer()
-    await settle()
+    // A thrown lookup must still reject into the page, where the PostHog
+    // frontend-exceptions capture counts it; only the pending state is
+    // cleaned up. The runner's own rejection handler is swapped out for it.
+    const rejections = []
+    const runnerHandlers = process.listeners('unhandledRejection')
+    const capture = (reason) => rejections.push(reason)
+    process.removeAllListeners('unhandledRejection')
+    process.on('unhandledRejection', capture)
+    try {
+      answer()
+      await settle()
+    } finally {
+      process.off('unhandledRejection', capture)
+      runnerHandlers.forEach((handler) => process.on('unhandledRejection', handler))
+    }
+    assert.deepEqual(
+      rejections.map((reason) => reason && reason.message),
+      outcome === 'thrown' ? ['Controlled lookup failure'] : [],
+      outcome + ': rejection reaches error monitoring',
+    )
     assert.equal(button.getAttribute('aria-disabled'), 'true', outcome + ': still closed')
     assert.equal(button.getAttribute('aria-busy'), null, outcome + ': pending cleared')
     assert.equal(hint.textContent, 'This Starter isn’t accepting calls right now.', outcome)
