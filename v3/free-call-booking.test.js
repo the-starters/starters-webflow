@@ -706,6 +706,43 @@ test('Free reopen blocks a changed command while one is in flight', async () => 
   })
 })
 
+// F01 team test 2026-09-28: Request Call clicks that made no booking left no
+// trace. An ignored Free confirm now warns with its reason, and still sends
+// nothing.
+test('an ignored Free confirm warns with its reason and sends nothing', async () => {
+  const fixture = chooserFixture()
+  let resolveBooking
+  const booking = bookingApiFixture({
+    run: () => new Promise((resolve) => {
+      resolveBooking = () => resolve({ booking: { booking_id: 'ignored-free', row_id: 905 } })
+    }),
+  })
+  const originalWarn = console.warn
+  const warnings = []
+  try {
+    console.warn = (...args) => warnings.push(args)
+    await withGlobals({ document: fixture.document }, async () => {
+      const slot = { start: 1, end: 2, timezone: 'UTC' }
+      api.installFreeBookingController(installSettings(booking.bookingApi))
+      await fixture.cta.onclick(event())
+      const first = booking.state.mounts[0].onConfirm(slot)
+      await new Promise((resolve) => setImmediate(resolve))
+      assert.equal(await booking.state.mounts[0].onConfirm(slot), undefined)
+      closeThroughFade(fixture)
+      assert.equal(await booking.state.mounts[0].onConfirm(slot), undefined)
+      assert.equal(booking.state.runs, 1)
+      resolveBooking()
+      await first
+    })
+  } finally {
+    console.warn = originalWarn
+  }
+  assert.deepEqual(
+    warnings.filter((args) => args[0] === '[free-call-booking] confirm ignored').map((args) => args[1]),
+    ['locked', 'stale-surface'],
+  )
+})
+
 test('Free install fails closed without the shared canonical booking client', async () => {
   const fixture = chooserFixture()
   await withGlobals({ document: fixture.document }, async () => {

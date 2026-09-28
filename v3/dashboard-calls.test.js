@@ -534,6 +534,233 @@ test('Starter Accept sends one canonical request and blocks a double click', asy
   }
 })
 
+// Kaeser QA P5 (2026-09-28): the Starter confirm can take a minute. Accept
+// only set aria-busy and logged a failure to the console, so the Starter read
+// it as "unable to accept". The F21 alert pattern now shows the failure.
+test('Starter Accept shows Confirming… in flight and a visible failure', async () => {
+  const actions = require('./dashboard-call-actions.js')
+  const configId = '11111111-2222-3333-4444-555555555555'
+  const bookingId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+  const uuidBytes = (value) => Buffer.from(value.replace(/-/g, ''), 'hex')
+  const booking = {
+    booking_id: bookingId,
+    config_id: configId,
+    booking_ref: Buffer.concat([
+      uuidBytes(configId),
+      uuidBytes(bookingId),
+      Buffer.from('bounded-salt'),
+    ]).toString('base64url'),
+    data_environment: 'production',
+    starter_data: { memberstack_id: 'mem_starter-one' },
+    status: 'pending',
+  }
+  const original = {
+    document: global.document,
+    crypto: global.crypto,
+    fetch: global.xanoAuthFetch,
+    storage: global.sessionStorage,
+    actions: global.StartersDashboardCallActions,
+    error: console.error,
+  }
+  function host(panels) {
+    return {
+      children: [],
+      ownerDocument: {
+        createElement() {
+          return {
+            hidden: false,
+            style: {},
+            textContent: '',
+            attributes: {},
+            setAttribute(name, value) { this.attributes[name] = value },
+          }
+        },
+      },
+      getAttribute(name) { return name === 'data-booking-id' ? bookingId : null },
+      appendChild(node) { node.parentNode = this; this.children.push(node) },
+      notes() {
+        return this.children.filter((node) => node.attributes && 'data-starters-action-error' in node.attributes)
+      },
+      querySelector(selector) { return this.querySelectorAll(selector)[0] || null },
+      querySelectorAll(selector) {
+        if (selector === '[booking-popup-content]') return panels
+        if (selector === '[data-starters-action-error]') {
+          return panels.flatMap((panel) => panel.notes()).concat(this.notes())
+        }
+        return []
+      },
+    }
+  }
+  try {
+    global.StartersDashboardCallActions = actions
+    global.crypto = {
+      subtle: original.crypto && original.crypto.subtle,
+      randomUUID: () => '00000000-0000-4000-8000-000000000071',
+    }
+    global.sessionStorage = memoryStorage()
+    console.error = () => {}
+    for (const where of ['modal', 'card']) {
+      const basePanel = Object.assign(host([]), {
+        hidden: false,
+        style: {},
+      })
+      basePanel.getAttribute = (name) => name === 'booking-popup-content' ? 'base' : null
+      const modal = host([basePanel])
+      const card = host([])
+      const label = { textContent: 'Accept' }
+      const inner = { disabled: false }
+      const button = {
+        attributes: {},
+        setAttribute(name, value) { this.attributes[name] = value },
+        querySelectorAll(selector) {
+          if (selector === 'button') return [inner]
+          return selector.includes('.button_main-text') ? [label] : []
+        },
+        closest(selector) {
+          if (selector === '[data-booking-id]') return where === 'modal' ? modal : card
+          if (selector.includes('popup-booking-info')) return where === 'modal' ? modal : null
+          return this
+        },
+      }
+      const listeners = []
+      global.document = { addEventListener(_type, listener) { listeners.push(listener) } }
+      const response = deferred()
+      global.xanoAuthFetch = async () => response.promise
+      api.wireBookingActions([{ rows: [booking] }], 'starter', async () => {})
+      const click = listeners[0]({ target: button, preventDefault() {}, stopImmediatePropagation() {} })
+      await until(() => label.textContent === 'Confirming…')
+      assert.equal(inner.disabled, true)
+      assert.equal(button.attributes['aria-busy'], 'true')
+      response.resolve({ ok: false, json: async () => ({ message: 'Controlled confirm refusal' }) })
+      await click
+      assert.equal(label.textContent, 'Accept')
+      assert.equal(inner.disabled, false)
+      assert.equal(button.attributes['aria-busy'], 'false')
+      const notes = where === 'modal' ? basePanel.notes() : card.notes()
+      assert.equal(notes.length, 1, where + ': one visible alert')
+      assert.equal(notes[0].textContent, 'Controlled confirm refusal')
+      assert.equal(notes[0].hidden, false)
+      assert.equal(notes[0].attributes.role, 'alert')
+    }
+  } finally {
+    global.document = original.document
+    global.crypto = original.crypto
+    global.xanoAuthFetch = original.fetch
+    global.sessionStorage = original.storage
+    global.StartersDashboardCallActions = original.actions
+    console.error = original.error
+  }
+})
+
+// The alert shows the server's own text only for a server answer. The
+// fallback and client-side errors show plain copy, never internal wording,
+// and a failure after the server confirmed shows no "not confirmed" alert.
+test('Starter Accept alert shows server text only for server answers', async () => {
+  const actions = require('./dashboard-call-actions.js')
+  const configId = '11111111-2222-3333-4444-555555555555'
+  const bookingId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+  const uuidBytes = (value) => Buffer.from(value.replace(/-/g, ''), 'hex')
+  const original = {
+    document: global.document,
+    crypto: global.crypto,
+    fetch: global.xanoAuthFetch,
+    storage: global.sessionStorage,
+    actions: global.StartersDashboardCallActions,
+    error: console.error,
+  }
+  const scenarios = [
+    { name: 'server message', respond: async () => ({ ok: false, json: async () => ({ error: 'Controlled server error' }) }), alert: 'Controlled server error' },
+    { name: 'no server text', respond: async () => ({ ok: false, json: async () => ({}) }), alert: 'The call could not be confirmed. Please try again.' },
+    { name: 'unreadable body', respond: async () => ({ ok: true, json: async () => { throw new Error('bad json') } }), alert: 'The call could not be confirmed. Please try again.' },
+    { name: 'transport error', respond: async () => { throw new Error('Internal transport detail') }, alert: 'The call could not be confirmed. Please try again.' },
+    {
+      name: 'refresh after confirm fails',
+      respond: async () => ({ ok: true, json: async () => ({ status: 'confirmed' }) }),
+      restart: async () => { throw new Error('Refresh failed') },
+      alert: null,
+    },
+  ]
+  const logged = []
+  try {
+    global.StartersDashboardCallActions = actions
+    global.sessionStorage = memoryStorage()
+    console.error = (...args) => logged.push(args.join(' '))
+    let uuid = 0
+    global.crypto = {
+      subtle: original.crypto && original.crypto.subtle,
+      randomUUID: () => '00000000-0000-4000-8000-0000000008' + String(uuid += 1).padStart(2, '0'),
+    }
+    for (const scenario of scenarios) {
+      const booking = {
+        booking_id: bookingId,
+        config_id: configId,
+        booking_ref: Buffer.concat([
+          uuidBytes(configId),
+          uuidBytes(bookingId),
+          Buffer.from('bounded-salt'),
+        ]).toString('base64url'),
+        data_environment: 'production',
+        starter_data: { memberstack_id: 'mem_starter-one' },
+        status: 'pending',
+      }
+      const card = {
+        children: [],
+        ownerDocument: {
+          createElement() {
+            return { hidden: false, style: {}, textContent: '', attributes: {}, setAttribute(name, value) { this.attributes[name] = value } }
+          },
+        },
+        getAttribute(name) { return name === 'data-booking-id' ? bookingId : null },
+        appendChild(node) { node.parentNode = this; this.children.push(node) },
+        querySelector(selector) { return this.querySelectorAll(selector)[0] || null },
+        querySelectorAll(selector) {
+          return selector === '[data-starters-action-error]'
+            ? this.children.filter((node) => 'data-starters-action-error' in node.attributes)
+            : []
+        },
+      }
+      const label = { textContent: 'Accept' }
+      const button = {
+        attributes: {},
+        setAttribute(name, value) { this.attributes[name] = value },
+        querySelectorAll(selector) {
+          if (selector === 'button') return []
+          return selector.includes('.button_main-text') ? [label] : []
+        },
+        closest(selector) {
+          if (selector === '[data-booking-id]') return card
+          if (selector.includes('popup-booking-info')) return null
+          return this
+        },
+      }
+      const listeners = []
+      global.document = { addEventListener(_type, listener) { listeners.push(listener) } }
+      global.xanoAuthFetch = scenario.respond
+      api.wireBookingActions([{ rows: [booking] }], 'starter', scenario.restart || (async () => {}))
+      await listeners[0]({ target: button, preventDefault() {}, stopImmediatePropagation() {} })
+      const notes = card.children.filter((node) => !node.hidden)
+      if (scenario.alert === null) {
+        assert.equal(notes.length, 0, scenario.name + ': no alert after the server confirmed')
+      } else {
+        assert.equal(notes.length, 1, scenario.name)
+        assert.equal(notes[0].textContent, scenario.alert, scenario.name)
+        assert.doesNotMatch(notes[0].textContent, /Canonical/)
+      }
+      assert.equal(label.textContent, 'Accept', scenario.name + ': label restored')
+    }
+    // The technical text still reaches the console.
+    assert.ok(logged.some((line) => line.includes('Internal transport detail')))
+    assert.ok(logged.some((line) => line.includes('Canonical booking confirmation failed')))
+  } finally {
+    global.document = original.document
+    global.crypto = original.crypto
+    global.xanoAuthFetch = original.fetch
+    global.sessionStorage = original.storage
+    global.StartersDashboardCallActions = original.actions
+    console.error = original.error
+  }
+})
+
 test('Starter Accept rechecks the response window immediately before mutation', async () => {
   const configId = '11111111-2222-3333-4444-555555555555'
   const bookingId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
@@ -2045,6 +2272,100 @@ test('proposal details show old and proposed times and the correct waiting role'
   }
 })
 
+// Kaeser 2026-09-28 (P6): a Dubai Brand with no stored timezone saw the
+// Starter's zone (PDT), so the edited call showed another DATE than the Brand
+// picked. Order: viewer's own zone, then the browser zone, then counterpart.
+test('call times use the viewer zone, then the browser zone, then the counterpart', () => {
+  const RealIntl = Intl
+  function withBrowserZone(zone, run) {
+    global.Intl = {
+      DateTimeFormat: function (locales, options) {
+        if (locales === undefined && options === undefined) {
+          return { resolvedOptions: () => ({ timeZone: zone }) }
+        }
+        return new RealIntl.DateTimeFormat(locales, options)
+      },
+    }
+    try { return run() } finally { global.Intl = RealIntl }
+  }
+  // 2026-10-01 01:30 UTC is Sep 30 in Los Angeles and Oct 1 in Dubai.
+  const start = Date.parse('2026-10-01T01:30:00Z')
+  const booking = {
+    booking_id: 'timezone-order',
+    status: 'confirmed',
+    start,
+    end: start + 1800000,
+    brand_data: { name: 'Brand', timezone: '' },
+    starter_data: { name: 'Starter', timezone: 'America/Los_Angeles' },
+  }
+  function detailDate(row, role) {
+    const view = detailModalHarness()
+    api.populateDetailModal(view.modal, row, role, start - 86400000)
+    return view.fields['start-date'].textContent
+  }
+  function cardDate(row, role) {
+    const startDate = element({ 'booking-element': 'start-date' })
+    const card = element()
+    card.querySelector = (selector) => selector === '[booking-element="start-date"]' ? startDate : null
+    api.bindCard(card, row, role)
+    return startDate.textContent
+  }
+  withBrowserZone('Asia/Dubai', () => {
+    // A Brand with no stored zone reads its own browser zone, on details and card.
+    assert.equal(detailDate(booking, 'brand'), 'Thu, Oct 01, 5:30 AM GMT+4')
+    assert.equal(cardDate(booking, 'brand'), 'Thu, Oct 01, 5:30 AM GMT+4')
+    // A stored own zone still wins over the browser.
+    const stored = { ...booking, brand_data: { name: 'Brand', timezone: 'UTC' } }
+    assert.equal(detailDate(stored, 'brand'), 'Thu, Oct 01, 1:30 AM UTC')
+    // The Starter keeps its own stored zone.
+    assert.equal(detailDate(booking, 'starter'), 'Wed, Sep 30, 6:30 PM PDT')
+  })
+  // With no browser zone either, the counterpart's zone is the last resort.
+  withBrowserZone('', () => {
+    assert.equal(detailDate(booking, 'brand'), 'Wed, Sep 30, 6:30 PM PDT')
+  })
+})
+
+// P6 is a Brand fix. A Starter with no stored zone keeps the Brand's zone,
+// as before, and never switches to the browser zone.
+test('a Starter with no stored zone keeps the Brand zone, not the browser zone', () => {
+  const RealIntl = Intl
+  global.Intl = {
+    DateTimeFormat: function (locales, options) {
+      if (locales === undefined && options === undefined) {
+        return { resolvedOptions: () => ({ timeZone: 'Asia/Dubai' }) }
+      }
+      return new RealIntl.DateTimeFormat(locales, options)
+    },
+  }
+  try {
+    // 2026-10-01 01:30 UTC is Sep 30 in Los Angeles and Oct 1 in Dubai.
+    const start = Date.parse('2026-10-01T01:30:00Z')
+    const booking = {
+      booking_id: 'starter-timezone-order',
+      status: 'confirmed',
+      start,
+      end: start + 1800000,
+      brand_data: { name: 'Brand', timezone: 'America/Los_Angeles' },
+      starter_data: { name: 'Starter', timezone: '' },
+    }
+    const view = detailModalHarness()
+    api.populateDetailModal(view.modal, booking, 'starter', start - 86400000)
+    assert.equal(view.fields['start-date'].textContent, 'Wed, Sep 30, 6:30 PM PDT')
+    const startDate = element({ 'booking-element': 'start-date' })
+    const card = element()
+    card.querySelector = (selector) => selector === '[booking-element="start-date"]' ? startDate : null
+    api.bindCard(card, booking, 'starter')
+    assert.equal(startDate.textContent, 'Wed, Sep 30, 6:30 PM PDT')
+    // The Brand on the same row still reads its browser zone.
+    const brandView = detailModalHarness()
+    api.populateDetailModal(brandView.modal, { ...booking, brand_data: { name: 'Brand', timezone: '' } }, 'brand', start - 86400000)
+    assert.equal(brandView.fields['start-date'].textContent, 'Thu, Oct 01, 5:30 AM GMT+4')
+  } finally {
+    global.Intl = RealIntl
+  }
+})
+
 test('proposal details hide unavailable old time and unknown proposer copy', () => {
   const view = detailModalHarness()
   api.populateDetailModal(view.modal, { booking_id: 'missing-old', status: 'rescheduled', start: Date.now() + 86400000, start_old: null }, 'starter')
@@ -2083,6 +2404,141 @@ test('details fill every authored panel copy of a booking field', () => {
   api.populateDetailModal(view.modal, booking, 'starter', 2_000)
   assert.equal(view.fields.context.hidden, true)
   assert.equal(view.panelCopies.context.hidden, true)
+})
+
+// F09 team test 2026-09-28: after a Brand edit and a Starter decline, Declined
+// Details showed "Reschedule reason" (the old edit) and "Cancellation reason"
+// (the decline reason). The declined panel labels the reason it really holds.
+test('declined panels label the decline reason and drop the stale edit reason', () => {
+  const booking = {
+    status: 'declined',
+    start: 10_000,
+    duration: 30,
+    rescheduled_reason: 'Earlier suits us',
+    cancelled_reason: 'I am not available that day',
+    brand_data: { name: 'Northwind', memberstack_id: 'mem_brand', timezone: 'UTC' },
+    starter_data: { name: 'Sam', memberstack_id: 'mem_starter', timezone: 'UTC' },
+  }
+  const rows = (panel) => api.detailSupplementRows(booking, 'starter', 'UTC', panel)
+    .map((row) => [row.field, row.label])
+    .filter(([field]) => field.endsWith('-reason'))
+  assert.deepEqual(rows('declined'), [['decline-reason', 'Decline reason']])
+  for (const panel of ['cancelled', 'base', undefined]) {
+    assert.deepEqual(rows(panel), [
+      ['reschedule-reason', 'Reschedule reason'],
+      ['cancel-reason', 'Cancellation reason'],
+    ])
+  }
+
+  for (const authored of [true, false]) {
+    const modal = domElement('dialog', { 'popup-booking-info': '' })
+    modal.ownerDocument = { createElement: (tag) => domElement(tag) }
+    const declined = domElement('div', { 'booking-popup-content': 'declined' })
+    const cancelled = domElement('div', { 'booking-popup-content': 'cancelled' })
+    const wrap = domElement('div', { 'booking-element-wrap': '' })
+    const reason = domElement('p', { 'booking-element': 'decline-reason' })
+    wrap.appendChild(reason)
+    if (authored) declined.appendChild(wrap)
+    modal.appendChild(domElement('div', { 'booking-popup-content': 'base' }))
+    modal.appendChild(declined)
+    modal.appendChild(cancelled)
+
+    api.populateDetailModal(modal, booking, 'starter', 5_000)
+    const summary = (panel) =>
+      panel.querySelectorAll('[data-starters-call-summary-row]').map((row) => [
+        row.getAttribute('data-starters-call-summary-row'),
+        row.children[0].textContent,
+        row.children[1].textContent,
+      ]).filter(([field]) => field.endsWith('-reason'))
+    if (authored) {
+      assert.equal(reason.textContent, 'I am not available that day')
+      assert.equal(reason.hidden, false)
+      assert.equal(wrap.hidden, false)
+      assert.deepEqual(summary(declined), [], 'the authored hook is not duplicated')
+    } else {
+      assert.deepEqual(summary(declined), [
+        ['decline-reason', 'Decline reason', 'I am not available that day'],
+      ])
+    }
+    // Cancelled keeps its labels.
+    assert.deepEqual(summary(cancelled), [
+      ['reschedule-reason', 'Reschedule reason', 'Earlier suits us'],
+      ['cancel-reason', 'Cancellation reason', 'I am not available that day'],
+    ])
+  }
+
+  // Only a declined booking fills the decline-reason hook.
+  const modal = domElement('dialog', { 'popup-booking-info': '' })
+  modal.ownerDocument = { createElement: (tag) => domElement(tag) }
+  const reason = domElement('p', { 'booking-element': 'decline-reason' })
+  const declined = domElement('div', { 'booking-popup-content': 'declined' })
+  declined.appendChild(reason)
+  modal.appendChild(declined)
+  api.populateDetailModal(modal, { ...booking, status: 'cancelled' }, 'starter', 5_000)
+  assert.equal(reason.hidden, true)
+})
+
+// PR #974 kept the Paid declined display unchanged on purpose, so the F09
+// labels and the decline-reason fill apply to Free bookings only. A reused
+// modal puts back the authored hook a Free booking filled before.
+test('Paid declined details keep their labels and the authored decline-reason hook', () => {
+  const paid = {
+    booking_id: 'paid-declined',
+    status: 'declined',
+    is_paid: true,
+    start: 10_000,
+    duration: 30,
+    rescheduled_reason: 'Earlier suits us',
+    cancelled_reason: 'I am not available that day',
+    brand_data: { name: 'Northwind', memberstack_id: 'mem_brand', timezone: 'UTC' },
+    starter_data: { name: 'Sam', memberstack_id: 'mem_starter', timezone: 'UTC' },
+  }
+  const free = { ...paid, booking_id: 'free-declined', is_paid: false, cancelled_reason: 'Free reason' }
+  const reasonRows = (booking, panel) => api.detailSupplementRows(booking, 'starter', 'UTC', panel)
+    .map((row) => [row.field, row.label])
+    .filter(([field]) => field.endsWith('-reason'))
+  assert.deepEqual(reasonRows(paid, 'declined'), [
+    ['reschedule-reason', 'Reschedule reason'],
+    ['cancel-reason', 'Cancellation reason'],
+  ])
+  assert.deepEqual(reasonRows(free, 'declined'), [['decline-reason', 'Decline reason']])
+
+  const modal = domElement('dialog', { 'popup-booking-info': '' })
+  modal.ownerDocument = { createElement: (tag) => domElement(tag) }
+  const declined = domElement('div', { 'booking-popup-content': 'declined' })
+  const wrap = domElement('div', { 'booking-element-wrap': '' })
+  const reason = domElement('p', { 'booking-element': 'decline-reason' })
+  reason.textContent = 'Authored placeholder'
+  wrap.appendChild(reason)
+  declined.appendChild(wrap)
+  modal.appendChild(domElement('div', { 'booking-popup-content': 'base' }))
+  modal.appendChild(declined)
+  const summary = () =>
+    declined.querySelectorAll('[data-starters-call-summary-row]').map((row) => [
+      row.getAttribute('data-starters-call-summary-row'),
+      row.children[0].textContent,
+    ]).filter(([field]) => field.endsWith('-reason'))
+
+  api.populateDetailModal(modal, paid, 'starter', 5_000)
+  assert.equal(reason.textContent, 'Authored placeholder', 'Paid never fills the hook')
+  assert.equal(reason.hidden, false)
+  assert.equal(wrap.hidden, false)
+  assert.deepEqual(summary(), [
+    ['reschedule-reason', 'Reschedule reason'],
+    ['cancel-reason', 'Cancellation reason'],
+  ])
+
+  // A Free booking fills the hook; the next Paid booking gets the authored hook back.
+  api.populateDetailModal(modal, free, 'starter', 5_000)
+  assert.equal(reason.textContent, 'Free reason')
+  api.populateDetailModal(modal, { ...free, booking_id: 'free-cancelled', status: 'cancelled' }, 'starter', 5_000)
+  assert.equal(reason.hidden, true)
+  api.populateDetailModal(modal, paid, 'starter', 5_000)
+  assert.equal(reason.textContent, 'Authored placeholder', 'no Free reason leaks into Paid')
+  assert.equal(reason.hidden, false)
+  assert.equal(wrap.hidden, false)
+  assert.notEqual(reason.style.display, 'none')
+  assert.notEqual(wrap.style.display, 'none')
 })
 
 test('missing panel details and role-correct Message actions are supplied without duplicates', () => {
@@ -4993,7 +5449,9 @@ test('reschedule responses refresh receipt and base without retaining proposal-o
   context.after(() => { global.xanoAuthFetch = previous.fetch; global.sessionStorage = previous.storage; global.StartersDashboardCallActions = previous.actions })
   global.StartersDashboardCallActions = actions
   for (const kind of ['confirm', 'decline']) for (const role of ['brand', 'starter']) for (const scenario of ['success', 'failure', 'transport-failure', 'switched-success', 'switched-failure', 'switched-transport-failure']) {
-    const expectedStatus = kind === 'confirm' ? 'confirmed' : 'cancelled'
+    // Both answers leave a confirmed call: #5760 restores a declined Free
+    // proposal to its original confirmed time.
+    const expectedStatus = 'confirmed'
     const values = new Map()
     global.sessionStorage = { getItem: key => values.get(key), setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key) }
     const handlers = []
@@ -5036,7 +5494,7 @@ test('reschedule responses refresh receipt and base without retaining proposal-o
     if (scenario.includes('transport')) {
       response.reject(new Error('Controlled transport failure'))
     } else {
-      response.resolve({ ok: !scenario.endsWith('failure'), json: async () => scenario.endsWith('failure') ? { message: 'Controlled failure' } : { ['reschedule_' + kind]: { booking_id: booking.booking_id, status: expectedStatus, start: booking.start, end: booking.end } } })
+      response.resolve({ ok: !scenario.endsWith('failure'), json: async () => scenario.endsWith('failure') ? { message: 'Controlled failure' } : { ['reschedule_' + kind]: { booking_id: booking.booking_id, status: expectedStatus, start: kind === 'decline' ? booking.start_old : booking.start, end: kind === 'decline' ? booking.start_old + 1800000 : booking.end } } })
     }
     await action
     if (scenario.endsWith('failure')) assert.deepEqual(Array.from(values.entries()), retryKeys, 'Failed attempt retains the same retry key')
@@ -5054,6 +5512,7 @@ test('reschedule responses refresh receipt and base without retaining proposal-o
       continue
     }
     assert.equal(booking.status, expectedStatus)
+    if (kind === 'decline') assert.equal(booking.start, booking.start_old, 'Decline restores the original time')
     assert.equal(receipt.querySelector('[data-starters-call-summary-row="start-date-old"]'), null)
     assert.equal(base.querySelector('[data-starters-call-summary-row="start-date-old"]'), null)
     assert.equal(receipt.hidden, false)

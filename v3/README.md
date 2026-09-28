@@ -2332,7 +2332,9 @@ confirmed `start_old` while the canonical status is `rescheduled`, including
 after a list refresh. Missing or invalid original timestamps display
 `Confirmed time unavailable` instead of the proposal. Other statuses use
 `start`, so accepting a proposal displays the accepted slot. Dates use the
-viewing participant's timezone, falling back to the counterpart's timezone.
+viewing participant's stored timezone first. A Brand then uses the browser's
+timezone, and the counterpart's timezone only when neither exists. A Starter
+with no stored timezone uses the Brand's timezone, as before.
 
 On both roles' cards, the authored Join Call anchor
 `[booking-element="meeting-link"]` receives the canonical `meeting_link` as a
@@ -2384,11 +2386,18 @@ also opens the shared `cancelled` panel; a compatibility row carrying a raw
 Because a terminal panel is the opening view rather than one the member
 navigated to, the authored `switch-base` back control stays hidden until a chain
 leaves the panel, keeping the doubled close icon off the entry view.
+Away from `base`, the Brand header's `[booking-action-btn="switch-base"][close-to-base]`
+X shows only when the open panel authors neither a `switch-base` nor a
+`switch-close` control of its own. A step with its own Back (cancel, cancel
+reason, reschedule, calendar) and a receipt with its own Close (cancelled,
+declined, and the reschedule proposed, updated, accepted, and declined
+receipts) therefore show one control beside the dialog close. A panel with
+neither, such as `payment-methods`, keeps the header X as its way back.
 
 In call details for a canonical `rescheduled` row, `[booking-element="start-date-old"]`
 shows `start_old` as the current confirmed time and `start-date` shows `start`
-as the proposed time. Both use the viewing participant's timezone, falling back
-to the counterpart's timezone. The shared formatter includes time and timezone,
+as the proposed time. Both use the same role-aware timezone order as the
+cards. The shared formatter includes time and timezone,
 so standalone `start-time` and `start-time-old` nodes stay hidden without hiding
 their date wrappers. Missing or invalid `start_old` hides the old-date field.
 The `status-text` hook tells the counterpart that their confirmation is awaited,
@@ -2405,7 +2414,15 @@ lists only the fields that panel has no usable `[booking-element]` hook for and
 that the canonical row has a value for — counterpart name, date and time
 (including the current confirmed and proposed times described above),
 duration, call context, reschedule reason, and cancellation reason — as
-`data-starters-call-summary-row` lines keyed by that field name. A hook counts
+`data-starters-call-summary-row` lines keyed by that field name. A Free
+booking's `declined` panel is the exception: a decline stores its reason in
+`cancelled_reason`, so there that value is the `decline-reason` row labelled
+"Decline reason", and an earlier edit's reschedule reason is left out. A
+declined Free booking also fills the authored
+`[booking-element="decline-reason"]` hook, so a panel that authors it gets no
+second reason row. Other panels keep both labels. A Paid booking keeps both
+labels on every panel and leaves the authored hook as authored, restoring it
+when a reused modal showed a Free booking first, as PR #974 scoped F09. A hook counts
 as usable only while it renders: a hook that is itself hidden, that sits inside
 a hidden `[booking-element-wrap]` group, or that generates no box of its own
 inside a panel that does generate one, is treated as absent, so the module
@@ -2586,10 +2603,12 @@ contracts never claim the same booking. Every command requires a booking ID,
 configuration ID, participant identity, and exact `test` or `production` data
 environment.
 
-For an active upcoming initial request or confirmed row where neither a
+For an active upcoming initial request or confirmed Paid row where neither a
 reschedule action nor a response is available, the modal shows
 `Rescheduling is available for Free calls.` below the authored Reschedule
-control. A rescheduled proposal hides this hint for both roles, including when
+control. A Free row never shows it: with no control for that viewer (a
+Starter's pending request, or a call inside the reschedule window) the words
+would be false. A rescheduled proposal hides this hint for both roles, including when
 reusing a modal that previously showed it. All eligibility explanations are
 module-owned `data-starters-action-hint` nodes inserted after the authored
 buttons; the script does not edit Designer markup. The early Reschedule guard
@@ -2615,12 +2634,13 @@ pending path's `reschedule-updated` result. A modal that lacks that panel receiv
 a module fallback, so the direct-update success cannot switch to a missing
 target. A modal with no authored `reschedule` view receives the module fallback
 instead.
-The module uses the base "Accept new time" and "Cancel call" responses
-authored beside the reschedule trigger, normalizing authored decline labels to
-"Cancel call". Declining a proposed time cancels the confirmed call under the
-responding actor policy; it does not retain the original appointment. See the
+The module uses the base "Accept New Time" and "Keep Current Time" responses
+authored beside the reschedule trigger and keeps their authored labels.
+Declining a proposed time on a Free call keeps the original confirmed call: the
+published F13 `booking/reschedule/decline/v3` (#5760) restores `start_old` and
+`end_old`, sets `confirmed`, and makes no provider change. See the
 [CS-17 backend release prerequisite](#cs-17-backend-release-prerequisite) for the
-required backend prerequisite. If either control is missing from the
+backend history. If either control is missing from the
 base panel, it creates the fallback pair once per modal and marks both controls
 with `data-starters-reschedule-respond`. Decline, cancel, and both reschedule
 commands require a non-empty reason. Decline posts `booking_id`, `config_id`,
@@ -2646,6 +2666,19 @@ The alert renders inside the open `booking-popup-content` panel, below its
 buttons, and scrolls into view with `block: 'nearest'`. The dialog root clips
 to the viewport, so an alert there was invisible. With no open panel, the alert
 stays on the dialog root.
+While a decline, cancel, or proposal response is in flight, its control reads
+"Declining…", "Cancelling…", "Accepting…", or "Keeping current time…", is
+`aria-busy`, and it and any button inside it are disabled; the authored label and
+state return when the command settles. The two proposal responses answer the
+same proposal, so while either is in flight both respond controls in the open
+panel are busy and disabled; only the clicked one changes its label. The Starter's Accept on
+`dashboard-calls.js` uses the same `markActionBusy` state with "Confirming…" and
+shows its failure through the same alert, in the open details panel or on the
+card for a card-level Accept. The alert shows the server's `message` or `error`
+text only for a server answer. With no server text, or for a client-side
+error, it shows "The call could not be confirmed. Please try again."; the
+technical text stays in the console. A failure after the server confirmed,
+such as the list refresh, shows no alert.
 A click rejected by the client eligibility gate does not open an authored
 legacy action. It writes a PII-free console warning with only role, booking
 status, paid state, and whether the booking has the required identity.
@@ -2658,7 +2691,17 @@ malformed result keeps the key for safe replay. Only an exact nested result for
 the same booking clears the matching key: decline must be `declined`, cancel
 must be `cancelled`, a proposal must be `rescheduled`, a pending-request update
 must remain `pending`, acceptance must be `confirmed`, and the nested
-`reschedule_decline` response must be `cancelled`. Authored action-result and
+`reschedule_decline` response must be `confirmed`. A pending-request update
+replaces the provider booking (#5921), so its result may instead carry the new
+`booking_id` with `replaced_booking_id` equal to the sent id; only that contract
+accepts the replacement form, and the new id must be non-empty. The module then
+moves the row, the open modal, and every list card keyed by the sent id to the
+new id before it refreshes the details. The calendar mount compares the modal
+with the row's current id, so the calendar's own cleanup (status, slots, and
+confirm) still runs after the move. When the member opened another booking
+before the answer arrived, the row and its card still move to the new id, the
+other booking's details stay as they are, and the list re-reads when the modal
+closes. Authored action-result and
 terminal panels replace `[Starter]` and `[Brand]` in their leaf text nodes with
 the counterpart's canonical booking name, or `the other participant` when that
 name is blank. Free panels also replace the exact authored lowercase `[brand]`
@@ -2676,10 +2719,9 @@ After a validated response for either role, the module applies the returned
 status and valid returned start/end times to the booking and runs the shared
 detail formatter before opening `reschedule-accepted` or `reschedule-declined`.
 Both the receipt and base omit proposal-only fields and summary rows while
-retaining counterpart and call-context fields. The declined receipt says
-"Call cancelled" and "The proposed time was declined and the call was cancelled."
-The module also normalizes the known legacy authored receipt copy before
-reusing existing views. A delayed confirm or
+retaining counterpart and call-context fields. The declined receipt keeps its
+authored "Proposal declined" and "The call keeps its original time." copy; the
+module fallback uses the same words. A delayed confirm or
 decline response, whether successful or failed, does not replace the displayed
 details, switch panels, or show an error if the modal now holds another booking.
 Other authored content stays unchanged. The panel remains visible until the
@@ -4689,6 +4731,12 @@ published, with exact source readback and both-role native Test cancellation
 and provider evidence. See [release evidence](fixtures/RESCHEDULE-DECLINE-RELEASE-PROOF.md)
 for revisions, scope, cleanup, and remaining verification limits. This replaces
 the earlier supplied status in which endpoint5760 restored `confirmed`.
+
+F13 soft launch (published #5760 `4d5e3f86`, 2026-09-26) supersedes that
+cancellation for Free bookings: a Free decline restores the original confirmed
+call and answers `reschedule_decline.status = confirmed` with
+`original_restored: true`. Other bookings keep the prior #2099 handoff, which the
+dashboard never reaches because it offers the response on Free calls only.
 
 The frontend remains subject to no-mistakes review and CI before merge/release.
 Backend evidence does not establish Paid settlement, production canaries, or

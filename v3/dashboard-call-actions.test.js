@@ -717,6 +717,209 @@ test('F21: the alert follows the open panel, falls back to the root, and clears 
   assert.equal(bare.created[0].parentNode, bare.modal)
 })
 
+// Kaeser QA P5 (2026-09-28): call actions only set aria-busy, so a slow
+// command read as a dead button. A busy control now reads its action label
+// and is disabled until the command settles.
+function deferred() {
+  let resolve
+  const promise = new Promise((done) => { resolve = done })
+  return { promise, resolve }
+}
+
+function busyControl(action, authoredLabel) {
+  const label = { textContent: authoredLabel }
+  const inner = { disabled: false }
+  return {
+    label,
+    inner,
+    attributes: {},
+    getAttribute(name) {
+      return name === 'booking-action-btn' ? action : (this.attributes[name] ?? null)
+    },
+    setAttribute(name, value) { this.attributes[name] = String(value) },
+    querySelectorAll(selector) {
+      if (selector === 'button') return [inner]
+      if (selector.includes('.button_main-text')) return [label]
+      return []
+    },
+  }
+}
+
+test('markActionBusy shows a visible busy label and disables the control until release', () => {
+  const control = busyControl('decline', 'Decline Call')
+  control.inner.disabled = false
+  const release = api.markActionBusy(control, 'Declining…')
+  assert.equal(control.label.textContent, 'Declining…')
+  assert.equal(control.inner.disabled, true)
+  assert.equal(control.attributes['aria-busy'], 'true')
+  assert.equal(control.attributes['aria-disabled'], 'true')
+  release()
+  release()
+  assert.equal(control.label.textContent, 'Decline Call')
+  assert.equal(control.inner.disabled, false)
+  assert.equal(control.attributes['aria-busy'], 'false')
+  assert.equal(control.attributes['aria-disabled'], 'false')
+
+  // A plain generated button carries its label as its own text.
+  const plain = { textContent: 'Keep Current Time', disabled: true, setAttribute() {} }
+  const releasePlain = api.markActionBusy(plain, 'Keeping current time…')
+  assert.equal(plain.textContent, 'Keeping current time…')
+  releasePlain()
+  assert.equal(plain.textContent, 'Keep Current Time')
+  assert.equal(plain.disabled, true, 'a control disabled before stays disabled')
+  // Markup without a label hook is never flattened into text.
+  const icon = { textContent: 'Accept' }
+  const structured = { textContent: 'Accept', children: [icon], setAttribute() {}, querySelectorAll: () => [] }
+  const releaseStructured = api.markActionBusy(structured, 'Accepting…')
+  assert.equal(structured.textContent, 'Accept')
+  assert.equal(structured.children[0], icon)
+  releaseStructured()
+  assert.doesNotThrow(() => api.markActionBusy(null, 'Busy')())
+})
+
+test('decline and proposal responses show a busy label, then restore it and show failures', async () => {
+  const originalFetch = global.xanoAuthFetch
+  const originalStorage = global.sessionStorage
+  const originalCrypto = global.crypto
+  try {
+    global.sessionStorage = storage()
+    let uuid = 0
+    global.crypto = {
+      subtle: originalCrypto.subtle,
+      randomUUID() {
+        uuid += 1
+        return '00000000-0000-4000-8000-0000000006' + String(uuid).padStart(2, '0')
+      },
+    }
+    for (const scenario of [
+      { action: 'decline', label: 'Decline Call', busy: 'Declining…', panel: 'decline-reason', booking: pendingBooking(), role: 'starter' },
+      {
+        action: 'confirm-reschedule',
+        label: 'Accept New Time',
+        busy: 'Accepting…',
+        panel: 'base',
+        booking: rescheduleBooking({ status: 'rescheduled', rescheduled_by: 'starter', start: Date.now() + 48 * 60 * 60 * 1000 }),
+        role: 'brand',
+      },
+    ]) {
+      const { modal, open, panel } = actionErrorModal(['base', 'decline-reason'])
+      open(scenario.panel)
+      const reasonField = { value: 'Not available' }
+      const queryModal = modal.querySelector
+      modal.querySelector = (selector) =>
+        selector === '[booking-decline-reason]' ? reasonField : queryModal.call(modal, selector)
+      modal.getAttribute = (name) => name === 'data-booking-id' ? scenario.booking.booking_id : null
+      const handlers = []
+      api.wire({
+        document: { addEventListener(type, handler) { if (type === 'click') handlers.push(handler) } },
+        role: scenario.role,
+        getBooking: () => scenario.booking,
+      })
+      const control = busyControl(scenario.action, scenario.label)
+      control.closest = (selector) => selector.includes('popup-booking-info') ? modal : control
+      const response = deferred()
+      global.xanoAuthFetch = async () => response.promise
+      const click = handlers[0]({ target: control, preventDefault() {}, stopImmediatePropagation() {} })
+      await new Promise((resolve) => setImmediate(resolve))
+      await new Promise((resolve) => setImmediate(resolve))
+      assert.equal(control.label.textContent, scenario.busy, scenario.action + ' shows its busy label')
+      assert.equal(control.inner.disabled, true)
+      response.resolve({ ok: false, json: async () => ({ message: 'Controlled refusal' }) })
+      await click
+      assert.equal(control.label.textContent, scenario.label)
+      assert.equal(control.inner.disabled, false)
+      const note = panel(scenario.panel).notes()[0]
+      assert.equal(note && note.textContent, 'Controlled refusal')
+      assert.equal(note.hidden, false)
+    }
+  } finally {
+    global.xanoAuthFetch = originalFetch
+    global.sessionStorage = originalStorage
+    global.crypto = originalCrypto
+  }
+})
+
+// Keep Current Time and Accept New Time answer the same proposal. With only
+// the clicked control busy, a click on its sibling sent the opposite command
+// while the first was still in flight.
+test('while one proposal response is in flight both respond controls are busy', async () => {
+  const originalFetch = global.xanoAuthFetch
+  const originalStorage = global.sessionStorage
+  const originalCrypto = global.crypto
+  try {
+    global.sessionStorage = storage()
+    let uuid = 0
+    global.crypto = {
+      subtle: originalCrypto.subtle,
+      randomUUID() {
+        uuid += 1
+        return '00000000-0000-4000-8000-0000000007' + String(uuid).padStart(2, '0')
+      },
+    }
+    for (const clicked of ['confirm-reschedule', 'reschedule-decline']) {
+      const booking = rescheduleBooking({
+        status: 'rescheduled',
+        rescheduled_by: 'starter',
+        start: Date.now() + 48 * 60 * 60 * 1000,
+      })
+      const { modal, open, panel } = actionErrorModal(['base'])
+      open('base')
+      modal.getAttribute = (name) => name === 'data-booking-id' ? booking.booking_id : null
+      const accept = busyControl('confirm-reschedule', 'Accept New Time')
+      const keep = busyControl('reschedule-decline', 'Keep Current Time')
+      const base = panel('base')
+      const queryBase = base.querySelectorAll
+      base.querySelectorAll = (selector) =>
+        selector.includes('"confirm-reschedule"') && selector.includes('"reschedule-decline"')
+          ? [accept, keep]
+          : queryBase.call(base, selector)
+      for (const control of [accept, keep]) {
+        control.closest = (selector) => selector.includes('popup-booking-info') ? modal : control
+      }
+      const handlers = []
+      api.wire({
+        document: { addEventListener(type, handler) { if (type === 'click') handlers.push(handler) } },
+        role: 'brand',
+        getBooking: () => booking,
+      })
+      const response = deferred()
+      let posts = 0
+      global.xanoAuthFetch = async () => {
+        posts += 1
+        return response.promise
+      }
+      const [first, sibling] = clicked === 'confirm-reschedule' ? [accept, keep] : [keep, accept]
+      const event = (target) => ({ target, preventDefault() {}, stopImmediatePropagation() {} })
+      const click = handlers[0](event(first))
+      await new Promise((resolve) => setImmediate(resolve))
+      await new Promise((resolve) => setImmediate(resolve))
+      assert.equal(first.label.textContent, clicked === 'confirm-reschedule' ? 'Accepting…' : 'Keeping current time…')
+      assert.equal(sibling.label.textContent, clicked === 'confirm-reschedule' ? 'Keep Current Time' : 'Accept New Time',
+        clicked + ': the sibling keeps its label')
+      for (const control of [first, sibling]) {
+        assert.equal(control.inner.disabled, true, clicked + ': both are disabled')
+        assert.equal(control.attributes['aria-disabled'], 'true')
+      }
+      // A sibling click mid-flight sends nothing.
+      await handlers[0](event(sibling))
+      response.resolve({ ok: false, json: async () => ({ message: 'Controlled refusal' }) })
+      await click
+      assert.equal(posts, 1, clicked + ': one command only')
+      assert.equal(accept.label.textContent, 'Accept New Time')
+      assert.equal(keep.label.textContent, 'Keep Current Time')
+      for (const control of [first, sibling]) {
+        assert.equal(control.inner.disabled, false, clicked + ': both are released')
+        assert.equal(control.attributes['aria-busy'], 'false')
+        assert.equal(control.attributes['aria-disabled'], 'false')
+      }
+    }
+  } finally {
+    global.xanoAuthFetch = originalFetch
+    global.sessionStorage = originalStorage
+    global.crypto = originalCrypto
+  }
+})
+
 test('a blocked legacy Free booking is reported as unpaid', async () => {
   const originalWarn = console.warn
   let clickHandler
@@ -992,7 +1195,10 @@ test('a reschedule proposal posts slot, reason, and a durable propose key', asyn
   }
 })
 
-test('reschedule responses require confirmed acceptance and cancelled decline', async () => {
+// F13 soft launch: published #5760 restores a Free call to its original
+// confirmed time, so a declined proposal also answers `confirmed`. The old
+// `cancelled` answer belongs to the retired decline-cancels contract.
+test('reschedule responses require confirmed acceptance and a confirmed decline', async () => {
   const originalFetch = global.xanoAuthFetch
   const originalStorage = global.sessionStorage
   const originalCrypto = global.crypto
@@ -1009,18 +1215,30 @@ test('reschedule responses require confirmed acceptance and cancelled decline', 
       requests.push({ url, options })
       const key = url.includes('/confirm/') ? 'reschedule_confirm' : 'reschedule_decline'
       const body = {}
-      body[key] = { booking_id: 'booking-test-3', status: key === 'reschedule_confirm' ? 'confirmed' : 'cancelled', revision: 4 }
+      body[key] = {
+        booking_id: 'booking-test-3',
+        status: declineStatus && key === 'reschedule_decline' ? declineStatus : 'confirmed',
+        revision: 4,
+      }
+      if (key === 'reschedule_decline') body[key].original_restored = true
       body.duplicate = false
       return { ok: true, async json() { return body } }
     }
+    let declineStatus = ''
     const booking = rescheduleBooking({ status: 'rescheduled', rescheduled_by: 'starter' })
     const confirmed = await api.respondReschedule('reschedule-confirm', booking, 'brand')
     assert.equal(confirmed.reschedule_confirm.status, 'confirmed')
     assert.match(requests[0].url, /\/booking\/reschedule\/confirm\/v3$/)
     assert.match(JSON.parse(requests[0].options.body).idempotency_key, /^dashboard-reschedule-confirm:/)
     const declined = await api.respondReschedule('reschedule-decline', booking, 'brand')
-    assert.equal(declined.reschedule_decline.status, 'cancelled')
+    assert.equal(declined.reschedule_decline.status, 'confirmed')
     assert.match(requests[1].url, /\/booking\/reschedule\/decline\/v3$/)
+    // The retired decline-cancels answer is no longer a success.
+    declineStatus = 'cancelled'
+    await assert.rejects(
+      api.respondReschedule('reschedule-decline', booking, 'brand'),
+      /Canonical reschedule response failed/,
+    )
     assert.equal(await api.respondReschedule('reschedule-confirm', booking, 'starter'), null)
     assert.equal(await api.respondReschedule('cancel', booking, 'brand'), null)
   } finally {
@@ -1319,6 +1537,12 @@ test('respond controls are rendered into the base view for the counterpart', () 
     inserted.map((child) => child.attributes['booking-action-btn']).sort(),
     ['confirm-reschedule', 'reschedule-decline'],
   )
+  // Declining a Free proposal keeps the original time (#5760). The fallback
+  // reads exactly like the authored "Keep Current Time" button.
+  assert.equal(
+    inserted.find((child) => child.attributes['booking-action-btn'] === 'reschedule-decline').textContent,
+    'Keep Current Time',
+  )
   assert.equal(api.ensureRescheduleViews(doc, modal), true)
   assert.equal(
     group.children.filter(
@@ -1382,6 +1606,7 @@ test('authored respond controls in the base view are not duplicated', () => {
   group.appendChild(authoredAccept)
   const authoredDecline = fakeElement('a')
   authoredDecline.setAttribute('booking-action-btn', 'reschedule-decline')
+  authoredDecline.textContent = 'Keep Current Time'
   group.appendChild(authoredDecline)
   const modal = {
     querySelector(selector) {
@@ -1409,6 +1634,8 @@ test('authored respond controls in the base view are not duplicated', () => {
     0,
   )
   assert.equal(group.children.length, 3)
+  // The authored label matches the #5760 keep-original contract and stays.
+  assert.equal(authoredDecline.textContent, 'Keep Current Time')
 })
 
 test('authored reschedule controls and field label replace Webflow placeholder copy', () => {
@@ -1917,6 +2144,251 @@ test('a pending reschedule posts the update contract and keeps the booking pendi
   }
 })
 
+// F04 (Kaeser Call 1, 2026-09-28): #5921 replaces the provider booking and
+// answers with the NEW booking_id plus replaced_booking_id = the sent id. The
+// client used to require the sent id in booking_id, so a successful edit
+// showed "Canonical reschedule request failed" and every retry replayed it.
+test('a pending update accepts the replacement booking the server returns', async () => {
+  const originalFetch = global.xanoAuthFetch
+  const originalStorage = global.sessionStorage
+  const originalCrypto = global.crypto
+  const keys = []
+  let response = null
+  try {
+    global.sessionStorage = storage()
+    let uuid = 0
+    global.crypto = {
+      subtle: originalCrypto.subtle,
+      randomUUID() {
+        uuid += 1
+        return '00000000-0000-4000-8000-0000000004' + String(uuid).padStart(2, '0')
+      },
+    }
+    global.xanoAuthFetch = async function (_url, options) {
+      keys.push(JSON.parse(options.body).idempotency_key)
+      return { ok: true, async json() { return response } }
+    }
+    const start = Date.now() + 3 * 60 * 60 * 1000
+    const slot = { start, end: start + 30 * 60 * 1000, timezone: 'Asia/Dubai' }
+    const booking = () => rescheduleBooking({ booking_id: '2e9f08a2', status: 'pending' })
+
+    // Negative cases keep the key for a safe replay of the same attempt.
+    for (const result of [
+      { booking_id: 'other-booking', replaced_booking_id: 'another-booking', status: 'pending' },
+      { booking_id: '', replaced_booking_id: '2e9f08a2', status: 'pending' },
+      { booking_id: '0984c0fb', replaced_booking_id: '2e9f08a2', status: 'confirmed' },
+    ]) {
+      response = { reschedule_request: result }
+      await assert.rejects(
+        api.proposeReschedule(booking(), 'brand', 'Earlier suits us', slot),
+        /Canonical reschedule request failed/,
+      )
+    }
+    assert.equal(new Set(keys).size, 1)
+
+    response = {
+      reschedule_request: { booking_id: '0984c0fb', replaced_booking_id: '2e9f08a2', status: 'pending' },
+    }
+    const accepted = await api.proposeReschedule(booking(), 'brand', 'Earlier suits us', slot)
+    assert.equal(accepted.reschedule_request.booking_id, '0984c0fb')
+    // The success cleared the attempt key stored under the sent id.
+    await api.proposeReschedule(booking(), 'brand', 'Earlier suits us', slot)
+    assert.equal(keys.length, 5)
+    assert.equal(keys[3], keys[0])
+    assert.notEqual(keys[4], keys[3])
+
+    // Only the replacing contract may answer with another booking id.
+    response = {
+      reschedule: { booking_id: 'other-booking', replaced_booking_id: 'booking-test-3', status: 'rescheduled' },
+    }
+    await assert.rejects(
+      api.proposeReschedule(rescheduleBooking(), 'brand', 'Conflict came up', slot),
+      /Canonical reschedule proposal failed/,
+    )
+  } finally {
+    global.xanoAuthFetch = originalFetch
+    global.sessionStorage = originalStorage
+    global.crypto = originalCrypto
+  }
+})
+
+test('a replaced pending booking moves the modal, card, and row to the new id', async () => {
+  const originalCalendar = global.StartersPaidCallBrandPayment
+  const originalFetch = global.xanoAuthFetch
+  const originalStorage = global.sessionStorage
+  const originalCrypto = global.crypto
+  function carrier(id) {
+    const attributes = new Map([['data-booking-id', id]])
+    return {
+      getAttribute(name) { return attributes.has(name) ? attributes.get(name) : null },
+      setAttribute(name, value) { attributes.set(name, String(value)) },
+    }
+  }
+  const container = { textContent: '' }
+  const panels = ['base', 'reschedule-calendar', 'reschedule-updated'].map((name) => ({
+    hidden: name !== 'reschedule-calendar',
+    style: {},
+    getAttribute(attribute) { return attribute === 'booking-popup-content' ? name : null },
+    querySelectorAll() { return [] },
+  }))
+  const modal = Object.assign(carrier('2e9f08a2'), {
+    querySelector(selector) {
+      if (selector === '[booking-reschedule-calendar]') return container
+      return null
+    },
+    querySelectorAll(selector) {
+      return selector === '[booking-popup-content]' ? panels : []
+    },
+  })
+  const card = carrier('2e9f08a2')
+  const otherCard = carrier('unrelated-booking')
+  const document = {
+    querySelectorAll(selector) {
+      return selector === '[data-booking-id]' ? [card, otherCard, modal] : []
+    },
+  }
+  const mounts = []
+  const refreshed = []
+  try {
+    global.StartersPaidCallBrandPayment = {
+      async mountPaidCalendar(options) { mounts.push(options) },
+    }
+    global.sessionStorage = storage()
+    global.crypto = {
+      subtle: originalCrypto.subtle,
+      randomUUID() { return '00000000-0000-4000-8000-000000000501' },
+    }
+    global.xanoAuthFetch = async function () {
+      return {
+        ok: true,
+        async json() {
+          return {
+            reschedule_request: { booking_id: '0984c0fb', replaced_booking_id: '2e9f08a2', status: 'pending' },
+          }
+        },
+      }
+    }
+    const booking = rescheduleBooking({ booking_id: '2e9f08a2', status: 'pending' })
+    await api.mountRescheduleCalendar(document, modal, booking, 'brand', 'Earlier suits us', undefined,
+      function (target, row) {
+        refreshed.push({ target, id: row.booking_id, modalId: target.getAttribute('data-booking-id') })
+      })
+    const start = Date.now() + 5 * 60 * 60 * 1000
+    await mounts[0].onConfirm({ start, end: start + 30 * 60 * 1000, timezone: 'Asia/Dubai' })
+
+    assert.equal(booking.booking_id, '0984c0fb')
+    assert.equal(booking.start, start)
+    assert.equal(modal.getAttribute('data-booking-id'), '0984c0fb')
+    assert.equal(card.getAttribute('data-booking-id'), '0984c0fb')
+    assert.equal(otherCard.getAttribute('data-booking-id'), 'unrelated-booking')
+    assert.deepEqual(refreshed, [{ target: modal, id: '0984c0fb', modalId: '0984c0fb' }])
+    assert.equal(panels[2].hidden, false)
+    assert.equal(panels[1].hidden, true)
+    // The engine's post-success cleanup (status, slots, confirm) runs only
+    // while the mount reads as current, so it must follow the adopted id.
+    assert.equal(mounts[0].isCurrent(), true, 'the mount follows the adopted id')
+  } finally {
+    global.StartersPaidCallBrandPayment = originalCalendar
+    global.xanoAuthFetch = originalFetch
+    global.sessionStorage = originalStorage
+    global.crypto = originalCrypto
+  }
+})
+
+// F04 retry edge: the member switched bookings during the ~10 s #5921 call.
+// The attempt key under the sent id is already cleared, so the local row and
+// its card must still leave the dead id, and the list re-reads on close.
+test('a replacement that lands after the modal moved on still retires the sent id', async () => {
+  const originalCalendar = global.StartersPaidCallBrandPayment
+  const originalFetch = global.xanoAuthFetch
+  const originalStorage = global.sessionStorage
+  const originalCrypto = global.crypto
+  function carrier(id) {
+    const attributes = new Map([['data-booking-id', id]])
+    return {
+      getAttribute(name) { return attributes.has(name) ? attributes.get(name) : null },
+      setAttribute(name, value) { attributes.set(name, String(value)) },
+    }
+  }
+  const container = { textContent: '' }
+  const panels = ['base', 'reschedule-calendar', 'reschedule-updated'].map((name) => ({
+    hidden: name !== 'reschedule-calendar',
+    style: {},
+    getAttribute(attribute) { return attribute === 'booking-popup-content' ? name : null },
+    querySelectorAll() { return [] },
+  }))
+  const modalListeners = {}
+  const modal = Object.assign(carrier('2e9f08a2'), {
+    querySelector(selector) {
+      if (selector === '[booking-reschedule-calendar]') return container
+      return null
+    },
+    querySelectorAll(selector) {
+      return selector === '[booking-popup-content]' ? panels : []
+    },
+    addEventListener(type, listener) { modalListeners[type] = listener },
+    removeEventListener(type) { delete modalListeners[type] },
+  })
+  const card = carrier('2e9f08a2')
+  const otherCard = carrier('other-booking')
+  const document = {
+    querySelectorAll(selector) {
+      return selector === '[data-booking-id]' ? [card, otherCard, modal] : []
+    },
+    addEventListener() {},
+    removeEventListener() {},
+  }
+  const mounts = []
+  const refreshed = []
+  const response = deferred()
+  let restarts = 0
+  try {
+    global.StartersPaidCallBrandPayment = {
+      async mountPaidCalendar(options) { mounts.push(options) },
+    }
+    global.sessionStorage = storage()
+    global.crypto = {
+      subtle: originalCrypto.subtle,
+      randomUUID() { return '00000000-0000-4000-8000-000000000502' },
+    }
+    global.xanoAuthFetch = async () => response.promise
+    const booking = rescheduleBooking({ booking_id: '2e9f08a2', status: 'pending' })
+    await api.mountRescheduleCalendar(document, modal, booking, 'brand', 'Earlier suits us',
+      function () { restarts += 1 },
+      function (target, row) { refreshed.push(row.booking_id) })
+    const start = Date.now() + 5 * 60 * 60 * 1000
+    const confirm = mounts[0].onConfirm({ start, end: start + 30 * 60 * 1000, timezone: 'Asia/Dubai' })
+    // Mid-request the member opens another booking in the same modal.
+    modal.setAttribute('data-booking-id', 'other-booking')
+    response.resolve({
+      ok: true,
+      async json() {
+        return {
+          reschedule_request: { booking_id: '0984c0fb', replaced_booking_id: '2e9f08a2', status: 'pending' },
+        }
+      },
+    })
+    await confirm
+
+    assert.equal(booking.booking_id, '0984c0fb', 'the row leaves the replaced id')
+    assert.equal(card.getAttribute('data-booking-id'), '0984c0fb', 'its card follows')
+    assert.equal(modal.getAttribute('data-booking-id'), 'other-booking', 'the other booking is untouched')
+    assert.equal(otherCard.getAttribute('data-booking-id'), 'other-booking')
+    assert.deepEqual(refreshed, [], 'the other booking keeps its details')
+    assert.equal(panels[2].hidden, true, 'no receipt over the other booking')
+    assert.equal(mounts[0].isCurrent(), false)
+    assert.equal(typeof modalListeners.close, 'function', 'the list re-reads on close')
+    modalListeners.close()
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(restarts, 1)
+  } finally {
+    global.StartersPaidCallBrandPayment = originalCalendar
+    global.xanoAuthFetch = originalFetch
+    global.sessionStorage = originalStorage
+    global.crypto = originalCrypto
+  }
+})
+
 test('a confirmed reschedule still posts the propose contract', async () => {
   const originalFetch = global.xanoAuthFetch
   const originalStorage = global.sessionStorage
@@ -2256,7 +2728,7 @@ test('availability rejection renders an error only for the current booking mount
 })
 
 for (const role of ['brand', 'starter']) {
-  test(`${role} authored declined receipt is normalized before the existing-view return`, () => {
+  test(`${role} authored declined receipt keeps its original-time copy`, () => {
     const title = { textContent: 'Proposal declined', children: [] }
     const body = { textContent: 'The call keeps its original time.', children: [] }
     const detail = { textContent: 'Date and time', children: [] }
@@ -2273,8 +2745,8 @@ for (const role of ['brand', 'starter']) {
     const document = { createElement() { throw new Error('Authored views must be reused') } }
     for (let attempt = 0; attempt < 2; attempt += 1) {
       assert.equal(api.ensureRescheduleViews(document, modal), true)
-      assert.equal(title.textContent, 'Call cancelled')
-      assert.equal(body.textContent, 'The proposed time was declined and the call was cancelled.')
+      assert.equal(title.textContent, 'Proposal declined')
+      assert.equal(body.textContent, 'The call keeps its original time.')
       assert.equal(detail.textContent, 'Date and time')
     }
   })

@@ -145,6 +145,82 @@ test('detail action refresh preserves back control visibility away from base', (
   assert.equal(panels[1].hidden, false)
 })
 
+// Kaeser 2026-09-28: every Brand step view showed two X icons, the header
+// [close-to-base] back control beside the dialog close. A step that authors
+// its own Back, or a receipt that authors its own Close, now keeps only that
+// control; a panel with neither (payment-methods) keeps the header X, so every
+// panel still has a way out.
+test('the header back X shows only on a panel without its own Back or Close', () => {
+  const header = button('switch-base')
+  header.attributes = { 'close-to-base': '' }
+  header.hasAttribute = (name) => name in header.attributes
+  const ownBacks = {}
+  const ownCloses = {}
+  const withBack = ['cancel', 'cancel-reason', 'reschedule-calendar']
+  const receipts = [
+    'cancelled',
+    'declined',
+    'reschedule-proposed',
+    'reschedule-updated',
+    'reschedule-accepted',
+    'reschedule-declined',
+  ]
+  const panels = ['base', ...withBack, ...receipts, 'payment-methods']
+    .map(function (name) {
+      if (withBack.includes(name)) ownBacks[name] = button('switch-base')
+      if (receipts.includes(name)) ownCloses[name] = button('switch-close')
+      return {
+        name,
+        hidden: name !== 'base',
+        style: {},
+        getAttribute(attribute) {
+          return attribute === 'booking-popup-content' ? name : null
+        },
+        querySelector(selector) {
+          const matches = []
+          if (ownBacks[name]) matches.push('switch-base')
+          if (ownCloses[name]) matches.push('switch-close')
+          const hit = matches.find((action) => selector.includes('"' + action + '"'))
+          return hit === 'switch-base' ? ownBacks[name] : hit === 'switch-close' ? ownCloses[name] : null
+        },
+        querySelectorAll() { return [] },
+      }
+    })
+  const modal = {
+    querySelectorAll(selector) {
+      if (selector === '[booking-popup-content]') return panels
+      if (selector.includes('switch-base')) return [header, ...Object.values(ownBacks)]
+      if (selector.includes('[booking-action-btn]')) return [header]
+      return []
+    },
+  }
+  const actions = global.StartersDashboardCallActions
+  for (const panel of panels) {
+    actions.switchPopupContent(modal, panel.name)
+    const own = ownBacks[panel.name] || ownCloses[panel.name]
+    if (panel.name === 'base') {
+      assert.equal(header.hidden, true)
+      Object.values(ownBacks).forEach((control) => assert.equal(control.hidden, true))
+      continue
+    }
+    assert.equal(header.hidden, Boolean(own), panel.name + ': one way out only')
+    assert.equal(header.style.display, own ? 'none' : '')
+    if (ownBacks[panel.name]) assert.equal(ownBacks[panel.name].hidden, false, panel.name + ': its own Back stays')
+    assert.ok(!header.hidden || own, panel.name + ': keeps a way out')
+  }
+  assert.equal(header.hidden, false, 'payment-methods keeps the header X as its only way back')
+
+  // A detail refresh on a step keeps the single back control.
+  actions.switchPopupContent(modal, 'cancel')
+  dashboard.configureDetailActions(modal, 'brand', 'confirmed', {
+    booking_id: 'booking-header-x',
+    status: 'confirmed',
+    start: Date.now() + 60 * 60 * 1000,
+  })
+  assert.equal(header.hidden, true)
+  assert.equal(ownBacks.cancel.hidden, false)
+})
+
 test('dashboard reuses already-loaded narrow modules', async () => {
   const loaded = await dashboard.loadDashboardCallModules()
   assert.equal(loaded.actions, global.StartersDashboardCallActions)
@@ -847,6 +923,80 @@ test('gated Reschedule and paid Cancel render an explanation hint', () => {
     )
     assert.equal(freshModal.hints.reschedule, undefined)
     assert.equal(freshModal.hints.cancel, undefined)
+  } finally {
+    global.StartersDashboardCallActions = originalActions
+  }
+})
+
+// Kaeser 2026-09-28 (P4): a Starter's Free pending request showed
+// "Rescheduling is available for Free calls." with no reschedule control.
+// The hint explains the Paid gate only.
+test('a Free call with no reschedule control for the viewer shows no Free-calls hint', () => {
+  const realActions = require('./dashboard-call-actions.js')
+  const originalActions = global.StartersDashboardCallActions
+  function hintModal() {
+    const hints = {}
+    const reschedule = button('reschedule')
+    reschedule.insertAdjacentElement = function () {}
+    return {
+      hints,
+      reschedule,
+      querySelectorAll() { return [reschedule] },
+      querySelector(selector) {
+        const match = /data-starters-action-hint="([^"]+)"/.exec(selector)
+        return match ? hints[match[1]] || null : null
+      },
+      ownerDocument: {
+        createElement() {
+          return {
+            hidden: false,
+            style: {},
+            textContent: '',
+            setAttribute(name, value) {
+              if (name === 'data-starters-action-hint') hints[value] = this
+            },
+          }
+        },
+      },
+    }
+  }
+  const now = Date.now()
+  const base = {
+    booking_id: 'booking-free-hint',
+    config_id: 'config-free-hint',
+    grant_id: 'grant-free-hint',
+    duration: 30,
+    data_environment: 'production',
+    start: now + 48 * 60 * 60 * 1000,
+    confirmation_expires_at: now + 24 * 60 * 60 * 1000,
+    starter_data: { memberstack_id: 'mem_starter' },
+    brand_data: { memberstack_id: 'mem_brand' },
+  }
+  try {
+    global.StartersDashboardCallActions = realActions
+    for (const [role, status, isPaid, start, expected] of [
+      // Free: the Starter cannot restate a pending request.
+      ['starter', 'pending', false, base.start, undefined],
+      // Free: inside the reschedule window nobody gets a control.
+      ['brand', 'confirmed', false, now + 60 * 60 * 1000, undefined],
+      // Paid: the gate is real, so the hint explains it.
+      ['brand', 'confirmed', true, base.start, 'Rescheduling is available for Free calls.'],
+    ]) {
+      const modal = hintModal()
+      const booking = { ...base, status, is_paid: isPaid, start, server_now_ms: now }
+      realActions.bindCanonicalClock([booking], realActions.monotonicNow())
+      dashboard.configureDetailActions(modal, role, status, booking, now)
+      assert.equal(modal.reschedule.hidden, true, role + ' ' + status + ': no reschedule control')
+      const hint = modal.hints.reschedule
+      assert.equal(hint && !hint.hidden ? hint.textContent : undefined, expected, role + ' ' + status + ' paid=' + isPaid)
+    }
+    // A Free call that does offer the control still shows no hint.
+    const modal = hintModal()
+    const eligible = { ...base, status: 'confirmed', is_paid: false, server_now_ms: now }
+    realActions.bindCanonicalClock([eligible], realActions.monotonicNow())
+    dashboard.configureDetailActions(modal, 'brand', 'confirmed', eligible, now)
+    assert.equal(modal.reschedule.hidden, false)
+    assert.equal(modal.hints.reschedule, undefined)
   } finally {
     global.StartersDashboardCallActions = originalActions
   }

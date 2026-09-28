@@ -91,6 +91,7 @@
       reasonContent: 'decline-reason',
       successContent: 'declined',
       failureMessage: 'Canonical booking decline failed',
+      busyLabel: 'Declining…',
     },
     cancel: {
       path: '/booking/cancel/v3',
@@ -104,6 +105,7 @@
       reasonContent: 'cancel-reason',
       successContent: 'cancelled',
       failureMessage: 'Canonical booking cancel failed',
+      busyLabel: 'Cancelling…',
     },
     'reschedule-propose': {
       path: '/booking/reschedule/propose/v3',
@@ -129,6 +131,9 @@
       reasonField: 'rescheduled_reason',
       reasonAttribute: 'booking-reschedule-reason',
       responseKey: 'reschedule_request',
+      // #5921 replaces the provider booking: its result carries the NEW
+      // booking_id and names the sent one as replaced_booking_id.
+      replacesBooking: true,
       // The booking is deliberately still pending afterwards; a status change
       // here would mean the handshake contract ran by mistake.
       successStatus: 'pending',
@@ -144,6 +149,7 @@
       successStatus: 'confirmed',
       successContent: 'reschedule-accepted',
       failureMessage: 'Canonical reschedule confirmation failed',
+      busyLabel: 'Accepting…',
     },
     'reschedule-decline': {
       path: '/booking/reschedule/decline/v3',
@@ -151,9 +157,13 @@
       attemptPrefix: 'dashboard-reschedule-decline',
       reasonField: null,
       responseKey: 'reschedule_decline',
-      successStatus: 'cancelled',
+      // F13 soft launch: published #5760 restores a Free call to its original
+      // confirmed time (original_restored true). Only Free calls reach this
+      // action (canRespondReschedule), so `confirmed` is the success status.
+      successStatus: 'confirmed',
       successContent: 'reschedule-declined',
       failureMessage: 'Canonical reschedule response failed',
+      busyLabel: 'Keeping current time…',
     },
   }
 
@@ -492,13 +502,72 @@
   function actionSucceeded(kind, body, bookingId) {
     const config = KINDS[kind]
     const result = config && body && body[config.responseKey]
+    const sent = clean(bookingId)
+    // A replacing contract answers with the new id and names the sent one as
+    // replaced; that new id must be present for the caller to adopt it.
+    const replaced = Boolean(
+      config &&
+      config.replacesBooking &&
+      result &&
+      clean(result.replaced_booking_id) === sent &&
+      clean(result.booking_id) !== ''
+    )
     return Boolean(
       config &&
       result &&
-      clean(result.booking_id) === clean(bookingId) &&
-      clean(bookingId) !== '' &&
+      sent !== '' &&
+      (clean(result.booking_id) === sent || replaced) &&
       clean(result.status).toLowerCase() === config.successStatus
     )
+  }
+
+  /**
+   * The booking id a successful replacing command left in place of `booking`,
+   * or '' when the booking kept its id.
+   * @param {string} kind Action kind that succeeded.
+   * @param {object|null} body Validated command response.
+   * @param {object|null} booking Booking the command was sent for.
+   * @returns {string} Replacement booking id, or ''.
+   */
+  function replacementBookingId(kind, body, booking) {
+    const config = KINDS[kind]
+    const result = config && config.replacesBooking && body && body[config.responseKey]
+    const sent = clean(booking && booking.booking_id)
+    const next = clean(result && result.booking_id)
+    return result && sent !== '' && next !== '' && next !== sent &&
+      clean(result.replaced_booking_id) === sent
+      ? next
+      : ''
+  }
+
+  /**
+   * Moves the local booking and every element keyed by its old id to the
+   * replacement id, so the open modal and the list card keep resolving the
+   * same row until the next canonical read.
+   * @param {Document|null} document Page document.
+   * @param {HTMLElement|null} modal Detail modal being populated.
+   * @param {object} booking Canonical row to update in place.
+   * @param {string} nextId Replacement booking id.
+   * @returns {boolean} Whether the booking id changed.
+   */
+  function adoptReplacementBooking(document, modal, booking, nextId) {
+    const previous = clean(booking && booking.booking_id)
+    const next = clean(nextId)
+    if (!booking || !previous || !next || previous === next) return false
+    booking.booking_id = next
+    const carriers = document && typeof document.querySelectorAll === 'function'
+      ? Array.prototype.slice.call(document.querySelectorAll('[data-booking-id]'))
+      : []
+    if (modal && carriers.indexOf(modal) === -1) carriers.push(modal)
+    carriers.forEach(function (carrier) {
+      if (
+        carrier &&
+        typeof carrier.getAttribute === 'function' &&
+        typeof carrier.setAttribute === 'function' &&
+        clean(carrier.getAttribute('data-booking-id')) === previous
+      ) carrier.setAttribute('data-booking-id', next)
+    })
+    return true
   }
 
   function declineSucceeded(body, bookingId) {
@@ -665,16 +734,35 @@
     // The authored back control returns to the base panel, so it is only
     // meaningful away from it. Hiding it there removes the doubled close icon
     // Kaeser reported on the Brand dialog.
+    const backSelector =
+      '[booking-action-btn="switch-base"], [booking-card-action-btn="switch-base"]'
+    // The Brand header's [close-to-base] X is a second way back. A step panel
+    // that authors its own Back, or a receipt that authors its own Close,
+    // keeps only that control, so the header no longer shows a second X
+    // beside the dialog close. A panel with neither (payment-methods) keeps
+    // the header X as its only way back.
+    const ownExitSelector = backSelector +
+      ', [booking-action-btn="switch-close"], [booking-card-action-btn="switch-close"]'
+    const targetHasOwnExit = contents.some(function (content) {
+      return !content.hidden &&
+        typeof content.querySelector === 'function' &&
+        Boolean(content.querySelector(ownExitSelector))
+    })
     modal
-      .querySelectorAll(
-        '[booking-action-btn="switch-base"], [booking-card-action-btn="switch-base"]',
-      )
+      .querySelectorAll(backSelector)
       .forEach(function (control) {
-        const visible = target !== 'base'
+        const visible = target !== 'base' &&
+          !(targetHasOwnExit && hasAttribute(control, 'close-to-base'))
         control.hidden = !visible
         control.style.display = visible ? '' : 'none'
       })
     return found
+  }
+
+  function hasAttribute(node, name) {
+    if (!node) return false
+    if (typeof node.hasAttribute === 'function') return node.hasAttribute(name)
+    return typeof node.getAttribute === 'function' && node.getAttribute(name) != null
   }
 
   /**
@@ -886,13 +974,13 @@
     return button
   }
 
+  const ACTION_LABEL_SELECTOR = '.button_main-text, [button-text], [data-button-text]'
+
   function setAuthoredActionLabel(control, label) {
     if (!control) return false
     const labels =
       typeof control.querySelectorAll === 'function'
-        ? Array.prototype.slice.call(
-            control.querySelectorAll('.button_main-text, [button-text], [data-button-text]'),
-          )
+        ? Array.prototype.slice.call(control.querySelectorAll(ACTION_LABEL_SELECTOR))
         : []
     if (labels.length) {
       labels.forEach(function (node) {
@@ -902,6 +990,59 @@
       control.textContent = label
     }
     return true
+  }
+
+  /**
+   * Shows a visible in-flight state on an action control until the returned
+   * release runs: the authored label reads `label`, and the control and any
+   * button inside it are disabled. aria-busy alone was invisible, so a slow
+   * command read as a dead button (Kaeser QA P5, 2026-09-28). Release
+   * restores the authored label and each button's prior disabled state.
+   * @param {HTMLElement|null} control Clicked action control.
+   * @param {string} label Busy label, for example "Confirming…".
+   * @returns {function(): void} Idempotent release.
+   */
+  function markActionBusy(control, label) {
+    if (!control) return function () {}
+    const labels =
+      typeof control.querySelectorAll === 'function'
+        ? Array.prototype.slice.call(control.querySelectorAll(ACTION_LABEL_SELECTOR))
+        : []
+    // A control with element children but no label hook keeps its markup;
+    // it still gets the busy and disabled state below.
+    const textNodes = labels.length
+      ? labels
+      : control.children && control.children.length ? [] : [control]
+    const authoredText = textNodes.map(function (node) { return node.textContent })
+    const buttons = [control]
+      .concat(
+        typeof control.querySelectorAll === 'function'
+          ? Array.prototype.slice.call(control.querySelectorAll('button'))
+          : [],
+      )
+      .filter(function (node) { return node && 'disabled' in node })
+    const wasDisabled = buttons.map(function (node) { return node.disabled })
+    if (typeof control.setAttribute === 'function') {
+      control.setAttribute('aria-busy', 'true')
+      control.setAttribute('aria-disabled', 'true')
+    }
+    if (clean(label)) {
+      textNodes.forEach(function (node) { node.textContent = label })
+    }
+    buttons.forEach(function (node) { node.disabled = true })
+    let released = false
+    return function release() {
+      if (released) return
+      released = true
+      if (clean(label)) {
+        textNodes.forEach(function (node, index) { node.textContent = authoredText[index] })
+      }
+      buttons.forEach(function (node, index) { node.disabled = wasDisabled[index] })
+      if (typeof control.setAttribute === 'function') {
+        control.setAttribute('aria-busy', 'false')
+        control.setAttribute('aria-disabled', 'false')
+      }
+    }
   }
 
   function replaceAuthoredPlaceholder(root, replacement) {
@@ -1054,17 +1195,8 @@
       typeof modal.querySelector !== 'function' ||
       typeof document.createElement !== 'function'
     ) return false
-    const declinedReceipt = modal.querySelector('[booking-popup-content="reschedule-declined"]')
-    if (declinedReceipt && typeof declinedReceipt.querySelectorAll === 'function') {
-      Array.prototype.forEach.call(declinedReceipt.querySelectorAll('p, h1, h2, h3'), function (node) {
-        if (node.children && node.children.length) return
-        const text = clean(node.textContent)
-        if (text === 'Proposal declined') node.textContent = 'Call cancelled'
-        if (text === 'The call keeps its original time.') {
-          node.textContent = 'The proposed time was declined and the call was cancelled.'
-        }
-      })
-    }
+    // The authored declined receipt ("The call keeps its original time.")
+    // matches the #5760 Free contract again, so it is no longer rewritten.
     const hasAuthoredRescheduleView = normalizeRescheduleViewCopy(modal)
     if (modal.querySelector('[data-starters-reschedule-views]')) {
       ensureRespondButtons(document, modal)
@@ -1155,9 +1287,9 @@
 
     if (!modal.querySelector('[booking-popup-content="reschedule-declined"]')) {
       const declinedPanel = reschedulePanel(document, 'reschedule-declined')
-      declinedPanel.appendChild(panelText(document, 'h3', 'Call cancelled'))
+      declinedPanel.appendChild(panelText(document, 'h3', 'Proposal declined'))
       declinedPanel.appendChild(
-        panelText(document, 'p', 'The proposed time was declined and the call was cancelled.', true),
+        panelText(document, 'p', 'The call keeps its original time.', true),
       )
       host.appendChild(declinedPanel)
     }
@@ -1197,11 +1329,8 @@
       typeof modal.querySelector !== 'function' ||
       typeof document.createElement !== 'function'
     ) return false
-    if (typeof modal.querySelectorAll === 'function') {
-      modal.querySelectorAll('[booking-action-btn="reschedule-decline"], [booking-card-action-btn="reschedule-decline"]').forEach(function (control) {
-        setAuthoredActionLabel(control, 'Cancel call')
-      })
-    }
+    // Declining a Free proposal keeps the original time (#5760), so the
+    // authored "Keep Current Time" label stays; it is no longer renamed.
     if (modal.querySelector('[data-starters-reschedule-respond]')) return true
     /* Both views now author the respond pair in the base panel, where the
        member can reach it. Generating a second pair there left four controls
@@ -1230,14 +1359,14 @@
       document,
       modal,
       'confirm-reschedule',
-      'Accept new time',
+      'Accept New Time',
     )
     accept.setAttribute('data-starters-reschedule-respond', '')
     const decline = styledActionButton(
       document,
       modal,
       'reschedule-decline',
-      'Cancel call',
+      'Keep Current Time',
     )
     decline.setAttribute('data-starters-reschedule-respond', '')
     anchor.parentNode.insertBefore(accept, anchor.nextSibling)
@@ -1290,13 +1419,16 @@
     const container = modal && modal.querySelector('[booking-reschedule-calendar]')
     if (!container) return false
     if (!rescheduleKindFor(role, booking)) return false
-    const bookingId = clean(booking && booking.booking_id)
     const mountToken = {}
     modal.__startersRescheduleCalendarToken = mountToken
+    // The row's id, not the id at mount: a F04 replacement moves the row and
+    // the modal to the new id together, and the engine's post-success cleanup
+    // still needs this mount to read as current.
     const isCurrent = function () {
       return (
         modal.__startersRescheduleCalendarToken === mountToken &&
-        clean(modal.getAttribute && modal.getAttribute('data-booking-id')) === bookingId &&
+        clean(modal.getAttribute && modal.getAttribute('data-booking-id')) ===
+          clean(booking && booking.booking_id) &&
         modal.querySelector('[booking-reschedule-calendar]') === container
       )
     }
@@ -1346,7 +1478,22 @@
           showActionError(modal, (error && error.message) || config.failureMessage)
           throw error
         }
-        if (!isCurrent()) return result
+        // F04: the update replaces the provider booking, so the row now
+        // lives under the new id. The attempt key was already cleared under
+        // the sent id inside submitAction. Adopt before the currency check:
+        // a member who moved on mid-request must not leave the row, or a card
+        // still keyed by the sent id, holding a dead booking_id.
+        const replaced = kind === 'reschedule-request' && adoptReplacementBooking(
+          document,
+          modal,
+          booking,
+          replacementBookingId(kind, result, booking),
+        )
+        if (!isCurrent()) {
+          // The card still shows the old slot, so re-read the list on close.
+          if (replaced) restartAfterModalClose(document, modal, restart)
+          return result
+        }
         const reasonField = modal.querySelector('[booking-reschedule-reason]')
         if (reasonField) reasonField.value = ''
         // The receipt describes the selected slot. A pending request moves
@@ -1392,6 +1539,25 @@
         return !content.hidden && !(content.style && content.style.display === 'none')
       },
     ) || null
+  }
+
+  const RESPOND_SELECTOR =
+    '[booking-action-btn="confirm-reschedule"], [booking-card-action-btn="confirm-reschedule"], ' +
+    '[booking-action-btn="reschedule-decline"], [booking-card-action-btn="reschedule-decline"]'
+
+  /**
+   * The clicked proposal response plus every other response control in the
+   * open panel (authored or module-rendered), clicked control first.
+   * @param {HTMLElement|null} modal Detail modal.
+   * @param {HTMLElement} button Clicked response control.
+   * @returns {HTMLElement[]} Response controls to hold busy together.
+   */
+  function respondControlsInOpenPanel(modal, button) {
+    const panel = modal && openPopupContent(modal)
+    const siblings = panel && typeof panel.querySelectorAll === 'function'
+      ? Array.prototype.slice.call(panel.querySelectorAll(RESPOND_SELECTOR))
+      : []
+    return [button].concat(siblings.filter(function (control) { return control !== button }))
   }
 
   /**
@@ -1549,9 +1715,18 @@
         }
         if (button.__startersActionBusy) return
         if (step.step === 'respond') {
-          button.__startersActionBusy = true
-          button.setAttribute('aria-busy', 'true')
-          button.setAttribute('aria-disabled', 'true')
+          // Keep Current Time and Accept New Time answer the same proposal.
+          // While either is in flight, both are busy, so the sibling cannot
+          // send the opposite command; only the clicked one changes its label.
+          const respondControls = respondControlsInOpenPanel(modal, button)
+          const releases = respondControls.map(function (control) {
+            control.__startersActionBusy = true
+            return markActionBusy(control, control === button ? config.busyLabel : '')
+          })
+          const releaseBusy = function () {
+            respondControls.forEach(function (control) { control.__startersActionBusy = false })
+            releases.forEach(function (release) { release() })
+          }
           showActionError(modal, '')
           try {
             const result = await respondReschedule(step.kind, booking, settings.role)
@@ -1575,17 +1750,14 @@
             )
             showActionError(modal, (error && error.message) || config.failureMessage)
           } finally {
-            button.__startersActionBusy = false
-            button.setAttribute('aria-busy', 'false')
-            button.setAttribute('aria-disabled', 'false')
+            releaseBusy()
           }
           return
         }
         const reason = reasonValue(modal, step.kind)
         if (!validateReason(reason.field, reason.value)) return
         button.__startersActionBusy = true
-        button.setAttribute('aria-busy', 'true')
-        button.setAttribute('aria-disabled', 'true')
+        const releaseBusy = markActionBusy(button, config.busyLabel)
         showActionError(modal, '')
         try {
           const result = await submitAction(
@@ -1607,8 +1779,7 @@
           showActionError(modal, (error && error.message) || config.failureMessage)
         } finally {
           button.__startersActionBusy = false
-          button.setAttribute('aria-busy', 'false')
-          button.setAttribute('aria-disabled', 'false')
+          releaseBusy()
         }
       },
       true,
@@ -1649,6 +1820,7 @@
     declineStorageKey,
     closeDetailModal,
     declineSucceeded,
+    markActionBusy,
     showActionError,
     switchPopupContent,
     validAttemptKey,

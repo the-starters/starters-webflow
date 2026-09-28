@@ -35,7 +35,8 @@ const root = path.resolve(__dirname, '../..')
         const modal = document.querySelector('dialog')
         window.booking = { booking_id: 'cs17-' + role, config_id: 'synthetic-config', data_environment: 'test', status: 'rescheduled', rescheduled_by: role === 'brand' ? 'starter' : 'brand', start: Date.UTC(2027, 0, 18, 12), end: Date.UTC(2027, 0, 18, 12, 30), start_old: Date.UTC(2027, 0, 17, 12), duration: 30, price: 0, is_paid: false, brand_data: { name: 'Example Brand', memberstack_id: 'synthetic-brand', timezone: 'UTC' }, starter_data: { name: 'Example Starter', memberstack_id: 'synthetic-starter', timezone: 'UTC' } }
         window.requests = []
-        window.responseStatus = 'confirmed'
+        // F13 soft launch: #5760 answers `confirmed` and restores the original time.
+        window.responseStatus = 'cancelled'
         window.xanoAuthFetch = async (url, options) => {
           requests.push({ url, body: JSON.parse(options.body) })
           return { ok: true, json: async () => ({ reschedule_decline: { booking_id: booking.booking_id, status: responseStatus, start: Date.UTC(2027, 0, 17, 12), end: Date.UTC(2027, 0, 17, 12, 30) } }) }
@@ -44,31 +45,31 @@ const root = path.resolve(__dirname, '../..')
         fixtureCalls.openBookingDetail(modal, booking, role)
       }, role)
       const control = page.locator('dialog [booking-action-btn="reschedule-decline"]:visible').first()
-      assert.equal((await control.innerText()).toLowerCase(), 'cancel call')
+      assert.equal((await control.innerText()).toLowerCase(), 'keep current time')
       if (process.env.CS17_EVIDENCE) {
         await fs.mkdir(process.env.CS17_EVIDENCE, { recursive: true })
-        await page.screenshot({ path: path.join(process.env.CS17_EVIDENCE, role + '-cancel-action.png') })
+        await page.screenshot({ path: path.join(process.env.CS17_EVIDENCE, role + '-keep-action.png') })
       }
       await control.click()
       await page.waitForFunction(() => requests.length === 1 && document.querySelector('[role="alert"]')?.textContent)
       assert.equal(await page.evaluate(() => booking.status), 'rescheduled')
-      await page.evaluate(() => { responseStatus = 'cancelled' })
+      await page.evaluate(() => { responseStatus = 'confirmed' })
       await control.click()
-      await page.waitForFunction(() => booking.status === 'cancelled')
+      await page.waitForFunction(() => booking.status === 'confirmed')
       const receipt = page.locator('[booking-popup-content="reschedule-declined"]')
       assert.equal(await receipt.isVisible(), true)
-      assert.match(await receipt.innerText(), /Call cancelled/)
-      assert.doesNotMatch(await receipt.innerText(), /keeps its original time/)
+      assert.match(await receipt.innerText(), /keeps its original time/)
+      assert.doesNotMatch(await receipt.innerText(), /Call cancelled/)
       const state = await page.evaluate(() => ({ booking, requests, receipt: document.querySelector('[booking-popup-content="reschedule-declined"]').innerText }))
       assert.equal(state.booking.start, Date.UTC(2027, 0, 17, 12))
       assert.equal(state.requests.length, 2)
       assert.equal(state.requests[0].body.idempotency_key, state.requests[1].body.idempotency_key)
       assert.match(state.requests[1].url, /booking\/reschedule\/decline\/v3$/)
       observations.push({ role, ...state })
-      if (process.env.CS17_EVIDENCE) await page.screenshot({ path: path.join(process.env.CS17_EVIDENCE, role + '-cancelled-receipt.png') })
+      if (process.env.CS17_EVIDENCE) await page.screenshot({ path: path.join(process.env.CS17_EVIDENCE, role + '-declined-receipt.png') })
       await page.close()
     }
     if (process.env.CS17_EVIDENCE) await fs.writeFile(path.join(process.env.CS17_EVIDENCE, 'reschedule-decline-observations.json'), JSON.stringify(observations, null, 2))
-    console.log('Both roles: Cancel call rejected confirmed response, retained retry key, then displayed cancelled receipt with canonical confirmed interval. Controlled API only.')
+    console.log('Both roles: Keep current time rejected the retired cancelled response, retained retry key, then displayed the declined receipt with the restored original interval. Controlled API only.')
   } finally { if (browser) await browser.close(); await new Promise(resolve => server.close(resolve)) }
 })().catch(error => { console.error(error); process.exitCode = 1 })

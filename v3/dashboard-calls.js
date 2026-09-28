@@ -16,6 +16,7 @@
     'https://x08a-5ko8-jj1r.n7c.xano.io/api:tCpV3oqd'
   const BOOKINGS_PATH = '/booking_record/get/v3'
   const CONFIRM_PATH = '/booking/confirm/v3'
+  const CONFIRM_FAILURE_COPY = 'The call could not be confirmed. Please try again.'
   const DASHBOARD_CALL_MODULES = [
     {
       globalName: 'StartersDashboardCallActions',
@@ -499,6 +500,37 @@
     )
   }
 
+  function browserTimezone() {
+    try {
+      const intl = global.Intl
+      return clean(intl && intl.DateTimeFormat().resolvedOptions().timeZone)
+    } catch (_error) {
+      return ''
+    }
+  }
+
+  /**
+   * Timezone the signed-in viewer reads call times in: the viewer's own stored
+   * zone first. A Brand then uses this browser's zone, and the counterpart's
+   * zone only as a last resort. A Brand with no stored zone used to fall back
+   * to the Starter's zone first, so a Dubai Brand saw a different date than it
+   * booked (P6). A Starter keeps its own zone, then the Brand's.
+   * @param {string} role Signed-in member's role.
+   * @param {object} booking Canonical booking row.
+   * @returns {string} IANA timezone, or '' for the formatter default.
+   */
+  function viewerTimezone(role, booking) {
+    const own = role === 'starter'
+      ? booking && booking.starter_data
+      : booking && booking.brand_data
+    const other = role === 'starter'
+      ? booking && booking.brand_data
+      : booking && booking.starter_data
+    return clean(own && own.timezone) ||
+      (role === 'brand' ? browserTimezone() : '') ||
+      clean(other && other.timezone)
+  }
+
   function formatDate(value, timezone) {
     const timestamp = Number(value)
     if (!Number.isFinite(timestamp) || timestamp <= 0) return ''
@@ -849,7 +881,6 @@
     const now = Date.now()
     const status = bookingStatus(booking, now)
     const other = role === 'starter' ? booking.brand_data : booking.starter_data
-    const own = role === 'starter' ? booking.starter_data : booking.brand_data
     card.removeAttribute('bookings-item-template')
     card.setAttribute('data-booking-id', clean(booking.booking_id || booking.id))
     card.setAttribute('data-booking-status', status)
@@ -875,8 +906,8 @@
       card,
       '[booking-element="start-date"]',
       clean(booking.status).toLowerCase() === 'rescheduled'
-        ? proposalOldDate(booking, (own && own.timezone) || (other && other.timezone)) || 'Confirmed time unavailable'
-        : formatDate(booking.start, (own && own.timezone) || (other && other.timezone)),
+        ? proposalOldDate(booking, viewerTimezone(role, booking)) || 'Confirmed time unavailable'
+        : formatDate(booking.start, viewerTimezone(role, booking)),
     )
     text(card, '[booking-element="duration"]', formatDuration(booking.duration))
     text(
@@ -1131,8 +1162,12 @@
     return links.length
   }
 
-  function detailSupplementRows(booking, role, timezone) {
+  function detailSupplementRows(booking, role, timezone, panelName) {
     const counterpart = detailCounterpart(role, booking)
+    // A decline writes its reason to cancelled_reason. On a Free declined
+    // panel that is the decline reason, and an earlier edit's reason is
+    // stale. Paid keeps its display unchanged, as PR #974 scoped F09.
+    const declinedPanel = panelName === 'declined' && !paidBooking(booking)
     return [
       {
         field: role === 'starter' ? 'brand-name' : 'starter-name',
@@ -1143,8 +1178,10 @@
       { field: 'start-date', label: clean(booking && booking.status).toLowerCase() === 'rescheduled' ? 'Proposed time' : 'Date and time', value: formatDate(booking && booking.start, timezone) },
       { field: 'duration', label: 'Duration', value: formatDuration(booking && booking.duration) },
       { field: 'context', label: 'Call', value: clean(booking && booking.call_context) },
-      { field: 'reschedule-reason', label: 'Reschedule reason', value: clean(booking && booking.rescheduled_reason) },
-      { field: 'cancel-reason', label: 'Cancellation reason', value: clean(booking && booking.cancelled_reason) },
+      { field: 'reschedule-reason', label: 'Reschedule reason', value: declinedPanel ? '' : clean(booking && booking.rescheduled_reason) },
+      declinedPanel
+        ? { field: 'decline-reason', label: 'Decline reason', value: clean(booking && booking.cancelled_reason) }
+        : { field: 'cancel-reason', label: 'Cancellation reason', value: clean(booking && booking.cancelled_reason) },
     ].filter(function (row) {
       return row.value !== ''
     })
@@ -1230,13 +1267,16 @@
       )
     })
     if (!authored.length && !content) panels.push(modal)
-    const rows = detailSupplementRows(booking, role, timezone)
     const counterpart = detailCounterpart(role, booking)
     const counterpartId = clean(counterpart && counterpart.memberstack_id)
     let rendered = 0
 
     panels.forEach(function (panel) {
       if (!panel || typeof panel.querySelector !== 'function') return
+      const panelName = panel !== modal && typeof panel.getAttribute === 'function'
+        ? clean(panel.getAttribute('booking-popup-content'))
+        : ''
+      const rows = detailSupplementRows(booking, role, timezone, panelName)
       const authoritative = rows
         .filter(function (row) {
           return panelHasUsableField(panel, row.field)
@@ -1537,7 +1577,11 @@
       // Brands can now also restate the time on their own pending request, so
       // the old "confirmed only" wording would misdescribe the gate.
       'Rescheduling is available for Free calls.',
+      // The hint explains the Paid gate. A Free call with no reschedule
+      // control for this viewer (a Starter's pending request, or a call
+      // inside the reschedule window) would read it as a false promise.
       Boolean(gates.rescheduleAnchor) &&
+        paidBooking(booking) &&
         active &&
         status !== 'rescheduled' &&
         upcoming &&
@@ -1690,9 +1734,7 @@
   }
 
   function populateDetailSchedule(root, booking, role) {
-    const other = role === 'starter' ? booking.brand_data : booking.starter_data
-    const own = role === 'starter' ? booking.starter_data : booking.brand_data
-    const timezone = (own && own.timezone) || (other && other.timezone)
+    const timezone = viewerTimezone(role, booking)
     setBookingField(root, 'start-date', formatDate(booking.start, timezone), true)
     // The shared date formatter already includes time and timezone.
     ;['start-time', 'start-time-old'].forEach(function (name) {
@@ -1705,11 +1747,56 @@
     setBookingField(root, 'reschedule-reason', booking.rescheduled_reason, Boolean(booking.rescheduled_reason))
   }
 
+  // Authored state of each decline-reason hook and its wrap from before a
+  // Free fill first changed it, so a reused modal can put it back for Paid.
+  const authoredDeclineReasons = new WeakMap()
+
+  function displayState(node) {
+    return node ? { node: node, hidden: node.hidden, display: node.style && node.style.display } : null
+  }
+
+  /**
+   * The authored declined panels carry a decline-reason hook. A Free booking
+   * fills it, which keeps the supplement from adding a second reason row
+   * there. Paid keeps its v1.59.633 display (PR #974 scoped F09 to Free): the
+   * hook stays as authored, restored when a Free booking changed it first.
+   * @param {HTMLElement} modal Detail modal being populated.
+   * @param {object} booking Canonical booking row.
+   * @param {boolean} isPaid Whether the booking is a Paid call.
+   */
+  function populateDeclineReason(modal, booking, isPaid) {
+    const fields = bookingFields(modal, 'decline-reason')
+    if (isPaid) {
+      fields.forEach(function (field) {
+        const authored = authoredDeclineReasons.get(field)
+        if (!authored) return
+        field.textContent = authored.text
+        authored.states.forEach(function (state) {
+          state.node.hidden = state.hidden
+          if (state.node.style) state.node.style.display = state.display
+        })
+      })
+      return
+    }
+    fields.forEach(function (field) {
+      if (authoredDeclineReasons.has(field)) return
+      const group = field.closest && field.closest('[booking-element-wrap]')
+      authoredDeclineReasons.set(field, {
+        text: field.textContent,
+        states: [displayState(field), displayState(group)].filter(Boolean),
+      })
+    })
+    setBookingField(
+      modal,
+      'decline-reason',
+      booking.cancelled_reason,
+      clean(booking.status).toLowerCase() === 'declined' && Boolean(booking.cancelled_reason),
+    )
+  }
+
   function populateDetailModal(modal, booking, role, now, content) {
     if (!modal || !booking) return false
-    const other = role === 'starter' ? booking.brand_data : booking.starter_data
-    const own = role === 'starter' ? booking.starter_data : booking.brand_data
-    const timezone = (own && own.timezone) || (other && other.timezone)
+    const timezone = viewerTimezone(role, booking)
     if (content) {
       const panel = modal.querySelector('[booking-popup-content="' + content + '"]')
       if (!panel) return false
@@ -1774,6 +1861,7 @@
     setBookingPrice(modal, formatPrice(booking.price, isPaid), isPaid)
     setBookingField(modal, 'payment-status-text', paymentText, isPaid)
     setBookingField(modal, 'cancel-reason', booking.cancelled_reason, Boolean(booking.cancelled_reason))
+    populateDeclineReason(modal, booking, isPaid)
 
     const showMeeting = ['confirmed', 'rescheduled'].includes(status) && clean(booking.meeting_link) !== ''
     bookingFields(modal, 'meeting-link').forEach(function (meetingLink) {
@@ -2541,30 +2629,59 @@
       button.__startersBookingActionBusy = true
       button.setAttribute('aria-busy', 'true')
       button.setAttribute('aria-disabled', 'true')
+      // P5: the confirm can take a minute, and aria-busy alone was invisible,
+      // so the Starter read it as "unable to accept". The actions module owns
+      // the visible busy label and the F21 action-error alert; the alert sits
+      // in the open details panel, or on the card for a card-level Accept.
+      const actionsModule = global.StartersDashboardCallActions
+      const actionsReady = validDashboardModule(actionsModule)
+      const releaseBusy = actionsReady && typeof actionsModule.markActionBusy === 'function'
+        ? actionsModule.markActionBusy(button, 'Confirming…')
+        : null
+      const errorHost = (button.closest && button.closest(DETAIL_MODAL_SELECTOR)) || card
+      const showError = function (message) {
+        if (actionsReady && typeof actionsModule.showActionError === 'function') {
+          actionsModule.showActionError(errorHost, message)
+        }
+      }
+      showError('')
+      // Only a server answer's own message or error text reaches the alert.
+      // The fallback and client-side errors show plain copy instead of
+      // internal wording; the technical text stays in the console.
+      let serverMessage = ''
+      let confirmed = false
       try {
         if (!button.__startersBookingActionKey) {
           button.__startersBookingActionKey = await storedConfirmAttemptKey(booking) || await createConfirmAttemptKey(booking)
         }
         const payload = confirmPayload(booking, button.__startersBookingActionKey)
-        if (
-          !payload ||
-          typeof global.xanoAuthFetch !== 'function' ||
-          !canConfirmBooking(role, booking)
-        ) return
+        if (!canConfirmBooking(role, booking)) return
+        if (!payload || typeof global.xanoAuthFetch !== 'function') {
+          throw new Error('Canonical booking confirmation failed')
+        }
         const response = await global.xanoAuthFetch(XANO_SCHEDULING_BASE + CONFIRM_PATH, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
         })
         const body = await response.json().catch(function () { return null })
-        if (!response.ok || !confirmSucceeded(body)) throw new Error('Canonical booking confirmation failed')
+        if (!response.ok || !confirmSucceeded(body)) {
+          // Prefer the server's own message, as the other call actions do.
+          serverMessage = clean(body && (body.message || body.error))
+          throw new Error(serverMessage || 'Canonical booking confirmation failed')
+        }
+        confirmed = true
         await clearConfirmAttemptKey(booking, button.__startersBookingActionKey)
         button.__startersBookingActionKey = ''
         await restart()
       } catch (error) {
         console.error('[dashboard-calls] confirmation failed closed:', error && error.message)
+        // A failure after the server confirmed (key cleanup or the list
+        // refresh) must not tell the Starter the call was not confirmed.
+        if (!confirmed) showError(serverMessage || CONFIRM_FAILURE_COPY)
       } finally {
         button.__startersBookingActionBusy = false
+        if (releaseBusy) releaseBusy()
         button.setAttribute('aria-busy', 'false')
         button.setAttribute('aria-disabled', 'false')
       }
