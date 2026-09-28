@@ -2405,7 +2405,12 @@ lists only the fields that panel has no usable `[booking-element]` hook for and
 that the canonical row has a value for — counterpart name, date and time
 (including the current confirmed and proposed times described above),
 duration, call context, reschedule reason, and cancellation reason — as
-`data-starters-call-summary-row` lines keyed by that field name. A hook counts
+`data-starters-call-summary-row` lines keyed by that field name. The `declined`
+panel is the exception: a decline stores its reason in `cancelled_reason`, so
+there that value is the `decline-reason` row labelled "Decline reason", and an
+earlier edit's reschedule reason is left out. A declined booking also fills the
+authored `[booking-element="decline-reason"]` hook, so a panel that authors it
+gets no second reason row. Other panels keep both labels. A hook counts
 as usable only while it renders: a hook that is itself hidden, that sits inside
 a hidden `[booking-element-wrap]` group, or that generates no box of its own
 inside a panel that does generate one, is treated as absent, so the module

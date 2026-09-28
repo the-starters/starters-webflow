@@ -1131,8 +1131,11 @@
     return links.length
   }
 
-  function detailSupplementRows(booking, role, timezone) {
+  function detailSupplementRows(booking, role, timezone, panelName) {
     const counterpart = detailCounterpart(role, booking)
+    // A decline writes its reason to cancelled_reason. On the declined panel
+    // that is the decline reason, and an earlier edit's reason is stale.
+    const declinedPanel = panelName === 'declined'
     return [
       {
         field: role === 'starter' ? 'brand-name' : 'starter-name',
@@ -1143,8 +1146,10 @@
       { field: 'start-date', label: clean(booking && booking.status).toLowerCase() === 'rescheduled' ? 'Proposed time' : 'Date and time', value: formatDate(booking && booking.start, timezone) },
       { field: 'duration', label: 'Duration', value: formatDuration(booking && booking.duration) },
       { field: 'context', label: 'Call', value: clean(booking && booking.call_context) },
-      { field: 'reschedule-reason', label: 'Reschedule reason', value: clean(booking && booking.rescheduled_reason) },
-      { field: 'cancel-reason', label: 'Cancellation reason', value: clean(booking && booking.cancelled_reason) },
+      { field: 'reschedule-reason', label: 'Reschedule reason', value: declinedPanel ? '' : clean(booking && booking.rescheduled_reason) },
+      declinedPanel
+        ? { field: 'decline-reason', label: 'Decline reason', value: clean(booking && booking.cancelled_reason) }
+        : { field: 'cancel-reason', label: 'Cancellation reason', value: clean(booking && booking.cancelled_reason) },
     ].filter(function (row) {
       return row.value !== ''
     })
@@ -1230,13 +1235,16 @@
       )
     })
     if (!authored.length && !content) panels.push(modal)
-    const rows = detailSupplementRows(booking, role, timezone)
     const counterpart = detailCounterpart(role, booking)
     const counterpartId = clean(counterpart && counterpart.memberstack_id)
     let rendered = 0
 
     panels.forEach(function (panel) {
       if (!panel || typeof panel.querySelector !== 'function') return
+      const panelName = panel !== modal && typeof panel.getAttribute === 'function'
+        ? clean(panel.getAttribute('booking-popup-content'))
+        : ''
+      const rows = detailSupplementRows(booking, role, timezone, panelName)
       const authoritative = rows
         .filter(function (row) {
           return panelHasUsableField(panel, row.field)
@@ -1774,6 +1782,14 @@
     setBookingPrice(modal, formatPrice(booking.price, isPaid), isPaid)
     setBookingField(modal, 'payment-status-text', paymentText, isPaid)
     setBookingField(modal, 'cancel-reason', booking.cancelled_reason, Boolean(booking.cancelled_reason))
+    // The authored declined panels carry a decline-reason hook; filling it
+    // keeps the supplement from adding a second reason row there.
+    setBookingField(
+      modal,
+      'decline-reason',
+      booking.cancelled_reason,
+      clean(booking.status).toLowerCase() === 'declined' && Boolean(booking.cancelled_reason),
+    )
 
     const showMeeting = ['confirmed', 'rescheduled'].includes(status) && clean(booking.meeting_link) !== ''
     bookingFields(modal, 'meeting-link').forEach(function (meetingLink) {

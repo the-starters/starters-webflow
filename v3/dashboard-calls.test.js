@@ -2085,6 +2085,78 @@ test('details fill every authored panel copy of a booking field', () => {
   assert.equal(view.panelCopies.context.hidden, true)
 })
 
+// F09 team test 2026-09-28: after a Brand edit and a Starter decline, Declined
+// Details showed "Reschedule reason" (the old edit) and "Cancellation reason"
+// (the decline reason). The declined panel labels the reason it really holds.
+test('declined panels label the decline reason and drop the stale edit reason', () => {
+  const booking = {
+    status: 'declined',
+    start: 10_000,
+    duration: 30,
+    rescheduled_reason: 'Earlier suits us',
+    cancelled_reason: 'I am not available that day',
+    brand_data: { name: 'Northwind', memberstack_id: 'mem_brand', timezone: 'UTC' },
+    starter_data: { name: 'Sam', memberstack_id: 'mem_starter', timezone: 'UTC' },
+  }
+  const rows = (panel) => api.detailSupplementRows(booking, 'starter', 'UTC', panel)
+    .map((row) => [row.field, row.label])
+    .filter(([field]) => field.endsWith('-reason'))
+  assert.deepEqual(rows('declined'), [['decline-reason', 'Decline reason']])
+  for (const panel of ['cancelled', 'base', undefined]) {
+    assert.deepEqual(rows(panel), [
+      ['reschedule-reason', 'Reschedule reason'],
+      ['cancel-reason', 'Cancellation reason'],
+    ])
+  }
+
+  for (const authored of [true, false]) {
+    const modal = domElement('dialog', { 'popup-booking-info': '' })
+    modal.ownerDocument = { createElement: (tag) => domElement(tag) }
+    const declined = domElement('div', { 'booking-popup-content': 'declined' })
+    const cancelled = domElement('div', { 'booking-popup-content': 'cancelled' })
+    const wrap = domElement('div', { 'booking-element-wrap': '' })
+    const reason = domElement('p', { 'booking-element': 'decline-reason' })
+    wrap.appendChild(reason)
+    if (authored) declined.appendChild(wrap)
+    modal.appendChild(domElement('div', { 'booking-popup-content': 'base' }))
+    modal.appendChild(declined)
+    modal.appendChild(cancelled)
+
+    api.populateDetailModal(modal, booking, 'starter', 5_000)
+    const summary = (panel) =>
+      panel.querySelectorAll('[data-starters-call-summary-row]').map((row) => [
+        row.getAttribute('data-starters-call-summary-row'),
+        row.children[0].textContent,
+        row.children[1].textContent,
+      ]).filter(([field]) => field.endsWith('-reason'))
+    if (authored) {
+      assert.equal(reason.textContent, 'I am not available that day')
+      assert.equal(reason.hidden, false)
+      assert.equal(wrap.hidden, false)
+      assert.deepEqual(summary(declined), [], 'the authored hook is not duplicated')
+    } else {
+      assert.deepEqual(summary(declined), [
+        ['decline-reason', 'Decline reason', 'I am not available that day'],
+      ])
+    }
+    // Cancelled keeps its labels.
+    assert.deepEqual(summary(cancelled), [
+      ['reschedule-reason', 'Reschedule reason', 'Earlier suits us'],
+      ['cancel-reason', 'Cancellation reason', 'I am not available that day'],
+    ])
+  }
+
+  // Only a declined booking fills the decline-reason hook.
+  const modal = domElement('dialog', { 'popup-booking-info': '' })
+  modal.ownerDocument = { createElement: (tag) => domElement(tag) }
+  const reason = domElement('p', { 'booking-element': 'decline-reason' })
+  const declined = domElement('div', { 'booking-popup-content': 'declined' })
+  declined.appendChild(reason)
+  modal.appendChild(declined)
+  api.populateDetailModal(modal, { ...booking, status: 'cancelled' }, 'starter', 5_000)
+  assert.equal(reason.hidden, true)
+})
+
 test('missing panel details and role-correct Message actions are supplied without duplicates', () => {
   const document = { createElement: (tag) => domElement(tag) }
   const modal = domElement('dialog')
