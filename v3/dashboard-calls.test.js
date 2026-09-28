@@ -2163,6 +2163,60 @@ test('proposal details show old and proposed times and the correct waiting role'
   }
 })
 
+// Kaeser 2026-09-28 (P6): a Dubai Brand with no stored timezone saw the
+// Starter's zone (PDT), so the edited call showed another DATE than the Brand
+// picked. Order: viewer's own zone, then the browser zone, then counterpart.
+test('call times use the viewer zone, then the browser zone, then the counterpart', () => {
+  const RealIntl = Intl
+  function withBrowserZone(zone, run) {
+    global.Intl = {
+      DateTimeFormat: function (locales, options) {
+        if (locales === undefined && options === undefined) {
+          return { resolvedOptions: () => ({ timeZone: zone }) }
+        }
+        return new RealIntl.DateTimeFormat(locales, options)
+      },
+    }
+    try { return run() } finally { global.Intl = RealIntl }
+  }
+  // 2026-10-01 01:30 UTC is Sep 30 in Los Angeles and Oct 1 in Dubai.
+  const start = Date.parse('2026-10-01T01:30:00Z')
+  const booking = {
+    booking_id: 'timezone-order',
+    status: 'confirmed',
+    start,
+    end: start + 1800000,
+    brand_data: { name: 'Brand', timezone: '' },
+    starter_data: { name: 'Starter', timezone: 'America/Los_Angeles' },
+  }
+  function detailDate(row, role) {
+    const view = detailModalHarness()
+    api.populateDetailModal(view.modal, row, role, start - 86400000)
+    return view.fields['start-date'].textContent
+  }
+  function cardDate(row, role) {
+    const startDate = element({ 'booking-element': 'start-date' })
+    const card = element()
+    card.querySelector = (selector) => selector === '[booking-element="start-date"]' ? startDate : null
+    api.bindCard(card, row, role)
+    return startDate.textContent
+  }
+  withBrowserZone('Asia/Dubai', () => {
+    // A Brand with no stored zone reads its own browser zone, on details and card.
+    assert.equal(detailDate(booking, 'brand'), 'Thu, Oct 01, 5:30 AM GMT+4')
+    assert.equal(cardDate(booking, 'brand'), 'Thu, Oct 01, 5:30 AM GMT+4')
+    // A stored own zone still wins over the browser.
+    const stored = { ...booking, brand_data: { name: 'Brand', timezone: 'UTC' } }
+    assert.equal(detailDate(stored, 'brand'), 'Thu, Oct 01, 1:30 AM UTC')
+    // The Starter keeps its own stored zone.
+    assert.equal(detailDate(booking, 'starter'), 'Wed, Sep 30, 6:30 PM PDT')
+  })
+  // With no browser zone either, the counterpart's zone is the last resort.
+  withBrowserZone('', () => {
+    assert.equal(detailDate(booking, 'brand'), 'Wed, Sep 30, 6:30 PM PDT')
+  })
+})
+
 test('proposal details hide unavailable old time and unknown proposer copy', () => {
   const view = detailModalHarness()
   api.populateDetailModal(view.modal, { booking_id: 'missing-old', status: 'rescheduled', start: Date.now() + 86400000, start_old: null }, 'starter')

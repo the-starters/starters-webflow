@@ -499,6 +499,34 @@
     )
   }
 
+  function browserTimezone() {
+    try {
+      const intl = global.Intl
+      return clean(intl && intl.DateTimeFormat().resolvedOptions().timeZone)
+    } catch (_error) {
+      return ''
+    }
+  }
+
+  /**
+   * Timezone the signed-in viewer reads call times in: the viewer's own stored
+   * zone, then this browser's zone, and the counterpart's zone only as a last
+   * resort. A Brand with no stored zone used to fall back to the Starter's
+   * zone first, so a Dubai Brand saw a different date than it booked (P6).
+   * @param {string} role Signed-in member's role.
+   * @param {object} booking Canonical booking row.
+   * @returns {string} IANA timezone, or '' for the formatter default.
+   */
+  function viewerTimezone(role, booking) {
+    const own = role === 'starter'
+      ? booking && booking.starter_data
+      : booking && booking.brand_data
+    const other = role === 'starter'
+      ? booking && booking.brand_data
+      : booking && booking.starter_data
+    return clean(own && own.timezone) || browserTimezone() || clean(other && other.timezone)
+  }
+
   function formatDate(value, timezone) {
     const timestamp = Number(value)
     if (!Number.isFinite(timestamp) || timestamp <= 0) return ''
@@ -849,7 +877,6 @@
     const now = Date.now()
     const status = bookingStatus(booking, now)
     const other = role === 'starter' ? booking.brand_data : booking.starter_data
-    const own = role === 'starter' ? booking.starter_data : booking.brand_data
     card.removeAttribute('bookings-item-template')
     card.setAttribute('data-booking-id', clean(booking.booking_id || booking.id))
     card.setAttribute('data-booking-status', status)
@@ -875,8 +902,8 @@
       card,
       '[booking-element="start-date"]',
       clean(booking.status).toLowerCase() === 'rescheduled'
-        ? proposalOldDate(booking, (own && own.timezone) || (other && other.timezone)) || 'Confirmed time unavailable'
-        : formatDate(booking.start, (own && own.timezone) || (other && other.timezone)),
+        ? proposalOldDate(booking, viewerTimezone(role, booking)) || 'Confirmed time unavailable'
+        : formatDate(booking.start, viewerTimezone(role, booking)),
     )
     text(card, '[booking-element="duration"]', formatDuration(booking.duration))
     text(
@@ -1702,9 +1729,7 @@
   }
 
   function populateDetailSchedule(root, booking, role) {
-    const other = role === 'starter' ? booking.brand_data : booking.starter_data
-    const own = role === 'starter' ? booking.starter_data : booking.brand_data
-    const timezone = (own && own.timezone) || (other && other.timezone)
+    const timezone = viewerTimezone(role, booking)
     setBookingField(root, 'start-date', formatDate(booking.start, timezone), true)
     // The shared date formatter already includes time and timezone.
     ;['start-time', 'start-time-old'].forEach(function (name) {
@@ -1719,9 +1744,7 @@
 
   function populateDetailModal(modal, booking, role, now, content) {
     if (!modal || !booking) return false
-    const other = role === 'starter' ? booking.brand_data : booking.starter_data
-    const own = role === 'starter' ? booking.starter_data : booking.brand_data
-    const timezone = (own && own.timezone) || (other && other.timezone)
+    const timezone = viewerTimezone(role, booking)
     if (content) {
       const panel = modal.querySelector('[booking-popup-content="' + content + '"]')
       if (!panel) return false

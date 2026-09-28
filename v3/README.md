@@ -2332,7 +2332,8 @@ confirmed `start_old` while the canonical status is `rescheduled`, including
 after a list refresh. Missing or invalid original timestamps display
 `Confirmed time unavailable` instead of the proposal. Other statuses use
 `start`, so accepting a proposal displays the accepted slot. Dates use the
-viewing participant's timezone, falling back to the counterpart's timezone.
+viewing participant's stored timezone, then the browser's timezone, and the
+counterpart's timezone only when neither exists.
 
 On both roles' cards, the authored Join Call anchor
 `[booking-element="meeting-link"]` receives the canonical `meeting_link` as a
@@ -2392,8 +2393,8 @@ the header X as its way back.
 
 In call details for a canonical `rescheduled` row, `[booking-element="start-date-old"]`
 shows `start_old` as the current confirmed time and `start-date` shows `start`
-as the proposed time. Both use the viewing participant's timezone, falling back
-to the counterpart's timezone. The shared formatter includes time and timezone,
+as the proposed time. Both use the same viewer, browser, then counterpart
+timezone order as the cards. The shared formatter includes time and timezone,
 so standalone `start-time` and `start-time-old` nodes stay hidden without hiding
 their date wrappers. Missing or invalid `start_old` hides the old-date field.
 The `status-text` hook tells the counterpart that their confirmation is awaited,
