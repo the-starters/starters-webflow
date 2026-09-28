@@ -2386,10 +2386,12 @@ Because a terminal panel is the opening view rather than one the member
 navigated to, the authored `switch-base` back control stays hidden until a chain
 leaves the panel, keeping the doubled close icon off the entry view.
 Away from `base`, the Brand header's `[booking-action-btn="switch-base"][close-to-base]`
-X shows only when the open panel authors no `switch-base` control of its own. A
-step with its own Back (cancel, cancel reason, reschedule, calendar) therefore
-shows one back control beside the dialog close, and a panel without one keeps
-the header X as its way back.
+X shows only when the open panel authors neither a `switch-base` nor a
+`switch-close` control of its own. A step with its own Back (cancel, cancel
+reason, reschedule, calendar) and a receipt with its own Close (cancelled,
+declined, and the reschedule proposed, updated, accepted, and declined
+receipts) therefore show one control beside the dialog close. A panel with
+neither, such as `payment-methods`, keeps the header X as its way back.
 
 In call details for a canonical `rescheduled` row, `[booking-element="start-date-old"]`
 shows `start_old` as the current confirmed time and `start-date` shows `start`

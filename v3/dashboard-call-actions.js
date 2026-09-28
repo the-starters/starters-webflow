@@ -737,19 +737,22 @@
     const backSelector =
       '[booking-action-btn="switch-base"], [booking-card-action-btn="switch-base"]'
     // The Brand header's [close-to-base] X is a second way back. A step panel
-    // that authors its own Back keeps only that one, so the header no longer
-    // shows a second X beside the dialog close; a panel without its own Back
-    // keeps the header X as its way back.
-    const targetHasOwnBack = contents.some(function (content) {
+    // that authors its own Back, or a receipt that authors its own Close,
+    // keeps only that control, so the header no longer shows a second X
+    // beside the dialog close. A panel with neither (payment-methods) keeps
+    // the header X as its only way back.
+    const ownExitSelector = backSelector +
+      ', [booking-action-btn="switch-close"], [booking-card-action-btn="switch-close"]'
+    const targetHasOwnExit = contents.some(function (content) {
       return !content.hidden &&
         typeof content.querySelector === 'function' &&
-        Boolean(content.querySelector(backSelector))
+        Boolean(content.querySelector(ownExitSelector))
     })
     modal
       .querySelectorAll(backSelector)
       .forEach(function (control) {
         const visible = target !== 'base' &&
-          !(targetHasOwnBack && hasAttribute(control, 'close-to-base'))
+          !(targetHasOwnExit && hasAttribute(control, 'close-to-base'))
         control.hidden = !visible
         control.style.display = visible ? '' : 'none'
       })

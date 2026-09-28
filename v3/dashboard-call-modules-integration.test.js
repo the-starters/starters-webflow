@@ -147,17 +147,28 @@ test('detail action refresh preserves back control visibility away from base', (
 
 // Kaeser 2026-09-28: every Brand step view showed two X icons, the header
 // [close-to-base] back control beside the dialog close. A step that authors
-// its own Back now keeps only that one; a step without one keeps the header X,
-// so every step still has a way back.
-test('the header back X shows only on a step without its own Back control', () => {
+// its own Back, or a receipt that authors its own Close, now keeps only that
+// control; a panel with neither (payment-methods) keeps the header X, so every
+// panel still has a way out.
+test('the header back X shows only on a panel without its own Back or Close', () => {
   const header = button('switch-base')
   header.attributes = { 'close-to-base': '' }
   header.hasAttribute = (name) => name in header.attributes
   const ownBacks = {}
-  const panels = ['base', 'cancel', 'cancel-reason', 'reschedule-calendar', 'payment-methods', 'cancelled']
+  const ownCloses = {}
+  const withBack = ['cancel', 'cancel-reason', 'reschedule-calendar']
+  const receipts = [
+    'cancelled',
+    'declined',
+    'reschedule-proposed',
+    'reschedule-updated',
+    'reschedule-accepted',
+    'reschedule-declined',
+  ]
+  const panels = ['base', ...withBack, ...receipts, 'payment-methods']
     .map(function (name) {
-      const withBack = ['cancel', 'cancel-reason', 'reschedule-calendar'].includes(name)
-      if (withBack) ownBacks[name] = button('switch-base')
+      if (withBack.includes(name)) ownBacks[name] = button('switch-base')
+      if (receipts.includes(name)) ownCloses[name] = button('switch-close')
       return {
         name,
         hidden: name !== 'base',
@@ -166,7 +177,11 @@ test('the header back X shows only on a step without its own Back control', () =
           return attribute === 'booking-popup-content' ? name : null
         },
         querySelector(selector) {
-          return withBack && selector.includes('switch-base') ? ownBacks[name] : null
+          const matches = []
+          if (ownBacks[name]) matches.push('switch-base')
+          if (ownCloses[name]) matches.push('switch-close')
+          const hit = matches.find((action) => selector.includes('"' + action + '"'))
+          return hit === 'switch-base' ? ownBacks[name] : hit === 'switch-close' ? ownCloses[name] : null
         },
         querySelectorAll() { return [] },
       }
@@ -182,17 +197,18 @@ test('the header back X shows only on a step without its own Back control', () =
   const actions = global.StartersDashboardCallActions
   for (const panel of panels) {
     actions.switchPopupContent(modal, panel.name)
-    const own = ownBacks[panel.name]
+    const own = ownBacks[panel.name] || ownCloses[panel.name]
     if (panel.name === 'base') {
       assert.equal(header.hidden, true)
       Object.values(ownBacks).forEach((control) => assert.equal(control.hidden, true))
       continue
     }
-    assert.equal(header.hidden, Boolean(own), panel.name + ': one back control only')
+    assert.equal(header.hidden, Boolean(own), panel.name + ': one way out only')
     assert.equal(header.style.display, own ? 'none' : '')
-    if (own) assert.equal(own.hidden, false, panel.name + ': its own Back stays')
-    assert.ok(!header.hidden || (own && !own.hidden), panel.name + ': keeps a way back')
+    if (ownBacks[panel.name]) assert.equal(ownBacks[panel.name].hidden, false, panel.name + ': its own Back stays')
+    assert.ok(!header.hidden || own, panel.name + ': keeps a way out')
   }
+  assert.equal(header.hidden, false, 'payment-methods keeps the header X as its only way back')
 
   // A detail refresh on a step keeps the single back control.
   actions.switchPopupContent(modal, 'cancel')
