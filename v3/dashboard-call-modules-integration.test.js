@@ -145,6 +145,66 @@ test('detail action refresh preserves back control visibility away from base', (
   assert.equal(panels[1].hidden, false)
 })
 
+// Kaeser 2026-09-28: every Brand step view showed two X icons, the header
+// [close-to-base] back control beside the dialog close. A step that authors
+// its own Back now keeps only that one; a step without one keeps the header X,
+// so every step still has a way back.
+test('the header back X shows only on a step without its own Back control', () => {
+  const header = button('switch-base')
+  header.attributes = { 'close-to-base': '' }
+  header.hasAttribute = (name) => name in header.attributes
+  const ownBacks = {}
+  const panels = ['base', 'cancel', 'cancel-reason', 'reschedule-calendar', 'payment-methods', 'cancelled']
+    .map(function (name) {
+      const withBack = ['cancel', 'cancel-reason', 'reschedule-calendar'].includes(name)
+      if (withBack) ownBacks[name] = button('switch-base')
+      return {
+        name,
+        hidden: name !== 'base',
+        style: {},
+        getAttribute(attribute) {
+          return attribute === 'booking-popup-content' ? name : null
+        },
+        querySelector(selector) {
+          return withBack && selector.includes('switch-base') ? ownBacks[name] : null
+        },
+        querySelectorAll() { return [] },
+      }
+    })
+  const modal = {
+    querySelectorAll(selector) {
+      if (selector === '[booking-popup-content]') return panels
+      if (selector.includes('switch-base')) return [header, ...Object.values(ownBacks)]
+      if (selector.includes('[booking-action-btn]')) return [header]
+      return []
+    },
+  }
+  const actions = global.StartersDashboardCallActions
+  for (const panel of panels) {
+    actions.switchPopupContent(modal, panel.name)
+    const own = ownBacks[panel.name]
+    if (panel.name === 'base') {
+      assert.equal(header.hidden, true)
+      Object.values(ownBacks).forEach((control) => assert.equal(control.hidden, true))
+      continue
+    }
+    assert.equal(header.hidden, Boolean(own), panel.name + ': one back control only')
+    assert.equal(header.style.display, own ? 'none' : '')
+    if (own) assert.equal(own.hidden, false, panel.name + ': its own Back stays')
+    assert.ok(!header.hidden || (own && !own.hidden), panel.name + ': keeps a way back')
+  }
+
+  // A detail refresh on a step keeps the single back control.
+  actions.switchPopupContent(modal, 'cancel')
+  dashboard.configureDetailActions(modal, 'brand', 'confirmed', {
+    booking_id: 'booking-header-x',
+    status: 'confirmed',
+    start: Date.now() + 60 * 60 * 1000,
+  })
+  assert.equal(header.hidden, true)
+  assert.equal(ownBacks.cancel.hidden, false)
+})
+
 test('dashboard reuses already-loaded narrow modules', async () => {
   const loaded = await dashboard.loadDashboardCallModules()
   assert.equal(loaded.actions, global.StartersDashboardCallActions)

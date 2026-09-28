@@ -730,16 +730,32 @@
     // The authored back control returns to the base panel, so it is only
     // meaningful away from it. Hiding it there removes the doubled close icon
     // Kaeser reported on the Brand dialog.
+    const backSelector =
+      '[booking-action-btn="switch-base"], [booking-card-action-btn="switch-base"]'
+    // The Brand header's [close-to-base] X is a second way back. A step panel
+    // that authors its own Back keeps only that one, so the header no longer
+    // shows a second X beside the dialog close; a panel without its own Back
+    // keeps the header X as its way back.
+    const targetHasOwnBack = contents.some(function (content) {
+      return !content.hidden &&
+        typeof content.querySelector === 'function' &&
+        Boolean(content.querySelector(backSelector))
+    })
     modal
-      .querySelectorAll(
-        '[booking-action-btn="switch-base"], [booking-card-action-btn="switch-base"]',
-      )
+      .querySelectorAll(backSelector)
       .forEach(function (control) {
-        const visible = target !== 'base'
+        const visible = target !== 'base' &&
+          !(targetHasOwnBack && hasAttribute(control, 'close-to-base'))
         control.hidden = !visible
         control.style.display = visible ? '' : 'none'
       })
     return found
+  }
+
+  function hasAttribute(node, name) {
+    if (!node) return false
+    if (typeof node.hasAttribute === 'function') return node.hasAttribute(name)
+    return typeof node.getAttribute === 'function' && node.getAttribute(name) != null
   }
 
   /**
