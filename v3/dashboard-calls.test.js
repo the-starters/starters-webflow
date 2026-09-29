@@ -5742,6 +5742,77 @@ test('call card binds its Join Call destination and clears it for ineligible reb
   }
 })
 
+test('authored meeting paragraphs open a confirmed call and stop after rebinding', () => {
+  const previousOpen = global.open
+  const opened = []
+  global.open = (...args) => opened.push(args)
+  const handlers = new Map()
+  const meeting = element({ 'booking-element': 'meeting-link' })
+  meeting.tagName = 'P'
+  meeting.addEventListener = (type, handler) => handlers.set(type, handler)
+  meeting.closest = () => null
+  const card = element()
+  card.querySelectorAll = selector => selector === '[booking-element="meeting-link"]' ? [meeting] : []
+  const booking = {
+    status: 'confirmed', start: Date.now() + 86400000, end: Date.now() + 88200000,
+    meeting_link: 'https://meet.google.com/abc-defg-hij',
+  }
+  try {
+    api.bindCard(card, booking, 'brand')
+    assert.equal(meeting.getAttribute('role'), 'link')
+    assert.equal(meeting.getAttribute('tabindex'), '0')
+    assert.equal(meeting.getAttribute('data-meeting-href'), booking.meeting_link)
+    assert.equal(meeting.getAttribute('href'), null, 'paragraphs cannot use native href navigation')
+    handlers.get('click')({ preventDefault() {} })
+    assert.deepEqual(opened, [[booking.meeting_link, '_blank', 'noopener,noreferrer']])
+
+    api.bindCard(card, { ...booking, status: 'cancelled' }, 'brand')
+    assert.equal(meeting.getAttribute('role'), null)
+    assert.equal(meeting.getAttribute('tabindex'), null)
+    assert.equal(meeting.getAttribute('data-meeting-href'), null)
+    handlers.get('click')({ preventDefault() {} })
+    assert.equal(opened.length, 1, 'an ineligible call must not keep its old destination')
+  } finally {
+    global.open = previousOpen
+  }
+})
+
+test('authored details paragraph opens the current Meet URL for either role', () => {
+  const previousOpen = global.open
+  const opened = []
+  global.open = (...args) => opened.push(args)
+  try {
+    for (const role of ['brand', 'starter']) {
+      const view = detailModalHarness()
+      const meeting = view.fields['meeting-link']
+      const handlers = new Map()
+      meeting.tagName = 'P'
+      delete meeting.href
+      meeting.addEventListener = (type, handler) => handlers.set(type, handler)
+      const booking = {
+        status: 'confirmed', start: Date.now() + 86400000,
+        end: Date.now() + 88200000, duration: 30,
+        meeting_link: 'https://meet.google.com/abc-defg-hij',
+        brand_data: { name: 'Brand', timezone: 'UTC' },
+        starter_data: { name: 'Starter', timezone: 'UTC' },
+      }
+      api.populateDetailModal(view.modal, booking, role)
+      assert.equal(meeting.textContent, booking.meeting_link)
+      assert.equal(meeting.getAttribute('role'), 'link')
+      assert.equal(meeting.getAttribute('tabindex'), '0')
+      handlers.get('keydown')({ key: 'Enter', preventDefault() {} })
+      assert.deepEqual(opened.at(-1), [booking.meeting_link, '_blank', 'noopener,noreferrer'])
+
+      api.populateDetailModal(view.modal, { ...booking, status: 'cancelled' }, role)
+      handlers.get('click')({ preventDefault() {} })
+      assert.equal(meeting.getAttribute('data-meeting-href'), null)
+      assert.equal(opened.length, role === 'brand' ? 1 : 2)
+    }
+  } finally {
+    global.open = previousOpen
+  }
+})
+
 test('Starter request Decline is exposed only with a loaded eligible contract and open response window', () => {
   const prior = global.StartersDashboardCallActions
   const button = element({ 'booking-action-btn': 'switch-decline' })

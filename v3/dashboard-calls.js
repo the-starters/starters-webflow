@@ -476,6 +476,63 @@
     element.style.display = visible ? (flexWhenShown ? 'flex' : '') : 'none'
   }
 
+  const wiredMeetingParagraphs = new WeakSet()
+
+  function safeMeetingHref(value) {
+    try {
+      const url = new URL(clean(value))
+      return url.protocol === 'https:' || url.protocol === 'http:' ? url.href : ''
+    } catch (_error) {
+      return ''
+    }
+  }
+
+  function setMeetingDestination(element, href) {
+    if (!element) return
+    const tag = clean(element.tagName).toLowerCase()
+    // A missing tag is only used by the small DOM test doubles.
+    const nativeLink = tag === '' || tag === 'a' || tag === 'area'
+    if (nativeLink) {
+      if (href) {
+        element.setAttribute('href', href)
+        if ('href' in element) element.href = href
+        element.setAttribute('target', '_blank')
+        element.setAttribute('rel', 'noopener noreferrer')
+      } else {
+        element.removeAttribute('href')
+        if ('href' in element) element.href = ''
+        element.removeAttribute('target')
+        element.removeAttribute('rel')
+      }
+      return
+    }
+
+    // The published Webflow details use a paragraph for this authored hook.
+    // Make that existing text keyboard accessible without generating UI.
+    element.removeAttribute('href')
+    if (href) {
+      element.setAttribute('data-meeting-href', href)
+      element.setAttribute('role', 'link')
+      element.setAttribute('tabindex', '0')
+    } else {
+      element.removeAttribute('data-meeting-href')
+      element.removeAttribute('role')
+      element.removeAttribute('tabindex')
+    }
+    if (wiredMeetingParagraphs.has(element) || typeof element.addEventListener !== 'function') return
+    const openCurrentMeeting = function (event) {
+      const current = safeMeetingHref(element.getAttribute('data-meeting-href'))
+      if (!current || typeof global.open !== 'function') return
+      if (event && typeof event.preventDefault === 'function') event.preventDefault()
+      global.open(current, '_blank', 'noopener,noreferrer')
+    }
+    element.addEventListener('click', openCurrentMeeting)
+    element.addEventListener('keydown', function (event) {
+      if (event.key === 'Enter' || event.key === ' ') openCurrentMeeting(event)
+    })
+    wiredMeetingParagraphs.add(element)
+  }
+
   function text(root, selector, value) {
     const element = root && root.querySelector(selector)
     if (element) element.textContent = clean(value)
@@ -887,16 +944,10 @@
     card.setAttribute('data-booking-id', clean(booking.booking_id || booking.id))
     card.setAttribute('data-booking-status', status)
     paintStatusPill(card, status, role, booking)
-    let meetingHref = ''
-    if (['confirmed', 'rescheduled'].includes(status)) {
-      try {
-        const url = new URL(clean(booking.meeting_link))
-        if (url.protocol === 'https:' || url.protocol === 'http:') meetingHref = url.href
-      } catch (_error) {}
-    }
+    const meetingHref = ['confirmed', 'rescheduled'].includes(status)
+      ? safeMeetingHref(booking.meeting_link) : ''
     bookingFields(card, 'meeting-link').forEach(function (link) {
-      if (meetingHref) link.setAttribute('href', meetingHref)
-      else link.removeAttribute('href')
+      setMeetingDestination(link, meetingHref)
       show(link, meetingHref !== '')
       const wrap = link.closest && link.closest('[booking-element-wrap]')
       if (wrap) show(wrap, meetingHref !== '')
@@ -1983,10 +2034,12 @@
     setBookingField(modal, 'cancel-reason', booking.cancelled_reason, Boolean(booking.cancelled_reason))
     populateDeclineReason(modal, booking, isPaid)
 
-    const showMeeting = ['confirmed', 'rescheduled'].includes(status) && clean(booking.meeting_link) !== ''
+    const meetingHref = ['confirmed', 'rescheduled'].includes(status)
+      ? safeMeetingHref(booking.meeting_link) : ''
+    const showMeeting = meetingHref !== ''
     bookingFields(modal, 'meeting-link').forEach(function (meetingLink) {
-      if ('href' in meetingLink) meetingLink.href = showMeeting ? clean(booking.meeting_link) : ''
-      meetingLink.textContent = showMeeting ? clean(booking.meeting_link) : ''
+      setMeetingDestination(meetingLink, meetingHref)
+      meetingLink.textContent = meetingHref
       show(meetingLink, showMeeting)
       const group = meetingLink.closest && meetingLink.closest('[booking-element-wrap]')
       if (group) show(group, showMeeting)
