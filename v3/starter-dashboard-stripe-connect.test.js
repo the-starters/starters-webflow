@@ -136,7 +136,7 @@ function returnContext(overrides = {}) {
   }
 }
 
-test('dashboard view uses canonical connected and charges-enabled state', () => {
+test('dashboard view uses canonical provider-derived onboarding state', () => {
   assert.equal(
     api.resolveDashboardView(
       { connected: false, charges_enabled: false },
@@ -146,17 +146,37 @@ test('dashboard view uses canonical connected and charges-enabled state', () => 
   )
   assert.equal(
     api.resolveDashboardView(
-      { connected: true, charges_enabled: false },
+      {
+        connected: true,
+        charges_enabled: false,
+        requires_onboarding: true,
+      },
       returnContext(),
     ),
     'incomplete',
   )
   assert.equal(
     api.resolveDashboardView(
-      { connected: true, charges_enabled: true },
+      {
+        connected: true,
+        charges_enabled: false,
+        requires_onboarding: false,
+      },
+      returnContext(),
+    ),
+    'review',
+  )
+  assert.equal(
+    api.resolveDashboardView(
+      {
+        connected: true,
+        charges_enabled: true,
+        requires_onboarding: true,
+      },
       returnContext(),
     ),
     'ready',
+    'canonical readiness wins over stale onboarding state',
   )
   assert.equal(
     api.resolveDashboardView({ mode: 'provider_unavailable' }, returnContext()),
@@ -178,21 +198,64 @@ test('dashboard view uses canonical connected and charges-enabled state', () => 
   )
 })
 
-test('a Stripe return renders review only while the provider account is connected', () => {
-  assert.equal(
-    api.resolveDashboardView(
-      { connected: true, charges_enabled: false },
-      returnContext({ mode: 'connected', returnedFromStripe: true }),
-    ),
-    'review',
-  )
-  assert.equal(
-    api.resolveDashboardView(
-      { connected: false, charges_enabled: false },
-      returnContext({ mode: 'connected', returnedFromStripe: true }),
-    ),
-    'disconnected',
-  )
+test('provider-derived state stays stable across a Stripe return and reload', () => {
+  const stripeReturn = returnContext({
+    mode: 'connected',
+    pollForSettlement: true,
+    returnedFromStripe: true,
+  })
+  const reload = returnContext()
+  const cases = [
+    {
+      expected: 'incomplete',
+      status: {
+        connected: true,
+        charges_enabled: false,
+        requires_onboarding: true,
+      },
+    },
+    {
+      expected: 'review',
+      status: {
+        connected: true,
+        charges_enabled: false,
+        requires_onboarding: false,
+      },
+    },
+    {
+      expected: 'ready',
+      status: {
+        connected: true,
+        charges_enabled: true,
+        requires_onboarding: true,
+      },
+    },
+  ]
+
+  for (const { expected, status } of cases) {
+    assert.equal(api.resolveDashboardView(status, stripeReturn), expected)
+    assert.equal(api.resolveDashboardView(status, reload), expected)
+  }
+})
+
+test('missing or malformed onboarding state fails safe to incomplete', () => {
+  for (const requiresOnboarding of [undefined, null, 'false', 0, {}]) {
+    const status = {
+      connected: true,
+      charges_enabled: false,
+    }
+    if (requiresOnboarding !== undefined) {
+      status.requires_onboarding = requiresOnboarding
+    }
+
+    assert.equal(
+      api.resolveDashboardView(
+        status,
+        returnContext({ mode: 'connected', returnedFromStripe: true }),
+      ),
+      'incomplete',
+    )
+  }
 })
 
 test('exchange outcome exposes only the allowlisted owner-conflict reason', () => {
@@ -4567,7 +4630,7 @@ test('pending conflict recovery enables reload after dashboard ownership is lost
   }
 })
 
-test('verified callback signal renders review on the original dashboard', async () => {
+test('verified callback signal stops polling when onboarding is required', async () => {
   const previous = {
     BroadcastChannel: global.BroadcastChannel,
     addEventListener: global.addEventListener,
@@ -4641,7 +4704,11 @@ test('verified callback signal renders review on the original dashboard', async 
     }
     if (String(url).includes('/stripe_connect/status/v3')) {
       statusCount += 1
-      return response({ connected: true, charges_enabled: false })
+      return response({
+        connected: true,
+        charges_enabled: false,
+        requires_onboarding: true,
+      })
     }
     return response({
       mode: 'oauth',
@@ -4667,9 +4734,9 @@ test('verified callback signal renders review on the original dashboard', async 
     assert.equal(api.signalStripeReturn('member-123'), true)
     await delivery
 
-    assert.equal(statusCount, 5)
+    assert.equal(statusCount, 1)
     assert.equal(connect.getAttribute('aria-busy'), 'false')
-    assert.equal(root.getAttribute('data-stripe-connect-view'), 'review')
+    assert.equal(root.getAttribute('data-stripe-connect-view'), 'incomplete')
   } finally {
     api.__resetXanoToken()
     global.BroadcastChannel = previous.BroadcastChannel

@@ -3837,9 +3837,9 @@ root, use these values:
 | --- | --- |
 | `loading` | Immediate loading state while Memberstack and Xano resolve |
 | `disconnected` | No connected Stripe account; contains the authored connect CTA |
-| `incomplete` | Connected account whose charges are not enabled; used by the hero earnings tile while the Action Item root is hidden |
+| `incomplete` | Connected account whose provider status requires more onboarding; missing or malformed onboarding status also fails safe here |
 | `ready` | Stripe reports `charges_enabled: true` |
-| `review` | The user just returned from Stripe, but the authoritative enabled flag has not settled after short polling |
+| `review` | Connected account whose provider status explicitly says onboarding is complete while readiness remains pending |
 | `error` | Designer-owned safe failure state; on the callback page this remains visible instead of losing a failed one-time code, and on the dashboard it also carries safe account-owner-conflict recovery copy |
 
 Give every Connect control `data-stripe-connect-action="start"`. An optional
@@ -3905,11 +3905,13 @@ the shared action guard latched while a supported return watcher prevents
 duplicate onboarding tabs. When the dashboard regains focus, the Stripe tab
 closes, or the member-matched callback signals completion, the original
 dashboard re-reads canonical status, restores the pending controls, and releases
-the guard for recovery. A verified callback that has not settled to
-`charges_enabled:true` renders `review`; focus or tab closure without callback
-confirmation returns to the canonical disconnected or incomplete state. If the
-browser exposes none of the return-watcher APIs, the controller releases the
-pending state and guard after the successful tab navigation.
+the guard for recovery. A verified callback uses the same provider-derived
+state as a reload: `requires_onboarding:true` stops settlement polling and
+renders `incomplete`; only an explicit `requires_onboarding:false` with
+readiness still pending renders `review`. Focus or tab closure without callback
+confirmation also returns to canonical provider state. If the browser exposes
+none of the return-watcher APIs, the controller releases the pending state and
+guard after the successful tab navigation.
 
 A single in-flight guard is shared across every start, refresh, Earnings, and
 Open Stripe control in the dashboard, so a second click on any
@@ -3939,13 +3941,15 @@ dashboard does not expose it.
 The dashboard calls provider-aware `status/v3` immediately. It repairs a
 readiness mismatch and clears a stale projection only when Stripe returns a
 definitive disconnect; ambiguous provider errors show the authored unavailable
-state without changing Xano. `connected:false` selects
-`disconnected`; `connected:true` with `charges_enabled:false` selects
-`incomplete`; and `charges_enabled:true` selects `ready`. After a recognized
-ordinary return, the controller polls the status briefly to absorb webhook
-timing. A receipt-verified owner conflict skips that settlement-poll loop. If
-the provider account remains connected but the readiness flag is still false,
-it selects the authored `review` state instead of painting a false success. A
+state without changing Xano. `connected:false` selects `disconnected`.
+`charges_enabled:true` always selects `ready`. A connected account whose
+readiness is false selects `review` only when provider status explicitly returns
+`requires_onboarding:false`; `true`, missing, or malformed values select
+`incomplete`. After a recognized ordinary return, the controller polls status
+briefly to absorb webhook timing, but stops as soon as readiness succeeds or
+the provider confirms more onboarding is required. The return marker controls
+only that polling and URL cleanup; it cannot choose a dashboard state. A
+receipt-verified owner conflict skips the settlement-poll loop. A
 provider-disconnected account always returns to `disconnected`, even when a
 stale success marker is present. A `reconciliation_required` return with a
 canonically disconnected account stays fail closed in the authored error state

@@ -262,8 +262,7 @@
       return 'disconnected'
     }
     if (status.charges_enabled === true) return 'ready'
-    if (returnContext.returnedFromStripe === true) return 'review'
-    return 'incomplete'
+    return status.requires_onboarding === false ? 'review' : 'incomplete'
   }
 
   function wait(ms) {
@@ -1500,7 +1499,12 @@
       if (authScope) requireConflictAuthScope(authScope)
       status = await fetchStatus(authScope)
       if (authScope) requireConflictAuthScope(authScope)
-      if (status.charges_enabled === true) break
+      if (
+        status.charges_enabled === true ||
+        status.requires_onboarding === true
+      ) {
+        break
+      }
     }
     return status
   }
