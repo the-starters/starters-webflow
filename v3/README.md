@@ -3244,6 +3244,21 @@ composite clear contract in
 [Booking-stage availability writer](#booking-stage-availability-writer); this
 section does not add a second clear owner.
 
+Connection actions (JP contract, 2026-09-29): a disconnected member sees only
+Connect Platform. Connect Google appears once the Platform layer is connected.
+A Google connection shows Platform and Google connected, plus Disconnect
+Google. Connect Google goes straight to the `pre-oauth` step; the retired
+`switch-calendar` step never opens, and a stale Connect Google click without a
+connected Platform layer is ignored. V3 keeps one grant per member, so the
+"Done" click deletes the Platform grant through `grants/delete/v3` before the
+OAuth redirect. That route never cancels anything: while a call has not ended
+it refuses, and the error step names those calls. Before the delete, the
+controller stores an OAuth intent with `restorePlatform: true` (plus the paid
+service when one exists). When the member cancels at Google, returns without a
+callback, or the OAuth start fails, the controller rebuilds a Platform calendar
+and its services from that intent. An intent without `restorePlatform` or a paid
+service creates no calendar.
+
 Designer markup contract (`data-availability-element="<name>"` unless noted):
 `section` (root), `connect-wrapper`, `connect-label-group`, `connect-label`,
 `connect-info-wrapper`, `connect-btn-wrapper`

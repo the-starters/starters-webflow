@@ -490,13 +490,22 @@
       : 'https://' + window.location.hostname + PRODUCTION_PATH
   }
 
-  function rememberOAuthIntent(memberId, redirectUri, paidCallIntent) {
+  function rememberOAuthIntent(memberId, redirectUri, paidCallIntent, restorePlatform) {
     const intent = {
       createdAt: Date.now(),
       redirectUri: redirectUri,
       paidCallIntent: paidCallIntent || null,
     }
+    // Set only when this transition deletes a connected Platform calendar, so an
+    // abandoned OAuth rebuilds what the member had, Free-only members included.
+    if (restorePlatform) intent.restorePlatform = true
     return writeOAuthIntent(memberId, intent) ? intent : null
+  }
+
+  // An OAuth transition needs recovery when it replaced a connected Platform
+  // calendar or captured a paid service that must come back.
+  function oauthIntentNeedsRecovery(intent) {
+    return Boolean(intent && (intent.paidCallIntent || intent.restorePlatform))
   }
 
   function oauthIntentStorages(storageNames) {
@@ -959,9 +968,9 @@
     return service
   }
 
-  async function recoverPaidCallAfterOAuthCancellation(memberId, oauthIntent) {
-    const intent = oauthIntent && oauthIntent.paidCallIntent
-    if (!intent) return false
+  async function recoverCalendarAfterOAuthCancellation(memberId, oauthIntent) {
+    if (!oauthIntentNeedsRecovery(oauthIntent)) return false
+    const intent = oauthIntent.paidCallIntent || null
     await refreshCanonicalConnectionState()
     let createdVirtual = false
     const recovery = oauthIntent.virtualRecovery
@@ -995,7 +1004,7 @@
   async function recoverFailedCalendarTransition(memberId, transition, error) {
     const recoveryTransition = transition || (error && error.calendarTransition)
     if (!(memberId && recoveryTransition && recoveryTransition.oauthIntent)) return false
-    const recovered = await recoverPaidCallAfterOAuthCancellation(
+    const recovered = await recoverCalendarAfterOAuthCancellation(
       memberId,
       recoveryTransition.oauthIntent,
     )
@@ -1197,15 +1206,20 @@
     })
   }
 
-  async function clearGrant(currentGrantId, memberId) {
+  async function clearGrant(currentGrantId, memberId, restorePlatform) {
     if (!currentGrantId) return { paidCallIntent: null }
     await ensureTimezone()
     const paidCallIntent = await capturePaidCallIntent()
-    const oauthIntent = paidCallIntent
-      ? rememberOAuthIntent(memberId, oauthRedirectUri(), paidCallIntent)
+    const oauthIntent = paidCallIntent || restorePlatform
+      ? rememberOAuthIntent(memberId, oauthRedirectUri(), paidCallIntent, restorePlatform)
       : null
     if (paidCallIntent && !oauthIntent) {
       throw new Error('Paid-call calendar transition could not be retained')
+    }
+    // Deleting a connected Platform calendar without a recovery record would leave
+    // a member who abandons OAuth with no calendar, so refuse before the delete.
+    if (restorePlatform && !oauthIntent) {
+      throw new Error('Platform calendar transition could not be retained')
     }
     const transition = { paidCallIntent: paidCallIntent, oauthIntent: oauthIntent }
     // The authenticated Xano route owns the complete provider-first lifecycle:
@@ -1307,7 +1321,10 @@
     let transition = null
     try {
       memberId = await writeMemberId()
-      transition = await clearGrant(grantId, memberId)
+      // Connect Google replaces the connected Platform calendar (V3 keeps one
+      // grant per member). Remember that, so an abandoned OAuth rebuilds it.
+      const replacingPlatform = platformLayerConnected() && !googleLayerConnected()
+      transition = await clearGrant(grantId, memberId, replacingPlatform)
       grantId = null
       grantEmail = null
       grantCalendarId = null
@@ -1326,7 +1343,7 @@
       }
       await refreshCanonicalConnectionState()
       console.log('[scheduling-section] redirecting to Google Calendar OAuth')
-      await handlePreRedirect(transition.paidCallIntent)
+      await handlePreRedirect(transition.paidCallIntent, Boolean(transition.oauthIntent && transition.oauthIntent.restorePlatform))
       // On success handlePreRedirect navigates away, so connectBusy is
       // intentionally left set; a fresh page load resets module state.
       return true
@@ -1401,7 +1418,7 @@
     }
   }
 
-  async function handlePreRedirect(paidCallIntent) {
+  async function handlePreRedirect(paidCallIntent, restorePlatform) {
     try {
       const memberId = await writeMemberId()
       await ensureTimezone()
@@ -1418,7 +1435,7 @@
         response.response.result.data &&
         response.response.result.data.url
       if (!url) throw new Error('grants/oauth returned no URL')
-      if (!rememberOAuthIntent(memberId, redirectUri, paidCallIntent)) {
+      if (!rememberOAuthIntent(memberId, redirectUri, paidCallIntent, restorePlatform)) {
         throw new Error('OAuth transition could not be retained')
       }
       window.location.assign(url)
@@ -1502,11 +1519,10 @@
         error &&
         error.code === 'OAUTH_CALLBACK_INVALID' &&
         trustedState &&
-        oauthIntent &&
-        oauthIntent.paidCallIntent
+        oauthIntentNeedsRecovery(oauthIntent)
       ) {
         try {
-          recovered = await recoverPaidCallAfterOAuthCancellation(
+          recovered = await recoverCalendarAfterOAuthCancellation(
             memberId,
             oauthIntent,
           )
@@ -1521,7 +1537,7 @@
       if (
         error &&
         error.code === 'OAUTH_CALLBACK_INVALID' &&
-        (!trustedState || !oauthIntent || !oauthIntent.paidCallIntent || recovered)
+        (!trustedState || !oauthIntentNeedsRecovery(oauthIntent) || recovered)
       ) {
         if (trustedState && memberId) clearOAuthIntent(memberId)
         clearOAuthCallback()
@@ -1599,8 +1615,9 @@
       target.addEventListener('click', function (e) {
         if (e && typeof e.preventDefault === 'function') e.preventDefault()
         if (action === 'connect-google') {
-          // Confirmed switching from platform — continue into the same
-          // pre-oauth step a fresh connect would show.
+          // Legacy "Switch to Google" button in the retired switch-calendar step.
+          // Connect Google no longer opens that step; if older markup still
+          // reaches it, continue into the same pre-oauth step.
           switchNotification('pre-oauth')
         } else if (action === 'open-oauth-redirect') {
           switchNotification('oauth-redirect')
@@ -1739,7 +1756,9 @@
     const hasGoogleConnection = googleLayerConnected()
     const rules = [
       ['connect-platform', platformConnectAvailable()],
-      ['open-connect-google', !hasGoogleConnection],
+      // JP contract (2026-09-29): Connect Google is offered only once the Platform
+      // layer is connected, so a disconnected member sees only Connect Platform.
+      ['open-connect-google', platformLayerConnected() && !hasGoogleConnection],
       ['open-disconnect-google', hasGoogleConnection],
     ]
     rules.forEach(function (rule, i) {
@@ -1793,10 +1812,16 @@
           else if (ok) switchNotification('virtual-connected')
         })
       } else if (action === 'open-connect-google') {
-        // Switching away from platform replaces the platform calendar, and
-        // grants/delete/v3 refuses while calls are active. Warn first.
-        // Starting from disconnected skips straight to the informational step.
-        openNotification(availability && availability.manager === 'platform' ? 'switch-calendar' : 'pre-oauth')
+        // Google is added on top of a connected Platform layer and goes straight
+        // to the informational step: no "switch" warning. grants/delete/v3 never
+        // cancels anything; while a call has not ended it refuses, and the error
+        // step names those calls. A stale or programmatic click without a
+        // connected Platform layer (or with Google already connected) is ignored.
+        if (!platformLayerConnected() || googleLayerConnected()) {
+          applyConnectButtonVisibility()
+          return
+        }
+        openNotification('pre-oauth')
       } else if (action === 'open-disconnect-google') {
         openNotification('disconnect-calendar')
       }
@@ -3111,8 +3136,8 @@
         await consumeOAuthCallback()
       } else {
         const pendingTransition = readOAuthIntent(sessionMemberId)
-        if (pendingTransition && pendingTransition.paidCallIntent) {
-          const recovered = await recoverPaidCallAfterOAuthCancellation(
+        if (oauthIntentNeedsRecovery(pendingTransition)) {
+          const recovered = await recoverCalendarAfterOAuthCancellation(
             sessionMemberId,
             pendingTransition,
           )
