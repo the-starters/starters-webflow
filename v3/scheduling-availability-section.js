@@ -565,6 +565,32 @@
     return age >= 0 && age <= maxAge
   }
 
+  function oauthIntentExpired(intent) {
+    if (!(intent && Number.isFinite(intent.createdAt))) return false
+    const maxAge = intent.restorePlatform === true
+      ? OAUTH_PLATFORM_RECOVERY_MAX_AGE
+      : OAUTH_CALLBACK_MAX_AGE
+    return Date.now() - intent.createdAt > maxAge
+  }
+
+  function removeMatchingDurableOAuthIntent(key, expiredIntent) {
+    const storages = oauthIntentStorages(['localStorage'])
+    if (storages.length === 0) return
+    try {
+      const raw = storages[0].getItem(key)
+      const durableIntent = raw ? JSON.parse(raw) : null
+      if (
+        durableIntent &&
+        durableIntent.createdAt === expiredIntent.createdAt &&
+        durableIntent.redirectUri === expiredIntent.redirectUri
+      ) {
+        storages[0].removeItem(key)
+      }
+    } catch (error) {
+      /* storage unavailable */
+    }
+  }
+
   function platformRecoveryIntent(intent) {
     const recoveryIntent = {
       createdAt: intent.createdAt,
@@ -600,6 +626,7 @@
           if (allowPlatformRecovery) return platformRecoveryIntent(intent)
           continue
         }
+        if (oauthIntentExpired(intent)) removeMatchingDurableOAuthIntent(key, intent)
         storage.removeItem(key)
       } catch (error) {
         try {
@@ -1269,22 +1296,25 @@
     })
   }
 
-  async function clearGrant(currentGrantId, memberId, restorePlatform) {
-    if (!currentGrantId) return { paidCallIntent: null }
+  async function clearGrant(currentGrantId, memberId, restorePlatform, retainedTransition) {
+    if (!currentGrantId) return retainedTransition || { paidCallIntent: null }
     await ensureTimezone()
-    const paidCallIntent = await capturePaidCallIntent()
-    const oauthIntent = paidCallIntent || restorePlatform
-      ? rememberOAuthIntent(memberId, oauthRedirectUri(), paidCallIntent, restorePlatform)
-      : null
-    if (paidCallIntent && !oauthIntent) {
-      throw new Error('Paid-call calendar transition could not be retained')
+    let transition = retainedTransition || null
+    if (!transition) {
+      const paidCallIntent = await capturePaidCallIntent()
+      const oauthIntent = paidCallIntent || restorePlatform
+        ? rememberOAuthIntent(memberId, oauthRedirectUri(), paidCallIntent, restorePlatform)
+        : null
+      if (paidCallIntent && !oauthIntent) {
+        throw new Error('Paid-call calendar transition could not be retained')
+      }
+      // Deleting a connected Platform calendar without a recovery record would leave
+      // a member who abandons OAuth with no calendar, so refuse before the delete.
+      if (restorePlatform && !oauthIntent) {
+        throw new Error('Platform calendar transition could not be retained')
+      }
+      transition = { paidCallIntent: paidCallIntent, oauthIntent: oauthIntent }
     }
-    // Deleting a connected Platform calendar without a recovery record would leave
-    // a member who abandons OAuth with no calendar, so refuse before the delete.
-    if (restorePlatform && !oauthIntent) {
-      throw new Error('Platform calendar transition could not be retained')
-    }
-    const transition = { paidCallIntent: paidCallIntent, oauthIntent: oauthIntent }
     // The authenticated Xano route owns the complete provider-first lifecycle:
     // active-booking guard, Nylas grant deletion, configuration cleanup,
     // canonical availability cleanup, and Memberstack reconciliation. Never
@@ -1299,7 +1329,7 @@
       return Object.assign({ result: result }, transition)
     } catch (error) {
       const failure = error instanceof Error ? error : new Error('grants/delete/v3 failed')
-      if (oauthIntent && isActiveCallsRefusal(failure)) {
+      if (transition.oauthIntent && isActiveCallsRefusal(failure)) {
         clearOAuthIntent(memberId)
         transition.oauthIntent = null
       }
@@ -1328,7 +1358,15 @@
     try {
       memberId = await writeMemberId()
       const pendingRecovery = readOAuthRecoveryIntent(memberId)
-      if (oauthIntentNeedsRecovery(pendingRecovery)) {
+      const recoveryAccount = pendingRecovery && pendingRecovery.virtualRecovery
+      const repairPendingRecovery = Boolean(
+        pendingRecovery &&
+        pendingRecovery.restorePlatform === true &&
+        grantId &&
+        !grantCalendarId &&
+        !(recoveryAccount && recoveryAccount.grant_id === grantId),
+      )
+      if (oauthIntentNeedsRecovery(pendingRecovery) && !repairPendingRecovery) {
         const recovered = await recoverCalendarAfterOAuthCancellation(memberId, pendingRecovery)
         if (!recovered) return
         clearOAuthIntent(memberId)
@@ -1343,7 +1381,13 @@
       // failure below leaves the module re-issuing clearGrant against a
       // deleted grant on every retry.
       const clearedGrant = Boolean(grantId)
-      transition = await clearGrant(grantId, memberId)
+      const retainedTransition = repairPendingRecovery
+        ? {
+            paidCallIntent: pendingRecovery.paidCallIntent || null,
+            oauthIntent: pendingRecovery,
+          }
+        : null
+      transition = await clearGrant(grantId, memberId, false, retainedTransition)
       if (clearedGrant) {
         grantId = null
         grantEmail = null
@@ -1425,7 +1469,7 @@
       }
       await refreshCanonicalConnectionState()
       console.log('[scheduling-section] redirecting to Google Calendar OAuth')
-      await handlePreRedirect(transition.paidCallIntent, Boolean(transition.oauthIntent && transition.oauthIntent.restorePlatform))
+      await handlePreRedirect(transition.oauthIntent)
       // On success handlePreRedirect navigates away, so connectBusy is
       // intentionally left set; a fresh page load resets module state.
       return true
@@ -1500,11 +1544,12 @@
     }
   }
 
-  async function handlePreRedirect(paidCallIntent, restorePlatform) {
+  async function handlePreRedirect(oauthIntent) {
     try {
+      if (!oauthIntent) throw new Error('OAuth transition could not be retained')
       const memberId = await writeMemberId()
       await ensureTimezone()
-      const redirectUri = oauthRedirectUri()
+      const redirectUri = oauthIntent.redirectUri
       const response = await xanoPost('/grants/oauth/v3', {
         in_state: memberId,
         in_provider: 'google',
@@ -1517,9 +1562,6 @@
         response.response.result.data &&
         response.response.result.data.url
       if (!url) throw new Error('grants/oauth returned no URL')
-      if (!rememberOAuthIntent(memberId, redirectUri, paidCallIntent, restorePlatform)) {
-        throw new Error('OAuth transition could not be retained')
-      }
       oauthRedirectStarted = true
       window.location.assign(url)
     } catch (error) {
