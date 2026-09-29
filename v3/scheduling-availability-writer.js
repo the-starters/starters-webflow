@@ -468,9 +468,9 @@
   /* ------------------------------------------------------------------ */
 
   // Remembers the authored copy the first time the shared error step is revealed,
-  // so every path that reveals it restores that copy and only a rate-aware caller
-  // can replace it. Otherwise one transition's remediation message would still be
-  // on screen for the next, unrelated failure.
+  // so every path that reveals it restores that copy and only an explicitly mapped,
+  // actionable transition failure can replace it. Otherwise one transition's
+  // remediation message would still be on screen for the next, unrelated failure.
   let authoredTransitionErrorCopy = null
 
   // Only a leaf the step authored as its copy may be written through. An element

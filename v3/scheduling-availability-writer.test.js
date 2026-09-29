@@ -5,6 +5,10 @@ const vm = require('node:vm')
 
 const source = fs.readFileSync(require.resolve('./scheduling-availability-writer.js'), 'utf8')
 const API_BASE = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:tCpV3oqd'
+const ACTIVE_CALLS_COPY =
+  'You have Requested or Confirmed calls on your current calendar. Decline or cancel them, or wait until they end, then try again.'
+const GENERIC_TRANSITION_COPY =
+  "We couldn't complete that calendar change. Please try again or contact support."
 
 /* ------------------------------------------------------------------ */
 /* Minimal DOM                                                         */
@@ -207,10 +211,8 @@ function buildDom(options) {
     root.appendChild(step)
   }
 
-  // Same `[error-text-element]` contract the section's shared notification modal
-  // authors. Designer has not added it to this page's error step yet
-  // (v3/README.md, availability-step markup gaps), so the writer must degrade to
-  // the authored generic copy when it is absent and use it when it is present.
+  // The writer uses `[error-text-element]` when it is a plain text leaf and
+  // otherwise leaves the Designer-authored generic error step intact.
   let errorText = null
   if (!options.withoutErrorTextElement) {
     errorText = new El('div', { 'error-text-element': '' })
@@ -1128,6 +1130,8 @@ test('an active-booking rejection stops the platform-to-Google manager switch', 
   assert.equal(result.calls.filter((c) => c.path === '/grants/oauth/v3').length, 0)
   assert.equal(result.window.STARTER_AVAILABILITY.manager, 'platform')
   assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'error')
+  assert.equal(result.dom.steps['config-request-error'].style.display, 'block')
+  assert.equal(result.dom.errorText.textContent, ACTIVE_CALLS_COPY)
 })
 
 test('choosing platform creates the virtual calendar chain and configs', async () => {
@@ -1386,7 +1390,7 @@ test('an active-booking rejection stops the Google-to-Platform manager switch', 
       }),
       '/grants/delete/v3': () => ({
         status: 400,
-        body: { message: 'Resolve active bookings before disconnecting the calendar' },
+        body: { message: 'RESOLVE ACTIVE BOOKINGS before disconnecting the calendar' },
       }),
     },
   })
@@ -1401,6 +1405,8 @@ test('an active-booking rejection stops the Google-to-Platform manager switch', 
   assert.equal(result.calls.filter((c) => c.path === '/starter/update_availability/v3').length, 0)
   assert.equal(result.window.STARTER_AVAILABILITY.manager, 'calendar')
   assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'error')
+  assert.equal(result.dom.steps['config-request-error'].style.display, 'block')
+  assert.equal(result.dom.errorText.textContent, ACTIVE_CALLS_COPY)
 })
 
 test('disconnect flow: confirm navigates to its step, disconnect rebuilds a virtual calendar', async () => {
@@ -1619,6 +1625,41 @@ test('a revealed error step keeps nested authored markup inside its error-text e
   assert.match(result.dom.errorText.children[1].textContent, /contact support/)
 })
 
+test('an active-booking refusal keeps nested authored markup inside its error-text element', async () => {
+  const availability = defaultAvailability()
+  availability.manager = 'calendar'
+  const result = loadWriter({
+    availability,
+    storage: TZ_CACHED,
+    nestedErrorTextMarkup: true,
+    routes: {
+      '/starter/get_by_memberstack/v3': () => ({
+        status: 200,
+        body: {
+          id: 1,
+          timezone: 'Asia/Manila',
+          availability,
+          nylas_grant_id: 'grant-1',
+          nylas_grant_email: 'grant@example.com',
+          nylas_calendar_id: 'cal-1',
+        },
+      }),
+      '/grants/delete/v3': () => ({
+        status: 400,
+        body: { message: 'Resolve active bookings before disconnecting the calendar' },
+      }),
+    },
+  })
+  await settle()
+
+  result.clickAction(result.dom.buttons.disconnectCalendar)
+  await settle()
+
+  assert.equal(result.dom.steps['config-request-error'].style.display, 'block')
+  assert.equal(result.dom.errorText.children.length, 2, 'authored icon and copy must survive')
+  assert.equal(result.dom.errorText.children[1].textContent, GENERIC_TRANSITION_COPY)
+})
+
 test('a blocked paid-call rate still stops the disconnect where Designer authored no error-text element', async () => {
   const result = loadWriter({
     storage: TZ_CACHED,
@@ -1745,9 +1786,7 @@ test('an active-booking rejection preserves calendar state in the disconnect flo
   assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'error')
   assert.equal(result.dom.steps['config-request-error'].style.display, 'block')
   assert.equal(result.dom.steps['success-disconnect'].style.display, 'none')
-  assert.match(result.dom.errorText.textContent, /Requested or Confirmed calls/)
-  assert.match(result.dom.errorText.textContent, /Decline or cancel them, or wait until they end/)
-  assert.doesNotMatch(result.dom.errorText.textContent, /contact support/)
+  assert.equal(result.dom.errorText.textContent, ACTIVE_CALLS_COPY)
 })
 
 // A 400 from a different grants/delete/v3 precondition is not the active-calls
@@ -1783,8 +1822,41 @@ test('a different grant deletion 400 keeps the authored generic copy', async () 
 
   assert.equal(result.calls.filter((c) => c.path === '/grants/delete/v3').length, 1)
   assert.equal(result.dom.steps['config-request-error'].style.display, 'block')
-  assert.match(result.dom.errorText.textContent, /contact support/)
-  assert.doesNotMatch(result.dom.errorText.textContent, /Requested or Confirmed calls/)
+  assert.equal(result.dom.errorText.textContent, GENERIC_TRANSITION_COPY)
+})
+
+test('a matching active-bookings message on non-400 keeps the authored generic copy', async () => {
+  const availability = defaultAvailability()
+  availability.manager = 'calendar'
+  const result = loadWriter({
+    availability,
+    storage: TZ_CACHED,
+    routes: {
+      '/starter/get_by_memberstack/v3': () => ({
+        status: 200,
+        body: {
+          id: 1,
+          timezone: 'Asia/Manila',
+          availability,
+          nylas_grant_id: 'grant-1',
+          nylas_grant_email: 'grant@example.com',
+          nylas_calendar_id: 'cal-1',
+        },
+      }),
+      '/grants/delete/v3': () => ({
+        status: 500,
+        body: { message: 'Resolve active bookings before disconnecting the calendar' },
+      }),
+    },
+  })
+  await settle()
+
+  result.clickAction(result.dom.buttons.disconnectCalendar)
+  await settle()
+
+  assert.equal(result.calls.filter((c) => c.path === '/grants/delete/v3').length, 1)
+  assert.equal(result.dom.steps['config-request-error'].style.display, 'block')
+  assert.equal(result.dom.errorText.textContent, GENERIC_TRANSITION_COPY)
 })
 
 test('calendar connection copy describes the explicit same-tab handoff', async () => {

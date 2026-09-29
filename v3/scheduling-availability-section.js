@@ -130,7 +130,7 @@
   let connectionError = false
   let connectBusy = false
   // Carries the last calendar-transition failure to the modal that reports it, so
-  // a repairable paid-call rate can replace the generic connection copy.
+  // a recognized actionable failure can replace the generic connection copy.
   let calendarTransitionErrorText = null
   let cachedItemTemplate = null
   let creatingDraft = false
