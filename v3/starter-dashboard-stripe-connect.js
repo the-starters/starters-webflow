@@ -63,6 +63,7 @@
   const actionSelector = (name) => '[' + ACTION_ATTR + '="' + name + '"]'
   const canonicalConnectedByRoot = new WeakMap()
   const authoredErrorCopyByElement = new WeakMap()
+  let conflictAuthGeneration = 0
   const ACCOUNT_OWNER_CONFLICT_REASON = 'account_owner_conflict'
   const NO_RETURN_CONTEXT = Object.freeze({
     cleanReturnUrl: false,
@@ -232,6 +233,116 @@
     }
 
     return currentMemberId()
+  }
+
+  function releaseConflictAuthScope(scope) {
+    try {
+      if (scope && typeof scope.release === 'function') scope.release()
+    } catch (_error) {
+      return
+    }
+  }
+
+  function armConflictAuthScope(expectedMemberId) {
+    let memberstack = null
+    try {
+      memberstack = global.$memberstackDom
+      if (
+        typeof expectedMemberId !== 'string' ||
+        !expectedMemberId ||
+        !memberstack ||
+        typeof memberstack.getCurrentMember !== 'function' ||
+        typeof memberstack.onAuthChange !== 'function'
+      ) {
+        return null
+      }
+    } catch (_error) {
+      return null
+    }
+
+    const expectedGeneration = conflictAuthGeneration
+    let active = true
+    let cleanup = null
+    let initialReplayPending = true
+    let registering = true
+    const scope = {
+      expectedGeneration,
+      expectedMemberId,
+      isActive: function () {
+        return active
+      },
+      memberstack,
+      release: function () {
+        if (!active) return
+        active = false
+        if (!cleanup) return
+        try {
+          cleanup()
+        } catch (_error) {
+          return
+        }
+      },
+    }
+
+    try {
+      const subscription = memberstack.onAuthChange(function (payload) {
+        if (!active) return
+        if (registering && initialReplayPending) {
+          initialReplayPending = false
+          const member = payload && payload.data ? payload.data : payload
+          const memberId =
+            member && typeof member.id === 'string' ? member.id : ''
+          if (!memberId || memberId === expectedMemberId) return
+        }
+        conflictAuthGeneration += 1
+      })
+      registering = false
+      if (typeof subscription === 'function') {
+        cleanup = subscription
+      } else if (
+        subscription &&
+        typeof subscription.unsubscribe === 'function'
+      ) {
+        cleanup = function () {
+          subscription.unsubscribe()
+        }
+      }
+    } catch (_error) {
+      registering = false
+      scope.release()
+      return null
+    }
+
+    if (conflictAuthGeneration !== expectedGeneration) {
+      scope.release()
+      return null
+    }
+    return scope
+  }
+
+  async function conflictAuthScopeMatches(scope) {
+    try {
+      if (
+        !scope ||
+        typeof scope.isActive !== 'function' ||
+        !scope.isActive() ||
+        scope.memberstack !== global.$memberstackDom ||
+        scope.expectedGeneration !== conflictAuthGeneration
+      ) {
+        return false
+      }
+      const result = await scope.memberstack.getCurrentMember()
+      const member = result && result.data
+      return Boolean(
+        scope.isActive() &&
+          scope.memberstack === global.$memberstackDom &&
+          scope.expectedGeneration === conflictAuthGeneration &&
+          member &&
+          member.id === scope.expectedMemberId,
+      )
+    } catch (_error) {
+      return false
+    }
   }
 
   let xanoTokenPromise = null
@@ -1214,13 +1325,9 @@
       let reason = ''
       if (
         conflictCandidate &&
-        typeof returnContext.receiptMemberId === 'string' &&
-        returnContext.receiptMemberId
+        (await conflictAuthScopeMatches(returnContext.conflictAuthScope))
       ) {
-        const activeMemberId = await currentMemberId()
-        if (activeMemberId === returnContext.receiptMemberId) {
-          reason = ACCOUNT_OWNER_CONFLICT_REASON
-        }
+        reason = ACCOUNT_OWNER_CONFLICT_REASON
       }
       renderRoots(
         roots,
@@ -1244,6 +1351,7 @@
       )
       return null
     } finally {
+      releaseConflictAuthScope(returnContext.conflictAuthScope)
       if (returnContext.cleanReturnUrl) cleanReturnMarker()
     }
   }
@@ -1514,15 +1622,26 @@
 
       const returnSearch = global.location.search
       const untrustedReturnContext = resolveReturnContext(returnSearch)
-      const activeMemberId = await currentMemberId()
       const receiptReason = consumeReturnReason(
-        activeMemberId,
+        memberId,
         untrustedReturnContext.mode,
       )
-      const trustedReason = activeMemberId === memberId ? receiptReason : ''
+      const receiptContext = resolveReturnContext(returnSearch, receiptReason)
+      let conflictAuthScope = null
+      let trustedReason = ''
+      if (receiptContext.reason === ACCOUNT_OWNER_CONFLICT_REASON) {
+        conflictAuthScope = armConflictAuthScope(memberId)
+        if (await conflictAuthScopeMatches(conflictAuthScope)) {
+          trustedReason = receiptContext.reason
+        } else {
+          releaseConflictAuthScope(conflictAuthScope)
+          conflictAuthScope = null
+        }
+      }
       const returnContext = {
-        ...resolveReturnContext(returnSearch, trustedReason),
-        receiptMemberId: trustedReason ? activeMemberId : '',
+        ...receiptContext,
+        conflictAuthScope,
+        reason: trustedReason,
       }
       return runExclusive(function () {
         return loadDashboardStatus(roots, returnContext, earningsTiles)
@@ -1618,6 +1737,7 @@
     __resetConnectStartAttempt: clearConnectStartAttemptKey,
     __resetDashboardAttempt: clearDashboardAttemptKey,
     __resetDisconnectAttempt: clearDisconnectAttemptKey,
+    armConflictAuthScope,
     callbackParams,
     confirmDisconnect,
     consumeReturnReason,

@@ -3937,7 +3937,11 @@ blind Connect loop. The controller recognizes only the public
 `account_owner_conflict` reason, and only when the authenticated callback also
 created a short-lived, one-time same-tab receipt bound to the current
 Memberstack ID and reconciliation mode. A copied or forged query parameter
-without that receipt stays on the generic recovery path. For the verified
+without that receipt stays on the generic recovery path. Only a matching
+receipt arms a local Memberstack auth-generation watch. The same live member
+and unchanged generation must hold before canonical status and immediately
+before rendering; a missing or failed watch, a member mismatch, or any
+intervening auth change keeps the authored generic recovery. For the verified
 reason, the controller changes the existing error card to explain that the
 Stripe account is already linked to another Starter profile and makes the
 `Connect a different account` recovery action start a new Connect flow. The copy
