@@ -4347,6 +4347,7 @@ for (const publicFirst of [false, true]) {
       assert.equal(card.root.style.display, 'block')
       assert.equal(card.root.getAttribute('data-call-offer-state'), 'loading')
       assert.equal(card.root.getAttribute('aria-busy'), 'true')
+      assert.equal(card.root.getAttribute('data-booking-trigger-unavailable'), null)
       assert.equal(card.root.getAttribute('booking-popup-open'), null)
       assert.equal(card.root.getAttribute('data-modal-trigger'), null)
       assert.equal(card.root.getAttribute('data-signup-trigger-element'), null)
@@ -8658,6 +8659,95 @@ for (const grantFirst of [true, false]) {
     }
   })
 }
+
+test('F50 legacy Header enters loading synchronously while member identity is unresolved', async () => {
+  const page = makePage()
+  const legacyHeader = addLegacyHeaderCallCardsFixture(page)
+  const displayWrites = new Map()
+  for (const card of [legacyHeader.free, legacyHeader.paid]) {
+    card.root.setAttribute('booking-popup-open', '')
+    card.root.setAttribute('data-modal-trigger', 'popup-booking-main')
+    card.root.setAttribute('data-signup-trigger-element', 'service')
+    card.root.setAttribute(
+      'data-signup-trigger-value',
+      card === legacyHeader.paid ? 'Paid Consulting Call' : 'Free Call',
+    )
+    const writes = []
+    let display = card.root.style.display
+    Object.defineProperty(card.root.style, 'display', {
+      configurable: true,
+      get: () => display,
+      set: (value) => {
+        writes.push(value)
+        display = value
+      },
+    })
+    displayWrites.set(card.root, writes)
+  }
+  const memberReady = new Promise(() => {})
+  const context = makeContext({ page, memberReady })
+  context.waitForMember = (callback) => memberReady.then(() => callback(context.MEMBER))
+  vm.createContext(context)
+  vm.runInContext(source, context)
+
+  const assertLoading = () => {
+    for (const card of [legacyHeader.free, legacyHeader.paid]) {
+      assert.equal(card.root.style.display, 'block')
+      assert.equal(card.root.getAttribute('aria-hidden'), null)
+      assert.equal(card.root.getAttribute('data-canonical-call-unavailable'), null)
+      assert.equal(card.root.getAttribute('data-service-card-state'), 'Default')
+      assert.equal(card.root.getAttribute('data-call-offer-state'), 'loading')
+      assert.equal(card.root.getAttribute('aria-busy'), 'true')
+      assert.equal(card.root.getAttribute('booking-popup-open'), null)
+      assert.equal(card.root.getAttribute('data-modal-trigger'), null)
+      assert.equal(card.root.getAttribute('data-signup-trigger-element'), null)
+      assert.equal(card.root.getAttribute('data-call-service-direct'), null)
+      assert.equal(displayWrites.get(card.root).includes('none'), false)
+    }
+  }
+
+  assertLoading()
+  await settle()
+  assertLoading()
+})
+
+test('F50 ready legacy owner Header click reaches the owner explanation', async () => {
+  const page = makePage()
+  const legacyHeader = addLegacyHeaderCallCardsFixture(page)
+  for (const card of [legacyHeader.free, legacyHeader.paid]) {
+    card.root.setAttribute('booking-popup-open', '')
+    card.root.setAttribute('data-modal-trigger', 'popup-booking-main')
+    card.root.setAttribute('data-signup-trigger-element', 'service')
+    card.root.setAttribute(
+      'data-signup-trigger-value',
+      card === legacyHeader.paid ? 'Paid Consulting Call' : 'Free Call',
+    )
+  }
+  const context = ownerContext(page, ownerController())
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  const card = legacyHeader.free.root
+  assert.equal(card.getAttribute('data-call-offer-state'), 'available')
+  assert.equal(card.getAttribute('data-owner-preview-action'), 'call')
+  const hint = page.root.querySelector('#' + card.getAttribute('aria-describedby'))
+  assert.ok(hint)
+  assert.equal(hint.getAttribute('data-owner-preview-hint'), '')
+  assert.equal(hint.style.display, 'none')
+
+  let stoppedImmediate = false
+  const event = {
+    preventDefault() {},
+    stopPropagation() {},
+    stopImmediatePropagation() { stoppedImmediate = true },
+  }
+  for (const listener of card.listeners.click || []) {
+    listener(event)
+    if (stoppedImmediate) break
+  }
+  assert.equal(hint.style.display, 'block')
+})
 
 test('F50 a logged-out Book Call goes from loading to signup-only', async () => {
   const page = makePage()

@@ -564,6 +564,18 @@
       wrapper.setAttribute('aria-hidden', 'false');
   }
 
+  function isManagedLegacyHeaderCallSurface(surface) {
+      return !!(
+          surface &&
+          surface.closest('[data-call-canary-legacy-wrapper="header"]') &&
+          !document.querySelector('[wf-xano-instance="starter-call-offers-header"]') &&
+          typeof window.qs === 'function' &&
+          typeof window.qsa === 'function' &&
+          typeof window.waitForMember === 'function' &&
+          window.starter_memberstack_id
+      );
+  }
+
   // These controls remain discoverable while their booking action is closed.
   // Strip delegate hooks while disabled so signup and Lumos cannot open first.
   const bookingHints = new Map();
@@ -726,6 +738,7 @@
       document.querySelectorAll(
           '[data-modal-trigger="popup-booking-main"]:not([data-booking-back]), [data-profile-book-call]'
       ).forEach(function (trigger) {
+          if (isManagedLegacyHeaderCallSurface(trigger)) return;
           if (available) {
               trigger.removeAttribute('data-booking-trigger-unavailable');
               trigger.removeAttribute('aria-disabled');
@@ -1462,7 +1475,11 @@
 
   ensureBookingModalAvailabilityGuard();
   primeBookingModalOptions([]);
-  applyCallSurfaceAvailability({ free: false, paid: false });
+  applyCallSurfaceAvailability(
+      { free: false, paid: false },
+      null,
+      function (surface) { return !isManagedLegacyHeaderCallSurface(surface); }
+  );
   // Webflow authors the structural Book Call triggers and dialog. Keep them
   // closed until the viewer-specific readiness gate admits an entry point.
   setBookingButtonAvailable(false);
@@ -1600,6 +1617,8 @@
     setBookingButtonAvailable(false);
     return;
   }
+
+  applyPendingCallCardStates(legacyHeaderCallEntries(null));
 
   // `jp-test` is the published CMS canary shared by both environments. Its
   // authored Memberstack value belongs to Live, so the Test Brand on Webflow
@@ -2796,11 +2815,6 @@
   }
 
   function releaseLegacyHeaderBookingTrigger(card) {
-      const bookingHint = bookingHints.get(card);
-      if (bookingHint) {
-          bookingHint.hint.remove();
-          bookingHints.delete(card);
-      }
       [
           'data-profile-book-call',
           'data-booking-trigger-loading',
@@ -2877,7 +2891,7 @@
       return entries;
   }
 
-  function applyBrandCallCardStates(entries) {
+  function applyPendingCallCardStates(entries) {
       entries.forEach(function (entry) {
           const card = entry.card;
           card.removeAttribute('booking-popup-open');
@@ -2918,7 +2932,7 @@
       }
       if (isBrandMember(MEMBER)) {
           const entries = legacyHeaderCallEntries(latestCanonicalCallItems);
-          applyBrandCallCardStates(entries);
+          applyPendingCallCardStates(entries);
           if (!callDiscoveryPending && paintedCallState && Array.isArray(paintedCallState.configs)) {
               const legacyCards = new Set(entries.map(function (entry) { return entry.card; }));
               syncCanonicalCallCardSurfaces(
@@ -3211,7 +3225,7 @@
       } else if (isProfileOwner(MEMBER)) {
           applyOwnerCallCardStates(ownerCallSettingsSnapshot);
       } else if (isBrandMember(MEMBER)) {
-          applyBrandCallCardStates(adapted.concat(legacyHeaderCallEntries(itemsById)));
+          applyPendingCallCardStates(adapted.concat(legacyHeaderCallEntries(itemsById)));
           // Canonical discovery can finish before wf-xano clones this card.
           // Replay the already-installed set so a late clone does not stay in
           // pending until some unrelated DOM mutation happens.

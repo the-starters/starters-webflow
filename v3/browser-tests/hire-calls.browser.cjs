@@ -111,10 +111,21 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
     }
     const navigate = async query => {
       await send('Page.navigate', { url: `http://www.thestarters.com:${server.address().port}/v3/browser-tests/hire-calls.html?${query}` })
+      let ready = false
       for (let i = 0; i < 100; i++) {
-        if (await evaluate(`document.readyState === 'complete' && !!window.lumos?.modal?.list['signup-modal'] && !!document.querySelector('[data-call-offer-type]')`)) break
+        if (await evaluate(`(() => {
+          const cards = [...document.querySelectorAll('[wf-xano-instance^="starter-call-offers-"] [wf-xano-item]')]
+          const callsSettled = !!document.querySelector('[data-call-offer-type]') ||
+            (cards.length === 4 && cards.every(card => getComputedStyle(card).display === 'none'))
+          return document.readyState === 'complete' &&
+            !!window.lumos?.modal?.list['signup-modal'] && callsSettled
+        })()`)) {
+          ready = true
+          break
+        }
         await pause(50)
       }
+      assert.equal(ready, true, `browser fixture did not become ready for ${query}`)
       await pause(150)
     }
     const assertBookCall = async (role, available) => {
@@ -268,6 +279,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
     for (const owner of ['ready', 'off', 'calendar', 'stripe', 'stale', 'loading', 'error']) {
       await navigate(`role=owner&owner=${owner}&failed=header`)
       const state = await snapshot(`owner-${owner}`)
+      assert.equal(state.cards.length, 4, 'owners retain two cards in both wrappers')
       assert.ok(state.cards.every(card => card.visible), 'owners retain both cards in both wrappers')
       assert.ok(state.cards.every(card => card.state === (owner === 'ready' || owner === 'loading' ? 'Default' : owner === 'stripe' || owner === 'stale' ? card.type === 'free' ? 'Default' : 'Disabled' : 'Disabled')), JSON.stringify(state))
       const messages = { off: { free: 'Enable your Free Call service.', paid: 'Enable and price your Paid Call service.' }, calendar: { free: 'Connect your calendar to offer calls.', paid: 'Connect your calendar to offer calls.' }, stripe: { paid: 'Connect Stripe to offer paid calls.' }, stale: { paid: 'Refresh your Stripe connection to offer paid calls.' }, loading: { free: '', paid: '' }, error: { free: 'Call settings could not be loaded. Refresh or open Call Settings.', paid: 'Call settings could not be loaded. Refresh or open Call Settings.' } }
