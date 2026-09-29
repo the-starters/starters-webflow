@@ -565,14 +565,30 @@
     return Number.isFinite(wall) && wall > 0 ? wall : null
   }
 
+  function effectiveConfirmedInterval(booking) {
+    const rescheduled = clean(booking && booking.status).toLowerCase() === 'rescheduled'
+    return {
+      start: Number(booking && booking[rescheduled ? 'start_old' : 'start']),
+      end: Number(booking && booking[rescheduled ? 'end_old' : 'end']),
+    }
+  }
+
+  function detailLifecycleStatus(booking, now) {
+    if (clean(booking && booking.status).toLowerCase() !== 'rescheduled') {
+      return bookingStatus(booking, now)
+    }
+    const interval = effectiveConfirmedInterval(booking)
+    return bookingStatus(Object.assign({}, booking, { end: interval.end }), now)
+  }
+
   function meetingHrefAtReference(booking, currentTime) {
     const raw = clean(booking && booking.status).toLowerCase()
     if (currentTime == null) return ''
     const status = raw === 'rescheduled' ? raw : bookingStatus(booking, currentTime)
     if (!['confirmed', 'rescheduled'].includes(status)) return ''
-    const restored = raw === 'rescheduled'
-    const start = Number(booking && booking[restored ? 'start_old' : 'start'])
-    const end = Number(booking && booking[restored ? 'end_old' : 'end'])
+    const interval = effectiveConfirmedInterval(booking)
+    const start = interval.start
+    const end = interval.end
     if (!Number.isFinite(start) || start <= 0 || !Number.isFinite(end) || end <= start || end <= currentTime) return ''
     return safeMeetingHref(booking && booking.meeting_link)
   }
@@ -885,16 +901,32 @@
     paintMeetingDestinations(modal, booking, now, true)
   }
 
-  function applyCancellationResult(refs, booking, result, now) {
+  function commitBookingMutation(refs, booking, update, invalidate, now) {
+    const bookingId = clean(booking && (booking.booking_id || booking.id))
+    const current = bookingById(Array.isArray(refs) ? refs : [], bookingId)
+    if (!current) return null
+    const changes = typeof update === 'function' ? update(current) : update
+    if (!changes || typeof changes !== 'object' || Array.isArray(changes)) return null
+    if (typeof invalidate === 'function') invalidate()
+    Object.assign(current, changes)
+    if (booking !== current) Object.assign(booking, changes)
+    refreshMeetingDestinations(refs, now)
+    return current
+  }
+
+  function applyCancellationResult(refs, booking, result, now, commit) {
     const cancellation = result && result.cancel
     if (
       !booking || !cancellation ||
       clean(cancellation.booking_id) !== clean(booking.booking_id || booking.id) ||
       clean(cancellation.status).toLowerCase() !== 'cancelled'
     ) return false
-    booking.status = cancellation.status
-    refreshMeetingDestinations(refs, now)
-    return true
+    const apply = typeof commit === 'function'
+      ? commit
+      : function (model, changes) {
+          return commitBookingMutation(refs, model, changes, null, now)
+        }
+    return Boolean(apply(booking, { status: cancellation.status }))
   }
 
   function startBookingLifecycleTicker(refs, role, restart, options) {
@@ -2074,7 +2106,8 @@
     const previousBookingId = clean(modal.getAttribute('data-booking-id'))
     if (previousBookingId !== nextBookingId) resetDetailActionState(modal)
     const referenceTime = meetingReferenceTime(booking, now)
-    const status = bookingStatus(booking, referenceTime)
+    const status = detailLifecycleStatus(booking, referenceTime)
+    const actionStatus = bookingStatus(booking, now)
     const isPaid = paidBooking(booking)
     const paymentText = isPaid && status !== 'cancelled' && status !== 'archived'
       ? booking.pm_confirmed
@@ -2151,28 +2184,33 @@
       base.querySelectorAll ? base.querySelectorAll('[pending-info-text]') : [],
     )
     pendingMessages.forEach(function (message, index) {
-      show(message, index === 0 && status === 'pending' && responseWindowOpen(booking, referenceTime))
+      show(message, index === 0 && actionStatus === 'pending' && responseWindowOpen(booking, now))
     })
     modal.querySelectorAll('[reschedule-blocked-info]').forEach(function (info) {
       show(info, false)
     })
-    configureDetailActions(modal, role, status, booking, referenceTime)
+    configureDetailActions(modal, role, actionStatus, booking, now)
     ensureDetailSupplements(modal, booking, role, timezone)
     scheduleDetailSupplements(modal, booking, role, timezone)
     hideDuplicateDetailCopy(modal, isPaid)
     return true
   }
 
-  function bookingFromCard(refs, card) {
-    const bookingId = clean(card && card.getAttribute('data-booking-id'))
+  function bookingById(refs, bookingId) {
+    const id = clean(bookingId)
+    if (!id) return null
     let booking = null
     refs.some(function (section) {
-      booking = section.rows.find(function (row) {
-        return clean(row.booking_id || row.id) === bookingId
+      booking = (Array.isArray(section && section.rows) ? section.rows : []).find(function (row) {
+        return clean(row.booking_id || row.id) === id
       }) || null
       return Boolean(booking)
     })
     return booking
+  }
+
+  function bookingFromCard(refs, card) {
+    return bookingById(refs, card && card.getAttribute('data-booking-id'))
   }
 
   function bookingForActionTarget(refs, target) {
@@ -3204,6 +3242,11 @@
         { preserveExisting: true },
       )
     }
+    const commitCurrentBooking = function (booking, update) {
+      return commitBookingMutation(refs, booking, update, function () {
+        sessionGeneration += 1
+      })
+    }
     const moduleOptions = {
       document: global.document,
       role,
@@ -3220,8 +3263,9 @@
       refreshDetail: function (modal, booking, content) {
         return populateDetailModal(modal, booking, role, undefined, content)
       },
+      commitBookingMutation: commitCurrentBooking,
       onCancelSuccess: function (booking, result) {
-        applyCancellationResult(refs, booking, result, Date.now())
+        return applyCancellationResult(refs, booking, result, Date.now(), commitCurrentBooking)
       },
       onAvailable: function () {
         bindBookingClocks(refs.flatMap(function (section) { return section.rows || [] }))
@@ -3252,6 +3296,7 @@
     refreshRequestExpirations,
     refreshDetailExpiration,
     refreshMeetingDestinations,
+    commitBookingMutation,
     applyCancellationResult,
     startBookingLifecycleTicker,
     refreshSession,
@@ -3262,6 +3307,7 @@
     paintStatusPill,
     paintActiveFilter,
     populateDetailModal,
+    detailLifecycleStatus,
     detailOpenPanel,
     wireBookingDetails,
     resetDetailModal,

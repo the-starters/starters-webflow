@@ -1615,6 +1615,17 @@
     }
   }
 
+  function commitBookingMutation(settings, booking, update) {
+    if (settings && typeof settings.commitBookingMutation === 'function') {
+      return settings.commitBookingMutation(booking, update)
+    }
+    if (!booking) return null
+    const changes = typeof update === 'function' ? update(booking) : update
+    if (!changes || typeof changes !== 'object' || Array.isArray(changes)) return null
+    Object.assign(booking, changes)
+    return booking
+  }
+
   function wire(options) {
     const settings = options || {}
     const document = settings.document || global.document
@@ -1736,17 +1747,21 @@
               clean(booking.booking_id || booking.id)
             if (step.kind === 'reschedule-confirm' || step.kind === 'reschedule-decline') {
               const confirmed = result[config.responseKey]
-              booking.status = confirmed.status
-              const confirmedStart = Number(confirmed.start)
-              const confirmedEnd = Number(confirmed.end)
-              const restoredStart = Number(booking.start_old)
-              const restoredEnd = Number(booking.end_old)
-              if (Number.isFinite(confirmedStart) && confirmedStart > 0) booking.start = confirmedStart
-              else if (step.kind === 'reschedule-decline') booking.start = Number.isFinite(restoredStart) && restoredStart > 0 ? restoredStart : null
-              if (Number.isFinite(confirmedEnd) && confirmedEnd > 0) booking.end = confirmedEnd
-              else if (step.kind === 'reschedule-decline') booking.end = Number.isFinite(restoredEnd) && restoredEnd > 0 ? restoredEnd : null
+              const confirmedBooking = commitBookingMutation(settings, booking, function (current) {
+                const changes = { status: confirmed.status }
+                const confirmedStart = Number(confirmed.start)
+                const confirmedEnd = Number(confirmed.end)
+                const restoredStart = Number(current.start_old)
+                const restoredEnd = Number(current.end_old)
+                if (Number.isFinite(confirmedStart) && confirmedStart > 0) changes.start = confirmedStart
+                else if (step.kind === 'reschedule-decline') changes.start = Number.isFinite(restoredStart) && restoredStart > 0 ? restoredStart : null
+                if (Number.isFinite(confirmedEnd) && confirmedEnd > 0) changes.end = confirmedEnd
+                else if (step.kind === 'reschedule-decline') changes.end = Number.isFinite(restoredEnd) && restoredEnd > 0 ? restoredEnd : null
+                return changes
+              })
+              if (!confirmedBooking) return
               if (modalIsCurrent && typeof settings.refreshDetail === 'function') {
-                settings.refreshDetail(modal, booking)
+                settings.refreshDetail(modal, confirmedBooking)
               }
             }
             if (modalIsCurrent) {
@@ -1781,7 +1796,7 @@
           if (!result) throw new Error(config.failureMessage)
           if (step.kind === 'cancel' && typeof settings.onCancelSuccess === 'function') {
             try {
-              settings.onCancelSuccess(booking, result)
+              if (settings.onCancelSuccess(booking, result) === false) return
             } catch (error) {
               console.error(
                 '[dashboard-call-actions] cancellation repaint failed:',

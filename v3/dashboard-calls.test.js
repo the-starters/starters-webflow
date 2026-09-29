@@ -5798,7 +5798,7 @@ test('rescheduled Join destinations follow the still-confirmed original end', ()
       const anchor = anchorElement({ 'booking-element': 'meeting-link' })
       anchor.closest = selector => selector === '[booking-element-wrap]' ? cardWrap : null
       card.querySelectorAll = selector => selector === '[booking-element="meeting-link"]' ? [anchor] : []
-      const view = detailModalHarness()
+      const view = completedDetailModalHarness(['terminal'])
       const originalSlot = {
         status: 'rescheduled',
         start: now - 90_000,
@@ -5825,6 +5825,9 @@ test('rescheduled Join destinations follow the still-confirmed original end', ()
       }
 
       assertDestinations(originalSlot, true)
+      assert.equal(view.modal.getAttribute('data-booking-status'), 'rescheduled')
+      assert.equal(view.base.hidden, false)
+      assert.equal(view.completedPanels[0].hidden, true)
       assertDestinations({ ...originalSlot, end: now + 60_000, end_old: now }, false)
       assertDestinations({ ...originalSlot, end: now + 60_000, end_old: undefined }, false)
       assertDestinations({
@@ -6005,6 +6008,56 @@ test('detail panels and meeting destinations share one canonical lifecycle snaps
       assert.equal(view.fields['meeting-link'].hidden, true)
       assert.equal(view.fields['meeting-link'].getAttribute('data-meeting-href'), null)
     }
+  } finally {
+    global.StartersDashboardCallActions = previousActions
+    Date.now = previousNow
+  }
+})
+
+test('canonical Meet timing does not change existing action clock gates', () => {
+  const actions = require('./dashboard-call-actions.js')
+  const previousActions = global.StartersDashboardCallActions
+  const previousNow = Date.now
+  const serverNow = 2_000_000_000_000
+  const deviceNow = serverNow + 2 * 60 * 60 * 1000
+  global.StartersDashboardCallActions = {
+    ...actions,
+    canonicalNow: () => serverNow,
+  }
+  Date.now = () => deviceNow
+  try {
+    const confirmed = {
+      booking_id: 'clock-policy-confirmed',
+      config_id: 'clock-policy-config',
+      data_environment: 'test',
+      status: 'confirmed',
+      start: serverNow + 30 * 60 * 1000,
+      end: serverNow + 60 * 60 * 1000,
+      duration: 30,
+      is_paid: false,
+      meeting_link: 'https://meet.google.com/clock-policy',
+      brand_data: { memberstack_id: 'clock-policy-brand', timezone: 'UTC' },
+      starter_data: { memberstack_id: 'clock-policy-starter', timezone: 'UTC' },
+    }
+    const confirmedView = detailModalHarness()
+    api.populateDetailModal(confirmedView.modal, confirmed, 'brand')
+    const cancel = confirmedView.actions.find(button => button.getAttribute('booking-action-btn') === 'cancel')
+    assert.equal(confirmedView.fields['meeting-link'].hidden, false)
+    assert.equal(cancel.hidden, true)
+    assert.equal(actions.canCancel('brand', confirmed), false)
+
+    const pendingView = detailModalHarness()
+    const pending = {
+      ...confirmed,
+      booking_id: 'clock-policy-pending',
+      status: 'pending',
+      grant_id: 'clock-policy-grant',
+      meeting_link: '',
+    }
+    api.populateDetailModal(pendingView.modal, pending, 'brand')
+    const reschedule = pendingView.actions.find(button => button.getAttribute('booking-action-btn') === 'reschedule')
+    assert.equal(reschedule.hidden, true)
+    assert.equal(actions.rescheduleKindFor('brand', pending), '')
   } finally {
     global.StartersDashboardCallActions = previousActions
     Date.now = previousNow
@@ -6321,6 +6374,7 @@ test('successful cancellation clears current destinations before a failed refres
     : cancel
   let restarts = 0
   let posts = 0
+  let claims = 0
   try {
     global.document = document
     global.sessionStorage = memoryStorage()
@@ -6329,14 +6383,12 @@ test('successful cancellation clears current destinations before a failed refres
       randomUUID: () => '00000000-0000-4000-8000-000000000099',
     }
     console.error = () => {}
+    const requested = deferred()
+    const response = deferred()
     global.xanoAuthFetch = async () => {
       posts += 1
-      return {
-        ok: true,
-        json: async () => ({
-          cancel: { booking_id: booking.booking_id, status: 'cancelled' },
-        }),
-      }
+      requested.resolve()
+      return response.promise
     }
     api.bindCard(card, booking, 'brand')
     api.populateDetailModal(view.modal, booking, 'brand', now)
@@ -6348,15 +6400,31 @@ test('successful cancellation clears current destinations before a failed refres
         restarts += 1
         return Promise.reject(new Error('refresh unavailable'))
       },
-      onCancelSuccess: (model, result) => api.applyCancellationResult(refs, model, result, now),
+      onCancelSuccess(model, result) {
+        return api.applyCancellationResult(refs, model, result, now, (candidate, update) => (
+          api.commitBookingMutation(refs, candidate, update, () => { claims += 1 }, now)
+        ))
+      },
     })
 
-    await handlers[0]({
+    const cancellation = handlers[0]({
       target: cancel,
       preventDefault() {},
       stopImmediatePropagation() {},
     })
+    await requested.promise
+    const current = { ...booking }
+    refs[0].rows = [current]
+    response.resolve({
+      ok: true,
+      json: async () => ({
+        cancel: { booking_id: booking.booking_id, status: 'cancelled' },
+      }),
+    })
+    await cancellation
     assert.equal(posts, 1)
+    assert.equal(claims, 1)
+    assert.equal(current.status, 'cancelled')
     assert.equal(booking.status, 'cancelled')
     assert.equal(anchor.hasAttribute('href'), false)
     assert.equal(anchor.hidden, true)
@@ -6382,6 +6450,67 @@ test('successful cancellation clears current destinations before a failed refres
     global.sessionStorage = previousStorage
     global.crypto = previousCrypto
     console.error = previousError
+  }
+})
+
+test('validated mutations prevent older canonical reads from restoring Join', async () => {
+  const previousDocument = global.document
+  const previousFetch = global.xanoAuthFetch
+  const previousActions = global.StartersDashboardCallActions
+  const now = Date.now()
+  const captured = {
+    booking_id: 'mutation-generation',
+    status: 'confirmed',
+    start: now + 60_000,
+    end: now + 120_000,
+    meeting_link: 'https://meet.google.com/mutation-generation',
+    brand_data: { memberstack_id: 'mutation-brand' },
+    starter_data: { memberstack_id: 'mutation-starter' },
+  }
+  const current = { ...captured }
+  const card = element({ 'data-booking-id': captured.booking_id })
+  const wrap = element()
+  const anchor = anchorElement({ 'booking-element': 'meeting-link' })
+  anchor.closest = selector => selector === '[booking-element-wrap]' ? wrap : null
+  card.querySelectorAll = selector => selector === '[booking-element="meeting-link"]' ? [anchor] : []
+  const refs = {
+    name: 'calls', filter: 'all', rows: [current], rendered: 1,
+    list: { querySelectorAll: selector => selector === '[data-booking-id]' ? [card] : [] },
+    template: element(), loader: element(), empty: element(), loadMore: element(),
+    filters: element(), count: element(), section: element(),
+  }
+  const requested = deferred()
+  const response = deferred()
+  let generation = 1
+  try {
+    global.StartersDashboardCallActions = undefined
+    global.document = { documentElement: element(), querySelector: () => null }
+    global.xanoAuthFetch = async () => {
+      requested.resolve()
+      return response.promise
+    }
+    api.bindCard(card, current, 'brand')
+    assert.equal(anchor.getAttribute('href'), current.meeting_link)
+    const refresh = api.refreshSession(
+      { getCurrentMember: async () => ({ id: 'mutation-brand' }) },
+      [refs], 'brand', generation, () => generation, false, { preserveExisting: true },
+    )
+    await requested.promise
+    const committed = api.commitBookingMutation(
+      [refs], captured, { status: 'cancelled' }, () => { generation += 1 }, now,
+    )
+    assert.equal(committed, current)
+    assert.equal(current.status, 'cancelled')
+    assert.equal(anchor.hasAttribute('href'), false)
+    response.resolve({ ok: true, json: async () => [{ ...captured, status: 'confirmed' }] })
+    assert.equal(await refresh, undefined)
+    assert.equal(refs.rows[0], current)
+    assert.equal(refs.rows[0].status, 'cancelled')
+    assert.equal(anchor.hasAttribute('href'), false)
+  } finally {
+    global.document = previousDocument
+    global.xanoAuthFetch = previousFetch
+    global.StartersDashboardCallActions = previousActions
   }
 })
 
@@ -6548,6 +6677,8 @@ test('reschedule responses refresh receipt and base without retaining proposal-o
     modal.appendChild(base)
     actions.ensureRescheduleViews(document, modal)
     const booking = { booking_id: 'accept-' + role, config_id: 'config', data_environment: 'test', status: 'rescheduled', rescheduled_by: role === 'brand' ? 'starter' : 'brand', start: Date.now() + 172800000, end: Date.now() + 174600000, start_old: Date.now() + 86400000, end_old: Date.now() + 88200000, duration: 30, price: 0, is_paid: false, brand_data: { memberstack_id: 'mem-brand', timezone: 'UTC' }, starter_data: { memberstack_id: 'mem-starter', timezone: 'Asia/Manila' } }
+    let ownerBooking = booking
+    const refs = [{ rows: [ownerBooking], list: { querySelectorAll: () => [] } }]
     const acceptedStart = booking.start + 60_000
     const acceptedEnd = booking.end + 60_000
     booking.server_now_ms = Date.now()
@@ -6565,6 +6696,7 @@ test('reschedule responses refresh receipt and base without retaining proposal-o
       role,
       getBooking: () => booking,
       restart: async () => { restarts += 1 },
+      commitBookingMutation: (model, update) => api.commitBookingMutation(refs, model, update),
       refreshDetail(target, model) {
         refreshDetailCalls += 1
         return api.populateDetailModal(target, model, role)
@@ -6577,7 +6709,10 @@ test('reschedule responses refresh receipt and base without retaining proposal-o
     const retryKeys = Array.from(values.entries())
     assert.ok(retryKeys.length > 0)
     if (scenario.startsWith('switched')) {
-      api.populateDetailModal(modal, { ...booking, booking_id: 'other', status: 'confirmed', start: booking.start + 86400000, end: booking.end + 86400000 }, role)
+      ownerBooking = { ...booking }
+      const other = { ...booking, booking_id: 'other', status: 'confirmed', start: booking.start + 86400000, end: booking.end + 86400000 }
+      refs[0].rows = [ownerBooking, other]
+      api.populateDetailModal(modal, other, role)
     }
     const panelState = () => modal.querySelectorAll('[booking-popup-content]').map(panel => ({
       panel: panel.getAttribute('booking-popup-content'),
@@ -6619,12 +6754,17 @@ test('reschedule responses refresh receipt and base without retaining proposal-o
       continue
     }
     assert.equal(booking.status, expectedStatus)
+    assert.equal(ownerBooking.status, expectedStatus)
     if (kind === 'decline') {
       assert.equal(booking.start, booking.start_old, 'Decline restores the original start')
       assert.equal(booking.end, booking.end_old, 'Decline restores the original end')
+      assert.equal(ownerBooking.start, ownerBooking.start_old, 'Current row restores the original start')
+      assert.equal(ownerBooking.end, ownerBooking.end_old, 'Current row restores the original end')
     } else {
       assert.equal(booking.start, acceptedStart)
       assert.equal(booking.end, acceptedEnd)
+      assert.equal(ownerBooking.start, acceptedStart)
+      assert.equal(ownerBooking.end, acceptedEnd)
     }
     if (scenario === 'switched-success') {
       assert.equal(modal.getAttribute('data-booking-id'), 'other')
