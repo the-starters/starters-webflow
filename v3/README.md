@@ -2911,10 +2911,12 @@ The canonical profile reader is not used because its `Availability` field is the
 workload range, not the legacy scheduling object. Failed or malformed reads, or a
 Memberstack member change or logout during the read, set the document status and
 Calendar connection state to `error` without claiming connection or availability
-readiness. The Designer-authored hero trigger and Dashboard Calendar action row
-remain available and route the shared native modal to `config-request-error`. When
-the live Memberstack client is available, its logged-out result is authoritative
-over stale `memberReady` data. Initialization can be retried with
+readiness. The Designer-authored hero trigger remains available and routes the
+shared native modal to `config-request-error`. The Dashboard Calendar action row
+remains available and scrolls to the always-visible Calendar section when that
+section exists; the legacy modal route remains only on pages without the section.
+When the live Memberstack client is available, its logged-out result is
+authoritative over stale `memberReady` data. Initialization can be retried with
 `window.StarterSchedulingAvailability.initialize()`.
 
 Webflow markup contract:
@@ -2922,22 +2924,27 @@ Webflow markup contract:
 - The first-time and saved-schedule controls use `[init-availability]` and
   `[update-availability]`, respectively.
 - The Dashboard Calendar action row uses `[calendar-connection-action]` and its
-  clickable component carries `data-modal-trigger="set-availability"`. Until
-  that canonical attribute reaches the published Starter dashboard, the
-  initializer also matches only the existing
-  `.dash-hero_action-item a[href="#calendar"]` link. The row stays
-  Designer-authored; the initializer only shows/hides it and selects an
-  existing native modal step. The row is complete when the live scheduling
+  clickable component can carry the legacy
+  `data-modal-trigger="set-availability"`. When the page contains the canonical
+  `[data-availability-element="section"]`, the initializer removes that modal
+  trigger and leaves the authored `#calendar` page-section link to handle the
+  scroll. A future canonical action without that link falls back to a smooth
+  `scrollIntoView()` call on the section. Until the canonical action attribute
+  reaches the published Starter dashboard, the initializer also matches only
+  the existing `.dash-hero_action-item a[href="#calendar"]` link. The row stays
+  Designer-authored; the initializer only shows/hides it and selects the
+  section or legacy modal route. The row is complete when the live scheduling
   event reports `configurationCount > 0`. Google grant and calendar fields do
   not control this Action Item. If Webflow inserts the authored row after that
   event, the initializer reapplies the retained canonical state when the row
   appears.
-- The hero and Dashboard Calendar triggers share the authored
-  `dialog[data-modal-target="set-availability"]`. Lumos normally owns its
-  open/close lifecycle. After a trigger click has bubbled, the initializer uses
-  the registry when available, then falls back to the dialog's native
-  `showModal()`/`close()` contract only if the dialog is still closed. This
-  fallback is scoped to this dialog and preserves its cancel and
+- The hero trigger continues to use the authored
+  `dialog[data-modal-target="set-availability"]`. The Dashboard Calendar route
+  uses that dialog only when the non-modal section is absent. Lumos normally
+  owns its open/close lifecycle. After a legacy trigger click has bubbled, the
+  initializer uses the registry when available, then falls back to the dialog's
+  native `showModal()`/`close()` contract only if the dialog is still closed.
+  This fallback is scoped to this dialog and preserves its cancel and
   `[data-modal-close]` controls.
 - Modal panels use `availability-step="setup-form"` for first-time setup and
   `availability-step="default"` for an existing schedule.

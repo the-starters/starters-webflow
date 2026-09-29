@@ -35,6 +35,7 @@
   let connectionActionObserver = null
   const CALENDAR_ACTION_SELECTOR =
     '[calendar-connection-action], .dash-hero_action-item a[href="#calendar"]'
+  const AVAILABILITY_SECTION_SELECTOR = '[data-availability-element="section"]'
 
   function setStatus(value) {
     document.documentElement.setAttribute(STATUS_ATTRIBUTE, value)
@@ -283,6 +284,57 @@
     })
   }
 
+  function clearAvailabilityModalTrigger(control) {
+    const modalTrigger =
+      typeof control.closest === 'function'
+        ? control.closest('[data-modal-trigger="set-availability"]')
+        : null
+    if (modalTrigger && typeof modalTrigger.removeAttribute === 'function') {
+      modalTrigger.removeAttribute('data-modal-trigger')
+    }
+    if (typeof control.removeAttribute === 'function') {
+      control.removeAttribute('data-modal-trigger')
+    }
+  }
+
+  function routeConnectionActionToSection(control, event) {
+    const section = document.querySelector(AVAILABILITY_SECTION_SELECTOR)
+    if (!section) return false
+
+    // The shared modal engine delegates from `document`, so remove the authored
+    // trigger before this click bubbles. The legacy modal remains available on
+    // pages that do not yet carry the always-visible Calendar section.
+    clearAvailabilityModalTrigger(control)
+
+    // The published action is already a Webflow page-section link. Leave its
+    // native #calendar navigation intact, including Webflow's scroll handling.
+    if (control.getAttribute('href') === '#calendar') return true
+
+    // A future canonical action marker may not be an anchor. Keep that route
+    // useful without bringing the retired availability modal back.
+    if (event && typeof event.preventDefault === 'function') event.preventDefault()
+    if (typeof section.scrollIntoView === 'function') {
+      section.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
+    return true
+  }
+
+  function bindConnectionAction(control, resolveStep) {
+    if (!control) return
+    control.__tsAvailabilityStepResolver = resolveStep
+    if (document.querySelector(AVAILABILITY_SECTION_SELECTOR)) {
+      clearAvailabilityModalTrigger(control)
+    }
+    if (control.__tsAvailabilityConnectionActionBound) return
+    control.__tsAvailabilityConnectionActionBound = true
+    control.addEventListener('click', function (event) {
+      if (routeConnectionActionToSection(control, event)) return
+      const stepName = control.__tsAvailabilityStepResolver()
+      if (stepName) showStep(stepName)
+      ensureAvailabilityModalOpen()
+    })
+  }
+
   function renderConnectionAction(state, availability) {
     const actions = Array.from(document.querySelectorAll(CALENDAR_ACTION_SELECTOR))
     actions.forEach(function (action) {
@@ -302,7 +354,7 @@
       action.setAttribute('data-calendar-connection-state', state)
       action.setAttribute('aria-busy', state === 'loading' ? 'true' : 'false')
       action.style.display = hasNylasAvailability ? 'none' : 'flex'
-      bindStep(action, function () {
+      bindConnectionAction(action, function () {
         if (activeConnectionState === 'error') return 'config-request-error'
         if (activeConnectionState === 'connected') {
           return Object.keys((availability && availability.items) || {}).length > 0
