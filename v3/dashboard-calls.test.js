@@ -5776,7 +5776,12 @@ test('call card binds its Join Call destination and clears it for ineligible reb
       assert.equal(link.hidden, true)
       assert.equal(wrap.hidden, true)
     }
-    api.bindCard(card, { ...booking, status: 'rescheduled', end_old: booking.end }, role)
+    api.bindCard(card, {
+      ...booking,
+      status: 'rescheduled',
+      start_old: booking.start,
+      end_old: booking.end,
+    }, role)
     assert.equal(link.getAttribute('href'), booking.meeting_link)
     assert.equal(link.hidden, false)
   }
@@ -5983,7 +5988,12 @@ test('meeting destinations expire at call end for both roles without a canonical
       const auxiliaryHandlers = new Map()
       auxiliaryAnchor.closest = selector => selector === '[booking-element-wrap]' ? auxiliaryWrap : null
       auxiliaryAnchor.addEventListener = (type, handler) => auxiliaryHandlers.set(type, handler)
-      card.querySelectorAll = selector => selector === '[booking-element="meeting-link"]' ? [anchor, auxiliaryAnchor] : []
+      const dragWrap = element()
+      const dragAnchor = anchorElement({ 'booking-element': 'meeting-link' })
+      const dragHandlers = new Map()
+      dragAnchor.closest = selector => selector === '[booking-element-wrap]' ? dragWrap : null
+      dragAnchor.addEventListener = (type, handler) => dragHandlers.set(type, handler)
+      card.querySelectorAll = selector => selector === '[booking-element="meeting-link"]' ? [anchor, auxiliaryAnchor, dragAnchor] : []
       const view = detailModalHarness()
       const paragraph = view.fields['meeting-link']
       const paragraphHandlers = new Map()
@@ -6016,6 +6026,7 @@ test('meeting destinations expire at call end for both roles without a canonical
 
       assert.equal(anchor.getAttribute('href'), booking.meeting_link)
       assert.equal(auxiliaryAnchor.getAttribute('href'), booking.meeting_link)
+      assert.equal(dragAnchor.getAttribute('href'), booking.meeting_link)
       assert.equal(paragraph.getAttribute('data-meeting-href'), booking.meeting_link)
       let anchorPrevented = false
       anchorHandlers.get('click')({
@@ -6028,11 +6039,29 @@ test('meeting destinations expire at call end for both roles without a canonical
         preventDefault() { auxiliaryPrevented = true },
       })
       assert.equal(auxiliaryPrevented, false)
+      let dragPrevented = false
+      dragHandlers.get('dragstart')({
+        preventDefault() { dragPrevented = true },
+      })
+      assert.equal(dragPrevented, false)
       const openedBefore = opened.length
       paragraphHandlers.get('click')({ preventDefault() {} })
       assert.equal(opened.length, openedBefore + 1)
 
       currentTime = booking.end
+      let expiredDragPrevented = false
+      let expiredDragStopped = false
+      dragHandlers.get('dragstart')({
+        preventDefault() { expiredDragPrevented = true },
+        stopImmediatePropagation() { expiredDragStopped = true },
+      })
+      assert.equal(expiredDragPrevented, true)
+      assert.equal(expiredDragStopped, true)
+      assert.equal(dragAnchor.hasAttribute('href'), false)
+      assert.equal(dragAnchor.hasAttribute('target'), false)
+      assert.equal(dragAnchor.hasAttribute('rel'), false)
+      assert.equal(dragAnchor.hidden, true)
+      assert.equal(dragWrap.hidden, true)
       let expiredAuxiliaryPrevented = false
       let expiredAuxiliaryStopped = false
       auxiliaryHandlers.get('auxclick')({
@@ -6248,6 +6277,99 @@ test('pending proposal cards retain confirmed time for both roles and adopt the 
       api.bindCard(card, { ...booking, start_old }, role)
       assert.equal(date.textContent, 'Confirmed time unavailable')
     }
+  }
+})
+
+test('reschedule decline clears incomplete original intervals before repaint', async () => {
+  const actions = require('./dashboard-call-actions.js')
+  const previous = {
+    actions: global.StartersDashboardCallActions,
+    fetch: global.xanoAuthFetch,
+    storage: global.sessionStorage,
+  }
+  global.StartersDashboardCallActions = actions
+  try {
+    for (const role of ['brand', 'starter']) {
+      for (const missingOriginal of ['start_old', 'end_old']) {
+        global.sessionStorage = memoryStorage()
+        const handlers = []
+        const document = {
+          createElement: tag => domElement(tag),
+          addEventListener(type, handler) {
+            if (type === 'click') handlers.push(handler)
+          },
+        }
+        const modal = domElement('dialog', { 'popup-booking-info': '' })
+        modal.ownerDocument = document
+        document.querySelector = () => modal
+        const base = domElement('div', { 'booking-popup-content': 'base' })
+        const meetingWrap = domElement('div', { 'booking-element-wrap': '' })
+        const meeting = domElement('p', { 'booking-element': 'meeting-link' })
+        meetingWrap.appendChild(meeting)
+        base.appendChild(meetingWrap)
+        modal.appendChild(base)
+        actions.ensureRescheduleViews(document, modal)
+        const now = Date.now()
+        const booking = {
+          booking_id: 'decline-incomplete-' + role + '-' + missingOriginal,
+          config_id: 'config',
+          data_environment: 'test',
+          status: 'rescheduled',
+          rescheduled_by: role === 'brand' ? 'starter' : 'brand',
+          start: now + 48 * 60 * 60 * 1000,
+          end: now + 48 * 60 * 60 * 1000 + 30 * 60 * 1000,
+          start_old: now + 24 * 60 * 60 * 1000,
+          end_old: now + 24 * 60 * 60 * 1000 + 30 * 60 * 1000,
+          server_now_ms: now,
+          duration: 30,
+          price: 0,
+          is_paid: false,
+          meeting_link: 'https://meet.google.com/incomplete-original',
+          brand_data: { memberstack_id: 'mem-brand', timezone: 'UTC' },
+          starter_data: { memberstack_id: 'mem-starter', timezone: 'UTC' },
+        }
+        booking[missingOriginal] = null
+        actions.bindCanonicalClock([booking], actions.monotonicNow())
+        api.populateDetailModal(modal, booking, role)
+        global.xanoAuthFetch = async () => ({
+          ok: true,
+          json: async () => ({
+            reschedule_decline: {
+              booking_id: booking.booking_id,
+              status: 'confirmed',
+              original_restored: true,
+            },
+          }),
+        })
+        actions.wire({
+          document,
+          role,
+          getBooking: () => booking,
+          refreshDetail: (target, model) => api.populateDetailModal(target, model, role),
+        })
+        const button = domElement('button', { 'booking-action-btn': 'reschedule-decline' })
+        button.closest = selector => selector.includes('popup-booking-info') ? modal : button
+        await handlers[0]({
+          target: button,
+          preventDefault() {},
+          stopImmediatePropagation() {},
+        })
+
+        const currentField = missingOriginal === 'start_old' ? 'start' : 'end'
+        const restoredField = missingOriginal === 'start_old' ? 'end' : 'start'
+        const availableOriginal = missingOriginal === 'start_old' ? 'end_old' : 'start_old'
+        assert.equal(booking.status, 'confirmed')
+        assert.equal(booking[currentField], null)
+        assert.equal(booking[restoredField], booking[availableOriginal])
+        assert.equal(meeting.getAttribute('data-meeting-href'), null)
+        assert.equal(meeting.hidden, true)
+        assert.equal(meetingWrap.hidden, true)
+      }
+    }
+  } finally {
+    global.StartersDashboardCallActions = previous.actions
+    global.xanoAuthFetch = previous.fetch
+    global.sessionStorage = previous.storage
   }
 })
 

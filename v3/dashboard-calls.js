@@ -537,7 +537,10 @@
       global.open(current, '_blank', 'noopener,noreferrer')
     }
     element.addEventListener('click', activateMeetingDestination, true)
-    if (isAnchor) element.addEventListener('auxclick', activateMeetingDestination, true)
+    if (isAnchor) {
+      element.addEventListener('auxclick', activateMeetingDestination, true)
+      element.addEventListener('dragstart', activateMeetingDestination, true)
+    }
     if (isParagraph) {
       element.addEventListener('keydown', function (event) {
         if (event.key === 'Enter') activateMeetingDestination(event)
@@ -567,8 +570,10 @@
     if (currentTime == null) return ''
     const status = raw === 'rescheduled' ? raw : bookingStatus(booking, currentTime)
     if (!['confirmed', 'rescheduled'].includes(status)) return ''
-    const end = Number(booking && booking[raw === 'rescheduled' ? 'end_old' : 'end'])
-    if (!Number.isFinite(end) || end <= 0 || end <= currentTime) return ''
+    const restored = raw === 'rescheduled'
+    const start = Number(booking && booking[restored ? 'start_old' : 'start'])
+    const end = Number(booking && booking[restored ? 'end_old' : 'end'])
+    if (!Number.isFinite(start) || start <= 0 || !Number.isFinite(end) || end <= start || end <= currentTime) return ''
     return safeMeetingHref(booking && booking.meeting_link)
   }
 

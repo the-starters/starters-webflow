@@ -1740,9 +1740,9 @@
               const restoredStart = Number(booking.start_old)
               const restoredEnd = Number(booking.end_old)
               if (Number.isFinite(confirmedStart) && confirmedStart > 0) booking.start = confirmedStart
-              else if (step.kind === 'reschedule-decline' && Number.isFinite(restoredStart) && restoredStart > 0) booking.start = restoredStart
+              else if (step.kind === 'reschedule-decline') booking.start = Number.isFinite(restoredStart) && restoredStart > 0 ? restoredStart : null
               if (Number.isFinite(confirmedEnd) && confirmedEnd > 0) booking.end = confirmedEnd
-              else if (step.kind === 'reschedule-decline' && Number.isFinite(restoredEnd) && restoredEnd > 0) booking.end = restoredEnd
+              else if (step.kind === 'reschedule-decline') booking.end = Number.isFinite(restoredEnd) && restoredEnd > 0 ? restoredEnd : null
               if (typeof settings.refreshDetail === 'function') settings.refreshDetail(modal, booking)
             }
             ensureRescheduleViews(document, modal)
