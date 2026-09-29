@@ -12,6 +12,8 @@ const ACTIVE_CALLS_COPY =
   'You have Requested or Confirmed calls on your current calendar. Decline or cancel them, or wait until they end, then try again.'
 const DISCONNECT_GOOGLE_GENERIC_COPY =
   "We couldn't disconnect your Google calendar. Please try again or contact support."
+const PAID_CALL_RATE_COPY =
+  'Your paid call rate must be a whole-dollar amount from $1 to $1,000. Update it in Call Settings, then try again.'
 
 /* ------------------------------------------------------------------ */
 /* Minimal DOM (same shape as scheduling-availability-writer.test.js)  */
@@ -639,6 +641,7 @@ function loadSection(options = {}) {
   const warnings = []
   const logs = []
   const assigned = []
+  const reloads = []
   const events = []
 
   const xanoAuthFetch = async (url, init) => {
@@ -684,6 +687,7 @@ function loadSection(options = {}) {
       pathname: options.pathname || '/starter-dashboard',
       origin: options.origin || 'https://thestarters.com',
       assign: (url) => assigned.push(url),
+      reload: () => reloads.push(true),
     },
     localStorage: {
       _map: new Map(Object.entries(options.localStorage || {})),
@@ -752,7 +756,7 @@ function loadSection(options = {}) {
     window,
   })
 
-  return { dom, calls, warnings, logs, assigned, events, state, window, document }
+  return { dom, calls, warnings, logs, assigned, reloads, events, state, window, document }
 }
 
 async function settle(iterations = 25) {
@@ -1196,10 +1200,13 @@ test('a disconnected member cannot reach Google OAuth: a stale Connect Google cl
 
   assert.equal(dom.connectBtnWrapper.children[1].style.display, 'none')
   dom.connectBtnWrapper.children[1].click() // hidden, programmatic click
+  dom.notif.oauthRedirectBtn.click()
   await settle()
 
   assert.equal(dom.notif.steps['pre-oauth'].style.display, 'none')
   assert.equal(dom.notif.steps['switch-calendar'].style.display, 'none')
+  assert.equal(dom.notif.steps['oauth-redirect'].style.display, 'none')
+  assert.equal(dom.notif.steps['request-error'].style.display, 'none')
   assert.equal(calls.filter((c) => c.path === '/grants/delete/v3').length, 0)
   assert.equal(calls.filter((c) => c.path === '/grants/oauth/v3').length, 0)
   assert.equal(assigned.length, 0)
@@ -1411,10 +1418,7 @@ for (const [label, priceCents] of [
     // The rate is repairable in Call Settings, so the member must be told that
     // rather than being left with copy that blames the calendar connection.
     assert.equal(dom.notif.steps['request-error'].style.display, '')
-    assert.match(dom.notif.errorText.textContent, /paid call rate/i)
-    assert.match(dom.notif.errorText.textContent, /\$1 to \$1,000/)
-    assert.match(dom.notif.errorText.textContent, /Call Settings/)
-    assert.doesNotMatch(dom.notif.errorText.textContent, /contact support/)
+    assert.equal(dom.notif.errorText.textContent, PAID_CALL_RATE_COPY)
   })
 }
 
@@ -1665,6 +1669,12 @@ const PLATFORM_STATE = {
 }
 const OAUTH_INTENT_KEY = 'starter-scheduling-oauth-intent:member-a'
 
+function platformState(extra) {
+  return Object.assign({}, PLATFORM_STATE, extra || {}, {
+    availability: Object.assign({}, PLATFORM_STATE.availability, extra && extra.availability),
+  })
+}
+
 function freeOnlyPlatformIntent(extra) {
   return JSON.stringify(Object.assign({
     createdAt: Date.now(),
@@ -1675,7 +1685,7 @@ function freeOnlyPlatformIntent(extra) {
 }
 
 test('Connect Google from Platform goes straight to the informational step, with no switch warning', async () => {
-  const { dom, calls, assigned, window } = loadSection({ serverState: PLATFORM_STATE })
+  const { dom, calls, assigned, window } = loadSection({ serverState: platformState() })
   await settle()
 
   assert.equal(dom.connectBtnWrapper.children[0].style.display, 'none') // Platform already connected
@@ -1693,6 +1703,72 @@ test('Connect Google from Platform goes straight to the informational step, with
   const intent = JSON.parse(window.sessionStorage._map.get(OAUTH_INTENT_KEY))
   assert.equal(intent.restorePlatform, true, 'the replaced Platform calendar is remembered')
   assert.equal(intent.paidCallIntent, null, 'Free-only member: no paid service captured')
+})
+
+test('a stale modal Connect Google action is ignored after Google is connected', async () => {
+  const result = loadSection({
+    serverState: {
+      grantId: 'google-grant',
+      grantEmail: 'member-a@gmail.example',
+      calendarId: 'primary',
+      availability: {
+        items: { general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] } },
+        manager: 'calendar',
+      },
+    },
+  })
+  await settle()
+
+  result.dom.notif.oauthRedirectBtn.click()
+  await settle()
+
+  assert.equal(result.calls.filter((call) => call.path === '/grants/delete/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/grants/oauth/v3').length, 0)
+  assert.equal(result.assigned.length, 0)
+  assert.equal(result.dom.notif.steps['oauth-redirect'].style.display, 'none')
+  assert.equal(result.dom.notif.steps['request-error'].style.display, 'none')
+  assert.equal(result.dom.connectBtnWrapper.children[2].style.display, '')
+  assert.equal(result.state.grantId, 'google-grant')
+  assert.equal(result.state.availability.manager, 'calendar')
+})
+
+test('Connect Google refuses before deleting Platform when recovery is not session-readable', async () => {
+  const result = loadSection({ serverState: platformState() })
+  await settle()
+  result.window.sessionStorage.setItem = () => {
+    throw new Error('session storage unavailable')
+  }
+
+  result.dom.connectBtnWrapper.children[1].click()
+  result.dom.notif.oauthRedirectBtn.click()
+  await settle()
+
+  assert.equal(result.calls.filter((call) => call.path === '/grants/delete/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/grants/oauth/v3').length, 0)
+  assert.equal(result.assigned.length, 0)
+  assert.equal(result.window.localStorage._map.has(OAUTH_INTENT_KEY), false)
+  assert.equal(result.dom.notif.steps['request-error'].style.display, '')
+  assert.equal(result.state.grantId, 'grant-virtual-1')
+  assert.equal(result.state.availability.manager, 'platform')
+})
+
+test('a BFCache return reloads only after this page started Google OAuth', async () => {
+  const oauthResult = loadSection({ serverState: platformState() })
+  await settle()
+  oauthResult.dom.connectBtnWrapper.children[1].click()
+  oauthResult.dom.notif.oauthRedirectBtn.click()
+  await settle()
+
+  assert.equal(oauthResult.assigned.length, 1)
+  oauthResult.window.dispatchEvent({ type: 'pageshow', persisted: false })
+  assert.equal(oauthResult.reloads.length, 0)
+  oauthResult.window.dispatchEvent({ type: 'pageshow', persisted: true })
+  assert.equal(oauthResult.reloads.length, 1)
+
+  const ordinaryResult = loadSection()
+  await settle()
+  ordinaryResult.window.dispatchEvent({ type: 'pageshow', persisted: true })
+  assert.equal(ordinaryResult.reloads.length, 0)
 })
 
 test('the OAuth return after a Platform replacement shows Platform and Google both connected', async () => {
@@ -1734,11 +1810,13 @@ test('a Free-only member who cancels Google OAuth gets the Platform calendar bac
   const result = loadSection({
     search: '?error=access_denied&error_description=cancelled&state=member-a',
     sessionStorage: { [OAUTH_INTENT_KEY]: freeOnlyPlatformIntent() },
+    serverState: { configs: [] },
   })
   await settle()
 
   assert.equal(result.calls.filter((c) => c.path === '/grants/add/v3').length, 0)
   assert.equal(result.calls.filter((c) => c.path === '/grants/create_virtual_account/v3').length, 1)
+  assert.equal(result.calls.filter((c) => c.path === '/scheduler/configurations/create/v3').length, 1)
   assert.equal(result.state.grantId, 'vgrant-1')
   assert.equal(result.state.calendarId, 'vcal-1')
   assert.equal(result.state.availability.manager, 'platform')
@@ -1749,10 +1827,12 @@ test('a Free-only member who cancels Google OAuth gets the Platform calendar bac
 test('a Free-only member who comes back from Google without a callback gets the Platform calendar back', async () => {
   const result = loadSection({
     sessionStorage: { [OAUTH_INTENT_KEY]: freeOnlyPlatformIntent() },
+    serverState: { configs: [] },
   })
   await settle()
 
   assert.equal(result.calls.filter((c) => c.path === '/grants/create_virtual_account/v3').length, 1)
+  assert.equal(result.calls.filter((c) => c.path === '/scheduler/configurations/create/v3').length, 1)
   assert.equal(result.state.grantId, 'vgrant-1')
   assert.equal(result.state.availability.manager, 'platform')
   assert.equal(result.window.sessionStorage._map.has(OAUTH_INTENT_KEY), false)
@@ -1772,7 +1852,7 @@ test('an OAuth intent without a replaced Platform calendar or a paid service cre
 
 test('a Free-only Platform member whose OAuth start fails after the delete gets the Platform calendar back', async () => {
   const { dom, calls, assigned, state, window } = loadSection({
-    serverState: PLATFORM_STATE,
+    serverState: platformState({ configs: [] }),
     postRoutes: {
       '/grants/oauth/v3': () => ({ status: 500, body: { message: 'provider unavailable' } }),
     },
@@ -1787,6 +1867,7 @@ test('a Free-only Platform member whose OAuth start fails after the delete gets 
   assert.equal(calls.filter((c) => c.path === '/grants/oauth/v3').length, 1)
   assert.equal(assigned.length, 0)
   assert.equal(calls.filter((c) => c.path === '/grants/create_virtual_account/v3').length, 1)
+  assert.equal(calls.filter((c) => c.path === '/scheduler/configurations/create/v3').length, 1)
   assert.equal(state.grantId, 'vgrant-1')
   assert.equal(state.availability.manager, 'platform')
   assert.equal(window.sessionStorage._map.has(OAUTH_INTENT_KEY), false)

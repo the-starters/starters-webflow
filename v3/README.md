@@ -3244,10 +3244,7 @@ composite clear contract in
 [Booking-stage availability writer](#booking-stage-availability-writer); this
 section does not add a second clear owner.
 
-Connection actions (JP contract, 2026-09-29): a disconnected member sees only
-Connect Platform. Connect Google appears once the Platform layer is connected.
-A Google connection shows Platform and Google connected, plus Disconnect
-Google. Connect Google goes straight to the `pre-oauth` step; the retired
+Connect Google goes straight to the `pre-oauth` step; the retired
 `switch-calendar` step never opens, and a stale Connect Google click without a
 connected Platform layer is ignored. V3 keeps one grant per member, so the
 "Done" click deletes the Platform grant through `grants/delete/v3` before the
@@ -3324,7 +3321,7 @@ notification, applies native custom validity to both authored inputs, keeps the
 inline form editable, and sends no availability request.
 
 The three `connect-btn-wrapper` actions follow the two-layer state matrix. With
-no connection, Connect Platform and Connect Google show. With a virtual Nylas
+no connection, only Connect Platform shows. With a virtual Nylas
 grant, only Connect Google shows. With a Google-backed Nylas grant, only
 Disconnect Google shows. Connect Platform is never valid while either layer is
 connected, and a stale or programmatic click is ignored.

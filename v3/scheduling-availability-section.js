@@ -84,7 +84,7 @@
   // problem, not a connection failure, so it must name the rate instead of leaving
   // the member with generic calendar copy they cannot act on.
   const ERROR_TEXT_PAID_CALL_RATE =
-    'Your paid call rate must be a whole-dollar amount from $1 to $1,000. Update it in Call Settings, then switch calendars again.'
+    'Your paid call rate must be a whole-dollar amount from $1 to $1,000. Update it in Call Settings, then try again.'
   const PAID_CALL_RATE_UNSUPPORTED = 'PAID_CALL_RATE_UNSUPPORTED'
   // grants/delete/v3 (Xano #1660) refuses a calendar switch or disconnect while the
   // current calendar still has requested, confirmed or rescheduled calls. Nothing is
@@ -129,6 +129,7 @@
   let timezonePersisted = false
   let connectionError = false
   let connectBusy = false
+  let oauthRedirectStarted = false
   // Carries the last calendar-transition failure to the modal that reports it, so
   // a recognized actionable failure can replace the generic connection copy.
   let calendarTransitionErrorText = null
@@ -374,6 +375,10 @@
     return !platformLayerConnected() && !googleLayerConnected()
   }
 
+  function googleConnectAvailable() {
+    return platformLayerConnected() && !googleLayerConnected()
+  }
+
   function deriveCalendarConnectionState() {
     const hasGrant = Boolean(grantId)
     const hasCalendar = Boolean(grantCalendarId)
@@ -499,7 +504,12 @@
     // Set only when this transition deletes a connected Platform calendar, so an
     // abandoned OAuth rebuilds what the member had, Free-only members included.
     if (restorePlatform) intent.restorePlatform = true
-    return writeOAuthIntent(memberId, intent) ? intent : null
+    if (!writeOAuthIntent(memberId, intent)) return null
+    if (restorePlatform && !oauthIntentReadableFromSession(memberId, intent)) {
+      clearOAuthIntent(memberId)
+      return null
+    }
+    return intent
   }
 
   // An OAuth transition needs recovery when it replaced a connected Platform
@@ -534,6 +544,18 @@
       }
     })
     return stored
+  }
+
+  function oauthIntentReadableFromSession(memberId, intent) {
+    const key = OAUTH_INTENT_PREFIX + memberId
+    const expected = JSON.stringify(intent)
+    const storages = oauthIntentStorages(['sessionStorage'])
+    if (storages.length === 0) return false
+    try {
+      return storages[0].getItem(key) === expected
+    } catch (error) {
+      return false
+    }
   }
 
   function readOAuthIntent(memberId, includeDurableFallback) {
@@ -1312,6 +1334,11 @@
   }
 
   async function activateGoogleManager() {
+    if (!googleConnectAvailable()) {
+      switchNotification(undefined)
+      applyConnectButtonVisibility()
+      return
+    }
     if (connectBusy) return
     connectBusy = true
     calendarTransitionErrorText = null
@@ -1438,8 +1465,10 @@
       if (!rememberOAuthIntent(memberId, redirectUri, paidCallIntent, restorePlatform)) {
         throw new Error('OAuth transition could not be retained')
       }
+      oauthRedirectStarted = true
       window.location.assign(url)
     } catch (error) {
+      oauthRedirectStarted = false
       publishCalendarConnectionError()
       console.warn('[scheduling-section] OAuth redirect failed:', error && error.message)
       throw error
@@ -1614,12 +1643,12 @@
       const action = target.getAttribute(ACTION)
       target.addEventListener('click', function (e) {
         if (e && typeof e.preventDefault === 'function') e.preventDefault()
-        if (action === 'connect-google') {
-          // Legacy "Switch to Google" button in the retired switch-calendar step.
-          // Connect Google no longer opens that step; if older markup still
-          // reaches it, continue into the same pre-oauth step.
-          switchNotification('pre-oauth')
-        } else if (action === 'open-oauth-redirect') {
+        if (action === 'open-oauth-redirect') {
+          if (!googleConnectAvailable()) {
+            switchNotification(undefined)
+            applyConnectButtonVisibility()
+            return
+          }
           switchNotification('oauth-redirect')
           activateGoogleManager().then(function (ok) {
             if (ok === false) showNotificationError(calendarTransitionErrorCopy(ERROR_TEXT_CONNECT_GOOGLE))
@@ -1758,7 +1787,7 @@
       ['connect-platform', platformConnectAvailable()],
       // JP contract (2026-09-29): Connect Google is offered only once the Platform
       // layer is connected, so a disconnected member sees only Connect Platform.
-      ['open-connect-google', platformLayerConnected() && !hasGoogleConnection],
+      ['open-connect-google', googleConnectAvailable()],
       ['open-disconnect-google', hasGoogleConnection],
     ]
     rules.forEach(function (rule, i) {
@@ -1817,7 +1846,8 @@
         // cancels anything; while a call has not ended it refuses, and the error
         // step names those calls. A stale or programmatic click without a
         // connected Platform layer (or with Google already connected) is ignored.
-        if (!platformLayerConnected() || googleLayerConnected()) {
+        if (!googleConnectAvailable()) {
+          switchNotification(undefined)
           applyConnectButtonVisibility()
           return
         }
@@ -3185,6 +3215,12 @@
     minimumBookingNoticeMinutes: minimumBookingNoticeMinutes,
     publishCalendarConnectionState: publishCalendarConnectionState,
   }
+
+  window.addEventListener('pageshow', function (event) {
+    if (!event.persisted || !oauthRedirectStarted) return
+    oauthRedirectStarted = false
+    window.location.reload()
+  })
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', initialize, { once: true })
