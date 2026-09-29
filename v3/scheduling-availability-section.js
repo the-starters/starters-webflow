@@ -129,7 +129,6 @@
   let timezonePersisted = false
   let connectionError = false
   let connectBusy = false
-  let oauthRedirectStarted = false
   // Carries the last calendar-transition failure to the modal that reports it, so
   // a recognized actionable failure can replace the generic connection copy.
   let calendarTransitionErrorText = null
@@ -1431,10 +1430,8 @@
       if (!rememberOAuthIntent(memberId, redirectUri, paidCallIntent)) {
         throw new Error('OAuth transition could not be retained')
       }
-      oauthRedirectStarted = true
       window.location.assign(url)
     } catch (error) {
-      oauthRedirectStarted = false
       publishCalendarConnectionError()
       console.warn('[scheduling-section] OAuth redirect failed:', error && error.message)
       throw error
@@ -3134,18 +3131,11 @@
       } else {
         const pendingTransition = readOAuthIntent(sessionMemberId)
         if (pendingTransition && pendingTransition.paidCallIntent) {
-          try {
-            const recovered = await recoverPaidCallAfterOAuthCancellation(
-              sessionMemberId,
-              pendingTransition,
-            )
-            if (recovered) clearOAuthIntent(sessionMemberId)
-          } catch (error) {
-            console.warn(
-              '[scheduling-section] callbackless recovery failed:',
-              error && error.message,
-            )
-          }
+          const recovered = await recoverPaidCallAfterOAuthCancellation(
+            sessionMemberId,
+            pendingTransition,
+          )
+          if (recovered) clearOAuthIntent(sessionMemberId)
         }
       }
 
@@ -3189,12 +3179,6 @@
     minimumBookingNoticeMinutes: minimumBookingNoticeMinutes,
     publishCalendarConnectionState: publishCalendarConnectionState,
   }
-
-  window.addEventListener('pageshow', function (event) {
-    if (!event.persisted || !oauthRedirectStarted) return
-    oauthRedirectStarted = false
-    window.location.reload()
-  })
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', initialize, { once: true })

@@ -641,7 +641,6 @@ function loadSection(options = {}) {
   const warnings = []
   const logs = []
   const assigned = []
-  const reloads = []
   const events = []
 
   const xanoAuthFetch = async (url, init) => {
@@ -687,7 +686,6 @@ function loadSection(options = {}) {
       pathname: options.pathname || '/starter-dashboard',
       origin: options.origin || 'https://thestarters.com',
       assign: (url) => assigned.push(url),
-      reload: () => reloads.push(true),
     },
     localStorage: {
       _map: new Map(Object.entries(options.localStorage || {})),
@@ -756,7 +754,7 @@ function loadSection(options = {}) {
     window,
   })
 
-  return { dom, calls, warnings, logs, assigned, reloads, events, state, window, document }
+  return { dom, calls, warnings, logs, assigned, events, state, window, document }
 }
 
 async function settle(iterations = 25) {
@@ -1724,25 +1722,6 @@ test('a stale modal Connect Google action is ignored after Google is connected',
   assert.equal(result.state.availability.manager, 'calendar')
 })
 
-test('a BFCache return reloads only after this page started Google OAuth', async () => {
-  const oauthResult = loadSection({ serverState: platformState() })
-  await settle()
-  oauthResult.dom.connectBtnWrapper.children[1].click()
-  oauthResult.dom.notif.oauthRedirectBtn.click()
-  await settle()
-
-  assert.equal(oauthResult.assigned.length, 1)
-  oauthResult.window.dispatchEvent({ type: 'pageshow', persisted: false })
-  assert.equal(oauthResult.reloads.length, 0)
-  oauthResult.window.dispatchEvent({ type: 'pageshow', persisted: true })
-  assert.equal(oauthResult.reloads.length, 1)
-
-  const ordinaryResult = loadSection()
-  await settle()
-  ordinaryResult.window.dispatchEvent({ type: 'pageshow', persisted: true })
-  assert.equal(ordinaryResult.reloads.length, 0)
-})
-
 test('the OAuth return after a Platform replacement shows Platform and Google both connected', async () => {
   let canonicalState = null
   const result = loadSection({
@@ -1782,66 +1761,6 @@ test('the OAuth return after a Platform replacement shows Platform and Google bo
     assert.equal(result.dom.connectBtnWrapper.children[index].style.display !== 'none', visible, 'action ' + index)
   })
   assert.equal(result.window.sessionStorage._map.has(OAUTH_INTENT_KEY), false)
-})
-
-test('a failed paid-only callbackless recovery leaves Connect Platform bound for retry', async () => {
-  let canonicalState = null
-  let accountAttempts = 0
-  const intent = JSON.stringify({
-    createdAt: Date.now(),
-    redirectUri: 'https://thestarters.com/starter-dashboard',
-    paidCallIntent: {
-      title: 'Paid Strategy Call',
-      price_cents: 42500,
-      duration_minutes: 45,
-    },
-  })
-  const result = loadSection({
-    sessionStorage: { [OAUTH_INTENT_KEY]: intent },
-    localStorage: { [OAUTH_INTENT_KEY]: intent },
-    serverState: { configs: [] },
-    postRoutes: {
-      '/grants/create_virtual_account/v3': () => {
-        accountAttempts += 1
-        if (accountAttempts === 1) {
-          return { status: 503, body: { message: 'try again' } }
-        }
-        canonicalState.grantId = 'vgrant-retry'
-        canonicalState.grantEmail = 'virtual@example.com'
-        return {
-          status: 200,
-          body: {
-            response: {
-              result: { data: { id: 'vgrant-retry', email: 'virtual@example.com' } },
-            },
-          },
-        }
-      },
-    },
-  })
-  canonicalState = result.state
-  await settle()
-
-  assert.equal(accountAttempts, 1)
-  assert.equal(
-    result.document.documentElement.getAttribute('data-scheduling-availability-section'),
-    'ready',
-  )
-  assert.notEqual(result.dom.connectBtnWrapper.children[0].style.display, 'none')
-  assert.equal(result.window.sessionStorage._map.has(OAUTH_INTENT_KEY), true)
-  assert.equal(result.window.localStorage._map.has(OAUTH_INTENT_KEY), true)
-
-  result.dom.connectBtnWrapper.children[0].click()
-  await settle()
-
-  assert.equal(accountAttempts, 2)
-  assert.equal(result.calls.filter((call) => call.path === '/scheduler/configurations/create/v3').length, 1)
-  assert.equal(result.state.grantId, 'vgrant-retry')
-  assert.equal(result.state.calendarId, 'vcal-1')
-  assert.equal(result.state.availability.manager, 'platform')
-  assert.equal(result.dom.notif.steps['virtual-connected'].style.display, '')
-  assert.equal(result.window.sessionStorage._map.has(OAUTH_INTENT_KEY), true)
-  assert.equal(result.window.localStorage._map.has(OAUTH_INTENT_KEY), true)
 })
 
 test('an active-booking rejection stops Google disconnect before the virtual Platform replacement', async () => {
