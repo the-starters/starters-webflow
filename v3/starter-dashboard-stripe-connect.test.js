@@ -175,8 +175,19 @@ test('dashboard view uses canonical provider-derived onboarding state', () => {
       },
       returnContext(),
     ),
+    'incomplete',
+    'explicit onboarding requirement wins over readiness',
+  )
+  assert.equal(
+    api.resolveDashboardView(
+      {
+        connected: true,
+        charges_enabled: true,
+        requires_onboarding: false,
+      },
+      returnContext(),
+    ),
     'ready',
-    'canonical readiness wins over stale onboarding state',
   )
   assert.equal(
     api.resolveDashboardView({ mode: 'provider_unavailable' }, returnContext()),
@@ -223,11 +234,19 @@ test('provider-derived state stays stable across a Stripe return and reload', ()
       },
     },
     {
-      expected: 'ready',
+      expected: 'incomplete',
       status: {
         connected: true,
         charges_enabled: true,
         requires_onboarding: true,
+      },
+    },
+    {
+      expected: 'ready',
+      status: {
+        connected: true,
+        charges_enabled: true,
+        requires_onboarding: false,
       },
     },
   ]
@@ -4706,7 +4725,7 @@ test('verified callback signal stops polling when onboarding is required', async
       statusCount += 1
       return response({
         connected: true,
-        charges_enabled: false,
+        charges_enabled: true,
         requires_onboarding: true,
       })
     }
@@ -6067,7 +6086,7 @@ test('dashboard requires the documented auth-change subscription for conflict gu
   }
 })
 
-test('ordinary dashboard mount keeps a live auth scope and ignores restart markers', async () => {
+test('ordinary dashboard mount prioritizes onboarding and keeps a live auth scope', async () => {
   const previous = {
     document: global.document,
     fetch: global.fetch,
@@ -6119,7 +6138,11 @@ test('ordinary dashboard mount keeps a live auth scope and ignores restart marke
   global.fetch = async (url) => {
     if (String(url).includes('/stripe_connect/status/v3')) {
       statusReads += 1
-      return response({ connected: false, charges_enabled: false })
+      return response({
+        connected: true,
+        charges_enabled: true,
+        requires_onboarding: true,
+      })
     }
     throw new Error('Unexpected Stripe request: ' + url)
   }
@@ -6127,15 +6150,16 @@ test('ordinary dashboard mount keeps a live auth scope and ignores restart marke
 
   try {
     assert.deepEqual(await api.mountDashboard(), {
-      connected: false,
-      charges_enabled: false,
+      connected: true,
+      charges_enabled: true,
+      requires_onboarding: true,
     })
     assert.equal(typeof authChangeListener, 'function')
     assert.equal(listenerRegistrations, 1)
     assert.equal(liveReads, 6)
     assert.equal(statusReads, 1)
     assert.deepEqual(replaced, [])
-    assert.equal(root.getAttribute('data-stripe-connect-view'), 'disconnected')
+    assert.equal(root.getAttribute('data-stripe-connect-view'), 'incomplete')
     assert.equal(root.getAttribute('data-stripe-connect-reason'), null)
   } finally {
     api.__resetXanoToken()

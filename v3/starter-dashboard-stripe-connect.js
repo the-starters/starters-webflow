@@ -261,6 +261,7 @@
       if (returnContext.mode === 'reconciliation_required') return 'error'
       return 'disconnected'
     }
+    if (status.requires_onboarding === true) return 'incomplete'
     if (status.charges_enabled === true) return 'ready'
     return status.requires_onboarding === false ? 'review' : 'incomplete'
   }

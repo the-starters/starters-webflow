@@ -3837,8 +3837,8 @@ root, use these values:
 | --- | --- |
 | `loading` | Immediate loading state while Memberstack and Xano resolve |
 | `disconnected` | No connected Stripe account; contains the authored connect CTA |
-| `incomplete` | Connected account whose provider status requires more onboarding; missing or malformed onboarding status also fails safe here |
-| `ready` | Stripe reports `charges_enabled: true` |
+| `incomplete` | Connected account whose provider status explicitly requires more onboarding; while readiness is pending, missing or malformed onboarding status also fails safe here |
+| `ready` | Stripe reports `charges_enabled: true` without an explicit onboarding requirement |
 | `review` | Connected account whose provider status explicitly says onboarding is complete while readiness remains pending |
 | `error` | Designer-owned safe failure state; on the callback page this remains visible instead of losing a failed one-time code, and on the dashboard it also carries safe account-owner-conflict recovery copy |
 
@@ -3868,8 +3868,8 @@ an error. A verified account-owner conflict keeps that hero disabled with
 `Stripe Unavailable / Use Connect a different account above` while the error
 card exposes the matching `Connect a different account` recovery action. The
 disconnected and incomplete states start the same guarded OAuth/onboarding flow
-as the action-list CTA. A status with
-`charges_enabled:true` requests a provider-verified account destination from
+as the action-list CTA. A status with `charges_enabled:true` and no explicit
+onboarding requirement requests a provider-verified account destination from
 `dashboard/v3`:
 Express accounts receive a single-use login link, while Standard/full accounts
 receive an account-scoped `/b/<account>` Dashboard URL. The generic Stripe
@@ -3942,13 +3942,15 @@ The dashboard calls provider-aware `status/v3` immediately. It repairs a
 readiness mismatch and clears a stale projection only when Stripe returns a
 definitive disconnect; ambiguous provider errors show the authored unavailable
 state without changing Xano. `connected:false` selects `disconnected`.
-`charges_enabled:true` always selects `ready`. A connected account whose
-readiness is false selects `review` only when provider status explicitly returns
-`requires_onboarding:false`; `true`, missing, or malformed values select
-`incomplete`. After a recognized ordinary return, the controller polls status
-briefly to absorb webhook timing, but stops as soon as readiness succeeds or
-the provider confirms more onboarding is required. The return marker controls
-only that polling and URL cleanup; it cannot choose a dashboard state. A
+`requires_onboarding:true` selects `incomplete` even when
+`charges_enabled:true`. Otherwise, `charges_enabled:true` selects `ready`. A
+connected account whose readiness is false selects `review` only when provider
+status explicitly returns `requires_onboarding:false`; `true`, missing, or
+malformed values select `incomplete`. After a recognized ordinary return, the
+controller polls status briefly to absorb webhook timing, but stops as soon as
+readiness succeeds or the provider confirms more onboarding is required. The
+return marker controls only that polling and URL cleanup; it cannot choose a
+dashboard state. A
 receipt-verified owner conflict skips the settlement-poll loop. A
 provider-disconnected account always returns to `disconnected`, even when a
 stale success marker is present. A `reconciliation_required` return with a
