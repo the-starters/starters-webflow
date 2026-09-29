@@ -47,6 +47,7 @@
   const REQUEST_EXPIRATION_TICK_MS = 10000
   const REQUEST_EXPIRATION_POLL_MS = 30000
   const REQUEST_EXPIRATION_MAX_POLLS = 3
+  const MUTATION_RECONCILIATION_MAX_PASSES = 3
   const PROFILE_REFRESH_DELAYS_MS = [0, 150, 300, 600, 1000, 1600, 2500]
   const DEEP_LINK_READY_DELAYS_MS = [0, 100, 250, 500, 1000, 1600]
   const PROFILE_FORM_SELECTOR = 'form[data-ms-form="profile"]'
@@ -963,11 +964,7 @@
       pending.delete(claim.owner)
       if (!pending.size) state.pending.delete(bookingId)
     }
-    if (!bookingMutationPending(state, bookingId) && state.refreshRequired.has(bookingId)) {
-      state.refreshRequired.delete(bookingId)
-      return true
-    }
-    return false
+    return !bookingMutationPending(state, bookingId) && state.refreshRequired.has(bookingId)
   }
 
   function snapshotBookingMutations(state) {
@@ -976,7 +973,63 @@
       identity: state.identity,
       owners: new Map(state.owners),
       committed: new Map(state.committed),
+      refreshRequired: new Set(state.refreshRequired),
     }
+  }
+
+  function bookingMutationReconciliationPending(state) {
+    if (!state || !(state.refreshRequired instanceof Set)) return false
+    return Array.from(state.refreshRequired).some(function (bookingId) {
+      return !bookingMutationPending(state, bookingId)
+    })
+  }
+
+  function acknowledgeBookingMutationRefresh(state, snapshot) {
+    if (
+      !state || !snapshot || snapshot.identity !== state.identity ||
+      !(snapshot.refreshRequired instanceof Set)
+    ) return
+    snapshot.refreshRequired.forEach(function (bookingId) {
+      if (
+        bookingMutationPending(state, bookingId) ||
+        bookingMutationCounter(state.owners, bookingId) !==
+          (snapshot.owners.get(bookingId) || 0) ||
+        bookingMutationCounter(state.committed, bookingId) !==
+          (snapshot.committed.get(bookingId) || 0)
+      ) return
+      state.refreshRequired.delete(bookingId)
+    })
+  }
+
+  function createBookingMutationReconciler(refresh, state) {
+    let active = null
+    const reconcile = function () {
+      if (!bookingMutationReconciliationPending(state)) return Promise.resolve(true)
+      if (active) return active
+      const identity = state.identity
+      const attempt = function (pass) {
+        if (
+          identity !== state.identity ||
+          !bookingMutationReconciliationPending(state)
+        ) return Promise.resolve(true)
+        return Promise.resolve()
+          .then(refresh)
+          .then(function (refreshed) {
+            if (
+              refreshed === true &&
+              pass < MUTATION_RECONCILIATION_MAX_PASSES &&
+              identity === state.identity &&
+              bookingMutationReconciliationPending(state)
+            ) return attempt(pass + 1)
+            return refreshed === true && !bookingMutationReconciliationPending(state)
+          })
+      }
+      active = attempt(1).finally(function () {
+        active = null
+      })
+      return active
+    }
+    return reconcile
   }
 
   function bookingChangedDuringRefresh(state, snapshot, bookingId) {
@@ -985,8 +1038,9 @@
     const pending = bookingMutationPending(state, bookingId) &&
       bookingMutationCounter(state.owners, bookingId) !==
         (snapshot.owners.get(bookingId) || 0)
-    if (pending) state.refreshRequired.add(bookingId)
-    return committed || pending
+    const changed = committed || pending
+    if (changed) state.refreshRequired.add(bookingId)
+    return changed
   }
 
   function reconcileCanonicalBookings(refs, rows, snapshot, state) {
@@ -1056,12 +1110,10 @@
     Object.assign(current, changes)
     if (booking !== current) Object.assign(booking, changes)
     if (state) {
-      releaseBookingMutation(state, claim)
       state.committed.set(
         bookingId,
         bookingMutationCounter(state.committed, bookingId) + 1,
       )
-      state.refreshRequired.delete(bookingId)
     }
     refreshMeetingDestinations(refs, now)
     return current
@@ -1098,6 +1150,16 @@
     const tick = function () {
       const currentTime = Number(now())
       refreshMeetingDestinations(refs, currentTime)
+      if (typeof settings.reconcileBookingMutations === 'function') {
+        Promise.resolve()
+          .then(settings.reconcileBookingMutations)
+          .catch(function (error) {
+            console.error(
+              '[dashboard-calls] mutation reconciliation failed:',
+              error && error.message,
+            )
+          })
+      }
       if (role !== 'starter') return
       const expiredKeys = refreshRequestExpirations(refs, role, currentTime)
       refreshDetailExpiration(refs, role, currentTime)
@@ -3305,7 +3367,9 @@
         canonicalRows,
         mutationSnapshot,
         mutationState,
-      )
+      ).filter(function (booking) {
+        return memberOwnsBooking(booking, memberId, role)
+      })
       refs.forEach(function (section) {
         const nextRows = sectionBookings(rows, role, section.name)
         if (preserveExisting && sameBookingRows(section.rows, nextRows)) {
@@ -3335,6 +3399,20 @@
       document.documentElement.setAttribute('data-dashboard-calls-v3', 'ready')
       if (options && typeof options.onCanonicalRows === 'function') {
         options.onCanonicalRows(rows, memberId, role)
+      }
+      acknowledgeBookingMutationRefresh(mutationState, mutationSnapshot)
+      if (
+        bookingMutationReconciliationPending(mutationState) &&
+        options && typeof options.onMutationReconciliationRequired === 'function'
+      ) {
+        Promise.resolve()
+          .then(options.onMutationReconciliationRequired)
+          .catch(function (error) {
+            console.error(
+              '[dashboard-calls] mutation reconciliation failed:',
+              error && error.message,
+            )
+          })
       }
       return true
     } catch (error) {
@@ -3393,8 +3471,14 @@
     }
 
     let sessionGeneration = 0
+    let reconcileBookingMutations = null
     const currentGeneration = function () {
       return sessionGeneration
+    }
+    const requestMutationReconciliation = function () {
+      return typeof reconcileBookingMutations === 'function'
+        ? reconcileBookingMutations()
+        : Promise.resolve(true)
     }
     wireBrandProfileRepaint(memberstack, currentGeneration)
     let initialReadinessPending = true
@@ -3432,7 +3516,12 @@
         generation,
         currentGeneration,
         useSharedMember,
-        { preserveExisting, onCanonicalRows, mutationState },
+        {
+          preserveExisting,
+          onCanonicalRows,
+          mutationState,
+          onMutationReconciliationRequired: requestMutationReconciliation,
+        },
       ).then(function (refreshed) {
         if (refreshed === true && generation === currentGeneration()) {
           initialReadinessPending = false
@@ -3452,9 +3541,17 @@
         generation,
         currentGeneration,
         false,
-        { preserveExisting: true, mutationState },
+        {
+          preserveExisting: true,
+          mutationState,
+          onMutationReconciliationRequired: requestMutationReconciliation,
+        },
       )
     }
+    reconcileBookingMutations = createBookingMutationReconciler(
+      refreshExpiredRequests,
+      mutationState,
+    )
     const captureCurrentBooking = function (booking) {
       return captureBookingMutation(refs, booking, mutationState)
     }
@@ -3483,6 +3580,7 @@
       captureBookingMutation: captureCurrentBooking,
       commitBookingMutation: commitCurrentBooking,
       releaseBookingMutation: releaseCurrentBooking,
+      reconcileBookingMutations: requestMutationReconciliation,
       onCancelSuccess: function (booking, result, claim) {
         return applyCancellationResult(
           refs,
@@ -3502,7 +3600,9 @@
     }
     wireDashboardCallModules(moduleOptions)
     wireBookingActions(refs, role, refreshAfterMutation)
-    startBookingLifecycleTicker(refs, role, refreshExpiredRequests)
+    startBookingLifecycleTicker(refs, role, refreshExpiredRequests, {
+      reconcileBookingMutations: requestMutationReconciliation,
+    })
     if (typeof memberstack.onAuthChange === 'function') {
       memberstack.onAuthChange(function () {
         restart()
@@ -3528,6 +3628,8 @@
     resetBookingMutationState,
     captureBookingMutation,
     releaseBookingMutation,
+    bookingMutationReconciliationPending,
+    createBookingMutationReconciler,
     reconcileCanonicalBookings,
     commitBookingMutation,
     applyCancellationResult,

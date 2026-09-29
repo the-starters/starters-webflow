@@ -6767,6 +6767,206 @@ test('booking-scoped mutations merge stale reads without blocking unrelated rows
   }
 })
 
+test('canonical reconciliation excludes dirty rows owned by another member', async () => {
+  const previousDocument = global.document
+  const previousFetch = global.xanoAuthFetch
+  const previousActions = global.StartersDashboardCallActions
+  const now = Date.now()
+  const prior = {
+    booking_id: 'prior-member-booking',
+    status: 'confirmed',
+    start: now + 60_000,
+    end: now + 120_000,
+    meeting_link: 'https://meet.google.com/prior-member',
+    brand_data: { memberstack_id: 'prior-member' },
+    starter_data: { memberstack_id: 'starter-member' },
+  }
+  const current = {
+    booking_id: 'current-member-booking',
+    status: 'confirmed',
+    start: now + 180_000,
+    end: now + 240_000,
+    meeting_link: 'https://meet.google.com/current-member',
+    brand_data: { memberstack_id: 'current-member' },
+    starter_data: { memberstack_id: 'starter-member' },
+  }
+  const refs = {
+    name: 'calls', filter: 'all', rows: [prior], rendered: 1,
+    list: element(), template: element(), loader: element(), empty: element(),
+    loadMore: element(), filters: element(), count: element(), section: element(),
+  }
+  const requested = deferred()
+  const response = deferred()
+  const mutationState = api.createBookingMutationState()
+  const view = detailModalHarness()
+  let canonicalRows = null
+  try {
+    global.StartersDashboardCallActions = undefined
+    global.document = {
+      documentElement: element(),
+      querySelector: selector => selector.includes('popup-booking-info') ? view.modal : null,
+    }
+    global.xanoAuthFetch = async () => {
+      requested.resolve()
+      return response.promise
+    }
+    api.populateDetailModal(view.modal, prior, 'brand', now)
+    assert.equal(
+      view.fields['meeting-link'].getAttribute('data-meeting-href'),
+      prior.meeting_link,
+    )
+    const refresh = api.refreshSession(
+      { getCurrentMember: async () => ({ id: 'current-member' }) },
+      [refs], 'brand', 1, () => 1, false, {
+        preserveExisting: true,
+        mutationState,
+        onCanonicalRows(rows) { canonicalRows = rows },
+      },
+    )
+    await requested.promise
+    const priorClaim = api.captureBookingMutation([refs], prior, mutationState)
+    response.resolve({ ok: true, json: async () => [current] })
+
+    assert.equal(await refresh, true)
+    assert.deepEqual(refs.rows.map(row => row.booking_id), [current.booking_id])
+    assert.deepEqual(canonicalRows.map(row => row.booking_id), [current.booking_id])
+    assert.equal(refs.rows.some(row => row.meeting_link === prior.meeting_link), false)
+    assert.equal(canonicalRows.some(row => row.meeting_link === prior.meeting_link), false)
+    assert.equal(view.fields['meeting-link'].hasAttribute('data-meeting-href'), false)
+    assert.equal(view.fields['meeting-link'].hidden, true)
+    assert.equal(api.releaseBookingMutation(mutationState, priorClaim), true)
+  } finally {
+    global.document = previousDocument
+    global.xanoAuthFetch = previousFetch
+    global.StartersDashboardCallActions = previousActions
+  }
+})
+
+test('mutation reconciliation retains dirty state until canonical readback succeeds', async () => {
+  const previousDocument = global.document
+  const previousFetch = global.xanoAuthFetch
+  const previousActions = global.StartersDashboardCallActions
+  const previousError = console.error
+  const now = Date.now()
+  const booking = {
+    booking_id: 'durable-reconciliation',
+    status: 'rescheduled',
+    rescheduled_by: 'starter',
+    start: now + 180_000,
+    end: now + 240_000,
+    start_old: now + 60_000,
+    end_old: now + 120_000,
+    meeting_link: 'https://meet.google.com/original-link',
+    brand_data: { memberstack_id: 'mutation-member' },
+    starter_data: { memberstack_id: 'starter-member' },
+  }
+  const accepted = {
+    ...booking,
+    status: 'confirmed',
+    start: now + 300_000,
+    end: now + 360_000,
+    meeting_link: 'https://meet.google.com/rotated-link',
+  }
+  const card = element({ 'data-booking-id': booking.booking_id })
+  const wrap = element()
+  const anchor = anchorElement({ 'booking-element': 'meeting-link' })
+  anchor.closest = selector => selector === '[booking-element-wrap]' ? wrap : null
+  card.querySelectorAll = selector => selector === '[booking-element="meeting-link"]'
+    ? [anchor]
+    : []
+  const list = element()
+  list.querySelectorAll = selector => selector === '[data-booking-id]' ? [card] : []
+  const refs = {
+    name: 'calls', filter: 'all', rows: [booking], rendered: 1,
+    list, template: element(), loader: element(), empty: element(),
+    loadMore: element(), filters: element(), count: element(), section: element(),
+  }
+  const staleRequested = deferred()
+  const staleResponse = deferred()
+  const mutationState = api.createBookingMutationState()
+  let reads = 0
+  try {
+    global.StartersDashboardCallActions = undefined
+    global.document = { documentElement: element(), querySelector: () => null }
+    console.error = () => {}
+    global.xanoAuthFetch = async () => {
+      reads += 1
+      if (reads === 1) {
+        staleRequested.resolve()
+        return staleResponse.promise
+      }
+      if (reads === 2) throw new Error('Controlled reconciliation failure')
+      return { ok: true, json: async () => [accepted] }
+    }
+    api.bindCard(card, booking, 'brand')
+    assert.equal(anchor.getAttribute('href'), booking.meeting_link)
+    const staleRefresh = api.refreshSession(
+      { getCurrentMember: async () => ({ id: 'mutation-member' }) },
+      [refs], 'brand', 1, () => 1, false,
+      { preserveExisting: true, mutationState },
+    )
+    await staleRequested.promise
+    const claim = api.captureBookingMutation([refs], booking, mutationState)
+    staleResponse.resolve({ ok: true, json: async () => [accepted] })
+    assert.equal(await staleRefresh, true)
+    assert.equal(refs.rows[0], booking)
+    assert.equal(anchor.getAttribute('href'), booking.meeting_link)
+
+    assert.equal(api.commitBookingMutation(
+      [refs],
+      booking,
+      { status: accepted.status, start: accepted.start, end: accepted.end },
+      claim,
+      mutationState,
+      now,
+    ), booking)
+    assert.equal(api.releaseBookingMutation(mutationState, claim), true)
+
+    const reconcile = api.createBookingMutationReconciler(function () {
+      return api.refreshSession(
+        { getCurrentMember: async () => ({ id: 'mutation-member' }) },
+        [refs], 'brand', 1, () => 1, false,
+        { preserveExisting: true, mutationState },
+      )
+    }, mutationState)
+    const first = reconcile()
+    const coalesced = reconcile()
+    assert.equal(first, coalesced)
+    assert.equal(await first, false)
+    assert.equal(reads, 2)
+    assert.equal(api.bookingMutationReconciliationPending(mutationState), true)
+    assert.equal(api.releaseBookingMutation(mutationState, claim), true)
+
+    let clearedTicker = false
+    const stopTicker = api.startBookingLifecycleTicker([refs], 'brand', () => {}, {
+      now: () => now,
+      reconcileBookingMutations: reconcile,
+      setInterval(_callback, delay) {
+        assert.equal(delay, 10_000)
+        return 77
+      },
+      clearInterval(timer) {
+        assert.equal(timer, 77)
+        clearedTicker = true
+      },
+    })
+    await new Promise(setImmediate)
+    assert.equal(reads, 3)
+    assert.equal(refs.rows[0].meeting_link, accepted.meeting_link)
+    assert.equal(refs.rows[0].start, accepted.start)
+    assert.equal(anchor.getAttribute('href'), accepted.meeting_link)
+    assert.equal(api.bookingMutationReconciliationPending(mutationState), false)
+    assert.equal(api.releaseBookingMutation(mutationState, claim), false)
+    stopTicker()
+    assert.equal(clearedTicker, true)
+  } finally {
+    global.document = previousDocument
+    global.xanoAuthFetch = previousFetch
+    global.StartersDashboardCallActions = previousActions
+    console.error = previousError
+  }
+})
+
 test('the latest same-booking action owns its validated response', () => {
   const now = Date.now()
   const booking = {
@@ -6807,7 +7007,7 @@ test('the latest same-booking action owns its validated response', () => {
     ),
     booking,
   )
-  assert.equal(api.releaseBookingMutation(mutationState, cancelClaim), false)
+  assert.equal(api.releaseBookingMutation(mutationState, cancelClaim), true)
   assert.equal(booking.status, 'cancelled')
 
   const removed = { ...booking, booking_id: 'removed-action-owner', status: 'confirmed' }
@@ -7011,6 +7211,7 @@ test('a delayed reschedule response cannot overwrite a later cancellation', asyn
   const requested = deferred()
   const response = deferred()
   let restarts = 0
+  let reconciliations = 0
   try {
     global.StartersDashboardCallActions = actions
     global.document = document
@@ -7033,6 +7234,7 @@ test('a delayed reschedule response cannot overwrite a later cancellation', asyn
       ),
       refreshDetail: (target, model) => api.populateDetailModal(target, model, 'brand', now),
       restart: async () => { restarts += 1 },
+      reconcileBookingMutations: async () => { reconciliations += 1 },
     })
     const button = domElement('button', { 'booking-action-btn': 'reschedule-decline' })
     button.closest = selector => selector.includes('popup-booking-info') ? modal : button
@@ -7054,6 +7256,7 @@ test('a delayed reschedule response cannot overwrite a later cancellation', asyn
       ),
       booking,
     )
+    assert.equal(api.releaseBookingMutation(mutationState, cancellationClaim), false)
     response.resolve({
       ok: true,
       json: async () => ({
@@ -7069,7 +7272,8 @@ test('a delayed reschedule response cannot overwrite a later cancellation', asyn
     assert.equal(meeting.getAttribute('data-meeting-href'), null)
     assert.equal(meeting.hidden, true)
     assert.equal(modal.querySelector('[booking-popup-content="reschedule-declined"]').hidden, true)
-    assert.equal(restarts, 1)
+    assert.equal(reconciliations, 1)
+    assert.equal(restarts, 0)
   } finally {
     global.StartersDashboardCallActions = previous.actions
     global.document = previous.document

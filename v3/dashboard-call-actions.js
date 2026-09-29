@@ -1632,9 +1632,9 @@
       typeof settings.releaseBookingMutation !== 'function'
     ) return
     const refresh = settings.releaseBookingMutation(claim)
-    if (!refresh || typeof settings.restart !== 'function') return
+    if (!refresh || typeof settings.reconcileBookingMutations !== 'function') return
     try {
-      await settings.restart()
+      await settings.reconcileBookingMutations()
     } catch (error) {
       console.error(
         '[dashboard-call-actions] mutation reconciliation failed:',
