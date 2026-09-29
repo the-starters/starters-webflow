@@ -1118,6 +1118,11 @@
     'payment-methods',
   ]
 
+  // The "Are you sure?" steps before a cancel or a decline. They describe the
+  // call that the member is about to end, so an earlier edit's reason there
+  // reads as the reason for this action (F45, Kaeser 2026-09-28).
+  const DETAIL_CONFIRM_STEP_PANELS = ['cancel', 'decline']
+
   /** Every authored Message control, link or button, card or modal. */
   const MESSAGE_CONTROL_SELECTOR =
     '[booking-action-btn="message"], [booking-card-action-btn="message"], ' +
@@ -1162,12 +1167,68 @@
     return links.length
   }
 
+  /**
+   * Whether `panelName` is a Free cancel or decline confirmation step. Paid
+   * keeps its display, as PR #974 scoped F09 to Free.
+   * @param {string} panelName Authored `booking-popup-content` value.
+   * @param {object} booking Canonical booking row.
+   * @returns {boolean} Whether the earlier edit's reason is stale there.
+   */
+  function confirmStepPanel(panelName, booking) {
+    return DETAIL_CONFIRM_STEP_PANELS.indexOf(clean(panelName)) !== -1 && !paidBooking(booking)
+  }
+
+  /**
+   * Hides the authored `reschedule-reason` hook inside the Free confirmation
+   * steps. Webflow authors it there with the label "Reason", so the cancel
+   * step showed an old edit reason as if it were the cancel reason. The next
+   * populate pass sets every copy again, so a reused modal needs no restore.
+   * @param {HTMLElement} root Modal or panel being populated.
+   * @param {object} booking Canonical booking row.
+   */
+  function hideConfirmStepEditReason(root, booking) {
+    bookingFields(root, 'reschedule-reason').forEach(function (field) {
+      const panel = field.closest && field.closest('[booking-popup-content]')
+      const panelName = panel && typeof panel.getAttribute === 'function'
+        ? panel.getAttribute('booking-popup-content')
+        : ''
+      if (!confirmStepPanel(panelName, booking)) return
+      show(field, false)
+      const group = field.closest && field.closest('[booking-element-wrap]')
+      if (group) show(group, false)
+    })
+  }
+
+  /**
+   * The panel's button-only footer: a direct child that holds an authored
+   * action control and no booking field. Terminal panels anchor on their close
+   * control. The confirmation steps carry Back plus a forward control instead,
+   * so appending there put the summary below the buttons (F45).
+   * @param {HTMLElement} panel Authored panel.
+   * @returns {HTMLElement|null} Footer to insert before, or `null`.
+   */
+  function detailFooter(panel) {
+    const close = panel.querySelector('[booking-action-btn="switch-close"]')
+    const controls = close && close.parentNode
+    if (controls && controls.parentNode === panel) return controls
+    const children = Array.prototype.slice.call(panel.children || [])
+    return children.find(function (child) {
+      return Boolean(
+        child &&
+        typeof child.querySelector === 'function' &&
+        child.querySelector('[booking-action-btn]') &&
+        !child.querySelector('[booking-element]'),
+      )
+    }) || null
+  }
+
   function detailSupplementRows(booking, role, timezone, panelName) {
     const counterpart = detailCounterpart(role, booking)
     // A decline writes its reason to cancelled_reason. On a Free declined
     // panel that is the decline reason, and an earlier edit's reason is
     // stale. Paid keeps its display unchanged, as PR #974 scoped F09.
     const declinedPanel = panelName === 'declined' && !paidBooking(booking)
+    const confirmStep = confirmStepPanel(panelName, booking)
     return [
       {
         field: role === 'starter' ? 'brand-name' : 'starter-name',
@@ -1178,7 +1239,7 @@
       { field: 'start-date', label: clean(booking && booking.status).toLowerCase() === 'rescheduled' ? 'Proposed time' : 'Date and time', value: formatDate(booking && booking.start, timezone) },
       { field: 'duration', label: 'Duration', value: formatDuration(booking && booking.duration) },
       { field: 'context', label: 'Call', value: clean(booking && booking.call_context) },
-      { field: 'reschedule-reason', label: 'Reschedule reason', value: declinedPanel ? '' : clean(booking && booking.rescheduled_reason) },
+      { field: 'reschedule-reason', label: 'Reschedule reason', value: declinedPanel || confirmStep ? '' : clean(booking && booking.rescheduled_reason) },
       declinedPanel
         ? { field: 'decline-reason', label: 'Decline reason', value: clean(booking && booking.cancelled_reason) }
         : { field: 'cancel-reason', label: 'Cancellation reason', value: clean(booking && booking.cancelled_reason) },
@@ -1293,9 +1354,8 @@
         supplement.style.gap = '16px'
         supplement.style.width = '100%'
         supplement.style.marginTop = '12px'
-        const close = panel.querySelector('[booking-action-btn="switch-close"]')
-        const controls = close && close.parentNode
-        if (controls && controls.parentNode === panel && typeof panel.insertBefore === 'function') {
+        const controls = detailFooter(panel)
+        if (controls && typeof panel.insertBefore === 'function') {
           panel.insertBefore(supplement, controls)
         } else {
           panel.appendChild(supplement)
@@ -1745,6 +1805,7 @@
     const statusText = proposalStatusText(booking, role)
     setBookingField(root, 'status-text', statusText, statusText !== '')
     setBookingField(root, 'reschedule-reason', booking.rescheduled_reason, Boolean(booking.rescheduled_reason))
+    hideConfirmStepEditReason(root, booking)
   }
 
   // Authored state of each decline-reason hook and its wrap from before a
@@ -2998,6 +3059,7 @@
     configureActionButtons,
     configureDetailActions,
     detailSupplementRows,
+    detailFooter,
     ensureDetailSupplements,
     scheduleDetailSupplements,
     panelHasUsableField,

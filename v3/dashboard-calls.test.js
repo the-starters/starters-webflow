@@ -2406,6 +2406,102 @@ test('details fill every authored panel copy of a booking field', () => {
   assert.equal(view.panelCopies.context.hidden, true)
 })
 
+// F45 (Kaeser team test 2026-09-28): the "Are you sure?" cancel step showed an
+// earlier edit's reason under the authored label "Reason", and the module's
+// Starter row rendered below the Back / Cancel Call buttons, outside the card.
+function withInsertBefore(node) {
+  node.insertBefore = function (child, before) {
+    const index = this.children.indexOf(before)
+    if (index === -1) return this.appendChild(child)
+    this.children.splice(index, 0, child)
+    child.parentNode = this
+    return child
+  }
+  return node
+}
+
+test('Free cancel and decline steps drop the stale edit reason; Paid keeps it', () => {
+  const free = {
+    status: 'confirmed',
+    start: 10_000,
+    duration: 30,
+    rescheduled_reason: 'test call propose new time',
+    brand_data: { name: 'Northwind', memberstack_id: 'mem_brand', timezone: 'UTC' },
+    starter_data: { name: 'Sam', memberstack_id: 'mem_starter', timezone: 'UTC' },
+  }
+  const paid = { ...free, is_paid: true, rescheduled_reason: 'Paid edit reason' }
+  const reasonRows = (booking, panel) => api.detailSupplementRows(booking, 'brand', 'UTC', panel)
+    .filter((row) => row.field === 'reschedule-reason')
+    .map((row) => row.value)
+  assert.deepEqual(reasonRows(free, 'cancel'), [])
+  assert.deepEqual(reasonRows(free, 'decline'), [])
+  for (const panel of ['base', 'cancelled', 'reschedule-proposed', undefined]) {
+    assert.deepEqual(reasonRows(free, panel), ['test call propose new time'], panel)
+  }
+  assert.deepEqual(reasonRows(paid, 'cancel'), ['Paid edit reason'])
+
+  const modal = domElement('dialog', { 'popup-booking-info': '' })
+  modal.ownerDocument = { createElement: (tag) => domElement(tag) }
+  const authoredReason = (panelName) => {
+    const panel = domElement('div', { 'booking-popup-content': panelName })
+    const wrap = domElement('div', { 'booking-element-wrap': '' })
+    const field = domElement('p', { 'booking-element': 'reschedule-reason' })
+    wrap.appendChild(field)
+    panel.appendChild(wrap)
+    modal.appendChild(panel)
+    return { field, wrap }
+  }
+  const base = authoredReason('base')
+  const cancel = authoredReason('cancel')
+
+  api.populateDetailModal(modal, free, 'brand', 5_000)
+  assert.equal(base.field.textContent, 'test call propose new time')
+  assert.equal(base.field.hidden, false)
+  assert.equal(cancel.field.hidden, true)
+  assert.equal(cancel.wrap.hidden, true)
+
+  // A reused modal shows the Paid reason again: every populate pass sets it.
+  api.populateDetailModal(modal, paid, 'brand', 5_000)
+  assert.equal(cancel.field.textContent, 'Paid edit reason')
+  assert.equal(cancel.field.hidden, false)
+  assert.equal(cancel.wrap.hidden, false)
+})
+
+test('the call summary sits above a confirmation step footer, not below it', () => {
+  const modal = domElement('dialog')
+  modal.ownerDocument = { createElement: (tag) => domElement(tag) }
+  const cancel = withInsertBefore(domElement('div', { 'booking-popup-content': 'cancel' }))
+  const content = domElement('div')
+  content.appendChild(domElement('p', { 'booking-element': 'duration' }))
+  const footer = domElement('div')
+  footer.appendChild(domElement('div', { 'booking-action-btn': 'switch-base' }))
+  footer.appendChild(domElement('div', { 'booking-action-btn': 'switch-cancel-reason' }))
+  cancel.appendChild(content)
+  cancel.appendChild(footer)
+  modal.appendChild(cancel)
+  const booking = {
+    status: 'confirmed',
+    start: 10_000,
+    duration: 30,
+    brand_data: { name: 'Northwind', memberstack_id: 'mem_brand', timezone: 'UTC' },
+    starter_data: { name: 'Sam', memberstack_id: 'mem_starter', timezone: 'UTC' },
+  }
+
+  assert.equal(api.detailFooter(cancel), footer)
+  api.ensureDetailSupplements(modal, booking, 'brand', 'UTC')
+  const supplement = cancel.querySelector('[data-starters-call-summary]')
+  assert.ok(supplement.querySelector('[data-starters-call-summary-row="starter-name"]'))
+  assert.deepEqual(cancel.children, [content, supplement, footer])
+
+  // A panel without a button-only footer keeps the append fallback.
+  const bare = withInsertBefore(domElement('div', { 'booking-popup-content': 'expired' }))
+  const mixed = domElement('div')
+  mixed.appendChild(domElement('p', { 'booking-element': 'duration' }))
+  mixed.appendChild(domElement('div', { 'booking-action-btn': 'message' }))
+  bare.appendChild(mixed)
+  assert.equal(api.detailFooter(bare), null)
+})
+
 // F09 team test 2026-09-28: after a Brand edit and a Starter decline, Declined
 // Details showed "Reschedule reason" (the old edit) and "Cancellation reason"
 // (the decline reason). The declined panel labels the reason it really holds.
