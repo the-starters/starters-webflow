@@ -48,6 +48,7 @@
   const REQUEST_EXPIRATION_POLL_MS = 30000
   const REQUEST_EXPIRATION_MAX_POLLS = 3
   const MUTATION_RECONCILIATION_MAX_PASSES = 3
+  const CANONICAL_READ_TIMEOUT_MS = 10000
   const PROFILE_REFRESH_DELAYS_MS = [0, 150, 300, 600, 1000, 1600, 2500]
   const DEEP_LINK_READY_DELAYS_MS = [0, 100, 250, 500, 1000, 1600]
   const PROFILE_FORM_SELECTOR = 'form[data-ms-form="profile"]'
@@ -386,7 +387,7 @@
     }
     if (['pending', 'requested', 'request'].includes(raw)) return 'pending'
     const end = Number(booking && booking.end)
-    if (Number.isFinite(end) && end > 0 && end < (now || Date.now())) {
+    if (Number.isFinite(end) && end > 0 && end <= (now || Date.now())) {
       return 'completed'
     }
     if (['completed', 'complete', 'done'].includes(raw)) return 'completed'
@@ -572,6 +573,16 @@
       start: Number(booking && booking[rescheduled ? 'start_old' : 'start']),
       end: Number(booking && booking[rescheduled ? 'end_old' : 'end']),
     }
+  }
+
+  function detailStatusAtReference(booking, referenceTime) {
+    if (clean(booking && booking.status).toLowerCase() === 'rescheduled') {
+      const end = effectiveConfirmedInterval(booking).end
+      if (Number.isFinite(end) && end > 0) {
+        return end <= referenceTime ? 'completed' : 'rescheduled'
+      }
+    }
+    return bookingStatus(booking, referenceTime)
   }
 
   function meetingHrefAtReference(booking, currentTime) {
@@ -899,7 +910,9 @@
       identity: 0,
       owners: new Map(),
       committed: new Map(),
+      actionEpoch: new Map(),
       pending: new Map(),
+      actionPending: new Set(),
       refreshRequired: new Set(),
     }
   }
@@ -909,7 +922,9 @@
     state.identity += 1
     state.owners.clear()
     state.committed.clear()
+    state.actionEpoch.clear()
     state.pending.clear()
+    state.actionPending.clear()
     state.refreshRequired.clear()
   }
 
@@ -921,7 +936,10 @@
     const pending = state && state.pending instanceof Map
       ? state.pending.get(clean(bookingId))
       : null
-    return Boolean(pending && pending.size)
+    return Boolean(
+      (pending && pending.size) ||
+      (state && state.actionPending instanceof Set && state.actionPending.has(clean(bookingId)))
+    )
   }
 
   function bookingMutationLifecycle(booking) {
@@ -973,6 +991,7 @@
       identity: state.identity,
       owners: new Map(state.owners),
       committed: new Map(state.committed),
+      actionEpoch: new Map(state.actionEpoch),
       refreshRequired: new Set(state.refreshRequired),
     }
   }
@@ -995,7 +1014,9 @@
         bookingMutationCounter(state.owners, bookingId) !==
           (snapshot.owners.get(bookingId) || 0) ||
         bookingMutationCounter(state.committed, bookingId) !==
-          (snapshot.committed.get(bookingId) || 0)
+          (snapshot.committed.get(bookingId) || 0) ||
+        bookingMutationCounter(state.actionEpoch, bookingId) !==
+          (snapshot.actionEpoch.get(bookingId) || 0)
       ) return
       state.refreshRequired.delete(bookingId)
     })
@@ -1034,6 +1055,72 @@
     return reconcile
   }
 
+  function createBookingActionQueue(state, reconcile) {
+    const tails = new Map()
+    return function acquire(booking, failureMessage) {
+      const bookingId = clean(booking && (booking.booking_id || booking.id))
+      if (!bookingId) return Promise.resolve(null)
+      const identity = state.identity
+      const previous = tails.get(bookingId)
+      const wait = previous && previous.identity === identity
+        ? previous.done
+        : Promise.resolve()
+      let unlock
+      const held = new Promise(function (resolve) { unlock = resolve })
+      const record = { identity, done: wait.then(function () { return held }) }
+      tails.set(bookingId, record)
+      const releaseSlot = function () {
+        unlock()
+        if (tails.get(bookingId) === record) tails.delete(bookingId)
+      }
+      return wait.then(async function () {
+        if (identity !== state.identity) {
+          releaseSlot()
+          return null
+        }
+        // An ambiguous earlier POST must be read back before another command
+        // can use the same booking. The read has its own deadline.
+        if (state.refreshRequired.has(bookingId)) {
+          await reconcile()
+          if (state.refreshRequired.has(bookingId)) {
+            releaseSlot()
+            throw new Error(failureMessage || 'The call could not be updated. Please try again.')
+          }
+        }
+        if (identity !== state.identity) {
+          releaseSlot()
+          return null
+        }
+        state.actionEpoch.set(
+          bookingId,
+          bookingMutationCounter(state.actionEpoch, bookingId) + 1,
+        )
+        state.actionPending.add(bookingId)
+        state.refreshRequired.add(bookingId)
+        let released = false
+        return async function release() {
+          if (released) return
+          released = true
+          try {
+            if (identity === state.identity) {
+              state.actionPending.delete(bookingId)
+              state.actionEpoch.set(
+                bookingId,
+                bookingMutationCounter(state.actionEpoch, bookingId) + 1,
+              )
+              await reconcile()
+            }
+          } finally {
+            releaseSlot()
+          }
+        }
+      }).catch(function (error) {
+        releaseSlot()
+        throw error
+      })
+    }
+  }
+
   function createSerializedRefresh(refresh) {
     const tails = new Map()
     return function (owner) {
@@ -1052,12 +1139,14 @@
   }
 
   function bookingChangedDuringRefresh(state, snapshot, bookingId) {
+    const actionEpoch = bookingMutationCounter(state.actionEpoch, bookingId) !==
+      (snapshot.actionEpoch.get(bookingId) || 0)
     const committed = bookingMutationCounter(state.committed, bookingId) !==
       (snapshot.committed.get(bookingId) || 0)
     const pending = bookingMutationPending(state, bookingId) &&
       bookingMutationCounter(state.owners, bookingId) !==
         (snapshot.owners.get(bookingId) || 0)
-    const changed = committed || pending
+    const changed = actionEpoch || committed || pending
     if (changed) state.refreshRequired.add(bookingId)
     return changed
   }
@@ -1204,6 +1293,7 @@
     const tick = function () {
       const currentTime = Number(now())
       refreshMeetingDestinations(refs, currentTime)
+      refreshOpenDetailPanel(refs, role, currentTime)
       if (typeof settings.reconcileBookingMutations === 'function') {
         Promise.resolve()
           .then(settings.reconcileBookingMutations)
@@ -2338,12 +2428,18 @@
       (visible.length !== 1 || visible[0] !== uniqueCompletedDetailPanel(modal))
     ) return false
     const referenceTime = meetingReferenceTime(booking, now)
+    const currentStatus = detailStatusAtReference(booking, referenceTime)
     const nextPanel = detailOpenPanelForMeeting(
       modal,
       booking,
-      storedStatus,
+      currentStatus,
       referenceTime,
     )
+    if (currentStatus !== storedStatus) {
+      modal.setAttribute('data-booking-status', currentStatus)
+      setBookingField(modal, 'status', statusLabel(currentStatus, role, booking), true)
+      configureDetailActions(modal, role, currentStatus, booking, referenceTime)
+    }
     if (nextPanel === previousPanel) return false
     const selected = selectDetailPanel(modal, booking, role, nextPanel)
     if (selected && nextPanel === 'base' && naturalPanel !== 'base') {
@@ -3217,17 +3313,43 @@
     let requestStarted = null
     try { requestStarted = global.performance && global.performance.now() } catch (_error) {}
     const clockRequest = {started: requestStarted, wallStarted: Date.now()}
-    const response = await global.xanoAuthFetch(
-      XANO_SCHEDULING_BASE + BOOKINGS_PATH,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ memberstack_id: memberId }),
-      },
-    )
-    const body = await response.json().catch(function () {
-      return null
-    })
+    const controller = typeof global.AbortController === 'function'
+      ? new global.AbortController()
+      : null
+    let timer
+    // A cancellable timer pair lets a successful read retire its deadline.
+    const canTimeRead = typeof global.setTimeout === 'function' &&
+      typeof global.clearTimeout === 'function'
+    const deadline = canTimeRead
+      ? new Promise(function (_resolve, reject) {
+          timer = global.setTimeout(function () {
+            if (controller) {
+              try { controller.abort() } catch (_error) {}
+            }
+            reject(new Error('Canonical bookings request timed out'))
+          }, CANONICAL_READ_TIMEOUT_MS)
+        })
+      : null
+    let response
+    let body
+    try {
+      const request = global.xanoAuthFetch(
+        XANO_SCHEDULING_BASE + BOOKINGS_PATH,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ memberstack_id: memberId }),
+          ...(controller ? { signal: controller.signal } : {}),
+        },
+      )
+      response = deadline ? await Promise.race([request, deadline]) : await request
+      const readBody = Promise.resolve().then(function () { return response.json() }).catch(function () {
+        return null
+      })
+      body = deadline ? await Promise.race([readBody, deadline]) : await readBody
+    } finally {
+      if (canTimeRead) global.clearTimeout(timer)
+    }
     if (!response.ok || !Array.isArray(body)) {
       throw new Error('Canonical bookings request failed')
     }
@@ -3240,7 +3362,7 @@
     return rows
   }
 
-  function wireBookingActions(refs, role, restart) {
+  function wireBookingActions(refs, role, restart, acquireBookingAction) {
     if (role !== 'starter' || !global.document || !global.document.addEventListener) return
     global.document.addEventListener('click', async function (event) {
       const target = event && event.target
@@ -3287,7 +3409,14 @@
       // internal wording; the technical text stays in the console.
       let serverMessage = ''
       let confirmed = false
+      let releaseAction = null
       try {
+        if (typeof acquireBookingAction === 'function') {
+          releaseAction = await acquireBookingAction(booking, CONFIRM_FAILURE_COPY)
+          if (!releaseAction) return
+          booking = bookingById(refs, bookingId)
+          if (!booking || !canConfirmBooking(role, booking)) return
+        }
         if (!button.__startersBookingActionKey) {
           button.__startersBookingActionKey = await storedConfirmAttemptKey(booking) || await createConfirmAttemptKey(booking)
         }
@@ -3317,6 +3446,11 @@
         // refresh) must not tell the Starter the call was not confirmed.
         if (!confirmed) showError(serverMessage || CONFIRM_FAILURE_COPY)
       } finally {
+        if (releaseAction) {
+          try { await releaseAction() } catch (error) {
+            console.error('[dashboard-calls] confirmation readback failed:', error && error.message)
+          }
+        }
         button.__startersBookingActionBusy = false
         if (releaseBusy) releaseBusy()
         button.setAttribute('aria-busy', 'false')
@@ -3629,6 +3763,10 @@
       refreshExpiredRequests,
       mutationState,
     )
+    const acquireBookingAction = createBookingActionQueue(
+      mutationState,
+      requestMutationReconciliation,
+    )
     const captureCurrentBooking = function (booking) {
       return captureBookingMutation(refs, booking, mutationState)
     }
@@ -3658,6 +3796,7 @@
       commitBookingMutation: commitCurrentBooking,
       releaseBookingMutation: releaseCurrentBooking,
       reconcileBookingMutations: requestMutationReconciliation,
+      acquireBookingAction,
       onCancelSuccess: function (booking, result, claim) {
         return applyCancellationResult(
           refs,
@@ -3676,7 +3815,7 @@
       },
     }
     wireDashboardCallModules(moduleOptions)
-    wireBookingActions(refs, role, refreshAfterMutation)
+    wireBookingActions(refs, role, refreshAfterMutation, acquireBookingAction)
     startBookingLifecycleTicker(refs, role, refreshExpiredRequests, {
       reconcileBookingMutations: requestMutationReconciliation,
     })
@@ -3707,6 +3846,7 @@
     releaseBookingMutation,
     bookingMutationReconciliationPending,
     createBookingMutationReconciler,
+    createBookingActionQueue,
     createSerializedRefresh,
     reconcileCanonicalBookings,
     commitBookingMutation,

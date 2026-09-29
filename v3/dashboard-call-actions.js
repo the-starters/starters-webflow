@@ -1415,6 +1415,7 @@
     reason,
     restart,
     refreshDetail,
+    settings,
   ) {
     const container = modal && modal.querySelector('[booking-reschedule-calendar]')
     if (!container) return false
@@ -1463,57 +1464,71 @@
         // The booking decides the contract, and with it the failure copy and
         // the success view: a pending request lands on "time updated", not on
         // "waiting for the other participant".
-        const kind = rescheduleKindFor(role, booking)
-        if (!kind) return null
-        const config = KINDS[kind]
-        let result
+        const initialKind = rescheduleKindFor(role, booking)
+        if (!initialKind) return null
+        let releaseAction = null
         try {
-          result = await proposeReschedule(booking, role, reason, {
+          releaseAction = settings && typeof settings.acquireBookingAction === 'function'
+            ? await acquireMutationSlot(settings, booking, KINDS[initialKind].failureMessage)
+            : async function () {}
+          if (!releaseAction || !isCurrent()) return null
+          if (settings && typeof settings.getBooking === 'function') {
+            booking = settings.getBooking(modal)
+            if (!booking) return null
+          }
+          const kind = rescheduleKindFor(role, booking)
+          if (!kind) return null
+          const config = KINDS[kind]
+          const result = await proposeReschedule(booking, role, reason, {
             start: Number(slot && slot.start),
             end: Number(slot && slot.end),
             timezone: clean(slot && slot.timezone),
           }, undefined, kind)
           if (!result) throw new Error(config.failureMessage)
+          // F04: the update replaces the provider booking, so the row now
+          // lives under the new id. The attempt key was already cleared under
+          // the sent id inside submitAction. Adopt before the currency check:
+          // a member who moved on mid-request must not leave the row, or a card
+          // still keyed by the sent id, holding a dead booking_id.
+          const replaced = kind === 'reschedule-request' && adoptReplacementBooking(
+            document,
+            modal,
+            booking,
+            replacementBookingId(kind, result, booking),
+          )
+          if (!isCurrent()) {
+            // The card still shows the old slot, so re-read the list on close.
+            if (replaced) restartAfterModalClose(document, modal, restart)
+            return result
+          }
+          const reasonField = modal.querySelector('[booking-reschedule-reason]')
+          if (reasonField) reasonField.value = ''
+          // The receipt describes the selected slot. A pending request moves
+          // immediately; a confirmed call keeps its canonical time until the
+          // counterpart accepts, so render its proposal from a separate model.
+          if (kind === 'reschedule-request' && booking) {
+            booking.start = Number(slot && slot.start)
+            booking.end = Number(slot && slot.end)
+            booking.rescheduled_reason = reason || booking.rescheduled_reason
+            if (typeof refreshDetail === 'function') refreshDetail(modal, booking)
+          }
+          if (kind === 'reschedule-propose' && booking && typeof refreshDetail === 'function') {
+            refreshDetail(modal, Object.assign({}, booking, {
+              start: Number(slot && slot.start),
+              end: Number(slot && slot.end),
+              rescheduled_reason: reason || booking.rescheduled_reason,
+            }), config.successContent)
+          }
+          switchPopupContent(modal, config.successContent)
+          restartAfterModalClose(document, modal, restart)
         } catch (error) {
-          showActionError(modal, (error && error.message) || config.failureMessage)
+          if (isCurrent()) {
+            showActionError(modal, (error && error.message) || KINDS[initialKind].failureMessage)
+          }
           throw error
+        } finally {
+          await releaseMutationSlot(releaseAction)
         }
-        // F04: the update replaces the provider booking, so the row now
-        // lives under the new id. The attempt key was already cleared under
-        // the sent id inside submitAction. Adopt before the currency check:
-        // a member who moved on mid-request must not leave the row, or a card
-        // still keyed by the sent id, holding a dead booking_id.
-        const replaced = kind === 'reschedule-request' && adoptReplacementBooking(
-          document,
-          modal,
-          booking,
-          replacementBookingId(kind, result, booking),
-        )
-        if (!isCurrent()) {
-          // The card still shows the old slot, so re-read the list on close.
-          if (replaced) restartAfterModalClose(document, modal, restart)
-          return result
-        }
-        const reasonField = modal.querySelector('[booking-reschedule-reason]')
-        if (reasonField) reasonField.value = ''
-        // The receipt describes the selected slot. A pending request moves
-        // immediately; a confirmed call keeps its canonical time until the
-        // counterpart accepts, so render its proposal from a separate model.
-        if (kind === 'reschedule-request' && booking) {
-          booking.start = Number(slot && slot.start)
-          booking.end = Number(slot && slot.end)
-          booking.rescheduled_reason = reason || booking.rescheduled_reason
-          if (typeof refreshDetail === 'function') refreshDetail(modal, booking)
-        }
-        if (kind === 'reschedule-propose' && booking && typeof refreshDetail === 'function') {
-          refreshDetail(modal, Object.assign({}, booking, {
-            start: Number(slot && slot.start),
-            end: Number(slot && slot.end),
-            rescheduled_reason: reason || booking.rescheduled_reason,
-          }), config.successContent)
-        }
-        switchPopupContent(modal, config.successContent)
-        restartAfterModalClose(document, modal, restart)
       },
       })
     } catch (error) {
@@ -1643,6 +1658,21 @@
     }
   }
 
+  function acquireMutationSlot(settings, booking, failureMessage) {
+    return settings && typeof settings.acquireBookingAction === 'function'
+      ? settings.acquireBookingAction(booking, failureMessage)
+      : Promise.resolve(async function () {})
+  }
+
+  async function releaseMutationSlot(release) {
+    if (typeof release !== 'function') return
+    try {
+      await release()
+    } catch (error) {
+      console.error('[dashboard-call-actions] mutation readback failed:', error && error.message)
+    }
+  }
+
   function wire(options) {
     const settings = options || {}
     const document = settings.document || global.document
@@ -1683,7 +1713,7 @@
           }
           return
         }
-        const booking = settings.getBooking(button)
+        let booking = settings.getBooking(button)
         /* One authored Reschedule button serves two contracts. The markup
            cannot know which, so the booking decides here: a pending request
            swaps the confirmed-call kind for the direct-update one before the
@@ -1733,6 +1763,7 @@
             proposalReason.value,
             settings.restart,
             settings.refreshDetail,
+            settings,
           ).catch(function (error) {
             console.error(
               '[dashboard-call-actions] reschedule calendar failed:',
@@ -1757,7 +1788,12 @@
           }
           showActionError(modal, '')
           let mutationClaim = null
+          let releaseAction = null
           try {
+            releaseAction = await acquireMutationSlot(settings, booking, config.failureMessage)
+            if (!releaseAction) return
+            booking = settings.getBooking(button)
+            if (!canAct(step.kind, settings.role, booking)) return
             mutationClaim = typeof settings.captureBookingMutation === 'function'
               ? settings.captureBookingMutation(booking)
               : null
@@ -1798,8 +1834,12 @@
             )
             showActionError(modal, (error && error.message) || config.failureMessage)
           } finally {
-            releaseBusy()
-            await releaseMutationClaim(settings, mutationClaim)
+            try {
+              await releaseMutationClaim(settings, mutationClaim)
+            } finally {
+              await releaseMutationSlot(releaseAction)
+              releaseBusy()
+            }
           }
           return
         }
@@ -1809,7 +1849,12 @@
         const releaseBusy = markActionBusy(button, config.busyLabel)
         showActionError(modal, '')
         let mutationClaim = null
+        let releaseAction = null
         try {
+          releaseAction = await acquireMutationSlot(settings, booking, config.failureMessage)
+          if (!releaseAction) return
+          booking = settings.getBooking(button)
+          if (!canAct(step.kind, settings.role, booking)) return
           mutationClaim = step.kind === 'cancel' &&
             typeof settings.captureBookingMutation === 'function'
             ? settings.captureBookingMutation(booking)
@@ -1842,9 +1887,13 @@
           )
           showActionError(modal, (error && error.message) || config.failureMessage)
         } finally {
-          button.__startersActionBusy = false
-          releaseBusy()
-          await releaseMutationClaim(settings, mutationClaim)
+          try {
+            await releaseMutationClaim(settings, mutationClaim)
+          } finally {
+            await releaseMutationSlot(releaseAction)
+            button.__startersActionBusy = false
+            releaseBusy()
+          }
         }
       },
       true,

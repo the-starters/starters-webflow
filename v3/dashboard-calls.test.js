@@ -1405,7 +1405,8 @@ test('session refresh tolerates a bounded transient empty Memberstack member', a
   let reads = 0
   try {
     global.document = { documentElement: root, querySelector: () => null }
-    global.setTimeout = (callback) => {
+    global.setTimeout = (callback, delay) => {
+      if (delay === 10_000) return originalSetTimeout(callback, delay)
       callback()
       return 1
     }
@@ -1464,6 +1465,7 @@ test('initial refresh waits through the post-login Memberstack hydration gap', a
     global.memberReady = Promise.resolve({})
     global.setTimeout = (callback, delay) => {
       delays.push(delay)
+      if (delay === 10_000) return originalSetTimeout(callback, delay)
       callback()
       return 1
     }
@@ -7992,5 +7994,352 @@ test('F13: an expired cancellation shows Expired; other cancellations stay Cance
     assert.equal(api.statusLabel(api.bookingStatus(cancelled, 30_000), role, cancelled), 'Cancelled')
     assert.equal(api.statusLabel('cancelled', role), 'Cancelled')
     assert.equal(api.statusLabel('confirmed', role, expired), 'Upcoming')
+  }
+})
+
+test('booking action queue waits for canonical readback and isolates other bookings', async () => {
+  const state = api.createBookingMutationState()
+  const readback = deferred()
+  const seen = []
+  let reads = 0
+  const acquire = api.createBookingActionQueue(state, async () => {
+    reads += 1
+    if (reads === 1) await readback.promise
+    for (const bookingId of state.refreshRequired) {
+      if (!state.actionPending.has(bookingId)) state.refreshRequired.delete(bookingId)
+    }
+    return true
+  })
+  const booking = { booking_id: 'queued-call' }
+  const other = { booking_id: 'other-call' }
+  const accept = await acquire(booking)
+  assert.equal(state.actionPending.has(booking.booking_id), true)
+  assert.equal(api.bookingMutationReconciliationPending(state), false)
+
+  const cancel = acquire(booking).then(release => {
+    seen.push('cancel admitted')
+    return release
+  })
+  const unrelated = await acquire(other)
+  seen.push('other admitted')
+  assert.deepEqual(seen, ['other admitted'])
+
+  const accepting = accept()
+  await new Promise(setImmediate)
+  assert.deepEqual(seen, ['other admitted'], 'Cancel waits during Accept readback')
+  assert.equal(state.refreshRequired.has(booking.booking_id), true)
+  readback.resolve()
+  await accepting
+  const releaseCancel = await cancel
+  assert.deepEqual(seen, ['other admitted', 'cancel admitted'])
+  assert.equal(state.actionPending.has(booking.booking_id), true)
+  await releaseCancel()
+  await unrelated()
+  assert.equal(state.refreshRequired.size, 0)
+})
+
+test('a queued Cancel cannot post while a proposal response awaits readback', async () => {
+  const actions = require('./dashboard-call-actions.js')
+  const original = {
+    document: global.document,
+    fetch: global.xanoAuthFetch,
+    storage: global.sessionStorage,
+    crypto: global.crypto,
+    error: console.error,
+  }
+  const handlers = []
+  const document = {
+    createElement: tag => domElement(tag),
+    addEventListener(type, handler) {
+      if (type === 'click') handlers.push(handler)
+    },
+    querySelector() { return modal },
+  }
+  const modal = domElement('dialog', { 'popup-booking-info': '', 'data-booking-id': 'queued-response' })
+  modal.ownerDocument = document
+  const base = domElement('div', { 'booking-popup-content': 'base' })
+  const reason = domElement('textarea', { 'booking-cancel-reason': '' })
+  reason.value = 'Schedule changed'
+  modal.appendChild(base)
+  modal.appendChild(reason)
+  const now = Date.now()
+  const booking = {
+    booking_id: 'queued-response',
+    config_id: 'queued-config',
+    data_environment: 'test',
+    status: 'rescheduled',
+    rescheduled_by: 'starter',
+    start: now + 48 * 60 * 60 * 1000,
+    end: now + 48 * 60 * 60 * 1000 + 30 * 60 * 1000,
+    start_old: now + 24 * 60 * 60 * 1000,
+    end_old: now + 24 * 60 * 60 * 1000 + 30 * 60 * 1000,
+    duration: 30,
+    is_paid: false,
+    brand_data: { memberstack_id: 'queued-brand', timezone: 'UTC' },
+    starter_data: { memberstack_id: 'queued-starter', timezone: 'UTC' },
+  }
+  const refs = [{ rows: [booking], list: { querySelectorAll: () => [] } }]
+  const state = api.createBookingMutationState()
+  const response = deferred()
+  const readback = deferred()
+  const posts = []
+  let reads = 0
+  const acquire = api.createBookingActionQueue(state, async () => {
+    reads += 1
+    if (reads === 1) await readback.promise
+    if (!state.actionPending.has(booking.booking_id)) {
+      state.refreshRequired.delete(booking.booking_id)
+    }
+    return true
+  })
+  try {
+    global.document = document
+    global.sessionStorage = memoryStorage()
+    global.crypto = {
+      subtle: original.crypto.subtle,
+      randomUUID: () => '00000000-0000-4000-8000-000000000042',
+    }
+    console.error = () => {}
+    global.xanoAuthFetch = async url => {
+      posts.push(url)
+      if (url.endsWith('/booking/reschedule/decline/v3')) return response.promise
+      if (url.endsWith('/booking/cancel/v3')) return {
+        ok: true,
+        json: async () => ({ cancel: { booking_id: booking.booking_id, status: 'cancelled' } }),
+      }
+      throw new Error('Unexpected booking command')
+    }
+    actions.ensureRescheduleViews(document, modal)
+    actions.wire({
+      document,
+      role: 'brand',
+      getBooking: () => refs[0].rows[0],
+      acquireBookingAction: acquire,
+      captureBookingMutation: model => api.captureBookingMutation(refs, model, state),
+      releaseBookingMutation: claim => api.releaseBookingMutation(state, claim),
+      commitBookingMutation: (model, update, claim) =>
+        api.commitBookingMutation(refs, model, update, claim, state, now),
+      onCancelSuccess: (model, result, claim) =>
+        api.applyCancellationResult(refs, model, result, now,
+          (candidate, update) => api.commitBookingMutation(refs, candidate, update, claim, state, now), claim),
+      reconcileBookingMutations: async () => false,
+      restart: async () => true,
+    })
+    const respondButton = domElement('button', { 'booking-action-btn': 'reschedule-decline' })
+    const cancelButton = domElement('button', { 'booking-action-btn': 'cancel' })
+    respondButton.closest = selector => selector.includes('popup-booking-info') ? modal : respondButton
+    cancelButton.closest = selector => selector.includes('popup-booking-info') ? modal : cancelButton
+    modal.appendChild(respondButton)
+    modal.appendChild(cancelButton)
+    const click = target => handlers[0]({ target, preventDefault() {}, stopImmediatePropagation() {} })
+    const responding = click(respondButton)
+    await until(() => posts.length === 1)
+    const cancelling = click(cancelButton)
+    await new Promise(setImmediate)
+    assert.equal(posts.length, 1)
+    response.resolve({ ok: true, json: async () => ({
+      reschedule_decline: { booking_id: booking.booking_id, status: 'confirmed', original_restored: true },
+    }) })
+    await until(() => reads === 1)
+    assert.equal(posts.length, 1, 'Cancel waits after the first POST until readback ends')
+    readback.resolve()
+    await until(() => posts.length === 2)
+    await Promise.all([responding, cancelling])
+    assert.match(posts[1], /\/booking\/cancel\/v3$/)
+    assert.equal(booking.status, 'cancelled')
+    assert.equal(state.refreshRequired.size, 0)
+  } finally {
+    global.document = original.document
+    global.xanoAuthFetch = original.fetch
+    global.sessionStorage = original.storage
+    global.crypto = original.crypto
+    console.error = original.error
+  }
+})
+
+test('failed canonical readback keeps the booking dirty and blocks a queued command', async () => {
+  const state = api.createBookingMutationState()
+  const booking = { booking_id: 'ambiguous-call' }
+  let reads = 0
+  const acquire = api.createBookingActionQueue(state, async () => {
+    reads += 1
+    return false
+  })
+  const first = await acquire(booking)
+  await first()
+  assert.equal(state.refreshRequired.has(booking.booking_id), true)
+  await assert.rejects(acquire(booking, 'The call could not be updated.'),
+    /The call could not be updated/)
+  assert.equal(reads, 2)
+  assert.equal(state.actionPending.size, 0)
+})
+
+test('a read begun during an action cannot clear its later readback', async () => {
+  const original = { document: global.document, fetch: global.xanoAuthFetch }
+  const now = Date.now()
+  const booking = {
+    booking_id: 'read-during-action',
+    status: 'pending',
+    start: now + 120_000,
+    end: now + 180_000,
+    brand_data: { memberstack_id: 'read-during-member' },
+  }
+  const stale = { ...booking }
+  const refs = [{ rows: [booking], name: 'calls', list: element() }]
+  const state = api.createBookingMutationState()
+  const canonical = deferred()
+  try {
+    global.document = { documentElement: element(), querySelector: () => null }
+    global.xanoAuthFetch = () => canonical.promise
+    const acquire = api.createBookingActionQueue(state, async () => true)
+    const release = await acquire(booking)
+    const reading = api.refreshSession(
+      { getCurrentMember: async () => ({ id: 'read-during-member' }) },
+      refs, 'brand', 1, () => 1, false,
+      { preserveExisting: true, mutationState: state },
+    )
+    await new Promise(setImmediate)
+    booking.status = 'confirmed'
+    await release()
+    canonical.resolve({ ok: true, json: async () => [stale] })
+    assert.equal(await reading, true)
+    assert.equal(refs[0].rows[0].status, 'confirmed')
+    assert.equal(state.refreshRequired.has(booking.booking_id), true)
+
+    global.xanoAuthFetch = async () => ({ ok: true, json: async () => [{ ...booking }] })
+    assert.equal(await api.refreshSession(
+      { getCurrentMember: async () => ({ id: 'read-during-member' }) },
+      refs, 'brand', 1, () => 1, false,
+      { preserveExisting: true, mutationState: state },
+    ), true)
+    assert.equal(state.refreshRequired.has(booking.booking_id), false)
+  } finally {
+    global.document = original.document
+    global.xanoAuthFetch = original.fetch
+  }
+})
+
+test('hanging canonical read aborts at its deadline and retains mutation readback', async () => {
+  const original = {
+    document: global.document,
+    fetch: global.xanoAuthFetch,
+    setTimeout: global.setTimeout,
+    clearTimeout: global.clearTimeout,
+    error: console.error,
+  }
+  const timers = new Map()
+  let nextTimer = 0
+  let signal
+  const state = api.createBookingMutationState()
+  state.refreshRequired.add('timed-out-call')
+  try {
+    global.document = { documentElement: element() }
+    global.setTimeout = (callback, delay) => {
+      const id = ++nextTimer
+      timers.set(id, { callback, delay })
+      return id
+    }
+    global.clearTimeout = id => timers.delete(id)
+    global.xanoAuthFetch = (_url, options) => {
+      signal = options.signal
+      return new Promise(() => {})
+    }
+    console.error = () => {}
+    const pending = api.refreshSession(
+      { getCurrentMember: async () => ({ id: 'timed-out-member' }) },
+      [], 'brand', 1, () => 1, false,
+      { preserveExisting: true, mutationState: state },
+    )
+    await until(() => Array.from(timers.values()).some(timer => timer.delay === 10_000))
+    const deadline = Array.from(timers.values()).find(timer => timer.delay === 10_000)
+    deadline.callback()
+    assert.equal(await pending, false)
+    assert.equal(signal.aborted, true)
+    assert.equal(timers.size, 0)
+    assert.equal(state.refreshRequired.has('timed-out-call'), true)
+  } finally {
+    global.document = original.document
+    global.xanoAuthFetch = original.fetch
+    global.setTimeout = original.setTimeout
+    global.clearTimeout = original.clearTimeout
+    console.error = original.error
+  }
+})
+
+test('the lifecycle tick moves an open Join detail to Completed at call end', () => {
+  const actions = require('./dashboard-call-actions.js')
+  const original = {
+    document: global.document,
+    actions: global.StartersDashboardCallActions,
+  }
+  const now = Date.now()
+  let clock = now
+  const booking = {
+    booking_id: 'tick-completed-call',
+    status: 'confirmed',
+    start: now - 60_000,
+    end: now + 60_000,
+    duration: 30,
+    meeting_link: 'https://meet.google.com/tick-completed-call',
+    brand_data: { name: 'Brand', timezone: 'UTC' },
+    starter_data: { name: 'Starter', timezone: 'UTC' },
+  }
+  const view = completedDetailModalHarness(['terminal'])
+  const refs = [{ rows: [booking], list: element() }]
+  let tick
+  try {
+    global.document = { querySelector: selector =>
+      selector === '[popup-booking-info], dialog[data-modal-target="popup-booking-info"]'
+        ? view.modal : null }
+    global.StartersDashboardCallActions = { ...actions, canonicalNow: () => clock }
+    api.populateDetailModal(view.modal, booking, 'brand', clock)
+    assert.equal(view.base.hidden, false)
+    assert.equal(view.fields['meeting-link'].hidden, false)
+    const stop = api.startBookingLifecycleTicker(refs, 'brand', () => {}, {
+      now: () => clock,
+      setInterval(callback) { tick = callback; return 1 },
+      clearInterval() {},
+    })
+    clock = booking.end
+    tick()
+    assert.equal(view.fields['meeting-link'].hidden, true)
+    assert.equal(view.base.hidden, true)
+    assert.equal(view.completedPanels[0].hidden, false)
+    assert.equal(view.modal.getAttribute('data-booking-status'), 'completed')
+
+    clock = now
+    api.populateDetailModal(view.modal, booking, 'brand', clock)
+    view.base.hidden = true
+    view.base.style.display = 'none'
+    view.confirmation.hidden = false
+    view.confirmation.style.display = 'flex'
+    view.confirmation.draft = 'Keep the open action'
+    clock = booking.end
+    tick()
+    assert.equal(view.confirmation.hidden, false)
+    assert.equal(view.confirmation.draft, 'Keep the open action')
+
+    const proposed = {
+      ...booking,
+      status: 'rescheduled',
+      rescheduled_by: 'starter',
+      start_old: booking.start,
+      end_old: booking.end,
+      start: now + 24 * 60 * 60 * 1000,
+      end: now + 24 * 60 * 60 * 1000 + 30 * 60 * 1000,
+    }
+    refs[0].rows = [proposed]
+    clock = now
+    api.populateDetailModal(view.modal, proposed, 'brand', clock)
+    assert.equal(view.fields['meeting-link'].hidden, false)
+    clock = proposed.end_old
+    tick()
+    assert.equal(view.base.hidden, true)
+    assert.equal(view.completedPanels[0].hidden, false)
+    assert.equal(view.fields['meeting-link'].hidden, true)
+    stop()
+  } finally {
+    global.document = original.document
+    global.StartersDashboardCallActions = original.actions
   }
 })
