@@ -243,13 +243,28 @@
     }
   }
 
+  function conflictAuthScopeIsCurrent(scope) {
+    try {
+      return Boolean(
+        scope &&
+          typeof scope.isActive === 'function' &&
+          scope.isActive() &&
+          scope.memberstack === global.$memberstackDom &&
+          scope.expectedGeneration === conflictAuthGeneration,
+      )
+    } catch (_error) {
+      return false
+    }
+  }
+
   function armConflictAuthScope(expectedMemberId) {
     let memberstack = null
+    const hasExpectedMember = expectedMemberId !== undefined
     try {
       memberstack = global.$memberstackDom
       if (
-        typeof expectedMemberId !== 'string' ||
-        !expectedMemberId ||
+        (hasExpectedMember &&
+          (typeof expectedMemberId !== 'string' || !expectedMemberId)) ||
         !memberstack ||
         typeof memberstack.getCurrentMember !== 'function' ||
         typeof memberstack.onAuthChange !== 'function'
@@ -262,12 +277,10 @@
 
     const expectedGeneration = conflictAuthGeneration
     let active = true
-    let cleanup = null
-    let initialReplayPending = true
-    let registering = true
+    let subscription = null
     const scope = {
       expectedGeneration,
-      expectedMemberId,
+      expectedMemberId: hasExpectedMember ? expectedMemberId : '',
       isActive: function () {
         return active
       },
@@ -275,9 +288,11 @@
       release: function () {
         if (!active) return
         active = false
-        if (!cleanup) return
+        if (!subscription) return
+        const activeSubscription = subscription
+        subscription = null
         try {
-          cleanup()
+          activeSubscription.unsubscribe()
         } catch (_error) {
           return
         }
@@ -285,63 +300,40 @@
     }
 
     try {
-      const subscription = memberstack.onAuthChange(function (payload) {
+      const registered = memberstack.onAuthChange(function () {
         if (!active) return
-        if (registering && initialReplayPending) {
-          initialReplayPending = false
-          const member = payload && payload.data ? payload.data : payload
-          const memberId =
-            member && typeof member.id === 'string' ? member.id : ''
-          if (!memberId || memberId === expectedMemberId) return
-        }
         conflictAuthGeneration += 1
       })
-      registering = false
-      if (typeof subscription === 'function') {
-        cleanup = subscription
-      } else if (
-        subscription &&
-        typeof subscription.unsubscribe === 'function'
+      if (
+        !registered ||
+        typeof registered !== 'object' ||
+        typeof registered.unsubscribe !== 'function'
       ) {
-        cleanup = function () {
-          subscription.unsubscribe()
-        }
+        active = false
+        return null
       }
+      subscription = registered
     } catch (_error) {
-      registering = false
-      scope.release()
+      active = false
       return null
     }
 
-    if (conflictAuthGeneration !== expectedGeneration) {
+    if (!conflictAuthScopeIsCurrent(scope)) {
       scope.release()
       return null
     }
     return scope
   }
 
-  async function conflictAuthScopeMatches(scope) {
+  async function conflictAuthScopeMemberId(scope) {
     try {
-      if (
-        !scope ||
-        typeof scope.isActive !== 'function' ||
-        !scope.isActive() ||
-        scope.memberstack !== global.$memberstackDom ||
-        scope.expectedGeneration !== conflictAuthGeneration
-      ) {
-        return false
-      }
+      if (!conflictAuthScopeIsCurrent(scope)) return ''
       const result = await scope.memberstack.getCurrentMember()
       const member = result && result.data
-      return Boolean(
-        scope.isActive() &&
-          scope.memberstack === global.$memberstackDom &&
-          scope.expectedGeneration === conflictAuthGeneration &&
-          member &&
-          member.id === scope.expectedMemberId,
-      )
+      if (!conflictAuthScopeIsCurrent(scope)) return ''
+      return member && typeof member.id === 'string' ? member.id : ''
     } catch (_error) {
-      return false
+      return ''
     }
   }
 
@@ -1274,6 +1266,15 @@
     }
   }
 
+  function genericizeReturnContext(returnContext) {
+    return {
+      ...returnContext,
+      conflictAuthScope: null,
+      pollForSettlement: returnContext.returnedFromStripe === true,
+      reason: '',
+    }
+  }
+
   function cleanReturnMarker() {
     const url = new URL(global.location.href)
     url.searchParams.delete('after_onboarding')
@@ -1298,6 +1299,16 @@
     return status
   }
 
+  async function continueSettledStatus(status) {
+    if (status && status.charges_enabled === true) return status
+    for (const delay of RETURN_POLL_DELAYS_MS.slice(1)) {
+      await wait(delay)
+      status = await fetchStatus()
+      if (status.charges_enabled === true) break
+    }
+    return status
+  }
+
   function emit(name, detail) {
     if (
       typeof global.CustomEvent !== 'function' ||
@@ -1316,18 +1327,33 @@
     renderRoots(roots, 'loading')
     renderEarningsTiles(earningsTiles, 'loading')
     try {
-      const status = await readSettledStatus(returnContext.pollForSettlement)
-      const view = resolveDashboardView(status, returnContext)
+      let status = await readSettledStatus(returnContext.pollForSettlement)
+      let effectiveReturnContext = returnContext
+      let view = resolveDashboardView(status, effectiveReturnContext)
       const conflictCandidate =
         view === 'error' &&
         isCanonicalDisconnectedStatus(status) &&
         returnContext.reason === ACCOUNT_OWNER_CONFLICT_REASON
       let reason = ''
-      if (
-        conflictCandidate &&
-        (await conflictAuthScopeMatches(returnContext.conflictAuthScope))
-      ) {
-        reason = ACCOUNT_OWNER_CONFLICT_REASON
+      if (conflictCandidate) {
+        const conflictAuthScope = returnContext.conflictAuthScope
+        const activeMemberId = await conflictAuthScopeMemberId(
+          conflictAuthScope,
+        )
+        if (
+          conflictAuthScope &&
+          activeMemberId === conflictAuthScope.expectedMemberId &&
+          conflictAuthScopeIsCurrent(conflictAuthScope)
+        ) {
+          reason = ACCOUNT_OWNER_CONFLICT_REASON
+        } else {
+          releaseConflictAuthScope(conflictAuthScope)
+          effectiveReturnContext = genericizeReturnContext(returnContext)
+          if (!returnContext.pollForSettlement) {
+            status = await continueSettledStatus(status)
+          }
+          view = resolveDashboardView(status, effectiveReturnContext)
+        }
       }
       renderRoots(
         roots,
@@ -1631,17 +1657,27 @@
       let trustedReason = ''
       if (receiptContext.reason === ACCOUNT_OWNER_CONFLICT_REASON) {
         conflictAuthScope = armConflictAuthScope(memberId)
-        if (await conflictAuthScopeMatches(conflictAuthScope)) {
+        const activeMemberId = await conflictAuthScopeMemberId(
+          conflictAuthScope,
+        )
+        if (
+          conflictAuthScope &&
+          activeMemberId === memberId &&
+          conflictAuthScopeIsCurrent(conflictAuthScope)
+        ) {
           trustedReason = receiptContext.reason
         } else {
           releaseConflictAuthScope(conflictAuthScope)
           conflictAuthScope = null
         }
       }
-      const returnContext = {
+      let returnContext = {
         ...receiptContext,
         conflictAuthScope,
         reason: trustedReason,
+      }
+      if (!trustedReason) {
+        returnContext = genericizeReturnContext(returnContext)
       }
       return runExclusive(function () {
         return loadDashboardStatus(roots, returnContext, earningsTiles)
@@ -1686,29 +1722,64 @@
     )
     renderRoots(roots, 'loading')
     const params = callbackParams()
+    let callbackAuthScope = null
 
     try {
       if (params.error) throw new Error('Stripe Connect authorization was not completed')
       if (!params.code) throw new Error('Stripe Connect callback code is missing')
-
-      const memberId = await currentMemberId()
       if (!validOpaqueState(params.state)) {
         throw new Error('Stripe Connect state is missing or invalid')
+      }
+
+      callbackAuthScope = armConflictAuthScope()
+      let memberId = await conflictAuthScopeMemberId(callbackAuthScope)
+      if (
+        callbackAuthScope &&
+        memberId &&
+        conflictAuthScopeIsCurrent(callbackAuthScope)
+      ) {
+        callbackAuthScope.expectedMemberId = memberId
+      } else {
+        releaseConflictAuthScope(callbackAuthScope)
+        callbackAuthScope = null
+        memberId = await currentMemberId()
       }
 
       const result = await exchangeCode(params.code, params.state)
       const outcome = resolveExchangeOutcome(result)
       const mode = outcome.mode
+      let publicReason = ''
+      let storedConflictReason = false
 
-      storeReturnReason(memberId, outcome)
+      if (
+        outcome.reason === ACCOUNT_OWNER_CONFLICT_REASON &&
+        callbackAuthScope
+      ) {
+        const activeMemberId = await conflictAuthScopeMemberId(
+          callbackAuthScope,
+        )
+        if (
+          activeMemberId === memberId &&
+          conflictAuthScopeIsCurrent(callbackAuthScope) &&
+          storeReturnReason(memberId, outcome)
+        ) {
+          storedConflictReason = true
+        }
+      }
+      if (storedConflictReason) {
+        publicReason = ACCOUNT_OWNER_CONFLICT_REASON
+      } else {
+        storeReturnReason(memberId, null)
+      }
+
       if (mode === 'completed') signalStripeReturn(memberId)
       const dashboardUrl = new URL(DASHBOARD_PATH, global.location.origin)
       dashboardUrl.searchParams.set(
         'stripe_connect',
         mode === 'completed' ? 'connected' : mode,
       )
-      if (outcome.reason) {
-        dashboardUrl.searchParams.set('stripe_connect_reason', outcome.reason)
+      if (publicReason) {
+        dashboardUrl.searchParams.set('stripe_connect_reason', publicReason)
       }
       global.location.assign(dashboardUrl.toString())
       return result
@@ -1720,6 +1791,8 @@
       })
       global.console.error('[stripe-connect-callback] Exchange failed', error)
       return null
+    } finally {
+      releaseConflictAuthScope(callbackAuthScope)
     }
   }
 

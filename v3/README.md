@@ -3937,21 +3937,25 @@ blind Connect loop. The controller recognizes only the public
 `account_owner_conflict` reason, and only when the authenticated callback also
 created a short-lived, one-time same-tab receipt bound to the current
 Memberstack ID and reconciliation mode. A copied or forged query parameter
-without that receipt stays on the generic recovery path. Only a matching
-receipt arms a local Memberstack auth-generation watch. The same live member
-and unchanged generation must hold before canonical status and immediately
-before rendering; a missing or failed watch, a member mismatch, or any
-intervening auth change keeps the authored generic recovery. For the verified
-reason, the controller changes the existing error card to explain that the
-Stripe account is already linked to another Starter profile and makes the
-`Connect a different account` recovery action start a new Connect flow. The copy
-never includes the existing owner's identity. Unknown or internal reconciliation
-reasons remain on the generic unavailable copy. A canonical connected result
-always overrides a stale return reason.
+without that receipt stays on the generic recovery path. The callback arms a
+local Memberstack auth-generation watch before resolving the member or
+exchanging the code, and the dashboard arms another watch only for a matching
+receipt. Each watch requires the documented subscription object with an
+`unsubscribe()` method. The same Memberstack client, live member, and unchanged
+generation must hold throughout the protected operation; any auth event,
+missing or failed subscription, or member mismatch removes the specialized
+reason without blocking redirect, canonical status, or URL cleanup. The generic
+path retains bounded settlement polling. For the verified reason, the
+controller changes the existing error card to explain that the Stripe account
+is already linked to another Starter profile and makes the `Connect a different
+account` recovery action start a new Connect flow. The copy never includes the
+existing owner's identity. Unknown or internal reconciliation reasons remain on
+the generic unavailable copy. A canonical connected result always overrides a
+stale return reason.
 
 The callback reads `code` and the backend-issued opaque `state`,
-removes OAuth parameters from the visible URL before network work, resolves the
-current Memberstack member, validates the bounded state shape, and posts
+removes OAuth parameters from the visible URL before network work, validates the
+bounded state shape, resolves the current Memberstack member, and posts
 `{code, state}` to `oauth_exchange/v3`. Xano binds the state to the authenticated
 member and request receipt; the browser does not compare the opaque value to a
 Memberstack ID. The callback handles `completed`, `reconciliation_required`,
@@ -3965,9 +3969,11 @@ allowlisted `account_owner_conflict` reason also receives
 is never reflected into the URL or page. Before redirecting, that verified
 branch stores the one-time receipt in same-origin `sessionStorage`; all other
 callback outcomes clear an older receipt. The dashboard consumes the receipt
-before it accepts the public reason. The terminal owner-conflict branch reads
-canonical status once, while a direct URL spoof or generic reconciliation keeps
-the bounded settlement polling and original authored copy. `restart_required`
+before it accepts the public reason. A verified owner-conflict branch reads
+canonical status once. If its auth scope becomes untrusted, the controller
+removes the specialized reason and completes the remaining bounded settlement
+polls with the original authored copy, just like a direct URL spoof or generic
+reconciliation. `restart_required`
 performs one canonical read and cleans the marker without treating a consumed
 code as a completed return. The dashboard removes `after_onboarding`,
 `stripe_connect`, and `stripe_connect_reason` together while preserving
