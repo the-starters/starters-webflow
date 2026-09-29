@@ -532,14 +532,8 @@
     return data
   }
 
-  function fetchStatus(forceAuthRefresh, authScope) {
-    return post(
-      STATUS_PATH,
-      {},
-      true,
-      forceAuthRefresh === true,
-      authScope,
-    )
+  function fetchStatus(authScope) {
+    return post(STATUS_PATH, {}, true, false, authScope)
   }
 
   function createAttemptKey(prefix) {
@@ -1200,9 +1194,7 @@
       try {
         const activeMemberId = await currentMemberId()
         if (activeMemberId !== memberId) {
-          throw new Error(
-            'Member session changed before Stripe Dashboard access',
-          )
+          throw memberScopeChangedError()
         }
         const authScope = dashboardAuthScopeForRoots(roots)
         if (ownershipReloadRequired(roots)) throw memberScopeChangedError()
@@ -1279,7 +1271,7 @@
       try {
         const activeMemberId = await currentMemberId()
         if (activeMemberId !== bootMemberId) {
-          throw new Error('Member session changed before Stripe disconnect')
+          throw memberScopeChangedError()
         }
         const authScope = dashboardAuthScopeForRoots(roots)
         if (ownershipReloadRequired(roots)) throw memberScopeChangedError()
@@ -1405,13 +1397,11 @@
     const requestedMode = params.get('stripe_connect') || ''
     const mode =
       requestedMode === 'connected' ||
-      requestedMode === 'reconciliation_required' ||
-      requestedMode === 'restart_required'
+      requestedMode === 'reconciliation_required'
         ? requestedMode
         : ''
     const reason =
       mode === 'reconciliation_required' &&
-      params.get('stripe_connect_reason') === ACCOUNT_OWNER_CONFLICT_REASON &&
       trustedReason === ACCOUNT_OWNER_CONFLICT_REASON
         ? ACCOUNT_OWNER_CONFLICT_REASON
         : ''
@@ -1421,10 +1411,7 @@
       mode === 'reconciliation_required'
 
     return {
-      cleanReturnUrl:
-        params.has('after_onboarding') ||
-        params.has('stripe_connect') ||
-        params.has('stripe_connect_reason'),
+      cleanReturnUrl: returnedFromStripe,
       mode,
       pollForSettlement:
         returnedFromStripe && reason !== ACCOUNT_OWNER_CONFLICT_REASON,
@@ -1433,27 +1420,11 @@
     }
   }
 
-  function genericizeReturnContext(returnContext) {
-    return {
-      ...returnContext,
-      conflictAuthScope: null,
-      pollForSettlement: returnContext.returnedFromStripe === true,
-      reason: '',
-    }
-  }
-
   function cleanReturnMarker() {
     const url = new URL(global.location.href)
-    if (
-      !url.searchParams.has('after_onboarding') &&
-      !url.searchParams.has('stripe_connect') &&
-      !url.searchParams.has('stripe_connect_reason')
-    ) {
-      return false
-    }
+    if (!resolveReturnContext(url.search).cleanReturnUrl) return false
     url.searchParams.delete('after_onboarding')
     url.searchParams.delete('stripe_connect')
-    url.searchParams.delete('stripe_connect_reason')
     global.history.replaceState(
       {},
       global.document.title,
@@ -1470,7 +1441,7 @@
       if (authScope) requireConflictAuthScope(authScope)
       if (delay) await wait(delay)
       if (authScope) requireConflictAuthScope(authScope)
-      status = await fetchStatus(false, authScope)
+      status = await fetchStatus(authScope)
       if (authScope) requireConflictAuthScope(authScope)
       if (status.charges_enabled === true) break
     }
@@ -1493,18 +1464,12 @@
     earningsTiles = resolveEarningsTiles([]),
   ) {
     if (ownershipReloadRequired(roots)) {
-      releaseConflictAuthScope(returnContext.conflictAuthScope)
       if (returnContext.cleanReturnUrl) cleanReturnMarker()
       return null
     }
     renderRoots(roots, 'loading')
     renderEarningsTiles(earningsTiles, 'loading')
-    const persistedAuthScope = dashboardAuthScopeForRoots(roots)
-    const contextAuthScope = returnContext.conflictAuthScope
-    const authScope = contextAuthScope || persistedAuthScope
-    const releaseAuthScopeAtEnd = Boolean(
-      contextAuthScope && contextAuthScope !== persistedAuthScope,
-    )
+    const authScope = dashboardAuthScopeForRoots(roots)
     const hasTrustedConflictReason =
       returnContext.reason === ACCOUNT_OWNER_CONFLICT_REASON
     try {
@@ -1562,7 +1527,6 @@
       )
       return null
     } finally {
-      if (releaseAuthScopeAtEnd) releaseConflictAuthScope(contextAuthScope)
       if (returnContext.cleanReturnUrl) cleanReturnMarker()
     }
   }
@@ -1585,7 +1549,7 @@
       }
       const activeMemberId = await currentMemberId()
       if (activeMemberId !== bootMemberId) {
-        throw new Error('Member session changed before Stripe Connect redirect')
+        throw memberScopeChangedError()
       }
       const authScope = dashboardAuthScopeForRoots(roots)
       if (ownershipReloadRequired(roots)) throw memberScopeChangedError()
@@ -1669,6 +1633,11 @@
       const recover = function (returnReason) {
         const returnedFromStripe = returnReason === 'callback'
         setStartPending(button, connectTile, false)
+        if (ownershipReloadRequired(roots)) {
+          renderEarningsTiles(earningsTiles, 'error')
+          runExclusive.release()
+          return Promise.resolve(null)
+        }
         return loadDashboardStatus(
           roots,
           {
@@ -1765,6 +1734,34 @@
 
     try {
       const memberId = await initialMemberId()
+      roots.forEach(function (root) {
+        root
+          .querySelectorAll(actionSelector('refresh'))
+          .forEach(function (button) {
+            button.addEventListener('click', function (event) {
+              event.preventDefault()
+              if (reloadAfterOwnershipLoss(event, roots)) return
+              if (isAccountOwnerConflictRecovery(button, roots)) {
+                startInNewTab(
+                  runExclusive,
+                  button,
+                  earningsTiles.primary,
+                  roots,
+                  memberId,
+                  earningsTiles,
+                )
+                return
+              }
+              runExclusive(function () {
+                return loadDashboardStatus(
+                  roots,
+                  NO_RETURN_CONTEXT,
+                  earningsTiles,
+                )
+              })
+            })
+          })
+      })
       const dashboardAuthScope = armConflictAuthScope(
         memberId,
         function () {
@@ -1847,30 +1844,6 @@
             )
           })
         })
-        root.querySelectorAll(actionSelector('refresh')).forEach(function (button) {
-          button.addEventListener('click', function (event) {
-            event.preventDefault()
-            if (reloadAfterOwnershipLoss(event, roots)) return
-            if (isAccountOwnerConflictRecovery(button, roots)) {
-              startInNewTab(
-                runExclusive,
-                button,
-                earningsTiles.primary,
-                roots,
-                memberId,
-                earningsTiles,
-              )
-              return
-            }
-            runExclusive(function () {
-              return loadDashboardStatus(
-                roots,
-                NO_RETURN_CONTEXT,
-                earningsTiles,
-              )
-            })
-          })
-        })
       })
 
       const returnSearch = global.location.search
@@ -1879,31 +1852,7 @@
         memberId,
         untrustedReturnContext.mode,
       )
-      const receiptContext = resolveReturnContext(returnSearch, receiptReason)
-      let conflictAuthScope = null
-      let trustedReason = ''
-      if (receiptContext.reason === ACCOUNT_OWNER_CONFLICT_REASON) {
-        conflictAuthScope = dashboardAuthScope
-        const activeMemberId = await conflictAuthScopeMemberId(
-          conflictAuthScope,
-        )
-        if (
-          activeMemberId === memberId &&
-          conflictAuthScopeIsCurrent(conflictAuthScope)
-        ) {
-          trustedReason = receiptContext.reason
-        } else {
-          failClosedOwnership(roots, earningsTiles)
-        }
-      }
-      let returnContext = {
-        ...receiptContext,
-        conflictAuthScope,
-        reason: trustedReason,
-      }
-      if (!trustedReason) {
-        returnContext = genericizeReturnContext(returnContext)
-      }
+      const returnContext = resolveReturnContext(returnSearch, receiptReason)
       return runExclusive(function () {
         return loadDashboardStatus(roots, returnContext, earningsTiles)
       })
@@ -1983,14 +1932,7 @@
       requireConflictAuthScope(callbackAuthScope)
       const outcome = resolveExchangeOutcome(result)
       const mode = outcome.mode
-      let publicReason = ''
-
-      if (
-        outcome.reason === ACCOUNT_OWNER_CONFLICT_REASON &&
-        storeReturnReason(memberId, outcome)
-      ) {
-        publicReason = ACCOUNT_OWNER_CONFLICT_REASON
-      }
+      storeReturnReason(memberId, outcome)
 
       if (mode === 'completed') signalStripeReturn(memberId)
       const dashboardUrl = new URL(DASHBOARD_PATH, global.location.origin)
@@ -1998,9 +1940,6 @@
         'stripe_connect',
         mode === 'completed' ? 'connected' : mode,
       )
-      if (publicReason) {
-        dashboardUrl.searchParams.set('stripe_connect_reason', publicReason)
-      }
       global.location.assign(dashboardUrl.toString())
       return result
     } catch (error) {

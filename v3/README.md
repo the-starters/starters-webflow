@@ -3936,8 +3936,8 @@ account stays fail closed in the authored error state instead of returning to a
 blind Connect loop. The controller recognizes only the public
 `account_owner_conflict` reason, and only when the authenticated callback also
 created a short-lived, one-time same-tab receipt bound to the current
-Memberstack ID and reconciliation mode. A copied or forged query parameter
-without that receipt stays on the generic recovery path. The callback arms a
+Memberstack ID and reconciliation mode. A copied reconciliation marker without
+that receipt stays on the generic recovery path. The callback arms a
 local Memberstack auth-generation watch before resolving the member or
 exchanging the code. Every dashboard mount arms a page-lifetime watch before
 its first status read and uses that scope for later status and provider-action
@@ -3967,26 +3967,25 @@ and `restart_required` without automatically replaying the one-time code. When
 `BroadcastChannel` is available, only `completed` signals the original dashboard
 through a member-matched channel. The callback tab then redirects to the
 matching `/starter-dashboard?stripe_connect=<mode>` URL, where the dashboard
-re-reads canonical status. Only `reconciliation_required` with the exact
-allowlisted `account_owner_conflict` reason also receives
-`stripe_connect_reason=account_owner_conflict`; arbitrary backend reason text
-is never reflected into the URL or page. Before redirecting, that verified
-branch stores the one-time receipt in same-origin `sessionStorage`; all other
-callback outcomes clear an older receipt. The callback clears any older receipt
-at entry, so an authorization error, invalid state, member failure, or exchange
-failure cannot leave a prior conflict outcome reusable within the TTL. The
-dashboard consumes the receipt before it accepts the public reason. A verified
+re-reads canonical status. The callback never reflects the reason into the URL.
+Before redirecting, a `reconciliation_required` result with the exact
+allowlisted `account_owner_conflict` reason stores the one-time receipt in
+same-origin `sessionStorage`; all other callback outcomes clear an older
+receipt. The callback clears any older receipt at entry, so an authorization
+error, invalid state, member failure, or exchange failure cannot leave a prior
+conflict outcome reusable within the TTL. The dashboard derives the public
+reason only from the consumed receipt and reconciliation mode. A verified
 owner-conflict branch reads canonical status once. If its auth scope becomes
 untrusted before, during, or after that read, the controller discards the
 response and cached bearer, immediately removes the return markers, restores
 the authored generic error, and requires a full page reload. It does not poll,
 remount, or rebind the current controller to a different member.
-`restart_required`
-performs one canonical read and cleans the marker without treating a consumed
-code as a completed return. The dashboard removes `after_onboarding`,
-`stripe_connect`, and `stripe_connect_reason` together while preserving
-unrelated query parameters and the hash. Callback errors stay on the authored
-error state for safe recovery.
+Only `after_onboarding=true`, `stripe_connect=connected`, and
+`stripe_connect=reconciliation_required` trigger settlement polling and return
+cleanup. The dashboard removes `after_onboarding` and `stripe_connect` for
+those recognized returns while preserving unrelated query parameters and the
+hash. `restart_required` and arbitrary marker values do not trigger return
+cleanup. Callback errors stay on the authored error state for safe recovery.
 
 Each root reflects the selected state in `data-stripe-connect-status` and
 `data-stripe-connect-view`. During the public owner-conflict recovery state it
