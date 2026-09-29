@@ -6,12 +6,11 @@
   // dashboard. Every availability item now carries its own inline edit form
   // instead of sharing one modal form, so this module owns per-item CRUD,
   // connect/disconnect, timezone, and Nylas scheduler-configuration logic
-  // independently of the step/modal machinery in the writer. It deliberately
-  // does not depend on scheduling-availability-init.js: that module's job
-  // (show/hide the legacy `[init-availability]`/`[update-availability]` hero
-  // controls and pick the old modal's initial step) has no equivalent markup
-  // in the new component, so this module reads the canonical starter record
-  // itself instead of waiting on the initializer's handoff.
+  // independently of the step/modal machinery in the writer. It reads the
+  // canonical starter record itself instead of waiting on an availability-state
+  // handoff from scheduling-availability-init.js; that initializer's separate
+  // UI-routing contract lives in the "Booking-stage availability initializer"
+  // section of v3/README.md.
   //
   // OAuth-callback ownership: on any page carrying this section's root
   // (`[data-availability-element="section"]`), this module is the sole

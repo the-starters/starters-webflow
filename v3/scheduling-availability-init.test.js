@@ -13,15 +13,18 @@ function control(attributes = {}) {
     addEventListener(name, listener) {
       listeners.set(name, listener)
     },
-    click() {
+    click(event = {}) {
       const listener = listeners.get('click')
-      if (listener) listener()
+      if (listener) listener(event)
     },
     getAttribute(name) {
       return this.attributes[name] ?? null
     },
     setAttribute(name, value) {
       this.attributes[name] = String(value)
+    },
+    removeAttribute(name) {
+      delete this.attributes[name]
     },
   }
 }
@@ -68,21 +71,40 @@ function loadInitializer(options = {}) {
   const connectionAction = control(
     options.legacyCalendarAction
       ? { href: '#calendar' }
-      : { 'calendar-connection-action': '' },
+      : {
+          'calendar-connection-action': '',
+          'data-modal-trigger': 'set-availability',
+        },
   )
   // Production still uses the documented legacy class fallback for this row.
   const connectionItem = control({ class: 'dash-hero_action-item' })
   connectionItem.hidden = false
-  connectionAction.closest = (selector) =>
-    selector === '[data-action-element="item"], .dash-hero_action-item'
-      ? connectionItem
-      : null
+  connectionAction.closest = (selector) => {
+    if (selector === '[data-action-element="item"], .dash-hero_action-item') {
+      return connectionItem
+    }
+    if (
+      selector === '[data-modal-trigger="set-availability"]' &&
+      connectionAction.getAttribute('data-modal-trigger') === 'set-availability'
+    ) {
+      return connectionAction
+    }
+    return null
+  }
   const steps = ['default', 'setup-form', 'how-to-manage', 'config-request-error'].map((name) =>
     control({ 'availability-step': name }),
   )
   const attributes = new Map()
   const storage = new Map(Object.entries(options.storage || {}))
   const events = []
+  const availabilitySection = options.availabilitySection
+    ? {
+        scrollCalls: [],
+        scrollIntoView(scrollOptions) {
+          this.scrollCalls.push(scrollOptions)
+        },
+      }
+    : null
   let connectionActionAvailable = !options.lateConnectionAction
   let mutationCallback = null
   const document = {
@@ -97,6 +119,9 @@ function loadInitializer(options = {}) {
       if (selector === '[init-availability]') return init
       if (selector === '[update-availability]') return update
       if (selector === '[calendar-connection-action]') return connectionAction
+      if (selector === '[data-availability-element="section"]') {
+        return availabilitySection
+      }
       if (selector === 'dialog[data-modal-target="set-availability"]') {
         return options.modal || null
       }
@@ -191,6 +216,7 @@ function loadInitializer(options = {}) {
     attributes,
     connectionAction,
     connectionItem,
+    availabilitySection,
     events,
     init,
     steps,
@@ -224,6 +250,7 @@ test('Calendar controls fall back to the native dialog when the shared modal eng
   result.connectionAction.click()
   await settle()
 
+  assert.equal(result.connectionAction.getAttribute('data-modal-trigger'), 'set-availability')
   assert.equal(modal.open, true)
   assert.equal(modal.showModalCalls, 1)
   assert.equal(
@@ -252,6 +279,95 @@ test('Calendar controls fall back to the native dialog when the shared modal eng
   })
   assert.equal(modal.open, false)
   assert.equal(modal.closeCalls, 2)
+})
+
+test('Connect Calendar scrolls to the non-modal availability section without opening the modal', async () => {
+  const modal = nativeModal()
+  const result = loadInitializer({
+    availabilitySection: true,
+    modal,
+    xanoAuthFetch: async () => ({
+      ok: true,
+      status: 200,
+      json: async () => null,
+    }),
+  })
+  await settle()
+
+  let prevented = false
+  result.connectionAction.click({
+    preventDefault() {
+      prevented = true
+    },
+  })
+  await settle()
+
+  assert.equal(prevented, true)
+  assert.equal(result.availabilitySection.scrollCalls.length, 1)
+  assert.equal(result.availabilitySection.scrollCalls[0].behavior, 'smooth')
+  assert.equal(result.availabilitySection.scrollCalls[0].block, 'start')
+  assert.equal(result.connectionAction.getAttribute('data-modal-trigger'), null)
+  assert.equal(modal.open, false)
+  assert.equal(modal.showModalCalls, 0)
+})
+
+test('the legacy Calendar action keeps its native section link and does not open the modal', async () => {
+  const modal = nativeModal()
+  const result = loadInitializer({
+    availabilitySection: true,
+    legacyCalendarAction: true,
+    modal,
+    xanoAuthFetch: async () => ({
+      ok: true,
+      status: 200,
+      json: async () => null,
+    }),
+  })
+  await settle()
+
+  let prevented = false
+  result.connectionAction.click({
+    preventDefault() {
+      prevented = true
+    },
+  })
+  await settle()
+
+  assert.equal(prevented, false)
+  assert.equal(result.connectionAction.getAttribute('href'), '#calendar')
+  assert.equal(result.availabilitySection.scrollCalls.length, 0)
+  assert.equal(modal.open, false)
+  assert.equal(modal.showModalCalls, 0)
+})
+
+test('a late Calendar action scrolls to the non-modal section without opening the modal', async () => {
+  const modal = nativeModal()
+  const result = loadInitializer({
+    availabilitySection: true,
+    lateConnectionAction: true,
+    modal,
+  })
+  await settle()
+
+  result.window.dispatchEvent({
+    type: 'starterSchedulingConnectionStateChanged',
+    detail: { state: 'disconnected', configurationCount: 0 },
+  })
+  result.insertConnectionAction()
+  let prevented = false
+  result.connectionAction.click({
+    preventDefault() {
+      prevented = true
+    },
+  })
+  await settle()
+
+  assert.equal(prevented, true)
+  assert.equal(result.connectionAction.getAttribute('data-calendar-connection-state'), 'disconnected')
+  assert.equal(result.connectionAction.getAttribute('data-modal-trigger'), null)
+  assert.equal(result.availabilitySection.scrollCalls.length, 1)
+  assert.equal(modal.open, false)
+  assert.equal(modal.showModalCalls, 0)
 })
 
 test('Calendar controls prefer the shared modal registry and do not double-open the dialog', async () => {
