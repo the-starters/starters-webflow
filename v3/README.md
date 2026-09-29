@@ -2982,8 +2982,9 @@ Runtime contract:
   `renderState(availability, connectionState)` for repainting the controls and
   initial step, plus `setConnectionState(state, detail)` for writer events.
 
-This module intentionally owns initialization and visibility only. The writer
-flow lives in `scheduling-availability-writer.js` (below).
+This module intentionally owns initialization, visibility, and Dashboard
+Calendar action routing only. The writer flow lives in
+`scheduling-availability-writer.js` (below).
 
 The authoritative loader order and release URLs live in
 `scheduling-v3-stage-component.html`.
@@ -3242,10 +3243,10 @@ legacy availability-step machinery. Save, remove, connect, and disconnect
 results use the shared Designer-authored `availability-notification` modal;
 every action also logs its outcome to the console.
 
-It does not depend on `scheduling-availability-init.js`: that module's job
-(show/hide the legacy `[init-availability]`/`[update-availability]` hero
-controls, pick the old modal's initial step) has no equivalent in the new
-component, so this module reads the canonical starter record itself.
+It does not consume an availability-state handoff from
+`scheduling-availability-init.js`; this module reads the canonical starter
+record itself. The initializer's separate UI-routing contract is documented in
+[Booking-stage availability initializer](#booking-stage-availability-initializer).
 
 Google Calendar disconnect and manager switches follow the provider-first
 composite clear contract in
