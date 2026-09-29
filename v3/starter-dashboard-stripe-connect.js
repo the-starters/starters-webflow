@@ -164,6 +164,18 @@
     }
   }
 
+  function resetErrorRecoveryActions(roots) {
+    roots.forEach(function (root) {
+      const errorState = root.querySelector(elementSelector('error'))
+      if (!errorState) return
+      errorState
+        .querySelectorAll(actionSelector('refresh'))
+        .forEach(function (button) {
+          setActionPending(button, false)
+        })
+    })
+  }
+
   function failClosedOwnership(
     roots,
     earningsTiles = resolveEarningsTiles([]),
@@ -183,6 +195,8 @@
     })
     xanoTokenPromise = null
     clearReturnReason()
+    cleanReturnMarker()
+    resetErrorRecoveryActions(roots)
     if (!alreadyRequired) {
       renderRoots(roots, 'error')
       renderEarningsTiles(earningsTiles, 'error')
@@ -414,6 +428,19 @@
     return Object.assign(new Error('Member session changed'), {
       code: MEMBER_SCOPE_CHANGED_CODE,
     })
+  }
+
+  async function requireCurrentMemberId(expectedMemberId) {
+    let memberId = ''
+    try {
+      memberId = await currentMemberId()
+    } catch (_error) {
+      throw memberScopeChangedError()
+    }
+    if (!memberId || memberId !== expectedMemberId) {
+      throw memberScopeChangedError()
+    }
+    return memberId
   }
 
   function requireConflictAuthScope(scope) {
@@ -1192,10 +1219,7 @@
 
       setActionPending(button, true)
       try {
-        const activeMemberId = await currentMemberId()
-        if (activeMemberId !== memberId) {
-          throw memberScopeChangedError()
-        }
+        await requireCurrentMemberId(memberId)
         const authScope = dashboardAuthScopeForRoots(roots)
         if (ownershipReloadRequired(roots)) throw memberScopeChangedError()
         const result = await dashboardAccess(
@@ -1269,10 +1293,7 @@
       if (ownershipReloadRequired(roots)) return false
       setActionPending(button, true)
       try {
-        const activeMemberId = await currentMemberId()
-        if (activeMemberId !== bootMemberId) {
-          throw memberScopeChangedError()
-        }
+        await requireCurrentMemberId(bootMemberId)
         const authScope = dashboardAuthScopeForRoots(roots)
         if (ownershipReloadRequired(roots)) throw memberScopeChangedError()
         const result = await disconnectConnect(
@@ -1421,16 +1442,28 @@
   }
 
   function cleanReturnMarker() {
-    const url = new URL(global.location.href)
-    if (!resolveReturnContext(url.search).cleanReturnUrl) return false
-    url.searchParams.delete('after_onboarding')
-    url.searchParams.delete('stripe_connect')
-    global.history.replaceState(
-      {},
-      global.document.title,
-      url.pathname + url.search + url.hash,
-    )
-    return true
+    try {
+      if (
+        !global.location ||
+        !global.location.href ||
+        !global.history ||
+        typeof global.history.replaceState !== 'function'
+      ) {
+        return false
+      }
+      const url = new URL(global.location.href)
+      if (!resolveReturnContext(url.search).cleanReturnUrl) return false
+      url.searchParams.delete('after_onboarding')
+      url.searchParams.delete('stripe_connect')
+      global.history.replaceState(
+        {},
+        global.document ? global.document.title : '',
+        url.pathname + url.search + url.hash,
+      )
+      return true
+    } catch (_error) {
+      return false
+    }
   }
 
   async function readSettledStatus(returnedFromStripe, authScope) {
@@ -1547,10 +1580,7 @@
       if (!stripeTab || stripeTab.closed) {
         throw new Error('Browser blocked the Stripe Connect tab')
       }
-      const activeMemberId = await currentMemberId()
-      if (activeMemberId !== bootMemberId) {
-        throw memberScopeChangedError()
-      }
+      await requireCurrentMemberId(bootMemberId)
       const authScope = dashboardAuthScopeForRoots(roots)
       if (ownershipReloadRequired(roots)) throw memberScopeChangedError()
       const returnUrl = new URL(DASHBOARD_PATH, global.location.origin).toString()
@@ -1770,7 +1800,6 @@
       )
       if (!dashboardAuthScope) {
         failClosedOwnership(roots, earningsTiles)
-        cleanReturnMarker()
         return null
       }
       roots.forEach(function (root) {

@@ -3944,18 +3944,19 @@ its first status read and uses that scope for later status and provider-action
 requests. Each watch requires the documented subscription object with an
 `unsubscribe()` method. The same Memberstack client, live member, and unchanged
 generation must hold throughout each protected request. Any auth event,
-missing or failed subscription, or member mismatch clears the cached bearer and
-receipt, stops further Stripe requests and rendering, restores the authored
-generic error, disables provider actions, and requires a full page reload. The
-controller does not recover another member through handlers bound to the boot
-member. Ordinary return paths retain bounded settlement polling inside the same
-page-lifetime scope. For the verified reason, the
-controller changes the existing error card to explain that the Stripe account
-is already linked to another Starter profile and makes the `Connect a different
-account` recovery action start a new Connect flow. The copy never includes the
-existing owner's identity. Unknown or internal reconciliation reasons remain on
-the generic unavailable copy. A canonical connected result always overrides a
-stale return reason.
+missing or failed subscription, member mismatch, or failure to prove the live
+member clears the cached bearer and receipt, synchronously removes recognized
+return markers, stops further Stripe requests and rendering, restores the
+authored generic error and its usable reload control, keeps provider actions
+disabled, and requires a full page reload. The controller does not recover
+another member through handlers bound to the boot member. Ordinary return paths
+retain bounded settlement polling inside the same page-lifetime scope. For the
+verified reason, the controller changes the existing error card to explain that
+the Stripe account is already linked to another Starter profile and makes the
+`Connect a different account` recovery action start a new Connect flow. The copy
+never includes the existing owner's identity. Unknown or internal reconciliation
+reasons remain on the generic unavailable copy. A canonical connected result
+always overrides a stale return reason.
 
 The callback reads `code` and the backend-issued opaque `state`,
 removes OAuth parameters from the visible URL before network work, validates the

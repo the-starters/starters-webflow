@@ -792,8 +792,10 @@ test('auth loss discards an in-flight status without recovery', async () => {
     sessionStorage: global.sessionStorage,
   }
   const storage = sessionStorageFixture()
-  const { root } = stripeRoot()
+  const { root, states } = stripeRoot()
+  const refresh = new FakeElement('BUTTON')
   const setRootAttribute = root.setAttribute.bind(root)
+  const replacedUrls = []
   const renderedViews = []
   const readyEvents = []
   const statusAuthorizations = []
@@ -802,12 +804,16 @@ test('auth loss discards an in-flight status without recovery', async () => {
   let authUnsubscribes = 0
   let liveMemberId = 'member-a'
   let markFirstStatusStarted
+  let reloads = 0
   let resolveFirstStatus
   let statusReads = 0
   const firstStatusStarted = new Promise((resolve) => {
     markFirstStatusStarted = resolve
   })
 
+  refresh.setAttribute(ACTION_ATTR, 'refresh')
+  states.error.children.set(actionSelector('refresh'), refresh)
+  root.children.set(actionSelector('refresh'), refresh)
   root.setAttribute = (name, value) => {
     if (name === 'data-stripe-connect-view') {
       renderedViews.push(String(value))
@@ -833,13 +839,23 @@ test('auth loss discards an in-flight status without recovery', async () => {
       return value === selector('root') ? [root] : []
     },
   }
-  global.history = { replaceState() {} }
+  global.history = {
+    replaceState(_state, _title, url) {
+      replacedUrls.push(url)
+      const next = new URL(url, global.location.origin)
+      global.location.href = next.toString()
+      global.location.search = next.search
+    },
+  }
   global.location = {
     href:
       'https://thestarters.com/starter-dashboard?' +
-      'stripe_connect=reconciliation_required',
+      'stripe_connect=reconciliation_required&utm_source=proof#stripe',
     origin: 'https://thestarters.com',
-    search: '?stripe_connect=reconciliation_required',
+    reload() {
+      reloads += 1
+    },
+    search: '?stripe_connect=reconciliation_required&utm_source=proof',
   }
   global.memberReady = Promise.resolve({ id: 'member-a' })
   global.$memberstackDom = {
@@ -885,6 +901,23 @@ test('auth loss discards an in-flight status without recovery', async () => {
 
     liveMemberId = 'member-b'
     authChangeListener({ id: 'member-b' })
+
+    assert.deepEqual(replacedUrls, [
+      '/starter-dashboard?utm_source=proof#stripe',
+    ])
+    assert.equal(root.getAttribute('data-stripe-connect-view'), 'error')
+    const click = {
+      defaultPrevented: false,
+      preventDefault() {
+        this.defaultPrevented = true
+      },
+      type: 'click',
+    }
+    refresh.dispatchEvent(click)
+    assert.equal(click.defaultPrevented, true)
+    assert.equal(reloads, 1)
+    assert.equal(statusReads, 1)
+
     resolveFirstStatus()
 
     assert.equal(await loaded, null)
@@ -899,6 +932,9 @@ test('auth loss discards an in-flight status without recovery', async () => {
     assert.equal(root.getAttribute('data-stripe-connect-reason'), null)
     assert.equal(root.hidden, false)
     assert.deepEqual(readyEvents, [])
+    assert.deepEqual(replacedUrls, [
+      '/starter-dashboard?utm_source=proof#stripe',
+    ])
   } finally {
     api.__resetXanoToken()
     global.CustomEvent = previous.CustomEvent
@@ -2529,6 +2565,139 @@ test('silent member mismatches fail closed before every provider action', async 
   }
 })
 
+test('unresolved current members fail closed before every provider action', async (t) => {
+  for (const memberMode of ['rejected', 'memberless']) {
+    await t.test(memberMode, async () => {
+      const previous = {
+        confirm: global.confirm,
+        console: global.console,
+        fetch: global.fetch,
+        memberstack: global.$memberstackDom,
+        open: global.open,
+        sessionStorage: global.sessionStorage,
+      }
+      const storage = sessionStorageFixture()
+      const openedTabs = []
+      let fetchCount = 0
+      let memberReads = 0
+      global.sessionStorage = storage
+      global.confirm = () => true
+      global.console = { ...console, error: () => {} }
+      global.$memberstackDom = {
+        getCurrentMember: async () => {
+          memberReads += 1
+          if (memberMode === 'rejected') {
+            throw new Error('Memberstack unavailable')
+          }
+          return { data: null }
+        },
+      }
+      global.open = () => {
+        const stripeTab = {
+          closed: false,
+          close() {
+            this.closed = true
+          },
+          location: { replace() {} },
+          opener: global,
+        }
+        openedTabs.push(stripeTab)
+        return stripeTab
+      }
+      global.fetch = async () => {
+        fetchCount += 1
+        return response({ connected: false })
+      }
+      api.__resetXanoToken()
+      api.__resetDashboardAttempt()
+      api.__resetDisconnectAttempt()
+      api.__resetConnectStartAttempt()
+
+      const seedReceipt = () => {
+        api.storeReturnReason('member-at-boot', {
+          mode: 'reconciliation_required',
+          reason: 'account_owner_conflict',
+        })
+        assert.equal(storage.values.size, 1)
+      }
+      const assertFailedClosed = (root) => {
+        assert.equal(root.getAttribute('data-stripe-connect-view'), 'error')
+        assert.equal(root.hidden, false)
+        assert.equal(storage.values.size, 0)
+      }
+
+      try {
+        const dashboardRoot = stripeRoot().root
+        api.renderRoots([dashboardRoot], 'ready', '', true)
+        seedReceipt()
+        assert.equal(
+          await api.openDashboardInNewTab(
+            api.createExclusiveRunner(),
+            new FakeElement('BUTTON'),
+            [dashboardRoot],
+            'member-at-boot',
+          ),
+          false,
+        )
+        assertFailedClosed(dashboardRoot)
+        assert.equal(openedTabs.length, 1)
+        assert.equal(openedTabs[0].closed, true)
+
+        const disconnectRoot = stripeRoot().root
+        api.renderRoots([disconnectRoot], 'ready', '', true)
+        seedReceipt()
+        assert.equal(
+          await api.handleDisconnect(
+            api.createExclusiveRunner(),
+            new FakeElement('BUTTON'),
+            [disconnectRoot],
+            api.resolveEarningsTiles([]),
+            'member-at-boot',
+          ),
+          false,
+        )
+        assertFailedClosed(disconnectRoot)
+
+        const connectRoot = stripeRoot().root
+        const connectTab = {
+          closed: false,
+          close() {
+            this.closed = true
+          },
+          location: { replace() {} },
+        }
+        api.renderRoots([connectRoot], 'ready', '', true)
+        seedReceipt()
+        assert.equal(
+          await api.handleStart(
+            new FakeElement('BUTTON'),
+            new FakeElement(),
+            [connectRoot],
+            'member-at-boot',
+            connectTab,
+          ),
+          false,
+        )
+        assertFailedClosed(connectRoot)
+        assert.equal(connectTab.closed, true)
+        assert.equal(fetchCount, 0)
+        assert.equal(memberReads, memberMode === 'rejected' ? 3 : 6)
+      } finally {
+        api.__resetXanoToken()
+        api.__resetDashboardAttempt()
+        api.__resetDisconnectAttempt()
+        api.__resetConnectStartAttempt()
+        global.confirm = previous.confirm
+        global.console = previous.console
+        global.fetch = previous.fetch
+        global.$memberstackDom = previous.memberstack
+        global.open = previous.open
+        global.sessionStorage = previous.sessionStorage
+      }
+    })
+  }
+})
+
 test('staging query flags do not bypass confirmed disconnect', async () => {
   const previous = {
     confirm: global.confirm,
@@ -3596,7 +3765,7 @@ test('early returning focus waits for start before releasing Stripe retry', asyn
   }
 })
 
-test('popup recovery keeps the hero disabled after dashboard ownership is lost', async () => {
+test('pending conflict recovery enables reload after dashboard ownership is lost', async () => {
   const previous = {
     BroadcastChannel: global.BroadcastChannel,
     addEventListener: global.addEventListener,
@@ -3614,8 +3783,9 @@ test('popup recovery keeps the hero disabled after dashboard ownership is lost',
     setInterval: global.setInterval,
   }
   const storage = sessionStorageFixture()
-  const { root } = stripeRoot()
+  const { errorCopy, root, states } = stripeRoot()
   const hero = new FakeElement('A')
+  const recovery = new FakeElement('BUTTON')
   const listeners = new Map()
   const stripeTab = {
     closed: false,
@@ -3626,8 +3796,14 @@ test('popup recovery keeps the hero disabled after dashboard ownership is lost',
     opener: global,
   }
   let authChangeListener
+  let reloads = 0
   let statusReads = 0
   let startReads = 0
+  recovery.disabled = false
+  recovery.setAttribute(ACTION_ATTR, 'refresh')
+  recovery.setAttribute('tabindex', '4')
+  states.error.children.set(actionSelector('refresh'), recovery)
+  root.children.set(actionSelector('refresh'), recovery)
   hero.setAttribute('data-stripe-connect-earnings-state', 'ready')
   global.BroadcastChannel = undefined
   global.addEventListener = (name, listener) => listeners.set(name, listener)
@@ -3645,11 +3821,22 @@ test('popup recovery keeps the hero disabled after dashboard ownership is lost',
       return []
     },
   }
-  global.history = { replaceState() {} }
+  global.history = {
+    replaceState(_state, _title, url) {
+      const next = new URL(url, global.location.origin)
+      global.location.href = next.toString()
+      global.location.search = next.search
+    },
+  }
   global.location = {
-    href: 'https://thestarters.com/starter-dashboard',
+    href:
+      'https://thestarters.com/starter-dashboard?' +
+      'stripe_connect=reconciliation_required',
     origin: 'https://thestarters.com',
-    search: '',
+    reload() {
+      reloads += 1
+    },
+    search: '?stripe_connect=reconciliation_required',
   }
   global.memberReady = Promise.resolve({ id: 'member-a' })
   global.$memberstackDom = {
@@ -3677,17 +3864,26 @@ test('popup recovery keeps the hero disabled after dashboard ownership is lost',
   }
   api.__resetXanoToken()
   api.__resetConnectStartAttempt()
+  api.storeReturnReason('member-a', {
+    mode: 'reconciliation_required',
+    reason: 'account_owner_conflict',
+  })
 
   try {
     assert.deepEqual(await api.mountDashboard(), {
       connected: false,
       charges_enabled: false,
     })
+    assert.equal(root.getAttribute('data-stripe-connect-view'), 'error')
+    assert.equal(
+      root.getAttribute('data-stripe-connect-reason'),
+      'account_owner_conflict',
+    )
     const earningsTiles = api.resolveEarningsTiles([hero])
     assert.equal(
       await api.startInNewTab(
         api.createExclusiveRunner(),
-        hero,
+        recovery,
         hero,
         [root],
         'member-a',
@@ -3695,17 +3891,40 @@ test('popup recovery keeps the hero disabled after dashboard ownership is lost',
       ),
       true,
     )
+    assert.equal(recovery.getAttribute('aria-busy'), 'true')
+    assert.equal(recovery.getAttribute('aria-disabled'), 'true')
+    assert.equal(recovery.getAttribute('tabindex'), '-1')
+    assert.equal(recovery.style.pointerEvents, 'none')
+    assert.equal(recovery.disabled, true)
     assert.equal(hero.getAttribute('aria-busy'), 'true')
     assert.equal(startReads, 1)
 
     authChangeListener({ data: { id: 'member-b' } })
-    await listeners.get('focus')()
 
     assert.equal(statusReads, 1)
     assert.equal(root.getAttribute('data-stripe-connect-view'), 'error')
-    assert.equal(hero.getAttribute('aria-busy'), 'false')
+    assert.equal(root.getAttribute('data-stripe-connect-reason'), null)
+    assert.equal(errorCopy.button.textContent, 'Try Again')
+    assert.equal(recovery.getAttribute('aria-busy'), 'false')
+    assert.equal(recovery.getAttribute('aria-disabled'), 'false')
+    assert.equal(recovery.getAttribute('tabindex'), '4')
+    assert.equal(recovery.style.pointerEvents, '')
+    assert.equal(recovery.classList.contains('is-disabled'), false)
+    assert.equal(recovery.disabled, false)
     assert.equal(hero.getAttribute('aria-disabled'), 'true')
     assert.equal(hero.getAttribute('tabindex'), '-1')
+    const click = {
+      defaultPrevented: false,
+      preventDefault() {
+        this.defaultPrevented = true
+      },
+      type: 'click',
+    }
+    recovery.dispatchEvent(click)
+    assert.equal(click.defaultPrevented, true)
+    assert.equal(reloads, 1)
+    assert.equal(startReads, 1)
+    assert.equal(statusReads, 1)
   } finally {
     api.__resetXanoToken()
     api.__resetConnectStartAttempt()
@@ -4942,7 +5161,12 @@ test('dashboard rejects an owner-conflict receipt after member identity changes'
     },
   }
   global.history = {
-    replaceState: (_state, _title, url) => replaced.push(url),
+    replaceState(_state, _title, url) {
+      replaced.push(url)
+      const next = new URL(url, global.location.origin)
+      global.location.href = next.toString()
+      global.location.search = next.search
+    },
   }
   global.location = {
     href:
@@ -5057,7 +5281,12 @@ test('dashboard requires the documented auth-change subscription for conflict gu
         },
       }
       global.history = {
-        replaceState: (_state, _title, url) => replaced.push(url),
+        replaceState(_state, _title, url) {
+          replaced.push(url)
+          const next = new URL(url, global.location.origin)
+          global.location.href = next.toString()
+          global.location.search = next.search
+        },
       }
       global.location = {
         href:
@@ -5899,7 +6128,12 @@ test('dashboard discards stale status and token after an ABA auth change', async
     },
   }
   global.history = {
-    replaceState: (_state, _title, url) => replaced.push(url),
+    replaceState(_state, _title, url) {
+      replaced.push(url)
+      const next = new URL(url, global.location.origin)
+      global.location.href = next.toString()
+      global.location.search = next.search
+    },
   }
   global.location = {
     href:
@@ -6050,7 +6284,12 @@ test('dashboard stops when auth changes at the final render boundary', async () 
     },
   }
   global.history = {
-    replaceState: (_state, _title, url) => replaced.push(url),
+    replaceState(_state, _title, url) {
+      replaced.push(url)
+      const next = new URL(url, global.location.origin)
+      global.location.href = next.toString()
+      global.location.search = next.search
+    },
   }
   global.location = {
     href:
