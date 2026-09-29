@@ -3949,8 +3949,8 @@ status explicitly returns `requires_onboarding:false`; `true`, missing, or
 malformed values select `incomplete`. After a recognized ordinary return, the
 controller polls status briefly to absorb webhook timing, but stops as soon as
 readiness succeeds or the provider confirms more onboarding is required. The
-return marker controls only that polling and URL cleanup; it cannot choose a
-dashboard state. A
+`stripe_connect=connected` and legacy `after_onboarding=true` return markers
+control only that polling and URL cleanup; neither changes state selection. A
 receipt-verified owner conflict skips the settlement-poll loop. A
 provider-disconnected account always returns to `disconnected`, even when a
 stale success marker is present. A `reconciliation_required` return with a
