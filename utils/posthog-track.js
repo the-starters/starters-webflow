@@ -212,6 +212,21 @@
         return new Error('Unhandled rejection object')
       }
     }
+    // A fetch that fails or aborts rejects with only a browser-specific message.
+    // WebKit gives it no stack and a rejection has no filename, so the SDK can
+    // only report this forwarder's frames. Tag the family and group it by one
+    // stable fingerprint instead of by forwarder line numbers.
+    const NETWORK_FAILURE = /^(Load failed|Failed to fetch( \(.*\))?|NetworkError when attempting to fetch resource\.?|Network Error)$/
+    const isNetworkFailure = (reason) => {
+      try {
+        if (typeof reason === 'string') return NETWORK_FAILURE.test(reason)
+        if (!reason || typeof reason !== 'object') return false
+        return reason.code === 'network-error' ||
+          (typeof reason.message === 'string' && NETWORK_FAILURE.test(reason.message))
+      } catch (e) {
+        return false
+      }
+    }
     window.addEventListener('error', (e) => {
       // Cross-origin script failures reach the page as a bare "Script error."
       // with no error object and no source location — the browser strips the
@@ -228,9 +243,12 @@
       recoverWebflowChunkFailure(e)
     })
     window.addEventListener('unhandledrejection', (e) => {
-      send(rejectionError(e.reason), {
-        starters_error_source: 'onunhandledrejection',
-      })
+      const props = { starters_error_source: 'onunhandledrejection' }
+      if (isNetworkFailure(e.reason)) {
+        props.starters_error_kind = 'network'
+        props.$exception_fingerprint = 'starters-network-rejection'
+      }
+      send(rejectionError(e.reason), props)
       recoverWebflowChunkFailure({ error: e.reason })
     })
   }
