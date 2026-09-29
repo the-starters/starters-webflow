@@ -3971,9 +3971,14 @@ branch stores the one-time receipt in same-origin `sessionStorage`; all other
 callback outcomes clear an older receipt. The dashboard consumes the receipt
 before it accepts the public reason. A verified owner-conflict branch reads
 canonical status once. If its auth scope becomes untrusted, the controller
-removes the specialized reason and completes the remaining bounded settlement
-polls with the original authored copy, just like a direct URL spoof or generic
-reconciliation. `restart_required`
+removes the specialized reason, discards that response and the cached
+controller bearer, then performs a full force-refreshed generic settlement
+sequence under a new strict auth-generation watch. If ownership changes again,
+the controller discards the sequence and fails closed with the original
+authored copy. The recovery bearer is discarded when that watch ends, so later
+provider actions must authenticate the then-current session. A stable recovery
+otherwise behaves like a direct URL spoof or generic reconciliation.
+`restart_required`
 performs one canonical read and cleans the marker without treating a consumed
 code as a completed return. The dashboard removes `after_onboarding`,
 `stripe_connect`, and `stripe_connect_reason` together while preserving

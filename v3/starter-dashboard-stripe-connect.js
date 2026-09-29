@@ -417,8 +417,8 @@
     return data
   }
 
-  function fetchStatus() {
-    return post(STATUS_PATH, {})
+  function fetchStatus(forceAuthRefresh) {
+    return post(STATUS_PATH, {}, true, forceAuthRefresh === true)
   }
 
   function createAttemptKey(prefix) {
@@ -1287,23 +1287,14 @@
     )
   }
 
-  async function readSettledStatus(returnedFromStripe) {
+  async function readSettledStatus(returnedFromStripe, forceAuthRefresh) {
     let status = null
     const delays = returnedFromStripe ? RETURN_POLL_DELAYS_MS : [0]
 
-    for (const delay of delays) {
+    for (let index = 0; index < delays.length; index += 1) {
+      const delay = delays[index]
       if (delay) await wait(delay)
-      status = await fetchStatus()
-      if (status.charges_enabled === true) break
-    }
-    return status
-  }
-
-  async function continueSettledStatus(status) {
-    if (status && status.charges_enabled === true) return status
-    for (const delay of RETURN_POLL_DELAYS_MS.slice(1)) {
-      await wait(delay)
-      status = await fetchStatus()
+      status = await fetchStatus(forceAuthRefresh === true && index === 0)
       if (status.charges_enabled === true) break
     }
     return status
@@ -1326,16 +1317,17 @@
   ) {
     renderRoots(roots, 'loading')
     renderEarningsTiles(earningsTiles, 'loading')
+    let recoveryAuthScope = null
     try {
-      let status = await readSettledStatus(returnContext.pollForSettlement)
       let effectiveReturnContext = returnContext
-      let view = resolveDashboardView(status, effectiveReturnContext)
-      const conflictCandidate =
-        view === 'error' &&
-        isCanonicalDisconnectedStatus(status) &&
+      const hasTrustedConflictReason =
         returnContext.reason === ACCOUNT_OWNER_CONFLICT_REASON
+      let status = hasTrustedConflictReason
+        ? await fetchStatus()
+        : await readSettledStatus(returnContext.pollForSettlement)
+      let trustedConflictScope = false
       let reason = ''
-      if (conflictCandidate) {
+      if (hasTrustedConflictReason) {
         const conflictAuthScope = returnContext.conflictAuthScope
         const activeMemberId = await conflictAuthScopeMemberId(
           conflictAuthScope,
@@ -1345,15 +1337,46 @@
           activeMemberId === conflictAuthScope.expectedMemberId &&
           conflictAuthScopeIsCurrent(conflictAuthScope)
         ) {
-          reason = ACCOUNT_OWNER_CONFLICT_REASON
+          trustedConflictScope = true
         } else {
           releaseConflictAuthScope(conflictAuthScope)
           effectiveReturnContext = genericizeReturnContext(returnContext)
-          if (!returnContext.pollForSettlement) {
-            status = await continueSettledStatus(status)
+          recoveryAuthScope = armConflictAuthScope()
+          const recoveryMemberId = await conflictAuthScopeMemberId(
+            recoveryAuthScope,
+          )
+          if (
+            !recoveryAuthScope ||
+            !recoveryMemberId ||
+            !conflictAuthScopeIsCurrent(recoveryAuthScope)
+          ) {
+            xanoTokenPromise = null
+            throw new Error('Stripe status recovery lost member ownership')
           }
-          view = resolveDashboardView(status, effectiveReturnContext)
+          recoveryAuthScope.expectedMemberId = recoveryMemberId
+          status = await readSettledStatus(
+            effectiveReturnContext.pollForSettlement,
+            true,
+          )
+          const settledMemberId = await conflictAuthScopeMemberId(
+            recoveryAuthScope,
+          )
+          if (
+            settledMemberId !== recoveryMemberId ||
+            !conflictAuthScopeIsCurrent(recoveryAuthScope)
+          ) {
+            xanoTokenPromise = null
+            throw new Error('Stripe status recovery lost member ownership')
+          }
         }
+      }
+      const view = resolveDashboardView(status, effectiveReturnContext)
+      if (
+        trustedConflictScope &&
+        view === 'error' &&
+        isCanonicalDisconnectedStatus(status)
+      ) {
+        reason = ACCOUNT_OWNER_CONFLICT_REASON
       }
       renderRoots(
         roots,
@@ -1365,6 +1388,9 @@
       emit('starterStripeConnectReady', { view, status })
       return status
     } catch (error) {
+      if (returnContext.reason === ACCOUNT_OWNER_CONFLICT_REASON) {
+        xanoTokenPromise = null
+      }
       renderRoots(roots, 'error')
       renderEarningsTiles(earningsTiles, 'error')
       emit('starterStripeConnectError', {
@@ -1377,7 +1403,9 @@
       )
       return null
     } finally {
+      if (recoveryAuthScope) xanoTokenPromise = null
       releaseConflictAuthScope(returnContext.conflictAuthScope)
+      releaseConflictAuthScope(recoveryAuthScope)
       if (returnContext.cleanReturnUrl) cleanReturnMarker()
     }
   }
