@@ -3828,7 +3828,7 @@ root, use these values:
 | `incomplete` | Connected account whose charges are not enabled; used by the hero earnings tile while the Action Item root is hidden |
 | `ready` | Stripe reports `charges_enabled: true` |
 | `review` | The user just returned from Stripe, but the authoritative enabled flag has not settled after short polling |
-| `error` | Designer-owned safe failure state; on the callback page this remains visible instead of losing a failed one-time code |
+| `error` | Designer-owned safe failure state; on the callback page this remains visible instead of losing a failed one-time code, and on the dashboard it also carries safe account-owner-conflict recovery copy |
 
 Give every Connect control `data-stripe-connect-action="start"`. An optional
 retry control can use `data-stripe-connect-action="refresh"`. The Action Item
@@ -3927,8 +3927,20 @@ OAuth callback or Stripe-hosted onboarding returns, the controller polls the
 status briefly to absorb webhook timing. If the provider account remains
 connected but the readiness flag is still false, it selects the authored
 `review` state instead of painting a false success. A provider-disconnected
-account always returns to `disconnected`, even when a stale return marker is
-present.
+account always returns to `disconnected`, even when a stale success marker is
+present. A `reconciliation_required` return with a canonically disconnected
+account stays fail closed in the authored error state instead of returning to a
+blind Connect loop. The controller recognizes only the public
+`account_owner_conflict` reason, and only when the authenticated callback also
+created a short-lived, one-time same-tab receipt bound to the current
+Memberstack ID and reconciliation mode. A copied or forged query parameter
+without that receipt stays on the generic recovery path. For the verified
+reason, the controller changes the existing error card to explain that the
+Stripe account is already linked to another Starter profile and makes the
+recovery action start a different-account Connect flow. The copy never includes
+the existing owner's identity. Unknown or internal reconciliation reasons
+remain on the generic unavailable copy. A canonical connected result always
+overrides a stale return reason.
 
 The callback reads `code` and the backend-issued opaque `state`,
 removes OAuth parameters from the visible URL before network work, resolves the
@@ -3940,11 +3952,26 @@ and `restart_required` without automatically replaying the one-time code. When
 `BroadcastChannel` is available, only `completed` signals the original dashboard
 through a member-matched channel. The callback tab then redirects to the
 matching `/starter-dashboard?stripe_connect=<mode>` URL, where the dashboard
-re-reads canonical status. Callback errors stay on the authored error state for
-safe recovery.
+re-reads canonical status. Only `reconciliation_required` with the exact
+allowlisted `account_owner_conflict` reason also receives
+`stripe_connect_reason=account_owner_conflict`; arbitrary backend reason text
+is never reflected into the URL or page. Before redirecting, that verified
+branch stores the one-time receipt in same-origin `sessionStorage`; all other
+callback outcomes clear an older receipt. The dashboard consumes the receipt
+before it accepts the public reason. The terminal owner-conflict branch reads
+canonical status once, while a direct URL spoof or generic reconciliation keeps
+the bounded settlement polling and original authored copy. `restart_required`
+performs one canonical read and cleans the marker without treating a consumed
+code as a completed return. The dashboard removes `after_onboarding`,
+`stripe_connect`, and `stripe_connect_reason` together while preserving
+unrelated query parameters and the hash. Callback errors stay on the authored
+error state for safe recovery.
 
 Each root reflects the selected state in `data-stripe-connect-status` and
-`data-stripe-connect-view`. The module also emits
+`data-stripe-connect-view`. During the public owner-conflict recovery state it
+also sets `data-stripe-connect-reason="account_owner_conflict"`; every other
+render removes that marker and restores the original authored error copy. The
+module also emits
 `starterStripeConnectReady`, `starterStripeConnectRedirect`,
 `starterStripeConnectDashboard`, `starterStripeConnectDisconnected`, and
 `starterStripeConnectError` events. `starterStripeConnectRedirect` is

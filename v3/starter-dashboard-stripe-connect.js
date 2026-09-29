@@ -42,8 +42,11 @@
   const OAUTH_STATE_MAX_LENGTH = 128
   const IDEMPOTENCY_KEY_MAX_LENGTH = 128
   const RETURN_POLL_DELAYS_MS = [0, 750, 1500, 3000, 5000]
+  const RETURN_REASON_STORAGE_KEY = 'starters.stripe-connect.return-reason.v1'
+  const RETURN_REASON_TTL_MS = 5 * 60 * 1000
   const ELEMENT_ATTR = 'data-stripe-connect-element'
   const ACTION_ATTR = 'data-stripe-connect-action'
+  const REASON_ATTR = 'data-stripe-connect-reason'
   const EARNINGS_STATE_ATTR = 'data-stripe-connect-earnings-state'
   const HERO_ACTION_ATTR = 'data-stripe-connect-hero-action'
   const PENDING_TABINDEX_ATTR = 'data-stripe-connect-pending-tabindex'
@@ -59,6 +62,14 @@
     '[' + ELEMENT_ATTR + '="' + name + '"]'
   const actionSelector = (name) => '[' + ACTION_ATTR + '="' + name + '"]'
   const canonicalConnectedByRoot = new WeakMap()
+  const authoredErrorCopyByElement = new WeakMap()
+  const ACCOUNT_OWNER_CONFLICT_REASON = 'account_owner_conflict'
+  const ACCOUNT_OWNER_CONFLICT_COPY = {
+    button: 'Connect a different account',
+    label: 'Stripe account already linked',
+    message:
+      'This Stripe account is already linked to another Starter profile. Use a different Stripe account or contact The Starters.',
+  }
 
   function show(element, visible) {
     if (!element) return
@@ -74,19 +85,59 @@
     root.setAttribute('data-stripe-connect-view', view)
   }
 
-  function renderRoots(roots, view) {
+  function setErrorStateCopy(root, reason) {
+    const errorState = root.querySelector(elementSelector('error'))
+    if (!errorState) return
+    const elements = {
+      button: errorState.querySelector('.button_main-text'),
+      label: errorState.querySelector('.label_text'),
+      message: errorState.querySelector('.action-item_title'),
+    }
+    if (!authoredErrorCopyByElement.has(errorState)) {
+      authoredErrorCopyByElement.set(errorState, {
+        button: elements.button ? elements.button.textContent : '',
+        label: elements.label ? elements.label.textContent : '',
+        message: elements.message ? elements.message.textContent : '',
+      })
+    }
+    const copy =
+      reason === ACCOUNT_OWNER_CONFLICT_REASON
+        ? ACCOUNT_OWNER_CONFLICT_COPY
+        : authoredErrorCopyByElement.get(errorState)
+    Object.keys(elements).forEach(function (key) {
+      if (elements[key]) elements[key].textContent = copy[key]
+    })
+  }
+
+  function renderRoots(roots, view, reason) {
     roots.forEach(function (root) {
       if (view === 'incomplete' || view === 'ready' || view === 'review') {
         canonicalConnectedByRoot.set(root, true)
       } else if (view === 'disconnected') {
         canonicalConnectedByRoot.set(root, false)
       }
+      const publicReason =
+        view === 'error' && reason === ACCOUNT_OWNER_CONFLICT_REASON
+          ? ACCOUNT_OWNER_CONFLICT_REASON
+          : ''
+      if (publicReason) root.setAttribute(REASON_ATTR, publicReason)
+      else root.removeAttribute(REASON_ATTR)
+      setErrorStateCopy(root, publicReason)
       setView(root, view)
       show(root, canonicalConnectedByRoot.get(root) !== true)
     })
   }
 
-  function resolveDashboardView(status, returnedFromStripe) {
+  function isAccountOwnerConflictRecovery(button, roots) {
+    return (
+      button.getAttribute(ELEMENT_ATTR) === 'error' &&
+      roots.some(function (root) {
+        return root.getAttribute(REASON_ATTR) === ACCOUNT_OWNER_CONFLICT_REASON
+      })
+    )
+  }
+
+  function resolveDashboardView(status, returnContext) {
     if (
       !status ||
       typeof status !== 'object' ||
@@ -96,7 +147,18 @@
     ) {
       return 'error'
     }
-    if (status.connected === false) return 'disconnected'
+    const returnedFromStripe =
+      typeof returnContext === 'object' && returnContext !== null
+        ? returnContext.returnedFromStripe === true
+        : returnContext === true
+    const returnMode =
+      typeof returnContext === 'object' && returnContext !== null
+        ? returnContext.mode || ''
+        : ''
+    if (status.connected === false) {
+      if (returnMode === 'reconciliation_required') return 'error'
+      return 'disconnected'
+    }
     if (status.charges_enabled === true) return 'ready'
     if (returnedFromStripe) return 'review'
     return 'incomplete'
@@ -375,6 +437,18 @@
       throw new Error('Stripe Connect exchange did not connect the account')
     }
     return mode
+  }
+
+  function resolveExchangeOutcome(result) {
+    const mode = resolveExchangeMode(result)
+    return {
+      mode,
+      reason:
+        mode === 'reconciliation_required' &&
+        result.reason === ACCOUNT_OWNER_CONFLICT_REASON
+          ? ACCOUNT_OWNER_CONFLICT_REASON
+          : '',
+    }
   }
 
   function isStripeUrl(value) {
@@ -969,20 +1043,159 @@
     })
   }
 
-  function returnMarker() {
-    const params = new URLSearchParams(global.location.search)
-    const result = params.get('stripe_connect')
-    return (
-      params.get('after_onboarding') === 'true' ||
-      result === 'connected' ||
-      result === 'reconciliation_required'
+  function returnReasonStorage() {
+    try {
+      const storage = global.sessionStorage
+      return storage &&
+        typeof storage.getItem === 'function' &&
+        typeof storage.setItem === 'function' &&
+        typeof storage.removeItem === 'function'
+        ? storage
+        : null
+    } catch (_error) {
+      return null
+    }
+  }
+
+  function storeReturnReason(memberId, outcome) {
+    const storage = returnReasonStorage()
+    if (!storage) return false
+
+    try {
+      storage.removeItem(RETURN_REASON_STORAGE_KEY)
+      if (
+        typeof memberId !== 'string' ||
+        !memberId ||
+        !outcome ||
+        outcome.mode !== 'reconciliation_required' ||
+        outcome.reason !== ACCOUNT_OWNER_CONFLICT_REASON
+      ) {
+        return false
+      }
+      storage.setItem(
+        RETURN_REASON_STORAGE_KEY,
+        JSON.stringify({
+          createdAt: Date.now(),
+          memberId,
+          mode: outcome.mode,
+          reason: outcome.reason,
+        }),
+      )
+      return true
+    } catch (_error) {
+      return false
+    }
+  }
+
+  function consumeReturnReason(memberId, mode) {
+    const storage = returnReasonStorage()
+    if (!storage) return ''
+
+    let raw = ''
+    try {
+      raw = storage.getItem(RETURN_REASON_STORAGE_KEY) || ''
+      storage.removeItem(RETURN_REASON_STORAGE_KEY)
+    } catch (_error) {
+      return ''
+    }
+    if (!raw) return ''
+
+    try {
+      const receipt = JSON.parse(raw)
+      const createdAt = Number(receipt.createdAt)
+      const age = Date.now() - createdAt
+      return receipt.memberId === memberId &&
+        receipt.mode === mode &&
+        receipt.reason === ACCOUNT_OWNER_CONFLICT_REASON &&
+        Number.isFinite(createdAt) &&
+        age >= 0 &&
+        age <= RETURN_REASON_TTL_MS
+        ? ACCOUNT_OWNER_CONFLICT_REASON
+        : ''
+    } catch (_error) {
+      return ''
+    }
+  }
+
+  function resolveReturnContext(search, trustedReason) {
+    const params = new URLSearchParams(
+      typeof search === 'string' ? search : global.location.search,
     )
+    const requestedMode = params.get('stripe_connect') || ''
+    const mode =
+      requestedMode === 'connected' ||
+      requestedMode === 'reconciliation_required' ||
+      requestedMode === 'restart_required'
+        ? requestedMode
+        : ''
+    const reason =
+      mode === 'reconciliation_required' &&
+      params.get('stripe_connect_reason') === ACCOUNT_OWNER_CONFLICT_REASON &&
+      trustedReason === ACCOUNT_OWNER_CONFLICT_REASON
+        ? ACCOUNT_OWNER_CONFLICT_REASON
+        : ''
+    const returnedFromStripe =
+      params.get('after_onboarding') === 'true' ||
+      mode === 'connected' ||
+      mode === 'reconciliation_required'
+
+    return {
+      cleanReturnUrl:
+        params.has('after_onboarding') ||
+        params.has('stripe_connect') ||
+        params.has('stripe_connect_reason'),
+      mode,
+      pollForSettlement:
+        returnedFromStripe && reason !== ACCOUNT_OWNER_CONFLICT_REASON,
+      reason,
+      returnedFromStripe,
+    }
+  }
+
+  function normalizeReturnContext(
+    returnContext,
+    pollForSettlement,
+    cleanReturnUrl,
+  ) {
+    if (returnContext && typeof returnContext === 'object') {
+      return {
+        cleanReturnUrl:
+          typeof cleanReturnUrl === 'boolean'
+            ? cleanReturnUrl
+            : returnContext.cleanReturnUrl === true,
+        mode: returnContext.mode || '',
+        pollForSettlement:
+          typeof pollForSettlement === 'boolean'
+            ? pollForSettlement
+            : returnContext.pollForSettlement === true,
+        reason:
+          returnContext.reason === ACCOUNT_OWNER_CONFLICT_REASON &&
+          returnContext.mode === 'reconciliation_required'
+            ? ACCOUNT_OWNER_CONFLICT_REASON
+            : '',
+        returnedFromStripe: returnContext.returnedFromStripe === true,
+      }
+    }
+    return {
+      cleanReturnUrl:
+        typeof cleanReturnUrl === 'boolean'
+          ? cleanReturnUrl
+          : returnContext === true,
+      mode: returnContext === true ? 'connected' : '',
+      pollForSettlement:
+        typeof pollForSettlement === 'boolean'
+          ? pollForSettlement
+          : returnContext === true,
+      reason: '',
+      returnedFromStripe: returnContext === true,
+    }
   }
 
   function cleanReturnMarker() {
     const url = new URL(global.location.href)
     url.searchParams.delete('after_onboarding')
     url.searchParams.delete('stripe_connect')
+    url.searchParams.delete('stripe_connect_reason')
     global.history.replaceState(
       {},
       global.document.title,
@@ -1014,17 +1227,28 @@
 
   async function loadDashboardStatus(
     roots,
-    returnedFromStripe,
+    returnContext,
     earningsTiles = resolveEarningsTiles([]),
-    pollForSettlement = returnedFromStripe,
-    cleanReturnUrl = returnedFromStripe,
+    pollForSettlement,
+    cleanReturnUrl,
   ) {
+    const context = normalizeReturnContext(
+      returnContext,
+      pollForSettlement,
+      cleanReturnUrl,
+    )
     renderRoots(roots, 'loading')
     renderEarningsTiles(earningsTiles, 'loading')
     try {
-      const status = await readSettledStatus(pollForSettlement)
-      const view = resolveDashboardView(status, returnedFromStripe)
-      renderRoots(roots, view)
+      const status = await readSettledStatus(context.pollForSettlement)
+      const view = resolveDashboardView(status, context)
+      const reason =
+        view === 'error' &&
+        status.connected === false &&
+        context.reason === ACCOUNT_OWNER_CONFLICT_REASON
+          ? ACCOUNT_OWNER_CONFLICT_REASON
+          : ''
+      renderRoots(roots, view, reason)
       renderEarningsTiles(earningsTiles, view)
       emit('starterStripeConnectReady', { view, status })
       return status
@@ -1041,7 +1265,7 @@
       )
       return null
     } finally {
-      if (cleanReturnUrl) cleanReturnMarker()
+      if (context.cleanReturnUrl) cleanReturnMarker()
     }
   }
 
@@ -1279,6 +1503,17 @@
         root.querySelectorAll(actionSelector('refresh')).forEach(function (button) {
           button.addEventListener('click', function (event) {
             event.preventDefault()
+            if (isAccountOwnerConflictRecovery(button, roots)) {
+              startInNewTab(
+                runExclusive,
+                button,
+                earningsTiles.primary,
+                roots,
+                memberId,
+                earningsTiles,
+              )
+              return
+            }
             runExclusive(function () {
               return loadDashboardStatus(roots, false, earningsTiles)
             })
@@ -1286,9 +1521,15 @@
         })
       })
 
-      const returnedFromStripe = returnMarker()
+      const returnSearch = global.location.search
+      const untrustedReturnContext = resolveReturnContext(returnSearch)
+      const trustedReason = consumeReturnReason(
+        memberId,
+        untrustedReturnContext.mode,
+      )
+      const returnContext = resolveReturnContext(returnSearch, trustedReason)
       return runExclusive(function () {
-        return loadDashboardStatus(roots, returnedFromStripe, earningsTiles)
+        return loadDashboardStatus(roots, returnContext, earningsTiles)
       })
     } catch (error) {
       renderRoots(roots, 'error')
@@ -1341,14 +1582,19 @@
       }
 
       const result = await exchangeCode(params.code, params.state)
-      const mode = resolveExchangeMode(result)
+      const outcome = resolveExchangeOutcome(result)
+      const mode = outcome.mode
 
+      storeReturnReason(memberId, outcome)
       if (mode === 'completed') signalStripeReturn(memberId)
       const dashboardUrl = new URL(DASHBOARD_PATH, global.location.origin)
       dashboardUrl.searchParams.set(
         'stripe_connect',
         mode === 'completed' ? 'connected' : mode,
       )
+      if (outcome.reason) {
+        dashboardUrl.searchParams.set('stripe_connect_reason', outcome.reason)
+      }
       global.location.assign(dashboardUrl.toString())
       return result
     } catch (error) {
@@ -1378,6 +1624,7 @@
     __resetDisconnectAttempt: clearDisconnectAttemptKey,
     callbackParams,
     confirmDisconnect,
+    consumeReturnReason,
     createExclusiveRunner,
     createAttemptKey,
     currentConnectStartAttemptKey,
@@ -1400,6 +1647,7 @@
     openDashboardInNewTab,
     reserveStripeTab,
     initialMemberId,
+    isAccountOwnerConflictRecovery,
     isStripeDashboardUrl,
     isStripeUrl,
     loadDashboardStatus,
@@ -1407,7 +1655,9 @@
     mountDashboard,
     renderRoots,
     renderEarningsTiles,
+    resolveExchangeOutcome,
     resolveExchangeMode,
+    resolveReturnContext,
     resolveDashboardDestination,
     resolveEarningsTiles,
     resolveDashboardView,
@@ -1422,6 +1672,7 @@
     signalStripeReturn,
     startInNewTab,
     startConnect,
+    storeReturnReason,
     validOpaqueState,
     watchStripeTabReturn,
   }
