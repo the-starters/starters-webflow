@@ -6967,6 +6967,165 @@ test('mutation reconciliation retains dirty state until canonical readback succe
   }
 })
 
+test('Starter background refreshes preserve canonical response order', async () => {
+  const previousDocument = global.document
+  const previousFetch = global.xanoAuthFetch
+  const previousActions = global.StartersDashboardCallActions
+  const now = Date.now()
+  const booking = {
+    booking_id: 'ordered-background-call',
+    status: 'confirmed',
+    start: now + 120_000,
+    end: now + 180_000,
+    meeting_link: 'https://meet.google.com/ordered-background',
+    brand_data: { memberstack_id: 'ordered-brand' },
+    starter_data: { memberstack_id: 'ordered-starter' },
+  }
+  const request = {
+    booking_id: 'ordered-expired-request',
+    status: 'pending',
+    start: now + 240_000,
+    end: now + 300_000,
+    confirmation_expires_at: now - 1,
+    brand_data: { memberstack_id: 'ordered-brand' },
+    starter_data: { memberstack_id: 'ordered-starter' },
+  }
+  const cancelled = { ...booking, status: 'cancelled' }
+  const callCard = element({ 'data-booking-id': booking.booking_id })
+  const meetingWrap = element()
+  const meeting = anchorElement({ 'booking-element': 'meeting-link' })
+  meeting.closest = selector => selector === '[booking-element-wrap]' ? meetingWrap : null
+  callCard.querySelectorAll = selector => selector === '[booking-element="meeting-link"]'
+    ? [meeting]
+    : []
+  const requestCard = element({ 'data-booking-id': request.booking_id })
+  requestCard.querySelector = () => element()
+  requestCard.querySelectorAll = () => []
+  const callsList = element()
+  callsList.querySelectorAll = selector => selector === '[data-booking-id]' ? [callCard] : []
+  const requestsList = element()
+  requestsList.querySelectorAll = selector => selector === '[data-booking-id]'
+    ? [requestCard]
+    : []
+  const section = (name, rows, list) => ({
+    name,
+    filter: 'all',
+    rows,
+    rendered: rows.length,
+    list,
+    template: element(),
+    loader: element(),
+    empty: element(),
+    loadMore: element(),
+    filters: element(),
+    count: element(),
+    section: element(),
+  })
+  const refs = [
+    section('calls', [booking], callsList),
+    section('requests', [request], requestsList),
+  ]
+  refs[0].template.cloneNode = () => callCard
+  refs[1].template.cloneNode = () => requestCard
+  const mutationState = api.createBookingMutationState()
+  const supersededClaim = api.captureBookingMutation(refs, booking, mutationState)
+  const latestClaim = api.captureBookingMutation(refs, booking, mutationState)
+  assert.equal(api.commitBookingMutation(
+    refs,
+    booking,
+    { status: 'cancelled' },
+    supersededClaim,
+    mutationState,
+    now,
+  ), null)
+  assert.equal(api.releaseBookingMutation(mutationState, supersededClaim), false)
+  assert.equal(api.releaseBookingMutation(mutationState, latestClaim), true)
+  assert.equal(api.bookingMutationReconciliationPending(mutationState), true)
+
+  const requested = [deferred(), deferred()]
+  const staleResponse = deferred()
+  const refreshes = []
+  let reads = 0
+  let sessionGeneration = 1
+  let stopTicker = null
+  try {
+    global.StartersDashboardCallActions = undefined
+    global.document = { documentElement: element(), querySelector: () => null }
+    global.xanoAuthFetch = async () => {
+      const index = reads
+      reads += 1
+      requested[index].resolve()
+      if (index === 0) return staleResponse.promise
+      return { ok: true, json: async () => [cancelled] }
+    }
+    api.bindCard(callCard, booking, 'starter')
+    assert.equal(meeting.getAttribute('href'), booking.meeting_link)
+
+    const currentGeneration = () => sessionGeneration
+    const serializedRefresh = api.createSerializedRefresh(function (generation) {
+      if (generation !== currentGeneration()) return
+      return api.refreshSession(
+        { getCurrentMember: async () => ({ id: 'ordered-starter' }) },
+        refs,
+        'starter',
+        generation,
+        currentGeneration,
+        false,
+        { preserveExisting: true, mutationState },
+      )
+    })
+    const backgroundRefresh = function () {
+      const refresh = serializedRefresh(sessionGeneration)
+      refreshes.push(refresh)
+      return refresh
+    }
+    const reconcile = api.createBookingMutationReconciler(
+      backgroundRefresh,
+      mutationState,
+    )
+    stopTicker = api.startBookingLifecycleTicker(refs, 'starter', backgroundRefresh, {
+      now: () => now,
+      reconcileBookingMutations: reconcile,
+      setInterval() { return 91 },
+      clearInterval(timer) { assert.equal(timer, 91) },
+    })
+
+    await requested[0].promise
+    await new Promise(setImmediate)
+    staleResponse.resolve({ ok: true, json: async () => [booking, request] })
+    await requested[1].promise
+    await Promise.all(refreshes)
+    await new Promise(setImmediate)
+
+    const current = refs[0].rows.find(row => row.booking_id === booking.booking_id)
+    assert.equal(reads, 2)
+    assert.equal(current.status, 'cancelled')
+    assert.equal(meeting.hasAttribute('href'), false)
+    assert.equal(meeting.hidden, true)
+    assert.equal(refs[1].rows.length, 0)
+    assert.equal(api.bookingMutationReconciliationPending(mutationState), false)
+
+    const stalled = deferred()
+    let currentSessionRan = false
+    const perSession = api.createSerializedRefresh(async function (generation) {
+      if (generation === 1) await stalled.promise
+      else currentSessionRan = true
+    })
+    const staleSession = perSession(1)
+    const currentSession = perSession(2)
+    await currentSession
+    assert.equal(currentSessionRan, true)
+    stalled.resolve()
+    await staleSession
+  } finally {
+    if (stopTicker) stopTicker()
+    sessionGeneration += 1
+    global.document = previousDocument
+    global.xanoAuthFetch = previousFetch
+    global.StartersDashboardCallActions = previousActions
+  }
+})
+
 test('the latest same-booking action owns its validated response', () => {
   const now = Date.now()
   const booking = {

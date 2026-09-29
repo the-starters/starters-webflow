@@ -1032,6 +1032,23 @@
     return reconcile
   }
 
+  function createSerializedRefresh(refresh) {
+    const tails = new Map()
+    return function (owner) {
+      const args = arguments
+      const tail = tails.get(owner) || Promise.resolve()
+      const current = tail.then(function () {
+        return refresh.apply(null, args)
+      })
+      const recovered = current.catch(function () {})
+      tails.set(owner, recovered)
+      recovered.finally(function () {
+        if (tails.get(owner) === recovered) tails.delete(owner)
+      })
+      return current
+    }
+  }
+
   function bookingChangedDuringRefresh(state, snapshot, bookingId) {
     const committed = bookingMutationCounter(state.committed, bookingId) !==
       (snapshot.committed.get(bookingId) || 0)
@@ -3532,8 +3549,8 @@
     const refreshAfterMutation = function () {
       return restart({ preserveExisting: true })
     }
-    const refreshExpiredRequests = function () {
-      const generation = sessionGeneration
+    const refreshBackground = createSerializedRefresh(function (generation) {
+      if (generation !== currentGeneration()) return
       return refreshSession(
         memberstack,
         refs,
@@ -3547,6 +3564,9 @@
           onMutationReconciliationRequired: requestMutationReconciliation,
         },
       )
+    })
+    const refreshExpiredRequests = function () {
+      return refreshBackground(sessionGeneration)
     }
     reconcileBookingMutations = createBookingMutationReconciler(
       refreshExpiredRequests,
@@ -3630,6 +3650,7 @@
     releaseBookingMutation,
     bookingMutationReconciliationPending,
     createBookingMutationReconciler,
+    createSerializedRefresh,
     reconcileCanonicalBookings,
     commitBookingMutation,
     applyCancellationResult,
