@@ -487,25 +487,22 @@
     }
   }
 
-  function setMeetingDestination(element, href) {
-    if (!element) return
+  function setMeetingDestination(element, href, allowParagraph) {
+    if (!element) return false
     const tag = clean(element.tagName).toLowerCase()
-    // A missing tag is only used by the small DOM test doubles.
-    const nativeLink = tag === '' || tag === 'a' || tag === 'area'
-    if (nativeLink) {
+    if (tag === 'a') {
       if (href) {
         element.setAttribute('href', href)
-        if ('href' in element) element.href = href
         element.setAttribute('target', '_blank')
         element.setAttribute('rel', 'noopener noreferrer')
       } else {
         element.removeAttribute('href')
-        if ('href' in element) element.href = ''
         element.removeAttribute('target')
         element.removeAttribute('rel')
       }
-      return
+      return true
     }
+    if (tag !== 'p' || !allowParagraph) return false
 
     // The published Webflow details use a paragraph for this authored hook.
     // Make that existing text keyboard accessible without generating UI.
@@ -518,8 +515,9 @@
       element.removeAttribute('data-meeting-href')
       element.removeAttribute('role')
       element.removeAttribute('tabindex')
+      return true
     }
-    if (wiredMeetingParagraphs.has(element) || typeof element.addEventListener !== 'function') return
+    if (wiredMeetingParagraphs.has(element) || typeof element.addEventListener !== 'function') return true
     const openCurrentMeeting = function (event) {
       const current = safeMeetingHref(element.getAttribute('data-meeting-href'))
       if (!current || typeof global.open !== 'function') return
@@ -528,9 +526,29 @@
     }
     element.addEventListener('click', openCurrentMeeting)
     element.addEventListener('keydown', function (event) {
-      if (event.key === 'Enter' || event.key === ' ') openCurrentMeeting(event)
+      if (event.key === 'Enter') openCurrentMeeting(event)
     })
     wiredMeetingParagraphs.add(element)
+    return true
+  }
+
+  function meetingHrefForBooking(booking, now) {
+    return ['confirmed', 'rescheduled'].includes(bookingStatus(booking, now))
+      ? safeMeetingHref(booking && booking.meeting_link)
+      : ''
+  }
+
+  function paintMeetingDestinations(root, booking, now, allowParagraph) {
+    const href = meetingHrefForBooking(booking, now)
+    bookingFields(root, 'meeting-link').forEach(function (meetingLink) {
+      const supported = setMeetingDestination(meetingLink, href, allowParagraph)
+      if (allowParagraph && supported) meetingLink.textContent = href
+      const visible = supported && href !== ''
+      show(meetingLink, visible)
+      const group = meetingLink.closest && meetingLink.closest('[booking-element-wrap]')
+      if (group) show(group, visible)
+    })
+    return href
   }
 
   function text(root, selector, value) {
@@ -799,12 +817,40 @@
     return true
   }
 
-  function startRequestExpirationTicker(refs, role, restart, options) {
+  function refreshMeetingDestinations(refs, now) {
+    const sections = Array.isArray(refs) ? refs : []
+    sections.forEach(function (section) {
+      if (!section || !section.list || typeof section.list.querySelectorAll !== 'function') return
+      section.list.querySelectorAll('[data-booking-id]').forEach(function (card) {
+        const booking = bookingFromCard(sections, card)
+        if (booking) paintMeetingDestinations(card, booking, now, false)
+      })
+    })
+    if (!global.document || typeof global.document.querySelector !== 'function') return
+    const modal = global.document.querySelector(DETAIL_MODAL_SELECTOR)
+    if (!modal || !clean(modal.getAttribute && modal.getAttribute('data-booking-id'))) return
+    const booking = bookingFromCard(sections, modal)
+    if (booking) paintMeetingDestinations(modal, booking, now, true)
+  }
+
+  function applyCancellationResult(refs, booking, result, now) {
+    const cancellation = result && result.cancel
+    if (
+      !booking || !cancellation ||
+      clean(cancellation.booking_id) !== clean(booking.booking_id || booking.id) ||
+      clean(cancellation.status).toLowerCase() !== 'cancelled'
+    ) return false
+    booking.status = cancellation.status
+    refreshMeetingDestinations(refs, now)
+    return true
+  }
+
+  function startBookingLifecycleTicker(refs, role, restart, options) {
     const settings = options || {}
     // The old inline helper remains defined, but its legacy list generator is
-    // no longer invoked on the current dashboard. This controller is the one
-    // active owner and uses one bounded timer for every rendered request.
-    if (role !== 'starter') return null
+    // no longer invoked on the current dashboard. This controller owns one
+    // bounded timer for rendered booking lifecycle and Starter request expiry.
+    if (!['starter', 'brand'].includes(role)) return null
     const setTimer = settings.setInterval || global.setInterval
     const clearTimer = settings.clearInterval || global.clearInterval
     const now = settings.now || Date.now
@@ -814,6 +860,8 @@
     const polls = new Map()
     const tick = function () {
       const currentTime = Number(now())
+      refreshMeetingDestinations(refs, currentTime)
+      if (role !== 'starter') return
       const expiredKeys = refreshRequestExpirations(refs, role, currentTime)
       refreshDetailExpiration(refs, role, currentTime)
       const pollable = expiredKeys.filter(function (key) {
@@ -944,14 +992,7 @@
     card.setAttribute('data-booking-id', clean(booking.booking_id || booking.id))
     card.setAttribute('data-booking-status', status)
     paintStatusPill(card, status, role, booking)
-    const meetingHref = ['confirmed', 'rescheduled'].includes(status)
-      ? safeMeetingHref(booking.meeting_link) : ''
-    bookingFields(card, 'meeting-link').forEach(function (link) {
-      setMeetingDestination(link, meetingHref)
-      show(link, meetingHref !== '')
-      const wrap = link.closest && link.closest('[booking-element-wrap]')
-      if (wrap) show(wrap, meetingHref !== '')
-    })
+    paintMeetingDestinations(card, booking, now, false)
     text(card, '[booking-element="brand-name"]', other && other.name)
     text(card, '[booking-element="starter-name"]', other && other.name)
     text(card, '[booking-element="title"]', booking.call_context || 'Call')
@@ -2034,16 +2075,7 @@
     setBookingField(modal, 'cancel-reason', booking.cancelled_reason, Boolean(booking.cancelled_reason))
     populateDeclineReason(modal, booking, isPaid)
 
-    const meetingHref = ['confirmed', 'rescheduled'].includes(status)
-      ? safeMeetingHref(booking.meeting_link) : ''
-    const showMeeting = meetingHref !== ''
-    bookingFields(modal, 'meeting-link').forEach(function (meetingLink) {
-      setMeetingDestination(meetingLink, meetingHref)
-      meetingLink.textContent = meetingHref
-      show(meetingLink, showMeeting)
-      const group = meetingLink.closest && meetingLink.closest('[booking-element-wrap]')
-      if (group) show(group, showMeeting)
-    })
+    paintMeetingDestinations(modal, booking, now, true)
 
     // Authored "Messages tab" links are Designer-owned copy; resetDetailModal
     // clears and hides every [booking-element], so each populate pass must
@@ -2114,7 +2146,9 @@
     modal.removeAttribute('data-booking-payment')
     modal.querySelectorAll('[booking-element]').forEach(function (field) {
       field.textContent = ''
-      if ('href' in field) field.href = ''
+      if (clean(field.getAttribute && field.getAttribute('booking-element')) === 'meeting-link') {
+        setMeetingDestination(field, '', true)
+      } else if ('href' in field) field.href = ''
       show(field, false)
       const group = field.closest && field.closest('[booking-element-wrap]')
       if (group) show(group, false)
@@ -3132,6 +3166,9 @@
       refreshDetail: function (modal, booking, content) {
         return populateDetailModal(modal, booking, role, undefined, content)
       },
+      onCancelSuccess: function (booking, result) {
+        applyCancellationResult(refs, booking, result, Date.now())
+      },
       onAvailable: function () {
         bindBookingClocks(refs.flatMap(function (section) { return section.rows || [] }))
         refreshDetailExpiration(refs, role)
@@ -3139,7 +3176,7 @@
     }
     wireDashboardCallModules(moduleOptions)
     wireBookingActions(refs, role, refreshAfterMutation)
-    startRequestExpirationTicker(refs, role, refreshExpiredRequests)
+    startBookingLifecycleTicker(refs, role, refreshExpiredRequests)
     if (typeof memberstack.onAuthChange === 'function') {
       memberstack.onAuthChange(function () {
         restart()
@@ -3159,7 +3196,9 @@
     paintRequestExpiration,
     refreshRequestExpirations,
     refreshDetailExpiration,
-    startRequestExpirationTicker,
+    refreshMeetingDestinations,
+    applyCancellationResult,
+    startBookingLifecycleTicker,
     refreshSession,
     bindBookingClocks,
     canConfirmBooking,

@@ -71,6 +71,20 @@ function element(attributes = {}) {
   }
 }
 
+function anchorElement(attributes = {}) {
+  const anchor = element(attributes)
+  anchor.tagName = 'A'
+  Object.defineProperty(anchor, 'href', {
+    get() {
+      return this.hasAttribute('href') ? this.attributes.href : ''
+    },
+    set(value) {
+      this.setAttribute('href', value)
+    },
+  })
+  return anchor
+}
+
 function matchesAttributeSelector(node, selector) {
   const match = selector.match(/^\[([^=\]]+)(?:="([^"]*)")?\]$/)
   if (!match) return false
@@ -237,7 +251,7 @@ test('both roles see Pending proposal details without losing an existing meeting
     api.populateDetailModal(view.modal, booking, role, 2000)
     assert.equal(view.fields.status.textContent, 'Pending')
     assert.equal(view.fields['meeting-link'].hidden, false)
-    assert.equal(view.fields['meeting-link'].href, booking.meeting_link)
+    assert.equal(view.fields['meeting-link'].getAttribute('data-meeting-href'), booking.meeting_link)
   }
 })
 
@@ -990,7 +1004,7 @@ test('GitHub expiration owner polls one expired request at a bounded interval', 
   let tick
   let cleared = false
   let restarts = 0
-  const stop = api.startRequestExpirationTicker(refs, 'starter', async () => {
+  const stop = api.startBookingLifecycleTicker(refs, 'starter', async () => {
     restarts += 1
   }, {
     now: () => nowValue.value,
@@ -1051,7 +1065,7 @@ test('GitHub expiration owner polls one expired request at a bounded interval', 
   assert.equal(cleared, true)
 })
 
-test('the expiration owner arms exactly one timer, and none for Brands', () => {
+test('the lifecycle owner arms exactly one timer for each dashboard role', () => {
   const expiredRow = (id) => ({
     booking_id: id,
     status: 'pending',
@@ -1075,7 +1089,7 @@ test('the expiration owner arms exactly one timer, and none for Brands', () => {
   ]
 
   let starterTimers = 0
-  const stop = api.startRequestExpirationTicker(refs, 'starter', () => {}, {
+  const stop = api.startBookingLifecycleTicker(refs, 'starter', () => {}, {
     now: () => 2_000_000_000_000,
     setInterval() {
       starterTimers += 1
@@ -1087,15 +1101,18 @@ test('the expiration owner arms exactly one timer, and none for Brands', () => {
   assert.equal(starterTimers, 1)
 
   let brandTimers = 0
-  assert.equal(api.startRequestExpirationTicker(refs, 'brand', () => {}, {
+  const stopBrand = api.startBookingLifecycleTicker(refs, 'brand', () => {}, {
     now: () => 2_000_000_000_000,
     setInterval() {
       brandTimers += 1
       return 1
     },
     clearInterval() {},
-  }), null)
-  assert.equal(brandTimers, 0)
+  })
+  assert.equal(typeof stopBrand, 'function')
+  assert.equal(brandTimers, 1)
+  stop()
+  stopBrand()
 })
 
 test('an open detail modal hides Accept once the request passes its deadline', () => {
@@ -1174,7 +1191,7 @@ test('expiration polling recovers from thrown and rejected refreshes and keeps r
   const originalError = console.error
   console.error = () => {}
   try {
-    api.startRequestExpirationTicker(refs, 'starter', () => {
+    api.startBookingLifecycleTicker(refs, 'starter', () => {
       restarts += 1
       if (restarts === 1) throw new Error('synchronous refresh failure')
       if (restarts === 2) return Promise.reject(new Error('rejected refresh failure'))
@@ -1230,7 +1247,7 @@ test('expiration polling does not overlap an in-flight canonical refresh', async
   const pending = deferred()
   let tick
   let restarts = 0
-  api.startRequestExpirationTicker(refs, 'starter', () => {
+  api.startBookingLifecycleTicker(refs, 'starter', () => {
     restarts += 1
     return pending.promise
   }, {
@@ -2063,7 +2080,7 @@ function detailModalHarness() {
     const group = element({ 'booking-element-wrap': '' })
     group.querySelector = (selector) => selector === '[booking-element]' ? field : null
     field.closest = (selector) => selector === '[booking-element-wrap]' ? group : null
-    if (name === 'meeting-link') field.href = 'stale'
+    if (name === 'meeting-link') field.tagName = 'P'
     if (name.endsWith('-message-link')) field.href = '/messages'
     groups.push(group)
     return field
@@ -2396,7 +2413,7 @@ test('details fill every authored panel copy of a booking field', () => {
   assert.equal(view.panelCopies.context.hidden, false)
   assert.equal(view.panelCopies['start-date'].textContent, view.fields['start-date'].textContent)
   assert.equal(view.panelCopies['start-date'].hidden, false)
-  assert.equal(view.panelCopies['meeting-link'].href, 'https://meet.example/abc')
+  assert.equal(view.panelCopies['meeting-link'].getAttribute('data-meeting-href'), 'https://meet.example/abc')
   assert.equal(view.panelCopies['meeting-link'].hidden, false)
 
   // A hidden field hides every copy too.
@@ -3195,7 +3212,7 @@ test('confirmed Paid Call details show per-call price and hide every unsupported
   assert.equal(view.fields.price.hidden, false)
   assert.equal(view.fields['payment-status-text'].textContent, 'Payment method confirmed.')
   assert.equal(view.fields['payment-status-text'].hidden, false)
-  assert.equal(view.fields['meeting-link'].href, 'https://meet.example/current')
+  assert.equal(view.fields['meeting-link'].getAttribute('data-meeting-href'), 'https://meet.example/current')
   assert.equal(view.pendingOne.hidden, true)
   assert.equal(view.pendingDuplicate.hidden, true)
   assert.equal(view.actions[4].hidden, true)
@@ -3523,8 +3540,11 @@ test('auth changes clear identity state and stale requests cannot render', async
   const count = element()
   const filters = element()
   const modalField = element({ 'booking-element': 'starter-name' })
+  const modalMeeting = element({ 'booking-element': 'meeting-link' })
+  modalMeeting.tagName = 'P'
   const modalGroup = element({ 'booking-element-wrap': '' })
   modalField.closest = (selector) => selector === '[booking-element-wrap]' ? modalGroup : null
+  modalMeeting.closest = (selector) => selector === '[booking-element-wrap]' ? modalGroup : null
   const modalAction = element({ 'booking-action-btn': 'switch-close' })
   const modalPaymentAction = element({ 'payment-action-btn': 'confirm' })
   const modal = element({
@@ -3537,7 +3557,7 @@ test('auth changes clear identity state and stale requests cannot render', async
   let modalCloseCount = 0
   modal.close = () => { modalCloseCount += 1 }
   modal.querySelectorAll = (selector) => ({
-    '[booking-element]': [modalField],
+    '[booking-element]': [modalField, modalMeeting],
     '[booking-popup-content], [pending-info-text], [booking-action-btn], [booking-card-action-btn], [payment-action-btn], [booking-pm-action], [data-btn-payment], [popup-stripe-card-open], [pm-use-this]': [modalAction, modalPaymentAction],
   })[selector] || []
   const section = element({ 'bookings-section': 'calls' })
@@ -3583,10 +3603,12 @@ test('auth changes clear identity state and stale requests cannot render', async
   }
   const window = {
     $memberstackDom: memberstack,
-    clearInterval,
+    clearInterval() {},
     document,
     location: { pathname: '/brand-dashboard' },
-    setInterval,
+    setInterval() {
+      return 1
+    },
     xanoAuthFetch: async (_url, init) => {
       requests.push(JSON.parse(init.body).memberstack_id)
       if (requests.length === 1) return firstResponse.promise
@@ -3619,6 +3641,12 @@ test('auth changes clear identity state and stale requests cannot render', async
   modalField.textContent = 'Member A'
   modalField.hidden = false
   modalField.style.display = ''
+  modalMeeting.textContent = 'https://meet.google.com/member-a-room'
+  modalMeeting.setAttribute('data-meeting-href', 'https://meet.google.com/member-a-room')
+  modalMeeting.setAttribute('role', 'link')
+  modalMeeting.setAttribute('tabindex', '0')
+  modalMeeting.hidden = false
+  modalMeeting.style.display = ''
   modalAction.hidden = false
   modalAction.style.display = ''
   modalPaymentAction.hidden = false
@@ -3640,6 +3668,11 @@ test('auth changes clear identity state and stale requests cannot render', async
   assert.equal(modal.hasAttribute('data-booking-payment'), false)
   assert.equal(modalField.textContent, '')
   assert.equal(modalField.hidden, true)
+  assert.equal(modalMeeting.textContent, '')
+  assert.equal(modalMeeting.hasAttribute('data-meeting-href'), false)
+  assert.equal(modalMeeting.hasAttribute('role'), false)
+  assert.equal(modalMeeting.hasAttribute('tabindex'), false)
+  assert.equal(modalMeeting.hidden, true)
   assert.equal(modalGroup.hidden, true)
   assert.equal(modalAction.hidden, true)
   assert.equal(modalPaymentAction.hidden, true)
@@ -3759,10 +3792,12 @@ test('native Brand profile saves repaint the hero only after canonical Membersta
   }
   const window = {
     $memberstackDom: memberstack,
-    clearInterval,
+    clearInterval() {},
     document,
     location: { pathname: '/brand-dashboard' },
-    setInterval,
+    setInterval() {
+      return 1
+    },
     setTimeout: (listener) => setImmediate(listener),
     xanoAuthFetch: async () => ({ ok: true, json: async () => [] }),
   }
@@ -5717,7 +5752,7 @@ test('generated reschedule receipts preserve canonical base dates across deferre
 test('call card binds its Join Call destination and clears it for ineligible rebinding', () => {
   const card = element()
   const wrap = element()
-  const link = element({ 'booking-element': 'meeting-link', href: '/' })
+  const link = anchorElement({ 'booking-element': 'meeting-link', href: '/' })
   link.closest = () => wrap
   card.querySelectorAll = (selector) => selector === '[booking-element="meeting-link"]' ? [link] : []
   const booking = { status: 'confirmed', start: Date.now() + 86400000, end: Date.now() + 88200000, meeting_link: 'https://meet.google.com/abc-defg-hij' }
@@ -5732,48 +5767,15 @@ test('call card binds its Join Call destination and clears it for ineligible reb
       { meeting_link: '/' },
     ]) {
       api.bindCard(card, { ...booking, ...changed }, role)
-      assert.equal(link.getAttribute('href'), null)
+      assert.equal(link.hasAttribute('href'), false)
+      assert.equal(link.hasAttribute('target'), false)
+      assert.equal(link.hasAttribute('rel'), false)
       assert.equal(link.hidden, true)
       assert.equal(wrap.hidden, true)
     }
     api.bindCard(card, { ...booking, status: 'rescheduled' }, role)
     assert.equal(link.getAttribute('href'), booking.meeting_link)
     assert.equal(link.hidden, false)
-  }
-})
-
-test('authored meeting paragraphs open a confirmed call and stop after rebinding', () => {
-  const previousOpen = global.open
-  const opened = []
-  global.open = (...args) => opened.push(args)
-  const handlers = new Map()
-  const meeting = element({ 'booking-element': 'meeting-link' })
-  meeting.tagName = 'P'
-  meeting.addEventListener = (type, handler) => handlers.set(type, handler)
-  meeting.closest = () => null
-  const card = element()
-  card.querySelectorAll = selector => selector === '[booking-element="meeting-link"]' ? [meeting] : []
-  const booking = {
-    status: 'confirmed', start: Date.now() + 86400000, end: Date.now() + 88200000,
-    meeting_link: 'https://meet.google.com/abc-defg-hij',
-  }
-  try {
-    api.bindCard(card, booking, 'brand')
-    assert.equal(meeting.getAttribute('role'), 'link')
-    assert.equal(meeting.getAttribute('tabindex'), '0')
-    assert.equal(meeting.getAttribute('data-meeting-href'), booking.meeting_link)
-    assert.equal(meeting.getAttribute('href'), null, 'paragraphs cannot use native href navigation')
-    handlers.get('click')({ preventDefault() {} })
-    assert.deepEqual(opened, [[booking.meeting_link, '_blank', 'noopener,noreferrer']])
-
-    api.bindCard(card, { ...booking, status: 'cancelled' }, 'brand')
-    assert.equal(meeting.getAttribute('role'), null)
-    assert.equal(meeting.getAttribute('tabindex'), null)
-    assert.equal(meeting.getAttribute('data-meeting-href'), null)
-    handlers.get('click')({ preventDefault() {} })
-    assert.equal(opened.length, 1, 'an ineligible call must not keep its old destination')
-  } finally {
-    global.open = previousOpen
   }
 })
 
@@ -5802,6 +5804,10 @@ test('authored details paragraph opens the current Meet URL for either role', ()
       assert.equal(meeting.getAttribute('tabindex'), '0')
       handlers.get('keydown')({ key: 'Enter', preventDefault() {} })
       assert.deepEqual(opened.at(-1), [booking.meeting_link, '_blank', 'noopener,noreferrer'])
+      let spacePrevented = false
+      handlers.get('keydown')({ key: ' ', preventDefault() { spacePrevented = true } })
+      assert.equal(spacePrevented, false)
+      assert.equal(opened.length, role === 'brand' ? 1 : 2)
 
       api.populateDetailModal(view.modal, { ...booking, status: 'cancelled' }, role)
       handlers.get('click')({ preventDefault() {} })
@@ -5810,6 +5816,207 @@ test('authored details paragraph opens the current Meet URL for either role', ()
     }
   } finally {
     global.open = previousOpen
+  }
+})
+
+test('meeting destinations expire at call end for both roles without a canonical refresh', () => {
+  const previousDocument = global.document
+  const previousOpen = global.open
+  const opened = []
+  global.open = (...args) => opened.push(args)
+  try {
+    for (const role of ['brand', 'starter']) {
+      const now = { value: Date.now() }
+      const booking = {
+        booking_id: 'ending-' + role,
+        status: 'confirmed',
+        start: now.value - 30 * 60 * 1000,
+        end: now.value + 60 * 1000,
+        duration: 30,
+        meeting_link: 'https://meet.google.com/' + role + '-room',
+        brand_data: { name: 'Brand', timezone: 'UTC' },
+        starter_data: { name: 'Starter', timezone: 'UTC' },
+      }
+      const card = element({ 'data-booking-id': booking.booking_id })
+      const cardWrap = element()
+      const anchor = anchorElement({ 'booking-element': 'meeting-link' })
+      anchor.closest = selector => selector === '[booking-element-wrap]' ? cardWrap : null
+      card.querySelectorAll = selector => selector === '[booking-element="meeting-link"]' ? [anchor] : []
+      const view = detailModalHarness()
+      const paragraph = view.fields['meeting-link']
+      const paragraphHandlers = new Map()
+      paragraph.addEventListener = (type, handler) => paragraphHandlers.set(type, handler)
+      global.document = {
+        querySelector: selector => selector === '[popup-booking-info], dialog[data-modal-target="popup-booking-info"]' ? view.modal : null,
+      }
+
+      api.bindCard(card, booking, role)
+      api.populateDetailModal(view.modal, booking, role, now.value)
+      const refs = [{
+        rows: [booking],
+        list: { querySelectorAll: selector => selector === '[data-booking-id]' ? [card] : [] },
+      }]
+      let tick
+      let restarts = 0
+      const stop = api.startBookingLifecycleTicker(refs, role, () => {
+        restarts += 1
+      }, {
+        now: () => now.value,
+        setInterval(callback, delay) {
+          assert.equal(delay, 10_000)
+          tick = callback
+          return role
+        },
+        clearInterval(timer) {
+          assert.equal(timer, role)
+        },
+      })
+
+      assert.equal(anchor.getAttribute('href'), booking.meeting_link)
+      assert.equal(paragraph.getAttribute('data-meeting-href'), booking.meeting_link)
+      const openedBefore = opened.length
+      paragraphHandlers.get('click')({ preventDefault() {} })
+      assert.equal(opened.length, openedBefore + 1)
+
+      now.value = booking.end + 1
+      tick()
+      assert.equal(anchor.hasAttribute('href'), false)
+      assert.equal(anchor.hidden, true)
+      assert.equal(cardWrap.hidden, true)
+      assert.equal(paragraph.hasAttribute('data-meeting-href'), false)
+      assert.equal(paragraph.hasAttribute('role'), false)
+      assert.equal(paragraph.hasAttribute('tabindex'), false)
+      assert.equal(paragraph.hidden, true)
+      paragraphHandlers.get('click')({ preventDefault() {} })
+      assert.equal(opened.length, openedBefore + 1)
+      assert.equal(restarts, 0)
+      stop()
+    }
+  } finally {
+    global.document = previousDocument
+    global.open = previousOpen
+  }
+})
+
+test('successful cancellation clears current destinations before a failed refresh', async () => {
+  const actions = require('./dashboard-call-actions.js')
+  const previousDocument = global.document
+  const previousFetch = global.xanoAuthFetch
+  const previousStorage = global.sessionStorage
+  const previousCrypto = global.crypto
+  const previousError = console.error
+  const now = Date.now()
+  const booking = {
+    booking_id: 'cancel-current-meeting',
+    config_id: 'cancel-config',
+    data_environment: 'test',
+    status: 'confirmed',
+    start: now + 60 * 60 * 1000,
+    end: now + 90 * 60 * 1000,
+    duration: 30,
+    is_paid: false,
+    meeting_link: 'https://meet.google.com/cancel-current',
+    brand_data: { name: 'Brand', memberstack_id: 'brand-member', timezone: 'UTC' },
+    starter_data: { name: 'Starter', memberstack_id: 'starter-member', timezone: 'UTC' },
+  }
+  const card = element({ 'data-booking-id': booking.booking_id })
+  const cardWrap = element()
+  const anchor = anchorElement({ 'booking-element': 'meeting-link' })
+  anchor.closest = selector => selector === '[booking-element-wrap]' ? cardWrap : null
+  card.querySelectorAll = selector => selector === '[booking-element="meeting-link"]' ? [anchor] : []
+  const view = detailModalHarness()
+  const reason = { value: 'Conflict came up' }
+  const queryModal = view.modal.querySelector
+  view.modal.querySelector = selector => selector === '[booking-cancel-reason]'
+    ? reason
+    : queryModal(selector)
+  const refs = [{
+    rows: [booking],
+    list: { querySelectorAll: selector => selector === '[data-booking-id]' ? [card] : [] },
+  }]
+  const handlers = []
+  const document = {
+    addEventListener(type, handler) {
+      if (type === 'click') handlers.push(handler)
+    },
+    removeEventListener(type, handler) {
+      if (type !== 'click') return
+      const index = handlers.indexOf(handler)
+      if (index !== -1) handlers.splice(index, 1)
+    },
+    querySelector(selector) {
+      return selector === '[popup-booking-info], dialog[data-modal-target="popup-booking-info"]'
+        ? view.modal
+        : null
+    },
+  }
+  const cancel = element({ 'booking-action-btn': 'cancel' })
+  cancel.closest = selector => selector.includes('popup-booking-info') || selector.includes('dialog[')
+    ? view.modal
+    : cancel
+  let restarts = 0
+  let posts = 0
+  try {
+    global.document = document
+    global.sessionStorage = memoryStorage()
+    global.crypto = {
+      subtle: previousCrypto.subtle,
+      randomUUID: () => '00000000-0000-4000-8000-000000000099',
+    }
+    console.error = () => {}
+    global.xanoAuthFetch = async () => {
+      posts += 1
+      return {
+        ok: true,
+        json: async () => ({
+          cancel: { booking_id: booking.booking_id, status: 'cancelled' },
+        }),
+      }
+    }
+    api.bindCard(card, booking, 'brand')
+    api.populateDetailModal(view.modal, booking, 'brand', now)
+    actions.wire({
+      document,
+      role: 'brand',
+      getBooking: () => booking,
+      restart: () => {
+        restarts += 1
+        return Promise.reject(new Error('refresh unavailable'))
+      },
+      onCancelSuccess: (model, result) => api.applyCancellationResult(refs, model, result, now),
+    })
+
+    await handlers[0]({
+      target: cancel,
+      preventDefault() {},
+      stopImmediatePropagation() {},
+    })
+    assert.equal(posts, 1)
+    assert.equal(booking.status, 'cancelled')
+    assert.equal(anchor.hasAttribute('href'), false)
+    assert.equal(anchor.hidden, true)
+    assert.equal(view.fields['meeting-link'].hasAttribute('data-meeting-href'), false)
+    assert.equal(view.fields['meeting-link'].hasAttribute('role'), false)
+    assert.equal(view.fields['meeting-link'].hasAttribute('tabindex'), false)
+    assert.equal(view.fields['meeting-link'].hidden, true)
+    assert.equal(restarts, 0)
+
+    const close = element({ 'booking-action-btn': 'switch-close' })
+    close.closest = selector => selector.includes('popup-booking-info') || selector.includes('dialog[')
+      ? view.modal
+      : close
+    handlers.at(-1)({ target: close })
+    await new Promise(setImmediate)
+    assert.equal(restarts, 1)
+    api.refreshMeetingDestinations(refs, now + 1)
+    assert.equal(anchor.hasAttribute('href'), false)
+    assert.equal(view.fields['meeting-link'].hasAttribute('data-meeting-href'), false)
+  } finally {
+    global.document = previousDocument
+    global.xanoAuthFetch = previousFetch
+    global.sessionStorage = previousStorage
+    global.crypto = previousCrypto
+    console.error = previousError
   }
 })
 

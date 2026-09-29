@@ -1767,6 +1767,16 @@
             reason.value,
           )
           if (!result) throw new Error(config.failureMessage)
+          if (step.kind === 'cancel' && typeof settings.onCancelSuccess === 'function') {
+            try {
+              settings.onCancelSuccess(booking, result)
+            } catch (error) {
+              console.error(
+                '[dashboard-call-actions] cancellation repaint failed:',
+                error && error.message,
+              )
+            }
+          }
           if (reason.field) reason.field.value = ''
           fillCounterpartPlaceholders(modal, config.successContent, settings.role, booking)
           switchPopupContent(modal, config.successContent)
