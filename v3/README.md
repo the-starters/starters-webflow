@@ -3840,16 +3840,17 @@ root, use these values:
 | `incomplete` | Connected account whose charges are not enabled; used by the hero earnings tile while the Action Item root is hidden |
 | `ready` | Stripe reports `charges_enabled: true` |
 | `review` | The user just returned from Stripe, but the authoritative enabled flag has not settled after short polling |
-| `error` | Designer-owned safe failure state; on the callback page this remains visible instead of losing a failed one-time code |
+| `error` | Designer-owned safe failure state; on the callback page this remains visible instead of losing a failed one-time code, and on the dashboard it also carries safe account-owner-conflict recovery copy |
 
 Give every Connect control `data-stripe-connect-action="start"`. An optional
 retry control can use `data-stripe-connect-action="refresh"`. The Action Item
 root is visible for `loading`, `disconnected`, and `error` until canonical
 status proves a connection. It is hidden for every provider-connected state:
 `incomplete`, `review`, and `ready`, and stays hidden during later loading or
-error states until canonical status reports `disconnected`. The controller does
-not create or bind a disconnect control. Members must contact The Starters
-support team to disconnect Stripe.
+error states until canonical status reports `disconnected`. Ownership loss is
+the exception: it re-shows the generic error state and its reload control even
+after a connected result. The controller does not create or bind a disconnect
+control. Members must contact The Starters support team to disconnect Stripe.
 
 The hero can keep its two authored Stripe tiles, both with
 `data-stripe-connect-action="earnings"`, but the controller uses only one blue
@@ -3863,8 +3864,11 @@ action change with canonical status: `Checking Stripe` while loading, `Get Paid
 onboarding` while incomplete, a disabled `Under Review / Stripe is reviewing
 your account` state while under review, `Earnings / Payment history & payouts`
 while ready, and a disabled `Stripe Unavailable / Use Try Again above` state on
-an error. The disconnected and incomplete states start the same guarded
-OAuth/onboarding flow as the action-list CTA. A status with
+an error. A verified account-owner conflict keeps that hero disabled with
+`Stripe Unavailable / Use Connect a different account above` while the error
+card exposes the matching `Connect a different account` recovery action. The
+disconnected and incomplete states start the same guarded OAuth/onboarding flow
+as the action-list CTA. A status with
 `charges_enabled:true` requests a provider-verified account destination from
 `dashboard/v3`:
 Express accounts receive a single-use login link, while Standard/full accounts
@@ -3925,26 +3929,56 @@ false invalid-URL error.
 Dashboard access sends a bounded idempotency key. A retry after a
 network-ambiguous, timeout, conflict, rate-limit, or server outcome reuses the
 key. A definitive provider result or non-retryable response clears it, so a
-later intentional action starts a new attempt. The authenticated disconnect
-endpoint remains available to the support-owned workflow, but the dashboard
-does not expose it.
+later intentional action starts a new attempt. If Dashboard access reports a
+disconnect, a nested canonical status read repaints the hero. If that refresh
+does not establish canonical status, the hero stays disabled. Ownership loss
+also leaves the page in its reload-required error state. The authenticated
+disconnect endpoint remains available to the support-owned workflow, but the
+dashboard does not expose it.
 
 The dashboard calls provider-aware `status/v3` immediately. It repairs a
 readiness mismatch and clears a stale projection only when Stripe returns a
 definitive disconnect; ambiguous provider errors show the authored unavailable
 state without changing Xano. `connected:false` selects
 `disconnected`; `connected:true` with `charges_enabled:false` selects
-`incomplete`; and `charges_enabled:true` selects `ready`. After either the
-OAuth callback or Stripe-hosted onboarding returns, the controller polls the
-status briefly to absorb webhook timing. If the provider account remains
-connected but the readiness flag is still false, it selects the authored
-`review` state instead of painting a false success. A provider-disconnected
-account always returns to `disconnected`, even when a stale return marker is
-present.
+`incomplete`; and `charges_enabled:true` selects `ready`. After a recognized
+ordinary return, the controller polls the status briefly to absorb webhook
+timing. A receipt-verified owner conflict skips that settlement-poll loop. If
+the provider account remains connected but the readiness flag is still false,
+it selects the authored `review` state instead of painting a false success. A
+provider-disconnected account always returns to `disconnected`, even when a
+stale success marker is present. A `reconciliation_required` return with a
+canonically disconnected account stays fail closed in the authored error state
+instead of returning to a blind Connect loop. The controller recognizes only
+the public
+`account_owner_conflict` reason, and only when the authenticated callback also
+created a short-lived, one-time same-tab receipt bound to the current
+Memberstack ID and reconciliation mode. A copied reconciliation marker without
+that receipt stays on the generic recovery path. After consuming the receipt,
+only that exact live page auth scope can retain its allowlisted provenance until
+the first canonical status outcome. The callback arms a local Memberstack
+auth-generation watch before resolving the member or exchanging the code. Every
+dashboard mount arms a page-lifetime watch before its first status read and uses
+that scope for later status and provider-action requests. Each watch requires
+the documented subscription object with an `unsubscribe()` method. The same
+Memberstack client, live member, and unchanged generation must hold throughout
+each protected request. Any auth event,
+missing or failed subscription, member mismatch, or failure to prove the live
+member clears the cached bearer and receipt, synchronously removes recognized
+return markers, stops further Stripe requests and rendering, restores the
+authored generic error and its usable reload control, keeps provider actions
+disabled, and requires a full page reload. The controller does not recover
+another member through handlers bound to the boot member. All return status work
+stays inside the same page-lifetime scope. For the verified reason, the
+controller changes the existing error card to explain that
+the Stripe account is already linked to another Starter profile and makes the
+`Connect a different account` recovery action start a new Connect flow. The copy
+never includes the existing owner's identity. Unknown or internal reconciliation
+reasons remain on the generic unavailable copy.
 
 The callback reads `code` and the backend-issued opaque `state`,
-removes OAuth parameters from the visible URL before network work, resolves the
-current Memberstack member, validates the bounded state shape, and posts
+removes OAuth parameters from the visible URL before network work, validates the
+bounded state shape, resolves the current Memberstack member, and posts
 `{code, state}` to `oauth_exchange/v3`. Xano binds the state to the authenticated
 member and request receipt; the browser does not compare the opaque value to a
 Memberstack ID. The callback handles `completed`, `reconciliation_required`,
@@ -3952,11 +3986,39 @@ and `restart_required` without automatically replaying the one-time code. When
 `BroadcastChannel` is available, only `completed` signals the original dashboard
 through a member-matched channel. The callback tab then redirects to the
 matching `/starter-dashboard?stripe_connect=<mode>` URL, where the dashboard
-re-reads canonical status. Callback errors stay on the authored error state for
-safe recovery.
+re-reads canonical status. The callback never reflects the reason into the URL.
+Before redirecting, a `reconciliation_required` result with the exact
+allowlisted `account_owner_conflict` reason attempts to store the one-time
+receipt in same-origin `sessionStorage`. If storage is unavailable, the callback
+still redirects and the dashboard falls back to generic recovery. The callback
+clears an accessible older receipt at entry and stores a new one only for a
+newly verified conflict, so an authorization error, invalid state, member
+failure, or exchange failure cannot leave an accessible prior conflict outcome
+reusable within the TTL. The dashboard derives the public reason only from the
+consumed receipt and reconciliation mode. It consumes the
+receipt before the first status attempt, cleans the recognized URL marker when
+that attempt settles, and retains only an in-memory unresolved-conflict bit on
+the same live dashboard auth scope. A thrown or noncanonical status attempt
+keeps that bit so same-page `Try Again` can reach a resolved canonical outcome
+without recreating a blind Connect loop. The first canonical result clears it;
+a connected result always overrides the conflict reason. Auth loss or scope
+release also clears it, and a reload cannot replay it from storage or the
+cleaned URL. If the scope becomes untrusted before, during, or after a read, the
+controller discards the response and cached bearer, restores the authored
+generic error, and requires a full page reload. It does not poll, remount, or
+rebind the current controller to a different member.
+Only `after_onboarding=true`, `stripe_connect=connected`, and
+`stripe_connect=reconciliation_required` trigger return cleanup. The dashboard
+removes `after_onboarding` and `stripe_connect` for those recognized returns
+while preserving unrelated query parameters and the hash. `restart_required`
+and arbitrary marker values do not trigger return cleanup. Callback errors stay
+on the authored error state for safe recovery.
 
 Each root reflects the selected state in `data-stripe-connect-status` and
-`data-stripe-connect-view`. The module also emits
+`data-stripe-connect-view`. During the public owner-conflict recovery state it
+also sets `data-stripe-connect-reason="account_owner_conflict"`; every other
+render removes that marker and restores the original authored error copy. The
+module also emits
 `starterStripeConnectReady`, `starterStripeConnectRedirect`,
 `starterStripeConnectDashboard`, `starterStripeConnectDisconnected`, and
 `starterStripeConnectError` events. `starterStripeConnectRedirect` is
