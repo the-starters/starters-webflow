@@ -40,7 +40,8 @@
   const TIMEZONE_CACHE_PREFIX = 'starter-timezone:'
   const OAUTH_INTENT_PREFIX = 'starter-scheduling-oauth-intent:'
   const OAUTH_CALLBACK_KEY = 'starter-scheduling-oauth-callback'
-  const OAUTH_INTENT_MAX_AGE = 15 * 60 * 1000
+  const OAUTH_CALLBACK_MAX_AGE = 15 * 60 * 1000
+  const OAUTH_PLATFORM_RECOVERY_MAX_AGE = 24 * 60 * 60 * 1000
 
   const EL = 'data-availability-element'
   const ACTION = 'data-availability-action'
@@ -165,7 +166,7 @@
           stored &&
           Number.isFinite(stored.capturedAt) &&
           Date.now() - stored.capturedAt >= 0 &&
-          Date.now() - stored.capturedAt <= OAUTH_INTENT_MAX_AGE &&
+          Date.now() - stored.capturedAt <= OAUTH_CALLBACK_MAX_AGE &&
           (stored.code || stored.grantId || stored.hasError)
         ) {
           stored.resumed = true
@@ -558,24 +559,46 @@
     }
   }
 
-  function readOAuthIntent(memberId, includeDurableFallback) {
+  function oauthIntentWithinAge(intent, maxAge) {
+    if (!(intent && Number.isFinite(intent.createdAt))) return false
+    const age = Date.now() - intent.createdAt
+    return age >= 0 && age <= maxAge
+  }
+
+  function platformRecoveryIntent(intent) {
+    const recoveryIntent = {
+      createdAt: intent.createdAt,
+      redirectUri: intent.redirectUri,
+      paidCallIntent: null,
+      restorePlatform: true,
+    }
+    if (intent.virtualRecovery) recoveryIntent.virtualRecovery = intent.virtualRecovery
+    return recoveryIntent
+  }
+
+  function readStoredOAuthIntent(memberId, includeDurableFallback, allowPlatformRecovery) {
     const redirectUri = oauthRedirectUri()
     const key = OAUTH_INTENT_PREFIX + memberId
     const storageNames = includeDurableFallback
       ? ['sessionStorage', 'localStorage']
       : ['sessionStorage']
+    let storedIntentEncountered = false
     for (const storage of oauthIntentStorages(storageNames)) {
       try {
         const raw = storage.getItem(key)
+        if (raw !== null) storedIntentEncountered = true
         const intent = raw ? JSON.parse(raw) : null
-        if (
-          intent &&
-          Number.isFinite(intent.createdAt) &&
-          Date.now() - intent.createdAt >= 0 &&
-          Date.now() - intent.createdAt <= OAUTH_INTENT_MAX_AGE &&
-          intent.redirectUri === redirectUri
-        ) {
+        const redirectMatches = Boolean(intent && intent.redirectUri === redirectUri)
+        if (redirectMatches && oauthIntentWithinAge(intent, OAUTH_CALLBACK_MAX_AGE)) {
           return intent
+        }
+        if (
+          redirectMatches &&
+          intent.restorePlatform === true &&
+          oauthIntentWithinAge(intent, OAUTH_PLATFORM_RECOVERY_MAX_AGE)
+        ) {
+          if (allowPlatformRecovery) return platformRecoveryIntent(intent)
+          continue
         }
         storage.removeItem(key)
       } catch (error) {
@@ -586,7 +609,17 @@
         }
       }
     }
-    return isStagingHost ? { redirectUri: redirectUri, paidCallIntent: null } : null
+    return !allowPlatformRecovery && isStagingHost && !storedIntentEncountered
+      ? { redirectUri: redirectUri, paidCallIntent: null }
+      : null
+  }
+
+  function readOAuthIntent(memberId, includeDurableFallback) {
+    return readStoredOAuthIntent(memberId, includeDurableFallback, false)
+  }
+
+  function readOAuthRecoveryIntent(memberId, includeDurableFallback) {
+    return readStoredOAuthIntent(memberId, includeDurableFallback, true)
   }
 
   function clearOAuthIntent(memberId) {
@@ -1481,6 +1514,7 @@
     const oauthState = oauthCallback.state
     let memberId = null
     let oauthIntent = null
+    let oauthRecoveryIntent = null
     let trustedState = false
     try {
       memberId = await writeMemberId()
@@ -1489,6 +1523,7 @@
       }
       trustedState = true
       oauthIntent = readOAuthIntent(memberId, true)
+      oauthRecoveryIntent = oauthIntent || readOAuthRecoveryIntent(memberId, true)
       if (oauthCallback.hasError) {
         throw invalidOAuthCallback('OAuth authorization was cancelled or failed')
       }
@@ -1544,16 +1579,17 @@
       console.log('[scheduling-section] Google Calendar connected via OAuth')
     } catch (error) {
       let recovered = false
+      const recoveryIntent = oauthIntent || oauthRecoveryIntent
       if (
         error &&
         error.code === 'OAUTH_CALLBACK_INVALID' &&
         trustedState &&
-        oauthIntentNeedsRecovery(oauthIntent)
+        oauthIntentNeedsRecovery(recoveryIntent)
       ) {
         try {
           recovered = await recoverCalendarAfterOAuthCancellation(
             memberId,
-            oauthIntent,
+            recoveryIntent,
           )
         } catch (recoveryError) {
           console.warn(
@@ -1566,7 +1602,7 @@
       if (
         error &&
         error.code === 'OAUTH_CALLBACK_INVALID' &&
-        (!trustedState || !oauthIntentNeedsRecovery(oauthIntent) || recovered)
+        (!trustedState || !oauthIntentNeedsRecovery(recoveryIntent) || recovered)
       ) {
         if (trustedState && memberId) clearOAuthIntent(memberId)
         clearOAuthCallback()
@@ -3165,7 +3201,7 @@
       if (oauthCallback) {
         await consumeOAuthCallback()
       } else {
-        const pendingTransition = readOAuthIntent(sessionMemberId)
+        const pendingTransition = readOAuthRecoveryIntent(sessionMemberId)
         if (oauthIntentNeedsRecovery(pendingTransition)) {
           const recovered = await recoverCalendarAfterOAuthCancellation(
             sessionMemberId,

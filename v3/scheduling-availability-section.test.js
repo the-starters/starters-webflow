@@ -1806,6 +1806,53 @@ test('the OAuth return after a Platform replacement shows Platform and Google bo
   assert.equal(result.window.sessionStorage._map.has(OAUTH_INTENT_KEY), false)
 })
 
+test('a 20-minute success callback is rejected and only Platform recovery runs', async () => {
+  const delayedIntent = freeOnlyPlatformIntent({
+    createdAt: Date.now() - 20 * 60 * 1000,
+    paidCallIntent: {
+      title: 'Paid Strategy Call',
+      price_cents: 42500,
+      duration_minutes: 45,
+    },
+  })
+  const result = loadSection({
+    search: '?success=true&grant_id=google-grant-9&state=member-a',
+    sessionStorage: { [OAUTH_INTENT_KEY]: delayedIntent },
+    localStorage: { [OAUTH_INTENT_KEY]: delayedIntent },
+    serverState: { configs: [] },
+  })
+  await settle()
+
+  assert.equal(result.calls.filter((call) => call.path === '/grants/add/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/grants/create_virtual_account/v3').length, 1)
+  assert.equal(result.calls.filter((call) => call.path === '/scheduler/configurations/create/v3').length, 1)
+  assert.equal(result.calls.filter((call) => call.path === '/starter/paid-call-settings/upsert/v3').length, 0)
+  assert.equal(result.state.grantId, 'vgrant-1')
+  assert.equal(result.state.calendarId, 'vcal-1')
+  assert.equal(result.state.availability.manager, 'platform')
+  assert.equal(result.window.sessionStorage._map.has(OAUTH_INTENT_KEY), false)
+  assert.equal(result.window.localStorage._map.has(OAUTH_INTENT_KEY), false)
+  assert.equal(result.window.sessionStorage._map.has('starter-scheduling-oauth-callback'), false)
+})
+
+test('an expired staging intent never falls back to callback admission', async () => {
+  const result = loadSection({
+    hostname: 'the-starters-3-0.webflow.io',
+    search: '?success=true&grant_id=google-grant-9&state=member-a',
+    sessionStorage: {
+      [OAUTH_INTENT_KEY]: freeOnlyPlatformIntent({
+        createdAt: Date.now() - 25 * 60 * 60 * 1000,
+        redirectUri: 'https://the-starters-3-0.webflow.io/starter-dashboard---availability-stage',
+      }),
+    },
+  })
+  await settle()
+
+  assert.equal(result.calls.filter((call) => call.path === '/grants/add/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/grants/create_virtual_account/v3').length, 0)
+  assert.equal(result.window.sessionStorage._map.has(OAUTH_INTENT_KEY), false)
+})
+
 test('a Free-only member who cancels Google OAuth gets the Platform calendar back', async () => {
   const result = loadSection({
     search: '?error=access_denied&error_description=cancelled&state=member-a',
@@ -1837,6 +1884,45 @@ test('a Free-only member who comes back from Google without a callback gets the 
   assert.equal(result.state.availability.manager, 'platform')
   assert.equal(result.window.sessionStorage._map.has(OAUTH_INTENT_KEY), false)
   assert.notEqual(result.dom.connectBtnWrapper.children[1].style.display, 'none') // Connect Google again
+})
+
+test('a 20-minute Platform recovery marker rebuilds Platform without a callback', async () => {
+  const result = loadSection({
+    sessionStorage: {
+      [OAUTH_INTENT_KEY]: freeOnlyPlatformIntent({
+        createdAt: Date.now() - 20 * 60 * 1000,
+      }),
+    },
+    serverState: { configs: [] },
+  })
+  await settle()
+
+  assert.equal(result.calls.filter((call) => call.path === '/grants/add/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/grants/create_virtual_account/v3').length, 1)
+  assert.equal(result.calls.filter((call) => call.path === '/scheduler/configurations/create/v3').length, 1)
+  assert.equal(result.state.grantId, 'vgrant-1')
+  assert.equal(result.state.calendarId, 'vcal-1')
+  assert.equal(result.state.availability.manager, 'platform')
+  assert.equal(result.window.sessionStorage._map.has(OAUTH_INTENT_KEY), false)
+})
+
+test('a Platform recovery marker older than 24 hours creates nothing', async () => {
+  const result = loadSection({
+    sessionStorage: {
+      [OAUTH_INTENT_KEY]: freeOnlyPlatformIntent({
+        createdAt: Date.now() - 25 * 60 * 60 * 1000,
+      }),
+    },
+    serverState: { configs: [] },
+  })
+  await settle()
+
+  assert.equal(result.calls.filter((call) => call.path === '/grants/add/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/grants/create_virtual_account/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/scheduler/configurations/create/v3').length, 0)
+  assert.equal(result.state.grantId, null)
+  assert.equal(result.state.availability.manager, null)
+  assert.equal(result.window.sessionStorage._map.has(OAUTH_INTENT_KEY), false)
 })
 
 test('an OAuth intent without a replaced Platform calendar or a paid service creates nothing on cancel', async () => {
