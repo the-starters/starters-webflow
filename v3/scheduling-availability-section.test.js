@@ -8,6 +8,10 @@ const WRITER_SOURCE = fs.readFileSync(require.resolve('./scheduling-availability
 const API_BASE = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:tCpV3oqd'
 const DAY_VARIANT_DEFAULT = 'w-variant-89402c65-e26d-c236-91e7-76e9135a2d42'
 const DAY_VARIANT_SELECTED = 'w-variant-30a4a9ed-8474-d414-9314-498a5fe53866'
+const ACTIVE_CALLS_COPY =
+  'You have Requested or Confirmed calls on your current calendar. Decline or cancel them, or wait until they end, then try again.'
+const DISCONNECT_GOOGLE_GENERIC_COPY =
+  "We couldn't disconnect your Google calendar. Please try again or contact support."
 
 /* ------------------------------------------------------------------ */
 /* Minimal DOM (same shape as scheduling-availability-writer.test.js)  */
@@ -1666,6 +1670,99 @@ test('an active-booking rejection stops Google disconnect before the virtual Pla
   assert.equal(calls.filter((c) => c.path === '/grants/delete/v3').length, 1)
   assert.equal(calls.filter((c) => c.path === '/grants/create_virtual_account/v3').length, 0)
   assert.equal(window.STARTER_SCHEDULING_CONNECTION.state, 'error')
+  // The refusal is something the member can act on, so it must name the calls
+  // instead of blaming the calendar connection.
+  assert.equal(dom.notif.steps['request-error'].style.display, '')
+  assert.equal(dom.notif.errorText.textContent, ACTIVE_CALLS_COPY)
+})
+
+test('an active-booking rejection stops a Platform-to-Google switch before the OAuth redirect and names the calls', async () => {
+  const { dom, calls, assigned, window } = loadSection({
+    serverState: {
+      grantId: 'grant-virtual-1',
+      grantEmail: 'member-a@virtual.example',
+      calendarId: 'cal-virtual-1',
+      availability: {
+        items: { general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] } },
+        manager: 'platform',
+      },
+    },
+    postRoutes: {
+      '/grants/delete/v3': () => ({
+        status: 400,
+        body: { code: 'ERROR_CODE_INPUT_ERROR', message: 'Resolve active bookings before disconnecting the calendar' },
+      }),
+    },
+  })
+  await settle()
+
+  dom.connectBtnWrapper.children[1].click() // open-connect-google from Platform -> switch warning
+  assert.equal(dom.notif.steps['switch-calendar'].style.display, '')
+  dom.notif.switchConnectGoogleBtn.click() // "Switch to Google" -> informational step
+  assert.equal(dom.notif.steps['pre-oauth'].style.display, '')
+  dom.notif.oauthRedirectBtn.click() // "Done" -> grant delete is refused
+  await settle()
+
+  assert.equal(calls.filter((c) => c.path === '/grants/delete/v3').length, 1)
+  assert.equal(calls.filter((c) => c.path === '/grants/oauth/v3').length, 0, 'no Google OAuth after the refusal')
+  assert.equal(assigned.length, 0, 'the member stays on the dashboard')
+  assert.equal(window.STARTER_SCHEDULING_CONNECTION.state, 'error')
+  assert.equal(dom.notif.steps['request-error'].style.display, '')
+  assert.equal(dom.notif.errorText.textContent, ACTIVE_CALLS_COPY)
+})
+
+test('only the exact 400 active-bookings refusal replaces section disconnect copy', async () => {
+  const cases = [
+    {
+      label: 'matching message with a non-400 status',
+      response: {
+        status: 500,
+        body: { message: 'Resolve active bookings before disconnecting the calendar' },
+      },
+    },
+    {
+      label: 'different message with a 400 status',
+      response: {
+        status: 400,
+        body: { message: 'Grant does not belong to the authenticated member' },
+      },
+    },
+  ]
+
+  for (const entry of cases) {
+    const { dom } = loadSection({
+      serverState: {
+        grantId: 'grant-1',
+        grantEmail: 'g@example.com',
+        calendarId: 'cal-1',
+        availability: {
+          items: {
+            general: {
+              days: [1, 2, 3],
+              start: '09:00',
+              end: '17:00',
+              defaultDays: [1, 2, 3],
+            },
+          },
+          manager: 'calendar',
+        },
+      },
+      postRoutes: {
+        '/grants/delete/v3': () => entry.response,
+      },
+    })
+    await settle()
+
+    dom.connectBtnWrapper.children[2].click()
+    dom.notif.disconnectGoogleBtn.click()
+    await settle()
+
+    assert.equal(
+      dom.notif.errorText.textContent,
+      DISCONNECT_GOOGLE_GENERIC_COPY,
+      entry.label,
+    )
+  }
 })
 
 test('an ambiguous grant deletion immediately restores the paid service', async () => {

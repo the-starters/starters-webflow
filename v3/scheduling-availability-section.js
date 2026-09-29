@@ -86,6 +86,13 @@
   const ERROR_TEXT_PAID_CALL_RATE =
     'Your paid call rate must be a whole-dollar amount from $1 to $1,000. Update it in Call Settings, then switch calendars again.'
   const PAID_CALL_RATE_UNSUPPORTED = 'PAID_CALL_RATE_UNSUPPORTED'
+  // grants/delete/v3 (Xano #1660) refuses a calendar switch or disconnect while the
+  // current calendar still has requested, confirmed or rescheduled calls. Nothing is
+  // cancelled or deleted in that case. The member can act on it, so name the calls
+  // instead of showing generic calendar copy.
+  const ERROR_TEXT_ACTIVE_CALLS =
+    'You have Requested or Confirmed calls on your current calendar. Decline or cancel them, or wait until they end, then try again.'
+  const ACTIVE_CALLS_REFUSAL = /resolve active bookings/i
   const PRE_OAUTH_GOOGLE_COPY = "You’ll be taken to connect your Google calendar."
   const PRE_OAUTH_GOOGLE_COPY_STALE =
     PRE_OAUTH_GOOGLE_COPY + ' Your availability settings have been saved.'
@@ -123,7 +130,7 @@
   let connectionError = false
   let connectBusy = false
   // Carries the last calendar-transition failure to the modal that reports it, so
-  // a repairable paid-call rate can replace the generic connection copy.
+  // a recognized actionable failure can replace the generic connection copy.
   let calendarTransitionErrorText = null
   let cachedItemTemplate = null
   let creatingDraft = false
@@ -405,8 +412,19 @@
   }
 
   function noteCalendarTransitionError(error) {
-    calendarTransitionErrorText =
-      error && error.code === PAID_CALL_RATE_UNSUPPORTED ? ERROR_TEXT_PAID_CALL_RATE : null
+    if (error && error.code === PAID_CALL_RATE_UNSUPPORTED) {
+      calendarTransitionErrorText = ERROR_TEXT_PAID_CALL_RATE
+    } else if (isActiveCallsRefusal(error)) {
+      calendarTransitionErrorText = ERROR_TEXT_ACTIVE_CALLS
+    } else {
+      calendarTransitionErrorText = null
+    }
+  }
+
+  function isActiveCallsRefusal(error) {
+    const data = error && error.data
+    const message = data && typeof data.message === 'string' ? data.message : ''
+    return Boolean(error) && error.status === 400 && ACTIVE_CALLS_REFUSAL.test(message)
   }
 
   function calendarTransitionErrorCopy(fallback) {
@@ -1775,7 +1793,8 @@
           else if (ok) switchNotification('virtual-connected')
         })
       } else if (action === 'open-connect-google') {
-        // Switching away from platform cancels active bookings — warn first.
+        // Switching away from platform replaces the platform calendar, and
+        // grants/delete/v3 refuses while calls are active. Warn first.
         // Starting from disconnected skips straight to the informational step.
         openNotification(availability && availability.manager === 'platform' ? 'switch-calendar' : 'pre-oauth')
       } else if (action === 'open-disconnect-google') {
