@@ -476,7 +476,8 @@
     element.style.display = visible ? (flexWhenShown ? 'flex' : '') : 'none'
   }
 
-  const wiredMeetingParagraphs = new WeakSet()
+  const wiredMeetingDestinations = new WeakSet()
+  const meetingDestinationBookings = new WeakMap()
 
   function safeMeetingHref(value) {
     try {
@@ -487,10 +488,15 @@
     }
   }
 
-  function setMeetingDestination(element, href, allowParagraph) {
+  function setMeetingDestination(element, href, allowParagraph, booking) {
     if (!element) return false
     const tag = clean(element.tagName).toLowerCase()
-    if (tag === 'a') {
+    const isAnchor = tag === 'a'
+    const isParagraph = tag === 'p' && allowParagraph
+    if (!isAnchor && !isParagraph) return false
+    if (href) meetingDestinationBookings.set(element, booking)
+    else meetingDestinationBookings.delete(element)
+    if (isAnchor) {
       if (href) {
         element.setAttribute('href', href)
         element.setAttribute('target', '_blank')
@@ -500,48 +506,61 @@
         element.removeAttribute('target')
         element.removeAttribute('rel')
       }
-      return true
-    }
-    if (tag !== 'p' || !allowParagraph) return false
-
-    // The published Webflow details use a paragraph for this authored hook.
-    // Make that existing text keyboard accessible without generating UI.
-    element.removeAttribute('href')
-    if (href) {
-      element.setAttribute('data-meeting-href', href)
-      element.setAttribute('role', 'link')
-      element.setAttribute('tabindex', '0')
     } else {
-      element.removeAttribute('data-meeting-href')
-      element.removeAttribute('role')
-      element.removeAttribute('tabindex')
-      return true
+      element.removeAttribute('href')
+      if (href) {
+        element.setAttribute('data-meeting-href', href)
+        element.setAttribute('role', 'link')
+        element.setAttribute('tabindex', '0')
+      } else {
+        element.removeAttribute('data-meeting-href')
+        element.removeAttribute('role')
+        element.removeAttribute('tabindex')
+      }
     }
-    if (wiredMeetingParagraphs.has(element) || typeof element.addEventListener !== 'function') return true
-    const openCurrentMeeting = function (event) {
-      const current = safeMeetingHref(element.getAttribute('data-meeting-href'))
-      if (!current || typeof global.open !== 'function') return
+    if (!href || wiredMeetingDestinations.has(element) || typeof element.addEventListener !== 'function') return true
+    const activateMeetingDestination = function (event) {
+      const current = meetingHrefForBooking(meetingDestinationBookings.get(element), Date.now())
+      const rendered = safeMeetingHref(element.getAttribute(isAnchor ? 'href' : 'data-meeting-href'))
+      if (!current || current !== rendered) {
+        if (event && typeof event.preventDefault === 'function') event.preventDefault()
+        if (event && typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation()
+        setMeetingDestination(element, '', allowParagraph)
+        if (isParagraph) element.textContent = ''
+        show(element, false)
+        const group = element.closest && element.closest('[booking-element-wrap]')
+        if (group) show(group, false)
+        return
+      }
+      if (isAnchor || typeof global.open !== 'function') return
       if (event && typeof event.preventDefault === 'function') event.preventDefault()
       global.open(current, '_blank', 'noopener,noreferrer')
     }
-    element.addEventListener('click', openCurrentMeeting)
-    element.addEventListener('keydown', function (event) {
-      if (event.key === 'Enter') openCurrentMeeting(event)
-    })
-    wiredMeetingParagraphs.add(element)
+    element.addEventListener('click', activateMeetingDestination, true)
+    if (isParagraph) {
+      element.addEventListener('keydown', function (event) {
+        if (event.key === 'Enter') activateMeetingDestination(event)
+      })
+    }
+    wiredMeetingDestinations.add(element)
     return true
   }
 
   function meetingHrefForBooking(booking, now) {
-    return ['confirmed', 'rescheduled'].includes(bookingStatus(booking, now))
-      ? safeMeetingHref(booking && booking.meeting_link)
-      : ''
+    const raw = clean(booking && booking.status).toLowerCase()
+    const reference = Number(now)
+    const currentTime = Number.isFinite(reference) ? reference : Date.now()
+    const status = raw === 'rescheduled' ? raw : bookingStatus(booking, currentTime)
+    if (!['confirmed', 'rescheduled'].includes(status)) return ''
+    const end = Number(booking && booking[raw === 'rescheduled' ? 'end_old' : 'end'])
+    if (!Number.isFinite(end) || end <= 0 || end <= currentTime) return ''
+    return safeMeetingHref(booking && booking.meeting_link)
   }
 
   function paintMeetingDestinations(root, booking, now, allowParagraph) {
     const href = meetingHrefForBooking(booking, now)
     bookingFields(root, 'meeting-link').forEach(function (meetingLink) {
-      const supported = setMeetingDestination(meetingLink, href, allowParagraph)
+      const supported = setMeetingDestination(meetingLink, href, allowParagraph, booking)
       if (allowParagraph && supported) meetingLink.textContent = href
       const visible = supported && href !== ''
       show(meetingLink, visible)

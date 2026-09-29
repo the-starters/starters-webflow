@@ -244,6 +244,7 @@ test('both roles see Pending proposal details without losing an existing meeting
     const view = detailModalHarness()
     const booking = {
       booking_id: 'proposal-details', status: 'rescheduled', start: 3000, end: 4000,
+      start_old: 2500, end_old: 3500,
       duration: 30, meeting_link: 'https://meet.google.com/test-room',
       brand_data: { name: 'Brand', timezone: 'UTC' },
       starter_data: { name: 'Starter', timezone: 'UTC' },
@@ -2399,6 +2400,7 @@ test('details fill every authored panel copy of a booking field', () => {
     booking_id: 'copy-one',
     status: 'confirmed',
     start: 10_000,
+    end: 20_000,
     paid_meeting: false,
     duration: 30,
     call_context: 'Discuss launch',
@@ -3195,6 +3197,7 @@ test('confirmed Paid Call details show per-call price and hide every unsupported
     booking_id: 'paid-one',
     status: 'confirmed',
     start: Date.now() + 60_000,
+    end: Date.now() + 90_000,
     paid_meeting: true,
     price: 25,
     duration: 30,
@@ -5773,9 +5776,61 @@ test('call card binds its Join Call destination and clears it for ineligible reb
       assert.equal(link.hidden, true)
       assert.equal(wrap.hidden, true)
     }
-    api.bindCard(card, { ...booking, status: 'rescheduled' }, role)
+    api.bindCard(card, { ...booking, status: 'rescheduled', end_old: booking.end }, role)
     assert.equal(link.getAttribute('href'), booking.meeting_link)
     assert.equal(link.hidden, false)
+  }
+})
+
+test('rescheduled Join destinations follow the still-confirmed original end', () => {
+  const previousNow = Date.now
+  const now = 2_000_000_000_000
+  Date.now = () => now
+  try {
+    for (const role of ['brand', 'starter']) {
+      const card = element()
+      const cardWrap = element()
+      const anchor = anchorElement({ 'booking-element': 'meeting-link' })
+      anchor.closest = selector => selector === '[booking-element-wrap]' ? cardWrap : null
+      card.querySelectorAll = selector => selector === '[booking-element="meeting-link"]' ? [anchor] : []
+      const view = detailModalHarness()
+      const originalSlot = {
+        status: 'rescheduled',
+        start: now - 90_000,
+        end: now - 60_000,
+        start_old: now - 30_000,
+        end_old: now + 60_000,
+        duration: 30,
+        meeting_link: 'https://meet.google.com/original-slot',
+        brand_data: { name: 'Brand', timezone: 'UTC' },
+        starter_data: { name: 'Starter', timezone: 'UTC' },
+      }
+      const assertDestinations = (booking, visible) => {
+        api.bindCard(card, booking, role)
+        api.populateDetailModal(view.modal, booking, role, now)
+        if (visible) {
+          assert.equal(anchor.getAttribute('href'), booking.meeting_link)
+          assert.equal(view.fields['meeting-link'].getAttribute('data-meeting-href'), booking.meeting_link)
+        } else {
+          assert.equal(anchor.hasAttribute('href'), false)
+          assert.equal(view.fields['meeting-link'].hasAttribute('data-meeting-href'), false)
+        }
+        assert.equal(anchor.hidden, !visible)
+        assert.equal(view.fields['meeting-link'].hidden, !visible)
+      }
+
+      assertDestinations(originalSlot, true)
+      assertDestinations({ ...originalSlot, end: now + 60_000, end_old: now }, false)
+      assertDestinations({ ...originalSlot, end: now + 60_000, end_old: undefined }, false)
+      assertDestinations({
+        ...originalSlot,
+        status: 'confirmed',
+        end: now + 60_000,
+        end_old: now - 60_000,
+      }, true)
+    }
+  } finally {
+    Date.now = previousNow
   }
 })
 
@@ -5822,16 +5877,19 @@ test('authored details paragraph opens the current Meet URL for either role', ()
 test('meeting destinations expire at call end for both roles without a canonical refresh', () => {
   const previousDocument = global.document
   const previousOpen = global.open
+  const previousNow = Date.now
   const opened = []
   global.open = (...args) => opened.push(args)
+  let currentTime = previousNow()
+  Date.now = () => currentTime
   try {
     for (const role of ['brand', 'starter']) {
-      const now = { value: Date.now() }
+      currentTime += 24 * 60 * 60 * 1000
       const booking = {
         booking_id: 'ending-' + role,
         status: 'confirmed',
-        start: now.value - 30 * 60 * 1000,
-        end: now.value + 60 * 1000,
+        start: currentTime - 30 * 60 * 1000,
+        end: currentTime + 60 * 1000,
         duration: 30,
         meeting_link: 'https://meet.google.com/' + role + '-room',
         brand_data: { name: 'Brand', timezone: 'UTC' },
@@ -5840,7 +5898,9 @@ test('meeting destinations expire at call end for both roles without a canonical
       const card = element({ 'data-booking-id': booking.booking_id })
       const cardWrap = element()
       const anchor = anchorElement({ 'booking-element': 'meeting-link' })
+      const anchorHandlers = new Map()
       anchor.closest = selector => selector === '[booking-element-wrap]' ? cardWrap : null
+      anchor.addEventListener = (type, handler) => anchorHandlers.set(type, handler)
       card.querySelectorAll = selector => selector === '[booking-element="meeting-link"]' ? [anchor] : []
       const view = detailModalHarness()
       const paragraph = view.fields['meeting-link']
@@ -5851,7 +5911,7 @@ test('meeting destinations expire at call end for both roles without a canonical
       }
 
       api.bindCard(card, booking, role)
-      api.populateDetailModal(view.modal, booking, role, now.value)
+      api.populateDetailModal(view.modal, booking, role, currentTime)
       const refs = [{
         rows: [booking],
         list: { querySelectorAll: selector => selector === '[data-booking-id]' ? [card] : [] },
@@ -5861,7 +5921,7 @@ test('meeting destinations expire at call end for both roles without a canonical
       const stop = api.startBookingLifecycleTicker(refs, role, () => {
         restarts += 1
       }, {
-        now: () => now.value,
+        now: () => currentTime,
         setInterval(callback, delay) {
           assert.equal(delay, 10_000)
           tick = callback
@@ -5874,19 +5934,43 @@ test('meeting destinations expire at call end for both roles without a canonical
 
       assert.equal(anchor.getAttribute('href'), booking.meeting_link)
       assert.equal(paragraph.getAttribute('data-meeting-href'), booking.meeting_link)
+      let anchorPrevented = false
+      anchorHandlers.get('click')({
+        preventDefault() { anchorPrevented = true },
+      })
+      assert.equal(anchorPrevented, false)
       const openedBefore = opened.length
       paragraphHandlers.get('click')({ preventDefault() {} })
       assert.equal(opened.length, openedBefore + 1)
 
-      now.value = booking.end + 1
-      tick()
+      currentTime = booking.end
+      let expiredAnchorPrevented = false
+      let expiredAnchorStopped = false
+      anchorHandlers.get('click')({
+        preventDefault() { expiredAnchorPrevented = true },
+        stopImmediatePropagation() { expiredAnchorStopped = true },
+      })
+      assert.equal(expiredAnchorPrevented, true)
+      assert.equal(expiredAnchorStopped, true)
       assert.equal(anchor.hasAttribute('href'), false)
       assert.equal(anchor.hidden, true)
       assert.equal(cardWrap.hidden, true)
+      let expiredParagraphPrevented = false
+      paragraphHandlers.get('keydown')({
+        key: 'Enter',
+        preventDefault() { expiredParagraphPrevented = true },
+      })
+      assert.equal(expiredParagraphPrevented, true)
       assert.equal(paragraph.hasAttribute('data-meeting-href'), false)
       assert.equal(paragraph.hasAttribute('role'), false)
       assert.equal(paragraph.hasAttribute('tabindex'), false)
       assert.equal(paragraph.hidden, true)
+      assert.equal(paragraph.textContent, '')
+      assert.equal(opened.length, openedBefore + 1)
+
+      tick()
+      assert.equal(view.panelCopies['meeting-link'].hasAttribute('data-meeting-href'), false)
+      assert.equal(view.panelCopies['meeting-link'].hidden, true)
       paragraphHandlers.get('click')({ preventDefault() {} })
       assert.equal(opened.length, openedBefore + 1)
       assert.equal(restarts, 0)
@@ -5895,6 +5979,7 @@ test('meeting destinations expire at call end for both roles without a canonical
   } finally {
     global.document = previousDocument
     global.open = previousOpen
+    Date.now = previousNow
   }
 })
 
