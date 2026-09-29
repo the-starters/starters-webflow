@@ -1743,6 +1743,48 @@ test('an active-booking rejection preserves calendar state in the disconnect flo
   assert.deepEqual(legacyClearCalls, [])
   assert.equal(result.window.STARTER_AVAILABILITY.manager, 'calendar')
   assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'error')
+  assert.equal(result.dom.steps['config-request-error'].style.display, 'block')
+  assert.equal(result.dom.steps['success-disconnect'].style.display, 'none')
+  assert.match(result.dom.errorText.textContent, /Requested or Confirmed calls/)
+  assert.match(result.dom.errorText.textContent, /Decline or cancel them, or wait until they end/)
+  assert.doesNotMatch(result.dom.errorText.textContent, /contact support/)
+})
+
+// A 400 from a different grants/delete/v3 precondition is not the active-calls
+// refusal; it must keep the authored generic copy.
+test('a different grant deletion 400 keeps the authored generic copy', async () => {
+  const availability = defaultAvailability()
+  availability.manager = 'calendar'
+  const result = loadWriter({
+    availability,
+    storage: TZ_CACHED,
+    routes: {
+      '/starter/get_by_memberstack/v3': () => ({
+        status: 200,
+        body: {
+          id: 1,
+          timezone: 'Asia/Manila',
+          availability,
+          nylas_grant_id: 'grant-1',
+          nylas_grant_email: 'grant@example.com',
+          nylas_calendar_id: 'cal-1',
+        },
+      }),
+      '/grants/delete/v3': () => ({
+        status: 400,
+        body: { message: 'Grant does not belong to the authenticated member' },
+      }),
+    },
+  })
+  await settle()
+
+  result.clickAction(result.dom.buttons.disconnectCalendar)
+  await settle()
+
+  assert.equal(result.calls.filter((c) => c.path === '/grants/delete/v3').length, 1)
+  assert.equal(result.dom.steps['config-request-error'].style.display, 'block')
+  assert.match(result.dom.errorText.textContent, /contact support/)
+  assert.doesNotMatch(result.dom.errorText.textContent, /Requested or Confirmed calls/)
 })
 
 test('calendar connection copy describes the explicit same-tab handoff', async () => {

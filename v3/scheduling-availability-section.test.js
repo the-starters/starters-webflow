@@ -1666,6 +1666,48 @@ test('an active-booking rejection stops Google disconnect before the virtual Pla
   assert.equal(calls.filter((c) => c.path === '/grants/delete/v3').length, 1)
   assert.equal(calls.filter((c) => c.path === '/grants/create_virtual_account/v3').length, 0)
   assert.equal(window.STARTER_SCHEDULING_CONNECTION.state, 'error')
+  // The refusal is something the member can act on, so it must name the calls
+  // instead of blaming the calendar connection.
+  assert.equal(dom.notif.steps['request-error'].style.display, '')
+  assert.match(dom.notif.errorText.textContent, /requested or confirmed calls/i)
+  assert.match(dom.notif.errorText.textContent, /Decline or cancel them, or wait until they end/)
+  assert.doesNotMatch(dom.notif.errorText.textContent, /contact support/)
+})
+
+test('an active-booking rejection stops a Platform-to-Google switch before the OAuth redirect and names the calls', async () => {
+  const { dom, calls, assigned, window } = loadSection({
+    serverState: {
+      grantId: 'grant-virtual-1',
+      grantEmail: 'member-a@virtual.example',
+      calendarId: 'cal-virtual-1',
+      availability: {
+        items: { general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] } },
+        manager: 'platform',
+      },
+    },
+    postRoutes: {
+      '/grants/delete/v3': () => ({
+        status: 400,
+        body: { code: 'ERROR_CODE_INPUT_ERROR', message: 'Resolve active bookings before disconnecting the calendar' },
+      }),
+    },
+  })
+  await settle()
+
+  dom.connectBtnWrapper.children[1].click() // open-connect-google from Platform -> switch warning
+  assert.equal(dom.notif.steps['switch-calendar'].style.display, '')
+  dom.notif.switchConnectGoogleBtn.click() // "Switch to Google" -> informational step
+  assert.equal(dom.notif.steps['pre-oauth'].style.display, '')
+  dom.notif.oauthRedirectBtn.click() // "Done" -> grant delete is refused
+  await settle()
+
+  assert.equal(calls.filter((c) => c.path === '/grants/delete/v3').length, 1)
+  assert.equal(calls.filter((c) => c.path === '/grants/oauth/v3').length, 0, 'no Google OAuth after the refusal')
+  assert.equal(assigned.length, 0, 'the member stays on the dashboard')
+  assert.equal(window.STARTER_SCHEDULING_CONNECTION.state, 'error')
+  assert.equal(dom.notif.steps['request-error'].style.display, '')
+  assert.match(dom.notif.errorText.textContent, /requested or confirmed calls/i)
+  assert.doesNotMatch(dom.notif.errorText.textContent, /couldn't connect your Google calendar/)
 })
 
 test('an ambiguous grant deletion immediately restores the paid service', async () => {

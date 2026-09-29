@@ -44,6 +44,13 @@
   const PAID_CALL_RATE_UNSUPPORTED = 'PAID_CALL_RATE_UNSUPPORTED'
   const ERROR_TEXT_PAID_CALL_RATE =
     'Your paid call rate must be a whole-dollar amount from $1 to $1,000. Update it in Call Settings, then switch calendars again.'
+  // grants/delete/v3 (Xano #1660) refuses a calendar switch or disconnect while the
+  // current calendar still has requested, confirmed or rescheduled calls. Nothing is
+  // cancelled or deleted in that case. The member can act on it, so name the calls
+  // instead of showing generic calendar copy.
+  const ERROR_TEXT_ACTIVE_CALLS =
+    'You have Requested or Confirmed calls on your current calendar. Decline or cancel them, or wait until they end, then try again.'
+  const ACTIVE_CALLS_REFUSAL = /resolve active bookings/i
 
   const activePath = window.location.pathname.replace(/\/+$/, '') || '/'
   const activeHostname = String(window.location.hostname || '').trim().toLowerCase()
@@ -503,9 +510,18 @@
 
   function showTransitionError(error) {
     const step = switchStep('config-request-error')
-    if (!error || error.code !== PAID_CALL_RATE_UNSUPPORTED) return
+    let text = null
+    if (error && error.code === PAID_CALL_RATE_UNSUPPORTED) text = ERROR_TEXT_PAID_CALL_RATE
+    else if (isActiveCallsRefusal(error)) text = ERROR_TEXT_ACTIVE_CALLS
+    if (!text) return
     const errorEl = transitionErrorCopyLeaf(step)
-    if (errorEl) errorEl.textContent = ERROR_TEXT_PAID_CALL_RATE
+    if (errorEl) errorEl.textContent = text
+  }
+
+  function isActiveCallsRefusal(error) {
+    const data = error && error.data
+    const message = data && typeof data.message === 'string' ? data.message : ''
+    return Boolean(error) && error.status === 400 && ACTIVE_CALLS_REFUSAL.test(message)
   }
 
   // Matches the page's shared `[data-custom-loader]` contract.
