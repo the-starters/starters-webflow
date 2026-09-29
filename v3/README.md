@@ -3939,13 +3939,17 @@ created a short-lived, one-time same-tab receipt bound to the current
 Memberstack ID and reconciliation mode. A copied or forged query parameter
 without that receipt stays on the generic recovery path. The callback arms a
 local Memberstack auth-generation watch before resolving the member or
-exchanging the code, and the dashboard arms another watch only for a matching
-receipt. Each watch requires the documented subscription object with an
+exchanging the code. Every dashboard mount arms a page-lifetime watch before
+its first status read and uses that scope for later status and provider-action
+requests. Each watch requires the documented subscription object with an
 `unsubscribe()` method. The same Memberstack client, live member, and unchanged
-generation must hold throughout the protected operation; any auth event,
-missing or failed subscription, or member mismatch removes the specialized
-reason without blocking redirect, canonical status, or URL cleanup. The generic
-path retains bounded settlement polling. For the verified reason, the
+generation must hold throughout each protected request. Any auth event,
+missing or failed subscription, or member mismatch clears the cached bearer and
+receipt, stops further Stripe requests and rendering, restores the authored
+generic error, disables provider actions, and requires a full page reload. The
+controller does not recover another member through handlers bound to the boot
+member. Ordinary return paths retain bounded settlement polling inside the same
+page-lifetime scope. For the verified reason, the
 controller changes the existing error card to explain that the Stripe account
 is already linked to another Starter profile and makes the `Connect a different
 account` recovery action start a new Connect flow. The copy never includes the
@@ -3968,16 +3972,15 @@ allowlisted `account_owner_conflict` reason also receives
 `stripe_connect_reason=account_owner_conflict`; arbitrary backend reason text
 is never reflected into the URL or page. Before redirecting, that verified
 branch stores the one-time receipt in same-origin `sessionStorage`; all other
-callback outcomes clear an older receipt. The dashboard consumes the receipt
-before it accepts the public reason. A verified owner-conflict branch reads
-canonical status once. If its auth scope becomes untrusted, the controller
-removes the specialized reason, discards that response and the cached
-controller bearer, then performs a full force-refreshed generic settlement
-sequence under a new strict auth-generation watch. If ownership changes again,
-the controller discards the sequence and fails closed with the original
-authored copy. The recovery bearer is discarded when that watch ends, so later
-provider actions must authenticate the then-current session. A stable recovery
-otherwise behaves like a direct URL spoof or generic reconciliation.
+callback outcomes clear an older receipt. The callback clears any older receipt
+at entry, so an authorization error, invalid state, member failure, or exchange
+failure cannot leave a prior conflict outcome reusable within the TTL. The
+dashboard consumes the receipt before it accepts the public reason. A verified
+owner-conflict branch reads canonical status once. If its auth scope becomes
+untrusted before, during, or after that read, the controller discards the
+response and cached bearer, immediately removes the return markers, restores
+the authored generic error, and requires a full page reload. It does not poll,
+remount, or rebind the current controller to a different member.
 `restart_required`
 performs one canonical read and cleans the marker without treating a consumed
 code as a completed return. The dashboard removes `after_onboarding`,

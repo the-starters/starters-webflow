@@ -530,7 +530,7 @@ test('owner-conflict guidance requires a valid canonical disconnect', async () =
     )
 
     assert.equal(statusReads, 1)
-    assert.equal(liveReads, 1)
+    assert.equal(liveReads, 6)
     assert.equal(unsubscribes, 1)
     assert.equal(root.getAttribute('data-stripe-connect-view'), 'error')
     assert.equal(root.getAttribute('data-stripe-connect-reason'), null)
@@ -712,7 +712,7 @@ test('canonical ready status overrides a stale conflict marker', async () => {
     )
 
     assert.equal(statusReads, 1)
-    assert.equal(liveReads, 1)
+    assert.equal(liveReads, 6)
     assert.equal(unsubscribes, 1)
     assert.equal(root.getAttribute('data-stripe-connect-view'), 'ready')
     assert.equal(root.getAttribute('data-stripe-connect-reason'), null)
@@ -729,7 +729,7 @@ test('canonical ready status overrides a stale conflict marker', async () => {
   }
 })
 
-test('auth loss discards stale connected status before rendering', async () => {
+test('auth loss discards an in-flight status without recovery', async () => {
   const previous = {
     CustomEvent: global.CustomEvent,
     dispatchEvent: global.dispatchEvent,
@@ -804,6 +804,8 @@ test('auth loss discards stale connected status before rendering', async () => {
     return response({ connected: true, charges_enabled: true })
   }
   api.__resetXanoToken()
+  api.renderRoots([root], 'ready', '', true)
+  renderedViews.length = 0
 
   try {
     const conflictAuthScope = api.armConflictAuthScope('member-a')
@@ -823,25 +825,18 @@ test('auth loss discards stale connected status before rendering', async () => {
     authChangeListener({ id: 'member-b' })
     resolveFirstStatus()
 
-    const status = await loaded
-    assert.deepEqual(status, { connected: true, charges_enabled: true })
-    assert.equal(statusReads, 2)
-    assert.equal(authUnsubscribes, 2)
-    assert.deepEqual(tokenOptions, [undefined, { forceRefresh: true }])
-    assert.deepEqual(statusAuthorizations, [
-      'Bearer member-a-xano-token',
-      'Bearer member-b-xano-token',
-    ])
+    assert.equal(await loaded, null)
+    assert.equal(statusReads, 1)
+    assert.equal(authUnsubscribes, 1)
+    assert.deepEqual(tokenOptions, [undefined])
+    assert.deepEqual(statusAuthorizations, ['Bearer member-a-xano-token'])
     assert.equal(renderedViews.includes('incomplete'), false)
     assert.equal(renderedViews.includes('review'), false)
-    assert.equal(root.getAttribute('data-stripe-connect-view'), 'ready')
+    assert.equal(renderedViews.includes('ready'), false)
+    assert.equal(root.getAttribute('data-stripe-connect-view'), 'error')
     assert.equal(root.getAttribute('data-stripe-connect-reason'), null)
-    assert.deepEqual(readyEvents, [
-      {
-        status: { connected: true, charges_enabled: true },
-        view: 'ready',
-      },
-    ])
+    assert.equal(root.hidden, false)
+    assert.deepEqual(readyEvents, [])
   } finally {
     api.__resetXanoToken()
     global.CustomEvent = previous.CustomEvent
@@ -853,7 +848,7 @@ test('auth loss discards stale connected status before rendering', async () => {
   }
 })
 
-test('trusted status failure clears a raced auth token', async () => {
+test('auth loss during token acquisition prevents the status request', async () => {
   const previous = {
     console: global.console,
     fetch: global.fetch,
@@ -887,9 +882,6 @@ test('trusted status failure clears a raced auth token', async () => {
   }
   global.getXanoAuthToken = (options) => {
     tokenOptions.push(options)
-    if (tokenOptions.length > 1) {
-      return Promise.resolve(liveMemberId + '-xano-token')
-    }
     return new Promise((resolve) => {
       resolveToken = resolve
       markTokenRequestStarted()
@@ -898,7 +890,6 @@ test('trusted status failure clears a raced auth token', async () => {
   global.fetch = async (_url, options) => {
     statusReads += 1
     statusAuthorizations.push(options.headers.Authorization)
-    if (statusReads === 1) throw new Error('status request failed')
     return response({ connected: true, charges_enabled: true })
   }
   api.__resetXanoToken()
@@ -926,15 +917,9 @@ test('trusted status failure clears a raced auth token', async () => {
     assert.equal(await loaded, null)
     assert.equal(root.getAttribute('data-stripe-connect-view'), 'error')
     assert.equal(authUnsubscribes, 1)
-    assert.deepEqual(await api.fetchStatus(), {
-      connected: true,
-      charges_enabled: true,
-    })
-    assert.deepEqual(tokenOptions, [undefined, undefined])
-    assert.deepEqual(statusAuthorizations, [
-      'Bearer member-b-xano-token',
-      'Bearer member-a-xano-token',
-    ])
+    assert.equal(statusReads, 0)
+    assert.deepEqual(tokenOptions, [undefined])
+    assert.deepEqual(statusAuthorizations, [])
   } finally {
     api.__resetXanoToken()
     global.console = previous.console
@@ -2589,6 +2574,121 @@ test('a shared stale Xano token is force-refreshed after a 401', async () => {
   }
 })
 
+test('a silent member switch blocks the authenticated 401 retry', async () => {
+  const previous = {
+    fetch: global.fetch,
+    getXanoAuthToken: global.getXanoAuthToken,
+    memberstack: global.$memberstackDom,
+  }
+  let fetchReads = 0
+  let liveMemberId = 'member-a'
+  let liveReads = 0
+  const tokenOptions = []
+  global.$memberstackDom = {
+    getCurrentMember: async () => {
+      liveReads += 1
+      return { data: { id: liveMemberId } }
+    },
+    onAuthChange() {
+      return { unsubscribe() {} }
+    },
+  }
+  global.getXanoAuthToken = async (options) => {
+    tokenOptions.push(options)
+    return options && options.forceRefresh
+      ? 'member-b-xano-token'
+      : 'member-a-xano-token'
+  }
+  global.fetch = async () => {
+    fetchReads += 1
+    liveMemberId = 'member-b'
+    return response({ error: 'expired token' }, { ok: false, status: 401 })
+  }
+  api.__resetXanoToken()
+  const authScope = api.armConflictAuthScope('member-a')
+
+  try {
+    assert.ok(authScope)
+    await assert.rejects(
+      () =>
+        api.startConnect(
+          'https://thestarters.com/starter-dashboard',
+          'connect-start-member-a',
+          authScope,
+        ),
+      (error) => {
+        assert.equal(error.code, 'member_scope_changed')
+        return true
+      },
+    )
+    assert.equal(fetchReads, 1)
+    assert.equal(liveReads, 3)
+    assert.deepEqual(tokenOptions, [undefined])
+  } finally {
+    authScope.release()
+    api.__resetXanoToken()
+    global.fetch = previous.fetch
+    global.getXanoAuthToken = previous.getXanoAuthToken
+    global.$memberstackDom = previous.memberstack
+  }
+})
+
+test('an auth event at the async member-check boundary blocks the request', async () => {
+  const previous = {
+    fetch: global.fetch,
+    getXanoAuthToken: global.getXanoAuthToken,
+    memberstack: global.$memberstackDom,
+  }
+  let authChangeListener
+  let fetchReads = 0
+  let tokenReads = 0
+  global.$memberstackDom = {
+    getCurrentMember() {
+      return {
+        then(resolve) {
+          resolve({ data: { id: 'member-a' } })
+          queueMicrotask(() => {
+            queueMicrotask(() => authChangeListener({ id: 'member-a' }))
+          })
+        },
+      }
+    },
+    onAuthChange(listener) {
+      authChangeListener = listener
+      return { unsubscribe() {} }
+    },
+  }
+  global.getXanoAuthToken = async () => {
+    tokenReads += 1
+    return 'member-a-xano-token'
+  }
+  global.fetch = async () => {
+    fetchReads += 1
+    return response({ connected: false, charges_enabled: false })
+  }
+  api.__resetXanoToken()
+  const authScope = api.armConflictAuthScope('member-a')
+
+  try {
+    assert.ok(authScope)
+    await assert.rejects(
+      () => api.fetchStatus(false, authScope),
+      (error) => {
+        assert.equal(error.code, 'member_scope_changed')
+        return true
+      },
+    )
+    assert.equal(tokenReads, 0)
+    assert.equal(fetchReads, 0)
+  } finally {
+    authScope.release()
+    api.__resetXanoToken()
+    global.fetch = previous.fetch
+    global.getXanoAuthToken = previous.getXanoAuthToken
+    global.$memberstackDom = previous.memberstack
+  }
+})
+
 test('initial identity reuses memberReady while live checks read Memberstack', async () => {
   const previous = {
     memberReady: global.memberReady,
@@ -3821,11 +3921,18 @@ test('callback refuses an invalid opaque state without exchanging', async () => 
     history: global.history,
     location: global.location,
     memberstack: global.$memberstackDom,
+    sessionStorage: global.sessionStorage,
   }
+  const storage = sessionStorageFixture()
   const { root, states } = stripeRoot()
   let fetchCount = 0
 
   global.console = { ...console, error: () => {} }
+  global.sessionStorage = storage
+  api.storeReturnReason('mem-live', {
+    mode: 'reconciliation_required',
+    reason: 'account_owner_conflict',
+  })
   global.document = {
     title: 'Stripe callback',
     querySelectorAll: () => [root],
@@ -3850,6 +3957,7 @@ test('callback refuses an invalid opaque state without exchanging', async () => 
     const result = await api.mountCallback()
     assert.equal(result, null)
     assert.equal(fetchCount, 0)
+    assert.equal(storage.values.size, 0)
     assert.equal(states.error.style.display, '')
     assert.equal(root.getAttribute('data-stripe-connect-view'), 'error')
   } finally {
@@ -3859,6 +3967,7 @@ test('callback refuses an invalid opaque state without exchanging', async () => 
     global.history = previous.history
     global.location = previous.location
     global.$memberstackDom = previous.memberstack
+    global.sessionStorage = previous.sessionStorage
   }
 })
 
@@ -3971,6 +4080,7 @@ test('callback requires the documented auth subscription for conflict receipts',
   ]) {
     await t.test(listenerMode, async () => {
       const previous = {
+        console: global.console,
         document: global.document,
         fetch: global.fetch,
         getXanoAuthToken: global.getXanoAuthToken,
@@ -3981,11 +4091,17 @@ test('callback requires the documented auth subscription for conflict receipts',
       }
       const storage = sessionStorageFixture()
       const { root, states } = stripeRoot()
+      const refresh = new FakeElement('BUTTON')
       const assigned = []
       const cleanedUrls = []
       let exchangeCount = 0
       let listenerRegistrations = 0
       let liveReads = 0
+      let reloads = 0
+      refresh.setAttribute(ACTION_ATTR, 'refresh')
+      states.error.children.set(actionSelector('refresh'), refresh)
+      root.children.set(actionSelector('refresh'), refresh)
+      global.console = { ...console, error: () => {} }
       global.sessionStorage = storage
       api.storeReturnReason('member-a', {
         mode: 'reconciliation_required',
@@ -4003,6 +4119,9 @@ test('callback requires the documented auth subscription for conflict receipts',
           'https://thestarters.com/stripe-connect-callback?' +
           'code=one-time-code&state=opaque-state-1234567890',
         origin: 'https://thestarters.com',
+        reload: () => {
+          reloads += 1
+        },
         assign: (url) => assigned.push(url),
       }
       global.$memberstackDom = {
@@ -4042,19 +4161,28 @@ test('callback requires the documented auth subscription for conflict receipts',
 
       try {
         const result = await api.mountCallback()
-        assert.equal(result.mode, 'reconciliation_required')
+        assert.equal(result, null)
         assert.equal(listenerRegistrations, listenerMode === 'missing' ? 0 : 1)
-        assert.equal(liveReads, 1)
-        assert.equal(exchangeCount, 1)
+        assert.equal(liveReads, 0)
+        assert.equal(exchangeCount, 0)
         assert.deepEqual(cleanedUrls, ['/stripe-connect-callback'])
-        assert.deepEqual(assigned, [
-          'https://thestarters.com/starter-dashboard?' +
-            'stripe_connect=reconciliation_required',
-        ])
+        assert.deepEqual(assigned, [])
         assert.equal(storage.values.size, 0)
-        assert.equal(states.error.style.display, 'none')
+        assert.equal(states.error.style.display, '')
+        const click = {
+          defaultPrevented: false,
+          preventDefault() {
+            this.defaultPrevented = true
+          },
+          type: 'click',
+        }
+        refresh.dispatchEvent(click)
+        assert.equal(click.defaultPrevented, true)
+        assert.equal(reloads, 1)
+        assert.equal(exchangeCount, 0)
       } finally {
         api.__resetXanoToken()
+        global.console = previous.console
         global.document = previous.document
         global.fetch = previous.fetch
         global.getXanoAuthToken = previous.getXanoAuthToken
@@ -4069,6 +4197,7 @@ test('callback requires the documented auth subscription for conflict receipts',
 
 test('callback drops conflict trust after an ABA auth change during exchange', async () => {
   const previous = {
+    console: global.console,
     document: global.document,
     fetch: global.fetch,
     getXanoAuthToken: global.getXanoAuthToken,
@@ -4087,13 +4216,14 @@ test('callback drops conflict trust after an ABA auth change during exchange', a
   let exchangeCount = 0
   let liveMemberId = 'member-a'
   let liveReads = 0
-  let markTokenRequestStarted
-  let resolveToken
-  const tokenRequestStarted = new Promise((resolve) => {
-    markTokenRequestStarted = resolve
+  let markExchangeStarted
+  let resolveExchange
+  const exchangeStarted = new Promise((resolve) => {
+    markExchangeStarted = resolve
   })
 
   global.sessionStorage = storage
+  global.console = { ...console, error: () => {} }
   api.storeReturnReason('member-a', {
     mode: 'reconciliation_required',
     reason: 'account_owner_conflict',
@@ -4127,15 +4257,126 @@ test('callback drops conflict trust after an ABA auth change during exchange', a
       }
     },
   }
-  global.getXanoAuthToken = () =>
-    new Promise((resolve) => {
-      resolveToken = resolve
-      markTokenRequestStarted()
-    })
-  global.fetch = async (url, options) => {
+  global.getXanoAuthToken = async () => 'member-a-xano-token'
+  global.fetch = (url, options) => {
     if (String(url).includes('/stripe_connect/oauth_exchange/v3')) {
       exchangeCount += 1
       exchangeAuthorization = options.headers.Authorization
+      markExchangeStarted()
+      return new Promise((resolve) => {
+        resolveExchange = () =>
+          resolve(
+            response({
+              connected: false,
+              mode: 'reconciliation_required',
+              reason: 'account_owner_conflict',
+            }),
+          )
+      })
+    }
+    throw new Error('Unexpected Stripe request: ' + url)
+  }
+  api.__resetXanoToken()
+
+  try {
+    const callback = api.mountCallback()
+    await exchangeStarted
+    assert.equal(liveReads, 3)
+    assert.equal(exchangeCount, 1)
+
+    liveMemberId = 'member-b'
+    authChangeListener({ id: 'member-b' })
+    liveMemberId = 'member-a'
+    authChangeListener({ id: 'member-a' })
+    resolveExchange()
+
+    const result = await callback
+    assert.equal(result, null)
+    assert.equal(authUnsubscribes, 1)
+    assert.equal(exchangeCount, 1)
+    assert.equal(exchangeAuthorization, 'Bearer member-a-xano-token')
+    assert.equal(liveReads, 3)
+    assert.deepEqual(cleanedUrls, ['/stripe-connect-callback'])
+    assert.deepEqual(assigned, [])
+    assert.equal(storage.values.size, 0)
+    assert.equal(states.error.style.display, '')
+  } finally {
+    api.__resetXanoToken()
+    global.console = previous.console
+    global.document = previous.document
+    global.fetch = previous.fetch
+    global.getXanoAuthToken = previous.getXanoAuthToken
+    global.history = previous.history
+    global.location = previous.location
+    global.$memberstackDom = previous.memberstack
+    global.sessionStorage = previous.sessionStorage
+  }
+})
+
+test('callback stops when auth changes at the final settlement boundary', async () => {
+  const previous = {
+    console: global.console,
+    document: global.document,
+    fetch: global.fetch,
+    getXanoAuthToken: global.getXanoAuthToken,
+    history: global.history,
+    location: global.location,
+    memberstack: global.$memberstackDom,
+    sessionStorage: global.sessionStorage,
+  }
+  const storage = sessionStorageFixture()
+  const { root, states } = stripeRoot()
+  const assigned = []
+  const cleanedUrls = []
+  let authChangeListener
+  let authUnsubscribes = 0
+  let exchangeCount = 0
+  let liveReads = 0
+
+  global.sessionStorage = storage
+  global.console = { ...console, error: () => {} }
+  global.document = {
+    title: 'Stripe callback',
+    querySelectorAll: () => [root],
+  }
+  global.history = {
+    replaceState: (_state, _title, url) => cleanedUrls.push(url),
+  }
+  global.location = {
+    href:
+      'https://thestarters.com/stripe-connect-callback?' +
+      'code=one-time-code&state=opaque-state-1234567890',
+    origin: 'https://thestarters.com',
+    assign: (url) => assigned.push(url),
+  }
+  global.$memberstackDom = {
+    getCurrentMember() {
+      liveReads += 1
+      if (liveReads !== 6) {
+        return Promise.resolve({ data: { id: 'member-a' } })
+      }
+      return {
+        then(resolve) {
+          resolve({ data: { id: 'member-a' } })
+          queueMicrotask(() => {
+            queueMicrotask(() => authChangeListener({ id: 'member-a' }))
+          })
+        },
+      }
+    },
+    onAuthChange(listener) {
+      authChangeListener = listener
+      return {
+        unsubscribe() {
+          authUnsubscribes += 1
+        },
+      }
+    },
+  }
+  global.getXanoAuthToken = async () => 'member-a-xano-token'
+  global.fetch = async (url) => {
+    if (String(url).includes('/stripe_connect/oauth_exchange/v3')) {
+      exchangeCount += 1
       return response({
         connected: false,
         mode: 'reconciliation_required',
@@ -4147,31 +4388,18 @@ test('callback drops conflict trust after an ABA auth change during exchange', a
   api.__resetXanoToken()
 
   try {
-    const callback = api.mountCallback()
-    await tokenRequestStarted
-    assert.equal(liveReads, 1)
-
-    liveMemberId = 'member-b'
-    authChangeListener({ id: 'member-b' })
-    liveMemberId = 'member-a'
-    authChangeListener({ id: 'member-a' })
-    resolveToken('member-b-xano-token')
-
-    const result = await callback
-    assert.equal(result.mode, 'reconciliation_required')
+    assert.equal(await api.mountCallback(), null)
+    assert.equal(liveReads, 6)
     assert.equal(authUnsubscribes, 1)
     assert.equal(exchangeCount, 1)
-    assert.equal(exchangeAuthorization, 'Bearer member-b-xano-token')
-    assert.equal(liveReads, 1)
     assert.deepEqual(cleanedUrls, ['/stripe-connect-callback'])
-    assert.deepEqual(assigned, [
-      'https://thestarters.com/starter-dashboard?' +
-        'stripe_connect=reconciliation_required',
-    ])
+    assert.deepEqual(assigned, [])
     assert.equal(storage.values.size, 0)
-    assert.equal(states.error.style.display, 'none')
+    assert.equal(states.error.style.display, '')
+    assert.equal(root.getAttribute('data-stripe-connect-reason'), null)
   } finally {
     api.__resetXanoToken()
+    global.console = previous.console
     global.document = previous.document
     global.fetch = previous.fetch
     global.getXanoAuthToken = previous.getXanoAuthToken
@@ -4326,7 +4554,7 @@ test('authenticated callback mounts owner-conflict recovery and starts a new flo
     const status = await api.mountDashboard()
 
     assert.deepEqual(status, { connected: false, charges_enabled: false })
-    assert.equal(authUnsubscribes, 2)
+    assert.equal(authUnsubscribes, 1)
     assert.equal(statusReads, 1)
     assert.equal(storage.values.size, 0)
     assert.equal(sameTabLocation.href, 'https://thestarters.com/starter-dashboard')
@@ -4410,10 +4638,15 @@ test('dashboard rejects an owner-conflict receipt after member identity changes'
     sessionStorage: global.sessionStorage,
   }
   const storage = sessionStorageFixture()
-  const { errorCopy, root } = stripeRoot()
+  const { errorCopy, root, states } = stripeRoot()
+  const refresh = new FakeElement('BUTTON')
   const replaced = []
   let liveReads = 0
+  let reloads = 0
   let statusReads = 0
+  refresh.setAttribute(ACTION_ATTR, 'refresh')
+  states.error.children.set(actionSelector('refresh'), refresh)
+  root.children.set(actionSelector('refresh'), refresh)
   global.sessionStorage = storage
   api.storeReturnReason('member-a', {
     mode: 'reconciliation_required',
@@ -4434,6 +4667,9 @@ test('dashboard rejects an owner-conflict receipt after member identity changes'
       'stripe_connect=reconciliation_required&' +
       'stripe_connect_reason=account_owner_conflict&utm_source=proof#stripe',
     origin: 'https://thestarters.com',
+    reload: () => {
+      reloads += 1
+    },
     search:
       '?stripe_connect=reconciliation_required&' +
       'stripe_connect_reason=account_owner_conflict&utm_source=proof',
@@ -4461,12 +4697,9 @@ test('dashboard rejects an owner-conflict receipt after member identity changes'
   api.__resetXanoToken()
 
   try {
-    assert.deepEqual(await api.mountDashboard(), {
-      connected: false,
-      charges_enabled: false,
-    })
+    assert.equal(await api.mountDashboard(), null)
     assert.equal(liveReads, 1)
-    assert.equal(statusReads, 5)
+    assert.equal(statusReads, 0)
     assert.equal(storage.values.size, 0)
     assert.deepEqual(replaced, [
       '/starter-dashboard?utm_source=proof#stripe',
@@ -4475,6 +4708,17 @@ test('dashboard rejects an owner-conflict receipt after member identity changes'
     assert.equal(root.getAttribute('data-stripe-connect-reason'), null)
     assert.equal(errorCopy.label.textContent, 'Stripe Status Unavailable')
     assert.equal(errorCopy.button.textContent, 'Try Again')
+    const click = {
+      defaultPrevented: false,
+      preventDefault() {
+        this.defaultPrevented = true
+      },
+      type: 'click',
+    }
+    refresh.dispatchEvent(click)
+    assert.equal(click.defaultPrevented, true)
+    assert.equal(reloads, 1)
+    assert.equal(statusReads, 0)
   } finally {
     api.__resetXanoToken()
     global.document = previous.document
@@ -4583,18 +4827,15 @@ test('dashboard requires the documented auth-change subscription for conflict gu
       api.__resetXanoToken()
 
       try {
-        assert.deepEqual(await api.mountDashboard(), {
-          connected: true,
-          charges_enabled: true,
-        })
+        assert.equal(await api.mountDashboard(), null)
         assert.equal(listenerRegistrations, listenerMode === 'missing' ? 0 : 1)
         assert.equal(liveReads, 0)
-        assert.equal(statusReads, 2)
+        assert.equal(statusReads, 0)
         assert.equal(storage.values.size, 0)
         assert.deepEqual(replaced, [
           '/starter-dashboard?utm_source=proof#stripe',
         ])
-        assert.equal(root.getAttribute('data-stripe-connect-view'), 'ready')
+        assert.equal(root.getAttribute('data-stripe-connect-view'), 'error')
         assert.equal(root.getAttribute('data-stripe-connect-reason'), null)
         assert.equal(errorCopy.label.textContent, 'Stripe Status Unavailable')
         assert.equal(errorCopy.button.textContent, 'Try Again')
@@ -4614,7 +4855,7 @@ test('dashboard requires the documented auth-change subscription for conflict gu
   }
 })
 
-test('ordinary dashboard mount skips live auth preflight and cleans return markers', async () => {
+test('ordinary dashboard mount keeps a live auth scope and cleans return markers', async () => {
   const previous = {
     document: global.document,
     fetch: global.fetch,
@@ -4629,6 +4870,7 @@ test('ordinary dashboard mount skips live auth preflight and cleans return marke
   const storage = sessionStorageFixture()
   const { root } = stripeRoot()
   const replaced = []
+  let authChangeListener
   let listenerRegistrations = 0
   let liveReads = 0
   let statusReads = 0
@@ -4653,11 +4895,12 @@ test('ordinary dashboard mount skips live auth preflight and cleans return marke
   global.$memberstackDom = {
     getCurrentMember: async () => {
       liveReads += 1
-      throw new Error('live member temporarily unavailable')
+      return { data: { id: 'member-a' } }
     },
-    onAuthChange() {
+    onAuthChange(listener) {
       listenerRegistrations += 1
-      throw new Error('ordinary mount must not register an auth listener')
+      authChangeListener = listener
+      return { unsubscribe() {} }
     },
   }
   global.getXanoAuthToken = async () => 'member-a-xano-token'
@@ -4675,14 +4918,493 @@ test('ordinary dashboard mount skips live auth preflight and cleans return marke
       connected: false,
       charges_enabled: false,
     })
-    assert.equal(listenerRegistrations, 0)
-    assert.equal(liveReads, 0)
+    assert.equal(typeof authChangeListener, 'function')
+    assert.equal(listenerRegistrations, 1)
+    assert.equal(liveReads, 6)
     assert.equal(statusReads, 1)
     assert.deepEqual(replaced, [
       '/starter-dashboard?utm_source=proof#stripe',
     ])
     assert.equal(root.getAttribute('data-stripe-connect-view'), 'disconnected')
     assert.equal(root.getAttribute('data-stripe-connect-reason'), null)
+  } finally {
+    api.__resetXanoToken()
+    global.document = previous.document
+    global.fetch = previous.fetch
+    global.getXanoAuthToken = previous.getXanoAuthToken
+    global.history = previous.history
+    global.location = previous.location
+    global.memberReady = previous.memberReady
+    global.$memberstackDom = previous.memberstack
+    global.sessionStorage = previous.sessionStorage
+  }
+})
+
+test('a late dashboard auth change forces reload and blocks every Stripe action', async () => {
+  const previous = {
+    document: global.document,
+    fetch: global.fetch,
+    getXanoAuthToken: global.getXanoAuthToken,
+    history: global.history,
+    location: global.location,
+    memberReady: global.memberReady,
+    memberstack: global.$memberstackDom,
+    open: global.open,
+    sessionStorage: global.sessionStorage,
+  }
+  const storage = sessionStorageFixture()
+  const { errorCopy, root } = stripeRoot()
+  const dashboard = new FakeElement('BUTTON')
+  const refresh = new FakeElement('BUTTON')
+  const start = new FakeElement('BUTTON')
+  dashboard.setAttribute(ACTION_ATTR, 'dashboard')
+  refresh.setAttribute(ACTION_ATTR, 'refresh')
+  start.setAttribute(ACTION_ATTR, 'start')
+  root.children.set(actionSelector('dashboard'), dashboard)
+  root.children.set(actionSelector('refresh'), refresh)
+  root.children.set(actionSelector('start'), start)
+
+  let authChangeListener
+  let authUnsubscribes = 0
+  let liveMemberId = 'member-a'
+  let popupAttempts = 0
+  let reloads = 0
+  let statusReads = 0
+  global.sessionStorage = storage
+  global.document = {
+    title: 'Starter dashboard',
+    querySelectorAll(value) {
+      return value === selector('root') ? [root] : []
+    },
+  }
+  global.history = { replaceState() {} }
+  global.location = {
+    href: 'https://thestarters.com/starter-dashboard',
+    origin: 'https://thestarters.com',
+    reload() {
+      reloads += 1
+    },
+    search: '',
+  }
+  global.memberReady = Promise.resolve({ id: 'member-a' })
+  global.$memberstackDom = {
+    getCurrentMember: async () => ({ data: { id: liveMemberId } }),
+    onAuthChange(listener) {
+      authChangeListener = listener
+      return {
+        unsubscribe() {
+          authUnsubscribes += 1
+        },
+      }
+    },
+  }
+  global.getXanoAuthToken = async () => 'member-a-xano-token'
+  global.open = () => {
+    popupAttempts += 1
+    return null
+  }
+  global.fetch = async (url) => {
+    if (String(url).includes('/stripe_connect/status/v3')) {
+      statusReads += 1
+      return response({ connected: false, charges_enabled: false })
+    }
+    throw new Error('Unexpected Stripe request: ' + url)
+  }
+  api.__resetXanoToken()
+
+  try {
+    assert.deepEqual(await api.mountDashboard(), {
+      connected: false,
+      charges_enabled: false,
+    })
+    assert.equal(statusReads, 1)
+
+    liveMemberId = 'member-b'
+    authChangeListener({ data: { id: 'member-b' } })
+
+    assert.equal(authUnsubscribes, 1)
+    assert.equal(root.getAttribute('data-stripe-connect-view'), 'error')
+    assert.equal(root.getAttribute('data-stripe-connect-reason'), null)
+    assert.equal(errorCopy.label.textContent, 'Stripe Status Unavailable')
+    assert.equal(errorCopy.button.textContent, 'Try Again')
+
+    const click = () => ({
+      defaultPrevented: false,
+      preventDefault() {
+        this.defaultPrevented = true
+      },
+      type: 'click',
+    })
+    const refreshClick = click()
+    refresh.dispatchEvent(refreshClick)
+    start.dispatchEvent(click())
+    dashboard.dispatchEvent(click())
+
+    assert.equal(refreshClick.defaultPrevented, true)
+    assert.equal(reloads, 1)
+    assert.equal(popupAttempts, 0)
+    assert.equal(statusReads, 1)
+  } finally {
+    api.__resetXanoToken()
+    global.document = previous.document
+    global.fetch = previous.fetch
+    global.getXanoAuthToken = previous.getXanoAuthToken
+    global.history = previous.history
+    global.location = previous.location
+    global.memberReady = previous.memberReady
+    global.$memberstackDom = previous.memberstack
+    global.open = previous.open
+    global.sessionStorage = previous.sessionStorage
+  }
+})
+
+test('an auth change while a Connect response body parses blocks navigation', async () => {
+  const previous = {
+    document: global.document,
+    fetch: global.fetch,
+    getXanoAuthToken: global.getXanoAuthToken,
+    history: global.history,
+    location: global.location,
+    memberReady: global.memberReady,
+    memberstack: global.$memberstackDom,
+    sessionStorage: global.sessionStorage,
+  }
+  const storage = sessionStorageFixture()
+  const { root } = stripeRoot()
+  const button = new FakeElement('BUTTON')
+  const connectTile = new FakeElement()
+  const popupDestinations = []
+  const stripeTab = {
+    closed: false,
+    close() {
+      this.closed = true
+    },
+    location: {
+      replace(url) {
+        popupDestinations.push(url)
+      },
+    },
+  }
+  let authChangeListener
+  let markStartRequestObserved
+  let resolveStartBody
+  let startReads = 0
+  let statusReads = 0
+  const startRequestObserved = new Promise((resolve) => {
+    markStartRequestObserved = resolve
+  })
+  global.sessionStorage = storage
+  global.document = {
+    title: 'Starter dashboard',
+    querySelectorAll(value) {
+      return value === selector('root') ? [root] : []
+    },
+  }
+  global.history = { replaceState() {} }
+  global.location = {
+    href: 'https://thestarters.com/starter-dashboard',
+    origin: 'https://thestarters.com',
+    search: '',
+  }
+  global.memberReady = Promise.resolve({ id: 'member-a' })
+  global.$memberstackDom = {
+    getCurrentMember: async () => ({ data: { id: 'member-a' } }),
+    onAuthChange(listener) {
+      authChangeListener = listener
+      return { unsubscribe() {} }
+    },
+  }
+  global.getXanoAuthToken = async () => 'member-a-xano-token'
+  global.fetch = async (url) => {
+    if (String(url).includes('/stripe_connect/status/v3')) {
+      statusReads += 1
+      return response({ connected: false, charges_enabled: false })
+    }
+    if (String(url).includes('/stripe_connect/start/v3')) {
+      startReads += 1
+      return {
+        ok: true,
+        status: 200,
+        json: () =>
+          new Promise((resolve) => {
+            resolveStartBody = resolve
+            markStartRequestObserved()
+          }),
+      }
+    }
+    throw new Error('Unexpected Stripe request: ' + url)
+  }
+  api.__resetXanoToken()
+
+  try {
+    assert.deepEqual(await api.mountDashboard(), {
+      connected: false,
+      charges_enabled: false,
+    })
+
+    const started = api.handleStart(
+      button,
+      connectTile,
+      [root],
+      'member-a',
+      stripeTab,
+    )
+    await startRequestObserved
+    authChangeListener({ data: { id: 'member-b' } })
+    resolveStartBody({
+      mode: 'oauth',
+      url: 'https://connect.stripe.com/oauth/authorize?client_id=test',
+    })
+
+    assert.equal(await started, false)
+    assert.equal(statusReads, 1)
+    assert.equal(startReads, 1)
+    assert.equal(stripeTab.closed, true)
+    assert.deepEqual(popupDestinations, [])
+    assert.equal(root.getAttribute('data-stripe-connect-view'), 'error')
+  } finally {
+    api.__resetXanoToken()
+    global.document = previous.document
+    global.fetch = previous.fetch
+    global.getXanoAuthToken = previous.getXanoAuthToken
+    global.history = previous.history
+    global.location = previous.location
+    global.memberReady = previous.memberReady
+    global.$memberstackDom = previous.memberstack
+    global.sessionStorage = previous.sessionStorage
+  }
+})
+
+test('a silent member change while a Dashboard response body parses blocks navigation', async () => {
+  const previous = {
+    document: global.document,
+    fetch: global.fetch,
+    getXanoAuthToken: global.getXanoAuthToken,
+    history: global.history,
+    location: global.location,
+    memberReady: global.memberReady,
+    memberstack: global.$memberstackDom,
+    open: global.open,
+    sessionStorage: global.sessionStorage,
+  }
+  const storage = sessionStorageFixture()
+  const { root } = stripeRoot()
+  const button = new FakeElement('BUTTON')
+  const popupDestinations = []
+  const stripeTab = {
+    closed: false,
+    close() {
+      this.closed = true
+    },
+    location: {
+      replace(url) {
+        popupDestinations.push(url)
+      },
+    },
+  }
+  let markDashboardBodyObserved
+  let resolveDashboardBody
+  let dashboardReads = 0
+  let liveMemberId = 'member-a'
+  let statusReads = 0
+  const dashboardBodyObserved = new Promise((resolve) => {
+    markDashboardBodyObserved = resolve
+  })
+  global.sessionStorage = storage
+  global.document = {
+    title: 'Starter dashboard',
+    querySelectorAll(value) {
+      return value === selector('root') ? [root] : []
+    },
+  }
+  global.history = { replaceState() {} }
+  global.location = {
+    href: 'https://thestarters.com/starter-dashboard',
+    origin: 'https://thestarters.com',
+    search: '',
+  }
+  global.memberReady = Promise.resolve({ id: 'member-a' })
+  global.$memberstackDom = {
+    getCurrentMember: async () => ({ data: { id: liveMemberId } }),
+    onAuthChange() {
+      return { unsubscribe() {} }
+    },
+  }
+  global.getXanoAuthToken = async () => 'member-a-xano-token'
+  global.open = () => stripeTab
+  global.fetch = async (url) => {
+    if (String(url).includes('/stripe_connect/status/v3')) {
+      statusReads += 1
+      return response({ connected: true, charges_enabled: true })
+    }
+    if (String(url).includes('/stripe_connect/dashboard/v3')) {
+      dashboardReads += 1
+      return {
+        ok: true,
+        status: 200,
+        json: () =>
+          new Promise((resolve) => {
+            resolveDashboardBody = resolve
+            markDashboardBodyObserved()
+          }),
+      }
+    }
+    throw new Error('Unexpected Stripe request: ' + url)
+  }
+  api.__resetXanoToken()
+
+  try {
+    assert.deepEqual(await api.mountDashboard(), {
+      connected: true,
+      charges_enabled: true,
+    })
+
+    const opened = api.openDashboardInNewTab(
+      api.createExclusiveRunner(),
+      button,
+      [root],
+      'member-a',
+    )
+    await dashboardBodyObserved
+    liveMemberId = 'member-b'
+    resolveDashboardBody({
+      account_id: 'acct_ownerA',
+      connected: true,
+      mode: 'full',
+      url: 'https://dashboard.stripe.com/b/acct_ownerA',
+    })
+
+    assert.equal(await opened, false)
+    assert.equal(statusReads, 1)
+    assert.equal(dashboardReads, 1)
+    assert.equal(stripeTab.closed, true)
+    assert.deepEqual(popupDestinations, [])
+    assert.equal(root.getAttribute('data-stripe-connect-view'), 'error')
+  } finally {
+    api.__resetXanoToken()
+    global.document = previous.document
+    global.fetch = previous.fetch
+    global.getXanoAuthToken = previous.getXanoAuthToken
+    global.history = previous.history
+    global.location = previous.location
+    global.memberReady = previous.memberReady
+    global.$memberstackDom = previous.memberstack
+    global.open = previous.open
+    global.sessionStorage = previous.sessionStorage
+  }
+})
+
+test('an auth event after the final member read cannot escape through Connect navigation', async () => {
+  const previous = {
+    document: global.document,
+    fetch: global.fetch,
+    getXanoAuthToken: global.getXanoAuthToken,
+    history: global.history,
+    location: global.location,
+    memberReady: global.memberReady,
+    memberstack: global.$memberstackDom,
+    sessionStorage: global.sessionStorage,
+  }
+  const storage = sessionStorageFixture()
+  const { root } = stripeRoot()
+  const button = new FakeElement('BUTTON')
+  const connectTile = new FakeElement()
+  const popupDestinations = []
+  const stripeTab = {
+    closed: false,
+    close() {
+      this.closed = true
+    },
+    location: {
+      replace(url) {
+        popupDestinations.push(url)
+      },
+    },
+  }
+  let actionPhase = false
+  let actionLiveReads = 0
+  let authChangeListener
+  let startReads = 0
+  let statusReads = 0
+  global.sessionStorage = storage
+  global.document = {
+    title: 'Starter dashboard',
+    querySelectorAll(value) {
+      return value === selector('root') ? [root] : []
+    },
+  }
+  global.history = { replaceState() {} }
+  global.location = {
+    href: 'https://thestarters.com/starter-dashboard',
+    origin: 'https://thestarters.com',
+    search: '',
+  }
+  global.memberReady = Promise.resolve({ id: 'member-a' })
+  global.$memberstackDom = {
+    getCurrentMember() {
+      if (!actionPhase) {
+        return Promise.resolve({ data: { id: 'member-a' } })
+      }
+      actionLiveReads += 1
+      if (actionLiveReads !== 5) {
+        return Promise.resolve({ data: { id: 'member-a' } })
+      }
+      return {
+        then(resolve) {
+          resolve({ data: { id: 'member-a' } })
+          queueMicrotask(() => {
+            queueMicrotask(() => {
+              queueMicrotask(() => authChangeListener({ id: 'member-a' }))
+            })
+          })
+        },
+      }
+    },
+    onAuthChange(listener) {
+      authChangeListener = listener
+      return { unsubscribe() {} }
+    },
+  }
+  global.getXanoAuthToken = async () => 'member-a-xano-token'
+  global.fetch = async (url) => {
+    if (String(url).includes('/stripe_connect/status/v3')) {
+      statusReads += 1
+      return response({ connected: false, charges_enabled: false })
+    }
+    if (String(url).includes('/stripe_connect/start/v3')) {
+      startReads += 1
+      return response({
+        mode: 'oauth',
+        url: 'https://connect.stripe.com/oauth/authorize?client_id=test',
+      })
+    }
+    throw new Error('Unexpected Stripe request: ' + url)
+  }
+  api.__resetXanoToken()
+
+  try {
+    assert.deepEqual(await api.mountDashboard(), {
+      connected: false,
+      charges_enabled: false,
+    })
+    actionPhase = true
+
+    assert.equal(
+      await api.handleStart(
+        button,
+        connectTile,
+        [root],
+        'member-a',
+        stripeTab,
+      ),
+      false,
+    )
+    assert.equal(actionLiveReads, 5)
+    assert.equal(statusReads, 1)
+    assert.equal(startReads, 1)
+    assert.equal(stripeTab.closed, true)
+    assert.deepEqual(popupDestinations, [])
+    assert.equal(root.getAttribute('data-stripe-connect-view'), 'error')
   } finally {
     api.__resetXanoToken()
     global.document = previous.document
@@ -4710,8 +5432,9 @@ test('dashboard discards stale status and token after an ABA auth change', async
     sessionStorage: global.sessionStorage,
   }
   const storage = sessionStorageFixture()
-  const { errorCopy, root } = stripeRoot()
+  const { errorCopy, root, states } = stripeRoot()
   const earningsTile = new FakeElement()
+  const refresh = new FakeElement('BUTTON')
   const setRootAttribute = root.setAttribute.bind(root)
   const replaced = []
   const statusAuthorizations = []
@@ -4721,15 +5444,11 @@ test('dashboard discards stale status and token after an ABA auth change', async
   let conflictReasonWrites = 0
   let liveMemberId = 'member-a'
   let liveReads = 0
+  let reloads = 0
   let readyViewWrites = 0
   let statusReads = 0
-  let resolveRecoveryStatus
   let resolveToken
-  let markRecoveryStatusStarted
   let markTokenRequestStarted
-  const recoveryStatusStarted = new Promise((resolve) => {
-    markRecoveryStatusStarted = resolve
-  })
   const tokenRequestStarted = new Promise((resolve) => {
     markTokenRequestStarted = resolve
   })
@@ -4746,6 +5465,9 @@ test('dashboard discards stale status and token after an ABA auth change', async
     }
     setRootAttribute(name, value)
   }
+  refresh.setAttribute(ACTION_ATTR, 'refresh')
+  states.error.children.set(actionSelector('refresh'), refresh)
+  root.children.set(actionSelector('refresh'), refresh)
   global.sessionStorage = storage
   global.console = { ...console, error: () => {} }
   api.storeReturnReason('member-a', {
@@ -4769,6 +5491,9 @@ test('dashboard discards stale status and token after an ABA auth change', async
       'stripe_connect=reconciliation_required&' +
       'stripe_connect_reason=account_owner_conflict&utm_source=proof#stripe',
     origin: 'https://thestarters.com',
+    reload: () => {
+      reloads += 1
+    },
     search:
       '?stripe_connect=reconciliation_required&' +
       'stripe_connect_reason=account_owner_conflict&utm_source=proof',
@@ -4805,16 +5530,6 @@ test('dashboard discards stale status and token after an ABA auth change', async
   global.fetch = async (_url, options) => {
     statusReads += 1
     statusAuthorizations.push(options.headers.Authorization)
-    if (statusReads === 1) {
-      return response({ connected: true, charges_enabled: true })
-    }
-    if (statusReads === 2) {
-      return new Promise((resolve) => {
-        resolveRecoveryStatus = () =>
-          resolve(response({ connected: false, charges_enabled: false }))
-        markRecoveryStatusStarted()
-      })
-    }
     return response({ connected: true, charges_enabled: true })
   }
   api.__resetXanoToken()
@@ -4826,23 +5541,16 @@ test('dashboard discards stale status and token after an ABA auth change', async
 
     liveMemberId = 'member-b'
     authChangeListener({ id: 'member-b' })
-    resolveToken('member-a-xano-token')
-
-    await recoveryStatusStarted
     liveMemberId = 'member-a'
     authChangeListener({ id: 'member-a' })
-    resolveRecoveryStatus()
+    resolveToken('member-b-xano-token')
 
     assert.equal(await mounted, null)
-    assert.equal(liveReads, 2)
-    assert.equal(authUnsubscribes, 2)
-    assert.equal(statusReads, 3)
-    assert.deepEqual(tokenOptions, [undefined, { forceRefresh: true }])
-    assert.deepEqual(statusAuthorizations, [
-      'Bearer member-a-xano-token',
-      'Bearer member-b-xano-token',
-      'Bearer member-b-xano-token',
-    ])
+    assert.equal(liveReads, 3)
+    assert.equal(authUnsubscribes, 1)
+    assert.equal(statusReads, 0)
+    assert.deepEqual(tokenOptions, [undefined])
+    assert.deepEqual(statusAuthorizations, [])
     assert.equal(conflictReasonWrites, 0)
     assert.equal(readyViewWrites, 0)
     assert.equal(storage.values.size, 0)
@@ -4853,7 +5561,18 @@ test('dashboard discards stale status and token after an ABA auth change', async
     assert.equal(root.getAttribute('data-stripe-connect-reason'), null)
     assert.equal(earningsTile.getAttribute('aria-disabled'), 'true')
     earningsTile.dispatchEvent({ type: 'click' })
-    assert.equal(statusReads, 3)
+    assert.equal(statusReads, 0)
+    const click = {
+      defaultPrevented: false,
+      preventDefault() {
+        this.defaultPrevented = true
+      },
+      type: 'click',
+    }
+    refresh.dispatchEvent(click)
+    assert.equal(click.defaultPrevented, true)
+    assert.equal(reloads, 1)
+    assert.equal(statusReads, 0)
     assert.equal(errorCopy.label.textContent, 'Stripe Status Unavailable')
     assert.equal(
       errorCopy.message.textContent,
@@ -4875,7 +5594,7 @@ test('dashboard discards stale status and token after an ABA auth change', async
   }
 })
 
-test('dashboard repolls when auth changes at the final render boundary', async () => {
+test('dashboard stops when auth changes at the final render boundary', async () => {
   const previous = {
     document: global.document,
     fetch: global.fetch,
@@ -4934,13 +5653,15 @@ test('dashboard repolls when auth changes at the final render boundary', async (
   global.$memberstackDom = {
     getCurrentMember() {
       liveReads += 1
-      if (liveReads !== 2) {
+      if (liveReads !== 7) {
         return Promise.resolve({ data: { id: 'member-a' } })
       }
       return {
         then(resolve) {
           resolve({ data: { id: 'member-a' } })
-          queueMicrotask(() => authChangeListener({ id: 'member-a' }))
+          queueMicrotask(() => {
+            queueMicrotask(() => authChangeListener({ id: 'member-a' }))
+          })
         },
       }
     },
@@ -4972,19 +5693,16 @@ test('dashboard repolls when auth changes at the final render boundary', async (
   api.__resetXanoToken()
 
   try {
-    assert.deepEqual(await api.mountDashboard(), {
-      connected: true,
-      charges_enabled: true,
-    })
-    assert.equal(liveReads, 4)
-    assert.equal(authUnsubscribes, 2)
-    assert.equal(statusReads, 2)
+    assert.equal(await api.mountDashboard(), null)
+    assert.equal(liveReads, 7)
+    assert.equal(authUnsubscribes, 1)
+    assert.equal(statusReads, 1)
     assert.equal(conflictReasonWrites, 0)
     assert.equal(storage.values.size, 0)
     assert.deepEqual(replaced, [
       '/starter-dashboard?utm_source=proof#stripe',
     ])
-    assert.equal(root.getAttribute('data-stripe-connect-view'), 'ready')
+    assert.equal(root.getAttribute('data-stripe-connect-view'), 'error')
     assert.equal(root.getAttribute('data-stripe-connect-reason'), null)
     assert.equal(errorCopy.label.textContent, 'Stripe Status Unavailable')
     assert.equal(errorCopy.button.textContent, 'Try Again')
@@ -5149,6 +5867,7 @@ test('staging callback uses the persistent exchange and keeps the TEST domain', 
   global.$memberstackDom = {
     getCurrentMember: async () => ({ data: { id: 'mem_sb_test' } }),
     getMemberCookie: async () => 'ms-cookie',
+    onAuthChange: () => ({ unsubscribe() {} }),
   }
   global.fetch = async (url, options) => {
     requests.push({ url, options })

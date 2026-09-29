@@ -63,7 +63,10 @@
   const actionSelector = (name) => '[' + ACTION_ATTR + '="' + name + '"]'
   const canonicalConnectedByRoot = new WeakMap()
   const authoredErrorCopyByElement = new WeakMap()
+  const ownershipReloadRequiredByRoot = new WeakSet()
+  const dashboardAuthScopeByRoot = new WeakMap()
   let conflictAuthGeneration = 0
+  const MEMBER_SCOPE_CHANGED_CODE = 'member_scope_changed'
   const ACCOUNT_OWNER_CONFLICT_REASON = 'account_owner_conflict'
   const NO_RETURN_CONTEXT = Object.freeze({
     cleanReturnUrl: false,
@@ -132,6 +135,74 @@
       setView(root, view)
       show(root, canonicalConnectedByRoot.get(root) !== true)
     })
+  }
+
+  function ownershipReloadRequired(roots) {
+    return roots.some(function (root) {
+      return ownershipReloadRequiredByRoot.has(root)
+    })
+  }
+
+  function dashboardAuthScopeForRoots(roots) {
+    let scope = null
+    for (const root of roots) {
+      const candidate = dashboardAuthScopeByRoot.get(root)
+      if (!candidate) return null
+      if (scope && scope !== candidate) return null
+      scope = candidate
+    }
+    return scope
+  }
+
+  function clearReturnReason(storage = returnReasonStorage()) {
+    if (!storage) return false
+    try {
+      storage.removeItem(RETURN_REASON_STORAGE_KEY)
+      return true
+    } catch (_error) {
+      return false
+    }
+  }
+
+  function failClosedOwnership(
+    roots,
+    earningsTiles = resolveEarningsTiles([]),
+    action = 'session',
+  ) {
+    const alreadyRequired =
+      roots.length > 0 &&
+      roots.every(function (root) {
+        return ownershipReloadRequiredByRoot.has(root)
+      })
+    roots.forEach(function (root) {
+      ownershipReloadRequiredByRoot.add(root)
+      canonicalConnectedByRoot.delete(root)
+      const scope = dashboardAuthScopeByRoot.get(root)
+      releaseConflictAuthScope(scope)
+      dashboardAuthScopeByRoot.delete(root)
+    })
+    xanoTokenPromise = null
+    clearReturnReason()
+    if (!alreadyRequired) {
+      renderRoots(roots, 'error')
+      renderEarningsTiles(earningsTiles, 'error')
+      emit('starterStripeConnectError', {
+        action,
+        message: 'Member session changed. Reload the page to continue.',
+      })
+    }
+    return null
+  }
+
+  function reloadAfterOwnershipLoss(event, roots) {
+    if (!ownershipReloadRequired(roots)) return false
+    if (event && typeof event.preventDefault === 'function') {
+      event.preventDefault()
+    }
+    if (global.location && typeof global.location.reload === 'function') {
+      global.location.reload()
+    }
+    return true
   }
 
   function isAccountOwnerConflictRecovery(button, roots) {
@@ -257,7 +328,7 @@
     }
   }
 
-  function armConflictAuthScope(expectedMemberId) {
+  function armConflictAuthScope(expectedMemberId, onInvalidated) {
     let memberstack = null
     const hasExpectedMember = expectedMemberId !== undefined
     try {
@@ -303,6 +374,8 @@
       const registered = memberstack.onAuthChange(function () {
         if (!active) return
         conflictAuthGeneration += 1
+        xanoTokenPromise = null
+        if (typeof onInvalidated === 'function') onInvalidated()
       })
       if (
         !registered ||
@@ -335,6 +408,26 @@
     } catch (_error) {
       return ''
     }
+  }
+
+  function memberScopeChangedError() {
+    return Object.assign(new Error('Member session changed'), {
+      code: MEMBER_SCOPE_CHANGED_CODE,
+    })
+  }
+
+  function requireConflictAuthScope(scope) {
+    if (!conflictAuthScopeIsCurrent(scope)) throw memberScopeChangedError()
+  }
+
+  async function requireConflictAuthScopeMember(scope) {
+    requireConflictAuthScope(scope)
+    const memberId = await conflictAuthScopeMemberId(scope)
+    requireConflictAuthScope(scope)
+    if (!memberId || memberId !== scope.expectedMemberId) {
+      throw memberScopeChangedError()
+    }
+    return memberId
   }
 
   let xanoTokenPromise = null
@@ -386,10 +479,24 @@
     return xanoTokenPromise
   }
 
-  async function post(path, payload, allowAuthRetry, forceAuthRefresh) {
+  async function post(
+    path,
+    payload,
+    allowAuthRetry,
+    forceAuthRefresh,
+    authScope,
+  ) {
     const retryOnAuthFailure = allowAuthRetry !== false
+    if (authScope) {
+      await requireConflictAuthScopeMember(authScope)
+      requireConflictAuthScope(authScope)
+    }
     const tokenPromise = xanoToken(forceAuthRefresh === true)
     const token = await tokenPromise
+    if (authScope) {
+      await requireConflictAuthScopeMember(authScope)
+      requireConflictAuthScope(authScope)
+    }
     const response = await global.fetch(XANO_BASE + path, {
       method: 'POST',
       headers: {
@@ -398,13 +505,21 @@
       },
       body: JSON.stringify(payload),
     })
+    if (authScope) {
+      await requireConflictAuthScopeMember(authScope)
+      requireConflictAuthScope(authScope)
+    }
     if (response.status === 401 && retryOnAuthFailure) {
       if (xanoTokenPromise === tokenPromise) xanoTokenPromise = null
-      return post(path, payload, false, true)
+      return post(path, payload, false, true, authScope)
     }
     const data = await response.json().catch(function () {
       return null
     })
+    if (authScope) {
+      await requireConflictAuthScopeMember(authScope)
+      requireConflictAuthScope(authScope)
+    }
     if (!response.ok) {
       throw Object.assign(new Error(path + ' failed (' + response.status + ')'), {
         status: response.status,
@@ -417,8 +532,14 @@
     return data
   }
 
-  function fetchStatus(forceAuthRefresh) {
-    return post(STATUS_PATH, {}, true, forceAuthRefresh === true)
+  function fetchStatus(forceAuthRefresh, authScope) {
+    return post(
+      STATUS_PATH,
+      {},
+      true,
+      forceAuthRefresh === true,
+      authScope,
+    )
   }
 
   function createAttemptKey(prefix) {
@@ -500,7 +621,7 @@
     return shouldRetainConnectStartKey(error)
   }
 
-  function startConnect(returnUrl, idempotencyKey) {
+  function startConnect(returnUrl, idempotencyKey, authScope) {
     const callbackUrl = new URL(CALLBACK_PATH, new URL(returnUrl).origin).toString()
     const payload = {
       return_url: returnUrl,
@@ -511,25 +632,37 @@
       throw new Error('Stripe Connect idempotency key is invalid')
     }
     payload.idempotency_key = attemptKey
-    return post(START_PATH, payload)
+    return post(START_PATH, payload, true, false, authScope)
   }
 
-  function dashboardAccess(idempotencyKey) {
+  function dashboardAccess(idempotencyKey, authScope) {
     if (!idempotencyKey || idempotencyKey.length > IDEMPOTENCY_KEY_MAX_LENGTH) {
       throw new Error('Stripe Dashboard idempotency key is invalid')
     }
-    return post(DASHBOARD_ACCESS_PATH, { idempotency_key: idempotencyKey })
+    return post(
+      DASHBOARD_ACCESS_PATH,
+      { idempotency_key: idempotencyKey },
+      true,
+      false,
+      authScope,
+    )
   }
 
-  function disconnectConnect(idempotencyKey) {
+  function disconnectConnect(idempotencyKey, authScope) {
     if (!idempotencyKey || idempotencyKey.length > IDEMPOTENCY_KEY_MAX_LENGTH) {
       throw new Error('Stripe disconnect idempotency key is invalid')
     }
-    return post(DISCONNECT_PATH, { idempotency_key: idempotencyKey })
+    return post(
+      DISCONNECT_PATH,
+      { idempotency_key: idempotencyKey },
+      true,
+      false,
+      authScope,
+    )
   }
 
-  function exchangeCode(code, state) {
-    return post(EXCHANGE_PATH, { code, state }, false)
+  function exchangeCode(code, state, authScope) {
+    return post(EXCHANGE_PATH, { code, state }, false, false, authScope)
   }
 
   function resolveExchangeMode(result) {
@@ -1048,7 +1181,9 @@
     memberId,
     earningsTiles = resolveEarningsTiles([]),
   ) {
+    if (ownershipReloadRequired(roots)) return Promise.resolve(false)
     return runExclusive(async function () {
+      if (ownershipReloadRequired(roots)) return false
       let failed = false
       const stripeTab = reserveStripeTab()
       if (!stripeTab) {
@@ -1065,9 +1200,17 @@
       try {
         const activeMemberId = await currentMemberId()
         if (activeMemberId !== memberId) {
-          throw new Error('Member session changed before Stripe Dashboard access')
+          throw new Error(
+            'Member session changed before Stripe Dashboard access',
+          )
         }
-        const result = await dashboardAccess(currentDashboardAttemptKey())
+        const authScope = dashboardAuthScopeForRoots(roots)
+        if (ownershipReloadRequired(roots)) throw memberScopeChangedError()
+        const result = await dashboardAccess(
+          currentDashboardAttemptKey(),
+          authScope,
+        )
+        if (authScope) requireConflictAuthScope(authScope)
         if (result.mode === 'disconnected' && result.connected === false) {
           clearDashboardAttemptKey()
           closeStripeTab(stripeTab)
@@ -1076,6 +1219,7 @@
         }
         const destination = resolveDashboardDestination(result)
         clearDashboardAttemptKey()
+        if (authScope) requireConflictAuthScope(authScope)
         if (!navigateStripeTab(stripeTab, destination)) {
           throw new Error('Unable to open the connected Stripe account')
         }
@@ -1083,6 +1227,14 @@
         return true
       } catch (error) {
         failed = true
+        if (
+          error.code === MEMBER_SCOPE_CHANGED_CODE ||
+          ownershipReloadRequired(roots)
+        ) {
+          closeStripeTab(stripeTab)
+          failClosedOwnership(roots, earningsTiles)
+          return false
+        }
         if (!shouldRetainDashboardKey(error)) clearDashboardAttemptKey()
         closeStripeTab(stripeTab)
         renderRoots(roots, 'error')
@@ -1119,15 +1271,23 @@
     earningsTiles,
     bootMemberId,
   ) {
+    if (ownershipReloadRequired(roots)) return Promise.resolve(false)
     if (!confirmDisconnect()) return Promise.resolve(false)
     return runExclusive(async function () {
+      if (ownershipReloadRequired(roots)) return false
       setActionPending(button, true)
       try {
         const activeMemberId = await currentMemberId()
         if (activeMemberId !== bootMemberId) {
           throw new Error('Member session changed before Stripe disconnect')
         }
-        const result = await disconnectConnect(currentDisconnectAttemptKey())
+        const authScope = dashboardAuthScopeForRoots(roots)
+        if (ownershipReloadRequired(roots)) throw memberScopeChangedError()
+        const result = await disconnectConnect(
+          currentDisconnectAttemptKey(),
+          authScope,
+        )
+        if (authScope) requireConflictAuthScope(authScope)
         if (result.connected !== false) {
           throw new Error('Stripe disconnect returned an invalid result')
         }
@@ -1139,6 +1299,13 @@
         })
         return true
       } catch (error) {
+        if (
+          error.code === MEMBER_SCOPE_CHANGED_CODE ||
+          ownershipReloadRequired(roots)
+        ) {
+          failClosedOwnership(roots, earningsTiles)
+          return false
+        }
         if (!shouldRetainDisconnectKey(error)) clearDisconnectAttemptKey()
         renderRoots(roots, 'error')
         renderEarningsTiles(earningsTiles, 'error')
@@ -1277,6 +1444,13 @@
 
   function cleanReturnMarker() {
     const url = new URL(global.location.href)
+    if (
+      !url.searchParams.has('after_onboarding') &&
+      !url.searchParams.has('stripe_connect') &&
+      !url.searchParams.has('stripe_connect_reason')
+    ) {
+      return false
+    }
     url.searchParams.delete('after_onboarding')
     url.searchParams.delete('stripe_connect')
     url.searchParams.delete('stripe_connect_reason')
@@ -1285,16 +1459,19 @@
       global.document.title,
       url.pathname + url.search + url.hash,
     )
+    return true
   }
 
-  async function readSettledStatus(returnedFromStripe, forceAuthRefresh) {
+  async function readSettledStatus(returnedFromStripe, authScope) {
     let status = null
     const delays = returnedFromStripe ? RETURN_POLL_DELAYS_MS : [0]
 
-    for (let index = 0; index < delays.length; index += 1) {
-      const delay = delays[index]
+    for (const delay of delays) {
+      if (authScope) requireConflictAuthScope(authScope)
       if (delay) await wait(delay)
-      status = await fetchStatus(forceAuthRefresh === true && index === 0)
+      if (authScope) requireConflictAuthScope(authScope)
+      status = await fetchStatus(false, authScope)
+      if (authScope) requireConflictAuthScope(authScope)
       if (status.charges_enabled === true) break
     }
     return status
@@ -1315,64 +1492,40 @@
     returnContext = NO_RETURN_CONTEXT,
     earningsTiles = resolveEarningsTiles([]),
   ) {
+    if (ownershipReloadRequired(roots)) {
+      releaseConflictAuthScope(returnContext.conflictAuthScope)
+      if (returnContext.cleanReturnUrl) cleanReturnMarker()
+      return null
+    }
     renderRoots(roots, 'loading')
     renderEarningsTiles(earningsTiles, 'loading')
-    let recoveryAuthScope = null
+    const persistedAuthScope = dashboardAuthScopeForRoots(roots)
+    const contextAuthScope = returnContext.conflictAuthScope
+    const authScope = contextAuthScope || persistedAuthScope
+    const releaseAuthScopeAtEnd = Boolean(
+      contextAuthScope && contextAuthScope !== persistedAuthScope,
+    )
+    const hasTrustedConflictReason =
+      returnContext.reason === ACCOUNT_OWNER_CONFLICT_REASON
     try {
-      let effectiveReturnContext = returnContext
-      const hasTrustedConflictReason =
-        returnContext.reason === ACCOUNT_OWNER_CONFLICT_REASON
-      let status = hasTrustedConflictReason
-        ? await fetchStatus()
-        : await readSettledStatus(returnContext.pollForSettlement)
-      let trustedConflictScope = false
+      let status = null
       let reason = ''
-      if (hasTrustedConflictReason) {
-        const conflictAuthScope = returnContext.conflictAuthScope
-        const activeMemberId = await conflictAuthScopeMemberId(
-          conflictAuthScope,
+      if (authScope) {
+        await requireConflictAuthScopeMember(authScope)
+        status = await readSettledStatus(
+          hasTrustedConflictReason ? false : returnContext.pollForSettlement,
+          authScope,
         )
-        if (
-          conflictAuthScope &&
-          activeMemberId === conflictAuthScope.expectedMemberId &&
-          conflictAuthScopeIsCurrent(conflictAuthScope)
-        ) {
-          trustedConflictScope = true
-        } else {
-          releaseConflictAuthScope(conflictAuthScope)
-          effectiveReturnContext = genericizeReturnContext(returnContext)
-          recoveryAuthScope = armConflictAuthScope()
-          const recoveryMemberId = await conflictAuthScopeMemberId(
-            recoveryAuthScope,
-          )
-          if (
-            !recoveryAuthScope ||
-            !recoveryMemberId ||
-            !conflictAuthScopeIsCurrent(recoveryAuthScope)
-          ) {
-            xanoTokenPromise = null
-            throw new Error('Stripe status recovery lost member ownership')
-          }
-          recoveryAuthScope.expectedMemberId = recoveryMemberId
-          status = await readSettledStatus(
-            effectiveReturnContext.pollForSettlement,
-            true,
-          )
-          const settledMemberId = await conflictAuthScopeMemberId(
-            recoveryAuthScope,
-          )
-          if (
-            settledMemberId !== recoveryMemberId ||
-            !conflictAuthScopeIsCurrent(recoveryAuthScope)
-          ) {
-            xanoTokenPromise = null
-            throw new Error('Stripe status recovery lost member ownership')
-          }
-        }
+        await requireConflictAuthScopeMember(authScope)
+        requireConflictAuthScope(authScope)
+      } else if (hasTrustedConflictReason) {
+        throw memberScopeChangedError()
+      } else {
+        status = await readSettledStatus(returnContext.pollForSettlement)
       }
-      const view = resolveDashboardView(status, effectiveReturnContext)
+      const view = resolveDashboardView(status, returnContext)
       if (
-        trustedConflictScope &&
+        hasTrustedConflictReason &&
         view === 'error' &&
         isCanonicalDisconnectedStatus(status)
       ) {
@@ -1388,9 +1541,15 @@
       emit('starterStripeConnectReady', { view, status })
       return status
     } catch (error) {
-      if (returnContext.reason === ACCOUNT_OWNER_CONFLICT_REASON) {
-        xanoTokenPromise = null
+      if (
+        (authScope || hasTrustedConflictReason) &&
+        (error.code === MEMBER_SCOPE_CHANGED_CODE ||
+          ownershipReloadRequired(roots) ||
+          !conflictAuthScopeIsCurrent(authScope))
+      ) {
+        return failClosedOwnership(roots, earningsTiles)
       }
+      if (hasTrustedConflictReason) xanoTokenPromise = null
       renderRoots(roots, 'error')
       renderEarningsTiles(earningsTiles, 'error')
       emit('starterStripeConnectError', {
@@ -1403,9 +1562,7 @@
       )
       return null
     } finally {
-      if (recoveryAuthScope) xanoTokenPromise = null
-      releaseConflictAuthScope(returnContext.conflictAuthScope)
-      releaseConflictAuthScope(recoveryAuthScope)
+      if (releaseAuthScopeAtEnd) releaseConflictAuthScope(contextAuthScope)
       if (returnContext.cleanReturnUrl) cleanReturnMarker()
     }
   }
@@ -1417,6 +1574,10 @@
     bootMemberId,
     stripeTab,
   ) {
+    if (ownershipReloadRequired(roots)) {
+      closeStripeTab(stripeTab)
+      return false
+    }
     setStartPending(button, connectTile, true)
     try {
       if (!stripeTab || stripeTab.closed) {
@@ -1426,9 +1587,12 @@
       if (activeMemberId !== bootMemberId) {
         throw new Error('Member session changed before Stripe Connect redirect')
       }
+      const authScope = dashboardAuthScopeForRoots(roots)
+      if (ownershipReloadRequired(roots)) throw memberScopeChangedError()
       const returnUrl = new URL(DASHBOARD_PATH, global.location.origin).toString()
       const attemptKey = currentConnectStartAttemptKey()
-      const result = await startConnect(returnUrl, attemptKey)
+      const result = await startConnect(returnUrl, attemptKey, authScope)
+      if (authScope) requireConflictAuthScope(authScope)
       if (
         (result.mode === 'connected' || result.mode === 'reconciliation_required')
       ) {
@@ -1445,13 +1609,23 @@
         clearConnectStartAttemptKey()
         throw new Error('Stripe Connect start returned an invalid URL')
       }
-      emit('starterStripeConnectRedirect', { mode: result.mode || '' })
+      if (authScope) requireConflictAuthScope(authScope)
       if (!navigateStripeTab(stripeTab, result.url)) {
         throw new Error('Unable to open the Stripe Connect tab')
       }
+      emit('starterStripeConnectRedirect', { mode: result.mode || '' })
       clearConnectStartAttemptKey()
       return true
     } catch (error) {
+      if (
+        error.code === MEMBER_SCOPE_CHANGED_CODE ||
+        ownershipReloadRequired(roots)
+      ) {
+        closeStripeTab(stripeTab)
+        setStartPending(button, connectTile, false)
+        failClosedOwnership(roots)
+        return false
+      }
       if (!shouldRetainConnectStartKey(error)) {
         clearConnectStartAttemptKey()
       }
@@ -1478,7 +1652,9 @@
     memberId,
     earningsTiles = resolveEarningsTiles([]),
   ) {
+    if (ownershipReloadRequired(roots)) return Promise.resolve(false)
     return runExclusive(function () {
+      if (ownershipReloadRequired(roots)) return false
       const stripeTab = reserveStripeTab()
       if (!stripeTab) {
         renderRoots(roots, 'error')
@@ -1589,9 +1765,29 @@
 
     try {
       const memberId = await initialMemberId()
+      const dashboardAuthScope = armConflictAuthScope(
+        memberId,
+        function () {
+          failClosedOwnership(roots, earningsTiles)
+        },
+      )
+      if (!dashboardAuthScope) {
+        failClosedOwnership(roots, earningsTiles)
+        cleanReturnMarker()
+        return null
+      }
+      roots.forEach(function (root) {
+        dashboardAuthScopeByRoot.set(root, dashboardAuthScope)
+      })
       if (earningsTiles.primary) {
         const heroTile = earningsTiles.primary
         const activateHeroTile = function (event, keyboard) {
+          if (ownershipReloadRequired(roots)) {
+            if (event && typeof event.preventDefault === 'function') {
+              event.preventDefault()
+            }
+            return false
+          }
           return handleHeroTileActivation(heroTile, event, keyboard, {
             start: function () {
               startInNewTab(
@@ -1627,6 +1823,7 @@
           .forEach(function (button) {
             button.addEventListener('click', function (event) {
               event.preventDefault()
+              if (ownershipReloadRequired(roots)) return
               openDashboardInNewTab(
                 runExclusive,
                 button,
@@ -1639,6 +1836,7 @@
         root.querySelectorAll(actionSelector('start')).forEach(function (button) {
           button.addEventListener('click', function (event) {
             event.preventDefault()
+            if (ownershipReloadRequired(roots)) return
             startInNewTab(
               runExclusive,
               button,
@@ -1652,6 +1850,7 @@
         root.querySelectorAll(actionSelector('refresh')).forEach(function (button) {
           button.addEventListener('click', function (event) {
             event.preventDefault()
+            if (reloadAfterOwnershipLoss(event, roots)) return
             if (isAccountOwnerConflictRecovery(button, roots)) {
               startInNewTab(
                 runExclusive,
@@ -1684,19 +1883,17 @@
       let conflictAuthScope = null
       let trustedReason = ''
       if (receiptContext.reason === ACCOUNT_OWNER_CONFLICT_REASON) {
-        conflictAuthScope = armConflictAuthScope(memberId)
+        conflictAuthScope = dashboardAuthScope
         const activeMemberId = await conflictAuthScopeMemberId(
           conflictAuthScope,
         )
         if (
-          conflictAuthScope &&
           activeMemberId === memberId &&
           conflictAuthScopeIsCurrent(conflictAuthScope)
         ) {
           trustedReason = receiptContext.reason
         } else {
-          releaseConflictAuthScope(conflictAuthScope)
-          conflictAuthScope = null
+          failClosedOwnership(roots, earningsTiles)
         }
       }
       let returnContext = {
@@ -1748,6 +1945,14 @@
     const roots = Array.prototype.slice.call(
       global.document.querySelectorAll(elementSelector('root')),
     )
+    clearReturnReason()
+    roots.forEach(function (root) {
+      root.querySelectorAll(actionSelector('refresh')).forEach(function (button) {
+        button.addEventListener('click', function (event) {
+          reloadAfterOwnershipLoss(event, roots)
+        })
+      })
+    })
     renderRoots(roots, 'loading')
     const params = callbackParams()
     let callbackAuthScope = null
@@ -1759,45 +1964,32 @@
         throw new Error('Stripe Connect state is missing or invalid')
       }
 
-      callbackAuthScope = armConflictAuthScope()
-      let memberId = await conflictAuthScopeMemberId(callbackAuthScope)
-      if (
-        callbackAuthScope &&
-        memberId &&
-        conflictAuthScopeIsCurrent(callbackAuthScope)
-      ) {
-        callbackAuthScope.expectedMemberId = memberId
-      } else {
-        releaseConflictAuthScope(callbackAuthScope)
-        callbackAuthScope = null
-        memberId = await currentMemberId()
+      callbackAuthScope = armConflictAuthScope(undefined, function () {
+        failClosedOwnership(roots, undefined, 'callback')
+      })
+      if (!callbackAuthScope) throw memberScopeChangedError()
+      const memberId = await conflictAuthScopeMemberId(callbackAuthScope)
+      if (!memberId || !conflictAuthScopeIsCurrent(callbackAuthScope)) {
+        throw memberScopeChangedError()
       }
+      callbackAuthScope.expectedMemberId = memberId
 
-      const result = await exchangeCode(params.code, params.state)
+      const result = await exchangeCode(
+        params.code,
+        params.state,
+        callbackAuthScope,
+      )
+      await requireConflictAuthScopeMember(callbackAuthScope)
+      requireConflictAuthScope(callbackAuthScope)
       const outcome = resolveExchangeOutcome(result)
       const mode = outcome.mode
       let publicReason = ''
-      let storedConflictReason = false
 
       if (
         outcome.reason === ACCOUNT_OWNER_CONFLICT_REASON &&
-        callbackAuthScope
+        storeReturnReason(memberId, outcome)
       ) {
-        const activeMemberId = await conflictAuthScopeMemberId(
-          callbackAuthScope,
-        )
-        if (
-          activeMemberId === memberId &&
-          conflictAuthScopeIsCurrent(callbackAuthScope) &&
-          storeReturnReason(memberId, outcome)
-        ) {
-          storedConflictReason = true
-        }
-      }
-      if (storedConflictReason) {
         publicReason = ACCOUNT_OWNER_CONFLICT_REASON
-      } else {
-        storeReturnReason(memberId, null)
       }
 
       if (mode === 'completed') signalStripeReturn(memberId)
@@ -1812,11 +2004,20 @@
       global.location.assign(dashboardUrl.toString())
       return result
     } catch (error) {
-      renderRoots(roots, 'error')
-      emit('starterStripeConnectError', {
-        action: 'callback',
-        message: error.message || 'Stripe Connect callback failed',
-      })
+      if (
+        error.code === MEMBER_SCOPE_CHANGED_CODE ||
+        ownershipReloadRequired(roots) ||
+        (callbackAuthScope &&
+          !conflictAuthScopeIsCurrent(callbackAuthScope))
+      ) {
+        failClosedOwnership(roots, undefined, 'callback')
+      } else {
+        renderRoots(roots, 'error')
+        emit('starterStripeConnectError', {
+          action: 'callback',
+          message: error.message || 'Stripe Connect callback failed',
+        })
+      }
       global.console.error('[stripe-connect-callback] Exchange failed', error)
       return null
     } finally {
