@@ -116,12 +116,10 @@
     })
   }
 
-  function renderRoots(roots, view, reason) {
+  function renderRoots(roots, view, reason, canonicalConnected) {
     roots.forEach(function (root) {
-      if (view === 'incomplete' || view === 'ready' || view === 'review') {
-        canonicalConnectedByRoot.set(root, true)
-      } else if (view === 'disconnected') {
-        canonicalConnectedByRoot.set(root, false)
+      if (typeof canonicalConnected === 'boolean') {
+        canonicalConnectedByRoot.set(root, canonicalConnected)
       }
       const publicReason =
         view === 'error' && reason === ACCOUNT_OWNER_CONFLICT_REASON
@@ -136,33 +134,35 @@
   }
 
   function isAccountOwnerConflictRecovery(button, roots) {
-    return (
-      button.getAttribute(ELEMENT_ATTR) === 'error' &&
-      roots.some(function (root) {
-        return root.getAttribute(REASON_ATTR) === ACCOUNT_OWNER_CONFLICT_REASON
-      })
+    return roots.some(function (root) {
+      if (root.getAttribute(REASON_ATTR) !== ACCOUNT_OWNER_CONFLICT_REASON) {
+        return false
+      }
+      const errorState = root.querySelector(elementSelector('error'))
+      return (
+        errorState &&
+        typeof errorState.contains === 'function' &&
+        errorState.contains(button)
+      )
+    })
+  }
+
+  function isCanonicalStatus(status) {
+    return Boolean(
+      status &&
+        typeof status === 'object' &&
+        typeof status.connected === 'boolean' &&
+        typeof status.charges_enabled === 'boolean' &&
+        !(status.connected === false && status.charges_enabled === true),
     )
   }
 
   function isCanonicalDisconnectedStatus(status) {
-    return (
-      status &&
-      typeof status === 'object' &&
-      status.connected === false &&
-      status.charges_enabled === false
-    )
+    return isCanonicalStatus(status) && status.connected === false
   }
 
   function resolveDashboardView(status, returnContext = NO_RETURN_CONTEXT) {
-    if (
-      !status ||
-      typeof status !== 'object' ||
-      typeof status.connected !== 'boolean' ||
-      typeof status.charges_enabled !== 'boolean' ||
-      (status.connected === false && status.charges_enabled === true)
-    ) {
-      return 'error'
-    }
+    if (!isCanonicalStatus(status)) return 'error'
     if (isCanonicalDisconnectedStatus(status)) {
       if (returnContext.mode === 'reconciliation_required') return 'error'
       return 'disconnected'
@@ -1213,7 +1213,12 @@
         returnContext.reason === ACCOUNT_OWNER_CONFLICT_REASON
           ? ACCOUNT_OWNER_CONFLICT_REASON
           : ''
-      renderRoots(roots, view, reason)
+      renderRoots(
+        roots,
+        view,
+        reason,
+        isCanonicalStatus(status) ? status.connected : undefined,
+      )
       renderEarningsTiles(earningsTiles, view, reason)
       emit('starterStripeConnectReady', { view, status })
       return status
@@ -1500,10 +1505,12 @@
 
       const returnSearch = global.location.search
       const untrustedReturnContext = resolveReturnContext(returnSearch)
-      const trustedReason = consumeReturnReason(
-        memberId,
+      const activeMemberId = await currentMemberId()
+      const receiptReason = consumeReturnReason(
+        activeMemberId,
         untrustedReturnContext.mode,
       )
+      const trustedReason = activeMemberId === memberId ? receiptReason : ''
       const returnContext = resolveReturnContext(returnSearch, trustedReason)
       return runExclusive(function () {
         return loadDashboardStatus(roots, returnContext, earningsTiles)

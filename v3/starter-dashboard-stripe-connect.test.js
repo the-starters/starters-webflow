@@ -49,6 +49,20 @@ class FakeElement {
     return event.defaultPrevented !== true
   }
 
+  contains(element) {
+    if (this === element) return true
+    return Array.from(this.children.values()).some((value) => {
+      const children = Array.isArray(value) ? value : [value]
+      return children.some(
+        (child) =>
+          child === element ||
+          (child &&
+            typeof child.contains === 'function' &&
+            child.contains(element)),
+      )
+    })
+  }
+
   setAttribute(name, value) {
     this.attributes.set(name, String(value))
   }
@@ -380,23 +394,23 @@ test('owner conflict uses safe recovery copy and later generic errors restore au
 
 test('only the authored conflict error action starts different-account recovery', () => {
   const { root, states } = stripeRoot()
-  states.error.setAttribute(ELEMENT_ATTR, 'error')
+  const refresh = new FakeElement('BUTTON')
+  const unrelatedRefresh = new FakeElement('BUTTON')
+  states.error.children.set(actionSelector('refresh'), refresh)
 
   api.renderRoots([root], 'error', 'account_owner_conflict')
   assert.equal(
-    api.isAccountOwnerConflictRecovery(states.error, [root]),
+    api.isAccountOwnerConflictRecovery(refresh, [root]),
     true,
+  )
+  assert.equal(
+    api.isAccountOwnerConflictRecovery(unrelatedRefresh, [root]),
+    false,
   )
 
   api.renderRoots([root], 'error')
   assert.equal(
-    api.isAccountOwnerConflictRecovery(states.error, [root]),
-    false,
-  )
-  states.error.setAttribute(ELEMENT_ATTR, 'review')
-  api.renderRoots([root], 'error', 'account_owner_conflict')
-  assert.equal(
-    api.isAccountOwnerConflictRecovery(states.error, [root]),
+    api.isAccountOwnerConflictRecovery(refresh, [root]),
     false,
   )
 })
@@ -664,13 +678,13 @@ test('connected Stripe states remove the Action Item root', () => {
   for (const view of ['incomplete', 'ready', 'review']) {
     const { root } = stripeRoot()
 
-    api.renderRoots([root], view)
+    api.renderRoots([root], view, '', true)
 
     assert.equal(root.hidden, true, view)
     assert.equal(root.style.display, 'none', view)
   }
 
-  for (const view of ['loading', 'disconnected', 'error']) {
+  for (const view of ['loading', 'error']) {
     const { root } = stripeRoot()
 
     api.renderRoots([root], view)
@@ -678,6 +692,11 @@ test('connected Stripe states remove the Action Item root', () => {
     assert.equal(root.hidden, false, view)
     assert.equal(root.style.display, '', view)
   }
+
+  const { root } = stripeRoot()
+  api.renderRoots([root], 'disconnected', '', false)
+  assert.equal(root.hidden, false)
+  assert.equal(root.style.display, '')
 })
 
 test('status refresh keeps a canonically connected Action Item hidden while polling', async () => {
@@ -693,7 +712,7 @@ test('status refresh keeps a canonically connected Action Item hidden while poll
       resolveStatus = resolve
     })
   api.__resetXanoToken()
-  api.renderRoots([root], 'ready')
+  api.renderRoots([root], 'ready', '', true)
 
   try {
     const refresh = api.loadDashboardStatus([root], returnContext())
@@ -738,7 +757,7 @@ test('Dashboard access failure keeps a canonically connected Action Item hidden'
   global.open = () => stripeTab
   global.fetch = async () => response({}, { ok: false, status: 503 })
   api.__resetXanoToken()
-  api.renderRoots([root], 'ready')
+  api.renderRoots([root], 'ready', '', true)
 
   try {
     assert.equal(
@@ -2501,8 +2520,13 @@ test('reconciliation replay stays fail closed while canonically disconnected', a
     removeEventListener: global.removeEventListener,
     setTimeout: global.setTimeout,
   }
-  const { errorCopy, root } = stripeRoot()
+  const { errorCopy, root, states } = stripeRoot()
   const button = new FakeElement('BUTTON')
+  const title = new FakeElement()
+  const description = new FakeElement()
+  button.children.set('.dash-hero_button-title', title)
+  button.children.set('.dash-hero_button-description', description)
+  const earningsTiles = api.resolveEarningsTiles([button])
   const stripeTab = {
     closed: false,
     close() {
@@ -2539,7 +2563,11 @@ test('reconciliation replay stays fail closed while canonically disconnected', a
     }
     if (String(url).includes('/stripe_connect/status/v3')) {
       statusReads += 1
-      return response({ connected: false, charges_enabled: false })
+      return response(
+        statusReads === 1
+          ? { connected: true, charges_enabled: false }
+          : { connected: false, charges_enabled: false },
+      )
     }
     throw new Error('Unexpected Stripe request: ' + url)
   }
@@ -2547,6 +2575,21 @@ test('reconciliation replay stays fail closed while canonically disconnected', a
   api.__resetConnectStartAttempt()
 
   try {
+    assert.deepEqual(
+      await api.loadDashboardStatus(
+        [root],
+        returnContext(),
+        earningsTiles,
+      ),
+      { connected: true, charges_enabled: false },
+    )
+    assert.equal(root.hidden, true)
+    assert.equal(button.hidden, false)
+    assert.equal(
+      button.getAttribute('data-stripe-connect-hero-action'),
+      'start',
+    )
+
     assert.equal(
       await api.startInNewTab(
         api.createExclusiveRunner(),
@@ -2554,15 +2597,23 @@ test('reconciliation replay stays fail closed while canonically disconnected', a
         button,
         [root],
         'member-123',
+        earningsTiles,
       ),
       false,
     )
-    assert.equal(statusReads, 5)
+    assert.equal(statusReads, 6)
     assert.equal(stripeTab.closed, true)
     assert.equal(root.getAttribute('data-stripe-connect-view'), 'error')
     assert.equal(root.getAttribute('data-stripe-connect-reason'), null)
+    assert.equal(root.hidden, false)
+    assert.equal(root.style.display, '')
+    assert.equal(states.error.style.display, '')
     assert.equal(errorCopy.label.textContent, 'Stripe Status Unavailable')
     assert.equal(errorCopy.button.textContent, 'Try Again')
+    assert.equal(button.hidden, false)
+    assert.equal(button.getAttribute('aria-disabled'), 'true')
+    assert.equal(title.textContent, 'Stripe Unavailable')
+    assert.equal(description.textContent, 'Use Try Again above')
   } finally {
     api.__resetXanoToken()
     api.__resetConnectStartAttempt()
@@ -3645,11 +3696,16 @@ test('authenticated callback mounts owner-conflict recovery and starts a new flo
     root: dashboardRoot,
     states: dashboardStates,
   } = stripeRoot()
+  const recoveryButton = new FakeElement('BUTTON')
   dashboardStates.error.setAttribute(ELEMENT_ATTR, 'error')
-  dashboardStates.error.setAttribute(ACTION_ATTR, 'refresh')
+  recoveryButton.setAttribute(ACTION_ATTR, 'refresh')
+  dashboardStates.error.children.set(
+    actionSelector('refresh'),
+    recoveryButton,
+  )
   dashboardRoot.children.set(
     actionSelector('refresh'),
-    dashboardStates.error,
+    recoveryButton,
   )
   let activeRoot = callbackRoot
   const assigned = []
@@ -3782,7 +3838,7 @@ test('authenticated callback mounts owner-conflict recovery and starts a new flo
       },
       type: 'click',
     }
-    dashboardStates.error.dispatchEvent(click)
+    recoveryButton.dispatchEvent(click)
     const startRequest = await startRequestObserved
     await new Promise(setImmediate)
 
@@ -3822,6 +3878,91 @@ test('authenticated callback mounts owner-conflict recovery and starts a new flo
     global.$memberstackDom = previous.memberstack
     global.open = previous.open
     global.removeEventListener = previous.removeEventListener
+    global.sessionStorage = previous.sessionStorage
+  }
+})
+
+test('dashboard rejects an owner-conflict receipt after member identity changes', async () => {
+  const previous = {
+    document: global.document,
+    fetch: global.fetch,
+    getXanoAuthToken: global.getXanoAuthToken,
+    history: global.history,
+    location: global.location,
+    memberReady: global.memberReady,
+    memberstack: global.$memberstackDom,
+    setTimeout: global.setTimeout,
+    sessionStorage: global.sessionStorage,
+  }
+  const storage = sessionStorageFixture()
+  const { errorCopy, root } = stripeRoot()
+  let liveReads = 0
+  let statusReads = 0
+  global.sessionStorage = storage
+  api.storeReturnReason('member-a', {
+    mode: 'reconciliation_required',
+    reason: 'account_owner_conflict',
+  })
+  global.document = {
+    title: 'Starter dashboard',
+    querySelectorAll(value) {
+      return value === selector('root') ? [root] : []
+    },
+  }
+  global.history = { replaceState: () => {} }
+  global.location = {
+    href:
+      'https://thestarters.com/starter-dashboard?' +
+      'stripe_connect=reconciliation_required&' +
+      'stripe_connect_reason=account_owner_conflict',
+    origin: 'https://thestarters.com',
+    search:
+      '?stripe_connect=reconciliation_required&' +
+      'stripe_connect_reason=account_owner_conflict',
+  }
+  global.memberReady = Promise.resolve({ id: 'member-a' })
+  global.$memberstackDom = {
+    getCurrentMember: async () => {
+      liveReads += 1
+      return { data: { id: 'member-b' } }
+    },
+  }
+  global.getXanoAuthToken = async () => 'member-b-xano-token'
+  global.setTimeout = (callback) => {
+    callback()
+    return 1
+  }
+  global.fetch = async (url) => {
+    if (String(url).includes('/stripe_connect/status/v3')) {
+      statusReads += 1
+      return response({ connected: false, charges_enabled: false })
+    }
+    throw new Error('Unexpected Stripe request: ' + url)
+  }
+  api.__resetXanoToken()
+
+  try {
+    assert.deepEqual(await api.mountDashboard(), {
+      connected: false,
+      charges_enabled: false,
+    })
+    assert.equal(liveReads, 1)
+    assert.equal(statusReads, 5)
+    assert.equal(storage.values.size, 0)
+    assert.equal(root.getAttribute('data-stripe-connect-view'), 'error')
+    assert.equal(root.getAttribute('data-stripe-connect-reason'), null)
+    assert.equal(errorCopy.label.textContent, 'Stripe Status Unavailable')
+    assert.equal(errorCopy.button.textContent, 'Try Again')
+  } finally {
+    api.__resetXanoToken()
+    global.document = previous.document
+    global.fetch = previous.fetch
+    global.getXanoAuthToken = previous.getXanoAuthToken
+    global.history = previous.history
+    global.location = previous.location
+    global.memberReady = previous.memberReady
+    global.$memberstackDom = previous.memberstack
+    global.setTimeout = previous.setTimeout
     global.sessionStorage = previous.sessionStorage
   }
 })
