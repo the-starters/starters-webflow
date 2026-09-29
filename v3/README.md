@@ -3130,8 +3130,9 @@ Deliberately NOT ported from the legacy inline writer:
   embed's `window.generateBookingsList` when present. Disconnects and manager
   switches never delegate to `window.clearGrantData`: the authenticated
   `grants/delete/v3` composite route is the single clear owner. While the
-  current calendar has a pending (Requested), confirmed, or rescheduled call,
-  that route returns HTTP 400 with a `data.message` matching
+  current calendar has a pending (Requested), confirmed, or rescheduled call
+  whose end time has not passed, that route returns HTTP 400 with a
+  `data.message` matching
   `/resolve active bookings/i` and does not cancel, archive, or delete anything.
   Both availability controllers map only that status and message to: `You have
   Requested or Confirmed calls on your current calendar. Decline or cancel them,
@@ -3244,6 +3245,16 @@ composite clear contract in
 [Booking-stage availability writer](#booking-stage-availability-writer); this
 section does not add a second clear owner.
 
+Connect Google goes straight to the `pre-oauth` step; the retired
+`switch-calendar` step never opens, and a stale Connect Google click without a
+connected Platform layer is ignored. V3 keeps one grant per member, so the
+"Done" click deletes the Platform grant through `grants/delete/v3` before the
+OAuth redirect. The shared composite-clear contract above owns its active-call
+refusal and no-cancellation guarantees; this section names any blocking calls in
+the error step. Known limit: if Google sign-in is abandoned after the Platform
+grant is deleted, the member remains disconnected until they click Connect
+Platform; reordering the transition server-side is planned.
+
 Designer markup contract (`data-availability-element="<name>"` unless noted):
 `section` (root), `connect-wrapper`, `connect-label-group`, `connect-label`,
 `connect-info-wrapper`, `connect-btn-wrapper`
@@ -3254,7 +3265,7 @@ Designer markup contract (`data-availability-element="<name>"` unless noted):
 (`data-availability-id=""`), `slots-wrapper`, `loading-slots`. Day selection
 renders as 7 Labelv2 badges per item; selected/unselected is a Designer
 component-variant class swap (`w-variant-89402c65-…` default,
-`w-variant-ebea452c-…` selected), not a data attribute.
+`w-variant-30a4a9ed-…` selected), not a data attribute.
 
 `connect-label-group` holds the connection status labels. Each
 `data-availability-element="connect-label"` carries `data-type="false"|"true"`
@@ -3309,7 +3320,7 @@ notification, applies native custom validity to both authored inputs, keeps the
 inline form editable, and sends no availability request.
 
 The three `connect-btn-wrapper` actions follow the two-layer state matrix. With
-no connection, Connect Platform and Connect Google show. With a virtual Nylas
+no connection, only Connect Platform shows. With a virtual Nylas
 grant, only Connect Google shows. With a Google-backed Nylas grant, only
 Disconnect Google shows. Connect Platform is never valid while either layer is
 connected, and a stale or programmatic click is ignored.
@@ -3430,9 +3441,10 @@ access tokens are never stored in the browser, and the returned `email` and
 `provider` are neither retained nor trusted.
 
 Nylas-standard OAuth failures (`error`, `error_description`, `error_uri`, or
-`error_code`) are captured without retaining their provider text, stripped from
-the visible URL, and routed to `config-request-error`. They never reach
-`grants/add/v3`; the member can reopen the same native modal and try again.
+`error_code`) are captured without retaining their provider text and stripped
+from the visible URL. They never reach `grants/add/v3`. The modal writer routes
+them to `config-request-error`; the non-modal section resumes through its
+connection-state contract above.
 
 Before persisting anything, the controller verifies `state` (set server-side from
 the caller's Bearer token) against the logged-in member and, on production,

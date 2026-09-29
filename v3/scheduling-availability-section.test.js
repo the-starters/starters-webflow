@@ -12,6 +12,8 @@ const ACTIVE_CALLS_COPY =
   'You have Requested or Confirmed calls on your current calendar. Decline or cancel them, or wait until they end, then try again.'
 const DISCONNECT_GOOGLE_GENERIC_COPY =
   "We couldn't disconnect your Google calendar. Please try again or contact support."
+const PAID_CALL_RATE_COPY =
+  'Your paid call rate must be a whole-dollar amount from $1 to $1,000. Update it in Call Settings, then try again.'
 
 /* ------------------------------------------------------------------ */
 /* Minimal DOM (same shape as scheduling-availability-writer.test.js)  */
@@ -933,14 +935,14 @@ test('getUpcomingTimeSlots returns the full booking window when limit is zero', 
 /* Tests: connection-state -> visibility                               */
 /* ------------------------------------------------------------------ */
 
-test('boots into disconnected state: connect + google visible, disconnect hidden', async () => {
+test('boots into disconnected state: only Connect Platform visible', async () => {
   const { dom, window } = loadSection()
   await settle()
 
   assert.equal(window.STARTER_SCHEDULING_CONNECTION.state, 'disconnected')
   assert.equal(dom.connectInfoWrapper.style.display, '')
   assert.notEqual(dom.connectBtnWrapper.children[0].style.display, 'none') // connect-platform
-  assert.notEqual(dom.connectBtnWrapper.children[1].style.display, 'none') // connect-google
+  assert.equal(dom.connectBtnWrapper.children[1].style.display, 'none') // Google waits for Platform
   assert.equal(dom.connectBtnWrapper.children[2].style.display, 'none') // disconnect-google
 })
 
@@ -950,7 +952,7 @@ test('connection pills and actions follow the independent Nylas and Google state
       name: 'no Nylas grant',
       serverState: {},
       labels: [true, false, true, false],
-      actions: [true, true, false],
+      actions: [true, false, false],
     },
     {
       name: 'virtual Nylas grant',
@@ -989,7 +991,7 @@ test('connection pills and actions follow the independent Nylas and Google state
         },
       },
       labels: [true, false, true, false],
-      actions: [true, true, false],
+      actions: [true, false, false],
     },
   ]
 
@@ -1190,29 +1192,43 @@ test('accepts any successful provider 2xx status when creating a scheduler confi
   assert.equal(dom.notif.steps['request-error'].style.display, 'none')
 })
 
-test('connect-google succeeds on a brand-new starter with no availability row yet', async () => {
-  // Reproduces the reported bug: a starter who has never saved any
-  // availability has no canonical availability row in Xano at all (not even
-  // the empty {items:{}, manager:null} shape) — refreshCanonicalConnectionState()'s
-  // strict isAvailability() check used to throw here and block the redirect
-  // before the member ever reached Google.
-  const { dom, assigned, warnings, window } = loadSection({
-    serverState: { availability: null },
-  })
+test('a disconnected member cannot reach Google OAuth: a stale Connect Google click is ignored', async () => {
+  const { dom, calls, assigned } = loadSection({ serverState: { availability: null } })
   await settle()
 
-  dom.connectBtnWrapper.children[1].click() // open-connect-google -> disconnected, so straight to pre-oauth
+  assert.equal(dom.connectBtnWrapper.children[1].style.display, 'none')
+  dom.connectBtnWrapper.children[1].click() // hidden, programmatic click
+  dom.notif.oauthRedirectBtn.click()
+  await settle()
+
+  assert.equal(dom.notif.steps['pre-oauth'].style.display, 'none')
+  assert.equal(dom.notif.steps['switch-calendar'].style.display, 'none')
+  assert.equal(dom.notif.steps['oauth-redirect'].style.display, 'none')
+  assert.equal(dom.notif.steps['request-error'].style.display, 'none')
+  assert.equal(calls.filter((c) => c.path === '/grants/delete/v3').length, 0)
+  assert.equal(calls.filter((c) => c.path === '/grants/oauth/v3').length, 0)
+  assert.equal(assigned.length, 0)
+})
+
+test('a brand-new member connects Platform first, then Connect Google reaches OAuth', async () => {
+  const { dom, calls, assigned, window } = loadSection({ serverState: { availability: null } })
+  await settle()
+
+  dom.connectBtnWrapper.children[0].click() // connect-platform
+  await settle()
+  assert.equal(window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
+  assert.notEqual(dom.connectBtnWrapper.children[1].style.display, 'none') // Google now offered
+
+  dom.connectBtnWrapper.children[1].click() // open-connect-google -> informational step
   assert.equal(dom.notif.steps['pre-oauth'].style.display, '')
-  assert.equal(assigned.length, 0, 'no redirect yet — still waiting on the informational step')
-
-  dom.notif.oauthRedirectBtn.click() // "Done" -> the actual redirect
+  assert.equal(dom.notif.steps['switch-calendar'].style.display, 'none')
+  dom.notif.oauthRedirectBtn.click() // "Done"
   await settle()
 
-  assert.equal(assigned.length, 1, 'the OAuth redirect actually happened')
+  assert.equal(calls.filter((c) => c.path === '/grants/delete/v3').length, 1)
+  assert.equal(calls.filter((c) => c.path === '/grants/oauth/v3').length, 1)
+  assert.equal(assigned.length, 1)
   assert.ok(assigned[0].includes('nylas.example/oauth'))
-  assert.ok(!warnings.some((w) => w.includes('connect-google failed')))
-  assert.ok(window.sessionStorage._map.has('starter-scheduling-oauth-intent:member-a'))
-  assert.ok(window.localStorage._map.has('starter-scheduling-oauth-intent:member-a'))
 })
 
 test('hides unsupported Outlook actions and removes premature Google OAuth success copy', async () => {
@@ -1400,10 +1416,7 @@ for (const [label, priceCents] of [
     // The rate is repairable in Call Settings, so the member must be told that
     // rather than being left with copy that blames the calendar connection.
     assert.equal(dom.notif.steps['request-error'].style.display, '')
-    assert.match(dom.notif.errorText.textContent, /paid call rate/i)
-    assert.match(dom.notif.errorText.textContent, /\$1 to \$1,000/)
-    assert.match(dom.notif.errorText.textContent, /Call Settings/)
-    assert.doesNotMatch(dom.notif.errorText.textContent, /contact support/)
+    assert.equal(dom.notif.errorText.textContent, PAID_CALL_RATE_COPY)
   })
 }
 
@@ -1643,6 +1656,113 @@ test('OAuth cancellation recovery reuses canonical resources after partial succe
   )
 })
 
+const PLATFORM_STATE = {
+  grantId: 'grant-virtual-1',
+  grantEmail: 'member-a@virtual.example',
+  calendarId: 'cal-virtual-1',
+  availability: {
+    items: { general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] } },
+    manager: 'platform',
+  },
+}
+const OAUTH_INTENT_KEY = 'starter-scheduling-oauth-intent:member-a'
+
+function platformState(extra) {
+  return Object.assign({}, PLATFORM_STATE, extra || {}, {
+    availability: Object.assign({}, PLATFORM_STATE.availability, extra && extra.availability),
+  })
+}
+
+test('Connect Google from Platform goes straight to the informational step, with no switch warning', async () => {
+  const { dom, calls, assigned, window } = loadSection({ serverState: platformState() })
+  await settle()
+
+  assert.equal(dom.connectBtnWrapper.children[0].style.display, 'none') // Platform already connected
+  assert.notEqual(dom.connectBtnWrapper.children[1].style.display, 'none')
+  dom.connectBtnWrapper.children[1].click()
+  assert.equal(dom.notif.steps['switch-calendar'].style.display, 'none')
+  assert.equal(dom.notif.steps['pre-oauth'].style.display, '')
+
+  dom.notif.oauthRedirectBtn.click() // "Done"
+  await settle()
+
+  assert.equal(calls.filter((c) => c.path === '/grants/delete/v3').length, 1)
+  assert.equal(calls.filter((c) => c.path === '/grants/oauth/v3').length, 1)
+  assert.equal(assigned.length, 1)
+  const intent = JSON.parse(window.sessionStorage._map.get(OAUTH_INTENT_KEY))
+  const durableIntent = JSON.parse(window.localStorage._map.get(OAUTH_INTENT_KEY))
+  assert.equal(intent.paidCallIntent, null, 'Free-only member: no paid service captured')
+  assert.deepEqual(durableIntent, intent)
+})
+
+test('a stale modal Connect Google action is ignored after Google is connected', async () => {
+  const result = loadSection({
+    serverState: {
+      grantId: 'google-grant',
+      grantEmail: 'member-a@gmail.example',
+      calendarId: 'primary',
+      availability: {
+        items: { general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] } },
+        manager: 'calendar',
+      },
+    },
+  })
+  await settle()
+
+  result.dom.notif.oauthRedirectBtn.click()
+  await settle()
+
+  assert.equal(result.calls.filter((call) => call.path === '/grants/delete/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/grants/oauth/v3').length, 0)
+  assert.equal(result.assigned.length, 0)
+  assert.equal(result.dom.notif.steps['oauth-redirect'].style.display, 'none')
+  assert.equal(result.dom.notif.steps['request-error'].style.display, 'none')
+  assert.equal(result.dom.connectBtnWrapper.children[2].style.display, '')
+  assert.equal(result.state.grantId, 'google-grant')
+  assert.equal(result.state.availability.manager, 'calendar')
+})
+
+test('the OAuth return after a Platform replacement shows Platform and Google both connected', async () => {
+  let canonicalState = null
+  const result = loadSection({
+    search: '?success=true&grant_id=google-grant-9&state=member-a',
+    sessionStorage: {
+      [OAUTH_INTENT_KEY]: JSON.stringify({
+        createdAt: Date.now(),
+        redirectUri: 'https://thestarters.com/starter-dashboard',
+        paidCallIntent: null,
+      }),
+    },
+    serverState: {
+      availability: {
+        items: { general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] } },
+        manager: null,
+      },
+    },
+    postRoutes: {
+      '/grants/add/v3': () => {
+        canonicalState.grantId = 'google-grant-9'
+        canonicalState.grantEmail = 'member-a@gmail.example'
+        canonicalState.calendarId = 'primary'
+        return { status: 200, body: { grant_id: 'google-grant-9' } }
+      },
+    },
+  })
+  canonicalState = result.state
+  await settle()
+
+  assert.equal(result.calls.filter((c) => c.path === '/grants/add/v3').length, 1)
+  assert.equal(result.calls.filter((c) => c.path === '/grants/create_virtual_account/v3').length, 0)
+  assert.equal(result.state.availability.manager, 'calendar')
+  ;[false, true, false, true].forEach((visible, index) => {
+    assert.equal(result.dom.labelGroup.children[index].style.display !== 'none', visible, 'label ' + index)
+  })
+  ;[false, false, true].forEach((visible, index) => {
+    assert.equal(result.dom.connectBtnWrapper.children[index].style.display !== 'none', visible, 'action ' + index)
+  })
+  assert.equal(result.window.sessionStorage._map.has(OAUTH_INTENT_KEY), false)
+})
+
 test('an active-booking rejection stops Google disconnect before the virtual Platform replacement', async () => {
   const { dom, calls, window } = loadSection({
     serverState: {
@@ -1676,7 +1796,7 @@ test('an active-booking rejection stops Google disconnect before the virtual Pla
   assert.equal(dom.notif.errorText.textContent, ACTIVE_CALLS_COPY)
 })
 
-test('an active-booking rejection stops a Platform-to-Google switch before the OAuth redirect and names the calls', async () => {
+test('an active-booking rejection stops Connect Google from Platform before the OAuth redirect and names the calls', async () => {
   const { dom, calls, assigned, window } = loadSection({
     serverState: {
       grantId: 'grant-virtual-1',
@@ -1696,9 +1816,8 @@ test('an active-booking rejection stops a Platform-to-Google switch before the O
   })
   await settle()
 
-  dom.connectBtnWrapper.children[1].click() // open-connect-google from Platform -> switch warning
-  assert.equal(dom.notif.steps['switch-calendar'].style.display, '')
-  dom.notif.switchConnectGoogleBtn.click() // "Switch to Google" -> informational step
+  dom.connectBtnWrapper.children[1].click() // open-connect-google from Platform -> informational step
+  assert.equal(dom.notif.steps['switch-calendar'].style.display, 'none', 'no switch warning')
   assert.equal(dom.notif.steps['pre-oauth'].style.display, '')
   dom.notif.oauthRedirectBtn.click() // "Done" -> grant delete is refused
   await settle()

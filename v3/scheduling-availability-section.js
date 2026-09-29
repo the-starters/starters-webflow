@@ -84,12 +84,12 @@
   // problem, not a connection failure, so it must name the rate instead of leaving
   // the member with generic calendar copy they cannot act on.
   const ERROR_TEXT_PAID_CALL_RATE =
-    'Your paid call rate must be a whole-dollar amount from $1 to $1,000. Update it in Call Settings, then switch calendars again.'
+    'Your paid call rate must be a whole-dollar amount from $1 to $1,000. Update it in Call Settings, then try again.'
   const PAID_CALL_RATE_UNSUPPORTED = 'PAID_CALL_RATE_UNSUPPORTED'
-  // grants/delete/v3 (Xano #1660) refuses a calendar switch or disconnect while the
-  // current calendar still has requested, confirmed or rescheduled calls. Nothing is
-  // cancelled or deleted in that case. The member can act on it, so name the calls
-  // instead of showing generic calendar copy.
+  // grants/delete/v3 (Xano #1660) refuses a calendar transition or disconnect while
+  // the current calendar still has requested, confirmed or rescheduled calls whose
+  // end time has not passed. Nothing is cancelled or deleted in that case. The member
+  // can act on it, so name the calls instead of showing generic calendar copy.
   const ERROR_TEXT_ACTIVE_CALLS =
     'You have Requested or Confirmed calls on your current calendar. Decline or cancel them, or wait until they end, then try again.'
   const ACTIVE_CALLS_REFUSAL = /resolve active bookings/i
@@ -372,6 +372,10 @@
   // disconnect instead of being deleted from under the member.
   function platformConnectAvailable() {
     return !platformLayerConnected() && !googleLayerConnected()
+  }
+
+  function googleConnectAvailable() {
+    return platformLayerConnected() && !googleLayerConnected()
   }
 
   function deriveCalendarConnectionState() {
@@ -1298,6 +1302,11 @@
   }
 
   async function activateGoogleManager() {
+    if (!googleConnectAvailable()) {
+      switchNotification(undefined)
+      applyConnectButtonVisibility()
+      return
+    }
     if (connectBusy) return
     connectBusy = true
     calendarTransitionErrorText = null
@@ -1598,11 +1607,12 @@
       const action = target.getAttribute(ACTION)
       target.addEventListener('click', function (e) {
         if (e && typeof e.preventDefault === 'function') e.preventDefault()
-        if (action === 'connect-google') {
-          // Confirmed switching from platform — continue into the same
-          // pre-oauth step a fresh connect would show.
-          switchNotification('pre-oauth')
-        } else if (action === 'open-oauth-redirect') {
+        if (action === 'open-oauth-redirect') {
+          if (!googleConnectAvailable()) {
+            switchNotification(undefined)
+            applyConnectButtonVisibility()
+            return
+          }
           switchNotification('oauth-redirect')
           activateGoogleManager().then(function (ok) {
             if (ok === false) showNotificationError(calendarTransitionErrorCopy(ERROR_TEXT_CONNECT_GOOGLE))
@@ -1739,7 +1749,9 @@
     const hasGoogleConnection = googleLayerConnected()
     const rules = [
       ['connect-platform', platformConnectAvailable()],
-      ['open-connect-google', !hasGoogleConnection],
+      // JP contract (2026-09-29): Connect Google is offered only once the Platform
+      // layer is connected, so a disconnected member sees only Connect Platform.
+      ['open-connect-google', googleConnectAvailable()],
       ['open-disconnect-google', hasGoogleConnection],
     ]
     rules.forEach(function (rule, i) {
@@ -1793,10 +1805,17 @@
           else if (ok) switchNotification('virtual-connected')
         })
       } else if (action === 'open-connect-google') {
-        // Switching away from platform replaces the platform calendar, and
-        // grants/delete/v3 refuses while calls are active. Warn first.
-        // Starting from disconnected skips straight to the informational step.
-        openNotification(availability && availability.manager === 'platform' ? 'switch-calendar' : 'pre-oauth')
+        // Google is added on top of a connected Platform layer and goes straight
+        // to the informational step: no "switch" warning. grants/delete/v3 never
+        // cancels anything; while a call has not ended it refuses, and the error
+        // step names those calls. A stale or programmatic click without a
+        // connected Platform layer (or with Google already connected) is ignored.
+        if (!googleConnectAvailable()) {
+          switchNotification(undefined)
+          applyConnectButtonVisibility()
+          return
+        }
+        openNotification('pre-oauth')
       } else if (action === 'open-disconnect-google') {
         openNotification('disconnect-calendar')
       }
