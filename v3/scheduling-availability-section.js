@@ -1027,12 +1027,20 @@
     if (!oauthIntentNeedsRecovery(oauthIntent)) return false
     const intent = oauthIntent.paidCallIntent || null
     await refreshCanonicalConnectionState()
-    let createdVirtual = false
     const recovery = oauthIntent.virtualRecovery
     const resumableGrant =
       recovery && recovery.grant_id && (!grantId || recovery.grant_id === grantId)
         ? recovery
         : null
+    if (
+      oauthIntent.restorePlatform &&
+      platformLayerConnected() &&
+      !googleLayerConnected() &&
+      !resumableGrant
+    ) {
+      return false
+    }
+    let createdVirtual = false
     if (grantId && (!grantEmail || !grantCalendarId) && !resumableGrant) {
       throw new Error('Canonical calendar transition is incomplete')
     }
@@ -1291,6 +1299,10 @@
       return Object.assign({ result: result }, transition)
     } catch (error) {
       const failure = error instanceof Error ? error : new Error('grants/delete/v3 failed')
+      if (oauthIntent && isActiveCallsRefusal(failure)) {
+        clearOAuthIntent(memberId)
+        transition.oauthIntent = null
+      }
       failure.calendarTransition = transition
       throw failure
     }
@@ -1315,6 +1327,16 @@
     let transition = null
     try {
       memberId = await writeMemberId()
+      const pendingRecovery = readOAuthRecoveryIntent(memberId)
+      if (oauthIntentNeedsRecovery(pendingRecovery)) {
+        const recovered = await recoverCalendarAfterOAuthCancellation(memberId, pendingRecovery)
+        if (!recovered) return
+        clearOAuthIntent(memberId)
+        renderAvailabilityItems()
+        renderSlotsPreview()
+        console.log('[scheduling-section] connected to platform calendar')
+        return true
+      }
       // clearGrant is a no-op without a grant id, so this only ever deletes a
       // half-built grant that never became a connection. Once the canonical
       // route reports it gone, the local copy must go too — otherwise a
@@ -3203,11 +3225,18 @@
       } else {
         const pendingTransition = readOAuthRecoveryIntent(sessionMemberId)
         if (oauthIntentNeedsRecovery(pendingTransition)) {
-          const recovered = await recoverCalendarAfterOAuthCancellation(
-            sessionMemberId,
-            pendingTransition,
-          )
-          if (recovered) clearOAuthIntent(sessionMemberId)
+          try {
+            const recovered = await recoverCalendarAfterOAuthCancellation(
+              sessionMemberId,
+              pendingTransition,
+            )
+            if (recovered) clearOAuthIntent(sessionMemberId)
+          } catch (error) {
+            console.warn(
+              '[scheduling-section] callbackless recovery failed:',
+              error && error.message,
+            )
+          }
         }
       }
 

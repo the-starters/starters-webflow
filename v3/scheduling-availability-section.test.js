@@ -1886,6 +1886,94 @@ test('a Free-only member who comes back from Google without a callback gets the 
   assert.notEqual(result.dom.connectBtnWrapper.children[1].style.display, 'none') // Connect Google again
 })
 
+test('callbackless recovery waits for an in-flight Platform deletion before rebuilding', async () => {
+  const intent = freeOnlyPlatformIntent()
+  const firstLoad = loadSection({
+    sessionStorage: { [OAUTH_INTENT_KEY]: intent },
+    localStorage: { [OAUTH_INTENT_KEY]: intent },
+    serverState: platformState(),
+  })
+  await settle()
+
+  assert.equal(firstLoad.calls.filter((call) => call.path === '/grants/create_virtual_account/v3').length, 0)
+  assert.equal(firstLoad.calls.filter((call) => call.path === '/scheduler/configurations/create/v3').length, 0)
+  assert.equal(firstLoad.window.sessionStorage._map.has(OAUTH_INTENT_KEY), true)
+  assert.equal(firstLoad.window.localStorage._map.has(OAUTH_INTENT_KEY), true)
+
+  const secondLoad = loadSection({
+    sessionStorage: Object.fromEntries(firstLoad.window.sessionStorage._map),
+    localStorage: Object.fromEntries(firstLoad.window.localStorage._map),
+    serverState: {
+      grantId: null,
+      grantEmail: null,
+      calendarId: null,
+      configs: [],
+      availability: Object.assign({}, firstLoad.state.availability, { manager: null }),
+    },
+  })
+  await settle()
+
+  assert.equal(secondLoad.calls.filter((call) => call.path === '/grants/create_virtual_account/v3').length, 1)
+  assert.equal(secondLoad.calls.filter((call) => call.path === '/scheduler/configurations/create/v3').length, 1)
+  assert.equal(secondLoad.state.grantId, 'vgrant-1')
+  assert.equal(secondLoad.state.calendarId, 'vcal-1')
+  assert.equal(secondLoad.state.availability.manager, 'platform')
+  assert.equal(secondLoad.window.sessionStorage._map.has(OAUTH_INTENT_KEY), false)
+  assert.equal(secondLoad.window.localStorage._map.has(OAUTH_INTENT_KEY), false)
+})
+
+test('a failed callbackless recovery leaves Connect Platform bound for retry', async () => {
+  let canonicalState = null
+  let accountAttempts = 0
+  const intent = freeOnlyPlatformIntent()
+  const result = loadSection({
+    sessionStorage: { [OAUTH_INTENT_KEY]: intent },
+    localStorage: { [OAUTH_INTENT_KEY]: intent },
+    serverState: { configs: [] },
+    postRoutes: {
+      '/grants/create_virtual_account/v3': () => {
+        accountAttempts += 1
+        if (accountAttempts === 1) {
+          return { status: 503, body: { message: 'try again' } }
+        }
+        canonicalState.grantId = 'vgrant-retry'
+        canonicalState.grantEmail = 'virtual@example.com'
+        return {
+          status: 200,
+          body: {
+            response: {
+              result: { data: { id: 'vgrant-retry', email: 'virtual@example.com' } },
+            },
+          },
+        }
+      },
+    },
+  })
+  canonicalState = result.state
+  await settle()
+
+  assert.equal(accountAttempts, 1)
+  assert.equal(
+    result.document.documentElement.getAttribute('data-scheduling-availability-section'),
+    'ready',
+  )
+  assert.notEqual(result.dom.connectBtnWrapper.children[0].style.display, 'none')
+  assert.equal(result.window.sessionStorage._map.has(OAUTH_INTENT_KEY), true)
+  assert.equal(result.window.localStorage._map.has(OAUTH_INTENT_KEY), true)
+
+  result.dom.connectBtnWrapper.children[0].click()
+  await settle()
+
+  assert.equal(accountAttempts, 2)
+  assert.equal(result.calls.filter((call) => call.path === '/scheduler/configurations/create/v3').length, 1)
+  assert.equal(result.state.grantId, 'vgrant-retry')
+  assert.equal(result.state.calendarId, 'vcal-1')
+  assert.equal(result.state.availability.manager, 'platform')
+  assert.equal(result.dom.notif.steps['virtual-connected'].style.display, '')
+  assert.equal(result.window.sessionStorage._map.has(OAUTH_INTENT_KEY), false)
+  assert.equal(result.window.localStorage._map.has(OAUTH_INTENT_KEY), false)
+})
+
 test('a 20-minute Platform recovery marker rebuilds Platform without a callback', async () => {
   const result = loadSection({
     sessionStorage: {
@@ -2024,6 +2112,8 @@ test('an active-booking rejection stops Connect Google from Platform before the 
   assert.equal(window.STARTER_SCHEDULING_CONNECTION.state, 'error')
   assert.equal(dom.notif.steps['request-error'].style.display, '')
   assert.equal(dom.notif.errorText.textContent, ACTIVE_CALLS_COPY)
+  assert.equal(window.sessionStorage._map.has(OAUTH_INTENT_KEY), false)
+  assert.equal(window.localStorage._map.has(OAUTH_INTENT_KEY), false)
 })
 
 test('only the exact 400 active-bookings refusal replaces section disconnect copy', async () => {
