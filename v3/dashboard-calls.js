@@ -540,6 +540,7 @@
     if (isAnchor) {
       element.addEventListener('auxclick', activateMeetingDestination, true)
       element.addEventListener('dragstart', activateMeetingDestination, true)
+      element.addEventListener('contextmenu', activateMeetingDestination, true)
     }
     if (isParagraph) {
       element.addEventListener('keydown', function (event) {
@@ -564,9 +565,8 @@
     return Number.isFinite(wall) && wall > 0 ? wall : null
   }
 
-  function meetingHrefForBooking(booking, now) {
+  function meetingHrefAtReference(booking, currentTime) {
     const raw = clean(booking && booking.status).toLowerCase()
-    const currentTime = meetingReferenceTime(booking, now)
     if (currentTime == null) return ''
     const status = raw === 'rescheduled' ? raw : bookingStatus(booking, currentTime)
     if (!['confirmed', 'rescheduled'].includes(status)) return ''
@@ -577,8 +577,12 @@
     return safeMeetingHref(booking && booking.meeting_link)
   }
 
-  function paintMeetingDestinations(root, booking, now, allowParagraph) {
-    const href = meetingHrefForBooking(booking, now)
+  function meetingHrefForBooking(booking, now) {
+    return meetingHrefAtReference(booking, meetingReferenceTime(booking, now))
+  }
+
+  function paintMeetingDestinationsAt(root, booking, referenceTime, allowParagraph) {
+    const href = meetingHrefAtReference(booking, referenceTime)
     bookingFields(root, 'meeting-link').forEach(function (meetingLink) {
       const supported = setMeetingDestination(meetingLink, href, allowParagraph, booking)
       if (allowParagraph && supported) meetingLink.textContent = href
@@ -588,6 +592,15 @@
       if (group) show(group, visible)
     })
     return href
+  }
+
+  function paintMeetingDestinations(root, booking, now, allowParagraph) {
+    return paintMeetingDestinationsAt(
+      root,
+      booking,
+      meetingReferenceTime(booking, now),
+      allowParagraph,
+    )
   }
 
   function text(root, selector, value) {
@@ -869,7 +882,7 @@
     const modal = global.document.querySelector(DETAIL_MODAL_SELECTOR)
     if (!modal || !clean(modal.getAttribute && modal.getAttribute('data-booking-id'))) return
     const booking = bookingFromCard(sections, modal)
-    if (booking) paintMeetingDestinations(modal, booking, now, true)
+    paintMeetingDestinations(modal, booking, now, true)
   }
 
   function applyCancellationResult(refs, booking, result, now) {
@@ -2060,7 +2073,8 @@
     const nextBookingId = clean(booking.booking_id || booking.id)
     const previousBookingId = clean(modal.getAttribute('data-booking-id'))
     if (previousBookingId !== nextBookingId) resetDetailActionState(modal)
-    const status = bookingStatus(booking, now)
+    const referenceTime = meetingReferenceTime(booking, now)
+    const status = bookingStatus(booking, referenceTime)
     const isPaid = paidBooking(booking)
     const paymentText = isPaid && status !== 'cancelled' && status !== 'archived'
       ? booking.pm_confirmed
@@ -2114,7 +2128,7 @@
     setBookingField(modal, 'cancel-reason', booking.cancelled_reason, Boolean(booking.cancelled_reason))
     populateDeclineReason(modal, booking, isPaid)
 
-    paintMeetingDestinations(modal, booking, now, true)
+    paintMeetingDestinationsAt(modal, booking, referenceTime, true)
 
     // Authored "Messages tab" links are Designer-owned copy; resetDetailModal
     // clears and hides every [booking-element], so each populate pass must
@@ -2137,12 +2151,12 @@
       base.querySelectorAll ? base.querySelectorAll('[pending-info-text]') : [],
     )
     pendingMessages.forEach(function (message, index) {
-      show(message, index === 0 && status === 'pending' && responseWindowOpen(booking, now))
+      show(message, index === 0 && status === 'pending' && responseWindowOpen(booking, referenceTime))
     })
     modal.querySelectorAll('[reschedule-blocked-info]').forEach(function (info) {
       show(info, false)
     })
-    configureDetailActions(modal, role, status, booking, now)
+    configureDetailActions(modal, role, status, booking, referenceTime)
     ensureDetailSupplements(modal, booking, role, timezone)
     scheduleDetailSupplements(modal, booking, role, timezone)
     hideDuplicateDetailCopy(modal, isPaid)
@@ -3067,6 +3081,7 @@
           if (section.rendered === rendered) break
         }
       })
+      refreshMeetingDestinations(refs)
       document.documentElement.setAttribute('data-dashboard-calls-v3', 'ready')
       if (options && typeof options.onCanonicalRows === 'function') {
         options.onCanonicalRows(rows, memberId, role)

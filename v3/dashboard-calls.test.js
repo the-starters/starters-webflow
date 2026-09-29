@@ -5956,6 +5956,61 @@ test('meeting destinations prefer canonical time across device clock skew', () =
   }
 })
 
+test('detail panels and meeting destinations share one canonical lifecycle snapshot', () => {
+  const previousActions = global.StartersDashboardCallActions
+  const previousNow = Date.now
+  const serverNow = 2_000_000_000_000
+  let canonicalNow = serverNow
+  let canonicalReads = 0
+  global.StartersDashboardCallActions = {
+    canonicalNow() {
+      canonicalReads += 1
+      return canonicalNow
+    },
+  }
+  Date.now = () => serverNow + 60 * 60 * 1000
+  try {
+    for (const role of ['brand', 'starter']) {
+      const view = completedDetailModalHarness(['terminal'])
+      const booking = {
+        booking_id: 'canonical-detail-' + role,
+        status: 'confirmed',
+        start: serverNow - 30 * 60 * 1000,
+        end: serverNow + 60 * 1000,
+        duration: 30,
+        meeting_link: 'https://meet.google.com/detail-' + role,
+        brand_data: { name: 'Brand', timezone: 'UTC' },
+        starter_data: { name: 'Starter', timezone: 'UTC' },
+      }
+
+      canonicalReads = 0
+      canonicalNow = serverNow
+      Date.now = () => serverNow + 60 * 60 * 1000
+      api.populateDetailModal(view.modal, booking, role)
+      assert.equal(canonicalReads, 1)
+      assert.equal(view.modal.getAttribute('data-booking-status'), 'confirmed')
+      assert.equal(view.base.hidden, false)
+      assert.equal(view.completedPanels[0].hidden, true)
+      assert.equal(view.fields['meeting-link'].hidden, false)
+      assert.equal(view.fields['meeting-link'].getAttribute('data-meeting-href'), booking.meeting_link)
+
+      canonicalReads = 0
+      canonicalNow = booking.end + 1
+      Date.now = () => serverNow - 60 * 60 * 1000
+      api.populateDetailModal(view.modal, booking, role)
+      assert.equal(canonicalReads, 1)
+      assert.equal(view.modal.getAttribute('data-booking-status'), 'completed')
+      assert.equal(view.base.hidden, true)
+      assert.equal(view.completedPanels[0].hidden, false)
+      assert.equal(view.fields['meeting-link'].hidden, true)
+      assert.equal(view.fields['meeting-link'].getAttribute('data-meeting-href'), null)
+    }
+  } finally {
+    global.StartersDashboardCallActions = previousActions
+    Date.now = previousNow
+  }
+})
+
 test('meeting destinations expire at call end for both roles without a canonical refresh', () => {
   const previousDocument = global.document
   const previousOpen = global.open
@@ -5993,7 +6048,12 @@ test('meeting destinations expire at call end for both roles without a canonical
       const dragHandlers = new Map()
       dragAnchor.closest = selector => selector === '[booking-element-wrap]' ? dragWrap : null
       dragAnchor.addEventListener = (type, handler) => dragHandlers.set(type, handler)
-      card.querySelectorAll = selector => selector === '[booking-element="meeting-link"]' ? [anchor, auxiliaryAnchor, dragAnchor] : []
+      const contextWrap = element()
+      const contextAnchor = anchorElement({ 'booking-element': 'meeting-link' })
+      const contextHandlers = new Map()
+      contextAnchor.closest = selector => selector === '[booking-element-wrap]' ? contextWrap : null
+      contextAnchor.addEventListener = (type, handler) => contextHandlers.set(type, handler)
+      card.querySelectorAll = selector => selector === '[booking-element="meeting-link"]' ? [anchor, auxiliaryAnchor, dragAnchor, contextAnchor] : []
       const view = detailModalHarness()
       const paragraph = view.fields['meeting-link']
       const paragraphHandlers = new Map()
@@ -6027,6 +6087,7 @@ test('meeting destinations expire at call end for both roles without a canonical
       assert.equal(anchor.getAttribute('href'), booking.meeting_link)
       assert.equal(auxiliaryAnchor.getAttribute('href'), booking.meeting_link)
       assert.equal(dragAnchor.getAttribute('href'), booking.meeting_link)
+      assert.equal(contextAnchor.getAttribute('href'), booking.meeting_link)
       assert.equal(paragraph.getAttribute('data-meeting-href'), booking.meeting_link)
       let anchorPrevented = false
       anchorHandlers.get('click')({
@@ -6044,6 +6105,11 @@ test('meeting destinations expire at call end for both roles without a canonical
         preventDefault() { dragPrevented = true },
       })
       assert.equal(dragPrevented, false)
+      let contextPrevented = false
+      contextHandlers.get('contextmenu')({
+        preventDefault() { contextPrevented = true },
+      })
+      assert.equal(contextPrevented, false)
       const openedBefore = opened.length
       paragraphHandlers.get('click')({ preventDefault() {} })
       assert.equal(opened.length, openedBefore + 1)
@@ -6062,6 +6128,19 @@ test('meeting destinations expire at call end for both roles without a canonical
       assert.equal(dragAnchor.hasAttribute('rel'), false)
       assert.equal(dragAnchor.hidden, true)
       assert.equal(dragWrap.hidden, true)
+      let expiredContextPrevented = false
+      let expiredContextStopped = false
+      contextHandlers.get('contextmenu')({
+        preventDefault() { expiredContextPrevented = true },
+        stopImmediatePropagation() { expiredContextStopped = true },
+      })
+      assert.equal(expiredContextPrevented, true)
+      assert.equal(expiredContextStopped, true)
+      assert.equal(contextAnchor.hasAttribute('href'), false)
+      assert.equal(contextAnchor.hasAttribute('target'), false)
+      assert.equal(contextAnchor.hasAttribute('rel'), false)
+      assert.equal(contextAnchor.hidden, true)
+      assert.equal(contextWrap.hidden, true)
       let expiredAuxiliaryPrevented = false
       let expiredAuxiliaryStopped = false
       auxiliaryHandlers.get('auxclick')({
@@ -6112,6 +6191,75 @@ test('meeting destinations expire at call end for both roles without a canonical
     global.document = previousDocument
     global.open = previousOpen
     Date.now = previousNow
+  }
+})
+
+test('canonical refresh immediately clears an open stale meeting destination', async () => {
+  const previousDocument = global.document
+  const previousFetch = global.xanoAuthFetch
+  const previousActions = global.StartersDashboardCallActions
+  const previousOpen = global.open
+  const now = Date.now()
+  const booking = {
+    booking_id: 'canonical-refresh-meeting',
+    status: 'confirmed',
+    start: now + 30 * 60 * 1000,
+    end: now + 60 * 60 * 1000,
+    duration: 30,
+    meeting_link: 'https://meet.google.com/canonical-refresh',
+    brand_data: { memberstack_id: 'brand-refresh', name: 'Brand', timezone: 'UTC' },
+    starter_data: { memberstack_id: 'starter-refresh', name: 'Starter', timezone: 'UTC' },
+  }
+  const view = detailModalHarness()
+  const meeting = view.fields['meeting-link']
+  const handlers = new Map()
+  const opened = []
+  meeting.addEventListener = (type, handler) => handlers.set(type, handler)
+  const root = element()
+  const refs = {
+    name: 'calls', filter: 'all', rows: [booking], rendered: 1,
+    list: element(), template: element(), loader: element(), empty: element(),
+    loadMore: element(), filters: element(), count: element(), section: element(),
+  }
+  try {
+    global.StartersDashboardCallActions = undefined
+    global.open = (...args) => opened.push(args)
+    global.document = {
+      documentElement: root,
+      querySelector(selector) {
+        return selector === '[popup-booking-info], dialog[data-modal-target="popup-booking-info"]'
+          ? view.modal
+          : null
+      },
+    }
+    api.populateDetailModal(view.modal, booking, 'brand', now)
+    assert.equal(meeting.getAttribute('data-meeting-href'), booking.meeting_link)
+    global.xanoAuthFetch = async () => ({
+      ok: true,
+      json: async () => [{ ...booking, status: 'cancelled' }],
+    })
+
+    assert.equal(await api.refreshSession(
+      { getCurrentMember: async () => ({ id: 'brand-refresh' }) },
+      [refs], 'brand', 1, () => 1, false, { preserveExisting: true },
+    ), true)
+    assert.equal(refs.rows[0].status, 'cancelled')
+    assert.equal(meeting.getAttribute('data-meeting-href'), null)
+    assert.equal(meeting.getAttribute('role'), null)
+    assert.equal(meeting.getAttribute('tabindex'), null)
+    assert.equal(meeting.hidden, true)
+    let prevented = false
+    handlers.get('click')({
+      preventDefault() { prevented = true },
+      stopImmediatePropagation() {},
+    })
+    assert.equal(prevented, true)
+    assert.equal(opened.length, 0)
+  } finally {
+    global.document = previousDocument
+    global.xanoAuthFetch = previousFetch
+    global.StartersDashboardCallActions = previousActions
+    global.open = previousOpen
   }
 })
 
@@ -6388,11 +6536,20 @@ test('reschedule responses refresh receipt and base without retaining proposal-o
     const document = { createElement: tag => domElement(tag), addEventListener(type, handler) { if (type === 'click') handlers.push(handler) } }
     const modal = domElement('dialog', { 'popup-booking-info': '' })
     modal.ownerDocument = document
+    let closeHandler = null
+    modal.addEventListener = (type, handler) => {
+      if (type === 'close') closeHandler = handler
+    }
+    modal.removeEventListener = (type, handler) => {
+      if (type === 'close' && closeHandler === handler) closeHandler = null
+    }
     document.querySelector = () => modal
     const base = domElement('div', { 'booking-popup-content': 'base' })
     modal.appendChild(base)
     actions.ensureRescheduleViews(document, modal)
     const booking = { booking_id: 'accept-' + role, config_id: 'config', data_environment: 'test', status: 'rescheduled', rescheduled_by: role === 'brand' ? 'starter' : 'brand', start: Date.now() + 172800000, end: Date.now() + 174600000, start_old: Date.now() + 86400000, end_old: Date.now() + 88200000, duration: 30, price: 0, is_paid: false, brand_data: { memberstack_id: 'mem-brand', timezone: 'UTC' }, starter_data: { memberstack_id: 'mem-starter', timezone: 'Asia/Manila' } }
+    const acceptedStart = booking.start + 60_000
+    const acceptedEnd = booking.end + 60_000
     booking.server_now_ms = Date.now()
     actions.bindCanonicalClock([booking], actions.monotonicNow())
     api.populateDetailModal(modal, booking, role)
@@ -6400,8 +6557,19 @@ test('reschedule responses refresh receipt and base without retaining proposal-o
     assert.ok(receipt.querySelector('[data-starters-call-summary-row="start-date-old"]'))
     const requested = deferred()
     const response = deferred()
+    let refreshDetailCalls = 0
+    let restarts = 0
     global.xanoAuthFetch = async () => { requested.resolve(); return response.promise }
-    actions.wire({ document, role, getBooking: () => booking, refreshDetail: (target, model) => api.populateDetailModal(target, model, role) })
+    actions.wire({
+      document,
+      role,
+      getBooking: () => booking,
+      restart: async () => { restarts += 1 },
+      refreshDetail(target, model) {
+        refreshDetailCalls += 1
+        return api.populateDetailModal(target, model, role)
+      },
+    })
     const button = domElement('button', { 'booking-action-btn': kind === 'confirm' ? 'confirm-reschedule' : 'reschedule-decline' })
     button.closest = selector => selector.includes('popup-booking-info') ? modal : button
     const action = handlers[0]({ target: button, preventDefault() {}, stopImmediatePropagation() {} })
@@ -6429,14 +6597,15 @@ test('reschedule responses refresh receipt and base without retaining proposal-o
       const result = { booking_id: booking.booking_id, status: expectedStatus }
       if (kind === 'decline') result.original_restored = true
       else {
-        result.start = booking.start
-        result.end = booking.end
+        result.start = acceptedStart
+        result.end = acceptedEnd
       }
       response.resolve({ ok: true, json: async () => ({ ['reschedule_' + kind]: result }) })
     }
     await action
     if (scenario.endsWith('failure')) assert.deepEqual(Array.from(values.entries()), retryKeys, 'Failed attempt retains the same retry key')
-    if (scenario !== 'success') {
+    const succeeded = scenario === 'success' || scenario === 'switched-success'
+    if (!succeeded) {
       assert.equal(booking.status, 'rescheduled')
       assert.equal(receipt.hidden, true)
       assert.deepEqual(panelState(), pendingState, 'Delayed response preserves displayed dates and panels')
@@ -6453,10 +6622,25 @@ test('reschedule responses refresh receipt and base without retaining proposal-o
     if (kind === 'decline') {
       assert.equal(booking.start, booking.start_old, 'Decline restores the original start')
       assert.equal(booking.end, booking.end_old, 'Decline restores the original end')
+    } else {
+      assert.equal(booking.start, acceptedStart)
+      assert.equal(booking.end, acceptedEnd)
     }
-    assert.equal(receipt.querySelector('[data-starters-call-summary-row="start-date-old"]'), null)
-    assert.equal(base.querySelector('[data-starters-call-summary-row="start-date-old"]'), null)
-    assert.equal(receipt.hidden, false)
+    if (scenario === 'switched-success') {
+      assert.equal(modal.getAttribute('data-booking-id'), 'other')
+      assert.deepEqual(panelState(), pendingState, 'The rebound modal remains unchanged')
+      assert.equal(refreshDetailCalls, 0)
+    } else {
+      assert.equal(refreshDetailCalls, 1)
+      assert.equal(receipt.querySelector('[data-starters-call-summary-row="start-date-old"]'), null)
+      assert.equal(base.querySelector('[data-starters-call-summary-row="start-date-old"]'), null)
+      assert.equal(receipt.hidden, false)
+    }
+    assert.equal(restarts, 0)
+    assert.equal(typeof closeHandler, 'function')
+    closeHandler()
+    await new Promise(setImmediate)
+    assert.equal(restarts, 1)
   }
 })
 

@@ -1731,7 +1731,9 @@
           try {
             const result = await respondReschedule(step.kind, booking, settings.role)
             if (!result) throw new Error(config.failureMessage)
-            if (clean(modal.getAttribute('data-booking-id')) !== clean(booking.booking_id || booking.id)) return
+            const modalIsCurrent =
+              clean(modal.getAttribute('data-booking-id')) ===
+              clean(booking.booking_id || booking.id)
             if (step.kind === 'reschedule-confirm' || step.kind === 'reschedule-decline') {
               const confirmed = result[config.responseKey]
               booking.status = confirmed.status
@@ -1743,10 +1745,14 @@
               else if (step.kind === 'reschedule-decline') booking.start = Number.isFinite(restoredStart) && restoredStart > 0 ? restoredStart : null
               if (Number.isFinite(confirmedEnd) && confirmedEnd > 0) booking.end = confirmedEnd
               else if (step.kind === 'reschedule-decline') booking.end = Number.isFinite(restoredEnd) && restoredEnd > 0 ? restoredEnd : null
-              if (typeof settings.refreshDetail === 'function') settings.refreshDetail(modal, booking)
+              if (modalIsCurrent && typeof settings.refreshDetail === 'function') {
+                settings.refreshDetail(modal, booking)
+              }
             }
-            ensureRescheduleViews(document, modal)
-            switchPopupContent(modal, config.successContent)
+            if (modalIsCurrent) {
+              ensureRescheduleViews(document, modal)
+              switchPopupContent(modal, config.successContent)
+            }
             restartAfterModalClose(document, modal, settings.restart)
           } catch (error) {
             if (clean(modal.getAttribute('data-booking-id')) !== clean(booking.booking_id || booking.id)) return
