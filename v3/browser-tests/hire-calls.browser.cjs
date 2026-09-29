@@ -140,9 +140,9 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
       await navigate(`role=owner&owner=${owner}&failed=header`)
       const state = await snapshot(`owner-${owner}`)
       assert.ok(state.cards.every(card => card.visible), 'owners retain both cards in both wrappers')
-      assert.ok(state.cards.every(card => card.state === (owner === 'ready' ? 'Default' : owner === 'stripe' || owner === 'stale' ? card.type === 'free' ? 'Default' : 'Disabled' : 'Disabled')), JSON.stringify(state))
-      const messages = { off: { free: 'Enable your Free Call service.', paid: 'Enable and price your Paid Call service.' }, calendar: { free: 'Connect your calendar to offer calls.', paid: 'Connect your calendar to offer calls.' }, stripe: { paid: 'Connect Stripe to offer paid calls.' }, stale: { paid: 'Refresh your Stripe connection to offer paid calls.' }, loading: { free: 'Call settings are loading. Open Call Settings if this continues.', paid: 'Call settings are loading. Open Call Settings if this continues.' }, error: { free: 'Call settings could not be loaded. Refresh or open Call Settings.', paid: 'Call settings could not be loaded. Refresh or open Call Settings.' } }
-      for (const card of state.cards) if (messages[owner]?.[card.type]) assert.equal(card.tooltip, messages[owner][card.type])
+      assert.ok(state.cards.every(card => card.state === (owner === 'ready' || owner === 'loading' ? 'Default' : owner === 'stripe' || owner === 'stale' ? card.type === 'free' ? 'Default' : 'Disabled' : 'Disabled')), JSON.stringify(state))
+      const messages = { off: { free: 'Enable your Free Call service.', paid: 'Enable and price your Paid Call service.' }, calendar: { free: 'Connect your calendar to offer calls.', paid: 'Connect your calendar to offer calls.' }, stripe: { paid: 'Connect Stripe to offer paid calls.' }, stale: { paid: 'Refresh your Stripe connection to offer paid calls.' }, loading: { free: '', paid: '' }, error: { free: 'Call settings could not be loaded. Refresh or open Call Settings.', paid: 'Call settings could not be loaded. Refresh or open Call Settings.' } }
+      for (const card of state.cards) if (messages[owner]?.[card.type] !== undefined) assert.equal(card.tooltip, messages[owner][card.type])
     }
     assert.deepEqual(errors, [], 'no uncaught browser errors')
     if (evidence) await fs.writeFile(path.join(evidence, 'observations.json'), JSON.stringify({ boundary: 'Local fixture; real adapter, attribution, modal; synthetic data and booking controllers', observations }, null, 2))
