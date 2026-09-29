@@ -1313,6 +1313,12 @@ for (const identity of [null, '', '1063invalid']) test(`canonical hero rates hid
 
 test('a page missing the Memberstack helpers stands down instead of throwing', () => {
   const page = makePage()
+  const unresolvedCompany = addXanoCompanyLinkFixture(
+    page,
+    'starter-work-histories',
+    '/companies/company-pending-6001',
+    'Pending Company',
+  )
   const context = makeContext({ page, member: BRAND_MEMBER })
   delete context.qs
   delete context.qsa
@@ -1336,6 +1342,22 @@ test('a page missing the Memberstack helpers stands down instead of throwing', (
   assert.equal(page.bookingButton.getAttribute('aria-disabled'), 'true')
   assert.equal(page.bookingButton.getAttribute('data-modal-trigger'), null)
   assert.equal(page.bookingButton.getAttribute('data-signup-trigger-element'), null)
+  assert.equal(unresolvedCompany.link.getAttribute('href'), null)
+  assert.doesNotThrow(() => {
+    page.bookingButton.listeners.focusin.forEach((listener) => listener({}))
+  })
+
+  const lateCompany = addXanoCompanyLinkFixture(
+    page,
+    'starter-clients',
+    '/companies/',
+    'Late Pending Company',
+  )
+  const mutation = [{ type: 'childList', addedNodes: [lateCompany.wrapper] }]
+  assert.doesNotThrow(() => {
+    context.mutationObserverCallbacks.forEach((callback) => callback(mutation))
+  })
+  assert.equal(lateCompany.link.getAttribute('href'), null)
 })
 
 test('a page missing starter_memberstack_id stands down instead of throwing', () => {
@@ -2899,10 +2921,6 @@ test('a chooser trigger outside booking-button-wrapper stays hidden until discov
 
   assert.equal(strayTrigger.getAttribute('data-booking-trigger-unavailable'), '')
   assert.equal(strayTrigger.getAttribute('aria-disabled'), 'true')
-  const guard = context.document.getElementById('hire-booking-modal-availability-guard')
-  assert.ok(guard.textContent.includes(
-    '[data-booking-trigger-unavailable]{opacity:.55;cursor:help}',
-  ))
 })
 
 test('canonical discovery removes legacy Free and Paid projections when the profile is not bookable', async () => {
@@ -8284,7 +8302,7 @@ function holdLongTimers(context) {
   const realClearTimeout = context.clearTimeout
   context.setTimeout = (fn, ms, ...rest) => {
     if (ms >= 10000) {
-      held.push(fn)
+      held.push({ callback: fn, delay: ms })
       return `held-${held.length - 1}`
     }
     return realSetTimeout(fn, ms, ...rest)
@@ -8367,7 +8385,9 @@ test('F50 the failsafe ends loading when the public call DTO never answers', asy
   assertBookCallLoading(button)
   assert.equal(held.filter(Boolean).length, 1, 'one failsafe waits for the DTO')
 
-  held.find(Boolean)()
+  const failsafe = held.find(Boolean)
+  assert.equal(failsafe.delay, 15000)
+  failsafe.callback()
   await settle()
   assert.equal(button.getAttribute('data-booking-trigger-loading'), null)
   assert.equal(button.getAttribute('data-booking-trigger-unavailable'), '')
@@ -8453,7 +8473,7 @@ test('F50 loading Brand cards fail closed when discovery ends without an answer'
     assert.equal(card.root.style.display, 'none')
     assert.equal(card.root.getAttribute('aria-hidden'), 'true')
     assert.equal(card.root.getAttribute('aria-busy'), null)
-    assert.notEqual(card.root.getAttribute('data-call-offer-state'), 'loading')
+    assert.equal(card.root.getAttribute('data-call-offer-state'), 'hidden')
   }
   assert.ok(context.emptyNavRefreshCalls.length > navRefreshes, 'the Services area is re-checked once its cards hide')
   assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), '')

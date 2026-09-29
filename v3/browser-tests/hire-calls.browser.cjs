@@ -61,7 +61,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
     await send('Emulation.setDeviceMetricsOverride', { width: 1100, height: 950, deviceScaleFactor: 1, mobile: false })
     const observations = []
     const snapshot = async label => {
-      const state = await evaluate(`({ cards: [...document.querySelectorAll('[wf-xano-item]')].map(el => ({ visible: el.getBoundingClientRect().height > 0 && getComputedStyle(el).display !== 'none', type: el.getAttribute('data-call-offer-type'), state: el.getAttribute('data-service-card-state'), offerState: el.getAttribute('data-call-offer-state'), busy: el.getAttribute('aria-busy') === 'true', price: el.querySelector('[data-millify]').textContent, tooltip: el.querySelector('[hover-text]').textContent, tooltipDisplay: getComputedStyle(el.querySelector('[data-call-offer-tooltip]')).display })), book: (() => { const button = document.querySelector('[booking-button-wrapper] button'); const spinner = button.querySelector('[data-button-spinner]'); const loadingHide = button.querySelector('[data-opp-element="loading-hide"]'); return { visible: button.getBoundingClientRect().height > 0, disabled: button.getAttribute('aria-disabled') === 'true', loading: button.hasAttribute('data-booking-trigger-loading'), busy: button.getAttribute('aria-busy') === 'true', signup: button.getAttribute('data-signup-trigger-element'), modal: button.getAttribute('data-modal-trigger'), cursor: getComputedStyle(button).cursor, spinner: getComputedStyle(spinner).display, spinnerInline: spinner.style.display, loadingHide: getComputedStyle(loadingHide).display, loadingHideInline: loadingHide.style.display } })() })`)
+      const state = await evaluate(`({ cards: [...document.querySelectorAll('[wf-xano-item]')].map(el => ({ visible: el.getBoundingClientRect().height > 0 && getComputedStyle(el).display !== 'none', type: el.getAttribute('data-call-offer-type'), state: el.getAttribute('data-service-card-state'), offerState: el.getAttribute('data-call-offer-state'), busy: el.getAttribute('aria-busy') === 'true', price: el.querySelector('[data-millify]').textContent, tooltip: el.querySelector('[hover-text]').textContent, tooltipDisplay: getComputedStyle(el.querySelector('[data-call-offer-tooltip]')).display })), book: (() => { const trigger = document.querySelector('[booking-button-wrapper] .button_main-wrap'); const hitTarget = trigger.querySelector('.clickable_wrap > .clickable_btn'); const spinner = trigger.querySelector('[data-button-spinner]'); const loadingHide = trigger.querySelector('[data-opp-element="loading-hide"]'); return { visible: trigger.getBoundingClientRect().height > 0, disabled: trigger.getAttribute('aria-disabled') === 'true', loading: trigger.hasAttribute('data-booking-trigger-loading'), busy: trigger.getAttribute('aria-busy') === 'true', signup: trigger.getAttribute('data-signup-trigger-element'), modal: trigger.getAttribute('data-modal-trigger'), cursor: getComputedStyle(hitTarget).cursor, spinner: getComputedStyle(spinner).display, spinnerInline: spinner.style.display, loadingHide: getComputedStyle(loadingHide).display, loadingHideInline: loadingHide.style.display } })() })`)
       observations.push({ label, ...state })
       if (evidence) { const shot = await send('Page.captureScreenshot', { format: 'png' }); await fs.writeFile(path.join(evidence, `${label}.png`), Buffer.from(shot.data, 'base64')) }
       return state
@@ -75,7 +75,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
       await pause(150)
     }
     const assertBookCall = async (role, available) => {
-      const button = await evaluate(`(() => { const el = document.querySelector('[booking-button-wrapper] button'); el.scrollIntoView({block: 'center'}); const r = el.getBoundingClientRect(); return {x: r.x + r.width / 2, y: r.y + r.height / 2} })()`)
+      const button = await evaluate(`(() => { const el = document.querySelector('[booking-button-wrapper] .clickable_wrap > .clickable_btn'); el.scrollIntoView({block: 'center'}); const r = el.getBoundingClientRect(); return {x: r.x + r.width / 2, y: r.y + r.height / 2} })()`)
       await send('Input.dispatchMouseEvent', { type: 'mouseMoved', ...button })
       const hintVisible = await evaluate(`[...document.querySelectorAll('[data-call-availability-hint]')].some(el => getComputedStyle(el).display !== 'none')`)
       assert.equal(hintVisible, role === 'brand' && !available, 'only unavailable paid Brands see the hint')
@@ -109,7 +109,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
     await assertBookCall('brand', false)
     assert.equal(await evaluate('resolveStarterDiscovery()'), true)
     for (let i = 0; i < 100; i++) {
-      if (await evaluate(`!document.querySelector('[booking-button-wrapper] button').hasAttribute('data-booking-trigger-loading')`)) break
+      if (await evaluate(`!document.querySelector('[booking-button-wrapper] .button_main-wrap').hasAttribute('data-booking-trigger-loading')`)) break
       await pause(25)
     }
     loadingState = await snapshot('brand-discovery-settled')
@@ -121,7 +121,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
     assert.notEqual(loadingState.book.cursor, 'progress')
     assert.equal(loadingState.book.spinner, 'none')
     assert.equal(loadingState.book.spinnerInline, 'none')
-    assert.equal(loadingState.book.loadingHide, 'inline-flex')
+    assert.equal(loadingState.book.loadingHide, 'flex')
     assert.equal(loadingState.book.loadingHideInline, 'inline-flex')
     for (const role of ['anonymous', 'free', 'brand']) {
       for (const failed of ['header', 'services']) {

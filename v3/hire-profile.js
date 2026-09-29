@@ -78,7 +78,7 @@
           // F50: loading, not disabled. The authored Button Wrap already holds a
           // hidden [data-button-spinner] and a [data-opp-element="loading-hide"]
           // icon; this only toggles them while discovery is pending.
-          '[data-booking-trigger-loading]{cursor:progress}',
+          '[data-booking-trigger-loading],[data-booking-trigger-loading] .clickable_wrap > .clickable_btn{cursor:progress}',
           '[data-booking-trigger-loading] [data-button-spinner]{display:flex!important}',
           '[data-booking-trigger-loading] [data-opp-element="loading-hide"]{display:none!important}',
           '[data-call-offer-state="loading"],[data-call-offer-state="settings-loading"]{cursor:progress}',
@@ -745,35 +745,6 @@
       });
   }
 
-  function standDownBookingSurfaces() {
-      document.querySelectorAll('[booking-button-wrapper]').forEach(function (wrapper) {
-          setBookingWrapperAvailable(wrapper, false);
-      });
-      document.querySelectorAll(
-          '[data-modal-trigger="popup-booking-main"]:not([data-booking-back]), ' +
-          '[data-signup-trigger-element="book-call"]:not([data-booking-back]), ' +
-          '[data-profile-book-call]'
-      ).forEach(function (trigger) {
-          trigger.removeAttribute('data-signup-trigger-element');
-          trigger.removeAttribute('data-modal-trigger');
-          trigger.removeAttribute('data-booking-trigger-loading');
-          trigger.removeAttribute('aria-busy');
-          trigger.removeAttribute('aria-describedby');
-          trigger.setAttribute('data-profile-book-call', '');
-          trigger.setAttribute('data-booking-trigger-unavailable', '');
-          trigger.setAttribute('aria-disabled', 'true');
-          trigger.setAttribute('tabindex', '0');
-          trigger.setAttribute('role', 'button');
-          trigger.setAttribute('aria-label', 'Book a Call');
-      });
-      document.querySelectorAll('[data-modal-target="popup-booking-main"]').forEach(function (dialog) {
-          dialog.setAttribute('data-booking-surface-unavailable', '');
-      });
-      wireCallServiceCardsToDirectEntry();
-      wireChooserRowsToEntryStamp();
-      syncBookingBackControls();
-  }
-
   // F50: authenticated discovery and the public call DTO answer in either
   // order. A Brand whose discovery installed a controller is not answered
   // until the DTO has too, because publicCallTypeReady refuses every type
@@ -1384,6 +1355,8 @@
               return record && record.type === 'childList' && record.addedNodes && record.addedNodes.length;
           })) return;
           neutralizeUnavailableCompanyLinks();
+          if (typeof qs !== 'function' || typeof qsa !== 'function' ||
+              typeof waitForMember !== 'function' || !window.starter_memberstack_id) return;
           decorateOwnerPreviewActions();
           wireCallServiceCardsToDirectEntry();
           // Chooser rows and the back arrow arrive on the same late-node paths
@@ -1451,6 +1424,35 @@
       const isProductionHost = host === 'thestarters.com' || host === 'www.thestarters.com';
       return isProductionHost && path === '/hire/jp-dionisio';
   }
+
+  // Keep this map aligned with v3/route-guard.js and v3/auth-route.js. Access
+  // decisions use stable Memberstack plan IDs; display names and old dashboard
+  // URL fields are not role authority.
+  const MEMBERSTACK_PLAN_ROLES = {
+      'pln_free-plan-f6kn0dxz': 'brand-free',
+      'pln_new-paid-plan-463h04ph': 'brand-paid',
+      'pln_dorxata-test-free-plan-dvcg0k8o': 'talent',
+      'pln_dorxata-test-brand-plan-777r02pa': 'brand-paid',
+  };
+
+  ensureBookingModalAvailabilityGuard();
+  primeBookingModalOptions([]);
+  applyCallSurfaceAvailability({ free: false, paid: false });
+  // Webflow authors the structural Book Call triggers and dialog. Keep them
+  // closed until the viewer-specific readiness gate admits an entry point.
+  setBookingButtonAvailable(false);
+  neutralizeUnavailableCompanyLinks();
+  wireCallServiceCardsToDirectEntry();
+  wireChooserRowsToEntryStamp();
+  // Before any entry has happened there is no stamp, so the arrow starts
+  // hidden — the same answer the CSS guard gives before this line runs.
+  syncBookingBackControls();
+  // Bound to the modal library's own close-complete event rather than to close
+  // controls, so any closer the Designer adds later is covered for free.
+  if (typeof window.addEventListener === 'function') {
+      window.addEventListener('modal-close', forgetBookingEntryOnClose);
+  }
+  observeCallServiceCards();
 
   // Page-embed contract. This file is deferred, so all of these are already
   // defined in the normal case; stand down loudly rather than throwing if not.
@@ -1563,39 +1565,16 @@
   }
   if (typeof qs !== 'function' || typeof qsa !== 'function' || typeof waitForMember !== 'function') {
     console.warn('[hire-profile] page helpers (qs/qsa/waitForMember) missing; profile scripts stood down');
-    ensureBookingModalAvailabilityGuard();
-    primeBookingModalOptions([]);
-    applyCallSurfaceAvailability({ free: false, paid: false });
-    standDownBookingSurfaces();
+    callDiscoveryPending = false;
+    setBookingButtonAvailable(false);
     return;
   }
   if (!window.starter_memberstack_id) {
     console.warn('[hire-profile] starter_memberstack_id missing; profile scripts stood down');
-    ensureBookingModalAvailabilityGuard();
-    primeBookingModalOptions([]);
-    applyCallSurfaceAvailability({ free: false, paid: false });
-    standDownBookingSurfaces();
+    callDiscoveryPending = false;
+    setBookingButtonAvailable(false);
     return;
   }
-
-  ensureBookingModalAvailabilityGuard();
-  primeBookingModalOptions([]);
-  applyCallSurfaceAvailability({ free: false, paid: false });
-  // Webflow authors the structural Book Call triggers and dialog. Keep them
-  // closed until the viewer-specific readiness gate admits an entry point.
-  setBookingButtonAvailable(false);
-  neutralizeUnavailableCompanyLinks();
-  wireCallServiceCardsToDirectEntry();
-  wireChooserRowsToEntryStamp();
-  // Before any entry has happened there is no stamp, so the arrow starts
-  // hidden — the same answer the CSS guard gives before this line runs.
-  syncBookingBackControls();
-  // Bound to the modal library's own close-complete event rather than to close
-  // controls, so any closer the Designer adds later is covered for free.
-  if (typeof window.addEventListener === 'function') {
-      window.addEventListener('modal-close', forgetBookingEntryOnClose);
-  }
-  observeCallServiceCards();
 
   // `jp-test` is the published CMS canary shared by both environments. Its
   // authored Memberstack value belongs to Live, so the Test Brand on Webflow
@@ -1629,16 +1608,6 @@
           window.location.pathname.replace(/^\/hire\//, '').replace(/\/+$/, '')
       );
   }
-  // Keep this map aligned with v3/route-guard.js and v3/auth-route.js. Access
-  // decisions use stable Memberstack plan IDs; display names and old dashboard
-  // URL fields are not role authority.
-  const MEMBERSTACK_PLAN_ROLES = {
-      'pln_free-plan-f6kn0dxz': 'brand-free',
-      'pln_new-paid-plan-463h04ph': 'brand-paid',
-      'pln_dorxata-test-free-plan-dvcg0k8o': 'talent',
-      'pln_dorxata-test-brand-plan-777r02pa': 'brand-paid',
-  };
-
   function isActivePlanConnection(connection) {
       return !!connection && (connection.active === true || connection.status === 'ACTIVE');
   }

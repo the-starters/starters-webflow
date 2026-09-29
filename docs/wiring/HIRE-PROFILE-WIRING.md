@@ -359,7 +359,8 @@ and `aria-disabled="true"`. While the page hydrates (F50), a closed control
 reads as loading instead: it carries `data-booking-trigger-loading` and
 `aria-busy="true"`, not `data-booking-trigger-unavailable`. The module guard
 CSS then shows the Button Wrap's authored `[data-button-spinner]`, hides its
-`[data-opp-element="loading-hide"]` icon, and sets a progress cursor. Those
+`[data-opp-element="loading-hide"]` icon, and sets a progress cursor on the
+covering `.clickable_wrap > .clickable_btn` hit target. Those
 loading-scoped display rules override existing inline display values; removing
 the marker exposes the authored inline values again. Loading
 is still closed: `aria-disabled="true"` stays and the signup and modal hooks
