@@ -82,7 +82,7 @@
           '[data-booking-trigger-loading] [data-button-spinner]{display:flex!important}',
           '[data-booking-trigger-loading] [data-opp-element="loading-hide"]{display:none!important}',
           '[data-call-offer-state="loading"],[data-call-offer-state="settings-loading"]{cursor:progress}',
-          '[data-call-offer-state="loading"] [next-available-slot]{visibility:hidden}',
+          '[data-call-offer-state="loading"] [next-available-slot],[data-call-offer-state="settings-loading"] [next-available-slot]{visibility:hidden}',
           '[data-canonical-call-unavailable]{display:none!important}',
           '[data-call-offer-superseded]{display:none!important}',
           '[data-header-tout-excluded]{display:none!important}',
@@ -792,7 +792,10 @@
       if (callDiscoveryFailsafeTimer !== null) window.clearTimeout(callDiscoveryFailsafeTimer);
       callDiscoveryFailsafeTimer = null;
       callDiscoveryPending = false;
-      const unadmitted = document.querySelectorAll('[data-xano-call-card][data-call-offer-state="loading"]');
+      const unadmitted = document.querySelectorAll(
+          '[data-xano-call-card][data-call-offer-state="loading"], ' +
+          '[data-canonical-public-call][data-call-offer-state="loading"]'
+      );
       unadmitted.forEach(function (card) {
           setCallOfferVisible(card, false);
           card.removeAttribute('aria-busy');
@@ -935,10 +938,13 @@
       });
   }
 
-  function syncCanonicalCallSurfaces(configs, includeSurface) {
-      const records = (Array.isArray(configs) ? configs : []).filter(function (record) {
+  function admittedCanonicalCallRecords(configs) {
+      return (Array.isArray(configs) ? configs : []).filter(function (record) {
           return !isBrandMember(MEMBER) || publicCallTypeReady(record.is_paid === true ? 'paid' : 'free');
       });
+  }
+
+  function syncCanonicalCallCardSurfaces(records, includeSurface) {
       // Same shared predicate as the painters and the chooser lookup, so one
       // record set cannot be read as free by one of them and as nothing by
       // another.
@@ -946,18 +952,16 @@
           free: !!recordForType(records, 'free'),
           paid: !!recordForType(records, 'paid'),
       };
-      if (isBrandMember(MEMBER)) {
-          reconcileInstalledBookingModalOptions(records);
-          setBookingButtonAvailable(records.length > 0);
-      }
       const changed = applyCallSurfaceAvailability(availability, function (surface, type) {
-          if (!surface.hasAttribute('data-xano-call-card')) return;
+          if (!isManagedCallOfferCard(surface)) return;
           surface.setAttribute('has-connection', type);
           surface.removeAttribute('no-connection');
           surface.removeAttribute('aria-busy');
           surface.setAttribute('data-call-offer-state', 'available');
       }, includeSurface);
-      document.querySelectorAll('[data-xano-call-card][data-type]').forEach(function (surface) {
+      document.querySelectorAll(
+          '[data-xano-call-card][data-type], [data-canonical-public-call][data-type]'
+      ).forEach(function (surface) {
           const type = surface.getAttribute('data-type');
           if (includeSurface && !includeSurface(surface, type)) return;
           if (availability[type]) return;
@@ -967,6 +971,15 @@
           surface.setAttribute('data-call-offer-state', 'hidden');
       });
       return changed;
+  }
+
+  function syncCanonicalCallSurfaces(configs, includeSurface) {
+      const records = admittedCanonicalCallRecords(configs);
+      if (isBrandMember(MEMBER)) {
+          reconcileInstalledBookingModalOptions(records);
+          setBookingButtonAvailable(records.length > 0);
+      }
+      return syncCanonicalCallCardSurfaces(records, includeSurface);
   }
 
   function findReadyCallTypeCta(type) {
@@ -1288,6 +1301,11 @@
 
   const directCallServiceCards = new WeakSet();
 
+  function isManagedCallOfferCard(card) {
+      return card.hasAttribute('data-xano-call-card') ||
+          card.hasAttribute('data-canonical-public-call');
+  }
+
   function wireCallServiceCardsToDirectEntry() {
       // Call service cards are authored in both the profile hero and #services.
       // Bind by the shared component contract instead of the section location so
@@ -1301,10 +1319,15 @@
               card.getAttribute('has-connection') ||
               card.getAttribute('no-connection');
           if (type !== 'free' && type !== 'paid') return;
-          if (card.hasAttribute('data-xano-call-card') &&
-              (card.hasAttribute('data-canonical-call-unavailable') ||
+          const offerState = card.getAttribute('data-call-offer-state');
+          if (isManagedCallOfferCard(card) &&
+              ((offerState && offerState !== 'available') ||
+                  card.hasAttribute('data-canonical-call-unavailable') ||
                   (card.getAttribute('aria-hidden') === 'true' &&
-                      card.getAttribute('data-header-tout-excluded') !== 'capacity'))) return;
+                      card.getAttribute('data-header-tout-excluded') !== 'capacity'))) {
+              card.removeAttribute('data-call-service-direct');
+              return;
+          }
           // A cap-hidden but eligible Header call can reappear when a rate
           // refresh removes a higher-priority tout. Bind it now; the existing
           // click-time visibility guard still rejects it until then. This
@@ -1335,8 +1358,10 @@
               // stamp (or a released/hidden clone) cannot be trapped by this
               // capture-phase shortcut.
               if (card.hasAttribute('data-call-owner-preview')) return;
-              if (card.hasAttribute('data-xano-call-card') &&
-                  (card.hasAttribute('data-canonical-call-unavailable') ||
+              const liveOfferState = card.getAttribute('data-call-offer-state');
+              if (isManagedCallOfferCard(card) &&
+                  ((liveOfferState && liveOfferState !== 'available') ||
+                      card.hasAttribute('data-canonical-call-unavailable') ||
                       card.getAttribute('aria-hidden') === 'true')) return;
               const liveType = card.getAttribute('data-type') || card.getAttribute('has-connection');
               if (liveType !== 'free' && liveType !== 'paid') return;
@@ -2717,11 +2742,23 @@
       }) || null;
   }
 
+  function legacyHeaderCardsForType(legacyRoot, type) {
+      return qsa(
+          '[data-service-card="component"][data-type="' + type + '"], ' +
+          '[data-service-card="component"][has-connection="' + type + '"], ' +
+          '[data-service-card="component"][no-connection="' + type + '"]',
+          legacyRoot
+      );
+  }
+
   function supersedeLegacyHeaderCallCards() {
       const legacyRoot = qs('[data-call-canary-legacy-wrapper="header"]');
       if (!legacyRoot) return;
       qsa('[data-service-card="component"]', legacyRoot).forEach(function (card) {
           card.setAttribute('data-call-offer-superseded', '');
+          card.removeAttribute('aria-busy');
+          card.removeAttribute('data-call-service-direct');
+          card.setAttribute('data-call-offer-state', 'hidden');
           setCallOfferVisible(card, false);
       });
   }
@@ -2744,12 +2781,7 @@
       ['free', 'paid'].forEach(function (type) {
           const item = canonicalPublicItemForType(itemsById, type);
           if (!item) return;
-          qsa(
-              '[data-service-card="component"][data-type="' + type + '"], ' +
-              '[data-service-card="component"][has-connection="' + type + '"], ' +
-              '[data-service-card="component"][no-connection="' + type + '"]',
-              legacyRoot
-          ).forEach(function (card) {
+          legacyHeaderCardsForType(legacyRoot, type).forEach(function (card) {
               const title = qs('[data-service-card-element="title"]', card);
               const titleText = String(item.name || '');
               if (title && title.textContent !== titleText) title.textContent = titleText;
@@ -2769,16 +2801,13 @@
 
       ['free', 'paid'].forEach(function (type) {
           const item = canonicalPublicItemForType(itemsById, type);
-          qsa(
-              '[data-service-card="component"][data-type="' + type + '"], ' +
-              '[data-service-card="component"][has-connection="' + type + '"], ' +
-              '[data-service-card="component"][no-connection="' + type + '"]',
-              legacyRoot
-          ).forEach(function (card) {
+          legacyHeaderCardsForType(legacyRoot, type).forEach(function (card) {
               card.removeAttribute('data-call-offer-superseded');
               card.setAttribute('data-canonical-public-call', type);
               const visible = !!(item && item.public_available === true);
               setCallOfferVisible(card, visible);
+              card.removeAttribute('aria-busy');
+              card.setAttribute('data-call-offer-state', visible ? 'available' : 'hidden');
               if (!visible) {
                   card.removeAttribute('data-signup-trigger-element');
                   card.removeAttribute('data-signup-trigger-value');
@@ -2800,6 +2829,53 @@
       });
   }
 
+  function legacyHeaderBrandEntries(itemsById) {
+      const legacyRoot = qs('[data-call-canary-legacy-wrapper="header"]');
+      if (!legacyRoot || qs('[wf-xano-instance="starter-call-offers-header"]')) return [];
+      const entries = [];
+      ['free', 'paid'].forEach(function (type) {
+          const item = canonicalPublicItemForType(itemsById, type);
+          legacyHeaderCardsForType(legacyRoot, type).forEach(function (card) {
+              card.removeAttribute('data-call-offer-superseded');
+              card.setAttribute('data-canonical-public-call', type);
+              card.setAttribute('data-service-card-state', 'Default');
+              card.setAttribute('data-call-offer-type', type);
+              card.setAttribute('data-type', type);
+              card.removeAttribute('has-connection');
+              card.removeAttribute('no-connection');
+              card.removeAttribute('booking-popup-open');
+              card.removeAttribute('data-modal-trigger');
+              card.removeAttribute('data-signup-trigger-element');
+              card.removeAttribute('data-signup-trigger-value');
+              card.removeAttribute('data-call-service-direct');
+              entries.push({ card: card, item: item, type: type });
+          });
+      });
+      return entries;
+  }
+
+  function applyBrandCallCardStates(entries) {
+      const discoveryAnswered = !!(paintedCallState && Array.isArray(paintedCallState.configs));
+      entries.forEach(function (entry) {
+          const card = entry.card;
+          card.removeAttribute('booking-popup-open');
+          card.removeAttribute('data-modal-trigger');
+          card.removeAttribute('data-signup-trigger-element');
+          card.removeAttribute('data-signup-trigger-value');
+          card.removeAttribute('data-call-service-direct');
+          if (!discoveryAnswered && callDiscoveryPending && entry.item &&
+              entry.item.public_available === true) {
+              setCallOfferVisible(card, true);
+              card.setAttribute('aria-busy', 'true');
+              card.setAttribute('data-call-offer-state', 'loading');
+              return;
+          }
+          setCallOfferVisible(card, false);
+          card.removeAttribute('aria-busy');
+          card.setAttribute('data-call-offer-state', 'pending');
+      });
+  }
+
   function reconcileLegacyHeaderProjection() {
       if (qs('[wf-xano-instance="starter-call-offers-header"]')) {
           supersedeLegacyHeaderCallCards();
@@ -2810,6 +2886,20 @@
       }
       if (viewerSeesPublicProjection(MEMBER) && latestCanonicalCallItems) {
           syncLoggedOutCanonicalHeader(latestCanonicalCallItems);
+          return;
+      }
+      if (isBrandMember(MEMBER) && latestCanonicalCallItems) {
+          const entries = legacyHeaderBrandEntries(latestCanonicalCallItems);
+          applyBrandCallCardStates(entries);
+          if (paintedCallState && Array.isArray(paintedCallState.configs)) {
+              const legacyCards = new Set(entries.map(function (entry) { return entry.card; }));
+              syncCanonicalCallCardSurfaces(
+                  admittedCanonicalCallRecords(paintedCallState.configs),
+                  function (surface) { return legacyCards.has(surface); }
+              );
+          }
+          wireCallServiceCardsToDirectEntry();
+          maybeEndCallDiscoveryPending(false);
           return;
       }
       if (MEMBER.id && !isProfileOwner(MEMBER) && !isBrandMember(MEMBER)) {
@@ -3089,24 +3179,7 @@
       } else if (isProfileOwner(MEMBER)) {
           applyOwnerCallCardStates(ownerCallSettingsSnapshot);
       } else if (isBrandMember(MEMBER)) {
-          const discoveryAnswered = !!(paintedCallState && Array.isArray(paintedCallState.configs));
-          adapted.forEach(function (entry) {
-              const card = entry.card;
-              // F50: a type the public DTO offers stays on screen as loading
-              // while discovery is unanswered, instead of appearing late. It
-              // is not admitted: it carries no modal hook, and the direct
-              // entry finds no installed CTA to open. Discovery then admits
-              // it through syncCanonicalCallSurfaces or fails it closed.
-              if (!discoveryAnswered && callDiscoveryPending && entry.item.public_available === true) {
-                  setCallOfferVisible(card, true);
-                  card.setAttribute('aria-busy', 'true');
-                  card.setAttribute('data-call-offer-state', 'loading');
-                  return;
-              }
-              setCallOfferVisible(card, false);
-              card.removeAttribute('aria-busy');
-              card.setAttribute('data-call-offer-state', 'pending');
-          });
+          applyBrandCallCardStates(adapted.concat(legacyHeaderBrandEntries(itemsById)));
           // Canonical discovery can finish before wf-xano clones this card.
           // Replay the already-installed set so a late clone does not stay in
           // pending until some unrelated DOM mutation happens.

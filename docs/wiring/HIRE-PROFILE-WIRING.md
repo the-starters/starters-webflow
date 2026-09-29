@@ -322,7 +322,7 @@ are aligned before selecting the canary.
    closed until the [Brand readiness contract](#signed-in-brand-readiness)
    admits the type. Until then, Book Call and each card the public DTO offers
    read as loading (spinner, `aria-busy`), not as unavailable. Verify both arrival orders, refresh failure, sibling cached
-   replay, and recovery of both Header and Services cards. Enabled generic Book Call
+   replay, the published legacy Header fallback, and recovery of both Header and Services cards. Enabled generic Book Call
    buttons open the authored chooser. A visible Free or Paid call service in the hero or
    Services section reuses its exact installed
    chooser CTA and opens that call flow directly, including on a migrated
@@ -332,7 +332,8 @@ are aligned before selecting the canary.
 4. `document.documentElement` carries `data-v3-algolia-status="ready"`.
 5. The Algolia object ID matches the positive integer in
    `[data-starter-xano-id]`.
-6. Every admitted `[data-xano-call-card]` in the hero and in `#services` settles out of
+6. Every admitted `[data-xano-call-card]` in the hero and in `#services`, plus
+   every `[data-canonical-public-call]` in the published legacy Header, settles out of
    `data-call-offer-state="pending"` (and, for a Brand, out of `loading`) for
    the role under test: `available` or
    `hidden` for anonymous and Brand viewers, `available` or `setup-required` for
@@ -850,9 +851,11 @@ does not hide ordinary CMS Service cards.
 The currently published hero still uses the earlier `starter-calls` wf-xano
 wrapper. Until Webflow publishes `starter-call-offers-header`, the adapter
 repaints those two native hero touts from the latest canonical public call DTO.
-It replays that decision when the legacy wrapper renders or refreshes late. As
-soon as the canonical Header wrapper exists, the legacy hero touts are also
-stamped superseded and stay hidden.
+For a Brand, those native touts use the same `loading`, `available`, and
+`hidden` states and the same installed-controller and public-availability gate
+as canonical clones. It replays that decision when the legacy wrapper renders
+or refreshes late. As soon as the canonical Header wrapper exists, the legacy
+hero touts are also stamped superseded and stay hidden.
 
 Subscription uses the `window.WfXano` callback queue and reads retained public
 state when this deferred file registers after a result. Every adaptation waits
@@ -888,7 +891,7 @@ stale content. The final state for an admitted clone is one of:
 | --- | --- |
 | `available` | the card is offered: logged-out with `public_available === true`, brand admitted by the [readiness contract](#signed-in-brand-readiness), or the owner with a bookable record |
 | `setup-required` | owner only: the card is shown as a preview with the next setup step |
-| `settings-loading` | owner only: settings have not resolved yet; the card keeps the authored `Default` look with `aria-busy="true"`, a progress cursor, and its setup tooltip hidden |
+| `settings-loading` | owner only: settings have not resolved yet; the card keeps the authored `Default` look with `aria-busy="true"`, a progress cursor, and its setup tooltip and `[next-available-slot]` hidden |
 | `settings-unavailable` | owner only: the settings lookup failed; the card is disabled and offers only Call Settings |
 | `hidden` | the type is not offered to this viewer |
 | `loading` | brand, while authenticated discovery has not answered and the public DTO offers the type (`public_available === true`): the card is shown with `Default`, `aria-busy="true"`, a progress cursor, and its `[next-available-slot]` hidden; it is not admitted and opens nothing |
@@ -964,7 +967,7 @@ wf-xano clones after the settings lookup resolves gets the same state, and a
 lookup that resolves after the clone repaints it. Before that answer arrives,
 the card uses the neutral `settings-loading` state (F50): it keeps the authored
 `Default` variant, not the grey `Disabled` one, carries `aria-busy="true"`,
-and hides its setup tooltip. A failed lookup uses
+and hides its setup tooltip and authored next-slot sentinel. A failed lookup uses
 `settings-unavailable` with “Call settings could not be loaded. Refresh or open
 Call Settings.” and only the Settings CTA. It never guesses that Calendar,
 availability, or Stripe is missing. Setup-required owner cards intentionally

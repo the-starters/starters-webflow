@@ -150,3 +150,102 @@ for (const libraryFirst of [false, true]) for (const profileType of ['Consult', 
     assert.deepEqual(errors, [])
   } finally { observer.disconnect(); w.close() }
 })
+
+test('published legacy Header follows Brand loading and admission states', async () => {
+  const errors = []
+  const console = new VirtualConsole()
+  console.on('jsdomError', error => errors.push(error.message))
+  const legacyCard = type => `<article data-service-card="component" data-service-card-state="Default"
+    data-type="${type}" has-connection="${type}" booking-popup-open
+    data-modal-trigger="popup-booking-main" data-signup-trigger-element="service"
+    data-signup-trigger-value="${type === 'free' ? 'Free Call' : 'Paid Consulting Call'}">
+    <span data-service-card-element="title">Legacy ${type}</span>
+    <span data-service-card-element="description">Legacy description</span>
+    <span data-millify>0</span></article>`
+  const dom = new JSDOM(`<body><span data-starter-xano-id>424</span><span data-profile-type="Consult">Consult</span>
+    <header><div wf-xano-element="wrapper" wf-xano-instance="starter-calls"
+      data-call-canary-legacy-wrapper="header">${legacyCard('free')}${legacyCard('paid')}</div></header>
+    <section id="services">${calls('services')}</section></body>`,
+  { url: 'https://www.thestarters.com/hire/fixture', runScripts: 'outside-only', virtualConsole: console })
+  const w = dom.window
+  const brand = {
+    id: 'fixture-brand',
+    auth: { email: 'brand@example.invalid' },
+    customFields: { 'free-user': 'Brand', 'last-name': 'Fixture' },
+    planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', status: 'ACTIVE' }],
+  }
+  let resolveStarter
+  const starter = new Promise(resolve => { resolveStarter = resolve })
+  Object.assign(w, {
+    MEMBER: brand,
+    memberReady: Promise.resolve(brand),
+    waitForMember: callback => callback(brand),
+    starter_memberstack_id: 'fixture-starter',
+    stripe_charges: false,
+    qs: (selector, scope) => (scope || w.document).querySelector(selector),
+    qsa: (selector, scope) => (scope || w.document).querySelectorAll(selector),
+    WfXanoConfig: { xanoBase: 'https://fixture.invalid', preAuth: false, debug: false },
+    IntersectionObserver: class { observe() {} disconnect() {} },
+    formatWithTimezone: () => ({ list: {} }),
+    StartersFreeCallBooking: {
+      getStarterByMemberId: () => starter,
+      getConfigs: async () => [{
+        config_id: 'fixture-free', is_paid: false, active: true,
+        data_environment: 'production', price_cents: 0, duration: 30,
+      }],
+      getNearestSlot: async () => null,
+      installFreeBookingController: () => true,
+    },
+  })
+  w.fetch = async url => {
+    const parsed = new URL(url)
+    if (parsed.pathname.endsWith('/profile/starter/calls/v3')) return {
+      ok: true,
+      status: 200,
+      json: async () => ({ starter_id: 424, items: ['free', 'paid'].map(type => ({
+        id: `424:call:${type}`,
+        type,
+        name: type === 'free' ? 'Free Call' : 'Paid Consulting Call',
+        description: 'Canonical call offer',
+        price: type === 'free' ? 0 : 250,
+        public_available: true,
+        currency: 'USD',
+        unit: '/session',
+      })) }),
+    }
+    return { ok: true, status: 200, json: async () => ({ items: [] }) }
+  }
+  const cards = () => Array.from(w.document.querySelectorAll(
+    '[data-call-canary-legacy-wrapper="header"] [data-service-card="component"]'
+  ))
+  try {
+    w.eval(pageSource)
+    w.eval(library)
+    w.document.dispatchEvent(new w.Event('DOMContentLoaded'))
+    await until(() => cards().length === 2 && cards().every(card =>
+      card.getAttribute('data-call-offer-state') === 'loading'))
+    for (const card of cards()) {
+      assert.equal(card.style.display, 'block')
+      assert.equal(card.getAttribute('aria-hidden'), null)
+      assert.equal(card.getAttribute('aria-busy'), 'true')
+      assert.equal(card.getAttribute('data-service-card-state'), 'Default')
+      assert.equal(card.getAttribute('booking-popup-open'), null)
+      assert.equal(card.getAttribute('data-modal-trigger'), null)
+      assert.equal(card.getAttribute('data-signup-trigger-element'), null)
+      assert.equal(card.getAttribute('data-call-service-direct'), null)
+    }
+
+    resolveStarter({ nylas_grant_id: 'fixture-grant' })
+    await until(() => cards()[0].getAttribute('data-call-offer-state') === 'available' &&
+      cards()[1].getAttribute('data-call-offer-state') === 'hidden')
+    const [free, paid] = cards()
+    assert.equal(free.style.display, 'block')
+    assert.equal(free.getAttribute('aria-busy'), null)
+    assert.equal(free.getAttribute('has-connection'), 'free')
+    assert.equal(paid.style.display, 'none')
+    assert.equal(paid.getAttribute('aria-hidden'), 'true')
+    assert.equal(paid.getAttribute('aria-busy'), null)
+    assert.equal(paid.getAttribute('has-connection'), null)
+    assert.deepEqual(errors, [])
+  } finally { w.close() }
+})

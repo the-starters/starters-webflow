@@ -61,7 +61,49 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
     await send('Emulation.setDeviceMetricsOverride', { width: 1100, height: 950, deviceScaleFactor: 1, mobile: false })
     const observations = []
     const snapshot = async label => {
-      const state = await evaluate(`({ cards: [...document.querySelectorAll('[wf-xano-item]')].map(el => ({ visible: el.getBoundingClientRect().height > 0 && getComputedStyle(el).display !== 'none', type: el.getAttribute('data-call-offer-type'), state: el.getAttribute('data-service-card-state'), offerState: el.getAttribute('data-call-offer-state'), busy: el.getAttribute('aria-busy') === 'true', price: el.querySelector('[data-millify]').textContent, tooltip: el.querySelector('[hover-text]').textContent, tooltipDisplay: getComputedStyle(el.querySelector('[data-call-offer-tooltip]')).display })), book: (() => { const trigger = document.querySelector('[booking-button-wrapper] .button_main-wrap'); const hitTarget = trigger.querySelector('.clickable_wrap > .clickable_btn'); const spinner = trigger.querySelector('[data-button-spinner]'); const loadingHide = trigger.querySelector('[data-opp-element="loading-hide"]'); return { visible: trigger.getBoundingClientRect().height > 0, disabled: trigger.getAttribute('aria-disabled') === 'true', loading: trigger.hasAttribute('data-booking-trigger-loading'), busy: trigger.getAttribute('aria-busy') === 'true', signup: trigger.getAttribute('data-signup-trigger-element'), modal: trigger.getAttribute('data-modal-trigger'), cursor: getComputedStyle(hitTarget).cursor, spinner: getComputedStyle(spinner).display, spinnerInline: spinner.style.display, loadingHide: getComputedStyle(loadingHide).display, loadingHideInline: loadingHide.style.display } })() })`)
+      const state = await evaluate(`(() => {
+        const card = el => {
+          const slot = el.querySelector('[next-available-slot]')
+          return {
+            visible: el.getBoundingClientRect().height > 0 && getComputedStyle(el).display !== 'none',
+            display: getComputedStyle(el).display,
+            ariaHidden: el.getAttribute('aria-hidden'),
+            type: el.getAttribute('data-call-offer-type'),
+            state: el.getAttribute('data-service-card-state'),
+            offerState: el.getAttribute('data-call-offer-state'),
+            busy: el.getAttribute('aria-busy') === 'true',
+            price: el.querySelector('[data-millify]').textContent,
+            tooltip: el.querySelector('[hover-text]').textContent,
+            tooltipDisplay: getComputedStyle(el.querySelector('[data-call-offer-tooltip]')).display,
+            slotText: slot ? slot.textContent : null,
+            slotVisibility: slot ? getComputedStyle(slot).visibility : null,
+            signup: el.getAttribute('data-signup-trigger-element'),
+            modal: el.getAttribute('data-modal-trigger'),
+            direct: el.getAttribute('data-call-service-direct'),
+          }
+        }
+        const trigger = document.querySelector('[booking-button-wrapper] .button_main-wrap')
+        const hitTarget = trigger.querySelector('.clickable_wrap > .clickable_btn')
+        const spinner = trigger.querySelector('[data-button-spinner]')
+        const loadingHide = trigger.querySelector('[data-opp-element="loading-hide"]')
+        return {
+          cards: [...document.querySelectorAll('[wf-xano-item]')].map(card),
+          legacyCards: [...document.querySelectorAll('[data-call-canary-legacy-wrapper="header"] [data-service-card="component"]')].map(card),
+          book: {
+            visible: trigger.getBoundingClientRect().height > 0,
+            disabled: trigger.getAttribute('aria-disabled') === 'true',
+            loading: trigger.hasAttribute('data-booking-trigger-loading'),
+            busy: trigger.getAttribute('aria-busy') === 'true',
+            signup: trigger.getAttribute('data-signup-trigger-element'),
+            modal: trigger.getAttribute('data-modal-trigger'),
+            cursor: getComputedStyle(hitTarget).cursor,
+            spinner: getComputedStyle(spinner).display,
+            spinnerInline: spinner.style.display,
+            loadingHide: getComputedStyle(loadingHide).display,
+            loadingHideInline: loadingHide.style.display,
+          },
+        }
+      })()`)
       observations.push({ label, ...state })
       if (evidence) { const shot = await send('Page.captureScreenshot', { format: 'png' }); await fs.writeFile(path.join(evidence, `${label}.png`), Buffer.from(shot.data, 'base64')) }
       return state
@@ -94,6 +136,35 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
       assert.equal(state.book.signup, role !== 'brand' || available ? 'book-call' : null)
       assert.equal(state.book.modal, role === 'brand' && available ? 'popup-booking-main' : null)
     }
+    await navigate('role=brand&discovery=held&header=legacy')
+    let legacyState = await snapshot('brand-legacy-header-loading')
+    assert.equal(legacyState.legacyCards.length, 2)
+    assert.ok(legacyState.legacyCards.every(card => card.visible && card.state === 'Default'))
+    assert.ok(legacyState.legacyCards.every(card => card.offerState === 'loading' && card.busy))
+    assert.ok(legacyState.legacyCards.every(card => card.signup === null && card.modal === null && card.direct === null))
+    await evaluate(`document.querySelector('[data-call-canary-legacy-wrapper="header"] [data-type="free"]').click()`)
+    await pause(50)
+    assert.deepEqual(await evaluate(`({ entries: bookingEntries.length, chooser: document.querySelector('[data-modal-target="popup-booking-main"]').open, booking: document.querySelector('[data-modal-target="popup-booking"]').open })`), { entries: 0, chooser: false, booking: false })
+    assert.equal(await evaluate('resolveStarterDiscovery()'), true)
+    for (let i = 0; i < 100; i++) {
+      if (await evaluate(`![...document.querySelectorAll('[data-call-canary-legacy-wrapper="header"] [data-service-card="component"]')].some(card => card.getAttribute('data-call-offer-state') === 'loading')`)) break
+      await pause(25)
+    }
+    legacyState = await snapshot('brand-legacy-header-available')
+    assert.ok(legacyState.legacyCards.every(card => card.visible && card.offerState === 'available' && !card.busy))
+
+    await navigate('role=brand&discovery=held&header=legacy')
+    legacyState = await snapshot('brand-legacy-header-loading-empty')
+    assert.ok(legacyState.legacyCards.every(card => card.offerState === 'loading' && card.busy))
+    assert.equal(await evaluate(`resolveStarterDiscovery('empty')`), true)
+    for (let i = 0; i < 100; i++) {
+      if (await evaluate(`[...document.querySelectorAll('[data-call-canary-legacy-wrapper="header"] [data-service-card="component"]')].every(card => card.getAttribute('data-call-offer-state') === 'hidden')`)) break
+      await pause(25)
+    }
+    legacyState = await snapshot('brand-legacy-header-hidden')
+    assert.ok(legacyState.legacyCards.every(card => !card.visible && card.display === 'none'))
+    assert.ok(legacyState.legacyCards.every(card => card.ariaHidden === 'true' && card.offerState === 'hidden' && !card.busy))
+
     await navigate('role=brand&discovery=held')
     let loadingState = await snapshot('brand-discovery-loading')
     assert.equal(loadingState.book.loading, true)
@@ -172,11 +243,14 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
       assert.ok(state.cards.every(card => card.state === (owner === 'ready' || owner === 'loading' ? 'Default' : owner === 'stripe' || owner === 'stale' ? card.type === 'free' ? 'Default' : 'Disabled' : 'Disabled')), JSON.stringify(state))
       const messages = { off: { free: 'Enable your Free Call service.', paid: 'Enable and price your Paid Call service.' }, calendar: { free: 'Connect your calendar to offer calls.', paid: 'Connect your calendar to offer calls.' }, stripe: { paid: 'Connect Stripe to offer paid calls.' }, stale: { paid: 'Refresh your Stripe connection to offer paid calls.' }, loading: { free: '', paid: '' }, error: { free: 'Call settings could not be loaded. Refresh or open Call Settings.', paid: 'Call settings could not be loaded. Refresh or open Call Settings.' } }
       for (const card of state.cards) if (messages[owner]?.[card.type] !== undefined) assert.equal(card.tooltip, messages[owner][card.type])
-      if (owner === 'loading') assert.ok(state.cards.every(card => card.offerState === 'settings-loading' && card.busy && card.tooltipDisplay === 'none'))
+      if (owner === 'loading') {
+        assert.ok(state.cards.every(card => card.offerState === 'settings-loading' && card.busy && card.tooltipDisplay === 'none'))
+        assert.ok(state.cards.every(card => card.slotText === '00:00pm on 00/00' && card.slotVisibility === 'hidden'))
+      }
     }
     assert.deepEqual(errors, [], 'no uncaught browser errors')
     if (evidence) await fs.writeFile(path.join(evidence, 'observations.json'), JSON.stringify({ boundary: 'Local fixture; real adapter, attribution, modal; synthetic data and booking controllers', observations }, null, 2))
-    console.log(`PASS: ${observations.length} native-browser observations; both wrappers, signup, booking entry, owner states`)
+    console.log(`PASS: ${observations.length} native-browser observations; canonical and legacy calls, signup, booking entry, owner states`)
   } finally {
     socket?.close()
     const closed = new Promise(resolve => chrome.once('exit', resolve))

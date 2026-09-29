@@ -3,6 +3,7 @@
 const params = new URLSearchParams(location.search)
 const role = params.get('role') || 'anonymous'
 const ownerState = params.get('owner') || 'ready'
+const legacyHeader = params.get('header') === 'legacy'
 window.qs = (s, root = document) => root.querySelector(s)
 window.qsa = (s, root = document) => root.querySelectorAll(s)
 window.starter_memberstack_id = 'fixture-owner'
@@ -22,11 +23,11 @@ let heldStarterResolve = null
 const heldStarter = params.get('discovery') === 'held'
   ? new Promise(resolve => { heldStarterResolve = resolve })
   : null
-window.resolveStarterDiscovery = () => {
+window.resolveStarterDiscovery = result => {
   if (!heldStarterResolve) return false
   const resolve = heldStarterResolve
   heldStarterResolve = null
-  resolve({ nylas_grant_id: 'fixture-grant' })
+  resolve(result === 'empty' ? null : { nylas_grant_id: 'fixture-grant' })
   return true
 }
 function settings(type) {
@@ -61,12 +62,21 @@ window.StartersFreeCallBooking = {
 window.StartersPaidCallBrandPayment = { installPaidBookingController: () => install('paid') }
 window.callResult = (paid = true) => ({ items: ['free', 'paid'].map(type => ({ id: `424:call:${type}`, type, name: type === 'free' ? 'Free Call' : 'Paid Consulting Call', description: 'Fixture call offer', price: type === 'free' ? 0 : paid ? 250 : null, currency: 'USD', unit: '/session', public_available: type === 'free' || paid })) })
 window.lists = {}
-for (const surface of ['header', 'services']) {
+const cardContent = type => `<div data-service-card-element="title"></div><p data-service-card-element="description"></p><span data-millify></span><div class="service-card_content-wrapper"><span next-available-slot>00:00pm on 00/00</span></div><div data-call-offer-tooltip style="display:none"><span data-call-offer-tooltip-text hover-text></span><a hover-cta data-call-setup-action="calendar" starter-dashboard-url>Calendar</a><a hover-cta data-call-setup-action="stripe" stripe-connect-url>Stripe</a><a hover-cta data-call-setup-action="settings" starter-dashboard-url>Call Settings</a></div>`
+if (legacyHeader) {
+  const root = document.createElement('div')
+  root.setAttribute('wf-xano-element', 'wrapper')
+  root.setAttribute('wf-xano-instance', 'starter-calls')
+  root.setAttribute('data-call-canary-legacy-wrapper', 'header')
+  root.innerHTML = ['free', 'paid'].map(type => `<article data-service-card="component" data-service-card-state="Default" data-type="${type}" has-connection="${type}" booking-popup-open data-modal-trigger="popup-booking-main" data-signup-trigger-element="service" data-signup-trigger-value="${type === 'free' ? 'Free Call' : 'Paid Consulting Call'}">${cardContent(type)}</article>`).join('')
+  qs('#header').append(root)
+}
+for (const surface of legacyHeader ? ['services'] : ['header', 'services']) {
   const key = `starter-call-offers-${surface}`
   const root = document.createElement('div')
   root.setAttribute('wf-xano-element', 'wrapper')
   root.setAttribute('wf-xano-instance', key)
-  root.innerHTML = '<div wf-xano-element="template" data-service-card="component"></div>' + ['free', 'paid'].map(type => `<article wf-xano-item data-wf-xano-id="424:call:${type}"><div data-service-card-element="title"></div><p data-service-card-element="description"></p><span data-millify></span><div class="service-card_content-wrapper"></div><div data-call-offer-tooltip style="display:none"><span data-call-offer-tooltip-text hover-text></span><a hover-cta data-call-setup-action="calendar" starter-dashboard-url>Calendar</a><a hover-cta data-call-setup-action="stripe" stripe-connect-url>Stripe</a><a hover-cta data-call-setup-action="settings" starter-dashboard-url>Call Settings</a></div></article>`).join('')
+  root.innerHTML = '<div wf-xano-element="template" data-service-card="component"></div>' + ['free', 'paid'].map(type => `<article wf-xano-item data-wf-xano-id="424:call:${type}">${cardContent(type)}</article>`).join('')
   qs(`#${surface}`).append(root)
   const handlers = {}
   let state = { status: params.has('failed') && surface === (params.get('failed') || 'header') ? 'error' : 'success', data: callResult() }
