@@ -564,16 +564,33 @@
       wrapper.setAttribute('aria-hidden', 'false');
   }
 
-  function isManagedLegacyHeaderCallSurface(surface) {
+  function canonicalCallCardForSurface(surface) {
+      if (!surface || typeof surface.closest !== 'function') return null;
+      const card = surface.closest('[wf-xano-item]');
+      if (!card) return null;
+      const root = card.closest('[wf-xano-instance="starter-call-offers-header"]') ||
+          card.closest('[wf-xano-instance="starter-call-offers-services"]');
+      if (!root || card.closest('[wf-xano-element="wrapper"]') !== root) return null;
+      return card;
+  }
+
+  function isLegacyHeaderCallSurface(surface) {
       return !!(
           surface &&
-          surface.closest('[data-call-canary-legacy-wrapper="header"]') &&
-          !document.querySelector('[wf-xano-instance="starter-call-offers-header"]') &&
-          typeof window.qs === 'function' &&
-          typeof window.qsa === 'function' &&
-          typeof window.waitForMember === 'function' &&
-          window.starter_memberstack_id
+          typeof surface.closest === 'function' &&
+          surface.closest('[data-call-canary-legacy-wrapper="header"]')
       );
+  }
+
+  function isManagedHydratingCallSurface(surface) {
+      if (!surface || typeof surface.closest !== 'function' ||
+          typeof window.qs !== 'function' ||
+          typeof window.qsa !== 'function' ||
+          typeof window.waitForMember !== 'function' ||
+          !window.starter_memberstack_id) return false;
+      const legacyFallback = isLegacyHeaderCallSurface(surface) &&
+          !document.querySelector('[wf-xano-instance="starter-call-offers-header"]');
+      return legacyFallback || !!canonicalCallCardForSurface(surface);
   }
 
   // These controls remain discoverable while their booking action is closed.
@@ -738,7 +755,7 @@
       document.querySelectorAll(
           '[data-modal-trigger="popup-booking-main"]:not([data-booking-back]), [data-profile-book-call]'
       ).forEach(function (trigger) {
-          if (isManagedLegacyHeaderCallSurface(trigger)) return;
+          if (isManagedHydratingCallSurface(trigger)) return;
           if (available) {
               trigger.removeAttribute('data-booking-trigger-unavailable');
               trigger.removeAttribute('aria-disabled');
@@ -912,6 +929,7 @@
   function excludeXanoCallCards(surface) {
       return !surface.hasAttribute('data-xano-call-card') &&
           !surface.hasAttribute('data-canonical-public-call') &&
+          !canonicalCallCardForSurface(surface) &&
           !surface.hasAttribute('data-call-offer-superseded');
   }
 
@@ -960,13 +978,18 @@
           free: !!recordForType(records, 'free'),
           paid: !!recordForType(records, 'paid'),
       };
-      const changed = applyCallSurfaceAvailability(availability, function (surface, type) {
+      let changed = applyCallSurfaceAvailability(availability, function (surface, type) {
           if (!isManagedCallOfferCard(surface)) return;
           surface.setAttribute('has-connection', type);
           surface.removeAttribute('no-connection');
           surface.removeAttribute('aria-busy');
           surface.setAttribute('data-call-offer-state', 'available');
-      }, includeSurface);
+      }, function (surface, type) {
+          if (includeSurface && !includeSurface(surface, type)) return false;
+          if (!canonicalCallCardForSurface(surface)) return true;
+          return surface.hasAttribute('data-xano-call-card') ||
+              surface.hasAttribute('data-canonical-public-call');
+      });
       document.querySelectorAll(
           '[data-xano-call-card][data-type]:not([data-call-offer-superseded]), ' +
           '[data-canonical-public-call][data-type]:not([data-call-offer-superseded])'
@@ -979,6 +1002,24 @@
           surface.removeAttribute('aria-busy');
           surface.setAttribute('data-call-offer-state', 'hidden');
       });
+      if (!availability.free && !availability.paid) {
+          canonicalCallCardEntries().forEach(function (entry) {
+              const surface = entry.card;
+              if (surface.hasAttribute('data-xano-call-card') ||
+                  surface.hasAttribute('data-canonical-public-call')) return;
+              if (includeSurface && !includeSurface(surface, '')) return;
+              changed = changed ||
+                  surface.style.display !== 'none' ||
+                  surface.getAttribute('aria-hidden') !== 'true' ||
+                  surface.getAttribute('data-call-offer-state') !== 'hidden';
+              setCallOfferVisible(surface, false);
+              surface.removeAttribute('has-connection');
+              surface.removeAttribute('no-connection');
+              surface.removeAttribute('data-call-service-direct');
+              surface.removeAttribute('aria-busy');
+              surface.setAttribute('data-call-offer-state', 'hidden');
+          });
+      }
       return changed;
   }
 
@@ -1316,7 +1357,9 @@
 
   function isManagedCallOfferCard(card) {
       return card.hasAttribute('data-xano-call-card') ||
-          card.hasAttribute('data-canonical-public-call');
+          card.hasAttribute('data-canonical-public-call') ||
+          !!canonicalCallCardForSurface(card) ||
+          isLegacyHeaderCallSurface(card);
   }
 
   function wireCallServiceCardsToDirectEntry() {
@@ -1334,7 +1377,7 @@
           if (type !== 'free' && type !== 'paid') return;
           const offerState = card.getAttribute('data-call-offer-state');
           if (isManagedCallOfferCard(card) &&
-              ((offerState && offerState !== 'available') ||
+              (offerState !== 'available' ||
                   card.hasAttribute('data-canonical-call-unavailable') ||
                   (card.getAttribute('aria-hidden') === 'true' &&
                       card.getAttribute('data-header-tout-excluded') !== 'capacity'))) {
@@ -1373,7 +1416,7 @@
               if (card.hasAttribute('data-call-owner-preview')) return;
               const liveOfferState = card.getAttribute('data-call-offer-state');
               if (isManagedCallOfferCard(card) &&
-                  ((liveOfferState && liveOfferState !== 'available') ||
+                  (liveOfferState !== 'available' ||
                       card.hasAttribute('data-canonical-call-unavailable') ||
                       card.getAttribute('aria-hidden') === 'true')) return;
               const liveType = card.getAttribute('data-type') || card.getAttribute('has-connection');
@@ -1478,7 +1521,7 @@
   applyCallSurfaceAvailability(
       { free: false, paid: false },
       null,
-      function (surface) { return !isManagedLegacyHeaderCallSurface(surface); }
+      function (surface) { return !isManagedHydratingCallSurface(surface); }
   );
   // Webflow authors the structural Book Call triggers and dialog. Keep them
   // closed until the viewer-specific readiness gate admits an entry point.
@@ -1618,7 +1661,9 @@
     return;
   }
 
-  applyPendingCallCardStates(legacyHeaderCallEntries(null));
+  applyPendingCallCardStates(
+      canonicalCallCardEntries().concat(legacyHeaderCallEntries(null))
+  );
 
   // `jp-test` is the published CMS canary shared by both environments. Its
   // authored Memberstack value belongs to Live, so the Test Brand on Webflow
@@ -2891,9 +2936,26 @@
       return entries;
   }
 
+  function canonicalCallCardEntries() {
+      const entries = [];
+      ['starter-call-offers-header', 'starter-call-offers-services'].forEach(function (key) {
+          const root = qs('[wf-xano-instance="' + key + '"]');
+          if (!root) return;
+          Array.from(qsa('[wf-xano-item]', root)).forEach(function (card) {
+              if (card.closest('[wf-xano-element="wrapper"]') !== root ||
+                  card.hasAttribute('data-call-offer-superseded')) return;
+              entries.push({ card: card });
+          });
+      });
+      return entries;
+  }
+
   function applyPendingCallCardStates(entries) {
       entries.forEach(function (entry) {
           const card = entry.card;
+          card.setAttribute('data-service-card-state', 'Default');
+          card.removeAttribute('has-connection');
+          card.removeAttribute('no-connection');
           card.removeAttribute('booking-popup-open');
           card.removeAttribute('data-modal-trigger');
           card.removeAttribute('data-signup-trigger-element');

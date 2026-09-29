@@ -225,6 +225,23 @@ for (const arrival of ['dto-first', 'discovery-first']) test(`published legacy H
   const cards = () => Array.from(w.document.querySelectorAll(
     '[data-call-canary-legacy-wrapper="header"] [data-service-card="component"]'
   ))
+  const stateTracks = cards().map(card => {
+    const states = []
+    const observer = new w.MutationObserver(records => {
+      records.forEach((record, index) => {
+        const nextRecord = records[index + 1]
+        states.push(nextRecord
+          ? nextRecord.oldValue
+          : card.getAttribute('data-call-offer-state'))
+      })
+    })
+    observer.observe(card, {
+      attributes: true,
+      attributeFilter: ['data-call-offer-state'],
+      attributeOldValue: true,
+    })
+    return { observer, states }
+  })
   try {
     w.eval(pageSource)
     w.eval(library)
@@ -247,8 +264,6 @@ for (const arrival of ['dto-first', 'discovery-first']) test(`published legacy H
       assert.equal(card.getAttribute('data-signup-trigger-element'), null)
       assert.equal(card.getAttribute('data-call-service-direct'), null)
     }
-    const observedStates = cards().map(card => [card.getAttribute('data-call-offer-state')])
-
     if (arrival === 'dto-first') {
       resolveStarter({ nylas_grant_id: 'fixture-grant' })
     } else {
@@ -264,11 +279,15 @@ for (const arrival of ['dto-first', 'discovery-first']) test(`published legacy H
     assert.equal(paid.getAttribute('aria-hidden'), 'true')
     assert.equal(paid.getAttribute('aria-busy'), null)
     assert.equal(paid.getAttribute('has-connection'), null)
-    cards().forEach((card, index) => observedStates[index].push(card.getAttribute('data-call-offer-state')))
+    await pause(0)
     assert.deepEqual(
-      observedStates,
+      stateTracks.map(({ states }) => states.filter((state, index) =>
+        index === 0 || state !== states[index - 1])),
       [['loading', 'available'], ['loading', 'hidden']],
     )
     assert.deepEqual(errors, [])
-  } finally { w.close() }
+  } finally {
+    stateTracks.forEach(({ observer }) => observer.disconnect())
+    w.close()
+  }
 })

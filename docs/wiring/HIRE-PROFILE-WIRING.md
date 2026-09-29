@@ -978,6 +978,8 @@ Call Settings.” and only the Settings CTA. It never guesses that Calendar,
 availability, or Stripe is missing. Setup-required owner cards intentionally
 keep the authored next-slot sentinel as a preview placeholder until a trusted
 bookable record can paint it.
+The deliberate production block on `/hire/jp-dionisio` is the sole exception
+to the owner rule that only a failed settings read uses Disabled/settings-unavailable.
 
 <a id="signed-in-brand-readiness"></a>
 
