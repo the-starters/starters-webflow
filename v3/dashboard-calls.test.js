@@ -2747,6 +2747,252 @@ test('missing panel details and role-correct Message actions are supplied withou
   }
 })
 
+// F52 (JP meeting 2026-09-30): module rows rendered as a second bordered table
+// below the authored one, and the module Message line sat outside the padded
+// card column. The fixtures below mirror the saved dashboard markup: panel >
+// card column > [details table > booking-element-wrap rows] + a hidden
+// Message block, then the button footer.
+function richElement(tag, attributes = {}, text) {
+  const node = domElement(tag, attributes)
+  node.hasAttribute = function (name) {
+    return Object.prototype.hasOwnProperty.call(this.attributes, name)
+  }
+  node.insertBefore = function (child, before) {
+    if (child.parentNode && child.parentNode.removeChild) child.parentNode.removeChild(child)
+    const index = before ? this.children.indexOf(before) : -1
+    if (index === -1) return this.appendChild(child)
+    this.children.splice(index, 0, child)
+    child.parentNode = this
+    return child
+  }
+  node.removeChild = function (child) {
+    const index = this.children.indexOf(child)
+    if (index !== -1) this.children.splice(index, 1)
+    child.parentNode = null
+    return child
+  }
+  node.contains = function (other) {
+    for (let candidate = other; candidate; candidate = candidate.parentNode) {
+      if (candidate === this) return true
+    }
+    return false
+  }
+  Object.defineProperty(node, 'nextSibling', {
+    get() {
+      const parent = node.parentNode
+      if (!parent) return null
+      return parent.children[parent.children.indexOf(node) + 1] || null
+    },
+  })
+  node.cloneNode = function (deep) {
+    const copy = richElement(this.tagName, this.attributes)
+    copy.hidden = this.hidden
+    copy.style = { ...this.style }
+    copy.textContent = this.textContent
+    if (deep) this.children.forEach((child) => copy.appendChild(child.cloneNode(true)))
+    return copy
+  }
+  if (text != null) node.textContent = text
+  return node
+}
+
+function authoredTableRow(title, field, value) {
+  const wrap = richElement('div', {
+    'booking-element-wrap': '',
+    'display-flex': '',
+    class: 'call-details_table-item',
+  })
+  const titleBox = richElement('div', { class: 'call-details_table-title' })
+  titleBox.appendChild(richElement('p', {}, title))
+  const valueBox = richElement('div', { class: 'call-details_table-label' })
+  const hook = richElement('p', { 'booking-element': field, class: 'text-size-regular' }, value)
+  valueBox.appendChild(hook)
+  wrap.appendChild(titleBox)
+  wrap.appendChild(valueBox)
+  return { wrap, hook }
+}
+
+function f52Panel(panelName, { messageBlock, messageField, rows = [['Duration', 'duration', '30min']] } = {}) {
+  const modal = richElement('dialog', { 'popup-booking-info': '' })
+  modal.ownerDocument = { createElement: (tag) => richElement(tag) }
+  const panel = richElement('div', { 'booking-popup-content': panelName })
+  const column = richElement('div', { class: 'call-details_layout' })
+  const heading = richElement('p', {}, 'Heading')
+  const table = richElement('div', { class: 'call-details_table-details' })
+  const authored = rows.map(([title, field, value]) => authoredTableRow(title, field, value))
+  authored.forEach((row) => table.appendChild(row.wrap))
+  column.appendChild(heading)
+  column.appendChild(table)
+  let block = null
+  let link = null
+  if (messageBlock) {
+    block = richElement('div', { [messageBlock]: '' })
+    const copy = richElement('p', {}, 'Reach out via the ')
+    link = richElement('a', { 'booking-element': messageField }, 'Messages tab')
+    copy.appendChild(link)
+    block.appendChild(copy)
+    column.appendChild(block)
+  }
+  const footer = richElement('div')
+  footer.appendChild(richElement('a', { 'booking-action-btn': 'switch-base' }))
+  footer.appendChild(richElement('a', { 'booking-action-btn': 'switch-cancel-reason' }))
+  panel.appendChild(column)
+  panel.appendChild(footer)
+  modal.appendChild(panel)
+  // The open dialog renders the panel; a Message link inside a hidden block
+  // renders no box, so it is not an authoritative Message control.
+  panel.getClientRects = () => [{ width: 320, height: 400 }]
+  if (link) link.getClientRects = () => []
+  return { modal, panel, column, heading, table, authored, block, link, footer }
+}
+
+function summaryRowsOf(table) {
+  return table.children
+    .filter((row) => row.getAttribute('data-starters-call-summary-row') != null)
+    .map((row) => [
+      row.getAttribute('data-starters-call-summary-row'),
+      row.children[0].children[0].textContent,
+      row.children[1].children[0].textContent,
+    ])
+}
+
+const F52_BOOKING = {
+  booking_id: 'f52-booking',
+  status: 'confirmed',
+  start: 10_000,
+  duration: 30,
+  call_context: '',
+  brand_data: { name: 'Northwind', memberstack_id: 'mem_brand', timezone: 'UTC' },
+  starter_data: { name: 'Sam', memberstack_id: 'mem_starter', timezone: 'UTC' },
+}
+
+// The module's own date text for F52_BOOKING, read through the public row model.
+const F52_DATE = api.detailSupplementRows(F52_BOOKING, 'brand', 'UTC', 'base')
+  .find((row) => row.field === 'start-date').value
+
+test('Brand cancel step: module rows join the authored table and the Message line stays in the card', () => {
+  const view = f52Panel('cancel', {
+    messageBlock: 'reschedule-blocked-info',
+    messageField: 'starter-message-link',
+  })
+  assert.ok(api.ensureDetailSupplements(view.modal, F52_BOOKING, 'brand', 'UTC') > 0)
+
+  // The authored Duration row stays authoritative; the missing fields become
+  // extra rows of the same table, cloned from the authored row.
+  assert.deepEqual(summaryRowsOf(view.table), [
+    ['starter-name', 'Starter', 'Sam'],
+    ['start-date', 'Date and time', F52_DATE],
+  ])
+  assert.equal(view.table.children[0], view.authored[0].wrap)
+  const row = view.table.children[1]
+  assert.equal(row.parentNode, view.table)
+  assert.equal(row.getAttribute('class'), 'call-details_table-item', 'keeps the authored row typography')
+  assert.equal(row.getAttribute('booking-element-wrap'), null)
+  assert.equal(row.querySelectorAll('[booking-element]').length, 0, 'no controller hook is copied')
+  assert.equal(row.hidden, false)
+  assert.equal(row.style.display, 'flex')
+  assert.equal(view.panel.querySelector('[data-starters-call-summary-rows]'), null, 'no second bordered table')
+
+  // The Message line sits in the card column right after the hidden block,
+  // and the panel keeps only the column and the footer.
+  const supplement = view.panel.querySelector('[data-starters-call-summary]')
+  assert.equal(supplement.parentNode, view.column)
+  assert.deepEqual(view.column.children, [view.heading, view.table, view.block, supplement])
+  assert.deepEqual(view.panel.children, [view.column, view.footer])
+  assert.equal(supplement.style.marginTop, '0')
+  assert.equal(supplement.hidden, false)
+  assert.equal(supplement.children.length, 1)
+  const message = supplement.querySelector('[data-starters-call-message]')
+  assert.equal(message.href, '/messages?with=mem_starter')
+
+  // Repeated passes (populate, the frame pass, a repaint) keep one row per field.
+  api.ensureDetailSupplements(view.modal, F52_BOOKING, 'brand', 'UTC')
+  api.ensureDetailSupplements(view.modal, F52_BOOKING, 'brand', 'UTC')
+  assert.deepEqual(summaryRowsOf(view.table).map(([field]) => field), ['starter-name', 'start-date'])
+  assert.equal(view.panel.querySelectorAll('[data-starters-call-summary]').length, 1)
+  assert.equal(view.panel.querySelectorAll('[data-starters-call-message]').length, 1)
+  assert.deepEqual(view.column.children, [view.heading, view.table, view.block, supplement])
+
+  // A later pass with fewer missing fields removes the stale row.
+  api.ensureDetailSupplements(view.modal, { ...F52_BOOKING, start: undefined }, 'brand', 'UTC')
+  assert.deepEqual(summaryRowsOf(view.table).map(([field]) => field), ['starter-name'])
+
+  // An identity reset removes the in-table rows and the Message line.
+  const originalDocument = global.document
+  const originalActions = global.StartersDashboardCallActions
+  try {
+    global.StartersDashboardCallActions = undefined
+    global.document = { querySelector: () => view.modal }
+    api.resetDetailModal()
+    assert.deepEqual(view.table.children, [view.authored[0].wrap])
+    assert.equal(view.modal.querySelectorAll('[data-starters-call-summary-row]').length, 0)
+    assert.equal(view.modal.querySelector('[data-starters-call-message]'), null)
+  } finally {
+    global.document = originalDocument
+    global.StartersDashboardCallActions = originalActions
+  }
+})
+
+test('Starter steps put the Message line after the hidden pending-info block', () => {
+  const view = f52Panel('decline', {
+    messageBlock: 'pending-info-text',
+    messageField: 'brand-message-link',
+    rows: [['Duration', 'duration', '30min'], ['Brand', 'brand-name', '[Brand]']],
+  })
+  api.ensureDetailSupplements(view.modal, { ...F52_BOOKING, status: 'pending' }, 'starter', 'UTC')
+  const supplement = view.panel.querySelector('[data-starters-call-summary]')
+  assert.deepEqual(view.column.children, [view.heading, view.table, view.block, supplement])
+  assert.equal(supplement.querySelector('[data-starters-call-message]').href, '/messages?with=mem_brand')
+  assert.deepEqual(summaryRowsOf(view.table), [['start-date', 'Date and time', F52_DATE]])
+  assert.deepEqual(view.panel.children, [view.column, view.footer])
+})
+
+test('a panel with no Message control puts the module line right after the table', () => {
+  // F04 "Request time updated": no context hook and no Message control.
+  const view = f52Panel('reschedule-updated', {
+    rows: [['Duration', 'duration', '30min'], ['Starter', 'starter-name', '[Starter]']],
+  })
+  const booking = { ...F52_BOOKING, status: 'pending', call_context: 'Discuss launch' }
+  api.ensureDetailSupplements(view.modal, booking, 'brand', 'UTC')
+  assert.deepEqual(summaryRowsOf(view.table), [
+    ['start-date', 'Date and time', F52_DATE],
+    ['context', 'Call', 'Discuss launch'],
+  ])
+  const supplement = view.panel.querySelector('[data-starters-call-summary]')
+  assert.deepEqual(view.column.children, [view.heading, view.table, supplement])
+  assert.equal(supplement.querySelector('[data-starters-call-message]').href, '/messages?with=mem_starter')
+  for (let pass = 0; pass < 3; pass += 1) {
+    api.ensureDetailSupplements(view.modal, booking, 'brand', 'UTC')
+  }
+  assert.deepEqual(summaryRowsOf(view.table).map(([field]) => field), ['start-date', 'context'])
+})
+
+test('a hidden authored template row still yields a visible module row with fresh text', () => {
+  const view = f52Panel('declined', {
+    rows: [['Duration', 'duration', '30min']],
+  })
+  // resetDetailModal and populate hide an unused authored row the same way.
+  const template = view.authored[0]
+  template.wrap.hidden = true
+  template.wrap.style.display = 'none'
+  template.hook.hidden = true
+  template.hook.style.display = 'none'
+  const booking = { ...F52_BOOKING, status: 'declined', cancelled_reason: 'Not available' }
+  api.ensureDetailSupplements(view.modal, booking, 'brand', 'UTC')
+  const reason = view.table.children.find((row) =>
+    row.getAttribute('data-starters-call-summary-row') === 'decline-reason')
+  assert.ok(reason, 'the Free declined panel gets a Decline reason row')
+  assert.equal(reason.hidden, false)
+  assert.equal(reason.style.display, 'flex')
+  assert.equal(reason.children[1].children[0].hidden, false)
+  assert.equal(reason.children[1].children[0].style.display, '')
+  assert.equal(reason.children[0].children[0].textContent, 'Decline reason')
+  assert.equal(reason.children[1].children[0].textContent, 'Not available')
+  // The authored row itself is left exactly as the populate pass set it.
+  assert.equal(template.wrap.hidden, true)
+  assert.equal(template.hook.textContent, '30min')
+})
+
 test('an authored field inside a CSS-hidden wrapper still receives a visible supplement', () => {
   const originalGetComputedStyle = global.getComputedStyle
   const group = { hidden: false, style: {} }

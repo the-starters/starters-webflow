@@ -2406,13 +2406,19 @@ copy. Binding a non-rescheduled row hides both proposal-only fields.
 
 Not every authored panel repeats every booking hook, so each authored
 `[booking-popup-content]` panel also receives a module-owned
-`data-starters-call-summary` block inserted before the panel's direct-child
-footer. The authored `switch-close` control's group is preferred; otherwise the
-footer is the first direct child that contains a `[booking-action-btn]` and no
-`[booking-element]`. When neither attribute-driven anchor exists, the block is
-appended after the authored content. A modal that authors no such panel receives
-one block on the modal itself. Generated content uses no classes or generated
-IDs. The block lists only the fields that panel has no usable
+`data-starters-call-summary` block. When the panel authors a details table (a
+one-field `[booking-element-wrap]` row, such as the Duration row, whose parent
+is not the panel itself), the block goes into that table's padded card column:
+right after the authored `[reschedule-blocked-info]` or `[pending-info-text]`
+block that holds the panel's hidden Message copy, or else right after the
+table (F52, 2026-09-30). Otherwise the block is inserted before the panel's
+direct-child footer. The authored `switch-close` control's group is preferred;
+otherwise the footer is the first direct child that contains a
+`[booking-action-btn]` and no `[booking-element]`. When neither
+attribute-driven anchor exists, the block is appended after the authored
+content. A modal that authors no such panel receives one block on the modal
+itself. Generated content uses no generated IDs, and the code selects no
+classes. The module lists only the fields that panel has no usable
 `[booking-element]` hook for and that the canonical row has a value for —
 counterpart name, date and time
 (including the current confirmed and proposed times described above),
@@ -2441,10 +2447,15 @@ the dialog, the block is rebuilt one animation frame later against the now-open
 panel, and that second pass is skipped when the modal has been reset or rebound
 to another call in the meantime. A Designer-owned field therefore stays
 authoritative — and is never duplicated on screen — for as long as it and its
-wrapper render. The module-owned fields render inside one bordered
-`data-starters-call-summary-rows` group. Each field is a padded two-column row,
-so counterpart and duration use the same visual structure as the authored call
-details instead of appearing as loose text below them. The block ends with a
+wrapper render. In a panel with a details table, each module-owned field is a
+clone of the authored table row: the clone keeps the authored classes and
+layout, loses every `booking-element`, `booking-element-wrap`, and `id`
+attribute, and is appended to the same table, so it reads as one more row of
+it. Each pass removes the rows of the previous pass first, and a reset removes
+them too, so a panel keeps one row per field. A panel with no details table
+keeps the older layout: the fields render inside one bordered
+`data-starters-call-summary-rows` group of padded two-column rows. The block
+ends with a
 `data-starters-call-summary-actions` paragraph: “If you’d like to discuss
 options, reach out to [counterpart name] via the Messages tab.” The name falls
 back to `the Brand` for the Starter or `the Starter` for the Brand. Its underlined
