@@ -5962,6 +5962,7 @@ test('meeting destinations prefer canonical time across device clock skew', () =
 test('canonical Join timing preserves device-clock action panels', () => {
   const actions = require('./dashboard-call-actions.js')
   const previousActions = global.StartersDashboardCallActions
+  const previousDocument = global.document
   const previousNow = Date.now
   const serverNow = 2_000_000_000_000
   let canonicalNow = serverNow
@@ -5995,6 +5996,13 @@ test('canonical Join timing preserves device-clock action panels', () => {
       canonicalReads = 0
       canonicalNow = serverNow
       Date.now = () => serverNow + 60 * 60 * 1000
+      global.document = {
+        querySelector(selector) {
+          return selector === '[popup-booking-info], dialog[data-modal-target="popup-booking-info"]'
+            ? view.modal
+            : null
+        },
+      }
       api.populateDetailModal(view.modal, booking, role)
       assert.equal(canonicalReads, 1)
       assert.equal(view.modal.getAttribute('data-booking-status'), 'completed')
@@ -6004,6 +6012,14 @@ test('canonical Join timing preserves device-clock action panels', () => {
       assert.equal(view.fields['meeting-link'].getAttribute('data-meeting-href'), booking.meeting_link)
       assert.equal(cancel.hidden, true)
       assert.equal(actions.canCancel(role, booking), false)
+
+      const refs = [{ rows: [booking], list: element() }]
+      canonicalNow = booking.end
+      api.refreshMeetingDestinations(refs)
+      assert.equal(api.refreshOpenDetailPanel(refs, role), true)
+      assert.equal(view.fields['meeting-link'].hidden, true)
+      assert.equal(view.base.hidden, true)
+      assert.equal(view.completedPanels[0].hidden, false)
 
       canonicalReads = 0
       canonicalNow = booking.end + 1
@@ -6020,6 +6036,7 @@ test('canonical Join timing preserves device-clock action panels', () => {
     }
   } finally {
     global.StartersDashboardCallActions = previousActions
+    global.document = previousDocument
     Date.now = previousNow
   }
 })
@@ -6030,6 +6047,7 @@ test('late canonical clock reveals Join without replacing an action panel', () =
   const previousDocument = global.document
   const previousNow = Date.now
   const serverNow = 2_000_000_000_000
+  let canonicalNow = serverNow
   const booking = {
     booking_id: 'late-canonical-detail',
     status: 'confirmed',
@@ -6044,6 +6062,7 @@ test('late canonical clock reveals Join without replacing an action panel', () =
   Date.now = () => serverNow + 60 * 60 * 1000
   try {
     for (const keepActionOpen of [false, true]) {
+      canonicalNow = serverNow
       const view = completedDetailModalHarness(['terminal'])
       global.document = {
         querySelector(selector) {
@@ -6066,7 +6085,7 @@ test('late canonical clock reveals Join without replacing an action panel', () =
       }
       global.StartersDashboardCallActions = {
         ...actions,
-        canonicalNow: () => serverNow,
+        canonicalNow: () => canonicalNow,
       }
       api.refreshMeetingDestinations(refs)
       const changed = api.refreshOpenDetailPanel(refs, 'brand')
@@ -6082,6 +6101,20 @@ test('late canonical clock reveals Join without replacing an action panel', () =
         assert.equal(changed, true)
         assert.equal(view.base.hidden, false)
         assert.equal(view.completedPanels[0].hidden, true)
+      }
+
+      canonicalNow = booking.end
+      api.refreshMeetingDestinations(refs)
+      const expiredChanged = api.refreshOpenDetailPanel(refs, 'brand')
+      assert.equal(view.fields['meeting-link'].hidden, true)
+      if (keepActionOpen) {
+        assert.equal(expiredChanged, false)
+        assert.equal(view.confirmation.hidden, false)
+        assert.equal(view.confirmation.draft, 'Keep this draft')
+      } else {
+        assert.equal(expiredChanged, true)
+        assert.equal(view.base.hidden, true)
+        assert.equal(view.completedPanels[0].hidden, false)
       }
     }
 
@@ -6099,9 +6132,10 @@ test('late canonical clock reveals Join without replacing an action panel', () =
     api.populateDetailModal(paidView.modal, paidBooking, 'brand')
     assert.equal(paidView.base.hidden, true)
     assert.ok(paidView.completedPanels.every(panel => panel.hidden === false))
+    canonicalNow = serverNow
     global.StartersDashboardCallActions = {
       ...actions,
-      canonicalNow: () => serverNow,
+      canonicalNow: () => canonicalNow,
     }
     api.refreshMeetingDestinations(paidRefs)
     assert.equal(api.refreshOpenDetailPanel(paidRefs, 'brand'), true)
@@ -6601,7 +6635,7 @@ test('successful cancellation clears current destinations before a failed refres
       stopImmediatePropagation() {},
     })
     await requested.promise
-    const current = { ...booking }
+    const current = { ...booking, status: 'cancelled' }
     refs[0].rows = [current]
     response.resolve({
       ok: true,
@@ -6620,6 +6654,7 @@ test('successful cancellation clears current destinations before a failed refres
     assert.equal(view.fields['meeting-link'].hasAttribute('role'), false)
     assert.equal(view.fields['meeting-link'].hasAttribute('tabindex'), false)
     assert.equal(view.fields['meeting-link'].hidden, true)
+    assert.equal(view.cancelledPanel.hidden, false)
     assert.equal(restarts, 0)
 
     const close = element({ 'booking-action-btn': 'switch-close' })
@@ -6881,8 +6916,6 @@ test('mutation reconciliation retains dirty state until canonical readback succe
     list, template: element(), loader: element(), empty: element(),
     loadMore: element(), filters: element(), count: element(), section: element(),
   }
-  const staleRequested = deferred()
-  const staleResponse = deferred()
   const mutationState = api.createBookingMutationState()
   let reads = 0
   try {
@@ -6891,27 +6924,12 @@ test('mutation reconciliation retains dirty state until canonical readback succe
     console.error = () => {}
     global.xanoAuthFetch = async () => {
       reads += 1
-      if (reads === 1) {
-        staleRequested.resolve()
-        return staleResponse.promise
-      }
-      if (reads === 2) throw new Error('Controlled reconciliation failure')
+      if (reads === 1) throw new Error('Controlled reconciliation failure')
       return { ok: true, json: async () => [accepted] }
     }
     api.bindCard(card, booking, 'brand')
     assert.equal(anchor.getAttribute('href'), booking.meeting_link)
-    const staleRefresh = api.refreshSession(
-      { getCurrentMember: async () => ({ id: 'mutation-member' }) },
-      [refs], 'brand', 1, () => 1, false,
-      { preserveExisting: true, mutationState },
-    )
-    await staleRequested.promise
     const claim = api.captureBookingMutation([refs], booking, mutationState)
-    staleResponse.resolve({ ok: true, json: async () => [accepted] })
-    assert.equal(await staleRefresh, true)
-    assert.equal(refs.rows[0], booking)
-    assert.equal(anchor.getAttribute('href'), booking.meeting_link)
-
     assert.equal(api.commitBookingMutation(
       [refs],
       booking,
@@ -6920,6 +6938,7 @@ test('mutation reconciliation retains dirty state until canonical readback succe
       mutationState,
       now,
     ), booking)
+    assert.equal(anchor.getAttribute('href'), booking.meeting_link)
     assert.equal(api.releaseBookingMutation(mutationState, claim), true)
 
     const reconcile = api.createBookingMutationReconciler(function () {
@@ -6933,7 +6952,7 @@ test('mutation reconciliation retains dirty state until canonical readback succe
     const coalesced = reconcile()
     assert.equal(first, coalesced)
     assert.equal(await first, false)
-    assert.equal(reads, 2)
+    assert.equal(reads, 1)
     assert.equal(api.bookingMutationReconciliationPending(mutationState), true)
     assert.equal(api.releaseBookingMutation(mutationState, claim), true)
 
@@ -6951,7 +6970,7 @@ test('mutation reconciliation retains dirty state until canonical readback succe
       },
     })
     await new Promise(setImmediate)
-    assert.equal(reads, 3)
+    assert.equal(reads, 2)
     assert.equal(refs.rows[0].meeting_link, accepted.meeting_link)
     assert.equal(refs.rows[0].start, accepted.start)
     assert.equal(anchor.getAttribute('href'), accepted.meeting_link)
@@ -6965,6 +6984,50 @@ test('mutation reconciliation retains dirty state until canonical readback succe
     global.StartersDashboardCallActions = previousActions
     console.error = previousError
   }
+})
+
+test('mutation reconciliation isolates active work across identity resets', async () => {
+  const mutationState = api.createBookingMutationState()
+  const makeDirty = function (bookingId) {
+    const booking = { booking_id: bookingId, status: 'confirmed' }
+    const refs = [{ rows: [booking], list: { querySelectorAll: () => [] } }]
+    const superseded = api.captureBookingMutation(refs, booking, mutationState)
+    const latest = api.captureBookingMutation(refs, booking, mutationState)
+    assert.equal(api.commitBookingMutation(
+      refs,
+      booking,
+      { status: 'cancelled' },
+      superseded,
+      mutationState,
+    ), null)
+    assert.equal(api.releaseBookingMutation(mutationState, superseded), false)
+    assert.equal(api.releaseBookingMutation(mutationState, latest), true)
+  }
+  const firstRefresh = deferred()
+  const secondRefresh = deferred()
+  let refreshes = 0
+  const reconcile = api.createBookingMutationReconciler(function () {
+    refreshes += 1
+    return refreshes === 1 ? firstRefresh.promise : secondRefresh.promise
+  }, mutationState)
+
+  makeDirty('identity-a')
+  const first = reconcile()
+  await new Promise(setImmediate)
+  assert.equal(refreshes, 1)
+
+  api.resetBookingMutationState(mutationState)
+  makeDirty('identity-b')
+  const second = reconcile()
+  await new Promise(setImmediate)
+  assert.equal(refreshes, 2)
+  assert.notEqual(first, second)
+
+  firstRefresh.resolve(false)
+  assert.equal(await first, false)
+  assert.equal(reconcile(), second)
+  secondRefresh.resolve(false)
+  assert.equal(await second, false)
 })
 
 test('Starter background refreshes preserve canonical response order', async () => {
@@ -7126,6 +7189,125 @@ test('Starter background refreshes preserve canonical response order', async () 
   }
 })
 
+test('direct and reconciliation refreshes preserve same-session response order', async () => {
+  const source = fs.readFileSync(require.resolve('./dashboard-calls.js'), 'utf8')
+  const now = Date.now()
+  const booking = {
+    booking_id: 'ordered-direct-call',
+    status: 'confirmed',
+    start: now + 120_000,
+    end: now + 180_000,
+    meeting_link: 'https://meet.google.com/ordered-direct',
+    brand_data: { memberstack_id: 'ordered-direct-brand' },
+    starter_data: { memberstack_id: 'ordered-direct-starter' },
+  }
+  const cancelled = { ...booking, status: 'cancelled' }
+  const meetingWrap = element()
+  const meeting = anchorElement({ 'booking-element': 'meeting-link' })
+  meeting.closest = selector => selector === '[booking-element-wrap]' ? meetingWrap : null
+  const card = element({ 'bookings-item-template': 'calls' })
+  card.cloneNode = () => card
+  card.querySelectorAll = selector => {
+    if (selector === '[booking-element="meeting-link"]') return [meeting]
+    return []
+  }
+  const template = element({ 'bookings-item-template': 'calls' })
+  template.cloneNode = () => card
+  const list = element()
+  list.appendChild = () => {}
+  list.querySelectorAll = selector => {
+    if (selector === '[bookings-item-template]') return [template]
+    if (selector === '[data-booking-id]') return [card]
+    return []
+  }
+  const section = element({ 'bookings-section': 'calls' })
+  section.querySelector = selector => ({
+    '[bookings-list="calls"]': list,
+    '[bookings-item-template="calls"]': template,
+    '[bookings-loader="calls"]': element(),
+    '[bookings-empty="calls"]': element(),
+    '[bookings-count]': element(),
+    '.tabs-button_component.is-dashboard': element(),
+  })[selector] || null
+  const root = element()
+  const document = {
+    documentElement: root,
+    readyState: 'complete',
+    getElementById() { return null },
+    querySelector() { return null },
+    querySelectorAll(selector) {
+      return selector === '[bookings-section]' ? [section] : []
+    },
+  }
+  const directResponse = deferred()
+  let reads = 0
+  let moduleOptions = null
+  const window = {
+    $memberstackDom: {
+      async getCurrentMember() {
+        return { id: 'ordered-direct-brand' }
+      },
+      onAuthChange() {},
+    },
+    StartersDashboardCallActions: {
+      wire(options) { moduleOptions = options },
+    },
+    StartersDashboardCallMedia: { wire() {} },
+    StartersDashboardCallPayment: { wire() {} },
+    clearInterval() {},
+    document,
+    location: { pathname: '/brand-dashboard', search: '', hash: '' },
+    setInterval() { return 1 },
+    xanoAuthFetch: async () => {
+      reads += 1
+      if (reads === 1) return { ok: true, json: async () => [booking] }
+      if (reads === 2) return directResponse.promise
+      return { ok: true, json: async () => [cancelled] }
+    },
+  }
+
+  vm.runInNewContext(source, {
+    console: { error() {}, warn() {} },
+    document,
+    Intl,
+    URL,
+    URLSearchParams,
+    window,
+  })
+  await until(() => moduleOptions && root.getAttribute('data-dashboard-calls-v3') === 'ready')
+  assert.equal(reads, 1)
+  assert.equal(meeting.getAttribute('href'), booking.meeting_link)
+
+  const direct = moduleOptions.restart()
+  await until(() => reads === 2)
+  const superseded = moduleOptions.captureBookingMutation(booking)
+  const latest = moduleOptions.captureBookingMutation(booking)
+  assert.equal(
+    moduleOptions.commitBookingMutation(booking, { status: 'cancelled' }, superseded),
+    null,
+  )
+  assert.equal(moduleOptions.releaseBookingMutation(superseded), false)
+  assert.equal(moduleOptions.releaseBookingMutation(latest), true)
+  const reconciliation = moduleOptions.reconcileBookingMutations()
+  await new Promise(setImmediate)
+  assert.equal(reads, 2)
+
+  directResponse.resolve({ ok: true, json: async () => [booking] })
+  assert.equal(await direct, true)
+  await until(() => reads === 3)
+  assert.equal(await reconciliation, true)
+
+  const carrier = element({ 'data-booking-id': booking.booking_id })
+  const current = moduleOptions.getBooking({
+    closest(selector) {
+      return selector === '[data-booking-id]' ? carrier : null
+    },
+  })
+  assert.equal(current.status, 'cancelled')
+  assert.equal(meeting.hasAttribute('href'), false)
+  assert.equal(meeting.hidden, true)
+})
+
 test('the latest same-booking action owns its validated response', () => {
   const now = Date.now()
   const booking = {
@@ -7186,6 +7368,72 @@ test('the latest same-booking action owns its validated response', () => {
     null,
   )
   assert.equal(api.releaseBookingMutation(removedState, removedClaim), true)
+})
+
+test('canonical action results are idempotent without admitting competing transitions', () => {
+  const now = Math.floor(Date.now() / 1000) * 1000
+  const targetStart = now + 300_000
+  const targetEnd = now + 360_000
+  const booking = {
+    booking_id: 'idempotent-reschedule',
+    status: 'rescheduled',
+    rescheduled_by: 'starter',
+    start: now + 180_000,
+    end: now + 240_000,
+    start_old: now + 60_000,
+    end_old: now + 120_000,
+    meeting_link: 'https://meet.google.com/original-idempotent',
+  }
+  const refs = [{ rows: [booking], list: { querySelectorAll: () => [] } }]
+  const mutationState = api.createBookingMutationState()
+  const claim = api.captureBookingMutation(refs, booking, mutationState)
+  const canonical = {
+    ...booking,
+    status: 'confirmed',
+    start: targetStart,
+    end: targetEnd,
+    meeting_link: 'https://meet.google.com/rotated-idempotent',
+  }
+  refs[0].rows = [canonical]
+
+  assert.equal(api.commitBookingMutation(
+    refs,
+    booking,
+    {
+      status: 'CONFIRMED',
+      start: targetStart / 1000,
+      end: targetEnd / 1000,
+    },
+    claim,
+    mutationState,
+    now,
+  ), canonical)
+  assert.equal(booking.status, canonical.status)
+  assert.equal(booking.start, targetStart)
+  assert.equal(booking.end, targetEnd)
+  assert.equal(canonical.meeting_link, 'https://meet.google.com/rotated-idempotent')
+  assert.equal(api.releaseBookingMutation(mutationState, claim), true)
+
+  const competing = { ...booking, booking_id: 'competing-reschedule', status: 'rescheduled' }
+  const competingRefs = [{ rows: [competing], list: { querySelectorAll: () => [] } }]
+  const competingState = api.createBookingMutationState()
+  const competingClaim = api.captureBookingMutation(
+    competingRefs,
+    competing,
+    competingState,
+  )
+  const cancelled = { ...competing, status: 'cancelled' }
+  competingRefs[0].rows = [cancelled]
+  assert.equal(api.commitBookingMutation(
+    competingRefs,
+    competing,
+    { status: 'confirmed', start: targetStart, end: targetEnd },
+    competingClaim,
+    competingState,
+    now,
+  ), null)
+  assert.equal(cancelled.status, 'cancelled')
+  assert.equal(api.releaseBookingMutation(competingState, competingClaim), true)
 })
 
 test('Starter request Decline is exposed only with a loaded eligible contract and open response window', () => {

@@ -1005,8 +1005,8 @@
     let active = null
     const reconcile = function () {
       if (!bookingMutationReconciliationPending(state)) return Promise.resolve(true)
-      if (active) return active
       const identity = state.identity
+      if (active && active.identity === identity) return active.promise
       const attempt = function (pass) {
         if (
           identity !== state.identity ||
@@ -1024,10 +1024,12 @@
             return refreshed === true && !bookingMutationReconciliationPending(state)
           })
       }
-      active = attempt(1).finally(function () {
-        active = null
+      const record = { identity, promise: null }
+      record.promise = attempt(1).finally(function () {
+        if (active === record) active = null
       })
-      return active
+      active = record
+      return record.promise
     }
     return reconcile
   }
@@ -1099,6 +1101,26 @@
     return reconciled
   }
 
+  function bookingMutationChangesMatch(booking, changes) {
+    const fields = Object.keys(changes)
+    if (!fields.length) return false
+    return fields.every(function (field) {
+      const current = booking[field]
+      const next = changes[field]
+      if (field === 'status' || field === 'rescheduled_by') {
+        return clean(current).toLowerCase() === clean(next).toLowerCase()
+      }
+      if (['start', 'end', 'start_old', 'end_old'].includes(field)) {
+        const currentTime = normalizeTimestamp(current)
+        const nextTime = normalizeTimestamp(next)
+        if (Number.isFinite(currentTime) && Number.isFinite(nextTime)) {
+          return currentTime === nextTime
+        }
+      }
+      return current === next
+    })
+  }
+
   function commitBookingMutation(refs, booking, update, claim, state, now) {
     const bookingId = clean(booking && (booking.booking_id || booking.id))
     const current = bookingById(Array.isArray(refs) ? refs : [], bookingId)
@@ -1113,8 +1135,7 @@
       if (
         !claim || claim.bookingId !== bookingId ||
         claim.identity !== state.identity ||
-        claim.owner !== bookingMutationCounter(state.owners, bookingId) ||
-        claim.lifecycle !== bookingMutationLifecycle(current)
+        claim.owner !== bookingMutationCounter(state.owners, bookingId)
       ) {
         if (claim && claim.identity === state.identity) {
           state.refreshRequired.add(bookingId)
@@ -1122,15 +1143,31 @@
         return null
       }
     }
-    const changes = typeof update === 'function' ? update(current) : update
+    const lifecycleMatches = !state || claim.lifecycle === bookingMutationLifecycle(current)
+    const changes = typeof update === 'function'
+      ? update(lifecycleMatches ? current : booking)
+      : update
     if (!changes || typeof changes !== 'object' || Array.isArray(changes)) return null
-    Object.assign(current, changes)
-    if (booking !== current) Object.assign(booking, changes)
+    if (state && !lifecycleMatches) {
+      if (!bookingMutationChangesMatch(current, changes)) {
+        state.refreshRequired.add(bookingId)
+        return null
+      }
+      if (booking !== current) {
+        Object.keys(changes).forEach(function (field) {
+          booking[field] = current[field]
+        })
+      }
+    } else {
+      Object.assign(current, changes)
+      if (booking !== current) Object.assign(booking, changes)
+    }
     if (state) {
       state.committed.set(
         bookingId,
         bookingMutationCounter(state.committed, bookingId) + 1,
       )
+      state.refreshRequired.add(bookingId)
     }
     refreshMeetingDestinations(refs, now)
     return current
@@ -2235,6 +2272,8 @@
       : detailOpenPanel(modal, booking, status)
   }
 
+  const meetingForcedDetailBases = new WeakSet()
+
   function selectDetailPanel(modal, booking, role, openPanel) {
     const isPaid = paidBooking(booking)
     const actionsModule = global.StartersDashboardCallActions
@@ -2285,10 +2324,15 @@
     const visible = visibleDetailPanels(modal)
     if (!visible.length) return false
     const storedStatus = clean(modal.getAttribute('data-booking-status'))
-    const previousPanel = detailOpenPanel(modal, booking, storedStatus)
+    const naturalPanel = detailOpenPanel(modal, booking, storedStatus)
+    const forcedBase = meetingForcedDetailBases.has(modal)
+    const previousPanel = forcedBase ? 'base' : naturalPanel
     if (visible.some(function (panel) {
       return clean(panel.getAttribute('booking-popup-content')) !== previousPanel
-    })) return false
+    })) {
+      if (forcedBase) meetingForcedDetailBases.delete(modal)
+      return false
+    }
     if (
       previousPanel === 'completed' && !paidBooking(booking) &&
       (visible.length !== 1 || visible[0] !== uniqueCompletedDetailPanel(modal))
@@ -2301,7 +2345,13 @@
       referenceTime,
     )
     if (nextPanel === previousPanel) return false
-    return selectDetailPanel(modal, booking, role, nextPanel)
+    const selected = selectDetailPanel(modal, booking, role, nextPanel)
+    if (selected && nextPanel === 'base' && naturalPanel !== 'base') {
+      meetingForcedDetailBases.add(modal)
+    } else if (selected) {
+      meetingForcedDetailBases.delete(modal)
+    }
+    return selected
   }
 
   /**
@@ -2425,8 +2475,14 @@
     modal.setAttribute('data-booking-status', status)
     modal.setAttribute('data-booking-payment', isPaid ? 'paid' : 'free')
 
+    const naturalPanel = detailOpenPanel(modal, booking, status)
     const openPanel = detailOpenPanelForMeeting(modal, booking, status, referenceTime)
     selectDetailPanel(modal, booking, role, openPanel)
+    if (openPanel === 'base' && naturalPanel !== 'base') {
+      meetingForcedDetailBases.add(modal)
+    } else {
+      meetingForcedDetailBases.delete(modal)
+    }
     setBookingField(modal, 'paid-meeting', isPaid ? 'Paid Call' : 'Free Call', true)
     setBookingField(modal, 'status', statusLabel(status, role, booking), true)
     setBookingField(modal, 'brand-name', booking.brand_data && booking.brand_data.name, true)
@@ -2504,6 +2560,7 @@
     if (!global.document || typeof global.document.querySelector !== 'function') return
     const modal = global.document.querySelector(DETAIL_MODAL_SELECTOR)
     if (!modal) return
+    meetingForcedDetailBases.delete(modal)
     resetDetailActionState(modal)
     if (typeof modal.close === 'function') {
       try {
@@ -3499,6 +3556,22 @@
     }
     wireBrandProfileRepaint(memberstack, currentGeneration)
     let initialReadinessPending = true
+    const refreshCurrentSession = createSerializedRefresh(function (
+      generation,
+      useSharedMember,
+      refreshOptions,
+    ) {
+      if (generation !== currentGeneration()) return
+      return refreshSession(
+        memberstack,
+        refs,
+        role,
+        generation,
+        currentGeneration,
+        useSharedMember,
+        refreshOptions,
+      )
+    })
     const restart = function (options) {
       sessionGeneration += 1
       const generation = sessionGeneration
@@ -3526,12 +3599,8 @@
               })
           }
         : null
-      return refreshSession(
-        memberstack,
-        refs,
-        role,
+      return refreshCurrentSession(
         generation,
-        currentGeneration,
         useSharedMember,
         {
           preserveExisting,
@@ -3549,24 +3618,12 @@
     const refreshAfterMutation = function () {
       return restart({ preserveExisting: true })
     }
-    const refreshBackground = createSerializedRefresh(function (generation) {
-      if (generation !== currentGeneration()) return
-      return refreshSession(
-        memberstack,
-        refs,
-        role,
-        generation,
-        currentGeneration,
-        false,
-        {
-          preserveExisting: true,
-          mutationState,
-          onMutationReconciliationRequired: requestMutationReconciliation,
-        },
-      )
-    })
     const refreshExpiredRequests = function () {
-      return refreshBackground(sessionGeneration)
+      return refreshCurrentSession(sessionGeneration, false, {
+        preserveExisting: true,
+        mutationState,
+        onMutationReconciliationRequired: requestMutationReconciliation,
+      })
     }
     reconcileBookingMutations = createBookingMutationReconciler(
       refreshExpiredRequests,
