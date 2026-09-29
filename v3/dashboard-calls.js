@@ -80,6 +80,8 @@
   ].join(', ')
   const DETAIL_MODAL_SELECTOR =
     '[popup-booking-info], dialog[data-modal-target="popup-booking-info"]'
+  /** Module-owned `data-starters-action-hint` names that earlier versions made. */
+  const ACTION_HINT_NAMES = ['reschedule', 'cancel', 'decline']
   const DASHBOARD_ROLES = {
     '/starter-dashboard': 'starter',
     '/starter-dashboard---availability-stage': 'starter',
@@ -1483,9 +1485,10 @@
 
   /**
    * Renders or hides a muted one-line explanation under an authored action
-   * button that eligibility gating hides. Without it a gated action reads as
-   * a missing feature (Kaeser QA, 2026-08-29). The node is module-owned and
-   * marked `data-starters-action-hint`; authored markup is never edited.
+   * button that eligibility gating hides. The node is module-owned and marked
+   * `data-starters-action-hint`; authored markup is never edited. During soft
+   * launch no hint is shown (see configureDetailActions), so this only hides
+   * a node that an earlier version or an earlier booking left in the modal.
    */
   function ensureActionHint(modal, anchor, name, message, visible) {
     if (!modal || typeof modal.querySelector !== 'function') return
@@ -1524,16 +1527,6 @@
         modal.ownerDocument || global.document,
         modal,
       )
-    }
-    const gates = {
-      rescheduleAnchor: null,
-      rescheduleShown: false,
-      respondShown: false,
-      cancelAnchor: null,
-      cancelShown: false,
-      declineAnchor: null,
-      declineFallback: null,
-      declineShown: false,
     }
     modal
       .querySelectorAll(DETAIL_ACTION_SELECTOR)
@@ -1591,28 +1584,6 @@
         const payment = paymentControl && preferredPaymentControl &&
           typeof global.StartersDashboardCallPayment?.canManageCards === 'function' &&
           global.StartersDashboardCallPayment.canManageCards(role, booking)
-        if (action === 'reschedule') {
-          if (!gates.rescheduleAnchor) gates.rescheduleAnchor = button
-          if (proposeReschedule) gates.rescheduleShown = true
-        }
-        if (action === 'confirm-reschedule' && respondReschedule) {
-          gates.respondShown = true
-        }
-        if (action === 'switch-cancel' || action === 'cancel') {
-          if (!gates.cancelAnchor) gates.cancelAnchor = button
-          if (cancel) gates.cancelShown = true
-        }
-        if (
-          action === 'switch-decline' ||
-          action === 'switch-decline-reason' ||
-          action === 'decline'
-        ) {
-          // Anchor on the base-panel entry when the page authors one, so the
-          // hint sits where the Starter looks for Decline.
-          if (action === 'switch-decline' && !gates.declineAnchor) gates.declineAnchor = button
-          if (!gates.declineFallback) gates.declineFallback = button
-          if (decline) gates.declineShown = true
-        }
         show(
           button,
           action === 'switch-close' ||
@@ -1626,59 +1597,13 @@
             message,
         )
       })
-    const start = Number(booking && booking.start)
-    const reference = Number.isFinite(Number(now)) ? Number(now) : Date.now()
-    const upcoming = Number.isFinite(start) && start > reference
-    const active = ['pending', 'confirmed', 'rescheduled'].includes(status)
-    ensureActionHint(
-      modal,
-      gates.rescheduleAnchor,
-      'reschedule',
-      // Brands can now also restate the time on their own pending request, so
-      // the old "confirmed only" wording would misdescribe the gate.
-      'Rescheduling is available for Free calls.',
-      // The hint explains the Paid gate. A Free call with no reschedule
-      // control for this viewer (a Starter's pending request, or a call
-      // inside the reschedule window) would read it as a false promise.
-      Boolean(gates.rescheduleAnchor) &&
-        paidBooking(booking) &&
-        active &&
-        status !== 'rescheduled' &&
-        upcoming &&
-        !gates.rescheduleShown &&
-        !gates.respondShown,
-    )
-    ensureActionHint(
-      modal,
-      gates.cancelAnchor,
-      'cancel',
-      'Paid call cancellation is not available yet.',
-      Boolean(gates.cancelAnchor) &&
-        paidBooking(booking) &&
-        // A Brand's own pending Paid request is also withdrawn through Cancel
-        // (canCancel), and Paid pending cancellation is hard-launch work, so
-        // the hidden control gets the same explanation. The Starter declines
-        // a pending request instead, so no Cancel hint applies to that role.
-        (['confirmed', 'rescheduled'].includes(status) ||
-          (role === 'brand' && status === 'pending')) &&
-        upcoming &&
-        !gates.cancelShown,
-    )
-    const declineAnchor = gates.declineAnchor || gates.declineFallback
-    ensureActionHint(
-      modal,
-      declineAnchor,
-      'decline',
-      'Paid call decline is not available yet.',
-      // Paid decline is hard-launch work (JP, 2026-09-26): canDecline hides
-      // it, and the Starter reads why while the request can still be answered.
-      Boolean(declineAnchor) &&
-        role === 'starter' &&
-        paidBooking(booking) &&
-        status === 'pending' &&
-        responseWindowOpen(booking, now) &&
-        !gates.declineShown,
-    )
+    // Soft launch (JP meeting, 2026-09-30): a gated Paid action stays hidden
+    // with no explanation, so the modal never names a feature that is not
+    // live yet. This reverses the 2026-08-29 hint rule. A hint node that an
+    // earlier version or an earlier booking left in the modal still hides.
+    ACTION_HINT_NAMES.forEach(function (name) {
+      ensureActionHint(modal, null, name, '', false)
+    })
     const deepLinkState =
       typeof modal.getAttribute === 'function'
         ? clean(modal.getAttribute('data-booking-deep-link'))

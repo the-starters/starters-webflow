@@ -821,44 +821,51 @@ test('the authored Reschedule entry click reaches the actions module in real lis
   }
 })
 
-test('gated Reschedule and paid Cancel render an explanation hint', () => {
-  const originalActions = global.StartersDashboardCallActions
-  function hintButton(action) {
-    const node = button(action)
-    node.inserted = []
-    node.insertAdjacentElement = function (position, element) {
-      assert.equal(position, 'afterend')
-      node.inserted.push(element)
-    }
-    return node
-  }
-  function hintModal(buttons) {
-    const hints = {}
-    return {
-      hints,
-      querySelectorAll() {
-        return buttons
-      },
-      querySelector(selector) {
-        const match = /data-starters-action-hint="([^"]+)"/.exec(selector)
-        return match ? hints[match[1]] || null : null
-      },
-      ownerDocument: {
-        createElement() {
-          return {
-            hidden: false,
-            style: {},
-            textContent: '',
-            attributes: {},
-            setAttribute(name, value) {
-              this.attributes[name] = value
-              if (name === 'data-starters-action-hint') hints[value] = this
-            },
-          }
+// Soft launch (JP meeting, 2026-09-30): the details modal must not name a Paid
+// feature that is not live yet. Gated Paid actions hide with no hint, and a
+// hint node that an earlier version or booking left behind hides too.
+// `stale` seeds visible module hint nodes, as v1.59.640 and older made them.
+function hintModal(buttons, stale = []) {
+  const hints = {}
+  const inserted = []
+  const ownerDocument = {
+    createElement() {
+      return {
+        hidden: false,
+        style: {},
+        textContent: '',
+        setAttribute(name, value) {
+          if (name === 'data-starters-action-hint') hints[value] = this
         },
-      },
+      }
+    },
+  }
+  for (const name of stale) {
+    const node = ownerDocument.createElement('div')
+    node.setAttribute('data-starters-action-hint', name)
+    node.textContent = 'stale ' + name + ' hint'
+  }
+  for (const node of buttons) {
+    node.insertAdjacentElement = function (position, element) {
+      inserted.push(element)
     }
   }
+  return {
+    hints,
+    inserted,
+    querySelectorAll() {
+      return buttons
+    },
+    querySelector(selector) {
+      const match = /data-starters-action-hint="([^"]+)"/.exec(selector)
+      return match ? hints[match[1]] || null : null
+    },
+    ownerDocument,
+  }
+}
+
+test('gated Paid Reschedule and Cancel hide with no explanation hint', () => {
+  const originalActions = global.StartersDashboardCallActions
   try {
     global.StartersDashboardCallActions = {
       wire() {},
@@ -871,95 +878,60 @@ test('gated Reschedule and paid Cancel render an explanation hint', () => {
       rescheduleKindFor() { return '' },
       canRespondReschedule() { return false },
     }
-    const reschedule = hintButton('reschedule')
-    const cancel = hintButton('switch-cancel')
-    const modal = hintModal([reschedule, cancel])
     const paidBooking = {
       booking_id: 'booking-hint-1',
       status: 'confirmed',
       is_paid: true,
       start: Date.now() + 60 * 60 * 1000,
     }
-    dashboard.configureDetailActions(modal, 'brand', 'confirmed', paidBooking, Date.now())
-    assert.equal(
-      modal.hints.reschedule.textContent,
-      'Rescheduling is available for Free calls.',
-    )
-    assert.equal(modal.hints.reschedule.hidden, false)
-    assert.equal(
-      modal.hints.cancel.textContent,
-      'Paid call cancellation is not available yet.',
-    )
-    assert.equal(modal.hints.cancel.hidden, false)
-
-    // A proposal must clear a stale Free-only hint for either dashboard role.
     for (const role of ['brand', 'starter']) {
-      const proposal = { ...paidBooking, status: 'rescheduled' }
-      dashboard.configureDetailActions(
-        modal, role, dashboard.bookingStatus(proposal), proposal, Date.now(),
-      )
-      assert.equal(modal.hints.reschedule.hidden, true)
-      assert.equal(modal.hints.cancel.hidden, false)
+      const reschedule = button('reschedule')
+      const cancel = button('switch-cancel')
+      const modal = hintModal([reschedule, cancel])
+      dashboard.configureDetailActions(modal, role, 'confirmed', paidBooking, Date.now())
+      assert.equal(reschedule.hidden, true, role + ': Paid Reschedule hides')
+      assert.equal(cancel.hidden, true, role + ': Paid Cancel hides')
+      assert.deepEqual(Object.keys(modal.hints), [], role + ': no hint node is made')
+      assert.equal(modal.inserted.length, 0, role + ': nothing is inserted after the buttons')
     }
 
-    // When the actions become available the hints hide again.
+    // A modal that an older version (or an earlier booking) left with visible
+    // hints clears them on the next populate, for every hint name.
+    const reschedule = button('reschedule')
+    const cancel = button('switch-cancel')
+    const decline = button('switch-decline')
+    const reused = hintModal([reschedule, cancel, decline], ['reschedule', 'cancel', 'decline'])
+    for (const name of ['reschedule', 'cancel', 'decline']) {
+      assert.equal(reused.hints[name].hidden, false, name + ': seeded visible')
+    }
+    dashboard.configureDetailActions(reused, 'brand', 'confirmed', paidBooking, Date.now())
+    for (const name of ['reschedule', 'cancel', 'decline']) {
+      assert.equal(reused.hints[name].hidden, true, name + ': stale hint hides')
+      assert.equal(reused.hints[name].style.display, 'none', name + ': stale hint display none')
+    }
+
+    // When the actions are available (Free), the buttons show and no hint appears.
     global.StartersDashboardCallActions.rescheduleKindFor = () => 'reschedule-propose'
     global.StartersDashboardCallActions.canCancel = () => true
-    const freeBooking = { ...paidBooking, is_paid: false }
-    dashboard.configureDetailActions(modal, 'brand', 'confirmed', freeBooking, Date.now())
-    assert.equal(modal.hints.reschedule.hidden, true)
-    assert.equal(modal.hints.cancel.hidden, true)
-
-    // A past or terminal booking renders no hint at all.
-    const freshModal = hintModal([hintButton('reschedule'), hintButton('switch-cancel')])
-    global.StartersDashboardCallActions.rescheduleKindFor = () => ''
-    global.StartersDashboardCallActions.canCancel = () => false
+    const freeReschedule = button('reschedule')
+    const freeCancel = button('switch-cancel')
+    const freeModal = hintModal([freeReschedule, freeCancel])
     dashboard.configureDetailActions(
-      freshModal,
-      'brand',
-      'cancelled',
-      { ...paidBooking, status: 'cancelled' },
-      Date.now(),
+      freeModal, 'brand', 'confirmed', { ...paidBooking, is_paid: false }, Date.now(),
     )
-    assert.equal(freshModal.hints.reschedule, undefined)
-    assert.equal(freshModal.hints.cancel, undefined)
+    assert.equal(freeReschedule.hidden, false)
+    assert.equal(freeCancel.hidden, false)
+    assert.deepEqual(Object.keys(freeModal.hints), [])
   } finally {
     global.StartersDashboardCallActions = originalActions
   }
 })
 
-// Kaeser 2026-09-28 (P4): a Starter's Free pending request showed
-// "Rescheduling is available for Free calls." with no reschedule control.
-// The hint explains the Paid gate only.
-test('a Free call with no reschedule control for the viewer shows no Free-calls hint', () => {
+// Kaeser 2026-09-28 (P4) made the reschedule hint Paid-only. The soft-launch
+// rule (2026-09-30) now removes it for Paid too, so no viewer gets a hint.
+test('a call with no reschedule control for the viewer shows no reschedule hint', () => {
   const realActions = require('./dashboard-call-actions.js')
   const originalActions = global.StartersDashboardCallActions
-  function hintModal() {
-    const hints = {}
-    const reschedule = button('reschedule')
-    reschedule.insertAdjacentElement = function () {}
-    return {
-      hints,
-      reschedule,
-      querySelectorAll() { return [reschedule] },
-      querySelector(selector) {
-        const match = /data-starters-action-hint="([^"]+)"/.exec(selector)
-        return match ? hints[match[1]] || null : null
-      },
-      ownerDocument: {
-        createElement() {
-          return {
-            hidden: false,
-            style: {},
-            textContent: '',
-            setAttribute(name, value) {
-              if (name === 'data-starters-action-hint') hints[value] = this
-            },
-          }
-        },
-      },
-    }
-  }
   const now = Date.now()
   const base = {
     booking_id: 'booking-free-hint',
@@ -974,73 +946,43 @@ test('a Free call with no reschedule control for the viewer shows no Free-calls 
   }
   try {
     global.StartersDashboardCallActions = realActions
-    for (const [role, status, isPaid, start, expected] of [
+    for (const [role, status, isPaid, start] of [
       // Free: the Starter cannot restate a pending request.
-      ['starter', 'pending', false, base.start, undefined],
+      ['starter', 'pending', false, base.start],
       // Free: inside the reschedule window nobody gets a control.
-      ['brand', 'confirmed', false, now + 60 * 60 * 1000, undefined],
-      // Paid: the gate is real, so the hint explains it.
-      ['brand', 'confirmed', true, base.start, 'Rescheduling is available for Free calls.'],
+      ['brand', 'confirmed', false, now + 60 * 60 * 1000],
+      // Paid: the gate is real, but soft launch shows no explanation.
+      ['brand', 'confirmed', true, base.start],
+      ['starter', 'confirmed', true, base.start],
     ]) {
-      const modal = hintModal()
+      const reschedule = button('reschedule')
+      const modal = hintModal([reschedule])
       const booking = { ...base, status, is_paid: isPaid, start, server_now_ms: now }
       realActions.bindCanonicalClock([booking], realActions.monotonicNow())
       dashboard.configureDetailActions(modal, role, status, booking, now)
-      assert.equal(modal.reschedule.hidden, true, role + ' ' + status + ': no reschedule control')
-      const hint = modal.hints.reschedule
-      assert.equal(hint && !hint.hidden ? hint.textContent : undefined, expected, role + ' ' + status + ' paid=' + isPaid)
+      const label = role + ' ' + status + ' paid=' + isPaid
+      assert.equal(reschedule.hidden, true, label + ': no reschedule control')
+      assert.equal(modal.hints.reschedule, undefined, label + ': no hint')
     }
     // A Free call that does offer the control still shows no hint.
-    const modal = hintModal()
+    const reschedule = button('reschedule')
+    const modal = hintModal([reschedule])
     const eligible = { ...base, status: 'confirmed', is_paid: false, server_now_ms: now }
     realActions.bindCanonicalClock([eligible], realActions.monotonicNow())
     dashboard.configureDetailActions(modal, 'brand', 'confirmed', eligible, now)
-    assert.equal(modal.reschedule.hidden, false)
+    assert.equal(reschedule.hidden, false)
     assert.equal(modal.hints.reschedule, undefined)
   } finally {
     global.StartersDashboardCallActions = originalActions
   }
 })
 
-// Soft launch (2026-09-28): Paid pending cancellation is hard-launch work, so
-// canCancel hides the Brand's Cancel on a Paid pending request. The hidden
-// button must be explained exactly like the confirmed Paid case, and nothing
-// may change for Free requests or for the Starter, who declines instead.
-test('Brand pending Paid request explains that cancellation is not available yet', () => {
+// Paid pending cancellation is hard-launch work, so canCancel hides the
+// Brand's Cancel on a Paid pending request. Soft launch shows no hint for it,
+// and nothing changes for Free requests or for the Starter, who declines.
+test('Brand pending Paid request hides Cancel with no hint', () => {
   const originalActions = global.StartersDashboardCallActions
   const realActions = require('./dashboard-call-actions.js')
-  function hintButton(action) {
-    const node = button(action)
-    node.insertAdjacentElement = function (position, element) {
-      assert.equal(position, 'afterend')
-    }
-    return node
-  }
-  function hintModal(buttons) {
-    const hints = {}
-    return {
-      hints,
-      querySelectorAll() {
-        return buttons
-      },
-      querySelector(selector) {
-        const match = /data-starters-action-hint="([^"]+)"/.exec(selector)
-        return match ? hints[match[1]] || null : null
-      },
-      ownerDocument: {
-        createElement() {
-          return {
-            hidden: false,
-            style: {},
-            textContent: '',
-            setAttribute(name, value) {
-              if (name === 'data-starters-action-hint') hints[value] = this
-            },
-          }
-        },
-      },
-    }
-  }
   const now = Date.now()
   const pending = {
     booking_id: 'booking-pending-hint',
@@ -1061,82 +1003,41 @@ test('Brand pending Paid request explains that cancellation is not available yet
       canRespondReschedule() { return false },
     }
 
-    const paidCancel = hintButton('switch-cancel')
-    const paidModal = hintModal([paidCancel])
+    const paidCancel = button('switch-cancel')
+    const paidModal = hintModal([paidCancel], ['cancel'])
     dashboard.configureDetailActions(paidModal, 'brand', 'pending', { ...pending, is_paid: true }, now)
     assert.equal(paidCancel.hidden, true)
-    assert.ok(paidModal.hints.cancel, 'the hidden Paid Cancel carries a hint')
-    assert.equal(paidModal.hints.cancel.textContent, 'Paid call cancellation is not available yet.')
-    assert.equal(paidModal.hints.cancel.hidden, false)
+    assert.equal(paidModal.hints.cancel.hidden, true, 'a stale Paid cancel hint hides')
+    assert.equal(paidModal.inserted.length, 0)
 
     // Free pending: the Brand keeps its working Cancel and gets no hint.
-    const freeCancel = hintButton('switch-cancel')
+    const freeCancel = button('switch-cancel')
     const freeModal = hintModal([freeCancel])
     dashboard.configureDetailActions(freeModal, 'brand', 'pending', { ...pending, is_paid: false }, now)
     assert.equal(freeCancel.hidden, false)
     assert.equal(freeModal.hints.cancel, undefined)
 
-    // Re-rendering the same modal for a Free request hides a stale Paid hint.
+    // Re-rendering the reused modal for a Free request keeps the hint hidden.
     dashboard.configureDetailActions(paidModal, 'brand', 'pending', { ...pending, is_paid: false }, now)
     assert.equal(paidCancel.hidden, false)
     assert.equal(paidModal.hints.cancel.hidden, true)
 
     // The Starter never cancels a pending request, Paid or Free.
-    const starterCancel = hintButton('switch-cancel')
+    const starterCancel = button('switch-cancel')
     const starterModal = hintModal([starterCancel])
     dashboard.configureDetailActions(starterModal, 'starter', 'pending', { ...pending, is_paid: true }, now)
     assert.equal(starterCancel.hidden, true)
     assert.equal(starterModal.hints.cancel, undefined)
-
-    // A Paid request whose start has passed renders no hint.
-    const pastCancel = hintButton('switch-cancel')
-    const pastModal = hintModal([pastCancel])
-    dashboard.configureDetailActions(
-      pastModal, 'brand', 'pending', { ...pending, is_paid: true, start: now - 1000 }, now,
-    )
-    assert.equal(pastModal.hints.cancel, undefined)
   } finally {
     global.StartersDashboardCallActions = originalActions
   }
 })
 
 // Soft launch (JP, 2026-09-26): Paid decline is hard-launch work. The Starter
-// keeps Accept on a Paid request, loses Decline, and the details modal says
-// why. Free requests keep Decline and show no hint.
-test('Starter Paid request hides Decline and explains it; Free keeps Decline', () => {
+// keeps Accept on a Paid request and loses Decline. Since 2026-09-30 the
+// details modal no longer explains the hidden Decline. Free keeps Decline.
+test('Starter Paid request hides Decline with no hint; Free keeps Decline', () => {
   const originalActions = global.StartersDashboardCallActions
-  function hintButton(action) {
-    const node = button(action)
-    node.insertAdjacentElement = function (position) {
-      assert.equal(position, 'afterend')
-    }
-    return node
-  }
-  function hintModal(buttons) {
-    const hints = {}
-    return {
-      hints,
-      querySelectorAll() {
-        return buttons
-      },
-      querySelector(selector) {
-        const match = /data-starters-action-hint="([^"]+)"/.exec(selector)
-        return match ? hints[match[1]] || null : null
-      },
-      ownerDocument: {
-        createElement() {
-          return {
-            hidden: false,
-            style: {},
-            textContent: '',
-            setAttribute(name, value) {
-              if (name === 'data-starters-action-hint') hints[value] = this
-            },
-          }
-        },
-      },
-    }
-  }
   const now = Date.now()
   const pending = {
     booking_id: 'booking-decline-hint',
@@ -1162,42 +1063,42 @@ test('Starter Paid request hides Decline and explains it; Free keeps Decline', (
     assert.equal(cardAccept.hidden, false)
     assert.equal(cardDecline.hidden, false)
 
-    // Details: every authored decline step hides and one hint explains it.
-    const accept = hintButton('switch-confirm')
-    const decline = hintButton('switch-decline')
-    const declineReason = hintButton('switch-decline-reason')
-    const declineSubmit = hintButton('decline')
+    // Details: every authored decline step hides and no hint explains it.
+    const accept = button('switch-confirm')
+    const decline = button('switch-decline')
+    const declineReason = button('switch-decline-reason')
+    const declineSubmit = button('decline')
     const modal = hintModal([accept, decline, declineReason, declineSubmit])
     dashboard.configureDetailActions(modal, 'starter', 'pending', { ...pending, is_paid: true }, now)
     assert.equal(accept.hidden, false)
     assert.equal(decline.hidden, true)
     assert.equal(declineReason.hidden, true)
     assert.equal(declineSubmit.hidden, true)
-    assert.ok(modal.hints.decline, 'the hidden Paid Decline carries a hint')
-    assert.equal(modal.hints.decline.textContent, 'Paid call decline is not available yet.')
-    assert.equal(modal.hints.decline.hidden, false)
+    assert.equal(modal.hints.decline, undefined, 'the hidden Paid Decline has no hint')
+    assert.equal(modal.inserted.length, 0)
 
-    // Reusing the modal for a Free request restores Decline and hides the hint.
+    // Reusing the modal for a Free request restores Decline.
     dashboard.configureDetailActions(modal, 'starter', 'pending', { ...pending, is_paid: false }, now)
     assert.equal(decline.hidden, false)
     assert.equal(declineReason.hidden, false)
     assert.equal(declineSubmit.hidden, false)
-    assert.equal(modal.hints.decline.hidden, true)
+    assert.equal(modal.hints.decline, undefined)
 
-    // A Free request never creates the hint.
-    const freeDecline = hintButton('switch-decline')
-    const freeModal = hintModal([freeDecline])
-    dashboard.configureDetailActions(freeModal, 'starter', 'pending', { ...pending, is_paid: false }, now)
-    assert.equal(freeDecline.hidden, false)
-    assert.equal(freeModal.hints.decline, undefined)
+    // A stale decline hint from an older version hides on a Paid request.
+    const staleDecline = button('switch-decline')
+    const staleModal = hintModal([staleDecline], ['decline'])
+    dashboard.configureDetailActions(staleModal, 'starter', 'pending', { ...pending, is_paid: true }, now)
+    assert.equal(staleDecline.hidden, true)
+    assert.equal(staleModal.hints.decline.hidden, true)
 
-    // The Brand never declines, and an expired Paid request is read-only.
+    // The Brand never declines, and an expired or confirmed Paid request is
+    // read-only: Decline stays hidden and no hint appears.
     for (const [role, booking] of [
       ['brand', { ...pending, is_paid: true }],
       ['starter', { ...pending, is_paid: true, confirmation_expires_at: now - 1000 }],
       ['starter', { ...pending, is_paid: true, status: 'confirmed' }],
     ]) {
-      const other = hintButton('switch-decline')
+      const other = button('switch-decline')
       const otherModal = hintModal([other])
       dashboard.configureDetailActions(
         otherModal, role, dashboard.bookingStatus(booking, now), booking, now,

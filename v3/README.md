@@ -2575,9 +2575,7 @@ contracts.
 supported decline, cancel, and Free-call reschedule commands. Decline is
 available only to the Starter on a canonical pending row that is not explicitly
 Paid. Paid decline and its settlement are hard-launch work, so an `is_paid` or
-`paid_meeting` request hides every decline step and, while the request can
-still be answered, the details modal shows `Paid call decline is not available
-yet.` below the authored Decline control. Accept is unchanged. The authored card
+`paid_meeting` request hides every decline step. Accept is unchanged. The authored card
 Decline control also requires an open response window and a loaded, valid
 action module that approves the booking through `canDecline`. Clicking it
 populates the existing details modal with the selected booking and counterpart,
@@ -2595,11 +2593,7 @@ rescheduled row whose start is in the future. A Brand can also cancel its own
 canonical Free pending request before its start; a Starter declines a pending
 request instead. Xano
 `booking/cancel/v3` rejects Paid cancellation until the paid-cancel follow-up
-ships, so an explicitly Paid row hides Cancel. An upcoming Paid confirmed or
-rescheduled row, and the Brand's own upcoming Paid pending request, show
-`Paid call cancellation is not available yet.` below the authored control; the
-Starter's pending view gets no Cancel hint because the Starter declines a
-pending request instead. For Decline and Cancel eligibility,
+ships, so an explicitly Paid row hides Cancel. For Decline and Cancel eligibility,
 a row with neither `is_paid` nor `paid_meeting` is treated as legacy Free so
 older Free bookings keep the action. Reschedule keeps a stricter shared gate:
 the row must be in the future, have an explicit Free flag, a grant, and positive
@@ -2610,15 +2604,13 @@ contracts never claim the same booking. Every command requires a booking ID,
 configuration ID, participant identity, and exact `test` or `production` data
 environment.
 
-For an active upcoming initial request or confirmed Paid row where neither a
-reschedule action nor a response is available, the modal shows
-`Rescheduling is available for Free calls.` below the authored Reschedule
-control. A Free row never shows it: with no control for that viewer (a
-Starter's pending request, or a call inside the reschedule window) the words
-would be false. A rescheduled proposal hides this hint for both roles, including when
-reusing a modal that previously showed it. All eligibility explanations are
-module-owned `data-starters-action-hint` nodes inserted after the authored
-buttons; the script does not edit Designer markup. The early Reschedule guard
+During soft launch (JP, 2026-09-30) a gated Paid Reschedule, Cancel, or
+Decline control hides with no explanation, so the modal never names a feature
+that is not live yet. Earlier versions (2026-08-29 to v1.59.640) inserted a
+module-owned `data-starters-action-hint` node after the hidden authored
+button. Each details populate now hides any such node that an earlier version
+or an earlier booking left in the modal, and it creates no new one. The script
+does not edit Designer markup. The early Reschedule guard
 resolves the confirmed proposal or pending direct-update contract and passes an
 eligible click to `dashboard-call-actions.js`. It still consumes the
 click when that module is unavailable, the booking cannot be resolved, or the
