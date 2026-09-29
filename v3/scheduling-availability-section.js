@@ -40,8 +40,7 @@
   const TIMEZONE_CACHE_PREFIX = 'starter-timezone:'
   const OAUTH_INTENT_PREFIX = 'starter-scheduling-oauth-intent:'
   const OAUTH_CALLBACK_KEY = 'starter-scheduling-oauth-callback'
-  const OAUTH_CALLBACK_MAX_AGE = 15 * 60 * 1000
-  const OAUTH_PLATFORM_RECOVERY_MAX_AGE = 24 * 60 * 60 * 1000
+  const OAUTH_INTENT_MAX_AGE = 15 * 60 * 1000
 
   const EL = 'data-availability-element'
   const ACTION = 'data-availability-action'
@@ -166,7 +165,7 @@
           stored &&
           Number.isFinite(stored.capturedAt) &&
           Date.now() - stored.capturedAt >= 0 &&
-          Date.now() - stored.capturedAt <= OAUTH_CALLBACK_MAX_AGE &&
+          Date.now() - stored.capturedAt <= OAUTH_INTENT_MAX_AGE &&
           (stored.code || stored.grantId || stored.hasError)
         ) {
           stored.resumed = true
@@ -496,27 +495,13 @@
       : 'https://' + window.location.hostname + PRODUCTION_PATH
   }
 
-  function rememberOAuthIntent(memberId, redirectUri, paidCallIntent, restorePlatform) {
+  function rememberOAuthIntent(memberId, redirectUri, paidCallIntent) {
     const intent = {
       createdAt: Date.now(),
       redirectUri: redirectUri,
       paidCallIntent: paidCallIntent || null,
     }
-    // Set only when this transition deletes a connected Platform calendar, so an
-    // abandoned OAuth rebuilds what the member had, Free-only members included.
-    if (restorePlatform) intent.restorePlatform = true
-    if (!writeOAuthIntent(memberId, intent)) return null
-    if (restorePlatform && !oauthIntentReadableFromSession(memberId, intent)) {
-      clearOAuthIntent(memberId)
-      return null
-    }
-    return intent
-  }
-
-  // An OAuth transition needs recovery when it replaced a connected Platform
-  // calendar or captured a paid service that must come back.
-  function oauthIntentNeedsRecovery(intent) {
-    return Boolean(intent && (intent.paidCallIntent || intent.restorePlatform))
+    return writeOAuthIntent(memberId, intent) ? intent : null
   }
 
   function oauthIntentStorages(storageNames) {
@@ -547,86 +532,25 @@
     return stored
   }
 
-  function oauthIntentReadableFromSession(memberId, intent) {
-    const key = OAUTH_INTENT_PREFIX + memberId
-    const expected = JSON.stringify(intent)
-    const storages = oauthIntentStorages(['sessionStorage'])
-    if (storages.length === 0) return false
-    try {
-      return storages[0].getItem(key) === expected
-    } catch (error) {
-      return false
-    }
-  }
-
-  function oauthIntentWithinAge(intent, maxAge) {
-    if (!(intent && Number.isFinite(intent.createdAt))) return false
-    const age = Date.now() - intent.createdAt
-    return age >= 0 && age <= maxAge
-  }
-
-  function oauthIntentExpired(intent) {
-    if (!(intent && Number.isFinite(intent.createdAt))) return false
-    const maxAge = intent.restorePlatform === true
-      ? OAUTH_PLATFORM_RECOVERY_MAX_AGE
-      : OAUTH_CALLBACK_MAX_AGE
-    return Date.now() - intent.createdAt > maxAge
-  }
-
-  function removeMatchingDurableOAuthIntent(key, expiredIntent) {
-    const storages = oauthIntentStorages(['localStorage'])
-    if (storages.length === 0) return
-    try {
-      const raw = storages[0].getItem(key)
-      const durableIntent = raw ? JSON.parse(raw) : null
-      if (
-        durableIntent &&
-        durableIntent.createdAt === expiredIntent.createdAt &&
-        durableIntent.redirectUri === expiredIntent.redirectUri
-      ) {
-        storages[0].removeItem(key)
-      }
-    } catch (error) {
-      /* storage unavailable */
-    }
-  }
-
-  function platformRecoveryIntent(intent) {
-    const recoveryIntent = {
-      createdAt: intent.createdAt,
-      redirectUri: intent.redirectUri,
-      paidCallIntent: null,
-      restorePlatform: true,
-    }
-    if (intent.virtualRecovery) recoveryIntent.virtualRecovery = intent.virtualRecovery
-    return recoveryIntent
-  }
-
-  function readStoredOAuthIntent(memberId, includeDurableFallback, allowPlatformRecovery) {
+  function readOAuthIntent(memberId, includeDurableFallback) {
     const redirectUri = oauthRedirectUri()
     const key = OAUTH_INTENT_PREFIX + memberId
     const storageNames = includeDurableFallback
       ? ['sessionStorage', 'localStorage']
       : ['sessionStorage']
-    let storedIntentEncountered = false
     for (const storage of oauthIntentStorages(storageNames)) {
       try {
         const raw = storage.getItem(key)
-        if (raw !== null) storedIntentEncountered = true
         const intent = raw ? JSON.parse(raw) : null
-        const redirectMatches = Boolean(intent && intent.redirectUri === redirectUri)
-        if (redirectMatches && oauthIntentWithinAge(intent, OAUTH_CALLBACK_MAX_AGE)) {
+        if (
+          intent &&
+          Number.isFinite(intent.createdAt) &&
+          Date.now() - intent.createdAt >= 0 &&
+          Date.now() - intent.createdAt <= OAUTH_INTENT_MAX_AGE &&
+          intent.redirectUri === redirectUri
+        ) {
           return intent
         }
-        if (
-          redirectMatches &&
-          intent.restorePlatform === true &&
-          oauthIntentWithinAge(intent, OAUTH_PLATFORM_RECOVERY_MAX_AGE)
-        ) {
-          if (allowPlatformRecovery) return platformRecoveryIntent(intent)
-          continue
-        }
-        if (oauthIntentExpired(intent)) removeMatchingDurableOAuthIntent(key, intent)
         storage.removeItem(key)
       } catch (error) {
         try {
@@ -636,17 +560,7 @@
         }
       }
     }
-    return !allowPlatformRecovery && isStagingHost && !storedIntentEncountered
-      ? { redirectUri: redirectUri, paidCallIntent: null }
-      : null
-  }
-
-  function readOAuthIntent(memberId, includeDurableFallback) {
-    return readStoredOAuthIntent(memberId, includeDurableFallback, false)
-  }
-
-  function readOAuthRecoveryIntent(memberId, includeDurableFallback) {
-    return readStoredOAuthIntent(memberId, includeDurableFallback, true)
+    return isStagingHost ? { redirectUri: redirectUri, paidCallIntent: null } : null
   }
 
   function clearOAuthIntent(memberId) {
@@ -1050,24 +964,16 @@
     return service
   }
 
-  async function recoverCalendarAfterOAuthCancellation(memberId, oauthIntent) {
-    if (!oauthIntentNeedsRecovery(oauthIntent)) return false
-    const intent = oauthIntent.paidCallIntent || null
+  async function recoverPaidCallAfterOAuthCancellation(memberId, oauthIntent) {
+    const intent = oauthIntent && oauthIntent.paidCallIntent
+    if (!intent) return false
     await refreshCanonicalConnectionState()
+    let createdVirtual = false
     const recovery = oauthIntent.virtualRecovery
     const resumableGrant =
       recovery && recovery.grant_id && (!grantId || recovery.grant_id === grantId)
         ? recovery
         : null
-    if (
-      oauthIntent.restorePlatform &&
-      platformLayerConnected() &&
-      !googleLayerConnected() &&
-      !resumableGrant
-    ) {
-      return false
-    }
-    let createdVirtual = false
     if (grantId && (!grantEmail || !grantCalendarId) && !resumableGrant) {
       throw new Error('Canonical calendar transition is incomplete')
     }
@@ -1094,7 +1000,7 @@
   async function recoverFailedCalendarTransition(memberId, transition, error) {
     const recoveryTransition = transition || (error && error.calendarTransition)
     if (!(memberId && recoveryTransition && recoveryTransition.oauthIntent)) return false
-    const recovered = await recoverCalendarAfterOAuthCancellation(
+    const recovered = await recoverPaidCallAfterOAuthCancellation(
       memberId,
       recoveryTransition.oauthIntent,
     )
@@ -1296,25 +1202,17 @@
     })
   }
 
-  async function clearGrant(currentGrantId, memberId, restorePlatform, retainedTransition) {
-    if (!currentGrantId) return retainedTransition || { paidCallIntent: null }
+  async function clearGrant(currentGrantId, memberId) {
+    if (!currentGrantId) return { paidCallIntent: null }
     await ensureTimezone()
-    let transition = retainedTransition || null
-    if (!transition) {
-      const paidCallIntent = await capturePaidCallIntent()
-      const oauthIntent = paidCallIntent || restorePlatform
-        ? rememberOAuthIntent(memberId, oauthRedirectUri(), paidCallIntent, restorePlatform)
-        : null
-      if (paidCallIntent && !oauthIntent) {
-        throw new Error('Paid-call calendar transition could not be retained')
-      }
-      // Deleting a connected Platform calendar without a recovery record would leave
-      // a member who abandons OAuth with no calendar, so refuse before the delete.
-      if (restorePlatform && !oauthIntent) {
-        throw new Error('Platform calendar transition could not be retained')
-      }
-      transition = { paidCallIntent: paidCallIntent, oauthIntent: oauthIntent }
+    const paidCallIntent = await capturePaidCallIntent()
+    const oauthIntent = paidCallIntent
+      ? rememberOAuthIntent(memberId, oauthRedirectUri(), paidCallIntent)
+      : null
+    if (paidCallIntent && !oauthIntent) {
+      throw new Error('Paid-call calendar transition could not be retained')
     }
+    const transition = { paidCallIntent: paidCallIntent, oauthIntent: oauthIntent }
     // The authenticated Xano route owns the complete provider-first lifecycle:
     // active-booking guard, Nylas grant deletion, configuration cleanup,
     // canonical availability cleanup, and Memberstack reconciliation. Never
@@ -1329,10 +1227,6 @@
       return Object.assign({ result: result }, transition)
     } catch (error) {
       const failure = error instanceof Error ? error : new Error('grants/delete/v3 failed')
-      if (transition.oauthIntent && isActiveCallsRefusal(failure)) {
-        clearOAuthIntent(memberId)
-        transition.oauthIntent = null
-      }
       failure.calendarTransition = transition
       throw failure
     }
@@ -1357,37 +1251,13 @@
     let transition = null
     try {
       memberId = await writeMemberId()
-      const pendingRecovery = readOAuthRecoveryIntent(memberId)
-      const recoveryAccount = pendingRecovery && pendingRecovery.virtualRecovery
-      const repairPendingRecovery = Boolean(
-        pendingRecovery &&
-        pendingRecovery.restorePlatform === true &&
-        grantId &&
-        !grantCalendarId &&
-        !(recoveryAccount && recoveryAccount.grant_id === grantId),
-      )
-      if (oauthIntentNeedsRecovery(pendingRecovery) && !repairPendingRecovery) {
-        const recovered = await recoverCalendarAfterOAuthCancellation(memberId, pendingRecovery)
-        if (!recovered) return
-        clearOAuthIntent(memberId)
-        renderAvailabilityItems()
-        renderSlotsPreview()
-        console.log('[scheduling-section] connected to platform calendar')
-        return true
-      }
       // clearGrant is a no-op without a grant id, so this only ever deletes a
       // half-built grant that never became a connection. Once the canonical
       // route reports it gone, the local copy must go too — otherwise a
       // failure below leaves the module re-issuing clearGrant against a
       // deleted grant on every retry.
       const clearedGrant = Boolean(grantId)
-      const retainedTransition = repairPendingRecovery
-        ? {
-            paidCallIntent: pendingRecovery.paidCallIntent || null,
-            oauthIntent: pendingRecovery,
-          }
-        : null
-      transition = await clearGrant(grantId, memberId, false, retainedTransition)
+      transition = await clearGrant(grantId, memberId)
       if (clearedGrant) {
         grantId = null
         grantEmail = null
@@ -1447,10 +1317,7 @@
     let transition = null
     try {
       memberId = await writeMemberId()
-      // Connect Google replaces the connected Platform calendar (V3 keeps one
-      // grant per member). Remember that, so an abandoned OAuth rebuilds it.
-      const replacingPlatform = platformLayerConnected() && !googleLayerConnected()
-      transition = await clearGrant(grantId, memberId, replacingPlatform)
+      transition = await clearGrant(grantId, memberId)
       grantId = null
       grantEmail = null
       grantCalendarId = null
@@ -1469,7 +1336,7 @@
       }
       await refreshCanonicalConnectionState()
       console.log('[scheduling-section] redirecting to Google Calendar OAuth')
-      await handlePreRedirect(transition.oauthIntent)
+      await handlePreRedirect(transition.paidCallIntent)
       // On success handlePreRedirect navigates away, so connectBusy is
       // intentionally left set; a fresh page load resets module state.
       return true
@@ -1544,12 +1411,11 @@
     }
   }
 
-  async function handlePreRedirect(oauthIntent) {
+  async function handlePreRedirect(paidCallIntent) {
     try {
-      if (!oauthIntent) throw new Error('OAuth transition could not be retained')
       const memberId = await writeMemberId()
       await ensureTimezone()
-      const redirectUri = oauthIntent.redirectUri
+      const redirectUri = oauthRedirectUri()
       const response = await xanoPost('/grants/oauth/v3', {
         in_state: memberId,
         in_provider: 'google',
@@ -1562,6 +1428,9 @@
         response.response.result.data &&
         response.response.result.data.url
       if (!url) throw new Error('grants/oauth returned no URL')
+      if (!rememberOAuthIntent(memberId, redirectUri, paidCallIntent)) {
+        throw new Error('OAuth transition could not be retained')
+      }
       oauthRedirectStarted = true
       window.location.assign(url)
     } catch (error) {
@@ -1578,7 +1447,6 @@
     const oauthState = oauthCallback.state
     let memberId = null
     let oauthIntent = null
-    let oauthRecoveryIntent = null
     let trustedState = false
     try {
       memberId = await writeMemberId()
@@ -1587,7 +1455,6 @@
       }
       trustedState = true
       oauthIntent = readOAuthIntent(memberId, true)
-      oauthRecoveryIntent = oauthIntent || readOAuthRecoveryIntent(memberId, true)
       if (oauthCallback.hasError) {
         throw invalidOAuthCallback('OAuth authorization was cancelled or failed')
       }
@@ -1643,17 +1510,17 @@
       console.log('[scheduling-section] Google Calendar connected via OAuth')
     } catch (error) {
       let recovered = false
-      const recoveryIntent = oauthIntent || oauthRecoveryIntent
       if (
         error &&
         error.code === 'OAUTH_CALLBACK_INVALID' &&
         trustedState &&
-        oauthIntentNeedsRecovery(recoveryIntent)
+        oauthIntent &&
+        oauthIntent.paidCallIntent
       ) {
         try {
-          recovered = await recoverCalendarAfterOAuthCancellation(
+          recovered = await recoverPaidCallAfterOAuthCancellation(
             memberId,
-            recoveryIntent,
+            oauthIntent,
           )
         } catch (recoveryError) {
           console.warn(
@@ -1666,7 +1533,7 @@
       if (
         error &&
         error.code === 'OAUTH_CALLBACK_INVALID' &&
-        (!trustedState || !oauthIntentNeedsRecovery(recoveryIntent) || recovered)
+        (!trustedState || !oauthIntent || !oauthIntent.paidCallIntent || recovered)
       ) {
         if (trustedState && memberId) clearOAuthIntent(memberId)
         clearOAuthCallback()
@@ -3265,10 +3132,10 @@
       if (oauthCallback) {
         await consumeOAuthCallback()
       } else {
-        const pendingTransition = readOAuthRecoveryIntent(sessionMemberId)
-        if (oauthIntentNeedsRecovery(pendingTransition)) {
+        const pendingTransition = readOAuthIntent(sessionMemberId)
+        if (pendingTransition && pendingTransition.paidCallIntent) {
           try {
-            const recovered = await recoverCalendarAfterOAuthCancellation(
+            const recovered = await recoverPaidCallAfterOAuthCancellation(
               sessionMemberId,
               pendingTransition,
             )

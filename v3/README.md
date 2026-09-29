@@ -3249,15 +3249,10 @@ Connect Google goes straight to the `pre-oauth` step; the retired
 connected Platform layer is ignored. V3 keeps one grant per member, so the
 "Done" click deletes the Platform grant through `grants/delete/v3` before the
 OAuth redirect. That route never cancels anything: while a call has not ended
-it refuses, and the error step names those calls. Before the delete, the
-controller stores an OAuth intent with `restorePlatform: true` (plus the paid
-service when one exists). When the member cancels at Google, returns without a
-callback, or the OAuth start fails, the controller rebuilds a Platform calendar
-and its services from that intent. An intent without `restorePlatform` or a paid
-service creates no calendar. The full intent admits OAuth callbacks and paid-
-service handoff for 15 minutes. After that, only `restorePlatform` remains usable
-to rebuild Platform for up to 24 hours; it cannot admit a success callback or
-restore a paid service, and after 24 hours it is discarded.
+it refuses, and the error step names those calls. Known limit: if Google sign-in
+is abandoned after the Platform grant is deleted, the member remains
+disconnected until they click Connect Platform; reordering the transition
+server-side is planned.
 
 Designer markup contract (`data-availability-element="<name>"` unless noted):
 `section` (root), `connect-wrapper`, `connect-label-group`, `connect-label`,
@@ -3454,8 +3449,7 @@ the caller's Bearer token) against the logged-in member and, on production,
 requires a recent, member-scoped intent with the exact redirect URI. It reads
 the current tab's copy first and uses the same-origin durable copy only while
 processing a captured OAuth callback; a normal page load in another tab does
-not consume or recover that fallback. Both copies use the same 15-minute
-callback-admission window.
+not consume or recover that fallback. Both copies keep the same 15-minute TTL.
 For hosted auth, `success` must be exactly `true`, and only the returned
 `grant_id` is forwarded as callback identity. `grants/add/v3` performs the
 authoritative server-side code exchange or grant verification and persists the
