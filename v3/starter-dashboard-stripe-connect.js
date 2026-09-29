@@ -1207,12 +1207,21 @@
     try {
       const status = await readSettledStatus(returnContext.pollForSettlement)
       const view = resolveDashboardView(status, returnContext)
-      const reason =
+      const conflictCandidate =
         view === 'error' &&
         isCanonicalDisconnectedStatus(status) &&
         returnContext.reason === ACCOUNT_OWNER_CONFLICT_REASON
-          ? ACCOUNT_OWNER_CONFLICT_REASON
-          : ''
+      let reason = ''
+      if (
+        conflictCandidate &&
+        typeof returnContext.receiptMemberId === 'string' &&
+        returnContext.receiptMemberId
+      ) {
+        const activeMemberId = await currentMemberId()
+        if (activeMemberId === returnContext.receiptMemberId) {
+          reason = ACCOUNT_OWNER_CONFLICT_REASON
+        }
+      }
       renderRoots(
         roots,
         view,
@@ -1511,7 +1520,10 @@
         untrustedReturnContext.mode,
       )
       const trustedReason = activeMemberId === memberId ? receiptReason : ''
-      const returnContext = resolveReturnContext(returnSearch, trustedReason)
+      const returnContext = {
+        ...resolveReturnContext(returnSearch, trustedReason),
+        receiptMemberId: trustedReason ? activeMemberId : '',
+      }
       return runExclusive(function () {
         return loadDashboardStatus(roots, returnContext, earningsTiles)
       })
