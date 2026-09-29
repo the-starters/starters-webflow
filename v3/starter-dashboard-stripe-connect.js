@@ -64,6 +64,13 @@
   const canonicalConnectedByRoot = new WeakMap()
   const authoredErrorCopyByElement = new WeakMap()
   const ACCOUNT_OWNER_CONFLICT_REASON = 'account_owner_conflict'
+  const NO_RETURN_CONTEXT = Object.freeze({
+    cleanReturnUrl: false,
+    mode: '',
+    pollForSettlement: false,
+    reason: '',
+    returnedFromStripe: false,
+  })
   const ACCOUNT_OWNER_CONFLICT_COPY = {
     button: 'Connect a different account',
     label: 'Stripe account already linked',
@@ -137,7 +144,16 @@
     )
   }
 
-  function resolveDashboardView(status, returnContext) {
+  function isCanonicalDisconnectedStatus(status) {
+    return (
+      status &&
+      typeof status === 'object' &&
+      status.connected === false &&
+      status.charges_enabled === false
+    )
+  }
+
+  function resolveDashboardView(status, returnContext = NO_RETURN_CONTEXT) {
     if (
       !status ||
       typeof status !== 'object' ||
@@ -147,20 +163,12 @@
     ) {
       return 'error'
     }
-    const returnedFromStripe =
-      typeof returnContext === 'object' && returnContext !== null
-        ? returnContext.returnedFromStripe === true
-        : returnContext === true
-    const returnMode =
-      typeof returnContext === 'object' && returnContext !== null
-        ? returnContext.mode || ''
-        : ''
-    if (status.connected === false) {
-      if (returnMode === 'reconciliation_required') return 'error'
+    if (isCanonicalDisconnectedStatus(status)) {
+      if (returnContext.mode === 'reconciliation_required') return 'error'
       return 'disconnected'
     }
     if (status.charges_enabled === true) return 'ready'
-    if (returnedFromStripe) return 'review'
+    if (returnContext.returnedFromStripe === true) return 'review'
     return 'incomplete'
   }
 
@@ -669,7 +677,7 @@
     tile.setAttribute('aria-label', title + '. ' + description)
   }
 
-  function heroTileState(view) {
+  function heroTileState(view, reason) {
     if (view === 'disconnected') {
       return {
         action: 'start',
@@ -705,7 +713,10 @@
     if (view === 'error') {
       return {
         action: 'none',
-        description: 'Use Try Again above',
+        description:
+          reason === ACCOUNT_OWNER_CONFLICT_REASON
+            ? 'Use Connect a different account above'
+            : 'Use Try Again above',
         enabled: false,
         title: 'Stripe Unavailable',
       }
@@ -718,9 +729,9 @@
     }
   }
 
-  function renderEarningsTiles(tiles, view) {
+  function renderEarningsTiles(tiles, view, reason) {
     const primary = tiles.primary || tiles.ready || tiles.disconnected
-    const state = heroTileState(view)
+    const state = heroTileState(view, reason)
 
     tiles.all.forEach(function (element) {
       show(element, false)
@@ -957,7 +968,7 @@
         if (result.mode === 'disconnected' && result.connected === false) {
           clearDashboardAttemptKey()
           closeStripeTab(stripeTab)
-          await loadDashboardStatus(roots, false, earningsTiles)
+          await loadDashboardStatus(roots, NO_RETURN_CONTEXT, earningsTiles)
           return false
         }
         const destination = resolveDashboardDestination(result)
@@ -1018,7 +1029,7 @@
           throw new Error('Stripe disconnect returned an invalid result')
         }
         clearDisconnectAttemptKey()
-        await loadDashboardStatus(roots, false, earningsTiles)
+        await loadDashboardStatus(roots, NO_RETURN_CONTEXT, earningsTiles)
         emit('starterStripeConnectDisconnected', {
           providerAction: result.provider_action || '',
           replayed: result.replayed === true,
@@ -1152,45 +1163,6 @@
     }
   }
 
-  function normalizeReturnContext(
-    returnContext,
-    pollForSettlement,
-    cleanReturnUrl,
-  ) {
-    if (returnContext && typeof returnContext === 'object') {
-      return {
-        cleanReturnUrl:
-          typeof cleanReturnUrl === 'boolean'
-            ? cleanReturnUrl
-            : returnContext.cleanReturnUrl === true,
-        mode: returnContext.mode || '',
-        pollForSettlement:
-          typeof pollForSettlement === 'boolean'
-            ? pollForSettlement
-            : returnContext.pollForSettlement === true,
-        reason:
-          returnContext.reason === ACCOUNT_OWNER_CONFLICT_REASON &&
-          returnContext.mode === 'reconciliation_required'
-            ? ACCOUNT_OWNER_CONFLICT_REASON
-            : '',
-        returnedFromStripe: returnContext.returnedFromStripe === true,
-      }
-    }
-    return {
-      cleanReturnUrl:
-        typeof cleanReturnUrl === 'boolean'
-          ? cleanReturnUrl
-          : returnContext === true,
-      mode: returnContext === true ? 'connected' : '',
-      pollForSettlement:
-        typeof pollForSettlement === 'boolean'
-          ? pollForSettlement
-          : returnContext === true,
-      reason: '',
-      returnedFromStripe: returnContext === true,
-    }
-  }
-
   function cleanReturnMarker() {
     const url = new URL(global.location.href)
     url.searchParams.delete('after_onboarding')
@@ -1227,29 +1199,22 @@
 
   async function loadDashboardStatus(
     roots,
-    returnContext,
+    returnContext = NO_RETURN_CONTEXT,
     earningsTiles = resolveEarningsTiles([]),
-    pollForSettlement,
-    cleanReturnUrl,
   ) {
-    const context = normalizeReturnContext(
-      returnContext,
-      pollForSettlement,
-      cleanReturnUrl,
-    )
     renderRoots(roots, 'loading')
     renderEarningsTiles(earningsTiles, 'loading')
     try {
-      const status = await readSettledStatus(context.pollForSettlement)
-      const view = resolveDashboardView(status, context)
+      const status = await readSettledStatus(returnContext.pollForSettlement)
+      const view = resolveDashboardView(status, returnContext)
       const reason =
         view === 'error' &&
-        status.connected === false &&
-        context.reason === ACCOUNT_OWNER_CONFLICT_REASON
+        isCanonicalDisconnectedStatus(status) &&
+        returnContext.reason === ACCOUNT_OWNER_CONFLICT_REASON
           ? ACCOUNT_OWNER_CONFLICT_REASON
           : ''
       renderRoots(roots, view, reason)
-      renderEarningsTiles(earningsTiles, view)
+      renderEarningsTiles(earningsTiles, view, reason)
       emit('starterStripeConnectReady', { view, status })
       return status
     } catch (error) {
@@ -1265,7 +1230,7 @@
       )
       return null
     } finally {
-      if (context.cleanReturnUrl) cleanReturnMarker()
+      if (returnContext.cleanReturnUrl) cleanReturnMarker()
     }
   }
 
@@ -1354,10 +1319,14 @@
         setStartPending(button, connectTile, false)
         return loadDashboardStatus(
           roots,
-          returnedFromStripe,
+          {
+            cleanReturnUrl: false,
+            mode: returnedFromStripe ? 'connected' : '',
+            pollForSettlement: true,
+            reason: '',
+            returnedFromStripe,
+          },
           earningsTiles,
-          true,
-          false,
         ).finally(function () {
           runExclusive.release()
         })
@@ -1393,10 +1362,14 @@
             if (returnWatcher) returnWatcher.cancel()
             return loadDashboardStatus(
               roots,
-              result === 'reconciliation_required',
+              {
+                cleanReturnUrl: false,
+                mode: result,
+                pollForSettlement: true,
+                reason: '',
+                returnedFromStripe: result === 'reconciliation_required',
+              },
               earningsTiles,
-              true,
-              false,
             ).then(function () {
               return false
             })
@@ -1515,7 +1488,11 @@
               return
             }
             runExclusive(function () {
-              return loadDashboardStatus(roots, false, earningsTiles)
+              return loadDashboardStatus(
+                roots,
+                NO_RETURN_CONTEXT,
+                earningsTiles,
+              )
             })
           })
         })

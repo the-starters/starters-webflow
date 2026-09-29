@@ -3851,8 +3851,11 @@ action change with canonical status: `Checking Stripe` while loading, `Get Paid
 onboarding` while incomplete, a disabled `Under Review / Stripe is reviewing
 your account` state while under review, `Earnings / Payment history & payouts`
 while ready, and a disabled `Stripe Unavailable / Use Try Again above` state on
-an error. The disconnected and incomplete states start the same guarded
-OAuth/onboarding flow as the action-list CTA. A status with
+an error. A verified account-owner conflict keeps that hero disabled with
+`Stripe Unavailable / Use Connect a different account above` while the error
+card exposes the matching `Connect a different account` recovery action. The
+disconnected and incomplete states start the same guarded OAuth/onboarding flow
+as the action-list CTA. A status with
 `charges_enabled:true` requests a provider-verified account destination from
 `dashboard/v3`:
 Express accounts receive a single-use login link, while Standard/full accounts
@@ -3937,10 +3940,10 @@ Memberstack ID and reconciliation mode. A copied or forged query parameter
 without that receipt stays on the generic recovery path. For the verified
 reason, the controller changes the existing error card to explain that the
 Stripe account is already linked to another Starter profile and makes the
-recovery action start a different-account Connect flow. The copy never includes
-the existing owner's identity. Unknown or internal reconciliation reasons
-remain on the generic unavailable copy. A canonical connected result always
-overrides a stale return reason.
+`Connect a different account` recovery action start a new Connect flow. The copy
+never includes the existing owner's identity. Unknown or internal reconciliation
+reasons remain on the generic unavailable copy. A canonical connected result
+always overrides a stale return reason.
 
 The callback reads `code` and the backend-issued opaque `state`,
 removes OAuth parameters from the visible URL before network work, resolves the
