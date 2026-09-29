@@ -5874,6 +5874,83 @@ test('authored details paragraph opens the current Meet URL for either role', ()
   }
 })
 
+test('meeting destinations prefer canonical time across device clock skew', () => {
+  const previousActions = global.StartersDashboardCallActions
+  const previousNow = Date.now
+  const previousOpen = global.open
+  const serverNow = 2_000_000_000_000
+  let deviceNow = serverNow + 60 * 60 * 1000
+  let canonicalNow = serverNow
+  let observed = []
+  const opened = []
+  global.StartersDashboardCallActions = {
+    canonicalNow(booking) {
+      observed.push(booking)
+      return canonicalNow
+    },
+  }
+  Date.now = () => deviceNow
+  global.open = (...args) => opened.push(args)
+  try {
+    for (const role of ['brand', 'starter']) {
+      observed = []
+      canonicalNow = serverNow
+      deviceNow = serverNow + 60 * 60 * 1000
+      const booking = {
+        booking_id: 'canonical-meeting-' + role,
+        status: 'confirmed',
+        start: serverNow - 30 * 60 * 1000,
+        end: serverNow + 60 * 1000,
+        duration: 30,
+        meeting_link: 'https://meet.google.com/canonical-' + role,
+        brand_data: { name: 'Brand', timezone: 'UTC' },
+        starter_data: { name: 'Starter', timezone: 'UTC' },
+      }
+      const card = element()
+      const cardWrap = element()
+      const anchor = anchorElement({ 'booking-element': 'meeting-link' })
+      const anchorHandlers = new Map()
+      anchor.closest = selector => selector === '[booking-element-wrap]' ? cardWrap : null
+      anchor.addEventListener = (type, handler) => anchorHandlers.set(type, handler)
+      card.querySelectorAll = selector => selector === '[booking-element="meeting-link"]' ? [anchor] : []
+      const view = detailModalHarness()
+      const paragraph = view.fields['meeting-link']
+      const paragraphHandlers = new Map()
+      paragraph.addEventListener = (type, handler) => paragraphHandlers.set(type, handler)
+
+      api.bindCard(card, booking, role)
+      api.populateDetailModal(view.modal, booking, role)
+      assert.equal(anchor.getAttribute('href'), booking.meeting_link)
+      assert.equal(paragraph.getAttribute('data-meeting-href'), booking.meeting_link)
+      assert.ok(observed.length >= 2)
+      assert.ok(observed.every(candidate => candidate === booking))
+
+      canonicalNow = booking.end
+      deviceNow = serverNow - 60 * 60 * 1000
+      let anchorPrevented = false
+      anchorHandlers.get('click')({
+        preventDefault() { anchorPrevented = true },
+        stopImmediatePropagation() {},
+      })
+      let paragraphPrevented = false
+      paragraphHandlers.get('keydown')({
+        key: 'Enter',
+        preventDefault() { paragraphPrevented = true },
+        stopImmediatePropagation() {},
+      })
+      assert.equal(anchorPrevented, true)
+      assert.equal(paragraphPrevented, true)
+      assert.equal(anchor.hasAttribute('href'), false)
+      assert.equal(paragraph.hasAttribute('data-meeting-href'), false)
+      assert.equal(opened.length, 0)
+    }
+  } finally {
+    global.StartersDashboardCallActions = previousActions
+    Date.now = previousNow
+    global.open = previousOpen
+  }
+})
+
 test('meeting destinations expire at call end for both roles without a canonical refresh', () => {
   const previousDocument = global.document
   const previousOpen = global.open
@@ -5901,7 +5978,12 @@ test('meeting destinations expire at call end for both roles without a canonical
       const anchorHandlers = new Map()
       anchor.closest = selector => selector === '[booking-element-wrap]' ? cardWrap : null
       anchor.addEventListener = (type, handler) => anchorHandlers.set(type, handler)
-      card.querySelectorAll = selector => selector === '[booking-element="meeting-link"]' ? [anchor] : []
+      const auxiliaryWrap = element()
+      const auxiliaryAnchor = anchorElement({ 'booking-element': 'meeting-link' })
+      const auxiliaryHandlers = new Map()
+      auxiliaryAnchor.closest = selector => selector === '[booking-element-wrap]' ? auxiliaryWrap : null
+      auxiliaryAnchor.addEventListener = (type, handler) => auxiliaryHandlers.set(type, handler)
+      card.querySelectorAll = selector => selector === '[booking-element="meeting-link"]' ? [anchor, auxiliaryAnchor] : []
       const view = detailModalHarness()
       const paragraph = view.fields['meeting-link']
       const paragraphHandlers = new Map()
@@ -5933,17 +6015,38 @@ test('meeting destinations expire at call end for both roles without a canonical
       })
 
       assert.equal(anchor.getAttribute('href'), booking.meeting_link)
+      assert.equal(auxiliaryAnchor.getAttribute('href'), booking.meeting_link)
       assert.equal(paragraph.getAttribute('data-meeting-href'), booking.meeting_link)
       let anchorPrevented = false
       anchorHandlers.get('click')({
         preventDefault() { anchorPrevented = true },
       })
       assert.equal(anchorPrevented, false)
+      let auxiliaryPrevented = false
+      auxiliaryHandlers.get('auxclick')({
+        button: 1,
+        preventDefault() { auxiliaryPrevented = true },
+      })
+      assert.equal(auxiliaryPrevented, false)
       const openedBefore = opened.length
       paragraphHandlers.get('click')({ preventDefault() {} })
       assert.equal(opened.length, openedBefore + 1)
 
       currentTime = booking.end
+      let expiredAuxiliaryPrevented = false
+      let expiredAuxiliaryStopped = false
+      auxiliaryHandlers.get('auxclick')({
+        button: 1,
+        preventDefault() { expiredAuxiliaryPrevented = true },
+        stopImmediatePropagation() { expiredAuxiliaryStopped = true },
+      })
+      assert.equal(expiredAuxiliaryPrevented, true)
+      assert.equal(expiredAuxiliaryStopped, true)
+      assert.equal(auxiliaryAnchor.hasAttribute('href'), false)
+      assert.equal(auxiliaryAnchor.hasAttribute('target'), false)
+      assert.equal(auxiliaryAnchor.hasAttribute('rel'), false)
+      assert.equal(auxiliaryAnchor.hidden, true)
+      assert.equal(auxiliaryWrap.hidden, true)
       let expiredAnchorPrevented = false
       let expiredAnchorStopped = false
       anchorHandlers.get('click')({
@@ -6167,7 +6270,7 @@ test('reschedule responses refresh receipt and base without retaining proposal-o
     const base = domElement('div', { 'booking-popup-content': 'base' })
     modal.appendChild(base)
     actions.ensureRescheduleViews(document, modal)
-    const booking = { booking_id: 'accept-' + role, config_id: 'config', data_environment: 'test', status: 'rescheduled', rescheduled_by: role === 'brand' ? 'starter' : 'brand', start: Date.now() + 172800000, end: Date.now() + 174600000, start_old: Date.now() + 86400000, duration: 30, price: 0, is_paid: false, brand_data: { memberstack_id: 'mem-brand', timezone: 'UTC' }, starter_data: { memberstack_id: 'mem-starter', timezone: 'Asia/Manila' } }
+    const booking = { booking_id: 'accept-' + role, config_id: 'config', data_environment: 'test', status: 'rescheduled', rescheduled_by: role === 'brand' ? 'starter' : 'brand', start: Date.now() + 172800000, end: Date.now() + 174600000, start_old: Date.now() + 86400000, end_old: Date.now() + 88200000, duration: 30, price: 0, is_paid: false, brand_data: { memberstack_id: 'mem-brand', timezone: 'UTC' }, starter_data: { memberstack_id: 'mem-starter', timezone: 'Asia/Manila' } }
     booking.server_now_ms = Date.now()
     actions.bindCanonicalClock([booking], actions.monotonicNow())
     api.populateDetailModal(modal, booking, role)
@@ -6198,8 +6301,16 @@ test('reschedule responses refresh receipt and base without retaining proposal-o
     const pendingState = panelState()
     if (scenario.includes('transport')) {
       response.reject(new Error('Controlled transport failure'))
+    } else if (scenario.endsWith('failure')) {
+      response.resolve({ ok: false, json: async () => ({ message: 'Controlled failure' }) })
     } else {
-      response.resolve({ ok: !scenario.endsWith('failure'), json: async () => scenario.endsWith('failure') ? { message: 'Controlled failure' } : { ['reschedule_' + kind]: { booking_id: booking.booking_id, status: expectedStatus, start: kind === 'decline' ? booking.start_old : booking.start, end: kind === 'decline' ? booking.start_old + 1800000 : booking.end } } })
+      const result = { booking_id: booking.booking_id, status: expectedStatus }
+      if (kind === 'decline') result.original_restored = true
+      else {
+        result.start = booking.start
+        result.end = booking.end
+      }
+      response.resolve({ ok: true, json: async () => ({ ['reschedule_' + kind]: result }) })
     }
     await action
     if (scenario.endsWith('failure')) assert.deepEqual(Array.from(values.entries()), retryKeys, 'Failed attempt retains the same retry key')
@@ -6217,7 +6328,10 @@ test('reschedule responses refresh receipt and base without retaining proposal-o
       continue
     }
     assert.equal(booking.status, expectedStatus)
-    if (kind === 'decline') assert.equal(booking.start, booking.start_old, 'Decline restores the original time')
+    if (kind === 'decline') {
+      assert.equal(booking.start, booking.start_old, 'Decline restores the original start')
+      assert.equal(booking.end, booking.end_old, 'Decline restores the original end')
+    }
     assert.equal(receipt.querySelector('[data-starters-call-summary-row="start-date-old"]'), null)
     assert.equal(base.querySelector('[data-starters-call-summary-row="start-date-old"]'), null)
     assert.equal(receipt.hidden, false)

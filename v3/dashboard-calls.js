@@ -520,7 +520,7 @@
     }
     if (!href || wiredMeetingDestinations.has(element) || typeof element.addEventListener !== 'function') return true
     const activateMeetingDestination = function (event) {
-      const current = meetingHrefForBooking(meetingDestinationBookings.get(element), Date.now())
+      const current = meetingHrefForBooking(meetingDestinationBookings.get(element))
       const rendered = safeMeetingHref(element.getAttribute(isAnchor ? 'href' : 'data-meeting-href'))
       if (!current || current !== rendered) {
         if (event && typeof event.preventDefault === 'function') event.preventDefault()
@@ -537,6 +537,7 @@
       global.open(current, '_blank', 'noopener,noreferrer')
     }
     element.addEventListener('click', activateMeetingDestination, true)
+    if (isAnchor) element.addEventListener('auxclick', activateMeetingDestination, true)
     if (isParagraph) {
       element.addEventListener('keydown', function (event) {
         if (event.key === 'Enter') activateMeetingDestination(event)
@@ -546,10 +547,24 @@
     return true
   }
 
+  function meetingReferenceTime(booking, now) {
+    const actions = global.StartersDashboardCallActions
+    if (actions && typeof actions.canonicalNow === 'function') {
+      try {
+        const canonical = Number(actions.canonicalNow(booking))
+        if (Number.isFinite(canonical) && canonical > 0) return canonical
+      } catch (_error) {}
+    }
+    const reference = Number(now)
+    if (Number.isFinite(reference) && reference > 0) return reference
+    const wall = Number(Date.now())
+    return Number.isFinite(wall) && wall > 0 ? wall : null
+  }
+
   function meetingHrefForBooking(booking, now) {
     const raw = clean(booking && booking.status).toLowerCase()
-    const reference = Number(now)
-    const currentTime = Number.isFinite(reference) ? reference : Date.now()
+    const currentTime = meetingReferenceTime(booking, now)
+    if (currentTime == null) return ''
     const status = raw === 'rescheduled' ? raw : bookingStatus(booking, currentTime)
     if (!['confirmed', 'rescheduled'].includes(status)) return ''
     const end = Number(booking && booking[raw === 'rescheduled' ? 'end_old' : 'end'])
@@ -3190,6 +3205,7 @@
       },
       onAvailable: function () {
         bindBookingClocks(refs.flatMap(function (section) { return section.rows || [] }))
+        refreshMeetingDestinations(refs)
         refreshDetailExpiration(refs, role)
       },
     }

@@ -1735,8 +1735,14 @@
             if (step.kind === 'reschedule-confirm' || step.kind === 'reschedule-decline') {
               const confirmed = result[config.responseKey]
               booking.status = confirmed.status
-              if (Number.isFinite(Number(confirmed.start)) && Number(confirmed.start) > 0) booking.start = Number(confirmed.start)
-              if (Number.isFinite(Number(confirmed.end)) && Number(confirmed.end) > 0) booking.end = Number(confirmed.end)
+              const confirmedStart = Number(confirmed.start)
+              const confirmedEnd = Number(confirmed.end)
+              const restoredStart = Number(booking.start_old)
+              const restoredEnd = Number(booking.end_old)
+              if (Number.isFinite(confirmedStart) && confirmedStart > 0) booking.start = confirmedStart
+              else if (step.kind === 'reschedule-decline' && Number.isFinite(restoredStart) && restoredStart > 0) booking.start = restoredStart
+              if (Number.isFinite(confirmedEnd) && confirmedEnd > 0) booking.end = confirmedEnd
+              else if (step.kind === 'reschedule-decline' && Number.isFinite(restoredEnd) && restoredEnd > 0) booking.end = restoredEnd
               if (typeof settings.refreshDetail === 'function') settings.refreshDetail(modal, booking)
             }
             ensureRescheduleViews(document, modal)
