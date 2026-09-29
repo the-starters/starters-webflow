@@ -65,6 +65,7 @@
   const authoredErrorCopyByElement = new WeakMap()
   const ownershipReloadRequiredByRoot = new WeakSet()
   const dashboardAuthScopeByRoot = new WeakMap()
+  const unresolvedConflictAuthScopes = new WeakSet()
   let conflictAuthGeneration = 0
   const MEMBER_SCOPE_CHANGED_CODE = 'member_scope_changed'
   const ACCOUNT_OWNER_CONFLICT_REASON = 'account_owner_conflict'
@@ -74,6 +75,13 @@
     pollForSettlement: false,
     reason: '',
     returnedFromStripe: false,
+  })
+  const RETAINED_ACCOUNT_OWNER_CONFLICT_CONTEXT = Object.freeze({
+    cleanReturnUrl: false,
+    mode: 'reconciliation_required',
+    pollForSettlement: false,
+    reason: ACCOUNT_OWNER_CONFLICT_REASON,
+    returnedFromStripe: true,
   })
   const ACCOUNT_OWNER_CONFLICT_COPY = {
     button: 'Connect a different account',
@@ -371,6 +379,7 @@
       },
       memberstack,
       release: function () {
+        unresolvedConflictAuthScopes.delete(scope)
         if (!active) return
         active = false
         if (!subscription) return
@@ -389,6 +398,7 @@
         if (!active) return
         conflictAuthGeneration += 1
         xanoTokenPromise = null
+        unresolvedConflictAuthScopes.delete(scope)
         if (typeof onInvalidated === 'function') onInvalidated()
       })
       if (
@@ -410,6 +420,13 @@
       return null
     }
     return scope
+  }
+
+  function retainedReturnContext(scope, fallback) {
+    return conflictAuthScopeIsCurrent(scope) &&
+      unresolvedConflictAuthScopes.has(scope)
+      ? RETAINED_ACCOUNT_OWNER_CONFLICT_CONTEXT
+      : fallback
   }
 
   async function conflictAuthScopeMemberId(scope) {
@@ -1230,7 +1247,14 @@
         if (result.mode === 'disconnected' && result.connected === false) {
           clearDashboardAttemptKey()
           closeStripeTab(stripeTab)
-          await loadDashboardStatus(roots, NO_RETURN_CONTEXT, earningsTiles)
+          const refreshedStatus = await loadDashboardStatus(
+            roots,
+            NO_RETURN_CONTEXT,
+            earningsTiles,
+          )
+          failed =
+            !isCanonicalStatus(refreshedStatus) ||
+            ownershipReloadRequired(roots)
           return false
         }
         const destination = resolveDashboardDestination(result)
@@ -1503,15 +1527,21 @@
     renderRoots(roots, 'loading')
     renderEarningsTiles(earningsTiles, 'loading')
     const authScope = dashboardAuthScopeForRoots(roots)
+    const effectiveReturnContext = retainedReturnContext(
+      authScope,
+      returnContext,
+    )
     const hasTrustedConflictReason =
-      returnContext.reason === ACCOUNT_OWNER_CONFLICT_REASON
+      effectiveReturnContext.reason === ACCOUNT_OWNER_CONFLICT_REASON
     try {
       let status = null
       let reason = ''
       if (authScope) {
         await requireConflictAuthScopeMember(authScope)
         status = await readSettledStatus(
-          hasTrustedConflictReason ? false : returnContext.pollForSettlement,
+          hasTrustedConflictReason
+            ? false
+            : effectiveReturnContext.pollForSettlement,
           authScope,
         )
         await requireConflictAuthScopeMember(authScope)
@@ -1519,9 +1549,15 @@
       } else if (hasTrustedConflictReason) {
         throw memberScopeChangedError()
       } else {
-        status = await readSettledStatus(returnContext.pollForSettlement)
+        status = await readSettledStatus(
+          effectiveReturnContext.pollForSettlement,
+        )
       }
-      const view = resolveDashboardView(status, returnContext)
+      const canonicalStatus = isCanonicalStatus(status)
+      const view = resolveDashboardView(status, effectiveReturnContext)
+      if (canonicalStatus && authScope) {
+        unresolvedConflictAuthScopes.delete(authScope)
+      }
       if (
         hasTrustedConflictReason &&
         view === 'error' &&
@@ -1533,7 +1569,7 @@
         roots,
         view,
         reason,
-        isCanonicalStatus(status) ? status.connected : undefined,
+        canonicalStatus ? status.connected : undefined,
       )
       renderEarningsTiles(earningsTiles, view, reason)
       emit('starterStripeConnectReady', { view, status })
@@ -1882,6 +1918,14 @@
         untrustedReturnContext.mode,
       )
       const returnContext = resolveReturnContext(returnSearch, receiptReason)
+      if (
+        returnContext.mode === 'reconciliation_required' &&
+        returnContext.reason === ACCOUNT_OWNER_CONFLICT_REASON &&
+        conflictAuthScopeIsCurrent(dashboardAuthScope) &&
+        dashboardAuthScopeForRoots(roots) === dashboardAuthScope
+      ) {
+        unresolvedConflictAuthScopes.add(dashboardAuthScope)
+      }
       return runExclusive(function () {
         return loadDashboardStatus(roots, returnContext, earningsTiles)
       })

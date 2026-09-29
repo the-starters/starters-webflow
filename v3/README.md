@@ -3916,9 +3916,12 @@ false invalid-URL error.
 Dashboard access sends a bounded idempotency key. A retry after a
 network-ambiguous, timeout, conflict, rate-limit, or server outcome reuses the
 key. A definitive provider result or non-retryable response clears it, so a
-later intentional action starts a new attempt. The authenticated disconnect
-endpoint remains available to the support-owned workflow, but the dashboard
-does not expose it.
+later intentional action starts a new attempt. If Dashboard access reports a
+disconnect, a nested canonical status read repaints the hero. If that refresh
+does not establish canonical status, the hero stays disabled. Ownership loss
+also leaves the page in its reload-required error state. The authenticated
+disconnect endpoint remains available to the support-owned workflow, but the
+dashboard does not expose it.
 
 The dashboard calls provider-aware `status/v3` immediately. It repairs a
 readiness mismatch and clears a stale projection only when Stripe returns a
@@ -3937,13 +3940,15 @@ blind Connect loop. The controller recognizes only the public
 `account_owner_conflict` reason, and only when the authenticated callback also
 created a short-lived, one-time same-tab receipt bound to the current
 Memberstack ID and reconciliation mode. A copied reconciliation marker without
-that receipt stays on the generic recovery path. The callback arms a
-local Memberstack auth-generation watch before resolving the member or
-exchanging the code. Every dashboard mount arms a page-lifetime watch before
-its first status read and uses that scope for later status and provider-action
-requests. Each watch requires the documented subscription object with an
-`unsubscribe()` method. The same Memberstack client, live member, and unchanged
-generation must hold throughout each protected request. Any auth event,
+that receipt stays on the generic recovery path. After consuming the receipt,
+only that exact live page auth scope can retain its allowlisted provenance until
+the first canonical status outcome. The callback arms a local Memberstack
+auth-generation watch before resolving the member or exchanging the code. Every
+dashboard mount arms a page-lifetime watch before its first status read and uses
+that scope for later status and provider-action requests. Each watch requires
+the documented subscription object with an `unsubscribe()` method. The same
+Memberstack client, live member, and unchanged generation must hold throughout
+each protected request. Any auth event,
 missing or failed subscription, member mismatch, or failure to prove the live
 member clears the cached bearer and receipt, synchronously removes recognized
 return markers, stops further Stripe requests and rendering, restores the
@@ -3955,8 +3960,7 @@ verified reason, the controller changes the existing error card to explain that
 the Stripe account is already linked to another Starter profile and makes the
 `Connect a different account` recovery action start a new Connect flow. The copy
 never includes the existing owner's identity. Unknown or internal reconciliation
-reasons remain on the generic unavailable copy. A canonical connected result
-always overrides a stale return reason.
+reasons remain on the generic unavailable copy.
 
 The callback reads `code` and the backend-issued opaque `state`,
 removes OAuth parameters from the visible URL before network work, validates the
@@ -3975,12 +3979,18 @@ same-origin `sessionStorage`; all other callback outcomes clear an older
 receipt. The callback clears any older receipt at entry, so an authorization
 error, invalid state, member failure, or exchange failure cannot leave a prior
 conflict outcome reusable within the TTL. The dashboard derives the public
-reason only from the consumed receipt and reconciliation mode. A verified
-owner-conflict branch reads canonical status once. If its auth scope becomes
-untrusted before, during, or after that read, the controller discards the
-response and cached bearer, immediately removes the return markers, restores
-the authored generic error, and requires a full page reload. It does not poll,
-remount, or rebind the current controller to a different member.
+reason only from the consumed receipt and reconciliation mode. It consumes the
+receipt before the first status attempt, cleans the recognized URL marker when
+that attempt settles, and retains only an in-memory unresolved-conflict bit on
+the same live dashboard auth scope. A thrown or noncanonical status attempt
+keeps that bit so same-page `Try Again` can reach a resolved canonical outcome
+without recreating a blind Connect loop. The first canonical result clears it;
+a connected result always overrides the conflict reason. Auth loss or scope
+release also clears it, and a reload cannot replay it from storage or the
+cleaned URL. If the scope becomes untrusted before, during, or after a read, the
+controller discards the response and cached bearer, restores the authored
+generic error, and requires a full page reload. It does not poll, remount, or
+rebind the current controller to a different member.
 Only `after_onboarding=true`, `stripe_connect=connected`, and
 `stripe_connect=reconciliation_required` trigger settlement polling and return
 cleanup. The dashboard removes `after_onboarding` and `stripe_connect` for
