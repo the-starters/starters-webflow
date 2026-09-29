@@ -75,6 +75,14 @@
       style.textContent = [
           '[data-booking-unavailable]{display:none!important}',
           '[data-booking-trigger-unavailable]{opacity:.55;cursor:help}',
+          // F50: loading, not disabled. The authored Button Wrap already holds a
+          // hidden [data-button-spinner] and a [data-opp-element="loading-hide"]
+          // icon; this only toggles them while discovery is pending.
+          '[data-booking-trigger-loading]{cursor:progress}',
+          '[data-booking-trigger-loading] [data-button-spinner]{display:flex}',
+          '[data-booking-trigger-loading] [data-opp-element="loading-hide"]{display:none}',
+          '[data-call-offer-state="loading"],[data-call-offer-state="settings-loading"]{cursor:progress}',
+          '[data-call-offer-state="loading"] [next-available-slot]{visibility:hidden}',
           '[data-canonical-call-unavailable]{display:none!important}',
           '[data-call-offer-superseded]{display:none!important}',
           '[data-header-tout-excluded]{display:none!important}',
@@ -564,6 +572,8 @@
   // The fail-closed start disables Book Call before canonical discovery has
   // answered. Until it does, a Brand reads a loading hint, not the
   // "isn't accepting calls" verdict that only an empty result may give.
+  // F50: the closed control also LOOKS loading (data-booking-trigger-loading
+  // shows its authored spinner), not the faded unavailable state.
   let callDiscoveryPending = true;
   function explainBookingAvailability(trigger, available) {
       let entry = bookingHints.get(trigger);
@@ -659,6 +669,7 @@
       if (available) {
           entry.hint.style.display = 'none';
           trigger.removeAttribute('aria-busy');
+          trigger.removeAttribute('data-booking-trigger-loading');
           trigger.removeAttribute('aria-describedby');
           if (entry.signup) trigger.setAttribute('data-signup-trigger-element', entry.signup);
           if (entry.modal && !trigger.hasAttribute('data-logged-out-book-call')) trigger.setAttribute('data-modal-trigger', entry.modal);
@@ -673,8 +684,15 @@
       trigger.setAttribute('aria-describedby', entry.hint.getAttribute('id'));
       const owner = bookingOwner;
       const pending = !owner && callDiscoveryPending;
-      if (pending) trigger.setAttribute('aria-busy', 'true');
-      else trigger.removeAttribute('aria-busy');
+      if (pending) {
+          trigger.setAttribute('aria-busy', 'true');
+          trigger.setAttribute('data-booking-trigger-loading', '');
+          trigger.removeAttribute('data-booking-trigger-unavailable');
+      } else {
+          trigger.removeAttribute('aria-busy');
+          trigger.removeAttribute('data-booking-trigger-loading');
+          trigger.setAttribute('data-booking-trigger-unavailable', '');
+      }
       entry.hint.textContent = owner
           ? ('Clients use this button to book a call with you. ' +
               (ownerBookingReady ? 'Your calls are available to brands. ' : 'Your call booking is unavailable. '))
@@ -727,14 +745,60 @@
       });
   }
 
+  // F50: authenticated discovery and the public call DTO answer in either
+  // order. A Brand whose discovery installed a controller is not answered
+  // until the DTO has too, because publicCallTypeReady refuses every type
+  // while that DTO is unknown. Ending pending on discovery alone showed the
+  // "isn't accepting calls" verdict before the page knew. The failsafe keeps
+  // a DTO that never answers from holding the loading state open.
+  let authDiscoverySettled = false;
+  let callDiscoveryFailsafeTimer = null;
+  const CALL_DISCOVERY_PUBLIC_WAIT_MS = 15000;
+
+  function awaitingPublicCallReadiness() {
+      if (!isBrandMember(MEMBER) || STAGING_BOOKING_FIXTURE) return false;
+      // An empty, refused or failed discovery closes Book Call whatever the
+      // DTO says, so only an installed controller has anything to wait for.
+      const installed = paintedCallState && Array.isArray(paintedCallState.configs)
+          ? paintedCallState.configs.length > 0
+          : false;
+      return installed && !!canonicalCallWrapper() && latestCanonicalCallItems === null;
+  }
+
   /**
-   * Ends the discovery-pending state once canonical call discovery has
-   * answered, on every exit path. Triggers that stayed closed get the final
-   * hint; triggers discovery opened only lose their busy marker.
+   * Marks authenticated discovery as answered, on every exit path, then ends
+   * the pending state when nothing else is outstanding.
    */
   function endCallDiscoveryPending() {
-      if (!callDiscoveryPending) return;
+      authDiscoverySettled = true;
+      maybeEndCallDiscoveryPending(false);
+  }
+
+  /**
+   * Ends the discovery-pending state. Triggers that stayed closed get the
+   * final hint; triggers discovery opened only lose their busy marker. A
+   * Brand card still loading was never admitted, so it fails closed.
+   */
+  function maybeEndCallDiscoveryPending(force) {
+      if (!callDiscoveryPending || !authDiscoverySettled) return;
+      if (!force && awaitingPublicCallReadiness()) {
+          if (callDiscoveryFailsafeTimer === null) {
+              callDiscoveryFailsafeTimer = window.setTimeout(function () {
+                  maybeEndCallDiscoveryPending(true);
+              }, CALL_DISCOVERY_PUBLIC_WAIT_MS);
+          }
+          return;
+      }
+      if (callDiscoveryFailsafeTimer !== null) window.clearTimeout(callDiscoveryFailsafeTimer);
+      callDiscoveryFailsafeTimer = null;
       callDiscoveryPending = false;
+      const unadmitted = document.querySelectorAll('[data-xano-call-card][data-call-offer-state="loading"]');
+      unadmitted.forEach(function (card) {
+          setCallOfferVisible(card, false);
+          card.removeAttribute('aria-busy');
+          card.setAttribute('data-call-offer-state', 'hidden');
+      });
+      if (unadmitted.length) refreshEmptySectionNav();
       bookingHints.forEach(function (_entry, trigger) {
           if (trigger.getAttribute('aria-disabled') === 'true') {
               explainBookingAvailability(trigger, false);
@@ -851,6 +915,10 @@
       return Array.from(qsa(selector)).filter(excludeXanoCallCards);
   }
 
+  function canonicalCallWrapper() {
+      return document.querySelector('[wf-xano-instance="starter-call-offers-header"], [wf-xano-instance="starter-call-offers-services"]');
+  }
+
   function publicCallTypeReady(type) {
       // This gate only means something while the public projection and the
       // booking paths describe the SAME starter. On the staging fixture route
@@ -860,8 +928,7 @@
       // instead — Free is the fixture's whole purpose, and Paid stays closed so
       // no Stripe entry point can open on it.
       if (STAGING_BOOKING_FIXTURE) return type === 'free';
-      const wrapper = document.querySelector('[wf-xano-instance="starter-call-offers-header"], [wf-xano-instance="starter-call-offers-services"]');
-      if (!wrapper) return true; // Legacy pages have no public-readiness contract.
+      if (!canonicalCallWrapper()) return true; // Legacy pages have no public-readiness contract.
       if (!latestCanonicalCallItems) return false;
       return Array.from(latestCanonicalCallItems.values()).some(function (item) {
           return callOfferTypeOf(item) === type && item.public_available === true;
@@ -887,6 +954,7 @@
           if (!surface.hasAttribute('data-xano-call-card')) return;
           surface.setAttribute('has-connection', type);
           surface.removeAttribute('no-connection');
+          surface.removeAttribute('aria-busy');
           surface.setAttribute('data-call-offer-state', 'available');
       }, includeSurface);
       document.querySelectorAll('[data-xano-call-card][data-type]').forEach(function (surface) {
@@ -895,6 +963,7 @@
           if (availability[type]) return;
           surface.removeAttribute('has-connection');
           surface.removeAttribute('data-call-service-direct');
+          surface.removeAttribute('aria-busy');
           surface.setAttribute('data-call-offer-state', 'hidden');
       });
       return changed;
@@ -2739,6 +2808,7 @@
           'data-call-offer-type',
           'data-type',
           'data-call-offer-state',
+          'aria-busy',
           'data-call-owner-preview',
           'data-call-service-direct',
           'has-connection',
@@ -2806,6 +2876,14 @@
       return found;
   }
 
+  function hideCallOfferTooltips(card) {
+      callOfferTooltipNodes(card).forEach(function (node) {
+          node.style.display = 'none';
+          node.setAttribute('hidden', 'hidden');
+          node.setAttribute('aria-hidden', 'true');
+      });
+  }
+
   function configureOwnerSetupActions(card, type, settings) {
       const readiness = ownerReadinessOf(settings);
       const message = setupMessageFor(type, settings);
@@ -2837,10 +2915,8 @@
       });
   }
 
-  function configureOwnerSettingsUnavailable(card, loading) {
-      const message = loading
-          ? 'Call settings are loading. Open Call Settings if this continues.'
-          : 'Call settings could not be loaded. Refresh or open Call Settings.';
+  function configureOwnerSettingsUnavailable(card) {
+      const message = 'Call settings could not be loaded. Refresh or open Call Settings.';
       qsa('[data-call-offer-tooltip-text], [hover-text]', card).forEach(function (node) {
           node.textContent = message;
       });
@@ -2884,26 +2960,29 @@
           card.removeAttribute('data-modal-trigger');
           card.removeAttribute('data-call-service-direct');
           card.setAttribute('data-call-owner-preview', '');
+          card.removeAttribute('aria-busy');
           if (record) {
               decorateOwnerPreviewAction(card, 'call');
               card.setAttribute('data-service-card-state', 'Default');
               card.setAttribute('has-connection', type);
               card.removeAttribute('no-connection');
               card.setAttribute('data-call-offer-state', 'available');
-              callOfferTooltipNodes(card).forEach(function (node) {
-                  node.style.display = 'none';
-                  node.setAttribute('hidden', 'hidden');
-                  node.setAttribute('aria-hidden', 'true');
-              });
+              hideCallOfferTooltips(card);
+          } else if (settingsStatus === 'loading') {
+              // F50: an unanswered settings read is loading, not disabled.
+              // The authored Default look stays; aria-busy marks the wait.
+              card.setAttribute('data-service-card-state', 'Default');
+              card.removeAttribute('has-connection');
+              card.removeAttribute('no-connection');
+              card.setAttribute('data-call-offer-state', 'settings-loading');
+              card.setAttribute('aria-busy', 'true');
+              hideCallOfferTooltips(card);
           } else if (settingsStatus !== 'loaded') {
               card.setAttribute('data-service-card-state', 'Disabled');
               card.removeAttribute('has-connection');
               card.removeAttribute('no-connection');
-              card.setAttribute(
-                  'data-call-offer-state',
-                  settingsStatus === 'loading' ? 'settings-loading' : 'settings-unavailable'
-              );
-              configureOwnerSettingsUnavailable(card, settingsStatus === 'loading');
+              card.setAttribute('data-call-offer-state', 'settings-unavailable');
+              configureOwnerSettingsUnavailable(card);
           } else {
               card.setAttribute('data-service-card-state', 'Disabled');
               card.removeAttribute('has-connection');
@@ -2993,9 +3072,22 @@
       } else if (isProfileOwner(MEMBER)) {
           applyOwnerCallCardStates(ownerCallSettingsSnapshot);
       } else if (isBrandMember(MEMBER)) {
+          const discoveryAnswered = !!(paintedCallState && Array.isArray(paintedCallState.configs));
           adapted.forEach(function (entry) {
               const card = entry.card;
+              // F50: a type the public DTO offers stays on screen as loading
+              // while discovery is unanswered, instead of appearing late. It
+              // is not admitted: it carries no modal hook, and the direct
+              // entry finds no installed CTA to open. Discovery then admits
+              // it through syncCanonicalCallSurfaces or fails it closed.
+              if (!discoveryAnswered && callDiscoveryPending && entry.item.public_available === true) {
+                  setCallOfferVisible(card, true);
+                  card.setAttribute('aria-busy', 'true');
+                  card.setAttribute('data-call-offer-state', 'loading');
+                  return;
+              }
               setCallOfferVisible(card, false);
+              card.removeAttribute('aria-busy');
               card.setAttribute('data-call-offer-state', 'pending');
           });
           // Canonical discovery can finish before wf-xano clones this card.
@@ -3017,6 +3109,7 @@
       repaintCallSurfaces();
       reconcileHeaderTouts();
       refreshEmptySectionNav();
+      maybeEndCallDiscoveryPending(false);
   }
 
   /* XANO SERVICE CARDS (side-by-side CMS canary)

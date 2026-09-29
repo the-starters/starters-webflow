@@ -320,7 +320,8 @@ are aligned before selecting the canary.
    popup for a card that cannot be booked.
 3. Eligible signed-in Brand: canonical discovery keeps every call projection
    closed until the [Brand readiness contract](#signed-in-brand-readiness)
-   admits the type. Verify both arrival orders, refresh failure, sibling cached
+   admits the type. Until then, Book Call and each card the public DTO offers
+   read as loading (spinner, `aria-busy`), not as unavailable. Verify both arrival orders, refresh failure, sibling cached
    replay, and recovery of both Header and Services cards. Enabled generic Book Call
    buttons open the authored chooser. A visible Free or Paid call service in the hero or
    Services section reuses its exact installed
@@ -332,7 +333,8 @@ are aligned before selecting the canary.
 5. The Algolia object ID matches the positive integer in
    `[data-starter-xano-id]`.
 6. Every admitted `[data-xano-call-card]` in the hero and in `#services` settles out of
-   `data-call-offer-state="pending"` for the role under test: `available` or
+   `data-call-offer-state="pending"` (and, for a Brand, out of `loading`) for
+   the role under test: `available` or
    `hidden` for anonymous and Brand viewers, `available` or `setup-required` for
    the profile's own starter (`settings-loading` / `settings-unavailable` only
    while its settings answer is unresolved or failed), and `hidden` for a talent
@@ -353,9 +355,22 @@ authenticated authored calendar. Paid uses the booking flow owned by
 authored modal. Valid `/hire/<slug>` paths use the host-classified TEST or
 production route map. Generic Book Call controls remain visible across primary,
 sticky, and mobile CTAs when unavailable, with `data-booking-trigger-unavailable`
-and `aria-disabled="true"`. Until canonical call discovery answers, a paid
-Brand's closed control also carries `aria-busy="true"` and its hint reads
-“Checking this Starter’s call times…”. Discovery clears that state on every exit
+and `aria-disabled="true"`. While the page hydrates (F50), a closed control
+reads as loading instead: it carries `data-booking-trigger-loading` and
+`aria-busy="true"`, not `data-booking-trigger-unavailable`. The module guard
+CSS then shows the Button Wrap's authored `[data-button-spinner]`, hides its
+`[data-opp-element="loading-hide"]` icon, and sets a progress cursor. Loading
+is still closed: `aria-disabled="true"` stays and the signup and modal hooks
+stay removed. Every viewer starts in loading. A signed-out or paywalled viewer
+then gets signup-only activation, and the owner gets the closed preview. A paid
+Brand stays loading, and its hint reads “Checking this Starter’s call times…”,
+until canonical call discovery answers. If discovery installed a controller on
+a page with a canonical call wrapper, the Brand also waits for the public call
+DTO, because an unknown DTO refuses every type. A 15 s failsafe
+(`CALL_DISCOVERY_PUBLIC_WAIT_MS`) ends that wait when the DTO never answers.
+A DTO that arrives later still opens the control. An empty, refused, or failed
+discovery ends loading at once. Regression coverage: the `F50` tests in
+[`hire-profile.test.js`](../../v3/hire-profile.test.js). Discovery clears the state on every exit
 path, including a failed lookup or a missing booking controller. A failed
 lookup still rejects, so frontend error monitoring counts it. Only then do
 hover, keyboard focus, or tap reveal “This Starter isn’t accepting calls right
@@ -868,10 +883,11 @@ stale content. The final state for an admitted clone is one of:
 | --- | --- |
 | `available` | the card is offered: logged-out with `public_available === true`, brand admitted by the [readiness contract](#signed-in-brand-readiness), or the owner with a bookable record |
 | `setup-required` | owner only: the card is shown as a preview with the next setup step |
-| `settings-loading` | owner only: settings have not resolved yet; the card is disabled and offers only Call Settings |
+| `settings-loading` | owner only: settings have not resolved yet; the card keeps the authored `Default` look with `aria-busy="true"`, a progress cursor, and its setup tooltip hidden |
 | `settings-unavailable` | owner only: the settings lookup failed; the card is disabled and offers only Call Settings |
 | `hidden` | the type is not offered to this viewer |
-| `pending` | brand, before the [readiness contract](#signed-in-brand-readiness) has admitted or refused the type |
+| `loading` | brand, while authenticated discovery has not answered and the public DTO offers the type (`public_available === true`): the card is shown with `Default`, `aria-busy="true"`, a progress cursor, and its `[next-available-slot]` hidden; it is not admitted and opens nothing |
+| `pending` | brand, when the public DTO refuses the type or discovery has answered, before the [readiness contract](#signed-in-brand-readiness) has admitted or refused it |
 
 **Logged out.** A card is visible only when its own item carries
 `public_available === true`. A visible card gets `has-connection`,
@@ -941,7 +957,9 @@ with only the matching `calendar` / `stripe` / `settings` CTA left visible and
 settings answers are remembered in `ownerCallSettingsSnapshot`, so a card
 wf-xano clones after the settings lookup resolves gets the same state, and a
 lookup that resolves after the clone repaints it. Before that answer arrives,
-the card uses the neutral `settings-loading` state. A failed lookup uses
+the card uses the neutral `settings-loading` state (F50): it keeps the authored
+`Default` variant, not the grey `Disabled` one, carries `aria-busy="true"`,
+and hides its setup tooltip. A failed lookup uses
 `settings-unavailable` with “Call settings could not be loaded. Refresh or open
 Call Settings.” and only the Settings CTA. It never guesses that Calendar,
 availability, or Stripe is missing. Setup-required owner cards intentionally
@@ -956,6 +974,13 @@ and the current public DTO admits that type with `public_available === true`.
 `syncCanonicalCallSurfaces` applies this intersection to cards, chooser options,
 and Book Call availability. Public results and authenticated discovery may
 arrive in either order; unresolved public readiness keeps the surfaces closed.
+Closed is not the same look as refused while the page still hydrates (F50).
+When the DTO arrives first, a type it offers shows as `loading` until
+discovery admits it or fails it closed. A type it refuses stays hidden. When
+discovery arrives first with an installed controller, Book Call stays loading
+until the DTO answers. After the 15 s failsafe it reads closed, and a later DTO
+can still open it. A card still `loading` when pending ends is hidden with
+`data-call-offer-state="hidden"`, and the empty-section refresh runs again.
 A late card replays `paintedCallState.configs` through the same gate. Pages with
 neither canonical wrapper retain the authenticated discovery gate alone.
 
