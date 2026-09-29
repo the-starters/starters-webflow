@@ -359,7 +359,9 @@ and `aria-disabled="true"`. While the page hydrates (F50), a closed control
 reads as loading instead: it carries `data-booking-trigger-loading` and
 `aria-busy="true"`, not `data-booking-trigger-unavailable`. The module guard
 CSS then shows the Button Wrap's authored `[data-button-spinner]`, hides its
-`[data-opp-element="loading-hide"]` icon, and sets a progress cursor. Loading
+`[data-opp-element="loading-hide"]` icon, and sets a progress cursor. Those
+loading-scoped display rules override existing inline display values; removing
+the marker exposes the authored inline values again. Loading
 is still closed: `aria-disabled="true"` stays and the signup and modal hooks
 stay removed. Every viewer starts in loading. A signed-out or paywalled viewer
 then gets signup-only activation, and the owner gets the closed preview. A paid
@@ -391,7 +393,9 @@ two approved paths stay closed, so no entry point can open an empty chooser.
 The authored `[data-modal-target="popup-booking-main"]` dialog also stays marked
 `data-booking-surface-unavailable` until an option is admitted.
 Production `/hire/jp-dionisio` remains blocked before grant or configuration
-discovery, so the TEST fixture cannot activate on a production host.
+discovery, so the TEST fixture cannot activate on a production host. An owner
+view on that blocked route settles both canonical call cards through the
+existing `settings-unavailable` state without starting settings reads.
 
 <a id="staging-hire-jp-test-booking-fixture"></a>
 

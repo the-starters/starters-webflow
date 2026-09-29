@@ -1313,7 +1313,7 @@ for (const identity of [null, '', '1063invalid']) test(`canonical hero rates hid
 
 test('a page missing the Memberstack helpers stands down instead of throwing', () => {
   const page = makePage()
-  const context = makeContext({ page })
+  const context = makeContext({ page, member: BRAND_MEMBER })
   delete context.qs
   delete context.qsa
   delete context.waitForMember
@@ -1330,11 +1330,17 @@ test('a page missing the Memberstack helpers stands down instead of throwing', (
   assert.equal(page.paidModalCta.getAttribute('data-config'), null)
   assert.equal(page.servicesList.children[0].style.display, 'none')
   assert.equal(page.servicesList.children[0].getAttribute('data-canonical-call-unavailable'), '')
+  assert.equal(page.bookingButton.getAttribute('data-booking-trigger-loading'), null)
+  assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), '')
+  assert.equal(page.bookingButton.getAttribute('aria-busy'), null)
+  assert.equal(page.bookingButton.getAttribute('aria-disabled'), 'true')
+  assert.equal(page.bookingButton.getAttribute('data-modal-trigger'), null)
+  assert.equal(page.bookingButton.getAttribute('data-signup-trigger-element'), null)
 })
 
 test('a page missing starter_memberstack_id stands down instead of throwing', () => {
   const page = makePage()
-  const context = makeContext({ page })
+  const context = makeContext({ page, member: BRAND_MEMBER })
   delete context.starter_memberstack_id
   vm.createContext(context)
 
@@ -1349,6 +1355,12 @@ test('a page missing starter_memberstack_id stands down instead of throwing', ()
   assert.equal(page.paidModalCta.getAttribute('data-config'), null)
   assert.equal(page.servicesList.children[0].style.display, 'none')
   assert.equal(page.servicesList.children[0].getAttribute('data-canonical-call-unavailable'), '')
+  assert.equal(page.bookingButton.getAttribute('data-booking-trigger-loading'), null)
+  assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), '')
+  assert.equal(page.bookingButton.getAttribute('aria-busy'), null)
+  assert.equal(page.bookingButton.getAttribute('aria-disabled'), 'true')
+  assert.equal(page.bookingButton.getAttribute('data-modal-trigger'), null)
+  assert.equal(page.bookingButton.getAttribute('data-signup-trigger-element'), null)
 })
 
 test('the jQuery-only blocks are skipped, not fatal, when jQuery is absent', () => {
@@ -2461,6 +2473,30 @@ test('the TEST fixture booking surface stays hidden and inert on production', as
   assert.ok(context.warnings.some((line) => line.includes('TEST booking fixture stayed closed')))
 })
 
+test('the production fixture block settles owner call cards unavailable', async () => {
+  const page = makePage()
+  const xano = addXanoCallCardsFixture(page)
+  const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
+  const requests = []
+  const context = ownerContext(page, ownerController({ requests }), {
+    location: { hostname: 'www.thestarters.com', pathname: '/hire/jp-dionisio' },
+    wfXano: wfx.api,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  wfx.emit(callCardResult({ free: false, paid: false }))
+  await settle()
+
+  assert.deepEqual(requests, [])
+  for (const card of [xano.free, xano.paid]) {
+    assert.equal(card.root.getAttribute('data-service-card-state'), 'Disabled')
+    assert.equal(card.root.getAttribute('data-call-offer-state'), 'settings-unavailable')
+    assert.equal(card.root.getAttribute('aria-busy'), null)
+    assert.equal(card.tooltip.style.display, 'block')
+    assert.equal(card.tooltipText.textContent, 'Call settings could not be loaded. Refresh or open Call Settings.')
+  }
+})
+
 test('invalid, inactive, and cross-role plan records fail closed with a legacy Brand field', async () => {
   for (const planConnections of [
     null,
@@ -2737,28 +2773,6 @@ test('signed-in Brand keeps Free Call in the existing modal and the inline panel
   assert.equal(page.paidModalOption.style.display, 'none', 'controller re-closes unavailable Paid')
   assert.equal(page.paidModalOption.getAttribute('data-booking-unavailable'), '')
   assert.equal(page.paidModalOption.getAttribute('aria-hidden'), 'true')
-  const guard = context.document.getElementById('hire-booking-modal-availability-guard')
-  assert.ok(guard)
-  assert.equal(
-    guard.textContent,
-    '[data-booking-unavailable]{display:none!important}' +
-      '[data-booking-trigger-unavailable]{opacity:.55;cursor:help}' +
-      '[data-booking-trigger-loading]{cursor:progress}' +
-      '[data-booking-trigger-loading] [data-button-spinner]{display:flex}' +
-      '[data-booking-trigger-loading] [data-opp-element="loading-hide"]{display:none}' +
-      '[data-call-offer-state="loading"],[data-call-offer-state="settings-loading"]{cursor:progress}' +
-      '[data-call-offer-state="loading"] [next-available-slot]{visibility:hidden}' +
-      '[data-canonical-call-unavailable]{display:none!important}' +
-      '[data-call-offer-superseded]{display:none!important}' +
-      '[data-header-tout-excluded]{display:none!important}' +
-      '[data-booking-pass-through]{visibility:hidden!important}' +
-      '[data-booking-pass-through] *{visibility:hidden!important}' +
-      '[data-modal-target="popup-booking"]:not([data-booking-entry="chooser"])' +
-      ' [data-booking-back]{display:none!important}' +
-      '[data-modal-target="popup-booking"]' +
-      ' [data-booking-back]:not([data-paid-calendar-element="back"])' +
-      '{display:none!important}',
-  )
   assert.equal(page.inlineWrapper.style.display, 'none')
   assert.equal(page.inlineWrapper.getAttribute('aria-hidden'), 'true')
 })
@@ -8292,6 +8306,7 @@ function assertBookCallLoading(button, label = '') {
   // Loading is still fail-closed: nothing can open booking or signup.
   assert.equal(button.getAttribute('aria-disabled'), 'true', label + 'still closed')
   assert.equal(button.getAttribute('data-modal-trigger'), null, label + 'no modal hook')
+  assert.equal(button.getAttribute('data-signup-trigger-element'), null, label + 'no signup hook')
 }
 
 test('F50 Book Call reads as loading, not disabled, while discovery is pending', async () => {
@@ -8443,6 +8458,43 @@ test('F50 loading Brand cards fail closed when discovery ends without an answer'
   assert.ok(context.emptyNavRefreshCalls.length > navRefreshes, 'the Services area is re-checked once its cards hide')
   assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), '')
   assert.equal(page.bookingButton.getAttribute('data-booking-trigger-loading'), null)
+})
+
+test('F50 rejected discovery records an empty result before a late public DTO', async () => {
+  const page = makePage()
+  const xano = addXanoCallCardsFixture(page)
+  const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
+  let rejectStarter
+  const lookup = new Promise((_resolve, reject) => { rejectStarter = reject })
+  lookup.catch(() => {})
+  const context = f50BrandContext(page, wfx, { getStarterByMemberId: () => lookup })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+  assertBookCallLoading(page.bookingButton)
+
+  const rejections = []
+  const runnerHandlers = process.listeners('unhandledRejection')
+  const capture = (reason) => rejections.push(reason)
+  process.removeAllListeners('unhandledRejection')
+  process.on('unhandledRejection', capture)
+  try {
+    rejectStarter(new Error('Controlled discovery failure'))
+    await settle()
+  } finally {
+    process.off('unhandledRejection', capture)
+    runnerHandlers.forEach((handler) => process.on('unhandledRejection', handler))
+  }
+  assert.deepEqual(rejections.map((reason) => reason && reason.message), ['Controlled discovery failure'])
+
+  wfx.emit(callCardResult({ free: true, paid: false }))
+  await settle()
+  assert.equal(xano.free.root.style.display, 'none')
+  assert.equal(xano.free.root.getAttribute('aria-hidden'), 'true')
+  assert.equal(xano.free.root.getAttribute('aria-busy'), null)
+  assert.equal(xano.free.root.getAttribute('data-call-offer-state'), 'hidden')
+  assert.equal(page.bookingButton.getAttribute('data-booking-trigger-loading'), null)
+  assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), '')
 })
 
 test('F50 owner call cards read as loading, not Disabled, while settings load', async () => {

@@ -18,6 +18,17 @@ window.waitForMember = callback => memberReady.then(callback)
 window.$memberstackDom = { getCurrentMember: async () => ({ data: MEMBER.id ? MEMBER : null }), onAuthChange() {} }
 window.WfAlgolia = { getObject: async () => ({ rate: 0, 'retainer-enabled': false, 'profile-type': 'Consult' }) }
 const configs = ['free', 'paid'].map(type => ({ config_id: `fixture-${type}`, grant_id: 'fixture-grant', is_paid: type === 'paid', active: true, data_environment: 'production', payment_environment: 'live', currency: 'USD', price_cents: type === 'paid' ? 25000 : 0, duration: type === 'paid' ? 60 : 30, sync_status: 'synced', revision: 1 }))
+let heldStarterResolve = null
+const heldStarter = params.get('discovery') === 'held'
+  ? new Promise(resolve => { heldStarterResolve = resolve })
+  : null
+window.resolveStarterDiscovery = () => {
+  if (!heldStarterResolve) return false
+  const resolve = heldStarterResolve
+  heldStarterResolve = null
+  resolve({ nylas_grant_id: 'fixture-grant' })
+  return true
+}
 function settings(type) {
   if (ownerState === 'error') return Promise.reject(new Error('Synthetic lookup failure'))
   if (ownerState === 'loading') return new Promise(() => {})
@@ -41,7 +52,7 @@ function install(type) {
   return true
 }
 window.StartersFreeCallBooking = {
-  getStarterByMemberId: async () => ({ nylas_grant_id: 'fixture-grant' }),
+  getStarterByMemberId: async () => heldStarter || ({ nylas_grant_id: 'fixture-grant' }),
   getConfigs: async () => configs,
   getNearestSlot: async () => null,
   authenticatedRequest: path => settings(path.includes('/free-') ? 'free' : 'paid'),

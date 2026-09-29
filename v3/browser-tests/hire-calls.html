@@ -10,7 +10,7 @@ body{font:16px system-ui;margin:32px;background:#f6f7f9;color:#182423}section{ma
 <div hidden data-starter-xano-id>424</div>
 <section id="header"><h2>Header</h2></section>
 <section id="services"><h2>Services</h2></section>
-<div booking-button-wrapper><button data-modal-trigger="popup-booking-main" data-signup-trigger-element="book-call">Book Call</button></div>
+<div booking-button-wrapper><button data-modal-trigger="popup-booking-main" data-signup-trigger-element="book-call"><span data-button-spinner style="display:none" aria-hidden="true"></span><span data-opp-element="loading-hide" style="display:inline-flex">Book Call</span></button></div>
 <dialog class="modal_dialog" data-modal-target="signup-modal"><h2>Sign up</h2><p>Signup entry only; no form submission.</p><button data-modal-close>Close</button></dialog>
 <dialog class="modal_dialog" data-modal-target="popup-booking-main" popup-booking><h2>Choose call</h2><div call-type-item><button booking-popup-open data-type="free" data-modal-trigger="popup-booking">Free Call</button></div><div call-type-item><button booking-popup-open data-type="paid" data-modal-trigger="popup-booking">Paid Consulting Call</button><span call-type-price></span></div></dialog>
 <dialog class="modal_dialog" data-modal-target="popup-booking"><h2 id="booking-type">Booking entry</h2><p>Controller boundary reached. Calendar/provider UI is outside this fixture.</p><button data-modal-close>Close</button></dialog>

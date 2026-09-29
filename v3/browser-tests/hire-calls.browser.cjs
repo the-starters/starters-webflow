@@ -61,7 +61,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
     await send('Emulation.setDeviceMetricsOverride', { width: 1100, height: 950, deviceScaleFactor: 1, mobile: false })
     const observations = []
     const snapshot = async label => {
-      const state = await evaluate(`({ cards: [...document.querySelectorAll('[wf-xano-item]')].map(el => ({ visible: el.getBoundingClientRect().height > 0 && getComputedStyle(el).display !== 'none', type: el.getAttribute('data-call-offer-type'), state: el.getAttribute('data-service-card-state'), price: el.querySelector('[data-millify]').textContent, tooltip: el.querySelector('[hover-text]').textContent })), book: (() => { const button = document.querySelector('[booking-button-wrapper] button'); return { visible: button.getBoundingClientRect().height > 0, disabled: button.getAttribute('aria-disabled') === 'true', signup: button.getAttribute('data-signup-trigger-element'), modal: button.getAttribute('data-modal-trigger') } })() })`)
+      const state = await evaluate(`({ cards: [...document.querySelectorAll('[wf-xano-item]')].map(el => ({ visible: el.getBoundingClientRect().height > 0 && getComputedStyle(el).display !== 'none', type: el.getAttribute('data-call-offer-type'), state: el.getAttribute('data-service-card-state'), offerState: el.getAttribute('data-call-offer-state'), busy: el.getAttribute('aria-busy') === 'true', price: el.querySelector('[data-millify]').textContent, tooltip: el.querySelector('[hover-text]').textContent, tooltipDisplay: getComputedStyle(el.querySelector('[data-call-offer-tooltip]')).display })), book: (() => { const button = document.querySelector('[booking-button-wrapper] button'); const spinner = button.querySelector('[data-button-spinner]'); const loadingHide = button.querySelector('[data-opp-element="loading-hide"]'); return { visible: button.getBoundingClientRect().height > 0, disabled: button.getAttribute('aria-disabled') === 'true', loading: button.hasAttribute('data-booking-trigger-loading'), busy: button.getAttribute('aria-busy') === 'true', signup: button.getAttribute('data-signup-trigger-element'), modal: button.getAttribute('data-modal-trigger'), cursor: getComputedStyle(button).cursor, spinner: getComputedStyle(spinner).display, spinnerInline: spinner.style.display, loadingHide: getComputedStyle(loadingHide).display, loadingHideInline: loadingHide.style.display } })() })`)
       observations.push({ label, ...state })
       if (evidence) { const shot = await send('Page.captureScreenshot', { format: 'png' }); await fs.writeFile(path.join(evidence, `${label}.png`), Buffer.from(shot.data, 'base64')) }
       return state
@@ -94,6 +94,35 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
       assert.equal(state.book.signup, role !== 'brand' || available ? 'book-call' : null)
       assert.equal(state.book.modal, role === 'brand' && available ? 'popup-booking-main' : null)
     }
+    await navigate('role=brand&discovery=held')
+    let loadingState = await snapshot('brand-discovery-loading')
+    assert.equal(loadingState.book.loading, true)
+    assert.equal(loadingState.book.busy, true)
+    assert.equal(loadingState.book.disabled, true)
+    assert.equal(loadingState.book.signup, null)
+    assert.equal(loadingState.book.modal, null)
+    assert.equal(loadingState.book.cursor, 'progress')
+    assert.equal(loadingState.book.spinner, 'flex')
+    assert.equal(loadingState.book.spinnerInline, 'none')
+    assert.equal(loadingState.book.loadingHide, 'none')
+    assert.equal(loadingState.book.loadingHideInline, 'inline-flex')
+    await assertBookCall('brand', false)
+    assert.equal(await evaluate('resolveStarterDiscovery()'), true)
+    for (let i = 0; i < 100; i++) {
+      if (await evaluate(`!document.querySelector('[booking-button-wrapper] button').hasAttribute('data-booking-trigger-loading')`)) break
+      await pause(25)
+    }
+    loadingState = await snapshot('brand-discovery-settled')
+    assert.equal(loadingState.book.loading, false)
+    assert.equal(loadingState.book.busy, false)
+    assert.equal(loadingState.book.disabled, false)
+    assert.equal(loadingState.book.signup, 'book-call')
+    assert.equal(loadingState.book.modal, 'popup-booking-main')
+    assert.notEqual(loadingState.book.cursor, 'progress')
+    assert.equal(loadingState.book.spinner, 'none')
+    assert.equal(loadingState.book.spinnerInline, 'none')
+    assert.equal(loadingState.book.loadingHide, 'inline-flex')
+    assert.equal(loadingState.book.loadingHideInline, 'inline-flex')
     for (const role of ['anonymous', 'free', 'brand']) {
       for (const failed of ['header', 'services']) {
         await navigate(`role=${role}&failed=${failed}`)
@@ -143,6 +172,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
       assert.ok(state.cards.every(card => card.state === (owner === 'ready' || owner === 'loading' ? 'Default' : owner === 'stripe' || owner === 'stale' ? card.type === 'free' ? 'Default' : 'Disabled' : 'Disabled')), JSON.stringify(state))
       const messages = { off: { free: 'Enable your Free Call service.', paid: 'Enable and price your Paid Call service.' }, calendar: { free: 'Connect your calendar to offer calls.', paid: 'Connect your calendar to offer calls.' }, stripe: { paid: 'Connect Stripe to offer paid calls.' }, stale: { paid: 'Refresh your Stripe connection to offer paid calls.' }, loading: { free: '', paid: '' }, error: { free: 'Call settings could not be loaded. Refresh or open Call Settings.', paid: 'Call settings could not be loaded. Refresh or open Call Settings.' } }
       for (const card of state.cards) if (messages[owner]?.[card.type] !== undefined) assert.equal(card.tooltip, messages[owner][card.type])
+      if (owner === 'loading') assert.ok(state.cards.every(card => card.offerState === 'settings-loading' && card.busy && card.tooltipDisplay === 'none'))
     }
     assert.deepEqual(errors, [], 'no uncaught browser errors')
     if (evidence) await fs.writeFile(path.join(evidence, 'observations.json'), JSON.stringify({ boundary: 'Local fixture; real adapter, attribution, modal; synthetic data and booking controllers', observations }, null, 2))
@@ -153,6 +183,6 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
     chrome.kill()
     await closed
     await new Promise(resolve => server.close(resolve))
-    await fs.rm(profile, { recursive: true, force: true })
+    await fs.rm(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
   }
 })().catch(error => { console.error(error); process.exitCode = 1 })
