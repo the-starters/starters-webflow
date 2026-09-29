@@ -77,6 +77,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
             tooltipDisplay: getComputedStyle(el.querySelector('[data-call-offer-tooltip]')).display,
             slotText: slot ? slot.textContent : null,
             slotVisibility: slot ? getComputedStyle(slot).visibility : null,
+            bookingPopup: el.hasAttribute('booking-popup-open'),
             signup: el.getAttribute('data-signup-trigger-element'),
             modal: el.getAttribute('data-modal-trigger'),
             direct: el.getAttribute('data-call-service-direct'),
@@ -147,23 +148,51 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
     assert.deepEqual(await evaluate(`({ entries: bookingEntries.length, chooser: document.querySelector('[data-modal-target="popup-booking-main"]').open, booking: document.querySelector('[data-modal-target="popup-booking"]').open })`), { entries: 0, chooser: false, booking: false })
     assert.equal(await evaluate('resolveStarterDiscovery()'), true)
     for (let i = 0; i < 100; i++) {
-      if (await evaluate(`![...document.querySelectorAll('[data-call-canary-legacy-wrapper="header"] [data-service-card="component"]')].some(card => card.getAttribute('data-call-offer-state') === 'loading')`)) break
+      if (await evaluate(`(() => { const cards = [...document.querySelectorAll('[data-call-canary-legacy-wrapper="header"] [data-service-card="component"]')]; return cards.length === 2 && cards.every(card => card.getAttribute('data-call-offer-state') === 'available') })()`)) break
       await pause(25)
     }
     legacyState = await snapshot('brand-legacy-header-available')
+    assert.equal(legacyState.legacyCards.length, 2)
     assert.ok(legacyState.legacyCards.every(card => card.visible && card.offerState === 'available' && !card.busy))
+    const legacyFree = await evaluate(`(() => { const el = document.querySelector('[data-call-canary-legacy-wrapper="header"] [data-type="free"]'); el.scrollIntoView({block: 'center'}); const r = el.getBoundingClientRect(); return {x: r.x + r.width / 2, y: r.y + r.height / 2} })()`)
+    await send('Input.dispatchMouseEvent', { type: 'mousePressed', ...legacyFree, button: 'left', clickCount: 1 })
+    await send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...legacyFree, button: 'left', clickCount: 1 })
+    await pause(100)
+    assert.deepEqual(await evaluate(`({ entry: bookingEntries.at(-1), chooser: document.querySelector('[data-modal-target="popup-booking-main"]').open, booking: document.querySelector('[data-modal-target="popup-booking"]').open, label: document.querySelector('#booking-type').textContent })`), {
+      entry: 'free', chooser: false, booking: true, label: 'Free Call booking entry',
+    })
+    await evaluate('lumos.modal.closeAll()')
 
     await navigate('role=brand&discovery=held&header=legacy')
     legacyState = await snapshot('brand-legacy-header-loading-empty')
+    assert.equal(legacyState.legacyCards.length, 2)
     assert.ok(legacyState.legacyCards.every(card => card.offerState === 'loading' && card.busy))
     assert.equal(await evaluate(`resolveStarterDiscovery('empty')`), true)
     for (let i = 0; i < 100; i++) {
-      if (await evaluate(`[...document.querySelectorAll('[data-call-canary-legacy-wrapper="header"] [data-service-card="component"]')].every(card => card.getAttribute('data-call-offer-state') === 'hidden')`)) break
+      if (await evaluate(`(() => { const cards = [...document.querySelectorAll('[data-call-canary-legacy-wrapper="header"] [data-service-card="component"]')]; return cards.length === 2 && cards.every(card => card.getAttribute('data-call-offer-state') === 'hidden') })()`)) break
       await pause(25)
     }
     legacyState = await snapshot('brand-legacy-header-hidden')
+    assert.equal(legacyState.legacyCards.length, 2)
     assert.ok(legacyState.legacyCards.every(card => !card.visible && card.display === 'none'))
     assert.ok(legacyState.legacyCards.every(card => card.ariaHidden === 'true' && card.offerState === 'hidden' && !card.busy))
+
+    for (const grantOrder of ['fast', 'slow']) {
+      await navigate(`role=owner&owner=loading&header=legacy${grantOrder === 'slow' ? '&discovery=held' : ''}`)
+      let ownerLegacyState = await snapshot(`owner-legacy-${grantOrder}-grant-loading`)
+      assert.equal(ownerLegacyState.legacyCards.length, 2)
+      assert.ok(ownerLegacyState.legacyCards.every(card => card.visible && card.state === 'Default'))
+      assert.ok(ownerLegacyState.legacyCards.every(card => card.offerState === 'settings-loading' && card.busy))
+      assert.ok(ownerLegacyState.legacyCards.every(card => card.tooltipDisplay === 'none' && card.slotVisibility === 'hidden'))
+      assert.ok(ownerLegacyState.legacyCards.every(card => !card.bookingPopup && card.signup === null && card.modal === null && card.direct === null))
+      if (grantOrder === 'slow') {
+        assert.equal(await evaluate('resolveStarterDiscovery()'), true)
+        await pause(100)
+        ownerLegacyState = await snapshot('owner-legacy-slow-grant-settled-settings-loading')
+        assert.equal(ownerLegacyState.legacyCards.length, 2)
+        assert.ok(ownerLegacyState.legacyCards.every(card => card.offerState === 'settings-loading' && card.busy))
+      }
+    }
 
     await navigate('role=brand&discovery=held')
     let loadingState = await snapshot('brand-discovery-loading')

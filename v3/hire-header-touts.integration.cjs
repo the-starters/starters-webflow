@@ -151,7 +151,7 @@ for (const libraryFirst of [false, true]) for (const profileType of ['Consult', 
   } finally { observer.disconnect(); w.close() }
 })
 
-test('published legacy Header follows Brand loading and admission states', async () => {
+for (const arrival of ['dto-first', 'discovery-first']) test(`published legacy Header follows Brand loading and admission states: ${arrival}`, async () => {
   const errors = []
   const console = new VirtualConsole()
   console.on('jsdomError', error => errors.push(error.message))
@@ -176,6 +176,9 @@ test('published legacy Header follows Brand loading and admission states', async
   }
   let resolveStarter
   const starter = new Promise(resolve => { resolveStarter = resolve })
+  let resolveCalls
+  const callItems = new Promise(resolve => { resolveCalls = resolve })
+  let controllerInstalled = false
   Object.assign(w, {
     MEMBER: brand,
     memberReady: Promise.resolve(brand),
@@ -194,7 +197,10 @@ test('published legacy Header follows Brand loading and admission states', async
         data_environment: 'production', price_cents: 0, duration: 30,
       }],
       getNearestSlot: async () => null,
-      installFreeBookingController: () => true,
+      installFreeBookingController: () => {
+        controllerInstalled = true
+        return true
+      },
     },
   })
   w.fetch = async url => {
@@ -202,7 +208,11 @@ test('published legacy Header follows Brand loading and admission states', async
     if (parsed.pathname.endsWith('/profile/starter/calls/v3')) return {
       ok: true,
       status: 200,
-      json: async () => ({ starter_id: 424, items: ['free', 'paid'].map(type => ({
+      json: async () => callItems,
+    }
+    return { ok: true, status: 200, json: async () => ({ items: [] }) }
+  }
+  const result = { starter_id: 424, items: ['free', 'paid'].map(type => ({
         id: `424:call:${type}`,
         type,
         name: type === 'free' ? 'Free Call' : 'Paid Consulting Call',
@@ -211,10 +221,7 @@ test('published legacy Header follows Brand loading and admission states', async
         public_available: true,
         currency: 'USD',
         unit: '/session',
-      })) }),
-    }
-    return { ok: true, status: 200, json: async () => ({ items: [] }) }
-  }
+      })) }
   const cards = () => Array.from(w.document.querySelectorAll(
     '[data-call-canary-legacy-wrapper="header"] [data-service-card="component"]'
   ))
@@ -222,6 +229,12 @@ test('published legacy Header follows Brand loading and admission states', async
     w.eval(pageSource)
     w.eval(library)
     w.document.dispatchEvent(new w.Event('DOMContentLoaded'))
+    if (arrival === 'dto-first') {
+      resolveCalls(result)
+    } else {
+      resolveStarter({ nylas_grant_id: 'fixture-grant' })
+      await until(() => controllerInstalled)
+    }
     await until(() => cards().length === 2 && cards().every(card =>
       card.getAttribute('data-call-offer-state') === 'loading'))
     for (const card of cards()) {
@@ -234,8 +247,13 @@ test('published legacy Header follows Brand loading and admission states', async
       assert.equal(card.getAttribute('data-signup-trigger-element'), null)
       assert.equal(card.getAttribute('data-call-service-direct'), null)
     }
+    const observedStates = cards().map(card => [card.getAttribute('data-call-offer-state')])
 
-    resolveStarter({ nylas_grant_id: 'fixture-grant' })
+    if (arrival === 'dto-first') {
+      resolveStarter({ nylas_grant_id: 'fixture-grant' })
+    } else {
+      resolveCalls(result)
+    }
     await until(() => cards()[0].getAttribute('data-call-offer-state') === 'available' &&
       cards()[1].getAttribute('data-call-offer-state') === 'hidden')
     const [free, paid] = cards()
@@ -246,6 +264,11 @@ test('published legacy Header follows Brand loading and admission states', async
     assert.equal(paid.getAttribute('aria-hidden'), 'true')
     assert.equal(paid.getAttribute('aria-busy'), null)
     assert.equal(paid.getAttribute('has-connection'), null)
+    cards().forEach((card, index) => observedStates[index].push(card.getAttribute('data-call-offer-state')))
+    assert.deepEqual(
+      observedStates,
+      [['loading', 'available'], ['loading', 'hidden']],
+    )
     assert.deepEqual(errors, [])
   } finally { w.close() }
 })

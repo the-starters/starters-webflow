@@ -320,7 +320,7 @@ are aligned before selecting the canary.
    popup for a card that cannot be booked.
 3. Eligible signed-in Brand: canonical discovery keeps every call projection
    closed until the [Brand readiness contract](#signed-in-brand-readiness)
-   admits the type. Until then, Book Call and each card the public DTO offers
+   admits the type. Until then, Book Call and each managed call card
    read as loading (spinner, `aria-busy`), not as unavailable. Verify both arrival orders, refresh failure, sibling cached
    replay, the published legacy Header fallback, and recovery of both Header and Services cards. Enabled generic Book Call
    buttons open the authored chooser. A visible Free or Paid call service in the hero or
@@ -894,8 +894,8 @@ stale content. The final state for an admitted clone is one of:
 | `settings-loading` | owner only: settings have not resolved yet; the card keeps the authored `Default` look with `aria-busy="true"`, a progress cursor, and its setup tooltip and `[next-available-slot]` hidden |
 | `settings-unavailable` | owner only: the settings lookup failed; the card is disabled and offers only Call Settings |
 | `hidden` | the type is not offered to this viewer |
-| `loading` | brand, while authenticated discovery has not answered and the public DTO offers the type (`public_available === true`): the card is shown with `Default`, `aria-busy="true"`, a progress cursor, and its `[next-available-slot]` hidden; it is not admitted and opens nothing |
-| `pending` | brand, when the public DTO refuses the type or discovery has answered, before the [readiness contract](#signed-in-brand-readiness) has admitted or refused it |
+| `loading` | brand, from boot until authenticated discovery and the public DTO have both settled: the card is shown with `Default`, `aria-busy="true"`, a progress cursor, and its `[next-available-slot]` hidden; it is not admitted and opens nothing |
+| `pending` | internal adapter state before the role-specific readiness writer runs; it is not a settled viewer state |
 
 **Logged out.** A card is visible only when its own item carries
 `public_available === true`. A visible card gets `has-connection`,
@@ -967,7 +967,10 @@ wf-xano clones after the settings lookup resolves gets the same state, and a
 lookup that resolves after the clone repaints it. Before that answer arrives,
 the card uses the neutral `settings-loading` state (F50): it keeps the authored
 `Default` variant, not the grey `Disabled` one, carries `aria-busy="true"`,
-and hides its setup tooltip and authored next-slot sentinel. A failed lookup uses
+and hides its setup tooltip and authored next-slot sentinel. The published
+legacy Header fallback uses this same owner-state writer before and after the
+Starter grant lookup, so lookup order cannot expose its authored sentinel or
+booking hooks. A failed lookup uses
 `settings-unavailable` with “Call settings could not be loaded. Refresh or open
 Call Settings.” and only the Settings CTA. It never guesses that Calendar,
 availability, or Stripe is missing. Setup-required owner cards intentionally
@@ -983,11 +986,11 @@ and the current public DTO admits that type with `public_available === true`.
 and Book Call availability. Public results and authenticated discovery may
 arrive in either order; unresolved public readiness keeps the surfaces closed.
 Closed is not the same look as refused while the page still hydrates (F50).
-When the DTO arrives first, a type it offers shows as `loading` until
-discovery admits it or fails it closed. A type it refuses stays hidden. When
-discovery arrives first with an installed controller, Book Call stays loading
-until the DTO answers. After the 15 s failsafe it reads closed, and a later DTO
-can still open it. A card still `loading` when pending ends is hidden with
+Every managed call card starts in `loading` and remains there regardless of
+whether the DTO or authenticated discovery answers first. Once both have
+settled, the shared writer changes each card directly to `available` when the
+intersection admits it or `hidden` when it does not. After the 15 s failsafe it
+reads closed, and a later DTO can still open it. A refused card ends with
 `data-call-offer-state="hidden"`, and the empty-section refresh runs again.
 A late card replays `paintedCallState.configs` through the same gate. Pages with
 neither canonical wrapper retain the authenticated discovery gate alone.

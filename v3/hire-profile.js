@@ -774,11 +774,6 @@
       maybeEndCallDiscoveryPending(false);
   }
 
-  /**
-   * Ends the discovery-pending state. Triggers that stayed closed get the
-   * final hint; triggers discovery opened only lose their busy marker. A
-   * Brand card still loading was never admitted, so it fails closed.
-   */
   function maybeEndCallDiscoveryPending(force) {
       if (!callDiscoveryPending || !authDiscoverySettled) return;
       if (!force && awaitingPublicCallReadiness()) {
@@ -792,16 +787,14 @@
       if (callDiscoveryFailsafeTimer !== null) window.clearTimeout(callDiscoveryFailsafeTimer);
       callDiscoveryFailsafeTimer = null;
       callDiscoveryPending = false;
-      const unadmitted = document.querySelectorAll(
-          '[data-xano-call-card][data-call-offer-state="loading"], ' +
-          '[data-canonical-public-call][data-call-offer-state="loading"]'
-      );
-      unadmitted.forEach(function (card) {
-          setCallOfferVisible(card, false);
-          card.removeAttribute('aria-busy');
-          card.setAttribute('data-call-offer-state', 'hidden');
-      });
-      if (unadmitted.length) refreshEmptySectionNav();
+      const configs = paintedCallState && Array.isArray(paintedCallState.configs)
+          ? paintedCallState.configs
+          : [];
+      const callSurfacesChanged = isBrandMember(MEMBER)
+          ? syncCanonicalCallSurfaces(configs)
+          : false;
+      wireCallServiceCardsToDirectEntry();
+      if (callSurfacesChanged) refreshEmptySectionNav();
       bookingHints.forEach(function (_entry, trigger) {
           if (trigger.getAttribute('aria-disabled') === 'true') {
               explainBookingAvailability(trigger, false);
@@ -856,7 +849,9 @@
               '[data-service-card="component"][data-type="' + type + '"]'
           ).forEach(function (surface) {
               if (includeSurface && !includeSurface(surface, type)) return;
-              if (surface.hasAttribute('hidden') || surface.hasAttribute('data-runtime-call-template')) {
+              if (surface.hasAttribute('hidden') ||
+                  surface.hasAttribute('data-runtime-call-template') ||
+                  surface.hasAttribute('data-call-offer-superseded')) {
                   return;
               }
               if (availability[type]) {
@@ -960,7 +955,8 @@
           surface.setAttribute('data-call-offer-state', 'available');
       }, includeSurface);
       document.querySelectorAll(
-          '[data-xano-call-card][data-type], [data-canonical-public-call][data-type]'
+          '[data-xano-call-card][data-type]:not([data-call-offer-superseded]), ' +
+          '[data-canonical-public-call][data-type]:not([data-call-offer-superseded])'
       ).forEach(function (surface) {
           const type = surface.getAttribute('data-type');
           if (includeSurface && !includeSurface(surface, type)) return;
@@ -977,6 +973,10 @@
       const records = admittedCanonicalCallRecords(configs);
       if (isBrandMember(MEMBER)) {
           reconcileInstalledBookingModalOptions(records);
+          if (callDiscoveryPending) {
+              setBookingButtonAvailable(false);
+              return false;
+          }
           setBookingButtonAvailable(records.length > 0);
       }
       return syncCanonicalCallCardSurfaces(records, includeSurface);
@@ -2212,8 +2212,7 @@
 
   function hideOwnerContactActions() {
       if (!isProfileOwner(MEMBER)) return;
-      bookingOwner = true;
-      setBookingButtonAvailable(false);
+      applyOwnerCallCardStates(ownerCallSettingsSnapshot);
       decorateOwnerPreviewActions();
 
       OWNER_HIDDEN_ACTIONS.forEach(function (element) {
@@ -2538,6 +2537,7 @@
      routes actions into the controllers that already own signup, booking, and
      owner settings. It never creates a card or a modal. */
   let latestCanonicalCallItems = null;
+  waitForMember(reconcileLegacyHeaderProjection);
 
   function installXanoCallCardsAdapter() {
       window.WfXano = window.WfXano || [];
@@ -2737,6 +2737,7 @@
   }
 
   function canonicalPublicItemForType(itemsById, type) {
+      if (!itemsById || typeof itemsById.values !== 'function') return null;
       return Array.from(itemsById.values()).find(function (item) {
           return callOfferTypeOf(item) === type;
       }) || null;
@@ -2794,6 +2795,26 @@
       });
   }
 
+  function releaseLegacyHeaderBookingTrigger(card) {
+      const bookingHint = bookingHints.get(card);
+      if (bookingHint) {
+          bookingHint.hint.remove();
+          bookingHints.delete(card);
+      }
+      [
+          'data-profile-book-call',
+          'data-booking-trigger-loading',
+          'data-booking-trigger-unavailable',
+          'aria-disabled',
+          'aria-describedby',
+          'aria-label',
+          'tabindex',
+          'role',
+      ].forEach(function (attribute) {
+          card.removeAttribute(attribute);
+      });
+  }
+
   function syncLoggedOutCanonicalHeader(itemsById) {
       paintLegacyHeaderCanonicalContent(itemsById);
       const legacyRoot = qs('[data-call-canary-legacy-wrapper="header"]');
@@ -2802,6 +2823,7 @@
       ['free', 'paid'].forEach(function (type) {
           const item = canonicalPublicItemForType(itemsById, type);
           legacyHeaderCardsForType(legacyRoot, type).forEach(function (card) {
+              releaseLegacyHeaderBookingTrigger(card);
               card.removeAttribute('data-call-offer-superseded');
               card.setAttribute('data-canonical-public-call', type);
               const visible = !!(item && item.public_available === true);
@@ -2829,13 +2851,14 @@
       });
   }
 
-  function legacyHeaderBrandEntries(itemsById) {
+  function legacyHeaderCallEntries(itemsById) {
       const legacyRoot = qs('[data-call-canary-legacy-wrapper="header"]');
       if (!legacyRoot || qs('[wf-xano-instance="starter-call-offers-header"]')) return [];
       const entries = [];
       ['free', 'paid'].forEach(function (type) {
           const item = canonicalPublicItemForType(itemsById, type);
           legacyHeaderCardsForType(legacyRoot, type).forEach(function (card) {
+              releaseLegacyHeaderBookingTrigger(card);
               card.removeAttribute('data-call-offer-superseded');
               card.setAttribute('data-canonical-public-call', type);
               card.setAttribute('data-service-card-state', 'Default');
@@ -2855,7 +2878,6 @@
   }
 
   function applyBrandCallCardStates(entries) {
-      const discoveryAnswered = !!(paintedCallState && Array.isArray(paintedCallState.configs));
       entries.forEach(function (entry) {
           const card = entry.card;
           card.removeAttribute('booking-popup-open');
@@ -2863,16 +2885,10 @@
           card.removeAttribute('data-signup-trigger-element');
           card.removeAttribute('data-signup-trigger-value');
           card.removeAttribute('data-call-service-direct');
-          if (!discoveryAnswered && callDiscoveryPending && entry.item &&
-              entry.item.public_available === true) {
-              setCallOfferVisible(card, true);
-              card.setAttribute('aria-busy', 'true');
-              card.setAttribute('data-call-offer-state', 'loading');
-              return;
-          }
-          setCallOfferVisible(card, false);
-          card.removeAttribute('aria-busy');
-          card.setAttribute('data-call-offer-state', 'pending');
+          if (!callDiscoveryPending) return;
+          setCallOfferVisible(card, true);
+          card.setAttribute('aria-busy', 'true');
+          card.setAttribute('data-call-offer-state', 'loading');
       });
   }
 
@@ -2888,10 +2904,22 @@
           syncLoggedOutCanonicalHeader(latestCanonicalCallItems);
           return;
       }
-      if (isBrandMember(MEMBER) && latestCanonicalCallItems) {
-          const entries = legacyHeaderBrandEntries(latestCanonicalCallItems);
+      if (isProfileOwner(MEMBER)) {
+          const legacyRoot = qs('[data-call-canary-legacy-wrapper="header"]');
+          const needsOwnerState = legacyRoot && Array.from(qsa(
+              '[data-service-card="component"]:not([data-call-offer-superseded])',
+              legacyRoot
+          )).some(function (card) {
+              return !card.hasAttribute('data-canonical-public-call') ||
+                  !card.hasAttribute('data-call-offer-state');
+          });
+          if (needsOwnerState) applyOwnerCallCardStates(ownerCallSettingsSnapshot);
+          return;
+      }
+      if (isBrandMember(MEMBER)) {
+          const entries = legacyHeaderCallEntries(latestCanonicalCallItems);
           applyBrandCallCardStates(entries);
-          if (paintedCallState && Array.isArray(paintedCallState.configs)) {
+          if (!callDiscoveryPending && paintedCallState && Array.isArray(paintedCallState.configs)) {
               const legacyCards = new Set(entries.map(function (entry) { return entry.card; }));
               syncCanonicalCallCardSurfaces(
                   admittedCanonicalCallRecords(paintedCallState.configs),
@@ -3048,13 +3076,17 @@
 
   function applyOwnerCallCardStates(snapshot, records) {
       if (!isProfileOwner(MEMBER)) return;
+      legacyHeaderCallEntries(null);
       const accepted = Array.isArray(records)
           ? records
           : (snapshot && Array.isArray(snapshot.records) ? snapshot.records : []);
       bookingOwner = true;
       ownerBookingReady = accepted.length > 0;
       setBookingButtonAvailable(false);
-      document.querySelectorAll('[data-xano-call-card][data-type]').forEach(function (card) {
+      document.querySelectorAll(
+          '[data-xano-call-card][data-type]:not([data-call-offer-superseded]), ' +
+          '[data-canonical-public-call][data-type]:not([data-call-offer-superseded])'
+      ).forEach(function (card) {
           const type = card.getAttribute('data-type');
           const settings = snapshot && snapshot[type];
           const settingsStatus = snapshot && snapshot.status
@@ -3179,11 +3211,11 @@
       } else if (isProfileOwner(MEMBER)) {
           applyOwnerCallCardStates(ownerCallSettingsSnapshot);
       } else if (isBrandMember(MEMBER)) {
-          applyBrandCallCardStates(adapted.concat(legacyHeaderBrandEntries(itemsById)));
+          applyBrandCallCardStates(adapted.concat(legacyHeaderCallEntries(itemsById)));
           // Canonical discovery can finish before wf-xano clones this card.
           // Replay the already-installed set so a late clone does not stay in
           // pending until some unrelated DOM mutation happens.
-          if (paintedCallState && Array.isArray(paintedCallState.configs)) {
+          if (!callDiscoveryPending && paintedCallState && Array.isArray(paintedCallState.configs)) {
               syncCanonicalCallSurfaces(paintedCallState.configs);
           }
       } else {

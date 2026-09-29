@@ -850,11 +850,41 @@ function addLegacyHeaderCallCardsFixture(page) {
     description.textContent = 'Legacy description'
     const price = makeElement('span', { 'data-millify': '', 'data-millify-raw': '0' })
     price.textContent = '0'
+    const bookingRow = makeElement('div', {}, ['service-card_content-wrapper'])
+    const slot = makeElement('span', { 'next-available-slot': '' })
+    slot.textContent = '00:00pm on 00/00'
+    bookingRow.appendChild(slot)
+    const tooltip = makeElement('div', { 'data-call-offer-tooltip': '' })
+    const tooltipText = makeElement('span', { 'data-call-offer-tooltip-text': '', 'hover-text': '' })
+    const calendarCta = makeElement('a', {
+      'hover-cta': '',
+      'data-call-setup-action': 'calendar',
+      'starter-dashboard-url': '',
+    })
+    const stripeCta = makeElement('a', {
+      'hover-cta': '',
+      'data-call-setup-action': 'stripe',
+      'stripe-connect-url': '',
+    })
+    const settingsCta = makeElement('a', {
+      'hover-cta': '',
+      'data-call-setup-action': 'settings',
+      'starter-dashboard-url': '',
+    })
+    tooltip.appendChild(tooltipText)
+    tooltip.appendChild(calendarCta)
+    tooltip.appendChild(stripeCta)
+    tooltip.appendChild(settingsCta)
     root.appendChild(title)
     root.appendChild(description)
     root.appendChild(price)
+    root.appendChild(bookingRow)
+    root.appendChild(tooltip)
     wrapper.appendChild(root)
-    return { root, title, description, price }
+    return {
+      root, title, description, price, bookingRow, slot, tooltip, tooltipText,
+      calendarCta, stripeCta, settingsCta,
+    }
   }
   const free = card('free')
   const paid = card('paid')
@@ -4282,6 +4312,16 @@ for (const replayOnSubscribe of [false, true]) {
 for (const publicFirst of [false, true]) {
   test(`Brand cards intersect installed discovery with public readiness (public first: ${publicFirst})`, async () => {
     const page = makePage()
+    const legacyHeader = addLegacyHeaderCallCardsFixture(page)
+    for (const card of [legacyHeader.free, legacyHeader.paid]) {
+      card.root.setAttribute('booking-popup-open', '')
+      card.root.setAttribute('data-modal-trigger', 'popup-booking-main')
+      card.root.setAttribute('data-signup-trigger-element', 'service')
+      card.root.setAttribute(
+        'data-signup-trigger-value',
+        card === legacyHeader.paid ? 'Paid Consulting Call' : 'Free Call',
+      )
+    }
     const xano = addXanoCallCardsFixture(page)
     const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
     let resolveConfigs
@@ -4303,6 +4343,15 @@ for (const publicFirst of [false, true]) {
       wfx.emit(callCardResult({ free: true, paid: false }))
       await settle()
     }
+    for (const card of [legacyHeader.free, legacyHeader.paid]) {
+      assert.equal(card.root.style.display, 'block')
+      assert.equal(card.root.getAttribute('data-call-offer-state'), 'loading')
+      assert.equal(card.root.getAttribute('aria-busy'), 'true')
+      assert.equal(card.root.getAttribute('booking-popup-open'), null)
+      assert.equal(card.root.getAttribute('data-modal-trigger'), null)
+      assert.equal(card.root.getAttribute('data-signup-trigger-element'), null)
+      assert.equal(card.root.getAttribute('data-call-service-direct'), null)
+    }
     resolveConfigs([
       { config_id: 'cfg_free', is_paid: false, active: true, data_environment: 'production', price_cents: 0, duration: 30 },
       { config_id: 'cfg_paid', is_paid: true, active: true, data_environment: 'production', payment_environment: 'live', currency: 'USD', price_cents: 25000, duration: 60 },
@@ -4310,9 +4359,17 @@ for (const publicFirst of [false, true]) {
     await settle()
     if (!publicFirst) {
       assert.equal(page.bookingButtonWrapper.style.display, 'flex', 'discovery alone must not admit cards')
+      for (const card of [legacyHeader.free, legacyHeader.paid]) {
+        assert.equal(card.root.getAttribute('data-call-offer-state'), 'loading')
+        assert.equal(card.root.getAttribute('aria-busy'), 'true')
+      }
       wfx.emit(callCardResult({ free: true, paid: false }))
       await settle()
     }
+    assert.equal(legacyHeader.free.root.getAttribute('data-call-offer-state'), 'available')
+    assert.equal(legacyHeader.free.root.style.display, 'block')
+    assert.equal(legacyHeader.paid.root.getAttribute('data-call-offer-state'), 'hidden')
+    assert.equal(legacyHeader.paid.root.style.display, 'none')
     assert.equal(xano.free.root.style.display, 'block')
     assert.equal(xano.paid.root.style.display, 'none')
     assert.equal(xano.paid.root.getAttribute('data-call-service-direct'), null)
@@ -8419,7 +8476,7 @@ test('F50 an empty discovery ends loading at once, without waiting for the DTO',
   assert.equal(held.length, 0, 'no failsafe: the empty answer is already final')
 })
 
-test('F50 a publicly offered Brand call card shows loading until discovery installs it', async () => {
+test('F50 Brand call cards stay loading until discovery settles public admission', async () => {
   const page = makePage()
   const xano = addXanoCallCardsFixture(page)
   const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
@@ -8436,8 +8493,9 @@ test('F50 a publicly offered Brand call card shows loading until discovery insta
   assert.equal(xano.free.root.getAttribute('aria-busy'), 'true')
   assert.equal(xano.free.root.getAttribute('data-service-card-state'), 'Default')
   assert.equal(xano.free.root.getAttribute('data-modal-trigger'), null)
-  assert.equal(xano.paid.root.style.display, 'none', 'a type the public DTO refuses never shows loading')
-  assert.equal(xano.paid.root.getAttribute('data-call-offer-state'), 'pending')
+  assert.equal(xano.paid.root.style.display, 'block')
+  assert.equal(xano.paid.root.getAttribute('data-call-offer-state'), 'loading')
+  assert.equal(xano.paid.root.getAttribute('aria-busy'), 'true')
   // A click while loading opens nothing.
   let opened = 0
   page.freeModalCta.click = () => { opened += 1 }
@@ -8451,6 +8509,9 @@ test('F50 a publicly offered Brand call card shows loading until discovery insta
   assert.equal(xano.free.root.getAttribute('data-call-offer-state'), 'available')
   assert.equal(xano.free.root.getAttribute('aria-busy'), null)
   assert.equal(xano.free.root.style.display, 'block')
+  assert.equal(xano.paid.root.getAttribute('data-call-offer-state'), 'hidden')
+  assert.equal(xano.paid.root.getAttribute('aria-busy'), null)
+  assert.equal(xano.paid.root.style.display, 'none')
 })
 
 test('F50 loading Brand cards fail closed when discovery ends without an answer', async () => {
@@ -8546,6 +8607,57 @@ test('F50 owner call cards read as loading, not Disabled, while settings load', 
   assert.equal(xano.free.tooltipText.textContent, 'Call settings could not be loaded. Refresh or open Call Settings.')
   assert.equal(xano.paid.root.getAttribute('data-call-offer-state'), 'settings-loading', 'the sibling keeps loading')
 })
+
+for (const grantFirst of [true, false]) {
+  test(`F50 legacy owner Header stays settings-loading with ${grantFirst ? 'fast' : 'slow'} grant lookup`, async () => {
+    const page = makePage()
+    const legacyHeader = addLegacyHeaderCallCardsFixture(page)
+    for (const card of [legacyHeader.free, legacyHeader.paid]) {
+      card.root.setAttribute('booking-popup-open', '')
+      card.root.setAttribute('data-modal-trigger', 'popup-booking-main')
+      card.root.setAttribute('data-signup-trigger-element', 'service')
+      card.root.setAttribute(
+        'data-signup-trigger-value',
+        card === legacyHeader.paid ? 'Paid Consulting Call' : 'Free Call',
+      )
+    }
+    const controller = ownerController()
+    let resolveGrant
+    const heldGrant = new Promise(resolve => { resolveGrant = resolve })
+    controller.getStarterByMemberId = () => grantFirst
+      ? Promise.resolve({ nylas_grant_id: 'grant_owner' })
+      : heldGrant
+    controller.authenticatedRequest = async () => new Promise(() => {})
+    const context = ownerContext(page, controller)
+    vm.createContext(context)
+    vm.runInContext(source, context)
+    await settle()
+
+    for (const card of [legacyHeader.free, legacyHeader.paid]) {
+      assert.equal(card.root.style.display, 'block')
+      assert.equal(card.root.getAttribute('data-service-card-state'), 'Default')
+      assert.equal(card.root.getAttribute('data-call-offer-state'), 'settings-loading')
+      assert.equal(card.root.getAttribute('aria-busy'), 'true')
+      assert.equal(card.root.getAttribute('data-call-owner-preview'), '')
+      assert.equal(card.root.getAttribute('booking-popup-open'), null)
+      assert.equal(card.root.getAttribute('data-modal-trigger'), null)
+      assert.equal(card.root.getAttribute('data-signup-trigger-element'), null)
+      assert.equal(card.root.getAttribute('data-call-service-direct'), null)
+      assert.equal(card.tooltip.style.display, 'none')
+      assert.equal(card.tooltip.getAttribute('hidden'), 'hidden')
+      assert.equal(card.slot.textContent, '00:00pm on 00/00')
+    }
+
+    if (!grantFirst) {
+      resolveGrant({ nylas_grant_id: 'grant_owner' })
+      await settle()
+      for (const card of [legacyHeader.free, legacyHeader.paid]) {
+        assert.equal(card.root.getAttribute('data-call-offer-state'), 'settings-loading')
+        assert.equal(card.root.getAttribute('aria-busy'), 'true')
+      }
+    }
+  })
+}
 
 test('F50 a logged-out Book Call goes from loading to signup-only', async () => {
   const page = makePage()
