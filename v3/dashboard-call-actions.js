@@ -1615,15 +1615,32 @@
     }
   }
 
-  function commitBookingMutation(settings, booking, update) {
+  function commitBookingMutation(settings, booking, update, claim) {
     if (settings && typeof settings.commitBookingMutation === 'function') {
-      return settings.commitBookingMutation(booking, update)
+      return settings.commitBookingMutation(booking, update, claim)
     }
     if (!booking) return null
     const changes = typeof update === 'function' ? update(booking) : update
     if (!changes || typeof changes !== 'object' || Array.isArray(changes)) return null
     Object.assign(booking, changes)
     return booking
+  }
+
+  async function releaseMutationClaim(settings, claim) {
+    if (
+      !claim || !settings ||
+      typeof settings.releaseBookingMutation !== 'function'
+    ) return
+    const refresh = settings.releaseBookingMutation(claim)
+    if (!refresh || typeof settings.restart !== 'function') return
+    try {
+      await settings.restart()
+    } catch (error) {
+      console.error(
+        '[dashboard-call-actions] mutation reconciliation failed:',
+        error && error.message,
+      )
+    }
   }
 
   function wire(options) {
@@ -1739,7 +1756,11 @@
             releases.forEach(function (release) { release() })
           }
           showActionError(modal, '')
+          let mutationClaim = null
           try {
+            mutationClaim = typeof settings.captureBookingMutation === 'function'
+              ? settings.captureBookingMutation(booking)
+              : null
             const result = await respondReschedule(step.kind, booking, settings.role)
             if (!result) throw new Error(config.failureMessage)
             const modalIsCurrent =
@@ -1758,7 +1779,7 @@
                 if (Number.isFinite(confirmedEnd) && confirmedEnd > 0) changes.end = confirmedEnd
                 else if (step.kind === 'reschedule-decline') changes.end = Number.isFinite(restoredEnd) && restoredEnd > 0 ? restoredEnd : null
                 return changes
-              })
+              }, mutationClaim)
               if (!confirmedBooking) return
               if (modalIsCurrent && typeof settings.refreshDetail === 'function') {
                 settings.refreshDetail(modal, confirmedBooking)
@@ -1778,6 +1799,7 @@
             showActionError(modal, (error && error.message) || config.failureMessage)
           } finally {
             releaseBusy()
+            await releaseMutationClaim(settings, mutationClaim)
           }
           return
         }
@@ -1786,7 +1808,12 @@
         button.__startersActionBusy = true
         const releaseBusy = markActionBusy(button, config.busyLabel)
         showActionError(modal, '')
+        let mutationClaim = null
         try {
+          mutationClaim = step.kind === 'cancel' &&
+            typeof settings.captureBookingMutation === 'function'
+            ? settings.captureBookingMutation(booking)
+            : null
           const result = await submitAction(
             step.kind,
             settings.role,
@@ -1796,7 +1823,7 @@
           if (!result) throw new Error(config.failureMessage)
           if (step.kind === 'cancel' && typeof settings.onCancelSuccess === 'function') {
             try {
-              if (settings.onCancelSuccess(booking, result) === false) return
+              if (settings.onCancelSuccess(booking, result, mutationClaim) === false) return
             } catch (error) {
               console.error(
                 '[dashboard-call-actions] cancellation repaint failed:',
@@ -1817,6 +1844,7 @@
         } finally {
           button.__startersActionBusy = false
           releaseBusy()
+          await releaseMutationClaim(settings, mutationClaim)
         }
       },
       true,
