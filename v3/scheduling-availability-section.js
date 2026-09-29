@@ -86,10 +86,10 @@
   const ERROR_TEXT_PAID_CALL_RATE =
     'Your paid call rate must be a whole-dollar amount from $1 to $1,000. Update it in Call Settings, then try again.'
   const PAID_CALL_RATE_UNSUPPORTED = 'PAID_CALL_RATE_UNSUPPORTED'
-  // grants/delete/v3 (Xano #1660) refuses a calendar switch or disconnect while the
-  // current calendar still has requested, confirmed or rescheduled calls. Nothing is
-  // cancelled or deleted in that case. The member can act on it, so name the calls
-  // instead of showing generic calendar copy.
+  // grants/delete/v3 (Xano #1660) refuses a calendar transition or disconnect while
+  // the current calendar still has requested, confirmed or rescheduled calls whose
+  // end time has not passed. Nothing is cancelled or deleted in that case. The member
+  // can act on it, so name the calls instead of showing generic calendar copy.
   const ERROR_TEXT_ACTIVE_CALLS =
     'You have Requested or Confirmed calls on your current calendar. Decline or cancel them, or wait until they end, then try again.'
   const ACTIVE_CALLS_REFUSAL = /resolve active bookings/i
