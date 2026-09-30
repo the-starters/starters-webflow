@@ -179,6 +179,7 @@ for (const arrival of ['dto-first', 'discovery-first']) test(`published legacy H
   let resolveCalls
   const callItems = new Promise(resolve => { resolveCalls = resolve })
   let controllerInstalled = false
+  let slotRequested = false
   Object.assign(w, {
     MEMBER: brand,
     memberReady: Promise.resolve(brand),
@@ -196,7 +197,11 @@ for (const arrival of ['dto-first', 'discovery-first']) test(`published legacy H
         config_id: 'fixture-free', is_paid: false, active: true,
         data_environment: 'production', price_cents: 0, duration: 30,
       }],
-      getNearestSlot: async () => null,
+      // Discovery asks for the nearest slot only after it painted its answer.
+      getNearestSlot: async () => {
+        slotRequested = true
+        return null
+      },
       installFreeBookingController: () => {
         controllerInstalled = true
         return true
@@ -246,11 +251,21 @@ for (const arrival of ['dto-first', 'discovery-first']) test(`published legacy H
     w.eval(pageSource)
     w.eval(library)
     w.document.dispatchEvent(new w.Event('DOMContentLoaded'))
+    const adaptedServices = () => Array.from(w.document.querySelectorAll('#services [wf-xano-item][data-call-offer-type]'))
     if (arrival === 'dto-first') {
       resolveCalls(result)
+      // The DTO must really be adapted before discovery answers.
+      await until(() => adaptedServices().length === 2)
+      assert.equal(controllerInstalled, false, 'discovery has not answered yet')
+      for (const card of adaptedServices()) {
+        assert.equal(card.getAttribute('data-call-offer-state'), 'loading', 'an adapted Services card waits for discovery')
+        assert.equal(card.getAttribute('aria-busy'), 'true')
+      }
     } else {
       resolveStarter({ nylas_grant_id: 'fixture-grant' })
-      await until(() => controllerInstalled)
+      await until(() => controllerInstalled && slotRequested)
+      await pause(10)
+      assert.equal(w.document.querySelectorAll('#services [wf-xano-item]').length, 0, 'the DTO has not answered yet')
     }
     await until(() => cards().length === 2 && cards().every(card =>
       card.getAttribute('data-call-offer-state') === 'loading'))
