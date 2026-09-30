@@ -54,8 +54,8 @@ match.
 
 The first row is obvious: sending an authenticated member back to a login form is
 nonsense. The second row is the load-bearing one. Every page in it is guarded by
-`v3/brand-profile-redirect.js` **v1.59.116**, which is exactly the module that
-bounces an unfinished Brand *to* this form. A "go back" to any of them is a round
+[the Brand profile redirect](BRAND-PROFILE-REDIRECT-WIRING.md), which is the module that
+bounces an unfinished paid Brand *to* this form. A "go back" to any of them is a round
 trip that lands the member on the same form a second later, having watched two
 navigations to get nowhere. `/opportunities/<slug>` uses the same single-segment
 shape the guard does, so `/opportunities/product-designer/apply` is deliberately
