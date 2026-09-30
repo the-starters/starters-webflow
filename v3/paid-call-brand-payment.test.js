@@ -5635,3 +5635,50 @@ test('F65: a foreign Stripe.js tag that timed out is replaced at once on the nex
   assert.equal(retry.status, 'resolved')
   assert.deepEqual(keys, [STRIPE_LIVE_KEY])
 })
+
+/* ---- F65 review: guard coverage ---- */
+test('F65: a settled Stripe.js load leaves no bounded-wait work behind', async (t) => {
+  const document = stripeLoadDocument({ readyState: 'complete' })
+  useStripeLoadPage(t, document)
+  const keys = []
+  const result = trackSettlement(api.stripeForPaymentEnvironment('test'))
+  await flushStripeLoad()
+  const tag = document.scripts()[0]
+  // Count every later look at window.Stripe: a leftover timer would make one.
+  const Stripe = fakeStripeConstructor(keys)
+  let reads = 0
+  Object.defineProperty(global, 'Stripe', { configurable: true, enumerable: true, get() { reads += 1; return Stripe } })
+  tag.dispatch('load')
+  await flushStripeLoad()
+  assert.equal(result.status, 'resolved')
+  reads = 0
+  t.mock.timers.tick(15000)
+  await flushStripeLoad()
+  assert.equal(reads, 0, 'the bounded wait is cleared when the load settles')
+  assert.equal(tag.getAttribute('data-stripe-js-state'), 'loaded', 'a loaded tag stays loaded')
+})
+
+test('F65: before the page completes, a retry replaces a Stripe.js tag this file saw fail at once', async (t) => {
+  const document = stripeLoadDocument({ readyState: 'interactive' })
+  useStripeLoadPage(t, document)
+  const keys = []
+  const first = trackSettlement(api.stripeForPaymentEnvironment('test'))
+  await flushStripeLoad()
+  assert.equal(document.insertedScripts().length, 1)
+  const failed = document.scripts()[0]
+  failed.dispatch('error')
+  await flushStripeLoad()
+  assert.equal(first.status, 'rejected')
+  assert.equal(failed.getAttribute('data-stripe-js-state'), 'failed')
+
+  const retry = trackSettlement(api.stripeForPaymentEnvironment('test'))
+  await flushStripeLoad()
+  assert.equal(retry.status, 'pending')
+  assert.equal(failed.removed, true, 'the recorded failure is not watched again')
+  assert.equal(document.insertedScripts().length, 2, 'the retry inserts a fresh tag without waiting for the bound')
+  global.Stripe = fakeStripeConstructor(keys)
+  document.scripts()[0].dispatch('load')
+  await flushStripeLoad()
+  assert.equal(retry.status, 'resolved')
+  assert.deepEqual(keys, [STRIPE_TEST_KEY])
+})
