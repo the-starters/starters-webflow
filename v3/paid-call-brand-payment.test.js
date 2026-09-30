@@ -5523,3 +5523,52 @@ test('F65: Use this card leaves its wait and shows the existing picker error whe
   assert.equal(modal.getAttribute('aria-busy'), 'false')
   assert.equal(fixture.payment.defaultPosts.length, 0, 'no default is set without a confirmed card')
 })
+
+/* ---- F65 review: a ready Stripe always wins ----
+   Stripe.js can arrive from a source a load does not watch: a replaced tag that
+   still ran, or another loader. Then a stalled or failed watched tag must not
+   reject the load or insert a second copy. */
+test('F65: the bounded wait resolves when Stripe.js arrives from a source the load does not watch', async (t) => {
+  const document = stripeLoadDocument({ readyState: 'interactive', existing: true })
+  useStripeLoadPage(t, document)
+  const keys = []
+  const result = trackSettlement(api.stripeForPaymentEnvironment('test'))
+  await flushStripeLoad()
+  t.mock.timers.tick(5000)
+  global.Stripe = fakeStripeConstructor(keys)
+  t.mock.timers.tick(10000)
+  await flushStripeLoad()
+  assert.equal(result.status, 'resolved', 'a ready Stripe is not reported as a failed load')
+  assert.deepEqual(keys, [STRIPE_TEST_KEY])
+  assert.notEqual(document.existing.getAttribute('data-stripe-js-state'), 'failed', 'the watched tag is not marked dead')
+  assert.equal(document.insertedScripts().length, 0)
+})
+
+test('F65: a watched Stripe.js tag that errors after Stripe is ready resolves without a second copy', async (t) => {
+  const document = stripeLoadDocument({ readyState: 'interactive', existing: true })
+  useStripeLoadPage(t, document)
+  const keys = []
+  const result = trackSettlement(api.stripeForPaymentEnvironment('live'))
+  await flushStripeLoad()
+  global.Stripe = fakeStripeConstructor(keys)
+  document.existing.dispatch('error')
+  await flushStripeLoad()
+  assert.equal(result.status, 'resolved')
+  assert.deepEqual(keys, [STRIPE_LIVE_KEY])
+  assert.equal(document.insertedScripts().length, 0, 'no replacement is inserted once Stripe is ready')
+})
+
+test('F65: a fresh Stripe.js tag that errors after Stripe is ready resolves the load', async (t) => {
+  const document = stripeLoadDocument({ readyState: 'complete', existing: true })
+  useStripeLoadPage(t, document)
+  const keys = []
+  const result = trackSettlement(api.stripeForPaymentEnvironment('test'))
+  await flushStripeLoad()
+  assert.equal(document.insertedScripts().length, 1, 'the dead tag is replaced')
+  global.Stripe = fakeStripeConstructor(keys)
+  document.scripts()[0].dispatch('error')
+  await flushStripeLoad()
+  assert.equal(result.status, 'resolved', 'a ready Stripe is not reported as a failed load')
+  assert.deepEqual(keys, [STRIPE_TEST_KEY])
+  assert.equal(document.insertedScripts().length, 1)
+})

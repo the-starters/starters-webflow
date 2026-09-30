@@ -1142,8 +1142,12 @@
   const STRIPE_LOAD_TIMEOUT_MS = 15000
   let stripeLoad = null
 
+  function stripeReady() {
+    return typeof global.Stripe === 'function'
+  }
+
   function loadStripe() {
-    if (typeof global.Stripe === 'function') return Promise.resolve(global.Stripe)
+    if (stripeReady()) return Promise.resolve(global.Stripe)
     if (!global.document) return Promise.reject(new Error('Stripe.js is unavailable'))
     if (stripeLoad) return stripeLoad
     const load = startStripeLoad(global.document)
@@ -1175,7 +1179,7 @@
       let settled = false
       const timer = setTimeout(function () {
         // A tag that has not settled in the bounded wait is dead for a retry.
-        if (tag) tag.setAttribute(STRIPE_JS_STATE, 'failed')
+        if (tag && !stripeReady()) tag.setAttribute(STRIPE_JS_STATE, 'failed')
         finish(new Error('Stripe.js failed to load'))
       }, STRIPE_LOAD_TIMEOUT_MS)
       function unwatch() {
@@ -1189,21 +1193,24 @@
         tag.addEventListener('load', loaded, { once: true })
         tag.addEventListener('error', dead, { once: true })
       }
+      // Stripe.js can arrive from a source this load does not watch (a replaced
+      // tag that still ran, or another loader), so a ready Stripe always wins
+      // over a stalled or failed watched tag.
       function finish(error) {
         if (settled) return
         settled = true
         clearTimeout(timer)
         unwatch()
-        if (error) reject(error)
-        else resolve(global.Stripe)
+        if (stripeReady()) resolve(global.Stripe)
+        else reject(error)
       }
       function loaded() {
-        if (typeof global.Stripe === 'function') finish(null)
+        if (stripeReady()) finish(null)
         else dead()
       }
       function dead() {
         if (settled) return
-        if (inserted) finish(new Error('Stripe.js failed to load'))
+        if (inserted || stripeReady()) finish(new Error('Stripe.js failed to load'))
         else insertFreshTag()
       }
       function insertFreshTag() {

@@ -4151,9 +4151,11 @@ reviewed card so the Brand chooses and confirms a card again. Retries reuse the
 same SetupIntent and the same idempotency keys.
 
 Stripe.js loads on demand from `https://js.stripe.com/v3/`, and every load
-settles. Concurrent calls share one load. A tag that is already dead (blocked,
-failed, or loaded without `Stripe`) is replaced at most once per load. A load
-that does not settle within 15 seconds rejects with `Stripe.js failed to load`.
+settles. Concurrent calls share one load. When `Stripe` is ready, the load
+resolves, even if the watched tag stalls or fails, and no second copy is
+inserted. A tag that is already dead (blocked, failed, or loaded without
+`Stripe`) is replaced at most once per load. A load that does not settle within
+15 seconds rejects with `Stripe.js failed to load`.
 **Add payment method** then shows that message in `[card-error]`, and **Use this
 card** shows its existing verification error. A failed load is not kept, so the
 next attempt loads again.
