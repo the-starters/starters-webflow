@@ -378,9 +378,17 @@ discovery ends loading at once. One 15 s failsafe
 (`CALL_DISCOVERY_PUBLIC_WAIT_MS`), armed at bootstrap for every viewer, bounds
 the whole loading state. If identity, discovery, or the public call DTO has not
 answered by then, Book Call reads unavailable (still `aria-disabled`) and every
-call card still in `loading` fails closed to `hidden`. The failsafe is cleared
-once nothing reads as loading. An answer that arrives after it still runs its
-normal writer, so an admitted control can still open. Regression coverage: the `F50` tests in
+call card still in `loading` fails closed to `hidden`. The failsafe is
+measured from bootstrap, not from the start of each surface. This is the
+accepted design: a surface that enters loading while the timer runs gets only
+the time that is left. The failsafe is cleared once nothing reads as loading.
+If a surface enters loading after that release, `armCallLoadingFailsafe` arms
+the same timer again, measured from that entry. An example is a legacy Header
+tout that renders late for a signed-out viewer while the public call DTO does
+not answer. Only one timer exists at a time. After the timer fires, it is not
+armed again, and a late surface fails closed at once. An answer that arrives
+after the failsafe still runs its normal writer, so an admitted control can
+still open. Regression coverage: the `F50` tests in
 [`hire-profile.test.js`](../../v3/hire-profile.test.js). Discovery clears the state on every exit
 path, including a failed lookup or a missing booking controller. A failed
 lookup still rejects, so frontend error monitoring counts it. Only then do
@@ -871,7 +879,16 @@ canonical clones. For a signed-out or paywalled viewer, the public DTO decides
 them, so identity alone never settles or supersedes them. Only talent viewing
 another Starter's profile has them superseded at identity. It replays that
 decision when the legacy wrapper renders or refreshes late; a tout rendered
-before the DTO joins the loading state. As soon as the canonical Header wrapper
+before the DTO joins the loading state. Loading removes each tout's Book Call
+role and hooks. When the state is known, an offered tout gets back the values
+that origin/main left on it: `data-profile-book-call`, `tabindex="0"`,
+`role="button"`, `aria-label="Book a Call"`, and `has-connection`. For a
+signed-out or paywalled viewer, the tout also gets `data-logged-out-book-call`
+and the public signup hooks. For a Brand, the tout gets its authored
+`data-modal-trigger` and signup hooks. The direct-entry capture listener still
+takes the click before the modal.js delegate. A hidden tout keeps none of these
+attributes, so it stays fail closed. The owner's touts use the owner preview
+writer. As soon as the canonical Header wrapper
 exists, the legacy hero touts are also stamped superseded and stay hidden.
 
 Subscription uses the `window.WfXano` callback queue and reads retained public
@@ -908,7 +925,8 @@ hidden. Release removes the adapter identity, viewer-state, connection,
 direct-entry, and signup-attribution markers before applying
 `data-canonical-call-unavailable`, `aria-hidden="true"`, and `display:none`.
 That prevents any later owner, Brand, or anonymous writer from re-admitting
-stale content. The final state for an admitted clone is one of:
+stale content. The late-clone loading writer (F50) also skips a released
+clone, so an unrelated DOM mutation cannot show it as `loading` again. The final state for an admitted clone is one of:
 
 | `data-call-offer-state` | Viewer and meaning |
 | --- | --- |
@@ -917,7 +935,7 @@ stale content. The final state for an admitted clone is one of:
 | `settings-loading` | owner only: settings have not resolved yet; the card keeps the authored `Default` look with `aria-busy="true"`, a progress cursor, and its setup tooltip and `[next-available-slot]` hidden |
 | `settings-unavailable` | owner only: the settings lookup failed; the card is disabled and offers only Call Settings |
 | `hidden` | the type is not offered to this viewer |
-| `loading` | every viewer before identity resolves; then a brand while discovery is pending and after an installed controller until the public DTO settles, and a signed-out, paywalled, talent, or owner viewer's not-yet-adapted clone until the DTO settles it: the card is shown with `Default`, `aria-busy="true"`, a progress cursor, and its `[next-available-slot]` hidden; empty, refused, or failed discovery ends this state immediately for a brand; the 15 s failsafe fails any card still here closed to `hidden`; it is not admitted and opens nothing |
+| `loading` | every viewer before identity resolves; then a brand while discovery is pending and after an installed controller until the public DTO settles, and a signed-out, paywalled, talent, or owner viewer's not-yet-adapted clone until the DTO settles it: the card is shown with `Default`, `aria-busy="true"`, a progress cursor, and its `[next-available-slot]` hidden; the public Services pointer (`markServiceCardsClickable`) skips a loading card, and the DTO writer adds it when the card is offered; empty, refused, or failed discovery ends this state immediately for a brand; the 15 s failsafe fails any card still here closed to `hidden`; it is not admitted and opens nothing |
 | `pending` | internal adapter state before the role-specific readiness writer runs; it is not a settled viewer state |
 
 **Logged out.** A card is visible only when its own item carries
