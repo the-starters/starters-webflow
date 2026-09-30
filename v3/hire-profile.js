@@ -870,12 +870,15 @@
 
   /**
    * The failsafe stays armed while anything still reads as loading: Book Call
-   * while discovery is pending, or a call card whose terminal writer has not
-   * run yet (for example a signed-out viewer still waiting for the DTO).
+   * while discovery is pending, a call card whose terminal writer has not
+   * run yet (for example a signed-out viewer still waiting for the DTO), or
+   * an owner card whose settings read has not answered.
    */
   function releaseCallLoadingFailsafe() {
       if (callDiscoveryFailsafeTimer === null || callDiscoveryPending) return;
-      if (document.querySelector('[data-call-offer-state="loading"]')) return;
+      if (document.querySelector(
+          '[data-call-offer-state="loading"], [data-call-offer-state="settings-loading"]'
+      )) return;
       window.clearTimeout(callDiscoveryFailsafeTimer);
       callDiscoveryFailsafeTimer = null;
   }
@@ -916,6 +919,10 @@
       const stillLoading = Array.from(document.querySelectorAll('[data-call-offer-state="loading"]'));
       stillLoading.forEach(failCloseCallCard);
       if (stillLoading.length) refreshEmptySectionNav();
+      // An owner settings read that has not answered now reads as failed.
+      if (document.querySelector('[data-call-offer-state="settings-loading"]')) {
+          applyOwnerCallCardStates(ownerCallSettingsSnapshot);
+      }
   }
 
   /**
@@ -3414,15 +3421,20 @@
       bookingOwner = true;
       ownerBookingReady = accepted.length > 0;
       setBookingButtonAvailable(false);
+      let settingsLoading = false;
       document.querySelectorAll(
           '[data-xano-call-card][data-type]:not([data-call-offer-superseded]), ' +
           '[data-canonical-public-call][data-type]:not([data-call-offer-superseded])'
       ).forEach(function (card) {
           const type = card.getAttribute('data-type');
           const settings = snapshot && snapshot[type];
-          const settingsStatus = snapshot && snapshot.status
+          let settingsStatus = snapshot && snapshot.status
               ? snapshot.status[type]
               : 'loading';
+          // F50: the one failsafe bounds settings-loading too. Once it has
+          // fired, an unanswered read settles exactly like a failed read. A
+          // later answer still reaches settleSettings and applies its rules.
+          if (settingsStatus === 'loading' && callLoadingFailsafeFired) settingsStatus = 'error';
           const record = recordForType(accepted, type);
           setCallOfferVisible(card, true);
           card.removeAttribute('data-signup-trigger-element');
@@ -3447,6 +3459,7 @@
               setAttributeIfChanged(card, 'data-call-offer-state', 'settings-loading');
               setAttributeIfChanged(card, 'aria-busy', 'true');
               hideCallOfferTooltips(card);
+              settingsLoading = true;
           } else if (settingsStatus !== 'loaded') {
               setAttributeIfChanged(card, 'data-service-card-state', 'Disabled');
               card.removeAttribute('has-connection');
@@ -3461,6 +3474,11 @@
               configureOwnerSetupActions(card, type, settings);
           }
       });
+      if (settingsLoading) {
+          armCallLoadingFailsafe();
+      } else {
+          releaseCallLoadingFailsafe();
+      }
   }
 
   function adaptXanoCallCards(instance, key, result) {

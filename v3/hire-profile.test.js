@@ -10507,3 +10507,81 @@ for (const viewer of ['brand', 'signed-out', 'paywalled']) {
     assert.equal(paid.root.getAttribute('data-call-offer-state'), 'hidden')
   })
 }
+
+/** Every owner call surface the settings writer decides, as the page shows it. */
+function ownerCallSurfaceState(fixture) {
+  const keys = ['data-service-card-state', 'data-call-offer-state', 'aria-busy', 'has-connection',
+    'no-connection', 'data-call-owner-preview', 'data-modal-trigger', 'data-signup-trigger-element',
+    'tabindex', 'role', 'aria-disabled']
+  const cards = fixture.legacyCards.concat([fixture.services.free, fixture.services.paid])
+  const button = fixture.page.bookingButton
+  const hint = fixture.page.root.querySelector('#' + button.getAttribute('aria-describedby'))
+  return {
+    cards: cards.map((card) => ({
+      attributes: Object.fromEntries(keys.map((key) => [key, card.root.getAttribute(key)])),
+      display: card.root.style.display,
+      tooltip: card.tooltipText.textContent,
+      tooltipDisplay: card.tooltip.style.display,
+      settingsCta: card.settingsCta.style.display,
+    })),
+    bookCall: {
+      disabled: button.getAttribute('aria-disabled'),
+      unavailable: button.getAttribute('data-booking-trigger-unavailable'),
+      loading: button.getAttribute('data-booking-trigger-loading'),
+      hint: hint && hint.textContent,
+    },
+  }
+}
+
+function ownerSettingsPage({ reads }) {
+  const fixture = f50LegacyHeaderPage()
+  const controller = ownerController()
+  const resolvers = new Map()
+  controller.authenticatedRequest = (path) => reads === 'failed'
+    ? Promise.reject(new Error('Controlled settings failure'))
+    : new Promise((resolve) => { resolvers.set(path, resolve) })
+  const context = ownerContext(fixture.page, controller, { wfXano: fixture.feed.api })
+  const held = holdLongTimers(context)
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  fixture.feed.emit(callCardResult({ free: true, paid: true }))
+  return { fixture, context, held, resolvers }
+}
+
+test('F50 the failsafe settles an unanswered owner settings read like a failed read', async () => {
+  const unanswered = ownerSettingsPage({ reads: 'held' })
+  const failed = ownerSettingsPage({ reads: 'failed' })
+  await settle()
+  const cards = (page) => page.fixture.legacyCards.concat([page.fixture.services.free, page.fixture.services.paid])
+  for (const card of cards(unanswered)) {
+    assert.equal(card.root.getAttribute('data-call-offer-state'), 'settings-loading')
+    assert.equal(card.root.getAttribute('aria-busy'), 'true')
+  }
+  // The one failsafe is still armed for owner settings-loading.
+  armedFailsafe(unanswered.held).callback()
+  await settle()
+  const expired = ownerCallSurfaceState(unanswered.fixture)
+  for (const card of expired.cards) {
+    assert.equal(card.attributes['data-service-card-state'], 'Disabled')
+    assert.equal(card.attributes['data-call-offer-state'], 'settings-unavailable')
+    assert.equal(card.attributes['aria-busy'], null)
+    assert.equal(card.tooltip, 'Call settings could not be loaded. Refresh or open Call Settings.')
+  }
+  assert.deepEqual(expired, ownerCallSurfaceState(failed.fixture), 'the same terminal state as a failed read')
+
+  // A later successful read still applies the loaded rules.
+  unanswered.resolvers.get(OWNER_FREE_SETTINGS_PATH)(ownerFreeSettings())
+  await settle()
+  for (const card of cards(unanswered)) {
+    const type = card.root.getAttribute('data-type')
+    assert.equal(card.root.getAttribute('data-call-offer-state'), type === 'free' ? 'available' : 'settings-unavailable')
+    assert.equal(card.root.getAttribute('data-service-card-state'), type === 'free' ? 'Default' : 'Disabled')
+  }
+  unanswered.resolvers.get(OWNER_PAID_SETTINGS_PATH)(ownerPaidSettings())
+  await settle()
+  for (const card of cards(unanswered)) {
+    assert.equal(card.root.getAttribute('data-call-offer-state'), 'available')
+    assert.equal(card.root.getAttribute('has-connection'), card.root.getAttribute('data-type'))
+  }
+  assert.equal(unanswered.held.filter(Boolean).length, 1, 'the fired failsafe is not re-armed')
+})
