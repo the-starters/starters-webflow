@@ -1129,22 +1129,105 @@
     return Stripe(environment === 'test' ? STRIPE_PUBLIC_KEY_TEST : STRIPE_PUBLIC_KEY_LIVE)
   }
 
+  // Stripe.js is one page-wide tag. A browser fires its `load` or `error` once,
+  // so a tag that was blocked (extension, CSP, network) or that loaded without
+  // defining `Stripe` before a listener here was attached never settles a
+  // listener attached later. Every tag this file inserts or watches records its
+  // outcome in STRIPE_JS_STATE; a dead tag is replaced at most once per load;
+  // and the whole load is bounded, so the card step always reaches its error
+  // state. Concurrent calls share one load, and a failed load is not kept, so a
+  // later retry starts a new one.
+  const STRIPE_JS_SRC = 'https://js.stripe.com/v3/'
+  const STRIPE_JS_STATE = 'data-stripe-js-state'
+  const STRIPE_LOAD_TIMEOUT_MS = 15000
+  let stripeLoad = null
+
   function loadStripe() {
     if (typeof global.Stripe === 'function') return Promise.resolve(global.Stripe)
     if (!global.document) return Promise.reject(new Error('Stripe.js is unavailable'))
-    const existing = global.document.querySelector('script[src="https://js.stripe.com/v3/"]')
-    if (existing) {
-      return new Promise(function (resolve, reject) {
-        existing.addEventListener('load', function () { resolve(global.Stripe) }, { once: true })
-        existing.addEventListener('error', function () { reject(new Error('Stripe.js failed to load')) }, { once: true })
-      })
-    }
+    if (stripeLoad) return stripeLoad
+    const load = startStripeLoad(global.document)
+    stripeLoad = load
+    function release() { if (stripeLoad === load) stripeLoad = null }
+    load.then(release, release)
+    return load
+  }
+
+  function trackStripeTag(tag) {
+    if (tag.getAttribute(STRIPE_JS_STATE)) return
+    tag.setAttribute(STRIPE_JS_STATE, 'loading')
+    tag.addEventListener('load', function () { tag.setAttribute(STRIPE_JS_STATE, 'loaded') }, { once: true })
+    tag.addEventListener('error', function () { tag.setAttribute(STRIPE_JS_STATE, 'failed') }, { once: true })
+  }
+
+  function stripeTagMayStillLoad(tag, document) {
+    const state = tag.getAttribute(STRIPE_JS_STATE)
+    if (state) return state === 'loading'
+    // An unmarked tag was placed by other code. After the document is complete,
+    // that tag has already fired its only `load` or `error`.
+    return document.readyState !== 'complete'
+  }
+
+  function startStripeLoad(document) {
     return new Promise(function (resolve, reject) {
-      const script = global.document.createElement('script')
-      script.src = 'https://js.stripe.com/v3/'
-      script.addEventListener('load', function () { resolve(global.Stripe) }, { once: true })
-      script.addEventListener('error', function () { reject(new Error('Stripe.js failed to load')) }, { once: true })
-      global.document.head.appendChild(script)
+      let tag = null
+      let inserted = false
+      let settled = false
+      const timer = setTimeout(function () {
+        // A tag that has not settled in the bounded wait is dead for a retry.
+        if (tag) tag.setAttribute(STRIPE_JS_STATE, 'failed')
+        finish(new Error('Stripe.js failed to load'))
+      }, STRIPE_LOAD_TIMEOUT_MS)
+      function unwatch() {
+        if (!tag) return
+        tag.removeEventListener('load', loaded)
+        tag.removeEventListener('error', dead)
+      }
+      function watch(next) {
+        unwatch()
+        tag = next
+        tag.addEventListener('load', loaded, { once: true })
+        tag.addEventListener('error', dead, { once: true })
+      }
+      function finish(error) {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        unwatch()
+        if (error) reject(error)
+        else resolve(global.Stripe)
+      }
+      function loaded() {
+        if (typeof global.Stripe === 'function') finish(null)
+        else dead()
+      }
+      function dead() {
+        if (settled) return
+        if (inserted) finish(new Error('Stripe.js failed to load'))
+        else insertFreshTag()
+      }
+      function insertFreshTag() {
+        const previous = tag
+        const script = document.createElement('script')
+        script.src = STRIPE_JS_SRC
+        trackStripeTag(script)
+        watch(script)
+        inserted = true
+        if (previous && typeof previous.remove === 'function') previous.remove()
+        document.head.appendChild(script)
+      }
+      try {
+        const existing = document.querySelector('script[src="' + STRIPE_JS_SRC + '"]')
+        if (existing && stripeTagMayStillLoad(existing, document)) {
+          trackStripeTag(existing)
+          watch(existing)
+        } else {
+          tag = existing
+          insertFreshTag()
+        }
+      } catch (error) {
+        finish(error)
+      }
     })
   }
 
