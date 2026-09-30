@@ -42,6 +42,23 @@ function deferred() {
   return { promise, resolve }
 }
 
+function fakeClock(initial = 0) {
+  let now = initial
+  return {
+    Date: class extends Date {
+      static now() {
+        return now
+      }
+    },
+    advance(milliseconds) {
+      now += milliseconds
+    },
+    set(milliseconds) {
+      now = milliseconds
+    },
+  }
+}
+
 function requestUrl(request) {
   return typeof request === 'string' ? request : request.url
 }
@@ -71,6 +88,7 @@ function loadBridge(nativeFetch, options = {}) {
   }
 
   vm.runInNewContext(source, {
+    Date: options.Date || Date,
     Headers,
     Request,
     Response,
@@ -725,4 +743,727 @@ test('reconciliation queued during token lookup blocks dispatch', async () => {
 
   await assert.rejects(staleWrite, (error) => error.code === 'MEMBER_SCOPE_CHANGED')
   assert.deepEqual(dispatchedBodies, [])
+})
+
+function countingFetch() {
+  const calls = []
+  const nativeFetch = async (request) => {
+    const url = requestUrl(request)
+    if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-1' })
+    const body = await request.text()
+    calls.push({ url, method: request.method, body })
+    return response({ n: calls.length })
+  }
+  return { calls, nativeFetch }
+}
+
+const PAID_GET = `${XANO_ORIGIN}/api:tCpV3oqd/starter/paid-call-settings/get/v3`
+const PAID_UPSERT = `${XANO_ORIGIN}/api:tCpV3oqd/starter/paid-call-settings/upsert/v3`
+const FREE_GET = `${XANO_ORIGIN}/api:tCpV3oqd/starter/free-call-settings/get/v3`
+const STRIPE_CONNECT_STATUS = `${XANO_ORIGIN}/api:KZf7nFnk/stripe_connect/status/v3`
+
+test('concurrent and repeated identical reads share one network response', async () => {
+  const { calls, nativeFetch } = countingFetch()
+  const { window } = loadBridge(nativeFetch)
+
+  const [a, b] = await Promise.all([window.xanoAuthFetch(PAID_GET), window.xanoAuthFetch(PAID_GET)])
+  const c = await window.xanoAuthFetch(PAID_GET)
+
+  assert.equal(calls.length, 1)
+  assert.deepEqual(await a.json(), { n: 1 })
+  assert.deepEqual(await b.json(), { n: 1 })
+  assert.deepEqual(await c.json(), { n: 1 })
+})
+
+test('pending Xano reads stay shared and receive a full TTL after settlement', async () => {
+  const clock = fakeClock()
+  const readGate = deferred()
+  const readStarted = deferred()
+  let calls = 0
+  const nativeFetch = async (request) => {
+    if (requestUrl(request).includes('/auth/trade-token/v3')) {
+      return response({ authToken: 'xano-1' })
+    }
+    calls += 1
+    const callNumber = calls
+    readStarted.resolve()
+    await readGate.promise
+    return response({ n: callNumber })
+  }
+  const { window } = loadBridge(nativeFetch, { Date: clock.Date })
+
+  const first = window.xanoAuthFetch(PAID_GET)
+  await readStarted.promise
+  clock.advance(6000)
+  const second = window.xanoAuthFetch(PAID_GET)
+  for (let step = 0; step < 6; step += 1) await Promise.resolve()
+  readGate.resolve()
+  const [firstResponse, secondResponse] = await Promise.all([first, second])
+  const immediate = await window.xanoAuthFetch(PAID_GET)
+  clock.advance(4999)
+  const beforeExpiry = await window.xanoAuthFetch(PAID_GET)
+  clock.advance(1)
+  const atExpiry = await window.xanoAuthFetch(PAID_GET)
+
+  assert.equal(calls, 2)
+  assert.deepEqual(await firstResponse.json(), { n: 1 })
+  assert.deepEqual(await secondResponse.json(), { n: 1 })
+  assert.deepEqual(await immediate.json(), { n: 1 })
+  assert.deepEqual(await beforeExpiry.json(), { n: 1 })
+  assert.deepEqual(await atExpiry.json(), { n: 2 })
+})
+
+test('later shared reads prune expired Xano entries', async (t) => {
+  const scenarios = [
+    {
+      name: 'Xano access',
+      access({ window }) {
+        return window.xanoAuthFetch(FREE_GET)
+      },
+    },
+    {
+      name: 'Memberstack access',
+      access({ memberstack }) {
+        return memberstack.getCurrentMember()
+      },
+    },
+  ]
+
+  for (const scenario of scenarios) {
+    await t.test(scenario.name, async () => {
+      const clock = fakeClock()
+      const calls = []
+      const memberstack = {
+        getMemberCookie: async () => 'memberstack-a',
+        onAuthChange() {},
+        getCurrentMember: async () => ({ data: { id: 'member-a' } }),
+      }
+      const nativeFetch = async (request) => {
+        const url = requestUrl(request)
+        if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-1' })
+        calls.push(url)
+        return response({ n: calls.length })
+      }
+      const bridge = loadBridge(nativeFetch, { Date: clock.Date, memberstack })
+
+      await bridge.window.xanoAuthFetch(PAID_GET)
+      clock.set(6000)
+      await scenario.access(bridge)
+      clock.set(1)
+      const refreshed = await bridge.window.xanoAuthFetch(PAID_GET)
+
+      assert.equal(calls.filter((url) => url === PAID_GET).length, 2)
+      assert.deepEqual(await refreshed.json(), {
+        n: scenario.name === 'Xano access' ? 3 : 2,
+      })
+    })
+  }
+})
+
+test('reads with different bodies or URLs are not shared', async () => {
+  const { calls, nativeFetch } = countingFetch()
+  const { window } = loadBridge(nativeFetch)
+  const post = (member) =>
+    window.xanoAuthFetch(V3_STARTER_URL, { method: 'POST', body: JSON.stringify({ member_id: member }) })
+
+  await Promise.all([post('member-a'), post('member-b'), post('member-a')])
+  await window.xanoAuthFetch(PAID_GET)
+  await window.xanoAuthFetch(`${XANO_ORIGIN}/api:tCpV3oqd/starter/free-call-settings/get/v3`)
+
+  assert.equal(calls.length, 4)
+})
+
+test('a write clears shared reads so the next read is fresh', async () => {
+  const { calls, nativeFetch } = countingFetch()
+  const { window } = loadBridge(nativeFetch)
+
+  await window.xanoAuthFetch(PAID_GET)
+  await window.xanoAuthFetch(PAID_UPSERT, { method: 'POST', body: '{}' })
+  const after = await window.xanoAuthFetch(PAID_GET)
+
+  assert.equal(calls.length, 3)
+  assert.deepEqual(await after.json(), { n: 3 })
+})
+
+test('authenticated Xano pass-throughs clear shared reads before and after dispatch', async (t) => {
+  const scenarios = [
+    {
+      name: 'preauthorized xanoAuthFetch request',
+      requestUrl: PAID_UPSERT,
+      dispatch(window) {
+        return window.xanoAuthFetch(PAID_UPSERT, {
+          method: 'POST',
+          headers: { Authorization: 'Bearer caller-token' },
+          body: '{}',
+        })
+      },
+    },
+    {
+      name: 'non-scheduling window.fetch request',
+      requestUrl: STRIPE_CONNECT_STATUS,
+      dispatch(window) {
+        return window.fetch(STRIPE_CONNECT_STATUS, {
+          method: 'POST',
+          headers: { Authorization: 'Bearer caller-token' },
+          body: '{}',
+        })
+      },
+    },
+  ]
+
+  for (const scenario of scenarios) {
+    await t.test(scenario.name, async () => {
+      const passThroughGate = deferred()
+      const calls = []
+      const nativeFetch = async (request) => {
+        const url = requestUrl(request)
+        if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-1' })
+        calls.push(url)
+        if (url !== PAID_GET) await passThroughGate.promise
+        return response({ n: calls.length })
+      }
+      const { window } = loadBridge(nativeFetch)
+
+      const initial = await window.xanoAuthFetch(PAID_GET)
+      const passThrough = scenario.dispatch(window)
+      const during = await window.xanoAuthFetch(PAID_GET)
+      passThroughGate.resolve()
+      await passThrough
+      const after = await window.xanoAuthFetch(PAID_GET)
+
+      assert.deepEqual(calls, [PAID_GET, scenario.requestUrl, PAID_GET, PAID_GET])
+      assert.deepEqual(await initial.json(), { n: 1 })
+      assert.deepEqual(await during.json(), { n: 3 })
+      assert.deepEqual(await after.json(), { n: 4 })
+    })
+  }
+})
+
+test('explicit AbortSignals bypass shared Xano reads without invalidating cache', async (t) => {
+  const scenarios = [
+    {
+      name: 'signaled owner',
+      first(window, controller) {
+        return window.xanoAuthFetch(PAID_GET, { signal: controller.signal })
+      },
+      second(window) {
+        return window.xanoAuthFetch(PAID_GET)
+      },
+      abortedIndex: 0,
+    },
+    {
+      name: 'signaled later caller',
+      first(window) {
+        return window.xanoAuthFetch(PAID_GET)
+      },
+      second(window, controller) {
+        return window.xanoAuthFetch(PAID_GET, { signal: controller.signal })
+      },
+      abortedIndex: 1,
+    },
+    {
+      name: 'Request input with second-argument signal',
+      first(window, controller) {
+        return window.xanoAuthFetch(new Request(PAID_GET), {
+          signal: controller.signal,
+        })
+      },
+      second(window) {
+        return window.xanoAuthFetch(PAID_GET)
+      },
+      abortedIndex: 0,
+    },
+  ]
+
+  for (const scenario of scenarios) {
+    await t.test(scenario.name, async () => {
+      const controller = new AbortController()
+      const responseGate = deferred()
+      const firstStarted = deferred()
+      let calls = 0
+      let freeCalls = 0
+      const nativeFetch = async (request) => {
+        if (requestUrl(request).includes('/auth/trade-token/v3')) {
+          return response({ authToken: 'xano-1' })
+        }
+        if (requestUrl(request) === FREE_GET) {
+          freeCalls += 1
+          return response({ free: freeCalls })
+        }
+        calls += 1
+        const callNumber = calls
+        if (calls === 1) firstStarted.resolve()
+        return new Promise((resolve, reject) => {
+          const abort = () => reject(request.signal.reason)
+          if (request.signal.aborted) {
+            abort()
+            return
+          }
+          request.signal.addEventListener('abort', abort, { once: true })
+          responseGate.promise.then(() => {
+            request.signal.removeEventListener('abort', abort)
+            resolve(response({ n: callNumber }))
+          })
+        })
+      }
+      const { window } = loadBridge(nativeFetch)
+
+      await window.xanoAuthFetch(FREE_GET)
+      const first = scenario.first(window, controller)
+      await firstStarted.promise
+      const second = scenario.second(window, controller)
+      await new Promise(setImmediate)
+      assert.equal(calls, 2)
+      controller.abort()
+      responseGate.resolve()
+      const results = await Promise.allSettled([first, second])
+      const completedIndex = scenario.abortedIndex === 0 ? 1 : 0
+
+      assert.equal(results[scenario.abortedIndex].status, 'rejected')
+      assert.equal(results[scenario.abortedIndex].reason.name, 'AbortError')
+      assert.equal(results[completedIndex].status, 'fulfilled')
+      assert.equal((await results[completedIndex].value.json()).n, completedIndex + 1)
+      assert.deepEqual(await (await window.xanoAuthFetch(FREE_GET)).json(), { free: 1 })
+      assert.equal(freeCalls, 1)
+    })
+  }
+})
+
+test('plain Request inputs share one Xano read', async () => {
+  const responseGate = deferred()
+  const firstStarted = deferred()
+  let calls = 0
+  const nativeFetch = async (request) => {
+    if (requestUrl(request).includes('/auth/trade-token/v3')) {
+      return response({ authToken: 'xano-1' })
+    }
+    calls += 1
+    firstStarted.resolve()
+    await responseGate.promise
+    return response({ n: calls })
+  }
+  const { window } = loadBridge(nativeFetch)
+
+  const first = window.xanoAuthFetch(new Request(PAID_GET))
+  await firstStarted.promise
+  const second = window.xanoAuthFetch(new Request(PAID_GET))
+  await new Promise(setImmediate)
+  const callsBeforeRelease = calls
+  responseGate.resolve()
+  const [firstResponse, secondResponse] = await Promise.all([first, second])
+
+  assert.equal(callsBeforeRelease, 1)
+  assert.deepEqual(await firstResponse.json(), { n: 1 })
+  assert.deepEqual(await secondResponse.json(), { n: 1 })
+  assert.deepEqual(await (await window.xanoAuthFetch(new Request(PAID_GET))).json(), {
+    n: 1,
+  })
+  assert.equal(calls, 1)
+})
+
+test('failed reads are not shared and a session change drops shared reads', async () => {
+  let status = 500
+  const calls = []
+  const nativeFetch = async (request) => {
+    if (requestUrl(request).includes('/auth/trade-token/v3')) return response({ authToken: 'xano-1' })
+    calls.push(requestUrl(request))
+    return response({ ok: status === 200 }, status)
+  }
+  const memberstack = { getMemberCookie: async () => 'memberstack-a', onAuthChange() {} }
+  const { window } = loadBridge(nativeFetch, { memberstack })
+
+  assert.equal((await window.xanoAuthFetch(PAID_GET)).status, 500)
+  status = 200
+  assert.equal((await window.xanoAuthFetch(PAID_GET)).status, 200)
+  await window.xanoAuthFetch(PAID_GET)
+  assert.equal(calls.length, 2)
+
+  memberstack.getMemberCookie = async () => 'memberstack-b'
+  await window.xanoAuthFetch(PAID_GET)
+  assert.equal(calls.length, 3)
+})
+
+test('any failed shared Xano read drops every cached entry', async (t) => {
+  for (const failure of ['response', 'rejection']) {
+    await t.test(failure, async () => {
+      const calls = []
+      const nativeFetch = async (request) => {
+        const url = requestUrl(request)
+        if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-1' })
+        calls.push(url)
+        if (url === FREE_GET) {
+          if (failure === 'response') return response({ failed: true }, 500)
+          throw new Error('free settings failed')
+        }
+        return response({ n: calls.length })
+      }
+      const { window } = loadBridge(nativeFetch)
+
+      await window.xanoAuthFetch(PAID_GET)
+      if (failure === 'response') {
+        assert.equal((await window.xanoAuthFetch(FREE_GET)).status, 500)
+      } else {
+        await assert.rejects(window.xanoAuthFetch(FREE_GET), /free settings failed/)
+      }
+      const refreshed = await window.xanoAuthFetch(PAID_GET)
+
+      assert.equal(calls.filter((url) => url === PAID_GET).length, 2)
+      assert.deepEqual(await refreshed.json(), { n: 3 })
+    })
+  }
+})
+
+test('failed signaled reads clear every cached entry', async (t) => {
+  for (const failure of ['response', 'rejection']) {
+    await t.test(failure, async () => {
+      let paidCalls = 0
+      let freeCalls = 0
+      const nativeFetch = async (request) => {
+        const url = requestUrl(request)
+        if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-1' })
+        if (url === FREE_GET) {
+          freeCalls += 1
+          return response({ free: freeCalls })
+        }
+        paidCalls += 1
+        if (paidCalls === 2) {
+          if (failure === 'response') return response({ failed: true }, 500)
+          throw new Error('signaled paid settings failed')
+        }
+        return response({ paid: paidCalls })
+      }
+      const { window } = loadBridge(nativeFetch)
+
+      await window.xanoAuthFetch(PAID_GET)
+      await window.xanoAuthFetch(FREE_GET)
+      const controller = new AbortController()
+      if (failure === 'response') {
+        assert.equal(
+          (await window.xanoAuthFetch(PAID_GET, { signal: controller.signal })).status,
+          500,
+        )
+      } else {
+        await assert.rejects(
+          window.xanoAuthFetch(PAID_GET, { signal: controller.signal }),
+          /signaled paid settings failed/,
+        )
+      }
+      const refreshedPaid = await window.xanoAuthFetch(PAID_GET)
+      const refreshedFree = await window.xanoAuthFetch(FREE_GET)
+
+      assert.deepEqual(await refreshedPaid.json(), { paid: 3 })
+      assert.deepEqual(await refreshedFree.json(), { free: 2 })
+      assert.equal(paidCalls, 3)
+      assert.equal(freeCalls, 2)
+    })
+  }
+})
+
+test('a stale failed signaled read cannot evict a replacement cache entry', async () => {
+  const failureGate = deferred()
+  const failureStarted = deferred()
+  let paidCalls = 0
+  const nativeFetch = async (request) => {
+    const url = requestUrl(request)
+    if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-1' })
+    if (url === PAID_UPSERT) return response({ updated: true })
+    paidCalls += 1
+    if (paidCalls === 2) {
+      failureStarted.resolve()
+      await failureGate.promise
+      throw new Error('stale signaled read failed')
+    }
+    return response({ paid: paidCalls })
+  }
+  const { window } = loadBridge(nativeFetch)
+
+  await window.xanoAuthFetch(PAID_GET)
+  const controller = new AbortController()
+  const staleFailure = window.xanoAuthFetch(PAID_GET, { signal: controller.signal })
+  await failureStarted.promise
+  await window.xanoAuthFetch(PAID_UPSERT, { method: 'POST', body: '{}' })
+  const replacement = await window.xanoAuthFetch(PAID_GET)
+  failureGate.resolve()
+  await assert.rejects(staleFailure, /stale signaled read failed/)
+  const reused = await window.xanoAuthFetch(PAID_GET)
+
+  assert.deepEqual(await replacement.json(), { paid: 3 })
+  assert.deepEqual(await reused.json(), { paid: 3 })
+  assert.equal(paidCalls, 3)
+})
+
+test('shared reads honor each caller expected scope', async () => {
+  const { nativeFetch } = countingFetch()
+  const { window } = loadBridge(nativeFetch)
+  const scope = await window.__tsSchedulingAuthGetScope()
+
+  await window.xanoAuthFetch(PAID_GET, undefined, scope)
+  await assert.rejects(window.xanoAuthFetch(PAID_GET, undefined, {}), { code: 'MEMBER_SCOPE_CHANGED' })
+})
+
+function memberstackWithCounter(extra = {}) {
+  const state = { reads: 0, listeners: [], gate: null }
+  const memberstack = {
+    getMemberCookie: async () => 'memberstack-a',
+    onAuthChange(listener) {
+      state.listeners.push(listener)
+    },
+    async getCurrentMember() {
+      state.reads += 1
+      if (state.gate) await state.gate.promise
+      return { data: { id: `member-${state.reads}` } }
+    },
+    async updateMember() {
+      return { data: {} }
+    },
+    ...extra,
+  }
+  return { memberstack, state }
+}
+
+test('overlapping getCurrentMember calls share one Memberstack request', async () => {
+  const { memberstack, state } = memberstackWithCounter()
+  state.gate = deferred()
+  loadBridge(async () => response({}), { memberstack })
+
+  const calls = [memberstack.getCurrentMember(), memberstack.getCurrentMember(), memberstack.getCurrentMember()]
+  state.gate.resolve()
+  const results = await Promise.all(calls)
+
+  assert.equal(state.reads, 1)
+  assert.deepEqual(results.map((r) => r.data.id), ['member-1', 'member-1', 'member-1'])
+})
+
+test('getCurrentMember is not cached after it settles or across different arguments', async () => {
+  const { memberstack, state } = memberstackWithCounter()
+  loadBridge(async () => response({}), { memberstack })
+
+  await memberstack.getCurrentMember()
+  await memberstack.getCurrentMember()
+  state.gate = deferred()
+  const a = memberstack.getCurrentMember({ x: 1 })
+  const b = memberstack.getCurrentMember({ x: 2 })
+  state.gate.resolve()
+  await Promise.all([a, b])
+
+  assert.equal(state.reads, 4)
+})
+
+test('every non-read Memberstack method invalidates before and after settlement', async () => {
+  const mutationGate = deferred()
+  let mutations = 0
+  const { memberstack, state } = memberstackWithCounter({
+    disconnectProvider() {
+      mutations += 1
+      return mutationGate.promise
+    },
+  })
+  state.gate = deferred()
+  loadBridge(async () => response({}), { memberstack })
+
+  const before = memberstack.getCurrentMember()
+  const mutation = memberstack.disconnectProvider('google')
+  const during = memberstack.getCurrentMember()
+  for (let step = 0; step < 6; step += 1) await Promise.resolve()
+  assert.equal(state.reads, 2)
+  mutationGate.resolve()
+  await mutation
+  const after = memberstack.getCurrentMember()
+  for (let step = 0; step < 3; step += 1) await Promise.resolve()
+  assert.equal(state.reads, 3)
+  state.gate.resolve()
+  await Promise.all([before, during, after])
+
+  assert.equal(mutations, 1)
+})
+
+test('Memberstack read methods preserve an overlapping member request', async () => {
+  const { memberstack, state } = memberstackWithCounter()
+  state.gate = deferred()
+  loadBridge(async () => response({}), { memberstack })
+
+  const before = memberstack.getCurrentMember()
+  await memberstack.getMemberCookie()
+  memberstack.onAuthChange(function () {})
+  const after = memberstack.getCurrentMember()
+  state.gate.resolve()
+  await Promise.all([before, after])
+
+  assert.equal(state.reads, 1)
+})
+
+test('cookie rotation prevents a new member joining an older getCurrentMember request', async () => {
+  let cookie = 'memberstack-a'
+  let reads = 0
+  const memberAGate = deferred()
+  const memberAStarted = deferred()
+  const memberstack = {
+    getMemberCookie: async () => cookie,
+    onAuthChange() {},
+    getCurrentMember() {
+      reads += 1
+      const memberId = cookie === 'memberstack-a' ? 'member-a' : 'member-b'
+      if (memberId === 'member-a') {
+        memberAStarted.resolve()
+        return memberAGate.promise.then(() => ({ data: { id: memberId } }))
+      }
+      return Promise.resolve({ data: { id: memberId } })
+    },
+  }
+  const nativeFetch = async (request) =>
+    requestUrl(request).includes('/auth/trade-token/v3')
+      ? response({ authToken: `xano-${cookie}` })
+      : response({})
+  const { window } = loadBridge(nativeFetch, { memberstack })
+
+  await window.__tsSchedulingAuthGetScope()
+  const memberA = memberstack.getCurrentMember()
+  await memberAStarted.promise
+  cookie = 'memberstack-b'
+  await window.xanoAuthFetch(PAID_GET)
+  const memberB = memberstack.getCurrentMember()
+  const memberARejection = assert.rejects(memberA, {
+    code: 'MEMBER_SCOPE_CHANGED',
+  })
+  for (let step = 0; step < 6; step += 1) await Promise.resolve()
+  try {
+    assert.equal(reads, 2)
+  } finally {
+    memberAGate.resolve()
+  }
+  const [memberBResult] = await Promise.all([memberB, memberARejection])
+
+  assert.equal(memberBResult.data.id, 'member-b')
+})
+
+test('live cookie isolates member reads without an auth event or Xano request', async () => {
+  let cookie = 'memberstack-a'
+  let reads = 0
+  const memberAGate = deferred()
+  const memberAStarted = deferred()
+  const memberstack = {
+    getMemberCookie: async () => cookie,
+    onAuthChange() {},
+    getCurrentMember() {
+      reads += 1
+      const memberId = cookie === 'memberstack-a' ? 'member-a' : 'member-b'
+      if (memberId === 'member-a') {
+        memberAStarted.resolve()
+        return memberAGate.promise.then(() => ({ data: { id: memberId } }))
+      }
+      return Promise.resolve({ data: { id: memberId } })
+    },
+  }
+  loadBridge(async () => response({}), { memberstack })
+
+  const memberAOwner = memberstack.getCurrentMember()
+  await memberAStarted.promise
+  const memberAJoiner = memberstack.getCurrentMember()
+  cookie = 'memberstack-b'
+  const memberB = memberstack.getCurrentMember()
+  const memberAOwnerRejection = assert.rejects(memberAOwner, {
+    code: 'MEMBER_SCOPE_CHANGED',
+  })
+  const memberAJoinerRejection = assert.rejects(memberAJoiner, {
+    code: 'MEMBER_SCOPE_CHANGED',
+  })
+  for (let step = 0; step < 6; step += 1) await Promise.resolve()
+  try {
+    assert.equal(reads, 2)
+  } finally {
+    memberAGate.resolve()
+  }
+  const [memberBResult] = await Promise.all([
+    memberB,
+    memberAOwnerRejection,
+    memberAJoinerRejection,
+  ])
+
+  assert.equal(memberBResult.data.id, 'member-b')
+})
+
+test('first read in a silently rotated session shares its new revision', async () => {
+  let cookie = 'memberstack-a'
+  const reads = { a: 0, b: 0 }
+  const memberAGate = deferred()
+  const memberBGate = deferred()
+  const memberAStarted = deferred()
+  const memberBStarted = deferred()
+  const memberstack = {
+    getMemberCookie: async () => cookie,
+    onAuthChange() {},
+    getCurrentMember() {
+      const member = cookie === 'memberstack-a' ? 'a' : 'b'
+      reads[member] += 1
+      if (member === 'a') {
+        memberAStarted.resolve()
+        return memberAGate.promise.then(() => ({ data: { id: 'member-a' } }))
+      }
+      memberBStarted.resolve()
+      return memberBGate.promise.then(() => ({ data: { id: 'member-b' } }))
+    },
+  }
+  loadBridge(async () => response({}), { memberstack })
+
+  const memberA = memberstack.getCurrentMember()
+  await memberAStarted.promise
+  cookie = 'memberstack-b'
+  const memberB1 = memberstack.getCurrentMember()
+  await memberBStarted.promise
+  const memberB2 = memberstack.getCurrentMember()
+  const memberARejection = assert.rejects(memberA, {
+    code: 'MEMBER_SCOPE_CHANGED',
+  })
+  for (let step = 0; step < 6; step += 1) await Promise.resolve()
+  try {
+    assert.deepEqual(reads, { a: 1, b: 1 })
+  } finally {
+    memberAGate.resolve()
+    memberBGate.resolve()
+  }
+  const [memberB1Result, memberB2Result] = await Promise.all([
+    memberB1,
+    memberB2,
+    memberARejection,
+  ])
+
+  assert.equal(memberB1Result.data.id, 'member-b')
+  assert.equal(memberB2Result.data.id, 'member-b')
+})
+
+test('a Memberstack write or auth change stops later reads joining an older request', async () => {
+  const { memberstack, state } = memberstackWithCounter()
+  loadBridge(async () => response({}), { memberstack })
+
+  state.gate = deferred()
+  const before = memberstack.getCurrentMember()
+  await memberstack.updateMember({ customFields: { a: 1 } })
+  const afterWrite = memberstack.getCurrentMember()
+  state.listeners.forEach((listener) => listener({}))
+  const afterAuth = memberstack.getCurrentMember()
+  state.gate.resolve()
+  await Promise.all([before, afterWrite, afterAuth])
+
+  assert.equal(state.reads, 3)
+})
+
+test('auth change has one owner and clears member reads before cookie reconciliation', async () => {
+  const cookieGate = deferred()
+  const { memberstack, state } = memberstackWithCounter({
+    getMemberCookie() {
+      return cookieGate.promise
+    },
+  })
+  state.gate = deferred()
+  loadBridge(async () => response({}), { memberstack })
+
+  const before = memberstack.getCurrentMember()
+  const reconciliation = state.listeners[state.listeners.length - 1]({})
+  const after = memberstack.getCurrentMember()
+  cookieGate.resolve('memberstack-a')
+  state.gate.resolve()
+  await Promise.all([before, after, reconciliation])
+
+  assert.equal(state.listeners.length, 1)
+  assert.equal(state.reads, 2)
 })

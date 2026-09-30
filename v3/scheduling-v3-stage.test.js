@@ -837,6 +837,57 @@ test('the real auth bridge authorizes every mapped V3 target', async () => {
   assert.equal(attributes['data-scheduling-v3-stage'], 'ready')
 })
 
+test('the stage adapter preserves read sharing and caller signal isolation', async () => {
+  const requests = []
+  const window = {
+    location: {
+      hostname: 'the-starters-3-0.webflow.io',
+      pathname: '/starter-dashboard',
+      href: 'https://the-starters-3-0.webflow.io/starter-dashboard',
+    },
+    fetch: async (request) => {
+      const url = typeof request === 'string' ? request : request.url
+      if (url.includes('/auth/trade-token/v3')) {
+        return response({ authToken: 'xano-shared-read' })
+      }
+      requests.push(request)
+      return response({ request: requests.length })
+    },
+    setTimeout() {},
+    $memberstackDom: {
+      getMemberCookie: async () => 'memberstack-shared-read',
+      onAuthChange() {},
+    },
+  }
+  const context = {
+    console: { info() {}, warn() {} },
+    document: { documentElement: { setAttribute() {} } },
+    Headers,
+    Object,
+    Request,
+    Response,
+    Set,
+    URL,
+    window,
+  }
+  vm.runInNewContext(authSource, context)
+  vm.runInNewContext(source, context)
+
+  const first = await window.fetch(`${API_BASE}starter/paid-call-settings/get/v3`)
+  const shared = await window.fetch(`${API_BASE}starter/paid-call-settings/get/v3`)
+  const controller = new AbortController()
+  const isolated = await window.fetch(`${API_BASE}starter/paid-call-settings/get/v3`, {
+    signal: controller.signal,
+  })
+  const stillShared = await window.fetch(`${API_BASE}starter/paid-call-settings/get/v3`)
+
+  assert.equal(requests.length, 2)
+  assert.deepEqual(await first.json(), { request: 1 })
+  assert.deepEqual(await shared.json(), { request: 1 })
+  assert.deepEqual(await isolated.json(), { request: 2 })
+  assert.deepEqual(await stillShared.json(), { request: 1 })
+})
+
 test('dashboard routing reclaims the reviewed auth bridge from a competing page bridge', async () => {
   const requests = []
   let tradeCount = 0
