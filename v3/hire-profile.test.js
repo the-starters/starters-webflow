@@ -8675,6 +8675,8 @@ for (const grantFirst of [true, false]) {
   test(`F50 legacy owner Header follows settings with ${grantFirst ? 'fast' : 'slow'} grant lookup`, async () => {
     const page = makePage()
     const legacyHeader = addLegacyHeaderCallCardsFixture(page)
+    // The published layout: the legacy Header beside the canonical Services wrapper.
+    addXanoCallCardsFixture(page)
     for (const card of [legacyHeader.free, legacyHeader.paid]) {
       card.root.setAttribute('booking-popup-open', '')
       card.root.setAttribute('data-modal-trigger', 'popup-booking-main')
@@ -8744,6 +8746,8 @@ for (const grantFirst of [true, false]) {
 test('F50 legacy Header enters loading synchronously while member identity is unresolved', async () => {
   const page = makePage()
   const legacyHeader = addLegacyHeaderCallCardsFixture(page)
+  // The published layout: the legacy Header beside the canonical Services wrapper.
+  addXanoCallCardsFixture(page)
   const displayWrites = new Map()
   for (const card of [legacyHeader.free, legacyHeader.paid]) {
     card.root.setAttribute('booking-popup-open', '')
@@ -8904,6 +8908,8 @@ test('F50 an unadapted canonical sibling stays loading after partial admission',
 test('F50 ready legacy owner Header click reaches the owner explanation', async () => {
   const page = makePage()
   const legacyHeader = addLegacyHeaderCallCardsFixture(page)
+  // The published layout: the legacy Header beside the canonical Services wrapper.
+  addXanoCallCardsFixture(page)
   for (const card of [legacyHeader.free, legacyHeader.paid]) {
     card.root.setAttribute('booking-popup-open', '')
     card.root.setAttribute('data-modal-trigger', 'popup-booking-main')
@@ -9946,5 +9952,33 @@ for (const viewer of ['signed-out', 'paywalled']) {
     assert.equal(free.root.getAttribute('aria-busy'), null)
     assert.equal(paid.root.getAttribute('data-call-offer-state'), 'hidden')
     assert.equal(paid.root.getAttribute('aria-busy'), null)
+  })
+}
+
+for (const viewer of ['signed-out', 'paywalled']) {
+  test(`F50 legacy Header without a canonical wrapper keeps the Algolia reveal for ${viewer} viewers`, async () => {
+    // No canonical call wrapper means no public call DTO will ever answer, so
+    // the legacy touts keep their pre-F50 owner: the public Algolia record.
+    const page = makePage()
+    const legacyHeader = addLegacyHeaderCallCardsFixture(page)
+    const member = viewer === 'paywalled' ? FREE_BRAND_MEMBER : {}
+    const context = makeContext({
+      page,
+      member,
+      record: { 'free-consulting-calls-t-f': true, 'paid-consulting-calls-t-f': false },
+    })
+    vm.createContext(context)
+    vm.runInContext(source, context)
+    await settle()
+    const cards = [legacyHeader.free, legacyHeader.paid]
+    assert.equal(cards.length, 2)
+    for (const card of cards) {
+      assert.notEqual(card.root.getAttribute('data-call-offer-state'), 'loading', 'no DTO can end loading here')
+      assert.equal(card.root.getAttribute('aria-busy'), null)
+    }
+    assert.equal(legacyHeader.free.root.style.display, 'block')
+    assert.equal(legacyHeader.free.root.getAttribute('aria-hidden'), null)
+    assert.equal(legacyHeader.paid.root.style.display, 'none')
+    assert.equal(legacyHeader.paid.root.getAttribute('aria-hidden'), 'true')
   })
 }

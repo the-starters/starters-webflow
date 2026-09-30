@@ -582,6 +582,15 @@
       );
   }
 
+  // F50: the legacy Header touts follow the canonical public DTO only beside
+  // the canonical Services wrapper, which is the published layout. A page with
+  // neither canonical wrapper has no DTO to wait for, so its touts keep the
+  // Algolia and discovery reveal they had before F50.
+  function legacyHeaderFollowsCanonicalDto() {
+      return !document.querySelector('[wf-xano-instance="starter-call-offers-header"]') &&
+          !!document.querySelector('[wf-xano-instance="starter-call-offers-services"]');
+  }
+
   function isManagedHydratingCallSurface(surface) {
       if (!surface || typeof surface.closest !== 'function' ||
           typeof window.qs !== 'function' ||
@@ -589,7 +598,7 @@
           typeof window.waitForMember !== 'function' ||
           !window.starter_memberstack_id) return false;
       const legacyFallback = isLegacyHeaderCallSurface(surface) &&
-          !document.querySelector('[wf-xano-instance="starter-call-offers-header"]');
+          legacyHeaderFollowsCanonicalDto();
       return legacyFallback || !!canonicalCallCardForSurface(surface);
   }
 
@@ -1359,7 +1368,7 @@
       return card.hasAttribute('data-xano-call-card') ||
           card.hasAttribute('data-canonical-public-call') ||
           !!canonicalCallCardForSurface(card) ||
-          isLegacyHeaderCallSurface(card);
+          (isLegacyHeaderCallSurface(card) && !!canonicalCallWrapper());
   }
 
   function wireCallServiceCardsToDirectEntry() {
@@ -2913,7 +2922,7 @@
 
   function legacyHeaderCallEntries(itemsById) {
       const legacyRoot = qs('[data-call-canary-legacy-wrapper="header"]');
-      if (!legacyRoot || qs('[wf-xano-instance="starter-call-offers-header"]')) return [];
+      if (!legacyRoot || !legacyHeaderFollowsCanonicalDto()) return [];
       const entries = [];
       ['free', 'paid'].forEach(function (type) {
           const item = canonicalPublicItemForType(itemsById, type);
@@ -3009,7 +3018,7 @@
       }
       if (isProfileOwner(MEMBER)) {
           const legacyRoot = qs('[data-call-canary-legacy-wrapper="header"]');
-          const needsOwnerState = legacyRoot && Array.from(qsa(
+          const needsOwnerState = legacyRoot && legacyHeaderFollowsCanonicalDto() && Array.from(qsa(
               '[data-service-card="component"]:not([data-call-offer-superseded])',
               legacyRoot
           )).some(function (card) {
