@@ -51,6 +51,10 @@
   // (task #760), and the list was read once. A Starter's upcoming confirmed
   // row with no link gets these re-reads, counted from the tick that first
   // sees it. Some calendars never get a link, so the budget is 3 per row.
+  // Each re-read runs on the first 10 s tick at or after its delay, so the
+  // effective schedule is 50, 90 and 150 s. The first re-read then runs 50 to
+  // 60 s after the confirm, after most of the F40 window; a 40 s tick would
+  // run before most links exist.
   const MEETING_LINK_POLL_DELAYS_MS = [45000, 90000, 150000]
   const MUTATION_RECONCILIATION_MAX_PASSES = 3
   const CANONICAL_READ_TIMEOUT_MS = 10000

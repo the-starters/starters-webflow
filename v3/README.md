@@ -2858,19 +2858,21 @@ refresh of the same session, and a newer session discards its result.
 - A Meet link that is not written yet (F54, JP meeting 2026-09-30). F40 writes
   a virtual-calendar Meet link 38 to 56 s after the confirm (task #760). A row
   in its confirmed meeting window with an empty `meeting_link` gets re-reads
-  45, 90, and 150 s after the tick that first sees it: at most three per row
-  for the life of the page. The window and the clock are the ones the
-  meeting-link paint uses, so a rescheduled row uses `start_old` to `end_old`,
-  a call in progress still counts, and the canonical booking clock wins. No
-  re-read runs while `document.visibilityState` is `hidden`. When a re-read
-  runs a full tick late (the page was hidden, or another ticker read was in
-  flight), the remaining delays restart from that re-read, so overdue re-reads
-  never run on back-to-back ticks. A row that leaves this set and comes back
-  (a reset of the rendered rows, or a link that came and went) keeps its spent
-  count. Its remaining delays restart from the tick that sees it again, so no
-  re-read runs on that tick. A successful re-read repaints the cards, the open
-  dialog's meeting link, and its actions at once. The Brand dashboard gets no
-  Meet link re-read.
+  on the first ticks at or after 45, 90, and 150 s from the tick that first
+  sees it: at most three per row for the life of the page. The ticker runs
+  every 10 s, so the effective schedule is 50, 90, and 150 s, and the first
+  re-read runs 50 to 60 s after the confirm. The window and the clock are the
+  ones the meeting-link paint uses, so a rescheduled row uses `start_old` to
+  `end_old`, a call in progress still counts, and the canonical booking clock
+  wins. No re-read runs while `document.visibilityState` is `hidden`. When a
+  re-read runs a full tick late (the page was hidden, or another ticker read
+  was in flight), the remaining delays restart from that re-read, so overdue
+  re-reads never run on back-to-back ticks. A row that leaves this set and
+  comes back (a reset of the rendered rows, or a link that came and went)
+  keeps its spent count. Its remaining delays restart from the tick that sees
+  it again, so no re-read runs on that tick. A successful re-read repaints the
+  cards, the open dialog's meeting link, and its actions at once. The Brand
+  dashboard gets no Meet link re-read.
 
 These background refreshes reuse the same identity and endpoint contract, skip
 repainting a section whose canonical rows are unchanged, restore the extra

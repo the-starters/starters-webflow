@@ -8787,9 +8787,10 @@ test('F53: when the owner refuses the commit, the refreshed row repaints the mod
 // F54 (JP meeting 2026-09-30): F40 writes a virtual-calendar Meet link 38 to
 // 56 s after the confirm (task #760), and the dashboard read the list once, so
 // Join Call and the Meeting Link row stayed empty until a reload. The Starter
-// ticker now re-reads an upcoming confirmed row with no link 45, 90 and 150 s
-// after the tick that first sees it: at most 3 times per row, never while the
-// page is hidden, and never while another ticker read is in flight.
+// ticker now re-reads an upcoming confirmed row with no link on the first ticks
+// at or after 45, 90 and 150 s from the tick that first sees it (50, 90 and
+// 150 s on the 10 s ticker): at most 3 times per row, never while the page is
+// hidden, and never while another ticker read is in flight.
 const F54_START = 2_000_000_000_000
 
 function linkTicker(refs, restart, clock, role = 'starter') {
@@ -8837,7 +8838,24 @@ async function withLinkGlobals(document, run) {
   }
 }
 
-test('F54: an upcoming confirmed row with no Meet link is re-read 45, 90 and 150 s after the first tick that sees it, then never again', async () => {
+test('F54: on the 10 s ticker, an upcoming confirmed row with no Meet link is re-read 50, 90 and 150 s after the first sighting', async () => {
+  await withLinkGlobals({ visibilityState: 'visible' }, async () => {
+    const clock = { value: F54_START }
+    const refs = [{ rows: [linklessRow()], list: { querySelectorAll: () => [] } }]
+    const reads = []
+    // The ticker's own first tick at 0 s sees the row; every later tick is on
+    // the 10 s interval, as in production.
+    const ticker = linkTicker(refs, async () => {
+      reads.push((clock.value - F54_START) / 1000)
+      return true
+    }, clock)
+    for (let seconds = 10; seconds <= 900; seconds += 10) await ticker.at(seconds)
+    assert.deepEqual(reads, [50, 90, 150])
+    ticker.stop()
+  })
+})
+
+test('F54: an upcoming confirmed row with no Meet link is re-read on the first ticks at or after 45, 90 and 150 s from the first tick that sees it, then never again', async () => {
   await withLinkGlobals({ visibilityState: 'visible' }, async () => {
     const clock = { value: F54_START }
     const refs = [{ rows: [linklessRow()], list: { querySelectorAll: () => [] } }]
