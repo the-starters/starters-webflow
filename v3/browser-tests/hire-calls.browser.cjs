@@ -148,6 +148,31 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
       await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 0, y: 0 })
       await pause(220)
     }
+    // Every DOM mutation under body in 400 ms, described. A settled page makes
+    // none. With `unrelated`, one unrelated node is added first and its own
+    // record is left out: every writer the body observer then reaches must
+    // leave unchanged DOM alone.
+    const describeMutations = unrelated => `new Promise(resolve => {
+      const found = []
+      const marker = document.createElement('div')
+      const name = node => node.nodeType === 1
+        ? node.tagName.toLowerCase() + (node.getAttribute('data-type') ? ':' + node.getAttribute('data-type') : '')
+        : '#text'
+      const o = new MutationObserver(records => records.forEach(r => {
+        if (r.type === 'childList' && [...r.addedNodes].includes(marker)) return
+        found.push(name(r.target) + ' ' + r.type + (r.attributeName
+          ? ' ' + r.attributeName + ': ' + r.oldValue + ' -> ' + r.target.getAttribute(r.attributeName)
+          : ''))
+      }))
+      o.observe(document.body, { subtree: true, childList: true, attributes: true, attributeOldValue: true, characterData: true })
+      if (${unrelated}) document.body.appendChild(marker)
+      setTimeout(() => { o.disconnect(); marker.remove(); resolve(found) }, 400)
+    })`
+    const countMutations = describeMutations(false)
+    const countMutationsAfterUnrelatedNode = describeMutations(true)
+    const legacyToutStates = `[...document.querySelectorAll('[data-call-canary-legacy-wrapper="header"] [data-service-card="component"]')]
+      .filter(card => ['free', 'paid'].includes(card.getAttribute('data-type')))
+      .map(card => card.getAttribute('data-type') + ':' + card.getAttribute('data-call-offer-state'))`
     const assertBookState = (state, role, available) => {
       assert.equal(state.book.visible, true, 'Book Call remains discoverable')
       assert.equal(state.book.disabled, role === 'brand' && !available)
@@ -261,6 +286,17 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
         assert.equal(ownerLegacyState.legacyCards.length, 2)
         assert.ok(ownerLegacyState.legacyCards.every(card => card.offerState === 'settings-loading' && card.busy))
       }
+    }
+
+    // F50: a non Free/Paid card in the legacy Header wrapper (its wf-xano
+    // template, a rate tout) must not keep the owner writer re-running. Its
+    // writes woke the body observer again, so the page hung.
+    for (const extra of ['template', 'hourly']) {
+      await navigate(`role=owner&header=legacy&legacyextra=${extra}`)
+      assert.equal(await evaluate('1 + 1'), 2, `${extra}: the owner page stays responsive`)
+      assert.deepEqual(await evaluate(legacyToutStates), ['free:available', 'paid:available'], `${extra}: owner touts settle`)
+      assert.deepEqual(await evaluate(countMutations), [], `${extra}: a settled owner page makes no DOM writes`)
+      assert.deepEqual(await evaluate(countMutationsAfterUnrelatedNode), [], `${extra}: an unrelated node wakes no writer`)
     }
 
     await navigate('role=brand&discovery=held')

@@ -10375,3 +10375,107 @@ for (const viewer of ['signed-out', 'paywalled', 'brand']) {
     }
   })
 }
+
+/**
+ * Records every DOM write under `root` from now on: attribute sets (a real
+ * setAttribute queues a mutation even for the same value), removals of an
+ * attribute that is present, child insertions and removals, text writes and
+ * inline style writes. A body observer pass over a settled page must make
+ * none of them, or its own childList writes wake the observer again.
+ */
+function recordDomWrites(root, writes = []) {
+  const wrap = (el) => {
+    if (el.__writesRecorded) return
+    el.__writesRecorded = true
+    const label = () => [el.tag, el.getAttribute('data-type'), el.getAttribute('data-call-availability-hint') !== null ? 'hint' : '']
+      .filter(Boolean).join(':')
+    const { setAttribute, removeAttribute, appendChild, insertBefore, prepend, remove } = el
+    el.setAttribute = (name, value) => { writes.push(`${label()} set ${name}=${value}`); setAttribute(name, value) }
+    el.removeAttribute = (name) => {
+      if (el.hasAttribute(name)) writes.push(`${label()} remove ${name}`)
+      removeAttribute(name)
+    }
+    el.appendChild = (child) => { writes.push(`${label()} append ${child.tag}`); const out = appendChild(child); wrap(child); return out }
+    el.insertBefore = (child, ref) => { writes.push(`${label()} insert ${child.tag}`); const out = insertBefore(child, ref); wrap(child); return out }
+    el.prepend = (child) => { writes.push(`${label()} prepend ${child.tag}`); const out = prepend(child); wrap(child); return out }
+    el.remove = () => { if (el.parentElement) writes.push(`${label()} removed`); remove() }
+    let text = el.textContent
+    Object.defineProperty(el, 'textContent', {
+      configurable: true,
+      get: () => text,
+      set: (value) => { writes.push(`${label()} text=${value}`); text = value },
+    })
+    el.style = new Proxy(el.style, {
+      set(target, property, value) {
+        writes.push(`${label()} style.${String(property)}=${value}`)
+        target[property] = value
+        return true
+      },
+    })
+    el.children.forEach(wrap)
+  }
+  wrap(root)
+  return writes
+}
+
+/** Fires the body observer for one unrelated added node, as Chrome would. */
+async function reconcileAfterUnrelatedNode(context, page) {
+  const unrelated = makeElement('div')
+  page.root.appendChild(unrelated)
+  const writes = recordDomWrites(page.root)
+  context.mutationObserverCallbacks.forEach((callback) => callback([{ type: 'childList', addedNodes: [unrelated] }]))
+  await settle()
+  return writes
+}
+
+for (const extra of ['template', 'hourly']) {
+  test(`F50 a settled owner legacy Header with a ${extra} card writes nothing on a later reconcile`, async () => {
+    const fixture = f50LegacyHeaderPage()
+    // A card in the legacy wrapper that is not a Free or Paid tout: the
+    // wf-xano template, or a rate tout. It never follows the call DTO.
+    fixture.legacyHeader.wrapper.appendChild(extra === 'template'
+      ? makeElement('div', { 'wf-xano-element': 'template', 'data-service-card': 'component' })
+      : makeElement('a', { 'data-service-card': 'component', 'data-service-card-type': 'tout', 'data-type': 'hourly', href: '#services' }))
+    const context = ownerContext(fixture.page, ownerController(), { wfXano: fixture.feed.api })
+    holdLongTimers(context)
+    vm.createContext(context)
+    vm.runInContext(source, context)
+    fixture.feed.emit(callCardResult({ free: true, paid: true }))
+    await settle()
+    for (const card of fixture.legacyCards) {
+      assert.equal(card.root.getAttribute('data-call-offer-state'), 'available')
+      assert.equal(card.root.getAttribute('data-call-owner-preview'), '')
+    }
+    assert.deepEqual(await reconcileAfterUnrelatedNode(context, fixture.page), [],
+      'a second reconcile with no change writes nothing')
+    assert.deepEqual(await reconcileAfterUnrelatedNode(context, fixture.page), [],
+      'and nor does a third')
+  })
+}
+
+test('F50 an owner reconcile for a late legacy tout leaves the unchanged Book Call hint alone', async () => {
+  const fixture = f50LegacyHeaderPage()
+  const context = ownerContext(fixture.page, ownerController(), { wfXano: fixture.feed.api })
+  holdLongTimers(context)
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  fixture.feed.emit(callCardResult({ free: true, paid: true }))
+  await settle()
+  const button = fixture.page.bookingButton
+  const hint = fixture.page.root.querySelector('#' + button.getAttribute('aria-describedby'))
+  assert.equal(hint.getAttribute('data-call-availability-hint'), '')
+  assert.equal(hint.textContent, 'Clients use this button to book a call with you. Your calls are available to brands. ')
+  // The mock text setter keeps children, so count links rather than expect one.
+  const links = hint.querySelectorAll('a').length
+  assert.ok(links > 0, 'the owner hint carries the settings link')
+  const bookCallWrites = recordDomWrites(hint, recordDomWrites(button))
+  // A real change: the legacy wrapper renders one more Free tout late, so the
+  // owner writer runs again from the body observer.
+  const late = makeElement('div', { 'data-service-card': 'component', 'data-type': 'free', 'has-connection': 'free' })
+  fixture.legacyHeader.wrapper.appendChild(late)
+  context.mutationObserverCallbacks.forEach((callback) => callback([{ type: 'childList', addedNodes: [late] }]))
+  await settle()
+  assert.equal(late.getAttribute('data-call-offer-state'), 'available', 'the late tout gets the owner state')
+  assert.deepEqual(bookCallWrites, [], 'the unchanged Book Call hint and trigger are not rewritten')
+  assert.equal(hint.querySelectorAll('a').length, links, 'no second settings link')
+})

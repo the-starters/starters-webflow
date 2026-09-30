@@ -73,6 +73,10 @@ if (legacyHeader) {
   root.setAttribute('wf-xano-instance', 'starter-calls')
   root.setAttribute('data-call-canary-legacy-wrapper', 'header')
   root.innerHTML = ['free', 'paid'].map(type => `<article data-service-card="component" data-service-card-state="Default" data-type="${type}" has-connection="${type}" booking-popup-open data-modal-trigger="popup-booking-main" data-signup-trigger-element="service" data-signup-trigger-value="${type === 'free' ? 'Free Call' : 'Paid Consulting Call'}">${cardContent(type)}</article>`).join('')
+  // legacyextra: a card in the legacy wrapper that is not a Free or Paid
+  // tout (its wf-xano template, or a rate tout).
+  if (params.get('legacyextra') === 'template') root.insertAdjacentHTML('afterbegin', '<div wf-xano-element="template" data-service-card="component"></div>')
+  if (params.get('legacyextra') === 'hourly') root.insertAdjacentHTML('afterbegin', '<a data-service-card="component" data-service-card-type="tout" data-type="hourly" href="#services">Hourly</a>')
   qs('#header').append(root)
 }
 // servicecard=authored: wf-xano clones inherit the template's

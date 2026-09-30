@@ -112,6 +112,25 @@
       (document.head || document.documentElement).appendChild(style);
   }
 
+  /* ---- unchanged-value guards ----
+     The body observer re-runs the call writers on every added node. A write of
+     an unchanged value is still a DOM mutation (setAttribute queues one, and a
+     text write replaces the child text node), so each such writer checks the
+     current value first. A settled page then records no mutation, and a text
+     write cannot wake the observer that made it. */
+  function setAttributeIfChanged(el, name, value) {
+      const text = String(value);
+      if (el.getAttribute(name) !== text) el.setAttribute(name, text);
+  }
+
+  function setStyleIfChanged(el, property, value) {
+      if (el.style[property] !== value) el.style[property] = value;
+  }
+
+  function setTextIfChanged(el, text) {
+      if (el.textContent !== text) el.textContent = text;
+  }
+
   /* ---- canonical rate repaint ----
      The rate lives in four stores and the CMS-bound `[data-millify]` surfaces
      were never re-painted after a settings save, so a stale CMS rate outlived
@@ -222,10 +241,12 @@
       // authored ceiling. That ceiling is sized for the CMS value; leaving it on
       // a repainted node means a later re-process fails('max') and reverts to the
       // raw number, which looks exactly like the bad-data case it exists to expose.
-      el.removeAttribute('data-millify-raw');
+      // A raw that millify stamped after formatting this same explicit value
+      // is not stale, so a repaint of an unchanged amount leaves it.
+      if (el.getAttribute('data-millify') !== amount) el.removeAttribute('data-millify-raw');
       el.removeAttribute('data-millify-max');
-      el.setAttribute('data-millify', amount);
-      if (el.textContent !== formatted.text) el.textContent = formatted.text;
+      setAttributeIfChanged(el, 'data-millify', amount);
+      setTextIfChanged(el, formatted.text);
       return true;
   }
 
@@ -377,8 +398,8 @@
           if (!el) return;
           // Two body-wide MutationObservers wake on every text write, so an
           // identical rewrite is real work for no change.
-          if (el.textContent !== text) el.textContent = text;
-          el.setAttribute('data-next-slot-state', state);
+          setTextIfChanged(el, text);
+          setAttributeIfChanged(el, 'data-next-slot-state', state);
       });
   }
 
@@ -560,8 +581,8 @@
       if (!wrapper.querySelector('[data-modal-trigger="popup-booking-main"]') &&
           !wrapper.querySelector('[data-signup-trigger-element="book-call"]') &&
           !wrapper.querySelector('[data-profile-book-call]')) return;
-      wrapper.style.display = 'flex';
-      wrapper.setAttribute('aria-hidden', 'false');
+      setStyleIfChanged(wrapper, 'display', 'flex');
+      setAttributeIfChanged(wrapper, 'aria-hidden', 'false');
   }
 
   function canonicalCallCardForSurface(surface) {
@@ -705,38 +726,47 @@
           });
       }
       if (available) {
-          entry.hint.style.display = 'none';
+          setStyleIfChanged(entry.hint, 'display', 'none');
           trigger.removeAttribute('aria-busy');
           trigger.removeAttribute('data-booking-trigger-loading');
           trigger.removeAttribute('aria-describedby');
-          if (entry.signup) trigger.setAttribute('data-signup-trigger-element', entry.signup);
-          if (entry.modal && !trigger.hasAttribute('data-logged-out-book-call')) trigger.setAttribute('data-modal-trigger', entry.modal);
+          if (entry.signup) setAttributeIfChanged(trigger, 'data-signup-trigger-element', entry.signup);
+          if (entry.modal && !trigger.hasAttribute('data-logged-out-book-call')) {
+              setAttributeIfChanged(trigger, 'data-modal-trigger', entry.modal);
+          }
           return;
       }
       trigger.removeAttribute('data-signup-trigger-element');
       trigger.removeAttribute('data-modal-trigger');
-      trigger.setAttribute('data-profile-book-call', '');
-      trigger.setAttribute('tabindex', '0');
-      trigger.setAttribute('role', 'button');
-      trigger.setAttribute('aria-label', 'Book a Call');
-      trigger.setAttribute('aria-describedby', entry.hint.getAttribute('id'));
+      setAttributeIfChanged(trigger, 'data-profile-book-call', '');
+      setAttributeIfChanged(trigger, 'tabindex', '0');
+      setAttributeIfChanged(trigger, 'role', 'button');
+      setAttributeIfChanged(trigger, 'aria-label', 'Book a Call');
+      setAttributeIfChanged(trigger, 'aria-describedby', entry.hint.getAttribute('id'));
       const owner = bookingOwner;
       const pending = !owner && callDiscoveryPending;
       if (pending) {
-          trigger.setAttribute('aria-busy', 'true');
-          trigger.setAttribute('data-booking-trigger-loading', '');
+          setAttributeIfChanged(trigger, 'aria-busy', 'true');
+          setAttributeIfChanged(trigger, 'data-booking-trigger-loading', '');
           trigger.removeAttribute('data-booking-trigger-unavailable');
       } else {
           trigger.removeAttribute('aria-busy');
           trigger.removeAttribute('data-booking-trigger-loading');
-          trigger.setAttribute('data-booking-trigger-unavailable', '');
+          setAttributeIfChanged(trigger, 'data-booking-trigger-unavailable', '');
       }
-      entry.hint.textContent = owner
+      const copy = owner
           ? ('Clients use this button to book a call with you. ' +
               (ownerBookingReady ? 'Your calls are available to brands. ' : 'Your call booking is unavailable. '))
           : pending
               ? 'Checking this Starter’s call times…'
               : 'This Starter isn’t accepting calls right now.';
+      // The hint is this writer's own node. Rewriting the same copy (and
+      // re-appending the owner link) would be a childList mutation that wakes
+      // the body observer, which can call back here.
+      if (entry.copy === copy && entry.ownerLink === owner) return;
+      entry.copy = copy;
+      entry.ownerLink = owner;
+      entry.hint.textContent = copy;
       if (owner) {
           const settings = document.createElement('a');
           settings.textContent = 'Manage call settings';
@@ -769,8 +799,8 @@
               trigger.removeAttribute('data-booking-trigger-unavailable');
               trigger.removeAttribute('aria-disabled');
           } else {
-              trigger.setAttribute('data-booking-trigger-unavailable', '');
-              trigger.setAttribute('aria-disabled', 'true');
+              setAttributeIfChanged(trigger, 'data-booking-trigger-unavailable', '');
+              setAttributeIfChanged(trigger, 'aria-disabled', 'true');
           }
           explainBookingAvailability(trigger, available);
       });
@@ -779,7 +809,7 @@
           if (available) {
               dialog.removeAttribute('data-booking-surface-unavailable');
           } else {
-              dialog.setAttribute('data-booking-surface-unavailable', '');
+              setAttributeIfChanged(dialog, 'data-booking-surface-unavailable', '');
           }
       });
   }
@@ -945,16 +975,16 @@
                       surface.style.display !== 'block';
                   surface.removeAttribute('data-canonical-call-unavailable');
                   surface.removeAttribute('aria-hidden');
-                  surface.style.display = 'block';
+                  setStyleIfChanged(surface, 'display', 'block');
                   if (onReveal) onReveal(surface, type);
               } else {
                   changed = changed ||
                       !surface.hasAttribute('data-canonical-call-unavailable') ||
                       surface.getAttribute('aria-hidden') !== 'true' ||
                       surface.style.display !== 'none';
-                  surface.setAttribute('data-canonical-call-unavailable', '');
-                  surface.setAttribute('aria-hidden', 'true');
-                  surface.style.display = 'none';
+                  setAttributeIfChanged(surface, 'data-canonical-call-unavailable', '');
+                  setAttributeIfChanged(surface, 'aria-hidden', 'true');
+                  setStyleIfChanged(surface, 'display', 'none');
               }
               trackHeaderCallEligibility(surface, type, !!availability[type]);
           });
@@ -1459,7 +1489,7 @@
           // listener ownership by element identity instead of trusting the
           // diagnostic attribute as the binding guard.
           if (directCallServiceCards.has(card)) {
-              card.setAttribute('data-call-service-direct', 'ready');
+              setAttributeIfChanged(card, 'data-call-service-direct', 'ready');
               return;
           }
 
@@ -2245,13 +2275,13 @@
    */
   function decorateOwnerPreviewAction(action, kind) {
       if (!action) return;
-      if (kind !== 'call') action.style.display = '';
+      if (kind !== 'call') setStyleIfChanged(action, 'display', '');
       action.removeAttribute('hidden');
-      action.setAttribute('aria-hidden', 'false');
-      action.setAttribute('aria-disabled', 'true');
-      action.setAttribute('tabindex', '0');
-      action.setAttribute('role', 'button');
-      action.setAttribute('data-owner-preview-action', kind);
+      setAttributeIfChanged(action, 'aria-hidden', 'false');
+      setAttributeIfChanged(action, 'aria-disabled', 'true');
+      setAttributeIfChanged(action, 'tabindex', '0');
+      setAttributeIfChanged(action, 'role', 'button');
+      setAttributeIfChanged(action, 'data-owner-preview-action', kind);
       action.removeAttribute('data-modal-trigger');
       action.removeAttribute('booking-popup-open');
       // signup-attribution listens on document capture. Removing its selector
@@ -2331,8 +2361,8 @@
           }, true);
       }
 
-      entry.hint.textContent = ownerPreviewCopy(kind);
-      action.setAttribute('aria-describedby', entry.hint.getAttribute('id'));
+      setTextIfChanged(entry.hint, ownerPreviewCopy(kind));
+      setAttributeIfChanged(action, 'aria-describedby', entry.hint.getAttribute('id'));
   }
 
   function decorateOwnerPreviewActions() {
@@ -2842,11 +2872,11 @@
       if (visible) {
           card.removeAttribute('data-canonical-call-unavailable');
           card.removeAttribute('aria-hidden');
-          card.style.display = 'block';
+          setStyleIfChanged(card, 'display', 'block');
       } else {
-          card.setAttribute('data-canonical-call-unavailable', '');
-          card.setAttribute('aria-hidden', 'true');
-          card.style.display = 'none';
+          setAttributeIfChanged(card, 'data-canonical-call-unavailable', '');
+          setAttributeIfChanged(card, 'aria-hidden', 'true');
+          setStyleIfChanged(card, 'display', 'none');
       }
       trackHeaderCallEligibility(card, card.getAttribute('data-type') ||
           card.getAttribute('data-call-offer-type'), visible);
@@ -3142,14 +3172,19 @@
           return;
       }
       if (isProfileOwner(MEMBER)) {
+          // Only the Free and Paid touts follow the owner writer. Another card
+          // in this wrapper (the wf-xano template, a rate tout) never gets the
+          // canonical stamp, so counting it would re-run the writer on every
+          // observer pass, and its writes would wake the observer again.
           const legacyRoot = qs('[data-call-canary-legacy-wrapper="header"]');
-          const needsOwnerState = legacyRoot && legacyHeaderFollowsCanonicalDto() && Array.from(qsa(
-              '[data-service-card="component"]:not([data-call-offer-superseded])',
-              legacyRoot
-          )).some(function (card) {
-              return !card.hasAttribute('data-canonical-public-call') ||
-                  !card.hasAttribute('data-call-offer-state');
-          });
+          const needsOwnerState = legacyRoot && legacyHeaderFollowsCanonicalDto() &&
+              ['free', 'paid'].some(function (type) {
+                  return Array.from(legacyHeaderCardsForType(legacyRoot, type)).some(function (card) {
+                      return !card.hasAttribute('data-call-offer-superseded') &&
+                          (!card.hasAttribute('data-canonical-public-call') ||
+                              !card.hasAttribute('data-call-offer-state'));
+                  });
+              });
           if (needsOwnerState) applyOwnerCallCardStates(ownerCallSettingsSnapshot);
           return;
       }
@@ -3251,9 +3286,9 @@
 
   function hideCallOfferTooltips(card) {
       callOfferTooltipNodes(card).forEach(function (node) {
-          node.style.display = 'none';
-          node.setAttribute('hidden', 'hidden');
-          node.setAttribute('aria-hidden', 'true');
+          setStyleIfChanged(node, 'display', 'none');
+          setAttributeIfChanged(node, 'hidden', 'hidden');
+          setAttributeIfChanged(node, 'aria-hidden', 'true');
       });
   }
 
@@ -3261,12 +3296,12 @@
       const readiness = ownerReadinessOf(settings);
       const message = setupMessageFor(type, settings);
       qsa('[data-call-offer-tooltip-text], [hover-text]', card).forEach(function (node) {
-          node.textContent = message;
+          setTextIfChanged(node, message);
       });
       callOfferTooltipNodes(card).forEach(function (node) {
-          node.style.display = 'block';
+          setStyleIfChanged(node, 'display', 'block');
           node.removeAttribute('hidden');
-          node.setAttribute('aria-hidden', 'false');
+          setAttributeIfChanged(node, 'aria-hidden', 'false');
       });
 
       const needsCalendar = !readiness.calendar_connected || !readiness.availability_configured;
@@ -3281,7 +3316,7 @@
                   : 'calendar');
           const show = action === neededAction;
           const wrap = cta.closest('[hover-cta-wrap]') || cta;
-          wrap.style.display = show ? 'block' : 'none';
+          setStyleIfChanged(wrap, 'display', show ? 'block' : 'none');
           if (!cta.getAttribute('href') || cta.getAttribute('href') === '#') {
               cta.setAttribute('href', '/starter-dashboard');
           }
@@ -3291,12 +3326,12 @@
   function configureOwnerSettingsUnavailable(card) {
       const message = 'Call settings could not be loaded. Refresh or open Call Settings.';
       qsa('[data-call-offer-tooltip-text], [hover-text]', card).forEach(function (node) {
-          node.textContent = message;
+          setTextIfChanged(node, message);
       });
       callOfferTooltipNodes(card).forEach(function (node) {
-          node.style.display = 'block';
+          setStyleIfChanged(node, 'display', 'block');
           node.removeAttribute('hidden');
-          node.setAttribute('aria-hidden', 'false');
+          setAttributeIfChanged(node, 'aria-hidden', 'false');
       });
       qsa('[hover-cta], [data-call-setup-action]', card).forEach(function (cta) {
           const action = cta.getAttribute('data-call-setup-action') ||
@@ -3305,7 +3340,7 @@
                   : 'calendar');
           const show = action === 'settings';
           const wrap = cta.closest('[hover-cta-wrap]') || cta;
-          wrap.style.display = show ? 'block' : 'none';
+          setStyleIfChanged(wrap, 'display', show ? 'block' : 'none');
           if (show && (!cta.getAttribute('href') || cta.getAttribute('href') === '#')) {
               cta.setAttribute('href', '/starter-dashboard');
           }
@@ -3336,35 +3371,35 @@
           card.removeAttribute('data-signup-trigger-value');
           card.removeAttribute('data-modal-trigger');
           card.removeAttribute('data-call-service-direct');
-          card.setAttribute('data-call-owner-preview', '');
+          setAttributeIfChanged(card, 'data-call-owner-preview', '');
           card.removeAttribute('aria-busy');
           if (record) {
               decorateOwnerPreviewAction(card, 'call');
-              card.setAttribute('data-service-card-state', 'Default');
-              card.setAttribute('has-connection', type);
+              setAttributeIfChanged(card, 'data-service-card-state', 'Default');
+              setAttributeIfChanged(card, 'has-connection', type);
               card.removeAttribute('no-connection');
-              card.setAttribute('data-call-offer-state', 'available');
+              setAttributeIfChanged(card, 'data-call-offer-state', 'available');
               hideCallOfferTooltips(card);
           } else if (settingsStatus === 'loading') {
               // F50: an unanswered settings read is loading, not disabled.
               // The authored Default look stays; aria-busy marks the wait.
-              card.setAttribute('data-service-card-state', 'Default');
+              setAttributeIfChanged(card, 'data-service-card-state', 'Default');
               card.removeAttribute('has-connection');
               card.removeAttribute('no-connection');
-              card.setAttribute('data-call-offer-state', 'settings-loading');
-              card.setAttribute('aria-busy', 'true');
+              setAttributeIfChanged(card, 'data-call-offer-state', 'settings-loading');
+              setAttributeIfChanged(card, 'aria-busy', 'true');
               hideCallOfferTooltips(card);
           } else if (settingsStatus !== 'loaded') {
-              card.setAttribute('data-service-card-state', 'Disabled');
+              setAttributeIfChanged(card, 'data-service-card-state', 'Disabled');
               card.removeAttribute('has-connection');
               card.removeAttribute('no-connection');
-              card.setAttribute('data-call-offer-state', 'settings-unavailable');
+              setAttributeIfChanged(card, 'data-call-offer-state', 'settings-unavailable');
               configureOwnerSettingsUnavailable(card);
           } else {
-              card.setAttribute('data-service-card-state', 'Disabled');
+              setAttributeIfChanged(card, 'data-service-card-state', 'Disabled');
               card.removeAttribute('has-connection');
-              card.setAttribute('no-connection', type);
-              card.setAttribute('data-call-offer-state', 'setup-required');
+              setAttributeIfChanged(card, 'no-connection', type);
+              setAttributeIfChanged(card, 'data-call-offer-state', 'setup-required');
               configureOwnerSetupActions(card, type, settings);
           }
       });
