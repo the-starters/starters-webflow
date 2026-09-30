@@ -1428,7 +1428,8 @@
         setCardEditorOpen(false)
       })
     }
-    window.addEventListener('starterSchedulingConnectionStateChanged', function () {
+    window.addEventListener('starterSchedulingConnectionStateChanged', function (event) {
+      if (event && event.detail && event.detail.state === 'loading') return
       refreshFromPrerequisite().catch(function () {})
     })
     wireAuthChanges()

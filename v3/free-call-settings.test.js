@@ -462,9 +462,9 @@ function load(options = {}) {
       const pending = timers.splice(0)
       pending.forEach((timer) => { if (!timer.cancelled) timer.callback() })
     },
-    dispatchWindowEvent: async (name) => {
+    dispatchWindowEvent: async (name, detail) => {
       const listeners = windowListeners.get(name) || []
-      await Promise.all(listeners.map((listener) => listener({ type: name })))
+      await Promise.all(listeners.map((listener) => listener({ type: name, detail })))
     },
   }
 }
@@ -481,6 +481,21 @@ test('is inert when the Free settings root is absent', async () => {
   await settle()
   assert.equal(result.document.documentElement.getAttribute('data-free-call-settings'), 'not-applicable')
   assert.equal(result.calls.length, 0)
+})
+
+test('a loading calendar state does not start a Free settings read', async () => {
+  const result = load({ initial: canonical({ readiness: { calendar_connected: false } }) })
+  await settle()
+  const reads = () => result.calls.filter((call) => call.path === '/starter/free-call-settings/get/v3').length
+  assert.equal(reads(), 1)
+
+  await result.dispatchWindowEvent('starterSchedulingConnectionStateChanged', { state: 'loading' })
+  await settle()
+  assert.equal(reads(), 1)
+
+  await result.dispatchWindowEvent('starterSchedulingConnectionStateChanged', { state: 'connected' })
+  await settle()
+  assert.equal(reads(), 2)
 })
 
 test('boots when the native Free form is inserted after the controller', async () => {
