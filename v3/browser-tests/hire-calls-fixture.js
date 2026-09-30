@@ -63,7 +63,10 @@ window.StartersFreeCallBooking = {
 window.StartersPaidCallBrandPayment = { installPaidBookingController: () => install('paid') }
 window.callResult = (paid = true) => ({ items: ['free', 'paid'].map(type => ({ id: `424:call:${type}`, type, name: type === 'free' ? 'Free Call' : 'Paid Consulting Call', description: 'Fixture call offer', price: type === 'free' ? 0 : paid ? 250 : null, currency: 'USD', unit: '/session', public_available: type === 'free' || paid })) })
 window.lists = {}
-const cardContent = type => `<div data-service-card-element="title"></div><p data-service-card-element="description"></p><span data-millify></span><div class="service-card_content-wrapper"><span next-available-slot>00:00pm on 00/00</span></div><div data-call-offer-tooltip style="display:none"><span data-call-offer-tooltip-text hover-text></span><a hover-cta data-call-setup-action="calendar" starter-dashboard-url>Calendar</a><a hover-cta data-call-setup-action="stripe" stripe-connect-url>Stripe</a><a hover-cta data-call-setup-action="settings" starter-dashboard-url>Call Settings</a></div>`
+// tooltip=shown authors the setup tooltip visible, so a loading state has to
+// hide it rather than inherit the authored hide.
+const tooltipDisplay = params.get('tooltip') === 'shown' ? 'block' : 'none'
+const cardContent = type => `<div data-service-card-element="title"></div><p data-service-card-element="description"></p><span data-millify></span><div class="service-card_content-wrapper"><span next-available-slot>00:00pm on 00/00</span></div><div data-call-offer-tooltip style="display:${tooltipDisplay}"><span data-call-offer-tooltip-text hover-text></span><a hover-cta data-call-setup-action="calendar" starter-dashboard-url>Calendar</a><a hover-cta data-call-setup-action="stripe" stripe-connect-url>Stripe</a><a hover-cta data-call-setup-action="settings" starter-dashboard-url>Call Settings</a></div>`
 if (legacyHeader) {
   const root = document.createElement('div')
   root.setAttribute('wf-xano-element', 'wrapper')

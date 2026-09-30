@@ -75,6 +75,8 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
             price: el.querySelector('[data-millify]').textContent,
             tooltip: el.querySelector('[hover-text]').textContent,
             tooltipDisplay: getComputedStyle(el.querySelector('[data-call-offer-tooltip]')).display,
+            tooltipHidden: el.querySelector('[data-call-offer-tooltip]').hasAttribute('hidden'),
+            cursor: getComputedStyle(el).cursor,
             slotText: slot ? slot.textContent : null,
             slotVisibility: slot ? getComputedStyle(slot).visibility : null,
             bookingPopup: el.hasAttribute('booking-popup-open'),
@@ -153,6 +155,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
     assert.equal(legacyState.legacyCards.length, 2)
     assert.ok(legacyState.legacyCards.every(card => card.visible && card.state === 'Default'))
     assert.ok(legacyState.legacyCards.every(card => card.offerState === 'loading' && card.busy))
+    assert.ok(legacyState.legacyCards.every(card => card.slotText === '00:00pm on 00/00' && card.slotVisibility === 'hidden' && card.cursor === 'progress'), 'loading masks the slot and shows progress')
     assert.ok(legacyState.legacyCards.every(card => card.signup === null && card.modal === null && card.direct === null))
     await evaluate(`document.querySelector('[data-call-canary-legacy-wrapper="header"] [data-type="free"]').click()`)
     await pause(50)
@@ -213,12 +216,13 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
     assert.ok(talentLegacy.legacyCards.concat(talentLegacy.cards).every(card => !card.visible && card.offerState === 'hidden' && !card.busy), 'talent sees no call card')
 
     for (const grantOrder of ['fast', 'slow']) {
-      await navigate(`role=owner&owner=loading&header=legacy${grantOrder === 'slow' ? '&discovery=held' : ''}`)
+      await navigate(`role=owner&owner=loading&header=legacy&tooltip=shown${grantOrder === 'slow' ? '&discovery=held' : ''}`)
       let ownerLegacyState = await snapshot(`owner-legacy-${grantOrder}-grant-loading`)
       assert.equal(ownerLegacyState.legacyCards.length, 2)
       assert.ok(ownerLegacyState.legacyCards.every(card => card.visible && card.state === 'Default'))
       assert.ok(ownerLegacyState.legacyCards.every(card => card.offerState === 'settings-loading' && card.busy))
-      assert.ok(ownerLegacyState.legacyCards.every(card => card.tooltipDisplay === 'none' && card.slotVisibility === 'hidden'))
+      assert.ok(ownerLegacyState.legacyCards.every(card => card.tooltipDisplay === 'none' && card.tooltipHidden && card.slotVisibility === 'hidden'), 'settings-loading hides the authored-visible tooltip')
+      assert.ok(ownerLegacyState.legacyCards.every(card => card.cursor === 'progress'))
       assert.ok(ownerLegacyState.legacyCards.every(card => !card.bookingPopup && card.signup === null && card.modal === null && card.direct === null))
       if (grantOrder === 'slow') {
         assert.equal(await evaluate('resolveStarterDiscovery()'), true)
@@ -231,6 +235,9 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
 
     await navigate('role=brand&discovery=held')
     let loadingState = await snapshot('brand-discovery-loading')
+    assert.equal(loadingState.cards.length, 4)
+    assert.ok(loadingState.cards.every(card => card.visible && card.offerState === 'loading' && card.busy), 'Brand cards wait for discovery')
+    assert.ok(loadingState.cards.every(card => card.slotText === '00:00pm on 00/00' && card.slotVisibility === 'hidden' && card.cursor === 'progress'), 'loading masks the slot and shows progress')
     assert.equal(loadingState.book.loading, true)
     assert.equal(loadingState.book.busy, true)
     assert.equal(loadingState.book.disabled, true)
@@ -310,7 +317,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
       }
     }
     for (const owner of ['ready', 'off', 'calendar', 'stripe', 'stale', 'loading', 'error']) {
-      await navigate(`role=owner&owner=${owner}&failed=header`)
+      await navigate(`role=owner&owner=${owner}&failed=header${owner === 'loading' ? '&tooltip=shown' : ''}`)
       const state = await snapshot(`owner-${owner}`)
       assert.equal(state.cards.length, 4, 'owners retain two cards in both wrappers')
       assert.ok(state.cards.every(card => card.visible), 'owners retain both cards in both wrappers')
@@ -318,7 +325,8 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
       const messages = { off: { free: 'Enable your Free Call service.', paid: 'Enable and price your Paid Call service.' }, calendar: { free: 'Connect your calendar to offer calls.', paid: 'Connect your calendar to offer calls.' }, stripe: { paid: 'Connect Stripe to offer paid calls.' }, stale: { paid: 'Refresh your Stripe connection to offer paid calls.' }, loading: { free: '', paid: '' }, error: { free: 'Call settings could not be loaded. Refresh or open Call Settings.', paid: 'Call settings could not be loaded. Refresh or open Call Settings.' } }
       for (const card of state.cards) if (messages[owner]?.[card.type] !== undefined) assert.equal(card.tooltip, messages[owner][card.type])
       if (owner === 'loading') {
-        assert.ok(state.cards.every(card => card.offerState === 'settings-loading' && card.busy && card.tooltipDisplay === 'none'))
+        assert.ok(state.cards.every(card => card.offerState === 'settings-loading' && card.busy && card.tooltipDisplay === 'none' && card.tooltipHidden))
+        assert.ok(state.cards.every(card => card.cursor === 'progress'))
         assert.ok(state.cards.every(card => card.slotText === '00:00pm on 00/00' && card.slotVisibility === 'hidden'))
       }
     }
