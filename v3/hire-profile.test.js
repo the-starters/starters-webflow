@@ -10296,3 +10296,82 @@ for (const [label, member] of [['signed-out', {}], ['paywalled', FREE_BRAND_MEMB
     assert.equal(paid.root.getAttribute('data-call-offer-state'), 'hidden')
   })
 }
+
+/* F50: once its state is known, an offered legacy Header tout carries the
+   Book Call semantics origin/main (063cbf09) left on it. These values were
+   read from origin/main running this same fixture and order. Loading strips
+   them; a hidden tout stays fail closed without any hook. */
+const LEGACY_TOUT_SETTLED_KEYS = [
+  'tabindex', 'role', 'aria-label', 'data-profile-book-call', 'data-logged-out-book-call',
+  'data-modal-trigger', 'booking-popup-open', 'data-signup-trigger-element',
+  'data-signup-trigger-value', 'has-connection', 'aria-describedby', 'aria-disabled',
+  'aria-busy', 'data-booking-trigger-unavailable', 'data-booking-trigger-loading',
+]
+const ORIGIN_MAIN_PUBLIC_OFFERED_TOUT = {
+  tabindex: '0',
+  role: 'button',
+  'aria-label': 'Book a Call',
+  'data-profile-book-call': '',
+  'data-logged-out-book-call': '',
+  'data-modal-trigger': null,
+  'booking-popup-open': null,
+  'data-signup-trigger-element': 'service',
+  'data-signup-trigger-value': 'Free Call',
+  'has-connection': 'free',
+  'aria-describedby': null,
+  'aria-disabled': null,
+  'aria-busy': null,
+  'data-booking-trigger-unavailable': null,
+  'data-booking-trigger-loading': null,
+}
+const ORIGIN_MAIN_BRAND_OFFERED_TOUT = Object.assign({}, ORIGIN_MAIN_PUBLIC_OFFERED_TOUT, {
+  'data-logged-out-book-call': null,
+  'data-modal-trigger': 'popup-booking-main',
+})
+
+function legacyToutSemantics(root) {
+  const found = {}
+  for (const key of LEGACY_TOUT_SETTLED_KEYS) found[key] = root.getAttribute(key)
+  return found
+}
+
+for (const viewer of ['signed-out', 'paywalled', 'brand']) {
+  test(`F50 an offered legacy Header tout settles with the origin/main Book Call semantics (${viewer})`, async () => {
+    const fixture = f50LegacyHeaderPage()
+    const context = viewer === 'brand'
+      ? f50BrandContext(fixture.page, fixture.feed)
+      : makeContext({
+        page: fixture.page,
+        member: viewer === 'paywalled' ? FREE_BRAND_MEMBER : {},
+        wfXano: fixture.feed.api,
+      })
+    holdLongTimers(context)
+    vm.createContext(context)
+    vm.runInContext(source, context)
+    await settle()
+    assertF50Loading(fixture.legacyCards, 'identity known, DTO unresolved')
+    for (const card of fixture.legacyCards) {
+      for (const key of ['tabindex', 'role', 'aria-label', 'data-profile-book-call']) {
+        assert.equal(card.root.getAttribute(key), null, `${key} stays removed while loading`)
+      }
+    }
+    fixture.feed.emit(callCardResult({ free: true, paid: false }))
+    await settle()
+    const [free, paid] = fixture.legacyCards
+    const expected = viewer === 'brand' ? ORIGIN_MAIN_BRAND_OFFERED_TOUT : ORIGIN_MAIN_PUBLIC_OFFERED_TOUT
+    assert.equal(free.root.getAttribute('data-call-offer-state'), 'available')
+    assert.deepEqual(legacyToutSemantics(free.root), expected)
+    // Later reconciles keep the same settled semantics.
+    const unrelated = makeElement('div')
+    fixture.page.root.appendChild(unrelated)
+    context.mutationObserverCallbacks.forEach((callback) => callback([{ type: 'childList', addedNodes: [unrelated] }]))
+    await settle()
+    assert.deepEqual(legacyToutSemantics(free.root), expected, 'stable after a reconcile')
+    // A hidden tout is fail closed: nothing can focus or open it.
+    assert.equal(paid.root.getAttribute('data-call-offer-state'), 'hidden')
+    assert.equal(paid.root.style.display, 'none')
+    for (const key of ['tabindex', 'role', 'data-profile-book-call', 'data-modal-trigger', 'data-signup-trigger-element']) {
+      assert.equal(paid.root.getAttribute(key), null, `hidden tout: no ${key}`)
+    }
+  })
+}

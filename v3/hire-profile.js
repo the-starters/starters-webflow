@@ -1038,6 +1038,9 @@
           surface.removeAttribute('no-connection');
           surface.removeAttribute('aria-busy');
           surface.setAttribute('data-call-offer-state', 'available');
+          if (isLegacyHeaderCallSurface(surface) && surface.hasAttribute('data-canonical-public-call')) {
+              restoreLegacyHeaderBookingTrigger(surface, type, viewerSeesPublicProjection(MEMBER));
+          }
       }, function (surface, type) {
           if (includeSurface && !includeSurface(surface, type)) return false;
           if (!canonicalCallCardForSurface(surface)) return true;
@@ -1410,6 +1413,9 @@
   const directCallServiceCards = new WeakSet();
   // Clones the call adapter released because the DTO has no item for them.
   const releasedXanoCallCards = new WeakSet();
+  // The Book Call hooks each legacy Header tout was authored with, read once
+  // before the F50 loading state strips them.
+  const legacyHeaderAuthoredHooks = new WeakMap();
 
   function isManagedCallOfferCard(card) {
       return card.hasAttribute('data-xano-call-card') ||
@@ -1461,8 +1467,14 @@
           // installed chooser CTA so the matching GitHub controller and native
           // Webflow modal lifecycle stay authoritative, without showing the
           // generic Free/Paid choice first.
-          card.removeAttribute('booking-popup-open');
-          card.removeAttribute('data-modal-trigger');
+          // F50: a legacy Header tout that follows the DTO has its hooks
+          // owned by the legacy writers (stripped while loading or hidden,
+          // restored to origin/main when offered). This capture listener
+          // still claims its click before modal.js's document delegate.
+          if (!(isLegacyHeaderCallSurface(card) && card.hasAttribute('data-canonical-public-call'))) {
+              card.removeAttribute('booking-popup-open');
+              card.removeAttribute('data-modal-trigger');
+          }
           card.setAttribute('data-call-service-direct', 'ready');
           card.addEventListener('click', function (event) {
               // A clone can be observed before the wf-xano adapter resolves its
@@ -2934,8 +2946,21 @@
   }
 
   function releaseLegacyHeaderBookingTrigger(card) {
+      if (!legacyHeaderAuthoredHooks.has(card)) {
+          const modal = card.getAttribute('data-modal-trigger');
+          legacyHeaderAuthoredHooks.set(card, {
+              // The same match setBookingButtonAvailable made on origin/main.
+              bookCall: modal === 'popup-booking-main' || card.hasAttribute('data-profile-book-call'),
+              modal: modal,
+              signup: card.getAttribute('data-signup-trigger-element'),
+              signupValue: card.getAttribute('data-signup-trigger-value'),
+          });
+      }
       [
+          'data-modal-trigger',
+          'booking-popup-open',
           'data-profile-book-call',
+          'data-logged-out-book-call',
           'data-booking-trigger-loading',
           'data-booking-trigger-unavailable',
           'aria-disabled',
@@ -2946,6 +2971,31 @@
       ].forEach(function (attribute) {
           card.removeAttribute(attribute);
       });
+  }
+
+  /**
+   * F50: once its state is known, an offered legacy Header tout gets back the
+   * Book Call semantics origin/main left on it: a focusable, named button and
+   * its authored hooks for this viewer. Loading strips them, and a hidden tout
+   * stays without them (fail closed).
+   */
+  function restoreLegacyHeaderBookingTrigger(card, type, publicViewer) {
+      card.setAttribute('has-connection', type);
+      const authored = legacyHeaderAuthoredHooks.get(card);
+      if (!authored) return;
+      if (authored.bookCall) {
+          card.setAttribute('data-profile-book-call', '');
+          card.setAttribute('tabindex', '0');
+          card.setAttribute('role', 'button');
+          card.setAttribute('aria-label', 'Book a Call');
+          if (publicViewer) card.setAttribute('data-logged-out-book-call', '');
+      }
+      // A signed-out or paywalled tout opens signup only; its signup hooks
+      // are written by the public DTO writer.
+      if (publicViewer) return;
+      if (authored.modal) card.setAttribute('data-modal-trigger', authored.modal);
+      if (authored.signup) card.setAttribute('data-signup-trigger-element', authored.signup);
+      if (authored.signupValue) card.setAttribute('data-signup-trigger-value', authored.signupValue);
   }
 
   function syncLoggedOutCanonicalHeader(itemsById) {
@@ -2966,6 +3016,7 @@
               if (!visible) {
                   card.removeAttribute('data-signup-trigger-element');
                   card.removeAttribute('data-signup-trigger-value');
+                  card.removeAttribute('has-connection');
                   return;
               }
               const amount = Number(item.price);
@@ -2979,6 +3030,7 @@
                   'data-signup-trigger-value',
                   type === 'paid' ? 'Paid Consulting Call' : 'Free Call'
               );
+              restoreLegacyHeaderBookingTrigger(card, type, true);
               stripCallBookingRow(card);
           });
       });

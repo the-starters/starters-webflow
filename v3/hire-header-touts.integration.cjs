@@ -278,6 +278,9 @@ for (const arrival of ['dto-first', 'discovery-first']) test(`published legacy H
       assert.equal(card.getAttribute('data-modal-trigger'), null)
       assert.equal(card.getAttribute('data-signup-trigger-element'), null)
       assert.equal(card.getAttribute('data-call-service-direct'), null)
+      for (const name of ['tabindex', 'role', 'aria-label', 'data-profile-book-call']) {
+        assert.equal(card.getAttribute(name), null, `loading strips ${name}`)
+      }
     }
     if (arrival === 'dto-first') {
       resolveStarter({ nylas_grant_id: 'fixture-grant' })
@@ -290,6 +293,16 @@ for (const arrival of ['dto-first', 'discovery-first']) test(`published legacy H
     assert.equal(free.style.display, 'block')
     assert.equal(free.getAttribute('aria-busy'), null)
     assert.equal(free.getAttribute('has-connection'), 'free')
+    // origin/main Book Call semantics once the state is known.
+    assert.equal(free.getAttribute('tabindex'), '0')
+    assert.equal(free.getAttribute('role'), 'button')
+    assert.equal(free.getAttribute('aria-label'), 'Book a Call')
+    assert.equal(free.getAttribute('data-profile-book-call'), '')
+    assert.equal(free.getAttribute('data-modal-trigger'), 'popup-booking-main')
+    assert.equal(free.getAttribute('data-signup-trigger-element'), 'service')
+    assert.equal(free.getAttribute('data-signup-trigger-value'), 'Free Call')
+    assert.equal(paid.getAttribute('data-modal-trigger'), null, 'a hidden tout keeps no hook')
+    assert.equal(paid.getAttribute('tabindex'), null)
     assert.equal(paid.style.display, 'none')
     assert.equal(paid.getAttribute('aria-hidden'), 'true')
     assert.equal(paid.getAttribute('aria-busy'), null)

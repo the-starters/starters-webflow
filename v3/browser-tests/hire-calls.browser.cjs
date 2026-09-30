@@ -84,6 +84,9 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
             signup: el.getAttribute('data-signup-trigger-element'),
             modal: el.getAttribute('data-modal-trigger'),
             direct: el.getAttribute('data-call-service-direct'),
+            tabIndex: el.tabIndex,
+            role: el.getAttribute('role'),
+            ariaLabel: el.getAttribute('aria-label'),
           }
         }
         const trigger = document.querySelector('[booking-button-wrapper] .button_main-wrap')
@@ -158,6 +161,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
     assert.ok(legacyState.legacyCards.every(card => card.offerState === 'loading' && card.busy))
     assert.ok(legacyState.legacyCards.every(card => card.slotText === '00:00pm on 00/00' && card.slotVisibility === 'hidden' && card.cursor === 'progress'), 'loading masks the slot and shows progress')
     assert.ok(legacyState.legacyCards.every(card => card.signup === null && card.modal === null && card.direct === null))
+    assert.ok(legacyState.legacyCards.every(card => card.tabIndex === -1 && card.role === null && card.ariaLabel === null), 'loading removes the Book Call button role')
     await evaluate(`document.querySelector('[data-call-canary-legacy-wrapper="header"] [data-type="free"]').click()`)
     await pause(50)
     assert.deepEqual(await evaluate(`({ entries: bookingEntries.length, chooser: document.querySelector('[data-modal-target="popup-booking-main"]').open, booking: document.querySelector('[data-modal-target="popup-booking"]').open })`), { entries: 0, chooser: false, booking: false })
@@ -169,6 +173,10 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
     legacyState = await snapshot('brand-legacy-header-available')
     assert.equal(legacyState.legacyCards.length, 2)
     assert.ok(legacyState.legacyCards.every(card => card.visible && card.offerState === 'available' && !card.busy))
+    // origin/main semantics once known: a focusable, named button with its hooks.
+    assert.ok(legacyState.legacyCards.every(card => card.tabIndex === 0 && card.role === 'button' && card.ariaLabel === 'Book a Call'))
+    assert.ok(legacyState.legacyCards.every(card => card.modal === 'popup-booking-main' && card.signup === 'service' && card.direct === 'ready'))
+    assert.equal(await evaluate(`(() => { const el = document.querySelector('[data-call-canary-legacy-wrapper="header"] [data-type="free"]'); el.focus(); return document.activeElement === el })()`), true, 'keyboard can reach the offered tout')
     const legacyFree = await evaluate(`(() => { const el = document.querySelector('[data-call-canary-legacy-wrapper="header"] [data-type="free"]'); el.scrollIntoView({block: 'center'}); const r = el.getBoundingClientRect(); return {x: r.x + r.width / 2, y: r.y + r.height / 2} })()`)
     await send('Input.dispatchMouseEvent', { type: 'mousePressed', ...legacyFree, button: 'left', clickCount: 1 })
     await send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...legacyFree, button: 'left', clickCount: 1 })
@@ -208,7 +216,9 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
       publicLegacy = await snapshot(`${role}-legacy-header-settled`)
       const [legacyOffered, legacyRefused] = publicLegacy.legacyCards
       assert.ok(legacyOffered.visible && legacyOffered.offerState === 'available' && !legacyOffered.busy && legacyOffered.signup === 'service')
+      assert.ok(legacyOffered.tabIndex === 0 && legacyOffered.role === 'button' && legacyOffered.ariaLabel === 'Book a Call' && legacyOffered.modal === null, `${role}: the offered tout is a focusable signup button, as on origin/main`)
       assert.ok(!legacyRefused.visible && legacyRefused.offerState === 'hidden' && !legacyRefused.busy && legacyRefused.ariaHidden === 'true')
+      assert.ok(legacyRefused.signup === null && legacyRefused.modal === null && legacyRefused.role === null, `${role}: a hidden tout keeps no hook`)
     }
     for (const role of ['anonymous', 'free']) {
       // The public Algolia record reaches markServiceCardsClickable while the
