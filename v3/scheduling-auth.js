@@ -161,6 +161,8 @@
   let xanoAuthTokenMemberstackToken = null
   let tokenRequest = null
   const sharedReads = new Map()
+  const sharedMemberstackReads = new Map()
+  let memberstackReadOwner = 0
   let sessionGeneration = 0
   let tokenRevision = 0
   let sessionScope = {}
@@ -169,7 +171,7 @@
   let observedMemberstackToken = null
   let hasObservedMemberstackToken = false
 
-  function schedulingUrl(input) {
+  function xanoUrl(input) {
     let rawUrl
     if (typeof input === 'string') rawUrl = input
     else if (typeof URL !== 'undefined' && input instanceof URL) rawUrl = input.href
@@ -179,15 +181,21 @@
     try {
       const url = new URL(rawUrl, window.location.href)
       if (url.origin !== XANO_ORIGIN) return null
-      return (
-        AUTHENTICATED_PATHS.indexOf(url.pathname) !== -1 ||
-        LEGACY_COMPATIBILITY_PATHS.indexOf(url.pathname) !== -1
-      )
-        ? url
-        : null
+      return url
     } catch (error) {
       return null
     }
+  }
+
+  function schedulingUrl(input) {
+    const url = xanoUrl(input)
+    if (!url) return null
+    return (
+      AUTHENTICATED_PATHS.indexOf(url.pathname) !== -1 ||
+      LEGACY_COMPATIBILITY_PATHS.indexOf(url.pathname) !== -1
+    )
+      ? url
+      : null
   }
 
   function memberSessionChangedError() {
@@ -212,6 +220,7 @@
     xanoAuthTokenMemberstackToken = null
     tokenRequest = null
     sharedReads.clear()
+    sharedMemberstackReads.clear()
   }
 
   function observeMemberstackToken(memberstackToken) {
@@ -266,23 +275,28 @@
   // in-flight entries so a read after a write is never stale.
   function shareMemberstackReads(memberstack) {
     if (typeof memberstack.getCurrentMember !== 'function' || memberstack.__tsSharedReads) return
-    const inFlight = new Map()
+    const readOwner = ++memberstackReadOwner
     const original = memberstack.getCurrentMember.bind(memberstack)
     const WRITE_METHOD = /^(update|add|remove|purchase|login|logout|signup|launch|set|delete|send|verify)/i
     memberstack.__tsSharedReads = true
     memberstack.getCurrentMember = function () {
       let key
       try {
-        key = JSON.stringify(Array.prototype.slice.call(arguments))
+        key = JSON.stringify([
+          readOwner,
+          sessionGeneration,
+          hasObservedMemberstackToken ? observedMemberstackToken : null,
+          Array.prototype.slice.call(arguments),
+        ])
       } catch (error) {
         return original.apply(null, arguments)
       }
-      const shared = inFlight.get(key)
+      const shared = sharedMemberstackReads.get(key)
       if (shared) return shared
       const promise = Promise.resolve(original.apply(null, arguments))
-      inFlight.set(key, promise)
+      sharedMemberstackReads.set(key, promise)
       const release = function () {
-        if (inFlight.get(key) === promise) inFlight.delete(key)
+        if (sharedMemberstackReads.get(key) === promise) sharedMemberstackReads.delete(key)
       }
       promise.then(release, release)
       return promise
@@ -291,18 +305,18 @@
       const method = memberstack[name]
       if (typeof method !== 'function' || !WRITE_METHOD.test(name)) return
       memberstack[name] = function () {
-        inFlight.clear()
+        sharedMemberstackReads.clear()
         const result = method.apply(this, arguments)
         return result && typeof result.finally === 'function'
           ? result.finally(function () {
-              inFlight.clear()
+              sharedMemberstackReads.clear()
             })
           : result
       }
     })
     if (typeof memberstack.onAuthChange === 'function') {
       memberstack.onAuthChange(function () {
-        inFlight.clear()
+        sharedMemberstackReads.clear()
       })
     }
   }
@@ -385,6 +399,17 @@
     return new Request(request.clone(), { headers: headers })
   }
 
+  async function passThroughFetch(request) {
+    const invalidatesSharedReads =
+      request.headers.has('Authorization') && Boolean(xanoUrl(request))
+    if (invalidatesSharedReads) sharedReads.clear()
+    try {
+      return await originalFetch(request)
+    } finally {
+      if (invalidatesSharedReads) sharedReads.clear()
+    }
+  }
+
   async function fetchWithToken(request, token, generation, expectedScope) {
     await awaitLatestAuthReconciliation()
     assertSessionGeneration(generation)
@@ -421,7 +446,7 @@
     const request = new Request(input, init)
     const url = schedulingUrl(request)
     if (!url || request.headers.has('Authorization')) {
-      return originalFetch(request)
+      return passThroughFetch(request)
     }
 
     await awaitLatestAuthReconciliation()
@@ -474,25 +499,31 @@
 
   async function authenticatedFetch(input, init) {
     const request = new Request(input, init)
-    if (!schedulingUrl(request) || request.headers.has('Authorization')) {
-      return originalFetch(request)
+    const url = schedulingUrl(request)
+    if (!url || request.headers.has('Authorization')) {
+      return passThroughFetch(request)
     }
 
-    await awaitLatestAuthReconciliation()
-    const generation = sessionGeneration
-    let token
+    sharedReads.clear()
     try {
-      token = await getXanoAuthToken()
-    } catch (error) {
-      if (error && error.code === 'MEMBER_SCOPE_CHANGED') throw error
-      // Preserve the response behavior of legacy inline code while making the
-      // auth failure visible in the console. Direct xanoAuthFetch callers get
-      // the thrown error and can show a login/retry state.
-      console.warn('[scheduling-auth] token unavailable:', error && error.message)
-      return originalFetch(request.clone())
+      await awaitLatestAuthReconciliation()
+      const generation = sessionGeneration
+      let token
+      try {
+        token = await getXanoAuthToken()
+      } catch (error) {
+        if (error && error.code === 'MEMBER_SCOPE_CHANGED') throw error
+        // Preserve the response behavior of legacy inline code while making the
+        // auth failure visible in the console. Direct xanoAuthFetch callers get
+        // the thrown error and can show a login/retry state.
+        console.warn('[scheduling-auth] token unavailable:', error && error.message)
+        return await originalFetch(request.clone())
+      }
+      assertSessionGeneration(generation)
+      return await fetchWithToken(request, token, generation)
+    } finally {
+      sharedReads.clear()
     }
-    assertSessionGeneration(generation)
-    return fetchWithToken(request, token, generation)
   }
 
   function installBridge() {

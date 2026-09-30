@@ -741,6 +741,7 @@ function countingFetch() {
 
 const PAID_GET = `${XANO_ORIGIN}/api:tCpV3oqd/starter/paid-call-settings/get/v3`
 const PAID_UPSERT = `${XANO_ORIGIN}/api:tCpV3oqd/starter/paid-call-settings/upsert/v3`
+const STRIPE_CONNECT_STATUS = `${XANO_ORIGIN}/api:KZf7nFnk/stripe_connect/status/v3`
 
 test('concurrent and repeated identical reads share one network response', async () => {
   const { calls, nativeFetch } = countingFetch()
@@ -778,6 +779,60 @@ test('a write clears shared reads so the next read is fresh', async () => {
 
   assert.equal(calls.length, 3)
   assert.deepEqual(await after.json(), { n: 3 })
+})
+
+test('authenticated Xano pass-throughs clear shared reads before and after dispatch', async (t) => {
+  const scenarios = [
+    {
+      name: 'preauthorized xanoAuthFetch request',
+      requestUrl: PAID_UPSERT,
+      dispatch(window) {
+        return window.xanoAuthFetch(PAID_UPSERT, {
+          method: 'POST',
+          headers: { Authorization: 'Bearer caller-token' },
+          body: '{}',
+        })
+      },
+    },
+    {
+      name: 'non-scheduling window.fetch request',
+      requestUrl: STRIPE_CONNECT_STATUS,
+      dispatch(window) {
+        return window.fetch(STRIPE_CONNECT_STATUS, {
+          method: 'POST',
+          headers: { Authorization: 'Bearer caller-token' },
+          body: '{}',
+        })
+      },
+    },
+  ]
+
+  for (const scenario of scenarios) {
+    await t.test(scenario.name, async () => {
+      const passThroughGate = deferred()
+      const calls = []
+      const nativeFetch = async (request) => {
+        const url = requestUrl(request)
+        if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-1' })
+        calls.push(url)
+        if (url !== PAID_GET) await passThroughGate.promise
+        return response({ n: calls.length })
+      }
+      const { window } = loadBridge(nativeFetch)
+
+      const initial = await window.xanoAuthFetch(PAID_GET)
+      const passThrough = scenario.dispatch(window)
+      const during = await window.xanoAuthFetch(PAID_GET)
+      passThroughGate.resolve()
+      await passThrough
+      const after = await window.xanoAuthFetch(PAID_GET)
+
+      assert.deepEqual(calls, [PAID_GET, scenario.requestUrl, PAID_GET, PAID_GET])
+      assert.deepEqual(await initial.json(), { n: 1 })
+      assert.deepEqual(await during.json(), { n: 3 })
+      assert.deepEqual(await after.json(), { n: 4 })
+    })
+  }
 })
 
 test('failed reads are not shared and a session change drops shared reads', async () => {
@@ -857,6 +912,45 @@ test('getCurrentMember is not cached after it settles or across different argume
   await Promise.all([a, b])
 
   assert.equal(state.reads, 4)
+})
+
+test('cookie rotation prevents a new member joining an older getCurrentMember request', async () => {
+  let cookie = 'memberstack-a'
+  let reads = 0
+  const memberAGate = deferred()
+  const memberstack = {
+    getMemberCookie: async () => cookie,
+    onAuthChange() {},
+    getCurrentMember() {
+      reads += 1
+      const memberId = cookie === 'memberstack-a' ? 'member-a' : 'member-b'
+      if (memberId === 'member-a') {
+        return memberAGate.promise.then(() => ({ data: { id: memberId } }))
+      }
+      return Promise.resolve({ data: { id: memberId } })
+    },
+  }
+  const nativeFetch = async (request) =>
+    requestUrl(request).includes('/auth/trade-token/v3')
+      ? response({ authToken: `xano-${cookie}` })
+      : response({})
+  const { window } = loadBridge(nativeFetch, { memberstack })
+
+  await window.__tsSchedulingAuthGetScope()
+  const memberA = memberstack.getCurrentMember()
+  cookie = 'memberstack-b'
+  await window.xanoAuthFetch(PAID_GET)
+  let memberB
+  try {
+    memberB = memberstack.getCurrentMember()
+    assert.equal(reads, 2)
+  } finally {
+    memberAGate.resolve()
+  }
+  const [memberAResult, memberBResult] = await Promise.all([memberA, memberB])
+
+  assert.equal(memberAResult.data.id, 'member-a')
+  assert.equal(memberBResult.data.id, 'member-b')
 })
 
 test('a Memberstack write or auth change stops later reads joining an older request', async () => {
