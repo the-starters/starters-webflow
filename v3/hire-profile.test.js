@@ -10561,6 +10561,78 @@ test('F50 an owner DTO replay leaves a settled owner-preview legacy tout alone',
   assert.deepEqual(fixture.legacyCards.map((card) => semantics(card.root)), before)
 })
 
+test('F50 a Brand DTO replay leaves a settled offered legacy tout alone', async () => {
+  const fixture = f50LegacyHeaderPage()
+  const context = f50BrandContext(fixture.page, fixture.feed)
+  holdLongTimers(context)
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  fixture.feed.emit(callCardResult({ free: true, paid: false }))
+  await settle()
+  const free = fixture.legacyHeader.free.root
+  assert.equal(free.getAttribute('data-call-offer-state'), 'available')
+  assert.deepEqual(legacyToutSemantics(free), ORIGIN_MAIN_BRAND_OFFERED_TOUT)
+  // The same DTO again reaches adaptXanoCallCards, as a wf-xano refresh does.
+  const writes = recordDomWrites(free)
+  fixture.feed.emit(callCardResult({ free: true, paid: false }))
+  await settle()
+  const strips = writes.filter((write) => / remove (tabindex|role|aria-label|data-profile-book-call|data-modal-trigger|data-signup-trigger-element|has-connection)$/.test(write))
+  assert.deepEqual(strips, [], 'a DTO replay does not strip a focused tout')
+  assert.deepEqual(legacyToutSemantics(free), ORIGIN_MAIN_BRAND_OFFERED_TOUT)
+})
+
+test('F50 a Brand legacy Paid tout the DTO revokes keeps no Book Call hook', async () => {
+  const fixture = f50LegacyHeaderPage()
+  const context = f50BrandContext(fixture.page, fixture.feed, {
+    getConfigs: async () => [F50_FREE_CFG, { config_id: 'cfg_paid', is_paid: true, active: true, data_environment: 'production', payment_environment: 'live', currency: 'USD', price_cents: 25000, duration: 60 }],
+  })
+  holdLongTimers(context)
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  fixture.feed.emit(callCardResult({ free: true, paid: true }))
+  await settle()
+  const paid = fixture.legacyHeader.paid.root
+  assert.equal(paid.getAttribute('data-call-offer-state'), 'available')
+  assert.equal(paid.getAttribute('tabindex'), '0', 'the offered Paid tout is a focusable Book Call button')
+  // The settled Paid tout is kept only while the admitted records offer Paid.
+  fixture.feed.emit(callCardResult({ free: true, paid: false }))
+  await settle()
+  assert.equal(paid.getAttribute('data-call-offer-state'), 'hidden')
+  assert.equal(paid.style.display, 'none')
+  for (const [key, value] of Object.entries(legacyToutSemantics(paid))) {
+    assert.equal(value, null, `a revoked hidden tout keeps no ${key}`)
+  }
+  assert.equal(fixture.legacyHeader.free.root.getAttribute('data-call-offer-state'), 'available')
+})
+
+test('F50 owner clones rendered after the bootstrap release re-arm the one failsafe', async () => {
+  const page = makePage()
+  const fixture = f50PageFirstCallWrappers(page)
+  const controller = ownerController()
+  // The owner settings read never answers.
+  controller.authenticatedRequest = () => new Promise(() => {})
+  const context = ownerContext(page, controller, { wfXano: fixture.api })
+  const held = holdLongTimers(context)
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+  assert.deepEqual(held.filter(Boolean), [], 'no card loads yet, so the bootstrap failsafe is released')
+  const clones = fixture.render(context)
+  fixture.emit(callCardResult({ free: true, paid: true }))
+  await settle()
+  for (const clone of clones) {
+    assert.equal(clone.root.getAttribute('data-call-offer-state'), 'settings-loading')
+    assert.equal(clone.root.getAttribute('aria-busy'), 'true')
+  }
+  armedFailsafe(held).callback()
+  await settle()
+  for (const clone of clones) {
+    assert.equal(clone.root.getAttribute('data-call-offer-state'), 'settings-unavailable')
+    assert.equal(clone.root.getAttribute('data-service-card-state'), 'Disabled')
+    assert.equal(clone.root.getAttribute('aria-busy'), null)
+  }
+})
+
 /** Every owner call surface the settings writer decides, as the page shows it. */
 function ownerCallSurfaceState(fixture) {
   const keys = ['data-service-card-state', 'data-call-offer-state', 'aria-busy', 'has-connection',

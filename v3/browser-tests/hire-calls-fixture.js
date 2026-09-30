@@ -34,6 +34,14 @@ window.resolveStarterDiscovery = result => {
 function settings(type) {
   if (ownerState === 'error') return Promise.reject(new Error('Synthetic lookup failure'))
   if (ownerState === 'loading') return new Promise(() => {})
+  // owner=held: the read waits until heldOwner[type].resolve() answers it.
+  if (ownerState === 'held') {
+    return new Promise(resolve => { (window.heldOwner = window.heldOwner || {})[type] = { resolve } })
+      .then(() => settingsFor(type, 'ready'))
+  }
+  return settingsFor(type, ownerState)
+}
+function settingsFor(type, ownerState) {
   const ready = ownerState === 'ready' || (type === 'free' && ['stripe', 'stale'].includes(ownerState))
   return Promise.resolve({ data_environment: 'production', stripe_environment: 'live', readiness: {
     calendar_connected: ownerState !== 'calendar', availability_configured: true,
@@ -82,12 +90,33 @@ if (legacyHeader) {
 // servicecard=authored: wf-xano clones inherit the template's
 // data-service-card="component", as they do on the published page.
 const cloneServiceCard = params.get('servicecard') === 'authored' ? ' data-service-card="component"' : ''
+// clones=late: each canonical wrapper holds only its template at boot;
+// renderLateClones() then renders the clones and announces the result, as
+// wf-xano does. failsafeTimers counts the 15 s timers without changing them.
+const lateClones = params.get('clones') === 'late'
+if (lateClones) {
+  const live = new Set()
+  window.failsafeTimers = { armed: 0, get live() { return live.size } }
+  const nativeSetTimeout = window.setTimeout.bind(window)
+  const nativeClearTimeout = window.clearTimeout.bind(window)
+  window.setTimeout = (fn, ms, ...rest) => {
+    if (ms !== 15000) return nativeSetTimeout(fn, ms, ...rest)
+    window.failsafeTimers.armed++
+    const timer = nativeSetTimeout(() => { live.delete(timer); fn(...rest) }, ms)
+    live.add(timer)
+    return timer
+  }
+  window.clearTimeout = timer => { live.delete(timer); nativeClearTimeout(timer) }
+  window.renderLateClones = []
+}
 for (const surface of legacyHeader ? ['services'] : ['header', 'services']) {
   const key = `starter-call-offers-${surface}`
   const root = document.createElement('div')
   root.setAttribute('wf-xano-element', 'wrapper')
   root.setAttribute('wf-xano-instance', key)
-  root.innerHTML = '<div wf-xano-element="template" data-service-card="component"></div>' + ['free', 'paid'].map(type => `<article wf-xano-item data-wf-xano-id="424:call:${type}"${cloneServiceCard}>${cardContent(type)}</article>`).join('')
+  const clones = ['free', 'paid'].map(type => `<article wf-xano-item data-wf-xano-id="424:call:${type}"${cloneServiceCard}>${cardContent(type)}</article>`).join('')
+  root.innerHTML = '<div wf-xano-element="template" data-service-card="component"></div>' + (lateClones ? '' : clones)
+  if (lateClones) renderLateClones.push(() => { root.insertAdjacentHTML('beforeend', clones); handlers.results?.(state.data) })
   qs(`#${surface}`).append(root)
   const handlers = {}
   // dto=held: the public call DTO has not answered yet; emit() delivers it.

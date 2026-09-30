@@ -121,8 +121,10 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
       for (let i = 0; i < 100; i++) {
         if (await evaluate(`(() => {
           const cards = [...document.querySelectorAll('[wf-xano-instance^="starter-call-offers-"] [wf-xano-item]')]
+          // clones=late renders no clone until the test calls renderLateClones.
           const callsSettled = !!document.querySelector('[data-call-offer-type]') ||
-            (cards.length === 4 && cards.every(card => getComputedStyle(card).display === 'none'))
+            (cards.length === 4 && cards.every(card => getComputedStyle(card).display === 'none')) ||
+            (!!window.renderLateClones && cards.length === 0)
           return document.readyState === 'complete' &&
             !!window.lumos?.modal?.list['signup-modal'] && callsSettled
         })()`)) {
@@ -173,6 +175,17 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
     const legacyToutStates = `[...document.querySelectorAll('[data-call-canary-legacy-wrapper="header"] [data-service-card="component"]')]
       .filter(card => ['free', 'paid'].includes(card.getAttribute('data-type')))
       .map(card => card.getAttribute('data-type') + ':' + card.getAttribute('data-call-offer-state'))`
+    // Focuses the legacy Free tout, runs `action` in the page, then reports
+    // whether the tout kept focus and its Book Call semantics.
+    const focusFreeToutAcross = action => `(async () => {
+      const el = document.querySelector('[data-call-canary-legacy-wrapper="header"] [data-type="free"]')
+      el.focus()
+      const before = document.activeElement === el
+      ${action}
+      await new Promise(resolve => setTimeout(resolve, 200))
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+      return { before, after: document.activeElement === el, tabIndex: el.tabIndex, role: el.getAttribute('role'), label: el.getAttribute('aria-label'), disabled: el.getAttribute('aria-disabled'), state: el.getAttribute('data-call-offer-state') }
+    })()`
     const assertBookState = (state, role, available) => {
       assert.equal(state.book.visible, true, 'Book Call remains discoverable')
       assert.equal(state.book.disabled, role === 'brand' && !available)
@@ -325,6 +338,26 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
       })()`)
       assert.deepEqual(focus, { before: true, after: true, blurred: 0, tabIndex: 0, role: 'button', label: 'Book a Call' }, `${role}: the focused tout keeps focus`)
       assert.deepEqual(await evaluate(countMutationsAfterUnrelatedNode), [], `${role}: an unrelated node wakes no writer`)
+      // A DTO replay (wf-xano refreshes on window focus) must keep it too.
+      for (const op of ['replay()', 'emit()']) {
+        assert.deepEqual(await evaluate(focusFreeToutAcross(`lists['starter-call-offers-services'].${op}`)), {
+          before: true, after: true, tabIndex: 0, role: 'button', label: 'Book a Call', disabled: null, state: 'available',
+        }, `${role}: the focused tout keeps focus on a Services ${op}`)
+      }
+      if (role !== 'brand') continue
+      // A settled Paid tout is kept only while the admitted records offer
+      // Paid. Once the DTO revokes it, the hidden tout keeps no hook.
+      await evaluate(`lists['starter-call-offers-services'].emit(false)`)
+      for (let i = 0; i < 100; i++) {
+        if ((await evaluate(legacyToutStates)).join() === 'free:available,paid:hidden') break
+        await pause(25)
+      }
+      assert.deepEqual(await evaluate(legacyToutStates), ['free:available', 'paid:hidden'], 'brand: Paid revoked')
+      assert.deepEqual(await evaluate(`(() => {
+        const el = document.querySelector('[data-call-canary-legacy-wrapper="header"] [data-type="paid"]')
+        const hooks = ['tabindex', 'role', 'aria-label', 'data-profile-book-call', 'data-modal-trigger', 'booking-popup-open', 'data-signup-trigger-element', 'data-signup-trigger-value']
+        return { display: getComputedStyle(el).display, tabIndex: el.tabIndex, hooks: hooks.filter(name => el.hasAttribute(name)) }
+      })()`), { display: 'none', tabIndex: -1, hooks: [] }, 'brand: a revoked hidden Paid tout keeps no Book Call hook')
     }
 
     // F50: an owner DTO replay (wf-xano refreshes on window focus) must not
@@ -336,17 +369,39 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
     }
     assert.deepEqual(await evaluate(legacyToutStates), ['free:available', 'paid:available'], 'owner: touts settle')
     for (const op of ['replay()', 'emit()']) {
-      const focus = await evaluate(`(async () => {
-        const el = document.querySelector('[data-call-canary-legacy-wrapper="header"] [data-type="free"]')
-        el.focus()
-        const before = document.activeElement === el
-        lists['starter-call-offers-services'].${op}
-        await new Promise(resolve => setTimeout(resolve, 200))
-        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
-        return { before, after: document.activeElement === el, tabIndex: el.tabIndex, role: el.getAttribute('role'), disabled: el.getAttribute('aria-disabled'), state: el.getAttribute('data-call-offer-state') }
-      })()`)
-      assert.deepEqual(focus, { before: true, after: true, tabIndex: 0, role: 'button', disabled: 'true', state: 'available' }, `owner: the focused tout keeps focus on a Services ${op}`)
+      assert.deepEqual(await evaluate(focusFreeToutAcross(`lists['starter-call-offers-services'].${op}`)), {
+        before: true, after: true, tabIndex: 0, role: 'button', label: null, disabled: 'true', state: 'available',
+      }, `owner: the focused tout keeps focus on a Services ${op}`)
     }
+
+    // F50 (N11): owner clones that render after the bootstrap failsafe was
+    // released re-arm the one 15 s failsafe. It settles an unanswered
+    // settings read as settings-unavailable; a later answer still applies.
+    await navigate('role=owner&owner=held&clones=late')
+    await pause(500)
+    assert.deepEqual(await evaluate('({ armed: failsafeTimers.armed, live: failsafeTimers.live })'), { armed: 1, live: 0 }, 'owner: nothing loads yet, so the bootstrap failsafe is released')
+    await evaluate('renderLateClones.forEach(render => render()), true')
+    const renderedAt = Date.now()
+    const ownerCloneStates = `[...document.querySelectorAll('[wf-xano-item]')].map(card => card.getAttribute('data-call-offer-state') + (card.getAttribute('aria-busy') === 'true' ? '*busy' : ''))`
+    for (let i = 0; i < 100; i++) {
+      if ((await evaluate(ownerCloneStates)).join() === Array(4).fill('settings-loading*busy').join()) break
+      await pause(25)
+    }
+    assert.deepEqual(await evaluate(ownerCloneStates), Array(4).fill('settings-loading*busy'), 'owner: late clones wait for the settings read')
+    assert.deepEqual(await evaluate('({ armed: failsafeTimers.armed, live: failsafeTimers.live })'), { armed: 2, live: 1 }, 'owner: the late clones re-arm one failsafe')
+    for (let i = 0; i < 400; i++) {
+      if ((await evaluate(ownerCloneStates)).every(state => state === 'settings-unavailable')) break
+      await pause(50)
+    }
+    assert.deepEqual(await evaluate(ownerCloneStates), Array(4).fill('settings-unavailable'), 'owner: the failsafe settles an unanswered read')
+    assert.ok(Date.now() - renderedAt >= 14000, 'owner: the late clones get the full 15 s')
+    assert.deepEqual(await evaluate('({ armed: failsafeTimers.armed, live: failsafeTimers.live })'), { armed: 2, live: 0 })
+    await evaluate(`heldOwner.free.resolve(); heldOwner.paid.resolve(); true`)
+    for (let i = 0; i < 100; i++) {
+      if ((await evaluate(ownerCloneStates)).every(state => state === 'available')) break
+      await pause(25)
+    }
+    assert.deepEqual(await evaluate(ownerCloneStates), Array(4).fill('available'), 'owner: a later settings answer still applies')
 
     await navigate('role=brand&discovery=held')
     let loadingState = await snapshot('brand-discovery-loading')
