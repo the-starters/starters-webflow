@@ -1002,13 +1002,38 @@ for (const missingHelper of [false, true]) test(`existing Header call clones boo
     card.root.setAttribute('has-connection', 'free')
     card.root.setAttribute('data-service-card', 'component')
   }
+  for (const card of [header.free, header.paid]) {
+    card.root.setAttribute('booking-popup-open', '')
+    card.root.setAttribute('data-modal-trigger', 'popup-booking-main')
+    card.root.setAttribute('data-signup-trigger-element', 'service')
+    card.root.setAttribute('data-signup-trigger-value', 'Free Call')
+  }
   const context = makeContext({ page })
   if (missingHelper) context.qs = undefined
   vm.createContext(context)
   assert.doesNotThrow(() => vm.runInContext(source, context))
-  for (const card of [header.free, header.paid]) {
-    assert.equal(card.root.style.display, 'none', 'pre-adapter clones remain fail-closed')
-    assert.equal(card.root.getAttribute('aria-hidden'), 'true')
+  const cards = [header.free, header.paid]
+  assert.equal(cards.length, 2)
+  for (const card of cards) {
+    if (missingHelper) {
+      // The stand-down path owns no loading writer, so it stays fail-closed.
+      assert.equal(card.root.style.display, 'none', 'stood-down clones remain fail-closed')
+      assert.equal(card.root.getAttribute('aria-hidden'), 'true')
+      assert.equal(card.root.getAttribute('aria-busy'), null)
+      assert.equal(card.root.getAttribute('data-call-offer-state'), null)
+      continue
+    }
+    // F50: a pre-adapter clone enters the fail-closed loading state at once.
+    assert.equal(card.root.style.display, 'block', 'pre-adapter clones read as loading')
+    assert.equal(card.root.getAttribute('aria-hidden'), null)
+    assert.equal(card.root.getAttribute('data-canonical-call-unavailable'), null)
+    assert.equal(card.root.getAttribute('data-call-offer-state'), 'loading')
+    assert.equal(card.root.getAttribute('aria-busy'), 'true')
+    assert.equal(card.root.getAttribute('data-service-card-state'), 'Default')
+    assert.equal(card.root.getAttribute('booking-popup-open'), null)
+    assert.equal(card.root.getAttribute('data-modal-trigger'), null)
+    assert.equal(card.root.getAttribute('data-signup-trigger-element'), null)
+    assert.equal(card.root.getAttribute('data-call-service-direct'), null)
   }
 })
 
