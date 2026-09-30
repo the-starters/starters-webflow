@@ -10,6 +10,11 @@
       [data-search-brilliance-wrapper].is-active {
         pointer-events: auto;
       }
+
+      /* GSAP moves the close button into place when the overlay opens. */
+      [data-search-brilliance-wrapper] .button_main-wrap[data-search-brilliance-close] {
+        transition-property: background-color, color, border-color !important;
+      }
     
       /* Webflow Designer preview — toggle via data-search-brilliance-preview on the wrapper. */
       .wf-design-mode [data-search-brilliance-wrapper][data-search-brilliance-preview='True'] {
