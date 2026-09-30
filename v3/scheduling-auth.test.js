@@ -42,6 +42,23 @@ function deferred() {
   return { promise, resolve }
 }
 
+function fakeClock(initial = 0) {
+  let now = initial
+  return {
+    Date: class extends Date {
+      static now() {
+        return now
+      }
+    },
+    advance(milliseconds) {
+      now += milliseconds
+    },
+    set(milliseconds) {
+      now = milliseconds
+    },
+  }
+}
+
 function requestUrl(request) {
   return typeof request === 'string' ? request : request.url
 }
@@ -71,6 +88,7 @@ function loadBridge(nativeFetch, options = {}) {
   }
 
   vm.runInNewContext(source, {
+    Date: options.Date || Date,
     Headers,
     Request,
     Response,
@@ -741,6 +759,7 @@ function countingFetch() {
 
 const PAID_GET = `${XANO_ORIGIN}/api:tCpV3oqd/starter/paid-call-settings/get/v3`
 const PAID_UPSERT = `${XANO_ORIGIN}/api:tCpV3oqd/starter/paid-call-settings/upsert/v3`
+const FREE_GET = `${XANO_ORIGIN}/api:tCpV3oqd/starter/free-call-settings/get/v3`
 const STRIPE_CONNECT_STATUS = `${XANO_ORIGIN}/api:KZf7nFnk/stripe_connect/status/v3`
 
 test('concurrent and repeated identical reads share one network response', async () => {
@@ -754,6 +773,91 @@ test('concurrent and repeated identical reads share one network response', async
   assert.deepEqual(await a.json(), { n: 1 })
   assert.deepEqual(await b.json(), { n: 1 })
   assert.deepEqual(await c.json(), { n: 1 })
+})
+
+test('pending Xano reads stay shared and receive a full TTL after settlement', async () => {
+  const clock = fakeClock()
+  const readGate = deferred()
+  const readStarted = deferred()
+  let calls = 0
+  const nativeFetch = async (request) => {
+    if (requestUrl(request).includes('/auth/trade-token/v3')) {
+      return response({ authToken: 'xano-1' })
+    }
+    calls += 1
+    const callNumber = calls
+    readStarted.resolve()
+    await readGate.promise
+    return response({ n: callNumber })
+  }
+  const { window } = loadBridge(nativeFetch, { Date: clock.Date })
+
+  const first = window.xanoAuthFetch(PAID_GET)
+  await readStarted.promise
+  clock.advance(6000)
+  const second = window.xanoAuthFetch(PAID_GET)
+  for (let step = 0; step < 6; step += 1) await Promise.resolve()
+  readGate.resolve()
+  const [firstResponse, secondResponse] = await Promise.all([first, second])
+  const immediate = await window.xanoAuthFetch(PAID_GET)
+  clock.advance(4999)
+  const beforeExpiry = await window.xanoAuthFetch(PAID_GET)
+  clock.advance(1)
+  const atExpiry = await window.xanoAuthFetch(PAID_GET)
+
+  assert.equal(calls, 2)
+  assert.deepEqual(await firstResponse.json(), { n: 1 })
+  assert.deepEqual(await secondResponse.json(), { n: 1 })
+  assert.deepEqual(await immediate.json(), { n: 1 })
+  assert.deepEqual(await beforeExpiry.json(), { n: 1 })
+  assert.deepEqual(await atExpiry.json(), { n: 2 })
+})
+
+test('later shared reads prune expired Xano entries', async (t) => {
+  const scenarios = [
+    {
+      name: 'Xano access',
+      access({ window }) {
+        return window.xanoAuthFetch(FREE_GET)
+      },
+    },
+    {
+      name: 'Memberstack access',
+      access({ memberstack }) {
+        return memberstack.getCurrentMember()
+      },
+    },
+  ]
+
+  for (const scenario of scenarios) {
+    await t.test(scenario.name, async () => {
+      const clock = fakeClock()
+      const calls = []
+      const memberstack = {
+        getMemberCookie: async () => 'memberstack-a',
+        onAuthChange() {},
+        getCurrentMember: async () => ({ data: { id: 'member-a' } }),
+      }
+      const nativeFetch = async (request) => {
+        const url = requestUrl(request)
+        if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-1' })
+        calls.push(url)
+        return response({ n: calls.length })
+      }
+      const bridge = loadBridge(nativeFetch, { Date: clock.Date, memberstack })
+
+      await bridge.window.xanoAuthFetch(PAID_GET)
+      clock.set(6000)
+      await scenario.access(bridge)
+      clock.set(1)
+      const refreshed = await bridge.window.xanoAuthFetch(PAID_GET)
+
+      assert.equal(calls.filter((url) => url === PAID_GET).length, 2)
+      assert.deepEqual(await refreshed.json(), {
+        n: scenario.name === 'Xano access' ? 3 : 2,
+      })
+    })
+  }
 })
 
 test('reads with different bodies or URLs are not shared', async () => {
@@ -914,6 +1018,47 @@ test('getCurrentMember is not cached after it settles or across different argume
   assert.equal(state.reads, 4)
 })
 
+test('every non-read Memberstack method invalidates before and after settlement', async () => {
+  const mutationGate = deferred()
+  let mutations = 0
+  const { memberstack, state } = memberstackWithCounter({
+    disconnectProvider() {
+      mutations += 1
+      return mutationGate.promise
+    },
+  })
+  state.gate = deferred()
+  loadBridge(async () => response({}), { memberstack })
+
+  const before = memberstack.getCurrentMember()
+  const mutation = memberstack.disconnectProvider('google')
+  const during = memberstack.getCurrentMember()
+  assert.equal(state.reads, 2)
+  mutationGate.resolve()
+  await mutation
+  const after = memberstack.getCurrentMember()
+  assert.equal(state.reads, 3)
+  state.gate.resolve()
+  await Promise.all([before, during, after])
+
+  assert.equal(mutations, 1)
+})
+
+test('Memberstack read methods preserve an overlapping member request', async () => {
+  const { memberstack, state } = memberstackWithCounter()
+  state.gate = deferred()
+  loadBridge(async () => response({}), { memberstack })
+
+  const before = memberstack.getCurrentMember()
+  await memberstack.getMemberCookie()
+  memberstack.onAuthChange(function () {})
+  const after = memberstack.getCurrentMember()
+  state.gate.resolve()
+  await Promise.all([before, after])
+
+  assert.equal(state.reads, 1)
+})
+
 test('cookie rotation prevents a new member joining an older getCurrentMember request', async () => {
   let cookie = 'memberstack-a'
   let reads = 0
@@ -967,4 +1112,25 @@ test('a Memberstack write or auth change stops later reads joining an older requ
   await Promise.all([before, afterWrite, afterAuth])
 
   assert.equal(state.reads, 3)
+})
+
+test('auth change has one owner and clears member reads before cookie reconciliation', async () => {
+  const cookieGate = deferred()
+  const { memberstack, state } = memberstackWithCounter({
+    getMemberCookie() {
+      return cookieGate.promise
+    },
+  })
+  state.gate = deferred()
+  loadBridge(async () => response({}), { memberstack })
+
+  const before = memberstack.getCurrentMember()
+  const reconciliation = state.listeners[state.listeners.length - 1]({})
+  const after = memberstack.getCurrentMember()
+  cookieGate.resolve('memberstack-a')
+  state.gate.resolve()
+  await Promise.all([before, after, reconciliation])
+
+  assert.equal(state.listeners.length, 1)
+  assert.equal(state.reads, 2)
 })

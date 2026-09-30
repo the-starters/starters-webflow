@@ -223,6 +223,13 @@
     sharedMemberstackReads.clear()
   }
 
+  function pruneExpiredSharedReads() {
+    const now = Date.now()
+    sharedReads.forEach(function (shared, key) {
+      if (shared.expiresAt !== null && shared.expiresAt <= now) sharedReads.delete(key)
+    })
+  }
+
   function observeMemberstackToken(memberstackToken) {
     if (!hasObservedMemberstackToken) {
       hasObservedMemberstackToken = true
@@ -243,6 +250,7 @@
   }
 
   function reconcileAuthChange() {
+    sharedMemberstackReads.clear()
     const memberstack = window.$memberstackDom
     authReconciliation = authReconciliation.catch(function () {}).then(async function () {
       let memberstackToken = null
@@ -277,9 +285,10 @@
     if (typeof memberstack.getCurrentMember !== 'function' || memberstack.__tsSharedReads) return
     const readOwner = ++memberstackReadOwner
     const original = memberstack.getCurrentMember.bind(memberstack)
-    const WRITE_METHOD = /^(update|add|remove|purchase|login|logout|signup|launch|set|delete|send|verify)/i
+    const NON_INVALIDATING_METHODS = ['getCurrentMember', 'getMemberCookie', 'onAuthChange']
     memberstack.__tsSharedReads = true
     memberstack.getCurrentMember = function () {
+      pruneExpiredSharedReads()
       let key
       try {
         key = JSON.stringify([
@@ -303,22 +312,32 @@
     }
     Object.keys(memberstack).forEach(function (name) {
       const method = memberstack[name]
-      if (typeof method !== 'function' || !WRITE_METHOD.test(name)) return
+      if (typeof method !== 'function' || NON_INVALIDATING_METHODS.indexOf(name) !== -1) return
       memberstack[name] = function () {
         sharedMemberstackReads.clear()
-        const result = method.apply(this, arguments)
-        return result && typeof result.finally === 'function'
-          ? result.finally(function () {
+        let result
+        try {
+          result = method.apply(this, arguments)
+        } catch (error) {
+          sharedMemberstackReads.clear()
+          throw error
+        }
+        if (result && typeof result.then === 'function') {
+          return Promise.resolve(result).then(
+            function (value) {
               sharedMemberstackReads.clear()
-            })
-          : result
+              return value
+            },
+            function (error) {
+              sharedMemberstackReads.clear()
+              throw error
+            },
+          )
+        }
+        sharedMemberstackReads.clear()
+        return result
       }
     })
-    if (typeof memberstack.onAuthChange === 'function') {
-      memberstack.onAuthChange(function () {
-        sharedMemberstackReads.clear()
-      })
-    }
   }
 
   async function getXanoAuthToken(options) {
@@ -472,18 +491,24 @@
     }
 
     assertExpectedScope(expectedScope)
+    pruneExpiredSharedReads()
     let shared = sharedReads.get(key)
-    if (!shared || shared.expiresAt <= Date.now()) {
+    if (!shared) {
       const promise = (async function () {
         const token = await getXanoAuthToken()
         assertSessionGeneration(generation)
         return fetchWithToken(request, token, generation)
       })()
-      shared = { promise, expiresAt: Date.now() + READ_DEDUPE_TTL_MS }
+      shared = { promise, expiresAt: null }
       sharedReads.set(key, shared)
       promise.then(
         function (response) {
-          if (!response.ok && sharedReads.get(key) === shared) sharedReads.delete(key)
+          if (sharedReads.get(key) !== shared) return
+          if (!response.ok) {
+            sharedReads.delete(key)
+            return
+          }
+          shared.expiresAt = Date.now() + READ_DEDUPE_TTL_MS
         },
         function () {
           if (sharedReads.get(key) === shared) sharedReads.delete(key)
