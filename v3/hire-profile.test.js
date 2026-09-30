@@ -10161,3 +10161,36 @@ for (const profileType of ['Consult', 'Full']) {
     assert.equal(retainer.getAttribute('data-header-tout-excluded'), null)
   })
 }
+
+for (const viewer of ['signed-out', 'owner']) {
+  test(`F50 CMS Services call duplicates never flash beside the canonical Services wrapper (${viewer})`, async () => {
+    // The CMS call cards are rollback markup for the canonical Services
+    // clones. Algolia or the owner grant usually answers before the call DTO;
+    // neither may reveal a duplicate that the DTO then hides again.
+    const page = makePage()
+    const cms = page.servicesList.children[0]
+    assert.equal(cms.getAttribute('data-service-card'), 'component')
+    assert.equal(cms.getAttribute('has-connection'), 'free')
+    const services = addXanoCallCardsFixture(page)
+    const feed = makeCallCardsWfXanoFixture(services.wrapper)
+    const writes = recordDisplayWrites({ root: cms })
+    const context = viewer === 'owner'
+      ? ownerContext(page, ownerController(), { wfXano: feed.api })
+      : makeContext({
+        page,
+        member: {},
+        wfXano: feed.api,
+        record: { 'free-consulting-calls-t-f': true, 'paid-consulting-calls-t-f': true },
+      })
+    vm.createContext(context)
+    vm.runInContext(source, context)
+    await settle()
+    assert.equal(cms.style.display, 'none', 'hidden before the DTO')
+    assert.equal(cms.getAttribute('data-call-offer-superseded'), '')
+    feed.emit(callCardResult({ free: true, paid: false }))
+    await settle()
+    assert.equal(cms.style.display, 'none', 'hidden after the DTO')
+    assert.equal(writes.includes('block'), false, 'the rollback duplicate never shows')
+    assert.equal(services.free.root.getAttribute('data-call-offer-state'), 'available')
+  })
+}

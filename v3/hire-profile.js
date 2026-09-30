@@ -1708,6 +1708,12 @@
   applyPendingCallCardStates(
       canonicalCallCardEntries().concat(legacyHeaderCallEntries(null))
   );
+  // F50: the CMS call cards in #services are rollback duplicates of the
+  // canonical Services clones. While that wrapper exists they stay superseded
+  // from bootstrap, so the Algolia or owner-grant reveal cannot flash one
+  // before the call DTO arrives and hides it again.
+  const canonicalServicesCallRoot = qs('[wf-xano-instance="starter-call-offers-services"]');
+  if (canonicalServicesCallRoot) supersedeLegacyServiceCallCards(canonicalServicesCallRoot);
   callDiscoveryFailsafeTimer = window.setTimeout(expireCallLoading, CALL_DISCOVERY_PUBLIC_WAIT_MS);
 
   // `jp-test` is the published CMS canary shared by both environments. Its
