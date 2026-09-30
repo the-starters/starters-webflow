@@ -2748,6 +2748,13 @@
           ? String(carrier.getAttribute('data-profile-type') || carrier.textContent || '').trim().toLowerCase()
           : '';
       const priority = ['hourly', 'retainer', 'free', 'paid'];
+      // F50: a loading pre-adapter call clone has no type yet. It may hold a
+      // spare slot as a placeholder, but ranks after every known type so it
+      // never pushes a rendered rate tout out of the cap.
+      const rank = function (type) {
+          const at = priority.indexOf(type);
+          return at === -1 ? priority.length : at;
+      };
       let count = 0;
       const entries = Array.from(headerToutEligibility.entries()).filter(function (entry) {
           if (entry[0].isConnected === false) {
@@ -2756,7 +2763,7 @@
           }
           return true;
       }).sort(function (a, b) {
-          return priority.indexOf(a[1].type) - priority.indexOf(b[1].type);
+          return rank(a[1].type) - rank(b[1].type);
       });
       entries.forEach(function (entry) {
           const node = entry[0];

@@ -10128,3 +10128,26 @@ for (const stalled of ['identity', 'discovery']) {
     assert.equal(xano.paid.root.getAttribute('data-call-offer-state'), 'hidden')
   })
 }
+
+for (const profileType of ['Consult', 'Full']) {
+  test(`F50 loading Header call touts never push a rate tout out of the Header cap (${profileType})`, async () => {
+    // Pre-adapter Header clones carry no call type yet. Their loading
+    // placeholders may use spare capacity but must rank after Hourly and
+    // Retainer, so rate touts that already rendered stay put.
+    const f = makeHeaderToutCapacityFixture({ profileType })
+    f.rate('hourly'); f.rate('retainer')
+    await settle()
+    // The rate wrapper is the tracked Header tout node.
+    const retainer = f.rates.roots[1]
+    assert.ok(retainer.querySelector('[wf-xano-item]'), 'the Retainer tout rendered')
+    assert.equal(f.header.free.root.getAttribute('data-call-offer-state'), 'loading')
+    assert.equal(f.header.free.root.getAttribute('data-type'), null, 'the call type is still unknown')
+    assert.equal(retainer.getAttribute('data-header-tout-excluded'), null, 'Retainer keeps its slot')
+    assert.deepEqual(f.offers(), ['hourly', 'retainer', 'free'], 'one loading call tout fills the spare slot')
+    assert.equal(f.header.paid.root.getAttribute('data-header-tout-excluded'), 'capacity')
+    f.headerFeed.emit(callCardResult()); f.servicesFeed.emit(callCardResult())
+    await settle()
+    assert.deepEqual(f.offers(), ['hourly', 'retainer', 'free'])
+    assert.equal(retainer.getAttribute('data-header-tout-excluded'), null)
+  })
+}
