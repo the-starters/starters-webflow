@@ -3255,6 +3255,9 @@
           card.setAttribute('data-call-offer-type', type);
           card.setAttribute('data-type', type);
           card.setAttribute('data-call-offer-state', 'pending');
+          // F50: `pending` is internal. The role writer below owns aria-busy,
+          // so a card it settles never keeps the loading marker.
+          card.removeAttribute('aria-busy');
           card.removeAttribute('booking-popup-open');
           card.removeAttribute('data-modal-trigger');
           adapted.push({ card: card, item: item, type: type });

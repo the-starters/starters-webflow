@@ -9652,3 +9652,99 @@ test('non-owner talent has no Brand tooltip, signup route, or booking action', a
   assert.deepEqual(opens, { signup: 0, chooser: 0, contract: 0 })
   assert.equal(context.bookingCalls.length, 0)
 })
+
+/* F50 review follow-ups: every managed call card reaches a terminal state, and
+   the terminal state never keeps the loading marker. */
+
+/** Canonical Header and Services clones that exist before this file boots. */
+function f50LibraryFirstCallCards(page) {
+  const header = addXanoCallCardsFixture(page, 'starter-call-offers-header')
+  header.wrapper.remove()
+  page.root.appendChild(header.wrapper)
+  const services = addXanoCallCardsFixture(page)
+  for (const [fixture, isServices] of [[header, false], [services, true]]) {
+    for (const card of [fixture.free, fixture.paid]) {
+      card.root.setAttribute('data-service-card', 'component')
+      card.root.setAttribute('has-connection', 'free')
+      if (isServices) card.root.setAttribute('data-type', 'free')
+      card.root.setAttribute('booking-popup-open', '')
+      card.root.setAttribute('data-modal-trigger', 'popup-booking-main')
+    }
+  }
+  const headerFeed = makeCallCardsWfXanoFixture(header.wrapper, 'starter-call-offers-header')
+  const servicesFeed = makeCallCardsWfXanoFixture(services.wrapper)
+  const api = {
+    push(callback) {
+      callback({
+        get: (key) => key === 'starter-call-offers-header'
+          ? headerFeed.instance
+          : key === 'starter-call-offers-services' ? servicesFeed.instance : null,
+      })
+    },
+  }
+  return {
+    header,
+    services,
+    api,
+    headerFeed,
+    cards: [header.free, header.paid, services.free, services.paid],
+  }
+}
+
+/** A member whose identity resolves only when the test says so. */
+function f50HeldIdentity(context, member) {
+  let release
+  const ready = new Promise((resolve) => { release = resolve })
+  context.memberReady = ready
+  context.waitForMember = (callback) => ready.then(() => callback(member))
+  return () => release(member)
+}
+
+function assertF50Loading(cards, label) {
+  assert.ok(cards.length > 0, label + ': cards exist')
+  for (const card of cards) {
+    assert.equal(card.root.style.display, 'block', label + ': shown')
+    assert.equal(card.root.getAttribute('aria-hidden'), null, label + ': accessible')
+    assert.equal(card.root.getAttribute('data-call-offer-state'), 'loading', label + ': loading')
+    assert.equal(card.root.getAttribute('aria-busy'), 'true', label + ': busy')
+    assert.equal(card.root.getAttribute('data-modal-trigger'), null, label + ': no modal hook')
+    assert.equal(card.root.getAttribute('booking-popup-open'), null, label + ': no booking hook')
+    assert.equal(card.root.getAttribute('data-signup-trigger-element'), null, label + ': no signup hook')
+  }
+}
+
+for (const [label, memberName] of [['signed-out', 'none'], ['paywalled', 'free-brand'], ['talent', 'talent']]) {
+  for (const dtoFirst of [true, false]) {
+    test(`F50 ${label} canonical cards drop aria-busy when the DTO settles them (${dtoFirst ? 'DTO first' : 'identity first'})`, async () => {
+      const member = memberName === 'none' ? {} : memberName === 'talent' ? OTHER_TALENT_MEMBER : FREE_BRAND_MEMBER
+      const page = makePage()
+      const fixture = f50LibraryFirstCallCards(page)
+      const context = makeContext({ page, member, wfXano: fixture.api })
+      const releaseIdentity = f50HeldIdentity(context, member)
+      vm.createContext(context)
+      vm.runInContext(source, context)
+      assertF50Loading(fixture.cards, 'at boot')
+      if (dtoFirst) {
+        fixture.headerFeed.emit(callCardResult({ free: true, paid: false }))
+        await settle()
+        assertF50Loading(fixture.cards, 'DTO known, identity unresolved')
+        releaseIdentity()
+      } else {
+        releaseIdentity()
+        await settle()
+        assertF50Loading(fixture.cards, 'identity known, DTO unresolved')
+        fixture.headerFeed.emit(callCardResult({ free: true, paid: false }))
+      }
+      await settle()
+      assert.equal(fixture.cards.length, 4)
+      for (const card of fixture.cards) {
+        const type = card.root.getAttribute('data-type')
+        assert.ok(type === 'free' || type === 'paid', 'every clone is adapted')
+        const offered = memberName !== 'talent' && type === 'free'
+        assert.equal(card.root.getAttribute('data-call-offer-state'), offered ? 'available' : 'hidden')
+        assert.equal(card.root.style.display, offered ? 'block' : 'none')
+        assert.equal(card.root.getAttribute('aria-busy'), null, `${type}: a settled card is not busy`)
+      }
+    })
+  }
+}

@@ -234,6 +234,12 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
     assert.equal(loadingState.book.spinnerInline, 'none')
     assert.equal(loadingState.book.loadingHide, 'flex')
     assert.equal(loadingState.book.loadingHideInline, 'inline-flex')
+    for (const role of ['anonymous', 'free']) {
+      await navigate(`role=${role}`)
+      const state = await snapshot(`${role}-settled`)
+      assert.equal(state.cards.length, 4)
+      assert.ok(state.cards.every(card => card.visible && card.offerState === 'available' && !card.busy), `${role}: public cards settle without aria-busy`)
+    }
     for (const role of ['anonymous', 'free', 'brand']) {
       for (const failed of ['header', 'services']) {
         await navigate(`role=${role}&failed=${failed}`)
@@ -248,6 +254,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
         await pause(100)
         state = await snapshot(`${role}-${failed}-recovered`)
         assert.equal(state.cards.length, 4); assert.ok(state.cards.every(card => card.visible)); assertBookState(state, role, true)
+        assert.ok(state.cards.every(card => !card.busy && card.offerState === 'available'), 'settled cards drop aria-busy')
         await assertBookCall(role, true)
         assert.ok(state.cards.filter(card => card.type === 'paid').every(card => card.price === '250'))
         for (const surface of ['header', 'services']) for (const type of ['free', 'paid']) {
@@ -273,7 +280,9 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
         await evaluate(`lists['starter-call-offers-${failed}'].emit(false)`)
         await pause(50)
         state = await snapshot(`${role}-${failed}-paid-revoked`)
+        assert.equal(state.cards.length, 4)
         assert.ok(state.cards.every(card => card.visible === (card.type === 'free')))
+        assert.ok(state.cards.every(card => !card.busy && card.offerState === (card.type === 'free' ? 'available' : 'hidden')), 'revoked cards settle without aria-busy')
       }
     }
     for (const owner of ['ready', 'off', 'calendar', 'stripe', 'stale', 'loading', 'error']) {
