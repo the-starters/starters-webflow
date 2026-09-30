@@ -194,8 +194,11 @@ page. The separate login default can lead to `/`, where the existing homepage
 stay rule prevents a second redirect; the runtime tests follow that destination.
 
 On `/login` and `/starter-login`, free Brands with persisted `signup-source`
-exactly `/all-starters` and no completed quiz default to `/`. Completed quizzes
-still select `/quiz-results`; other sources retain `/quiz`. This shared decision
+matching `/all-starters` or a recognized Learn item path and no completed quiz
+default to `/`. Recognized Learn families are `/learn/sessions/`,
+`/learn/interviews-analysis/`, and `/learn/playbooks-frameworks/`, with exactly
+one normalized item slug; listing pages are excluded. Completed quizzes still
+select `/quiz-results`; other sources retain `/quiz`. This shared decision
 also drives `/auth-route`, but does not change `/sign-up`, canonical dashboard
 returns, guarded-page defaults, or immediate modal-signup returns. See the
 [login-default contract](../../v3/ACCESS-MATRIX.md#non-quiz-free-brand-login-default).
@@ -647,7 +650,7 @@ CDN copy is still in play; purge it with `purge.jsdelivr.net`.
   and confirm each one still renders untouched when signed out. On `/` the two
   homepage overrides change two of those cases: a not-yet-quizzed Free Brand must
   stay with no `<html>` attribute at all, while `/login` and `/starter-login`
-  send an All Starters-source member to `/` and quiz-origin or unknown-source
+  send All Starters and recognized Learn item members to `/`, and quiz-origin or unknown-source
   members to `/quiz`. Follow the new homepage destination and confirm it stays.
 - Verify the homepage cancelled-Brand redirect with a Memberstack account whose
   paid Brand plan is cancelled, in both sub-kinds — free plan still active, and

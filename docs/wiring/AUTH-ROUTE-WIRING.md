@@ -288,7 +288,7 @@ and an unbounded wait to the one page this change exists to speed up. See
 | `pln_dorxata-test-free-plan-dvcg0k8o` | Talent | `/starter-dashboard` |
 | `pln_new-paid-plan-463h04ph` | Brand paid | `/brand-dashboard` |
 | `pln_dorxata-test-brand-plan-777r02pa` | Test Brand / Brand paid | `/brand-dashboard` |
-| `pln_free-plan-f6kn0dxz` | Brand free | `/quiz-results` once the durable quiz signal is present; otherwise `/` for persisted Signup Source `/all-starters`, else `/quiz` |
+| `pln_free-plan-f6kn0dxz` | Brand free | `/quiz-results` once the durable quiz signal is present; otherwise `/` for a recognized All Starters or Learn item Signup Source, else `/quiz` |
 | Unmapped or inactive | Unmapped | Remain on `/auth-route` with `data-auth-route-error="unmapped-plan"` |
 
 Brand Free plus paid Brand is a valid same-family upgrade state and resolves to

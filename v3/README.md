@@ -148,8 +148,8 @@ The V3 protected-route guard sends logged-out visitors to
 locator on either dashboard, it also preserves `#calls` or `#calls-section`
 through login. Other fragments are removed, and the router restores only a
 role-allowed same-origin destination. Free Brands without a completed quiz and
-with persisted Signup Source `/all-starters` default to `/` on login; both login
-entry paths use the guard's shared decision. Generic role homes and immediate
+with a recognized All Starters or Learn item Signup Source default to `/` on
+login; both login entry paths use the guard's shared decision. Generic role homes and immediate
 signup returns are unchanged. See the
 [login-default contract](ACCESS-MATRIX.md#non-quiz-free-brand-login-default).
 

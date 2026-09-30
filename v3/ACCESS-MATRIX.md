@@ -58,8 +58,8 @@ one route-level rule that page needs.
 | Route | Brand free | Brand paid | Talent | Router behavior |
 | --- | --- | --- | --- | --- |
 | `/` (homepage) | Stay until the quiz is done, then `/quiz-results` | `/brand-dashboard` | `/starter-dashboard` | Member-home bounce plus two homepage-only overrides (decision 2026-08-03, see [Homepage overrides](#homepage-overrides)): a cancelled paid Brand goes to `/all-starters`, and a free Brand who has not completed the quiz stays here instead of being sent to `/quiz`. A valid `?next=` outranks both. Logged-out visitors untouched |
-| `/login` | Default quiz home | `/brand-dashboard` | `/starter-dashboard` | Member-home bounce, honouring a valid `?next=`; logged-out visitors untouched |
-| `/starter-login` | Default quiz home | `/brand-dashboard` | `/starter-dashboard` | Member-home bounce, honouring a valid `?next=`; logged-out visitors untouched |
+| `/login` | Source-dependent login default | `/brand-dashboard` | `/starter-dashboard` | Member-home bounce, honouring a valid `?next=`; logged-out visitors untouched |
+| `/starter-login` | Source-dependent login default | `/brand-dashboard` | `/starter-dashboard` | Member-home bounce, honouring a valid `?next=`; logged-out visitors untouched |
 | `/sign-up` | Default quiz home | `/brand-dashboard` | `/starter-dashboard` | Member-home bounce; logged-out visitors untouched |
 | `/dashboard` | Default quiz home | `/brand-dashboard` | `/starter-dashboard` | Canonical authenticated entry only; no dashboard page body lives here |
 | `/quiz` | Allow | Default `/brand-dashboard` | Default `/starter-dashboard`, enforced | Free Brand default until quiz completion; page controller enforces all three columns, and the Talent bounce ignores `?retake=` |
@@ -292,9 +292,24 @@ one route-level rule that page needs.
 
 After login through `/auth-route`, or when an authenticated member visits
 `/login` or `/starter-login`, a free Brand whose persisted Memberstack
-`signup-source` is exactly `/all-starters` defaults to `/` when it has not
-completed the quiz. The guard owns this shared login decision. No current-page,
-referrer, trigger, cookie, or query value classifies the member.
+`signup-source` matches one of these normalized paths defaults to `/` when it
+has not completed the quiz:
+
+- Exactly `/all-starters`.
+- One item under `/learn/sessions/`, `/learn/interviews-analysis/`, or
+  `/learn/playbooks-frameworks/`. The item slug uses lowercase letters, digits,
+  and internal hyphens only, with no further path segments.
+
+Attribution stores lowercase pathnames without a trailing slash; login consumes
+that persisted form without repairing malformed values. Listing paths, queries,
+fragments, external URLs, and other Learn families are not recognized. In
+particular, `/learn`, `/learn/sessions`, `/learn/interviews-analysis`, and
+`/learn/frameworks-playbooks` remain outside this exception. The older
+`interviews-analyses` source-map spelling is not a verified published signup
+family and is not included.
+
+The guard owns this shared login decision. No current-page, referrer, trigger,
+cookie, or query value classifies the member.
 
 A completed durable `starter-quiz` signal selects `/quiz-results` first.
 Quiz-origin, missing, unknown, and malformed sources retain `/quiz`. Completed
@@ -309,9 +324,20 @@ The homepage already lets free Brands without a completed quiz stay, so the new
 login default has no follow-on bounce. `/` is the live homepage; `/home` remains
 an attribution storage convention. Login never writes attribution.
 
-Before rollout, verify a persisted source from an actual All Starters modal
-signup through the staging-qa member-session harness. The source mapping and
-attribution unit tests do not substitute for that member-session check.
+On 2026-09-30, published staging DOM showed signup forms on All Starters and
+items in all three included Learn families. The Learn listings above showed no
+signup forms. Signup attribution captures the actual pathname independently of
+the older lead-entry source map. This establishes the mapping's page and code
+evidence, not persistence for an actual member in each cohort.
+
+Before rollout, verify a persisted source from an actual All Starters signup and
+each included Learn family through the staging-qa member-session harness. No
+existing member from these non-quiz cohorts has yet been verified; actual
+persisted-source and later-login checks remain release dependencies. The source
+mapping, simulated-member tests, and attribution unit tests do not substitute
+for those member-session checks. Immediate content-signup returns are unchanged.
+Release the pinned login loader and moving route guard together and verify their
+served bytes and published behavior before claiming this change is live.
 
 ### Homepage overrides
 

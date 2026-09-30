@@ -504,7 +504,9 @@
     if (
       memberRole(member) === 'brand-free' &&
       !hasCompletedQuiz(member) &&
-      fields['signup-source'] === '/all-starters'
+      (fields['signup-source'] === '/all-starters' ||
+        (typeof fields['signup-source'] === 'string' &&
+          /^\/learn\/(?:sessions|interviews-analysis|playbooks-frameworks)\/[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(fields['signup-source'])))
     ) return '/'
     return roleHome(member)
   }

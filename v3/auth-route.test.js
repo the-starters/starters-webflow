@@ -1661,6 +1661,60 @@ test('an All Starters free Brand lands on the homepage after login', async () =>
   assert.equal(location.replaced, '/')
 })
 
+test('verified Learn signup free Brands land on the homepage after login', async () => {
+  for (const source of [
+    '/learn/sessions/partnerships-playbook',
+    '/learn/interviews-analysis/how-to-build-trust-on-social-media-in-2026',
+    '/learn/playbooks-frameworks/the-live-shopping-playbook',
+  ]) {
+    const { location } = loadRouter({
+      pathname: '/auth-route',
+      member: {
+        id: 'member-content',
+        planConnections: [plan('pln_free-plan-f6kn0dxz')],
+        customFields: { 'signup-source': source },
+      },
+    })
+    await flush()
+    assert.equal(location.replaced, '/', source)
+  }
+})
+
+test('Learn listings and malformed or unverified source paths retain the quiz default', async () => {
+  for (const source of [
+    '/learn',
+    '/learn/sessions',
+    '/learn/interviews-analysis',
+    '/learn/frameworks-playbooks',
+    '/learn/playbooks-frameworks',
+    '/learn/sessions/',
+    '/learn/sessions/item/nested',
+    '/learn/sessions/item?modal-id=signup-modal',
+    '/learn/sessions/item#signup-modal',
+    '/learn/sessions/item\n',
+    '/learn/sessions/-item',
+    '/learn/sessions/item-',
+    '/learn/sessions/%69tem',
+    '/learn/sessions/Item',
+    '/learn/sessions/item/',
+    '/learn/interviews-analyses/item',
+    '/learn/other/item',
+    'https://example.com/learn/sessions/item',
+    { path: '/learn/sessions/item' },
+  ]) {
+    const { location } = loadRouter({
+      pathname: '/auth-route',
+      member: {
+        id: 'member-content',
+        planConnections: [plan('pln_free-plan-f6kn0dxz')],
+        customFields: { 'signup-source': source },
+      },
+    })
+    await flush()
+    assert.equal(location.replaced, '/quiz', JSON.stringify(source))
+  }
+})
+
 test('free Brand login keeps quiz precedence and conservative source fallbacks', async () => {
   const cases = [
     [{ 'signup-source': '/all-starters', 'starter-quiz': '{"status":"ready"}' }, '/quiz-results'],
@@ -1698,6 +1752,31 @@ test('All Starters login preserves allowed returns and uses the homepage for rej
       member: {
         id: 'member-all-starters', planConnections: [plan('pln_free-plan-f6kn0dxz')],
         customFields: { 'signup-source': '/all-starters' },
+      },
+    })
+    await flush()
+    assert.equal(location.replaced, expected, storedDestination)
+  }
+})
+
+test('Learn login preserves completed results and validated return destinations', async () => {
+  const cases = [
+    [null, '{"status":"ready"}', '/quiz-results'],
+    ['/all-starters?view=favorites', '', '/all-starters?view=favorites'],
+    ['/quiz?retake=true', '', '/quiz?retake=true'],
+    ['/dashboard', '', '/quiz'],
+    ['/brand-dashboard', '', '/'],
+    ['https://example.com/learn', '', '/'],
+  ]
+  for (const [storedDestination, quiz, expected] of cases) {
+    const { location } = loadRouter({
+      pathname: '/auth-route', storedDestination,
+      member: {
+        id: 'member-content', planConnections: [plan('pln_free-plan-f6kn0dxz')],
+        customFields: {
+          'signup-source': '/learn/playbooks-frameworks/the-live-shopping-playbook',
+          'starter-quiz': quiz,
+        },
       },
     })
     await flush()

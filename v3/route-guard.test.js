@@ -831,6 +831,47 @@ test('an authenticated All Starters free Brand reaches the homepage and stays th
   }
 })
 
+test('authenticated Learn signup free Brands reach the homepage and stay there', async () => {
+  for (const source of [
+    '/learn/sessions/partnerships-playbook',
+    '/learn/interviews-analysis/how-to-build-trust-on-social-media-in-2026',
+    '/learn/playbooks-frameworks/the-live-shopping-playbook',
+  ]) {
+    const member = { ...BRAND_FREE, customFields: { 'signup-source': source } }
+    for (const pathname of ['/login', '/starter-login']) {
+      const login = loadGuard({ pathname, member })
+      await flush()
+      assert.equal(login.location.replaced, '/', source + ' from ' + pathname)
+      const destination = loadGuard({ pathname: login.location.replaced, member })
+      await flush()
+      assert.equal(destination.location.replaced, undefined, source)
+    }
+  }
+})
+
+test('Learn signup sources preserve quiz precedence and unrelated entry behavior', async () => {
+  const source = '/learn/playbooks-frameworks/the-live-shopping-playbook'
+  const cases = [
+    ['/login', '', { 'starter-quiz': '{"status":"ready"}' }, '/quiz-results'],
+    ['/login', '?next=%2Fall-starters%3Fview%3Dfavorites', {}, '/all-starters?view=favorites'],
+    ['/login', '?next=%2Fquiz%3Fretake%3Dtrue', {}, '/quiz?retake=true'],
+    ['/login', '?next=%2Fbrand-dashboard', {}, '/'],
+    ['/login', '?next=https%3A%2F%2Fexample.com', {}, '/'],
+    ['/dashboard', '', {}, '/quiz'],
+    ['/brand-dashboard', '', {}, '/quiz'],
+    ['/sign-up', '', {}, '/quiz'],
+    ['/quiz', '?retake=true', {}, undefined],
+  ]
+  for (const [pathname, search, customFields, expected] of cases) {
+    const { location } = loadGuard({
+      pathname, search,
+      member: { ...BRAND_FREE, customFields: { 'signup-source': source, ...customFields } },
+    })
+    await flush()
+    assert.equal(location.replaced, expected, pathname + search)
+  }
+})
+
 test('an All Starters login still resolves an explicit dashboard return to quiz home', async () => {
   const { location } = loadGuard({
     pathname: '/login',
