@@ -9854,3 +9854,97 @@ for (const viewer of ['signed-out', 'brand', 'owner']) {
     }
   })
 }
+
+/** The published layout: the legacy Header touts plus the canonical Services wrapper. */
+function f50LegacyHeaderPage() {
+  const page = makePage()
+  const legacyHeader = addLegacyHeaderCallCardsFixture(page)
+  for (const card of [legacyHeader.free, legacyHeader.paid]) {
+    card.root.setAttribute('booking-popup-open', '')
+    card.root.setAttribute('data-modal-trigger', 'popup-booking-main')
+    card.root.setAttribute('data-signup-trigger-element', 'service')
+    card.root.setAttribute(
+      'data-signup-trigger-value',
+      card === legacyHeader.paid ? 'Paid Consulting Call' : 'Free Call',
+    )
+  }
+  const services = addXanoCallCardsFixture(page)
+  const feed = makeCallCardsWfXanoFixture(services.wrapper)
+  return { page, legacyHeader, services, feed, legacyCards: [legacyHeader.free, legacyHeader.paid] }
+}
+
+function recordDisplayWrites(card) {
+  const writes = []
+  let display = card.root.style.display
+  Object.defineProperty(card.root.style, 'display', {
+    configurable: true,
+    get: () => display,
+    set: (value) => {
+      writes.push(value)
+      display = value
+    },
+  })
+  return writes
+}
+
+for (const viewer of ['signed-out', 'paywalled', 'talent']) {
+  test(`F50 ${viewer} legacy Header holds loading until its terminal writer, identity first`, async () => {
+    const fixture = f50LegacyHeaderPage()
+    const member = viewer === 'paywalled' ? FREE_BRAND_MEMBER : viewer === 'talent' ? OTHER_TALENT_MEMBER : {}
+    const freeWrites = recordDisplayWrites(fixture.legacyHeader.free)
+    const context = makeContext({ page: fixture.page, member, wfXano: fixture.feed.api })
+    vm.createContext(context)
+    vm.runInContext(source, context)
+    assertF50Loading(fixture.legacyCards, 'at boot')
+    await settle()
+    if (viewer === 'talent') {
+      // Talent never sees a call card, so identity alone is terminal.
+      for (const card of fixture.legacyCards) {
+        assert.equal(card.root.style.display, 'none')
+        assert.equal(card.root.getAttribute('aria-hidden'), 'true')
+        assert.equal(card.root.getAttribute('data-call-offer-state'), 'hidden')
+        assert.equal(card.root.getAttribute('aria-busy'), null)
+      }
+      return
+    }
+    // The public DTO decides these cards; identity alone is not an answer.
+    assertF50Loading(fixture.legacyCards, 'identity known, DTO unresolved')
+    fixture.feed.emit(callCardResult({ free: true, paid: false }))
+    await settle()
+    const [free, paid] = fixture.legacyCards
+    assert.equal(free.root.getAttribute('data-call-offer-state'), 'available')
+    assert.equal(free.root.style.display, 'block')
+    assert.equal(free.root.getAttribute('aria-busy'), null)
+    assert.equal(free.root.getAttribute('data-signup-trigger-element'), 'service')
+    assert.equal(paid.root.getAttribute('data-call-offer-state'), 'hidden')
+    assert.equal(paid.root.style.display, 'none')
+    assert.equal(paid.root.getAttribute('aria-busy'), null)
+    assert.equal(freeWrites.includes('none'), false, 'the offered card never flashes hidden')
+  })
+}
+
+for (const viewer of ['signed-out', 'paywalled']) {
+  test(`F50 ${viewer} legacy Header touts rendered after identity load until the DTO`, async () => {
+    const fixture = f50LegacyHeaderPage()
+    const member = viewer === 'paywalled' ? FREE_BRAND_MEMBER : {}
+    for (const card of fixture.legacyCards) card.root.remove()
+    const context = makeContext({ page: fixture.page, member, wfXano: fixture.feed.api })
+    vm.createContext(context)
+    vm.runInContext(source, context)
+    await settle()
+    for (const card of fixture.legacyCards) fixture.legacyHeader.wrapper.appendChild(card.root)
+    const records = fixture.legacyCards.map((card) => ({ type: 'childList', addedNodes: [card.root] }))
+    context.mutationObserverCallbacks.forEach((callback) => callback(records))
+    assertF50Loading(fixture.legacyCards, 'late legacy touts')
+    for (const card of fixture.legacyCards) {
+      assert.deepEqual(card.root.listeners.click || [], [], 'no direct booking route')
+    }
+    fixture.feed.emit(callCardResult({ free: true, paid: false }))
+    await settle()
+    const [free, paid] = fixture.legacyCards
+    assert.equal(free.root.getAttribute('data-call-offer-state'), 'available')
+    assert.equal(free.root.getAttribute('aria-busy'), null)
+    assert.equal(paid.root.getAttribute('data-call-offer-state'), 'hidden')
+    assert.equal(paid.root.getAttribute('aria-busy'), null)
+  })
+}

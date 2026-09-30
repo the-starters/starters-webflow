@@ -188,6 +188,30 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
     assert.ok(legacyState.legacyCards.every(card => !card.visible && card.display === 'none'))
     assert.ok(legacyState.legacyCards.every(card => card.ariaHidden === 'true' && card.offerState === 'hidden' && !card.busy))
 
+    for (const role of ['anonymous', 'free']) {
+      await navigate(`role=${role}&header=legacy&dto=held`)
+      let publicLegacy = await snapshot(`${role}-legacy-header-loading`)
+      assert.equal(publicLegacy.legacyCards.length, 2)
+      assert.ok(publicLegacy.legacyCards.every(card => card.visible && card.offerState === 'loading' && card.busy), `${role}: legacy touts wait for the DTO`)
+      assert.ok(publicLegacy.legacyCards.every(card => card.signup === null && card.modal === null && card.direct === null))
+      assert.equal(publicLegacy.cards.length, 2)
+      assert.ok(publicLegacy.cards.every(card => card.visible && card.offerState === 'loading' && card.busy))
+      await evaluate(`lists['starter-call-offers-services'].emit(false)`)
+      for (let i = 0; i < 100; i++) {
+        if (await evaluate(`[...document.querySelectorAll('[data-call-canary-legacy-wrapper="header"] [data-service-card="component"]')].every(card => card.getAttribute('data-call-offer-state') !== 'loading')`)) break
+        await pause(25)
+      }
+      publicLegacy = await snapshot(`${role}-legacy-header-settled`)
+      const [legacyOffered, legacyRefused] = publicLegacy.legacyCards
+      assert.ok(legacyOffered.visible && legacyOffered.offerState === 'available' && !legacyOffered.busy && legacyOffered.signup === 'service')
+      assert.ok(!legacyRefused.visible && legacyRefused.offerState === 'hidden' && !legacyRefused.busy && legacyRefused.ariaHidden === 'true')
+    }
+    await navigate('role=talent&header=legacy')
+    const talentLegacy = await snapshot('talent-legacy-header')
+    assert.equal(talentLegacy.legacyCards.length, 2)
+    assert.equal(talentLegacy.cards.length, 2)
+    assert.ok(talentLegacy.legacyCards.concat(talentLegacy.cards).every(card => !card.visible && card.offerState === 'hidden' && !card.busy), 'talent sees no call card')
+
     for (const grantOrder of ['fast', 'slow']) {
       await navigate(`role=owner&owner=loading&header=legacy${grantOrder === 'slow' ? '&discovery=held' : ''}`)
       let ownerLegacyState = await snapshot(`owner-legacy-${grantOrder}-grant-loading`)

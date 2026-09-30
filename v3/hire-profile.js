@@ -2966,7 +2966,8 @@
       }));
   }
 
-  function applyPendingCallCardStates(entries) {
+  function applyPendingCallCardStates(entries, loading) {
+      const showLoading = loading === undefined ? callDiscoveryPending : loading;
       entries.forEach(function (entry) {
           const card = entry.card;
           card.setAttribute('data-service-card-state', 'Default');
@@ -2977,7 +2978,7 @@
           card.removeAttribute('data-signup-trigger-element');
           card.removeAttribute('data-signup-trigger-value');
           card.removeAttribute('data-call-service-direct');
-          if (!callDiscoveryPending) return;
+          if (!showLoading) return;
           setCallOfferVisible(card, true);
           card.setAttribute('aria-busy', 'true');
           card.setAttribute('data-call-offer-state', 'loading');
@@ -2992,8 +2993,18 @@
       if (latestCanonicalCallItems) {
           paintLegacyHeaderCanonicalContent(latestCanonicalCallItems);
       }
-      if (viewerSeesPublicProjection(MEMBER) && latestCanonicalCallItems) {
-          syncLoggedOutCanonicalHeader(latestCanonicalCallItems);
+      if (viewerSeesPublicProjection(MEMBER)) {
+          if (latestCanonicalCallItems) {
+              syncLoggedOutCanonicalHeader(latestCanonicalCallItems);
+          } else {
+              // F50: the public DTO decides these touts for a signed-out or
+              // paywalled viewer, so identity alone never settles or
+              // supersedes them. A tout the legacy wrapper renders late joins
+              // the loading state the bootstrap touts already hold.
+              applyPendingCallCardStates(legacyHeaderCallEntries(null).filter(function (entry) {
+                  return !entry.card.hasAttribute('data-call-offer-state');
+              }), true);
+          }
           return;
       }
       if (isProfileOwner(MEMBER)) {
