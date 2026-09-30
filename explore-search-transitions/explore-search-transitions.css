@@ -11,7 +11,8 @@
         pointer-events: auto;
       }
 
-      /* GSAP moves the close button into place when the overlay opens. */
+      /* Keep CSS transform transitions from competing with GSAP's entrance
+         animation; the close button's color transitions remain CSS-driven. */
       [data-search-brilliance-wrapper] .button_main-wrap[data-search-brilliance-close] {
         transition-property: background-color, color, border-color !important;
       }
