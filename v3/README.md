@@ -2273,8 +2273,11 @@ successful canonical load restarts that initial window instead of shortening
 it. Later refreshes retain the three-total-read budget with 200ms then 400ms
 backoff before the identity is treated as missing.
 A refresh that follows a successful cancel, decline, confirm, or reschedule
-keeps the rendered list and the success panel in place when the canonical read
-itself fails, and logs instead. A member that is still absent after the bounded
+keeps the rendered list and the open details view in place when the canonical
+read itself fails, and logs instead. Cancel, decline, and reschedule end on
+their authored success panels. A confirm has no success panel: it repaints the
+details view from the committed row, as the Starter Accept paragraph below
+describes. A member that is still absent after the bounded
 retries is not a transient failure: on every refresh path, including the
 post-mutation and expiry-tick refreshes, it clears the rendered identity and
 booking rows and then fails the dashboard closed.
@@ -2610,9 +2613,26 @@ canonical nested `confirmation.status` equal to `confirmed`, with a top-level
 flag does not change that decision. Any pending, malformed, or failed body
 fails closed and keeps the stored key. Only a confirmed response removes it
 before refreshing the canonical list, which moves the accepted row from Starter
-Call Requests to Starter Calls while it remains in Brand Calls. All other
-legacy mutation controls stay hidden until they have current V3-safe endpoint
-contracts.
+Call Requests to Starter Calls while it remains in Brand Calls.
+
+F53 (JP meeting, 2026-09-30): before that refresh, the controller commits the
+response's `confirmation.status` to the canonical row through the session's
+mutation owner, with a claim taken after the booking's action slot. This is the
+same owner the other call actions use, so the commit invalidates an in-flight
+background read and a stale pending row cannot come back. The controller then
+repaints the open details dialog from the committed row at once: the status
+hook shows the authored "Upcoming" label, `data-booking-status` becomes
+`confirmed`, and Confirm, Decline, and the `[pending-info-text]` copy hide. No
+new copy is added. The repaint uses the lifecycle painters, so it leaves a
+dialog that shows another step alone and paints only the call the dialog
+shows. After the refresh, the canonical read repaints the status and the
+meeting link, and the controller re-checks the pending copy and actions
+against the refreshed row. When every later read fails, the committed row keeps
+the confirmed view, and a stale second Accept sends no request and shows no
+error. A refused commit (the row changed or left the list) changes nothing,
+and the refresh repaints instead. A card-level Accept takes the same commit.
+All other legacy mutation controls stay hidden until they have current V3-safe
+endpoint contracts.
 
 ### Dashboard booking action contract
 

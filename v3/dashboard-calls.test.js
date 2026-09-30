@@ -8343,3 +8343,425 @@ test('the lifecycle tick moves an open Join detail to Completed at call end', ()
     global.StartersDashboardCallActions = original.actions
   }
 })
+
+// F53 (JP meeting 2026-09-30): after the Starter's in-modal Accept the details
+// heading kept "Pending" and Confirm/Decline stayed on screen until the list
+// read came back, or until a later tick when that read failed. These tests
+// boot the real controller with the real click delegates and the pure parts
+// of the real actions module.
+function acceptElement(tag, attributes = {}, text) {
+  const node = richElement(tag, attributes, text)
+  // The Accept delegate asks `closest` for a selector list.
+  node.closest = function (selector) {
+    const parts = selector.split(',').map((part) => part.trim()).filter(Boolean)
+    for (let candidate = this; candidate; candidate = candidate.parentNode) {
+      if (parts.some((part) => matchesAttributeSelector(candidate, part))) return candidate
+    }
+    return null
+  }
+  return node
+}
+
+function acceptView() {
+  const configId = '11111111-2222-3333-4444-555555555555'
+  const bookingId = 'f53f53f5-bbbb-cccc-dddd-eeeeeeeeeeee'
+  const uuidBytes = (value) => Buffer.from(value.replace(/-/g, ''), 'hex')
+  const bookingRef = Buffer.concat([
+    uuidBytes(configId),
+    uuidBytes(bookingId),
+    Buffer.from('bounded-salt'),
+  ]).toString('base64url')
+  const now = Date.now()
+  const booking = {
+    booking_id: bookingId,
+    config_id: configId,
+    booking_ref: bookingRef,
+    grant_id: 'grant-f53',
+    data_environment: 'production',
+    status: 'pending',
+    is_paid: false,
+    duration: 30,
+    start: now + 3 * 24 * 60 * 60 * 1000,
+    end: now + 3 * 24 * 60 * 60 * 1000 + 30 * 60 * 1000,
+    confirmation_expires_at: now + 24 * 60 * 60 * 1000,
+    meeting_link: '',
+    brand_data: { name: 'Northwind', memberstack_id: 'mem_brand', timezone: 'UTC' },
+    starter_data: { name: 'Sam', memberstack_id: 'mem_starter', timezone: 'UTC' },
+  }
+  const modal = acceptElement('dialog', { 'popup-booking-info': '' })
+  modal.ownerDocument = { createElement: (tag) => acceptElement(tag) }
+  modal.open = true
+  const base = acceptElement('div', { 'booking-popup-content': 'base' })
+  const status = acceptElement('i', { 'booking-element': 'status' }, 'Pending')
+  const pendingInfo = acceptElement('div', { 'pending-info-text': '' }, 'Authored pending info')
+  const table = acceptElement('div')
+  const meeting = authoredTableRow('Meeting Link', 'meeting-link', '')
+  table.appendChild(meeting.wrap)
+  const footer = acceptElement('div')
+  const accept = acceptElement('a', { 'booking-action-btn': 'switch-confirm' }, 'Confirm Call')
+  const decline = acceptElement('a', { 'booking-action-btn': 'switch-decline' }, 'Decline Call')
+  footer.appendChild(accept)
+  footer.appendChild(decline)
+  base.appendChild(status)
+  base.appendChild(pendingInfo)
+  base.appendChild(table)
+  base.appendChild(footer)
+  const declinePanel = acceptElement('div', { 'booking-popup-content': 'decline' })
+  declinePanel.hidden = true
+  modal.appendChild(base)
+  modal.appendChild(declinePanel)
+  return { accept, base, booking, bookingId, decline, declinePanel, meeting, modal, now, pendingInfo, status }
+}
+
+// The pure parts of the actions module, without its DOM mounting.
+function acceptActionsModule() {
+  const real = require('./dashboard-call-actions.js')
+  return {
+    wire() {},
+    canDecline: real.canDecline,
+    canCancel: real.canCancel,
+    rescheduleKindFor() { return '' },
+    canRespondReschedule() { return false },
+    canConfirmReschedule() { return false },
+    switchPopupContent: real.switchPopupContent,
+    fillCounterpartPlaceholders: real.fillCounterpartPlaceholders,
+    markActionBusy: real.markActionBusy,
+    showActionError: real.showActionError,
+  }
+}
+
+// Boots the real controller on /starter-dashboard with a controlled clock,
+// scripted canonical reads, and the captured ten-second lifecycle ticker, then
+// opens the details modal on the view's booking through the details delegate.
+async function bootAcceptDashboard(view, bookingReads, { onConfirm } = {}) {
+  const source = fs.readFileSync(require.resolve('./dashboard-calls.js'), 'utf8')
+  const clock = { value: view.now }
+  class ClockDate extends Date {
+    static now() { return clock.value }
+  }
+  const member = { id: 'mem_starter' }
+  const state = { reads: 0, confirms: 0, readTimes: [] }
+  const listeners = []
+  const intervals = []
+  const sectionNode = (name) => {
+    const list = element()
+    const template = element({ 'bookings-item-template': name })
+    list.querySelectorAll = (selector) => selector === '[bookings-item-template]' ? [template] : []
+    const node = element({ 'bookings-section': name })
+    node.querySelector = (selector) => ({
+      ['[bookings-list="' + name + '"]']: list,
+      ['[bookings-item-template="' + name + '"]']: template,
+      ['[bookings-loader="' + name + '"]']: element(),
+      ['[bookings-empty="' + name + '"]']: element(),
+      '[bookings-count]': element(),
+      '.tabs-button_component.is-dashboard': element(),
+    })[selector] || null
+    return node
+  }
+  const sections = [sectionNode('requests'), sectionNode('calls')]
+  const root = element()
+  const document = {
+    documentElement: root,
+    readyState: 'complete',
+    visibilityState: 'visible',
+    hidden: false,
+    addEventListener(type, listener) {
+      if (type === 'click') listeners.push(listener)
+    },
+    getElementById() { return null },
+    querySelector(selector) {
+      return selector.includes('popup-booking-info') ? view.modal : null
+    },
+    querySelectorAll(selector) {
+      return selector === '[bookings-section]' ? sections : []
+    },
+  }
+  const click = (target) => {
+    let stopped = false
+    const event = {
+      target,
+      preventDefault() {},
+      stopImmediatePropagation() { stopped = true },
+    }
+    const pending = []
+    for (const listener of listeners) {
+      pending.push(listener(event))
+      if (stopped) break
+    }
+    return Promise.all(pending)
+  }
+  const window = {
+    $memberstackDom: {
+      async getCurrentMember() { return { data: member } },
+      onAuthChange() {},
+    },
+    StartersDashboardCallActions: acceptActionsModule(),
+    TextEncoder,
+    URLSearchParams,
+    atob,
+    btoa,
+    clearInterval() {},
+    crypto: {
+      randomUUID: () => '00000000-0000-4000-8000-000000000153',
+      subtle: globalThis.crypto.subtle,
+    },
+    document,
+    location: { pathname: '/starter-dashboard', search: '', hash: '' },
+    sessionStorage: memoryStorage(),
+    setInterval(callback, delay) {
+      if (delay === 10_000) intervals.push(callback)
+      return intervals.length
+    },
+    setTimeout,
+    clearTimeout,
+    xanoAuthFetch: async (url, init) => {
+      if (url.endsWith('/booking/confirm/v3')) {
+        state.confirms += 1
+        if (onConfirm) onConfirm(window)
+        return {
+          ok: true,
+          json: async () => ({
+            confirmation: { booking_id: view.bookingId, status: 'confirmed', revision: 2 },
+            duplicate: false,
+          }),
+        }
+      }
+      assert.equal(JSON.parse(init.body).memberstack_id, member.id)
+      const read = bookingReads[Math.min(state.reads, bookingReads.length - 1)]
+      state.reads += 1
+      state.readTimes.push(clock.value - view.now)
+      return read()
+    },
+  }
+  vm.runInNewContext(source, {
+    console: { error() {}, warn() {}, log() {} },
+    Date: ClockDate,
+    document,
+    Intl,
+    URLSearchParams,
+    window,
+  })
+  await until(() => state.reads === 1 && root.getAttribute('data-dashboard-calls-v3') === 'ready')
+  assert.equal(intervals.length, 1, 'one lifecycle ticker')
+  const card = acceptElement('div', { 'data-booking-id': view.bookingId })
+  const details = acceptElement('a', { 'booking-card-action-btn': 'details' })
+  card.appendChild(details)
+  await click(details)
+  assert.equal(view.modal.getAttribute('data-booking-id'), view.bookingId)
+  return {
+    click,
+    clock,
+    document,
+    root,
+    state,
+    window,
+    async tickAt(seconds) {
+      clock.value = view.now + seconds * 1000
+      intervals[0]()
+      for (let step = 0; step < 20; step += 1) await new Promise(setImmediate)
+    },
+  }
+}
+
+function acceptSnapshot(view) {
+  return {
+    status: view.status.textContent,
+    stored: view.modal.getAttribute('data-booking-status'),
+    accept: view.accept.hidden,
+    decline: view.decline.hidden,
+    pendingInfo: view.pendingInfo.hidden,
+    base: view.base.hidden,
+  }
+}
+
+const ACCEPTED_SNAPSHOT = {
+  status: 'Upcoming',
+  stored: 'confirmed',
+  accept: true,
+  decline: true,
+  pendingInfo: true,
+  base: false,
+}
+
+function visibleActionErrors(host) {
+  return host
+    .querySelectorAll('[data-starters-action-error]')
+    .filter((note) => !note.hidden && note.textContent !== '')
+    .map((note) => note.textContent)
+}
+
+test('F53: an in-modal Starter Accept repaints the open modal to Upcoming before the list read returns', async () => {
+  const view = acceptView()
+  const pendingRaw = { ...view.booking }
+  const confirmedRaw = { ...pendingRaw, status: 'confirmed', revision: 2 }
+  const postConfirmRead = deferred()
+  const env = await bootAcceptDashboard(view, [
+    () => ({ ok: true, json: async () => [pendingRaw] }),
+    () => postConfirmRead.promise,
+    () => ({ ok: true, json: async () => [confirmedRaw] }),
+  ])
+  assert.deepEqual(acceptSnapshot(view), {
+    status: 'Pending',
+    stored: 'pending',
+    accept: false,
+    decline: false,
+    pendingInfo: false,
+    base: false,
+  })
+
+  const accepted = env.click(view.accept)
+  await until(() => env.state.reads === 2)
+  // The confirm has answered and the list read has not.
+  assert.equal(env.state.confirms, 1)
+  assert.deepEqual(acceptSnapshot(view), ACCEPTED_SNAPSHOT)
+  assert.equal(view.declinePanel.hidden, true)
+
+  postConfirmRead.resolve({ ok: true, json: async () => [confirmedRaw] })
+  await accepted
+  assert.deepEqual(acceptSnapshot(view), ACCEPTED_SNAPSHOT)
+  assert.equal(view.accept.getAttribute('aria-busy'), 'false')
+  assert.deepEqual(visibleActionErrors(view.modal), [])
+
+  await env.tickAt(10)
+  assert.deepEqual(acceptSnapshot(view), ACCEPTED_SNAPSHOT, 'the next tick keeps the confirmed state')
+  assert.equal(env.state.confirms, 1)
+})
+
+test('F53: when every read after the Accept fails, the modal still shows the confirmed call and a second Accept sends nothing', async () => {
+  const view = acceptView()
+  const pendingRaw = { ...view.booking }
+  const env = await bootAcceptDashboard(view, [
+    () => ({ ok: true, json: async () => [pendingRaw] }),
+    () => ({ ok: false, json: async () => ({}) }),
+  ])
+  await env.click(view.accept)
+  assert.equal(env.state.confirms, 1)
+  assert.ok(env.state.reads >= 2, 'the post-confirm read ran and failed')
+  assert.deepEqual(acceptSnapshot(view), ACCEPTED_SNAPSHOT)
+  assert.deepEqual(visibleActionErrors(view.modal), [], 'a confirmed call shows no failure')
+
+  // A stale second click on the hidden control neither posts nor claims the
+  // server refused the call.
+  await env.click(view.accept)
+  assert.equal(env.state.confirms, 1)
+  assert.deepEqual(visibleActionErrors(view.modal), [])
+
+  for (const seconds of [10, 20, 30]) {
+    await env.tickAt(seconds)
+    assert.deepEqual(acceptSnapshot(view), ACCEPTED_SNAPSHOT, 'tick at ' + seconds + ' s')
+  }
+})
+
+test('F53: an Accept that lands after the Starter moved to another step leaves that step alone', async () => {
+  const view = acceptView()
+  const pendingRaw = { ...view.booking }
+  const confirmedRaw = { ...pendingRaw, status: 'confirmed', revision: 2 }
+  const env = await bootAcceptDashboard(view, [
+    () => ({ ok: true, json: async () => [pendingRaw] }),
+    () => ({ ok: true, json: async () => [confirmedRaw] }),
+  ], {
+    // The Starter opened the decline step while the confirm was in flight.
+    onConfirm(window) {
+      window.StartersDashboardCallActions.switchPopupContent(view.modal, 'decline')
+    },
+  })
+  await env.click(view.accept)
+  assert.equal(env.state.confirms, 1)
+  assert.equal(view.declinePanel.hidden, false, 'the decline step stays on screen')
+  assert.equal(view.base.hidden, true)
+  assert.equal(view.status.textContent, 'Pending', 'the hidden base heading is not repainted')
+  assert.equal(view.modal.getAttribute('data-booking-status'), 'pending')
+
+  await env.click(view.accept)
+  assert.equal(env.state.confirms, 1, 'the committed call cannot be confirmed twice')
+})
+
+test('F53: a card-level Accept commits the call, so a later card Accept sends nothing even while reads fail', async () => {
+  const view = acceptView()
+  const pendingRaw = { ...view.booking }
+  const env = await bootAcceptDashboard(view, [
+    () => ({ ok: true, json: async () => [pendingRaw] }),
+    () => ({ ok: false, json: async () => ({}) }),
+  ])
+  // The modal moved on to another call before the card Accept.
+  view.modal.setAttribute('data-booking-id', 'another-booking')
+  view.status.textContent = 'Another call'
+  const card = acceptElement('div', { 'data-booking-id': view.bookingId })
+  card.ownerDocument = { createElement: (tag) => acceptElement(tag) }
+  const cardAccept = acceptElement('a', { 'booking-card-action-btn': 'switch-confirm' }, 'Accept')
+  card.appendChild(cardAccept)
+
+  await env.click(cardAccept)
+  assert.equal(env.state.confirms, 1)
+  assert.ok(env.state.reads >= 2, 'the card Accept still refreshes the lists')
+  assert.equal(view.status.textContent, 'Another call', 'a modal on another call is left alone')
+  assert.deepEqual(visibleActionErrors(card), [])
+
+  await env.click(cardAccept)
+  assert.equal(env.state.confirms, 1)
+  assert.deepEqual(visibleActionErrors(card), [], 'no false "could not be confirmed" alert')
+})
+
+test('F53: when the owner refuses the commit, the refreshed row repaints the modal and hides the pending copy right after the read', async () => {
+  const view = acceptView()
+  const sections = [{ name: 'requests', rows: [view.booking] }, { name: 'calls', rows: [] }]
+  const listeners = []
+  const originals = {
+    actions: global.StartersDashboardCallActions,
+    crypto: global.crypto,
+    document: global.document,
+    fetch: global.xanoAuthFetch,
+    storage: global.sessionStorage,
+  }
+  let seenDuringRefresh = null
+  let commits = 0
+  try {
+    global.StartersDashboardCallActions = acceptActionsModule()
+    global.document = {
+      addEventListener(type, listener) { if (type === 'click') listeners.push(listener) },
+      querySelector: (selector) => (selector.includes('popup-booking-info') ? view.modal : null),
+    }
+    global.crypto = {
+      subtle: originals.crypto && originals.crypto.subtle,
+      randomUUID: () => '00000000-0000-4000-8000-000000000053',
+    }
+    global.sessionStorage = memoryStorage()
+    global.xanoAuthFetch = async () => ({
+      ok: true,
+      json: async () => ({
+        confirmation: { booking_id: view.bookingId, status: 'confirmed', revision: 2 },
+        duplicate: false,
+      }),
+    })
+    assert.equal(api.populateDetailModal(view.modal, view.booking, 'starter'), true)
+    assert.equal(view.modal.getAttribute('data-booking-id'), view.bookingId)
+    assert.equal(view.pendingInfo.hidden, false)
+    api.wireBookingActions(sections, 'starter', async () => {
+      seenDuringRefresh = acceptSnapshot(view)
+      // What refreshSession does after a successful read: the row moves from
+      // Requests to Calls, and the open dialog's status repaints.
+      sections[0].rows = []
+      sections[1].rows = [{ ...view.booking, status: 'confirmed', revision: 2 }]
+      api.refreshOpenDetailPanel(sections, 'starter')
+      return true
+    }, undefined, {
+      // The row changed while the confirm was in flight.
+      commitBookingMutation() {
+        commits += 1
+        return null
+      },
+    })
+    await listeners[0]({ target: view.accept, preventDefault() {}, stopImmediatePropagation() {} })
+  } finally {
+    global.StartersDashboardCallActions = originals.actions
+    global.crypto = originals.crypto
+    global.document = originals.document
+    global.xanoAuthFetch = originals.fetch
+    global.sessionStorage = originals.storage
+  }
+  assert.equal(commits, 1)
+  assert.equal(seenDuringRefresh.status, 'Pending', 'a refused commit paints nothing')
+  assert.equal(seenDuringRefresh.accept, false)
+  assert.equal(view.booking.status, 'pending', 'a refused commit does not write the row')
+  assert.deepEqual(acceptSnapshot(view), ACCEPTED_SNAPSHOT)
+})

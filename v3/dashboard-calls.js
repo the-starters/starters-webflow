@@ -3362,8 +3362,27 @@
     return rows
   }
 
-  function wireBookingActions(refs, role, restart, acquireBookingAction) {
+  function wireBookingActions(refs, role, restart, acquireBookingAction, mutations) {
     if (role !== 'starter' || !global.document || !global.document.addEventListener) return
+    // F53: the confirmed status goes through the session's mutation owner, as
+    // the other call actions do. The commit invalidates an in-flight background
+    // read, so a stale pending row cannot come back.
+    const owner = mutations || {}
+    const captureConfirmation = typeof owner.captureBookingMutation === 'function'
+      ? owner.captureBookingMutation
+      : function () { return null }
+    const commitConfirmation = typeof owner.commitBookingMutation === 'function'
+      ? owner.commitBookingMutation
+      : function (model, changes) {
+          return commitBookingMutation(refs, model, changes)
+        }
+    const releaseConfirmation = async function (claim) {
+      if (!claim || typeof owner.releaseBookingMutation !== 'function') return
+      const reconcile = owner.releaseBookingMutation(claim)
+      if (reconcile && typeof owner.reconcileBookingMutations === 'function') {
+        await owner.reconcileBookingMutations()
+      }
+    }
     global.document.addEventListener('click', async function (event) {
       const target = event && event.target
       const button = target && target.closest
@@ -3410,6 +3429,7 @@
       let serverMessage = ''
       let confirmed = false
       let releaseAction = null
+      let claim = null
       try {
         if (typeof acquireBookingAction === 'function') {
           releaseAction = await acquireBookingAction(booking, CONFIRM_FAILURE_COPY)
@@ -3417,6 +3437,7 @@
           booking = bookingById(refs, bookingId)
           if (!booking || !canConfirmBooking(role, booking)) return
         }
+        claim = captureConfirmation(booking)
         if (!button.__startersBookingActionKey) {
           button.__startersBookingActionKey = await storedConfirmAttemptKey(booking) || await createConfirmAttemptKey(booking)
         }
@@ -3437,15 +3458,39 @@
           throw new Error(serverMessage || 'Canonical booking confirmation failed')
         }
         confirmed = true
+        // F53: the open details modal kept "Pending" with Confirm and Decline
+        // on screen until the list read returned, or until a later tick when
+        // that read failed. Commit the confirmed status to the canonical row,
+        // then repaint the dialog from it at once. The repaint keeps its
+        // guards: it leaves a dialog that shows another step alone, and it
+        // paints the call the dialog shows. A refused commit (the row changed
+        // or left the list) changes nothing, and the read below repaints.
+        const confirmation = body && body.confirmation ? body.confirmation : body
+        const committed = commitConfirmation(booking, {
+          status: clean(confirmation && confirmation.status).toLowerCase(),
+        }, claim)
+        if (committed) {
+          refreshOpenDetailPanel(refs, role)
+          refreshDetailExpiration(refs, role)
+        }
         await clearConfirmAttemptKey(booking, button.__startersBookingActionKey)
         button.__startersBookingActionKey = ''
         await restart()
+        // The read repainted the dialog's status and meeting link; re-check
+        // its pending copy and actions against the refreshed row now, not on
+        // the next tick.
+        refreshDetailExpiration(refs, role)
       } catch (error) {
         console.error('[dashboard-calls] confirmation failed closed:', error && error.message)
         // A failure after the server confirmed (key cleanup or the list
         // refresh) must not tell the Starter the call was not confirmed.
         if (!confirmed) showError(serverMessage || CONFIRM_FAILURE_COPY)
       } finally {
+        try {
+          await releaseConfirmation(claim)
+        } catch (error) {
+          console.error('[dashboard-calls] confirmation reconciliation failed:', error && error.message)
+        }
         if (releaseAction) {
           try { await releaseAction() } catch (error) {
             console.error('[dashboard-calls] confirmation readback failed:', error && error.message)
@@ -3815,7 +3860,12 @@
       },
     }
     wireDashboardCallModules(moduleOptions)
-    wireBookingActions(refs, role, refreshAfterMutation, acquireBookingAction)
+    wireBookingActions(refs, role, refreshAfterMutation, acquireBookingAction, {
+      captureBookingMutation: captureCurrentBooking,
+      commitBookingMutation: commitCurrentBooking,
+      releaseBookingMutation: releaseCurrentBooking,
+      reconcileBookingMutations: requestMutationReconciliation,
+    })
     startBookingLifecycleTicker(refs, role, refreshExpiredRequests, {
       reconcileBookingMutations: requestMutationReconciliation,
     })
