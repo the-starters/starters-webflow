@@ -10508,6 +10508,34 @@ for (const viewer of ['brand', 'signed-out', 'paywalled']) {
   })
 }
 
+test('F50 an owner DTO replay leaves a settled owner-preview legacy tout alone', async () => {
+  const fixture = f50LegacyHeaderPage()
+  const context = ownerContext(fixture.page, ownerController(), { wfXano: fixture.feed.api })
+  holdLongTimers(context)
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  fixture.feed.emit(callCardResult({ free: true, paid: true }))
+  await settle()
+  const semantics = (root) => Object.fromEntries(['tabindex', 'role', 'aria-disabled', 'aria-describedby',
+    'data-owner-preview-action', 'has-connection', 'data-call-offer-state'].map((key) => [key, root.getAttribute(key)]))
+  const before = fixture.legacyCards.map((card) => semantics(card.root))
+  for (const [index, card] of fixture.legacyCards.entries()) {
+    assert.equal(before[index]['data-call-offer-state'], 'available')
+    assert.equal(before[index].tabindex, '0')
+    assert.equal(before[index].role, 'button')
+  }
+  // wf-xano replays the same DTO when the window regains focus. A strip of
+  // tabindex, even one written back at once, blurs a focused tout.
+  const writes = []
+  for (const card of fixture.legacyCards) recordDomWrites(card.root, writes)
+  fixture.feed.emit(callCardResult({ free: true, paid: true }))
+  await settle()
+  const strips = writes.filter((write) =>
+    / remove (tabindex|role|aria-disabled|aria-describedby|has-connection)$/.test(write))
+  assert.deepEqual(strips, [], 'a DTO replay does not strip a settled owner-preview tout')
+  assert.deepEqual(fixture.legacyCards.map((card) => semantics(card.root)), before)
+})
+
 /** Every owner call surface the settings writer decides, as the page shows it. */
 function ownerCallSurfaceState(fixture) {
   const keys = ['data-service-card-state', 'data-call-offer-state', 'aria-busy', 'has-connection',

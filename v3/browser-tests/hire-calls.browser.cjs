@@ -323,6 +323,27 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
       assert.deepEqual(await evaluate(countMutationsAfterUnrelatedNode), [], `${role}: an unrelated node wakes no writer`)
     }
 
+    // F50: an owner DTO replay (wf-xano refreshes on window focus) must not
+    // strip a settled owner-preview tout. Removing its tabindex dropped focus.
+    await navigate('role=owner&header=legacy')
+    for (let i = 0; i < 100; i++) {
+      if ((await evaluate(legacyToutStates)).join() === 'free:available,paid:available') break
+      await pause(25)
+    }
+    assert.deepEqual(await evaluate(legacyToutStates), ['free:available', 'paid:available'], 'owner: touts settle')
+    for (const op of ['replay()', 'emit()']) {
+      const focus = await evaluate(`(async () => {
+        const el = document.querySelector('[data-call-canary-legacy-wrapper="header"] [data-type="free"]')
+        el.focus()
+        const before = document.activeElement === el
+        lists['starter-call-offers-services'].${op}
+        await new Promise(resolve => setTimeout(resolve, 200))
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+        return { before, after: document.activeElement === el, tabIndex: el.tabIndex, role: el.getAttribute('role'), disabled: el.getAttribute('aria-disabled'), state: el.getAttribute('data-call-offer-state') }
+      })()`)
+      assert.deepEqual(focus, { before: true, after: true, tabIndex: 0, role: 'button', disabled: 'true', state: 'available' }, `owner: the focused tout keeps focus on a Services ${op}`)
+    }
+
     await navigate('role=brand&discovery=held')
     let loadingState = await snapshot('brand-discovery-loading')
     assert.equal(loadingState.cards.length, 4)

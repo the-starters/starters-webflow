@@ -3412,12 +3412,43 @@
       });
   }
 
+  /**
+   * F50: a legacy Header tout the owner writer already settled as an
+   * available owner preview, with every hook it should carry. A DTO replay
+   * that keeps its record leaves it alone: stripping its tabindex to add it
+   * back would blur a focused tout. Any other owner state still strips it.
+   */
+  function legacyHeaderOwnerToutSettled(card, type) {
+      const entry = ownerPreviewHints.get(card);
+      if (!entry ||
+          card.getAttribute('data-call-offer-state') !== 'available' ||
+          card.getAttribute('data-canonical-public-call') !== type ||
+          card.getAttribute('data-call-offer-type') !== type ||
+          card.getAttribute('data-type') !== type ||
+          card.getAttribute('data-service-card-state') !== 'Default' ||
+          card.getAttribute('data-call-owner-preview') !== '' ||
+          card.getAttribute('data-owner-preview-action') !== 'call' ||
+          card.getAttribute('has-connection') !== type ||
+          card.getAttribute('tabindex') !== '0' ||
+          card.getAttribute('role') !== 'button' ||
+          card.getAttribute('aria-disabled') !== 'true' ||
+          card.getAttribute('aria-describedby') !== entry.hint.getAttribute('id')) return false;
+      return ![
+          'data-call-offer-superseded', 'no-connection', 'booking-popup-open', 'data-modal-trigger',
+          'data-signup-trigger-element', 'data-signup-trigger-value', 'data-call-service-direct',
+          'data-profile-book-call', 'data-logged-out-book-call', 'data-booking-trigger-loading',
+          'data-booking-trigger-unavailable', 'aria-label', 'aria-busy',
+      ].some(function (name) { return card.hasAttribute(name); });
+  }
+
   function applyOwnerCallCardStates(snapshot, records) {
       if (!isProfileOwner(MEMBER)) return;
-      legacyHeaderCallEntries(null);
       const accepted = Array.isArray(records)
           ? records
           : (snapshot && Array.isArray(snapshot.records) ? snapshot.records : []);
+      legacyHeaderCallEntries(null, function (card, type) {
+          return !!recordForType(accepted, type) && legacyHeaderOwnerToutSettled(card, type);
+      });
       bookingOwner = true;
       ownerBookingReady = accepted.length > 0;
       setBookingButtonAvailable(false);
