@@ -5257,3 +5257,520 @@ test('the generated consent checkbox stays visible under a site-wide !important 
   assert.equal(fallback.input.style.minHeight, '16px')
   assert.equal(fallback.wrap.style.alignItems, 'flex-start')
 })
+
+/* ---- F65: Stripe.js loading always settles ----
+   A browser fires a script's `load` or `error` once. These fakes model a tag
+   whose events already happened (they never fire again), a tag still loading,
+   and fresh tags whose outcome each test chooses. Timers are mocked, so the
+   bounded wait is exercised without real delay. */
+const STRIPE_JS_SELECTOR = 'script[src="https://js.stripe.com/v3/"]'
+const STRIPE_TEST_KEY = 'pk_test_51MMhu4AW8v1kanawI48Is1kTMhsz4XbB1XVOjw5xxLiFlKXuehHSFWhApJiUKquc8bmwjtuSTlTMitYjjShjB6aQ00Dhe2oFlX'
+const STRIPE_LIVE_KEY = 'pk_live_51MMhu4AW8v1kanawUQQjQTpTWBAsdVusIXoXSA26AcTHtZPYbJt6sr98ishd7cs5DXx4QeSMHw45QqrTuzftXaJm005MjZL3sz'
+const STRIPE_LOAD_ERROR = 'Stripe.js failed to load'
+
+class FakeStripeScript {
+  constructor() {
+    this.tagName = 'SCRIPT'
+    this.attrs = {}
+    this.listeners = {}
+    this.parent = null
+    this.removed = false
+  }
+  set src(value) { this.attrs.src = String(value) }
+  get src() { return this.attrs.src }
+  setAttribute(name, value) { this.attrs[name] = String(value) }
+  getAttribute(name) { return Object.prototype.hasOwnProperty.call(this.attrs, name) ? this.attrs[name] : null }
+  addEventListener(name, fn, options) {
+    ;(this.listeners[name] = this.listeners[name] || []).push({ fn, once: Boolean(options && options.once) })
+  }
+  removeEventListener(name, fn) { this.listeners[name] = (this.listeners[name] || []).filter(entry => entry.fn !== fn) }
+  listenerCount(name) { return (this.listeners[name] || []).length }
+  dispatch(name) {
+    const entries = this.listeners[name] || []
+    this.listeners[name] = entries.filter(entry => !entry.once)
+    entries.forEach(entry => entry.fn({ type: name, target: this }))
+  }
+  remove() {
+    if (this.parent) this.parent.nodes = this.parent.nodes.filter(node => node !== this)
+    this.parent = null
+    this.removed = true
+  }
+}
+
+function stripeLoadDocument({ readyState = 'complete', existing = false } = {}) {
+  const head = {
+    nodes: [],
+    appended: [],
+    appendChild(node) { node.parent = head; head.nodes.push(node); head.appended.push(node); return node },
+  }
+  const document = {
+    readyState,
+    head,
+    createElement(tag) {
+      assert.equal(tag, 'script')
+      return new FakeStripeScript()
+    },
+    querySelector(selector) {
+      if (selector !== STRIPE_JS_SELECTOR) return null
+      return head.nodes.find(node => node instanceof FakeStripeScript && node.getAttribute('src') === 'https://js.stripe.com/v3/') || null
+    },
+    scripts: () => head.nodes.filter(node => node instanceof FakeStripeScript),
+    insertedScripts: () => head.appended.filter(node => node instanceof FakeStripeScript),
+  }
+  if (existing) {
+    const tag = new FakeStripeScript()
+    tag.src = 'https://js.stripe.com/v3/'
+    tag.parent = head
+    head.nodes.push(tag)
+    document.existing = tag
+  }
+  return document
+}
+
+function trackSettlement(promise) {
+  const state = { status: 'pending', value: undefined, error: undefined }
+  promise.then(
+    value => { state.status = 'resolved'; state.value = value },
+    error => { state.status = 'rejected'; state.error = error },
+  )
+  return state
+}
+
+const flushMacrotask = () => new Promise(resolve => setImmediate(resolve))
+async function flushStripeLoad() { for (let turn = 0; turn < 3; turn += 1) await flushMacrotask() }
+
+function fakeStripeConstructor(keys) {
+  return function Stripe(key) { keys.push(key); return { key } }
+}
+
+/**
+ * Installs a Stripe-free page on the shared globals with mocked timers. One
+ * cleanup settles any load a failing assertion left in flight (so no later test
+ * inherits it) and only then restores the globals, through `restore` if given.
+ */
+function useStripeLoadPage(t, document, restore) {
+  const previous = { document: global.document, hasStripe: Object.prototype.hasOwnProperty.call(global, 'Stripe'), Stripe: global.Stripe }
+  global.document = document
+  delete global.Stripe
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  t.after(async () => {
+    t.mock.timers.tick(15000)
+    await flushStripeLoad()
+    if (restore) return restore()
+    global.document = previous.document
+    if (previous.hasStripe) global.Stripe = previous.Stripe
+    else delete global.Stripe
+  })
+}
+
+test('F65: a Stripe.js tag that already failed is replaced once and concurrent calls settle together', async (t) => {
+  // The tag's `error` fired before any listener was attached; it never fires again.
+  const document = stripeLoadDocument({ readyState: 'complete', existing: true })
+  useStripeLoadPage(t, document)
+  const keys = []
+  const testCall = trackSettlement(api.stripeForPaymentEnvironment('test'))
+  const liveCall = trackSettlement(api.stripeForPaymentEnvironment('live'))
+  await flushStripeLoad()
+  assert.equal(document.existing.removed, true, 'the dead tag is replaced')
+  assert.equal(document.insertedScripts().length, 1, 'two concurrent calls insert one fresh script')
+  assert.equal(document.scripts().length, 1, 'the page keeps one Stripe.js tag')
+  const fresh = document.scripts()[0]
+  assert.equal(fresh.src, 'https://js.stripe.com/v3/')
+  assert.deepEqual([testCall.status, liveCall.status], ['pending', 'pending'])
+  global.Stripe = fakeStripeConstructor(keys)
+  fresh.dispatch('load')
+  await flushStripeLoad()
+  assert.deepEqual([testCall.status, liveCall.status], ['resolved', 'resolved'])
+  assert.deepEqual(keys, [STRIPE_TEST_KEY, STRIPE_LIVE_KEY], 'test and live key selection is unchanged')
+  assert.deepEqual([testCall.value.key, liveCall.value.key], [STRIPE_TEST_KEY, STRIPE_LIVE_KEY])
+})
+
+test('F65: a Stripe.js tag that loads without Stripe is replaced at most once, then the load rejects', async (t) => {
+  const document = stripeLoadDocument({ readyState: 'interactive', existing: true })
+  useStripeLoadPage(t, document)
+  const result = trackSettlement(api.stripeForPaymentEnvironment('test'))
+  await flushStripeLoad()
+  assert.equal(document.insertedScripts().length, 0, 'a tag that may still load is watched, not duplicated')
+  document.existing.dispatch('load')
+  await flushStripeLoad()
+  assert.equal(result.status, 'pending')
+  assert.equal(document.existing.removed, true)
+  assert.equal(document.insertedScripts().length, 1, 'one fresh script replaces the dead tag')
+  const fresh = document.scripts()[0]
+  fresh.dispatch('error')
+  await flushStripeLoad()
+  assert.equal(result.status, 'rejected')
+  assert.equal(result.error.message, STRIPE_LOAD_ERROR)
+  assert.equal(document.insertedScripts().length, 1, 'a failed replacement is not replaced again in the same load')
+  assert.equal(fresh.getAttribute('data-stripe-js-state'), 'failed')
+})
+
+test('F65: Stripe.js that never settles rejects after the bounded 15 s wait, and a late event does nothing', async (t) => {
+  // The tag's events already happened while the document was still loading, so
+  // nothing here can tell it is dead until the bounded wait ends.
+  const document = stripeLoadDocument({ readyState: 'interactive', existing: true })
+  useStripeLoadPage(t, document)
+  const result = trackSettlement(api.stripeForPaymentEnvironment('live'))
+  await flushStripeLoad()
+  t.mock.timers.tick(14999)
+  await flushStripeLoad()
+  assert.equal(result.status, 'pending', 'the wait is not cut short')
+  t.mock.timers.tick(1)
+  await flushStripeLoad()
+  assert.equal(result.status, 'rejected')
+  assert.equal(result.error.message, STRIPE_LOAD_ERROR)
+  assert.equal(document.existing.getAttribute('data-stripe-js-state'), 'failed', 'the timed-out tag is dead for a retry')
+  assert.equal(document.existing.listenerCount('load'), 1, 'only the outcome recorder stays attached')
+  document.existing.dispatch('error')
+  await flushStripeLoad()
+  assert.equal(document.insertedScripts().length, 0, 'a late event after the wait inserts nothing')
+})
+
+test('F65: a failed Stripe.js load is not kept, so a later retry loads again', async (t) => {
+  const document = stripeLoadDocument({ readyState: 'complete' })
+  useStripeLoadPage(t, document)
+  const keys = []
+  const first = trackSettlement(api.stripeForPaymentEnvironment('test'))
+  const second = trackSettlement(api.stripeForPaymentEnvironment('test'))
+  await flushStripeLoad()
+  assert.equal(document.insertedScripts().length, 1, 'concurrent calls share one in-flight load')
+  const failed = document.scripts()[0]
+  failed.dispatch('error')
+  await flushStripeLoad()
+  assert.deepEqual([first.status, second.status], ['rejected', 'rejected'])
+  assert.equal(first.error.message, STRIPE_LOAD_ERROR)
+  assert.equal(document.insertedScripts().length, 1, 'the script this load inserted is not replaced again')
+
+  const retry = trackSettlement(api.stripeForPaymentEnvironment('test'))
+  await flushStripeLoad()
+  assert.equal(retry.status, 'pending', 'the retry does not reuse the rejected load')
+  assert.equal(failed.removed, true)
+  assert.equal(document.insertedScripts().length, 2, 'the retry replaces the failed tag')
+  assert.equal(document.scripts().length, 1)
+  global.Stripe = fakeStripeConstructor(keys)
+  document.scripts()[0].dispatch('load')
+  await flushStripeLoad()
+  assert.equal(retry.status, 'resolved')
+  assert.deepEqual(keys, [STRIPE_TEST_KEY])
+
+  const loaded = trackSettlement(api.stripeForPaymentEnvironment('live'))
+  await flushStripeLoad()
+  assert.equal(loaded.status, 'resolved', 'a loaded Stripe resolves at once')
+  assert.equal(document.insertedScripts().length, 2, 'a loaded Stripe inserts no tag')
+  assert.deepEqual(keys, [STRIPE_TEST_KEY, STRIPE_LIVE_KEY])
+})
+
+/** Opens the Paid card picker, then removes Stripe.js from the page. */
+async function paidPickerWithoutStripe(t) {
+  const fixture = makePaidLifecycleFixture(async (url) => {
+    if (url.endsWith(api.READINESS_PATH)) return response({ environment: 'test', bookable: false })
+    throw new Error('Unexpected request: ' + url)
+  })
+  let installed = false
+  t.after(() => { if (!installed) fixture.restore() })
+  await fixture.paid.onclick({ preventDefault() {} })
+  await fixture.calendars[0].options.onConfirm({ start: 1787000000000, end: 1787003600000, timezone: 'UTC' })
+  assert.equal(fixture.payment.modal.openCount, 1, 'the card picker is open')
+  const page = global.document
+  const stripePage = stripeLoadDocument({ readyState: 'complete' })
+  const createElement = page.createElement
+  const querySelector = page.querySelector
+  page.createElement = tag => tag === 'script' ? stripePage.createElement(tag) : createElement(tag)
+  page.querySelector = selector => selector === STRIPE_JS_SELECTOR ? stripePage.querySelector(selector) : querySelector(selector)
+  page.head = stripePage.head
+  page.readyState = 'complete'
+  useStripeLoadPage(t, page, () => fixture.restore())
+  installed = true
+  return { fixture, stripePage }
+}
+
+test('F65: Add payment method leaves its wait and shows the existing card error when Stripe.js does not load', async (t) => {
+  const { fixture, stripePage } = await paidPickerWithoutStripe(t)
+  const modal = fixture.payment.modal
+  const add = modal.querySelector('[aria-label="Add payment method"]')
+  assert.ok(add, 'the picker offers Add payment method')
+  const clicked = trackSettlement(add.click())
+  await flushStripeLoad()
+  const error = modal.querySelector('[card-error]')
+  assert.equal(modal.getAttribute('data-booking-payment-mode'), 'entry')
+  assert.equal(stripePage.insertedScripts().length, 1, 'the card step requested Stripe.js')
+  assert.equal(error.textContent, '', 'the card step is waiting for Stripe.js')
+  assert.equal(clicked.status, 'pending')
+  t.mock.timers.tick(15000)
+  await flushStripeLoad()
+  assert.equal(clicked.status, 'resolved', 'the card step leaves its wait')
+  assert.equal(error.textContent, STRIPE_LOAD_ERROR, 'the existing card error shows the existing message')
+  assert.equal(error.hidden, false)
+  assert.equal(error.style.display, 'block')
+  assert.equal(fixture.getCardCreates(), 0, 'no secure field mounts without Stripe.js')
+})
+
+test('F65: Use this card leaves its wait and shows the existing picker error when Stripe.js does not load', async (t) => {
+  const { fixture } = await paidPickerWithoutStripe(t)
+  const modal = fixture.payment.modal
+  const status = modal.querySelector('[data-payment-selection-status]')
+  const add = modal.querySelector('[aria-label="Add payment method"]')
+  const chosen = trackSettlement(fixture.payment.choose())
+  await flushStripeLoad()
+  assert.equal(status.textContent, 'Updating your default card…', 'the picker is waiting for Stripe.js')
+  assert.equal(add.disabled, true)
+  assert.equal(fixture.payment.setupPosts.length, 1)
+  t.mock.timers.tick(15000)
+  await flushStripeLoad()
+  assert.equal(chosen.status, 'resolved', 'the picker leaves its wait')
+  assert.equal(status.textContent, 'The default card could not be verified. Please try again.')
+  assert.equal(add.disabled, false, 'the picker releases its controls')
+  assert.equal(modal.getAttribute('aria-busy'), 'false')
+  assert.equal(fixture.payment.defaultPosts.length, 0, 'no default is set without a confirmed card')
+})
+
+/* ---- F65 review: a ready Stripe always wins ----
+   Stripe.js can arrive from a source a load does not watch: a replaced tag that
+   still ran, or another loader. Then a stalled or failed watched tag must not
+   reject the load or insert a second copy. */
+test('F65: the bounded wait resolves when Stripe.js arrives from a source the load does not watch', async (t) => {
+  const document = stripeLoadDocument({ readyState: 'interactive', existing: true })
+  useStripeLoadPage(t, document)
+  const keys = []
+  const result = trackSettlement(api.stripeForPaymentEnvironment('test'))
+  await flushStripeLoad()
+  t.mock.timers.tick(5000)
+  global.Stripe = fakeStripeConstructor(keys)
+  t.mock.timers.tick(10000)
+  await flushStripeLoad()
+  assert.equal(result.status, 'resolved', 'a ready Stripe is not reported as a failed load')
+  assert.deepEqual(keys, [STRIPE_TEST_KEY])
+  assert.notEqual(document.existing.getAttribute('data-stripe-js-state'), 'failed', 'the watched tag is not marked dead')
+  assert.equal(document.insertedScripts().length, 0)
+})
+
+test('F65: a watched Stripe.js tag that errors after Stripe is ready resolves without a second copy', async (t) => {
+  const document = stripeLoadDocument({ readyState: 'interactive', existing: true })
+  useStripeLoadPage(t, document)
+  const keys = []
+  const result = trackSettlement(api.stripeForPaymentEnvironment('live'))
+  await flushStripeLoad()
+  global.Stripe = fakeStripeConstructor(keys)
+  document.existing.dispatch('error')
+  await flushStripeLoad()
+  assert.equal(result.status, 'resolved')
+  assert.deepEqual(keys, [STRIPE_LIVE_KEY])
+  assert.equal(document.insertedScripts().length, 0, 'no replacement is inserted once Stripe is ready')
+})
+
+test('F65: a fresh Stripe.js tag that errors after Stripe is ready resolves the load', async (t) => {
+  const document = stripeLoadDocument({ readyState: 'complete', existing: true })
+  useStripeLoadPage(t, document)
+  const keys = []
+  const result = trackSettlement(api.stripeForPaymentEnvironment('test'))
+  await flushStripeLoad()
+  assert.equal(document.insertedScripts().length, 1, 'the dead tag is replaced')
+  global.Stripe = fakeStripeConstructor(keys)
+  document.scripts()[0].dispatch('error')
+  await flushStripeLoad()
+  assert.equal(result.status, 'resolved', 'a ready Stripe is not reported as a failed load')
+  assert.deepEqual(keys, [STRIPE_TEST_KEY])
+  assert.equal(document.insertedScripts().length, 1)
+})
+
+/* ---- F65 review: a slow fetch is not forked ----
+   Removing a script element does not cancel its fetch or its execution. A tag
+   this file inserted records its outcome from the start, so a 'loading' state
+   proves no event fired yet: a retry watches that fetch again instead of
+   starting a second copy of Stripe.js. */
+test('F65: a retry after the bounded wait watches the same in-flight Stripe.js fetch', async (t) => {
+  const document = stripeLoadDocument({ readyState: 'complete' })
+  useStripeLoadPage(t, document)
+  const keys = []
+  const first = trackSettlement(api.stripeForPaymentEnvironment('test'))
+  await flushStripeLoad()
+  assert.equal(document.insertedScripts().length, 1)
+  const slow = document.scripts()[0]
+  t.mock.timers.tick(15000)
+  await flushStripeLoad()
+  assert.equal(first.status, 'rejected')
+  assert.equal(first.error.message, STRIPE_LOAD_ERROR)
+  assert.equal(slow.getAttribute('data-stripe-js-state'), 'loading', 'a fetch still in flight is not marked dead')
+
+  const retry = trackSettlement(api.stripeForPaymentEnvironment('test'))
+  await flushStripeLoad()
+  assert.equal(retry.status, 'pending')
+  assert.equal(slow.removed, false, 'the in-flight tag is kept')
+  assert.equal(document.insertedScripts().length, 1, 'the retry inserts no second copy')
+  t.mock.timers.tick(15000)
+  await flushStripeLoad()
+  assert.equal(retry.status, 'rejected', 'each attempt stays bounded')
+
+  const late = trackSettlement(api.stripeForPaymentEnvironment('test'))
+  await flushStripeLoad()
+  global.Stripe = fakeStripeConstructor(keys)
+  slow.dispatch('load')
+  await flushStripeLoad()
+  assert.equal(late.status, 'resolved', 'the late load of the same fetch resolves the attempt')
+  assert.deepEqual(keys, [STRIPE_TEST_KEY])
+  assert.equal(document.insertedScripts().length, 1, 'Stripe.js was inserted once')
+  assert.equal(slow.getAttribute('data-stripe-js-state'), 'loaded')
+})
+
+test('F65: a foreign Stripe.js tag that timed out is replaced at once on the next attempt', async (t) => {
+  // The foreign tag was watched late, so a missed event can hide its outcome.
+  const document = stripeLoadDocument({ readyState: 'interactive', existing: true })
+  useStripeLoadPage(t, document)
+  const keys = []
+  const first = trackSettlement(api.stripeForPaymentEnvironment('live'))
+  await flushStripeLoad()
+  t.mock.timers.tick(15000)
+  await flushStripeLoad()
+  assert.equal(first.status, 'rejected')
+  assert.equal(document.existing.getAttribute('data-stripe-js-state'), 'failed')
+
+  const retry = trackSettlement(api.stripeForPaymentEnvironment('live'))
+  await flushStripeLoad()
+  assert.equal(retry.status, 'pending')
+  assert.equal(document.existing.removed, true, 'the timed-out foreign tag is replaced')
+  assert.equal(document.insertedScripts().length, 1)
+  global.Stripe = fakeStripeConstructor(keys)
+  document.scripts()[0].dispatch('load')
+  await flushStripeLoad()
+  assert.equal(retry.status, 'resolved')
+  assert.deepEqual(keys, [STRIPE_LIVE_KEY])
+})
+
+/* ---- F65 review: guard coverage ---- */
+test('F65: a settled Stripe.js load leaves no bounded-wait work behind', async (t) => {
+  const document = stripeLoadDocument({ readyState: 'complete' })
+  useStripeLoadPage(t, document)
+  const keys = []
+  const result = trackSettlement(api.stripeForPaymentEnvironment('test'))
+  await flushStripeLoad()
+  const tag = document.scripts()[0]
+  // Count every later look at window.Stripe: a leftover timer would make one.
+  const Stripe = fakeStripeConstructor(keys)
+  let reads = 0
+  Object.defineProperty(global, 'Stripe', { configurable: true, enumerable: true, get() { reads += 1; return Stripe } })
+  tag.dispatch('load')
+  await flushStripeLoad()
+  assert.equal(result.status, 'resolved')
+  reads = 0
+  t.mock.timers.tick(15000)
+  await flushStripeLoad()
+  assert.equal(reads, 0, 'the bounded wait is cleared when the load settles')
+  assert.equal(tag.getAttribute('data-stripe-js-state'), 'loaded', 'a loaded tag stays loaded')
+})
+
+test('F65: before the page completes, a retry replaces a Stripe.js tag this file saw fail at once', async (t) => {
+  const document = stripeLoadDocument({ readyState: 'interactive' })
+  useStripeLoadPage(t, document)
+  const keys = []
+  const first = trackSettlement(api.stripeForPaymentEnvironment('test'))
+  await flushStripeLoad()
+  assert.equal(document.insertedScripts().length, 1)
+  const failed = document.scripts()[0]
+  failed.dispatch('error')
+  await flushStripeLoad()
+  assert.equal(first.status, 'rejected')
+  assert.equal(failed.getAttribute('data-stripe-js-state'), 'failed')
+
+  const retry = trackSettlement(api.stripeForPaymentEnvironment('test'))
+  await flushStripeLoad()
+  assert.equal(retry.status, 'pending')
+  assert.equal(failed.removed, true, 'the recorded failure is not watched again')
+  assert.equal(document.insertedScripts().length, 2, 'the retry inserts a fresh tag without waiting for the bound')
+  global.Stripe = fakeStripeConstructor(keys)
+  document.scripts()[0].dispatch('load')
+  await flushStripeLoad()
+  assert.equal(retry.status, 'resolved')
+  assert.deepEqual(keys, [STRIPE_TEST_KEY])
+})
+
+/* ---- F66: a failed Add payment method returns to the saved-card picker ---- */
+test('F66: a failed Add payment method returns to the picker, keeps the card error, and its Add payment method can mount the card form', async (t) => {
+  const { fixture, stripePage } = await paidPickerWithoutStripe(t)
+  const modal = fixture.payment.modal
+  const add = modal.querySelector('[aria-label="Add payment method"]')
+  const save = modal.querySelector('[save-card-btn]')
+  const error = modal.querySelector('[card-error]')
+  const panel = modal.querySelector('[data-booking-payment-picker]')
+  const back = modal.querySelector('[data-booking-payment-back]')
+  const clicked = trackSettlement(add.click())
+  await flushStripeLoad()
+  assert.equal(modal.getAttribute('data-booking-payment-mode'), 'entry')
+  assert.equal(save.getAttribute('aria-disabled'), 'true', 'Save is closed while no card form is mounted')
+  assert.equal(save.querySelector('button').disabled, true)
+  stripePage.scripts()[0].dispatch('error')
+  await flushStripeLoad()
+  assert.equal(clicked.status, 'resolved')
+  assert.equal(modal.getAttribute('data-booking-payment-mode'), 'picker', 'the Brand is back on the saved-card picker')
+  assert.equal(error.textContent, STRIPE_LOAD_ERROR, 'the existing card error keeps the existing message')
+  assert.equal(error.style.display, 'block')
+  assert.equal(panel.style.display, 'block', 'the picker and its Add payment method are visible')
+  assert.equal(back.style.display, '', 'the picker Back is visible')
+  assert.equal(save.style.display, 'none', 'Save is hidden without a card form')
+  assert.equal(modal.querySelector('[data-payment-card-back]'), null)
+  assert.equal(fixture.getCardCreates(), 0)
+
+  global.Stripe = stripeEchoStub()
+  const retried = trackSettlement(add.click())
+  await flushStripeLoad()
+  assert.equal(retried.status, 'resolved')
+  assert.equal(stripePage.insertedScripts().length, 1, 'Stripe is ready, so no tag is inserted')
+  assert.equal(modal.getAttribute('data-booking-payment-mode'), 'entry', 'the retry reaches the card form')
+  assert.equal(error.textContent, '', 'the retry clears the old error')
+  assert.ok(modal.querySelector('[data-payment-card-back]'), 'the card form Back is present')
+  assert.equal(typeof save.listeners.click, 'function', 'Save is bound to the mounted form')
+})
+
+test('F66: the retry after a failed Stripe.js load calls the loader again', async (t) => {
+  const { fixture, stripePage } = await paidPickerWithoutStripe(t)
+  const modal = fixture.payment.modal
+  const add = modal.querySelector('[aria-label="Add payment method"]')
+  trackSettlement(add.click())
+  await flushStripeLoad()
+  stripePage.scripts()[0].dispatch('error')
+  await flushStripeLoad()
+  assert.equal(modal.getAttribute('data-booking-payment-mode'), 'picker')
+  const retried = trackSettlement(add.click())
+  await flushStripeLoad()
+  assert.equal(retried.status, 'pending', 'the retry waits for a new load')
+  assert.equal(stripePage.insertedScripts().length, 2, 'the retry starts a new load')
+  assert.equal(modal.getAttribute('data-booking-payment-mode'), 'entry')
+  assert.equal(modal.querySelector('[card-error]').textContent, '')
+  assert.equal(modal.querySelector('[save-card-btn]').getAttribute('aria-disabled'), 'true', 'Save stays closed during the new wait')
+})
+
+test('F66: a card form that cannot mount returns to the picker without its consent row', async (t) => {
+  const { fixture } = await paidPickerWithoutStripe(t)
+  const modal = fixture.payment.modal
+  global.Stripe = () => ({ elements() { throw new Error('Stripe Elements could not start') } })
+  await modal.querySelector('[aria-label="Add payment method"]').click()
+  await flushStripeLoad()
+  assert.equal(modal.getAttribute('data-booking-payment-mode'), 'picker')
+  assert.equal(modal.querySelector('[card-error]').textContent, 'Stripe Elements could not start')
+  assert.equal(modal.querySelectorAll('[data-payment-consent="card-setup"]').length, 0, 'the failed form leaves no consent row')
+  assert.equal(modal.querySelector('[data-payment-card-back]'), null)
+  assert.equal(fixture.getCardCreates(), 0)
+})
+
+test('F66 review: a Stripe.js failure after the Brand leaves the card dialog installs no picker and shows no error', async (t) => {
+  const { fixture, stripePage } = await paidPickerWithoutStripe(t)
+  const modal = fixture.payment.modal
+  const add = modal.querySelector('[aria-label="Add payment method"]')
+  const clicked = trackSettlement(add.click())
+  await flushStripeLoad()
+  assert.equal(modal.getAttribute('data-booking-payment-mode'), 'entry')
+  assert.equal(clicked.status, 'pending', 'the card step is waiting for Stripe.js')
+  modal.listeners.cancel({ type: 'cancel', target: modal, preventDefault() {}, stopImmediatePropagation() {} })
+  await flushStripeLoad()
+  assert.equal(modal.getAttribute('data-booking-payment-mode'), 'picker', 'Esc returns to the saved-card picker')
+  assert.equal(modal.querySelectorAll('[data-payment-selection-status]').length, 1)
+  await modal.querySelector('[data-booking-payment-back]').querySelector('button').click()
+  await flushStripeLoad()
+  assert.equal(modal.open, false, 'the picker Back leaves the card dialog')
+  assert.equal(modal.querySelectorAll('[data-payment-selection-status]').length, 0, 'leaving removes the picker')
+  stripePage.scripts()[0].dispatch('error')
+  await flushStripeLoad()
+  assert.equal(clicked.status, 'resolved', 'the stale card step leaves its wait')
+  assert.equal(modal.open, false)
+  assert.equal(modal.querySelectorAll('[data-payment-selection-status]').length, 0, 'the stale failure installs no picker inside the closed dialog')
+  assert.equal(modal.querySelector('[card-error]').textContent, '', 'the stale failure shows no card error')
+})
