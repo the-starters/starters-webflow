@@ -5264,8 +5264,8 @@ test('the generated consent checkbox stays visible under a site-wide !important 
    and fresh tags whose outcome each test chooses. Timers are mocked, so the
    bounded wait is exercised without real delay. */
 const STRIPE_JS_SELECTOR = 'script[src="https://js.stripe.com/v3/"]'
-const STRIPE_TEST_KEY = SOURCE.match(/STRIPE_PUBLIC_KEY_TEST =\s*'([^']+)'/)[1]
-const STRIPE_LIVE_KEY = SOURCE.match(/STRIPE_PUBLIC_KEY_LIVE =\s*'([^']+)'/)[1]
+const STRIPE_TEST_KEY = 'pk_test_51MMhu4AW8v1kanawI48Is1kTMhsz4XbB1XVOjw5xxLiFlKXuehHSFWhApJiUKquc8bmwjtuSTlTMitYjjShjB6aQ00Dhe2oFlX'
+const STRIPE_LIVE_KEY = 'pk_live_51MMhu4AW8v1kanawUQQjQTpTWBAsdVusIXoXSA26AcTHtZPYbJt6sr98ishd7cs5DXx4QeSMHw45QqrTuzftXaJm005MjZL3sz'
 const STRIPE_LOAD_ERROR = 'Stripe.js failed to load'
 
 class FakeStripeScript {
