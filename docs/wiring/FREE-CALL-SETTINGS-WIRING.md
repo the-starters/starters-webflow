@@ -150,8 +150,10 @@ exact server message into its existing inner `div`, or an optional
 canonical refresh, or other non-error state clears and hides the native block. The controller does
 not create form markup and never changes canonical state to simulate success.
 
-`starterSchedulingConnectionStateChanged` triggers a non-destructive canonical re-read. It never
-clears the session or resets an in-progress Yes/No selection.
+`starterSchedulingConnectionStateChanged` triggers a non-destructive canonical re-read after the
+Calendar connection state has settled. The transient `loading` event is ignored so the page does not
+repeat the same canonical GET before final availability. It never clears the session or resets an
+in-progress Yes/No selection.
 
 ## Xano authority
 
