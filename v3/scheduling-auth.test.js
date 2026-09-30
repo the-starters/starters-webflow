@@ -810,3 +810,67 @@ test('shared reads honor each caller expected scope', async () => {
   await window.xanoAuthFetch(PAID_GET, undefined, scope)
   await assert.rejects(window.xanoAuthFetch(PAID_GET, undefined, {}), { code: 'MEMBER_SCOPE_CHANGED' })
 })
+
+function memberstackWithCounter(extra = {}) {
+  const state = { reads: 0, listeners: [], gate: null }
+  const memberstack = {
+    getMemberCookie: async () => 'memberstack-a',
+    onAuthChange(listener) {
+      state.listeners.push(listener)
+    },
+    async getCurrentMember() {
+      state.reads += 1
+      if (state.gate) await state.gate.promise
+      return { data: { id: `member-${state.reads}` } }
+    },
+    async updateMember() {
+      return { data: {} }
+    },
+    ...extra,
+  }
+  return { memberstack, state }
+}
+
+test('overlapping getCurrentMember calls share one Memberstack request', async () => {
+  const { memberstack, state } = memberstackWithCounter()
+  state.gate = deferred()
+  loadBridge(async () => response({}), { memberstack })
+
+  const calls = [memberstack.getCurrentMember(), memberstack.getCurrentMember(), memberstack.getCurrentMember()]
+  state.gate.resolve()
+  const results = await Promise.all(calls)
+
+  assert.equal(state.reads, 1)
+  assert.deepEqual(results.map((r) => r.data.id), ['member-1', 'member-1', 'member-1'])
+})
+
+test('getCurrentMember is not cached after it settles or across different arguments', async () => {
+  const { memberstack, state } = memberstackWithCounter()
+  loadBridge(async () => response({}), { memberstack })
+
+  await memberstack.getCurrentMember()
+  await memberstack.getCurrentMember()
+  state.gate = deferred()
+  const a = memberstack.getCurrentMember({ x: 1 })
+  const b = memberstack.getCurrentMember({ x: 2 })
+  state.gate.resolve()
+  await Promise.all([a, b])
+
+  assert.equal(state.reads, 4)
+})
+
+test('a Memberstack write or auth change stops later reads joining an older request', async () => {
+  const { memberstack, state } = memberstackWithCounter()
+  loadBridge(async () => response({}), { memberstack })
+
+  state.gate = deferred()
+  const before = memberstack.getCurrentMember()
+  await memberstack.updateMember({ customFields: { a: 1 } })
+  const afterWrite = memberstack.getCurrentMember()
+  state.listeners.forEach((listener) => listener({}))
+  const afterAuth = memberstack.getCurrentMember()
+  state.gate.resolve()
+  await Promise.all([before, afterWrite, afterAuth])
+
+  assert.equal(state.reads, 3)
+})

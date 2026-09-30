@@ -255,7 +255,56 @@
     }
     if (memberstack === wiredMemberstack) return
     wiredMemberstack = memberstack
+    shareMemberstackReads(memberstack)
     memberstack.onAuthChange(reconcileAuthChange)
+  }
+
+  // Dashboard scripts each call getCurrentMember(), and every call is a
+  // separate, queued network request (about 30 per page load). Calls made
+  // while an identical one is still in flight share its result. Nothing is
+  // kept after it settles, and any Memberstack write or auth change drops the
+  // in-flight entries so a read after a write is never stale.
+  function shareMemberstackReads(memberstack) {
+    if (typeof memberstack.getCurrentMember !== 'function' || memberstack.__tsSharedReads) return
+    const inFlight = new Map()
+    const original = memberstack.getCurrentMember.bind(memberstack)
+    const WRITE_METHOD = /^(update|add|remove|purchase|login|logout|signup|launch|set|delete|send|verify)/i
+    memberstack.__tsSharedReads = true
+    memberstack.getCurrentMember = function () {
+      let key
+      try {
+        key = JSON.stringify(Array.prototype.slice.call(arguments))
+      } catch (error) {
+        return original.apply(null, arguments)
+      }
+      const shared = inFlight.get(key)
+      if (shared) return shared
+      const promise = Promise.resolve(original.apply(null, arguments))
+      inFlight.set(key, promise)
+      const release = function () {
+        if (inFlight.get(key) === promise) inFlight.delete(key)
+      }
+      promise.then(release, release)
+      return promise
+    }
+    Object.keys(memberstack).forEach(function (name) {
+      const method = memberstack[name]
+      if (typeof method !== 'function' || !WRITE_METHOD.test(name)) return
+      memberstack[name] = function () {
+        inFlight.clear()
+        const result = method.apply(this, arguments)
+        return result && typeof result.finally === 'function'
+          ? result.finally(function () {
+              inFlight.clear()
+            })
+          : result
+      }
+    })
+    if (typeof memberstack.onAuthChange === 'function') {
+      memberstack.onAuthChange(function () {
+        inFlight.clear()
+      })
+    }
   }
 
   async function getXanoAuthToken(options) {
