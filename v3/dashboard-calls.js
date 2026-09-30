@@ -80,6 +80,8 @@
   ].join(', ')
   const DETAIL_MODAL_SELECTOR =
     '[popup-booking-info], dialog[data-modal-target="popup-booking-info"]'
+  /** Module-owned `data-starters-action-hint` names that earlier versions made. */
+  const ACTION_HINT_NAMES = ['reschedule', 'cancel', 'decline']
   const DASHBOARD_ROLES = {
     '/starter-dashboard': 'starter',
     '/starter-dashboard---availability-stage': 'starter',
@@ -1222,6 +1224,119 @@
     }) || null
   }
 
+  /**
+   * Fields whose authored row can serve as the template for a module row, in
+   * order of preference. Each is a one-field `[booking-element-wrap]` row
+   * directly inside the panel's details table. The date hooks sit in a nested
+   * two-line label, and the meeting link carries an href, so neither is used.
+   */
+  const DETAIL_TABLE_TEMPLATE_FIELDS = [
+    'duration',
+    'starter-name',
+    'brand-name',
+    'context',
+    'reschedule-reason',
+    'cancel-reason',
+    'decline-reason',
+  ]
+
+  /** Attributes a cloned authored row must lose, so no controller reads it. */
+  const DETAIL_TABLE_CLONE_ATTRIBUTES = ['booking-element', 'booking-element-wrap', 'id']
+
+  function nodeWithin(node, root) {
+    let candidate = node
+    while (candidate) {
+      if (candidate === root) return true
+      candidate = candidate.parentNode
+    }
+    return false
+  }
+
+  /**
+   * An authored details-table row that a module row can copy: the
+   * `[booking-element-wrap]` around exactly one table field, with a title part
+   * and a value part. Its parent is the authored table, which sits in the
+   * padded card column. A wrap that is a direct child of the panel has no
+   * table, so the panel keeps the separate row group above its footer (F52).
+   * @param {HTMLElement} panel Authored panel.
+   * @returns {HTMLElement|null} Authored row, or `null`.
+   */
+  function detailTableTemplateRow(panel) {
+    if (!panel || typeof panel.querySelectorAll !== 'function') return null
+    let found = null
+    DETAIL_TABLE_TEMPLATE_FIELDS.some(function (name) {
+      return Array.prototype.slice
+        .call(panel.querySelectorAll('[booking-element="' + name + '"]'))
+        .some(function (field) {
+          const wrap = field.closest && field.closest('[booking-element-wrap]')
+          const table = wrap && wrap.parentNode
+          if (!table || wrap === panel || table === panel) return false
+          if (!nodeWithin(table, panel)) return false
+          if (typeof wrap.cloneNode !== 'function') return false
+          if (wrap.querySelectorAll('[booking-element]').length !== 1) return false
+          if (!wrap.children || wrap.children.length < 2) return false
+          found = wrap
+          return true
+        })
+    })
+    return found
+  }
+
+  /**
+   * The authored block that holds the panel's Message copy while a state rule
+   * hides it: `reschedule-blocked-info` or `pending-info-text`. The module
+   * Message line goes right after it, inside the same card column.
+   * @param {HTMLElement} panel Authored panel.
+   * @returns {HTMLElement|null} Authored block, or `null`.
+   */
+  function hiddenMessageBlock(panel) {
+    const control = panel.querySelector(MESSAGE_CONTROL_SELECTOR)
+    if (!control || typeof control.closest !== 'function') return null
+    const block =
+      control.closest('[reschedule-blocked-info]') ||
+      control.closest('[pending-info-text]')
+    return block && block.parentNode && nodeWithin(block, panel) ? block : null
+  }
+
+  function removeNode(node) {
+    const parent = node && node.parentNode
+    if (parent && typeof parent.removeChild === 'function') parent.removeChild(node)
+  }
+
+  /**
+   * Builds one module row from a clone of an authored table row, so it keeps
+   * the authored row's classes, typography and fill. The clone loses every
+   * controller hook and gets the module marker, the label and the value.
+   * @param {HTMLElement} template Authored row from detailTableTemplateRow.
+   * @param {{field: string, label: string, value: string}} row Row content.
+   * @returns {HTMLElement|null} Module-owned row, or `null`.
+   */
+  function detailTableSummaryRow(template, row) {
+    const line = template.cloneNode(true)
+    if (!line || typeof line.querySelectorAll !== 'function') return null
+    const value = line.querySelector('[booking-element]')
+    if (!value) return null
+    const title = Array.prototype.slice.call(line.children || []).find(function (child) {
+      return child !== value && !nodeWithin(value, child)
+    })
+    let label = title
+    while (label && label.children && label.children.length) label = label.children[0]
+    ;[line].concat(Array.prototype.slice.call(
+      line.querySelectorAll('[booking-element], [booking-element-wrap], [id]'),
+    )).forEach(function (node) {
+      DETAIL_TABLE_CLONE_ATTRIBUTES.forEach(function (name) {
+        if (typeof node.removeAttribute === 'function') node.removeAttribute(name)
+      })
+    })
+    line.setAttribute('data-starters-call-summary-row', row.field)
+    if (label) label.textContent = row.label
+    value.textContent = row.value
+    if (typeof value.removeAttribute === 'function') value.removeAttribute('href')
+    show(value, true)
+    show(line, true)
+    return line
+  }
+
   function detailSupplementRows(booking, role, timezone, panelName) {
     const counterpart = detailCounterpart(role, booking)
     // A decline writes its reason to cancelled_reason. On a Free declined
@@ -1345,6 +1460,16 @@
         .map(function (row) {
           return row.field
         })
+      // F52: module rows join the authored details table as clones of an
+      // authored row, and the Message line goes into the padded card column.
+      // Only a panel with no authored table keeps the separate row group
+      // above the footer. Rows from an earlier pass go first, so each pass
+      // leaves one row per field.
+      const templateRow = detailTableTemplateRow(panel)
+      const table = templateRow && templateRow.parentNode
+      Array.prototype.slice
+        .call(panel.querySelectorAll('[data-starters-call-summary-row]'))
+        .forEach(removeNode)
       let supplement = panel.querySelector('[data-starters-call-summary]')
       if (!supplement) {
         supplement = document.createElement('div')
@@ -1354,8 +1479,13 @@
         supplement.style.gap = '16px'
         supplement.style.width = '100%'
         supplement.style.marginTop = '12px'
+        const anchor = table ? hiddenMessageBlock(panel) || table : null
+        const column = anchor && anchor.parentNode
         const controls = detailFooter(panel)
-        if (controls && typeof panel.insertBefore === 'function') {
+        if (column && typeof column.insertBefore === 'function') {
+          supplement.style.marginTop = '0'
+          column.insertBefore(supplement, anchor.nextSibling || null)
+        } else if (controls && typeof panel.insertBefore === 'function') {
           panel.insertBefore(supplement, controls)
         } else {
           panel.appendChild(supplement)
@@ -1374,6 +1504,12 @@
 
       rows.forEach(function (row) {
         if (authoritative.indexOf(row.field) !== -1) return
+        const cloned = table ? detailTableSummaryRow(templateRow, row) : null
+        if (cloned) {
+          table.appendChild(cloned)
+          rendered += 1
+          return
+        }
         const line = document.createElement('div')
         line.setAttribute('data-starters-call-summary-row', row.field)
         line.style.display = 'grid'
@@ -1483,9 +1619,10 @@
 
   /**
    * Renders or hides a muted one-line explanation under an authored action
-   * button that eligibility gating hides. Without it a gated action reads as
-   * a missing feature (Kaeser QA, 2026-08-29). The node is module-owned and
-   * marked `data-starters-action-hint`; authored markup is never edited.
+   * button that eligibility gating hides. The node is module-owned and marked
+   * `data-starters-action-hint`; authored markup is never edited. During soft
+   * launch no hint is shown (see configureDetailActions), so this only hides
+   * a node that an earlier version or an earlier booking left in the modal.
    */
   function ensureActionHint(modal, anchor, name, message, visible) {
     if (!modal || typeof modal.querySelector !== 'function') return
@@ -1524,16 +1661,6 @@
         modal.ownerDocument || global.document,
         modal,
       )
-    }
-    const gates = {
-      rescheduleAnchor: null,
-      rescheduleShown: false,
-      respondShown: false,
-      cancelAnchor: null,
-      cancelShown: false,
-      declineAnchor: null,
-      declineFallback: null,
-      declineShown: false,
     }
     modal
       .querySelectorAll(DETAIL_ACTION_SELECTOR)
@@ -1591,28 +1718,6 @@
         const payment = paymentControl && preferredPaymentControl &&
           typeof global.StartersDashboardCallPayment?.canManageCards === 'function' &&
           global.StartersDashboardCallPayment.canManageCards(role, booking)
-        if (action === 'reschedule') {
-          if (!gates.rescheduleAnchor) gates.rescheduleAnchor = button
-          if (proposeReschedule) gates.rescheduleShown = true
-        }
-        if (action === 'confirm-reschedule' && respondReschedule) {
-          gates.respondShown = true
-        }
-        if (action === 'switch-cancel' || action === 'cancel') {
-          if (!gates.cancelAnchor) gates.cancelAnchor = button
-          if (cancel) gates.cancelShown = true
-        }
-        if (
-          action === 'switch-decline' ||
-          action === 'switch-decline-reason' ||
-          action === 'decline'
-        ) {
-          // Anchor on the base-panel entry when the page authors one, so the
-          // hint sits where the Starter looks for Decline.
-          if (action === 'switch-decline' && !gates.declineAnchor) gates.declineAnchor = button
-          if (!gates.declineFallback) gates.declineFallback = button
-          if (decline) gates.declineShown = true
-        }
         show(
           button,
           action === 'switch-close' ||
@@ -1626,59 +1731,13 @@
             message,
         )
       })
-    const start = Number(booking && booking.start)
-    const reference = Number.isFinite(Number(now)) ? Number(now) : Date.now()
-    const upcoming = Number.isFinite(start) && start > reference
-    const active = ['pending', 'confirmed', 'rescheduled'].includes(status)
-    ensureActionHint(
-      modal,
-      gates.rescheduleAnchor,
-      'reschedule',
-      // Brands can now also restate the time on their own pending request, so
-      // the old "confirmed only" wording would misdescribe the gate.
-      'Rescheduling is available for Free calls.',
-      // The hint explains the Paid gate. A Free call with no reschedule
-      // control for this viewer (a Starter's pending request, or a call
-      // inside the reschedule window) would read it as a false promise.
-      Boolean(gates.rescheduleAnchor) &&
-        paidBooking(booking) &&
-        active &&
-        status !== 'rescheduled' &&
-        upcoming &&
-        !gates.rescheduleShown &&
-        !gates.respondShown,
-    )
-    ensureActionHint(
-      modal,
-      gates.cancelAnchor,
-      'cancel',
-      'Paid call cancellation is not available yet.',
-      Boolean(gates.cancelAnchor) &&
-        paidBooking(booking) &&
-        // A Brand's own pending Paid request is also withdrawn through Cancel
-        // (canCancel), and Paid pending cancellation is hard-launch work, so
-        // the hidden control gets the same explanation. The Starter declines
-        // a pending request instead, so no Cancel hint applies to that role.
-        (['confirmed', 'rescheduled'].includes(status) ||
-          (role === 'brand' && status === 'pending')) &&
-        upcoming &&
-        !gates.cancelShown,
-    )
-    const declineAnchor = gates.declineAnchor || gates.declineFallback
-    ensureActionHint(
-      modal,
-      declineAnchor,
-      'decline',
-      'Paid call decline is not available yet.',
-      // Paid decline is hard-launch work (JP, 2026-09-26): canDecline hides
-      // it, and the Starter reads why while the request can still be answered.
-      Boolean(declineAnchor) &&
-        role === 'starter' &&
-        paidBooking(booking) &&
-        status === 'pending' &&
-        responseWindowOpen(booking, now) &&
-        !gates.declineShown,
-    )
+    // Soft launch (JP meeting, 2026-09-30): a gated Paid action stays hidden
+    // with no explanation, so the modal never names a feature that is not
+    // live yet. This reverses the 2026-08-29 hint rule. A hint node that an
+    // earlier version or an earlier booking left in the modal still hides.
+    ACTION_HINT_NAMES.forEach(function (name) {
+      ensureActionHint(modal, null, name, '', false)
+    })
     const deepLinkState =
       typeof modal.getAttribute === 'function'
         ? clean(modal.getAttribute('data-booking-deep-link'))
@@ -2007,6 +2066,9 @@
       const group = field.closest && field.closest('[booking-element-wrap]')
       if (group) show(group, false)
     })
+    // F52 rows live in the authored tables, outside the supplement, so an
+    // identity reset removes them on their own.
+    modal.querySelectorAll('[data-starters-call-summary-row]').forEach(removeNode)
     modal.querySelectorAll('[data-starters-call-summary]').forEach(function (supplement) {
       supplement.textContent = ''
       show(supplement, false)

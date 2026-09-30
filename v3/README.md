@@ -2406,13 +2406,19 @@ copy. Binding a non-rescheduled row hides both proposal-only fields.
 
 Not every authored panel repeats every booking hook, so each authored
 `[booking-popup-content]` panel also receives a module-owned
-`data-starters-call-summary` block inserted before the panel's direct-child
-footer. The authored `switch-close` control's group is preferred; otherwise the
-footer is the first direct child that contains a `[booking-action-btn]` and no
-`[booking-element]`. When neither attribute-driven anchor exists, the block is
-appended after the authored content. A modal that authors no such panel receives
-one block on the modal itself. Generated content uses no classes or generated
-IDs. The block lists only the fields that panel has no usable
+`data-starters-call-summary` block. When the panel authors a details table (a
+one-field `[booking-element-wrap]` row, such as the Duration row, whose parent
+is not the panel itself), the block goes into that table's padded card column:
+right after the authored `[reschedule-blocked-info]` or `[pending-info-text]`
+block that holds the panel's hidden Message copy, or else right after the
+table (F52, 2026-09-30). Otherwise the block is inserted before the panel's
+direct-child footer. The authored `switch-close` control's group is preferred;
+otherwise the footer is the first direct child that contains a
+`[booking-action-btn]` and no `[booking-element]`. When neither
+attribute-driven anchor exists, the block is appended after the authored
+content. A modal that authors no such panel receives one block on the modal
+itself. Generated content uses no generated IDs, and the code selects no
+classes. The module lists only the fields that panel has no usable
 `[booking-element]` hook for and that the canonical row has a value for —
 counterpart name, date and time
 (including the current confirmed and proposed times described above),
@@ -2441,10 +2447,15 @@ the dialog, the block is rebuilt one animation frame later against the now-open
 panel, and that second pass is skipped when the modal has been reset or rebound
 to another call in the meantime. A Designer-owned field therefore stays
 authoritative — and is never duplicated on screen — for as long as it and its
-wrapper render. The module-owned fields render inside one bordered
-`data-starters-call-summary-rows` group. Each field is a padded two-column row,
-so counterpart and duration use the same visual structure as the authored call
-details instead of appearing as loose text below them. The block ends with a
+wrapper render. In a panel with a details table, each module-owned field is a
+clone of the authored table row: the clone keeps the authored classes and
+layout, loses every `booking-element`, `booking-element-wrap`, and `id`
+attribute, and is appended to the same table, so it reads as one more row of
+it. Each pass removes the rows of the previous pass first, and a reset removes
+them too, so a panel keeps one row per field. A panel with no details table
+keeps the older layout: the fields render inside one bordered
+`data-starters-call-summary-rows` group of padded two-column rows. The block
+ends with a
 `data-starters-call-summary-actions` paragraph: “If you’d like to discuss
 options, reach out to [counterpart name] via the Messages tab.” The name falls
 back to `the Brand` for the Starter or `the Starter` for the Brand. Its underlined
@@ -2575,9 +2586,7 @@ contracts.
 supported decline, cancel, and Free-call reschedule commands. Decline is
 available only to the Starter on a canonical pending row that is not explicitly
 Paid. Paid decline and its settlement are hard-launch work, so an `is_paid` or
-`paid_meeting` request hides every decline step and, while the request can
-still be answered, the details modal shows `Paid call decline is not available
-yet.` below the authored Decline control. Accept is unchanged. The authored card
+`paid_meeting` request hides every decline step. Accept is unchanged. The authored card
 Decline control also requires an open response window and a loaded, valid
 action module that approves the booking through `canDecline`. Clicking it
 populates the existing details modal with the selected booking and counterpart,
@@ -2595,11 +2604,7 @@ rescheduled row whose start is in the future. A Brand can also cancel its own
 canonical Free pending request before its start; a Starter declines a pending
 request instead. Xano
 `booking/cancel/v3` rejects Paid cancellation until the paid-cancel follow-up
-ships, so an explicitly Paid row hides Cancel. An upcoming Paid confirmed or
-rescheduled row, and the Brand's own upcoming Paid pending request, show
-`Paid call cancellation is not available yet.` below the authored control; the
-Starter's pending view gets no Cancel hint because the Starter declines a
-pending request instead. For Decline and Cancel eligibility,
+ships, so an explicitly Paid row hides Cancel. For Decline and Cancel eligibility,
 a row with neither `is_paid` nor `paid_meeting` is treated as legacy Free so
 older Free bookings keep the action. Reschedule keeps a stricter shared gate:
 the row must be in the future, have an explicit Free flag, a grant, and positive
@@ -2610,15 +2615,13 @@ contracts never claim the same booking. Every command requires a booking ID,
 configuration ID, participant identity, and exact `test` or `production` data
 environment.
 
-For an active upcoming initial request or confirmed Paid row where neither a
-reschedule action nor a response is available, the modal shows
-`Rescheduling is available for Free calls.` below the authored Reschedule
-control. A Free row never shows it: with no control for that viewer (a
-Starter's pending request, or a call inside the reschedule window) the words
-would be false. A rescheduled proposal hides this hint for both roles, including when
-reusing a modal that previously showed it. All eligibility explanations are
-module-owned `data-starters-action-hint` nodes inserted after the authored
-buttons; the script does not edit Designer markup. The early Reschedule guard
+During soft launch (JP, 2026-09-30) a gated Paid Reschedule, Cancel, or
+Decline control hides with no explanation, so the modal never names a feature
+that is not live yet. Earlier versions (2026-08-29 to v1.59.640) inserted a
+module-owned `data-starters-action-hint` node after the hidden authored
+button. Each details populate now hides any such node that an earlier version
+or an earlier booking left in the modal, and it creates no new one. The script
+does not edit Designer markup. The early Reschedule guard
 resolves the confirmed proposal or pending direct-update contract and passes an
 eligible click to `dashboard-call-actions.js`. It still consumes the
 click when that module is unavailable, the booking cannot be resolved, or the
