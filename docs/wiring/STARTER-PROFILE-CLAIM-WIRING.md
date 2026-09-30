@@ -77,16 +77,21 @@ boolean for this design.
 Before endpoint `#1513 new_member/v3` uses its existing email fallback or creates
 a profile:
 
-1. Read the submitted `starter-claim-profile-slug` Memberstack custom field.
-2. Resolve that exact slug to one canonical `freelancers_v3 #82` row. Verify the
-   canonical slug field name against the live schema before implementation.
-3. Require `profile_provisioning_source=admin_prebuilt` and an empty
-   `memberstack_id`.
-4. In the existing signup transaction, atomically bind the first Memberstack
-   ID and the signup email to that exact profile.
-5. Treat a retry from that same Memberstack ID idempotently. Reject a different
-   Memberstack ID or any mismatch, and do not fall through to creating another
-   profile.
+1. Read the submitted `starter-claim-profile-slug` Memberstack custom field. If
+   it is absent, continue through the existing ordinary signup path unchanged.
+2. If a slug is present, resolve it to exactly one canonical `freelancers_v3
+   #82` row. Verify the canonical slug field name against the live schema before
+   implementation. A missing or ambiguous match is a claim rejection and must
+   not fall through to the ordinary profile-creation path.
+3. Require `profile_provisioning_source=admin_prebuilt`.
+4. If `memberstack_id` already equals the incoming Memberstack ID, return that
+   profile idempotently before checking whether the profile is unclaimed.
+5. If `memberstack_id` is non-empty and belongs to another member, reject the
+   claim without creating a profile.
+6. If `memberstack_id` is empty, atomically bind the incoming Memberstack ID and
+   signup email to that exact profile. A concurrent loser must re-read the row
+   and apply the same same-member or conflict result without falling through to
+   profile creation.
 
 The profile slug selects the target; it does not prove who scanned the QR. A
 signup with no claim slug continues through the existing normal signup path.
@@ -115,7 +120,7 @@ node --test v3/starter-profile-claim.test.js
 node v3/browser-tests/starter-profile-claim.browser.cjs
 ```
 
-The current production controller, Webflow attributes, and Xano `#1513` still
-use the superseded exchange-token design. Do not release this frontend until
-the matching form field and backend slug-claim path have been implemented and
+The current production controller, Webflow attributes, and Xano `#1513` do not
+yet implement this slug-claim design. Do not release this frontend until the
+matching form field and backend slug-claim path have been implemented and
 verified together.

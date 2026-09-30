@@ -62,7 +62,7 @@ function markup() {
       }
     })
 
-    await page.goto('https://www.thestarters.com/hire/jane-doe?utm_source=gift')
+    await page.goto('https://www.thestarters.com/hire/jane-doe')
     await page.waitForSelector('[data-starter-claim-state="ready"]')
 
     const ready = await page.locator('[data-starter-claim="wrapper"]').evaluate((wrapper) => ({
@@ -72,6 +72,7 @@ function markup() {
       hidden: wrapper.hidden,
       profileSlug: wrapper.querySelector('[data-ms-member="starter-claim-profile-slug"]').value,
       googleHidden: wrapper.querySelector('[data-ms-auth-provider="google"]').hidden,
+      controllerExported: Object.prototype.hasOwnProperty.call(window, 'StarterProfileClaim'),
       url: location.href,
     }))
 
@@ -82,11 +83,12 @@ function markup() {
       hidden: false,
       profileSlug: 'jane-doe',
       googleHidden: true,
-      url: 'https://www.thestarters.com/hire/jane-doe?utm_source=gift',
+      controllerExported: false,
+      url: 'https://www.thestarters.com/hire/jane-doe',
     })
     assert.deepEqual(remoteRequests, [])
 
-    await page.goto('https://www.thestarters.com/hire/john-smith?utm_source=gift')
+    await page.goto('https://www.thestarters.com/hire/john-smith')
     await page.waitForSelector('[data-starter-claim-state="closed"]', { state: 'attached' })
     const unlisted = await page.locator('[data-starter-claim="wrapper"]').evaluate((wrapper) => ({
       ariaHidden: wrapper.getAttribute('aria-hidden'),

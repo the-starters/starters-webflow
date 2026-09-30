@@ -98,13 +98,6 @@
     return { state: 'ready', slug: slug }
   }
 
-  window.StarterProfileClaim = {
-    init: init,
-    profilePath: profilePath,
-    profileSlug: profileSlug,
-    isClaimableSlug: isClaimableSlug,
-  }
-
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init, { once: true })
   } else {

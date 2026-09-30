@@ -87,14 +87,23 @@ function load(options = {}) {
   }
   vm.runInNewContext(source, { document, window })
 
-  return { api: window.StarterProfileClaim, form, listeners, profileSlugField, googleAuth, wrapper, window }
+  function dispatch(type) {
+    for (const listener of [...listeners]) {
+      if (listener.type !== type) continue
+      listener.handler()
+      if (listener.config && listener.config.once) {
+        listeners.splice(listeners.indexOf(listener), 1)
+      }
+    }
+  }
+
+  return { dispatch, form, listeners, profileSlugField, googleAuth, wrapper, window }
 }
 
 test('keeps the wrapper hidden for a normal profile not in the allowlist', () => {
   const harness = load({ search: '?utm_source=gift' })
-  const result = harness.api.init()
+  harness.dispatch('DOMContentLoaded')
 
-  assert.equal(result.state, 'not_listed')
   assert.equal(harness.wrapper.classList.contains('hide'), true)
   assert.equal(harness.wrapper.hidden, true)
   assert.equal(harness.wrapper.getAttribute('aria-hidden'), 'true')
@@ -105,10 +114,13 @@ test('keeps the wrapper hidden for a normal profile not in the allowlist', () =>
 
 test('shows the form for an allowlisted slug and puts that slug in the signup field', () => {
   const harness = load({ allowedSlugs: ['jane-doe'] })
-  const result = harness.api.init()
 
-  assert.equal(result.state, 'ready')
-  assert.equal(result.slug, 'jane-doe')
+  assert.equal(harness.wrapper.classList.contains('hide'), true)
+  assert.equal(harness.wrapper.hidden, true)
+  assert.equal(harness.wrapper.getAttribute('aria-hidden'), 'true')
+
+  harness.dispatch('DOMContentLoaded')
+
   assert.equal(harness.profileSlugField.value, 'jane-doe')
   assert.equal(harness.profileSlugField.getAttribute('value'), 'jane-doe')
   assert.equal(harness.wrapper.classList.contains('hide'), false)
@@ -122,16 +134,15 @@ test('shows the form for an allowlisted slug and puts that slug in the signup fi
   assert.equal(harness.googleAuth.getAttribute('tabindex'), '-1')
 })
 
-test('ignores query parameters; the normal profile URL is sufficient', () => {
+test('uses only the profile slug when unrelated query parameters are present', () => {
   const harness = load({
     allowedSlugs: ['jane-doe'],
-    search: '?claim=anything&utm_source=gift',
+    search: '?utm_source=gift&utm_campaign=profile',
   })
-  const result = harness.api.init()
+  harness.dispatch('DOMContentLoaded')
 
-  assert.equal(result.state, 'ready')
   assert.equal(harness.profileSlugField.value, 'jane-doe')
-  assert.equal(harness.window.location.search, '?claim=anything&utm_source=gift')
+  assert.equal(harness.window.location.search, '?utm_source=gift&utm_campaign=profile')
 })
 
 test('does not show the form for another slug even when one profile is allowlisted', () => {
@@ -139,9 +150,8 @@ test('does not show the form for another slug even when one profile is allowlist
     pathname: '/hire/john-smith',
     allowedSlugs: ['jane-doe'],
   })
-  const result = harness.api.init()
+  harness.dispatch('DOMContentLoaded')
 
-  assert.equal(result.state, 'not_listed')
   assert.equal(harness.wrapper.classList.contains('hide'), true)
   assert.equal(harness.profileSlugField.value, '')
 })
@@ -155,8 +165,7 @@ test('fails closed for non-profile paths and non-canonical slugs', () => {
     '/hire/jane-doe/',
   ]) {
     const harness = load({ pathname, allowedSlugs: ['jane-doe'] })
-    const result = harness.api.init()
-    assert.equal(result.state, 'not_profile', pathname)
+    harness.dispatch('DOMContentLoaded')
     assert.equal(harness.wrapper.classList.contains('hide'), true, pathname)
   }
 })
@@ -168,16 +177,15 @@ test('fails closed when the allowed form or slug field is not authored', () => {
     { fieldSelector: '[data-ms-member="starter-claim-profile-slug"]' },
   ]) {
     const harness = load({ ...options, allowedSlugs: ['jane-doe'] })
-    const result = harness.api.init()
-    assert.equal(result.state, 'misconfigured')
+    harness.dispatch('DOMContentLoaded')
+    assert.equal(harness.wrapper.getAttribute('data-starter-claim-state'), 'misconfigured')
     assert.equal(harness.wrapper.classList.contains('hide'), true)
   }
 })
 
 test('does not require the slug field on profiles outside the allowlist', () => {
   const harness = load({ profileSlugField: false })
-  const result = harness.api.init()
-  assert.equal(result.state, 'not_listed')
+  harness.dispatch('DOMContentLoaded')
   assert.equal(harness.wrapper.classList.contains('hide'), true)
 })
 
@@ -192,6 +200,11 @@ test('boots immediately when the document is already ready', () => {
   const harness = load({ readyState: 'complete', allowedSlugs: ['jane-doe'] })
   assert.equal(harness.listeners.length, 0)
   assert.equal(harness.wrapper.getAttribute('data-starter-claim-state'), 'ready')
+})
+
+test('keeps controller helpers private', () => {
+  const harness = load({ readyState: 'complete', allowedSlugs: ['jane-doe'] })
+  assert.equal(Object.prototype.hasOwnProperty.call(harness.window, 'StarterProfileClaim'), false)
 })
 
 test('second evaluation respects the global boot guard', () => {
