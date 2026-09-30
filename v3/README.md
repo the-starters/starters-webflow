@@ -4158,11 +4158,14 @@ is replaced at most once per load. A tag that other code placed counts as dead
 after the page finishes loading. If the load finds such a tag before the page
 finishes loading, it watches that tag until the 15 second limit, and the next
 attempt replaces it. A load that does not settle within 15 seconds rejects with
-`Stripe.js failed to load`. **Add payment method** then shows that message in
-`[card-error]`, and **Use this card** shows its existing verification error. A
-failed load is not kept, so the next attempt loads again. A removed script
-still runs, so a tag that this controller inserted and that is still loading
-after the limit is kept, and the next attempt waits for that same fetch.
+`Stripe.js failed to load`. After a failed **Add payment method**, the dialog
+returns to the saved-card picker and shows that message in `[card-error]`. The
+picker's **Add payment method** tries the load again, and its **Back** returns
+to review. **Use this card** shows its existing verification error. **Add card**
+stays disabled until the secure fields mount. A failed load is not kept, so the
+next attempt loads again. A removed script still runs, so a tag that this
+controller inserted and that is still loading after the limit is kept, and the
+next attempt waits for that same fetch.
 
 The controller uses this sequence:
 

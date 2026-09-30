@@ -809,7 +809,11 @@
       complete = event.complete
       paintCardError(error, event.error ? event.error.message : '')
       paint()
-    }) } catch (failure) { back.wrap.remove(); throw failure }
+    }) } catch (failure) {
+      back.wrap.remove()
+      if (consent.generated && typeof consent.wrap.remove === 'function') consent.wrap.remove()
+      throw failure
+    }
     function reset() {
       if (disposed) return
       generation += 1
@@ -3459,6 +3463,12 @@
       display(use, adding ? 'none' : '')
       use.hidden = adding
       display(back.wrap, adding ? 'none' : '')
+      // Entry starts with no secure fields, so Save stays closed until the card form mounts and repaints it.
+      if (adding) {
+        save.disabled = true
+        save.setAttribute('aria-disabled', 'true')
+        save.querySelectorAll('button').forEach(button => { button.disabled = true })
+      }
       for (const marker of ['[card-error]', '[save-card-status]']) {
         const node = modal.querySelector(marker)
         if (node) { node.textContent = ''; display(node, adding ? '' : 'none') }
@@ -3519,7 +3529,10 @@
           },
         })
       } catch (error) {
-        if (current(token)) paintCardError(modal.querySelector('[card-error]'), error.message)
+        if (!current(token)) return
+        // No card form is mounted. The picker's Add payment method retries the load and its Back returns to review.
+        showPicker()
+        paintCardError(modal.querySelector('[card-error]'), error.message)
       }
     }
     function dismiss(event) {
