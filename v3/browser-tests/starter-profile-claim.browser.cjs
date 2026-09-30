@@ -20,6 +20,7 @@ function markup() {
         <style>
           body { margin: 0; font-family: sans-serif; }
           .hide { display: none !important; }
+          .button.is-google { display: inline-flex; }
           .claim-modal { position: fixed; inset: 0; display: grid; place-items: center; background: rgba(0,0,0,.65); }
           form { width: 22rem; padding: 2rem; background: white; }
         </style>
@@ -33,7 +34,7 @@ function markup() {
             <input type="email" data-ms-member="email">
             <input type="hidden" data-ms-member="starter-claim-profile-slug" autocomplete="off">
             <button type="submit">Claim profile</button>
-            <button type="button" data-ms-auth-provider="google">Continue with Google</button>
+            <a href="#" class="button is-google w-button" data-ms-auth-provider="google">Continue with Google</a>
           </form>
         </section>
       </body>
@@ -63,18 +64,23 @@ function markup() {
     })
 
     await page.goto('https://www.thestarters.com/hire/jane-doe')
-    await page.waitForSelector('[data-starter-claim-state="ready"]')
+    await page.waitForSelector('[data-starter-claim="wrapper"]', { state: 'visible' })
 
-    const ready = await page.locator('[data-starter-claim="wrapper"]').evaluate((wrapper) => ({
-      ariaHidden: wrapper.getAttribute('aria-hidden'),
-      display: getComputedStyle(wrapper).display,
-      hasHide: wrapper.classList.contains('hide'),
-      hidden: wrapper.hidden,
-      profileSlug: wrapper.querySelector('[data-ms-member="starter-claim-profile-slug"]').value,
-      googleHidden: wrapper.querySelector('[data-ms-auth-provider="google"]').hidden,
-      controllerExported: Object.prototype.hasOwnProperty.call(window, 'StarterProfileClaim'),
-      url: location.href,
-    }))
+    const ready = await page.locator('[data-starter-claim="wrapper"]').evaluate((wrapper) => {
+      const google = wrapper.querySelector('[data-ms-auth-provider="google"]')
+      return {
+        ariaHidden: wrapper.getAttribute('aria-hidden'),
+        display: getComputedStyle(wrapper).display,
+        hasHide: wrapper.classList.contains('hide'),
+        hidden: wrapper.hidden,
+        profileSlug: wrapper.querySelector('[data-ms-member="starter-claim-profile-slug"]').value,
+        googleDisplay: getComputedStyle(google).display,
+        googleHasHide: google.classList.contains('hide'),
+        googleHidden: google.hidden,
+        controllerExported: Object.prototype.hasOwnProperty.call(window, 'StarterProfileClaim'),
+        url: location.href,
+      }
+    })
 
     assert.deepEqual(ready, {
       ariaHidden: 'false',
@@ -82,6 +88,8 @@ function markup() {
       hasHide: false,
       hidden: false,
       profileSlug: 'jane-doe',
+      googleDisplay: 'none',
+      googleHasHide: true,
       googleHidden: true,
       controllerExported: false,
       url: 'https://www.thestarters.com/hire/jane-doe',
@@ -89,14 +97,15 @@ function markup() {
     assert.deepEqual(remoteRequests, [])
 
     await page.goto('https://www.thestarters.com/hire/john-smith')
-    await page.waitForSelector('[data-starter-claim-state="closed"]', { state: 'attached' })
+    await page.waitForFunction(() =>
+      document.querySelector('[data-ms-auth-provider="google"]')?.classList.contains('hide'),
+    )
     const unlisted = await page.locator('[data-starter-claim="wrapper"]').evaluate((wrapper) => ({
       ariaHidden: wrapper.getAttribute('aria-hidden'),
       display: getComputedStyle(wrapper).display,
       hasHide: wrapper.classList.contains('hide'),
       hidden: wrapper.hidden,
       profileSlug: wrapper.querySelector('[data-ms-member="starter-claim-profile-slug"]').value,
-      state: wrapper.getAttribute('data-starter-claim-state'),
     }))
 
     assert.deepEqual(unlisted, {
@@ -105,7 +114,6 @@ function markup() {
       hasHide: true,
       hidden: true,
       profileSlug: '',
-      state: 'closed',
     })
     assert.deepEqual(remoteRequests, [])
 

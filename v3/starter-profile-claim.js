@@ -27,7 +27,7 @@
   var GOOGLE_AUTH_SELECTOR = '[data-ms-auth-provider="google"]'
   var PROFILE_PATH_PATTERN = /^\/hire\/([a-z0-9]+(?:-[a-z0-9]+)*)$/
 
-  function close(wrapper, state) {
+  function close(wrapper) {
     if (!wrapper) return
     if (wrapper.classList && typeof wrapper.classList.add === 'function') {
       wrapper.classList.add('hide')
@@ -35,7 +35,6 @@
     wrapper.hidden = true
     wrapper.setAttribute('hidden', '')
     wrapper.setAttribute('aria-hidden', 'true')
-    wrapper.setAttribute('data-starter-claim-state', state || 'closed')
   }
 
   function reveal(wrapper) {
@@ -45,12 +44,12 @@
     wrapper.hidden = false
     wrapper.removeAttribute('hidden')
     wrapper.setAttribute('aria-hidden', 'false')
-    wrapper.setAttribute('data-starter-claim-state', 'ready')
   }
 
   function hideUnverifiedGoogle(wrapper) {
     var googleAuth = wrapper && wrapper.querySelector(GOOGLE_AUTH_SELECTOR)
     if (!googleAuth) return
+    googleAuth.classList.add('hide')
     googleAuth.hidden = true
     googleAuth.setAttribute('hidden', '')
     googleAuth.setAttribute('aria-hidden', 'true')
@@ -74,28 +73,22 @@
 
   function init() {
     var wrapper = document.querySelector(WRAPPER_SELECTOR)
-    if (!wrapper) return { state: 'absent' }
+    if (!wrapper) return
 
-    close(wrapper, 'closed')
+    close(wrapper)
     hideUnverifiedGoogle(wrapper)
 
     var path = profilePath()
     var slug = profileSlug(path)
-    if (!path || !isClaimableSlug(slug)) {
-      return { state: path ? 'not_listed' : 'not_profile' }
-    }
+    if (!path || !isClaimableSlug(slug)) return
 
     var form = wrapper.querySelector(FORM_SELECTOR)
     var profileSlugField = form && form.querySelector(PROFILE_SLUG_FIELD_SELECTOR)
-    if (!form || !profileSlugField) {
-      close(wrapper, 'misconfigured')
-      return { state: 'misconfigured' }
-    }
+    if (!form || !profileSlugField) return
 
     profileSlugField.value = slug
     profileSlugField.setAttribute('value', slug)
     reveal(wrapper)
-    return { state: 'ready', slug: slug }
   }
 
   if (document.readyState === 'loading') {
