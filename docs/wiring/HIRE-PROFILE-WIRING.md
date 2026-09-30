@@ -381,7 +381,11 @@ answered by then, Book Call reads unavailable (still `aria-disabled`) and every
 call card still in `loading` fails closed to `hidden`. The failsafe is
 measured from bootstrap, not from the start of each surface. This is the
 accepted design: a surface that enters loading while the timer runs gets only
-the time that is left. The failsafe is cleared once nothing reads as loading.
+the time that is left. The same timer bounds the owner's `settings-loading`
+cards. When it fires, an owner settings read that has not answered settles
+exactly like a failed read (`settings-unavailable`, Disabled, the existing
+copy). A later successful read still applies the loaded rules. The failsafe is
+cleared once nothing reads as `loading` or `settings-loading`.
 If a surface enters loading after that release, `armCallLoadingFailsafe` arms
 the same timer again, measured from that entry. An example is a legacy Header
 tout that renders late for a signed-out viewer while the public call DTO does
@@ -887,8 +891,14 @@ signed-out or paywalled viewer, the tout also gets `data-logged-out-book-call`
 and the public signup hooks. For a Brand, the tout gets its authored
 `data-modal-trigger` and signup hooks. The direct-entry capture listener still
 takes the click before the modal.js delegate. A hidden tout keeps none of these
-attributes, so it stays fail closed. The owner's touts use the owner preview
-writer. As soon as the canonical Header wrapper
+attributes, so it stays fail closed. A reconcile leaves a tout that is already
+settled offered, with all of these values, as it is. Only entering loading or
+hidden removes them, so a focused tout keeps focus when unrelated DOM changes.
+The owner's touts use the owner preview writer. Only the Free and Paid touts
+count for that writer: another card in the legacy wrapper (its wf-xano
+template, a rate tout) never follows the call DTO. The writers that the body
+observer reaches do not write a value that is unchanged. A settled page records
+no mutation, and a writer's own text write cannot wake the observer again. As soon as the canonical Header wrapper
 exists, the legacy hero touts are also stamped superseded and stay hidden.
 
 Subscription uses the `window.WfXano` callback queue and reads retained public
@@ -932,7 +942,7 @@ clone, so an unrelated DOM mutation cannot show it as `loading` again. The final
 | --- | --- |
 | `available` | the card is offered: logged-out with `public_available === true`, brand admitted by the [readiness contract](#signed-in-brand-readiness), or the owner with a bookable record |
 | `setup-required` | owner only: the card is shown as a preview with the next setup step |
-| `settings-loading` | owner only: settings have not resolved yet; the card keeps the authored `Default` look with `aria-busy="true"`, a progress cursor, and its setup tooltip and `[next-available-slot]` hidden |
+| `settings-loading` | owner only: settings have not resolved yet; the card keeps the authored `Default` look with `aria-busy="true"`, a progress cursor, and its setup tooltip and `[next-available-slot]` hidden; the 15 s failsafe settles a read still unanswered like a failed read (`settings-unavailable`), and a later answer still applies |
 | `settings-unavailable` | owner only: the settings lookup failed; the card is disabled and offers only Call Settings |
 | `hidden` | the type is not offered to this viewer |
 | `loading` | every viewer before identity resolves; then a brand while discovery is pending and after an installed controller until the public DTO settles, and a signed-out, paywalled, talent, or owner viewer's not-yet-adapted clone until the DTO settles it: the card is shown with `Default`, `aria-busy="true"`, a progress cursor, and its `[next-available-slot]` hidden; the public Services pointer (`markServiceCardsClickable`) skips a loading card, and the DTO writer adds it when the card is offered; empty, refused, or failed discovery ends this state immediately for a brand; the 15 s failsafe fails any card still here closed to `hidden`; it is not admitted and opens nothing |
