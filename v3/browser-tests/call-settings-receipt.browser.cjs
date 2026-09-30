@@ -690,6 +690,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
     await navigate('/starter-dashboard', 'page=dashboard&paid=1&receipt=paid-pending&seen=1')
     assert.ok(await settleUntil(`document.documentElement.getAttribute('data-paid-call-settings') === 'ready'`), 'the Paid card hydrates before the session expires')
     await evaluate(`window.__tsExpirePaidReads()`)
+    await pause(5200)
     await evaluate(`window.dispatchEvent(new Event('starterSchedulingConnectionStateChanged'))`)
     assert.ok(await settleUntil(`document.querySelector('[data-call-settings-service="paid"] [data-call-settings-output="status"]').textContent === 'Sign in to manage paid calls.'`), 'the expired session fails the card closed')
     const unknownCanonical = await evaluate(`(async () => {
