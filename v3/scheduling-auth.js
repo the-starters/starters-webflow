@@ -551,6 +551,23 @@
     }
   }
 
+  async function passThroughInput(input, init) {
+    if (typeof Request === 'undefined' || !(input instanceof Request)) {
+      return passThroughFetch(new Request(input, init))
+    }
+    const headers = init && init.headers !== undefined
+      ? new Headers(init.headers)
+      : input.headers
+    const invalidatesSharedReads =
+      Headers.prototype.has.call(headers, 'Authorization') && Boolean(xanoUrl(input))
+    if (invalidatesSharedReads) clearSharedReads()
+    try {
+      return await originalFetch(input, init)
+    } finally {
+      if (invalidatesSharedReads) clearSharedReads()
+    }
+  }
+
   async function fetchWithToken(request, token, generation, expectedScope) {
     await awaitLatestAuthReconciliation()
     assertSessionGeneration(generation)
@@ -589,9 +606,10 @@
 
   async function xanoAuthFetch(input, init, expectedScope, signalHint) {
     const bypassSharedRead = hasExplicitAbortSignal(init, signalHint)
+    const url = schedulingUrl(input)
+    if (!url) return passThroughInput(input, init)
     const request = new Request(input, init)
-    const url = schedulingUrl(request)
-    if (!url || request.headers.has('Authorization')) {
+    if (request.headers.has('Authorization')) {
       return passThroughFetch(request)
     }
 
@@ -663,9 +681,10 @@
   }
 
   async function authenticatedFetch(input, init) {
+    const url = schedulingUrl(input)
+    if (!url) return passThroughInput(input, init)
     const request = new Request(input, init)
-    const url = schedulingUrl(request)
-    if (!url || request.headers.has('Authorization')) {
+    if (request.headers.has('Authorization')) {
       return passThroughFetch(request)
     }
 

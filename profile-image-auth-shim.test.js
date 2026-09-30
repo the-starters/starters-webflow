@@ -106,13 +106,13 @@ async function run() {
     return body
   }
 
-  // The real scheduling bridge wraps an unrelated multipart fetch in Request.
-  for (const schedulingBridge of [false, true]) {
+  // The real scheduling bridge must not consume an unrelated multipart upload.
+  for (const schedulingBridge of ['none', 'string-init', 'request']) {
     const { window, calls } = loadShim({ hostname: 'thestarters.com', schedulingBridge })
-    const input = schedulingBridge ? photoEndpoint : new Request(photoEndpoint, {
+    const input = schedulingBridge === 'string-init' ? photoEndpoint : new Request(photoEndpoint, {
       method: 'POST', body: photoBody(),
     })
-    const response = await window.fetch(input, schedulingBridge
+    const response = await window.fetch(input, schedulingBridge === 'string-init'
       ? { method: 'POST', body: photoBody() } : undefined)
     assert.equal(response.status, 200)
     assert.equal(calls.length, 2)
@@ -121,7 +121,7 @@ async function run() {
     assert.equal(outgoing.body.get('source_mutation_id'), photoMutationId)
     assert.equal(outgoing.body.get('member_id'), null)
     assert.equal(new Headers(outgoing.headers).get('Authorization'), 'Bearer xano-token')
-    if (!schedulingBridge) assert.equal(input.bodyUsed, false)
+    if (schedulingBridge !== 'string-init') assert.equal(input.bodyUsed, false)
   }
 
   // Native RequestInit semantics determine the effective body and headers.
