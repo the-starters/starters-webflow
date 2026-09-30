@@ -2609,11 +2609,13 @@ environment, and a non-reversible hash of the Starter identity. The key stays in
 tab-scoped `sessionStorage` after an ambiguous failure so a refresh retries the
 same backend command. Success is read from the published response contract: the
 canonical nested `confirmation.status` equal to `confirmed`, with a top-level
-`status` still accepted for compatibility; the response's `duplicate` replay
-flag does not change that decision. Any pending, malformed, or failed body
-fails closed and keeps the stored key. Only a confirmed response removes it
-before refreshing the canonical list, which moves the accepted row from Starter
-Call Requests to Starter Calls while it remains in Brand Calls.
+`status` still accepted for compatibility. A statusless nested confirmation
+that carries the booking identity is treated as the confirmed compatibility
+shape. The response's `duplicate` replay flag does not change that decision.
+Any pending, unknown-status, malformed, or failed body fails closed and keeps
+the stored key. Only an accepted confirmed response removes it before refreshing
+the canonical list, which moves the accepted row from Starter Call Requests to
+Starter Calls while it remains in Brand Calls.
 
 F53 (JP meeting, 2026-09-30): before that refresh, the controller commits the
 confirmed status validated from the accepted response shape to the canonical
