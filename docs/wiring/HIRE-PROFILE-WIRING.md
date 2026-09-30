@@ -894,7 +894,10 @@ takes the click before the modal.js delegate. A hidden tout keeps none of these
 attributes, so it stays fail closed. A reconcile leaves a tout that is already
 settled offered, with all of these values, as it is. Only entering loading or
 hidden removes them, so a focused tout keeps focus when unrelated DOM changes.
-The owner's touts use the owner preview writer. Only the Free and Paid touts
+The owner's touts use the owner preview writer. It has the same keep rule: a
+DTO replay leaves a tout that is already settled as an available owner preview
+as it is while the owner's records still offer its type, so a focused owner
+tout keeps focus. Only the Free and Paid touts
 count for that writer: another card in the legacy wrapper (its wf-xano
 template, a rate tout) never follows the call DTO. The writers that the body
 observer reaches do not write a value that is unchanged. A settled page records
@@ -1105,6 +1108,13 @@ millify re-parse its own formatted output), strips the authored
 `data-millify-max` (that ceiling was sized for the CMS value, and left in place a
 later re-process `fails('max')` and reverts to the raw number), and paints the
 text through `window.__startersMillify`.
+
+Exception (F50): when `data-millify` already holds the canonical amount,
+`paintRateElement` may leave `data-millify-raw` in place. That raw is usually
+the one millify stamped when it formatted the same value. The repaint does not
+remove it on each pass, because that removal is a DOM write on a settled page
+and the body observer records it as a mutation. The attribute is not visible
+to the user: the repaint still writes the text from the canonical amount.
 
 ### Calling millify correctly
 
