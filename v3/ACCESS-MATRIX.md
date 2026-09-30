@@ -346,13 +346,18 @@ On 2026-09-30, the Webflow Designer draft form's `data-ms-redirect` was set to
 `/` and read back. Published staging still has `data-ms-redirect="/quiz"`;
 the draft homepage destination remains pending site publish. This repository
 change does not modify the authored form setting.
-Attribution already direct-saves its pathname, but actual standalone
-source persistence remains unverified. On staging, the Brand account controller
-assigns its standard signup form a test plan classified as paid; production uses
-the free Brand plan. This later-login change does not alter that plan wiring.
-Before claiming real-account parity, verify the intended free account and saved
-source through the staging-qa harness. Source mapping, simulated-member tests,
-and attribution unit tests do not substitute for those member-session checks.
+An isolated staging-qa browser test created a real sandbox free Brand through
+`/sign-up`, using the candidate route guard, a browser-only homepage form redirect,
+and production's free-plan selection. Its exact `/sign-up` source persisted
+across reload with no completed quiz. Signup reached `/` immediately; a fresh
+native login also reached `/` and stayed there for 10 seconds.
+
+This verifies the candidate behavior with a real account, not the published
+staging configuration or production login. Staging still serves the previous
+guard and `/quiz` form setting. Its standard signup plan is classified as paid;
+the test changed that selection only inside its browser, without changing site
+plan wiring. Publish the coordinated guard and form changes, then verify the
+served configuration and login destinations before claiming deployment parity.
 Immediate content-signup returns are unchanged.
 Follow the [login asset release requirements](../docs/wiring/AUTH-ROUTE-WIRING.md#routing)
 before claiming this change is live.
