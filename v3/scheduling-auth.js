@@ -161,6 +161,7 @@
   let xanoAuthTokenMemberstackToken = null
   let tokenRequest = null
   const sharedReads = new Map()
+  let sharedReadsRevision = 0
   const sharedMemberstackReads = new Map()
   let memberstackReadOwner = 0
   let memberstackReadRevision = 0
@@ -218,6 +219,11 @@
     sharedMemberstackReads.clear()
   }
 
+  function clearSharedReads() {
+    sharedReadsRevision += 1
+    sharedReads.clear()
+  }
+
   function resetSession() {
     sessionGeneration += 1
     tokenRevision += 1
@@ -225,7 +231,7 @@
     xanoAuthToken = null
     xanoAuthTokenMemberstackToken = null
     tokenRequest = null
-    sharedReads.clear()
+    clearSharedReads()
     invalidateMemberstackReads()
   }
 
@@ -295,11 +301,14 @@
     memberstack.__tsSharedReads = true
     memberstack.getCurrentMember = async function () {
       pruneExpiredSharedReads()
-      const readRevision = memberstackReadRevision
+      const startingGeneration = sessionGeneration
+      const startingReadRevision = memberstackReadRevision
       const args = Array.prototype.slice.call(arguments)
       const memberstackToken = await memberstack.getMemberCookie()
       observeMemberstackToken(memberstackToken)
       const generation = sessionGeneration
+      const readRevision =
+        generation === startingGeneration ? startingReadRevision : memberstackReadRevision
       const read = async function () {
         const result = await original.apply(null, args)
         let latestMemberstackToken
@@ -452,11 +461,11 @@
   async function passThroughFetch(request) {
     const invalidatesSharedReads =
       request.headers.has('Authorization') && Boolean(xanoUrl(request))
-    if (invalidatesSharedReads) sharedReads.clear()
+    if (invalidatesSharedReads) clearSharedReads()
     try {
       return await originalFetch(request)
     } finally {
-      if (invalidatesSharedReads) sharedReads.clear()
+      if (invalidatesSharedReads) clearSharedReads()
     }
   }
 
@@ -492,7 +501,8 @@
     return [generation, request.method, url.pathname + url.search, body].join('\n')
   }
 
-  function hasExplicitAbortSignal(input, init) {
+  function hasExplicitAbortSignal(input, init, signalHint) {
+    if (typeof signalHint === 'boolean') return signalHint
     const inputIsRequest =
       typeof Request !== 'undefined' &&
       (input instanceof Request || Object.prototype.toString.call(input) === '[object Request]')
@@ -500,8 +510,8 @@
     return initSignal != null || inputIsRequest
   }
 
-  async function xanoAuthFetch(input, init, expectedScope) {
-    const bypassSharedRead = hasExplicitAbortSignal(input, init)
+  async function xanoAuthFetch(input, init, expectedScope, signalHint) {
+    const bypassSharedRead = hasExplicitAbortSignal(input, init, signalHint)
     const request = new Request(input, init)
     const url = schedulingUrl(request)
     if (!url || request.headers.has('Authorization')) {
@@ -518,15 +528,28 @@
       }
     }
     const generation = sessionGeneration
-    const key = bypassSharedRead ? null : await sharedReadKey(request, url, generation)
+    const key = await sharedReadKey(request, url, generation)
+    if (key && bypassSharedRead) {
+      const revision = sharedReadsRevision
+      try {
+        const token = await getXanoAuthToken()
+        assertSessionGeneration(generation)
+        const response = await fetchWithToken(request, token, generation, expectedScope)
+        if (!response.ok && revision === sharedReadsRevision) sharedReads.delete(key)
+        return response
+      } catch (error) {
+        if (!request.signal.aborted && revision === sharedReadsRevision) sharedReads.delete(key)
+        throw error
+      }
+    }
     if (!key) {
-      sharedReads.clear()
+      clearSharedReads()
       const token = await getXanoAuthToken()
       assertSessionGeneration(generation)
       try {
         return await fetchWithToken(request, token, generation, expectedScope)
       } finally {
-        sharedReads.clear()
+        clearSharedReads()
       }
     }
 
@@ -545,13 +568,13 @@
         function (response) {
           if (sharedReads.get(key) !== shared) return
           if (!response.ok) {
-            sharedReads.clear()
+            clearSharedReads()
             return
           }
           shared.expiresAt = Date.now() + READ_DEDUPE_TTL_MS
         },
         function () {
-          if (sharedReads.get(key) === shared) sharedReads.clear()
+          if (sharedReads.get(key) === shared) clearSharedReads()
         },
       )
     }
@@ -569,7 +592,7 @@
       return passThroughFetch(request)
     }
 
-    sharedReads.clear()
+    clearSharedReads()
     try {
       await awaitLatestAuthReconciliation()
       const generation = sessionGeneration
@@ -587,7 +610,7 @@
       assertSessionGeneration(generation)
       return await fetchWithToken(request, token, generation)
     } finally {
-      sharedReads.clear()
+      clearSharedReads()
     }
   }
 

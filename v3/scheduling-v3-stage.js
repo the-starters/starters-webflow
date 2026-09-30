@@ -186,6 +186,17 @@
     return new Request(url.href, request)
   }
 
+  function callerHasAbortSignal(input, init) {
+    const initSignal = init == null ? undefined : init.signal
+    if (initSignal != null) return true
+    const inputIsRequest =
+      typeof Request !== 'undefined' &&
+      (input instanceof Request || Object.prototype.toString.call(input) === '[object Request]')
+    if (!inputIsRequest) return false
+    if (init && init.signal === null) return false
+    return undefined
+  }
+
   function bookingStarterMemberstackId() {
     if (
       activeHost === STAGING_HOST &&
@@ -334,6 +345,7 @@
   }
 
   async function stageFetch(input, init) {
+    const signalHint = callerHasAbortSignal(input, init)
     const request = new Request(input, init)
     const scheduling = schedulingRoute(request)
     if (!scheduling || PASSTHROUGH_ROUTES.has(scheduling.route)) return originalFetch(request)
@@ -345,7 +357,12 @@
         return blockedResponse(scheduling.route)
       }
       scheduling.url.pathname = API_PREFIX + target
-      return originalXanoAuthFetch(requestAt(request, scheduling.url))
+      return originalXanoAuthFetch(
+        requestAt(request, scheduling.url),
+        undefined,
+        undefined,
+        signalHint,
+      )
     }
 
     if (activeV3Targets.has(scheduling.route)) {
@@ -353,7 +370,7 @@
         setStatus('auth-unavailable')
         return blockedResponse(scheduling.route)
       }
-      return originalXanoAuthFetch(request)
+      return originalXanoAuthFetch(request, undefined, undefined, signalHint)
     }
 
     if (LEGACY_PROVIDER_PATH.test(scheduling.route)) return blockedResponse(scheduling.route)
@@ -361,19 +378,27 @@
     return blockedResponse(scheduling.route)
   }
 
-  async function stageXanoAuthFetch(input, init) {
+  async function stageXanoAuthFetch(input, init, expectedScope) {
+    const signalHint = callerHasAbortSignal(input, init)
     const request = new Request(input, init)
     const scheduling = schedulingRoute(request)
-    if (!scheduling || PASSTHROUGH_ROUTES.has(scheduling.route)) return originalXanoAuthFetch(request)
+    if (!scheduling || PASSTHROUGH_ROUTES.has(scheduling.route)) {
+      return originalXanoAuthFetch(request, undefined, expectedScope, signalHint)
+    }
 
     const target = activeRouteMap[scheduling.route]
     if (target) {
       scheduling.url.pathname = API_PREFIX + target
-      return originalXanoAuthFetch(requestAt(request, scheduling.url))
+      return originalXanoAuthFetch(
+        requestAt(request, scheduling.url),
+        undefined,
+        expectedScope,
+        signalHint,
+      )
     }
 
     if (activeV3Targets.has(scheduling.route)) {
-      return originalXanoAuthFetch(request)
+      return originalXanoAuthFetch(request, undefined, expectedScope, signalHint)
     }
 
     if (LEGACY_PROVIDER_PATH.test(scheduling.route)) return blockedResponse(scheduling.route)
