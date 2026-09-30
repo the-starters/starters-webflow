@@ -150,3 +150,327 @@ for (const libraryFirst of [false, true]) for (const profileType of ['Consult', 
     assert.deepEqual(errors, [])
   } finally { observer.disconnect(); w.close() }
 })
+
+for (const arrival of ['dto-first', 'discovery-first']) test(`published legacy Header follows Brand loading and admission states: ${arrival}`, async () => {
+  const errors = []
+  const console = new VirtualConsole()
+  console.on('jsdomError', error => errors.push(error.message))
+  const legacyCard = type => `<article data-service-card="component" data-service-card-state="Default"
+    data-type="${type}" has-connection="${type}" booking-popup-open
+    data-modal-trigger="popup-booking-main" data-signup-trigger-element="service"
+    data-signup-trigger-value="${type === 'free' ? 'Free Call' : 'Paid Consulting Call'}">
+    <span data-service-card-element="title">Legacy ${type}</span>
+    <span data-service-card-element="description">Legacy description</span>
+    <span data-millify>0</span></article>`
+  const dom = new JSDOM(`<body><span data-starter-xano-id>424</span><span data-profile-type="Consult">Consult</span>
+    <header><div wf-xano-element="wrapper" wf-xano-instance="starter-calls"
+      data-call-canary-legacy-wrapper="header">${legacyCard('free')}${legacyCard('paid')}</div></header>
+    <section id="services">${calls('services')}</section></body>`,
+  { url: 'https://www.thestarters.com/hire/fixture', runScripts: 'outside-only', virtualConsole: console })
+  const w = dom.window
+  const brand = {
+    id: 'fixture-brand',
+    auth: { email: 'brand@example.invalid' },
+    customFields: { 'free-user': 'Brand', 'last-name': 'Fixture' },
+    planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', status: 'ACTIVE' }],
+  }
+  let resolveStarter
+  const starter = new Promise(resolve => { resolveStarter = resolve })
+  let resolveCalls
+  const callItems = new Promise(resolve => { resolveCalls = resolve })
+  let controllerInstalled = false
+  let slotRequested = false
+  Object.assign(w, {
+    MEMBER: brand,
+    memberReady: Promise.resolve(brand),
+    waitForMember: callback => callback(brand),
+    starter_memberstack_id: 'fixture-starter',
+    stripe_charges: false,
+    qs: (selector, scope) => (scope || w.document).querySelector(selector),
+    qsa: (selector, scope) => (scope || w.document).querySelectorAll(selector),
+    WfXanoConfig: { xanoBase: 'https://fixture.invalid', preAuth: false, debug: false },
+    IntersectionObserver: class { observe() {} disconnect() {} },
+    formatWithTimezone: () => ({ list: {} }),
+    StartersFreeCallBooking: {
+      getStarterByMemberId: () => starter,
+      getConfigs: async () => [{
+        config_id: 'fixture-free', is_paid: false, active: true,
+        data_environment: 'production', price_cents: 0, duration: 30,
+      }],
+      // Discovery asks for the nearest slot only after it painted its answer.
+      getNearestSlot: async () => {
+        slotRequested = true
+        return null
+      },
+      installFreeBookingController: () => {
+        controllerInstalled = true
+        return true
+      },
+    },
+  })
+  w.fetch = async url => {
+    const parsed = new URL(url)
+    if (parsed.pathname.endsWith('/profile/starter/calls/v3')) return {
+      ok: true,
+      status: 200,
+      json: async () => callItems,
+    }
+    return { ok: true, status: 200, json: async () => ({ items: [] }) }
+  }
+  const result = { starter_id: 424, items: ['free', 'paid'].map(type => ({
+        id: `424:call:${type}`,
+        type,
+        name: type === 'free' ? 'Free Call' : 'Paid Consulting Call',
+        description: 'Canonical call offer',
+        price: type === 'free' ? 0 : 250,
+        public_available: true,
+        currency: 'USD',
+        unit: '/session',
+      })) }
+  const cards = () => Array.from(w.document.querySelectorAll(
+    '[data-call-canary-legacy-wrapper="header"] [data-service-card="component"]'
+  ))
+  const stateTracks = cards().map(card => {
+    const states = []
+    const observer = new w.MutationObserver(records => {
+      records.forEach((record, index) => {
+        const nextRecord = records[index + 1]
+        states.push(nextRecord
+          ? nextRecord.oldValue
+          : card.getAttribute('data-call-offer-state'))
+      })
+    })
+    observer.observe(card, {
+      attributes: true,
+      attributeFilter: ['data-call-offer-state'],
+      attributeOldValue: true,
+    })
+    return { observer, states }
+  })
+  try {
+    w.eval(pageSource)
+    w.eval(library)
+    w.document.dispatchEvent(new w.Event('DOMContentLoaded'))
+    const adaptedServices = () => Array.from(w.document.querySelectorAll('#services [wf-xano-item][data-call-offer-type]'))
+    if (arrival === 'dto-first') {
+      resolveCalls(result)
+      // The DTO must really be adapted before discovery answers.
+      await until(() => adaptedServices().length === 2)
+      assert.equal(controllerInstalled, false, 'discovery has not answered yet')
+      for (const card of adaptedServices()) {
+        assert.equal(card.getAttribute('data-call-offer-state'), 'loading', 'an adapted Services card waits for discovery')
+        assert.equal(card.getAttribute('aria-busy'), 'true')
+      }
+    } else {
+      resolveStarter({ nylas_grant_id: 'fixture-grant' })
+      await until(() => controllerInstalled && slotRequested)
+      await pause(10)
+      assert.equal(w.document.querySelectorAll('#services [wf-xano-item]').length, 0, 'the DTO has not answered yet')
+    }
+    await until(() => cards().length === 2 && cards().every(card =>
+      card.getAttribute('data-call-offer-state') === 'loading'))
+    for (const card of cards()) {
+      assert.equal(card.style.display, 'block')
+      assert.equal(card.getAttribute('aria-hidden'), null)
+      assert.equal(card.getAttribute('aria-busy'), 'true')
+      assert.equal(card.getAttribute('data-service-card-state'), 'Default')
+      assert.equal(card.getAttribute('booking-popup-open'), null)
+      assert.equal(card.getAttribute('data-modal-trigger'), null)
+      assert.equal(card.getAttribute('data-signup-trigger-element'), null)
+      assert.equal(card.getAttribute('data-call-service-direct'), null)
+      for (const name of ['tabindex', 'role', 'aria-label', 'data-profile-book-call']) {
+        assert.equal(card.getAttribute(name), null, `loading strips ${name}`)
+      }
+    }
+    if (arrival === 'dto-first') {
+      resolveStarter({ nylas_grant_id: 'fixture-grant' })
+    } else {
+      resolveCalls(result)
+    }
+    await until(() => cards()[0].getAttribute('data-call-offer-state') === 'available' &&
+      cards()[1].getAttribute('data-call-offer-state') === 'hidden')
+    const [free, paid] = cards()
+    assert.equal(free.style.display, 'block')
+    assert.equal(free.getAttribute('aria-busy'), null)
+    assert.equal(free.getAttribute('has-connection'), 'free')
+    // origin/main Book Call semantics once the state is known.
+    assert.equal(free.getAttribute('tabindex'), '0')
+    assert.equal(free.getAttribute('role'), 'button')
+    assert.equal(free.getAttribute('aria-label'), 'Book a Call')
+    assert.equal(free.getAttribute('data-profile-book-call'), '')
+    assert.equal(free.getAttribute('data-modal-trigger'), 'popup-booking-main')
+    assert.equal(free.getAttribute('data-signup-trigger-element'), 'service')
+    assert.equal(free.getAttribute('data-signup-trigger-value'), 'Free Call')
+    assert.equal(paid.getAttribute('data-modal-trigger'), null, 'a hidden tout keeps no hook')
+    assert.equal(paid.getAttribute('tabindex'), null)
+    assert.equal(paid.style.display, 'none')
+    assert.equal(paid.getAttribute('aria-hidden'), 'true')
+    assert.equal(paid.getAttribute('aria-busy'), null)
+    assert.equal(paid.getAttribute('has-connection'), null)
+    await pause(0)
+    assert.deepEqual(
+      stateTracks.map(({ states }) => states.filter((state, index) =>
+        index === 0 || state !== states[index - 1])),
+      [['loading', 'available'], ['loading', 'hidden']],
+    )
+    assert.deepEqual(errors, [])
+  } finally {
+    stateTracks.forEach(({ observer }) => observer.disconnect())
+    w.close()
+  }
+})
+
+test('page-first canonical clones are born loading while Brand identity is unresolved', async () => {
+  const errors = []
+  const console = new VirtualConsole()
+  console.on('jsdomError', error => errors.push(error.message))
+  const dom = new JSDOM(`<body><span data-starter-xano-id>424</span><span data-profile-type="Consult">Consult</span>
+    <header>${calls('header')}</header><section id="services">${calls('services')}</section></body>`,
+  { url: 'https://www.thestarters.com/hire/fixture', runScripts: 'outside-only', virtualConsole: console })
+  const w = dom.window
+  const brand = {
+    id: 'fixture-brand',
+    auth: { email: 'brand@example.invalid' },
+    customFields: { 'free-user': 'Brand', 'last-name': 'Fixture' },
+    planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', status: 'ACTIVE' }],
+  }
+  let resolveStarter
+  const starter = new Promise(resolve => { resolveStarter = resolve })
+  let resolveMember
+  const memberReady = new Promise(resolve => { resolveMember = resolve })
+  Object.assign(w, {
+    // The published site head keeps MEMBER null until Memberstack answers.
+    MEMBER: null,
+    memberReady,
+    waitForMember: callback => memberReady.then(callback),
+    starter_memberstack_id: 'fixture-starter',
+    stripe_charges: false,
+    qs: (selector, scope) => (scope || w.document).querySelector(selector),
+    qsa: (selector, scope) => (scope || w.document).querySelectorAll(selector),
+    WfXanoConfig: { xanoBase: 'https://fixture.invalid', preAuth: false, debug: false },
+    IntersectionObserver: class { observe() {} disconnect() {} },
+    formatWithTimezone: () => ({ list: {} }),
+    StartersFreeCallBooking: {
+      getStarterByMemberId: () => starter,
+      getConfigs: async () => [{
+        config_id: 'fixture-free', is_paid: false, active: true,
+        data_environment: 'production', price_cents: 0, duration: 30,
+      }],
+      getNearestSlot: async () => null,
+      installFreeBookingController: () => true,
+    },
+  })
+  w.fetch = async url => {
+    const parsed = new URL(url)
+    if (parsed.pathname.endsWith('/profile/starter/calls/v3')) return {
+      ok: true, status: 200, json: async () => ({ starter_id: 424, items: ['free', 'paid'].map(type => ({
+        id: `424:call:${type}`, type, name: type, description: '', price: type === 'free' ? 0 : 250,
+        public_available: true, currency: 'USD', unit: '/session',
+      })) }),
+    }
+    return { ok: true, status: 200, json: async () => ({ items: [] }) }
+  }
+  const clones = () => Array.from(w.document.querySelectorAll('[wf-xano-item]'))
+  try {
+    w.eval(pageSource)
+    assert.equal(clones().length, 0, 'wf-xano has not rendered at bootstrap')
+    w.eval(library)
+    w.document.dispatchEvent(new w.Event('DOMContentLoaded'))
+    await until(() => clones().length === 4)
+    await pause(20)
+    for (const card of clones()) {
+      assert.equal(card.getAttribute('data-call-offer-state'), 'loading', 'a late clone is born loading')
+      assert.equal(card.hasAttribute('data-canonical-call-unavailable'), false, 'it does not keep the template hide')
+      assert.equal(card.getAttribute('aria-hidden'), null)
+      assert.equal(card.getAttribute('aria-busy'), 'true')
+      assert.equal(card.getAttribute('has-connection'), null)
+    }
+    w.MEMBER = brand
+    resolveMember(brand)
+    await pause(20)
+    for (const card of clones()) assert.equal(card.getAttribute('data-call-offer-state'), 'loading')
+    resolveStarter({ nylas_grant_id: 'fixture-grant', nylas_grant_email: 'starter@example.invalid' })
+    await until(() => clones().every(card => card.getAttribute('data-call-offer-state') !== 'loading'))
+    for (const card of clones()) {
+      const type = card.getAttribute('data-type')
+      assert.equal(card.getAttribute('data-call-offer-state'), type === 'free' ? 'available' : 'hidden')
+      assert.equal(card.getAttribute('aria-busy'), null)
+    }
+    assert.deepEqual(errors, [])
+  } finally { w.close() }
+})
+
+for (const profileType of ['Consult', 'Full']) test(`library-first Header keeps rendered rate touts while call touts load: ${profileType}`, async () => {
+  const errors = []
+  const console = new VirtualConsole()
+  console.on('jsdomError', error => errors.push(error.message))
+  const dom = new JSDOM(`<body><span data-starter-xano-id>424</span><span data-profile-type="${profileType}">${profileType}</span>
+    <header>${['hourly', 'retainer'].map(kind => `<div wf-xano-element="wrapper" wf-xano-instance="starter-${kind}"
+      wf-xano-source="KZf7nFnk:profile/starter/taxonomy/v3" wf-xano-method="GET" wf-xano-auth="none" wf-xano-param-starter_id="424" wf-xano-param-kind="${kind}">
+      <a data-service-card="component" data-service-card-type="tout" href="#services"><span wf-xano-bind="price">0</span></a></div>`).join('')}
+      ${calls('header')}</header><section id="services">${calls('services')}</section></body>`,
+  { url: 'https://www.thestarters.com/hire/fixture', runScripts: 'outside-only', virtualConsole: console })
+  const w = dom.window
+  let resolveMember
+  const memberReady = new Promise(resolve => { resolveMember = resolve })
+  Object.assign(w, {
+    MEMBER: null, memberReady, waitForMember: callback => memberReady.then(callback),
+    starter_memberstack_id: 'fixture-member', stripe_charges: false,
+    qs: (selector, scope) => (scope || w.document).querySelector(selector),
+    qsa: (selector, scope) => (scope || w.document).querySelectorAll(selector),
+    WfXanoConfig: { xanoBase: 'https://fixture.invalid', preAuth: false, debug: false },
+    IntersectionObserver: class { observe() {} disconnect() {} },
+    formatWithTimezone: () => ({ list: {} }),
+  })
+  w.fetch = async url => {
+    const parsed = new URL(url)
+    if (parsed.pathname.endsWith('/profile/starter/rates/v3')) {
+      const kind = parsed.searchParams.get('kind')
+      return { ok: true, status: 200, json: async () => ({ items: [{ id: `${kind}:424`, type: kind, name: kind, price: 100 }] }) }
+    }
+    if (parsed.pathname.endsWith('/profile/starter/calls/v3')) return {
+      ok: true, status: 200, json: async () => ({ starter_id: 424, items: ['free', 'paid'].map(type => ({
+        id: `424:call:${type}`, type, name: type, description: '', price: type === 'free' ? 0 : 250,
+        public_available: true, currency: 'USD', unit: '/session',
+      })) }),
+    }
+    return { ok: true, status: 200, json: async () => ({ items: [] }) }
+  }
+  function importantDisplayNone(node) {
+    return Array.from(w.document.styleSheets).some(sheet => Array.from(sheet.cssRules).some(rule =>
+      rule.selectorText && node.matches(rule.selectorText) && rule.style.getPropertyValue('display') === 'none' &&
+      rule.style.getPropertyPriority('display') === 'important'))
+  }
+  function visible(node) {
+    for (let current = node; current && current.nodeType === 1; current = current.parentElement) {
+      if (importantDisplayNone(current) || w.getComputedStyle(current).display === 'none') return false
+    }
+    return true
+  }
+  const kindOf = node => {
+    const rate = node.closest('[wf-xano-param-kind]')
+    return rate ? rate.getAttribute('wf-xano-param-kind') : node.getAttribute('data-type') || 'loading-call'
+  }
+  const headerOffers = () => Array.from(w.document.querySelectorAll('header [wf-xano-item]')).filter(visible).map(kindOf)
+  try {
+    w.eval(library)
+    w.document.dispatchEvent(new w.Event('DOMContentLoaded'))
+    // The call clones exist before this file boots; the hero rate wrappers
+    // are rewired by it and render right after.
+    await until(() => w.document.querySelectorAll('[wf-xano-item]').length === 4)
+    w.eval(pageSource)
+    await until(() => Array.from(w.document.querySelectorAll('[data-canonical-hero-rate-state]')).every(root =>
+      root.getAttribute('data-canonical-hero-rate-state') === 'ready'))
+    await pause(20)
+    const retainer = w.document.querySelector('header [wf-xano-param-kind="retainer"]')
+    assert.equal(retainer.getAttribute('data-header-tout-excluded'), null, 'Retainer keeps its slot while calls load')
+    assert.deepEqual(headerOffers(), ['hourly', 'retainer', 'loading-call'])
+    w.MEMBER = {}
+    resolveMember({})
+    await until(() => w.document.querySelectorAll('[data-xano-call-card]').length === 4)
+    await pause(20)
+    assert.deepEqual(headerOffers(), ['hourly', 'retainer', 'free'])
+    assert.equal(retainer.getAttribute('data-header-tout-excluded'), null)
+    assert.deepEqual(errors, [])
+  } finally { w.close() }
+})

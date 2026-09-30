@@ -164,6 +164,9 @@ their independent rules. Owner setup-required previews count toward the three
 Header slots without changing their Disabled state or setup tooltip. Unavailable
 visitor offers do not count. Recompute selection when sibling wrappers settle,
 refresh, fail, or recover; display suppression must not erase canonical eligibility.
+A loading call tout (F50) has no call type until the adapter stamps it. It can
+use a spare slot as a placeholder, but it ranks after every known type, so it
+never pushes a rendered Hourly or Retainer tout out of the three slots.
 
 Run `v3/hire-header-touts.integration.cjs` with the same `NODE_PATH` and
 `WF_XANO_SOURCE` settings shown above for actual wf-xano clone and recovery
@@ -320,8 +323,9 @@ are aligned before selecting the canary.
    popup for a card that cannot be booked.
 3. Eligible signed-in Brand: canonical discovery keeps every call projection
    closed until the [Brand readiness contract](#signed-in-brand-readiness)
-   admits the type. Verify both arrival orders, refresh failure, sibling cached
-   replay, and recovery of both Header and Services cards. Enabled generic Book Call
+   admits the type. Until then, Book Call and each managed call card
+   read as loading (spinner, `aria-busy`), not as unavailable. Verify both arrival orders, refresh failure, sibling cached
+   replay, the published legacy Header fallback, and recovery of both Header and Services cards. Enabled generic Book Call
    buttons open the authored chooser. A visible Free or Paid call service in the hero or
    Services section reuses its exact installed
    chooser CTA and opens that call flow directly, including on a migrated
@@ -331,8 +335,10 @@ are aligned before selecting the canary.
 4. `document.documentElement` carries `data-v3-algolia-status="ready"`.
 5. The Algolia object ID matches the positive integer in
    `[data-starter-xano-id]`.
-6. Every admitted `[data-xano-call-card]` in the hero and in `#services` settles out of
-   `data-call-offer-state="pending"` for the role under test: `available` or
+6. Every admitted `[data-xano-call-card]` in the hero and in `#services`, plus
+   every `[data-canonical-public-call]` in the published legacy Header, settles out of
+   `data-call-offer-state="pending"` and out of `loading` (no `aria-busy`) for
+   the role under test: `available` or
    `hidden` for anonymous and Brand viewers, `available` or `setup-required` for
    the profile's own starter (`settings-loading` / `settings-unavailable` only
    while its settings answer is unresolved or failed), and `hidden` for a talent
@@ -353,9 +359,41 @@ authenticated authored calendar. Paid uses the booking flow owned by
 authored modal. Valid `/hire/<slug>` paths use the host-classified TEST or
 production route map. Generic Book Call controls remain visible across primary,
 sticky, and mobile CTAs when unavailable, with `data-booking-trigger-unavailable`
-and `aria-disabled="true"`. Until canonical call discovery answers, a paid
-Brand's closed control also carries `aria-busy="true"` and its hint reads
-“Checking this Starter’s call times…”. Discovery clears that state on every exit
+and `aria-disabled="true"`. While the page hydrates (F50), a closed control
+reads as loading instead: it carries `data-booking-trigger-loading` and
+`aria-busy="true"`, not `data-booking-trigger-unavailable`. The module guard
+CSS then shows the Button Wrap's authored `[data-button-spinner]`, hides its
+`[data-opp-element="loading-hide"]` icon, and sets a progress cursor on the
+covering `.clickable_wrap > .clickable_btn` hit target. Those
+loading-scoped display rules override existing inline display values; removing
+the marker exposes the authored inline values again. Loading
+is still closed: `aria-disabled="true"` stays and the signup and modal hooks
+stay removed. Every viewer starts in loading. A signed-out or paywalled viewer
+then gets signup-only activation, and the owner gets the closed preview. A paid
+Brand stays loading, and its hint reads “Checking this Starter’s call times…”,
+until authenticated discovery and any required public call DTO have both
+answered. If discovery installed a controller on a page with a canonical call
+wrapper, the Brand waits for the public call DTO, because an unknown DTO refuses
+every type. An empty, refused, or failed discovery ends loading at once. One 15 s failsafe
+(`CALL_DISCOVERY_PUBLIC_WAIT_MS`), armed at bootstrap for every viewer, bounds
+the whole loading state. If identity, discovery, or the public call DTO has not
+answered by then, Book Call reads unavailable (still `aria-disabled`) and every
+call card still in `loading` fails closed to `hidden`. The failsafe is
+measured from bootstrap, not from the start of each surface. This is the
+accepted design: a surface that enters loading while the timer runs gets only
+the time that is left. The same timer bounds the owner's `settings-loading`
+cards. When it fires, an owner settings read that has not answered settles
+exactly like a failed read (`settings-unavailable`, Disabled, the existing
+copy). A later successful read still applies the loaded rules. The failsafe is
+cleared once nothing reads as `loading` or `settings-loading`.
+If a surface enters loading after that release, `armCallLoadingFailsafe` arms
+the same timer again, measured from that entry. An example is a legacy Header
+tout that renders late for a signed-out viewer while the public call DTO does
+not answer. Only one timer exists at a time. After the timer fires, it is not
+armed again, and a late surface fails closed at once. An answer that arrives
+after the failsafe still runs its normal writer, so an admitted control can
+still open. Regression coverage: the `F50` tests in
+[`hire-profile.test.js`](../../v3/hire-profile.test.js). Discovery clears the state on every exit
 path, including a failed lookup or a missing booking controller. A failed
 lookup still rejects, so frontend error monitoring counts it. Only then do
 hover, keyboard focus, or tap reveal “This Starter isn’t accepting calls right
@@ -376,7 +414,9 @@ two approved paths stay closed, so no entry point can open an empty chooser.
 The authored `[data-modal-target="popup-booking-main"]` dialog also stays marked
 `data-booking-surface-unavailable` until an option is admitted.
 Production `/hire/jp-dionisio` remains blocked before grant or configuration
-discovery, so the TEST fixture cannot activate on a production host.
+discovery, so the TEST fixture cannot activate on a production host. An owner
+view on that blocked route settles both canonical call cards through the
+existing `settings-unavailable` state without starting settings reads.
 
 <a id="staging-hire-jp-test-booking-fixture"></a>
 
@@ -822,27 +862,64 @@ Paid item with `id`, `type`, `name`, `description`, `price` (whole dollars) and
 file only adds viewer state and routes clicks into the controllers that already
 own signup, booking, and owner settings. It never creates a card or a modal.
 
-The CMS call cards stay in the page only as hidden rollback markup. Once the
-canonical Services result settles, the adapter stamps those old call cards
-`data-call-offer-superseded` and keeps them hidden for every viewer role. It
-does not hide ordinary CMS Service cards.
+The CMS call cards stay in the page only as hidden rollback markup. While the
+canonical Services wrapper is on the page, bootstrap stamps those old call cards
+`data-call-offer-superseded` (F50), and the adapter repeats the stamp when the
+canonical Services result settles. They stay hidden for every viewer role, so
+the Algolia or owner-grant reveal, which usually answers before the call DTO,
+cannot flash them. Removing the wrapper (the rollback) returns them to the
+legacy reveal. It does not hide ordinary CMS Service cards.
 
 The currently published hero still uses the earlier `starter-calls` wf-xano
 wrapper. Until Webflow publishes `starter-call-offers-header`, the adapter
 repaints those two native hero touts from the latest canonical public call DTO.
-It replays that decision when the legacy wrapper renders or refreshes late. As
+This applies only beside the canonical Services wrapper, which is the
+published layout. A page with neither canonical call wrapper has no DTO to
+wait for, so its legacy touts keep the pre-F50 Algolia and discovery reveal.
+Beside the Services wrapper, the touts start in `loading` at bootstrap for every
+viewer. For a Brand, they use the same `loading`, `available`, and `hidden`
+states and the same installed-controller and public-availability gate as
+canonical clones. For a signed-out or paywalled viewer, the public DTO decides
+them, so identity alone never settles or supersedes them. Only talent viewing
+another Starter's profile has them superseded at identity. It replays that
+decision when the legacy wrapper renders or refreshes late; a tout rendered
+before the DTO joins the loading state. Loading removes each tout's Book Call
+role and hooks. When the state is known, an offered tout gets back the values
+that origin/main left on it: `data-profile-book-call`, `tabindex="0"`,
+`role="button"`, `aria-label="Book a Call"`, and `has-connection`. For a
+signed-out or paywalled viewer, the tout also gets `data-logged-out-book-call`
+and the public signup hooks. For a Brand, the tout gets its authored
+`data-modal-trigger` and signup hooks. The direct-entry capture listener still
+takes the click before the modal.js delegate. A hidden tout keeps none of these
+attributes, so it stays fail closed. A reconcile leaves a tout that is already
+settled offered, with all of these values, as it is. Only entering loading or
+hidden removes them, so a focused tout keeps focus when unrelated DOM changes.
+The owner's touts use the owner preview writer. It has the same keep rule: a
+DTO replay leaves a tout that is already settled as an available owner preview
+as it is while the owner's records still offer its type, so a focused owner
+tout keeps focus. Only the Free and Paid touts
+count for that writer: another card in the legacy wrapper (its wf-xano
+template, a rate tout) never follows the call DTO. The writers that the body
+observer reaches do not write a value that is unchanged. A settled page records
+no mutation, and a writer's own text write cannot wake the observer again. As
 soon as the canonical Header wrapper exists, the legacy hero touts are also
 stamped superseded and stay hidden.
 
 Subscription uses the `window.WfXano` callback queue and reads retained public
-state when this deferred file registers after a result. Every adaptation waits
-on `memberReady`. For visitors, an error in either canonical wrapper invalidates
-both wrappers and the shared chooser; a sibling's cached success cannot reopen
-them while either instance still reports `error`. Once neither reports an
-error, a successful result reconciles matching rows in both wrappers, restoring
-their adapter identity and eligible click routes together. Owners instead adapt
-retained rows even when the instance reports an error, so their independent
-settings lookup can still apply Default or Disabled states.
+state when this deferred file registers after a result. Role-specific
+reconciliation waits on `memberReady`; the legacy Header fallback and every
+existing canonical clone enter their fail-closed loading state synchronously.
+On the normal page-first load, wf-xano clones a canonical template after
+bootstrap, and the clone inherits the template's fail-closed hide. While the
+viewer's call state is still unknown, the body observer moves each new
+unadapted clone into the same loading state before the next paint. For visitors, an error in either
+canonical wrapper invalidates both wrappers and the shared chooser; a sibling's
+cached success cannot reopen them while either instance still reports `error`.
+Once neither reports an error, a successful result reconciles matching rows in
+both wrappers, restoring their adapter identity and eligible click routes
+together. Owners instead adapt retained rows even when the instance reports an
+error, so their independent settings lookup can still apply Default or Disabled
+states.
 
 `callOfferTypeOf` is the single reader of a DTO item's call type — trimmed,
 lowercased, and admitted only as `free` or `paid`. Admission, the per-card
@@ -862,16 +939,18 @@ hidden. Release removes the adapter identity, viewer-state, connection,
 direct-entry, and signup-attribution markers before applying
 `data-canonical-call-unavailable`, `aria-hidden="true"`, and `display:none`.
 That prevents any later owner, Brand, or anonymous writer from re-admitting
-stale content. The final state for an admitted clone is one of:
+stale content. The late-clone loading writer (F50) also skips a released
+clone, so an unrelated DOM mutation cannot show it as `loading` again. The final state for an admitted clone is one of:
 
 | `data-call-offer-state` | Viewer and meaning |
 | --- | --- |
 | `available` | the card is offered: logged-out with `public_available === true`, brand admitted by the [readiness contract](#signed-in-brand-readiness), or the owner with a bookable record |
 | `setup-required` | owner only: the card is shown as a preview with the next setup step |
-| `settings-loading` | owner only: settings have not resolved yet; the card is disabled and offers only Call Settings |
+| `settings-loading` | owner only: settings have not resolved yet; the card keeps the authored `Default` look with `aria-busy="true"`, a progress cursor, and its setup tooltip and `[next-available-slot]` hidden; the 15 s failsafe settles a read still unanswered like a failed read (`settings-unavailable`), and a later answer still applies |
 | `settings-unavailable` | owner only: the settings lookup failed; the card is disabled and offers only Call Settings |
 | `hidden` | the type is not offered to this viewer |
-| `pending` | brand, before the [readiness contract](#signed-in-brand-readiness) has admitted or refused the type |
+| `loading` | every viewer before identity resolves; then a brand while discovery is pending and after an installed controller until the public DTO settles, and a signed-out, paywalled, talent, or owner viewer's not-yet-adapted clone until the DTO settles it: the card is shown with `Default`, `aria-busy="true"`, a progress cursor, and its `[next-available-slot]` hidden; the public Services pointer (`markServiceCardsClickable`) skips a loading card, and the DTO writer adds it when the card is offered; empty, refused, or failed discovery ends this state immediately for a brand; the 15 s failsafe fails any card still here closed to `hidden`; it is not admitted and opens nothing |
+| `pending` | internal adapter state before the role-specific readiness writer runs; it is not a settled viewer state |
 
 **Logged out.** A card is visible only when its own item carries
 `public_available === true`. A visible card gets `has-connection`,
@@ -941,12 +1020,19 @@ with only the matching `calendar` / `stripe` / `settings` CTA left visible and
 settings answers are remembered in `ownerCallSettingsSnapshot`, so a card
 wf-xano clones after the settings lookup resolves gets the same state, and a
 lookup that resolves after the clone repaints it. Before that answer arrives,
-the card uses the neutral `settings-loading` state. A failed lookup uses
+the card uses the neutral `settings-loading` state (F50): it keeps the authored
+`Default` variant, not the grey `Disabled` one, carries `aria-busy="true"`,
+and hides its setup tooltip and authored next-slot sentinel. The published
+legacy Header fallback uses this same owner-state writer before and after the
+Starter grant lookup, so lookup order cannot expose its authored sentinel or
+booking hooks. A failed lookup uses
 `settings-unavailable` with “Call settings could not be loaded. Refresh or open
 Call Settings.” and only the Settings CTA. It never guesses that Calendar,
 availability, or Stripe is missing. Setup-required owner cards intentionally
 keep the authored next-slot sentinel as a preview placeholder until a trusted
 bookable record can paint it.
+The deliberate production block on `/hire/jp-dionisio` is the sole exception
+to the owner rule that only a failed settings read uses Disabled/settings-unavailable.
 
 <a id="signed-in-brand-readiness"></a>
 
@@ -956,6 +1042,16 @@ and the current public DTO admits that type with `public_available === true`.
 `syncCanonicalCallSurfaces` applies this intersection to cards, chooser options,
 and Book Call availability. Public results and authenticated discovery may
 arrive in either order; unresolved public readiness keeps the surfaces closed.
+Closed is not the same look as refused while the page still hydrates (F50).
+Every managed call card starts in `loading`. When authenticated discovery
+installs a controller, the card remains there until the public DTO settles,
+regardless of which answer arrives first. Empty, refused, or failed discovery
+ends loading immediately. The shared writer then changes each card directly to
+`available` when the intersection admits it or `hidden` when it does not. After
+the 15 s failsafe, which is armed at bootstrap, it reads closed, and a later
+discovery or DTO answer can still open it. A refused
+card ends with `data-call-offer-state="hidden"`, and the empty-section refresh
+runs again.
 A late card replays `paintedCallState.configs` through the same gate. Pages with
 neither canonical wrapper retain the authenticated discovery gate alone.
 
@@ -1013,6 +1109,13 @@ millify re-parse its own formatted output), strips the authored
 `data-millify-max` (that ceiling was sized for the CMS value, and left in place a
 later re-process `fails('max')` and reverts to the raw number), and paints the
 text through `window.__startersMillify`.
+
+Exception (F50): when `data-millify` already holds the canonical amount,
+`paintRateElement` may leave `data-millify-raw` in place. That raw is usually
+the one millify stamped when it formatted the same value. The repaint does not
+remove it on each pass, because that removal is a DOM write on a settled page
+and the body observer records it as a mutation. The attribute is not visible
+to the user: the repaint still writes the text from the canonical amount.
 
 ### Calling millify correctly
 

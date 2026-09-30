@@ -61,21 +61,83 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
     await send('Emulation.setDeviceMetricsOverride', { width: 1100, height: 950, deviceScaleFactor: 1, mobile: false })
     const observations = []
     const snapshot = async label => {
-      const state = await evaluate(`({ cards: [...document.querySelectorAll('[wf-xano-item]')].map(el => ({ visible: el.getBoundingClientRect().height > 0 && getComputedStyle(el).display !== 'none', type: el.getAttribute('data-call-offer-type'), state: el.getAttribute('data-service-card-state'), price: el.querySelector('[data-millify]').textContent, tooltip: el.querySelector('[hover-text]').textContent })), book: (() => { const button = document.querySelector('[booking-button-wrapper] button'); return { visible: button.getBoundingClientRect().height > 0, disabled: button.getAttribute('aria-disabled') === 'true', signup: button.getAttribute('data-signup-trigger-element'), modal: button.getAttribute('data-modal-trigger') } })() })`)
+      const state = await evaluate(`(() => {
+        const card = el => {
+          const slot = el.querySelector('[next-available-slot]')
+          return {
+            visible: el.getBoundingClientRect().height > 0 && getComputedStyle(el).display !== 'none',
+            display: getComputedStyle(el).display,
+            ariaHidden: el.getAttribute('aria-hidden'),
+            type: el.getAttribute('data-call-offer-type'),
+            state: el.getAttribute('data-service-card-state'),
+            offerState: el.getAttribute('data-call-offer-state'),
+            busy: el.getAttribute('aria-busy') === 'true',
+            price: el.querySelector('[data-millify]').textContent,
+            tooltip: el.querySelector('[hover-text]').textContent,
+            tooltipDisplay: getComputedStyle(el.querySelector('[data-call-offer-tooltip]')).display,
+            tooltipHidden: el.querySelector('[data-call-offer-tooltip]').hasAttribute('hidden'),
+            cursor: getComputedStyle(el).cursor,
+            inlineCursor: el.style.cursor,
+            slotText: slot ? slot.textContent : null,
+            slotVisibility: slot ? getComputedStyle(slot).visibility : null,
+            bookingPopup: el.hasAttribute('booking-popup-open'),
+            signup: el.getAttribute('data-signup-trigger-element'),
+            modal: el.getAttribute('data-modal-trigger'),
+            direct: el.getAttribute('data-call-service-direct'),
+            tabIndex: el.tabIndex,
+            role: el.getAttribute('role'),
+            ariaLabel: el.getAttribute('aria-label'),
+          }
+        }
+        const trigger = document.querySelector('[booking-button-wrapper] .button_main-wrap')
+        const hitTarget = trigger.querySelector('.clickable_wrap > .clickable_btn')
+        const spinner = trigger.querySelector('[data-button-spinner]')
+        const loadingHide = trigger.querySelector('[data-opp-element="loading-hide"]')
+        return {
+          cards: [...document.querySelectorAll('[wf-xano-item]')].map(card),
+          legacyCards: [...document.querySelectorAll('[data-call-canary-legacy-wrapper="header"] [data-service-card="component"]')].map(card),
+          book: {
+            visible: trigger.getBoundingClientRect().height > 0,
+            disabled: trigger.getAttribute('aria-disabled') === 'true',
+            loading: trigger.hasAttribute('data-booking-trigger-loading'),
+            busy: trigger.getAttribute('aria-busy') === 'true',
+            signup: trigger.getAttribute('data-signup-trigger-element'),
+            modal: trigger.getAttribute('data-modal-trigger'),
+            cursor: getComputedStyle(hitTarget).cursor,
+            spinner: getComputedStyle(spinner).display,
+            spinnerInline: spinner.style.display,
+            loadingHide: getComputedStyle(loadingHide).display,
+            loadingHideInline: loadingHide.style.display,
+          },
+        }
+      })()`)
       observations.push({ label, ...state })
       if (evidence) { const shot = await send('Page.captureScreenshot', { format: 'png' }); await fs.writeFile(path.join(evidence, `${label}.png`), Buffer.from(shot.data, 'base64')) }
       return state
     }
     const navigate = async query => {
       await send('Page.navigate', { url: `http://www.thestarters.com:${server.address().port}/v3/browser-tests/hire-calls.html?${query}` })
+      let ready = false
       for (let i = 0; i < 100; i++) {
-        if (await evaluate(`document.readyState === 'complete' && !!window.lumos?.modal?.list['signup-modal'] && !!document.querySelector('[data-call-offer-type]')`)) break
+        if (await evaluate(`(() => {
+          const cards = [...document.querySelectorAll('[wf-xano-instance^="starter-call-offers-"] [wf-xano-item]')]
+          // clones=late renders no clone until the test calls renderLateClones.
+          const callsSettled = !!document.querySelector('[data-call-offer-type]') ||
+            (cards.length === 4 && cards.every(card => getComputedStyle(card).display === 'none')) ||
+            (!!window.renderLateClones && cards.length === 0)
+          return document.readyState === 'complete' &&
+            !!window.lumos?.modal?.list['signup-modal'] && callsSettled
+        })()`)) {
+          ready = true
+          break
+        }
         await pause(50)
       }
+      assert.equal(ready, true, `browser fixture did not become ready for ${query}`)
       await pause(150)
     }
     const assertBookCall = async (role, available) => {
-      const button = await evaluate(`(() => { const el = document.querySelector('[booking-button-wrapper] button'); el.scrollIntoView({block: 'center'}); const r = el.getBoundingClientRect(); return {x: r.x + r.width / 2, y: r.y + r.height / 2} })()`)
+      const button = await evaluate(`(() => { const el = document.querySelector('[booking-button-wrapper] .clickable_wrap > .clickable_btn'); el.scrollIntoView({block: 'center'}); const r = el.getBoundingClientRect(); return {x: r.x + r.width / 2, y: r.y + r.height / 2} })()`)
       await send('Input.dispatchMouseEvent', { type: 'mouseMoved', ...button })
       const hintVisible = await evaluate(`[...document.querySelectorAll('[data-call-availability-hint]')].some(el => getComputedStyle(el).display !== 'none')`)
       assert.equal(hintVisible, role === 'brand' && !available, 'only unavailable paid Brands see the hint')
@@ -88,11 +150,296 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
       await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 0, y: 0 })
       await pause(220)
     }
+    // Every DOM mutation under body in 400 ms, described. A settled page makes
+    // none. With `unrelated`, one unrelated node is added first and its own
+    // record is left out: every writer the body observer then reaches must
+    // leave unchanged DOM alone.
+    const describeMutations = unrelated => `new Promise(resolve => {
+      const found = []
+      const marker = document.createElement('div')
+      const name = node => node.nodeType === 1
+        ? node.tagName.toLowerCase() + (node.getAttribute('data-type') ? ':' + node.getAttribute('data-type') : '')
+        : '#text'
+      const o = new MutationObserver(records => records.forEach(r => {
+        if (r.type === 'childList' && [...r.addedNodes].includes(marker)) return
+        found.push(name(r.target) + ' ' + r.type + (r.attributeName
+          ? ' ' + r.attributeName + ': ' + r.oldValue + ' -> ' + r.target.getAttribute(r.attributeName)
+          : ''))
+      }))
+      o.observe(document.body, { subtree: true, childList: true, attributes: true, attributeOldValue: true, characterData: true })
+      if (${unrelated}) document.body.appendChild(marker)
+      setTimeout(() => { o.disconnect(); marker.remove(); resolve(found) }, 400)
+    })`
+    const countMutations = describeMutations(false)
+    const countMutationsAfterUnrelatedNode = describeMutations(true)
+    const legacyToutStates = `[...document.querySelectorAll('[data-call-canary-legacy-wrapper="header"] [data-service-card="component"]')]
+      .filter(card => ['free', 'paid'].includes(card.getAttribute('data-type')))
+      .map(card => card.getAttribute('data-type') + ':' + card.getAttribute('data-call-offer-state'))`
+    // Focuses the legacy Free tout, runs `action` in the page, then reports
+    // whether the tout kept focus and its Book Call semantics.
+    const focusFreeToutAcross = action => `(async () => {
+      const el = document.querySelector('[data-call-canary-legacy-wrapper="header"] [data-type="free"]')
+      el.focus()
+      const before = document.activeElement === el
+      ${action}
+      await new Promise(resolve => setTimeout(resolve, 200))
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+      return { before, after: document.activeElement === el, tabIndex: el.tabIndex, role: el.getAttribute('role'), label: el.getAttribute('aria-label'), disabled: el.getAttribute('aria-disabled'), state: el.getAttribute('data-call-offer-state') }
+    })()`
     const assertBookState = (state, role, available) => {
       assert.equal(state.book.visible, true, 'Book Call remains discoverable')
       assert.equal(state.book.disabled, role === 'brand' && !available)
       assert.equal(state.book.signup, role !== 'brand' || available ? 'book-call' : null)
       assert.equal(state.book.modal, role === 'brand' && available ? 'popup-booking-main' : null)
+    }
+    await navigate('role=brand&discovery=held&header=legacy')
+    let legacyState = await snapshot('brand-legacy-header-loading')
+    assert.equal(legacyState.legacyCards.length, 2)
+    assert.ok(legacyState.legacyCards.every(card => card.visible && card.state === 'Default'))
+    assert.ok(legacyState.legacyCards.every(card => card.offerState === 'loading' && card.busy))
+    assert.ok(legacyState.legacyCards.every(card => card.slotText === '00:00pm on 00/00' && card.slotVisibility === 'hidden' && card.cursor === 'progress'), 'loading masks the slot and shows progress')
+    assert.ok(legacyState.legacyCards.every(card => card.signup === null && card.modal === null && card.direct === null))
+    assert.ok(legacyState.legacyCards.every(card => card.tabIndex === -1 && card.role === null && card.ariaLabel === null), 'loading removes the Book Call button role')
+    // F50: a reconcile over touts already loading rewrites nothing.
+    assert.deepEqual(await evaluate(countMutationsAfterUnrelatedNode), [], 'brand loading: an unrelated node writes no attribute')
+    await evaluate(`document.querySelector('[data-call-canary-legacy-wrapper="header"] [data-type="free"]').click()`)
+    await pause(50)
+    assert.deepEqual(await evaluate(`({ entries: bookingEntries.length, chooser: document.querySelector('[data-modal-target="popup-booking-main"]').open, booking: document.querySelector('[data-modal-target="popup-booking"]').open })`), { entries: 0, chooser: false, booking: false })
+    assert.equal(await evaluate('resolveStarterDiscovery()'), true)
+    for (let i = 0; i < 100; i++) {
+      if (await evaluate(`(() => { const cards = [...document.querySelectorAll('[data-call-canary-legacy-wrapper="header"] [data-service-card="component"]')]; return cards.length === 2 && cards.every(card => card.getAttribute('data-call-offer-state') === 'available') })()`)) break
+      await pause(25)
+    }
+    legacyState = await snapshot('brand-legacy-header-available')
+    assert.equal(legacyState.legacyCards.length, 2)
+    assert.ok(legacyState.legacyCards.every(card => card.visible && card.offerState === 'available' && !card.busy))
+    // origin/main semantics once known: a focusable, named button with its hooks.
+    assert.ok(legacyState.legacyCards.every(card => card.tabIndex === 0 && card.role === 'button' && card.ariaLabel === 'Book a Call'))
+    assert.ok(legacyState.legacyCards.every(card => card.modal === 'popup-booking-main' && card.signup === 'service' && card.direct === 'ready'))
+    assert.equal(await evaluate(`(() => { const el = document.querySelector('[data-call-canary-legacy-wrapper="header"] [data-type="free"]'); el.focus(); return document.activeElement === el })()`), true, 'keyboard can reach the offered tout')
+    const legacyFree = await evaluate(`(() => { const el = document.querySelector('[data-call-canary-legacy-wrapper="header"] [data-type="free"]'); el.scrollIntoView({block: 'center'}); const r = el.getBoundingClientRect(); return {x: r.x + r.width / 2, y: r.y + r.height / 2} })()`)
+    await send('Input.dispatchMouseEvent', { type: 'mousePressed', ...legacyFree, button: 'left', clickCount: 1 })
+    await send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...legacyFree, button: 'left', clickCount: 1 })
+    await pause(100)
+    assert.deepEqual(await evaluate(`({ entry: bookingEntries.at(-1), chooser: document.querySelector('[data-modal-target="popup-booking-main"]').open, booking: document.querySelector('[data-modal-target="popup-booking"]').open, label: document.querySelector('#booking-type').textContent })`), {
+      entry: 'free', chooser: false, booking: true, label: 'Free Call booking entry',
+    })
+    await evaluate('lumos.modal.closeAll()')
+
+    await navigate('role=brand&discovery=held&header=legacy')
+    legacyState = await snapshot('brand-legacy-header-loading-empty')
+    assert.equal(legacyState.legacyCards.length, 2)
+    assert.ok(legacyState.legacyCards.every(card => card.offerState === 'loading' && card.busy))
+    assert.equal(await evaluate(`resolveStarterDiscovery('empty')`), true)
+    for (let i = 0; i < 100; i++) {
+      if (await evaluate(`(() => { const cards = [...document.querySelectorAll('[data-call-canary-legacy-wrapper="header"] [data-service-card="component"]')]; return cards.length === 2 && cards.every(card => card.getAttribute('data-call-offer-state') === 'hidden') })()`)) break
+      await pause(25)
+    }
+    legacyState = await snapshot('brand-legacy-header-hidden')
+    assert.equal(legacyState.legacyCards.length, 2)
+    assert.ok(legacyState.legacyCards.every(card => !card.visible && card.display === 'none'))
+    assert.ok(legacyState.legacyCards.every(card => card.ariaHidden === 'true' && card.offerState === 'hidden' && !card.busy))
+
+    for (const role of ['anonymous', 'free']) {
+      await navigate(`role=${role}&header=legacy&dto=held`)
+      let publicLegacy = await snapshot(`${role}-legacy-header-loading`)
+      assert.equal(publicLegacy.legacyCards.length, 2)
+      assert.ok(publicLegacy.legacyCards.every(card => card.visible && card.offerState === 'loading' && card.busy), `${role}: legacy touts wait for the DTO`)
+      assert.ok(publicLegacy.legacyCards.every(card => card.signup === null && card.modal === null && card.direct === null))
+      assert.equal(publicLegacy.cards.length, 2)
+      assert.ok(publicLegacy.cards.every(card => card.visible && card.offerState === 'loading' && card.busy))
+      await evaluate(`lists['starter-call-offers-services'].emit(false)`)
+      for (let i = 0; i < 100; i++) {
+        if (await evaluate(`[...document.querySelectorAll('[data-call-canary-legacy-wrapper="header"] [data-service-card="component"]')].every(card => card.getAttribute('data-call-offer-state') !== 'loading')`)) break
+        await pause(25)
+      }
+      publicLegacy = await snapshot(`${role}-legacy-header-settled`)
+      const [legacyOffered, legacyRefused] = publicLegacy.legacyCards
+      assert.ok(legacyOffered.visible && legacyOffered.offerState === 'available' && !legacyOffered.busy && legacyOffered.signup === 'service')
+      assert.ok(legacyOffered.tabIndex === 0 && legacyOffered.role === 'button' && legacyOffered.ariaLabel === 'Book a Call' && legacyOffered.modal === null, `${role}: the offered tout is a focusable signup button, as on origin/main`)
+      assert.ok(!legacyRefused.visible && legacyRefused.offerState === 'hidden' && !legacyRefused.busy && legacyRefused.ariaHidden === 'true')
+      assert.ok(legacyRefused.signup === null && legacyRefused.modal === null && legacyRefused.role === null, `${role}: a hidden tout keeps no hook`)
+    }
+    for (const role of ['anonymous', 'free']) {
+      // The public Algolia record reaches markServiceCardsClickable while the
+      // DTO is held. Clones that carry data-service-card, as published
+      // clones do, must keep the loading progress cursor until they settle.
+      await navigate(`role=${role}&header=legacy&dto=held&servicecard=authored`)
+      let cursorState = await snapshot(`${role}-services-cursor-loading`)
+      assert.equal(cursorState.cards.length, 2)
+      assert.ok(cursorState.cards.every(card => card.visible && card.offerState === 'loading' && card.busy))
+      assert.ok(cursorState.cards.every(card => card.cursor === 'progress' && card.inlineCursor === ''), `${role}: loading Services clones keep the progress cursor`)
+      await evaluate(`lists['starter-call-offers-services'].emit(false)`)
+      for (let i = 0; i < 100; i++) {
+        if (await evaluate(`[...document.querySelectorAll('#services [wf-xano-item]')].every(card => card.getAttribute('data-call-offer-state') !== 'loading')`)) break
+        await pause(25)
+      }
+      cursorState = await snapshot(`${role}-services-cursor-settled`)
+      const [cursorOffered, cursorRefused] = cursorState.cards
+      assert.ok(cursorOffered.visible && cursorOffered.offerState === 'available' && cursorOffered.cursor === 'pointer' && cursorOffered.inlineCursor === 'pointer', `${role}: an offered Services card gets the origin/main pointer`)
+      assert.ok(!cursorRefused.visible && cursorRefused.offerState === 'hidden')
+    }
+    await navigate('role=talent&header=legacy')
+    const talentLegacy = await snapshot('talent-legacy-header')
+    assert.equal(talentLegacy.legacyCards.length, 2)
+    assert.equal(talentLegacy.cards.length, 2)
+    assert.ok(talentLegacy.legacyCards.concat(talentLegacy.cards).every(card => !card.visible && card.offerState === 'hidden' && !card.busy), 'talent sees no call card')
+    // F50: a reconcile over touts already superseded rewrites nothing.
+    assert.deepEqual(await evaluate(countMutationsAfterUnrelatedNode), [], 'talent: an unrelated node writes no attribute')
+
+    for (const grantOrder of ['fast', 'slow']) {
+      await navigate(`role=owner&owner=loading&header=legacy&tooltip=shown${grantOrder === 'slow' ? '&discovery=held' : ''}`)
+      let ownerLegacyState = await snapshot(`owner-legacy-${grantOrder}-grant-loading`)
+      assert.equal(ownerLegacyState.legacyCards.length, 2)
+      assert.ok(ownerLegacyState.legacyCards.every(card => card.visible && card.state === 'Default'))
+      assert.ok(ownerLegacyState.legacyCards.every(card => card.offerState === 'settings-loading' && card.busy))
+      assert.ok(ownerLegacyState.legacyCards.every(card => card.tooltipDisplay === 'none' && card.tooltipHidden && card.slotVisibility === 'hidden'), 'settings-loading hides the authored-visible tooltip')
+      assert.ok(ownerLegacyState.legacyCards.every(card => card.cursor === 'progress'))
+      assert.ok(ownerLegacyState.legacyCards.every(card => !card.bookingPopup && card.signup === null && card.modal === null && card.direct === null))
+      if (grantOrder === 'slow') {
+        assert.equal(await evaluate('resolveStarterDiscovery()'), true)
+        await pause(100)
+        ownerLegacyState = await snapshot('owner-legacy-slow-grant-settled-settings-loading')
+        assert.equal(ownerLegacyState.legacyCards.length, 2)
+        assert.ok(ownerLegacyState.legacyCards.every(card => card.offerState === 'settings-loading' && card.busy))
+      }
+    }
+
+    // F50: a non Free/Paid card in the legacy Header wrapper (its wf-xano
+    // template, a rate tout) must not keep the owner writer re-running. Its
+    // writes woke the body observer again, so the page hung.
+    for (const extra of ['template', 'hourly']) {
+      await navigate(`role=owner&header=legacy&legacyextra=${extra}`)
+      assert.equal(await evaluate('1 + 1'), 2, `${extra}: the owner page stays responsive`)
+      assert.deepEqual(await evaluate(legacyToutStates), ['free:available', 'paid:available'], `${extra}: owner touts settle`)
+      assert.deepEqual(await evaluate(countMutations), [], `${extra}: a settled owner page makes no DOM writes`)
+      assert.deepEqual(await evaluate(countMutationsAfterUnrelatedNode), [], `${extra}: an unrelated node wakes no writer`)
+    }
+
+    // F50: a reconcile must not strip a settled offered tout. Removing its
+    // tabindex blurred a focused tout on any unrelated DOM change.
+    for (const role of ['brand', 'anonymous']) {
+      await navigate(`role=${role}&header=legacy`)
+      for (let i = 0; i < 100; i++) {
+        if ((await evaluate(legacyToutStates)).join() === 'free:available,paid:available') break
+        await pause(25)
+      }
+      assert.deepEqual(await evaluate(legacyToutStates), ['free:available', 'paid:available'], `${role}: touts offered`)
+      const focus = await evaluate(`(async () => {
+        const el = document.querySelector('[data-call-canary-legacy-wrapper="header"] [data-type="free"]')
+        el.focus()
+        const before = document.activeElement === el
+        let blurred = 0
+        el.addEventListener('blur', () => { blurred++ })
+        document.body.appendChild(document.createElement('div'))
+        await new Promise(resolve => setTimeout(resolve, 200))
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+        return { before, after: document.activeElement === el, blurred, tabIndex: el.tabIndex, role: el.getAttribute('role'), label: el.getAttribute('aria-label') }
+      })()`)
+      assert.deepEqual(focus, { before: true, after: true, blurred: 0, tabIndex: 0, role: 'button', label: 'Book a Call' }, `${role}: the focused tout keeps focus`)
+      assert.deepEqual(await evaluate(countMutationsAfterUnrelatedNode), [], `${role}: an unrelated node wakes no writer`)
+      // A DTO replay (wf-xano refreshes on window focus) must keep it too.
+      for (const op of ['replay()', 'emit()']) {
+        assert.deepEqual(await evaluate(focusFreeToutAcross(`lists['starter-call-offers-services'].${op}`)), {
+          before: true, after: true, tabIndex: 0, role: 'button', label: 'Book a Call', disabled: null, state: 'available',
+        }, `${role}: the focused tout keeps focus on a Services ${op}`)
+      }
+      if (role !== 'brand') continue
+      // A settled Paid tout is kept only while the admitted records offer
+      // Paid. Once the DTO revokes it, the hidden tout keeps no hook.
+      await evaluate(`lists['starter-call-offers-services'].emit(false)`)
+      for (let i = 0; i < 100; i++) {
+        if ((await evaluate(legacyToutStates)).join() === 'free:available,paid:hidden') break
+        await pause(25)
+      }
+      assert.deepEqual(await evaluate(legacyToutStates), ['free:available', 'paid:hidden'], 'brand: Paid revoked')
+      assert.deepEqual(await evaluate(`(() => {
+        const el = document.querySelector('[data-call-canary-legacy-wrapper="header"] [data-type="paid"]')
+        const hooks = ['tabindex', 'role', 'aria-label', 'data-profile-book-call', 'data-modal-trigger', 'booking-popup-open', 'data-signup-trigger-element', 'data-signup-trigger-value']
+        return { display: getComputedStyle(el).display, tabIndex: el.tabIndex, hooks: hooks.filter(name => el.hasAttribute(name)) }
+      })()`), { display: 'none', tabIndex: -1, hooks: [] }, 'brand: a revoked hidden Paid tout keeps no Book Call hook')
+    }
+
+    // F50: an owner DTO replay (wf-xano refreshes on window focus) must not
+    // strip a settled owner-preview tout. Removing its tabindex dropped focus.
+    await navigate('role=owner&header=legacy')
+    for (let i = 0; i < 100; i++) {
+      if ((await evaluate(legacyToutStates)).join() === 'free:available,paid:available') break
+      await pause(25)
+    }
+    assert.deepEqual(await evaluate(legacyToutStates), ['free:available', 'paid:available'], 'owner: touts settle')
+    for (const op of ['replay()', 'emit()']) {
+      assert.deepEqual(await evaluate(focusFreeToutAcross(`lists['starter-call-offers-services'].${op}`)), {
+        before: true, after: true, tabIndex: 0, role: 'button', label: null, disabled: 'true', state: 'available',
+      }, `owner: the focused tout keeps focus on a Services ${op}`)
+    }
+
+    // F50 (N11): owner clones that render after the bootstrap failsafe was
+    // released re-arm the one 15 s failsafe. It settles an unanswered
+    // settings read as settings-unavailable; a later answer still applies.
+    await navigate('role=owner&owner=held&clones=late')
+    await pause(500)
+    assert.deepEqual(await evaluate('({ armed: failsafeTimers.armed, live: failsafeTimers.live })'), { armed: 1, live: 0 }, 'owner: nothing loads yet, so the bootstrap failsafe is released')
+    await evaluate('renderLateClones.forEach(render => render()), true')
+    const renderedAt = Date.now()
+    const ownerCloneStates = `[...document.querySelectorAll('[wf-xano-item]')].map(card => card.getAttribute('data-call-offer-state') + (card.getAttribute('aria-busy') === 'true' ? '*busy' : ''))`
+    for (let i = 0; i < 100; i++) {
+      if ((await evaluate(ownerCloneStates)).join() === Array(4).fill('settings-loading*busy').join()) break
+      await pause(25)
+    }
+    assert.deepEqual(await evaluate(ownerCloneStates), Array(4).fill('settings-loading*busy'), 'owner: late clones wait for the settings read')
+    assert.deepEqual(await evaluate('({ armed: failsafeTimers.armed, live: failsafeTimers.live })'), { armed: 2, live: 1 }, 'owner: the late clones re-arm one failsafe')
+    for (let i = 0; i < 400; i++) {
+      if ((await evaluate(ownerCloneStates)).every(state => state === 'settings-unavailable')) break
+      await pause(50)
+    }
+    assert.deepEqual(await evaluate(ownerCloneStates), Array(4).fill('settings-unavailable'), 'owner: the failsafe settles an unanswered read')
+    assert.ok(Date.now() - renderedAt >= 14000, 'owner: the late clones get the full 15 s')
+    assert.deepEqual(await evaluate('({ armed: failsafeTimers.armed, live: failsafeTimers.live })'), { armed: 2, live: 0 })
+    await evaluate(`heldOwner.free.resolve(); heldOwner.paid.resolve(); true`)
+    for (let i = 0; i < 100; i++) {
+      if ((await evaluate(ownerCloneStates)).every(state => state === 'available')) break
+      await pause(25)
+    }
+    assert.deepEqual(await evaluate(ownerCloneStates), Array(4).fill('available'), 'owner: a later settings answer still applies')
+
+    await navigate('role=brand&discovery=held')
+    let loadingState = await snapshot('brand-discovery-loading')
+    assert.equal(loadingState.cards.length, 4)
+    assert.ok(loadingState.cards.every(card => card.visible && card.offerState === 'loading' && card.busy), 'Brand cards wait for discovery')
+    assert.ok(loadingState.cards.every(card => card.slotText === '00:00pm on 00/00' && card.slotVisibility === 'hidden' && card.cursor === 'progress'), 'loading masks the slot and shows progress')
+    assert.equal(loadingState.book.loading, true)
+    assert.equal(loadingState.book.busy, true)
+    assert.equal(loadingState.book.disabled, true)
+    assert.equal(loadingState.book.signup, null)
+    assert.equal(loadingState.book.modal, null)
+    assert.equal(loadingState.book.cursor, 'progress')
+    assert.equal(loadingState.book.spinner, 'flex')
+    assert.equal(loadingState.book.spinnerInline, 'none')
+    assert.equal(loadingState.book.loadingHide, 'none')
+    assert.equal(loadingState.book.loadingHideInline, 'inline-flex')
+    await assertBookCall('brand', false)
+    assert.equal(await evaluate('resolveStarterDiscovery()'), true)
+    for (let i = 0; i < 100; i++) {
+      if (await evaluate(`!document.querySelector('[booking-button-wrapper] .button_main-wrap').hasAttribute('data-booking-trigger-loading')`)) break
+      await pause(25)
+    }
+    loadingState = await snapshot('brand-discovery-settled')
+    assert.equal(loadingState.book.loading, false)
+    assert.equal(loadingState.book.busy, false)
+    assert.equal(loadingState.book.disabled, false)
+    assert.equal(loadingState.book.signup, 'book-call')
+    assert.equal(loadingState.book.modal, 'popup-booking-main')
+    assert.notEqual(loadingState.book.cursor, 'progress')
+    assert.equal(loadingState.book.spinner, 'none')
+    assert.equal(loadingState.book.spinnerInline, 'none')
+    assert.equal(loadingState.book.loadingHide, 'flex')
+    assert.equal(loadingState.book.loadingHideInline, 'inline-flex')
+    for (const role of ['anonymous', 'free']) {
+      await navigate(`role=${role}`)
+      const state = await snapshot(`${role}-settled`)
+      assert.equal(state.cards.length, 4)
+      assert.ok(state.cards.every(card => card.visible && card.offerState === 'available' && !card.busy), `${role}: public cards settle without aria-busy`)
     }
     for (const role of ['anonymous', 'free', 'brand']) {
       for (const failed of ['header', 'services']) {
@@ -108,6 +455,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
         await pause(100)
         state = await snapshot(`${role}-${failed}-recovered`)
         assert.equal(state.cards.length, 4); assert.ok(state.cards.every(card => card.visible)); assertBookState(state, role, true)
+        assert.ok(state.cards.every(card => !card.busy && card.offerState === 'available'), 'settled cards drop aria-busy')
         await assertBookCall(role, true)
         assert.ok(state.cards.filter(card => card.type === 'paid').every(card => card.price === '250'))
         for (const surface of ['header', 'services']) for (const type of ['free', 'paid']) {
@@ -133,26 +481,34 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
         await evaluate(`lists['starter-call-offers-${failed}'].emit(false)`)
         await pause(50)
         state = await snapshot(`${role}-${failed}-paid-revoked`)
+        assert.equal(state.cards.length, 4)
         assert.ok(state.cards.every(card => card.visible === (card.type === 'free')))
+        assert.ok(state.cards.every(card => !card.busy && card.offerState === (card.type === 'free' ? 'available' : 'hidden')), 'revoked cards settle without aria-busy')
       }
     }
     for (const owner of ['ready', 'off', 'calendar', 'stripe', 'stale', 'loading', 'error']) {
-      await navigate(`role=owner&owner=${owner}&failed=header`)
+      await navigate(`role=owner&owner=${owner}&failed=header${owner === 'loading' ? '&tooltip=shown' : ''}`)
       const state = await snapshot(`owner-${owner}`)
+      assert.equal(state.cards.length, 4, 'owners retain two cards in both wrappers')
       assert.ok(state.cards.every(card => card.visible), 'owners retain both cards in both wrappers')
-      assert.ok(state.cards.every(card => card.state === (owner === 'ready' ? 'Default' : owner === 'stripe' || owner === 'stale' ? card.type === 'free' ? 'Default' : 'Disabled' : 'Disabled')), JSON.stringify(state))
-      const messages = { off: { free: 'Enable your Free Call service.', paid: 'Enable and price your Paid Call service.' }, calendar: { free: 'Connect your calendar to offer calls.', paid: 'Connect your calendar to offer calls.' }, stripe: { paid: 'Connect Stripe to offer paid calls.' }, stale: { paid: 'Refresh your Stripe connection to offer paid calls.' }, loading: { free: 'Call settings are loading. Open Call Settings if this continues.', paid: 'Call settings are loading. Open Call Settings if this continues.' }, error: { free: 'Call settings could not be loaded. Refresh or open Call Settings.', paid: 'Call settings could not be loaded. Refresh or open Call Settings.' } }
-      for (const card of state.cards) if (messages[owner]?.[card.type]) assert.equal(card.tooltip, messages[owner][card.type])
+      assert.ok(state.cards.every(card => card.state === (owner === 'ready' || owner === 'loading' ? 'Default' : owner === 'stripe' || owner === 'stale' ? card.type === 'free' ? 'Default' : 'Disabled' : 'Disabled')), JSON.stringify(state))
+      const messages = { off: { free: 'Enable your Free Call service.', paid: 'Enable and price your Paid Call service.' }, calendar: { free: 'Connect your calendar to offer calls.', paid: 'Connect your calendar to offer calls.' }, stripe: { paid: 'Connect Stripe to offer paid calls.' }, stale: { paid: 'Refresh your Stripe connection to offer paid calls.' }, loading: { free: '', paid: '' }, error: { free: 'Call settings could not be loaded. Refresh or open Call Settings.', paid: 'Call settings could not be loaded. Refresh or open Call Settings.' } }
+      for (const card of state.cards) if (messages[owner]?.[card.type] !== undefined) assert.equal(card.tooltip, messages[owner][card.type])
+      if (owner === 'loading') {
+        assert.ok(state.cards.every(card => card.offerState === 'settings-loading' && card.busy && card.tooltipDisplay === 'none' && card.tooltipHidden))
+        assert.ok(state.cards.every(card => card.cursor === 'progress'))
+        assert.ok(state.cards.every(card => card.slotText === '00:00pm on 00/00' && card.slotVisibility === 'hidden'))
+      }
     }
     assert.deepEqual(errors, [], 'no uncaught browser errors')
     if (evidence) await fs.writeFile(path.join(evidence, 'observations.json'), JSON.stringify({ boundary: 'Local fixture; real adapter, attribution, modal; synthetic data and booking controllers', observations }, null, 2))
-    console.log(`PASS: ${observations.length} native-browser observations; both wrappers, signup, booking entry, owner states`)
+    console.log(`PASS: ${observations.length} native-browser observations; canonical and legacy calls, signup, booking entry, owner states`)
   } finally {
     socket?.close()
     const closed = new Promise(resolve => chrome.once('exit', resolve))
     chrome.kill()
     await closed
     await new Promise(resolve => server.close(resolve))
-    await fs.rm(profile, { recursive: true, force: true })
+    await fs.rm(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
   }
 })().catch(error => { console.error(error); process.exitCode = 1 })

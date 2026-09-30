@@ -75,6 +75,14 @@
       style.textContent = [
           '[data-booking-unavailable]{display:none!important}',
           '[data-booking-trigger-unavailable]{opacity:.55;cursor:help}',
+          // F50: loading, not disabled. The authored Button Wrap already holds a
+          // hidden [data-button-spinner] and a [data-opp-element="loading-hide"]
+          // icon; this only toggles them while discovery is pending.
+          '[data-booking-trigger-loading],[data-booking-trigger-loading] .clickable_wrap > .clickable_btn{cursor:progress}',
+          '[data-booking-trigger-loading] [data-button-spinner]{display:flex!important}',
+          '[data-booking-trigger-loading] [data-opp-element="loading-hide"]{display:none!important}',
+          '[data-call-offer-state="loading"],[data-call-offer-state="settings-loading"]{cursor:progress}',
+          '[data-call-offer-state="loading"] [next-available-slot],[data-call-offer-state="settings-loading"] [next-available-slot]{visibility:hidden}',
           '[data-canonical-call-unavailable]{display:none!important}',
           '[data-call-offer-superseded]{display:none!important}',
           '[data-header-tout-excluded]{display:none!important}',
@@ -102,6 +110,25 @@
           '[data-modal-target="popup-booking"] [data-booking-back]:not([data-paid-calendar-element="back"]){display:none!important}',
       ].join('');
       (document.head || document.documentElement).appendChild(style);
+  }
+
+  /* ---- unchanged-value guards ----
+     The body observer re-runs the call writers on every added node. A write of
+     an unchanged value is still a DOM mutation (setAttribute queues one, and a
+     text write replaces the child text node), so each such writer checks the
+     current value first. A settled page then records no mutation, and a text
+     write cannot wake the observer that made it. */
+  function setAttributeIfChanged(el, name, value) {
+      const text = String(value);
+      if (el.getAttribute(name) !== text) el.setAttribute(name, text);
+  }
+
+  function setStyleIfChanged(el, property, value) {
+      if (el.style[property] !== value) el.style[property] = value;
+  }
+
+  function setTextIfChanged(el, text) {
+      if (el.textContent !== text) el.textContent = text;
   }
 
   /* ---- canonical rate repaint ----
@@ -214,10 +241,12 @@
       // authored ceiling. That ceiling is sized for the CMS value; leaving it on
       // a repainted node means a later re-process fails('max') and reverts to the
       // raw number, which looks exactly like the bad-data case it exists to expose.
-      el.removeAttribute('data-millify-raw');
+      // A raw that millify stamped after formatting this same explicit value
+      // is not stale, so a repaint of an unchanged amount leaves it.
+      if (el.getAttribute('data-millify') !== amount) el.removeAttribute('data-millify-raw');
       el.removeAttribute('data-millify-max');
-      el.setAttribute('data-millify', amount);
-      if (el.textContent !== formatted.text) el.textContent = formatted.text;
+      setAttributeIfChanged(el, 'data-millify', amount);
+      setTextIfChanged(el, formatted.text);
       return true;
   }
 
@@ -369,8 +398,8 @@
           if (!el) return;
           // Two body-wide MutationObservers wake on every text write, so an
           // identical rewrite is real work for no change.
-          if (el.textContent !== text) el.textContent = text;
-          el.setAttribute('data-next-slot-state', state);
+          setTextIfChanged(el, text);
+          setAttributeIfChanged(el, 'data-next-slot-state', state);
       });
   }
 
@@ -552,8 +581,46 @@
       if (!wrapper.querySelector('[data-modal-trigger="popup-booking-main"]') &&
           !wrapper.querySelector('[data-signup-trigger-element="book-call"]') &&
           !wrapper.querySelector('[data-profile-book-call]')) return;
-      wrapper.style.display = 'flex';
-      wrapper.setAttribute('aria-hidden', 'false');
+      setStyleIfChanged(wrapper, 'display', 'flex');
+      setAttributeIfChanged(wrapper, 'aria-hidden', 'false');
+  }
+
+  function canonicalCallCardForSurface(surface) {
+      if (!surface || typeof surface.closest !== 'function') return null;
+      const card = surface.closest('[wf-xano-item]');
+      if (!card) return null;
+      const root = card.closest('[wf-xano-instance="starter-call-offers-header"]') ||
+          card.closest('[wf-xano-instance="starter-call-offers-services"]');
+      if (!root || card.closest('[wf-xano-element="wrapper"]') !== root) return null;
+      return card;
+  }
+
+  function isLegacyHeaderCallSurface(surface) {
+      return !!(
+          surface &&
+          typeof surface.closest === 'function' &&
+          surface.closest('[data-call-canary-legacy-wrapper="header"]')
+      );
+  }
+
+  // F50: the legacy Header touts follow the canonical public DTO only beside
+  // the canonical Services wrapper, which is the published layout. A page with
+  // neither canonical wrapper has no DTO to wait for, so its touts keep the
+  // Algolia and discovery reveal they had before F50.
+  function legacyHeaderFollowsCanonicalDto() {
+      return !document.querySelector('[wf-xano-instance="starter-call-offers-header"]') &&
+          !!document.querySelector('[wf-xano-instance="starter-call-offers-services"]');
+  }
+
+  function isManagedHydratingCallSurface(surface) {
+      if (!surface || typeof surface.closest !== 'function' ||
+          typeof window.qs !== 'function' ||
+          typeof window.qsa !== 'function' ||
+          typeof window.waitForMember !== 'function' ||
+          !window.starter_memberstack_id) return false;
+      const legacyFallback = isLegacyHeaderCallSurface(surface) &&
+          legacyHeaderFollowsCanonicalDto();
+      return legacyFallback || !!canonicalCallCardForSurface(surface);
   }
 
   // These controls remain discoverable while their booking action is closed.
@@ -564,6 +631,8 @@
   // The fail-closed start disables Book Call before canonical discovery has
   // answered. Until it does, a Brand reads a loading hint, not the
   // "isn't accepting calls" verdict that only an empty result may give.
+  // F50: the closed control also LOOKS loading (data-booking-trigger-loading
+  // shows its authored spinner), not the faded unavailable state.
   let callDiscoveryPending = true;
   function explainBookingAvailability(trigger, available) {
       let entry = bookingHints.get(trigger);
@@ -657,30 +726,47 @@
           });
       }
       if (available) {
-          entry.hint.style.display = 'none';
+          setStyleIfChanged(entry.hint, 'display', 'none');
           trigger.removeAttribute('aria-busy');
+          trigger.removeAttribute('data-booking-trigger-loading');
           trigger.removeAttribute('aria-describedby');
-          if (entry.signup) trigger.setAttribute('data-signup-trigger-element', entry.signup);
-          if (entry.modal && !trigger.hasAttribute('data-logged-out-book-call')) trigger.setAttribute('data-modal-trigger', entry.modal);
+          if (entry.signup) setAttributeIfChanged(trigger, 'data-signup-trigger-element', entry.signup);
+          if (entry.modal && !trigger.hasAttribute('data-logged-out-book-call')) {
+              setAttributeIfChanged(trigger, 'data-modal-trigger', entry.modal);
+          }
           return;
       }
       trigger.removeAttribute('data-signup-trigger-element');
       trigger.removeAttribute('data-modal-trigger');
-      trigger.setAttribute('data-profile-book-call', '');
-      trigger.setAttribute('tabindex', '0');
-      trigger.setAttribute('role', 'button');
-      trigger.setAttribute('aria-label', 'Book a Call');
-      trigger.setAttribute('aria-describedby', entry.hint.getAttribute('id'));
+      setAttributeIfChanged(trigger, 'data-profile-book-call', '');
+      setAttributeIfChanged(trigger, 'tabindex', '0');
+      setAttributeIfChanged(trigger, 'role', 'button');
+      setAttributeIfChanged(trigger, 'aria-label', 'Book a Call');
+      setAttributeIfChanged(trigger, 'aria-describedby', entry.hint.getAttribute('id'));
       const owner = bookingOwner;
       const pending = !owner && callDiscoveryPending;
-      if (pending) trigger.setAttribute('aria-busy', 'true');
-      else trigger.removeAttribute('aria-busy');
-      entry.hint.textContent = owner
+      if (pending) {
+          setAttributeIfChanged(trigger, 'aria-busy', 'true');
+          setAttributeIfChanged(trigger, 'data-booking-trigger-loading', '');
+          trigger.removeAttribute('data-booking-trigger-unavailable');
+      } else {
+          trigger.removeAttribute('aria-busy');
+          trigger.removeAttribute('data-booking-trigger-loading');
+          setAttributeIfChanged(trigger, 'data-booking-trigger-unavailable', '');
+      }
+      const copy = owner
           ? ('Clients use this button to book a call with you. ' +
               (ownerBookingReady ? 'Your calls are available to brands. ' : 'Your call booking is unavailable. '))
           : pending
               ? 'Checking this Starter’s call times…'
               : 'This Starter isn’t accepting calls right now.';
+      // The hint is this writer's own node. Rewriting the same copy (and
+      // re-appending the owner link) would be a childList mutation that wakes
+      // the body observer, which can call back here.
+      if (entry.copy === copy && entry.ownerLink === owner) return;
+      entry.copy = copy;
+      entry.ownerLink = owner;
+      entry.hint.textContent = copy;
       if (owner) {
           const settings = document.createElement('a');
           settings.textContent = 'Manage call settings';
@@ -708,12 +794,13 @@
       document.querySelectorAll(
           '[data-modal-trigger="popup-booking-main"]:not([data-booking-back]), [data-profile-book-call]'
       ).forEach(function (trigger) {
+          if (isManagedHydratingCallSurface(trigger)) return;
           if (available) {
               trigger.removeAttribute('data-booking-trigger-unavailable');
               trigger.removeAttribute('aria-disabled');
           } else {
-              trigger.setAttribute('data-booking-trigger-unavailable', '');
-              trigger.setAttribute('aria-disabled', 'true');
+              setAttributeIfChanged(trigger, 'data-booking-trigger-unavailable', '');
+              setAttributeIfChanged(trigger, 'aria-disabled', 'true');
           }
           explainBookingAvailability(trigger, available);
       });
@@ -722,26 +809,120 @@
           if (available) {
               dialog.removeAttribute('data-booking-surface-unavailable');
           } else {
-              dialog.setAttribute('data-booking-surface-unavailable', '');
+              setAttributeIfChanged(dialog, 'data-booking-surface-unavailable', '');
           }
       });
   }
 
+  // F50: authenticated discovery and the public call DTO answer in either
+  // order. A Brand whose discovery installed a controller is not answered
+  // until the DTO has too, because publicCallTypeReady refuses every type
+  // while that DTO is unknown. Ending pending on discovery alone showed the
+  // "isn't accepting calls" verdict before the page knew. One failsafe,
+  // armed at bootstrap for every viewer, keeps identity, discovery or a DTO
+  // that never answers from holding the loading state open.
+  let authDiscoverySettled = false;
+  let callDiscoveryFailsafeTimer = null;
+  let callLoadingFailsafeFired = false;
+  const CALL_DISCOVERY_PUBLIC_WAIT_MS = 15000;
+
+  function awaitingPublicCallReadiness() {
+      if (!isBrandMember(MEMBER) || STAGING_BOOKING_FIXTURE) return false;
+      // An empty, refused or failed discovery closes Book Call whatever the
+      // DTO says, so only an installed controller has anything to wait for.
+      const installed = paintedCallState && Array.isArray(paintedCallState.configs)
+          ? paintedCallState.configs.length > 0
+          : false;
+      return installed && !!canonicalCallWrapper() && latestCanonicalCallItems === null;
+  }
+
   /**
-   * Ends the discovery-pending state once canonical call discovery has
-   * answered, on every exit path. Triggers that stayed closed get the final
-   * hint; triggers discovery opened only lose their busy marker.
+   * Marks authenticated discovery as answered, on every exit path, then ends
+   * the pending state when nothing else is outstanding.
    */
   function endCallDiscoveryPending() {
-      if (!callDiscoveryPending) return;
-      callDiscoveryPending = false;
-      bookingHints.forEach(function (_entry, trigger) {
-          if (trigger.getAttribute('aria-disabled') === 'true') {
-              explainBookingAvailability(trigger, false);
-          } else {
-              trigger.removeAttribute('aria-busy');
-          }
-      });
+      authDiscoverySettled = true;
+      maybeEndCallDiscoveryPending(false);
+  }
+
+  function maybeEndCallDiscoveryPending(force) {
+      if (callDiscoveryPending &&
+          (force || (authDiscoverySettled && !awaitingPublicCallReadiness()))) {
+          callDiscoveryPending = false;
+          const configs = paintedCallState && Array.isArray(paintedCallState.configs)
+              ? paintedCallState.configs
+              : [];
+          const callSurfacesChanged = isBrandMember(MEMBER)
+              ? syncCanonicalCallSurfaces(configs)
+              : false;
+          wireCallServiceCardsToDirectEntry();
+          if (callSurfacesChanged) refreshEmptySectionNav();
+          bookingHints.forEach(function (_entry, trigger) {
+              if (trigger.getAttribute('aria-disabled') === 'true') {
+                  explainBookingAvailability(trigger, false);
+              } else {
+                  trigger.removeAttribute('aria-busy');
+              }
+          });
+      }
+      releaseCallLoadingFailsafe();
+  }
+
+  /**
+   * The failsafe stays armed while anything still reads as loading: Book Call
+   * while discovery is pending, a call card whose terminal writer has not
+   * run yet (for example a signed-out viewer still waiting for the DTO), or
+   * an owner card whose settings read has not answered.
+   */
+  function releaseCallLoadingFailsafe() {
+      if (callDiscoveryFailsafeTimer === null || callDiscoveryPending) return;
+      if (document.querySelector(
+          '[data-call-offer-state="loading"], [data-call-offer-state="settings-loading"]'
+      )) return;
+      window.clearTimeout(callDiscoveryFailsafeTimer);
+      callDiscoveryFailsafeTimer = null;
+  }
+
+  /**
+   * Arms the one failsafe timer. Bootstrap arms it; a surface that enters
+   * loading after an early release (for example a legacy Header tout rendered
+   * late for a signed-out viewer) arms it again. Once it has fired, a late
+   * surface fails closed at once instead.
+   */
+  function armCallLoadingFailsafe() {
+      if (callDiscoveryFailsafeTimer !== null || callLoadingFailsafeFired) return;
+      callDiscoveryFailsafeTimer = window.setTimeout(expireCallLoading, CALL_DISCOVERY_PUBLIC_WAIT_MS);
+  }
+
+  function failCloseCallCard(card) {
+      setCallOfferVisible(card, false);
+      card.removeAttribute('aria-busy');
+      card.removeAttribute('data-call-service-direct');
+      card.setAttribute('data-call-offer-state', 'hidden');
+  }
+
+  /**
+   * F50 failsafe, CALL_DISCOVERY_PUBLIC_WAIT_MS after bootstrap. Whatever has
+   * not answered by then fails closed: Book Call reads unavailable and every
+   * card still loading is hidden. A later identity, discovery or DTO answer
+   * still runs its normal writer, so an admitted control can open afterwards.
+   */
+  function expireCallLoading() {
+      callDiscoveryFailsafeTimer = null;
+      callLoadingFailsafeFired = true;
+      if (callDiscoveryPending && isBrandMember(MEMBER) && paintedCallState === null) {
+          // The closed look describes an empty answer; a later discovery
+          // replaces it.
+          paintedCallState = { configs: [], slots: {} };
+      }
+      maybeEndCallDiscoveryPending(true);
+      const stillLoading = Array.from(document.querySelectorAll('[data-call-offer-state="loading"]'));
+      stillLoading.forEach(failCloseCallCard);
+      if (stillLoading.length) refreshEmptySectionNav();
+      // An owner settings read that has not answered now reads as failed.
+      if (document.querySelector('[data-call-offer-state="settings-loading"]')) {
+          applyOwnerCallCardStates(ownerCallSettingsSnapshot);
+      }
   }
 
   /**
@@ -789,7 +970,9 @@
               '[data-service-card="component"][data-type="' + type + '"]'
           ).forEach(function (surface) {
               if (includeSurface && !includeSurface(surface, type)) return;
-              if (surface.hasAttribute('hidden') || surface.hasAttribute('data-runtime-call-template')) {
+              if (surface.hasAttribute('hidden') ||
+                  surface.hasAttribute('data-runtime-call-template') ||
+                  surface.hasAttribute('data-call-offer-superseded')) {
                   return;
               }
               if (availability[type]) {
@@ -799,16 +982,16 @@
                       surface.style.display !== 'block';
                   surface.removeAttribute('data-canonical-call-unavailable');
                   surface.removeAttribute('aria-hidden');
-                  surface.style.display = 'block';
+                  setStyleIfChanged(surface, 'display', 'block');
                   if (onReveal) onReveal(surface, type);
               } else {
                   changed = changed ||
                       !surface.hasAttribute('data-canonical-call-unavailable') ||
                       surface.getAttribute('aria-hidden') !== 'true' ||
                       surface.style.display !== 'none';
-                  surface.setAttribute('data-canonical-call-unavailable', '');
-                  surface.setAttribute('aria-hidden', 'true');
-                  surface.style.display = 'none';
+                  setAttributeIfChanged(surface, 'data-canonical-call-unavailable', '');
+                  setAttributeIfChanged(surface, 'aria-hidden', 'true');
+                  setStyleIfChanged(surface, 'display', 'none');
               }
               trackHeaderCallEligibility(surface, type, !!availability[type]);
           });
@@ -837,6 +1020,7 @@
   function excludeXanoCallCards(surface) {
       return !surface.hasAttribute('data-xano-call-card') &&
           !surface.hasAttribute('data-canonical-public-call') &&
+          !canonicalCallCardForSurface(surface) &&
           !surface.hasAttribute('data-call-offer-superseded');
   }
 
@@ -851,6 +1035,10 @@
       return Array.from(qsa(selector)).filter(excludeXanoCallCards);
   }
 
+  function canonicalCallWrapper() {
+      return document.querySelector('[wf-xano-instance="starter-call-offers-header"], [wf-xano-instance="starter-call-offers-services"]');
+  }
+
   function publicCallTypeReady(type) {
       // This gate only means something while the public projection and the
       // booking paths describe the SAME starter. On the staging fixture route
@@ -860,18 +1048,20 @@
       // instead — Free is the fixture's whole purpose, and Paid stays closed so
       // no Stripe entry point can open on it.
       if (STAGING_BOOKING_FIXTURE) return type === 'free';
-      const wrapper = document.querySelector('[wf-xano-instance="starter-call-offers-header"], [wf-xano-instance="starter-call-offers-services"]');
-      if (!wrapper) return true; // Legacy pages have no public-readiness contract.
+      if (!canonicalCallWrapper()) return true; // Legacy pages have no public-readiness contract.
       if (!latestCanonicalCallItems) return false;
       return Array.from(latestCanonicalCallItems.values()).some(function (item) {
           return callOfferTypeOf(item) === type && item.public_available === true;
       });
   }
 
-  function syncCanonicalCallSurfaces(configs, includeSurface) {
-      const records = (Array.isArray(configs) ? configs : []).filter(function (record) {
+  function admittedCanonicalCallRecords(configs) {
+      return (Array.isArray(configs) ? configs : []).filter(function (record) {
           return !isBrandMember(MEMBER) || publicCallTypeReady(record.is_paid === true ? 'paid' : 'free');
       });
+  }
+
+  function syncCanonicalCallCardSurfaces(records, includeSurface) {
       // Same shared predicate as the painters and the chooser lookup, so one
       // record set cannot be read as free by one of them and as nothing by
       // another.
@@ -879,25 +1069,65 @@
           free: !!recordForType(records, 'free'),
           paid: !!recordForType(records, 'paid'),
       };
-      if (isBrandMember(MEMBER)) {
-          reconcileInstalledBookingModalOptions(records);
-          setBookingButtonAvailable(records.length > 0);
-      }
-      const changed = applyCallSurfaceAvailability(availability, function (surface, type) {
-          if (!surface.hasAttribute('data-xano-call-card')) return;
-          surface.setAttribute('has-connection', type);
+      let changed = applyCallSurfaceAvailability(availability, function (surface, type) {
+          if (!isManagedCallOfferCard(surface)) return;
+          setAttributeIfChanged(surface, 'has-connection', type);
           surface.removeAttribute('no-connection');
-          surface.setAttribute('data-call-offer-state', 'available');
-      }, includeSurface);
-      document.querySelectorAll('[data-xano-call-card][data-type]').forEach(function (surface) {
+          surface.removeAttribute('aria-busy');
+          setAttributeIfChanged(surface, 'data-call-offer-state', 'available');
+          if (isLegacyHeaderCallSurface(surface) && surface.hasAttribute('data-canonical-public-call')) {
+              restoreLegacyHeaderBookingTrigger(surface, type, viewerSeesPublicProjection(MEMBER));
+          }
+      }, function (surface, type) {
+          if (includeSurface && !includeSurface(surface, type)) return false;
+          if (!canonicalCallCardForSurface(surface)) return true;
+          return surface.hasAttribute('data-xano-call-card') ||
+              surface.hasAttribute('data-canonical-public-call');
+      });
+      document.querySelectorAll(
+          '[data-xano-call-card][data-type]:not([data-call-offer-superseded]), ' +
+          '[data-canonical-public-call][data-type]:not([data-call-offer-superseded])'
+      ).forEach(function (surface) {
           const type = surface.getAttribute('data-type');
           if (includeSurface && !includeSurface(surface, type)) return;
           if (availability[type]) return;
           surface.removeAttribute('has-connection');
           surface.removeAttribute('data-call-service-direct');
-          surface.setAttribute('data-call-offer-state', 'hidden');
+          surface.removeAttribute('aria-busy');
+          setAttributeIfChanged(surface, 'data-call-offer-state', 'hidden');
       });
+      if (!availability.free && !availability.paid) {
+          canonicalCallCardEntries().forEach(function (entry) {
+              const surface = entry.card;
+              if (surface.hasAttribute('data-xano-call-card') ||
+                  surface.hasAttribute('data-canonical-public-call')) return;
+              if (includeSurface && !includeSurface(surface, '')) return;
+              changed = changed ||
+                  surface.style.display !== 'none' ||
+                  surface.getAttribute('aria-hidden') !== 'true' ||
+                  surface.getAttribute('data-call-offer-state') !== 'hidden';
+              setCallOfferVisible(surface, false);
+              surface.removeAttribute('has-connection');
+              surface.removeAttribute('no-connection');
+              surface.removeAttribute('data-call-service-direct');
+              surface.removeAttribute('aria-busy');
+              surface.setAttribute('data-call-offer-state', 'hidden');
+          });
+      }
       return changed;
+  }
+
+  function syncCanonicalCallSurfaces(configs, includeSurface) {
+      const records = admittedCanonicalCallRecords(configs);
+      if (isBrandMember(MEMBER)) {
+          reconcileInstalledBookingModalOptions(records);
+          if (callDiscoveryPending) {
+              setBookingButtonAvailable(false);
+              return false;
+          }
+          setBookingButtonAvailable(records.length > 0);
+      }
+      return syncCanonicalCallCardSurfaces(records, includeSurface);
   }
 
   function findReadyCallTypeCta(type) {
@@ -1200,6 +1430,14 @@
       return syncCanonicalCallSurfaces([]);
   }
 
+  function settleMemberCallDiscovery() {
+      if (isBrandMember(MEMBER) && paintedCallState === null) {
+          settleEmptyCallDiscovery();
+          return;
+      }
+      endCallDiscoveryPending();
+  }
+
   function repaintCallSurfaces() {
       if (!paintedCallState) return;
       repaintCanonicalRateSurfaces(paintedCallState.configs);
@@ -1210,6 +1448,18 @@
   }
 
   const directCallServiceCards = new WeakSet();
+  // Clones the call adapter released because the DTO has no item for them.
+  const releasedXanoCallCards = new WeakSet();
+  // The Book Call hooks each legacy Header tout was authored with, read once
+  // before the F50 loading state strips them.
+  const legacyHeaderAuthoredHooks = new WeakMap();
+
+  function isManagedCallOfferCard(card) {
+      return card.hasAttribute('data-xano-call-card') ||
+          card.hasAttribute('data-canonical-public-call') ||
+          !!canonicalCallCardForSurface(card) ||
+          (isLegacyHeaderCallSurface(card) && !!canonicalCallWrapper());
+  }
 
   function wireCallServiceCardsToDirectEntry() {
       // Call service cards are authored in both the profile hero and #services.
@@ -1224,10 +1474,15 @@
               card.getAttribute('has-connection') ||
               card.getAttribute('no-connection');
           if (type !== 'free' && type !== 'paid') return;
-          if (card.hasAttribute('data-xano-call-card') &&
-              (card.hasAttribute('data-canonical-call-unavailable') ||
+          const offerState = card.getAttribute('data-call-offer-state');
+          if (isManagedCallOfferCard(card) &&
+              (offerState !== 'available' ||
+                  card.hasAttribute('data-canonical-call-unavailable') ||
                   (card.getAttribute('aria-hidden') === 'true' &&
-                      card.getAttribute('data-header-tout-excluded') !== 'capacity'))) return;
+                      card.getAttribute('data-header-tout-excluded') !== 'capacity'))) {
+              card.removeAttribute('data-call-service-direct');
+              return;
+          }
           // A cap-hidden but eligible Header call can reappear when a rate
           // refresh removes a higher-priority tout. Bind it now; the existing
           // click-time visibility guard still rejects it until then. This
@@ -1241,7 +1496,7 @@
           // listener ownership by element identity instead of trusting the
           // diagnostic attribute as the binding guard.
           if (directCallServiceCards.has(card)) {
-              card.setAttribute('data-call-service-direct', 'ready');
+              setAttributeIfChanged(card, 'data-call-service-direct', 'ready');
               return;
           }
 
@@ -1249,8 +1504,14 @@
           // installed chooser CTA so the matching GitHub controller and native
           // Webflow modal lifecycle stay authoritative, without showing the
           // generic Free/Paid choice first.
-          card.removeAttribute('booking-popup-open');
-          card.removeAttribute('data-modal-trigger');
+          // F50: a legacy Header tout that follows the DTO has its hooks
+          // owned by the legacy writers (stripped while loading or hidden,
+          // restored to origin/main when offered). This capture listener
+          // still claims its click before modal.js's document delegate.
+          if (!(isLegacyHeaderCallSurface(card) && card.hasAttribute('data-canonical-public-call'))) {
+              card.removeAttribute('booking-popup-open');
+              card.removeAttribute('data-modal-trigger');
+          }
           card.setAttribute('data-call-service-direct', 'ready');
           card.addEventListener('click', function (event) {
               // A clone can be observed before the wf-xano adapter resolves its
@@ -1258,8 +1519,10 @@
               // stamp (or a released/hidden clone) cannot be trapped by this
               // capture-phase shortcut.
               if (card.hasAttribute('data-call-owner-preview')) return;
-              if (card.hasAttribute('data-xano-call-card') &&
-                  (card.hasAttribute('data-canonical-call-unavailable') ||
+              const liveOfferState = card.getAttribute('data-call-offer-state');
+              if (isManagedCallOfferCard(card) &&
+                  (liveOfferState !== 'available' ||
+                      card.hasAttribute('data-canonical-call-unavailable') ||
                       card.getAttribute('aria-hidden') === 'true')) return;
               const liveType = card.getAttribute('data-type') || card.getAttribute('has-connection');
               if (liveType !== 'free' && liveType !== 'paid') return;
@@ -1278,7 +1541,10 @@
               return record && record.type === 'childList' && record.addedNodes && record.addedNodes.length;
           })) return;
           neutralizeUnavailableCompanyLinks();
+          if (typeof qs !== 'function' || typeof qsa !== 'function' ||
+              typeof waitForMember !== 'function' || !window.starter_memberstack_id) return;
           decorateOwnerPreviewActions();
+          enterLateCallCardLoading();
           wireCallServiceCardsToDirectEntry();
           // Chooser rows and the back arrow arrive on the same late-node paths
           // as the cards. Both are guarded against rebinding, so re-running
@@ -1346,9 +1612,23 @@
       return isProductionHost && path === '/hire/jp-dionisio';
   }
 
+  // Keep this map aligned with v3/route-guard.js and v3/auth-route.js. Access
+  // decisions use stable Memberstack plan IDs; display names and old dashboard
+  // URL fields are not role authority.
+  const MEMBERSTACK_PLAN_ROLES = {
+      'pln_free-plan-f6kn0dxz': 'brand-free',
+      'pln_new-paid-plan-463h04ph': 'brand-paid',
+      'pln_dorxata-test-free-plan-dvcg0k8o': 'talent',
+      'pln_dorxata-test-brand-plan-777r02pa': 'brand-paid',
+  };
+
   ensureBookingModalAvailabilityGuard();
   primeBookingModalOptions([]);
-  applyCallSurfaceAvailability({ free: false, paid: false });
+  applyCallSurfaceAvailability(
+      { free: false, paid: false },
+      null,
+      function (surface) { return !isManagedHydratingCallSurface(surface); }
+  );
   // Webflow authors the structural Book Call triggers and dialog. Keep them
   // closed until the viewer-specific readiness gate admits an entry point.
   setBookingButtonAvailable(false);
@@ -1476,12 +1756,27 @@
   }
   if (typeof qs !== 'function' || typeof qsa !== 'function' || typeof waitForMember !== 'function') {
     console.warn('[hire-profile] page helpers (qs/qsa/waitForMember) missing; profile scripts stood down');
+    callDiscoveryPending = false;
+    setBookingButtonAvailable(false);
     return;
   }
   if (!window.starter_memberstack_id) {
     console.warn('[hire-profile] starter_memberstack_id missing; profile scripts stood down');
+    callDiscoveryPending = false;
+    setBookingButtonAvailable(false);
     return;
   }
+
+  applyPendingCallCardStates(
+      canonicalCallCardEntries().concat(legacyHeaderCallEntries(null))
+  );
+  // F50: the CMS call cards in #services are rollback duplicates of the
+  // canonical Services clones. While that wrapper exists they stay superseded
+  // from bootstrap, so the Algolia or owner-grant reveal cannot flash one
+  // before the call DTO arrives and hides it again.
+  const canonicalServicesCallRoot = qs('[wf-xano-instance="starter-call-offers-services"]');
+  if (canonicalServicesCallRoot) supersedeLegacyServiceCallCards(canonicalServicesCallRoot);
+  armCallLoadingFailsafe();
 
   // `jp-test` is the published CMS canary shared by both environments. Its
   // authored Memberstack value belongs to Live, so the Test Brand on Webflow
@@ -1515,16 +1810,6 @@
           window.location.pathname.replace(/^\/hire\//, '').replace(/\/+$/, '')
       );
   }
-  // Keep this map aligned with v3/route-guard.js and v3/auth-route.js. Access
-  // decisions use stable Memberstack plan IDs; display names and old dashboard
-  // URL fields are not role authority.
-  const MEMBERSTACK_PLAN_ROLES = {
-      'pln_free-plan-f6kn0dxz': 'brand-free',
-      'pln_new-paid-plan-463h04ph': 'brand-paid',
-      'pln_dorxata-test-free-plan-dvcg0k8o': 'talent',
-      'pln_dorxata-test-brand-plan-777r02pa': 'brand-paid',
-  };
-
   function isActivePlanConnection(connection) {
       return !!connection && (connection.active === true || connection.status === 'ACTIVE');
   }
@@ -1690,6 +1975,16 @@
   const OWNER_FREE_SETTINGS_PATH = '/starter/free-call-settings/get/v3';
   const OWNER_PAID_SETTINGS_PATH = '/starter/paid-call-settings/get/v3';
   let ownerCallSettingsSnapshot = null;
+
+  function settleOwnerCallSettingsUnavailable() {
+      ownerCallSettingsSnapshot = {
+          free: null,
+          paid: null,
+          status: { free: 'error', paid: 'error' },
+          records: [],
+      };
+      applyOwnerCallCardStates(ownerCallSettingsSnapshot);
+  }
 
   /**
    * The viewer IS the starter whose profile this is.
@@ -1987,13 +2282,13 @@
    */
   function decorateOwnerPreviewAction(action, kind) {
       if (!action) return;
-      if (kind !== 'call') action.style.display = '';
+      if (kind !== 'call') setStyleIfChanged(action, 'display', '');
       action.removeAttribute('hidden');
-      action.setAttribute('aria-hidden', 'false');
-      action.setAttribute('aria-disabled', 'true');
-      action.setAttribute('tabindex', '0');
-      action.setAttribute('role', 'button');
-      action.setAttribute('data-owner-preview-action', kind);
+      setAttributeIfChanged(action, 'aria-hidden', 'false');
+      setAttributeIfChanged(action, 'aria-disabled', 'true');
+      setAttributeIfChanged(action, 'tabindex', '0');
+      setAttributeIfChanged(action, 'role', 'button');
+      setAttributeIfChanged(action, 'data-owner-preview-action', kind);
       action.removeAttribute('data-modal-trigger');
       action.removeAttribute('booking-popup-open');
       // signup-attribution listens on document capture. Removing its selector
@@ -2073,8 +2368,8 @@
           }, true);
       }
 
-      entry.hint.textContent = ownerPreviewCopy(kind);
-      action.setAttribute('aria-describedby', entry.hint.getAttribute('id'));
+      setTextIfChanged(entry.hint, ownerPreviewCopy(kind));
+      setAttributeIfChanged(action, 'aria-describedby', entry.hint.getAttribute('id'));
   }
 
   function decorateOwnerPreviewActions() {
@@ -2094,8 +2389,7 @@
 
   function hideOwnerContactActions() {
       if (!isProfileOwner(MEMBER)) return;
-      bookingOwner = true;
-      setBookingButtonAvailable(false);
+      applyOwnerCallCardStates(ownerCallSettingsSnapshot);
       decorateOwnerPreviewActions();
 
       OWNER_HIDDEN_ACTIONS.forEach(function (element) {
@@ -2227,21 +2521,14 @@
       (async function () {
           if (isBlockedProductionBookingSurface()) {
               console.warn('[hire-profile] TEST booking fixture stayed closed on production');
+              if (isProfileOwner(MEMBER)) settleOwnerCallSettingsUnavailable();
               return;
           }
 
           freeCallBooking = await ensureFreeCallBooking();
           if (!validFreeCallBooking(freeCallBooking)) {
               console.warn('[hire-profile] Free Call booking controller is unavailable');
-              if (isProfileOwner(MEMBER)) {
-                  ownerCallSettingsSnapshot = {
-                      free: null,
-                      paid: null,
-                      status: { free: 'error', paid: 'error' },
-                      records: [],
-                  };
-                  applyOwnerCallCardStates(ownerCallSettingsSnapshot);
-              }
+              if (isProfileOwner(MEMBER)) settleOwnerCallSettingsUnavailable();
               return;
           }
 
@@ -2321,7 +2608,7 @@
       })()
           // Every exit of the member booking flow, including the early returns
           // and a failed lookup, ends the discovery-pending state.
-          .finally(endCallDiscoveryPending);
+          .finally(settleMemberCallDiscovery);
   });
 
   /* PUBLIC-RECORD CMS SERVICES (anonymous + brand viewers)
@@ -2416,6 +2703,9 @@
       });
       serviceCards.forEach(function (card) {
           if (getComputedStyle(card).display === 'none') return;
+          // F50: an inline pointer would outrank the loading progress cursor.
+          // The DTO writer calls this again once the card settles.
+          if (card.getAttribute('data-call-offer-state') === 'loading') return;
           card.style.cursor = 'pointer';
       });
   }
@@ -2427,6 +2717,7 @@
      routes actions into the controllers that already own signup, booking, and
      owner settings. It never creates a card or a modal. */
   let latestCanonicalCallItems = null;
+  waitForMember(reconcileLegacyHeaderProjection);
 
   function installXanoCallCardsAdapter() {
       window.WfXano = window.WfXano || [];
@@ -2528,6 +2819,13 @@
           ? String(carrier.getAttribute('data-profile-type') || carrier.textContent || '').trim().toLowerCase()
           : '';
       const priority = ['hourly', 'retainer', 'free', 'paid'];
+      // F50: a loading pre-adapter call clone has no type yet. It may hold a
+      // spare slot as a placeholder, but ranks after every known type so it
+      // never pushes a rendered rate tout out of the cap.
+      const rank = function (type) {
+          const at = priority.indexOf(type);
+          return at === -1 ? priority.length : at;
+      };
       let count = 0;
       const entries = Array.from(headerToutEligibility.entries()).filter(function (entry) {
           if (entry[0].isConnected === false) {
@@ -2536,7 +2834,7 @@
           }
           return true;
       }).sort(function (a, b) {
-          return priority.indexOf(a[1].type) - priority.indexOf(b[1].type);
+          return rank(a[1].type) - rank(b[1].type);
       });
       entries.forEach(function (entry) {
           const node = entry[0];
@@ -2581,11 +2879,11 @@
       if (visible) {
           card.removeAttribute('data-canonical-call-unavailable');
           card.removeAttribute('aria-hidden');
-          card.style.display = 'block';
+          setStyleIfChanged(card, 'display', 'block');
       } else {
-          card.setAttribute('data-canonical-call-unavailable', '');
-          card.setAttribute('aria-hidden', 'true');
-          card.style.display = 'none';
+          setAttributeIfChanged(card, 'data-canonical-call-unavailable', '');
+          setAttributeIfChanged(card, 'aria-hidden', 'true');
+          setStyleIfChanged(card, 'display', 'none');
       }
       trackHeaderCallEligibility(card, card.getAttribute('data-type') ||
           card.getAttribute('data-call-offer-type'), visible);
@@ -2626,16 +2924,29 @@
   }
 
   function canonicalPublicItemForType(itemsById, type) {
+      if (!itemsById || typeof itemsById.values !== 'function') return null;
       return Array.from(itemsById.values()).find(function (item) {
           return callOfferTypeOf(item) === type;
       }) || null;
+  }
+
+  function legacyHeaderCardsForType(legacyRoot, type) {
+      return qsa(
+          '[data-service-card="component"][data-type="' + type + '"], ' +
+          '[data-service-card="component"][has-connection="' + type + '"], ' +
+          '[data-service-card="component"][no-connection="' + type + '"]',
+          legacyRoot
+      );
   }
 
   function supersedeLegacyHeaderCallCards() {
       const legacyRoot = qs('[data-call-canary-legacy-wrapper="header"]');
       if (!legacyRoot) return;
       qsa('[data-service-card="component"]', legacyRoot).forEach(function (card) {
-          card.setAttribute('data-call-offer-superseded', '');
+          setAttributeIfChanged(card, 'data-call-offer-superseded', '');
+          card.removeAttribute('aria-busy');
+          card.removeAttribute('data-call-service-direct');
+          setAttributeIfChanged(card, 'data-call-offer-state', 'hidden');
           setCallOfferVisible(card, false);
       });
   }
@@ -2658,12 +2969,7 @@
       ['free', 'paid'].forEach(function (type) {
           const item = canonicalPublicItemForType(itemsById, type);
           if (!item) return;
-          qsa(
-              '[data-service-card="component"][data-type="' + type + '"], ' +
-              '[data-service-card="component"][has-connection="' + type + '"], ' +
-              '[data-service-card="component"][no-connection="' + type + '"]',
-              legacyRoot
-          ).forEach(function (card) {
+          legacyHeaderCardsForType(legacyRoot, type).forEach(function (card) {
               const title = qs('[data-service-card-element="title"]', card);
               const titleText = String(item.name || '');
               if (title && title.textContent !== titleText) title.textContent = titleText;
@@ -2676,6 +2982,95 @@
       });
   }
 
+  function releaseLegacyHeaderBookingTrigger(card) {
+      if (!legacyHeaderAuthoredHooks.has(card)) {
+          const modal = card.getAttribute('data-modal-trigger');
+          legacyHeaderAuthoredHooks.set(card, {
+              // The same match setBookingButtonAvailable made on origin/main.
+              bookCall: modal === 'popup-booking-main' || card.hasAttribute('data-profile-book-call'),
+              modal: modal,
+              signup: card.getAttribute('data-signup-trigger-element'),
+              signupValue: card.getAttribute('data-signup-trigger-value'),
+          });
+      }
+      [
+          'data-modal-trigger',
+          'booking-popup-open',
+          'data-profile-book-call',
+          'data-logged-out-book-call',
+          'data-booking-trigger-loading',
+          'data-booking-trigger-unavailable',
+          'aria-disabled',
+          'aria-describedby',
+          'aria-label',
+          'tabindex',
+          'role',
+      ].forEach(function (attribute) {
+          card.removeAttribute(attribute);
+      });
+  }
+
+  /**
+   * F50: once its state is known, an offered legacy Header tout gets back the
+   * Book Call semantics origin/main left on it: a focusable, named button and
+   * its authored hooks for this viewer. Loading strips them, and a hidden tout
+   * stays without them (fail closed).
+   */
+  function restoreLegacyHeaderBookingTrigger(card, type, publicViewer) {
+      const hooks = legacyHeaderOfferedHooks(card, type, publicViewer);
+      Object.keys(hooks).forEach(function (name) {
+          setAttributeIfChanged(card, name, hooks[name]);
+      });
+  }
+
+  function legacyHeaderOfferedHooks(card, type, publicViewer) {
+      const hooks = { 'has-connection': type };
+      const authored = legacyHeaderAuthoredHooks.get(card);
+      if (!authored) return hooks;
+      if (authored.bookCall) {
+          hooks['data-profile-book-call'] = '';
+          hooks.tabindex = '0';
+          hooks.role = 'button';
+          hooks['aria-label'] = 'Book a Call';
+          if (publicViewer) hooks['data-logged-out-book-call'] = '';
+      }
+      // A signed-out or paywalled tout opens signup only; its signup hooks
+      // are written by the public DTO writer.
+      if (publicViewer) return hooks;
+      if (authored.modal) hooks['data-modal-trigger'] = authored.modal;
+      if (authored.signup) hooks['data-signup-trigger-element'] = authored.signup;
+      if (authored.signupValue) hooks['data-signup-trigger-value'] = authored.signupValue;
+      return hooks;
+  }
+
+  /**
+   * F50: an offered legacy Header tout that is already settled for this
+   * viewer, with every hook it should carry. A reconcile that keeps it offered
+   * leaves it alone: stripping its tabindex to add it back would blur a
+   * focused tout on any unrelated DOM change. Only entering loading or hidden
+   * strips the hooks.
+   */
+  function legacyHeaderToutSettledOffered(card, type, publicViewer) {
+      if (card.getAttribute('data-call-offer-state') !== 'available' ||
+          card.getAttribute('data-canonical-public-call') !== type ||
+          card.getAttribute('data-service-card-state') !== 'Default' ||
+          card.hasAttribute('data-call-offer-superseded') ||
+          card.hasAttribute('data-canonical-call-unavailable') ||
+          card.hasAttribute('aria-hidden') ||
+          card.hasAttribute('aria-busy') ||
+          card.hasAttribute('booking-popup-open') ||
+          card.style.display !== 'block') return false;
+      const hooks = legacyHeaderOfferedHooks(card, type, publicViewer);
+      if (publicViewer) {
+          if (card.hasAttribute('data-modal-trigger')) return false;
+          hooks['data-signup-trigger-element'] = 'service';
+          hooks['data-signup-trigger-value'] = type === 'paid' ? 'Paid Consulting Call' : 'Free Call';
+      }
+      return Object.keys(hooks).every(function (name) {
+          return card.getAttribute(name) === hooks[name];
+      });
+  }
+
   function syncLoggedOutCanonicalHeader(itemsById) {
       paintLegacyHeaderCanonicalContent(itemsById);
       const legacyRoot = qs('[data-call-canary-legacy-wrapper="header"]');
@@ -2683,19 +3078,20 @@
 
       ['free', 'paid'].forEach(function (type) {
           const item = canonicalPublicItemForType(itemsById, type);
-          qsa(
-              '[data-service-card="component"][data-type="' + type + '"], ' +
-              '[data-service-card="component"][has-connection="' + type + '"], ' +
-              '[data-service-card="component"][no-connection="' + type + '"]',
-              legacyRoot
-          ).forEach(function (card) {
-              card.removeAttribute('data-call-offer-superseded');
-              card.setAttribute('data-canonical-public-call', type);
+          legacyHeaderCardsForType(legacyRoot, type).forEach(function (card) {
               const visible = !!(item && item.public_available === true);
+              if (!(visible && legacyHeaderToutSettledOffered(card, type, true))) {
+                  releaseLegacyHeaderBookingTrigger(card);
+              }
+              card.removeAttribute('data-call-offer-superseded');
+              setAttributeIfChanged(card, 'data-canonical-public-call', type);
               setCallOfferVisible(card, visible);
+              card.removeAttribute('aria-busy');
+              setAttributeIfChanged(card, 'data-call-offer-state', visible ? 'available' : 'hidden');
               if (!visible) {
                   card.removeAttribute('data-signup-trigger-element');
                   card.removeAttribute('data-signup-trigger-value');
+                  card.removeAttribute('has-connection');
                   return;
               }
               const amount = Number(item.price);
@@ -2703,15 +3099,114 @@
                   const price = priceHookIn(card);
                   if (price) paintRateElement(price, Math.round(amount * 100));
               }
-              card.setAttribute('data-service-card-state', 'Default');
-              card.setAttribute('data-signup-trigger-element', 'service');
-              card.setAttribute(
+              setAttributeIfChanged(card, 'data-service-card-state', 'Default');
+              setAttributeIfChanged(card, 'data-signup-trigger-element', 'service');
+              setAttributeIfChanged(
+                  card,
                   'data-signup-trigger-value',
                   type === 'paid' ? 'Paid Consulting Call' : 'Free Call'
               );
+              restoreLegacyHeaderBookingTrigger(card, type, true);
               stripCallBookingRow(card);
           });
       });
+  }
+
+  /**
+   * The legacy Header touts the caller's writer settles next, stripped of
+   * their Book Call hooks. `keep(card, type)` leaves a tout out untouched.
+   */
+  function legacyHeaderCallEntries(itemsById, keep) {
+      const legacyRoot = qs('[data-call-canary-legacy-wrapper="header"]');
+      if (!legacyRoot || !legacyHeaderFollowsCanonicalDto()) return [];
+      const entries = [];
+      ['free', 'paid'].forEach(function (type) {
+          const item = canonicalPublicItemForType(itemsById, type);
+          legacyHeaderCardsForType(legacyRoot, type).forEach(function (card) {
+              if (keep && keep(card, type)) return;
+              releaseLegacyHeaderBookingTrigger(card);
+              card.removeAttribute('data-call-offer-superseded');
+              setAttributeIfChanged(card, 'data-canonical-public-call', type);
+              setAttributeIfChanged(card, 'data-service-card-state', 'Default');
+              setAttributeIfChanged(card, 'data-call-offer-type', type);
+              setAttributeIfChanged(card, 'data-type', type);
+              card.removeAttribute('has-connection');
+              card.removeAttribute('no-connection');
+              card.removeAttribute('booking-popup-open');
+              card.removeAttribute('data-modal-trigger');
+              card.removeAttribute('data-signup-trigger-element');
+              card.removeAttribute('data-signup-trigger-value');
+              card.removeAttribute('data-call-service-direct');
+              entries.push({ card: card, item: item, type: type });
+          });
+      });
+      return entries;
+  }
+
+  /**
+   * F50: the Brand legacy Header touts to settle. A tout already settled
+   * offered, whose type the admitted records still offer, is kept as it is.
+   */
+  function brandLegacyHeaderCallEntries(itemsById) {
+      const admitted = !callDiscoveryPending && paintedCallState && Array.isArray(paintedCallState.configs)
+          ? admittedCanonicalCallRecords(paintedCallState.configs)
+          : null;
+      return legacyHeaderCallEntries(itemsById, function (card, type) {
+          return !!admitted && !!recordForType(admitted, type) &&
+              legacyHeaderToutSettledOffered(card, type, false);
+      });
+  }
+
+  function canonicalCallCardEntries() {
+      const entries = [];
+      ['starter-call-offers-header', 'starter-call-offers-services'].forEach(function (key) {
+          const root = qs('[wf-xano-instance="' + key + '"]');
+          if (!root) return;
+          Array.from(qsa('[wf-xano-item]', root)).forEach(function (card) {
+              if (card.closest('[wf-xano-element="wrapper"]') !== root ||
+                  card.hasAttribute('data-call-offer-superseded')) return;
+              entries.push({ card: card });
+          });
+      });
+      return entries;
+  }
+
+  /**
+   * F50: on the normal page-first load, wf-xano clones each canonical template
+   * after bootstrap, and the clone inherits the template's fail-closed hide.
+   * While this viewer's call state is still unknown, a new clone enters the
+   * same loading state as a bootstrap clone, before the next paint. The owner
+   * is left to its own writer; the adapter settles every clone later. A clone
+   * the adapter already released has a known answer (no DTO item), so it stays
+   * hidden rather than re-entering loading.
+   */
+  function enterLateCallCardLoading() {
+      if (!callDiscoveryPending || isProfileOwner(MEMBER)) return;
+      applyPendingCallCardStates(canonicalCallCardEntries().filter(function (entry) {
+          return !entry.card.hasAttribute('data-xano-call-card') &&
+              !entry.card.hasAttribute('data-call-offer-state') &&
+              !releasedXanoCallCards.has(entry.card);
+      }));
+  }
+
+  function applyPendingCallCardStates(entries, loading) {
+      const showLoading = loading === undefined ? callDiscoveryPending : loading;
+      entries.forEach(function (entry) {
+          const card = entry.card;
+          setAttributeIfChanged(card, 'data-service-card-state', 'Default');
+          card.removeAttribute('has-connection');
+          card.removeAttribute('no-connection');
+          card.removeAttribute('booking-popup-open');
+          card.removeAttribute('data-modal-trigger');
+          card.removeAttribute('data-signup-trigger-element');
+          card.removeAttribute('data-signup-trigger-value');
+          card.removeAttribute('data-call-service-direct');
+          if (!showLoading) return;
+          setCallOfferVisible(card, true);
+          setAttributeIfChanged(card, 'aria-busy', 'true');
+          setAttributeIfChanged(card, 'data-call-offer-state', 'loading');
+      });
+      if (showLoading && entries.length) armCallLoadingFailsafe();
   }
 
   function reconcileLegacyHeaderProjection() {
@@ -2722,8 +3217,54 @@
       if (latestCanonicalCallItems) {
           paintLegacyHeaderCanonicalContent(latestCanonicalCallItems);
       }
-      if (viewerSeesPublicProjection(MEMBER) && latestCanonicalCallItems) {
-          syncLoggedOutCanonicalHeader(latestCanonicalCallItems);
+      if (viewerSeesPublicProjection(MEMBER)) {
+          if (latestCanonicalCallItems) {
+              syncLoggedOutCanonicalHeader(latestCanonicalCallItems);
+          } else {
+              // F50: the public DTO decides these touts for a signed-out or
+              // paywalled viewer, so identity alone never settles or
+              // supersedes them. A tout the legacy wrapper renders late joins
+              // the loading state the bootstrap touts already hold.
+              const late = legacyHeaderCallEntries(null).filter(function (entry) {
+                  return !entry.card.hasAttribute('data-call-offer-state');
+              });
+              applyPendingCallCardStates(late, true);
+              // After the failsafe, a late tout fails closed with the rest.
+              if (callLoadingFailsafeFired) {
+                  late.forEach(function (entry) { failCloseCallCard(entry.card); });
+              }
+          }
+          return;
+      }
+      if (isProfileOwner(MEMBER)) {
+          // Only the Free and Paid touts follow the owner writer. Another card
+          // in this wrapper (the wf-xano template, a rate tout) never gets the
+          // canonical stamp, so counting it would re-run the writer on every
+          // observer pass, and its writes would wake the observer again.
+          const legacyRoot = qs('[data-call-canary-legacy-wrapper="header"]');
+          const needsOwnerState = legacyRoot && legacyHeaderFollowsCanonicalDto() &&
+              ['free', 'paid'].some(function (type) {
+                  return Array.from(legacyHeaderCardsForType(legacyRoot, type)).some(function (card) {
+                      return !card.hasAttribute('data-call-offer-superseded') &&
+                          (!card.hasAttribute('data-canonical-public-call') ||
+                              !card.hasAttribute('data-call-offer-state'));
+                  });
+              });
+          if (needsOwnerState) applyOwnerCallCardStates(ownerCallSettingsSnapshot);
+          return;
+      }
+      if (isBrandMember(MEMBER)) {
+          const entries = brandLegacyHeaderCallEntries(latestCanonicalCallItems);
+          applyPendingCallCardStates(entries);
+          if (!callDiscoveryPending && paintedCallState && Array.isArray(paintedCallState.configs)) {
+              const legacyCards = new Set(entries.map(function (entry) { return entry.card; }));
+              syncCanonicalCallCardSurfaces(
+                  admittedCanonicalCallRecords(paintedCallState.configs),
+                  function (surface) { return legacyCards.has(surface); }
+              );
+          }
+          wireCallServiceCardsToDirectEntry();
+          maybeEndCallDiscoveryPending(false);
           return;
       }
       if (MEMBER.id && !isProfileOwner(MEMBER) && !isBrandMember(MEMBER)) {
@@ -2732,6 +3273,7 @@
   }
 
   function releaseXanoCallCard(card) {
+      releasedXanoCallCards.add(card);
       [
           'data-xano-call-card',
           'data-service-card',
@@ -2739,6 +3281,7 @@
           'data-call-offer-type',
           'data-type',
           'data-call-offer-state',
+          'aria-busy',
           'data-call-owner-preview',
           'data-call-service-direct',
           'has-connection',
@@ -2806,16 +3349,24 @@
       return found;
   }
 
+  function hideCallOfferTooltips(card) {
+      callOfferTooltipNodes(card).forEach(function (node) {
+          setStyleIfChanged(node, 'display', 'none');
+          setAttributeIfChanged(node, 'hidden', 'hidden');
+          setAttributeIfChanged(node, 'aria-hidden', 'true');
+      });
+  }
+
   function configureOwnerSetupActions(card, type, settings) {
       const readiness = ownerReadinessOf(settings);
       const message = setupMessageFor(type, settings);
       qsa('[data-call-offer-tooltip-text], [hover-text]', card).forEach(function (node) {
-          node.textContent = message;
+          setTextIfChanged(node, message);
       });
       callOfferTooltipNodes(card).forEach(function (node) {
-          node.style.display = 'block';
+          setStyleIfChanged(node, 'display', 'block');
           node.removeAttribute('hidden');
-          node.setAttribute('aria-hidden', 'false');
+          setAttributeIfChanged(node, 'aria-hidden', 'false');
       });
 
       const needsCalendar = !readiness.calendar_connected || !readiness.availability_configured;
@@ -2830,24 +3381,22 @@
                   : 'calendar');
           const show = action === neededAction;
           const wrap = cta.closest('[hover-cta-wrap]') || cta;
-          wrap.style.display = show ? 'block' : 'none';
+          setStyleIfChanged(wrap, 'display', show ? 'block' : 'none');
           if (!cta.getAttribute('href') || cta.getAttribute('href') === '#') {
               cta.setAttribute('href', '/starter-dashboard');
           }
       });
   }
 
-  function configureOwnerSettingsUnavailable(card, loading) {
-      const message = loading
-          ? 'Call settings are loading. Open Call Settings if this continues.'
-          : 'Call settings could not be loaded. Refresh or open Call Settings.';
+  function configureOwnerSettingsUnavailable(card) {
+      const message = 'Call settings could not be loaded. Refresh or open Call Settings.';
       qsa('[data-call-offer-tooltip-text], [hover-text]', card).forEach(function (node) {
-          node.textContent = message;
+          setTextIfChanged(node, message);
       });
       callOfferTooltipNodes(card).forEach(function (node) {
-          node.style.display = 'block';
+          setStyleIfChanged(node, 'display', 'block');
           node.removeAttribute('hidden');
-          node.setAttribute('aria-hidden', 'false');
+          setAttributeIfChanged(node, 'aria-hidden', 'false');
       });
       qsa('[hover-cta], [data-call-setup-action]', card).forEach(function (cta) {
           const action = cta.getAttribute('data-call-setup-action') ||
@@ -2856,11 +3405,40 @@
                   : 'calendar');
           const show = action === 'settings';
           const wrap = cta.closest('[hover-cta-wrap]') || cta;
-          wrap.style.display = show ? 'block' : 'none';
+          setStyleIfChanged(wrap, 'display', show ? 'block' : 'none');
           if (show && (!cta.getAttribute('href') || cta.getAttribute('href') === '#')) {
               cta.setAttribute('href', '/starter-dashboard');
           }
       });
+  }
+
+  /**
+   * F50: a legacy Header tout the owner writer already settled as an
+   * available owner preview, with every hook it should carry. A DTO replay
+   * that keeps its record leaves it alone: stripping its tabindex to add it
+   * back would blur a focused tout. Any other owner state still strips it.
+   */
+  function legacyHeaderOwnerToutSettled(card, type) {
+      const entry = ownerPreviewHints.get(card);
+      if (!entry ||
+          card.getAttribute('data-call-offer-state') !== 'available' ||
+          card.getAttribute('data-canonical-public-call') !== type ||
+          card.getAttribute('data-call-offer-type') !== type ||
+          card.getAttribute('data-type') !== type ||
+          card.getAttribute('data-service-card-state') !== 'Default' ||
+          card.getAttribute('data-call-owner-preview') !== '' ||
+          card.getAttribute('data-owner-preview-action') !== 'call' ||
+          card.getAttribute('has-connection') !== type ||
+          card.getAttribute('tabindex') !== '0' ||
+          card.getAttribute('role') !== 'button' ||
+          card.getAttribute('aria-disabled') !== 'true' ||
+          card.getAttribute('aria-describedby') !== entry.hint.getAttribute('id')) return false;
+      return ![
+          'data-call-offer-superseded', 'no-connection', 'booking-popup-open', 'data-modal-trigger',
+          'data-signup-trigger-element', 'data-signup-trigger-value', 'data-call-service-direct',
+          'data-profile-book-call', 'data-logged-out-book-call', 'data-booking-trigger-loading',
+          'data-booking-trigger-unavailable', 'aria-label', 'aria-busy',
+      ].some(function (name) { return card.hasAttribute(name); });
   }
 
   function applyOwnerCallCardStates(snapshot, records) {
@@ -2868,50 +3446,70 @@
       const accepted = Array.isArray(records)
           ? records
           : (snapshot && Array.isArray(snapshot.records) ? snapshot.records : []);
+      legacyHeaderCallEntries(null, function (card, type) {
+          return !!recordForType(accepted, type) && legacyHeaderOwnerToutSettled(card, type);
+      });
       bookingOwner = true;
       ownerBookingReady = accepted.length > 0;
       setBookingButtonAvailable(false);
-      document.querySelectorAll('[data-xano-call-card][data-type]').forEach(function (card) {
+      let settingsLoading = false;
+      document.querySelectorAll(
+          '[data-xano-call-card][data-type]:not([data-call-offer-superseded]), ' +
+          '[data-canonical-public-call][data-type]:not([data-call-offer-superseded])'
+      ).forEach(function (card) {
           const type = card.getAttribute('data-type');
           const settings = snapshot && snapshot[type];
-          const settingsStatus = snapshot && snapshot.status
+          let settingsStatus = snapshot && snapshot.status
               ? snapshot.status[type]
               : 'loading';
+          // F50: the one failsafe bounds settings-loading too. Once it has
+          // fired, an unanswered read settles exactly like a failed read. A
+          // later answer still reaches settleSettings and applies its rules.
+          if (settingsStatus === 'loading' && callLoadingFailsafeFired) settingsStatus = 'error';
           const record = recordForType(accepted, type);
           setCallOfferVisible(card, true);
           card.removeAttribute('data-signup-trigger-element');
           card.removeAttribute('data-signup-trigger-value');
           card.removeAttribute('data-modal-trigger');
           card.removeAttribute('data-call-service-direct');
-          card.setAttribute('data-call-owner-preview', '');
+          setAttributeIfChanged(card, 'data-call-owner-preview', '');
+          card.removeAttribute('aria-busy');
           if (record) {
               decorateOwnerPreviewAction(card, 'call');
-              card.setAttribute('data-service-card-state', 'Default');
-              card.setAttribute('has-connection', type);
+              setAttributeIfChanged(card, 'data-service-card-state', 'Default');
+              setAttributeIfChanged(card, 'has-connection', type);
               card.removeAttribute('no-connection');
-              card.setAttribute('data-call-offer-state', 'available');
-              callOfferTooltipNodes(card).forEach(function (node) {
-                  node.style.display = 'none';
-                  node.setAttribute('hidden', 'hidden');
-                  node.setAttribute('aria-hidden', 'true');
-              });
+              setAttributeIfChanged(card, 'data-call-offer-state', 'available');
+              hideCallOfferTooltips(card);
+          } else if (settingsStatus === 'loading') {
+              // F50: an unanswered settings read is loading, not disabled.
+              // The authored Default look stays; aria-busy marks the wait.
+              setAttributeIfChanged(card, 'data-service-card-state', 'Default');
+              card.removeAttribute('has-connection');
+              card.removeAttribute('no-connection');
+              setAttributeIfChanged(card, 'data-call-offer-state', 'settings-loading');
+              setAttributeIfChanged(card, 'aria-busy', 'true');
+              hideCallOfferTooltips(card);
+              settingsLoading = true;
           } else if (settingsStatus !== 'loaded') {
-              card.setAttribute('data-service-card-state', 'Disabled');
+              setAttributeIfChanged(card, 'data-service-card-state', 'Disabled');
               card.removeAttribute('has-connection');
               card.removeAttribute('no-connection');
-              card.setAttribute(
-                  'data-call-offer-state',
-                  settingsStatus === 'loading' ? 'settings-loading' : 'settings-unavailable'
-              );
-              configureOwnerSettingsUnavailable(card, settingsStatus === 'loading');
+              setAttributeIfChanged(card, 'data-call-offer-state', 'settings-unavailable');
+              configureOwnerSettingsUnavailable(card);
           } else {
-              card.setAttribute('data-service-card-state', 'Disabled');
+              setAttributeIfChanged(card, 'data-service-card-state', 'Disabled');
               card.removeAttribute('has-connection');
-              card.setAttribute('no-connection', type);
-              card.setAttribute('data-call-offer-state', 'setup-required');
+              setAttributeIfChanged(card, 'no-connection', type);
+              setAttributeIfChanged(card, 'data-call-offer-state', 'setup-required');
               configureOwnerSetupActions(card, type, settings);
           }
       });
+      if (settingsLoading) {
+          armCallLoadingFailsafe();
+      } else {
+          releaseCallLoadingFailsafe();
+      }
   }
 
   function adaptXanoCallCards(instance, key, result) {
@@ -2961,6 +3559,9 @@
           card.setAttribute('data-call-offer-type', type);
           card.setAttribute('data-type', type);
           card.setAttribute('data-call-offer-state', 'pending');
+          // F50: `pending` is internal. The role writer below owns aria-busy,
+          // so a card it settles never keeps the loading marker.
+          card.removeAttribute('aria-busy');
           card.removeAttribute('booking-popup-open');
           card.removeAttribute('data-modal-trigger');
           adapted.push({ card: card, item: item, type: type });
@@ -2993,15 +3594,11 @@
       } else if (isProfileOwner(MEMBER)) {
           applyOwnerCallCardStates(ownerCallSettingsSnapshot);
       } else if (isBrandMember(MEMBER)) {
-          adapted.forEach(function (entry) {
-              const card = entry.card;
-              setCallOfferVisible(card, false);
-              card.setAttribute('data-call-offer-state', 'pending');
-          });
+          applyPendingCallCardStates(adapted.concat(brandLegacyHeaderCallEntries(itemsById)));
           // Canonical discovery can finish before wf-xano clones this card.
           // Replay the already-installed set so a late clone does not stay in
           // pending until some unrelated DOM mutation happens.
-          if (paintedCallState && Array.isArray(paintedCallState.configs)) {
+          if (!callDiscoveryPending && paintedCallState && Array.isArray(paintedCallState.configs)) {
               syncCanonicalCallSurfaces(paintedCallState.configs);
           }
       } else {
@@ -3017,6 +3614,7 @@
       repaintCallSurfaces();
       reconcileHeaderTouts();
       refreshEmptySectionNav();
+      maybeEndCallDiscoveryPending(false);
   }
 
   /* XANO SERVICE CARDS (side-by-side CMS canary)
@@ -3665,14 +4263,11 @@
   });
 
   async function startersBooking_handler(bookingStarterId, brand_name, brand_email) {
-      // No catch: a thrown lookup still rejects, so it reaches the PostHog
-      // frontend-exceptions capture. Surfaces keep whatever state discovery
-      // reached; the fail-closed start already closed them.
       try {
           return await discoverStarterBooking(bookingStarterId, brand_name, brand_email);
       } finally {
           // Every exit, including a thrown lookup, ends discovery-pending.
-          endCallDiscoveryPending();
+          settleMemberCallDiscovery();
       }
   }
 

@@ -3,24 +3,45 @@
 const params = new URLSearchParams(location.search)
 const role = params.get('role') || 'anonymous'
 const ownerState = params.get('owner') || 'ready'
+const legacyHeader = params.get('header') === 'legacy'
 window.qs = (s, root = document) => root.querySelector(s)
 window.qsa = (s, root = document) => root.querySelectorAll(s)
 window.starter_memberstack_id = 'fixture-owner'
 window.stripe_charges = false
+const talentRole = role === 'owner' || role === 'talent'
 window.MEMBER = role === 'anonymous' ? {} : {
-  id: role === 'owner' ? 'fixture-owner' : 'fixture-brand',
+  id: role === 'owner' ? 'fixture-owner' : role === 'talent' ? 'fixture-talent' : 'fixture-brand',
   auth: { email: 'fixture@example.invalid' },
-  customFields: { 'free-user': role === 'owner' ? 'Owner' : 'Brand', 'last-name': 'Fixture' },
-  planConnections: [{ planId: role === 'owner' ? 'pln_dorxata-test-free-plan-dvcg0k8o' : role === 'free' ? 'pln_free-plan-f6kn0dxz' : 'pln_new-paid-plan-463h04ph', status: 'ACTIVE' }],
+  customFields: { 'free-user': talentRole ? 'Starter' : 'Brand', 'last-name': 'Fixture' },
+  planConnections: [{ planId: talentRole ? 'pln_dorxata-test-free-plan-dvcg0k8o' : role === 'free' ? 'pln_free-plan-f6kn0dxz' : 'pln_new-paid-plan-463h04ph', status: 'ACTIVE' }],
 }
 window.memberReady = Promise.resolve(MEMBER)
 window.waitForMember = callback => memberReady.then(callback)
 window.$memberstackDom = { getCurrentMember: async () => ({ data: MEMBER.id ? MEMBER : null }), onAuthChange() {} }
 window.WfAlgolia = { getObject: async () => ({ rate: 0, 'retainer-enabled': false, 'profile-type': 'Consult' }) }
 const configs = ['free', 'paid'].map(type => ({ config_id: `fixture-${type}`, grant_id: 'fixture-grant', is_paid: type === 'paid', active: true, data_environment: 'production', payment_environment: 'live', currency: 'USD', price_cents: type === 'paid' ? 25000 : 0, duration: type === 'paid' ? 60 : 30, sync_status: 'synced', revision: 1 }))
+let heldStarterResolve = null
+const heldStarter = params.get('discovery') === 'held'
+  ? new Promise(resolve => { heldStarterResolve = resolve })
+  : null
+window.resolveStarterDiscovery = result => {
+  if (!heldStarterResolve) return false
+  const resolve = heldStarterResolve
+  heldStarterResolve = null
+  resolve(result === 'empty' ? null : { nylas_grant_id: 'fixture-grant' })
+  return true
+}
 function settings(type) {
   if (ownerState === 'error') return Promise.reject(new Error('Synthetic lookup failure'))
   if (ownerState === 'loading') return new Promise(() => {})
+  // owner=held: the read waits until heldOwner[type].resolve() answers it.
+  if (ownerState === 'held') {
+    return new Promise(resolve => { (window.heldOwner = window.heldOwner || {})[type] = { resolve } })
+      .then(() => settingsFor(type, 'ready'))
+  }
+  return settingsFor(type, ownerState)
+}
+function settingsFor(type, ownerState) {
   const ready = ownerState === 'ready' || (type === 'free' && ['stripe', 'stale'].includes(ownerState))
   return Promise.resolve({ data_environment: 'production', stripe_environment: 'live', readiness: {
     calendar_connected: ownerState !== 'calendar', availability_configured: true,
@@ -41,7 +62,7 @@ function install(type) {
   return true
 }
 window.StartersFreeCallBooking = {
-  getStarterByMemberId: async () => ({ nylas_grant_id: 'fixture-grant' }),
+  getStarterByMemberId: async () => heldStarter || ({ nylas_grant_id: 'fixture-grant' }),
   getConfigs: async () => configs,
   getNearestSlot: async () => null,
   authenticatedRequest: path => settings(path.includes('/free-') ? 'free' : 'paid'),
@@ -50,18 +71,61 @@ window.StartersFreeCallBooking = {
 window.StartersPaidCallBrandPayment = { installPaidBookingController: () => install('paid') }
 window.callResult = (paid = true) => ({ items: ['free', 'paid'].map(type => ({ id: `424:call:${type}`, type, name: type === 'free' ? 'Free Call' : 'Paid Consulting Call', description: 'Fixture call offer', price: type === 'free' ? 0 : paid ? 250 : null, currency: 'USD', unit: '/session', public_available: type === 'free' || paid })) })
 window.lists = {}
-for (const surface of ['header', 'services']) {
+// tooltip=shown authors the setup tooltip visible, so a loading state has to
+// hide it rather than inherit the authored hide.
+const tooltipDisplay = params.get('tooltip') === 'shown' ? 'block' : 'none'
+const cardContent = type => `<div data-service-card-element="title"></div><p data-service-card-element="description"></p><span data-millify></span><div class="service-card_content-wrapper"><span next-available-slot>00:00pm on 00/00</span></div><div data-call-offer-tooltip style="display:${tooltipDisplay}"><span data-call-offer-tooltip-text hover-text></span><a hover-cta data-call-setup-action="calendar" starter-dashboard-url>Calendar</a><a hover-cta data-call-setup-action="stripe" stripe-connect-url>Stripe</a><a hover-cta data-call-setup-action="settings" starter-dashboard-url>Call Settings</a></div>`
+if (legacyHeader) {
+  const root = document.createElement('div')
+  root.setAttribute('wf-xano-element', 'wrapper')
+  root.setAttribute('wf-xano-instance', 'starter-calls')
+  root.setAttribute('data-call-canary-legacy-wrapper', 'header')
+  root.innerHTML = ['free', 'paid'].map(type => `<article data-service-card="component" data-service-card-state="Default" data-type="${type}" has-connection="${type}" booking-popup-open data-modal-trigger="popup-booking-main" data-signup-trigger-element="service" data-signup-trigger-value="${type === 'free' ? 'Free Call' : 'Paid Consulting Call'}">${cardContent(type)}</article>`).join('')
+  // legacyextra: a card in the legacy wrapper that is not a Free or Paid
+  // tout (its wf-xano template, or a rate tout).
+  if (params.get('legacyextra') === 'template') root.insertAdjacentHTML('afterbegin', '<div wf-xano-element="template" data-service-card="component"></div>')
+  if (params.get('legacyextra') === 'hourly') root.insertAdjacentHTML('afterbegin', '<a data-service-card="component" data-service-card-type="tout" data-type="hourly" href="#services">Hourly</a>')
+  qs('#header').append(root)
+}
+// servicecard=authored: wf-xano clones inherit the template's
+// data-service-card="component", as they do on the published page.
+const cloneServiceCard = params.get('servicecard') === 'authored' ? ' data-service-card="component"' : ''
+// clones=late: each canonical wrapper holds only its template at boot;
+// renderLateClones() then renders the clones and announces the result, as
+// wf-xano does. failsafeTimers counts the 15 s timers without changing them.
+const lateClones = params.get('clones') === 'late'
+if (lateClones) {
+  const live = new Set()
+  window.failsafeTimers = { armed: 0, get live() { return live.size } }
+  const nativeSetTimeout = window.setTimeout.bind(window)
+  const nativeClearTimeout = window.clearTimeout.bind(window)
+  window.setTimeout = (fn, ms, ...rest) => {
+    if (ms !== 15000) return nativeSetTimeout(fn, ms, ...rest)
+    window.failsafeTimers.armed++
+    const timer = nativeSetTimeout(() => { live.delete(timer); fn(...rest) }, ms)
+    live.add(timer)
+    return timer
+  }
+  window.clearTimeout = timer => { live.delete(timer); nativeClearTimeout(timer) }
+  window.renderLateClones = []
+}
+for (const surface of legacyHeader ? ['services'] : ['header', 'services']) {
   const key = `starter-call-offers-${surface}`
   const root = document.createElement('div')
   root.setAttribute('wf-xano-element', 'wrapper')
   root.setAttribute('wf-xano-instance', key)
-  root.innerHTML = '<div wf-xano-element="template" data-service-card="component"></div>' + ['free', 'paid'].map(type => `<article wf-xano-item data-wf-xano-id="424:call:${type}"><div data-service-card-element="title"></div><p data-service-card-element="description"></p><span data-millify></span><div class="service-card_content-wrapper"></div><div data-call-offer-tooltip style="display:none"><span data-call-offer-tooltip-text hover-text></span><a hover-cta data-call-setup-action="calendar" starter-dashboard-url>Calendar</a><a hover-cta data-call-setup-action="stripe" stripe-connect-url>Stripe</a><a hover-cta data-call-setup-action="settings" starter-dashboard-url>Call Settings</a></div></article>`).join('')
+  const clones = ['free', 'paid'].map(type => `<article wf-xano-item data-wf-xano-id="424:call:${type}"${cloneServiceCard}>${cardContent(type)}</article>`).join('')
+  root.innerHTML = '<div wf-xano-element="template" data-service-card="component"></div>' + (lateClones ? '' : clones)
+  if (lateClones) renderLateClones.push(() => { root.insertAdjacentHTML('beforeend', clones); handlers.results?.(state.data) })
   qs(`#${surface}`).append(root)
   const handlers = {}
-  let state = { status: params.has('failed') && surface === (params.get('failed') || 'header') ? 'error' : 'success', data: callResult() }
+  // dto=held: the public call DTO has not answered yet; emit() delivers it.
+  let state = params.get('dto') === 'held'
+    ? { status: 'loading', data: null }
+    : { status: params.has('failed') && surface === (params.get('failed') || 'header') ? 'error' : 'success', data: callResult() }
   lists[key] = {
     root, getState: () => state,
-    on(event, fn) { handlers[event] = fn; if (event === 'results') queueMicrotask(() => fn(state.data)); return this },
+    on(event, fn) { handlers[event] = fn; if (event === 'results' && state.data) queueMicrotask(() => fn(state.data)); return this },
     emit(paid = true) { state = { status: 'success', data: callResult(paid) }; handlers.results(state.data) },
     fail() { state = { ...state, status: 'error' }; handlers.error(new Error('Synthetic refresh failure')) },
     replay() { handlers.results(state.data) },
