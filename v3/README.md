@@ -875,7 +875,7 @@ The path map holds the two hand-audited pages and its policy is used verbatim:
 | Page | After signup | Who writes the fields |
 | --- | --- | --- |
 | `/quiz` | `/quiz-results` | `quiz-results.js` |
-| `/sign-up` | Authored form redirect | `signup-attribution.js` |
+| `/sign-up` | [Authored form redirect and publication status](ACCESS-MATRIX.md#non-quiz-free-brand-login-default) | `signup-attribution.js` |
 
 Path matching ignores case and a single trailing slash. Because the map is checked
 first, those two keep behaving exactly as they do today whatever happens to their
