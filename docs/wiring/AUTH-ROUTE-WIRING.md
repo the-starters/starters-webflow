@@ -288,12 +288,24 @@ and an unbounded wait to the one page this change exists to speed up. See
 | `pln_dorxata-test-free-plan-dvcg0k8o` | Talent | `/starter-dashboard` |
 | `pln_new-paid-plan-463h04ph` | Brand paid | `/brand-dashboard` |
 | `pln_dorxata-test-brand-plan-777r02pa` | Test Brand / Brand paid | `/brand-dashboard` |
-| `pln_free-plan-f6kn0dxz` | Brand free | `/quiz` (→ `/quiz-results` once the Memberstack `starter-quiz` custom field is non-empty) |
+| `pln_free-plan-f6kn0dxz` | Brand free | See the [login-default contract](../../v3/ACCESS-MATRIX.md#non-quiz-free-brand-login-default) |
 | Unmapped or inactive | Unmapped | Remain on `/auth-route` with `data-auth-route-error="unmapped-plan"` |
 
 Brand Free plus paid Brand is a valid same-family upgrade state and resolves to
 paid Brand. Talent plus either Brand role is a cross-family conflict and remains
 on the utility page with `conflicting-plan-roles`.
+
+The guard's shared login default applies here and on authenticated visits to
+both login pages. Its exact scope and conservative fallbacks are documented in
+the [access matrix](../../v3/ACCESS-MATRIX.md#non-quiz-free-brand-login-default).
+Canonical `/dashboard` and allowed return destinations retain their existing
+semantics; immediate modal-signup returns are unchanged.
+
+Release the login router together with the guard: update the pinned login-loader
+ref as well as the moving guard asset, purge the moving asset, and verify the
+served bytes for both refs. A cached older guard without the new login-default
+API retains the previous quiz fallback; it does not break login. Matching local
+tests or a merged PR alone do not prove both published assets are current.
 
 ## Talent funnel position
 

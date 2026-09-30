@@ -215,8 +215,18 @@ function loadModule(options = {}) {
 
   if (options.debug) window.STARTERS_DEBUG = true
 
+  if (!options.routeGuardMissing) {
+    window.StartersV3RouteGuard = {
+      memberRole: () => ('role' in options ? options.role : 'brand-paid'),
+    }
+  }
+
   if (!options.memberstackMissing) {
     window.$memberstackDom = {
+      getCurrentMember: async () => {
+        if (options.memberLookupRejects) throw new Error('member lookup failure')
+        return { data: options.loggedOut ? null : { id: 'member-id' } }
+      },
       getMemberCookie: async () => {
         if (options.memberstackRejects) throw new Error('memberstack failure')
         return options.loggedOut ? null : 'ms-jwt'
@@ -378,6 +388,33 @@ test('the marker counts only as a non-empty value', () => {
 })
 
 // --- Redirect on visit --------------------------------------------------------
+
+test('a free Brand with an unfinished Xano record stays on All Starters', async () => {
+  for (const pathname of ['/all-starters', '/all-starters/']) {
+    const loader = loaderElement()
+    const { location, fetchCalls } = loadModule({ pathname, role: 'brand-free', loader })
+    await flush()
+    assert.equal(location.replaced, undefined, pathname)
+    assert.equal(fetchCalls.length, 0, 'free Brands do not need a paid profile')
+    assert.equal(loader.style.display, 'none')
+  }
+})
+
+test('only a confirmed paid Brand can enter the profile gate', async () => {
+  for (const options of [
+    { role: 'talent' },
+    { role: null },
+    { routeGuardMissing: true },
+    { memberLookupRejects: true },
+  ]) {
+    const loader = loaderElement()
+    const { location, fetchCalls } = loadModule({ ...options, loader })
+    await flush()
+    assert.equal(location.replaced, undefined, JSON.stringify(options))
+    assert.equal(fetchCalls.length, 0)
+    assert.equal(loader.style.display, 'none')
+  }
+})
 
 test('an unfinished Brand is replaced to /complete-profile with a bearer-authorized read', async () => {
   const { location, fetchCalls } = loadModule()

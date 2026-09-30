@@ -22,10 +22,8 @@
  *     member's role default (never the other role's page),
  *   - bounce an already-logged-in member off the four public entry pages in
  *     MEMBER_BOUNCE_PAGES (homepage, both login pages, signup) to a validated
- *     `?next=` or their role home, while leaving logged-out visitors there
- *     completely alone — with two homepage-only overrides on '/' (see
- *     homepageBounceOverride): a cancelled paid Brand goes to /all-starters,
- *     and a free Brand who has not taken the quiz stays put,
+ *     `?next=` or the default documented in v3/ACCESS-MATRIX.md, while leaving
+ *     logged-out visitors there completely alone,
  *   - send a logged-in member whose role does not belong on one of the
  *     ROLE_BOUNCE_PAGES (/quiz-results, /all-starters) to that member's role
  *     home, apart from the exact production paid-Brand email canary, again
@@ -88,7 +86,7 @@
     return LEGACY_V3_REDIRECTS[pathname] + (search || '') + (hash || '')
   }
 
-  // Identical to v3/auth-route.js and opportunities-3.0.js (MS_PLAN_ROLES).
+  // Shared role contract consumed by v3/auth-route.js.
   var PLAN_ROLES = {
     'pln_free-plan-f6kn0dxz': 'brand-free',
     'pln_new-paid-plan-463h04ph': 'brand-paid',
@@ -97,9 +95,8 @@
   }
 
   // Where each role is sent when it is not allowed on the requested page.
-  // Identical to ROLE_DEFAULTS in v3/auth-route.js. brand-free is decided at
-  // runtime by quiz completion (see brandFreeHome); the map value is the
-  // not-yet-completed fallback.
+  // brand-free is decided at runtime by quiz completion (see brandFreeHome);
+  // the map value is the not-yet-completed fallback.
   var ROLE_DEFAULTS = {
     talent: '/starter-dashboard',
     'brand-paid': '/brand-dashboard',
@@ -109,7 +106,7 @@
   // A brand-free member's home is /quiz-results once the quiz is completed,
   // else /quiz. Same durable signal the /quiz-results page reads: the
   // Memberstack `starter-quiz` custom field (on the member object, no extra
-  // call). Identical to brandFreeHome in v3/auth-route.js.
+  // call). v3/auth-route.js consumes this shared contract.
   function hasCompletedQuiz(member) {
     var cf = (member && member.customFields) || {}
     var value = cf['starter-quiz']
@@ -497,6 +494,20 @@
     return ROLE_DEFAULTS[role]
   }
 
+  // Login defaults may differ from the role home used by guarded pages.
+  // Only persisted, recognized Signup Source values select this exception.
+  function loginDefault(member) {
+    var fields = (member && member.customFields) || {}
+    if (
+      memberRole(member) === 'brand-free' &&
+      !hasCompletedQuiz(member) &&
+      (fields['signup-source'] === '/all-starters' ||
+        (typeof fields['signup-source'] === 'string' &&
+          /^\/learn\/(?:sessions|interviews-analysis|playbooks-frameworks)\/[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(fields['signup-source'])))
+    ) return '/'
+    return roleHome(member)
+  }
+
   // The roles allowed on a pathname, or null when the page is not guarded.
   function pageRolesFor(pathname) {
     if (Object.prototype.hasOwnProperty.call(PAGE_ROLES, pathname)) {
@@ -744,11 +755,9 @@
   /**
    * Homepage-only bounce overrides (decision by Jerico 2026-08-03).
    *
-   * Two rules that apply on '/' and on no other page. Every other bounce page
-   * (`/login`, `/starter-login`, `/sign-up`), every guarded-page wrong-role
-   * redirect, and all of auth-route.js login routing are deliberately untouched:
-   * a member who lands on a login form has just authenticated and still wants
-   * their funnel, whereas the homepage is where someone browses back to.
+   * Two rules that apply on '/' and on no other page. The separate loginDefault
+   * exception applies only to login entry paths; signup and guarded-page
+   * wrong-role redirects continue to use the role home.
    *
    * Precedence, highest first:
    *
@@ -805,6 +814,13 @@
     if (!role) return null
     if (next) return next
 
+    if (pathname === '/login' || pathname === '/starter-login') {
+      var requestedPath = pathnameOf(localPath(requestedNext))
+      if (requestedPath === '/dashboard' || requestedPath === '/dashboard/') {
+        return roleHome(member)
+      }
+      return loginDefault(member)
+    }
     return roleHome(member)
   }
 
@@ -1070,6 +1086,7 @@
     recordBrandAllStartersVisit: recordBrandAllStartersVisit,
     hasBrandAllStartersVisit: hasBrandAllStartersVisit,
     roleHome: roleHome,
+    loginDefault: loginDefault,
     hasCompletedQuiz: hasCompletedQuiz,
     hasReadyPendingQuiz: hasReadyPendingQuiz,
     hasCancelledPaidBrandPlan: hasCancelledPaidBrandPlan,

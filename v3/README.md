@@ -147,7 +147,8 @@ The V3 protected-route guard sends logged-out visitors to
 `/login?next=<encoded current path and query>`. For an exact Calls notification
 locator on either dashboard, it also preserves `#calls` or `#calls-section`
 through login. Other fragments are removed, and the router restores only a
-role-allowed same-origin destination.
+role-allowed same-origin destination. For free Brand login destinations, see the
+[login-default contract](ACCESS-MATRIX.md#non-quiz-free-brand-login-default).
 
 Talent logins additionally fork on funnel position, read from Xano
 `starters_onboarding/get_build_profile_status`: `build_profile_done` false goes to
@@ -314,9 +315,8 @@ the page with an explicit error state, and a cross-family Talent + Brand plan
 conflict fails closed. The canonical `/dashboard` route is a thin guarded
 utility page that sends mapped members to `/starter-dashboard`,
 `/brand-dashboard`, `/quiz`, or `/quiz-results`; it does not merge or duplicate
-the two dashboard page bodies. A free Brand's default is `/quiz` until
-the Memberstack `starter-quiz` custom field records completion, then
-`/quiz-results`.
+the two dashboard page bodies. Free Brands use the
+[quiz role home](ACCESS-MATRIX.md#route-level-access) for guarded-page redirects.
 
 Install the guard once sitewide in Site Settings Head Code, before page
 controllers such as `opportunities-3.0.js`. The controller detects the guard's
@@ -355,8 +355,9 @@ Three mechanisms were added on 2026-08-03. **Member-home bounce:** the homepage,
 both login pages, and `/sign-up` are not in the route table — they must keep
 working untouched for signed-out visitors, since they are the pre-signup funnel
 itself — but a member the guard can positively identify and map to a role is sent
-away from them, to a validated `?next=` when one is present and otherwise to the
-role home. Logged out, Memberstack unavailable, and cross-role conflict leave the
+away from them according to the
+[member-home bounce contract](ACCESS-MATRIX.md#route-level-access).
+Logged out, Memberstack unavailable, and cross-role conflict leave the
 page completely alone, with no error attribute and no `checking` stamp, and so
 does an unmapped plan on the two login pages and `/sign-up`. The homepage alone
 carries two overrides added later the same day. A member who cancelled a paid
@@ -364,8 +365,8 @@ Brand plan goes to `/all-starters`, whether their older free plan is still live 
 nothing is active at all — that second case is an unmapped plan which would
 otherwise have stayed, and an unmapped plan with no cancelled paid Brand behind it
 still does stay. And a free Brand who has not finished the quiz stays on `/`
-instead of being pushed to `/quiz`, which is where the login pages still send
-them. A valid `?next=` outranks both overrides; on `/` it is honoured even for a
+instead of being pushed to `/quiz`. Login pages use the separate source-specific
+default above. A valid `?next=` outranks both overrides; on `/` it is honoured even for a
 member with no mapped role, since deep-link intent does not depend on plan state.
 [Route guard wiring](../docs/wiring/ROUTE-GUARD-WIRING.md) has the exact precedence and the cancelled-plan
 definition. **Per-page logged-out destinations:** the three

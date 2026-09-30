@@ -819,6 +819,106 @@ test('a mapped member on a bounce page resolves to its role home', () => {
   )
 })
 
+test('an authenticated All Starters free Brand reaches the homepage and stays there', async () => {
+  const member = { ...BRAND_FREE, customFields: { 'signup-source': '/all-starters' } }
+  for (const pathname of ['/login', '/starter-login']) {
+    const login = loadGuard({ pathname, member })
+    await flush()
+    assert.equal(login.location.replaced, '/', pathname)
+    const destination = loadGuard({ pathname: login.location.replaced, member })
+    await flush()
+    assert.equal(destination.location.replaced, undefined)
+  }
+})
+
+test('authenticated Learn signup free Brands reach the homepage and stay there', async () => {
+  for (const source of [
+    '/learn/sessions/partnerships-playbook',
+    '/learn/interviews-analysis/how-to-build-trust-on-social-media-in-2026',
+    '/learn/playbooks-frameworks/the-live-shopping-playbook',
+  ]) {
+    const member = { ...BRAND_FREE, customFields: { 'signup-source': source } }
+    for (const pathname of ['/login', '/starter-login']) {
+      const login = loadGuard({ pathname, member })
+      await flush()
+      assert.equal(login.location.replaced, '/', source + ' from ' + pathname)
+      const destination = loadGuard({ pathname: login.location.replaced, member })
+      await flush()
+      assert.equal(destination.location.replaced, undefined, source)
+    }
+  }
+})
+
+test('Learn signup sources preserve quiz precedence and unrelated entry behavior', async () => {
+  const source = '/learn/playbooks-frameworks/the-live-shopping-playbook'
+  const cases = [
+    ['/login', '', { 'starter-quiz': '{"status":"ready"}' }, '/quiz-results'],
+    ['/login', '?next=%2Fall-starters%3Fview%3Dfavorites', {}, '/all-starters?view=favorites'],
+    ['/login', '?next=%2Fquiz%3Fretake%3Dtrue', {}, '/quiz?retake=true'],
+    ['/login', '?next=%2Fbrand-dashboard', {}, '/'],
+    ['/login', '?next=https%3A%2F%2Fexample.com', {}, '/'],
+    ['/dashboard', '', {}, '/quiz'],
+    ['/brand-dashboard', '', {}, '/quiz'],
+    ['/sign-up', '', {}, '/quiz'],
+    ['/quiz', '?retake=true', {}, undefined],
+  ]
+  for (const [pathname, search, customFields, expected] of cases) {
+    const { location } = loadGuard({
+      pathname, search,
+      member: { ...BRAND_FREE, customFields: { 'signup-source': source, ...customFields } },
+    })
+    await flush()
+    assert.equal(location.replaced, expected, pathname + search)
+  }
+})
+
+test('an All Starters login still resolves an explicit dashboard return to quiz home', async () => {
+  const { location } = loadGuard({
+    pathname: '/login',
+    search: '?next=%2Fdashboard',
+    member: { ...BRAND_FREE, customFields: { 'signup-source': '/all-starters' } },
+  })
+  await flush()
+  assert.equal(location.replaced, '/quiz')
+})
+
+test('authenticated free Brand login preserves quiz precedence and source fallbacks', async () => {
+  const cases = [
+    [{ 'signup-source': '/all-starters', 'starter-quiz': '{"status":"ready"}' }, '/quiz-results'],
+    [{ 'signup-source': '/quiz' }, '/quiz'],
+    [{}, '/quiz'],
+    [{ 'signup-source': '/hire/example' }, '/quiz'],
+    [{ 'signup-source': { path: '/all-starters' } }, '/quiz'],
+    [{ 'signup-source': ['/all-starters'] }, '/quiz'],
+    [{ 'signup-referrer': '/all-starters', 'signup-trigger': '/all-starters' }, '/quiz'],
+  ]
+  for (const [customFields, expected] of cases) {
+    const { location } = loadGuard({ pathname: '/login', member: { ...BRAND_FREE, customFields } })
+    await flush()
+    assert.equal(location.replaced, expected, JSON.stringify(customFields))
+  }
+})
+
+test('All Starters authenticated login preserves return validation and other entry routes', async () => {
+  const member = { ...BRAND_FREE, customFields: { 'signup-source': '/all-starters' } }
+  const cases = [
+    ['/login', '/all-starters?view=favorites', '/all-starters?view=favorites'],
+    ['/login', '/quiz?retake=true', '/quiz?retake=true'],
+    ['/login', '/brand-dashboard', '/'],
+    ['/login', 'https://example.com/all-starters', '/'],
+    ['/login', '/starter-login', '/'],
+    ['/dashboard', null, '/quiz'],
+    ['/brand-dashboard', null, '/quiz'],
+    ['/sign-up', null, '/quiz'],
+    ['/quiz', null, undefined],
+  ]
+  for (const [pathname, next, expected] of cases) {
+    const { location } = loadGuard({ pathname, member, search: next ? '?next=' + encodeURIComponent(next) : '' })
+    await flush()
+    assert.equal(location.replaced, expected, pathname + ' next=' + next)
+  }
+})
+
 test('an unmapped or conflicted member gets no bounce target at all', () => {
   const { api } = loadGuard()
   const conflict = {

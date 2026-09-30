@@ -28,8 +28,8 @@ deciding.
 Out of scope on purpose for now: `/opportunities-brands-view`,
 `/opportunities---create`, `/favorites`, `/complete-profile` (outbound half owns
 it). Install one deferred tag per page (or sitewide — the path gate no-ops
-elsewhere). Paid-Brand only in effect: Talent / free-Brand get `has_record: false`
-and stay.
+elsewhere). The route guard's `memberRole` contract limits the check to paid
+Brands. Talent and free Brands stay even if they have an unfinished Brand record.
 
 Its counterpart is
 [complete-profile-redirect.js](COMPLETE-PROFILE-REDIRECT-WIRING.md), the
@@ -65,6 +65,7 @@ Walked in this order, top to bottom, first match wins:
 | --- | --- |
 | The page loads and the check starts | Show `[data-page-spinner]`, covering the page for the length of the read |
 | `thestarters:v3-brand-profile-completed` holds a non-empty value | Hide the spinner and render the dashboard — **no Xano call at all** |
+| Member is not confirmed `brand-paid`, or the route guard contract is unavailable | Hide the spinner and stay — **no Xano call** |
 | `has_record: true`, `brand_profile_done: false` | `location.replace('/complete-profile')`, leaving the spinner up through the navigation |
 | `has_record: true`, `brand_profile_done: true` | Hide the spinner and render the dashboard |
 | `has_record: false` (any `brand_profile_done`) | Hide the spinner and render the dashboard |
@@ -111,15 +112,12 @@ The redirect is a **UX courtesy, not a security boundary**. Access control stays
 where it already is: Memberstack gated content, `v3/route-guard.js` for role
 routing, and Xano endpoint authorization for the records themselves.
 
-### No role logic, on purpose
+### Shared role classification
 
-A Talent or free-Brand member who reaches `/brand-dashboard` is the route guard's
-problem, and the guard runs first and sitewide. This module deliberately carries
-no plan-ID table and does not borrow the guard's role contract, because it does
-not need to: for those members the endpoint answers `has_record: false` — they
-have no Brand row — which lands in the stay branch and leaves the page alone. The
-two modules therefore cannot fight over the same visitor, and the wrong-role case
-costs one harmless read.
+The route guard owns role classification and access redirects. A Brand record
+can also exist for a free Brand, so record existence cannot establish paid
+access. This module carries no plan-ID table; it uses the guard's `memberRole`
+contract before the profile-status read, following the decision table above.
 
 ### The completion marker, and why it has to exist
 
@@ -209,10 +207,8 @@ Pin `@v1.59.116` (or newer) instead of `@main` / `@latest` once the release tag
 exists. Until then `@latest` 404s this file (tag still on `v1.59.115`).
 
 **It must load after `v3/route-guard.js`**, which is sitewide and already earlier
-in the document, so role routing has run before this module starts a network call.
-It does not read the guard's globals, so this is an ordering courtesy rather than a
-hard dependency — but a wrong-role member should be gone before a pointless Xano
-read goes out on their behalf.
+in the document. It uses `window.StartersV3RouteGuard.memberRole` to confirm a paid
+Brand before reading Xano. If that contract is unavailable, it leaves the page alone.
 
 **Its counterpart lives on `/complete-profile`**, not these pages:
 `v3/complete-profile-redirect.js` stays embedded there only. Do not add either
@@ -224,8 +220,8 @@ built.
 1. Memberstack must be loaded on the page (it is loaded site-wide today). The
    module waits up to 8 seconds for `window.$memberstackDom` and then fails open.
 2. `/brand-dashboard` is `brand-paid` in the route-guard matrix. Leave that entry
-   alone; this module assumes the guard has already done role routing and
-   deliberately contains no role logic of its own.
+   alone; this module reuses the guard's role classification without duplicating
+   its plan mapping.
 3. **Optional: a `[data-page-spinner]` element**, hidden by default, positioned and
    z-indexed to actually cover the page. The module only toggles `display`; how
    much it hides is a styling question. Keep it **outside** any `.w-form` wrapper,
@@ -272,9 +268,10 @@ console — staging is chatty, production is silent. The prefix is
    marker is gone with the old session, so the read runs for real and must answer
    done — if it bounces you, the webhook has not landed yet, so wait and retry
    before filing it as a bug.
-5. **A Talent session on the page.** The route guard should move you first. If you
-   defeat the guard, the endpoint answers `has_record: false`, the console notes
-   it, and the page is left alone — no redirect to `/complete-profile`.
+5. **A Talent or free Brand session.** This module skips the profile-status read
+   regardless of whether a Brand record exists. A free Brand's explicit
+   `/all-starters` return must remain there; the route guard still controls access
+   to restricted pages.
 6. **Offline / blocked-Xano check.** With the Network tab throttled to offline (or
    the Xano origin blocked), reload the page: it must render normally within a
    couple of seconds, spinner down, never a blank or stuck state.
@@ -288,7 +285,7 @@ console — staging is chatty, production is silent. The prefix is
 | Never redirects, console silent | The tag is not on the page, or the hostname is not approved. Check `window.StartersBrandProfileRedirect` exists in the console. |
 | Pasted a copy of the file (console or a second embed) and nothing happens | The boot guard, working as designed: a copy already loaded by the page's CDN tag set `window.__startersBrandProfileRedirectBooted`, so every later copy exits immediately. To hand-exercise the module, call `window.StartersBrandProfileRedirect.redirectIfIncomplete()` on staging instead of re-running the file. |
 | Never redirects, console says "could not read brand profile status" | The trade-token or read call failed. The message carries the status; check the member has a `user_v3` row (trade-token 404s without one) and that `get_brand_profile_status` is deployed. |
-| Never redirects, console says "has_record = false" | The read succeeded and Xano has no Brand row for this member. Correct for a Talent or free-Brand session; for a paid Brand it means the signup webhook never mirrored them. |
+| Never redirects, console says "has_record = false" | The read succeeded but Xano has no Brand row for this paid member; the signup webhook may not have mirrored them yet. |
 | Never redirects, console says "completion marker is set" | The marker is in this tab's `sessionStorage`. Expected right after a submit. If it is stale, open a new tab — this file never clears it. Check the value with `sessionStorage.getItem(window.StartersBrandProfileRedirect.markerKey)`. |
 | **Ping-pong between `/brand-dashboard` and `/complete-profile`** | The two halves disagree, or the marker was not written on submit. Both now read Xano, so a true ping-pong usually means a stale embed of one half still on the old Memberstack-field code, or a marker key mismatch with [brand-account-controller.js](BRAND-ACCOUNT-WIRING.md). Confirm both CDN files carry the Xano path and that `sessionStorage.getItem('thestarters:v3-brand-profile-completed')` is set right after submit. |
 | Redirected to `/complete-profile` and immediately sent back | Same root cause from the other side: outbound half thinks done, inbound thinks not. Check marker + both embeds on the Xano signal. |

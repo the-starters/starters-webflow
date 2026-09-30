@@ -332,6 +332,14 @@
     var contract = roleContract()
     return contract ? contract.roleHome(member) : null
   }
+  function loginDefault(member) {
+    var contract = roleContract()
+    if (!contract) return null
+    // A cached guard from before this exception keeps its existing default.
+    return typeof contract.loginDefault === 'function'
+      ? contract.loginDefault(member)
+      : contract.roleHome(member)
+  }
   function hasCompletedQuiz(member) {
     var contract = roleContract()
     return contract ? contract.hasCompletedQuiz(member) : false
@@ -456,7 +464,9 @@
 
     var requested = localPath(requestedDestination)
     var requestedPathname = pathnameOf(requested)
-    if (requestedPathname === DASHBOARD_PATH) return roleHome(member)
+    if (requestedPathname === DASHBOARD_PATH || requestedPathname === DASHBOARD_PATH + '/') {
+      return roleHome(member)
+    }
     var matchesRoleDestination =
       requestedPathname &&
       (ROLE_DESTINATIONS[role].has(requestedPathname) ||
@@ -469,7 +479,7 @@
       return requested
     }
 
-    return roleHome(member)
+    return loginDefault(member)
   }
 
   function readStoredDestination() {
