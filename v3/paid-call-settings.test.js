@@ -4192,6 +4192,23 @@ test('readiness events refresh canonical settings without a reload', async () =>
   assert.equal(result.dom.save.disabled, false)
 })
 
+test('a loading calendar state does not start a Paid settings read', async () => {
+  const result = load({ initial: canonical({ readiness: { calendar_connected: false } }) })
+  await settle()
+  const reads = () => result.calls.filter((call) => call.path === '/starter/paid-call-settings/get/v3').length
+  assert.equal(reads(), 1)
+
+  await result.dispatchWindow('starterSchedulingConnectionStateChanged', { state: 'loading' })
+  await settle()
+  assert.equal(reads(), 1)
+
+  result.getState().readiness.calendar_connected = true
+  await result.dispatchWindow('starterSchedulingConnectionStateChanged', { state: 'connected' })
+  await settle()
+  assert.equal(reads(), 2)
+  assert.equal(result.dom.save.disabled, false)
+})
+
 test('a newer readiness read cannot be overwritten by initial canonical state', async () => {
   const initialRead = deferred()
   const readinessRead = deferred()

@@ -1824,7 +1824,8 @@
       })
     }
     ;['starterSchedulingConnectionStateChanged', 'starterStripeConnectReady'].forEach(function (name) {
-      window.addEventListener(name, function () {
+      window.addEventListener(name, function (event) {
+        if (name === 'starterSchedulingConnectionStateChanged' && event && event.detail && event.detail.state === 'loading') return
         refreshFromPrerequisite().catch(function () {})
       })
     })

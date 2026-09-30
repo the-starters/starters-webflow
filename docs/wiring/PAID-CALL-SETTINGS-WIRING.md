@@ -278,6 +278,9 @@ The controller sets `data-ready="true|false"` on each row. It also sets these wr
 - Calendar setup creates only free-call configurations. Availability edits update the availability block of every active canonical configuration without sending title or price fields. Calendar code does not read `#price`, `data-rate`, or `paid_call_rate` in `localStorage`. Its bookable-slots preview does read the canonical Paid service to render duration and price read-only; the admission rules for that card live in [Booking-stage availability section](../../v3/README.md#booking-stage-availability-section).
 - Calendar transitions carry a one-use intent captured from canonical paid-call GET through the existing OAuth session envelope, then recreate it through paid-call upsert and canonical readback. A canonical rate outside the `$1` to `$1,000` whole-dollar range stops that capture before any destructive provider or calendar request and surfaces the rate-specific remediation message, so the stored service is never preserved, rounded, or silently dropped.
 - The Xano projection function remains the only writer to `freelancers_v3.Paid_Call_Enabled` and `Paid_Call_Rate` for this flow.
+- `starterSchedulingConnectionStateChanged` triggers a non-destructive canonical re-read only after
+  Calendar connection state has settled. The transient `loading` event is ignored so the page does
+  not repeat the same canonical GET before final availability.
 - The controller uses the owner-specific fetch reference retained by `scheduling-auth.js`. It accepts
   `window.xanoAuthFetch` as a compatibility fallback only while
   `window.__tsSchedulingAuthBridgeOwner` still identifies `scheduling-auth` as its owner. The bridge

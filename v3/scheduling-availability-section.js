@@ -3151,7 +3151,6 @@
       renderAvailabilityItems()
       renderSlotsPreview()
 
-      publishCalendarConnectionState(state)
       revealSection(state)
       setStatus('ready')
       emit('starterSchedulingSectionReady', { memberId: sessionMemberId })

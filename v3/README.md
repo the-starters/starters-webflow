@@ -2039,6 +2039,15 @@ Current safety boundary:
   code. It also retains its own auth-fetch reference for the stage adapter,
   because another page bundle can replace the public compatibility global
   after this bridge installs.
+- On `/starter-dashboard` only, exposes the read-only
+  `window.__tsSchedulingAuthTokenReuse` hook for dashboard list prewarmers. The
+  hook never starts an auth trade: it returns only a cached token or a matching
+  scheduling GET token that is already in flight or starts within 200ms, waits
+  at most 5000ms for that selected owner request, and then rechecks the exact
+  Memberstack cookie, session generation, revision, token value, owner auth
+  base, and `/auth/trade-token/v3` path before returning. A miss, timeout,
+  failed trade, logout, account switch, or token mismatch returns `null` so the
+  consumer keeps its normal session-checked POST fallback.
 - Dashboard data controllers reuse the site-head `window.memberReady` promise
   for their initial identity snapshot and `window.getXanoAuthToken` for the
   Opportunities, Points, Messages, and Stripe reads. This keeps one shared

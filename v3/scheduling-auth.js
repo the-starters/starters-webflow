@@ -160,6 +160,7 @@
   let xanoAuthToken = null
   let xanoAuthTokenMemberstackToken = null
   let tokenRequest = null
+  const tokenStartListeners = new Set()
   const sharedReads = new Map()
   let sharedReadsRevision = 0
   const sharedMemberstackReads = new Map()
@@ -231,6 +232,9 @@
     xanoAuthToken = null
     xanoAuthTokenMemberstackToken = null
     tokenRequest = null
+    tokenStartListeners.forEach(function (listener) {
+      listener(null)
+    })
     clearSharedReads()
     invalidateMemberstackReads()
   }
@@ -439,10 +443,88 @@
     })()
 
     tokenRequest = { generation, revision, memberstackToken, promise }
+    tokenStartListeners.forEach(function (listener) {
+      listener(tokenRequest)
+    })
     try {
       return await promise
     } finally {
       if (tokenRequest && tokenRequest.promise === promise) tokenRequest = null
+    }
+  }
+
+  // The deferred wf-xano library can reuse this dashboard token only when a
+  // scheduling caller already has it or starts the trade within 200 ms. This
+  // method never starts a trade; wf-xano retains its own fallback when null.
+  async function reuseDashboardToken(memberstackToken) {
+    if (typeof memberstackToken !== 'string' || !memberstackToken) return null
+    try {
+      await awaitLatestAuthReconciliation()
+      const memberstack = window.$memberstackDom
+      if (!memberstack || typeof memberstack.getMemberCookie !== 'function') return null
+      const currentMemberstackToken = await memberstack.getMemberCookie()
+      observeMemberstackToken(currentMemberstackToken)
+      if (currentMemberstackToken !== memberstackToken) return null
+      const generation = sessionGeneration
+      const revision = tokenRevision
+      let token = xanoAuthTokenMemberstackToken === memberstackToken ? xanoAuthToken : null
+      if (!token) {
+        const matches = function (request) {
+          return request && request.generation === generation &&
+            request.revision === revision &&
+            request.memberstackToken === memberstackToken
+        }
+        let request = matches(tokenRequest) ? tokenRequest : null
+        if (!request) {
+          request = await new Promise(function (resolve) {
+            let timer
+            const settle = function (value) {
+              tokenStartListeners.delete(onStart)
+              window.clearTimeout(timer)
+              resolve(value)
+            }
+            const onStart = function (started) {
+              if (!started || matches(started)) settle(started)
+            }
+            tokenStartListeners.add(onStart)
+            timer = window.setTimeout(function () {
+              settle(null)
+            }, 200)
+          })
+        }
+        if (!request) return null
+        try {
+          token = await new Promise(function (resolve) {
+            let timer
+            const settle = function (value) {
+              window.clearTimeout(timer)
+              resolve(value)
+            }
+            timer = window.setTimeout(function () {
+              resolve(null)
+            }, 5000)
+            request.promise.then(settle, function () {
+              settle(null)
+            })
+          })
+        } catch (error) {
+          return null
+        }
+        if (!token) return null
+      }
+      await awaitLatestAuthReconciliation()
+      const latestMemberstackToken = await memberstack.getMemberCookie()
+      observeMemberstackToken(latestMemberstackToken)
+      if (
+        latestMemberstackToken !== memberstackToken ||
+        generation !== sessionGeneration ||
+        revision !== tokenRevision ||
+        xanoAuthToken !== token ||
+        xanoAuthTokenMemberstackToken !== memberstackToken
+      ) return null
+      return token
+    } catch (error) {
+      return null
     }
   }
 
@@ -616,6 +698,17 @@
     // controllers. Other page bundles still expose compatibility bridges on
     // window.xanoAuthFetch and can replace that mutable global after install.
     window.__tsSchedulingAuthFetch = xanoAuthFetch
+    if (
+      activePath === '/starter-dashboard' &&
+      (isStagingHost || PRODUCTION_HOSTS.has(window.location.hostname))
+    ) {
+      window.__tsSchedulingAuthTokenReuse = {
+        owner: 'scheduling-auth',
+        authBase: XANO_ORIGIN + '/api:g1vmSLWh',
+        tradePath: '/auth/trade-token/v3',
+        getToken: reuseDashboardToken,
+      }
+    }
     window.xanoAuthFetch = xanoAuthFetch
     window.fetch = authenticatedFetch
     window.__tsSchedulingAuthBridge = true

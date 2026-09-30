@@ -935,6 +935,16 @@ test('getUpcomingTimeSlots returns the full booking window when limit is zero', 
 /* Tests: connection-state -> visibility                               */
 /* ------------------------------------------------------------------ */
 
+test('initial connection refresh publishes one loading state and one final state', async () => {
+  const { events } = loadSection()
+  await settle()
+
+  const states = events
+    .filter((event) => event.type === 'starterSchedulingConnectionStateChanged')
+    .map((event) => event.detail.state)
+  assert.deepEqual(states, ['loading', 'disconnected'])
+})
+
 test('boots into disconnected state: only Connect Platform visible', async () => {
   const { dom, window } = loadSection()
   await settle()
