@@ -47,6 +47,11 @@
   const REQUEST_EXPIRATION_TICK_MS = 10000
   const REQUEST_EXPIRATION_POLL_MS = 30000
   const REQUEST_EXPIRATION_MAX_POLLS = 3
+  // F54: F40 writes a virtual-calendar Meet link 38 to 56 s after the confirm
+  // (task #760), and the list was read once. A Starter's upcoming confirmed
+  // row with no link gets these re-reads, counted from the tick that first
+  // sees it. Some calendars never get a link, so the budget is 3 per row.
+  const MEETING_LINK_POLL_DELAYS_MS = [45000, 90000, 150000]
   const MUTATION_RECONCILIATION_MAX_PASSES = 3
   const CANONICAL_READ_TIMEOUT_MS = 10000
   const PROFILE_REFRESH_DELAYS_MS = [0, 150, 300, 600, 1000, 1600, 2500]
@@ -585,15 +590,19 @@
     return bookingStatus(booking, referenceTime)
   }
 
-  function meetingHrefAtReference(booking, currentTime) {
+  function meetingWindowOpenAt(booking, currentTime) {
     const raw = clean(booking && booking.status).toLowerCase()
-    if (currentTime == null) return ''
+    if (currentTime == null) return false
     const status = raw === 'rescheduled' ? raw : bookingStatus(booking, currentTime)
-    if (!['confirmed', 'rescheduled'].includes(status)) return ''
+    if (!['confirmed', 'rescheduled'].includes(status)) return false
     const interval = effectiveConfirmedInterval(booking)
     const start = interval.start
     const end = interval.end
-    if (!Number.isFinite(start) || start <= 0 || !Number.isFinite(end) || end <= start || end <= currentTime) return ''
+    return Number.isFinite(start) && start > 0 && Number.isFinite(end) && end > start && end > currentTime
+  }
+
+  function meetingHrefAtReference(booking, currentTime) {
+    if (!meetingWindowOpenAt(booking, currentTime)) return ''
     return safeMeetingHref(booking && booking.meeting_link)
   }
 
@@ -1277,6 +1286,32 @@
     return Boolean(apply(booking, { status: cancellation.status }, claim))
   }
 
+  /**
+   * F54: booking IDs of rows in their confirmed meeting window with no Meet
+   * link. The window and the clock are the ones the meeting-link paint uses,
+   * so a row is re-read only while a link that arrives would be painted.
+   * @param {Array} refs Dashboard sections.
+   * @param {number} now Current time in ms.
+   * @returns {string[]} Booking IDs.
+   */
+  function missingMeetingLinkKeys(refs, now) {
+    const keys = []
+    ;(Array.isArray(refs) ? refs : []).forEach(function (section) {
+      ;(section && Array.isArray(section.rows) ? section.rows : []).forEach(function (booking) {
+        if (!booking || clean(booking.meeting_link) !== '') return
+        if (!meetingWindowOpenAt(booking, meetingReferenceTime(booking, now))) return
+        const key = clean(booking.booking_id || booking.id)
+        if (key && keys.indexOf(key) === -1) keys.push(key)
+      })
+    })
+    return keys
+  }
+
+  function pageHidden() {
+    const document = global.document
+    return Boolean(document && (document.visibilityState === 'hidden' || document.hidden === true))
+  }
+
   function startBookingLifecycleTicker(refs, role, restart, options) {
     const settings = options || {}
     // The old inline helper remains defined, but its legacy list generator is
@@ -1290,6 +1325,34 @@
     let refreshBusy = false
     let nextPollAt = 0
     const polls = new Map()
+    // F54: per-row Meet link re-reads, Starter only. An entry outlives a reset
+    // of the rendered rows, so a row that comes back keeps its spent budget.
+    const linkPolls = new Map()
+    const dueMeetingLinkKeys = function (currentTime) {
+      const missing = missingMeetingLinkKeys(refs, currentTime)
+      missing.forEach(function (key) {
+        if (!linkPolls.has(key)) linkPolls.set(key, { since: currentTime, count: 0 })
+      })
+      if (pageHidden()) return []
+      return missing.filter(function (key) {
+        const poll = linkPolls.get(key)
+        return poll.count < MEETING_LINK_POLL_DELAYS_MS.length &&
+          currentTime - poll.since >= MEETING_LINK_POLL_DELAYS_MS[poll.count]
+      })
+    }
+    const spendMeetingLinkPolls = function (keys, currentTime) {
+      keys.forEach(function (key) {
+        const poll = linkPolls.get(key)
+        const delay = MEETING_LINK_POLL_DELAYS_MS[poll.count]
+        // A re-read that runs a full tick late (the page was hidden, or
+        // another ticker read was in flight) restarts the remaining delays
+        // from now, so overdue re-reads never run on back-to-back ticks.
+        if (currentTime - poll.since - delay >= REQUEST_EXPIRATION_TICK_MS) {
+          poll.since = currentTime - delay
+        }
+        poll.count += 1
+      })
+    }
     const tick = function () {
       const currentTime = Number(now())
       refreshMeetingDestinations(refs, currentTime)
@@ -1310,14 +1373,29 @@
       const pollable = expiredKeys.filter(function (key) {
         return (polls.get(key) || 0) < REQUEST_EXPIRATION_MAX_POLLS
       })
-      if (!pollable.length || refreshBusy || currentTime < nextPollAt) return
+      const expiryDue = pollable.length > 0 && currentTime >= nextPollAt
+      const linkDue = dueMeetingLinkKeys(currentTime)
+      // The expiry and Meet link re-reads share one canonical read and one
+      // in-flight guard. A blocked tick spends no budget.
+      if (refreshBusy || (!expiryDue && !linkDue.length)) return
       refreshBusy = true
-      nextPollAt = currentTime + REQUEST_EXPIRATION_POLL_MS
-      pollable.forEach(function (key) {
-        polls.set(key, (polls.get(key) || 0) + 1)
-      })
+      if (expiryDue) {
+        nextPollAt = currentTime + REQUEST_EXPIRATION_POLL_MS
+        pollable.forEach(function (key) {
+          polls.set(key, (polls.get(key) || 0) + 1)
+        })
+      }
+      spendMeetingLinkPolls(linkDue, currentTime)
       Promise.resolve()
         .then(restart)
+        .then(function (refreshed) {
+          // A successful read (true) has repainted the cards and the open
+          // dialog's status and meeting link. Re-check the dialog's pending
+          // copy and actions against the refreshed rows now, not on the next
+          // tick. A failed (false) or superseded read changed no rows.
+          if (!linkDue.length || refreshed !== true) return
+          refreshDetailExpiration(refs, role, Number(now()))
+        })
         .catch(function (error) {
           console.error('[dashboard-calls] expiration refresh failed:', error && error.message)
         })

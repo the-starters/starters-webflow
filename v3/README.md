@@ -2846,15 +2846,36 @@ from the already loaded canonical rows. For Starter requests, Accept disappears
 at the deadline without a reload and without a second timer per card. For either
 role, an open details view for a confirmed call moves to the completed panel and
 clears Join when the effective confirmed interval ends, including while a
-reschedule proposal is pending on the canonical row. Crossing a pending-request
-deadline remains the only timer trigger for a canonical re-read, and that read
-is bounded: at most three refreshes per booking-and-deadline pair, no more than
-one every thirty seconds, and never while another is in flight. That background
-refresh reuses the same identity and endpoint contract, skips repainting a
-section whose canonical rows are unchanged, restores the extra pages each
-section's load-more control had already revealed, and on a canonical read
-failure logs and leaves the rendered list in place instead of failing the whole
-dashboard closed. A missing member is the one exception and still fails closed.
+reschedule proposal is pending on the canonical row. On the Starter dashboard,
+two conditions trigger a timed canonical re-read. Both are bounded, and they
+share one in-flight guard: neither starts while the other is in flight, and a
+tick that the guard blocks spends no budget. Each re-read goes through the
+serialized session refresh (`refreshExpiredRequests`), so it waits behind a
+refresh of the same session, and a newer session discards its result.
+
+- Crossing a pending-request deadline: at most three refreshes per
+  booking-and-deadline pair, and no more than one every thirty seconds.
+- A Meet link that is not written yet (F54, JP meeting 2026-09-30). F40 writes
+  a virtual-calendar Meet link 38 to 56 s after the confirm (task #760). A row
+  in its confirmed meeting window with an empty `meeting_link` gets re-reads
+  45, 90, and 150 s after the tick that first sees it: at most three per row
+  for the life of the page. The window and the clock are the ones the
+  meeting-link paint uses, so a rescheduled row uses `start_old` to `end_old`,
+  a call in progress still counts, and the canonical booking clock wins. No
+  re-read runs while `document.visibilityState` is `hidden`. When a re-read
+  runs a full tick late (the page was hidden, or another ticker read was in
+  flight), the remaining delays restart from that re-read, so overdue re-reads
+  never run on back-to-back ticks. A reset of the rendered rows keeps each
+  row's spent count. A successful re-read repaints the cards, the open
+  dialog's meeting link, and its actions at once. The Brand dashboard gets no
+  Meet link re-read.
+
+These background refreshes reuse the same identity and endpoint contract, skip
+repainting a section whose canonical rows are unchanged, restore the extra
+pages each section's load-more control had already revealed, and on a
+canonical read failure log and leave the rendered list in place instead of
+failing the whole dashboard closed. A missing member is the one exception and
+still fails closed.
 
 Loading, empty, and error displays reuse the authored elements instead of
 generating UI. The filter wrapper stays hidden during identity resolution and
