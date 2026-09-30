@@ -120,6 +120,19 @@ file metadata matches a prior choice. A returning Starter's stored photo URL sta
 in draft capture until its replacement commits. If the browser cannot create a
 valid ID, the controller fails closed before it starts the upload.
 
+Fetch wrappers may pass the photo upload as a multipart `Request` instead of
+raw `FormData`. The shim clones that request, applies `RequestInit` overrides,
+and parses its effective multipart headers and body without consuming the caller.
+Malformed multipart data fails before token trade or upload. Keep a regression
+that composes the scheduling auth bridge with the shim: converting the body to a
+stream previously caused `PROFILE_IMAGE_INPUT_INVALID` on Starter Edit Profile.
+
+This guarantees non-consumption at the photo shim boundary. The reported
+controller calls `fetch(url, options)`; that path is covered with the scheduling
+wrapper installed. A caller-owned `Request` passed first through the existing
+scheduling wrapper can still be consumed by that upstream wrapper. Changing
+scheduling authentication or its page loader is outside this photo release.
+
 `profile-image-auth-shim.js` owns authentication and resizing for this upload
 request. It rejects a missing or malformed
 `source_mutation_id` before token trade or upload, removes any legacy

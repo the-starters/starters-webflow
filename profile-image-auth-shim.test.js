@@ -49,10 +49,13 @@ function loadShim({
   fetchImpl,
   createImageBitmapImpl = async () => null,
   documentImpl,
+  schedulingBridge = false,
 }) {
   const calls = []
   const window = {
-    location: { hostname, pathname, origin },
+    location: { hostname, pathname, origin, href: origin + pathname },
+    setTimeout() {},
+    clearTimeout() {},
     localStorage,
     $memberstackDom: {
       async getMemberCookie() {
@@ -86,10 +89,91 @@ function loadShim({
     document: documentImpl,
   })
   vm.runInContext(source, context)
+  if (schedulingBridge) {
+    vm.runInContext(fs.readFileSync(require.resolve('./v3/scheduling-auth.js'), 'utf8'), context)
+  }
   return { window, calls, localStorage }
 }
 
 async function run() {
+  const photoEndpoint = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/build_profile/starter/profile_image'
+  const photoMutationId = 'fixture_profile_photo_123456789'
+  function photoBody(bytes = 'fixture-image', id = photoMutationId) {
+    const body = new FormData()
+    body.append('image', new Blob([bytes], { type: 'image/png' }), 'fixture.png')
+    body.append('source_mutation_id', id)
+    body.append('member_id', 'must-not-forward')
+    return body
+  }
+
+  // The real scheduling bridge wraps an unrelated multipart fetch in Request.
+  for (const schedulingBridge of [false, true]) {
+    const { window, calls } = loadShim({ hostname: 'thestarters.com', schedulingBridge })
+    const input = schedulingBridge ? photoEndpoint : new Request(photoEndpoint, {
+      method: 'POST', body: photoBody(),
+    })
+    const response = await window.fetch(input, schedulingBridge
+      ? { method: 'POST', body: photoBody() } : undefined)
+    assert.equal(response.status, 200)
+    assert.equal(calls.length, 2)
+    const outgoing = calls[1].init
+    assert.equal(await outgoing.body.get('image').text(), 'fixture-image')
+    assert.equal(outgoing.body.get('source_mutation_id'), photoMutationId)
+    assert.equal(outgoing.body.get('member_id'), null)
+    assert.equal(new Headers(outgoing.headers).get('Authorization'), 'Bearer xano-token')
+    if (!schedulingBridge) assert.equal(input.bodyUsed, false)
+  }
+
+  // Native RequestInit semantics determine the effective body and headers.
+  for (const override of ['body', 'stale-boundary', 'null-body', 'method', 'headers']) {
+    const { window, calls } = loadShim({ hostname: 'thestarters.com' })
+    const request = new Request(photoEndpoint, {
+      method: override === 'method' ? 'PUT' : 'POST', body: photoBody('original'),
+    })
+    const init = override === 'body' ? { body: photoBody('replacement'), headers: {} }
+      : override === 'stale-boundary' ? { body: photoBody('replacement') }
+      : override === 'null-body' ? { body: null }
+        : override === 'method' ? { method: 'POST' }
+          : { headers: { 'Content-Type': 'application/json' } }
+    const response = await window.fetch(request, init)
+    assert.equal(request.bodyUsed, false)
+    assert.equal(response.status, ['headers', 'stale-boundary'].includes(override) ? 400 : 200)
+    if (['headers', 'stale-boundary'].includes(override)) {
+      assert.equal((await response.json()).code, 'PROFILE_IMAGE_INPUT_INVALID')
+      assert.equal(calls.length, 0)
+    } else {
+      assert.equal(await calls[1].init.body.get('image').text(), override === 'body' ? 'replacement' : 'original')
+    }
+  }
+
+  for (const body of [null, 'not-multipart', JSON.stringify({ image: 'not-a-file' }), new FormData(), photoBody('fixture', 'invalid')]) {
+    const { window, calls } = loadShim({ hostname: 'thestarters.com' })
+    const request = new Request(photoEndpoint, { method: 'POST', body })
+    const response = await window.fetch(request)
+    assert.equal(response.status, 400)
+    assert.equal((await response.json()).code, body instanceof FormData && body.get('image')
+      ? 'PROFILE_IMAGE_MUTATION_ID_INVALID' : 'PROFILE_IMAGE_INPUT_INVALID')
+    assert.equal(calls.length, 0)
+    assert.equal(request.bodyUsed, false)
+  }
+
+  {
+    const { window, calls } = loadShim({ hostname: 'thestarters.com' })
+    const request = new Request(photoEndpoint, { method: 'POST', body: photoBody() })
+    await request.text()
+    const response = await window.fetch(request)
+    assert.equal(response.status, 400)
+    assert.equal((await response.json()).code, 'PROFILE_IMAGE_INPUT_INVALID')
+    assert.equal(calls.length, 0)
+  }
+
+  {
+    const { window, calls } = loadShim({ hostname: 'the-starters-3-0.webflow.io' })
+    const request = new Request(photoEndpoint, { method: 'POST', body: photoBody() })
+    assert.equal((await window.fetch(request)).status, 403)
+    assert.equal(request.bodyUsed, false)
+    assert.equal(calls.length, 0)
+  }
   {
     const { window, localStorage } = loadShim({ hostname: 'thestarters.com' })
     assert.equal(window.__TS_EDIT_PROFILE_MODE__, 'live-write')
@@ -746,11 +830,13 @@ async function run() {
     body.append('image', new Blob(['same-upload-bytes'], { type: 'image/jpeg' }), 'photo.jpg')
     body.append('source_mutation_id', sourceMutationId)
     body.append('member_id', 'legacy-member-id-must-not-pass')
-    const response = await window.fetch(endpoint, {
+    const request = new Request(endpoint, {
       method: 'POST',
       headers: { Authorization: 'Bearer existing-token' },
       body,
     })
+    const response = await window.fetch(request)
+    assert.equal(request.bodyUsed, false)
     assert.equal(response.status, 200)
     assert.equal(tradeCount, 2)
     assert.equal(bitmapCount, 1)
