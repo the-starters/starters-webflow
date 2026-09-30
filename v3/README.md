@@ -673,7 +673,8 @@ allowlist. It fills the authored hidden
 signup form only for a listed slug with complete markup. It makes no request and
 does not inspect or change the query string. The slug list controls visibility
 only; the backend remains responsible for atomically claiming the exact
-admin-prebuilt profile for the first Memberstack account.
+admin-prebuilt profile only for an eligible fresh `member.created` signup.
+Existing accounts and later updates cannot establish or switch that binding.
 
 Load the approved slug list before the deferred controller on the Hire template.
 Kaeser's production list is still pending external input, so keep the list empty
