@@ -190,17 +190,11 @@ Unlike a guarded page, a bounce page never gets the `data-route-guard="checking"
 stamp. These pages are authored for signed-out visitors and must not depend on
 this script to become visible; the only attribute the bounce ever sets is
 `data-route-guard="redirecting"` on the way out. No role home is itself a bounce
-page. The separate login default can lead to `/`, where the existing homepage
-stay rule prevents a second redirect; the runtime tests follow that destination.
+page. For the login default's homepage destination, see the
+[homepage overrides](../../v3/ACCESS-MATRIX.md#homepage-overrides).
 
-On `/login` and `/starter-login`, free Brands with persisted `signup-source`
-matching `/all-starters` or a recognized Learn item path and no completed quiz
-default to `/`. Recognized Learn families are `/learn/sessions/`,
-`/learn/interviews-analysis/`, and `/learn/playbooks-frameworks/`, with exactly
-one normalized item slug; listing pages are excluded. Completed quizzes still
-select `/quiz-results`; other sources retain `/quiz`. This shared decision
-also drives `/auth-route`, but does not change `/sign-up`, canonical dashboard
-returns, guarded-page defaults, or immediate modal-signup returns. See the
+`/login`, `/starter-login`, and `/auth-route` share the guard's `loginDefault(member)`
+decision. Its source matching, quiz precedence, and scope are owned by the
 [login-default contract](../../v3/ACCESS-MATRIX.md#non-quiz-free-brand-login-default).
 
 Note that `/login` and `/starter-login` are also configured by

@@ -125,7 +125,9 @@ one route-level rule that page needs.
 > `route-guard.js` owns this via the exported `brandFreeHome(member)` /
 > `hasCompletedQuiz(member)` contract. `auth-route.js` reuses that contract.
 > That contract is unchanged by the 2026-08-04 fix: the field stays the only
-> signal for *where a free Brand is sent*. The extra pending-payload signal
+> quiz-completion signal for the role home. Login uses the separate
+> [login-default contract](#non-quiz-free-brand-login-default).
+> The extra pending-payload signal
 > applies solely to *whether a free Brand may stay on `/quiz-results`* — see
 > [Post-signup pending quiz](#post-signup-pending-quiz).
 
@@ -134,10 +136,13 @@ one route-level rule that page needs.
 > is not signed in, because they are the pre-signup funnel itself. What
 > `route-guard.js` adds there is a one-way bounce for a member it can positively
 > identify and map to a role: that member is sent to a validated `?next=` if one
-> is present, else to the role home. A `?next=` survives only when it is
+> is present, else follows the [login default](#non-quiz-free-brand-login-default)
+> or [homepage overrides](#homepage-overrides); `/sign-up` uses the role home.
+> A `?next=` survives only when it is
 > same-origin and either allowed for the member's role or on a page the guard does
 > not police at all; a `next` pointing back at one of these four pages is refused,
-> and `/dashboard` resolves to the role home rather than being handed back. Every
+> and `/dashboard` or `/dashboard/` resolves to the role home rather than being
+> handed back. Every
 > inconclusive case leaves the page untouched with no error attribute and no
 > redirect: logged out, Memberstack missing or slow, unmapped plan, or a
 > cross-role conflict (that last one is a console message only, because a public
@@ -312,17 +317,18 @@ The guard owns this shared login decision. No current-page, referrer, trigger,
 cookie, or query value classifies the member.
 
 A completed durable `starter-quiz` signal selects `/quiz-results` first.
-Quiz-origin, missing, unknown, and malformed sources retain `/quiz`. Completed
-quiz precedence and the unknown-source fallback are conservative working
-assumptions. Allowed `next` values keep their existing validation and precedence;
-an explicit canonical `/dashboard` return still resolves to the quiz role home.
+Quiz-origin, missing, unknown, and malformed sources retain `/quiz`.
+Allowed `next` values keep their existing validation and precedence;
+an explicit canonical `/dashboard` or `/dashboard/` return still resolves to
+the quiz role home.
 Paid Brand profile gates, Starter routing, and role conflicts remain unchanged.
 
 This exception does not change generic role homes, direct quiz/retake access,
 wrong-role guard redirects, `/sign-up`, or immediate modal-signup returns.
-The homepage already lets free Brands without a completed quiz stay, so the new
-login default has no follow-on bounce. `/` is the live homepage; `/home` remains
-an attribution storage convention. Login never writes attribution.
+The homepage lets free Brands without a completed quiz stay unless the
+[cancelled paid-Brand override](#homepage-overrides) sends them to `/all-starters`.
+`/` is the live homepage; `/home` remains an attribution storage convention.
+Login never writes attribution.
 
 On 2026-09-30, published staging DOM showed signup forms on All Starters and
 items in all three included Learn families. The Learn listings above showed no
@@ -336,8 +342,8 @@ existing member from these non-quiz cohorts has yet been verified; actual
 persisted-source and later-login checks remain release dependencies. The source
 mapping, simulated-member tests, and attribution unit tests do not substitute
 for those member-session checks. Immediate content-signup returns are unchanged.
-Release the pinned login loader and moving route guard together and verify their
-served bytes and published behavior before claiming this change is live.
+Follow the [login asset release requirements](../docs/wiring/AUTH-ROUTE-WIRING.md#routing)
+before claiming this change is live.
 
 ### Homepage overrides
 
@@ -404,8 +410,8 @@ separate owner:
 | `/starter-edit-profile` environment write mode | `profile-image-auth-shim.js` exact Live-host allowlist | Implemented; non-Live hosts block known mutations and preserve reads |
 | `/admin/talent-applications` staff access and private application records | Xano `admin/session` and talent-admin endpoint authorization | Parked, preparation-only staging Code Component; outside the member-plan route matrix; not production-ready and has not been imported into Webflow, published, tagged, or deployed |
 | Mutations and private records | Xano authorization using authenticated member and role | Profile, Companies, and Portfolio mutations receive `user_v3` Bearer auth from `profile-image-auth-shim.js`; ownership must be enforced server-side |
-| Paid-then-cancelled behavior | `v3/route-guard.js` `hasCancelledPaidBrandPlan` + the homepage branch of `bounceTargetFor` | Settled 2026-08-03: homepage-only. A cancelled paid Brand visiting `/` is sent to `/all-starters`; everywhere else the member keeps whatever their active plans resolve to today (free-Brand quiz funnel, or the unmapped-plan error when nothing is active). Role resolution itself is unchanged — the predicate reads `planConnections` directly and never invents a fourth role. See [Homepage overrides](#homepage-overrides) |
-| Not-yet-quizzed free Brand on the homepage | `v3/route-guard.js` homepage branch of `bounceTargetFor` | Settled 2026-08-03: a free Brand with an empty `starter-quiz` field stays on `/` instead of being pushed to `/quiz`. Homepage only — the login pages and `/sign-up` still send them to `/quiz`, and guarded pages still use `brandFreeHome` |
+| Paid-then-cancelled behavior | `v3/route-guard.js` `hasCancelledPaidBrandPlan` + the homepage branch of `bounceTargetFor` | See [Homepage overrides](#homepage-overrides); role resolution itself is unchanged |
+| Not-yet-quizzed free Brand on the homepage | `v3/route-guard.js` homepage branch of `bounceTargetFor` | See [Homepage overrides](#homepage-overrides), distinct from the [login default](#non-quiz-free-brand-login-default) |
 
 `Allow` on `/opportunities/<slug>` is the route guard's role-level decision, not
 brand ownership authorization. Xano enforces the underlying ownership boundary.

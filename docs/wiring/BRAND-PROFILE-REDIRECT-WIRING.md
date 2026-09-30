@@ -112,15 +112,12 @@ The redirect is a **UX courtesy, not a security boundary**. Access control stays
 where it already is: Memberstack gated content, `v3/route-guard.js` for role
 routing, and Xano endpoint authorization for the records themselves.
 
-### No role logic, on purpose
+### Shared role classification
 
-A Talent or free-Brand member who reaches `/brand-dashboard` is the route guard's
-problem, and the guard runs first and sitewide. This module deliberately carries
-no plan-ID table and does not borrow the guard's role contract, because it does
-not need to: for those members the endpoint answers `has_record: false` — they
-have no Brand row — which lands in the stay branch and leaves the page alone. The
-two modules therefore cannot fight over the same visitor, and the wrong-role case
-costs one harmless read.
+The route guard owns role classification and access redirects. A Brand record
+can also exist for a free Brand, so record existence cannot establish paid
+access. This module carries no plan-ID table; it uses the guard's `memberRole`
+contract before the profile-status read, following the decision table above.
 
 ### The completion marker, and why it has to exist
 

@@ -147,10 +147,7 @@ The V3 protected-route guard sends logged-out visitors to
 `/login?next=<encoded current path and query>`. For an exact Calls notification
 locator on either dashboard, it also preserves `#calls` or `#calls-section`
 through login. Other fragments are removed, and the router restores only a
-role-allowed same-origin destination. Free Brands without a completed quiz and
-with a recognized All Starters or Learn item Signup Source default to `/` on
-login; both login entry paths use the guard's shared decision. Generic role homes and immediate
-signup returns are unchanged. See the
+role-allowed same-origin destination. For free Brand login destinations, see the
 [login-default contract](ACCESS-MATRIX.md#non-quiz-free-brand-login-default).
 
 Talent logins additionally fork on funnel position, read from Xano
@@ -318,9 +315,8 @@ the page with an explicit error state, and a cross-family Talent + Brand plan
 conflict fails closed. The canonical `/dashboard` route is a thin guarded
 utility page that sends mapped members to `/starter-dashboard`,
 `/brand-dashboard`, `/quiz`, or `/quiz-results`; it does not merge or duplicate
-the two dashboard page bodies. A free Brand's default is `/quiz` until
-the Memberstack `starter-quiz` custom field records completion, then
-`/quiz-results`.
+the two dashboard page bodies. Free Brands use the
+[quiz role home](ACCESS-MATRIX.md#route-level-access) for guarded-page redirects.
 
 Install the guard once sitewide in Site Settings Head Code, before page
 controllers such as `opportunities-3.0.js`. The controller detects the guard's
@@ -359,8 +355,9 @@ Three mechanisms were added on 2026-08-03. **Member-home bounce:** the homepage,
 both login pages, and `/sign-up` are not in the route table — they must keep
 working untouched for signed-out visitors, since they are the pre-signup funnel
 itself — but a member the guard can positively identify and map to a role is sent
-away from them, to a validated `?next=` when one is present and otherwise to the
-role home. Logged out, Memberstack unavailable, and cross-role conflict leave the
+away from them according to the
+[member-home bounce contract](ACCESS-MATRIX.md#route-level-access).
+Logged out, Memberstack unavailable, and cross-role conflict leave the
 page completely alone, with no error attribute and no `checking` stamp, and so
 does an unmapped plan on the two login pages and `/sign-up`. The homepage alone
 carries two overrides added later the same day. A member who cancelled a paid

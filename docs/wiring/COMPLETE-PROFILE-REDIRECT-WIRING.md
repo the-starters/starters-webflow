@@ -52,15 +52,13 @@ annoyance, sending a member away from a form they still have to fill in is not.
 
 ### Why there is no `/login` hop
 
-Before this release the only way a free Brand or a Talent member got off this page
-was a manual trip to `/login`, where the guard's member-home bounce would forward
-them. That hop is pointless — this module already holds the member object *and* the
-guard's own `roleHome()` answer, so it produces exactly the destination the bounce
-would have produced, in one navigation instead of two, with no login form flashing
-at an already-authenticated member.
+This module already holds the member object and the guard's `roleHome()` answer,
+so it sends free Brands and Talent directly to their role home without a login
+form flashing at an authenticated member. The separate
+[login-default exception](../../v3/ACCESS-MATRIX.md#non-quiz-free-brand-login-default)
+does not apply on `/complete-profile`.
 
-The destinations are therefore identical to the `/login` bounce by construction,
-not by coincidence: every navigation assertion in
+The destinations follow the role-home contract: every navigation assertion in
 `v3/complete-profile-redirect.test.js` keys on
 `window.StartersV3RouteGuard.roleHome(member)` rather than on a path literal. The
 literals appear in exactly one test, which pins the contract's answers to the
