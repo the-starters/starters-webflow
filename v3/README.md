@@ -4155,7 +4155,9 @@ settles. Concurrent calls share one load. When `Stripe` is ready, the load
 resolves, even if the watched tag stalls or fails, and no second copy is
 inserted. A tag that is already dead (blocked, failed, or loaded without
 `Stripe`) is replaced at most once per load. A load that does not settle within
-15 seconds rejects with `Stripe.js failed to load`.
+15 seconds rejects with `Stripe.js failed to load`. A removed script still runs,
+so a tag that this controller inserted and that is still loading after the
+timeout is kept, and the next attempt waits for that same fetch.
 **Add payment method** then shows that message in `[card-error]`, and **Use this
 card** shows its existing verification error. A failed load is not kept, so the
 next attempt loads again.

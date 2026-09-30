@@ -1136,7 +1136,9 @@
   // outcome in STRIPE_JS_STATE; a dead tag is replaced at most once per load;
   // and the whole load is bounded, so the card step always reaches its error
   // state. Concurrent calls share one load, and a failed load is not kept, so a
-  // later retry starts a new one.
+  // later retry starts a new one. Removing a script does not cancel its fetch or
+  // its execution, so a tag this file inserted keeps 'loading' after a timeout
+  // and a retry watches that same fetch instead of starting a second copy.
   const STRIPE_JS_SRC = 'https://js.stripe.com/v3/'
   const STRIPE_JS_STATE = 'data-stripe-js-state'
   const STRIPE_LOAD_TIMEOUT_MS = 15000
@@ -1157,9 +1159,12 @@
     return load
   }
 
-  function trackStripeTag(tag) {
+  // 'loading' marks a tag tracked before it could fire, so the state proves that
+  // no event fired yet. 'watching' marks a tag other code placed: its only event
+  // may already have fired, so a load that times out marks it dead.
+  function trackStripeTag(tag, state) {
     if (tag.getAttribute(STRIPE_JS_STATE)) return
-    tag.setAttribute(STRIPE_JS_STATE, 'loading')
+    tag.setAttribute(STRIPE_JS_STATE, state)
     tag.addEventListener('load', function () { tag.setAttribute(STRIPE_JS_STATE, 'loaded') }, { once: true })
     tag.addEventListener('error', function () { tag.setAttribute(STRIPE_JS_STATE, 'failed') }, { once: true })
   }
@@ -1178,8 +1183,12 @@
       let inserted = false
       let settled = false
       const timer = setTimeout(function () {
-        // A tag that has not settled in the bounded wait is dead for a retry.
-        if (tag && !stripeReady()) tag.setAttribute(STRIPE_JS_STATE, 'failed')
+        // A watched foreign tag that has not settled in the bounded wait is dead
+        // for a retry. A tag this file inserted is still fetching, so it stays
+        // 'loading' and the next attempt watches the same fetch.
+        if (tag && !stripeReady() && tag.getAttribute(STRIPE_JS_STATE) === 'watching') {
+          tag.setAttribute(STRIPE_JS_STATE, 'failed')
+        }
         finish(new Error('Stripe.js failed to load'))
       }, STRIPE_LOAD_TIMEOUT_MS)
       function unwatch() {
@@ -1217,7 +1226,7 @@
         const previous = tag
         const script = document.createElement('script')
         script.src = STRIPE_JS_SRC
-        trackStripeTag(script)
+        trackStripeTag(script, 'loading')
         watch(script)
         inserted = true
         if (previous && typeof previous.remove === 'function') previous.remove()
@@ -1226,7 +1235,7 @@
       try {
         const existing = document.querySelector('script[src="' + STRIPE_JS_SRC + '"]')
         if (existing && stripeTagMayStillLoad(existing, document)) {
-          trackStripeTag(existing)
+          trackStripeTag(existing, 'watching')
           watch(existing)
         } else {
           tag = existing

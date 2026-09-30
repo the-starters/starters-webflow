@@ -5572,3 +5572,66 @@ test('F65: a fresh Stripe.js tag that errors after Stripe is ready resolves the 
   assert.deepEqual(keys, [STRIPE_TEST_KEY])
   assert.equal(document.insertedScripts().length, 1)
 })
+
+/* ---- F65 review: a slow fetch is not forked ----
+   Removing a script element does not cancel its fetch or its execution. A tag
+   this file inserted records its outcome from the start, so a 'loading' state
+   proves no event fired yet: a retry watches that fetch again instead of
+   starting a second copy of Stripe.js. */
+test('F65: a retry after the bounded wait watches the same in-flight Stripe.js fetch', async (t) => {
+  const document = stripeLoadDocument({ readyState: 'complete' })
+  useStripeLoadPage(t, document)
+  const keys = []
+  const first = trackSettlement(api.stripeForPaymentEnvironment('test'))
+  await flushStripeLoad()
+  assert.equal(document.insertedScripts().length, 1)
+  const slow = document.scripts()[0]
+  t.mock.timers.tick(15000)
+  await flushStripeLoad()
+  assert.equal(first.status, 'rejected')
+  assert.equal(first.error.message, STRIPE_LOAD_ERROR)
+  assert.equal(slow.getAttribute('data-stripe-js-state'), 'loading', 'a fetch still in flight is not marked dead')
+
+  const retry = trackSettlement(api.stripeForPaymentEnvironment('test'))
+  await flushStripeLoad()
+  assert.equal(retry.status, 'pending')
+  assert.equal(slow.removed, false, 'the in-flight tag is kept')
+  assert.equal(document.insertedScripts().length, 1, 'the retry inserts no second copy')
+  t.mock.timers.tick(15000)
+  await flushStripeLoad()
+  assert.equal(retry.status, 'rejected', 'each attempt stays bounded')
+
+  const late = trackSettlement(api.stripeForPaymentEnvironment('test'))
+  await flushStripeLoad()
+  global.Stripe = fakeStripeConstructor(keys)
+  slow.dispatch('load')
+  await flushStripeLoad()
+  assert.equal(late.status, 'resolved', 'the late load of the same fetch resolves the attempt')
+  assert.deepEqual(keys, [STRIPE_TEST_KEY])
+  assert.equal(document.insertedScripts().length, 1, 'Stripe.js was inserted once')
+  assert.equal(slow.getAttribute('data-stripe-js-state'), 'loaded')
+})
+
+test('F65: a foreign Stripe.js tag that timed out is replaced at once on the next attempt', async (t) => {
+  // The foreign tag was watched late, so a missed event can hide its outcome.
+  const document = stripeLoadDocument({ readyState: 'interactive', existing: true })
+  useStripeLoadPage(t, document)
+  const keys = []
+  const first = trackSettlement(api.stripeForPaymentEnvironment('live'))
+  await flushStripeLoad()
+  t.mock.timers.tick(15000)
+  await flushStripeLoad()
+  assert.equal(first.status, 'rejected')
+  assert.equal(document.existing.getAttribute('data-stripe-js-state'), 'failed')
+
+  const retry = trackSettlement(api.stripeForPaymentEnvironment('live'))
+  await flushStripeLoad()
+  assert.equal(retry.status, 'pending')
+  assert.equal(document.existing.removed, true, 'the timed-out foreign tag is replaced')
+  assert.equal(document.insertedScripts().length, 1)
+  global.Stripe = fakeStripeConstructor(keys)
+  document.scripts()[0].dispatch('load')
+  await flushStripeLoad()
+  assert.equal(retry.status, 'resolved')
+  assert.deepEqual(keys, [STRIPE_LIVE_KEY])
+})
