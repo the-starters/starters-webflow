@@ -17,8 +17,9 @@ This is intentionally first-claim-wins. The public URL and frontend allowlist
 control visibility, not identity. Anyone who reaches an eligible unclaimed
 profile can attempt to claim it. On successful signup, Xano must verify that the
 exact profile is admin-prebuilt and still unclaimed, then bind its first
-Memberstack ID. It must reject a later or conflicting claim without creating a
-second profile.
+Memberstack ID only from a fresh `member.created` event. An existing account
+cannot establish or switch a claim through a later update. Xano must reject a
+later or conflicting claim without creating a second profile.
 
 ## Frontend contract
 
@@ -74,29 +75,44 @@ The existing private marker `freelancers_v3.profile_provisioning_source` uses
 existing unique account binding. Do not add a claim table or duplicate claim
 boolean for this design.
 
-Before endpoint `#1513 new_member/v3` uses its existing email fallback or creates
-a profile:
+Preserve endpoint `#1513`'s existing atomic event-timestamp watermark gate as
+the first durable side-effect boundary. An exact duplicate or older event must
+return `skipped_stale_or_replay` before claim resolution, user or profile writes,
+projections, or outbox work. Only a fresh event continues.
+
+Keep the existing event plan resolution unchanged. Resolve a fresh
+`member.created` from its `planConnections`, as observed on recent Live Talent
+Free signups. Preserve the current fallback for a fresh `member.updated` payload
+that omits `planConnections`; that fallback may resolve an established role but
+must never make an existing account eligible for a first binding.
+
+For each fresh event that passes the watermark gate:
 
 1. Read the submitted `starter-claim-profile-slug` Memberstack custom field. If
    it is absent, continue through the existing ordinary signup path unchanged.
 2. If a slug is present, resolve it to exactly one canonical `freelancers_v3
-   #82` row. Verify the canonical slug field name against the live schema before
-   implementation. A missing or ambiguous match is a claim rejection and must
-   not fall through to the ordinary profile-creation path.
-3. Require `profile_provisioning_source=admin_prebuilt`.
-4. If `memberstack_id` already equals the incoming Memberstack ID, select that
-   row idempotently as the event's existing Talent profile and skip only the
-   email fallback and profile-creation branch.
-5. If `memberstack_id` is non-empty and belongs to another member, reject the
-   claim without creating a profile.
-6. If `memberstack_id` is empty, atomically bind the incoming Memberstack ID and
-   signup email to that exact profile. A concurrent loser must re-read the row
-   and apply the same same-member or conflict result without falling through to
-   profile creation.
-
-After either the same-member or successful-bind branch resolves the row,
-continue endpoint `#1513`'s existing event processing, `user_v3` and
-`freelancers_v3` updates, and downstream projection and outbox handling.
+   #82` row and require `profile_provisioning_source=admin_prebuilt`. Verify the
+   canonical slug field name against the live schema before implementation. A
+   missing, ambiguous, or non-prebuilt match is a claim rejection and must not
+   fall through to the ordinary profile-creation path.
+3. Read the current `user_v3`, `brands_v3`, and `freelancers_v3` rows for the
+   incoming immutable Memberstack ID before choosing a claim branch.
+4. A fresh `member.updated` event may reuse the target only when that exact
+   profile is already bound to the incoming Memberstack ID and there is no
+   conflicting Brand or different Freelancer row. Skip only the email fallback
+   and profile-creation branch, then continue the endpoint's normal `user_v3`,
+   `freelancers_v3`, projection, and outbox processing. An update must reject an
+   unclaimed target, a different target, or conflicting role ownership.
+5. A first binding requires a fresh `member.created` event whose incoming ID had
+   no `user_v3`, `brands_v3`, or `freelancers_v3` row before the event. The event
+   `planConnections` must resolve as Talent, and the event must create a new
+   `user_v3` mirror rather than finding one through an upsert.
+6. In one transaction, create that user mirror and conditionally bind the
+   incoming Memberstack ID and signup email to the exact target only while its
+   `memberstack_id` is still empty. If the identity precondition or target bind
+   loses a race, roll back and reject without creating a fallback profile.
+7. After a successful first bind, continue endpoint `#1513`'s normal event,
+   projection, and outbox processing once.
 
 The profile slug selects the target; it does not prove who scanned the QR. A
 signup with no claim slug continues through the existing normal signup path.
@@ -108,12 +124,19 @@ signup with no claim slug continues through the existing normal signup path.
 - A slug not on the list, a non-profile URL, or missing form markup stays
   hidden; the no-JavaScript initial state also stays hidden.
 - The browser sends no claim-validation request and does not modify the URL.
-- A prebuilt profile without an email is claimed by exact profile ID after
-  signup; the Memberstack ID and submitted email are saved once.
-- A same-member replay reuses the bound profile while continuing normal event
-  updates and projections. A different member cannot claim that profile or
-  create a duplicate.
-- Ordinary signup without the profile-slug field keeps its existing behavior.
+- A fresh Talent `member.created` event with a newly created `user_v3` mirror,
+  no preexisting role row, and an unclaimed admin-prebuilt target claims that
+  exact profile; the Memberstack ID and submitted email are saved once.
+- An exact or older webhook delivery returns `skipped_stale_or_replay` before
+  claim, profile, projection, or outbox side effects.
+- A later fresh `member.updated` event reuses only the same bound profile and
+  continues normal propagation with stable row IDs. It cannot first-bind an
+  unclaimed profile, switch targets, or create dual-role ownership.
+- A competing first claim or conflicting member is rejected without a fallback
+  profile or duplicate.
+- Ordinary signup without the profile-slug field keeps its existing behavior,
+  and a fresh `member.updated` without `planConnections` keeps the existing plan
+  fallback.
 - Google remains hidden unless a separate observed test proves the same slug
   field reaches the webhook.
 - A role-correct production canary confirms the authenticated profile and
