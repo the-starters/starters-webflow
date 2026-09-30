@@ -2865,8 +2865,10 @@ refresh of the same session, and a newer session discards its result.
   re-read runs while `document.visibilityState` is `hidden`. When a re-read
   runs a full tick late (the page was hidden, or another ticker read was in
   flight), the remaining delays restart from that re-read, so overdue re-reads
-  never run on back-to-back ticks. A reset of the rendered rows keeps each
-  row's spent count. A successful re-read repaints the cards, the open
+  never run on back-to-back ticks. A row that leaves this set and comes back
+  (a reset of the rendered rows, or a link that came and went) keeps its spent
+  count. Its remaining delays restart from the tick that sees it again, so no
+  re-read runs on that tick. A successful re-read repaints the cards, the open
   dialog's meeting link, and its actions at once. The Brand dashboard gets no
   Meet link re-read.
 

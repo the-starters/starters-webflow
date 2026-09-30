@@ -8972,15 +8972,61 @@ test('F54: the Meet link re-read budget survives a reset of the rendered rows', 
       reads.push((clock.value - F54_START) / 1000)
       return true
     }, clock)
-    await ticker.at(45)
-    assert.deepEqual(reads, [45])
-    // An identity reset clears the rows; a later read brings the same booking
-    // back as a new row object.
+    for (const seconds of [10, 20, 30, 40, 50]) await ticker.at(seconds)
+    assert.deepEqual(reads, [50])
+    // An identity reset clears the rows; its own full read brings the same
+    // booking back as a new row object.
     refs[0].rows = []
-    for (const seconds of [55, 65, 75, 85, 95, 105]) await ticker.at(seconds)
+    for (const seconds of [60, 70, 80, 90, 100, 110]) await ticker.at(seconds)
+    assert.deepEqual(reads, [50], 'no re-read while the row is gone')
     refs[0].rows = [linklessRow()]
-    for (let seconds = 115; seconds <= 900; seconds += 10) await ticker.at(seconds)
-    assert.equal(reads.length, 3, 'the row keeps its three-read budget: ' + reads.join(', '))
+    // No re-read on the tick the row comes back: the read that brought it
+    // back is fresh. The row keeps its spent count, and the remaining delays
+    // restart from that tick (the next gaps are 45 and 60 s, run on the
+    // 10 s ticks).
+    for (let seconds = 120; seconds <= 900; seconds += 10) await ticker.at(seconds)
+    assert.deepEqual(reads, [50, 170, 230])
+    ticker.stop()
+  })
+})
+
+test('F54: a row whose Meet link comes and goes restarts its remaining delays from the tick it is missing again', async () => {
+  const link = 'https://meet.google.com/abc-defg-hij'
+  // The link arrives through another read before any re-read, then a later
+  // row object has none: the full schedule restarts from that tick.
+  await withLinkGlobals({ visibilityState: 'visible' }, async () => {
+    const clock = { value: F54_START }
+    const refs = [{ rows: [linklessRow()], list: { querySelectorAll: () => [] } }]
+    const reads = []
+    const ticker = linkTicker(refs, async () => {
+      reads.push((clock.value - F54_START) / 1000)
+      return true
+    }, clock)
+    await ticker.at(10)
+    refs[0].rows = [linklessRow({ meeting_link: link })]
+    for (let seconds = 20; seconds <= 590; seconds += 10) await ticker.at(seconds)
+    assert.deepEqual(reads, [])
+    refs[0].rows = [linklessRow()]
+    for (let seconds = 600; seconds <= 1200; seconds += 10) await ticker.at(seconds)
+    assert.deepEqual(reads, [650, 690, 750])
+    ticker.stop()
+  })
+  // The second re-read brings the link, then a later row object has none:
+  // the last re-read runs 60 s after that tick, not on it.
+  await withLinkGlobals({ visibilityState: 'visible' }, async () => {
+    const clock = { value: F54_START }
+    const refs = [{ rows: [linklessRow()], list: { querySelectorAll: () => [] } }]
+    const reads = []
+    const ticker = linkTicker(refs, async () => {
+      reads.push((clock.value - F54_START) / 1000)
+      if (reads.length === 2) refs[0].rows = [linklessRow({ meeting_link: link })]
+      return true
+    }, clock)
+    for (let seconds = 10; seconds <= 590; seconds += 10) await ticker.at(seconds)
+    assert.deepEqual(reads, [50, 90])
+    refs[0].rows = [linklessRow()]
+    for (let seconds = 600; seconds <= 1200; seconds += 10) await ticker.at(seconds)
+    assert.deepEqual(reads, [50, 90, 660])
     ticker.stop()
   })
 })

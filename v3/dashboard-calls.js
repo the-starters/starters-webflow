@@ -1328,11 +1328,27 @@
     // F54: per-row Meet link re-reads, Starter only. An entry outlives a reset
     // of the rendered rows, so a row that comes back keeps its spent budget.
     const linkPolls = new Map()
+    let lastLinkTickAt = null
     const dueMeetingLinkKeys = function (currentTime) {
       const missing = missingMeetingLinkKeys(refs, currentTime)
       missing.forEach(function (key) {
-        if (!linkPolls.has(key)) linkPolls.set(key, { since: currentTime, count: 0 })
+        const poll = linkPolls.get(key)
+        if (!poll) {
+          linkPolls.set(key, { since: currentTime, count: 0, seenAt: currentTime })
+          return
+        }
+        // A row that was out of the set on the previous tick (a reset of the
+        // rendered rows, or a link that came and went) is back. It keeps its
+        // spent count, and its remaining delays restart from this tick, as if
+        // its last re-read ran now. The read that brought the row back is
+        // fresh, so no re-read runs on this tick.
+        if (poll.seenAt !== lastLinkTickAt) {
+          poll.since = currentTime -
+            (poll.count > 0 ? MEETING_LINK_POLL_DELAYS_MS[poll.count - 1] : 0)
+        }
+        poll.seenAt = currentTime
       })
+      lastLinkTickAt = currentTime
       if (pageHidden()) return []
       return missing.filter(function (key) {
         const poll = linkPolls.get(key)
