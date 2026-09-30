@@ -722,7 +722,7 @@ carries no signup form at all, so the source can never name it.
 Source and referrer are written at the auth transition and not during the sitewide
 capture that runs on every page load. Capturing on load would make each mean "last
 page loaded", and each signup page would be overwritten by its own redirect:
-`/sign-up` would end up saying `/brand-dashboard` and `/quiz` would say
+`/sign-up` would end up naming its authored destination and `/quiz` would say
 `/quiz-results`. The referrer is the sharper case, because `quiz-results.js` reads
 these cookies a page later: a load-time capture would have replaced the referrer
 with `/quiz-results`'s own referrer, which is `/quiz`, so every quiz signup would
@@ -875,7 +875,7 @@ The path map holds the two hand-audited pages and its policy is used verbatim:
 | Page | After signup | Who writes the fields |
 | --- | --- | --- |
 | `/quiz` | `/quiz-results` | `quiz-results.js` |
-| `/sign-up` | `/brand-dashboard` | `signup-attribution.js` |
+| `/sign-up` | Authored form redirect | `signup-attribution.js` |
 
 Path matching ignores case and a single trailing slash. Because the map is checked
 first, those two keep behaving exactly as they do today whatever happens to their
@@ -1035,10 +1035,10 @@ and without the flag the replay would look like a second registration.
 ### Direct signup field save
 
 A signup form's own redirect can navigate the browser away while the `updateMember`
-request is still in flight. The `/sign-up` form carries
-`redirect="/brand-dashboard"`; the `/all-starters` modal redirects to
-`/all-starters?modal-id=signup-modal`, which reloads the same page to reopen the
-modal and cuts the request off just as effectively. The save is therefore written to
+request is still in flight. The `/sign-up` form follows its authored redirect;
+a content modal can return to its current page with `?modal-id=signup-modal`,
+which reloads the page to reopen the modal and cuts the request off just as
+effectively. The save is therefore written to
 survive being cut off:
 
 1. On the transition, the `signup_source` and `signup_referrer` cookies are written

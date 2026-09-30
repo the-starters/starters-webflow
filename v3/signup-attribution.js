@@ -49,7 +49,7 @@
  * Capture at the transition rather than on load, for both, for the same reason.
  * On every page load the cookie would mean "last page loaded" and its referrer,
  * and each armed page would be clobbered by its own redirect: `/sign-up` would
- * report `/brand-dashboard`, and `/quiz` is worse because `quiz-results.js` reads
+ * report its authored destination, and `/quiz` is worse because `quiz-results.js` reads
  * these cookies a page later, so `signup_referrer` would have been overwritten by
  * `/quiz-results`'s own referrer, which is `/quiz` itself. Every quiz signup
  * would say it came from `/quiz` and the real answer would be gone. Firing on the
@@ -109,8 +109,8 @@
  * (`[data-ms-form="login"]`). The path map is checked first and its policy
  * is used verbatim, so the two hand-audited pages provably cannot regress if the
  * markup on them ever changes: `/quiz` (the funnel signup, followed by
- * `/quiz-results`) and `/sign-up` (the direct signup, followed by
- * `/brand-dashboard`). Form detection is what covers every other signup surface,
+ * `/quiz-results`) and `/sign-up` (the direct signup, followed by its authored
+ * post-signup page). Form detection is what covers every other signup surface,
  * starting with the signup modal on `/all-starters`. It reuses the attribute
  * Memberstack already needs, so a new signup surface needs no Designer work and
  * no edit here to be attributed.
@@ -174,9 +174,9 @@
  * after it and writes the attribution fields alongside the quiz summary. Every
  * other signup route has no such follow-up writer, so this script writes the
  * fields itself, and it has to survive the form's own redirect cutting the
- * request off mid-flight (`/sign-up` sends the browser to `/brand-dashboard`;
- * the `/all-starters` modal reloads the same page to reopen itself, which cuts
- * the request off just as effectively). The order is therefore: snapshot the
+ * request off mid-flight (`/sign-up` follows its authored form redirect;
+ * a content modal can reload the same page to reopen itself, which cuts the
+ * request off just as effectively). The order is therefore: snapshot the
  * non-empty field values into `startersAttributionPendingFields`, set
  * `startersAttributionPendingSave`, then call `updateMember`, then clear both
  * only once the write is confirmed. Every page load checks that marker and
@@ -1293,8 +1293,8 @@
      * Called from the auth transition and nowhere else. It cannot live in
      * capture(), which runs on every page load: the cookie would then mean "last
      * page loaded" rather than "page the signup happened on", and each armed page
-     * would be clobbered by its own redirect (`/sign-up` reporting
-     * `/brand-dashboard`, `/quiz` reporting `/quiz-results`). The transition is
+     * would be clobbered by its own redirect (`/sign-up` reporting its authored
+     * destination, `/quiz` reporting `/quiz-results`). The transition is
      * the only moment where the value is both known and final.
      *
      * Unlike the URL-parameter cookies this always overwrites. There, absence is
@@ -1984,7 +1984,7 @@
      * Saves the attribution fields, leaving the marker set on any failure.
      *
      * Prefers the signup-time snapshot so a fresh ad click between `/sign-up`
-     * and `/brand-dashboard` cannot overwrite the values the signup owed. Falls
+     * and its authored post-signup page cannot overwrite the values owed. Falls
      * back to live cookies when an older marker has no snapshot (pre-snapshot
      * sessions, or blocked storage on the signup page).
      *
@@ -2022,8 +2022,8 @@
      * Snapshots the fields, marks the save as owed, and starts it.
      *
      * The marker and snapshot are written first and synchronously, because the
-     * /sign-up form carries redirect="/brand-dashboard" and that navigation can
-     * cut the updateMember request off before it lands.
+     * /sign-up form's authored redirect can navigate away and cut the
+     * updateMember request off before it lands.
      *
      * The snapshot is deliberately NOT run through withoutFilledWriteOnceFields.
      * Nothing may be awaited before it reaches storage, and a synchronous guard
@@ -2050,7 +2050,7 @@
      * Completes a save that an earlier page could not finish.
      *
      * Runs on every page load, which is what makes the /sign-up write survive its
-     * own redirect: the attempt cut off there is retried on /brand-dashboard.
+     * own redirect: the interrupted attempt is retried on the authored destination.
      *
      * @returns {Promise<void>}
      */
@@ -2082,8 +2082,8 @@
             // signup re-raised it while the retry's member read was still in
             // flight, and that read then comes back logged out. That marker
             // belongs to a save that has only just started; clearing it would
-            // throw away the attribution the /brand-dashboard load is supposed
-            // to finish writing.
+            // throw away the attribution the authored destination page is
+            // supposed to finish writing.
             if (!savePendingFromThisPage) clearPendingSave()
             return
         }

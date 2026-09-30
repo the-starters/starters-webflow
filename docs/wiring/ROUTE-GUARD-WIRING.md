@@ -644,8 +644,9 @@ to publish and verify the assets.
   and confirm each one still renders untouched when signed out. On `/` the two
   homepage overrides change two of those cases: a not-yet-quizzed Free Brand must
   stay with no `<html>` attribute at all, while `/login` and `/starter-login`
-  send All Starters and recognized Learn item members to `/`, and quiz-origin or unknown-source
-  members to `/quiz`. Follow the new homepage destination and confirm it stays.
+  send members whose saved source is All Starters, `/sign-up`, or a recognized
+  Learn item to `/`, and quiz-origin or unknown-source members to `/quiz`.
+  Follow the new homepage destination and confirm it stays.
 - Verify the homepage cancelled-Brand redirect with a Memberstack account whose
   paid Brand plan is cancelled, in both sub-kinds — free plan still active, and
   no active plan at all. Both must land on `/all-starters` from `/` and then stay

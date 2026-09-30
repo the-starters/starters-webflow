@@ -300,7 +300,7 @@ After login through `/auth-route`, or when an authenticated member visits
 `signup-source` matches one of these normalized paths defaults to `/` when it
 has not completed the quiz:
 
-- Exactly `/all-starters`.
+- Exactly `/all-starters` or `/sign-up`.
 - One item under `/learn/sessions/`, `/learn/interviews-analysis/`, or
   `/learn/playbooks-frameworks/`. The item slug uses lowercase letters, digits,
   and internal hyphens only, with no further path segments.
@@ -324,24 +324,30 @@ the quiz role home.
 Paid Brand profile gates, Starter routing, and role conflicts remain unchanged.
 
 This exception does not change generic role homes, direct quiz/retake access,
-wrong-role guard redirects, `/sign-up`, or immediate modal-signup returns.
+wrong-role guard redirects, authenticated visits to `/sign-up`, or immediate
+standalone/modal signup returns. The standalone `/sign-up` source is recognized
+only for later login; it does not change the authored signup-form destination.
 The homepage lets free Brands without a completed quiz stay unless the
 [cancelled paid-Brand override](#homepage-overrides) sends them to `/all-starters`.
 `/` is the live homepage; `/home` remains an attribution storage convention.
 Login never writes attribution.
 
-On 2026-09-30, published staging DOM showed signup forms on All Starters and
-items in all three included Learn families. The Learn listings above showed no
-signup forms. Signup attribution captures the actual pathname independently of
-the older lead-entry source map. This establishes the mapping's page and code
-evidence, not persistence for an actual member in each cohort.
+Published staging verification on 2026-09-30 created a real free Brand through
+`/learn/sessions/partnerships-playbook`. Its source persisted across reload, and
+later native login reached `/` and stayed there for 30 seconds. Other Learn
+families and historical members remain unverified. Current `/all-starters`
+inspection opened a paid membership offer rather than the free signup form seen
+in earlier inspection; no new All Starters free account was created.
 
-Before rollout, verify a persisted source from an actual All Starters signup and
-each included Learn family through the staging-qa member-session harness. No
-existing member from these non-quiz cohorts has yet been verified; actual
-persisted-source and later-login checks remain release dependencies. The source
-mapping, simulated-member tests, and attribution unit tests do not substitute
-for those member-session checks. Immediate content-signup returns are unchanged.
+The standalone `/sign-up` form currently targets `/quiz` immediately after
+signup. Attribution already direct-saves its pathname, but actual standalone
+source persistence remains unverified. On staging, the Brand account controller
+assigns its standard signup form a test plan classified as paid; production uses
+the free Brand plan. This later-login change does not alter that plan wiring.
+Before claiming real-account parity, verify the intended free account and saved
+source through the staging-qa harness. Source mapping, simulated-member tests,
+and attribution unit tests do not substitute for those member-session checks.
+Immediate content-signup returns are unchanged.
 Follow the [login asset release requirements](../docs/wiring/AUTH-ROUTE-WIRING.md#routing)
 before claiming this change is live.
 
