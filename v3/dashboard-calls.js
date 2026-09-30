@@ -364,8 +364,17 @@
   }
 
   function confirmSucceeded(body) {
-    const confirmation = body && body.confirmation ? body.confirmation : body
-    return clean(confirmation && confirmation.status).toLowerCase() === 'confirmed'
+    return confirmationStatus(body) === 'confirmed'
+  }
+
+  function confirmationStatus(body) {
+    const confirmation = body && body.confirmation && typeof body.confirmation === 'object' ? body.confirmation : null
+    const nestedStatus = clean(confirmation && confirmation.status).toLowerCase()
+    const topStatus = clean(body && body.status).toLowerCase()
+    if (nestedStatus === 'confirmed' || topStatus === 'confirmed') return 'confirmed'
+    const confirmationId = clean(confirmation && (confirmation.booking_id || confirmation.unique_id || confirmation.id))
+    if (!nestedStatus && !topStatus && confirmationId) return 'confirmed'
+    return ''
   }
 
   function normalizeTimestamp(value) {
@@ -3563,9 +3572,9 @@
         // guards: it leaves a dialog that shows another step alone, and it
         // paints the call the dialog shows. A refused commit (the row changed
         // or left the list) changes nothing, and the read below repaints.
-        const confirmation = body && body.confirmation ? body.confirmation : body
+        const confirmedStatus = confirmationStatus(body)
         const committed = commitConfirmation(booking, {
-          status: clean(confirmation && confirmation.status).toLowerCase(),
+          status: confirmedStatus,
         }, claim)
         if (committed) {
           refreshOpenDetailPanel(refs, role)

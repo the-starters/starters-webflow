@@ -2616,9 +2616,10 @@ before refreshing the canonical list, which moves the accepted row from Starter
 Call Requests to Starter Calls while it remains in Brand Calls.
 
 F53 (JP meeting, 2026-09-30): before that refresh, the controller commits the
-response's `confirmation.status` to the canonical row through the session's
-mutation owner, with a claim taken after the booking's action slot. This is the
-same owner the other call actions use, so the commit invalidates an in-flight
+confirmed status validated from the accepted response shape to the canonical
+row through the session's mutation owner, with a claim taken after the
+booking's action slot. This is the same owner the other call actions use, so
+the commit invalidates an in-flight
 background read and a stale pending row cannot come back. The controller then
 repaints the open details dialog from the committed row at once: the status
 hook shows the authored "Upcoming" label, `data-booking-status` becomes

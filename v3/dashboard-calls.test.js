@@ -8433,7 +8433,7 @@ function acceptActionsModule() {
 // Boots the real controller on /starter-dashboard with a controlled clock,
 // scripted canonical reads, and the captured ten-second lifecycle ticker, then
 // opens the details modal on the view's booking through the details delegate.
-async function bootAcceptDashboard(view, bookingReads, { onConfirm, holdConfirm, holdAfterConfirm } = {}) {
+async function bootAcceptDashboard(view, bookingReads, { confirmBody, onConfirm, holdConfirm, holdAfterConfirm } = {}) {
   const source = fs.readFileSync(require.resolve('./dashboard-calls.js'), 'utf8')
   const clock = { value: view.now }
   class ClockDate extends Date {
@@ -8537,7 +8537,7 @@ async function bootAcceptDashboard(view, bookingReads, { onConfirm, holdConfirm,
         if (onConfirm) onConfirm(window)
         return {
           ok: true,
-          json: async () => ({
+          json: async () => confirmBody || ({
             confirmation: { booking_id: view.bookingId, status: 'confirmed', revision: 2 },
             duplicate: false,
           }),
@@ -8644,6 +8644,39 @@ test('F53: an in-modal Starter Accept repaints the open modal to Upcoming before
   assert.deepEqual(acceptSnapshot(view), ACCEPTED_SNAPSHOT, 'the next tick keeps the confirmed state')
   assert.equal(env.state.confirms, 1)
 })
+
+for (const [name, confirmBody] of [
+  ['top-level confirmed status with nested booking identity', (view) => ({
+    status: 'confirmed',
+    confirmation: { booking_id: view.bookingId, revision: 2 },
+    duplicate: false,
+  })],
+  ['nested confirmed status', (view) => ({
+    confirmation: { booking_id: view.bookingId, status: 'confirmed', revision: 2 },
+    duplicate: false,
+  })],
+]) {
+  test('F53: ' + name + ' repaints the modal to Upcoming before the list read returns', async () => {
+    const view = acceptView()
+    const pendingRaw = { ...view.booking }
+    const confirmedRaw = { ...pendingRaw, status: 'confirmed', revision: 2 }
+    const postConfirmRead = deferred()
+    const env = await bootAcceptDashboard(view, [
+      () => ({ ok: true, json: async () => [pendingRaw] }),
+      () => postConfirmRead.promise,
+      () => ({ ok: true, json: async () => [confirmedRaw] }),
+    ], { confirmBody: confirmBody(view) })
+
+    const accepted = env.click(view.accept)
+    await until(() => env.state.reads === 2)
+    assert.equal(env.state.confirms, 1)
+    assert.deepEqual(acceptSnapshot(view), ACCEPTED_SNAPSHOT)
+
+    postConfirmRead.resolve({ ok: true, json: async () => [confirmedRaw] })
+    await accepted
+    assert.deepEqual(acceptSnapshot(view), ACCEPTED_SNAPSHOT)
+  })
+}
 
 test('F53: when every read after the Accept fails, the modal still shows the confirmed call and a second Accept sends nothing', async () => {
   const view = acceptView()
