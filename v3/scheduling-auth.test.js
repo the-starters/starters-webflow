@@ -939,6 +939,86 @@ test('authenticated Xano pass-throughs clear shared reads before and after dispa
   }
 })
 
+test('explicit AbortSignals bypass shared Xano reads', async (t) => {
+  const scenarios = [
+    {
+      name: 'signaled owner',
+      first(window, controller) {
+        return window.xanoAuthFetch(PAID_GET, { signal: controller.signal })
+      },
+      second(window) {
+        return window.xanoAuthFetch(PAID_GET)
+      },
+      abortedIndex: 0,
+    },
+    {
+      name: 'signaled later caller',
+      first(window) {
+        return window.xanoAuthFetch(PAID_GET)
+      },
+      second(window, controller) {
+        return window.xanoAuthFetch(PAID_GET, { signal: controller.signal })
+      },
+      abortedIndex: 1,
+    },
+    {
+      name: 'signal-bearing Request input',
+      first(window, controller) {
+        return window.xanoAuthFetch(new Request(PAID_GET, { signal: controller.signal }))
+      },
+      second(window) {
+        return window.xanoAuthFetch(PAID_GET)
+      },
+      abortedIndex: 0,
+    },
+  ]
+
+  for (const scenario of scenarios) {
+    await t.test(scenario.name, async () => {
+      const controller = new AbortController()
+      const responseGate = deferred()
+      const firstStarted = deferred()
+      let calls = 0
+      const nativeFetch = async (request) => {
+        if (requestUrl(request).includes('/auth/trade-token/v3')) {
+          return response({ authToken: 'xano-1' })
+        }
+        calls += 1
+        const callNumber = calls
+        if (calls === 1) firstStarted.resolve()
+        return new Promise((resolve, reject) => {
+          const abort = () => reject(request.signal.reason)
+          if (request.signal.aborted) {
+            abort()
+            return
+          }
+          request.signal.addEventListener('abort', abort, { once: true })
+          responseGate.promise.then(() => {
+            request.signal.removeEventListener('abort', abort)
+            resolve(response({ n: callNumber }))
+          })
+        })
+      }
+      const { window } = loadBridge(nativeFetch)
+
+      const first = scenario.first(window, controller)
+      await firstStarted.promise
+      const second = scenario.second(window, controller)
+      await new Promise(setImmediate)
+      assert.equal(calls, 2)
+      controller.abort()
+      responseGate.resolve()
+      const results = await Promise.allSettled([first, second])
+      const completedIndex = scenario.abortedIndex === 0 ? 1 : 0
+
+      assert.equal(results[scenario.abortedIndex].status, 'rejected')
+      assert.equal(results[scenario.abortedIndex].reason.name, 'AbortError')
+      assert.equal(results[completedIndex].status, 'fulfilled')
+      assert.equal((await results[completedIndex].value.json()).n, completedIndex + 1)
+    })
+  }
+})
+
 test('failed reads are not shared and a session change drops shared reads', async () => {
   let status = 500
   const calls = []
@@ -959,6 +1039,36 @@ test('failed reads are not shared and a session change drops shared reads', asyn
   memberstack.getMemberCookie = async () => 'memberstack-b'
   await window.xanoAuthFetch(PAID_GET)
   assert.equal(calls.length, 3)
+})
+
+test('any failed shared Xano read drops every cached entry', async (t) => {
+  for (const failure of ['response', 'rejection']) {
+    await t.test(failure, async () => {
+      const calls = []
+      const nativeFetch = async (request) => {
+        const url = requestUrl(request)
+        if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-1' })
+        calls.push(url)
+        if (url === FREE_GET) {
+          if (failure === 'response') return response({ failed: true }, 500)
+          throw new Error('free settings failed')
+        }
+        return response({ n: calls.length })
+      }
+      const { window } = loadBridge(nativeFetch)
+
+      await window.xanoAuthFetch(PAID_GET)
+      if (failure === 'response') {
+        assert.equal((await window.xanoAuthFetch(FREE_GET)).status, 500)
+      } else {
+        await assert.rejects(window.xanoAuthFetch(FREE_GET), /free settings failed/)
+      }
+      const refreshed = await window.xanoAuthFetch(PAID_GET)
+
+      assert.equal(calls.filter((url) => url === PAID_GET).length, 2)
+      assert.deepEqual(await refreshed.json(), { n: 3 })
+    })
+  }
 })
 
 test('shared reads honor each caller expected scope', async () => {
@@ -1033,10 +1143,12 @@ test('every non-read Memberstack method invalidates before and after settlement'
   const before = memberstack.getCurrentMember()
   const mutation = memberstack.disconnectProvider('google')
   const during = memberstack.getCurrentMember()
+  for (let step = 0; step < 6; step += 1) await Promise.resolve()
   assert.equal(state.reads, 2)
   mutationGate.resolve()
   await mutation
   const after = memberstack.getCurrentMember()
+  for (let step = 0; step < 3; step += 1) await Promise.resolve()
   assert.equal(state.reads, 3)
   state.gate.resolve()
   await Promise.all([before, during, after])
@@ -1063,6 +1175,7 @@ test('cookie rotation prevents a new member joining an older getCurrentMember re
   let cookie = 'memberstack-a'
   let reads = 0
   const memberAGate = deferred()
+  const memberAStarted = deferred()
   const memberstack = {
     getMemberCookie: async () => cookie,
     onAuthChange() {},
@@ -1070,6 +1183,7 @@ test('cookie rotation prevents a new member joining an older getCurrentMember re
       reads += 1
       const memberId = cookie === 'memberstack-a' ? 'member-a' : 'member-b'
       if (memberId === 'member-a') {
+        memberAStarted.resolve()
         return memberAGate.promise.then(() => ({ data: { id: memberId } }))
       }
       return Promise.resolve({ data: { id: memberId } })
@@ -1083,18 +1197,67 @@ test('cookie rotation prevents a new member joining an older getCurrentMember re
 
   await window.__tsSchedulingAuthGetScope()
   const memberA = memberstack.getCurrentMember()
+  await memberAStarted.promise
   cookie = 'memberstack-b'
   await window.xanoAuthFetch(PAID_GET)
-  let memberB
+  const memberB = memberstack.getCurrentMember()
+  const memberARejection = assert.rejects(memberA, {
+    code: 'MEMBER_SCOPE_CHANGED',
+  })
+  for (let step = 0; step < 6; step += 1) await Promise.resolve()
   try {
-    memberB = memberstack.getCurrentMember()
     assert.equal(reads, 2)
   } finally {
     memberAGate.resolve()
   }
-  const [memberAResult, memberBResult] = await Promise.all([memberA, memberB])
+  const [memberBResult] = await Promise.all([memberB, memberARejection])
 
-  assert.equal(memberAResult.data.id, 'member-a')
+  assert.equal(memberBResult.data.id, 'member-b')
+})
+
+test('live cookie isolates member reads without an auth event or Xano request', async () => {
+  let cookie = 'memberstack-a'
+  let reads = 0
+  const memberAGate = deferred()
+  const memberAStarted = deferred()
+  const memberstack = {
+    getMemberCookie: async () => cookie,
+    onAuthChange() {},
+    getCurrentMember() {
+      reads += 1
+      const memberId = cookie === 'memberstack-a' ? 'member-a' : 'member-b'
+      if (memberId === 'member-a') {
+        memberAStarted.resolve()
+        return memberAGate.promise.then(() => ({ data: { id: memberId } }))
+      }
+      return Promise.resolve({ data: { id: memberId } })
+    },
+  }
+  loadBridge(async () => response({}), { memberstack })
+
+  const memberAOwner = memberstack.getCurrentMember()
+  await memberAStarted.promise
+  const memberAJoiner = memberstack.getCurrentMember()
+  cookie = 'memberstack-b'
+  const memberB = memberstack.getCurrentMember()
+  const memberAOwnerRejection = assert.rejects(memberAOwner, {
+    code: 'MEMBER_SCOPE_CHANGED',
+  })
+  const memberAJoinerRejection = assert.rejects(memberAJoiner, {
+    code: 'MEMBER_SCOPE_CHANGED',
+  })
+  for (let step = 0; step < 6; step += 1) await Promise.resolve()
+  try {
+    assert.equal(reads, 2)
+  } finally {
+    memberAGate.resolve()
+  }
+  const [memberBResult] = await Promise.all([
+    memberB,
+    memberAOwnerRejection,
+    memberAJoinerRejection,
+  ])
+
   assert.equal(memberBResult.data.id, 'member-b')
 })
 

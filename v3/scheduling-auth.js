@@ -163,6 +163,7 @@
   const sharedReads = new Map()
   const sharedMemberstackReads = new Map()
   let memberstackReadOwner = 0
+  let memberstackReadRevision = 0
   let sessionGeneration = 0
   let tokenRevision = 0
   let sessionScope = {}
@@ -212,6 +213,11 @@
     if (expectedScope && expectedScope !== sessionScope) throw memberSessionChangedError()
   }
 
+  function invalidateMemberstackReads() {
+    memberstackReadRevision += 1
+    sharedMemberstackReads.clear()
+  }
+
   function resetSession() {
     sessionGeneration += 1
     tokenRevision += 1
@@ -220,7 +226,7 @@
     xanoAuthTokenMemberstackToken = null
     tokenRequest = null
     sharedReads.clear()
-    sharedMemberstackReads.clear()
+    invalidateMemberstackReads()
   }
 
   function pruneExpiredSharedReads() {
@@ -250,7 +256,7 @@
   }
 
   function reconcileAuthChange() {
-    sharedMemberstackReads.clear()
+    invalidateMemberstackReads()
     const memberstack = window.$memberstackDom
     authReconciliation = authReconciliation.catch(function () {}).then(async function () {
       let memberstackToken = null
@@ -287,22 +293,47 @@
     const original = memberstack.getCurrentMember.bind(memberstack)
     const NON_INVALIDATING_METHODS = ['getCurrentMember', 'getMemberCookie', 'onAuthChange']
     memberstack.__tsSharedReads = true
-    memberstack.getCurrentMember = function () {
+    memberstack.getCurrentMember = async function () {
       pruneExpiredSharedReads()
+      const readRevision = memberstackReadRevision
+      const args = Array.prototype.slice.call(arguments)
+      const memberstackToken = await memberstack.getMemberCookie()
+      observeMemberstackToken(memberstackToken)
+      const generation = sessionGeneration
+      const read = async function () {
+        const result = await original.apply(null, args)
+        let latestMemberstackToken
+        try {
+          latestMemberstackToken = await memberstack.getMemberCookie()
+        } catch (error) {
+          invalidateMemberstackReads()
+          throw error
+        }
+        observeMemberstackToken(latestMemberstackToken)
+        if (
+          latestMemberstackToken !== memberstackToken ||
+          generation !== sessionGeneration
+        ) {
+          invalidateMemberstackReads()
+          throw memberSessionChangedError()
+        }
+        return result
+      }
       let key
       try {
         key = JSON.stringify([
           readOwner,
-          sessionGeneration,
-          hasObservedMemberstackToken ? observedMemberstackToken : null,
-          Array.prototype.slice.call(arguments),
+          readRevision,
+          generation,
+          memberstackToken,
+          args,
         ])
       } catch (error) {
-        return original.apply(null, arguments)
+        return read()
       }
       const shared = sharedMemberstackReads.get(key)
       if (shared) return shared
-      const promise = Promise.resolve(original.apply(null, arguments))
+      const promise = read()
       sharedMemberstackReads.set(key, promise)
       const release = function () {
         if (sharedMemberstackReads.get(key) === promise) sharedMemberstackReads.delete(key)
@@ -314,27 +345,27 @@
       const method = memberstack[name]
       if (typeof method !== 'function' || NON_INVALIDATING_METHODS.indexOf(name) !== -1) return
       memberstack[name] = function () {
-        sharedMemberstackReads.clear()
+        invalidateMemberstackReads()
         let result
         try {
           result = method.apply(this, arguments)
         } catch (error) {
-          sharedMemberstackReads.clear()
+          invalidateMemberstackReads()
           throw error
         }
         if (result && typeof result.then === 'function') {
           return Promise.resolve(result).then(
             function (value) {
-              sharedMemberstackReads.clear()
+              invalidateMemberstackReads()
               return value
             },
             function (error) {
-              sharedMemberstackReads.clear()
+              invalidateMemberstackReads()
               throw error
             },
           )
         }
-        sharedMemberstackReads.clear()
+        invalidateMemberstackReads()
         return result
       }
     })
@@ -461,7 +492,16 @@
     return [generation, request.method, url.pathname + url.search, body].join('\n')
   }
 
+  function hasExplicitAbortSignal(input, init) {
+    const inputIsRequest =
+      typeof Request !== 'undefined' &&
+      (input instanceof Request || Object.prototype.toString.call(input) === '[object Request]')
+    const initSignal = init == null ? undefined : init.signal
+    return initSignal != null || inputIsRequest
+  }
+
   async function xanoAuthFetch(input, init, expectedScope) {
+    const bypassSharedRead = hasExplicitAbortSignal(input, init)
     const request = new Request(input, init)
     const url = schedulingUrl(request)
     if (!url || request.headers.has('Authorization')) {
@@ -478,7 +518,7 @@
       }
     }
     const generation = sessionGeneration
-    const key = await sharedReadKey(request, url, generation)
+    const key = bypassSharedRead ? null : await sharedReadKey(request, url, generation)
     if (!key) {
       sharedReads.clear()
       const token = await getXanoAuthToken()
@@ -505,13 +545,13 @@
         function (response) {
           if (sharedReads.get(key) !== shared) return
           if (!response.ok) {
-            sharedReads.delete(key)
+            sharedReads.clear()
             return
           }
           shared.expiresAt = Date.now() + READ_DEDUPE_TTL_MS
         },
         function () {
-          if (sharedReads.get(key) === shared) sharedReads.delete(key)
+          if (sharedReads.get(key) === shared) sharedReads.clear()
         },
       )
     }
