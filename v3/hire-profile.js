@@ -788,10 +788,12 @@
   // order. A Brand whose discovery installed a controller is not answered
   // until the DTO has too, because publicCallTypeReady refuses every type
   // while that DTO is unknown. Ending pending on discovery alone showed the
-  // "isn't accepting calls" verdict before the page knew. The failsafe keeps
-  // a DTO that never answers from holding the loading state open.
+  // "isn't accepting calls" verdict before the page knew. One failsafe,
+  // armed at bootstrap for every viewer, keeps identity, discovery or a DTO
+  // that never answers from holding the loading state open.
   let authDiscoverySettled = false;
   let callDiscoveryFailsafeTimer = null;
+  let callLoadingFailsafeFired = false;
   const CALL_DISCOVERY_PUBLIC_WAIT_MS = 15000;
 
   function awaitingPublicCallReadiness() {
@@ -814,33 +816,65 @@
   }
 
   function maybeEndCallDiscoveryPending(force) {
-      if (!callDiscoveryPending || !authDiscoverySettled) return;
-      if (!force && awaitingPublicCallReadiness()) {
-          if (callDiscoveryFailsafeTimer === null) {
-              callDiscoveryFailsafeTimer = window.setTimeout(function () {
-                  maybeEndCallDiscoveryPending(true);
-              }, CALL_DISCOVERY_PUBLIC_WAIT_MS);
-          }
-          return;
+      if (callDiscoveryPending &&
+          (force || (authDiscoverySettled && !awaitingPublicCallReadiness()))) {
+          callDiscoveryPending = false;
+          const configs = paintedCallState && Array.isArray(paintedCallState.configs)
+              ? paintedCallState.configs
+              : [];
+          const callSurfacesChanged = isBrandMember(MEMBER)
+              ? syncCanonicalCallSurfaces(configs)
+              : false;
+          wireCallServiceCardsToDirectEntry();
+          if (callSurfacesChanged) refreshEmptySectionNav();
+          bookingHints.forEach(function (_entry, trigger) {
+              if (trigger.getAttribute('aria-disabled') === 'true') {
+                  explainBookingAvailability(trigger, false);
+              } else {
+                  trigger.removeAttribute('aria-busy');
+              }
+          });
       }
-      if (callDiscoveryFailsafeTimer !== null) window.clearTimeout(callDiscoveryFailsafeTimer);
+      releaseCallLoadingFailsafe();
+  }
+
+  /**
+   * The failsafe stays armed while anything still reads as loading: Book Call
+   * while discovery is pending, or a call card whose terminal writer has not
+   * run yet (for example a signed-out viewer still waiting for the DTO).
+   */
+  function releaseCallLoadingFailsafe() {
+      if (callDiscoveryFailsafeTimer === null || callDiscoveryPending) return;
+      if (document.querySelector('[data-call-offer-state="loading"]')) return;
+      window.clearTimeout(callDiscoveryFailsafeTimer);
       callDiscoveryFailsafeTimer = null;
-      callDiscoveryPending = false;
-      const configs = paintedCallState && Array.isArray(paintedCallState.configs)
-          ? paintedCallState.configs
-          : [];
-      const callSurfacesChanged = isBrandMember(MEMBER)
-          ? syncCanonicalCallSurfaces(configs)
-          : false;
-      wireCallServiceCardsToDirectEntry();
-      if (callSurfacesChanged) refreshEmptySectionNav();
-      bookingHints.forEach(function (_entry, trigger) {
-          if (trigger.getAttribute('aria-disabled') === 'true') {
-              explainBookingAvailability(trigger, false);
-          } else {
-              trigger.removeAttribute('aria-busy');
-          }
-      });
+  }
+
+  function failCloseCallCard(card) {
+      setCallOfferVisible(card, false);
+      card.removeAttribute('aria-busy');
+      card.removeAttribute('data-call-service-direct');
+      card.setAttribute('data-call-offer-state', 'hidden');
+  }
+
+  /**
+   * F50 failsafe, CALL_DISCOVERY_PUBLIC_WAIT_MS after bootstrap. Whatever has
+   * not answered by then fails closed: Book Call reads unavailable and every
+   * card still loading is hidden. A later identity, discovery or DTO answer
+   * still runs its normal writer, so an admitted control can open afterwards.
+   */
+  function expireCallLoading() {
+      callDiscoveryFailsafeTimer = null;
+      callLoadingFailsafeFired = true;
+      if (callDiscoveryPending && isBrandMember(MEMBER) && paintedCallState === null) {
+          // The closed look describes an empty answer; a later discovery
+          // replaces it.
+          paintedCallState = { configs: [], slots: {} };
+      }
+      maybeEndCallDiscoveryPending(true);
+      const stillLoading = Array.from(document.querySelectorAll('[data-call-offer-state="loading"]'));
+      stillLoading.forEach(failCloseCallCard);
+      if (stillLoading.length) refreshEmptySectionNav();
   }
 
   /**
@@ -1674,6 +1708,7 @@
   applyPendingCallCardStates(
       canonicalCallCardEntries().concat(legacyHeaderCallEntries(null))
   );
+  callDiscoveryFailsafeTimer = window.setTimeout(expireCallLoading, CALL_DISCOVERY_PUBLIC_WAIT_MS);
 
   // `jp-test` is the published CMS canary shared by both environments. Its
   // authored Memberstack value belongs to Live, so the Test Brand on Webflow
@@ -3010,9 +3045,14 @@
               // paywalled viewer, so identity alone never settles or
               // supersedes them. A tout the legacy wrapper renders late joins
               // the loading state the bootstrap touts already hold.
-              applyPendingCallCardStates(legacyHeaderCallEntries(null).filter(function (entry) {
+              const late = legacyHeaderCallEntries(null).filter(function (entry) {
                   return !entry.card.hasAttribute('data-call-offer-state');
-              }), true);
+              });
+              applyPendingCallCardStates(late, true);
+              // After the failsafe, a late tout fails closed with the rest.
+              if (callLoadingFailsafeFired) {
+                  late.forEach(function (entry) { failCloseCallCard(entry.card); });
+              }
           }
           return;
       }

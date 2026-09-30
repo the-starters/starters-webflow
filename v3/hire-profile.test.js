@@ -994,7 +994,7 @@ function makeWfXanoFixture(root, initialResult = null, { replayOnSubscribe = tru
   }
 }
 
-for (const missingHelper of [false, true]) test(`existing Header call clones bootstrap before qs assignment (helper missing: ${missingHelper})`, () => {
+for (const missingHelper of [false, true]) test(`existing Header call clones bootstrap before qs assignment (helper missing: ${missingHelper})`, async () => {
   const page = makePage()
   const header = addXanoCallCardsFixture(page, 'starter-call-offers-header')
   page.root.appendChild(header.wrapper)
@@ -1010,6 +1010,7 @@ for (const missingHelper of [false, true]) test(`existing Header call clones boo
   }
   const context = makeContext({ page })
   if (missingHelper) context.qs = undefined
+  const held = holdLongTimers(context)
   vm.createContext(context)
   assert.doesNotThrow(() => vm.runInContext(source, context))
   const cards = [header.free, header.paid]
@@ -1034,6 +1035,25 @@ for (const missingHelper of [false, true]) test(`existing Header call clones boo
     assert.equal(card.root.getAttribute('data-modal-trigger'), null)
     assert.equal(card.root.getAttribute('data-signup-trigger-element'), null)
     assert.equal(card.root.getAttribute('data-call-service-direct'), null)
+  }
+  if (missingHelper) {
+    assert.equal(held.length, 0, 'the stand-down path arms no failsafe')
+    return
+  }
+  // No wf-xano instance ever answers for this signed-out viewer, so only the
+  // bounded failsafe can end loading. It fails the clones closed.
+  await settle()
+  for (const card of cards) assert.equal(card.root.getAttribute('data-call-offer-state'), 'loading')
+  const armed = held.filter(Boolean)
+  assert.equal(armed.length, 1, 'one failsafe bounds the wait')
+  assert.equal(armed[0].delay, 15000)
+  armed[0].callback()
+  await settle()
+  for (const card of cards) {
+    assert.equal(card.root.style.display, 'none', 'the failsafe fails the clone closed')
+    assert.equal(card.root.getAttribute('aria-hidden'), 'true')
+    assert.equal(card.root.getAttribute('aria-busy'), null)
+    assert.equal(card.root.getAttribute('data-call-offer-state'), 'hidden')
   }
 })
 
@@ -8432,13 +8452,16 @@ test('F50 Book Call stays loading until the public call DTO answers after discov
   const page = makePage()
   const xano = addXanoCallCardsFixture(page)
   const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
-  const context = f50BrandContext(page, wfx)
+  const installs = []
+  const context = f50BrandContext(page, wfx, { initBookingComponents: () => installs.push('free') })
   const held = holdLongTimers(context)
   vm.createContext(context)
   vm.runInContext(source, context)
   await settle()
   const button = page.bookingButton
   const hint = page.root.querySelector('[data-call-availability-hint]')
+  assert.deepEqual(installs, ['free'], 'discovery installed its controller before the DTO')
+  armedFailsafe(held)
   assertBookCallLoading(button, 'between discovery and the DTO: ')
   button.listeners.focusin.forEach(fn => fn({}))
   assert.equal(hint.textContent, 'Checking this Starter’s call times…')
@@ -8529,7 +8552,7 @@ test('F50 an empty discovery ends loading at once, without waiting for the DTO',
   assert.equal(page.bookingButton.getAttribute('data-booking-trigger-loading'), null)
   assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), '')
   assert.equal(page.bookingButton.getAttribute('aria-busy'), null)
-  assert.equal(held.length, 0, 'no failsafe: the empty answer is already final')
+  assert.equal(held.filter(Boolean).length, 0, 'no failsafe remains: the empty answer is already final')
 })
 
 test('F50 Brand call cards stay loading until discovery settles public admission', async () => {
@@ -9980,5 +10003,128 @@ for (const viewer of ['signed-out', 'paywalled']) {
     assert.equal(legacyHeader.free.root.getAttribute('aria-hidden'), null)
     assert.equal(legacyHeader.paid.root.style.display, 'none')
     assert.equal(legacyHeader.paid.root.getAttribute('aria-hidden'), 'true')
+  })
+}
+
+/* F50: one bounded failsafe for every viewer. Identity, discovery or the public
+   call DTO that never answers cannot hold the loading state open. */
+
+function armedFailsafe(held) {
+  const armed = held.filter(Boolean)
+  assert.equal(armed.length, 1, 'exactly one failsafe is armed')
+  assert.equal(armed[0].delay, 15000)
+  return armed[0]
+}
+
+function assertF50FailedClosed(cards, label) {
+  assert.ok(cards.length > 0, label + ': cards exist')
+  for (const card of cards) {
+    assert.equal(card.root.style.display, 'none', label + ': hidden')
+    assert.equal(card.root.getAttribute('aria-hidden'), 'true', label + ': inaccessible')
+    assert.equal(card.root.getAttribute('aria-busy'), null, label + ': not busy')
+    assert.equal(card.root.getAttribute('data-call-offer-state'), 'hidden', label + ': terminal')
+  }
+}
+
+for (const viewer of ['signed-out', 'talent', 'owner', 'owner with a failed read']) {
+  test(`F50 pre-adapter clones fail closed for ${viewer} when the call DTO never answers`, async () => {
+    const page = makePage()
+    const fixture = f50LibraryFirstCallCards(page)
+    let api = fixture.api
+    if (viewer === 'owner with a failed read') {
+      const failed = makeCallCardsWfXanoFixture(fixture.header.wrapper, 'starter-call-offers-header', { initialError: true })
+      api = failed.api
+    } else {
+      // Instances exist but never announce a result.
+    }
+    const member = viewer === 'talent' ? OTHER_TALENT_MEMBER : viewer.startsWith('owner') ? OWNER_MEMBER : {}
+    const context = viewer.startsWith('owner')
+      ? ownerContext(page, ownerController(), { wfXano: api })
+      : makeContext({ page, member, wfXano: api })
+    const held = holdLongTimers(context)
+    vm.createContext(context)
+    vm.runInContext(source, context)
+    await settle()
+    assertF50Loading(fixture.cards, 'identity known, DTO unresolved')
+    armedFailsafe(held).callback()
+    await settle()
+    assertF50FailedClosed(fixture.cards, 'after the failsafe')
+    if (viewer !== 'signed-out') return
+    // A DTO that arrives after the failsafe still reaches its normal writer.
+    fixture.headerFeed.emit(callCardResult({ free: true, paid: false }))
+    await settle()
+    for (const card of fixture.cards) {
+      const offered = card.root.getAttribute('data-type') === 'free'
+      assert.equal(card.root.getAttribute('data-call-offer-state'), offered ? 'available' : 'hidden')
+      assert.equal(card.root.style.display, offered ? 'block' : 'none')
+    }
+  })
+}
+
+test('F50 signed-out legacy Header fails closed when the call DTO never answers', async () => {
+  const fixture = f50LegacyHeaderPage()
+  const context = makeContext({ page: fixture.page, member: {}, wfXano: fixture.feed.api })
+  const held = holdLongTimers(context)
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+  const cards = fixture.legacyCards.concat([fixture.services.free, fixture.services.paid])
+  assertF50Loading(cards, 'DTO unresolved')
+  armedFailsafe(held).callback()
+  await settle()
+  assertF50FailedClosed(cards, 'after the failsafe')
+
+  // A legacy tout rendered after the failsafe fails closed too.
+  const late = fixture.legacyHeader.free.root.cloneNode()
+  for (const name of ['data-call-offer-state', 'aria-busy', 'data-canonical-public-call']) late.removeAttribute(name)
+  late.setAttribute('data-modal-trigger', 'popup-booking-main')
+  fixture.legacyHeader.wrapper.appendChild(late)
+  context.mutationObserverCallbacks.forEach((callback) => callback([{ type: 'childList', addedNodes: [late] }]))
+  assertF50FailedClosed([{ root: late }], 'late tout after the failsafe')
+  assert.equal(late.getAttribute('data-modal-trigger'), null)
+
+  fixture.feed.emit(callCardResult({ free: true, paid: false }))
+  await settle()
+  assert.equal(fixture.legacyHeader.free.root.getAttribute('data-call-offer-state'), 'available')
+  assert.equal(fixture.legacyHeader.free.root.style.display, 'block')
+  assert.equal(fixture.legacyHeader.paid.root.getAttribute('data-call-offer-state'), 'hidden')
+})
+
+for (const stalled of ['identity', 'discovery']) {
+  test(`F50 the failsafe bounds a stalled ${stalled} for a Brand, and a later answer still opens`, async () => {
+    const page = makePage()
+    const xano = addXanoCallCardsFixture(page)
+    const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
+    let answerDiscovery
+    const discovery = new Promise((resolve) => { answerDiscovery = resolve })
+    const context = f50BrandContext(page, wfx, stalled === 'discovery'
+      ? { getStarterByMemberId: () => discovery }
+      : {})
+    const releaseIdentity = stalled === 'identity' ? f50HeldIdentity(context, BRAND_MEMBER) : null
+    const held = holdLongTimers(context)
+    vm.createContext(context)
+    vm.runInContext(source, context)
+    wfx.emit(callCardResult({ free: true, paid: false }))
+    await settle()
+    assertBookCallLoading(page.bookingButton, 'stalled: ')
+    assertF50Loading([xano.free, xano.paid], 'stalled')
+
+    armedFailsafe(held).callback()
+    await settle()
+    const button = page.bookingButton
+    assert.equal(button.getAttribute('data-booking-trigger-loading'), null)
+    assert.equal(button.getAttribute('aria-busy'), null)
+    assert.equal(button.getAttribute('data-booking-trigger-unavailable'), '')
+    assert.equal(button.getAttribute('aria-disabled'), 'true', 'the failsafe stays closed')
+    assertF50FailedClosed([xano.free, xano.paid], 'after the failsafe')
+
+    if (releaseIdentity) releaseIdentity()
+    else answerDiscovery({ nylas_grant_id: 'grant_prod' })
+    await settle()
+    assert.equal(button.getAttribute('aria-disabled'), null, 'the late answer opens Book Call')
+    assert.equal(button.getAttribute('data-modal-trigger'), 'popup-booking-main')
+    assert.equal(xano.free.root.getAttribute('data-call-offer-state'), 'available')
+    assert.equal(xano.free.root.style.display, 'block')
+    assert.equal(xano.paid.root.getAttribute('data-call-offer-state'), 'hidden')
   })
 }
