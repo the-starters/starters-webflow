@@ -203,8 +203,9 @@ One deferred tag per in-scope page, in **Page Settings → Custom Code → Befor
 <script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@main/v3/brand-profile-redirect.js" defer></script>
 ```
 
-Pin `@v1.59.116` (or newer) instead of `@main` / `@latest` once the release tag
-exists. Until then `@latest` 404s this file (tag still on `v1.59.115`).
+For production delivery and served-byte verification, follow the
+[repository release rules](../../README.md#sync-safety). A release pin must
+reference a published tag containing the reviewed file.
 
 **It must load after `v3/route-guard.js`**, which is sitewide and already earlier
 in the document. It uses `window.StartersV3RouteGuard.memberRole` to confirm a paid
@@ -311,9 +312,8 @@ for console checks.
   window, and `markerKey` is the exact key to check by hand. If it ever disagrees
   with the key [brand-account-controller.js](BRAND-ACCOUNT-WIRING.md) writes, one
   file is stale — that mismatch is the ping-pong bug.
-- `release` reads the shipping tag and must match the `@release` line in the
-  file's header. Grep the served CDN file for it to prove which version a page
-  actually loaded.
+- For `release` interpretation and served-file verification, see the shared
+  [release-marker contract](ROUTE-GUARD-WIRING.md#release-markers).
 
 ## Release gate
 

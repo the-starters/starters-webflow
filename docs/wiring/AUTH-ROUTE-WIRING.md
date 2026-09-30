@@ -84,7 +84,8 @@ moved to `get_build_profile_status` on 2026-08-04.
       - Find the loader's own element, not any page-level tag:
         `document.querySelector('script[data-starters-auth-runtime="auth-route"]').src`
         must be exactly
-        `https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v1.59.610/v3/auth-route.js`.
+        `https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@RELEASE/v3/auth-route.js`,
+        with `RELEASE` matching the loader ref selected in step 5.
       - That request must have a successful (2xx, non-`from disk cache`-only)
         network response in the Network panel.
       - The served bytes must match the release: compare
@@ -101,7 +102,8 @@ moved to `get_build_profile_status` on 2026-08-04.
       This is the actual gate, and it is the first step that observes the
       loader's copy executing. For one path: remove its page-level
       `auth-route.js` tag, then confirm `window.StartersV3AuthRouter.release`
-      reports `v1.59.610`, the form carries both `data-ms-redirect` and
+      matches the `@release` header of `v3/auth-route.js` at the selected ref,
+      the form carries both `data-ms-redirect` and
       `redirect` set to `/auth-route`, and one real login completes end to end
       through `/auth-route`. Repeat per path; do not batch.
    5. **Scope.** Steps 2–4 all edit and save Webflow custom code. They are out
@@ -565,9 +567,8 @@ Production stays silent apart from the configuration errors in the table above.
   loader's error surface stays silent here: it never executed, so expect no
   `data-auth-page-loader-error`, no `starters:v3-auth-page-loader-error` event,
   and a clean console.
-- Separately, block only the exact loader-inserted
-  `https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v1.59.610/v3/auth-route.js`
-  request in devtools while leaving `auth-page-loader.js` and the page-level
+- Separately, block only the request to the loader-inserted child URL identified
+  in step 6.3's delivery check, using devtools while leaving `auth-page-loader.js` and the page-level
   fallback tag's distinct URL reachable, then load each auth path. The loader executes,
   its child request fails, and
   `html[data-auth-page-loader-error="auth-route-load-failed"]`, the
@@ -580,7 +581,7 @@ Production stays silent apart from the configuration errors in the table above.
   which state was tested.
 - Walk step 6 in order. Step 6.3 records delivery evidence only (the loader's
   own `script[data-starters-auth-runtime="auth-route"]` element, its exact
-  `@v1.59.610` src, a successful response, and a matching served-byte hash);
+  selected-release src, a successful response, and a matching served-byte hash);
   step 6.4 is the behavioral gate and is the first step that can observe the
   loader's copy executing, one path at a time. Keep the step-6.1 readback until
   the release is signed off. All of step 6 is deferred to a separately

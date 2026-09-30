@@ -557,8 +557,8 @@ root [README script inventory](../../README.md#current-scripts).
 Standing convention (Jerico, 2026-08-03), applied to every browser-facing script
 touched by a release:
 
-- The file header comment carries a ` * @release vX.Y.Z` line naming the tag that
-  shipped the change.
+- The file header comment carries a ` * @release vX.Y.Z` line naming the intended
+  release tag.
 - Where the script exports a window API object, the same value appears as a
   `release` property on it.
 - The two must stay in sync. Each touched script's test file parses the header
@@ -580,17 +580,17 @@ curl -fsS "https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/r
 ```
 
 ```js
-window.StartersV3RouteGuard.release // -> 'v1.59.610'
+window.StartersV3RouteGuard.release // Compare with the served file's @release header.
 window.StartersV3AuthRouter.release
 window.StartersBuildProfileRedirect.release
 window.StartersCompleteProfileRedirect.release
 ```
 
-The marker states the tag that shipped the file's current contents, not the tag
-the browser happened to load it from — a `@latest` URL resolves to the newest
-tag, so the two agree unless a cached copy is being served. A mismatch between
-the console property and the tag you expect is the fastest signal that a stale
-CDN copy is still in play; purge it with `purge.jsdelivr.net`.
+The marker identifies the file's intended release, not the ref in its CDN URL
+or proof that the release has shipped. A later tag can contain an unchanged file
+with an older marker. Compare the console property and served bytes with that
+file at the selected ref. Follow the [repository release rules](../../README.md#sync-safety)
+to publish and verify the assets.
 
 ## Diagnostics
 
