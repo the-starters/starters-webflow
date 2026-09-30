@@ -726,3 +726,87 @@ test('reconciliation queued during token lookup blocks dispatch', async () => {
   await assert.rejects(staleWrite, (error) => error.code === 'MEMBER_SCOPE_CHANGED')
   assert.deepEqual(dispatchedBodies, [])
 })
+
+function countingFetch() {
+  const calls = []
+  const nativeFetch = async (request) => {
+    const url = requestUrl(request)
+    if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-1' })
+    const body = await request.text()
+    calls.push({ url, method: request.method, body })
+    return response({ n: calls.length })
+  }
+  return { calls, nativeFetch }
+}
+
+const PAID_GET = `${XANO_ORIGIN}/api:tCpV3oqd/starter/paid-call-settings/get/v3`
+const PAID_UPSERT = `${XANO_ORIGIN}/api:tCpV3oqd/starter/paid-call-settings/upsert/v3`
+
+test('concurrent and repeated identical reads share one network response', async () => {
+  const { calls, nativeFetch } = countingFetch()
+  const { window } = loadBridge(nativeFetch)
+
+  const [a, b] = await Promise.all([window.xanoAuthFetch(PAID_GET), window.xanoAuthFetch(PAID_GET)])
+  const c = await window.xanoAuthFetch(PAID_GET)
+
+  assert.equal(calls.length, 1)
+  assert.deepEqual(await a.json(), { n: 1 })
+  assert.deepEqual(await b.json(), { n: 1 })
+  assert.deepEqual(await c.json(), { n: 1 })
+})
+
+test('reads with different bodies or URLs are not shared', async () => {
+  const { calls, nativeFetch } = countingFetch()
+  const { window } = loadBridge(nativeFetch)
+  const post = (member) =>
+    window.xanoAuthFetch(V3_STARTER_URL, { method: 'POST', body: JSON.stringify({ member_id: member }) })
+
+  await Promise.all([post('member-a'), post('member-b'), post('member-a')])
+  await window.xanoAuthFetch(PAID_GET)
+  await window.xanoAuthFetch(`${XANO_ORIGIN}/api:tCpV3oqd/starter/free-call-settings/get/v3`)
+
+  assert.equal(calls.length, 4)
+})
+
+test('a write clears shared reads so the next read is fresh', async () => {
+  const { calls, nativeFetch } = countingFetch()
+  const { window } = loadBridge(nativeFetch)
+
+  await window.xanoAuthFetch(PAID_GET)
+  await window.xanoAuthFetch(PAID_UPSERT, { method: 'POST', body: '{}' })
+  const after = await window.xanoAuthFetch(PAID_GET)
+
+  assert.equal(calls.length, 3)
+  assert.deepEqual(await after.json(), { n: 3 })
+})
+
+test('failed reads are not shared and a session change drops shared reads', async () => {
+  let status = 500
+  const calls = []
+  const nativeFetch = async (request) => {
+    if (requestUrl(request).includes('/auth/trade-token/v3')) return response({ authToken: 'xano-1' })
+    calls.push(requestUrl(request))
+    return response({ ok: status === 200 }, status)
+  }
+  const memberstack = { getMemberCookie: async () => 'memberstack-a', onAuthChange() {} }
+  const { window } = loadBridge(nativeFetch, { memberstack })
+
+  assert.equal((await window.xanoAuthFetch(PAID_GET)).status, 500)
+  status = 200
+  assert.equal((await window.xanoAuthFetch(PAID_GET)).status, 200)
+  await window.xanoAuthFetch(PAID_GET)
+  assert.equal(calls.length, 2)
+
+  memberstack.getMemberCookie = async () => 'memberstack-b'
+  await window.xanoAuthFetch(PAID_GET)
+  assert.equal(calls.length, 3)
+})
+
+test('shared reads honor each caller expected scope', async () => {
+  const { nativeFetch } = countingFetch()
+  const { window } = loadBridge(nativeFetch)
+  const scope = await window.__tsSchedulingAuthGetScope()
+
+  await window.xanoAuthFetch(PAID_GET, undefined, scope)
+  await assert.rejects(window.xanoAuthFetch(PAID_GET, undefined, {}), { code: 'MEMBER_SCOPE_CHANGED' })
+})

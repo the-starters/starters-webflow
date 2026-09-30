@@ -102,6 +102,19 @@
     '/api:tCpV3oqd/starter/set_timezone/v3',
     '/api:tCpV3oqd/starter/update_availability/v3',
   ]
+  // Pure reads that several dashboard scripts request independently. A
+  // repeat within READ_DEDUPE_TTL_MS shares one network response (same member
+  // session, method, URL and body). Any other authenticated request clears
+  // the shared entries first, so a read that follows a write is always fresh.
+  const READ_DEDUPE_TTL_MS = 5000
+  const READ_DEDUPE_PATHS = [
+    '/api:tCpV3oqd/nylas_configurations/get_all/v3',
+    '/api:tCpV3oqd/nylas_configurations/get_bookable/v3',
+    '/api:tCpV3oqd/starter/get_booking_profile/v3',
+    '/api:tCpV3oqd/starter/get_by_memberstack/v3',
+    '/api:tCpV3oqd/starter/free-call-settings/get/v3',
+    '/api:tCpV3oqd/starter/paid-call-settings/get/v3',
+  ]
   // Temporary backwards compatibility for staging pages that already load
   // this shared auth module but do not yet load scheduling-v3-stage.js. The
   // stage adapter intercepts these paths first on the exact staging and
@@ -147,6 +160,7 @@
   let xanoAuthToken = null
   let xanoAuthTokenMemberstackToken = null
   let tokenRequest = null
+  const sharedReads = new Map()
   let sessionGeneration = 0
   let tokenRevision = 0
   let sessionScope = {}
@@ -197,6 +211,7 @@
     xanoAuthToken = null
     xanoAuthTokenMemberstackToken = null
     tokenRequest = null
+    sharedReads.clear()
   }
 
   function observeMemberstackToken(memberstackToken) {
@@ -346,17 +361,66 @@
     return response
   }
 
+  async function sharedReadKey(request, url, generation) {
+    if (READ_DEDUPE_PATHS.indexOf(url.pathname) === -1) return null
+    if (request.method !== 'GET' && request.method !== 'POST') return null
+    const body = request.method === 'POST' ? await request.clone().text() : ''
+    return [generation, request.method, url.pathname + url.search, body].join('\n')
+  }
+
   async function xanoAuthFetch(input, init, expectedScope) {
     const request = new Request(input, init)
-    if (!schedulingUrl(request) || request.headers.has('Authorization')) {
+    const url = schedulingUrl(request)
+    if (!url || request.headers.has('Authorization')) {
       return originalFetch(request)
     }
 
     await awaitLatestAuthReconciliation()
+    if (READ_DEDUPE_PATHS.indexOf(url.pathname) !== -1) {
+      // A shared hit skips the token path, so still notice a rotated cookie.
+      const memberstack = window.$memberstackDom
+      if (memberstack && typeof memberstack.getMemberCookie === 'function') {
+        observeMemberstackToken(await memberstack.getMemberCookie())
+        await awaitLatestAuthReconciliation()
+      }
+    }
     const generation = sessionGeneration
-    const token = await getXanoAuthToken()
+    const key = await sharedReadKey(request, url, generation)
+    if (!key) {
+      sharedReads.clear()
+      const token = await getXanoAuthToken()
+      assertSessionGeneration(generation)
+      try {
+        return await fetchWithToken(request, token, generation, expectedScope)
+      } finally {
+        sharedReads.clear()
+      }
+    }
+
+    assertExpectedScope(expectedScope)
+    let shared = sharedReads.get(key)
+    if (!shared || shared.expiresAt <= Date.now()) {
+      const promise = (async function () {
+        const token = await getXanoAuthToken()
+        assertSessionGeneration(generation)
+        return fetchWithToken(request, token, generation)
+      })()
+      shared = { promise, expiresAt: Date.now() + READ_DEDUPE_TTL_MS }
+      sharedReads.set(key, shared)
+      promise.then(
+        function (response) {
+          if (!response.ok && sharedReads.get(key) === shared) sharedReads.delete(key)
+        },
+        function () {
+          if (sharedReads.get(key) === shared) sharedReads.delete(key)
+        },
+      )
+    }
+    const response = await shared.promise
+    await awaitLatestAuthReconciliation()
     assertSessionGeneration(generation)
-    return fetchWithToken(request, token, generation, expectedScope)
+    assertExpectedScope(expectedScope)
+    return response.clone()
   }
 
   async function authenticatedFetch(input, init) {
