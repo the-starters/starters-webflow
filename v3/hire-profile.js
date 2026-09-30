@@ -850,6 +850,17 @@
       callDiscoveryFailsafeTimer = null;
   }
 
+  /**
+   * Arms the one failsafe timer. Bootstrap arms it; a surface that enters
+   * loading after an early release (for example a legacy Header tout rendered
+   * late for a signed-out viewer) arms it again. Once it has fired, a late
+   * surface fails closed at once instead.
+   */
+  function armCallLoadingFailsafe() {
+      if (callDiscoveryFailsafeTimer !== null || callLoadingFailsafeFired) return;
+      callDiscoveryFailsafeTimer = window.setTimeout(expireCallLoading, CALL_DISCOVERY_PUBLIC_WAIT_MS);
+  }
+
   function failCloseCallCard(card) {
       setCallOfferVisible(card, false);
       card.removeAttribute('aria-busy');
@@ -1716,7 +1727,7 @@
   // before the call DTO arrives and hides it again.
   const canonicalServicesCallRoot = qs('[wf-xano-instance="starter-call-offers-services"]');
   if (canonicalServicesCallRoot) supersedeLegacyServiceCallCards(canonicalServicesCallRoot);
-  callDiscoveryFailsafeTimer = window.setTimeout(expireCallLoading, CALL_DISCOVERY_PUBLIC_WAIT_MS);
+  armCallLoadingFailsafe();
 
   // `jp-test` is the published CMS canary shared by both environments. Its
   // authored Memberstack value belongs to Live, so the Test Brand on Webflow
@@ -3045,6 +3056,7 @@
           card.setAttribute('aria-busy', 'true');
           card.setAttribute('data-call-offer-state', 'loading');
       });
+      if (showLoading && entries.length) armCallLoadingFailsafe();
   }
 
   function reconcileLegacyHeaderProjection() {

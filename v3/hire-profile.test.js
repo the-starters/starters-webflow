@@ -10233,3 +10233,35 @@ test('F50 a clone the DTO released stays hidden through an unrelated mutation', 
   assertReleased('after discovery')
   assert.equal(xano.free.root.getAttribute('data-call-offer-state'), 'available')
 })
+
+test('F50 late legacy touts re-arm a released failsafe when the call DTO never answers', async () => {
+  // Page-first, signed out: no Services clone and no legacy tout exists at
+  // bootstrap. Identity ends discovery with nothing loading, so the bootstrap
+  // failsafe is released. Touts the legacy wrapper renders later enter
+  // loading; with the DTO hung, one failsafe must still bound them.
+  const fixture = f50LegacyHeaderPage()
+  for (const card of [fixture.services.free, fixture.services.paid]) card.root.remove()
+  for (const card of fixture.legacyCards) card.root.remove()
+  const context = makeContext({ page: fixture.page, member: {}, wfXano: fixture.feed.api })
+  const held = holdLongTimers(context)
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+  assert.equal(held.filter(Boolean).length, 0, 'nothing loads, so the bootstrap failsafe is released')
+
+  for (const card of fixture.legacyCards) fixture.legacyHeader.wrapper.appendChild(card.root)
+  const records = fixture.legacyCards.map((card) => ({ type: 'childList', addedNodes: [card.root] }))
+  context.mutationObserverCallbacks.forEach((callback) => callback(records))
+  await settle()
+  assertF50Loading(fixture.legacyCards, 'late legacy touts, DTO hung')
+  armedFailsafe(held).callback()
+  await settle()
+  assertF50FailedClosed(fixture.legacyCards, 'late legacy touts after 15 s')
+  assert.equal(held.filter(Boolean).length, 1, 'the fired failsafe is not re-armed')
+
+  // A DTO that arrives after the failsafe still reaches its normal writer.
+  fixture.feed.emit(callCardResult({ free: true, paid: false }))
+  await settle()
+  assert.equal(fixture.legacyHeader.free.root.getAttribute('data-call-offer-state'), 'available')
+  assert.equal(fixture.legacyHeader.paid.root.getAttribute('data-call-offer-state'), 'hidden')
+})
