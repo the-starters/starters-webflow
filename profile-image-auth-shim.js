@@ -376,6 +376,23 @@
     }
   }
 
+  async function uploadFormData(inspected) {
+    if (inspected.requestInput) {
+      // Wrappers can serialize multipart options into Request. Clone before
+      // applying init overrides, then parse the effective headers and body.
+      // Never consume the caller's request or accept malformed multipart data.
+      try {
+        return await materializeRequest(inspected).request.formData()
+      } catch {
+        return null
+      }
+    }
+    const body = inspected.init && inspected.init.body
+    return typeof FormData !== 'undefined' && body instanceof FormData
+      ? body
+      : null
+  }
+
   function authenticatedRequest(request, token) {
     const headers = new Headers(request.headers)
     headers.set('Authorization', 'Bearer ' + token)
@@ -455,10 +472,10 @@
 
     return (async () => {
       log('intercepting upload to', ENDPOINT_PATH)
-      const body = (init && init.body) || (input && input.body)
+      const body = await uploadFormData(inspected)
       let image = null
       let sourceMutationId = null
-      if (typeof FormData !== 'undefined' && body instanceof FormData) {
+      if (body) {
         image = body.get('image')
         sourceMutationId = body.get('source_mutation_id')
       }
