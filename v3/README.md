@@ -2361,14 +2361,21 @@ viewing participant's stored timezone first. A Brand then uses the browser's
 timezone, and the counterpart's timezone only when neither exists. A Starter
 with no stored timezone uses the Brand's timezone, as before.
 
-On both roles' cards, the authored Join Call anchor
-`[booking-element="meeting-link"]` receives the canonical `meeting_link` as a
-URL only when it is absolute HTTP(S) and the normalized lifecycle is confirmed
-(including rescheduled calls whose end has not passed). Otherwise, binding
-removes any previous or placeholder `href` and hides the anchor and its closest
-`[booking-element-wrap]`. Rebinding an eligible call restores both. This reader
-does not generate provider links or modify bookings; missing provider
-conferencing remains a separate dependency.
+On both roles' cards and call details, the authored Join Call
+`[booking-element="meeting-link"]` receives the canonical `meeting_link` only
+when it is absolute HTTP(S) and the call's effective confirmed interval is still
+in the future. Confirmed calls use `start` and `end`; canonical `rescheduled`
+rows use `start_old` and `end_old`, so the existing confirmed call remains
+joinable while a proposal is awaiting response. Otherwise, binding removes any
+previous or placeholder destination and hides the field and its closest
+`[booking-element-wrap]`. Rebinding an eligible call restores both. Details
+markup may be either an anchor or the authored paragraph; a paragraph is made
+keyboard-clickable only while its current canonical booking still has the same
+eligible URL. If the booking changes lifecycle, reaches its end, or the saved
+link rotates before activation, the handler fails closed, clears the rendered
+destination, and leaves no stale URL to open. This reader does not generate
+provider links or modify bookings; missing provider conferencing remains a
+separate dependency.
 
 For a local preview, serve the repository root with an HTTP server and open
 [`fixtures/dashboard-join-call.html`](fixtures/dashboard-join-call.html). Its
@@ -2495,8 +2502,10 @@ previous member's ID survives an identity change. Compose steps are excluded
 never receive it, because a summary and a navigating Message link below a
 reason form or the slot picker would discard in-progress input.
 
-Confirmed calls and active reschedule proposals can show their existing canonical
-meeting link; cancelled and archived calls cannot. The authored Message controls
+Confirmed calls and active reschedule proposals can show their existing
+canonical meeting link only while the effective confirmed interval is still in
+the future; completed, cancelled, and archived calls cannot. The authored
+Message controls
 navigate to the counterpart's thread. Only the counterpart's identity row carries
 a link — the Starter's
 dashboard restores `brand-message-link`, the Brand's restores
@@ -2811,18 +2820,21 @@ combo class. The
 wrap stays hidden for every row it does not own: Brand rows, non-pending rows,
 and pending rows with no usable deadline.
 
-One bounded ten-second timer, started only for the Starter role, repaints every
-rendered request card and the open `popup-booking-info` dialog from the already
-loaded canonical rows, so Accept disappears at the deadline without a reload
-and without a second timer per card. Crossing the deadline is the only trigger
-for a canonical re-read, and that read is bounded: at most three refreshes per
-booking-and-deadline pair, no more than one every thirty seconds, and never
-while another is in flight. That background refresh reuses the same identity
-and endpoint contract, skips repainting a section whose canonical rows are
-unchanged, restores the extra pages each section's load-more control had
-already revealed, and on a canonical read failure logs and leaves the rendered
-list in place instead of failing the whole dashboard closed. A missing member is
-the one exception and still fails closed.
+One bounded ten-second lifecycle timer, started for either dashboard role,
+repaints every rendered request card and the open `popup-booking-info` dialog
+from the already loaded canonical rows. For Starter requests, Accept disappears
+at the deadline without a reload and without a second timer per card. For either
+role, an open details view for a confirmed call moves to the completed panel and
+clears Join when the effective confirmed interval ends, including while a
+reschedule proposal is pending on the canonical row. Crossing a pending-request
+deadline remains the only timer trigger for a canonical re-read, and that read
+is bounded: at most three refreshes per booking-and-deadline pair, no more than
+one every thirty seconds, and never while another is in flight. That background
+refresh reuses the same identity and endpoint contract, skips repainting a
+section whose canonical rows are unchanged, restores the extra pages each
+section's load-more control had already revealed, and on a canonical read
+failure logs and leaves the rendered list in place instead of failing the whole
+dashboard closed. A missing member is the one exception and still fails closed.
 
 Loading, empty, and error displays reuse the authored elements instead of
 generating UI. The filter wrapper stays hidden during identity resolution and

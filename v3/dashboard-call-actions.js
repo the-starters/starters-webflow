@@ -1415,6 +1415,7 @@
     reason,
     restart,
     refreshDetail,
+    settings,
   ) {
     const container = modal && modal.querySelector('[booking-reschedule-calendar]')
     if (!container) return false
@@ -1463,57 +1464,71 @@
         // The booking decides the contract, and with it the failure copy and
         // the success view: a pending request lands on "time updated", not on
         // "waiting for the other participant".
-        const kind = rescheduleKindFor(role, booking)
-        if (!kind) return null
-        const config = KINDS[kind]
-        let result
+        const initialKind = rescheduleKindFor(role, booking)
+        if (!initialKind) return null
+        let releaseAction = null
         try {
-          result = await proposeReschedule(booking, role, reason, {
+          releaseAction = settings && typeof settings.acquireBookingAction === 'function'
+            ? await acquireMutationSlot(settings, booking, KINDS[initialKind].failureMessage)
+            : async function () {}
+          if (!releaseAction || !isCurrent()) return null
+          if (settings && typeof settings.getBooking === 'function') {
+            booking = settings.getBooking(modal)
+            if (!booking) return null
+          }
+          const kind = rescheduleKindFor(role, booking)
+          if (!kind) return null
+          const config = KINDS[kind]
+          const result = await proposeReschedule(booking, role, reason, {
             start: Number(slot && slot.start),
             end: Number(slot && slot.end),
             timezone: clean(slot && slot.timezone),
           }, undefined, kind)
           if (!result) throw new Error(config.failureMessage)
+          // F04: the update replaces the provider booking, so the row now
+          // lives under the new id. The attempt key was already cleared under
+          // the sent id inside submitAction. Adopt before the currency check:
+          // a member who moved on mid-request must not leave the row, or a card
+          // still keyed by the sent id, holding a dead booking_id.
+          const replaced = kind === 'reschedule-request' && adoptReplacementBooking(
+            document,
+            modal,
+            booking,
+            replacementBookingId(kind, result, booking),
+          )
+          if (!isCurrent()) {
+            // The card still shows the old slot, so re-read the list on close.
+            if (replaced) restartAfterModalClose(document, modal, restart)
+            return result
+          }
+          const reasonField = modal.querySelector('[booking-reschedule-reason]')
+          if (reasonField) reasonField.value = ''
+          // The receipt describes the selected slot. A pending request moves
+          // immediately; a confirmed call keeps its canonical time until the
+          // counterpart accepts, so render its proposal from a separate model.
+          if (kind === 'reschedule-request' && booking) {
+            booking.start = Number(slot && slot.start)
+            booking.end = Number(slot && slot.end)
+            booking.rescheduled_reason = reason || booking.rescheduled_reason
+            if (typeof refreshDetail === 'function') refreshDetail(modal, booking)
+          }
+          if (kind === 'reschedule-propose' && booking && typeof refreshDetail === 'function') {
+            refreshDetail(modal, Object.assign({}, booking, {
+              start: Number(slot && slot.start),
+              end: Number(slot && slot.end),
+              rescheduled_reason: reason || booking.rescheduled_reason,
+            }), config.successContent)
+          }
+          switchPopupContent(modal, config.successContent)
+          restartAfterModalClose(document, modal, restart)
         } catch (error) {
-          showActionError(modal, (error && error.message) || config.failureMessage)
+          if (isCurrent()) {
+            showActionError(modal, (error && error.message) || KINDS[initialKind].failureMessage)
+          }
           throw error
+        } finally {
+          await releaseMutationSlot(releaseAction)
         }
-        // F04: the update replaces the provider booking, so the row now
-        // lives under the new id. The attempt key was already cleared under
-        // the sent id inside submitAction. Adopt before the currency check:
-        // a member who moved on mid-request must not leave the row, or a card
-        // still keyed by the sent id, holding a dead booking_id.
-        const replaced = kind === 'reschedule-request' && adoptReplacementBooking(
-          document,
-          modal,
-          booking,
-          replacementBookingId(kind, result, booking),
-        )
-        if (!isCurrent()) {
-          // The card still shows the old slot, so re-read the list on close.
-          if (replaced) restartAfterModalClose(document, modal, restart)
-          return result
-        }
-        const reasonField = modal.querySelector('[booking-reschedule-reason]')
-        if (reasonField) reasonField.value = ''
-        // The receipt describes the selected slot. A pending request moves
-        // immediately; a confirmed call keeps its canonical time until the
-        // counterpart accepts, so render its proposal from a separate model.
-        if (kind === 'reschedule-request' && booking) {
-          booking.start = Number(slot && slot.start)
-          booking.end = Number(slot && slot.end)
-          booking.rescheduled_reason = reason || booking.rescheduled_reason
-          if (typeof refreshDetail === 'function') refreshDetail(modal, booking)
-        }
-        if (kind === 'reschedule-propose' && booking && typeof refreshDetail === 'function') {
-          refreshDetail(modal, Object.assign({}, booking, {
-            start: Number(slot && slot.start),
-            end: Number(slot && slot.end),
-            rescheduled_reason: reason || booking.rescheduled_reason,
-          }), config.successContent)
-        }
-        switchPopupContent(modal, config.successContent)
-        restartAfterModalClose(document, modal, restart)
       },
       })
     } catch (error) {
@@ -1615,6 +1630,49 @@
     }
   }
 
+  function commitBookingMutation(settings, booking, update, claim) {
+    if (settings && typeof settings.commitBookingMutation === 'function') {
+      return settings.commitBookingMutation(booking, update, claim)
+    }
+    if (!booking) return null
+    const changes = typeof update === 'function' ? update(booking) : update
+    if (!changes || typeof changes !== 'object' || Array.isArray(changes)) return null
+    Object.assign(booking, changes)
+    return booking
+  }
+
+  async function releaseMutationClaim(settings, claim) {
+    if (
+      !claim || !settings ||
+      typeof settings.releaseBookingMutation !== 'function'
+    ) return
+    const refresh = settings.releaseBookingMutation(claim)
+    if (!refresh || typeof settings.reconcileBookingMutations !== 'function') return
+    try {
+      await settings.reconcileBookingMutations()
+    } catch (error) {
+      console.error(
+        '[dashboard-call-actions] mutation reconciliation failed:',
+        error && error.message,
+      )
+    }
+  }
+
+  function acquireMutationSlot(settings, booking, failureMessage) {
+    return settings && typeof settings.acquireBookingAction === 'function'
+      ? settings.acquireBookingAction(booking, failureMessage)
+      : Promise.resolve(async function () {})
+  }
+
+  async function releaseMutationSlot(release) {
+    if (typeof release !== 'function') return
+    try {
+      await release()
+    } catch (error) {
+      console.error('[dashboard-call-actions] mutation readback failed:', error && error.message)
+    }
+  }
+
   function wire(options) {
     const settings = options || {}
     const document = settings.document || global.document
@@ -1655,7 +1713,7 @@
           }
           return
         }
-        const booking = settings.getBooking(button)
+        let booking = settings.getBooking(button)
         /* One authored Reschedule button serves two contracts. The markup
            cannot know which, so the booking decides here: a pending request
            swaps the confirmed-call kind for the direct-update one before the
@@ -1705,6 +1763,7 @@
             proposalReason.value,
             settings.restart,
             settings.refreshDetail,
+            settings,
           ).catch(function (error) {
             console.error(
               '[dashboard-call-actions] reschedule calendar failed:',
@@ -1728,19 +1787,44 @@
             releases.forEach(function (release) { release() })
           }
           showActionError(modal, '')
+          let mutationClaim = null
+          let releaseAction = null
           try {
+            releaseAction = await acquireMutationSlot(settings, booking, config.failureMessage)
+            if (!releaseAction) return
+            booking = settings.getBooking(button)
+            if (!canAct(step.kind, settings.role, booking)) return
+            mutationClaim = typeof settings.captureBookingMutation === 'function'
+              ? settings.captureBookingMutation(booking)
+              : null
             const result = await respondReschedule(step.kind, booking, settings.role)
             if (!result) throw new Error(config.failureMessage)
-            if (clean(modal.getAttribute('data-booking-id')) !== clean(booking.booking_id || booking.id)) return
+            const modalIsCurrent =
+              clean(modal.getAttribute('data-booking-id')) ===
+              clean(booking.booking_id || booking.id)
             if (step.kind === 'reschedule-confirm' || step.kind === 'reschedule-decline') {
               const confirmed = result[config.responseKey]
-              booking.status = confirmed.status
-              if (Number.isFinite(Number(confirmed.start)) && Number(confirmed.start) > 0) booking.start = Number(confirmed.start)
-              if (Number.isFinite(Number(confirmed.end)) && Number(confirmed.end) > 0) booking.end = Number(confirmed.end)
-              if (typeof settings.refreshDetail === 'function') settings.refreshDetail(modal, booking)
+              const confirmedBooking = commitBookingMutation(settings, booking, function (current) {
+                const changes = { status: confirmed.status }
+                const confirmedStart = Number(confirmed.start)
+                const confirmedEnd = Number(confirmed.end)
+                const restoredStart = Number(current.start_old)
+                const restoredEnd = Number(current.end_old)
+                if (Number.isFinite(confirmedStart) && confirmedStart > 0) changes.start = confirmedStart
+                else if (step.kind === 'reschedule-decline') changes.start = Number.isFinite(restoredStart) && restoredStart > 0 ? restoredStart : null
+                if (Number.isFinite(confirmedEnd) && confirmedEnd > 0) changes.end = confirmedEnd
+                else if (step.kind === 'reschedule-decline') changes.end = Number.isFinite(restoredEnd) && restoredEnd > 0 ? restoredEnd : null
+                return changes
+              }, mutationClaim)
+              if (!confirmedBooking) return
+              if (modalIsCurrent && typeof settings.refreshDetail === 'function') {
+                settings.refreshDetail(modal, confirmedBooking)
+              }
             }
-            ensureRescheduleViews(document, modal)
-            switchPopupContent(modal, config.successContent)
+            if (modalIsCurrent) {
+              ensureRescheduleViews(document, modal)
+              switchPopupContent(modal, config.successContent)
+            }
             restartAfterModalClose(document, modal, settings.restart)
           } catch (error) {
             if (clean(modal.getAttribute('data-booking-id')) !== clean(booking.booking_id || booking.id)) return
@@ -1750,7 +1834,12 @@
             )
             showActionError(modal, (error && error.message) || config.failureMessage)
           } finally {
-            releaseBusy()
+            try {
+              await releaseMutationClaim(settings, mutationClaim)
+            } finally {
+              await releaseMutationSlot(releaseAction)
+              releaseBusy()
+            }
           }
           return
         }
@@ -1759,7 +1848,17 @@
         button.__startersActionBusy = true
         const releaseBusy = markActionBusy(button, config.busyLabel)
         showActionError(modal, '')
+        let mutationClaim = null
+        let releaseAction = null
         try {
+          releaseAction = await acquireMutationSlot(settings, booking, config.failureMessage)
+          if (!releaseAction) return
+          booking = settings.getBooking(button)
+          if (!canAct(step.kind, settings.role, booking)) return
+          mutationClaim = step.kind === 'cancel' &&
+            typeof settings.captureBookingMutation === 'function'
+            ? settings.captureBookingMutation(booking)
+            : null
           const result = await submitAction(
             step.kind,
             settings.role,
@@ -1767,6 +1866,16 @@
             reason.value,
           )
           if (!result) throw new Error(config.failureMessage)
+          if (step.kind === 'cancel' && typeof settings.onCancelSuccess === 'function') {
+            try {
+              if (settings.onCancelSuccess(booking, result, mutationClaim) === false) return
+            } catch (error) {
+              console.error(
+                '[dashboard-call-actions] cancellation repaint failed:',
+                error && error.message,
+              )
+            }
+          }
           if (reason.field) reason.field.value = ''
           fillCounterpartPlaceholders(modal, config.successContent, settings.role, booking)
           switchPopupContent(modal, config.successContent)
@@ -1778,8 +1887,13 @@
           )
           showActionError(modal, (error && error.message) || config.failureMessage)
         } finally {
-          button.__startersActionBusy = false
-          releaseBusy()
+          try {
+            await releaseMutationClaim(settings, mutationClaim)
+          } finally {
+            await releaseMutationSlot(releaseAction)
+            button.__startersActionBusy = false
+            releaseBusy()
+          }
         }
       },
       true,

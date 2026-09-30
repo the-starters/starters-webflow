@@ -47,6 +47,8 @@
   const REQUEST_EXPIRATION_TICK_MS = 10000
   const REQUEST_EXPIRATION_POLL_MS = 30000
   const REQUEST_EXPIRATION_MAX_POLLS = 3
+  const MUTATION_RECONCILIATION_MAX_PASSES = 3
+  const CANONICAL_READ_TIMEOUT_MS = 10000
   const PROFILE_REFRESH_DELAYS_MS = [0, 150, 300, 600, 1000, 1600, 2500]
   const DEEP_LINK_READY_DELAYS_MS = [0, 100, 250, 500, 1000, 1600]
   const PROFILE_FORM_SELECTOR = 'form[data-ms-form="profile"]'
@@ -385,7 +387,7 @@
     }
     if (['pending', 'requested', 'request'].includes(raw)) return 'pending'
     const end = Number(booking && booking.end)
-    if (Number.isFinite(end) && end > 0 && end < (now || Date.now())) {
+    if (Number.isFinite(end) && end > 0 && end <= (now || Date.now())) {
       return 'completed'
     }
     if (['completed', 'complete', 'done'].includes(raw)) return 'completed'
@@ -474,6 +476,151 @@
     const flexWhenShown =
       element.hasAttribute && element.hasAttribute('display-flex')
     element.style.display = visible ? (flexWhenShown ? 'flex' : '') : 'none'
+  }
+
+  const wiredMeetingDestinations = new WeakSet()
+  const meetingDestinationBookings = new WeakMap()
+
+  function safeMeetingHref(value) {
+    try {
+      const url = new URL(clean(value))
+      return url.protocol === 'https:' || url.protocol === 'http:' ? url.href : ''
+    } catch (_error) {
+      return ''
+    }
+  }
+
+  function setMeetingDestination(element, href, allowParagraph, booking) {
+    if (!element) return false
+    const tag = clean(element.tagName).toLowerCase()
+    const isAnchor = tag === 'a'
+    const isParagraph = tag === 'p' && allowParagraph
+    if (!isAnchor && !isParagraph) return false
+    if (href) meetingDestinationBookings.set(element, booking)
+    else meetingDestinationBookings.delete(element)
+    if (isAnchor) {
+      if (href) {
+        element.setAttribute('href', href)
+        element.setAttribute('target', '_blank')
+        element.setAttribute('rel', 'noopener noreferrer')
+      } else {
+        element.removeAttribute('href')
+        element.removeAttribute('target')
+        element.removeAttribute('rel')
+      }
+    } else {
+      element.removeAttribute('href')
+      if (href) {
+        element.setAttribute('data-meeting-href', href)
+        element.setAttribute('role', 'link')
+        element.setAttribute('tabindex', '0')
+      } else {
+        element.removeAttribute('data-meeting-href')
+        element.removeAttribute('role')
+        element.removeAttribute('tabindex')
+      }
+    }
+    if (!href || wiredMeetingDestinations.has(element) || typeof element.addEventListener !== 'function') return true
+    const activateMeetingDestination = function (event) {
+      const current = meetingHrefForBooking(meetingDestinationBookings.get(element))
+      const rendered = safeMeetingHref(element.getAttribute(isAnchor ? 'href' : 'data-meeting-href'))
+      if (!current || current !== rendered) {
+        if (event && typeof event.preventDefault === 'function') event.preventDefault()
+        if (event && typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation()
+        setMeetingDestination(element, '', allowParagraph)
+        if (isParagraph) element.textContent = ''
+        show(element, false)
+        const group = element.closest && element.closest('[booking-element-wrap]')
+        if (group) show(group, false)
+        return
+      }
+      if (isAnchor || typeof global.open !== 'function') return
+      if (event && typeof event.preventDefault === 'function') event.preventDefault()
+      global.open(current, '_blank', 'noopener,noreferrer')
+    }
+    element.addEventListener('click', activateMeetingDestination, true)
+    if (isAnchor) {
+      element.addEventListener('auxclick', activateMeetingDestination, true)
+      element.addEventListener('dragstart', activateMeetingDestination, true)
+      element.addEventListener('contextmenu', activateMeetingDestination, true)
+    }
+    if (isParagraph) {
+      element.addEventListener('keydown', function (event) {
+        if (event.key === 'Enter') activateMeetingDestination(event)
+      })
+    }
+    wiredMeetingDestinations.add(element)
+    return true
+  }
+
+  function meetingReferenceTime(booking, now) {
+    const actions = global.StartersDashboardCallActions
+    if (actions && typeof actions.canonicalNow === 'function') {
+      try {
+        const canonical = Number(actions.canonicalNow(booking))
+        if (Number.isFinite(canonical) && canonical > 0) return canonical
+      } catch (_error) {}
+    }
+    const reference = Number(now)
+    if (Number.isFinite(reference) && reference > 0) return reference
+    const wall = Number(Date.now())
+    return Number.isFinite(wall) && wall > 0 ? wall : null
+  }
+
+  function effectiveConfirmedInterval(booking) {
+    const rescheduled = clean(booking && booking.status).toLowerCase() === 'rescheduled'
+    return {
+      start: Number(booking && booking[rescheduled ? 'start_old' : 'start']),
+      end: Number(booking && booking[rescheduled ? 'end_old' : 'end']),
+    }
+  }
+
+  function detailStatusAtReference(booking, referenceTime) {
+    if (clean(booking && booking.status).toLowerCase() === 'rescheduled') {
+      const end = effectiveConfirmedInterval(booking).end
+      if (Number.isFinite(end) && end > 0) {
+        return end <= referenceTime ? 'completed' : 'rescheduled'
+      }
+    }
+    return bookingStatus(booking, referenceTime)
+  }
+
+  function meetingHrefAtReference(booking, currentTime) {
+    const raw = clean(booking && booking.status).toLowerCase()
+    if (currentTime == null) return ''
+    const status = raw === 'rescheduled' ? raw : bookingStatus(booking, currentTime)
+    if (!['confirmed', 'rescheduled'].includes(status)) return ''
+    const interval = effectiveConfirmedInterval(booking)
+    const start = interval.start
+    const end = interval.end
+    if (!Number.isFinite(start) || start <= 0 || !Number.isFinite(end) || end <= start || end <= currentTime) return ''
+    return safeMeetingHref(booking && booking.meeting_link)
+  }
+
+  function meetingHrefForBooking(booking, now) {
+    return meetingHrefAtReference(booking, meetingReferenceTime(booking, now))
+  }
+
+  function paintMeetingDestinationsAt(root, booking, referenceTime, allowParagraph) {
+    const href = meetingHrefAtReference(booking, referenceTime)
+    bookingFields(root, 'meeting-link').forEach(function (meetingLink) {
+      const supported = setMeetingDestination(meetingLink, href, allowParagraph, booking)
+      if (allowParagraph && supported) meetingLink.textContent = href
+      const visible = supported && href !== ''
+      show(meetingLink, visible)
+      const group = meetingLink.closest && meetingLink.closest('[booking-element-wrap]')
+      if (group) show(group, visible)
+    })
+    return href
+  }
+
+  function paintMeetingDestinations(root, booking, now, allowParagraph) {
+    return paintMeetingDestinationsAt(
+      root,
+      booking,
+      meetingReferenceTime(booking, now),
+      allowParagraph,
+    )
   }
 
   function text(root, selector, value) {
@@ -742,12 +889,400 @@
     return true
   }
 
-  function startRequestExpirationTicker(refs, role, restart, options) {
+  function refreshMeetingDestinations(refs, now) {
+    const sections = Array.isArray(refs) ? refs : []
+    sections.forEach(function (section) {
+      if (!section || !section.list || typeof section.list.querySelectorAll !== 'function') return
+      section.list.querySelectorAll('[data-booking-id]').forEach(function (card) {
+        const booking = bookingFromCard(sections, card)
+        if (booking) paintMeetingDestinations(card, booking, now, false)
+      })
+    })
+    if (!global.document || typeof global.document.querySelector !== 'function') return
+    const modal = global.document.querySelector(DETAIL_MODAL_SELECTOR)
+    if (!modal || !clean(modal.getAttribute && modal.getAttribute('data-booking-id'))) return
+    const booking = bookingFromCard(sections, modal)
+    paintMeetingDestinations(modal, booking, now, true)
+  }
+
+  function createBookingMutationState() {
+    return {
+      identity: 0,
+      owners: new Map(),
+      committed: new Map(),
+      actionEpoch: new Map(),
+      pending: new Map(),
+      actionPending: new Set(),
+      refreshRequired: new Set(),
+    }
+  }
+
+  function resetBookingMutationState(state) {
+    if (!state || !(state.owners instanceof Map)) return
+    state.identity += 1
+    state.owners.clear()
+    state.committed.clear()
+    state.actionEpoch.clear()
+    state.pending.clear()
+    state.actionPending.clear()
+    state.refreshRequired.clear()
+  }
+
+  function bookingMutationCounter(map, bookingId) {
+    return map instanceof Map ? map.get(clean(bookingId)) || 0 : 0
+  }
+
+  function bookingMutationPending(state, bookingId) {
+    const pending = state && state.pending instanceof Map
+      ? state.pending.get(clean(bookingId))
+      : null
+    return Boolean(
+      (pending && pending.size) ||
+      (state && state.actionPending instanceof Set && state.actionPending.has(clean(bookingId)))
+    )
+  }
+
+  function bookingMutationLifecycle(booking) {
+    return JSON.stringify([
+      clean(booking && booking.status).toLowerCase(),
+      clean(booking && booking.lifecycle_revision),
+      normalizeTimestamp(booking && booking.start),
+      normalizeTimestamp(booking && booking.end),
+      normalizeTimestamp(booking && booking.start_old),
+      normalizeTimestamp(booking && booking.end_old),
+      clean(booking && booking.rescheduled_by).toLowerCase(),
+    ])
+  }
+
+  function captureBookingMutation(refs, booking, state) {
+    if (!state || !(state.owners instanceof Map)) return null
+    const bookingId = clean(booking && (booking.booking_id || booking.id))
+    const current = bookingById(Array.isArray(refs) ? refs : [], bookingId)
+    if (!current) return null
+    const owner = bookingMutationCounter(state.owners, bookingId) + 1
+    state.owners.set(bookingId, owner)
+    if (!state.pending.has(bookingId)) state.pending.set(bookingId, new Set())
+    state.pending.get(bookingId).add(owner)
+    return {
+      bookingId,
+      identity: state.identity,
+      owner,
+      lifecycle: bookingMutationLifecycle(current),
+    }
+  }
+
+  function releaseBookingMutation(state, claim) {
+    if (
+      !state || !claim || claim.identity !== state.identity ||
+      !(state.pending instanceof Map)
+    ) return false
+    const bookingId = clean(claim.bookingId)
+    const pending = state.pending.get(bookingId)
+    if (pending) {
+      pending.delete(claim.owner)
+      if (!pending.size) state.pending.delete(bookingId)
+    }
+    return !bookingMutationPending(state, bookingId) && state.refreshRequired.has(bookingId)
+  }
+
+  function snapshotBookingMutations(state) {
+    if (!state || !(state.committed instanceof Map)) return null
+    return {
+      identity: state.identity,
+      owners: new Map(state.owners),
+      committed: new Map(state.committed),
+      actionEpoch: new Map(state.actionEpoch),
+      refreshRequired: new Set(state.refreshRequired),
+    }
+  }
+
+  function bookingMutationReconciliationPending(state) {
+    if (!state || !(state.refreshRequired instanceof Set)) return false
+    return Array.from(state.refreshRequired).some(function (bookingId) {
+      return !bookingMutationPending(state, bookingId)
+    })
+  }
+
+  function acknowledgeBookingMutationRefresh(state, snapshot) {
+    if (
+      !state || !snapshot || snapshot.identity !== state.identity ||
+      !(snapshot.refreshRequired instanceof Set)
+    ) return
+    snapshot.refreshRequired.forEach(function (bookingId) {
+      if (
+        bookingMutationPending(state, bookingId) ||
+        bookingMutationCounter(state.owners, bookingId) !==
+          (snapshot.owners.get(bookingId) || 0) ||
+        bookingMutationCounter(state.committed, bookingId) !==
+          (snapshot.committed.get(bookingId) || 0) ||
+        bookingMutationCounter(state.actionEpoch, bookingId) !==
+          (snapshot.actionEpoch.get(bookingId) || 0)
+      ) return
+      state.refreshRequired.delete(bookingId)
+    })
+  }
+
+  function createBookingMutationReconciler(refresh, state) {
+    let active = null
+    const reconcile = function () {
+      if (!bookingMutationReconciliationPending(state)) return Promise.resolve(true)
+      const identity = state.identity
+      if (active && active.identity === identity) return active.promise
+      const attempt = function (pass) {
+        if (
+          identity !== state.identity ||
+          !bookingMutationReconciliationPending(state)
+        ) return Promise.resolve(true)
+        return Promise.resolve()
+          .then(refresh)
+          .then(function (refreshed) {
+            if (
+              refreshed === true &&
+              pass < MUTATION_RECONCILIATION_MAX_PASSES &&
+              identity === state.identity &&
+              bookingMutationReconciliationPending(state)
+            ) return attempt(pass + 1)
+            return refreshed === true && !bookingMutationReconciliationPending(state)
+          })
+      }
+      const record = { identity, promise: null }
+      record.promise = attempt(1).finally(function () {
+        if (active === record) active = null
+      })
+      active = record
+      return record.promise
+    }
+    return reconcile
+  }
+
+  function createBookingActionQueue(state, reconcile) {
+    const tails = new Map()
+    return function acquire(booking, failureMessage) {
+      const bookingId = clean(booking && (booking.booking_id || booking.id))
+      if (!bookingId) return Promise.resolve(null)
+      const identity = state.identity
+      const previous = tails.get(bookingId)
+      const wait = previous && previous.identity === identity
+        ? previous.done
+        : Promise.resolve()
+      let unlock
+      const held = new Promise(function (resolve) { unlock = resolve })
+      const record = { identity, done: wait.then(function () { return held }) }
+      tails.set(bookingId, record)
+      const releaseSlot = function () {
+        unlock()
+        if (tails.get(bookingId) === record) tails.delete(bookingId)
+      }
+      return wait.then(async function () {
+        if (identity !== state.identity) {
+          releaseSlot()
+          return null
+        }
+        // An ambiguous earlier POST must be read back before another command
+        // can use the same booking. The read has its own deadline.
+        if (state.refreshRequired.has(bookingId)) {
+          await reconcile()
+          if (state.refreshRequired.has(bookingId)) {
+            releaseSlot()
+            throw new Error(failureMessage || 'The call could not be updated. Please try again.')
+          }
+        }
+        if (identity !== state.identity) {
+          releaseSlot()
+          return null
+        }
+        state.actionEpoch.set(
+          bookingId,
+          bookingMutationCounter(state.actionEpoch, bookingId) + 1,
+        )
+        state.actionPending.add(bookingId)
+        state.refreshRequired.add(bookingId)
+        let released = false
+        return async function release() {
+          if (released) return
+          released = true
+          try {
+            if (identity === state.identity) {
+              state.actionPending.delete(bookingId)
+              state.actionEpoch.set(
+                bookingId,
+                bookingMutationCounter(state.actionEpoch, bookingId) + 1,
+              )
+              await reconcile()
+            }
+          } finally {
+            releaseSlot()
+          }
+        }
+      }).catch(function (error) {
+        releaseSlot()
+        throw error
+      })
+    }
+  }
+
+  function createSerializedRefresh(refresh) {
+    const tails = new Map()
+    return function (owner) {
+      const args = arguments
+      const tail = tails.get(owner) || Promise.resolve()
+      const current = tail.then(function () {
+        return refresh.apply(null, args)
+      })
+      const recovered = current.catch(function () {})
+      tails.set(owner, recovered)
+      recovered.finally(function () {
+        if (tails.get(owner) === recovered) tails.delete(owner)
+      })
+      return current
+    }
+  }
+
+  function bookingChangedDuringRefresh(state, snapshot, bookingId) {
+    const actionEpoch = bookingMutationCounter(state.actionEpoch, bookingId) !==
+      (snapshot.actionEpoch.get(bookingId) || 0)
+    const committed = bookingMutationCounter(state.committed, bookingId) !==
+      (snapshot.committed.get(bookingId) || 0)
+    const pending = bookingMutationPending(state, bookingId) &&
+      bookingMutationCounter(state.owners, bookingId) !==
+        (snapshot.owners.get(bookingId) || 0)
+    const changed = actionEpoch || committed || pending
+    if (changed) state.refreshRequired.add(bookingId)
+    return changed
+  }
+
+  function reconcileCanonicalBookings(refs, rows, snapshot, state) {
+    if (
+      !snapshot || !state || !(state.committed instanceof Map) ||
+      snapshot.identity !== state.identity
+    ) return rows
+    const currentRows = uniqueBookings(
+      (Array.isArray(refs) ? refs : []).flatMap(function (section) {
+        return Array.isArray(section && section.rows) ? section.rows : []
+      }),
+    )
+    const currentById = new Map()
+    currentRows.forEach(function (booking) {
+      currentById.set(clean(booking.booking_id || booking.id), booking)
+    })
+    const seen = new Set()
+    const reconciled = []
+    ;(Array.isArray(rows) ? rows : []).forEach(function (booking) {
+      const bookingId = clean(booking && (booking.booking_id || booking.id))
+      if (!bookingId || seen.has(bookingId)) return
+      const current = currentById.get(bookingId)
+      const changed = current && bookingChangedDuringRefresh(
+        state,
+        snapshot,
+        bookingId,
+      )
+      reconciled.push(changed ? current : booking)
+      seen.add(bookingId)
+    })
+    currentRows.forEach(function (booking) {
+      const bookingId = clean(booking && (booking.booking_id || booking.id))
+      const changed = bookingChangedDuringRefresh(state, snapshot, bookingId)
+      if (bookingId && changed && !seen.has(bookingId)) {
+        reconciled.push(booking)
+        seen.add(bookingId)
+      }
+    })
+    return reconciled
+  }
+
+  function bookingMutationChangesMatch(booking, changes) {
+    const fields = Object.keys(changes)
+    if (!fields.length) return false
+    return fields.every(function (field) {
+      const current = booking[field]
+      const next = changes[field]
+      if (field === 'status' || field === 'rescheduled_by') {
+        return clean(current).toLowerCase() === clean(next).toLowerCase()
+      }
+      if (['start', 'end', 'start_old', 'end_old'].includes(field)) {
+        const currentTime = normalizeTimestamp(current)
+        const nextTime = normalizeTimestamp(next)
+        if (Number.isFinite(currentTime) && Number.isFinite(nextTime)) {
+          return currentTime === nextTime
+        }
+      }
+      return current === next
+    })
+  }
+
+  function commitBookingMutation(refs, booking, update, claim, state, now) {
+    const bookingId = clean(booking && (booking.booking_id || booking.id))
+    const current = bookingById(Array.isArray(refs) ? refs : [], bookingId)
+    if (!current) {
+      if (
+        state && claim && claim.identity === state.identity &&
+        claim.bookingId === bookingId
+      ) state.refreshRequired.add(bookingId)
+      return null
+    }
+    if (state) {
+      if (
+        !claim || claim.bookingId !== bookingId ||
+        claim.identity !== state.identity ||
+        claim.owner !== bookingMutationCounter(state.owners, bookingId)
+      ) {
+        if (claim && claim.identity === state.identity) {
+          state.refreshRequired.add(bookingId)
+        }
+        return null
+      }
+    }
+    const lifecycleMatches = !state || claim.lifecycle === bookingMutationLifecycle(current)
+    const changes = typeof update === 'function'
+      ? update(lifecycleMatches ? current : booking)
+      : update
+    if (!changes || typeof changes !== 'object' || Array.isArray(changes)) return null
+    if (state && !lifecycleMatches) {
+      if (!bookingMutationChangesMatch(current, changes)) {
+        state.refreshRequired.add(bookingId)
+        return null
+      }
+      if (booking !== current) {
+        Object.keys(changes).forEach(function (field) {
+          booking[field] = current[field]
+        })
+      }
+    } else {
+      Object.assign(current, changes)
+      if (booking !== current) Object.assign(booking, changes)
+    }
+    if (state) {
+      state.committed.set(
+        bookingId,
+        bookingMutationCounter(state.committed, bookingId) + 1,
+      )
+      state.refreshRequired.add(bookingId)
+    }
+    refreshMeetingDestinations(refs, now)
+    return current
+  }
+
+  function applyCancellationResult(refs, booking, result, now, commit, claim) {
+    const cancellation = result && result.cancel
+    if (
+      !booking || !cancellation ||
+      clean(cancellation.booking_id) !== clean(booking.booking_id || booking.id) ||
+      clean(cancellation.status).toLowerCase() !== 'cancelled'
+    ) return false
+    const apply = typeof commit === 'function'
+      ? commit
+      : function (model, changes) {
+          return commitBookingMutation(refs, model, changes, null, null, now)
+        }
+    return Boolean(apply(booking, { status: cancellation.status }, claim))
+  }
+
+  function startBookingLifecycleTicker(refs, role, restart, options) {
     const settings = options || {}
     // The old inline helper remains defined, but its legacy list generator is
-    // no longer invoked on the current dashboard. This controller is the one
-    // active owner and uses one bounded timer for every rendered request.
-    if (role !== 'starter') return null
+    // no longer invoked on the current dashboard. This controller owns one
+    // bounded timer for rendered booking lifecycle and Starter request expiry.
+    if (!['starter', 'brand'].includes(role)) return null
     const setTimer = settings.setInterval || global.setInterval
     const clearTimer = settings.clearInterval || global.clearInterval
     const now = settings.now || Date.now
@@ -757,6 +1292,19 @@
     const polls = new Map()
     const tick = function () {
       const currentTime = Number(now())
+      refreshMeetingDestinations(refs, currentTime)
+      refreshOpenDetailPanel(refs, role, currentTime)
+      if (typeof settings.reconcileBookingMutations === 'function') {
+        Promise.resolve()
+          .then(settings.reconcileBookingMutations)
+          .catch(function (error) {
+            console.error(
+              '[dashboard-calls] mutation reconciliation failed:',
+              error && error.message,
+            )
+          })
+      }
+      if (role !== 'starter') return
       const expiredKeys = refreshRequestExpirations(refs, role, currentTime)
       refreshDetailExpiration(refs, role, currentTime)
       const pollable = expiredKeys.filter(function (key) {
@@ -887,20 +1435,7 @@
     card.setAttribute('data-booking-id', clean(booking.booking_id || booking.id))
     card.setAttribute('data-booking-status', status)
     paintStatusPill(card, status, role, booking)
-    let meetingHref = ''
-    if (['confirmed', 'rescheduled'].includes(status)) {
-      try {
-        const url = new URL(clean(booking.meeting_link))
-        if (url.protocol === 'https:' || url.protocol === 'http:') meetingHref = url.href
-      } catch (_error) {}
-    }
-    bookingFields(card, 'meeting-link').forEach(function (link) {
-      if (meetingHref) link.setAttribute('href', meetingHref)
-      else link.removeAttribute('href')
-      show(link, meetingHref !== '')
-      const wrap = link.closest && link.closest('[booking-element-wrap]')
-      if (wrap) show(wrap, meetingHref !== '')
-    })
+    paintMeetingDestinations(card, booking, now, false)
     text(card, '[booking-element="brand-name"]', other && other.name)
     text(card, '[booking-element="starter-name"]', other && other.name)
     text(card, '[booking-element="title"]', booking.call_context || 'Call')
@@ -1821,6 +2356,100 @@
     return authoredDetailPanel(modal, candidate) ? candidate : 'base'
   }
 
+  function detailOpenPanelForMeeting(modal, booking, status, referenceTime) {
+    return meetingHrefAtReference(booking, referenceTime)
+      ? 'base'
+      : detailOpenPanel(modal, booking, status)
+  }
+
+  const meetingForcedDetailBases = new WeakSet()
+
+  function selectDetailPanel(modal, booking, role, openPanel) {
+    const isPaid = paidBooking(booking)
+    const actionsModule = global.StartersDashboardCallActions
+    if (
+      validDashboardModule(actionsModule) &&
+      typeof actionsModule.switchPopupContent === 'function'
+    ) {
+      actionsModule.switchPopupContent(modal, openPanel)
+    } else {
+      modal.querySelectorAll('[booking-popup-content]').forEach(function (content) {
+        show(content, content.getAttribute('booking-popup-content') === openPanel)
+      })
+    }
+    if (openPanel === 'completed' && !isPaid) {
+      const terminalPanel = uniqueCompletedDetailPanel(modal)
+      modal.querySelectorAll('[booking-popup-content="completed"]').forEach(function (panel) {
+        if (panel !== terminalPanel) show(panel, false)
+      })
+    }
+    if (openPanel !== 'base') {
+      hideDetailBackControl(modal)
+      if (
+        validDashboardModule(actionsModule) &&
+        typeof actionsModule.fillCounterpartPlaceholders === 'function'
+      ) {
+        actionsModule.fillCounterpartPlaceholders(modal, openPanel, role, booking)
+      }
+    }
+    return true
+  }
+
+  function visibleDetailPanels(modal) {
+    if (!modal || typeof modal.querySelectorAll !== 'function') return []
+    return Array.prototype.filter.call(
+      modal.querySelectorAll('[booking-popup-content]'),
+      function (panel) {
+        return !panel.hidden && !(panel.style && panel.style.display === 'none')
+      },
+    )
+  }
+
+  function refreshOpenDetailPanel(refs, role, now) {
+    if (!global.document || typeof global.document.querySelector !== 'function') return false
+    const modal = global.document.querySelector(DETAIL_MODAL_SELECTOR)
+    if (!modal || typeof modal.getAttribute !== 'function') return false
+    const booking = bookingFromCard(Array.isArray(refs) ? refs : [], modal)
+    if (!booking) return false
+    const visible = visibleDetailPanels(modal)
+    if (!visible.length) return false
+    const storedStatus = clean(modal.getAttribute('data-booking-status'))
+    const naturalPanel = detailOpenPanel(modal, booking, storedStatus)
+    const forcedBase = meetingForcedDetailBases.has(modal)
+    const previousPanel = forcedBase ? 'base' : naturalPanel
+    if (visible.some(function (panel) {
+      return clean(panel.getAttribute('booking-popup-content')) !== previousPanel
+    })) {
+      if (forcedBase) meetingForcedDetailBases.delete(modal)
+      return false
+    }
+    if (
+      previousPanel === 'completed' && !paidBooking(booking) &&
+      (visible.length !== 1 || visible[0] !== uniqueCompletedDetailPanel(modal))
+    ) return false
+    const referenceTime = meetingReferenceTime(booking, now)
+    const currentStatus = detailStatusAtReference(booking, referenceTime)
+    const nextPanel = detailOpenPanelForMeeting(
+      modal,
+      booking,
+      currentStatus,
+      referenceTime,
+    )
+    if (currentStatus !== storedStatus) {
+      modal.setAttribute('data-booking-status', currentStatus)
+      setBookingField(modal, 'status', statusLabel(currentStatus, role, booking), true)
+      configureDetailActions(modal, role, currentStatus, booking, referenceTime)
+    }
+    if (nextPanel === previousPanel) return false
+    const selected = selectDetailPanel(modal, booking, role, nextPanel)
+    if (selected && nextPanel === 'base' && naturalPanel !== 'base') {
+      meetingForcedDetailBases.add(modal)
+    } else if (selected) {
+      meetingForcedDetailBases.delete(modal)
+    }
+    return selected
+  }
+
   /**
    * The authored back control returns to the base panel, so it is meaningful
    * only after a chain has navigated away from it. A modal that opens directly
@@ -1929,6 +2558,7 @@
     const nextBookingId = clean(booking.booking_id || booking.id)
     const previousBookingId = clean(modal.getAttribute('data-booking-id'))
     if (previousBookingId !== nextBookingId) resetDetailActionState(modal)
+    const referenceTime = meetingReferenceTime(booking, now)
     const status = bookingStatus(booking, now)
     const isPaid = paidBooking(booking)
     const paymentText = isPaid && status !== 'cancelled' && status !== 'archived'
@@ -1941,34 +2571,13 @@
     modal.setAttribute('data-booking-status', status)
     modal.setAttribute('data-booking-payment', isPaid ? 'paid' : 'free')
 
-    // Keep terminal selection centralized so the Free-only disambiguation and
-    // Paid compatibility behavior apply on every populate pass.
-    const openPanel = detailOpenPanel(modal, booking, status)
-    const actionsModule = global.StartersDashboardCallActions
-    if (
-      validDashboardModule(actionsModule) &&
-      typeof actionsModule.switchPopupContent === 'function'
-    ) {
-      actionsModule.switchPopupContent(modal, openPanel)
+    const naturalPanel = detailOpenPanel(modal, booking, status)
+    const openPanel = detailOpenPanelForMeeting(modal, booking, status, referenceTime)
+    selectDetailPanel(modal, booking, role, openPanel)
+    if (openPanel === 'base' && naturalPanel !== 'base') {
+      meetingForcedDetailBases.add(modal)
     } else {
-      modal.querySelectorAll('[booking-popup-content]').forEach(function (content) {
-        show(content, content.getAttribute('booking-popup-content') === openPanel)
-      })
-    }
-    if (openPanel === 'completed' && !isPaid) {
-      const terminalPanel = uniqueCompletedDetailPanel(modal)
-      modal.querySelectorAll('[booking-popup-content="completed"]').forEach(function (panel) {
-        if (panel !== terminalPanel) show(panel, false)
-      })
-    }
-    if (openPanel !== 'base') {
-      hideDetailBackControl(modal)
-      if (
-        validDashboardModule(actionsModule) &&
-        typeof actionsModule.fillCounterpartPlaceholders === 'function'
-      ) {
-        actionsModule.fillCounterpartPlaceholders(modal, openPanel, role, booking)
-      }
+      meetingForcedDetailBases.delete(modal)
     }
     setBookingField(modal, 'paid-meeting', isPaid ? 'Paid Call' : 'Free Call', true)
     setBookingField(modal, 'status', statusLabel(status, role, booking), true)
@@ -1983,14 +2592,7 @@
     setBookingField(modal, 'cancel-reason', booking.cancelled_reason, Boolean(booking.cancelled_reason))
     populateDeclineReason(modal, booking, isPaid)
 
-    const showMeeting = ['confirmed', 'rescheduled'].includes(status) && clean(booking.meeting_link) !== ''
-    bookingFields(modal, 'meeting-link').forEach(function (meetingLink) {
-      if ('href' in meetingLink) meetingLink.href = showMeeting ? clean(booking.meeting_link) : ''
-      meetingLink.textContent = showMeeting ? clean(booking.meeting_link) : ''
-      show(meetingLink, showMeeting)
-      const group = meetingLink.closest && meetingLink.closest('[booking-element-wrap]')
-      if (group) show(group, showMeeting)
-    })
+    paintMeetingDestinationsAt(modal, booking, referenceTime, true)
 
     // Authored "Messages tab" links are Designer-owned copy; resetDetailModal
     // clears and hides every [booking-element], so each populate pass must
@@ -2025,16 +2627,21 @@
     return true
   }
 
-  function bookingFromCard(refs, card) {
-    const bookingId = clean(card && card.getAttribute('data-booking-id'))
+  function bookingById(refs, bookingId) {
+    const id = clean(bookingId)
+    if (!id) return null
     let booking = null
     refs.some(function (section) {
-      booking = section.rows.find(function (row) {
-        return clean(row.booking_id || row.id) === bookingId
+      booking = (Array.isArray(section && section.rows) ? section.rows : []).find(function (row) {
+        return clean(row.booking_id || row.id) === id
       }) || null
       return Boolean(booking)
     })
     return booking
+  }
+
+  function bookingFromCard(refs, card) {
+    return bookingById(refs, card && card.getAttribute('data-booking-id'))
   }
 
   function bookingForActionTarget(refs, target) {
@@ -2049,6 +2656,7 @@
     if (!global.document || typeof global.document.querySelector !== 'function') return
     const modal = global.document.querySelector(DETAIL_MODAL_SELECTOR)
     if (!modal) return
+    meetingForcedDetailBases.delete(modal)
     resetDetailActionState(modal)
     if (typeof modal.close === 'function') {
       try {
@@ -2061,7 +2669,9 @@
     modal.removeAttribute('data-booking-payment')
     modal.querySelectorAll('[booking-element]').forEach(function (field) {
       field.textContent = ''
-      if ('href' in field) field.href = ''
+      if (clean(field.getAttribute && field.getAttribute('booking-element')) === 'meeting-link') {
+        setMeetingDestination(field, '', true)
+      } else if ('href' in field) field.href = ''
       show(field, false)
       const group = field.closest && field.closest('[booking-element-wrap]')
       if (group) show(group, false)
@@ -2703,17 +3313,43 @@
     let requestStarted = null
     try { requestStarted = global.performance && global.performance.now() } catch (_error) {}
     const clockRequest = {started: requestStarted, wallStarted: Date.now()}
-    const response = await global.xanoAuthFetch(
-      XANO_SCHEDULING_BASE + BOOKINGS_PATH,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ memberstack_id: memberId }),
-      },
-    )
-    const body = await response.json().catch(function () {
-      return null
-    })
+    const controller = typeof global.AbortController === 'function'
+      ? new global.AbortController()
+      : null
+    let timer
+    // A cancellable timer pair lets a successful read retire its deadline.
+    const canTimeRead = typeof global.setTimeout === 'function' &&
+      typeof global.clearTimeout === 'function'
+    const deadline = canTimeRead
+      ? new Promise(function (_resolve, reject) {
+          timer = global.setTimeout(function () {
+            if (controller) {
+              try { controller.abort() } catch (_error) {}
+            }
+            reject(new Error('Canonical bookings request timed out'))
+          }, CANONICAL_READ_TIMEOUT_MS)
+        })
+      : null
+    let response
+    let body
+    try {
+      const request = global.xanoAuthFetch(
+        XANO_SCHEDULING_BASE + BOOKINGS_PATH,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ memberstack_id: memberId }),
+          ...(controller ? { signal: controller.signal } : {}),
+        },
+      )
+      response = deadline ? await Promise.race([request, deadline]) : await request
+      const readBody = Promise.resolve().then(function () { return response.json() }).catch(function () {
+        return null
+      })
+      body = deadline ? await Promise.race([readBody, deadline]) : await readBody
+    } finally {
+      if (canTimeRead) global.clearTimeout(timer)
+    }
     if (!response.ok || !Array.isArray(body)) {
       throw new Error('Canonical bookings request failed')
     }
@@ -2726,7 +3362,7 @@
     return rows
   }
 
-  function wireBookingActions(refs, role, restart) {
+  function wireBookingActions(refs, role, restart, acquireBookingAction) {
     if (role !== 'starter' || !global.document || !global.document.addEventListener) return
     global.document.addEventListener('click', async function (event) {
       const target = event && event.target
@@ -2773,7 +3409,14 @@
       // internal wording; the technical text stays in the console.
       let serverMessage = ''
       let confirmed = false
+      let releaseAction = null
       try {
+        if (typeof acquireBookingAction === 'function') {
+          releaseAction = await acquireBookingAction(booking, CONFIRM_FAILURE_COPY)
+          if (!releaseAction) return
+          booking = bookingById(refs, bookingId)
+          if (!booking || !canConfirmBooking(role, booking)) return
+        }
         if (!button.__startersBookingActionKey) {
           button.__startersBookingActionKey = await storedConfirmAttemptKey(booking) || await createConfirmAttemptKey(booking)
         }
@@ -2803,6 +3446,11 @@
         // refresh) must not tell the Starter the call was not confirmed.
         if (!confirmed) showError(serverMessage || CONFIRM_FAILURE_COPY)
       } finally {
+        if (releaseAction) {
+          try { await releaseAction() } catch (error) {
+            console.error('[dashboard-calls] confirmation readback failed:', error && error.message)
+          }
+        }
         button.__startersBookingActionBusy = false
         if (releaseBusy) releaseBusy()
         button.setAttribute('aria-busy', 'false')
@@ -2837,7 +3485,8 @@
     }, true)
   }
 
-  function resetIdentityState(refs, role) {
+  function resetIdentityState(refs, role, mutationState) {
+    resetBookingMutationState(mutationState)
     clearBrandHero(role)
     resetDetailModal()
     refs.forEach(function (section) {
@@ -2882,6 +3531,8 @@
     options,
   ) {
     const preserveExisting = Boolean(options && options.preserveExisting)
+    const mutationState = options && options.mutationState
+    const mutationSnapshot = snapshotBookingMutations(mutationState)
     try {
       let current =
         useSharedMember && global.memberReady && typeof global.memberReady.then === 'function'
@@ -2915,19 +3566,29 @@
         throw missing
       }
       bindBrandHero(member)
-      const rows = (await fetchBookings(memberId)).filter(function (booking) {
+      const canonicalRows = (await fetchBookings(memberId)).filter(function (booking) {
         return memberOwnsBooking(booking, memberId, role)
       })
       if (generation !== currentGeneration()) return
+      const rows = reconcileCanonicalBookings(
+        refs,
+        canonicalRows,
+        mutationSnapshot,
+        mutationState,
+      ).filter(function (booking) {
+        return memberOwnsBooking(booking, memberId, role)
+      })
       refs.forEach(function (section) {
         const nextRows = sectionBookings(rows, role, section.name)
         if (preserveExisting && sameBookingRows(section.rows, nextRows)) {
           section.rows.forEach(function (row, index) {
             const next = nextRows[index]
-            row.server_now_ms = next.server_now_ms
-            bookingClockRequests.delete(row)
-            const request = bookingClockRequests.get(next)
-            if (request) bookingClockRequests.set(row, request)
+            if (next !== row) {
+              row.server_now_ms = next.server_now_ms
+              bookingClockRequests.delete(row)
+              const request = bookingClockRequests.get(next)
+              if (request) bookingClockRequests.set(row, request)
+            }
           })
           bindBookingClocks(section.rows)
           return
@@ -2941,9 +3602,25 @@
           if (section.rendered === rendered) break
         }
       })
+      refreshMeetingDestinations(refs)
+      refreshOpenDetailPanel(refs, role)
       document.documentElement.setAttribute('data-dashboard-calls-v3', 'ready')
       if (options && typeof options.onCanonicalRows === 'function') {
         options.onCanonicalRows(rows, memberId, role)
+      }
+      acknowledgeBookingMutationRefresh(mutationState, mutationSnapshot)
+      if (
+        bookingMutationReconciliationPending(mutationState) &&
+        options && typeof options.onMutationReconciliationRequired === 'function'
+      ) {
+        Promise.resolve()
+          .then(options.onMutationReconciliationRequired)
+          .catch(function (error) {
+            console.error(
+              '[dashboard-calls] mutation reconciliation failed:',
+              error && error.message,
+            )
+          })
       }
       return true
     } catch (error) {
@@ -2953,7 +3630,7 @@
         console.error('[dashboard-calls] background refresh failed:', error && error.message)
         return false
       }
-      if (preserveExisting) resetIdentityState(refs, role)
+      if (preserveExisting) resetIdentityState(refs, role, mutationState)
       clearBrandHero(role)
       refs.forEach(renderFailure)
       document.documentElement.setAttribute('data-dashboard-calls-v3', 'error')
@@ -2990,7 +3667,8 @@
         callsAnchor.scrollIntoView()
       }
     }
-    resetIdentityState(refs, role)
+    const mutationState = createBookingMutationState()
+    resetIdentityState(refs, role, mutationState)
 
     const memberstack = await waitForMemberstack(MEMBERSTACK_TIMEOUT_MS)
     if (!memberstack) {
@@ -3001,17 +3679,39 @@
     }
 
     let sessionGeneration = 0
+    let reconcileBookingMutations = null
     const currentGeneration = function () {
       return sessionGeneration
     }
+    const requestMutationReconciliation = function () {
+      return typeof reconcileBookingMutations === 'function'
+        ? reconcileBookingMutations()
+        : Promise.resolve(true)
+    }
     wireBrandProfileRepaint(memberstack, currentGeneration)
     let initialReadinessPending = true
+    const refreshCurrentSession = createSerializedRefresh(function (
+      generation,
+      useSharedMember,
+      refreshOptions,
+    ) {
+      if (generation !== currentGeneration()) return
+      return refreshSession(
+        memberstack,
+        refs,
+        role,
+        generation,
+        currentGeneration,
+        useSharedMember,
+        refreshOptions,
+      )
+    })
     const restart = function (options) {
       sessionGeneration += 1
       const generation = sessionGeneration
       const useSharedMember = initialReadinessPending
       const preserveExisting = Boolean(options && options.preserveExisting)
-      if (!preserveExisting) resetIdentityState(refs, role)
+      if (!preserveExisting) resetIdentityState(refs, role, mutationState)
       const onCanonicalRows = deepLinkPending
         ? function (rows, memberId) {
             focusCanonicalDeepLinkWhenReady(
@@ -3033,14 +3733,15 @@
               })
           }
         : null
-      return refreshSession(
-        memberstack,
-        refs,
-        role,
+      return refreshCurrentSession(
         generation,
-        currentGeneration,
         useSharedMember,
-        { preserveExisting, onCanonicalRows },
+        {
+          preserveExisting,
+          onCanonicalRows,
+          mutationState,
+          onMutationReconciliationRequired: requestMutationReconciliation,
+        },
       ).then(function (refreshed) {
         if (refreshed === true && generation === currentGeneration()) {
           initialReadinessPending = false
@@ -3052,16 +3753,28 @@
       return restart({ preserveExisting: true })
     }
     const refreshExpiredRequests = function () {
-      const generation = sessionGeneration
-      return refreshSession(
-        memberstack,
-        refs,
-        role,
-        generation,
-        currentGeneration,
-        false,
-        { preserveExisting: true },
-      )
+      return refreshCurrentSession(sessionGeneration, false, {
+        preserveExisting: true,
+        mutationState,
+        onMutationReconciliationRequired: requestMutationReconciliation,
+      })
+    }
+    reconcileBookingMutations = createBookingMutationReconciler(
+      refreshExpiredRequests,
+      mutationState,
+    )
+    const acquireBookingAction = createBookingActionQueue(
+      mutationState,
+      requestMutationReconciliation,
+    )
+    const captureCurrentBooking = function (booking) {
+      return captureBookingMutation(refs, booking, mutationState)
+    }
+    const commitCurrentBooking = function (booking, update, claim) {
+      return commitBookingMutation(refs, booking, update, claim, mutationState)
+    }
+    const releaseCurrentBooking = function (claim) {
+      return releaseBookingMutation(mutationState, claim)
     }
     const moduleOptions = {
       document: global.document,
@@ -3079,14 +3792,33 @@
       refreshDetail: function (modal, booking, content) {
         return populateDetailModal(modal, booking, role, undefined, content)
       },
-      onAvailable: function () {
+      captureBookingMutation: captureCurrentBooking,
+      commitBookingMutation: commitCurrentBooking,
+      releaseBookingMutation: releaseCurrentBooking,
+      reconcileBookingMutations: requestMutationReconciliation,
+      acquireBookingAction,
+      onCancelSuccess: function (booking, result, claim) {
+        return applyCancellationResult(
+          refs,
+          booking,
+          result,
+          Date.now(),
+          commitCurrentBooking,
+          claim,
+        )
+      },
+      onAvailable: function (_module, key) {
         bindBookingClocks(refs.flatMap(function (section) { return section.rows || [] }))
+        refreshMeetingDestinations(refs)
+        if (key === 'actions') refreshOpenDetailPanel(refs, role)
         refreshDetailExpiration(refs, role)
       },
     }
     wireDashboardCallModules(moduleOptions)
-    wireBookingActions(refs, role, refreshAfterMutation)
-    startRequestExpirationTicker(refs, role, refreshExpiredRequests)
+    wireBookingActions(refs, role, refreshAfterMutation, acquireBookingAction)
+    startBookingLifecycleTicker(refs, role, refreshExpiredRequests, {
+      reconcileBookingMutations: requestMutationReconciliation,
+    })
     if (typeof memberstack.onAuthChange === 'function') {
       memberstack.onAuthChange(function () {
         restart()
@@ -3106,7 +3838,20 @@
     paintRequestExpiration,
     refreshRequestExpirations,
     refreshDetailExpiration,
-    startRequestExpirationTicker,
+    refreshMeetingDestinations,
+    refreshOpenDetailPanel,
+    createBookingMutationState,
+    resetBookingMutationState,
+    captureBookingMutation,
+    releaseBookingMutation,
+    bookingMutationReconciliationPending,
+    createBookingMutationReconciler,
+    createBookingActionQueue,
+    createSerializedRefresh,
+    reconcileCanonicalBookings,
+    commitBookingMutation,
+    applyCancellationResult,
+    startBookingLifecycleTicker,
     refreshSession,
     bindBookingClocks,
     canConfirmBooking,
@@ -3116,6 +3861,7 @@
     paintActiveFilter,
     populateDetailModal,
     detailOpenPanel,
+    detailOpenPanelForMeeting,
     wireBookingDetails,
     resetDetailModal,
     configureActionButtons,
