@@ -2023,6 +2023,17 @@ Current safety boundary:
 - Reconciles Memberstack auth notifications against the live cookie. A transient empty DOM
   notification with the same cookie keeps the cached token and in-flight owner requests. A real
   logout or cookie change invalidates the cached token, auth scope, and in-flight scoped responses.
+- Shares identical eligible pure Xano reads for five seconds within one member
+  session. Eligibility is limited to reviewed GET/POST read routes, keyed by
+  method, URL, and body. Pending reads stay joinable until they settle; the
+  five-second reuse window starts only after a successful response settles.
+  Writes, authenticated Xano pass-throughs, session resets, and current
+  shared-read failures clear the shared entries.
+- Wraps `$memberstackDom.getCurrentMember()` only to share identical overlapping
+  calls. It keeps no settled Memberstack result, samples the live cookie before
+  and after the owner call, and clears in-flight member reads on auth changes,
+  cookie rotations, and every Memberstack method except `getCurrentMember`,
+  `getMemberCookie`, and `onAuthChange`.
 - Exposes `window.getXanoAuthToken` and `window.xanoAuthFetch` for page-owned
   code. It also retains its own auth-fetch reference for the stage adapter,
   because another page bundle can replace the public compatibility global
