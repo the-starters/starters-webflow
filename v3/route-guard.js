@@ -497,6 +497,18 @@
     return ROLE_DEFAULTS[role]
   }
 
+  // Login defaults may differ from the role home used by guarded pages.
+  // Only persisted, recognized Signup Source values select this exception.
+  function loginDefault(member) {
+    var fields = (member && member.customFields) || {}
+    if (
+      memberRole(member) === 'brand-free' &&
+      !hasCompletedQuiz(member) &&
+      fields['signup-source'] === '/all-starters'
+    ) return '/'
+    return roleHome(member)
+  }
+
   // The roles allowed on a pathname, or null when the page is not guarded.
   function pageRolesFor(pathname) {
     if (Object.prototype.hasOwnProperty.call(PAGE_ROLES, pathname)) {
@@ -744,11 +756,9 @@
   /**
    * Homepage-only bounce overrides (decision by Jerico 2026-08-03).
    *
-   * Two rules that apply on '/' and on no other page. Every other bounce page
-   * (`/login`, `/starter-login`, `/sign-up`), every guarded-page wrong-role
-   * redirect, and all of auth-route.js login routing are deliberately untouched:
-   * a member who lands on a login form has just authenticated and still wants
-   * their funnel, whereas the homepage is where someone browses back to.
+   * Two rules that apply on '/' and on no other page. The separate loginDefault
+   * exception applies only to login entry paths; signup and guarded-page
+   * wrong-role redirects continue to use the role home.
    *
    * Precedence, highest first:
    *
@@ -805,6 +815,13 @@
     if (!role) return null
     if (next) return next
 
+    if (pathname === '/login' || pathname === '/starter-login') {
+      var requestedPath = pathnameOf(localPath(requestedNext))
+      if (requestedPath === '/dashboard' || requestedPath === '/dashboard/') {
+        return roleHome(member)
+      }
+      return loginDefault(member)
+    }
     return roleHome(member)
   }
 
@@ -1070,6 +1087,7 @@
     recordBrandAllStartersVisit: recordBrandAllStartersVisit,
     hasBrandAllStartersVisit: hasBrandAllStartersVisit,
     roleHome: roleHome,
+    loginDefault: loginDefault,
     hasCompletedQuiz: hasCompletedQuiz,
     hasReadyPendingQuiz: hasReadyPendingQuiz,
     hasCancelledPaidBrandPlan: hasCancelledPaidBrandPlan,

@@ -1647,6 +1647,73 @@ test('a logged-out bounce back to /login discards the receipt unconfirmed', asyn
   assert.equal(harness.storage.has(TIMING_KEY), false)
 })
 
+test('an All Starters free Brand lands on the homepage after login', async () => {
+  const { location } = loadRouter({
+    pathname: '/auth-route',
+    member: {
+      id: 'member-all-starters',
+      planConnections: [plan('pln_free-plan-f6kn0dxz')],
+      customFields: { 'signup-source': '/all-starters' },
+    },
+  })
+
+  await flush()
+  assert.equal(location.replaced, '/')
+})
+
+test('free Brand login keeps quiz precedence and conservative source fallbacks', async () => {
+  const cases = [
+    [{ 'signup-source': '/all-starters', 'starter-quiz': '{"status":"ready"}' }, '/quiz-results'],
+    [{ 'signup-source': '/quiz' }, '/quiz'],
+    [{}, '/quiz'],
+    [{ 'signup-source': '/hire/example' }, '/quiz'],
+    [{ 'signup-source': '/learn' }, '/quiz'],
+    [{ 'signup-source': { path: '/all-starters' } }, '/quiz'],
+    [{ 'signup-source': ['/all-starters'] }, '/quiz'],
+    [{ 'signup-source': 'https://example.com/all-starters' }, '/quiz'],
+    [{ 'signup-referrer': '/all-starters', 'signup-trigger': '/all-starters' }, '/quiz'],
+  ]
+  for (const [customFields, expected] of cases) {
+    const { location } = loadRouter({
+      pathname: '/auth-route',
+      member: { id: 'member-free', planConnections: [plan('pln_free-plan-f6kn0dxz')], customFields },
+    })
+    await flush()
+    assert.equal(location.replaced, expected, JSON.stringify(customFields))
+  }
+})
+
+test('All Starters login preserves allowed returns and uses the homepage for rejected returns', async () => {
+  const cases = [
+    ['/all-starters?view=favorites', '/all-starters?view=favorites'],
+    ['/quiz?retake=true', '/quiz?retake=true'],
+    ['/dashboard', '/quiz'],
+    ['/brand-dashboard', '/'],
+    ['https://example.com/all-starters', '/'],
+    ['/login', '/'],
+  ]
+  for (const [storedDestination, expected] of cases) {
+    const { location } = loadRouter({
+      pathname: '/auth-route', storedDestination,
+      member: {
+        id: 'member-all-starters', planConnections: [plan('pln_free-plan-f6kn0dxz')],
+        customFields: { 'signup-source': '/all-starters' },
+      },
+    })
+    await flush()
+    assert.equal(location.replaced, expected, storedDestination)
+  }
+})
+
+test('a cached role contract without the login exception retains its existing default', () => {
+  const { api, window } = loadRouter()
+  delete window.StartersV3RouteGuard.loginDefault
+  assert.equal(api.destinationFor({
+    planConnections: [plan('pln_free-plan-f6kn0dxz')],
+    customFields: { 'signup-source': '/all-starters' },
+  }), '/quiz')
+})
+
 test('auth route preserves the stored destination from login', async () => {
   const { location } = loadRouter({
     pathname: '/auth-route',
@@ -2213,6 +2280,22 @@ test('auth route fails safely when the shared role contract is missing', async (
 const paidBrandMember = () => ({
   id: 'member-brand-paid',
   planConnections: [plan('pln_new-paid-plan-463h04ph')],
+})
+
+test('All Starters attribution never overrides paid Brand profile gates or mixed-plan routing', async () => {
+  for (const [brandStatusBody, expected] of [[BRAND_NOT_DONE, '/complete-profile'], [BRAND_DONE, '/brand-dashboard']]) {
+    const { location } = loadRouter({
+      pathname: '/auth-route',
+      member: {
+        ...paidBrandMember(),
+        planConnections: [plan('pln_free-plan-f6kn0dxz'), plan('pln_new-paid-plan-463h04ph')],
+        customFields: { 'signup-source': '/all-starters' },
+      },
+      xano: { brandStatusBody },
+    })
+    await flush()
+    assert.equal(location.replaced, expected)
+  }
 })
 
 test('the brand status body maps to a funnel position', () => {

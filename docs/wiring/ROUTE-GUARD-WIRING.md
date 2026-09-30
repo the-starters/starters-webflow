@@ -175,7 +175,7 @@ because a guarded page forces a login and these are the pre-signup funnel itself
 | --- | --- |
 | Logged out, or Memberstack unavailable | Nothing at all: no redirect, no attribute, no event |
 | Mapped member with a valid, permitted `?next=` | Replace with that `next` |
-| Mapped member otherwise | Replace with the role home (Free Brand: quiz home) |
+| Mapped member otherwise | Replace with the role home, except the login-only default below |
 | Authenticated but unmapped or cross-role conflicted | Stay, with a `console.error` only — no `data-route-guard-error` |
 
 A `?next=` is honoured only when it is same-origin, free of embedded
@@ -190,7 +190,15 @@ Unlike a guarded page, a bounce page never gets the `data-route-guard="checking"
 stamp. These pages are authored for signed-out visitors and must not depend on
 this script to become visible; the only attribute the bounce ever sets is
 `data-route-guard="redirecting"` on the way out. No role home is itself a bounce
-page, so the bounce cannot loop — `v3/route-guard.test.js` asserts that directly.
+page. The separate login default can lead to `/`, where the existing homepage
+stay rule prevents a second redirect; the runtime tests follow that destination.
+
+On `/login` and `/starter-login`, free Brands with persisted `signup-source`
+exactly `/all-starters` and no completed quiz default to `/`. Completed quizzes
+still select `/quiz-results`; other sources retain `/quiz`. This shared decision
+also drives `/auth-route`, but does not change `/sign-up`, canonical dashboard
+returns, guarded-page defaults, or immediate modal-signup returns. See the
+[login-default contract](../../v3/ACCESS-MATRIX.md#non-quiz-free-brand-login-default).
 
 Note that `/login` and `/starter-login` are also configured by
 `v3/auth-route.js`, which stores a `?next=` in session storage for the
@@ -639,12 +647,13 @@ CDN copy is still in play; purge it with `purge.jsdelivr.net`.
   and confirm each one still renders untouched when signed out. On `/` the two
   homepage overrides change two of those cases: a not-yet-quizzed Free Brand must
   stay with no `<html>` attribute at all, while `/login` and `/starter-login`
-  must still send that same member to `/quiz`.
+  send an All Starters-source member to `/` and quiz-origin or unknown-source
+  members to `/quiz`. Follow the new homepage destination and confirm it stays.
 - Verify the homepage cancelled-Brand redirect with a Memberstack account whose
   paid Brand plan is cancelled, in both sub-kinds — free plan still active, and
   no active plan at all. Both must land on `/all-starters` from `/` and then stay
-  there. Confirm `/login` is unchanged for the same accounts (quiz funnel for the
-  first, stay-put for the second), and check
+  there. Confirm `/login` uses the source-dependent free-Brand login default for
+  the first and stays put for the second, and check
   `window.StartersV3RouteGuard.hasCancelledPaidBrandPlan((await
   $memberstackDom.getCurrentMember()).data)` reads `true` in the console.
 - Verify `/login?next=/messages` bounces a signed-in Talent member to

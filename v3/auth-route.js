@@ -332,6 +332,14 @@
     var contract = roleContract()
     return contract ? contract.roleHome(member) : null
   }
+  function loginDefault(member) {
+    var contract = roleContract()
+    if (!contract) return null
+    // A cached guard from before this exception keeps its existing default.
+    return typeof contract.loginDefault === 'function'
+      ? contract.loginDefault(member)
+      : contract.roleHome(member)
+  }
   function hasCompletedQuiz(member) {
     var contract = roleContract()
     return contract ? contract.hasCompletedQuiz(member) : false
@@ -469,7 +477,7 @@
       return requested
     }
 
-    return roleHome(member)
+    return loginDefault(member)
   }
 
   function readStoredDestination() {

@@ -31,8 +31,8 @@ the canonical dashboard router, and direct-page guarding cannot drift.
 ## Route-level access
 
 `auth-route.js` uses this table only when restoring a same-origin `next`
-destination after login. A disallowed destination falls back to the role
-default. `route-guard.js` enforces direct access through three separate page
+destination after login. A disallowed destination falls back to the login
+default below. `route-guard.js` enforces direct access through three separate page
 tables, and every route below belongs to exactly one of them:
 
 - **`PAGE_ROLES`** — guarded pages. A logged-out visitor is sent to a login form
@@ -288,15 +288,38 @@ one route-level rule that page needs.
 > allowed snapshot resolves, the latest valid snapshot follows the normal
 > fail-closed redirect or unmapped-plan error.
 
+### Non-quiz free Brand login default
+
+After login through `/auth-route`, or when an authenticated member visits
+`/login` or `/starter-login`, a free Brand whose persisted Memberstack
+`signup-source` is exactly `/all-starters` defaults to `/` when it has not
+completed the quiz. The guard owns this shared login decision. No current-page,
+referrer, trigger, cookie, or query value classifies the member.
+
+A completed durable `starter-quiz` signal selects `/quiz-results` first.
+Quiz-origin, missing, unknown, and malformed sources retain `/quiz`. Completed
+quiz precedence and the unknown-source fallback are conservative working
+assumptions. Allowed `next` values keep their existing validation and precedence;
+an explicit canonical `/dashboard` return still resolves to the quiz role home.
+Paid Brand profile gates, Starter routing, and role conflicts remain unchanged.
+
+This exception does not change generic role homes, direct quiz/retake access,
+wrong-role guard redirects, `/sign-up`, or immediate modal-signup returns.
+The homepage already lets free Brands without a completed quiz stay, so the new
+login default has no follow-on bounce. `/` is the live homepage; `/home` remains
+an attribution storage convention. Login never writes attribution.
+
+Before rollout, verify a persisted source from an actual All Starters modal
+signup through the staging-qa member-session harness. The source mapping and
+attribution unit tests do not substitute for that member-session check.
+
 ### Homepage overrides
 
 Two rules apply on `/` and on no other page (decision by Jerico 2026-08-03).
 They live in `bounceTargetFor`'s homepage branch in `v3/route-guard.js`, so
-`/login`, `/starter-login`, `/sign-up`, every guarded-page wrong-role redirect,
-and all of `auth-route.js` login routing keep the behavior recorded in the table
-above, unchanged. The reasoning is that a member who has just landed on a login
-form still wants the funnel they were sent through, whereas the homepage is
-where someone browses back to later.
+`/sign-up` and every guarded-page wrong-role redirect keep the behavior recorded
+in the table above. The separate login-only exception above supersedes the
+original login outcome for recognized non-quiz free Brands.
 
 Precedence on `/`, highest first:
 

@@ -147,7 +147,11 @@ The V3 protected-route guard sends logged-out visitors to
 `/login?next=<encoded current path and query>`. For an exact Calls notification
 locator on either dashboard, it also preserves `#calls` or `#calls-section`
 through login. Other fragments are removed, and the router restores only a
-role-allowed same-origin destination.
+role-allowed same-origin destination. Free Brands without a completed quiz and
+with persisted Signup Source `/all-starters` default to `/` on login; both login
+entry paths use the guard's shared decision. Generic role homes and immediate
+signup returns are unchanged. See the
+[login-default contract](ACCESS-MATRIX.md#non-quiz-free-brand-login-default).
 
 Talent logins additionally fork on funnel position, read from Xano
 `starters_onboarding/get_build_profile_status`: `build_profile_done` false goes to
@@ -364,8 +368,8 @@ Brand plan goes to `/all-starters`, whether their older free plan is still live 
 nothing is active at all — that second case is an unmapped plan which would
 otherwise have stayed, and an unmapped plan with no cancelled paid Brand behind it
 still does stay. And a free Brand who has not finished the quiz stays on `/`
-instead of being pushed to `/quiz`, which is where the login pages still send
-them. A valid `?next=` outranks both overrides; on `/` it is honoured even for a
+instead of being pushed to `/quiz`. Login pages use the separate source-specific
+default above. A valid `?next=` outranks both overrides; on `/` it is honoured even for a
 member with no mapped role, since deep-link intent does not depend on plan state.
 [Route guard wiring](../docs/wiring/ROUTE-GUARD-WIRING.md) has the exact precedence and the cancelled-plan
 definition. **Per-page logged-out destinations:** the three
