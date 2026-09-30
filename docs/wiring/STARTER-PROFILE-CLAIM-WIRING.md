@@ -84,14 +84,19 @@ a profile:
    implementation. A missing or ambiguous match is a claim rejection and must
    not fall through to the ordinary profile-creation path.
 3. Require `profile_provisioning_source=admin_prebuilt`.
-4. If `memberstack_id` already equals the incoming Memberstack ID, return that
-   profile idempotently before checking whether the profile is unclaimed.
+4. If `memberstack_id` already equals the incoming Memberstack ID, select that
+   row idempotently as the event's existing Talent profile and skip only the
+   email fallback and profile-creation branch.
 5. If `memberstack_id` is non-empty and belongs to another member, reject the
    claim without creating a profile.
 6. If `memberstack_id` is empty, atomically bind the incoming Memberstack ID and
    signup email to that exact profile. A concurrent loser must re-read the row
    and apply the same same-member or conflict result without falling through to
    profile creation.
+
+After either the same-member or successful-bind branch resolves the row,
+continue endpoint `#1513`'s existing event processing, `user_v3` and
+`freelancers_v3` updates, and downstream projection and outbox handling.
 
 The profile slug selects the target; it does not prove who scanned the QR. A
 signup with no claim slug continues through the existing normal signup path.
@@ -105,8 +110,9 @@ signup with no claim slug continues through the existing normal signup path.
 - The browser sends no claim-validation request and does not modify the URL.
 - A prebuilt profile without an email is claimed by exact profile ID after
   signup; the Memberstack ID and submitted email are saved once.
-- Replaying the same webhook is idempotent. A different member cannot claim an
-  already-bound profile and cannot create a duplicate.
+- A same-member replay reuses the bound profile while continuing normal event
+  updates and projections. A different member cannot claim that profile or
+  create a duplicate.
 - Ordinary signup without the profile-slug field keeps its existing behavior.
 - Google remains hidden unless a separate observed test proves the same slug
   field reaches the webhook.

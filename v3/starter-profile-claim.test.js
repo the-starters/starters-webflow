@@ -46,7 +46,7 @@ function load(options = {}) {
   const profileSlugField = options.profileSlugField === false ? null : element()
   const googleAuth = options.googleAuth === false
     ? null
-    : element({ 'data-ms-auth-provider': 'google' })
+    : element({ class: 'button is-google w-button', 'data-ms-auth-provider': 'google' })
   const form = options.form === false ? null : element()
   if (form && profileSlugField) {
     form.setQuery(options.fieldSelector || PROFILE_SLUG_FIELD_SELECTOR, profileSlugField)
@@ -107,8 +107,8 @@ test('keeps the wrapper hidden for a normal profile not in the allowlist', () =>
   assert.equal(harness.wrapper.classList.contains('hide'), true)
   assert.equal(harness.wrapper.hidden, true)
   assert.equal(harness.wrapper.getAttribute('aria-hidden'), 'true')
-  assert.equal(harness.wrapper.getAttribute('data-starter-claim-state'), 'closed')
   assert.equal(harness.profileSlugField.value, '')
+  assert.equal(harness.googleAuth.classList.contains('hide'), true)
   assert.equal(harness.googleAuth.hidden, true)
 })
 
@@ -127,7 +127,7 @@ test('shows the form for an allowlisted slug and puts that slug in the signup fi
   assert.equal(harness.wrapper.hidden, false)
   assert.equal(harness.wrapper.getAttribute('hidden'), null)
   assert.equal(harness.wrapper.getAttribute('aria-hidden'), 'false')
-  assert.equal(harness.wrapper.getAttribute('data-starter-claim-state'), 'ready')
+  assert.equal(harness.googleAuth.classList.contains('hide'), true)
   assert.equal(harness.googleAuth.hidden, true)
   assert.equal(harness.googleAuth.getAttribute('hidden'), '')
   assert.equal(harness.googleAuth.getAttribute('aria-hidden'), 'true')
@@ -178,8 +178,9 @@ test('fails closed when the allowed form or slug field is not authored', () => {
   ]) {
     const harness = load({ ...options, allowedSlugs: ['jane-doe'] })
     harness.dispatch('DOMContentLoaded')
-    assert.equal(harness.wrapper.getAttribute('data-starter-claim-state'), 'misconfigured')
     assert.equal(harness.wrapper.classList.contains('hide'), true)
+    assert.equal(harness.wrapper.hidden, true)
+    assert.equal(harness.wrapper.getAttribute('aria-hidden'), 'true')
   }
 })
 
@@ -199,7 +200,9 @@ test('registers one DOMContentLoaded boot while the document is loading', () => 
 test('boots immediately when the document is already ready', () => {
   const harness = load({ readyState: 'complete', allowedSlugs: ['jane-doe'] })
   assert.equal(harness.listeners.length, 0)
-  assert.equal(harness.wrapper.getAttribute('data-starter-claim-state'), 'ready')
+  assert.equal(harness.wrapper.classList.contains('hide'), false)
+  assert.equal(harness.wrapper.hidden, false)
+  assert.equal(harness.profileSlugField.value, 'jane-doe')
 })
 
 test('keeps controller helpers private', () => {
