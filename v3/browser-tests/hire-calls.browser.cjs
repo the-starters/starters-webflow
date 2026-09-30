@@ -299,6 +299,30 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
       assert.deepEqual(await evaluate(countMutationsAfterUnrelatedNode), [], `${extra}: an unrelated node wakes no writer`)
     }
 
+    // F50: a reconcile must not strip a settled offered tout. Removing its
+    // tabindex blurred a focused tout on any unrelated DOM change.
+    for (const role of ['brand', 'anonymous']) {
+      await navigate(`role=${role}&header=legacy`)
+      for (let i = 0; i < 100; i++) {
+        if ((await evaluate(legacyToutStates)).join() === 'free:available,paid:available') break
+        await pause(25)
+      }
+      assert.deepEqual(await evaluate(legacyToutStates), ['free:available', 'paid:available'], `${role}: touts offered`)
+      const focus = await evaluate(`(async () => {
+        const el = document.querySelector('[data-call-canary-legacy-wrapper="header"] [data-type="free"]')
+        el.focus()
+        const before = document.activeElement === el
+        let blurred = 0
+        el.addEventListener('blur', () => { blurred++ })
+        document.body.appendChild(document.createElement('div'))
+        await new Promise(resolve => setTimeout(resolve, 200))
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+        return { before, after: document.activeElement === el, blurred, tabIndex: el.tabIndex, role: el.getAttribute('role'), label: el.getAttribute('aria-label') }
+      })()`)
+      assert.deepEqual(focus, { before: true, after: true, blurred: 0, tabIndex: 0, role: 'button', label: 'Book a Call' }, `${role}: the focused tout keeps focus`)
+      assert.deepEqual(await evaluate(countMutationsAfterUnrelatedNode), [], `${role}: an unrelated node wakes no writer`)
+    }
+
     await navigate('role=brand&discovery=held')
     let loadingState = await snapshot('brand-discovery-loading')
     assert.equal(loadingState.cards.length, 4)

@@ -10479,3 +10479,31 @@ test('F50 an owner reconcile for a late legacy tout leaves the unchanged Book Ca
   assert.deepEqual(bookCallWrites, [], 'the unchanged Book Call hint and trigger are not rewritten')
   assert.equal(hint.querySelectorAll('a').length, links, 'no second settings link')
 })
+
+for (const viewer of ['brand', 'signed-out', 'paywalled']) {
+  test(`F50 a later reconcile leaves a settled offered legacy Header tout alone (${viewer})`, async () => {
+    const fixture = f50LegacyHeaderPage()
+    const context = viewer === 'brand'
+      ? f50BrandContext(fixture.page, fixture.feed)
+      : makeContext({
+        page: fixture.page,
+        member: viewer === 'paywalled' ? FREE_BRAND_MEMBER : {},
+        wfXano: fixture.feed.api,
+      })
+    holdLongTimers(context)
+    vm.createContext(context)
+    vm.runInContext(source, context)
+    fixture.feed.emit(callCardResult({ free: true, paid: false }))
+    await settle()
+    const [free, paid] = fixture.legacyCards
+    const expected = viewer === 'brand' ? ORIGIN_MAIN_BRAND_OFFERED_TOUT : ORIGIN_MAIN_PUBLIC_OFFERED_TOUT
+    assert.equal(free.root.getAttribute('data-call-offer-state'), 'available')
+    assert.deepEqual(legacyToutSemantics(free.root), expected)
+    assert.equal(paid.root.getAttribute('data-call-offer-state'), 'hidden')
+    // A strip would drop tabindex from a focused tout, and blur it.
+    assert.deepEqual(await reconcileAfterUnrelatedNode(context, fixture.page), [],
+      'an unrelated node neither strips nor rewrites a settled tout')
+    assert.deepEqual(legacyToutSemantics(free.root), expected, 'the tout keeps its Book Call semantics')
+    assert.equal(paid.root.getAttribute('data-call-offer-state'), 'hidden')
+  })
+}

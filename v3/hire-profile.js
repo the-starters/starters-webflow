@@ -1064,10 +1064,10 @@
       };
       let changed = applyCallSurfaceAvailability(availability, function (surface, type) {
           if (!isManagedCallOfferCard(surface)) return;
-          surface.setAttribute('has-connection', type);
+          setAttributeIfChanged(surface, 'has-connection', type);
           surface.removeAttribute('no-connection');
           surface.removeAttribute('aria-busy');
-          surface.setAttribute('data-call-offer-state', 'available');
+          setAttributeIfChanged(surface, 'data-call-offer-state', 'available');
           if (isLegacyHeaderCallSurface(surface) && surface.hasAttribute('data-canonical-public-call')) {
               restoreLegacyHeaderBookingTrigger(surface, type, viewerSeesPublicProjection(MEMBER));
           }
@@ -1087,7 +1087,7 @@
           surface.removeAttribute('has-connection');
           surface.removeAttribute('data-call-service-direct');
           surface.removeAttribute('aria-busy');
-          surface.setAttribute('data-call-offer-state', 'hidden');
+          setAttributeIfChanged(surface, 'data-call-offer-state', 'hidden');
       });
       if (!availability.free && !availability.paid) {
           canonicalCallCardEntries().forEach(function (entry) {
@@ -3010,22 +3010,58 @@
    * stays without them (fail closed).
    */
   function restoreLegacyHeaderBookingTrigger(card, type, publicViewer) {
-      card.setAttribute('has-connection', type);
+      const hooks = legacyHeaderOfferedHooks(card, type, publicViewer);
+      Object.keys(hooks).forEach(function (name) {
+          setAttributeIfChanged(card, name, hooks[name]);
+      });
+  }
+
+  function legacyHeaderOfferedHooks(card, type, publicViewer) {
+      const hooks = { 'has-connection': type };
       const authored = legacyHeaderAuthoredHooks.get(card);
-      if (!authored) return;
+      if (!authored) return hooks;
       if (authored.bookCall) {
-          card.setAttribute('data-profile-book-call', '');
-          card.setAttribute('tabindex', '0');
-          card.setAttribute('role', 'button');
-          card.setAttribute('aria-label', 'Book a Call');
-          if (publicViewer) card.setAttribute('data-logged-out-book-call', '');
+          hooks['data-profile-book-call'] = '';
+          hooks.tabindex = '0';
+          hooks.role = 'button';
+          hooks['aria-label'] = 'Book a Call';
+          if (publicViewer) hooks['data-logged-out-book-call'] = '';
       }
       // A signed-out or paywalled tout opens signup only; its signup hooks
       // are written by the public DTO writer.
-      if (publicViewer) return;
-      if (authored.modal) card.setAttribute('data-modal-trigger', authored.modal);
-      if (authored.signup) card.setAttribute('data-signup-trigger-element', authored.signup);
-      if (authored.signupValue) card.setAttribute('data-signup-trigger-value', authored.signupValue);
+      if (publicViewer) return hooks;
+      if (authored.modal) hooks['data-modal-trigger'] = authored.modal;
+      if (authored.signup) hooks['data-signup-trigger-element'] = authored.signup;
+      if (authored.signupValue) hooks['data-signup-trigger-value'] = authored.signupValue;
+      return hooks;
+  }
+
+  /**
+   * F50: an offered legacy Header tout that is already settled for this
+   * viewer, with every hook it should carry. A reconcile that keeps it offered
+   * leaves it alone: stripping its tabindex to add it back would blur a
+   * focused tout on any unrelated DOM change. Only entering loading or hidden
+   * strips the hooks.
+   */
+  function legacyHeaderToutSettledOffered(card, type, publicViewer) {
+      if (card.getAttribute('data-call-offer-state') !== 'available' ||
+          card.getAttribute('data-canonical-public-call') !== type ||
+          card.getAttribute('data-service-card-state') !== 'Default' ||
+          card.hasAttribute('data-call-offer-superseded') ||
+          card.hasAttribute('data-canonical-call-unavailable') ||
+          card.hasAttribute('aria-hidden') ||
+          card.hasAttribute('aria-busy') ||
+          card.hasAttribute('booking-popup-open') ||
+          card.style.display !== 'block') return false;
+      const hooks = legacyHeaderOfferedHooks(card, type, publicViewer);
+      if (publicViewer) {
+          if (card.hasAttribute('data-modal-trigger')) return false;
+          hooks['data-signup-trigger-element'] = 'service';
+          hooks['data-signup-trigger-value'] = type === 'paid' ? 'Paid Consulting Call' : 'Free Call';
+      }
+      return Object.keys(hooks).every(function (name) {
+          return card.getAttribute(name) === hooks[name];
+      });
   }
 
   function syncLoggedOutCanonicalHeader(itemsById) {
@@ -3036,13 +3072,15 @@
       ['free', 'paid'].forEach(function (type) {
           const item = canonicalPublicItemForType(itemsById, type);
           legacyHeaderCardsForType(legacyRoot, type).forEach(function (card) {
-              releaseLegacyHeaderBookingTrigger(card);
-              card.removeAttribute('data-call-offer-superseded');
-              card.setAttribute('data-canonical-public-call', type);
               const visible = !!(item && item.public_available === true);
+              if (!(visible && legacyHeaderToutSettledOffered(card, type, true))) {
+                  releaseLegacyHeaderBookingTrigger(card);
+              }
+              card.removeAttribute('data-call-offer-superseded');
+              setAttributeIfChanged(card, 'data-canonical-public-call', type);
               setCallOfferVisible(card, visible);
               card.removeAttribute('aria-busy');
-              card.setAttribute('data-call-offer-state', visible ? 'available' : 'hidden');
+              setAttributeIfChanged(card, 'data-call-offer-state', visible ? 'available' : 'hidden');
               if (!visible) {
                   card.removeAttribute('data-signup-trigger-element');
                   card.removeAttribute('data-signup-trigger-value');
@@ -3054,9 +3092,10 @@
                   const price = priceHookIn(card);
                   if (price) paintRateElement(price, Math.round(amount * 100));
               }
-              card.setAttribute('data-service-card-state', 'Default');
-              card.setAttribute('data-signup-trigger-element', 'service');
-              card.setAttribute(
+              setAttributeIfChanged(card, 'data-service-card-state', 'Default');
+              setAttributeIfChanged(card, 'data-signup-trigger-element', 'service');
+              setAttributeIfChanged(
+                  card,
                   'data-signup-trigger-value',
                   type === 'paid' ? 'Paid Consulting Call' : 'Free Call'
               );
@@ -3066,19 +3105,24 @@
       });
   }
 
-  function legacyHeaderCallEntries(itemsById) {
+  /**
+   * The legacy Header touts the caller's writer settles next, stripped of
+   * their Book Call hooks. `keep(card, type)` leaves a tout out untouched.
+   */
+  function legacyHeaderCallEntries(itemsById, keep) {
       const legacyRoot = qs('[data-call-canary-legacy-wrapper="header"]');
       if (!legacyRoot || !legacyHeaderFollowsCanonicalDto()) return [];
       const entries = [];
       ['free', 'paid'].forEach(function (type) {
           const item = canonicalPublicItemForType(itemsById, type);
           legacyHeaderCardsForType(legacyRoot, type).forEach(function (card) {
+              if (keep && keep(card, type)) return;
               releaseLegacyHeaderBookingTrigger(card);
               card.removeAttribute('data-call-offer-superseded');
-              card.setAttribute('data-canonical-public-call', type);
-              card.setAttribute('data-service-card-state', 'Default');
-              card.setAttribute('data-call-offer-type', type);
-              card.setAttribute('data-type', type);
+              setAttributeIfChanged(card, 'data-canonical-public-call', type);
+              setAttributeIfChanged(card, 'data-service-card-state', 'Default');
+              setAttributeIfChanged(card, 'data-call-offer-type', type);
+              setAttributeIfChanged(card, 'data-type', type);
               card.removeAttribute('has-connection');
               card.removeAttribute('no-connection');
               card.removeAttribute('booking-popup-open');
@@ -3090,6 +3134,20 @@
           });
       });
       return entries;
+  }
+
+  /**
+   * F50: the Brand legacy Header touts to settle. A tout already settled
+   * offered, whose type the admitted records still offer, is kept as it is.
+   */
+  function brandLegacyHeaderCallEntries(itemsById) {
+      const admitted = !callDiscoveryPending && paintedCallState && Array.isArray(paintedCallState.configs)
+          ? admittedCanonicalCallRecords(paintedCallState.configs)
+          : null;
+      return legacyHeaderCallEntries(itemsById, function (card, type) {
+          return !!admitted && !!recordForType(admitted, type) &&
+              legacyHeaderToutSettledOffered(card, type, false);
+      });
   }
 
   function canonicalCallCardEntries() {
@@ -3128,7 +3186,7 @@
       const showLoading = loading === undefined ? callDiscoveryPending : loading;
       entries.forEach(function (entry) {
           const card = entry.card;
-          card.setAttribute('data-service-card-state', 'Default');
+          setAttributeIfChanged(card, 'data-service-card-state', 'Default');
           card.removeAttribute('has-connection');
           card.removeAttribute('no-connection');
           card.removeAttribute('booking-popup-open');
@@ -3189,7 +3247,7 @@
           return;
       }
       if (isBrandMember(MEMBER)) {
-          const entries = legacyHeaderCallEntries(latestCanonicalCallItems);
+          const entries = brandLegacyHeaderCallEntries(latestCanonicalCallItems);
           applyPendingCallCardStates(entries);
           if (!callDiscoveryPending && paintedCallState && Array.isArray(paintedCallState.configs)) {
               const legacyCards = new Set(entries.map(function (entry) { return entry.card; }));
@@ -3487,7 +3545,7 @@
       } else if (isProfileOwner(MEMBER)) {
           applyOwnerCallCardStates(ownerCallSettingsSnapshot);
       } else if (isBrandMember(MEMBER)) {
-          applyPendingCallCardStates(adapted.concat(legacyHeaderCallEntries(itemsById)));
+          applyPendingCallCardStates(adapted.concat(brandLegacyHeaderCallEntries(itemsById)));
           // Canonical discovery can finish before wf-xano clones this card.
           // Replay the already-installed set so a late clone does not stay in
           // pending until some unrelated DOM mutation happens.
