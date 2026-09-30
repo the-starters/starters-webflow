@@ -1397,6 +1397,8 @@
   }
 
   const directCallServiceCards = new WeakSet();
+  // Clones the call adapter released because the DTO has no item for them.
+  const releasedXanoCallCards = new WeakSet();
 
   function isManagedCallOfferCard(card) {
       return card.hasAttribute('data-xano-call-card') ||
@@ -3013,13 +3015,16 @@
    * after bootstrap, and the clone inherits the template's fail-closed hide.
    * While this viewer's call state is still unknown, a new clone enters the
    * same loading state as a bootstrap clone, before the next paint. The owner
-   * is left to its own writer; the adapter settles every clone later.
+   * is left to its own writer; the adapter settles every clone later. A clone
+   * the adapter already released has a known answer (no DTO item), so it stays
+   * hidden rather than re-entering loading.
    */
   function enterLateCallCardLoading() {
       if (!callDiscoveryPending || isProfileOwner(MEMBER)) return;
       applyPendingCallCardStates(canonicalCallCardEntries().filter(function (entry) {
           return !entry.card.hasAttribute('data-xano-call-card') &&
-              !entry.card.hasAttribute('data-call-offer-state');
+              !entry.card.hasAttribute('data-call-offer-state') &&
+              !releasedXanoCallCards.has(entry.card);
       }));
   }
 
@@ -3101,6 +3106,7 @@
   }
 
   function releaseXanoCallCard(card) {
+      releasedXanoCallCards.add(card);
       [
           'data-xano-call-card',
           'data-service-card',

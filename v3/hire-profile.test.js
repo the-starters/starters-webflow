@@ -10194,3 +10194,42 @@ for (const viewer of ['signed-out', 'owner']) {
     assert.equal(services.free.root.getAttribute('data-call-offer-state'), 'available')
   })
 }
+
+test('F50 a clone the DTO released stays hidden through an unrelated mutation', async () => {
+  // The DTO has no item for the paid clone, so the adapter releases and hides
+  // it while Brand discovery is still pending. A later, unrelated childList
+  // mutation must not re-admit that released clone into the loading state.
+  const page = makePage()
+  const xano = addXanoCallCardsFixture(page)
+  const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
+  let answerDiscovery
+  const discovery = new Promise((resolve) => { answerDiscovery = resolve })
+  const context = f50BrandContext(page, wfx, { getStarterByMemberId: () => discovery })
+  holdLongTimers(context)
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+  const full = callCardResult()
+  wfx.emit({ items: full.items.filter((item) => item.type === 'free') })
+  await settle()
+  const paid = xano.paid.root
+  const assertReleased = (label) => {
+    assert.equal(paid.style.display, 'none', label + ': hidden')
+    assert.equal(paid.getAttribute('aria-hidden'), 'true', label + ': inaccessible')
+    assert.equal(paid.getAttribute('data-call-offer-state'), null, label + ': not loading')
+    assert.equal(paid.getAttribute('aria-busy'), null, label + ': not busy')
+  }
+  assertReleased('after the DTO')
+  assertF50Loading([xano.free], 'the offered clone still waits for discovery')
+
+  const unrelated = makeElement('div')
+  page.root.appendChild(unrelated)
+  context.mutationObserverCallbacks.forEach((callback) => callback([{ type: 'childList', addedNodes: [unrelated] }]))
+  await settle()
+  assertReleased('after an unrelated mutation')
+
+  answerDiscovery({ nylas_grant_id: 'grant_prod' })
+  await settle()
+  assertReleased('after discovery')
+  assert.equal(xano.free.root.getAttribute('data-call-offer-state'), 'available')
+})
