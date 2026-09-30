@@ -76,9 +76,13 @@ existing unique account binding. Do not add a claim table or duplicate claim
 boolean for this design.
 
 Preserve endpoint `#1513`'s existing atomic event-timestamp watermark gate as
-the first durable side-effect boundary. An exact duplicate or older event must
-return `skipped_stale_or_replay` before claim resolution, user or profile writes,
-projections, or outbox work. Only a fresh event continues.
+the first durable side-effect boundary for committed canonical writes. When a
+prior delivery committed its user, profile, or event watermark, an exact
+duplicate or older event must return `skipped_stale_or_replay` before claim
+resolution, user or profile writes, projections, or outbox work. A competing
+first claim that loses the conditional bind rolls back without a claim ledger or
+receipt, so its exact retry may re-evaluate the claim and reject again without
+profile, projection, or outbox side effects.
 
 Keep the existing event plan resolution unchanged. Resolve a fresh
 `member.created` from its `planConnections`, as observed on recent Live Talent
@@ -127,13 +131,16 @@ signup with no claim slug continues through the existing normal signup path.
 - A fresh Talent `member.created` event with a newly created `user_v3` mirror,
   no preexisting role row, and an unclaimed admin-prebuilt target claims that
   exact profile; the Memberstack ID and submitted email are saved once.
-- An exact or older webhook delivery returns `skipped_stale_or_replay` before
-  claim, profile, projection, or outbox side effects.
+- An exact or older webhook delivery with committed canonical writes returns
+  `skipped_stale_or_replay` before claim, profile, projection, or outbox side
+  effects.
 - A later fresh `member.updated` event reuses only the same bound profile and
   continues normal propagation with stable row IDs. It cannot first-bind an
   unclaimed profile, switch targets, or create dual-role ownership.
 - A competing first claim or conflicting member is rejected without a fallback
-  profile or duplicate.
+  profile or duplicate; an exact retry of a rolled-back competing first claim
+  may re-evaluate and reject again without profile, projection, or outbox side
+  effects.
 - Ordinary signup without the profile-slug field keeps its existing behavior,
   and a fresh `member.updated` without `planConnections` keeps the existing plan
   fallback.
