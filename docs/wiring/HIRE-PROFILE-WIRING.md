@@ -371,10 +371,10 @@ is still closed: `aria-disabled="true"` stays and the signup and modal hooks
 stay removed. Every viewer starts in loading. A signed-out or paywalled viewer
 then gets signup-only activation, and the owner gets the closed preview. A paid
 Brand stays loading, and its hint reads “Checking this Starter’s call times…”,
-until canonical call discovery answers. If discovery installed a controller on
-a page with a canonical call wrapper, the Brand also waits for the public call
-DTO, because an unknown DTO refuses every type. An empty, refused, or failed
-discovery ends loading at once. One 15 s failsafe
+until authenticated discovery and any required public call DTO have both
+answered. If discovery installed a controller on a page with a canonical call
+wrapper, the Brand waits for the public call DTO, because an unknown DTO refuses
+every type. An empty, refused, or failed discovery ends loading at once. One 15 s failsafe
 (`CALL_DISCOVERY_PUBLIC_WAIT_MS`), armed at bootstrap for every viewer, bounds
 the whole loading state. If identity, discovery, or the public call DTO has not
 answered by then, Book Call reads unavailable (still `aria-disabled`) and every
@@ -901,8 +901,9 @@ tout keeps focus. Only the Free and Paid touts
 count for that writer: another card in the legacy wrapper (its wf-xano
 template, a rate tout) never follows the call DTO. The writers that the body
 observer reaches do not write a value that is unchanged. A settled page records
-no mutation, and a writer's own text write cannot wake the observer again. As soon as the canonical Header wrapper
-exists, the legacy hero touts are also stamped superseded and stay hidden.
+no mutation, and a writer's own text write cannot wake the observer again. As
+soon as the canonical Header wrapper exists, the legacy hero touts are also
+stamped superseded and stay hidden.
 
 Subscription uses the `window.WfXano` callback queue and reads retained public
 state when this deferred file registers after a result. Role-specific
