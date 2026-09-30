@@ -9326,3 +9326,76 @@ test('F53: a ticker read that starts during the confirm POST cannot bring back P
   assert.equal(env.state.confirms, 1)
   assert.deepEqual(visibleActionErrors(view.modal), [])
 })
+
+// F53 review: the Accept takes its claim after the booking's action slot and
+// releases it before the slot. A leaked claim keeps the booking pending in the
+// mutation owner, so reconciliation never clears it and every later action on
+// the call is refused until a reload. A claim taken before the slot bumps the
+// owner while an earlier action holds the slot, so the owner refuses that
+// earlier action's commit.
+test('F53: the Accept releases its claim, so a later call action on the same booking gets the slot', async () => {
+  const view = acceptView()
+  const pendingRaw = { ...view.booking }
+  const confirmedRaw = { ...pendingRaw, status: 'confirmed', revision: 2 }
+  const env = await bootAcceptDashboard(view, [
+    () => ({ ok: true, json: async () => [pendingRaw] }),
+    () => ({ ok: true, json: async () => [confirmedRaw] }),
+  ])
+  await env.click(view.accept)
+  assert.equal(env.state.confirms, 1)
+  assert.deepEqual(acceptSnapshot(view), ACCEPTED_SNAPSHOT)
+
+  // A later Cancel on the confirmed call uses the queue and the owner that
+  // boot hands the actions module.
+  const options = env.state.moduleOptions
+  assert.ok(options && typeof options.acquireBookingAction === 'function', 'boot wired the actions module')
+  const later = { booking_id: view.bookingId }
+  const release = await options.acquireBookingAction(later, 'The call could not be cancelled.')
+  assert.equal(typeof release, 'function', 'the later action gets the booking slot')
+  const claim = options.captureBookingMutation(later)
+  assert.ok(claim, 'the later action takes a claim')
+  assert.ok(
+    options.commitBookingMutation(later, { status: 'cancelled' }, claim),
+    'the owner accepts the later commit',
+  )
+  options.releaseBookingMutation(claim)
+  await release()
+})
+
+test('F53: an Accept queued behind an earlier Accept takes no claim until the slot opens, so the earlier commit still repaints the modal', async () => {
+  const view = acceptView()
+  const pendingRaw = { ...view.booking }
+  const confirmedRaw = { ...pendingRaw, status: 'confirmed', revision: 2 }
+  const holdConfirm = deferred()
+  const postConfirmRead = deferred()
+  const env = await bootAcceptDashboard(view, [
+    () => ({ ok: true, json: async () => [pendingRaw] }),
+    () => postConfirmRead.promise,
+    () => ({ ok: true, json: async () => [confirmedRaw] }),
+  ], { holdConfirm })
+  const card = acceptElement('div', { 'data-booking-id': view.bookingId })
+  card.ownerDocument = { createElement: (tag) => acceptElement(tag) }
+  const cardAccept = acceptElement('a', { 'booking-card-action-btn': 'switch-confirm' }, 'Accept')
+  card.appendChild(cardAccept)
+
+  // The card Accept owns the slot and its POST is in flight. The Starter
+  // then clicks Confirm in the open modal: that Accept waits for the slot.
+  const cardAccepted = env.click(cardAccept)
+  await until(() => env.state.confirms === 1)
+  const modalAccepted = env.click(view.accept)
+  for (let step = 0; step < 20; step += 1) await new Promise(setImmediate)
+  assert.equal(env.state.confirms, 1)
+
+  // The card Accept's commit keeps its claim and repaints the modal before
+  // the post-confirm read returns.
+  holdConfirm.resolve()
+  await until(() => env.state.reads === 2)
+  assert.deepEqual(acceptSnapshot(view), ACCEPTED_SNAPSHOT, 'the queued Accept did not take the owner first')
+
+  postConfirmRead.resolve({ ok: true, json: async () => [confirmedRaw] })
+  await Promise.all([cardAccepted, modalAccepted])
+  assert.equal(env.state.confirms, 1, 'the queued Accept sends no second POST')
+  assert.deepEqual(acceptSnapshot(view), ACCEPTED_SNAPSHOT)
+  assert.deepEqual(visibleActionErrors(view.modal), [])
+  assert.deepEqual(visibleActionErrors(card), [])
+})
