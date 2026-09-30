@@ -269,6 +269,76 @@ test('dashboard token reuse joins a matching in-flight trade without its own fet
   assert.equal(trades, 1)
 })
 
+test('dashboard token reuse gives up on a stalled in-flight trade', async () => {
+  const trade = deferred()
+  const started = deferred()
+  let completionTimer
+  let trades = 0
+  const { window } = loadBridge(async (request) => {
+    if (requestUrl(request).includes('/auth/trade-token/v3')) {
+      trades += 1
+      started.resolve()
+      return trade.promise
+    }
+    return response({})
+  }, {
+    pathname: '/starter-dashboard',
+    setTimeout(callback, milliseconds) {
+      assert.equal(milliseconds, 5000)
+      completionTimer = callback
+      return 1
+    },
+    clearTimeout() {},
+  })
+
+  const owner = window.getXanoAuthToken()
+  await started.promise
+  const joiner = window.__tsSchedulingAuthTokenReuse.getToken('memberstack-a')
+  await new Promise(setImmediate)
+  assert.equal(trades, 1)
+  completionTimer()
+
+  assert.equal(await joiner, null)
+  assert.equal(trades, 1)
+  trade.resolve(response({ authToken: 'xano-late' }))
+  assert.equal(await owner, 'xano-late')
+})
+
+test('dashboard token reuse leaves a late successful owner trade cached', async () => {
+  const trade = deferred()
+  const started = deferred()
+  let completionTimer
+  let trades = 0
+  const { window } = loadBridge(async (request) => {
+    if (requestUrl(request).includes('/auth/trade-token/v3')) {
+      trades += 1
+      started.resolve()
+      return trade.promise
+    }
+    return response({})
+  }, {
+    pathname: '/starter-dashboard',
+    setTimeout(callback, milliseconds) {
+      assert.equal(milliseconds, 5000)
+      completionTimer = callback
+      return 1
+    },
+    clearTimeout() {},
+  })
+
+  const owner = window.getXanoAuthToken()
+  await started.promise
+  const joiner = window.__tsSchedulingAuthTokenReuse.getToken('memberstack-a')
+  await new Promise(setImmediate)
+  completionTimer()
+  assert.equal(await joiner, null)
+  trade.resolve(response({ authToken: 'xano-late' }))
+
+  assert.equal(await owner, 'xano-late')
+  assert.equal(await window.__tsSchedulingAuthTokenReuse.getToken('memberstack-a'), 'xano-late')
+  assert.equal(trades, 1)
+})
+
 test('dashboard token reuse waits briefly for a scheduling trade to start', async () => {
   let trades = 0
   const { window } = loadBridge(async (request) => {

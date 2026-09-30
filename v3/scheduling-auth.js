@@ -494,10 +494,23 @@
         }
         if (!request) return null
         try {
-          token = await request.promise
+          token = await new Promise(function (resolve) {
+            let timer
+            const settle = function (value) {
+              window.clearTimeout(timer)
+              resolve(value)
+            }
+            timer = window.setTimeout(function () {
+              resolve(null)
+            }, 5000)
+            request.promise.then(settle, function () {
+              settle(null)
+            })
+          })
         } catch (error) {
           return null
         }
+        if (!token) return null
       }
       await awaitLatestAuthReconciliation()
       const latestMemberstackToken = await memberstack.getMemberCookie()
