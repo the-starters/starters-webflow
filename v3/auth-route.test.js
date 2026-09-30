@@ -1759,6 +1759,26 @@ test('All Starters login preserves allowed returns and uses the homepage for rej
   }
 })
 
+test('non-quiz login keeps slash-form dashboard returns on the quiz role home', async () => {
+  for (const requested of ['/dashboard/', '/dashboard/?source=login']) {
+    for (const returnLink of [
+      { storedDestination: requested },
+      { search: '?next=' + encodeURIComponent(requested) },
+    ]) {
+      const { location } = loadRouter({
+        pathname: '/auth-route', ...returnLink,
+        member: {
+          id: 'member-all-starters',
+          planConnections: [plan('pln_free-plan-f6kn0dxz')],
+          customFields: { 'signup-source': '/all-starters' },
+        },
+      })
+      await flush()
+      assert.equal(location.replaced, '/quiz', JSON.stringify(returnLink))
+    }
+  }
+})
+
 test('Learn login preserves completed results and validated return destinations', async () => {
   const cases = [
     [null, '{"status":"ready"}', '/quiz-results'],

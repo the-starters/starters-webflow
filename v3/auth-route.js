@@ -464,7 +464,9 @@
 
     var requested = localPath(requestedDestination)
     var requestedPathname = pathnameOf(requested)
-    if (requestedPathname === DASHBOARD_PATH) return roleHome(member)
+    if (requestedPathname === DASHBOARD_PATH || requestedPathname === DASHBOARD_PATH + '/') {
+      return roleHome(member)
+    }
     var matchesRoleDestination =
       requestedPathname &&
       (ROLE_DESTINATIONS[role].has(requestedPathname) ||
