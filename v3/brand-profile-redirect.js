@@ -13,9 +13,8 @@
  *   /brand-dashboard, /opportunities, /all-starters, /messages,
  *   /starter-dashboard, /dashboard
  * Install one deferred tag on each of those pages (or sitewide — out-of-scope
- * paths exit immediately). Paid-Brand only in effect: Talent / free-Brand get
- * has_record false from the endpoint and stay; the route guard still owns role
- * routing and runs first.
+ * paths exit immediately). The route guard's memberRole contract limits this
+ * check to paid Brands; Talent and free Brands stay even if a Brand row exists.
  *
  * PAIRED WITH v3/complete-profile-redirect.js, which owns the OUTBOUND half:
  * that module sits on /complete-profile and bounces a Brand who is already
@@ -32,6 +31,7 @@
  * THE DECISION TABLE, in the order the module walks it:
  *
  *   - sessionStorage marker set (just submitted)  → STAY, and do not call Xano
+ *   - member role is not confirmed brand-paid    → STAY, and do not call Xano
  *   - has_record true,  brand_profile_done false  → /complete-profile
  *   - has_record true,  brand_profile_done true   → STAY (the normal dashboard)
  *   - has_record false (any done value)           → STAY
@@ -73,11 +73,10 @@
  * layers, and role routing for /brand-dashboard stays entirely with
  * v3/route-guard.js (the page is `brand-paid` in its matrix).
  *
- * NO ROLE LOGIC HERE, on purpose. A Talent or free-Brand member who reaches
- * /brand-dashboard is the route guard's problem, and the guard runs first and
- * sitewide. For those members this endpoint answers `has_record: false` — they
- * have no Brand row — which falls into the fail-open branch and leaves the page
- * alone, so the two modules cannot fight over the same visitor.
+ * Role classification belongs to the sitewide route guard. A Brand record can
+ * exist for a free Brand too, so record existence cannot establish paid access.
+ * Only a confirmed paid Brand reaches the profile-status read; a missing guard
+ * or unavailable member leaves the page alone.
  *
  * That answer costs a round trip, and until it lands the dashboard is fully
  * visible — so a member on their way to the form would watch the dashboard paint
@@ -340,7 +339,9 @@
   function waitForMemberstack() {
     function ready() {
       return (
-        window.$memberstackDom && typeof window.$memberstackDom.getMemberCookie === 'function'
+        window.$memberstackDom &&
+        typeof window.$memberstackDom.getMemberCookie === 'function' &&
+        typeof window.$memberstackDom.getCurrentMember === 'function'
       )
     }
     if (ready()) return Promise.resolve(window.$memberstackDom)
@@ -422,9 +423,7 @@
    * `"false"`, a `0`, an absent record, a malformed body, null — is read as "do
    * not move them", so the failure mode is always "the dashboard renders".
    *
-   * has_record false is also the answer this endpoint gives a Talent or free-Brand
-   * session, which is why no role logic is needed here: those members simply fall
-   * into the stay branch and the route guard handles them.
+   * This payload is consulted only after the route guard confirms a paid Brand.
    */
   function needsBrandProfile(payload) {
     if (!payload || typeof payload !== 'object') {
@@ -476,6 +475,13 @@
 
     var incomplete
     try {
+      var memberstack = await waitForMemberstack()
+      var guard = window.StartersV3RouteGuard
+      if (!memberstack || !guard || typeof guard.memberRole !== 'function') return false
+      var response = await memberstack.getCurrentMember()
+      var member = response && response.data
+      if (!member || !member.id || guard.memberRole(member) !== 'brand-paid') return false
+
       incomplete = await fetchNeedsBrandProfile()
     } catch (error) {
       if (error && error.code === 'logged-out') {
