@@ -4153,14 +4153,16 @@ same SetupIntent and the same idempotency keys.
 Stripe.js loads on demand from `https://js.stripe.com/v3/`, and every load
 settles. Concurrent calls share one load. When `Stripe` is ready, the load
 resolves, even if the watched tag stalls or fails, and no second copy is
-inserted. A tag that is already dead (blocked, failed, or loaded without
-`Stripe`) is replaced at most once per load. A load that does not settle within
-15 seconds rejects with `Stripe.js failed to load`. A removed script still runs,
-so a tag that this controller inserted and that is still loading after the
-timeout is kept, and the next attempt waits for that same fetch.
-**Add payment method** then shows that message in `[card-error]`, and **Use this
-card** shows its existing verification error. A failed load is not kept, so the
-next attempt loads again.
+inserted. A tag known to be dead (blocked, failed, or loaded without `Stripe`)
+is replaced at most once per load. A tag that other code placed counts as dead
+after the page finishes loading. If the load finds such a tag before the page
+finishes loading, it watches that tag until the 15 second limit, and the next
+attempt replaces it. A load that does not settle within 15 seconds rejects with
+`Stripe.js failed to load`. **Add payment method** then shows that message in
+`[card-error]`, and **Use this card** shows its existing verification error. A
+failed load is not kept, so the next attempt loads again. A removed script
+still runs, so a tag that this controller inserted and that is still loading
+after the limit is kept, and the next attempt waits for that same fetch.
 
 The controller uses this sequence:
 
