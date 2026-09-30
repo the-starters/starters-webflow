@@ -9695,9 +9695,14 @@ function f50LibraryFirstCallCards(page) {
 function f50HeldIdentity(context, member) {
   let release
   const ready = new Promise((resolve) => { release = resolve })
+  // The published site head keeps MEMBER null until Memberstack answers.
+  context.MEMBER = null
   context.memberReady = ready
   context.waitForMember = (callback) => ready.then(() => callback(member))
-  return () => release(member)
+  return () => {
+    context.MEMBER = member
+    release(member)
+  }
 }
 
 function assertF50Loading(cards, label) {
@@ -9747,4 +9752,105 @@ for (const [label, memberName] of [['signed-out', 'none'], ['paywalled', 'free-b
       }
     })
   }
+}
+
+/**
+ * Page-first order: this file boots while each canonical wrapper still holds
+ * only its template, then wf-xano clones that template. The clone inherits the
+ * bootstrap fail-closed hide from its template, exactly as cloneNode does.
+ */
+function f50PageFirstCallWrappers(page) {
+  const header = addXanoCallCardsFixture(page, 'starter-call-offers-header')
+  header.wrapper.remove()
+  page.root.appendChild(header.wrapper)
+  const services = addXanoCallCardsFixture(page)
+  for (const [fixture, isServices] of [[header, false], [services, true]]) {
+    for (const card of [fixture.free, fixture.paid]) card.root.remove()
+    fixture.template.setAttribute('has-connection', 'free')
+    if (isServices) fixture.template.setAttribute('data-type', 'free')
+    fixture.template.setAttribute('booking-popup-open', '')
+    fixture.template.setAttribute('data-modal-trigger', 'popup-booking-main')
+    fixture.template.setAttribute('data-signup-trigger-element', 'service')
+    fixture.template.setAttribute('data-signup-trigger-value', 'Free Call')
+  }
+  const headerFeed = makeCallCardsWfXanoFixture(header.wrapper, 'starter-call-offers-header')
+  const servicesFeed = makeCallCardsWfXanoFixture(services.wrapper)
+  const api = {
+    push(callback) {
+      callback({
+        get: (key) => key === 'starter-call-offers-header'
+          ? headerFeed.instance
+          : key === 'starter-call-offers-services' ? servicesFeed.instance : null,
+      })
+    },
+  }
+  function render(context) {
+    const clones = []
+    for (const fixture of [header, services]) {
+      for (const id of ['424:call:free', '424:call:paid']) {
+        const clone = fixture.template.cloneNode(true)
+        clone.removeAttribute('wf-xano-element')
+        clone.setAttribute('wf-xano-item', '')
+        clone.setAttribute('data-wf-xano-id', id)
+        clone.style.display = ''
+        fixture.wrapper.appendChild(clone)
+        clones.push({ root: clone })
+      }
+    }
+    const records = clones.map((clone) => ({ type: 'childList', addedNodes: [clone.root] }))
+    context.mutationObserverCallbacks.forEach((callback) => callback(records))
+    return clones
+  }
+  return {
+    header,
+    services,
+    api,
+    render,
+    // Each wrapper announces its own result, as both wf-xano instances do.
+    emit(result) {
+      headerFeed.emit(result)
+      servicesFeed.emit(result)
+    },
+  }
+}
+
+for (const viewer of ['signed-out', 'brand', 'owner']) {
+  test(`F50 canonical clones rendered after bootstrap enter loading while ${viewer} identity is unresolved`, async () => {
+    const page = makePage()
+    const fixture = f50PageFirstCallWrappers(page)
+    const member = viewer === 'brand' ? BRAND_MEMBER : viewer === 'owner' ? OWNER_MEMBER : {}
+    const context = viewer === 'brand'
+      ? f50BrandContext(page, { api: fixture.api })
+      : viewer === 'owner'
+        ? ownerContext(page, ownerController(), { wfXano: fixture.api })
+        : makeContext({ page, member, wfXano: fixture.api })
+    const releaseIdentity = f50HeldIdentity(context, member)
+    vm.createContext(context)
+    vm.runInContext(source, context)
+    await settle()
+    assert.equal(fixture.header.template.getAttribute('data-canonical-call-unavailable'), '',
+      'the template carries the bootstrap hide its clones inherit')
+
+    const clones = fixture.render(context)
+    assert.equal(clones.length, 4)
+    // No click route may open while the viewer is unknown.
+    assertF50Loading(clones, 'late clone, identity unresolved')
+    for (const clone of clones) {
+      assert.deepEqual(clone.root.listeners.click || [], [], 'no direct booking route')
+      assert.equal(clone.root.getAttribute('data-canonical-call-unavailable'), null)
+    }
+
+    fixture.emit(callCardResult({ free: true, paid: false }))
+    await settle()
+    assertF50Loading(clones, 'DTO known, identity unresolved')
+    releaseIdentity()
+    await settle()
+    for (const clone of clones) {
+      const type = clone.root.getAttribute('data-type')
+      assert.ok(type === 'free' || type === 'paid', 'every late clone is adapted')
+      const expected = viewer === 'owner' ? 'available' : type === 'free' ? 'available' : 'hidden'
+      assert.equal(clone.root.getAttribute('data-call-offer-state'), expected, `${viewer} ${type}`)
+      assert.equal(clone.root.getAttribute('aria-busy'), null, `${viewer} ${type}: settled`)
+    }
+  })
 }

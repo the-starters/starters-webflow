@@ -291,3 +291,83 @@ for (const arrival of ['dto-first', 'discovery-first']) test(`published legacy H
     w.close()
   }
 })
+
+test('page-first canonical clones are born loading while Brand identity is unresolved', async () => {
+  const errors = []
+  const console = new VirtualConsole()
+  console.on('jsdomError', error => errors.push(error.message))
+  const dom = new JSDOM(`<body><span data-starter-xano-id>424</span><span data-profile-type="Consult">Consult</span>
+    <header>${calls('header')}</header><section id="services">${calls('services')}</section></body>`,
+  { url: 'https://www.thestarters.com/hire/fixture', runScripts: 'outside-only', virtualConsole: console })
+  const w = dom.window
+  const brand = {
+    id: 'fixture-brand',
+    auth: { email: 'brand@example.invalid' },
+    customFields: { 'free-user': 'Brand', 'last-name': 'Fixture' },
+    planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', status: 'ACTIVE' }],
+  }
+  let resolveStarter
+  const starter = new Promise(resolve => { resolveStarter = resolve })
+  let resolveMember
+  const memberReady = new Promise(resolve => { resolveMember = resolve })
+  Object.assign(w, {
+    // The published site head keeps MEMBER null until Memberstack answers.
+    MEMBER: null,
+    memberReady,
+    waitForMember: callback => memberReady.then(callback),
+    starter_memberstack_id: 'fixture-starter',
+    stripe_charges: false,
+    qs: (selector, scope) => (scope || w.document).querySelector(selector),
+    qsa: (selector, scope) => (scope || w.document).querySelectorAll(selector),
+    WfXanoConfig: { xanoBase: 'https://fixture.invalid', preAuth: false, debug: false },
+    IntersectionObserver: class { observe() {} disconnect() {} },
+    formatWithTimezone: () => ({ list: {} }),
+    StartersFreeCallBooking: {
+      getStarterByMemberId: () => starter,
+      getConfigs: async () => [{
+        config_id: 'fixture-free', is_paid: false, active: true,
+        data_environment: 'production', price_cents: 0, duration: 30,
+      }],
+      getNearestSlot: async () => null,
+      installFreeBookingController: () => true,
+    },
+  })
+  w.fetch = async url => {
+    const parsed = new URL(url)
+    if (parsed.pathname.endsWith('/profile/starter/calls/v3')) return {
+      ok: true, status: 200, json: async () => ({ starter_id: 424, items: ['free', 'paid'].map(type => ({
+        id: `424:call:${type}`, type, name: type, description: '', price: type === 'free' ? 0 : 250,
+        public_available: true, currency: 'USD', unit: '/session',
+      })) }),
+    }
+    return { ok: true, status: 200, json: async () => ({ items: [] }) }
+  }
+  const clones = () => Array.from(w.document.querySelectorAll('[wf-xano-item]'))
+  try {
+    w.eval(pageSource)
+    assert.equal(clones().length, 0, 'wf-xano has not rendered at bootstrap')
+    w.eval(library)
+    w.document.dispatchEvent(new w.Event('DOMContentLoaded'))
+    await until(() => clones().length === 4)
+    await pause(20)
+    for (const card of clones()) {
+      assert.equal(card.getAttribute('data-call-offer-state'), 'loading', 'a late clone is born loading')
+      assert.equal(card.hasAttribute('data-canonical-call-unavailable'), false, 'it does not keep the template hide')
+      assert.equal(card.getAttribute('aria-hidden'), null)
+      assert.equal(card.getAttribute('aria-busy'), 'true')
+      assert.equal(card.getAttribute('has-connection'), null)
+    }
+    w.MEMBER = brand
+    resolveMember(brand)
+    await pause(20)
+    for (const card of clones()) assert.equal(card.getAttribute('data-call-offer-state'), 'loading')
+    resolveStarter({ nylas_grant_id: 'fixture-grant', nylas_grant_email: 'starter@example.invalid' })
+    await until(() => clones().every(card => card.getAttribute('data-call-offer-state') !== 'loading'))
+    for (const card of clones()) {
+      const type = card.getAttribute('data-type')
+      assert.equal(card.getAttribute('data-call-offer-state'), type === 'free' ? 'available' : 'hidden')
+      assert.equal(card.getAttribute('aria-busy'), null)
+    }
+    assert.deepEqual(errors, [])
+  } finally { w.close() }
+})

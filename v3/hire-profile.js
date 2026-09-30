@@ -1439,6 +1439,7 @@
           if (typeof qs !== 'function' || typeof qsa !== 'function' ||
               typeof waitForMember !== 'function' || !window.starter_memberstack_id) return;
           decorateOwnerPreviewActions();
+          enterLateCallCardLoading();
           wireCallServiceCardsToDirectEntry();
           // Chooser rows and the back arrow arrive on the same late-node paths
           // as the cards. Both are guarded against rebinding, so re-running
@@ -2948,6 +2949,21 @@
           });
       });
       return entries;
+  }
+
+  /**
+   * F50: on the normal page-first load, wf-xano clones each canonical template
+   * after bootstrap, and the clone inherits the template's fail-closed hide.
+   * While this viewer's call state is still unknown, a new clone enters the
+   * same loading state as a bootstrap clone, before the next paint. The owner
+   * is left to its own writer; the adapter settles every clone later.
+   */
+  function enterLateCallCardLoading() {
+      if (!callDiscoveryPending || isProfileOwner(MEMBER)) return;
+      applyPendingCallCardStates(canonicalCallCardEntries().filter(function (entry) {
+          return !entry.card.hasAttribute('data-xano-call-card') &&
+              !entry.card.hasAttribute('data-call-offer-state');
+      }));
   }
 
   function applyPendingCallCardStates(entries) {
