@@ -300,7 +300,7 @@ After login through `/auth-route`, or when an authenticated member visits
 `signup-source` matches one of these normalized paths defaults to `/` when it
 has not completed the quiz:
 
-- Exactly `/all-starters`.
+- Exactly `/all-starters` or `/sign-up`.
 - One item under `/learn/sessions/`, `/learn/interviews-analysis/`, or
   `/learn/playbooks-frameworks/`. The item slug uses lowercase letters, digits,
   and internal hyphens only, with no further path segments.
@@ -324,24 +324,41 @@ the quiz role home.
 Paid Brand profile gates, Starter routing, and role conflicts remain unchanged.
 
 This exception does not change generic role homes, direct quiz/retake access,
-wrong-role guard redirects, `/sign-up`, or immediate modal-signup returns.
+wrong-role guard redirects, authenticated visits to `/sign-up`, or immediate
+modal signup returns. The standalone `/sign-up` source is recognized only for
+later login. Its immediate signup destination is owned separately by the
+authored Webflow form, with the draft and published settings recorded below.
 The homepage lets free Brands without a completed quiz stay unless the
 [cancelled paid-Brand override](#homepage-overrides) sends them to `/all-starters`.
 `/` is the live homepage; `/home` remains an attribution storage convention.
 Login never writes attribution.
 
-On 2026-09-30, published staging DOM showed signup forms on All Starters and
-items in all three included Learn families. The Learn listings above showed no
-signup forms. Signup attribution captures the actual pathname independently of
-the older lead-entry source map. This establishes the mapping's page and code
-evidence, not persistence for an actual member in each cohort.
+Published staging verification on 2026-09-30 created a real free Brand through
+`/learn/sessions/partnerships-playbook`. Its source persisted across reload, and
+later native login reached `/` and stayed there for 30 seconds. Other Learn
+families and historical members remain unverified. Current `/all-starters`
+inspection opened a paid membership offer rather than the free signup form seen
+in earlier inspection; no new All Starters free account was created.
 
-Before rollout, verify a persisted source from an actual All Starters signup and
-each included Learn family through the staging-qa member-session harness. No
-existing member from these non-quiz cohorts has yet been verified; actual
-persisted-source and later-login checks remain release dependencies. The source
-mapping, simulated-member tests, and attribution unit tests do not substitute
-for those member-session checks. Immediate content-signup returns are unchanged.
+The selected standalone `/sign-up` behavior is homepage `/` both immediately
+after signup and on later login for a free Brand without a completed quiz.
+On 2026-09-30, the Webflow Designer draft form's `data-ms-redirect` was set to
+`/` and read back. Published staging still has `data-ms-redirect="/quiz"`;
+the draft homepage destination remains pending site publish. This repository
+change does not modify the authored form setting.
+An isolated staging-qa browser test created a real sandbox free Brand through
+`/sign-up`, using the candidate route guard, a browser-only homepage form redirect,
+and production's free-plan selection. Its exact `/sign-up` source persisted
+across reload with no completed quiz. Signup reached `/` immediately; a fresh
+native login also reached `/` and stayed there for 10 seconds.
+
+This verifies the candidate behavior with a real account, not the published
+staging configuration or production login. Staging still serves the previous
+guard and `/quiz` form setting. Its standard signup plan is classified as paid;
+the test changed that selection only inside its browser, without changing site
+plan wiring. Publish the coordinated guard and form changes, then verify the
+served configuration and login destinations before claiming deployment parity.
+Immediate content-signup returns are unchanged.
 Follow the [login asset release requirements](../docs/wiring/AUTH-ROUTE-WIRING.md#routing)
 before claiming this change is live.
 

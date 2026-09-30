@@ -502,6 +502,7 @@
       memberRole(member) === 'brand-free' &&
       !hasCompletedQuiz(member) &&
       (fields['signup-source'] === '/all-starters' ||
+        fields['signup-source'] === '/sign-up' ||
         (typeof fields['signup-source'] === 'string' &&
           /^\/learn\/(?:sessions|interviews-analysis|playbooks-frameworks)\/[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(fields['signup-source'])))
     ) return '/'

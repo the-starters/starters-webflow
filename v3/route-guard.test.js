@@ -831,6 +831,46 @@ test('an authenticated All Starters free Brand reaches the homepage and stays th
   }
 })
 
+test('a standalone signup free Brand reaches the homepage after login and stays there', async () => {
+  const member = { ...BRAND_FREE, customFields: { 'signup-source': '/sign-up' } }
+  for (const pathname of ['/login', '/starter-login']) {
+    const login = loadGuard({ pathname, member })
+    await flush()
+    assert.equal(login.location.replaced, '/', pathname)
+    const destination = loadGuard({ pathname: login.location.replaced, member })
+    await flush()
+    assert.equal(destination.location.replaced, undefined)
+  }
+})
+
+test('standalone signup login keeps quiz, paid, return-link, and non-login routing rules', async () => {
+  const free = { ...BRAND_FREE, customFields: { 'signup-source': '/sign-up' } }
+  const cases = [
+    [free, '/login', '?next=%2Fall-starters', '/all-starters'],
+    [free, '/login', '?next=%2Fdashboard%2F', '/quiz'],
+    [free, '/login', '?next=https%3A%2F%2Fexample.com', '/'],
+    [free, '/sign-up', '', '/quiz'],
+    [free, '/brand-dashboard', '', '/quiz'],
+    [{ ...free, customFields: { ...free.customFields, 'starter-quiz': '{"status":"ready"}' } }, '/login', '', '/quiz-results'],
+    [{ ...BRAND_PAID, customFields: free.customFields }, '/login', '', '/brand-dashboard'],
+  ]
+  for (const [member, pathname, search, expected] of cases) {
+    const { location } = loadGuard({ member, pathname, search })
+    await flush()
+    assert.equal(location.replaced, expected, pathname + search)
+  }
+})
+
+test('standalone signup lookalikes do not change the free Brand login default', async () => {
+  for (const source of ['/sign-up/', '/sign-up?next=/', '/sign-up#form', '/sign-up/extra', '/signup', 'https://example.com/sign-up']) {
+    const { location } = loadGuard({
+      pathname: '/login', member: { ...BRAND_FREE, customFields: { 'signup-source': source } },
+    })
+    await flush()
+    assert.equal(location.replaced, '/quiz', source)
+  }
+})
+
 test('authenticated Learn signup free Brands reach the homepage and stay there', async () => {
   for (const source of [
     '/learn/sessions/partnerships-playbook',

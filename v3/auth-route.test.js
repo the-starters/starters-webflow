@@ -1661,6 +1661,19 @@ test('an All Starters free Brand lands on the homepage after login', async () =>
   assert.equal(location.replaced, '/')
 })
 
+test('a standalone signup free Brand lands on the homepage after a fresh login', async () => {
+  const { location } = loadRouter({
+    pathname: '/auth-route',
+    member: {
+      id: 'member-standalone-signup',
+      planConnections: [plan('pln_free-plan-f6kn0dxz')],
+      customFields: { 'signup-source': '/sign-up' },
+    },
+  })
+  await flush()
+  assert.equal(location.replaced, '/')
+})
+
 test('verified Learn signup free Brands land on the homepage after login', async () => {
   for (const source of [
     '/learn/sessions/partnerships-playbook',
