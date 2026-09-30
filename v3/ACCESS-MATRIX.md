@@ -325,8 +325,9 @@ Paid Brand profile gates, Starter routing, and role conflicts remain unchanged.
 
 This exception does not change generic role homes, direct quiz/retake access,
 wrong-role guard redirects, authenticated visits to `/sign-up`, or immediate
-standalone/modal signup returns. The standalone `/sign-up` source is recognized
-only for later login; it does not change the authored signup-form destination.
+modal signup returns. The standalone `/sign-up` source is recognized only for
+later login. Its immediate signup destination is owned separately by the
+authored Webflow form, with the draft and published settings recorded below.
 The homepage lets free Brands without a completed quiz stay unless the
 [cancelled paid-Brand override](#homepage-overrides) sends them to `/all-starters`.
 `/` is the live homepage; `/home` remains an attribution storage convention.
@@ -339,8 +340,13 @@ families and historical members remain unverified. Current `/all-starters`
 inspection opened a paid membership offer rather than the free signup form seen
 in earlier inspection; no new All Starters free account was created.
 
-The standalone `/sign-up` form currently targets `/quiz` immediately after
-signup. Attribution already direct-saves its pathname, but actual standalone
+The selected standalone `/sign-up` behavior is homepage `/` both immediately
+after signup and on later login for a free Brand without a completed quiz.
+On 2026-09-30, the Webflow Designer draft form's `data-ms-redirect` was set to
+`/` and read back. Published staging still has `data-ms-redirect="/quiz"`;
+the draft homepage destination remains pending site publish. This repository
+change does not modify the authored form setting.
+Attribution already direct-saves its pathname, but actual standalone
 source persistence remains unverified. On staging, the Brand account controller
 assigns its standard signup form a test plan classified as paid; production uses
 the free Brand plan. This later-login change does not alter that plan wiring.
