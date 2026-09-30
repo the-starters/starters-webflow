@@ -8420,6 +8420,20 @@ function holdLongTimers(context) {
   return held
 }
 
+/**
+ * Every route a click could take out of a loading call card is closed: no
+ * direct booking listener on the card, nothing the modal or signup delegates
+ * can match on it or its ancestors, and no document capture listener claims it.
+ */
+function assertNoCallClickRoute(context, root, label = '') {
+  assert.deepEqual(root.listeners.click || [], [], label + 'no direct booking listener')
+  assert.equal(root.closest('[data-modal-trigger]'), null, label + 'the modal delegate cannot match')
+  assert.equal(root.closest('[booking-popup-open]'), null, label + 'no booking popup hook')
+  assert.equal(root.closest('[data-signup-trigger-element]'), null, label + 'the signup delegate cannot match')
+  const event = context.clickDocument(root)
+  assert.equal(event.defaultPrevented, false, label + 'no document listener claims the click')
+}
+
 function assertBookCallLoading(button, label = '') {
   assert.equal(button.getAttribute('data-booking-trigger-loading'), '', label + 'loading marker')
   assert.equal(button.getAttribute('data-booking-trigger-unavailable'), null, label + 'no unavailable look')
@@ -8575,12 +8589,11 @@ test('F50 Brand call cards stay loading until discovery settles public admission
   assert.equal(xano.paid.root.style.display, 'block')
   assert.equal(xano.paid.root.getAttribute('data-call-offer-state'), 'loading')
   assert.equal(xano.paid.root.getAttribute('aria-busy'), 'true')
-  // A click while loading opens nothing.
+  // A click while loading opens nothing: no route to booking or signup exists.
   let opened = 0
   page.freeModalCta.click = () => { opened += 1 }
   page.bookingButton.click = () => { opened += 1 }
-  const evt = { preventDefault() {}, stopImmediatePropagation() {}, stopPropagation() {} }
-  ;(xano.free.root.listeners.click || []).forEach((fn) => fn(evt))
+  for (const card of [xano.free, xano.paid]) assertNoCallClickRoute(context, card.root)
   await settle()
   assert.equal(opened, 0)
   answer({ nylas_grant_id: 'grant_prod' })
@@ -8880,10 +8893,7 @@ test('F50 canonical Header and Services enter loading before member identity res
   }
 
   assertLoading()
-  const event = { preventDefault() {}, stopImmediatePropagation() {}, stopPropagation() {} }
-  for (const card of cards) {
-    for (const listener of card.root.listeners.click || []) listener(event)
-  }
+  for (const card of cards) assertNoCallClickRoute(context, card.root)
   assert.equal(opened, 0)
   await settle()
   assertLoading()
