@@ -10585,3 +10585,91 @@ test('F50 the failsafe settles an unanswered owner settings read like a failed r
   }
   assert.equal(unanswered.held.filter(Boolean).length, 1, 'the fired failsafe is not re-armed')
 })
+
+test('F50 the bootstrap failsafe ends Book Call loading on a Brand page without call cards', async () => {
+  const page = makePage()
+  const context = makeContext({
+    page,
+    member: BRAND_MEMBER,
+    record: { 'free-consulting-calls-t-f': true },
+    // Discovery never answers.
+    getStarterByMemberId: () => new Promise(() => {}),
+    getConfigs: async () => [],
+  })
+  const held = holdLongTimers(context)
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+  assert.equal(page.root.querySelectorAll('[wf-xano-instance], [data-call-canary-legacy-wrapper]').length, 0,
+    'no canonical or legacy call card can arm the failsafe')
+  const button = page.bookingButton
+  assertBookCallLoading(button)
+  // Only the bootstrap arm bounds this page. Fire every long timer it holds.
+  const timers = held.filter(Boolean)
+  assert.deepEqual(timers.map((timer) => timer.delay), [15000], 'the bootstrap arms the one failsafe')
+  timers.forEach((timer) => timer.callback())
+  await settle()
+  assert.equal(button.getAttribute('data-booking-trigger-loading'), null, 'Book Call leaves loading at 15 s')
+  assert.equal(button.getAttribute('aria-busy'), null)
+  assert.equal(button.getAttribute('data-booking-trigger-unavailable'), '')
+  assert.equal(button.getAttribute('aria-disabled'), 'true', 'still fail closed')
+  const hint = page.root.querySelector('#' + button.getAttribute('aria-describedby'))
+  assert.equal(hint.textContent, 'This Starter isn’t accepting calls right now.')
+})
+
+test('F50 a fired failsafe is not re-armed by a late loading tout', async () => {
+  const fixture = f50LegacyHeaderPage()
+  const context = makeContext({ page: fixture.page, member: {}, wfXano: fixture.feed.api })
+  const held = holdLongTimers(context)
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+  armedFailsafe(held).callback()
+  await settle()
+  const armedBefore = held.length
+  // A legacy tout rendered after the failsafe enters loading and fails closed
+  // at once. It must not start a second 15 s clock.
+  const late = fixture.legacyHeader.free.root.cloneNode()
+  for (const name of ['data-call-offer-state', 'aria-busy', 'data-canonical-public-call']) late.removeAttribute(name)
+  fixture.legacyHeader.wrapper.appendChild(late)
+  context.mutationObserverCallbacks.forEach((callback) => callback([{ type: 'childList', addedNodes: [late] }]))
+  await settle()
+  assert.equal(late.getAttribute('data-call-offer-state'), 'hidden')
+  assert.equal(held.length, armedBefore, 'no timer is armed after the failsafe fired')
+})
+
+for (const viewer of ['signed-out', 'paywalled']) {
+  test(`F50 a loading or revoked ${viewer} legacy tout keeps no connection or logged-out hook`, async () => {
+    const fixture = f50LegacyHeaderPage()
+    // Published markup can already carry the logged-out Book Call hook.
+    for (const card of fixture.legacyCards) card.root.setAttribute('data-logged-out-book-call', '')
+    const context = makeContext({
+      page: fixture.page,
+      member: viewer === 'paywalled' ? FREE_BRAND_MEMBER : {},
+      wfXano: fixture.feed.api,
+    })
+    holdLongTimers(context)
+    vm.createContext(context)
+    vm.runInContext(source, context)
+    await settle()
+    for (const card of fixture.legacyCards) {
+      assert.equal(card.root.getAttribute('data-call-offer-state'), 'loading')
+      assert.equal(card.root.getAttribute('data-logged-out-book-call'), null, 'loading strips the logged-out hook')
+      assert.equal(card.root.getAttribute('has-connection'), null)
+    }
+    fixture.feed.emit(callCardResult({ free: true, paid: true }))
+    await settle()
+    const paid = fixture.legacyHeader.paid.root
+    assert.equal(paid.getAttribute('data-call-offer-state'), 'available')
+    assert.equal(paid.getAttribute('has-connection'), 'paid')
+    assert.equal(paid.getAttribute('data-logged-out-book-call'), '')
+    // The DTO revokes Paid: the hidden tout is fail closed.
+    fixture.feed.emit(callCardResult({ free: true, paid: false }))
+    await settle()
+    assert.equal(paid.getAttribute('data-call-offer-state'), 'hidden')
+    assert.equal(paid.style.display, 'none')
+    assert.equal(paid.getAttribute('has-connection'), null, 'a hidden tout keeps no has-connection')
+    assert.equal(paid.getAttribute('data-logged-out-book-call'), null, 'a hidden tout keeps no logged-out hook')
+    assert.equal(fixture.legacyHeader.free.root.getAttribute('data-call-offer-state'), 'available')
+  })
+}
