@@ -2654,6 +2654,9 @@
       });
       serviceCards.forEach(function (card) {
           if (getComputedStyle(card).display === 'none') return;
+          // F50: an inline pointer would outrank the loading progress cursor.
+          // The DTO writer calls this again once the card settles.
+          if (card.getAttribute('data-call-offer-state') === 'loading') return;
           card.style.cursor = 'pointer';
       });
   }

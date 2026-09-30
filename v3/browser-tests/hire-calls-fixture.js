@@ -75,12 +75,15 @@ if (legacyHeader) {
   root.innerHTML = ['free', 'paid'].map(type => `<article data-service-card="component" data-service-card-state="Default" data-type="${type}" has-connection="${type}" booking-popup-open data-modal-trigger="popup-booking-main" data-signup-trigger-element="service" data-signup-trigger-value="${type === 'free' ? 'Free Call' : 'Paid Consulting Call'}">${cardContent(type)}</article>`).join('')
   qs('#header').append(root)
 }
+// servicecard=authored: wf-xano clones inherit the template's
+// data-service-card="component", as they do on the published page.
+const cloneServiceCard = params.get('servicecard') === 'authored' ? ' data-service-card="component"' : ''
 for (const surface of legacyHeader ? ['services'] : ['header', 'services']) {
   const key = `starter-call-offers-${surface}`
   const root = document.createElement('div')
   root.setAttribute('wf-xano-element', 'wrapper')
   root.setAttribute('wf-xano-instance', key)
-  root.innerHTML = '<div wf-xano-element="template" data-service-card="component"></div>' + ['free', 'paid'].map(type => `<article wf-xano-item data-wf-xano-id="424:call:${type}">${cardContent(type)}</article>`).join('')
+  root.innerHTML = '<div wf-xano-element="template" data-service-card="component"></div>' + ['free', 'paid'].map(type => `<article wf-xano-item data-wf-xano-id="424:call:${type}"${cloneServiceCard}>${cardContent(type)}</article>`).join('')
   qs(`#${surface}`).append(root)
   const handlers = {}
   // dto=held: the public call DTO has not answered yet; emit() delivers it.

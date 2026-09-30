@@ -10265,3 +10265,34 @@ test('F50 late legacy touts re-arm a released failsafe when the call DTO never a
   assert.equal(fixture.legacyHeader.free.root.getAttribute('data-call-offer-state'), 'available')
   assert.equal(fixture.legacyHeader.paid.root.getAttribute('data-call-offer-state'), 'hidden')
 })
+
+for (const [label, member] of [['signed-out', {}], ['paywalled', FREE_BRAND_MEMBER]]) {
+  test(`F50 ${label} loading Services clones keep the progress cursor after the Algolia record`, async () => {
+    // Published clones inherit data-service-card="component", so the public
+    // record's markServiceCardsClickable reaches them while the DTO is held.
+    // An inline pointer there would outrank the loading progress cursor.
+    const page = makePage()
+    const fixture = f50LibraryFirstCallCards(page)
+    const services = [fixture.services.free, fixture.services.paid]
+    const context = makeContext({
+      page,
+      member,
+      wfXano: fixture.api,
+      record: { 'free-consulting-calls-t-f': true, 'paid-consulting-calls-t-f': true },
+    })
+    holdLongTimers(context)
+    vm.createContext(context)
+    vm.runInContext(source, context)
+    await settle()
+    assert.ok(context.requestedIndexes.length > 0, 'the public record was read')
+    assertF50Loading(services, 'record known, DTO held')
+    for (const card of services) assert.equal(card.root.style.cursor || '', '', 'no inline pointer while loading')
+
+    fixture.headerFeed.emit(callCardResult({ free: true, paid: false }))
+    await settle()
+    const [free, paid] = services
+    assert.equal(free.root.getAttribute('data-call-offer-state'), 'available')
+    assert.equal(free.root.style.cursor, 'pointer', 'an offered card gets the origin/main pointer')
+    assert.equal(paid.root.getAttribute('data-call-offer-state'), 'hidden')
+  })
+}

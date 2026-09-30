@@ -77,6 +77,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
             tooltipDisplay: getComputedStyle(el.querySelector('[data-call-offer-tooltip]')).display,
             tooltipHidden: el.querySelector('[data-call-offer-tooltip]').hasAttribute('hidden'),
             cursor: getComputedStyle(el).cursor,
+            inlineCursor: el.style.cursor,
             slotText: slot ? slot.textContent : null,
             slotVisibility: slot ? getComputedStyle(slot).visibility : null,
             bookingPopup: el.hasAttribute('booking-popup-open'),
@@ -208,6 +209,25 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
       const [legacyOffered, legacyRefused] = publicLegacy.legacyCards
       assert.ok(legacyOffered.visible && legacyOffered.offerState === 'available' && !legacyOffered.busy && legacyOffered.signup === 'service')
       assert.ok(!legacyRefused.visible && legacyRefused.offerState === 'hidden' && !legacyRefused.busy && legacyRefused.ariaHidden === 'true')
+    }
+    for (const role of ['anonymous', 'free']) {
+      // The public Algolia record reaches markServiceCardsClickable while the
+      // DTO is held. Clones that carry data-service-card, as published
+      // clones do, must keep the loading progress cursor until they settle.
+      await navigate(`role=${role}&header=legacy&dto=held&servicecard=authored`)
+      let cursorState = await snapshot(`${role}-services-cursor-loading`)
+      assert.equal(cursorState.cards.length, 2)
+      assert.ok(cursorState.cards.every(card => card.visible && card.offerState === 'loading' && card.busy))
+      assert.ok(cursorState.cards.every(card => card.cursor === 'progress' && card.inlineCursor === ''), `${role}: loading Services clones keep the progress cursor`)
+      await evaluate(`lists['starter-call-offers-services'].emit(false)`)
+      for (let i = 0; i < 100; i++) {
+        if (await evaluate(`[...document.querySelectorAll('#services [wf-xano-item]')].every(card => card.getAttribute('data-call-offer-state') !== 'loading')`)) break
+        await pause(25)
+      }
+      cursorState = await snapshot(`${role}-services-cursor-settled`)
+      const [cursorOffered, cursorRefused] = cursorState.cards
+      assert.ok(cursorOffered.visible && cursorOffered.offerState === 'available' && cursorOffered.cursor === 'pointer' && cursorOffered.inlineCursor === 'pointer', `${role}: an offered Services card gets the origin/main pointer`)
+      assert.ok(!cursorRefused.visible && cursorRefused.offerState === 'hidden')
     }
     await navigate('role=talent&header=legacy')
     const talentLegacy = await snapshot('talent-legacy-header')
