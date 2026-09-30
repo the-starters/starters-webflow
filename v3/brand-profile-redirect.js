@@ -1,7 +1,7 @@
 /**
  * Brand platform pages — the inbound half of the Brand profile-completion loop.
  *
- * @release v1.59.116
+ * @release v1.59.643
  *
  * ONE job: a signed-in paid Brand whose Xano brand record exists but is not yet
  * marked complete is sent to /complete-profile with `location.replace()`, so a
@@ -526,7 +526,7 @@
   window.StartersBrandProfileRedirect = {
     // Keep in sync with the @release line in this file's header comment; the
     // v3/brand-profile-redirect.test.js drift guard asserts they match.
-    release: 'v1.59.116',
+    release: 'v1.59.643',
     allowedHost: allowedHost,
     stagingHost: stagingHost,
     isGuardedPath: isGuardedPath,
