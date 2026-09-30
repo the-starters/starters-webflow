@@ -47,6 +47,15 @@
   const REQUEST_EXPIRATION_TICK_MS = 10000
   const REQUEST_EXPIRATION_POLL_MS = 30000
   const REQUEST_EXPIRATION_MAX_POLLS = 3
+  // F54: F40 writes a virtual-calendar Meet link 38 to 56 s after the confirm
+  // (task #760), and the list was read once. A Starter's upcoming confirmed
+  // row with no link gets these re-reads, counted from the tick that first
+  // sees it. Some calendars never get a link, so the budget is 3 per row.
+  // Each re-read runs on the first 10 s tick at or after its delay, so the
+  // effective schedule is 50, 90 and 150 s. The first re-read then runs 50 to
+  // 60 s after the confirm, after most of the F40 window; a 40 s tick would
+  // run before most links exist.
+  const MEETING_LINK_POLL_DELAYS_MS = [45000, 90000, 150000]
   const MUTATION_RECONCILIATION_MAX_PASSES = 3
   const CANONICAL_READ_TIMEOUT_MS = 10000
   const PROFILE_REFRESH_DELAYS_MS = [0, 150, 300, 600, 1000, 1600, 2500]
@@ -355,8 +364,17 @@
   }
 
   function confirmSucceeded(body) {
-    const confirmation = body && body.confirmation ? body.confirmation : body
-    return clean(confirmation && confirmation.status).toLowerCase() === 'confirmed'
+    return confirmationStatus(body) === 'confirmed'
+  }
+
+  function confirmationStatus(body) {
+    const confirmation = body && body.confirmation && typeof body.confirmation === 'object' ? body.confirmation : null
+    const nestedStatus = clean(confirmation && confirmation.status).toLowerCase()
+    const topStatus = clean(body && body.status).toLowerCase()
+    if (nestedStatus === 'confirmed' || topStatus === 'confirmed') return 'confirmed'
+    const confirmationId = clean(confirmation && (confirmation.booking_id || confirmation.unique_id || confirmation.id))
+    if (!nestedStatus && !topStatus && confirmationId) return 'confirmed'
+    return ''
   }
 
   function normalizeTimestamp(value) {
@@ -585,15 +603,19 @@
     return bookingStatus(booking, referenceTime)
   }
 
-  function meetingHrefAtReference(booking, currentTime) {
+  function meetingWindowOpenAt(booking, currentTime) {
     const raw = clean(booking && booking.status).toLowerCase()
-    if (currentTime == null) return ''
+    if (currentTime == null) return false
     const status = raw === 'rescheduled' ? raw : bookingStatus(booking, currentTime)
-    if (!['confirmed', 'rescheduled'].includes(status)) return ''
+    if (!['confirmed', 'rescheduled'].includes(status)) return false
     const interval = effectiveConfirmedInterval(booking)
     const start = interval.start
     const end = interval.end
-    if (!Number.isFinite(start) || start <= 0 || !Number.isFinite(end) || end <= start || end <= currentTime) return ''
+    return Number.isFinite(start) && start > 0 && Number.isFinite(end) && end > start && end > currentTime
+  }
+
+  function meetingHrefAtReference(booking, currentTime) {
+    if (!meetingWindowOpenAt(booking, currentTime)) return ''
     return safeMeetingHref(booking && booking.meeting_link)
   }
 
@@ -1277,6 +1299,32 @@
     return Boolean(apply(booking, { status: cancellation.status }, claim))
   }
 
+  /**
+   * F54: booking IDs of rows in their confirmed meeting window with no Meet
+   * link. The window and the clock are the ones the meeting-link paint uses,
+   * so a row is re-read only while a link that arrives would be painted.
+   * @param {Array} refs Dashboard sections.
+   * @param {number} now Current time in ms.
+   * @returns {string[]} Booking IDs.
+   */
+  function missingMeetingLinkKeys(refs, now) {
+    const keys = []
+    ;(Array.isArray(refs) ? refs : []).forEach(function (section) {
+      ;(section && Array.isArray(section.rows) ? section.rows : []).forEach(function (booking) {
+        if (!booking || clean(booking.meeting_link) !== '') return
+        if (!meetingWindowOpenAt(booking, meetingReferenceTime(booking, now))) return
+        const key = clean(booking.booking_id || booking.id)
+        if (key && keys.indexOf(key) === -1) keys.push(key)
+      })
+    })
+    return keys
+  }
+
+  function pageHidden() {
+    const document = global.document
+    return Boolean(document && (document.visibilityState === 'hidden' || document.hidden === true))
+  }
+
   function startBookingLifecycleTicker(refs, role, restart, options) {
     const settings = options || {}
     // The old inline helper remains defined, but its legacy list generator is
@@ -1290,6 +1338,50 @@
     let refreshBusy = false
     let nextPollAt = 0
     const polls = new Map()
+    // F54: per-row Meet link re-reads, Starter only. An entry outlives a reset
+    // of the rendered rows, so a row that comes back keeps its spent budget.
+    const linkPolls = new Map()
+    let lastLinkTickAt = null
+    const dueMeetingLinkKeys = function (currentTime) {
+      const missing = missingMeetingLinkKeys(refs, currentTime)
+      missing.forEach(function (key) {
+        const poll = linkPolls.get(key)
+        if (!poll) {
+          linkPolls.set(key, { since: currentTime, count: 0, seenAt: currentTime })
+          return
+        }
+        // A row that was out of the set on the previous tick (a reset of the
+        // rendered rows, or a link that came and went) is back. It keeps its
+        // spent count, and its remaining delays restart from this tick, as if
+        // its last re-read ran now. The read that brought the row back is
+        // fresh, so no re-read runs on this tick.
+        if (poll.seenAt !== lastLinkTickAt) {
+          poll.since = currentTime -
+            (poll.count > 0 ? MEETING_LINK_POLL_DELAYS_MS[poll.count - 1] : 0)
+        }
+        poll.seenAt = currentTime
+      })
+      lastLinkTickAt = currentTime
+      if (pageHidden()) return []
+      return missing.filter(function (key) {
+        const poll = linkPolls.get(key)
+        return poll.count < MEETING_LINK_POLL_DELAYS_MS.length &&
+          currentTime - poll.since >= MEETING_LINK_POLL_DELAYS_MS[poll.count]
+      })
+    }
+    const spendMeetingLinkPolls = function (keys, currentTime) {
+      keys.forEach(function (key) {
+        const poll = linkPolls.get(key)
+        const delay = MEETING_LINK_POLL_DELAYS_MS[poll.count]
+        // A re-read that runs a full tick late (the page was hidden, or
+        // another ticker read was in flight) restarts the remaining delays
+        // from now, so overdue re-reads never run on back-to-back ticks.
+        if (currentTime - poll.since - delay >= REQUEST_EXPIRATION_TICK_MS) {
+          poll.since = currentTime - delay
+        }
+        poll.count += 1
+      })
+    }
     const tick = function () {
       const currentTime = Number(now())
       refreshMeetingDestinations(refs, currentTime)
@@ -1310,14 +1402,29 @@
       const pollable = expiredKeys.filter(function (key) {
         return (polls.get(key) || 0) < REQUEST_EXPIRATION_MAX_POLLS
       })
-      if (!pollable.length || refreshBusy || currentTime < nextPollAt) return
+      const expiryDue = pollable.length > 0 && currentTime >= nextPollAt
+      const linkDue = dueMeetingLinkKeys(currentTime)
+      // The expiry and Meet link re-reads share one canonical read and one
+      // in-flight guard. A blocked tick spends no budget.
+      if (refreshBusy || (!expiryDue && !linkDue.length)) return
       refreshBusy = true
-      nextPollAt = currentTime + REQUEST_EXPIRATION_POLL_MS
-      pollable.forEach(function (key) {
-        polls.set(key, (polls.get(key) || 0) + 1)
-      })
+      if (expiryDue) {
+        nextPollAt = currentTime + REQUEST_EXPIRATION_POLL_MS
+        pollable.forEach(function (key) {
+          polls.set(key, (polls.get(key) || 0) + 1)
+        })
+      }
+      spendMeetingLinkPolls(linkDue, currentTime)
       Promise.resolve()
         .then(restart)
+        .then(function (refreshed) {
+          // A successful read (true) has repainted the cards and the open
+          // dialog's status and meeting link. Re-check the dialog's pending
+          // copy and actions against the refreshed rows now, not on the next
+          // tick. A failed (false) or superseded read changed no rows.
+          if (!linkDue.length || refreshed !== true) return
+          refreshDetailExpiration(refs, role, Number(now()))
+        })
         .catch(function (error) {
           console.error('[dashboard-calls] expiration refresh failed:', error && error.message)
         })
@@ -3362,8 +3469,27 @@
     return rows
   }
 
-  function wireBookingActions(refs, role, restart, acquireBookingAction) {
+  function wireBookingActions(refs, role, restart, acquireBookingAction, mutations) {
     if (role !== 'starter' || !global.document || !global.document.addEventListener) return
+    // F53: the confirmed status goes through the session's mutation owner, as
+    // the other call actions do. The commit invalidates an in-flight background
+    // read, so a stale pending row cannot come back.
+    const owner = mutations || {}
+    const captureConfirmation = typeof owner.captureBookingMutation === 'function'
+      ? owner.captureBookingMutation
+      : function () { return null }
+    const commitConfirmation = typeof owner.commitBookingMutation === 'function'
+      ? owner.commitBookingMutation
+      : function (model, changes) {
+          return commitBookingMutation(refs, model, changes)
+        }
+    const releaseConfirmation = async function (claim) {
+      if (!claim || typeof owner.releaseBookingMutation !== 'function') return
+      const reconcile = owner.releaseBookingMutation(claim)
+      if (reconcile && typeof owner.reconcileBookingMutations === 'function') {
+        await owner.reconcileBookingMutations()
+      }
+    }
     global.document.addEventListener('click', async function (event) {
       const target = event && event.target
       const button = target && target.closest
@@ -3410,6 +3536,7 @@
       let serverMessage = ''
       let confirmed = false
       let releaseAction = null
+      let claim = null
       try {
         if (typeof acquireBookingAction === 'function') {
           releaseAction = await acquireBookingAction(booking, CONFIRM_FAILURE_COPY)
@@ -3417,6 +3544,7 @@
           booking = bookingById(refs, bookingId)
           if (!booking || !canConfirmBooking(role, booking)) return
         }
+        claim = captureConfirmation(booking)
         if (!button.__startersBookingActionKey) {
           button.__startersBookingActionKey = await storedConfirmAttemptKey(booking) || await createConfirmAttemptKey(booking)
         }
@@ -3437,15 +3565,39 @@
           throw new Error(serverMessage || 'Canonical booking confirmation failed')
         }
         confirmed = true
+        // F53: the open details modal kept "Pending" with Confirm and Decline
+        // on screen until the list read returned, or until a later tick when
+        // that read failed. Commit the confirmed status to the canonical row,
+        // then repaint the dialog from it at once. The repaint keeps its
+        // guards: it leaves a dialog that shows another step alone, and it
+        // paints the call the dialog shows. A refused commit (the row changed
+        // or left the list) changes nothing, and the read below repaints.
+        const confirmedStatus = confirmationStatus(body)
+        const committed = commitConfirmation(booking, {
+          status: confirmedStatus,
+        }, claim)
+        if (committed) {
+          refreshOpenDetailPanel(refs, role)
+          refreshDetailExpiration(refs, role)
+        }
         await clearConfirmAttemptKey(booking, button.__startersBookingActionKey)
         button.__startersBookingActionKey = ''
         await restart()
+        // The read repainted the dialog's status and meeting link; re-check
+        // its pending copy and actions against the refreshed row now, not on
+        // the next tick.
+        refreshDetailExpiration(refs, role)
       } catch (error) {
         console.error('[dashboard-calls] confirmation failed closed:', error && error.message)
         // A failure after the server confirmed (key cleanup or the list
         // refresh) must not tell the Starter the call was not confirmed.
         if (!confirmed) showError(serverMessage || CONFIRM_FAILURE_COPY)
       } finally {
+        try {
+          await releaseConfirmation(claim)
+        } catch (error) {
+          console.error('[dashboard-calls] confirmation reconciliation failed:', error && error.message)
+        }
         if (releaseAction) {
           try { await releaseAction() } catch (error) {
             console.error('[dashboard-calls] confirmation readback failed:', error && error.message)
@@ -3815,7 +3967,12 @@
       },
     }
     wireDashboardCallModules(moduleOptions)
-    wireBookingActions(refs, role, refreshAfterMutation, acquireBookingAction)
+    wireBookingActions(refs, role, refreshAfterMutation, acquireBookingAction, {
+      captureBookingMutation: captureCurrentBooking,
+      commitBookingMutation: commitCurrentBooking,
+      releaseBookingMutation: releaseCurrentBooking,
+      reconcileBookingMutations: requestMutationReconciliation,
+    })
     startBookingLifecycleTicker(refs, role, refreshExpiredRequests, {
       reconcileBookingMutations: requestMutationReconciliation,
     })

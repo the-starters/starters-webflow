@@ -8343,3 +8343,1156 @@ test('the lifecycle tick moves an open Join detail to Completed at call end', ()
     global.StartersDashboardCallActions = original.actions
   }
 })
+
+// F53 (JP meeting 2026-09-30): after the Starter's in-modal Accept the details
+// heading kept "Pending" and Confirm/Decline stayed on screen until the list
+// read came back, or until a later tick when that read failed. These tests
+// boot the real controller with the real click delegates and the pure parts
+// of the real actions module.
+function acceptElement(tag, attributes = {}, text) {
+  const node = richElement(tag, attributes, text)
+  // The Accept delegate asks `closest` for a selector list.
+  node.closest = function (selector) {
+    const parts = selector.split(',').map((part) => part.trim()).filter(Boolean)
+    for (let candidate = this; candidate; candidate = candidate.parentNode) {
+      if (parts.some((part) => matchesAttributeSelector(candidate, part))) return candidate
+    }
+    return null
+  }
+  return node
+}
+
+function acceptView() {
+  const configId = '11111111-2222-3333-4444-555555555555'
+  const bookingId = 'f53f53f5-bbbb-cccc-dddd-eeeeeeeeeeee'
+  const uuidBytes = (value) => Buffer.from(value.replace(/-/g, ''), 'hex')
+  const bookingRef = Buffer.concat([
+    uuidBytes(configId),
+    uuidBytes(bookingId),
+    Buffer.from('bounded-salt'),
+  ]).toString('base64url')
+  const now = Date.now()
+  const booking = {
+    booking_id: bookingId,
+    config_id: configId,
+    booking_ref: bookingRef,
+    grant_id: 'grant-f53',
+    data_environment: 'production',
+    status: 'pending',
+    is_paid: false,
+    duration: 30,
+    start: now + 3 * 24 * 60 * 60 * 1000,
+    end: now + 3 * 24 * 60 * 60 * 1000 + 30 * 60 * 1000,
+    confirmation_expires_at: now + 24 * 60 * 60 * 1000,
+    meeting_link: '',
+    brand_data: { name: 'Northwind', memberstack_id: 'mem_brand', timezone: 'UTC' },
+    starter_data: { name: 'Sam', memberstack_id: 'mem_starter', timezone: 'UTC' },
+  }
+  const modal = acceptElement('dialog', { 'popup-booking-info': '' })
+  modal.ownerDocument = { createElement: (tag) => acceptElement(tag) }
+  modal.open = true
+  const base = acceptElement('div', { 'booking-popup-content': 'base' })
+  const status = acceptElement('i', { 'booking-element': 'status' }, 'Pending')
+  const pendingInfo = acceptElement('div', { 'pending-info-text': '' }, 'Authored pending info')
+  const table = acceptElement('div')
+  const meeting = authoredTableRow('Meeting Link', 'meeting-link', '')
+  table.appendChild(meeting.wrap)
+  const footer = acceptElement('div')
+  const accept = acceptElement('a', { 'booking-action-btn': 'switch-confirm' }, 'Confirm Call')
+  const decline = acceptElement('a', { 'booking-action-btn': 'switch-decline' }, 'Decline Call')
+  footer.appendChild(accept)
+  footer.appendChild(decline)
+  base.appendChild(status)
+  base.appendChild(pendingInfo)
+  base.appendChild(table)
+  base.appendChild(footer)
+  const declinePanel = acceptElement('div', { 'booking-popup-content': 'decline' })
+  declinePanel.hidden = true
+  modal.appendChild(base)
+  modal.appendChild(declinePanel)
+  return { accept, base, booking, bookingId, decline, declinePanel, meeting, modal, now, pendingInfo, status }
+}
+
+// The pure parts of the actions module, without its DOM mounting.
+function acceptActionsModule() {
+  const real = require('./dashboard-call-actions.js')
+  return {
+    wire() {},
+    canDecline: real.canDecline,
+    canCancel: real.canCancel,
+    rescheduleKindFor() { return '' },
+    canRespondReschedule() { return false },
+    canConfirmReschedule() { return false },
+    switchPopupContent: real.switchPopupContent,
+    fillCounterpartPlaceholders: real.fillCounterpartPlaceholders,
+    markActionBusy: real.markActionBusy,
+    showActionError: real.showActionError,
+  }
+}
+
+// Boots the real controller on /starter-dashboard with a controlled clock,
+// scripted canonical reads, and the captured ten-second lifecycle ticker, then
+// opens the details modal on the view's booking through the details delegate.
+async function bootAcceptDashboard(view, bookingReads, { confirmBody, onConfirm, holdConfirm, holdAfterConfirm } = {}) {
+  const source = fs.readFileSync(require.resolve('./dashboard-calls.js'), 'utf8')
+  const clock = { value: view.now }
+  class ClockDate extends Date {
+    static now() { return clock.value }
+  }
+  const member = { id: 'mem_starter' }
+  const state = { reads: 0, confirms: 0, readTimes: [], held: false, moduleOptions: null }
+  let holdDigest = false
+  const actionsModule = acceptActionsModule()
+  // Keep what boot hands the actions module: the session's action queue and
+  // mutation owner, so a test can act as a later call action.
+  actionsModule.wire = (options) => { state.moduleOptions = options }
+  const listeners = []
+  const intervals = []
+  const sectionNode = (name) => {
+    const list = element()
+    const template = element({ 'bookings-item-template': name })
+    list.querySelectorAll = (selector) => selector === '[bookings-item-template]' ? [template] : []
+    const node = element({ 'bookings-section': name })
+    node.querySelector = (selector) => ({
+      ['[bookings-list="' + name + '"]']: list,
+      ['[bookings-item-template="' + name + '"]']: template,
+      ['[bookings-loader="' + name + '"]']: element(),
+      ['[bookings-empty="' + name + '"]']: element(),
+      '[bookings-count]': element(),
+      '.tabs-button_component.is-dashboard': element(),
+    })[selector] || null
+    return node
+  }
+  const sections = [sectionNode('requests'), sectionNode('calls')]
+  const root = element()
+  const document = {
+    documentElement: root,
+    readyState: 'complete',
+    visibilityState: 'visible',
+    hidden: false,
+    addEventListener(type, listener) {
+      if (type === 'click') listeners.push(listener)
+    },
+    getElementById() { return null },
+    querySelector(selector) {
+      return selector.includes('popup-booking-info') ? view.modal : null
+    },
+    querySelectorAll(selector) {
+      return selector === '[bookings-section]' ? sections : []
+    },
+  }
+  const click = (target) => {
+    let stopped = false
+    const event = {
+      target,
+      preventDefault() {},
+      stopImmediatePropagation() { stopped = true },
+    }
+    const pending = []
+    for (const listener of listeners) {
+      pending.push(listener(event))
+      if (stopped) break
+    }
+    return Promise.all(pending)
+  }
+  const window = {
+    $memberstackDom: {
+      async getCurrentMember() { return { data: member } },
+      onAuthChange() {},
+    },
+    StartersDashboardCallActions: actionsModule,
+    TextEncoder,
+    URLSearchParams,
+    atob,
+    btoa,
+    clearInterval() {},
+    crypto: {
+      randomUUID: () => '00000000-0000-4000-8000-000000000153',
+      subtle: {
+        digest(algorithm, data) {
+          const result = globalThis.crypto.subtle.digest(algorithm, data)
+          if (!holdDigest || !holdAfterConfirm) return result
+          // The attempt-key cleanup runs after the commit and before the
+          // post-confirm refresh: a test can hold the Accept there.
+          state.held = true
+          return holdAfterConfirm.promise.then(() => result)
+        },
+      },
+    },
+    document,
+    location: { pathname: '/starter-dashboard', search: '', hash: '' },
+    sessionStorage: memoryStorage(),
+    setInterval(callback, delay) {
+      if (delay === 10_000) intervals.push(callback)
+      return intervals.length
+    },
+    setTimeout,
+    clearTimeout,
+    xanoAuthFetch: async (url, init) => {
+      if (url.endsWith('/booking/confirm/v3')) {
+        state.confirms += 1
+        // A test can hold the confirm POST while the Accept owns the slot.
+        if (holdConfirm) await holdConfirm.promise
+        holdDigest = true
+        if (onConfirm) onConfirm(window)
+        return {
+          ok: true,
+          json: async () => confirmBody || ({
+            confirmation: { booking_id: view.bookingId, status: 'confirmed', revision: 2 },
+            duplicate: false,
+          }),
+        }
+      }
+      assert.equal(JSON.parse(init.body).memberstack_id, member.id)
+      const read = bookingReads[Math.min(state.reads, bookingReads.length - 1)]
+      state.reads += 1
+      state.readTimes.push(clock.value - view.now)
+      return read()
+    },
+  }
+  vm.runInNewContext(source, {
+    console: { error() {}, warn() {}, log() {} },
+    Date: ClockDate,
+    document,
+    Intl,
+    URL,
+    URLSearchParams,
+    window,
+  })
+  await until(() => state.reads === 1 && root.getAttribute('data-dashboard-calls-v3') === 'ready')
+  assert.equal(intervals.length, 1, 'one lifecycle ticker')
+  const card = acceptElement('div', { 'data-booking-id': view.bookingId })
+  const details = acceptElement('a', { 'booking-card-action-btn': 'details' })
+  card.appendChild(details)
+  await click(details)
+  assert.equal(view.modal.getAttribute('data-booking-id'), view.bookingId)
+  return {
+    click,
+    clock,
+    document,
+    root,
+    state,
+    window,
+    async tickAt(seconds) {
+      clock.value = view.now + seconds * 1000
+      intervals[0]()
+      for (let step = 0; step < 20; step += 1) await new Promise(setImmediate)
+    },
+  }
+}
+
+function acceptSnapshot(view) {
+  return {
+    status: view.status.textContent,
+    stored: view.modal.getAttribute('data-booking-status'),
+    accept: view.accept.hidden,
+    decline: view.decline.hidden,
+    pendingInfo: view.pendingInfo.hidden,
+    base: view.base.hidden,
+  }
+}
+
+const ACCEPTED_SNAPSHOT = {
+  status: 'Upcoming',
+  stored: 'confirmed',
+  accept: true,
+  decline: true,
+  pendingInfo: true,
+  base: false,
+}
+
+function visibleActionErrors(host) {
+  return host
+    .querySelectorAll('[data-starters-action-error]')
+    .filter((note) => !note.hidden && note.textContent !== '')
+    .map((note) => note.textContent)
+}
+
+test('F53: an in-modal Starter Accept repaints the open modal to Upcoming before the list read returns', async () => {
+  const view = acceptView()
+  const pendingRaw = { ...view.booking }
+  const confirmedRaw = { ...pendingRaw, status: 'confirmed', revision: 2 }
+  const postConfirmRead = deferred()
+  const env = await bootAcceptDashboard(view, [
+    () => ({ ok: true, json: async () => [pendingRaw] }),
+    () => postConfirmRead.promise,
+    () => ({ ok: true, json: async () => [confirmedRaw] }),
+  ])
+  assert.deepEqual(acceptSnapshot(view), {
+    status: 'Pending',
+    stored: 'pending',
+    accept: false,
+    decline: false,
+    pendingInfo: false,
+    base: false,
+  })
+
+  const accepted = env.click(view.accept)
+  await until(() => env.state.reads === 2)
+  // The confirm has answered and the list read has not.
+  assert.equal(env.state.confirms, 1)
+  assert.deepEqual(acceptSnapshot(view), ACCEPTED_SNAPSHOT)
+  assert.equal(view.declinePanel.hidden, true)
+
+  postConfirmRead.resolve({ ok: true, json: async () => [confirmedRaw] })
+  await accepted
+  assert.deepEqual(acceptSnapshot(view), ACCEPTED_SNAPSHOT)
+  assert.equal(view.accept.getAttribute('aria-busy'), 'false')
+  assert.deepEqual(visibleActionErrors(view.modal), [])
+
+  await env.tickAt(10)
+  assert.deepEqual(acceptSnapshot(view), ACCEPTED_SNAPSHOT, 'the next tick keeps the confirmed state')
+  assert.equal(env.state.confirms, 1)
+})
+
+for (const [name, confirmBody] of [
+  ['top-level confirmed status with nested booking identity', (view) => ({
+    status: 'confirmed',
+    confirmation: { booking_id: view.bookingId, revision: 2 },
+    duplicate: false,
+  })],
+  ['nested confirmed status', (view) => ({
+    confirmation: { booking_id: view.bookingId, status: 'confirmed', revision: 2 },
+    duplicate: false,
+  })],
+]) {
+  test('F53: ' + name + ' repaints the modal to Upcoming before the list read returns', async () => {
+    const view = acceptView()
+    const pendingRaw = { ...view.booking }
+    const confirmedRaw = { ...pendingRaw, status: 'confirmed', revision: 2 }
+    const postConfirmRead = deferred()
+    const env = await bootAcceptDashboard(view, [
+      () => ({ ok: true, json: async () => [pendingRaw] }),
+      () => postConfirmRead.promise,
+      () => ({ ok: true, json: async () => [confirmedRaw] }),
+    ], { confirmBody: confirmBody(view) })
+
+    const accepted = env.click(view.accept)
+    await until(() => env.state.reads === 2)
+    assert.equal(env.state.confirms, 1)
+    assert.deepEqual(acceptSnapshot(view), ACCEPTED_SNAPSHOT)
+
+    postConfirmRead.resolve({ ok: true, json: async () => [confirmedRaw] })
+    await accepted
+    assert.deepEqual(acceptSnapshot(view), ACCEPTED_SNAPSHOT)
+  })
+}
+
+test('F53: when every read after the Accept fails, the modal still shows the confirmed call and a second Accept sends nothing', async () => {
+  const view = acceptView()
+  const pendingRaw = { ...view.booking }
+  const env = await bootAcceptDashboard(view, [
+    () => ({ ok: true, json: async () => [pendingRaw] }),
+    () => ({ ok: false, json: async () => ({}) }),
+  ])
+  await env.click(view.accept)
+  assert.equal(env.state.confirms, 1)
+  assert.ok(env.state.reads >= 2, 'the post-confirm read ran and failed')
+  assert.deepEqual(acceptSnapshot(view), ACCEPTED_SNAPSHOT)
+  assert.deepEqual(visibleActionErrors(view.modal), [], 'a confirmed call shows no failure')
+
+  // A stale second click on the hidden control neither posts nor claims the
+  // server refused the call.
+  await env.click(view.accept)
+  assert.equal(env.state.confirms, 1)
+  assert.deepEqual(visibleActionErrors(view.modal), [])
+
+  for (const seconds of [10, 20, 30]) {
+    await env.tickAt(seconds)
+    assert.deepEqual(acceptSnapshot(view), ACCEPTED_SNAPSHOT, 'tick at ' + seconds + ' s')
+  }
+})
+
+test('F53: an Accept that lands after the Starter moved to another step leaves that step alone', async () => {
+  const view = acceptView()
+  const pendingRaw = { ...view.booking }
+  const confirmedRaw = { ...pendingRaw, status: 'confirmed', revision: 2 }
+  const env = await bootAcceptDashboard(view, [
+    () => ({ ok: true, json: async () => [pendingRaw] }),
+    () => ({ ok: true, json: async () => [confirmedRaw] }),
+  ], {
+    // The Starter opened the decline step while the confirm was in flight.
+    onConfirm(window) {
+      window.StartersDashboardCallActions.switchPopupContent(view.modal, 'decline')
+    },
+  })
+  await env.click(view.accept)
+  assert.equal(env.state.confirms, 1)
+  assert.equal(view.declinePanel.hidden, false, 'the decline step stays on screen')
+  assert.equal(view.base.hidden, true)
+  assert.equal(view.status.textContent, 'Pending', 'the hidden base heading is not repainted')
+  assert.equal(view.modal.getAttribute('data-booking-status'), 'pending')
+
+  await env.click(view.accept)
+  assert.equal(env.state.confirms, 1, 'the committed call cannot be confirmed twice')
+})
+
+test('F53: a card-level Accept commits the call, so a later card Accept sends nothing even while reads fail', async () => {
+  const view = acceptView()
+  const pendingRaw = { ...view.booking }
+  const env = await bootAcceptDashboard(view, [
+    () => ({ ok: true, json: async () => [pendingRaw] }),
+    () => ({ ok: false, json: async () => ({}) }),
+  ])
+  // The modal moved on to another call before the card Accept.
+  view.modal.setAttribute('data-booking-id', 'another-booking')
+  view.status.textContent = 'Another call'
+  const card = acceptElement('div', { 'data-booking-id': view.bookingId })
+  card.ownerDocument = { createElement: (tag) => acceptElement(tag) }
+  const cardAccept = acceptElement('a', { 'booking-card-action-btn': 'switch-confirm' }, 'Accept')
+  card.appendChild(cardAccept)
+
+  await env.click(cardAccept)
+  assert.equal(env.state.confirms, 1)
+  assert.ok(env.state.reads >= 2, 'the card Accept still refreshes the lists')
+  assert.equal(view.status.textContent, 'Another call', 'a modal on another call is left alone')
+  assert.deepEqual(visibleActionErrors(card), [])
+
+  await env.click(cardAccept)
+  assert.equal(env.state.confirms, 1)
+  assert.deepEqual(visibleActionErrors(card), [], 'no false "could not be confirmed" alert')
+})
+
+test('F53: when the owner refuses the commit, the refreshed row repaints the modal and hides the pending copy right after the read', async () => {
+  const view = acceptView()
+  const sections = [{ name: 'requests', rows: [view.booking] }, { name: 'calls', rows: [] }]
+  const listeners = []
+  const originals = {
+    actions: global.StartersDashboardCallActions,
+    crypto: global.crypto,
+    document: global.document,
+    fetch: global.xanoAuthFetch,
+    storage: global.sessionStorage,
+  }
+  let seenDuringRefresh = null
+  let commits = 0
+  try {
+    global.StartersDashboardCallActions = acceptActionsModule()
+    global.document = {
+      addEventListener(type, listener) { if (type === 'click') listeners.push(listener) },
+      querySelector: (selector) => (selector.includes('popup-booking-info') ? view.modal : null),
+    }
+    global.crypto = {
+      subtle: originals.crypto && originals.crypto.subtle,
+      randomUUID: () => '00000000-0000-4000-8000-000000000053',
+    }
+    global.sessionStorage = memoryStorage()
+    global.xanoAuthFetch = async () => ({
+      ok: true,
+      json: async () => ({
+        confirmation: { booking_id: view.bookingId, status: 'confirmed', revision: 2 },
+        duplicate: false,
+      }),
+    })
+    assert.equal(api.populateDetailModal(view.modal, view.booking, 'starter'), true)
+    assert.equal(view.modal.getAttribute('data-booking-id'), view.bookingId)
+    assert.equal(view.pendingInfo.hidden, false)
+    api.wireBookingActions(sections, 'starter', async () => {
+      seenDuringRefresh = acceptSnapshot(view)
+      // What refreshSession does after a successful read: the row moves from
+      // Requests to Calls, and the open dialog's status repaints.
+      sections[0].rows = []
+      sections[1].rows = [{ ...view.booking, status: 'confirmed', revision: 2 }]
+      api.refreshOpenDetailPanel(sections, 'starter')
+      return true
+    }, undefined, {
+      // The row changed while the confirm was in flight.
+      commitBookingMutation() {
+        commits += 1
+        return null
+      },
+    })
+    await listeners[0]({ target: view.accept, preventDefault() {}, stopImmediatePropagation() {} })
+  } finally {
+    global.StartersDashboardCallActions = originals.actions
+    global.crypto = originals.crypto
+    global.document = originals.document
+    global.xanoAuthFetch = originals.fetch
+    global.sessionStorage = originals.storage
+  }
+  assert.equal(commits, 1)
+  assert.equal(seenDuringRefresh.status, 'Pending', 'a refused commit paints nothing')
+  assert.equal(seenDuringRefresh.accept, false)
+  assert.equal(view.booking.status, 'pending', 'a refused commit does not write the row')
+  assert.deepEqual(acceptSnapshot(view), ACCEPTED_SNAPSHOT)
+})
+
+// F54 (JP meeting 2026-09-30): F40 writes a virtual-calendar Meet link 38 to
+// 56 s after the confirm (task #760), and the dashboard read the list once, so
+// Join Call and the Meeting Link row stayed empty until a reload. The Starter
+// ticker now re-reads an upcoming confirmed row with no link on the first ticks
+// at or after 45, 90 and 150 s from the tick that first sees it (50, 90 and
+// 150 s on the 10 s ticker): at most 3 times per row, never while the page is
+// hidden, and never while another ticker read is in flight.
+const F54_START = 2_000_000_000_000
+
+function linkTicker(refs, restart, clock, role = 'starter') {
+  let tick = null
+  const stop = api.startBookingLifecycleTicker(refs, role, restart, {
+    now: () => clock.value,
+    setInterval(callback, delay) {
+      assert.equal(delay, 10_000)
+      tick = callback
+      return 54
+    },
+    clearInterval() {},
+  })
+  return {
+    stop,
+    async at(seconds) {
+      clock.value = F54_START + seconds * 1000
+      tick()
+      await new Promise(setImmediate)
+      await new Promise(setImmediate)
+    },
+  }
+}
+
+function linklessRow(extra = {}) {
+  return {
+    booking_id: 'f54-booking',
+    status: 'confirmed',
+    start: F54_START + 2 * 24 * 60 * 60 * 1000,
+    end: F54_START + 2 * 24 * 60 * 60 * 1000 + 30 * 60 * 1000,
+    meeting_link: '',
+    ...extra,
+  }
+}
+
+async function withLinkGlobals(document, run) {
+  const original = { document: global.document, actions: global.StartersDashboardCallActions }
+  try {
+    global.document = document
+    global.StartersDashboardCallActions = undefined
+    return await run()
+  } finally {
+    global.document = original.document
+    global.StartersDashboardCallActions = original.actions
+  }
+}
+
+test('F54: on the 10 s ticker, an upcoming confirmed row with no Meet link is re-read 50, 90 and 150 s after the first sighting', async () => {
+  await withLinkGlobals({ visibilityState: 'visible' }, async () => {
+    const clock = { value: F54_START }
+    const refs = [{ rows: [linklessRow()], list: { querySelectorAll: () => [] } }]
+    const reads = []
+    // The ticker's own first tick at 0 s sees the row; every later tick is on
+    // the 10 s interval, as in production.
+    const ticker = linkTicker(refs, async () => {
+      reads.push((clock.value - F54_START) / 1000)
+      return true
+    }, clock)
+    for (let seconds = 10; seconds <= 900; seconds += 10) await ticker.at(seconds)
+    assert.deepEqual(reads, [50, 90, 150])
+    ticker.stop()
+  })
+})
+
+test('F54: an upcoming confirmed row with no Meet link is re-read on the first ticks at or after 45, 90 and 150 s from the first tick that sees it, then never again', async () => {
+  await withLinkGlobals({ visibilityState: 'visible' }, async () => {
+    const clock = { value: F54_START }
+    const refs = [{ rows: [linklessRow()], list: { querySelectorAll: () => [] } }]
+    const reads = []
+    const ticker = linkTicker(refs, async () => {
+      reads.push((clock.value - F54_START) / 1000)
+      // An unsuccessful read spends its place in the budget too.
+      return reads.length === 1 ? false : true
+    }, clock)
+    await new Promise(setImmediate)
+    assert.deepEqual(reads, [], 'the first sighting only starts the schedule')
+    for (const seconds of [10, 20, 30, 40, 44]) await ticker.at(seconds)
+    assert.deepEqual(reads, [])
+    await ticker.at(45)
+    assert.deepEqual(reads, [45])
+    for (const seconds of [55, 65, 75, 85, 89]) await ticker.at(seconds)
+    assert.deepEqual(reads, [45])
+    await ticker.at(90)
+    assert.deepEqual(reads, [45, 90])
+    for (const seconds of [100, 110, 120, 130, 140, 149]) await ticker.at(seconds)
+    assert.deepEqual(reads, [45, 90])
+    await ticker.at(150)
+    assert.deepEqual(reads, [45, 90, 150])
+    // Some calendars never get a link: the budget stays spent.
+    for (let seconds = 160; seconds <= 900; seconds += 10) await ticker.at(seconds)
+    assert.deepEqual(reads, [45, 90, 150])
+    ticker.stop()
+  })
+})
+
+test('F54: no Meet link re-read runs while the page is hidden, and overdue re-reads never run on back-to-back ticks', async () => {
+  const document = { visibilityState: 'hidden', hidden: true }
+  await withLinkGlobals(document, async () => {
+    const clock = { value: F54_START }
+    const refs = [{ rows: [linklessRow()], list: { querySelectorAll: () => [] } }]
+    const reads = []
+    const ticker = linkTicker(refs, async () => {
+      reads.push((clock.value - F54_START) / 1000)
+      return true
+    }, clock)
+    for (let seconds = 10; seconds <= 300; seconds += 10) await ticker.at(seconds)
+    assert.deepEqual(reads, [], 'a hidden page never re-reads')
+
+    // Back on screen: every delay is overdue. One re-read runs at once, and
+    // the remaining delays restart from it.
+    document.visibilityState = 'visible'
+    document.hidden = false
+    await ticker.at(310)
+    assert.deepEqual(reads, [310])
+    for (const seconds of [320, 330, 340, 350]) await ticker.at(seconds)
+    assert.deepEqual(reads, [310], 'no burst of overdue re-reads')
+    await ticker.at(360)
+    assert.deepEqual(reads, [310, 360])
+    for (const seconds of [370, 380, 390, 400, 410]) await ticker.at(seconds)
+    assert.deepEqual(reads, [310, 360])
+    await ticker.at(420)
+    assert.deepEqual(reads, [310, 360, 420])
+    for (let seconds = 430; seconds <= 900; seconds += 10) await ticker.at(seconds)
+    assert.equal(reads.length, 3)
+    ticker.stop()
+  })
+})
+
+test('F54: a Meet link re-read never overlaps an in-flight ticker read and keeps its budget while blocked', async () => {
+  await withLinkGlobals({ visibilityState: 'visible' }, async () => {
+    const clock = { value: F54_START }
+    // An expired pending request makes the first tick start an expiry read.
+    const expiredCard = {
+      getAttribute: (name) => (name === 'data-booking-id' ? 'f54-expired' : null),
+      querySelector: () => element(),
+      querySelectorAll: () => [],
+    }
+    const refs = [{
+      rows: [
+        {
+          booking_id: 'f54-expired',
+          status: 'pending',
+          start: F54_START + 60 * 60 * 1000,
+          confirmation_expires_at: F54_START - 1,
+        },
+        linklessRow(),
+      ],
+      list: { querySelectorAll: () => [expiredCard] },
+    }]
+    const expiryRead = deferred()
+    const linkRead = deferred()
+    const reads = []
+    const ticker = linkTicker(refs, () => {
+      reads.push((clock.value - F54_START) / 1000)
+      if (reads.length === 1) return expiryRead.promise
+      if (reads.length === 2) return linkRead.promise
+      return Promise.resolve(true)
+    }, clock)
+    await new Promise(setImmediate)
+    assert.deepEqual(reads, [0], 'the expiry read starts on the first tick')
+
+    // The 45 s re-read is due while the expiry read is in flight.
+    for (const seconds of [10, 20, 30, 40, 45]) await ticker.at(seconds)
+    assert.deepEqual(reads, [0], 'no re-read overlaps the expiry read')
+    // The canonical read no longer lists the expired request.
+    refs[0].rows = refs[0].rows.filter((row) => row.booking_id !== 'f54-expired')
+    expiryRead.resolve(true)
+    await new Promise(setImmediate)
+    await ticker.at(50)
+    assert.deepEqual(reads, [0, 50])
+
+    // The next re-reads are due while that re-read is in flight.
+    for (const seconds of [90, 100, 150, 160, 190]) await ticker.at(seconds)
+    assert.deepEqual(reads, [0, 50], 'no re-read overlaps an in-flight re-read')
+    linkRead.resolve(true)
+    await new Promise(setImmediate)
+    // The blocked ticks spent no budget: the two remaining re-reads still run,
+    // one at once and the other on the restarted delay.
+    await ticker.at(200)
+    assert.deepEqual(reads, [0, 50, 200])
+    for (const seconds of [210, 220, 230, 240, 250]) await ticker.at(seconds)
+    assert.deepEqual(reads, [0, 50, 200])
+    await ticker.at(260)
+    assert.deepEqual(reads, [0, 50, 200, 260])
+    for (let seconds = 270; seconds <= 900; seconds += 10) await ticker.at(seconds)
+    assert.equal(reads.length, 4)
+    ticker.stop()
+  })
+})
+
+test('F54: the Meet link re-read budget survives a reset of the rendered rows', async () => {
+  await withLinkGlobals({ visibilityState: 'visible' }, async () => {
+    const clock = { value: F54_START }
+    const refs = [{ rows: [linklessRow()], list: { querySelectorAll: () => [] } }]
+    const reads = []
+    const ticker = linkTicker(refs, async () => {
+      reads.push((clock.value - F54_START) / 1000)
+      return true
+    }, clock)
+    for (const seconds of [10, 20, 30, 40, 50]) await ticker.at(seconds)
+    assert.deepEqual(reads, [50])
+    // An identity reset clears the rows; its own full read brings the same
+    // booking back as a new row object.
+    refs[0].rows = []
+    for (const seconds of [60, 70, 80, 90, 100, 110]) await ticker.at(seconds)
+    assert.deepEqual(reads, [50], 'no re-read while the row is gone')
+    refs[0].rows = [linklessRow()]
+    // No re-read on the tick the row comes back: the read that brought it
+    // back is fresh. The row keeps its spent count, and the remaining delays
+    // restart from that tick (the next gaps are 45 and 60 s, run on the
+    // 10 s ticks).
+    for (let seconds = 120; seconds <= 900; seconds += 10) await ticker.at(seconds)
+    assert.deepEqual(reads, [50, 170, 230])
+    ticker.stop()
+  })
+})
+
+test('F54: a row whose Meet link comes and goes restarts its remaining delays from the tick it is missing again', async () => {
+  const link = 'https://meet.google.com/abc-defg-hij'
+  // The link arrives through another read before any re-read, then a later
+  // row object has none: the full schedule restarts from that tick.
+  await withLinkGlobals({ visibilityState: 'visible' }, async () => {
+    const clock = { value: F54_START }
+    const refs = [{ rows: [linklessRow()], list: { querySelectorAll: () => [] } }]
+    const reads = []
+    const ticker = linkTicker(refs, async () => {
+      reads.push((clock.value - F54_START) / 1000)
+      return true
+    }, clock)
+    await ticker.at(10)
+    refs[0].rows = [linklessRow({ meeting_link: link })]
+    for (let seconds = 20; seconds <= 590; seconds += 10) await ticker.at(seconds)
+    assert.deepEqual(reads, [])
+    refs[0].rows = [linklessRow()]
+    for (let seconds = 600; seconds <= 1200; seconds += 10) await ticker.at(seconds)
+    assert.deepEqual(reads, [650, 690, 750])
+    ticker.stop()
+  })
+  // The second re-read brings the link, then a later row object has none:
+  // the last re-read runs 60 s after that tick, not on it.
+  await withLinkGlobals({ visibilityState: 'visible' }, async () => {
+    const clock = { value: F54_START }
+    const refs = [{ rows: [linklessRow()], list: { querySelectorAll: () => [] } }]
+    const reads = []
+    const ticker = linkTicker(refs, async () => {
+      reads.push((clock.value - F54_START) / 1000)
+      if (reads.length === 2) refs[0].rows = [linklessRow({ meeting_link: link })]
+      return true
+    }, clock)
+    for (let seconds = 10; seconds <= 590; seconds += 10) await ticker.at(seconds)
+    assert.deepEqual(reads, [50, 90])
+    refs[0].rows = [linklessRow()]
+    for (let seconds = 600; seconds <= 1200; seconds += 10) await ticker.at(seconds)
+    assert.deepEqual(reads, [50, 90, 660])
+    ticker.stop()
+  })
+})
+
+test('F54: only rows in their confirmed meeting window with no link get a Meet link re-read', async () => {
+  const hour = 60 * 60 * 1000
+  const rescheduled = (id, oldEnd) => linklessRow({
+    booking_id: id,
+    status: 'rescheduled',
+    start_old: oldEnd - hour / 2,
+    end_old: oldEnd,
+  })
+  const cases = [
+    [linklessRow({ booking_id: 'confirmed-no-link' }), 1],
+    // A rescheduled row keeps its confirmed call at start_old/end_old until
+    // the proposal is answered, as the meeting-link paint does.
+    [rescheduled('rescheduled-no-link', F54_START + hour), 1],
+    [rescheduled('rescheduled-confirmed-call-ended', F54_START - 1), 0],
+    [linklessRow({ booking_id: 'rescheduled-no-confirmed-times', status: 'rescheduled' }), 0],
+    [{ booking_id: 'in-progress', status: 'confirmed', start: F54_START - hour / 2, end: F54_START + hour, meeting_link: '' }, 1],
+    [linklessRow({ booking_id: 'has-link', meeting_link: 'https://meet.google.com/abc-defg-hij' }), 0],
+    [linklessRow({ booking_id: 'pending', status: 'pending' }), 0],
+    [linklessRow({ booking_id: 'cancelled', status: 'cancelled' }), 0],
+    [{ booking_id: 'ended', status: 'confirmed', start: F54_START - hour, end: F54_START - 1, meeting_link: '' }, 0],
+    [{ booking_id: 'no-times', status: 'confirmed', meeting_link: '' }, 0],
+  ]
+  for (const [row, expected] of cases) {
+    await withLinkGlobals({ visibilityState: 'visible' }, async () => {
+      const clock = { value: F54_START }
+      const refs = [{ rows: [row], list: { querySelectorAll: () => [] } }]
+      let reads = 0
+      const ticker = linkTicker(refs, async () => { reads += 1; return true }, clock)
+      await ticker.at(45)
+      assert.equal(reads, expected, row.booking_id)
+      ticker.stop()
+    })
+  }
+
+  // The canonical booking clock wins over the local clock, as it does for the
+  // meeting-link paint: a call the server clock has ended is not re-read.
+  await withLinkGlobals({ visibilityState: 'visible' }, async () => {
+    global.StartersDashboardCallActions = { canonicalNow: () => F54_START + 2 * hour }
+    const clock = { value: F54_START }
+    const refs = [{
+      rows: [{ booking_id: 'server-ended', status: 'confirmed', start: F54_START - hour / 2, end: F54_START + hour, meeting_link: '' }],
+      list: { querySelectorAll: () => [] },
+    }]
+    let reads = 0
+    const ticker = linkTicker(refs, async () => { reads += 1; return true }, clock)
+    await ticker.at(45)
+    assert.equal(reads, 0)
+    ticker.stop()
+  })
+})
+
+test('F54: the Brand lifecycle ticker never runs a Meet link re-read', async () => {
+  await withLinkGlobals({ visibilityState: 'visible' }, async () => {
+    const clock = { value: F54_START }
+    const refs = [{ rows: [linklessRow()], list: { querySelectorAll: () => [] } }]
+    let reads = 0
+    const ticker = linkTicker(refs, async () => { reads += 1; return true }, clock, 'brand')
+    for (const seconds of [45, 90, 150, 300]) await ticker.at(seconds)
+    assert.equal(reads, 0)
+    ticker.stop()
+  })
+})
+
+test('F54: a Meet link re-read goes through the canonical refresh and paints the open modal right after the read', async () => {
+  const originalLocation = global.location
+  const originalFetch = global.xanoAuthFetch
+  const link = 'https://meet.google.com/abc-defg-hij'
+  const raw = { ...linklessRow(), starter_data: { memberstack_id: 'starter-1' } }
+  const root = element({ 'data-dashboard-calls-v3': 'ready' })
+  const appended = []
+  const list = element()
+  list.appendChild = (child) => { appended.push(child) }
+  const section = {
+    name: 'calls',
+    filter: 'all',
+    rows: [api.normalizeBooking(raw)],
+    rendered: 1,
+    list,
+    template: element(),
+    loader: element(),
+    empty: element(),
+    loadMore: element(),
+    filters: element(),
+    count: element(),
+    section: element(),
+  }
+  const refs = [section]
+  const modal = richElement('dialog', { 'popup-booking-info': '', 'data-booking-id': 'f54-booking' })
+  const base = richElement('div', { 'booking-popup-content': 'base' })
+  const meeting = authoredTableRow('Meeting Link', 'meeting-link', '')
+  meeting.wrap.hidden = true
+  meeting.hook.hidden = true
+  // A stale Accept on screen shows whether the dialog's actions are
+  // re-checked right after the read: a confirmed row hides it.
+  const strayAccept = richElement('a', { 'booking-action-btn': 'switch-confirm' })
+  base.appendChild(meeting.wrap)
+  base.appendChild(strayAccept)
+  modal.appendChild(base)
+  const responses = [raw, { ...raw, meeting_link: link }]
+  let reads = 0
+  const document = {
+    documentElement: root,
+    visibilityState: 'visible',
+    querySelector: (selector) => (selector.includes('popup-booking-info') ? modal : null),
+  }
+  try {
+    global.location = { pathname: '/starter-dashboard' }
+    global.xanoAuthFetch = async (_url, init) => {
+      assert.equal(JSON.parse(init.body).memberstack_id, 'starter-1')
+      const next = responses[Math.min(reads, responses.length - 1)]
+      reads += 1
+      strayAccept.hidden = false
+      return { ok: true, json: async () => [next] }
+    }
+    await withLinkGlobals(document, async () => {
+      const clock = { value: F54_START }
+      const memberstack = { getCurrentMember: async () => ({ id: 'starter-1' }) }
+      // The production restart shape: refreshExpiredRequests is refreshSession
+      // on the current generation with the rendered rows preserved.
+      const ticker = linkTicker(refs, () => api.refreshSession(
+        memberstack,
+        refs,
+        'starter',
+        1,
+        () => 1,
+        false,
+        { preserveExisting: true },
+      ), clock)
+      await ticker.at(40)
+      assert.equal(reads, 0)
+      assert.equal(meeting.hook.textContent, '')
+
+      // F40 has not written the room yet: the unchanged rows stay as they are.
+      await ticker.at(45)
+      assert.equal(reads, 1)
+      assert.equal(appended.length, 0, 'unchanged rows are not re-rendered')
+      assert.equal(meeting.hook.textContent, '')
+      assert.equal(meeting.wrap.hidden, true)
+      assert.equal(strayAccept.hidden, true, 'the dialog actions are re-checked after a successful read')
+
+      // The next read carries the link: the open dialog shows it right after
+      // the read, not on the next tick.
+      await ticker.at(90)
+      assert.equal(reads, 2)
+      assert.equal(section.rows[0].meeting_link, link)
+      assert.equal(appended.length, 1, 'the changed row is re-rendered')
+      assert.equal(meeting.hook.textContent, link)
+      assert.equal(meeting.hook.hidden, false)
+      assert.equal(meeting.wrap.hidden, false)
+      for (const seconds of [150, 300, 900]) await ticker.at(seconds)
+      assert.equal(reads, 2, 'no further reads once the row has a link')
+      ticker.stop()
+    })
+  } finally {
+    global.location = originalLocation
+    global.xanoAuthFetch = originalFetch
+  }
+})
+
+test('F54: a Meet link re-read that fails or is superseded spends its budget and repaints nothing', async () => {
+  // refreshSession resolves false on a failed canonical read and undefined on
+  // a read a newer session superseded. Either way the rows are unchanged.
+  for (const result of [false, undefined]) {
+    const label = 'restart resolved ' + String(result)
+    const modal = richElement('dialog', { 'popup-booking-info': '', 'data-booking-id': 'f54-booking' })
+    const strayAccept = richElement('a', { 'booking-action-btn': 'switch-confirm' })
+    modal.appendChild(strayAccept)
+    const document = { visibilityState: 'visible', querySelector: () => modal }
+    await withLinkGlobals(document, async () => {
+      const clock = { value: F54_START }
+      const refs = [{ rows: [linklessRow()], list: { querySelectorAll: () => [] } }]
+      let reads = 0
+      const ticker = linkTicker(refs, async () => {
+        reads += 1
+        strayAccept.hidden = false
+        return result
+      }, clock)
+      await ticker.at(45)
+      assert.equal(reads, 1, label)
+      assert.equal(strayAccept.hidden, false, label + ': no dialog repaint after the read')
+      for (const seconds of [90, 150, 160, 600]) await ticker.at(seconds)
+      assert.equal(reads, 3, label + ': unsuccessful reads still spend the three-read budget')
+      ticker.stop()
+    })
+  }
+})
+
+test('F54: after an in-modal Accept, a Meet link written about 50 s later reaches the modal without a reload', async () => {
+  const view = acceptView()
+  const link = 'https://meet.google.com/f54-joi-nnn'
+  const server = { row: { ...view.booking } }
+  const env = await bootAcceptDashboard(view, [
+    () => ({ ok: true, json: async () => [{ ...server.row }] }),
+  ])
+  server.row = { ...view.booking, status: 'confirmed', revision: 2 }
+  await env.click(view.accept)
+  const readsAfterAccept = env.state.reads
+  assert.deepEqual(acceptSnapshot(view), ACCEPTED_SNAPSHOT)
+  assert.equal(view.meeting.hook.textContent, '')
+
+  // The first tick after the Accept sees the linkless call.
+  for (const seconds of [10, 20, 30, 40, 50]) await env.tickAt(seconds)
+  assert.equal(env.state.reads, readsAfterAccept, 'no re-read before 45 s')
+  // Task #760 writes the room.
+  server.row = { ...server.row, meeting_link: link }
+  await env.tickAt(55)
+  assert.equal(env.state.reads, readsAfterAccept + 1)
+  assert.equal(view.meeting.hook.textContent, link)
+  assert.equal(view.meeting.hook.hidden, false)
+  assert.equal(view.meeting.wrap.hidden, false)
+  assert.deepEqual(acceptSnapshot(view), ACCEPTED_SNAPSHOT)
+
+  for (let seconds = 60; seconds <= 400; seconds += 10) await env.tickAt(seconds)
+  assert.equal(env.state.reads, readsAfterAccept + 1, 'the row has its link: no more re-reads')
+})
+
+test('F54: no Meet link re-read runs while the dashboard tab is hidden', async () => {
+  const view = acceptView()
+  const confirmedRaw = { ...view.booking, status: 'confirmed', revision: 2 }
+  const env = await bootAcceptDashboard(view, [
+    () => ({ ok: true, json: async () => [confirmedRaw] }),
+  ])
+  env.document.visibilityState = 'hidden'
+  env.document.hidden = true
+  for (let seconds = 10; seconds <= 400; seconds += 10) await env.tickAt(seconds)
+  assert.equal(env.state.reads, 1)
+  env.document.visibilityState = 'visible'
+  env.document.hidden = false
+  await env.tickAt(410)
+  assert.equal(env.state.reads, 2, 'one re-read once the tab is visible again')
+})
+
+test('F54: a Meet link re-read that answers with the pre-confirm row cannot repaint the accepted call as pending', async () => {
+  const view = acceptView()
+  const pendingRaw = { ...view.booking }
+  // Another confirmed call with no Meet link yet, so the ticker re-reads.
+  const linkRaw = {
+    booking_id: 'f54-other-call',
+    status: 'confirmed',
+    data_environment: 'production',
+    start: view.now + 2 * 24 * 60 * 60 * 1000,
+    end: view.now + 2 * 24 * 60 * 60 * 1000 + 30 * 60 * 1000,
+    meeting_link: '',
+    brand_data: view.booking.brand_data,
+    starter_data: view.booking.starter_data,
+  }
+  const staleRead = deferred()
+  const holdAfterConfirm = deferred()
+  const env = await bootAcceptDashboard(view, [
+    () => ({ ok: true, json: async () => [pendingRaw, linkRaw] }),
+    // The re-read starts before the Accept and answers with the pending row.
+    () => staleRead.promise,
+    () => ({ ok: true, json: async () => [{ ...pendingRaw, status: 'confirmed', revision: 2 }, linkRaw] }),
+  ], { holdAfterConfirm })
+  await env.tickAt(10)
+  await env.tickAt(55)
+  assert.equal(env.state.reads, 2, 'the Meet link re-read is in flight')
+
+  const accepted = env.click(view.accept)
+  await until(() => env.state.held)
+  assert.equal(env.state.confirms, 1)
+  assert.deepEqual(acceptSnapshot(view), ACCEPTED_SNAPSHOT)
+
+  // The stale read lands between the commit and the post-confirm refresh.
+  staleRead.resolve({ ok: true, json: async () => [pendingRaw, linkRaw] })
+  for (let step = 0; step < 20; step += 1) await new Promise(setImmediate)
+  assert.deepEqual(acceptSnapshot(view), ACCEPTED_SNAPSHOT, 'the stale read keeps the committed row')
+  await env.tickAt(56)
+  assert.deepEqual(acceptSnapshot(view), ACCEPTED_SNAPSHOT, 'the next tick does not bring Accept back')
+
+  holdAfterConfirm.resolve()
+  await accepted
+  assert.ok(env.state.reads >= 3, 'the post-confirm refresh ran')
+  assert.deepEqual(acceptSnapshot(view), ACCEPTED_SNAPSHOT)
+  assert.equal(view.accept.getAttribute('aria-busy'), 'false')
+})
+
+// F53 review: boot must hand the Accept the session's mutation owner. The
+// action slot alone protects only a read that started before the Accept took
+// the slot. A ticker read that starts while the confirm POST is in flight has
+// the slot in its snapshot, so only the owner's commit makes the refresh keep
+// the committed row. This test fails when boot calls wireBookingActions
+// without the owner.
+test('F53: a ticker read that starts during the confirm POST cannot bring back Pending, because boot routes the commit through the session owner', async () => {
+  const view = acceptView()
+  const pendingRaw = { ...view.booking }
+  // Another confirmed call with no Meet link yet, so the ticker re-reads.
+  const linkRaw = {
+    booking_id: 'f53-owner-link-call',
+    status: 'confirmed',
+    data_environment: 'production',
+    start: view.now + 2 * 24 * 60 * 60 * 1000,
+    end: view.now + 2 * 24 * 60 * 60 * 1000 + 30 * 60 * 1000,
+    meeting_link: '',
+    brand_data: view.booking.brand_data,
+    starter_data: view.booking.starter_data,
+  }
+  const confirmedRaw = { ...pendingRaw, status: 'confirmed', revision: 2 }
+  const holdConfirm = deferred()
+  const staleRead = deferred()
+  const holdAfterConfirm = deferred()
+  const env = await bootAcceptDashboard(view, [
+    () => ({ ok: true, json: async () => [pendingRaw, linkRaw] }),
+    // The Meet link re-read starts while the confirm POST is held.
+    () => staleRead.promise,
+    () => ({ ok: true, json: async () => [confirmedRaw, linkRaw] }),
+  ], { holdConfirm, holdAfterConfirm })
+  // The first tick sees the linkless call.
+  await env.tickAt(10)
+  assert.equal(env.state.reads, 1)
+
+  // The Accept owns the booking's action slot and its POST is in flight.
+  const accepted = env.click(view.accept)
+  await until(() => env.state.confirms === 1)
+  await env.tickAt(55)
+  assert.equal(env.state.reads, 2, 'the Meet link re-read started during the confirm POST')
+
+  // The confirm answers: the commit repaints the modal, and the handler
+  // stops in the attempt-key cleanup before its own refresh.
+  holdConfirm.resolve()
+  await until(() => env.state.held)
+  assert.deepEqual(acceptSnapshot(view), ACCEPTED_SNAPSHOT)
+
+  // The stale read lands between the commit and the post-confirm refresh.
+  staleRead.resolve({ ok: true, json: async () => [pendingRaw, linkRaw] })
+  for (let step = 0; step < 20; step += 1) await new Promise(setImmediate)
+  assert.deepEqual(acceptSnapshot(view), ACCEPTED_SNAPSHOT, 'the stale read keeps the committed row')
+  await env.tickAt(56)
+  assert.deepEqual(acceptSnapshot(view), ACCEPTED_SNAPSHOT, 'the next tick does not bring Accept back')
+
+  holdAfterConfirm.resolve()
+  await accepted
+  assert.ok(env.state.reads >= 3, 'the post-confirm refresh ran')
+  assert.deepEqual(acceptSnapshot(view), ACCEPTED_SNAPSHOT)
+  assert.deepEqual(visibleActionErrors(view.modal), [])
+
+  // A stale second Accept sends no POST.
+  await env.click(view.accept)
+  assert.equal(env.state.confirms, 1)
+  assert.deepEqual(visibleActionErrors(view.modal), [])
+})
+
+// F53 review: the Accept takes its claim after the booking's action slot and
+// releases it before the slot. A leaked claim keeps the booking pending in the
+// mutation owner, so reconciliation never clears it and every later action on
+// the call is refused until a reload. A claim taken before the slot bumps the
+// owner while an earlier action holds the slot, so the owner refuses that
+// earlier action's commit.
+test('F53: the Accept releases its claim, so a later call action on the same booking gets the slot', async () => {
+  const view = acceptView()
+  const pendingRaw = { ...view.booking }
+  const confirmedRaw = { ...pendingRaw, status: 'confirmed', revision: 2 }
+  const env = await bootAcceptDashboard(view, [
+    () => ({ ok: true, json: async () => [pendingRaw] }),
+    () => ({ ok: true, json: async () => [confirmedRaw] }),
+  ])
+  await env.click(view.accept)
+  assert.equal(env.state.confirms, 1)
+  assert.deepEqual(acceptSnapshot(view), ACCEPTED_SNAPSHOT)
+
+  // A later Cancel on the confirmed call uses the queue and the owner that
+  // boot hands the actions module.
+  const options = env.state.moduleOptions
+  assert.ok(options && typeof options.acquireBookingAction === 'function', 'boot wired the actions module')
+  const later = { booking_id: view.bookingId }
+  const release = await options.acquireBookingAction(later, 'The call could not be cancelled.')
+  assert.equal(typeof release, 'function', 'the later action gets the booking slot')
+  const claim = options.captureBookingMutation(later)
+  assert.ok(claim, 'the later action takes a claim')
+  assert.ok(
+    options.commitBookingMutation(later, { status: 'cancelled' }, claim),
+    'the owner accepts the later commit',
+  )
+  options.releaseBookingMutation(claim)
+  await release()
+})
+
+test('F53: an Accept queued behind an earlier Accept takes no claim until the slot opens, so the earlier commit still repaints the modal', async () => {
+  const view = acceptView()
+  const pendingRaw = { ...view.booking }
+  const confirmedRaw = { ...pendingRaw, status: 'confirmed', revision: 2 }
+  const holdConfirm = deferred()
+  const postConfirmRead = deferred()
+  const env = await bootAcceptDashboard(view, [
+    () => ({ ok: true, json: async () => [pendingRaw] }),
+    () => postConfirmRead.promise,
+    () => ({ ok: true, json: async () => [confirmedRaw] }),
+  ], { holdConfirm })
+  const card = acceptElement('div', { 'data-booking-id': view.bookingId })
+  card.ownerDocument = { createElement: (tag) => acceptElement(tag) }
+  const cardAccept = acceptElement('a', { 'booking-card-action-btn': 'switch-confirm' }, 'Accept')
+  card.appendChild(cardAccept)
+
+  // The card Accept owns the slot and its POST is in flight. The Starter
+  // then clicks Confirm in the open modal: that Accept waits for the slot.
+  const cardAccepted = env.click(cardAccept)
+  await until(() => env.state.confirms === 1)
+  const modalAccepted = env.click(view.accept)
+  for (let step = 0; step < 20; step += 1) await new Promise(setImmediate)
+  assert.equal(env.state.confirms, 1)
+
+  // The card Accept's commit keeps its claim and repaints the modal before
+  // the post-confirm read returns.
+  holdConfirm.resolve()
+  await until(() => env.state.reads === 2)
+  assert.deepEqual(acceptSnapshot(view), ACCEPTED_SNAPSHOT, 'the queued Accept did not take the owner first')
+
+  postConfirmRead.resolve({ ok: true, json: async () => [confirmedRaw] })
+  await Promise.all([cardAccepted, modalAccepted])
+  assert.equal(env.state.confirms, 1, 'the queued Accept sends no second POST')
+  assert.deepEqual(acceptSnapshot(view), ACCEPTED_SNAPSHOT)
+  assert.deepEqual(visibleActionErrors(view.modal), [])
+  assert.deepEqual(visibleActionErrors(card), [])
+})

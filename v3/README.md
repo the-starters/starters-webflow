@@ -2273,8 +2273,11 @@ successful canonical load restarts that initial window instead of shortening
 it. Later refreshes retain the three-total-read budget with 200ms then 400ms
 backoff before the identity is treated as missing.
 A refresh that follows a successful cancel, decline, confirm, or reschedule
-keeps the rendered list and the success panel in place when the canonical read
-itself fails, and logs instead. A member that is still absent after the bounded
+keeps the rendered list and the open details view in place when the canonical
+read itself fails, and logs instead. Cancel, decline, and reschedule end on
+their authored success panels. A confirm has no success panel: it repaints the
+details view from the committed row, as the Starter Accept paragraph below
+describes. A member that is still absent after the bounded
 retries is not a transient failure: on every refresh path, including the
 post-mutation and expiry-tick refreshes, it clears the rendered identity and
 booking rows and then fails the dashboard closed.
@@ -2606,13 +2609,33 @@ environment, and a non-reversible hash of the Starter identity. The key stays in
 tab-scoped `sessionStorage` after an ambiguous failure so a refresh retries the
 same backend command. Success is read from the published response contract: the
 canonical nested `confirmation.status` equal to `confirmed`, with a top-level
-`status` still accepted for compatibility; the response's `duplicate` replay
-flag does not change that decision. Any pending, malformed, or failed body
-fails closed and keeps the stored key. Only a confirmed response removes it
-before refreshing the canonical list, which moves the accepted row from Starter
-Call Requests to Starter Calls while it remains in Brand Calls. All other
-legacy mutation controls stay hidden until they have current V3-safe endpoint
-contracts.
+`status` still accepted for compatibility. A statusless nested confirmation
+that carries the booking identity is treated as the confirmed compatibility
+shape. The response's `duplicate` replay flag does not change that decision.
+Any pending, unknown-status, malformed, or failed body fails closed and keeps
+the stored key. Only an accepted confirmed response removes it before refreshing
+the canonical list, which moves the accepted row from Starter Call Requests to
+Starter Calls while it remains in Brand Calls.
+
+F53 (JP meeting, 2026-09-30): before that refresh, the controller commits the
+confirmed status validated from the accepted response shape to the canonical
+row through the session's mutation owner, with a claim taken after the
+booking's action slot. This is the same owner the other call actions use, so
+the commit invalidates an in-flight
+background read and a stale pending row cannot come back. The controller then
+repaints the open details dialog from the committed row at once: the status
+hook shows the authored "Upcoming" label, `data-booking-status` becomes
+`confirmed`, and Confirm, Decline, and the `[pending-info-text]` copy hide. No
+new copy is added. The repaint uses the lifecycle painters, so it leaves a
+dialog that shows another step alone and paints only the call the dialog
+shows. After the refresh, the canonical read repaints the status and the
+meeting link, and the controller re-checks the pending copy and actions
+against the refreshed row. When every later read fails, the committed row keeps
+the confirmed view, and a stale second Accept sends no request and shows no
+error. A refused commit (the row changed or left the list) changes nothing,
+and the refresh repaints instead. A card-level Accept takes the same commit.
+All other legacy mutation controls stay hidden until they have current V3-safe
+endpoint contracts.
 
 ### Dashboard booking action contract
 
@@ -2826,15 +2849,40 @@ from the already loaded canonical rows. For Starter requests, Accept disappears
 at the deadline without a reload and without a second timer per card. For either
 role, an open details view for a confirmed call moves to the completed panel and
 clears Join when the effective confirmed interval ends, including while a
-reschedule proposal is pending on the canonical row. Crossing a pending-request
-deadline remains the only timer trigger for a canonical re-read, and that read
-is bounded: at most three refreshes per booking-and-deadline pair, no more than
-one every thirty seconds, and never while another is in flight. That background
-refresh reuses the same identity and endpoint contract, skips repainting a
-section whose canonical rows are unchanged, restores the extra pages each
-section's load-more control had already revealed, and on a canonical read
-failure logs and leaves the rendered list in place instead of failing the whole
-dashboard closed. A missing member is the one exception and still fails closed.
+reschedule proposal is pending on the canonical row. On the Starter dashboard,
+two conditions trigger a timed canonical re-read. Both are bounded, and they
+share one in-flight guard: neither starts while the other is in flight, and a
+tick that the guard blocks spends no budget. Each re-read goes through the
+serialized session refresh (`refreshExpiredRequests`), so it waits behind a
+refresh of the same session, and a newer session discards its result.
+
+- Crossing a pending-request deadline: at most three refreshes per
+  booking-and-deadline pair, and no more than one every thirty seconds.
+- A Meet link that is not written yet (F54, JP meeting 2026-09-30). F40 writes
+  a virtual-calendar Meet link 38 to 56 s after the confirm (task #760). A row
+  in its confirmed meeting window with an empty `meeting_link` gets re-reads
+  on the first ticks at or after 45, 90, and 150 s from the tick that first
+  sees it: at most three per row for the life of the page. The ticker runs
+  every 10 s, so the effective schedule is 50, 90, and 150 s, and the first
+  re-read runs 50 to 60 s after the confirm. The window and the clock are the
+  ones the meeting-link paint uses, so a rescheduled row uses `start_old` to
+  `end_old`, a call in progress still counts, and the canonical booking clock
+  wins. No re-read runs while `document.visibilityState` is `hidden`. When a
+  re-read runs a full tick late (the page was hidden, or another ticker read
+  was in flight), the remaining delays restart from that re-read, so overdue
+  re-reads never run on back-to-back ticks. A row that leaves this set and
+  comes back (a reset of the rendered rows, or a link that came and went)
+  keeps its spent count. Its remaining delays restart from the tick that sees
+  it again, so no re-read runs on that tick. A successful re-read repaints the
+  cards, the open dialog's meeting link, and its actions at once. The Brand
+  dashboard gets no Meet link re-read.
+
+These background refreshes reuse the same identity and endpoint contract, skip
+repainting a section whose canonical rows are unchanged, restore the extra
+pages each section's load-more control had already revealed, and on a
+canonical read failure log and leave the rendered list in place instead of
+failing the whole dashboard closed. A missing member is the one exception and
+still fails closed.
 
 Loading, empty, and error displays reuse the authored elements instead of
 generating UI. The filter wrapper stays hidden during identity resolution and
