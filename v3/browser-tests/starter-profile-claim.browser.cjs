@@ -16,7 +16,7 @@ function markup() {
       <head>
         <meta charset="utf-8">
         <script>window.STARTER_PROFILE_CLAIM_SLUGS = ["jane-doe"]</script>
-        <script src="${controllerUrl}"></script>
+        <script src="${controllerUrl}" defer></script>
         <style>
           body { margin: 0; font-family: sans-serif; }
           .hide { display: none !important; }
@@ -58,12 +58,13 @@ function markup() {
       route.fulfill({ status: 200, contentType: 'application/javascript', body: source }),
     )
     page.on('request', (request) => {
-      if (!request.url().startsWith('https://www.thestarters.com/') && request.url() !== controllerUrl) {
-        remoteRequests.push(request.url())
-      }
+      if (request.isNavigationRequest() && request.resourceType() === 'document') return
+      if (request.url() === controllerUrl) return
+      remoteRequests.push(request.url())
     })
 
-    await page.goto('https://www.thestarters.com/hire/jane-doe')
+    const listedUrl = 'https://www.thestarters.com/hire/jane-doe?claim=unused&first=1&utm_source=qr'
+    await page.goto(listedUrl)
     await page.waitForSelector('[data-starter-claim="wrapper"]', { state: 'visible' })
 
     const ready = await page.locator('[data-starter-claim="wrapper"]').evaluate((wrapper) => {
@@ -92,11 +93,12 @@ function markup() {
       googleHasHide: true,
       googleHidden: true,
       controllerExported: false,
-      url: 'https://www.thestarters.com/hire/jane-doe',
+      url: listedUrl,
     })
     assert.deepEqual(remoteRequests, [])
 
-    await page.goto('https://www.thestarters.com/hire/john-smith')
+    const unlistedUrl = 'https://www.thestarters.com/hire/john-smith?claim=unused&utm_source=qr'
+    await page.goto(unlistedUrl)
     await page.waitForFunction(() =>
       document.querySelector('[data-ms-auth-provider="google"]')?.classList.contains('hide'),
     )
@@ -106,6 +108,7 @@ function markup() {
       hasHide: wrapper.classList.contains('hide'),
       hidden: wrapper.hidden,
       profileSlug: wrapper.querySelector('[data-ms-member="starter-claim-profile-slug"]').value,
+      url: location.href,
     }))
 
     assert.deepEqual(unlisted, {
@@ -114,6 +117,7 @@ function markup() {
       hasHide: true,
       hidden: true,
       profileSlug: '',
+      url: unlistedUrl,
     })
     assert.deepEqual(remoteRequests, [])
 
