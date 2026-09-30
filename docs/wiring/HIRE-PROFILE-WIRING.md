@@ -164,6 +164,9 @@ their independent rules. Owner setup-required previews count toward the three
 Header slots without changing their Disabled state or setup tooltip. Unavailable
 visitor offers do not count. Recompute selection when sibling wrappers settle,
 refresh, fail, or recover; display suppression must not erase canonical eligibility.
+A loading call tout (F50) has no call type until the adapter stamps it. It can
+use a spare slot as a placeholder, but it ranks after every known type, so it
+never pushes a rendered Hourly or Retainer tout out of the three slots.
 
 Run `v3/hire-header-touts.integration.cjs` with the same `NODE_PATH` and
 `WF_XANO_SOURCE` settings shown above for actual wf-xano clone and recovery
@@ -334,7 +337,7 @@ are aligned before selecting the canary.
    `[data-starter-xano-id]`.
 6. Every admitted `[data-xano-call-card]` in the hero and in `#services`, plus
    every `[data-canonical-public-call]` in the published legacy Header, settles out of
-   `data-call-offer-state="pending"` (and, for a Brand, out of `loading`) for
+   `data-call-offer-state="pending"` and out of `loading` (no `aria-busy`) for
    the role under test: `available` or
    `hidden` for anonymous and Brand viewers, `available` or `setup-required` for
    the profile's own starter (`settings-loading` / `settings-unavailable` only
@@ -370,10 +373,14 @@ then gets signup-only activation, and the owner gets the closed preview. A paid
 Brand stays loading, and its hint reads “Checking this Starter’s call times…”,
 until canonical call discovery answers. If discovery installed a controller on
 a page with a canonical call wrapper, the Brand also waits for the public call
-DTO, because an unknown DTO refuses every type. A 15 s failsafe
-(`CALL_DISCOVERY_PUBLIC_WAIT_MS`) ends that wait when the DTO never answers.
-A DTO that arrives later still opens the control. An empty, refused, or failed
-discovery ends loading at once. Regression coverage: the `F50` tests in
+DTO, because an unknown DTO refuses every type. An empty, refused, or failed
+discovery ends loading at once. One 15 s failsafe
+(`CALL_DISCOVERY_PUBLIC_WAIT_MS`), armed at bootstrap for every viewer, bounds
+the whole loading state. If identity, discovery, or the public call DTO has not
+answered by then, Book Call reads unavailable (still `aria-disabled`) and every
+call card still in `loading` fails closed to `hidden`. The failsafe is cleared
+once nothing reads as loading. An answer that arrives after it still runs its
+normal writer, so an admitted control can still open. Regression coverage: the `F50` tests in
 [`hire-profile.test.js`](../../v3/hire-profile.test.js). Discovery clears the state on every exit
 path, including a failed lookup or a missing booking controller. A failed
 lookup still rejects, so frontend error monitoring counts it. Only then do
@@ -843,24 +850,38 @@ Paid item with `id`, `type`, `name`, `description`, `price` (whole dollars) and
 file only adds viewer state and routes clicks into the controllers that already
 own signup, booking, and owner settings. It never creates a card or a modal.
 
-The CMS call cards stay in the page only as hidden rollback markup. Once the
-canonical Services result settles, the adapter stamps those old call cards
-`data-call-offer-superseded` and keeps them hidden for every viewer role. It
-does not hide ordinary CMS Service cards.
+The CMS call cards stay in the page only as hidden rollback markup. While the
+canonical Services wrapper is on the page, bootstrap stamps those old call cards
+`data-call-offer-superseded` (F50), and the adapter repeats the stamp when the
+canonical Services result settles. They stay hidden for every viewer role, so
+the Algolia or owner-grant reveal, which usually answers before the call DTO,
+cannot flash them. Removing the wrapper (the rollback) returns them to the
+legacy reveal. It does not hide ordinary CMS Service cards.
 
 The currently published hero still uses the earlier `starter-calls` wf-xano
 wrapper. Until Webflow publishes `starter-call-offers-header`, the adapter
 repaints those two native hero touts from the latest canonical public call DTO.
-For a Brand, those native touts use the same `loading`, `available`, and
-`hidden` states and the same installed-controller and public-availability gate
-as canonical clones. It replays that decision when the legacy wrapper renders
-or refreshes late. As soon as the canonical Header wrapper exists, the legacy
-hero touts are also stamped superseded and stay hidden.
+This applies only beside the canonical Services wrapper, which is the
+published layout. A page with neither canonical call wrapper has no DTO to
+wait for, so its legacy touts keep the pre-F50 Algolia and discovery reveal.
+Beside the Services wrapper, the touts start in `loading` at bootstrap for every
+viewer. For a Brand, they use the same `loading`, `available`, and `hidden`
+states and the same installed-controller and public-availability gate as
+canonical clones. For a signed-out or paywalled viewer, the public DTO decides
+them, so identity alone never settles or supersedes them. Only talent viewing
+another Starter's profile has them superseded at identity. It replays that
+decision when the legacy wrapper renders or refreshes late; a tout rendered
+before the DTO joins the loading state. As soon as the canonical Header wrapper
+exists, the legacy hero touts are also stamped superseded and stay hidden.
 
 Subscription uses the `window.WfXano` callback queue and reads retained public
 state when this deferred file registers after a result. Role-specific
-reconciliation waits on `memberReady`; the legacy Header fallback enters its
-fail-closed loading state synchronously. For visitors, an error in either
+reconciliation waits on `memberReady`; the legacy Header fallback and every
+existing canonical clone enter their fail-closed loading state synchronously.
+On the normal page-first load, wf-xano clones a canonical template after
+bootstrap, and the clone inherits the template's fail-closed hide. While the
+viewer's call state is still unknown, the body observer moves each new
+unadapted clone into the same loading state before the next paint. For visitors, an error in either
 canonical wrapper invalidates both wrappers and the shared chooser; a sibling's
 cached success cannot reopen them while either instance still reports `error`.
 Once neither reports an error, a successful result reconciles matching rows in
@@ -896,7 +917,7 @@ stale content. The final state for an admitted clone is one of:
 | `settings-loading` | owner only: settings have not resolved yet; the card keeps the authored `Default` look with `aria-busy="true"`, a progress cursor, and its setup tooltip and `[next-available-slot]` hidden |
 | `settings-unavailable` | owner only: the settings lookup failed; the card is disabled and offers only Call Settings |
 | `hidden` | the type is not offered to this viewer |
-| `loading` | every viewer before identity resolves, then a brand while discovery is pending and after an installed controller until the public DTO settles: the card is shown with `Default`, `aria-busy="true"`, a progress cursor, and its `[next-available-slot]` hidden; empty, refused, or failed discovery ends this state immediately; it is not admitted and opens nothing |
+| `loading` | every viewer before identity resolves; then a brand while discovery is pending and after an installed controller until the public DTO settles, and a signed-out, paywalled, talent, or owner viewer's not-yet-adapted clone until the DTO settles it: the card is shown with `Default`, `aria-busy="true"`, a progress cursor, and its `[next-available-slot]` hidden; empty, refused, or failed discovery ends this state immediately for a brand; the 15 s failsafe fails any card still here closed to `hidden`; it is not admitted and opens nothing |
 | `pending` | internal adapter state before the role-specific readiness writer runs; it is not a settled viewer state |
 
 **Logged out.** A card is visible only when its own item carries
@@ -995,7 +1016,8 @@ installs a controller, the card remains there until the public DTO settles,
 regardless of which answer arrives first. Empty, refused, or failed discovery
 ends loading immediately. The shared writer then changes each card directly to
 `available` when the intersection admits it or `hidden` when it does not. After
-the 15 s failsafe it reads closed, and a later DTO can still open it. A refused
+the 15 s failsafe, which is armed at bootstrap, it reads closed, and a later
+discovery or DTO answer can still open it. A refused
 card ends with `data-call-offer-state="hidden"`, and the empty-section refresh
 runs again.
 A late card replays `paintedCallState.configs` through the same gate. Pages with
