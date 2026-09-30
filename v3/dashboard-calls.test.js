@@ -8433,15 +8433,19 @@ function acceptActionsModule() {
 // Boots the real controller on /starter-dashboard with a controlled clock,
 // scripted canonical reads, and the captured ten-second lifecycle ticker, then
 // opens the details modal on the view's booking through the details delegate.
-async function bootAcceptDashboard(view, bookingReads, { onConfirm, holdAfterConfirm } = {}) {
+async function bootAcceptDashboard(view, bookingReads, { onConfirm, holdConfirm, holdAfterConfirm } = {}) {
   const source = fs.readFileSync(require.resolve('./dashboard-calls.js'), 'utf8')
   const clock = { value: view.now }
   class ClockDate extends Date {
     static now() { return clock.value }
   }
   const member = { id: 'mem_starter' }
-  const state = { reads: 0, confirms: 0, readTimes: [], held: false }
+  const state = { reads: 0, confirms: 0, readTimes: [], held: false, moduleOptions: null }
   let holdDigest = false
+  const actionsModule = acceptActionsModule()
+  // Keep what boot hands the actions module: the session's action queue and
+  // mutation owner, so a test can act as a later call action.
+  actionsModule.wire = (options) => { state.moduleOptions = options }
   const listeners = []
   const intervals = []
   const sectionNode = (name) => {
@@ -8496,7 +8500,7 @@ async function bootAcceptDashboard(view, bookingReads, { onConfirm, holdAfterCon
       async getCurrentMember() { return { data: member } },
       onAuthChange() {},
     },
-    StartersDashboardCallActions: acceptActionsModule(),
+    StartersDashboardCallActions: actionsModule,
     TextEncoder,
     URLSearchParams,
     atob,
@@ -8527,6 +8531,8 @@ async function bootAcceptDashboard(view, bookingReads, { onConfirm, holdAfterCon
     xanoAuthFetch: async (url, init) => {
       if (url.endsWith('/booking/confirm/v3')) {
         state.confirms += 1
+        // A test can hold the confirm POST while the Accept owns the slot.
+        if (holdConfirm) await holdConfirm.promise
         holdDigest = true
         if (onConfirm) onConfirm(window)
         return {
@@ -9254,4 +9260,69 @@ test('F54: a Meet link re-read that answers with the pre-confirm row cannot repa
   assert.ok(env.state.reads >= 3, 'the post-confirm refresh ran')
   assert.deepEqual(acceptSnapshot(view), ACCEPTED_SNAPSHOT)
   assert.equal(view.accept.getAttribute('aria-busy'), 'false')
+})
+
+// F53 review: boot must hand the Accept the session's mutation owner. The
+// action slot alone protects only a read that started before the Accept took
+// the slot. A ticker read that starts while the confirm POST is in flight has
+// the slot in its snapshot, so only the owner's commit makes the refresh keep
+// the committed row. This test fails when boot calls wireBookingActions
+// without the owner.
+test('F53: a ticker read that starts during the confirm POST cannot bring back Pending, because boot routes the commit through the session owner', async () => {
+  const view = acceptView()
+  const pendingRaw = { ...view.booking }
+  // Another confirmed call with no Meet link yet, so the ticker re-reads.
+  const linkRaw = {
+    booking_id: 'f53-owner-link-call',
+    status: 'confirmed',
+    data_environment: 'production',
+    start: view.now + 2 * 24 * 60 * 60 * 1000,
+    end: view.now + 2 * 24 * 60 * 60 * 1000 + 30 * 60 * 1000,
+    meeting_link: '',
+    brand_data: view.booking.brand_data,
+    starter_data: view.booking.starter_data,
+  }
+  const confirmedRaw = { ...pendingRaw, status: 'confirmed', revision: 2 }
+  const holdConfirm = deferred()
+  const staleRead = deferred()
+  const holdAfterConfirm = deferred()
+  const env = await bootAcceptDashboard(view, [
+    () => ({ ok: true, json: async () => [pendingRaw, linkRaw] }),
+    // The Meet link re-read starts while the confirm POST is held.
+    () => staleRead.promise,
+    () => ({ ok: true, json: async () => [confirmedRaw, linkRaw] }),
+  ], { holdConfirm, holdAfterConfirm })
+  // The first tick sees the linkless call.
+  await env.tickAt(10)
+  assert.equal(env.state.reads, 1)
+
+  // The Accept owns the booking's action slot and its POST is in flight.
+  const accepted = env.click(view.accept)
+  await until(() => env.state.confirms === 1)
+  await env.tickAt(55)
+  assert.equal(env.state.reads, 2, 'the Meet link re-read started during the confirm POST')
+
+  // The confirm answers: the commit repaints the modal, and the handler
+  // stops in the attempt-key cleanup before its own refresh.
+  holdConfirm.resolve()
+  await until(() => env.state.held)
+  assert.deepEqual(acceptSnapshot(view), ACCEPTED_SNAPSHOT)
+
+  // The stale read lands between the commit and the post-confirm refresh.
+  staleRead.resolve({ ok: true, json: async () => [pendingRaw, linkRaw] })
+  for (let step = 0; step < 20; step += 1) await new Promise(setImmediate)
+  assert.deepEqual(acceptSnapshot(view), ACCEPTED_SNAPSHOT, 'the stale read keeps the committed row')
+  await env.tickAt(56)
+  assert.deepEqual(acceptSnapshot(view), ACCEPTED_SNAPSHOT, 'the next tick does not bring Accept back')
+
+  holdAfterConfirm.resolve()
+  await accepted
+  assert.ok(env.state.reads >= 3, 'the post-confirm refresh ran')
+  assert.deepEqual(acceptSnapshot(view), ACCEPTED_SNAPSHOT)
+  assert.deepEqual(visibleActionErrors(view.modal), [])
+
+  // A stale second Accept sends no POST.
+  await env.click(view.accept)
+  assert.equal(env.state.confirms, 1)
+  assert.deepEqual(visibleActionErrors(view.modal), [])
 })
