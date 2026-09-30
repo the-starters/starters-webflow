@@ -2062,7 +2062,11 @@ Public helpers:
 - `window.xanoAuthFetch(input, init)` accepts the same inputs as `fetch`, adds
   Bearer authentication for scoped V3 paths and rejects if initial
   token acquisition fails. Calls outside that scope and calls with an existing
-  `Authorization` header pass through unchanged.
+  `Authorization` header pass through unchanged. For deduped reads, only an
+  `init.signal` passed as the second argument opts the call out of sharing. A
+  signal carried only inside a `Request` input is not detected and is
+  unsupported; pass it again as `init.signal` when cancellation isolation is
+  required.
 - `window.getXanoAuthToken({ forceRefresh: true })` returns the cached,
   member-scoped token or explicitly replaces it. The options argument is
   optional.

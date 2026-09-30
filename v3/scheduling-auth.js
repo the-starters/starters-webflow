@@ -501,17 +501,12 @@
     return [generation, request.method, url.pathname + url.search, body].join('\n')
   }
 
-  function hasExplicitAbortSignal(input, init, signalHint) {
-    if (typeof signalHint === 'boolean') return signalHint
-    const inputIsRequest =
-      typeof Request !== 'undefined' &&
-      (input instanceof Request || Object.prototype.toString.call(input) === '[object Request]')
-    const initSignal = init == null ? undefined : init.signal
-    return initSignal != null || inputIsRequest
+  function hasExplicitAbortSignal(init, signalHint) {
+    return signalHint === true || Boolean(init && init.signal != null)
   }
 
   async function xanoAuthFetch(input, init, expectedScope, signalHint) {
-    const bypassSharedRead = hasExplicitAbortSignal(input, init, signalHint)
+    const bypassSharedRead = hasExplicitAbortSignal(init, signalHint)
     const request = new Request(input, init)
     const url = schedulingUrl(request)
     if (!url || request.headers.has('Authorization')) {
@@ -529,16 +524,17 @@
     }
     const generation = sessionGeneration
     const key = await sharedReadKey(request, url, generation)
+    if (key) assertExpectedScope(expectedScope)
     if (key && bypassSharedRead) {
       const revision = sharedReadsRevision
       try {
         const token = await getXanoAuthToken()
         assertSessionGeneration(generation)
         const response = await fetchWithToken(request, token, generation, expectedScope)
-        if (!response.ok && revision === sharedReadsRevision) sharedReads.delete(key)
+        if (!response.ok && revision === sharedReadsRevision) clearSharedReads()
         return response
       } catch (error) {
-        if (!request.signal.aborted && revision === sharedReadsRevision) sharedReads.delete(key)
+        if (!request.signal.aborted && revision === sharedReadsRevision) clearSharedReads()
         throw error
       }
     }
@@ -553,7 +549,6 @@
       }
     }
 
-    assertExpectedScope(expectedScope)
     pruneExpiredSharedReads()
     let shared = sharedReads.get(key)
     if (!shared) {

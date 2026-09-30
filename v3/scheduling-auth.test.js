@@ -962,9 +962,11 @@ test('explicit AbortSignals bypass shared Xano reads without invalidating cache'
       abortedIndex: 1,
     },
     {
-      name: 'signal-bearing Request input',
+      name: 'Request input with second-argument signal',
       first(window, controller) {
-        return window.xanoAuthFetch(new Request(PAID_GET, { signal: controller.signal }))
+        return window.xanoAuthFetch(new Request(PAID_GET), {
+          signal: controller.signal,
+        })
       },
       second(window) {
         return window.xanoAuthFetch(PAID_GET)
@@ -1027,6 +1029,38 @@ test('explicit AbortSignals bypass shared Xano reads without invalidating cache'
   }
 })
 
+test('plain Request inputs share one Xano read', async () => {
+  const responseGate = deferred()
+  const firstStarted = deferred()
+  let calls = 0
+  const nativeFetch = async (request) => {
+    if (requestUrl(request).includes('/auth/trade-token/v3')) {
+      return response({ authToken: 'xano-1' })
+    }
+    calls += 1
+    firstStarted.resolve()
+    await responseGate.promise
+    return response({ n: calls })
+  }
+  const { window } = loadBridge(nativeFetch)
+
+  const first = window.xanoAuthFetch(new Request(PAID_GET))
+  await firstStarted.promise
+  const second = window.xanoAuthFetch(new Request(PAID_GET))
+  await new Promise(setImmediate)
+  const callsBeforeRelease = calls
+  responseGate.resolve()
+  const [firstResponse, secondResponse] = await Promise.all([first, second])
+
+  assert.equal(callsBeforeRelease, 1)
+  assert.deepEqual(await firstResponse.json(), { n: 1 })
+  assert.deepEqual(await secondResponse.json(), { n: 1 })
+  assert.deepEqual(await (await window.xanoAuthFetch(new Request(PAID_GET))).json(), {
+    n: 1,
+  })
+  assert.equal(calls, 1)
+})
+
 test('failed reads are not shared and a session change drops shared reads', async () => {
   let status = 500
   const calls = []
@@ -1079,7 +1113,7 @@ test('any failed shared Xano read drops every cached entry', async (t) => {
   }
 })
 
-test('failed signaled reads evict only their matching cached entry', async (t) => {
+test('failed signaled reads clear every cached entry', async (t) => {
   for (const failure of ['response', 'rejection']) {
     await t.test(failure, async () => {
       let paidCalls = 0
@@ -1115,12 +1149,12 @@ test('failed signaled reads evict only their matching cached entry', async (t) =
         )
       }
       const refreshedPaid = await window.xanoAuthFetch(PAID_GET)
-      const cachedFree = await window.xanoAuthFetch(FREE_GET)
+      const refreshedFree = await window.xanoAuthFetch(FREE_GET)
 
       assert.deepEqual(await refreshedPaid.json(), { paid: 3 })
-      assert.deepEqual(await cachedFree.json(), { free: 1 })
+      assert.deepEqual(await refreshedFree.json(), { free: 2 })
       assert.equal(paidCalls, 3)
-      assert.equal(freeCalls, 1)
+      assert.equal(freeCalls, 2)
     })
   }
 })
