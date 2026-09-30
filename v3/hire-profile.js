@@ -2943,10 +2943,10 @@
       const legacyRoot = qs('[data-call-canary-legacy-wrapper="header"]');
       if (!legacyRoot) return;
       qsa('[data-service-card="component"]', legacyRoot).forEach(function (card) {
-          card.setAttribute('data-call-offer-superseded', '');
+          setAttributeIfChanged(card, 'data-call-offer-superseded', '');
           card.removeAttribute('aria-busy');
           card.removeAttribute('data-call-service-direct');
-          card.setAttribute('data-call-offer-state', 'hidden');
+          setAttributeIfChanged(card, 'data-call-offer-state', 'hidden');
           setCallOfferVisible(card, false);
       });
   }
@@ -3203,8 +3203,8 @@
           card.removeAttribute('data-call-service-direct');
           if (!showLoading) return;
           setCallOfferVisible(card, true);
-          card.setAttribute('aria-busy', 'true');
-          card.setAttribute('data-call-offer-state', 'loading');
+          setAttributeIfChanged(card, 'aria-busy', 'true');
+          setAttributeIfChanged(card, 'data-call-offer-state', 'loading');
       });
       if (showLoading && entries.length) armCallLoadingFailsafe();
   }

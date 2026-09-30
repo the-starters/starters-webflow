@@ -187,6 +187,8 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
     assert.ok(legacyState.legacyCards.every(card => card.slotText === '00:00pm on 00/00' && card.slotVisibility === 'hidden' && card.cursor === 'progress'), 'loading masks the slot and shows progress')
     assert.ok(legacyState.legacyCards.every(card => card.signup === null && card.modal === null && card.direct === null))
     assert.ok(legacyState.legacyCards.every(card => card.tabIndex === -1 && card.role === null && card.ariaLabel === null), 'loading removes the Book Call button role')
+    // F50: a reconcile over touts already loading rewrites nothing.
+    assert.deepEqual(await evaluate(countMutationsAfterUnrelatedNode), [], 'brand loading: an unrelated node writes no attribute')
     await evaluate(`document.querySelector('[data-call-canary-legacy-wrapper="header"] [data-type="free"]').click()`)
     await pause(50)
     assert.deepEqual(await evaluate(`({ entries: bookingEntries.length, chooser: document.querySelector('[data-modal-target="popup-booking-main"]').open, booking: document.querySelector('[data-modal-target="popup-booking"]').open })`), { entries: 0, chooser: false, booking: false })
@@ -269,6 +271,8 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
     assert.equal(talentLegacy.legacyCards.length, 2)
     assert.equal(talentLegacy.cards.length, 2)
     assert.ok(talentLegacy.legacyCards.concat(talentLegacy.cards).every(card => !card.visible && card.offerState === 'hidden' && !card.busy), 'talent sees no call card')
+    // F50: a reconcile over touts already superseded rewrites nothing.
+    assert.deepEqual(await evaluate(countMutationsAfterUnrelatedNode), [], 'talent: an unrelated node writes no attribute')
 
     for (const grantOrder of ['fast', 'slow']) {
       await navigate(`role=owner&owner=loading&header=legacy&tooltip=shown${grantOrder === 'slow' ? '&discovery=held' : ''}`)

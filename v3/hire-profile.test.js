@@ -10508,6 +10508,31 @@ for (const viewer of ['brand', 'signed-out', 'paywalled']) {
   })
 }
 
+for (const viewer of ['brand-loading', 'talent']) {
+  test(`F50 a second reconcile writes no attribute to unchanged legacy Header touts (${viewer})`, async () => {
+    const fixture = f50LegacyHeaderPage()
+    const context = viewer === 'talent'
+      ? makeContext({ page: fixture.page, member: OTHER_TALENT_MEMBER, wfXano: fixture.feed.api })
+      // Discovery never answers, so the Brand touts stay loading.
+      : f50BrandContext(fixture.page, fixture.feed, { getStarterByMemberId: () => new Promise(() => {}) })
+    holdLongTimers(context)
+    vm.createContext(context)
+    vm.runInContext(source, context)
+    fixture.feed.emit(callCardResult({ free: true, paid: true }))
+    await settle()
+    const expected = viewer === 'talent' ? 'hidden' : 'loading'
+    for (const card of fixture.legacyCards) {
+      assert.equal(card.root.getAttribute('data-call-offer-state'), expected)
+      assert.equal(card.root.getAttribute('aria-busy'), viewer === 'talent' ? null : 'true')
+    }
+    // A real setAttribute of an unchanged value still queues a mutation.
+    assert.deepEqual(await reconcileAfterUnrelatedNode(context, fixture.page), [],
+      'a second pass writes no attribute')
+    assert.deepEqual(await reconcileAfterUnrelatedNode(context, fixture.page), [],
+      'and nor does a third')
+  })
+}
+
 test('F50 an owner DTO replay leaves a settled owner-preview legacy tout alone', async () => {
   const fixture = f50LegacyHeaderPage()
   const context = ownerContext(fixture.page, ownerController(), { wfXano: fixture.feed.api })
