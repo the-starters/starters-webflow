@@ -328,16 +328,18 @@ test('registers checkout intents from Learn pages', async () => {
 })
 
 test('fails closed on non-allowlisted Memberstack prices', async () => {
-  const priceState = boot({ pathname: '/all-starters' })
-  const control = target('prc_legacy-v2')
-  const event = clickEvent(control)
-  await priceState.listeners[0].listener(event)
+  for (const pathname of ['/all-starters', '/learn/sessions/partnerships-playbook']) {
+    const priceState = boot({ pathname })
+    const control = target('prc_legacy-v2')
+    const event = clickEvent(control)
+    await priceState.listeners[0].listener(event)
 
-  assert.equal(event.prevented, true)
-  assert.equal(event.stopped, true)
-  assert.equal(priceState.requests.length, 0)
-  assert.equal(control.clicks, 0)
-  assert.equal(control.getAttribute('data-v3-checkout-authority'), 'error')
+    assert.equal(event.prevented, true, pathname)
+    assert.equal(event.stopped, true, pathname)
+    assert.equal(priceState.requests.length, 0, pathname)
+    assert.equal(control.clicks, 0, pathname)
+    assert.equal(control.getAttribute('data-v3-checkout-authority'), 'error')
+  }
 })
 
 test('fails closed on non-checkout V3 routes', async () => {
@@ -370,10 +372,16 @@ test('fails closed on non-checkout V3 routes', async () => {
   }
 })
 
-test('does not activate on a V2 host for a real V3 checkout route', () => {
-  const state = boot({ hostname: 'www.hirethestarters.com', pathname: '/all-starters' })
-  assert.equal(state.listeners.length, 0)
-  assert.equal(state.requests.length, 0)
+test('does not activate on other hosts for a Learn checkout route', () => {
+  for (const [hostname, pathname] of [
+    ['www.hirethestarters.com', '/all-starters'],
+    ['www.hirethestarters.com', '/learn/sessions/partnerships-playbook'],
+    ['www.thestarters.com.evil.test', '/learn/sessions/partnerships-playbook'],
+  ]) {
+    const state = boot({ hostname, pathname })
+    assert.equal(state.listeners.length, 0, hostname + pathname)
+    assert.equal(state.requests.length, 0, hostname + pathname)
+  }
 })
 
 test('a bypassed replay continues without a second registration', async () => {
