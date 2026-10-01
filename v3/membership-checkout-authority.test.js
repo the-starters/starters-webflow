@@ -304,17 +304,42 @@ test('registers from the exact public Join CTA route families', async () => {
   }
 })
 
-test('fails closed on non-allowlisted Memberstack prices', async () => {
-  const priceState = boot({ pathname: '/all-starters' })
-  const control = target('prc_legacy-v2')
-  const event = clickEvent(control)
-  await priceState.listeners[0].listener(event)
+test('registers checkout intents from Learn pages', async () => {
+  for (const pathname of [
+    '/learn',
+    '/learn/sessions',
+    '/learn/sessions/partnerships-playbook',
+    '/learn/interviews-analysis/how-to-build-trust',
+    '/learn/playbooks-frameworks/the-live-shopping-playbook',
+    '/learn/frameworks-playbooks',
+    '/learn/events',
+  ]) {
+    for (const priceId of [
+      'prc_premium-monthly--fn1ae0qjj',
+      'prc_paid-annual-2o5f040u',
+    ]) {
+      const state = boot({ pathname: pathname + '/' })
+      const control = target(priceId)
+      await state.listeners[0].listener(clickEvent(control))
+      assert.equal(control.clicks, 1, pathname)
+      assert.equal(JSON.parse(state.requests[1].init.body).source_route, pathname)
+    }
+  }
+})
 
-  assert.equal(event.prevented, true)
-  assert.equal(event.stopped, true)
-  assert.equal(priceState.requests.length, 0)
-  assert.equal(control.clicks, 0)
-  assert.equal(control.getAttribute('data-v3-checkout-authority'), 'error')
+test('fails closed on non-allowlisted Memberstack prices', async () => {
+  for (const pathname of ['/all-starters', '/learn/sessions/partnerships-playbook']) {
+    const priceState = boot({ pathname })
+    const control = target('prc_legacy-v2')
+    const event = clickEvent(control)
+    await priceState.listeners[0].listener(event)
+
+    assert.equal(event.prevented, true, pathname)
+    assert.equal(event.stopped, true, pathname)
+    assert.equal(priceState.requests.length, 0, pathname)
+    assert.equal(control.clicks, 0, pathname)
+    assert.equal(control.getAttribute('data-v3-checkout-authority'), 'error')
+  }
 })
 
 test('fails closed on non-checkout V3 routes', async () => {
@@ -330,6 +355,10 @@ test('fails closed on non-checkout V3 routes', async () => {
     '/partners/example',
     '/services/example',
     '/categories/example/edit',
+    '/learning',
+    '/learn/Bad-Slug',
+    '/learn/sessions//item',
+    '/learn/sessions/%2fitem',
   ]) {
     const state = boot({ pathname })
     const control = target('prc_premium-monthly--fn1ae0qjj')
@@ -343,10 +372,16 @@ test('fails closed on non-checkout V3 routes', async () => {
   }
 })
 
-test('does not activate on a V2 host for a real V3 checkout route', () => {
-  const state = boot({ hostname: 'www.hirethestarters.com', pathname: '/all-starters' })
-  assert.equal(state.listeners.length, 0)
-  assert.equal(state.requests.length, 0)
+test('does not activate on other hosts for a Learn checkout route', () => {
+  for (const [hostname, pathname] of [
+    ['www.hirethestarters.com', '/all-starters'],
+    ['www.hirethestarters.com', '/learn/sessions/partnerships-playbook'],
+    ['www.thestarters.com.evil.test', '/learn/sessions/partnerships-playbook'],
+  ]) {
+    const state = boot({ hostname, pathname })
+    assert.equal(state.listeners.length, 0, hostname + pathname)
+    assert.equal(state.requests.length, 0, hostname + pathname)
+  }
 })
 
 test('a bypassed replay continues without a second registration', async () => {

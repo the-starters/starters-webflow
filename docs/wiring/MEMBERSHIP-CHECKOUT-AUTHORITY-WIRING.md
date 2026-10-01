@@ -29,13 +29,15 @@ The controller boots only on these V3 hosts:
 - `the-starters-3-0.webflow.io`
 
 It allows checkout on the V3 funnel routes `/` and `/quiz-results`, the public routes
-`/all-starters` and `/why-us`, and the single-segment CMS families `/hire`,
-`/categories`, `/subcategories`, `/companies`, `/competitors`, `/functions`,
+`/all-starters` and `/why-us`, the `/learn` landing page and paths beneath it,
+and the single-segment CMS families `/hire`, `/categories`, `/subcategories`,
+`/companies`, `/competitors`, `/functions`,
 `/industries`, `/roles`, `/skills`, and `/tools`. Each CMS route requires one
-slug with only lowercase letters, numbers, and single hyphens. All paths are
-case-sensitive. Nested or malformed paths fail closed. `/partners` and
-`/services` remain excluded because their sampled live items returned 404. The
-controller removes trailing slashes before it records the source path. It gates
+slug with only lowercase letters, numbers, and single hyphens. Learn paths may
+have multiple segments with the same character rules. All paths are
+case-sensitive. Malformed paths and nested paths outside Learn fail closed.
+`/partners` and `/services` remain excluded because their sampled live items
+returned 404. The controller removes trailing slashes before it records the source path. It gates
 only these V3 Memberstack price IDs:
 
 - `prc_premium-monthly--fn1ae0qjj`

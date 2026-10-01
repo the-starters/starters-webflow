@@ -46,10 +46,12 @@
       route === '/' ||
       route === '/quiz-results' ||
       route === '/all-starters' ||
-      route === '/why-us'
+      route === '/why-us' ||
+      route === '/learn'
     ) {
       return true
     }
+    if (/^\/learn(?:\/[a-z0-9]+(?:-[a-z0-9]+)*)+$/.test(route)) return true
     return /^\/(?:hire|categories|subcategories|companies|competitors|functions|industries|roles|skills|tools)\/[a-z0-9]+(?:-[a-z0-9]+)*$/.test(route)
   }
 
