@@ -2488,6 +2488,214 @@ test('Free cancel and decline steps drop the stale edit reason; Paid keeps it', 
   assert.equal(cancel.wrap.hidden, false)
 })
 
+test('Free cancelled details show the cancellation reason without the old proposal reason', () => {
+  const modal = domElement('dialog', { 'popup-booking-info': '' })
+  modal.ownerDocument = { createElement: tag => domElement(tag) }
+  const panel = domElement('div', { 'booking-popup-content': 'cancelled' })
+  modal.appendChild(panel)
+  const reason = name => {
+    const wrap = domElement('div', { 'booking-element-wrap': '' })
+    const field = domElement('p', { 'booking-element': name })
+    wrap.appendChild(field)
+    panel.appendChild(wrap)
+    return { field, wrap }
+  }
+  const oldReason = reason('reschedule-reason')
+  const currentReason = reason('cancel-reason')
+  const booking = {
+    booking_id: 'cancelled-proposal', status: 'cancelled',
+    start: 1791345600000, end: 1791347400000, duration: 30,
+    rescheduled_reason: 'Earlier proposal reason', cancelled_reason: 'New cancellation reason',
+    brand_data: { name: 'Brand', timezone: 'UTC' },
+    starter_data: { name: 'Starter', timezone: 'UTC' },
+  }
+  for (const role of ['brand', 'starter']) {
+    api.populateDetailModal(modal, booking, role)
+    assert.equal(currentReason.field.textContent, booking.cancelled_reason)
+    assert.equal(currentReason.field.hidden, false)
+    assert.equal(oldReason.field.hidden, true)
+    assert.equal(oldReason.wrap.hidden, true)
+    assert.equal(api.detailSupplementRows(booking, role, 'UTC', 'cancelled')
+      .some(row => row.field === 'reschedule-reason'), false)
+    assert.equal(panel.querySelector('[data-starters-call-summary-row="reschedule-reason"]'), null)
+  }
+  // Stored history and Paid display are preserved, including on a reused modal.
+  assert.equal(booking.rescheduled_reason, 'Earlier proposal reason')
+  api.populateDetailModal(modal, { ...booking, is_paid: true }, 'brand')
+  assert.equal(oldReason.field.hidden, false)
+  assert.equal(oldReason.wrap.hidden, false)
+  assert.equal(oldReason.field.textContent, booking.rescheduled_reason)
+  api.populateDetailModal(modal, { ...booking, status: 'rescheduled' }, 'brand')
+  assert.equal(oldReason.field.hidden, false)
+})
+
+test('Free cancellation response repaints the open proposal modal before Close', async () => {
+  const actions = require('./dashboard-call-actions.js')
+  const original = {
+    document: global.document, fetch: global.xanoAuthFetch,
+    storage: global.sessionStorage, crypto: global.crypto,
+  }
+  try {
+    for (const { role, rebound } of [
+      { role: 'brand', rebound: false }, { role: 'starter', rebound: false },
+      { role: 'brand', rebound: true }, { role: 'starter', rebound: true },
+    ]) {
+      const now = Date.now()
+      const originalStart = now + 24 * 3600000
+      const originalEnd = originalStart + 30 * 60000
+      const booking = {
+        booking_id: 'cancel-proposal-' + role + '-' + rebound, config_id: 'cancel-config',
+        status: 'rescheduled', lifecycle_revision: 3, data_environment: 'test',
+        start: originalStart + 24 * 3600000, end: originalEnd + 24 * 3600000,
+        start_old: originalStart, end_old: originalEnd,
+        rescheduled_by: 'brand', rescheduled_reason: 'Old proposal reason',
+        duration: 30, is_paid: false,
+        brand_data: { name: 'Brand', memberstack_id: 'brand-member', timezone: 'UTC' },
+        starter_data: { name: 'Starter', memberstack_id: 'starter-member', timezone: 'UTC' },
+      }
+      const view = detailModalHarness()
+      const reason = { value: 'New cancellation reason' }
+      const modalQuery = view.modal.querySelector
+      view.modal.querySelector = selector => selector === '[booking-cancel-reason]'
+        ? reason : modalQuery(selector)
+      const handlers = []
+      const document = {
+        addEventListener: (type, handler) => { if (type === 'click') handlers.push(handler) },
+        removeEventListener() {},
+        querySelector: () => view.modal,
+      }
+      const button = element({ 'booking-action-btn': 'cancel' })
+      button.closest = selector => selector.includes('popup-booking-info') ? view.modal : button
+      const refs = [{ rows: [booking], list: { querySelectorAll: () => [] } }]
+      const state = api.createBookingMutationState()
+      let posts = 0
+      let repaints = 0
+      let restarts = 0
+      global.document = document
+      global.sessionStorage = memoryStorage()
+      global.crypto = { subtle: original.crypto.subtle, randomUUID: () => 'cancel-proposal-attempt-' + role }
+      global.xanoAuthFetch = async (_url, init) => {
+        posts += 1
+        assert.equal(JSON.parse(init.body).cancelled_reason, 'New cancellation reason')
+        if (rebound) {
+          api.populateDetailModal(view.modal, { ...booking, booking_id: 'another-booking' }, role, now)
+          reason.value = 'Other booking draft'
+        }
+        // The production response carries the restored slot but omits the reason.
+        return { ok: true, json: async () => ({ cancel: {
+          booking_id: booking.booking_id, status: 'cancelled', revision: 4,
+          start: originalStart, end: originalEnd, cancelled_by: role,
+        } }) }
+      }
+      api.populateDetailModal(view.modal, booking, role, now)
+      const originalDate = api.detailSupplementRows({ ...booking, start: originalStart }, role, 'UTC', 'cancelled')
+        .find(row => row.field === 'start-date').value
+      assert.notEqual(view.fields['start-date'].textContent, originalDate)
+      actions.wire({
+        document, role, getBooking: () => booking,
+        restart: () => { restarts += 1 },
+        captureBookingMutation: model => api.captureBookingMutation(refs, model, state),
+        releaseBookingMutation: claim => api.releaseBookingMutation(state, claim),
+        onCancelSuccess(model, result, claim, submittedReason) {
+          return api.applyCancellationResult(refs, model, result, now,
+            (candidate, update) => api.commitBookingMutation(refs, candidate, update, claim, state, now),
+            claim, submittedReason, role)
+        },
+        refreshDetail(modal, model) {
+          repaints += 1
+          return api.populateDetailModal(modal, model, role, now)
+        },
+      })
+      await handlers[0]({ target: button, preventDefault() {}, stopImmediatePropagation() {} })
+      assert.equal(posts, 1)
+      assert.equal(repaints, rebound ? 0 : 1)
+      assert.equal(restarts, 0)
+      assert.equal(booking.status, 'cancelled')
+      assert.equal(booking.lifecycle_revision, 4)
+      assert.equal(booking.start, originalStart)
+      assert.equal(booking.end, originalEnd)
+      assert.equal(booking.cancelled_by, role)
+      assert.equal(booking.cancelled_reason, 'New cancellation reason')
+      assert.equal(booking.rescheduled_reason, 'Old proposal reason')
+      if (rebound) {
+        assert.equal(view.modal.getAttribute('data-booking-id'), 'another-booking')
+        assert.notEqual(view.fields['start-date'].textContent, originalDate)
+        assert.equal(view.cancelledPanel.hidden, true)
+        assert.equal(reason.value, 'Other booking draft')
+        continue
+      }
+      assert.equal(view.fields['start-date'].textContent, originalDate)
+      assert.equal(view.panelCopies['start-date'].textContent, originalDate)
+      assert.equal(view.fields['start-date-old'].hidden, true)
+      assert.equal(view.panelCopies['start-date-old'].hidden, true)
+      assert.equal(view.fields['cancel-reason'].textContent, 'New cancellation reason')
+      assert.equal(view.cancelledPanel.hidden, false)
+      assert.equal(reason.value, '')
+    }
+  } finally {
+    global.document = original.document
+    global.xanoAuthFetch = original.fetch
+    global.sessionStorage = original.storage
+    global.crypto = original.crypto
+  }
+})
+
+test('Free cancellation cache rejects malformed receipts and preserves newer lifecycle or session state', () => {
+  const booking = {
+    booking_id: 'cancel-admission', status: 'rescheduled', lifecycle_revision: 3,
+    start: 1791439200000, end: 1791441000000,
+    start_old: 1791345600000, end_old: 1791347400000, is_paid: false,
+    rescheduled_reason: 'Old proposal reason',
+  }
+  const cancel = {
+    booking_id: booking.booking_id, status: 'cancelled', revision: 4,
+    start: booking.start_old, end: booking.end_old, cancelled_by: 'brand',
+  }
+  for (const [field, value] of [
+    ['booking_id', 'another-booking'], ['status', 'confirmed'],
+    ['revision', undefined], ['revision', 2], ['revision', '4'],
+    ['start', null], ['start', '1791345600000'], ['end', cancel.start],
+    ['cancelled_by', 'starter'],
+  ]) {
+    const model = { ...booking }
+    const refs = [{ rows: [model] }]
+    assert.equal(api.applyCancellationResult(refs, model, { cancel: { ...cancel, [field]: value } },
+      Date.now(), undefined, undefined, 'New cancellation reason', 'brand'), false, field)
+    assert.deepEqual(model, booking)
+  }
+  for (const reason of [undefined, '', '   ']) {
+    const model = { ...booking }
+    assert.equal(api.applyCancellationResult([{ rows: [model] }], model, { cancel },
+      Date.now(), undefined, undefined, reason, 'brand'), false)
+    assert.deepEqual(model, booking)
+  }
+  for (const drift of ['lifecycle', 'session']) {
+    const model = { ...booking }
+    const refs = [{ rows: [model] }]
+    const state = api.createBookingMutationState()
+    const claim = api.captureBookingMutation(refs, model, state)
+    if (drift === 'lifecycle') {
+      refs[0].rows = [{ ...model, status: 'confirmed', lifecycle_revision: 5,
+        start: 1791525600000, end: 1791527400000 }]
+    } else {
+      api.resetBookingMutationState(state, 'another-session')
+    }
+    const before = structuredClone(refs[0].rows)
+    assert.equal(api.applyCancellationResult(refs, model, { cancel }, Date.now(),
+      (candidate, update) => api.commitBookingMutation(refs, candidate, update, claim, state),
+      claim, 'New cancellation reason', 'brand'), false)
+    assert.deepEqual(refs[0].rows, before)
+    assert.deepEqual(model, booking)
+  }
+  // Pending withdrawal and Paid display retain their existing status-only path.
+  for (const preserved of [{ ...booking, status: 'pending' }, { ...booking, is_paid: true }]) {
+    const before = { ...preserved }
+    assert.equal(api.applyCancellationResult([{ rows: [preserved] }], preserved,
+      { cancel: { booking_id: booking.booking_id, status: 'cancelled' } }), true)
+    assert.deepEqual(preserved, { ...before, status: 'cancelled' })
+  }
+})
+
 test('the call summary sits above a confirmation step footer, not below it', () => {
   const modal = domElement('dialog')
   modal.ownerDocument = { createElement: (tag) => domElement(tag) }
@@ -6547,6 +6755,7 @@ test('successful cancellation clears current destinations before a failed refres
     config_id: 'cancel-config',
     data_environment: 'test',
     status: 'confirmed',
+    lifecycle_revision: 1,
     start: now + 60 * 60 * 1000,
     end: now + 90 * 60 * 1000,
     duration: 30,
@@ -6624,10 +6833,10 @@ test('successful cancellation clears current destinations before a failed refres
         return api.captureBookingMutation(refs, model, mutationState)
       },
       releaseBookingMutation: claim => api.releaseBookingMutation(mutationState, claim),
-      onCancelSuccess(model, result, claim) {
+      onCancelSuccess(model, result, claim, submittedReason) {
         return api.applyCancellationResult(refs, model, result, now, (candidate, update) => (
           api.commitBookingMutation(refs, candidate, update, claim, mutationState, now)
-        ), claim)
+        ), claim, submittedReason, 'brand')
       },
     })
 
@@ -6637,12 +6846,18 @@ test('successful cancellation clears current destinations before a failed refres
       stopImmediatePropagation() {},
     })
     await requested.promise
-    const current = { ...booking, status: 'cancelled' }
+    const current = {
+      ...booking, status: 'cancelled', lifecycle_revision: 2,
+      cancelled_by: 'brand', cancelled_reason: reason.value,
+    }
     refs[0].rows = [current]
     response.resolve({
       ok: true,
       json: async () => ({
-        cancel: { booking_id: booking.booking_id, status: 'cancelled' },
+        cancel: {
+          booking_id: booking.booking_id, status: 'cancelled', revision: 2,
+          start: booking.start, end: booking.end, cancelled_by: 'brand',
+        },
       }),
     })
     await cancellation
@@ -8105,7 +8320,10 @@ test('a queued Cancel cannot post while a proposal response awaits readback', as
       if (url.endsWith('/booking/reschedule/decline/v3')) return response.promise
       if (url.endsWith('/booking/cancel/v3')) return {
         ok: true,
-        json: async () => ({ cancel: { booking_id: booking.booking_id, status: 'cancelled' } }),
+        json: async () => ({ cancel: {
+          booking_id: booking.booking_id, status: 'cancelled', revision: 4,
+          start: booking.start, end: booking.end, cancelled_by: 'brand',
+        } }),
       }
       throw new Error('Unexpected booking command')
     }
@@ -8119,9 +8337,10 @@ test('a queued Cancel cannot post while a proposal response awaits readback', as
       releaseBookingMutation: claim => api.releaseBookingMutation(state, claim),
       commitBookingMutation: (model, update, claim) =>
         api.commitBookingMutation(refs, model, update, claim, state, now),
-      onCancelSuccess: (model, result, claim) =>
+      onCancelSuccess: (model, result, claim, submittedReason) =>
         api.applyCancellationResult(refs, model, result, now,
-          (candidate, update) => api.commitBookingMutation(refs, candidate, update, claim, state, now), claim),
+          (candidate, update) => api.commitBookingMutation(refs, candidate, update, claim, state, now),
+          claim, submittedReason, 'brand'),
       reconcileBookingMutations: async () => false,
       restart: async () => true,
     })
