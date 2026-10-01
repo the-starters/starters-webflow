@@ -59,6 +59,36 @@ function fakeClock(initial = 0) {
   }
 }
 
+function timerQueue() {
+  const timers = []
+  let nextId = 1
+  const pending = (milliseconds) =>
+    timers.filter(
+      (timer) =>
+        !timer.cleared &&
+        !timer.fired &&
+        (milliseconds == null || timer.milliseconds === milliseconds),
+    )
+  return {
+    setTimeout(callback, milliseconds) {
+      const timer = { id: nextId++, callback, milliseconds, cleared: false, fired: false }
+      timers.push(timer)
+      return timer.id
+    },
+    clearTimeout(id) {
+      const timer = timers.find((item) => item.id === id)
+      if (timer) timer.cleared = true
+    },
+    pending,
+    fire(milliseconds) {
+      const [timer] = pending(milliseconds)
+      assert.ok(timer, `no pending ${milliseconds} ms timer`)
+      timer.fired = true
+      timer.callback()
+    },
+  }
+}
+
 function requestUrl(request) {
   return typeof request === 'string' ? request : request.url
 }
@@ -79,8 +109,9 @@ function loadBridge(nativeFetch, options = {}) {
     },
     fetch: options.bridgeFetch || nativeFetch,
     setTimeout: options.setTimeout || function () {},
-    clearTimeout: options.clearTimeout || function () {},
+    clearTimeout: options.clearTimeout === null ? undefined : options.clearTimeout || function () {},
   }
+  if (options.AbortController) window.AbortController = options.AbortController
   if (options.withoutMemberstack !== true) window.$memberstackDom = memberstack
   if (options.legacyBridge) {
     window.__tsSchedulingAuthBridge = true
@@ -88,7 +119,7 @@ function loadBridge(nativeFetch, options = {}) {
     window.__tsSchedulingAuthOriginalFetch = nativeFetch
   }
 
-  vm.runInNewContext(source, {
+  const context = vm.createContext({
     Date: options.Date || Date,
     Headers,
     Request,
@@ -97,9 +128,14 @@ function loadBridge(nativeFetch, options = {}) {
     console: options.console || { info() {}, warn() {} },
     window,
   })
+  vm.runInContext(source, context)
   return {
     authChange: (member) => (authChange || memberstack.listener)(member),
     memberstack,
+    // The bridge realm's Promise. A fake fetch that returns this kind of
+    // promise and rejects it inside abort() has the same race order as a
+    // native browser fetch.
+    RealmPromise: vm.runInContext('Promise', context),
     window,
   }
 }
@@ -284,6 +320,9 @@ test('dashboard token reuse gives up on a stalled in-flight trade', async () => 
   }, {
     pathname: '/starter-dashboard',
     setTimeout(callback, milliseconds) {
+      // The owner trade arms its own 30 s deadline; this test drives only the
+      // 5 s reuse wait.
+      if (milliseconds === 30000) return 2
       assert.equal(milliseconds, 5000)
       completionTimer = callback
       return 1
@@ -319,6 +358,9 @@ test('dashboard token reuse leaves a late successful owner trade cached', async 
   }, {
     pathname: '/starter-dashboard',
     setTimeout(callback, milliseconds) {
+      // The owner trade arms its own 30 s deadline; this test drives only the
+      // 5 s reuse wait.
+      if (milliseconds === 30000) return 2
       assert.equal(milliseconds, 5000)
       completionTimer = callback
       return 1
@@ -484,6 +526,369 @@ test('dashboard token reuse rejects an in-flight token invalidated by forceRefre
   await ownerRejected
   assert.equal(await refresh, 'new-xano-token')
   assert.equal(await joiner, null)
+  assert.equal(trades, 2)
+})
+
+const TRADE_DEADLINE_MS = 30000
+const BOOKINGS_URL = `${XANO_ORIGIN}/api:tCpV3oqd/booking_record/get/v3`
+
+function isTrade(request) {
+  return requestUrl(request).includes('/auth/trade-token/v3')
+}
+
+test('a stalled token trade times out, aborts its request, and the next call starts a new trade', async () => {
+  const timers = timerQueue()
+  const firstTrade = deferred()
+  const started = deferred()
+  const signals = []
+  let trades = 0
+  const { window } = loadBridge(async (request, init) => {
+    if (isTrade(request)) {
+      trades += 1
+      signals.push(init && init.signal)
+      if (trades === 1) {
+        started.resolve()
+        return firstTrade.promise
+      }
+      return response({ authToken: 'xano-fresh' })
+    }
+    return response({})
+  }, { AbortController, setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout })
+
+  const owner = window.getXanoAuthToken()
+  await started.promise
+  const joiner = window.getXanoAuthToken()
+  await new Promise(setImmediate)
+  assert.deepEqual(timers.pending().map((timer) => timer.milliseconds), [TRADE_DEADLINE_MS])
+  assert.equal(signals[0].aborted, false)
+
+  timers.fire(TRADE_DEADLINE_MS)
+
+  await assert.rejects(owner, (error) => error.code === 'XANO_TOKEN_TRADE_TIMEOUT')
+  await assert.rejects(joiner, (error) => error.code === 'XANO_TOKEN_TRADE_TIMEOUT')
+  assert.equal(signals[0].aborted, true)
+  assert.equal(trades, 1)
+
+  firstTrade.resolve(response({ authToken: 'xano-late' }))
+  assert.equal(await window.getXanoAuthToken(), 'xano-fresh')
+  assert.equal(trades, 2)
+  assert.equal(signals[1].aborted, false)
+  assert.equal(timers.pending().length, 0)
+  assert.equal(await window.getXanoAuthToken(), 'xano-fresh')
+  assert.equal(trades, 2)
+})
+
+// Native fetch rejects its promise with AbortError inside abort(). This fake
+// fetch does the same with a promise from the bridge realm, so the race order
+// matches a browser trade that never receives response headers.
+function nativeLikeStalledTrade(getRealmPromise, signal) {
+  const RealmPromise = getRealmPromise()
+  return new RealmPromise((resolve, reject) => {
+    signal.addEventListener('abort', () => {
+      reject(new DOMException('signal is aborted without reason', 'AbortError'))
+    })
+  })
+}
+
+test('a native-like trade stalled before headers rejects owner and joiner with the timeout code', async () => {
+  const timers = timerQueue()
+  let RealmPromise
+  let trades = 0
+  let firstSignal
+  const { window, RealmPromise: realm } = loadBridge((request, init) => {
+    if (isTrade(request)) {
+      trades += 1
+      if (trades === 1) {
+        firstSignal = init.signal
+        return nativeLikeStalledTrade(() => RealmPromise, init.signal)
+      }
+      return RealmPromise.resolve(response({ authToken: 'xano-fresh' }))
+    }
+    return RealmPromise.resolve(response({}))
+  }, { AbortController, setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout })
+  RealmPromise = realm
+
+  const owner = window.getXanoAuthToken()
+  await new Promise(setImmediate)
+  assert.equal(trades, 1)
+  const joiner = window.getXanoAuthToken()
+  await new Promise(setImmediate)
+
+  timers.fire(TRADE_DEADLINE_MS)
+
+  await assert.rejects(owner, (error) => error.code === 'XANO_TOKEN_TRADE_TIMEOUT')
+  await assert.rejects(joiner, (error) => error.code === 'XANO_TOKEN_TRADE_TIMEOUT')
+  assert.equal(firstSignal.aborted, true)
+  assert.equal(await window.getXanoAuthToken(), 'xano-fresh')
+  assert.equal(trades, 2)
+})
+
+test('the legacy wrapper logs the trade timeout for a native-like trade stalled before headers', async () => {
+  const timers = timerQueue()
+  const warnings = []
+  const sent = []
+  let RealmPromise
+  const { window, RealmPromise: realm } = loadBridge((request, init) => {
+    if (isTrade(request)) return nativeLikeStalledTrade(() => RealmPromise, init.signal)
+    sent.push(request.headers.get('Authorization'))
+    return RealmPromise.resolve(response({ message: 'unauthorized' }, 401))
+  }, {
+    AbortController,
+    setTimeout: timers.setTimeout,
+    clearTimeout: timers.clearTimeout,
+    console: { info() {}, warn: (...args) => warnings.push(args.join(' ')) },
+  })
+  RealmPromise = realm
+
+  const pending = window.fetch(SCHEDULING_URL, { method: 'POST', body: '{}' })
+  await new Promise(setImmediate)
+  timers.fire(TRADE_DEADLINE_MS)
+
+  assert.equal((await pending).status, 401)
+  assert.deepEqual(sent, [null])
+  assert.deepEqual(warnings, ['[scheduling-auth] token unavailable: Xano token trade timed out'])
+})
+
+test('a trade network error before the deadline keeps its own error', async () => {
+  const timers = timerQueue()
+  let RealmPromise
+  const { window, RealmPromise: realm } = loadBridge((request) => {
+    if (isTrade(request)) return RealmPromise.reject(new TypeError('Failed to fetch'))
+    return RealmPromise.resolve(response({}))
+  }, { AbortController, setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout })
+  RealmPromise = realm
+
+  await assert.rejects(window.getXanoAuthToken(), (error) =>
+    error.name === 'TypeError' && error.message === 'Failed to fetch')
+  assert.equal(timers.pending(TRADE_DEADLINE_MS).length, 0)
+})
+
+test('a token trade whose body read stalls also times out and is released', async () => {
+  const timers = timerQueue()
+  const started = deferred()
+  let trades = 0
+  let firstSignal
+  const { window } = loadBridge(async (request, init) => {
+    if (isTrade(request)) {
+      trades += 1
+      if (trades === 1) {
+        firstSignal = init.signal
+        started.resolve()
+        return { ok: true, status: 200, json: () => new Promise(() => {}) }
+      }
+      return response({ authToken: 'xano-fresh' })
+    }
+    return response({})
+  }, { AbortController, setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout })
+
+  const owner = window.getXanoAuthToken()
+  await started.promise
+  await new Promise(setImmediate)
+  timers.fire(TRADE_DEADLINE_MS)
+
+  await assert.rejects(owner, (error) => error.code === 'XANO_TOKEN_TRADE_TIMEOUT')
+  assert.equal(firstSignal.aborted, true)
+  assert.equal(await window.getXanoAuthToken(), 'xano-fresh')
+  assert.equal(trades, 2)
+})
+
+test('without AbortController the trade keeps its request shape and still times out', async () => {
+  const timers = timerQueue()
+  const started = deferred()
+  const inits = []
+  let trades = 0
+  const { window } = loadBridge(async (request, init) => {
+    if (isTrade(request)) {
+      trades += 1
+      inits.push(init)
+      if (trades === 1) {
+        started.resolve()
+        return new Promise(() => {})
+      }
+      return response({ authToken: 'xano-fresh' })
+    }
+    return response({})
+  }, { setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout })
+
+  const owner = window.getXanoAuthToken()
+  await started.promise
+  timers.fire(TRADE_DEADLINE_MS)
+
+  await assert.rejects(owner, (error) => error.code === 'XANO_TOKEN_TRADE_TIMEOUT')
+  assert.equal(await window.getXanoAuthToken(), 'xano-fresh')
+  assert.deepEqual(inits, [undefined, undefined])
+})
+
+test('a window without clearTimeout trades without a deadline or an abort signal', async () => {
+  const armed = []
+  const inits = []
+  const { window } = loadBridge(async (request, init) => {
+    if (isTrade(request)) {
+      inits.push(init)
+      return response({ authToken: 'xano-a' })
+    }
+    return response({})
+  }, {
+    AbortController,
+    setTimeout: (callback, milliseconds) => armed.push(milliseconds),
+    clearTimeout: null,
+  })
+
+  assert.equal(await window.getXanoAuthToken(), 'xano-a')
+  assert.deepEqual(inits, [undefined])
+  assert.deepEqual(armed, [])
+})
+
+test('a token trade that settles before the deadline clears its timer and stays cached', async () => {
+  const timers = timerQueue()
+  let trades = 0
+  const { window } = loadBridge(async (request) => {
+    if (isTrade(request)) {
+      trades += 1
+      return response({ authToken: 'xano-a' })
+    }
+    return response({})
+  }, { AbortController, setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout })
+
+  assert.equal(await window.getXanoAuthToken(), 'xano-a')
+  assert.equal(timers.pending(TRADE_DEADLINE_MS).length, 0)
+  assert.equal(await window.getXanoAuthToken(), 'xano-a')
+  assert.equal(trades, 1)
+})
+
+test('a failed trade clears its deadline timer', async () => {
+  const timers = timerQueue()
+  const { window } = loadBridge(async (request) => {
+    if (isTrade(request)) throw new TypeError('Failed to fetch')
+    return response({})
+  }, { AbortController, setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout })
+
+  await assert.rejects(window.getXanoAuthToken(), /Failed to fetch/)
+  assert.equal(timers.pending(TRADE_DEADLINE_MS).length, 0)
+})
+
+test('an authenticated read stuck on the shared trade fails at the deadline and the next read recovers', async () => {
+  const timers = timerQueue()
+  const started = deferred()
+  const reads = []
+  let trades = 0
+  const { window } = loadBridge(async (request) => {
+    if (isTrade(request)) {
+      trades += 1
+      if (trades === 1) {
+        started.resolve()
+        return new Promise(() => {})
+      }
+      return response({ authToken: 'xano-fresh' })
+    }
+    reads.push(request.headers.get('Authorization'))
+    return response([])
+  }, { AbortController, setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout })
+  const read = () => {
+    const controller = new AbortController()
+    return window.xanoAuthFetch(BOOKINGS_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ memberstack_id: 'mem_a' }),
+      signal: controller.signal,
+    })
+  }
+
+  const first = read()
+  await started.promise
+  const joined = read()
+  await new Promise(setImmediate)
+  timers.fire(TRADE_DEADLINE_MS)
+
+  await assert.rejects(first, (error) => error.code === 'XANO_TOKEN_TRADE_TIMEOUT')
+  await assert.rejects(joined, (error) => error.code === 'XANO_TOKEN_TRADE_TIMEOUT')
+  assert.deepEqual(reads, [])
+
+  const recovered = await read()
+  assert.equal(recovered.status, 200)
+  assert.deepEqual(reads, ['Bearer xano-fresh'])
+  assert.equal(trades, 2)
+})
+
+test('the legacy fetch wrapper falls back without a token after a trade timeout', async () => {
+  const timers = timerQueue()
+  const started = deferred()
+  const warnings = []
+  const sent = []
+  const { window } = loadBridge(async (request) => {
+    if (isTrade(request)) {
+      started.resolve()
+      return new Promise(() => {})
+    }
+    sent.push(request.headers.get('Authorization'))
+    return response({ message: 'unauthorized' }, 401)
+  }, {
+    AbortController,
+    setTimeout: timers.setTimeout,
+    clearTimeout: timers.clearTimeout,
+    console: { info() {}, warn: (...args) => warnings.push(args.join(' ')) },
+  })
+
+  const pending = window.fetch(SCHEDULING_URL, { method: 'POST', body: '{}' })
+  await started.promise
+  timers.fire(TRADE_DEADLINE_MS)
+
+  assert.equal((await pending).status, 401)
+  assert.deepEqual(sent, [null])
+  assert.ok(warnings.some((line) => line.includes('Xano token trade timed out')))
+})
+
+test('a 401 refresh whose trade stalls returns the original 401 at the deadline', async () => {
+  const timers = timerQueue()
+  const refreshStarted = deferred()
+  const sent = []
+  let trades = 0
+  const { window } = loadBridge(async (request) => {
+    if (isTrade(request)) {
+      trades += 1
+      if (trades === 1) return response({ authToken: 'xano-expired' })
+      refreshStarted.resolve()
+      return new Promise(() => {})
+    }
+    sent.push(request.headers.get('Authorization'))
+    return response({ message: 'expired' }, 401)
+  }, { AbortController, setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout })
+
+  const pending = window.xanoAuthFetch(SCHEDULING_URL, { method: 'POST', body: '{}' })
+  await refreshStarted.promise
+  timers.fire(TRADE_DEADLINE_MS)
+
+  const result = await pending
+  assert.equal(result.status, 401)
+  assert.deepEqual(sent, ['Bearer xano-expired'])
+  assert.equal(trades, 2)
+})
+
+test('a stale trade deadline does not disturb the trade that replaced it', async () => {
+  const timers = timerQueue()
+  const started = deferred()
+  let trades = 0
+  const { window } = loadBridge(async (request) => {
+    if (isTrade(request)) {
+      trades += 1
+      if (trades === 1) {
+        started.resolve()
+        return new Promise(() => {})
+      }
+      return response({ authToken: 'xano-new' })
+    }
+    return response({})
+  }, { AbortController, setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout })
+
+  const owner = window.getXanoAuthToken()
+  await started.promise
+  assert.equal(await window.getXanoAuthToken({ forceRefresh: true }), 'xano-new')
+  assert.equal(timers.pending(TRADE_DEADLINE_MS).length, 1)
+
+  timers.fire(TRADE_DEADLINE_MS)
+
+  await assert.rejects(owner, (error) => error.code === 'XANO_TOKEN_TRADE_TIMEOUT')
+  assert.equal(await window.getXanoAuthToken(), 'xano-new')
   assert.equal(trades, 2)
 })
 

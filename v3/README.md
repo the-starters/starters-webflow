@@ -2039,6 +2039,15 @@ Current safety boundary:
   code. It also retains its own auth-fetch reference for the stage adapter,
   because another page bundle can replace the public compatibility global
   after this bridge installs.
+- Gives each Xano token trade one 30 s deadline for the trade request and its
+  body read. Callers with the same Memberstack token share one in-flight
+  trade. At the deadline, the bridge aborts the trade request and rejects
+  every caller of that trade with code `XANO_TOKEN_TRADE_TIMEOUT`. The next
+  caller then starts a new trade, and a late response is discarded. Request
+  history on 2026-10-01 (101 trades) had a 567 ms median, a 6.3 s p90 and a
+  17.8 s maximum, so the deadline keeps slow trades that succeed. On a timeout,
+  the legacy `window.fetch` wrapper keeps its failed-trade fallback, and a
+  `401` refresh keeps the original `401` response.
 - On `/starter-dashboard` only, exposes the read-only
   `window.__tsSchedulingAuthTokenReuse` hook for dashboard list prewarmers. The
   hook never starts an auth trade: it returns only a cached token or a matching
@@ -2925,15 +2934,15 @@ the 10 s deadline, because the retained errors do not show which step used
 the budget. The deadline aborts only the canonical POST and its body read.
 For those two steps, a fresh attempt after an abort recovers a stuck request
 sooner than a longer deadline. The auth bridge's shared steps in
-`v3/scheduling-auth.js` (the auth reconciliation and the token trade) have no
-timeout and do not take the caller's abort signal. A later attempt for the
-same Memberstack token joins the trade that is still in flight. So a retry
-does not recover a hung token trade: each attempt times out again until the
-page reloads or the Memberstack token changes. A slow trade that finishes
-still helps, because the retry then sends only the POST with the cached
-token. Follow-up outside this change: give the token trade its own timeout in
-`v3/scheduling-auth.js`, or drop an abandoned trade, so that a retry can start
-a new trade. When every attempt times out, the last retry ends
+`v3/scheduling-auth.js` do not take the caller's abort signal. A later attempt
+for the same Memberstack token joins the trade that is still in flight. The
+token trade has its own 30 s deadline in the auth bridge. A stuck trade that
+the boot read started is aborted and released about 30 s after it started.
+The first retry (at 13 s) can still join that trade and time out, but the
+second retry (at 33 s or later) starts a new trade.
+A slow trade that finishes still helps, because the retry then sends only the
+POST with the cached token. The auth reconciliation step has no timeout. When
+every attempt times out, the last retry ends
 about 83 s after the boot read started, and a failed page load adds at most
 three canonical POSTs.
 

@@ -45,6 +45,13 @@
   window.__tsSchedulingAuthBridgePending = true
 
   const TRADE_TOKEN_PATH = '/api:g1vmSLWh/auth/trade-token/v3'
+  // Callers with the same Memberstack token share one in-flight trade, so a
+  // trade that never settled blocked every later token request (and each F68
+  // dashboard retry) until a reload. This deadline covers the trade POST and
+  // its body read. Request history on 2026-10-01 (101 trades) had a 567 ms
+  // median, a 6.3 s p90 and a 17.8 s maximum, so 30 s keeps slow trades that
+  // succeed, and the second F68 retry still starts a new trade.
+  const TOKEN_TRADE_TIMEOUT_MS = 30000
   // Keep this exact. The stage adapter owns legacy-to-V3 routing; this bridge
   // only adds credentials to reviewed authenticated endpoints.
   const AUTHENTICATED_PATHS = [
@@ -204,6 +211,12 @@
   function memberSessionChangedError() {
     return Object.assign(new Error('Member session changed during request'), {
       code: 'MEMBER_SCOPE_CHANGED',
+    })
+  }
+
+  function tokenTradeTimeoutError() {
+    return Object.assign(new Error('Xano token trade timed out'), {
+      code: 'XANO_TOKEN_TRADE_TIMEOUT',
     })
   }
 
@@ -418,12 +431,51 @@
     }
 
     const promise = (async function () {
-      const response = await originalFetch(
-        XANO_ORIGIN + TRADE_TOKEN_PATH + '?token=' + encodeURIComponent(memberstackToken),
-      )
-      const data = await response.json().catch(function () {
-        return null
-      })
+      const tradeUrl =
+        XANO_ORIGIN + TRADE_TOKEN_PATH + '?token=' + encodeURIComponent(memberstackToken)
+      const canTimeTrade =
+        typeof window.setTimeout === 'function' && typeof window.clearTimeout === 'function'
+      const controller =
+        canTimeTrade && typeof window.AbortController === 'function'
+          ? new window.AbortController()
+          : null
+      let timer
+      let timedOut = false
+      // At the deadline the trade is aborted and every caller gets the timeout
+      // error. A native fetch rejects with AbortError inside abort(), so the
+      // catch below replaces that error. The owner call then releases
+      // tokenRequest, so the next caller starts a new trade. A late response is
+      // discarded.
+      const deadline = canTimeTrade
+        ? new Promise(function (resolve, reject) {
+            timer = window.setTimeout(function () {
+              timedOut = true
+              reject(tokenTradeTimeoutError())
+              if (controller) {
+                try {
+                  controller.abort()
+                } catch (error) {}
+              }
+            }, TOKEN_TRADE_TIMEOUT_MS)
+          })
+        : null
+      let response
+      let data
+      try {
+        const request = controller
+          ? originalFetch(tradeUrl, { signal: controller.signal })
+          : originalFetch(tradeUrl)
+        response = deadline ? await Promise.race([request, deadline]) : await request
+        const readBody = response.json().catch(function () {
+          return null
+        })
+        data = deadline ? await Promise.race([readBody, deadline]) : await readBody
+      } catch (error) {
+        if (timedOut) throw tokenTradeTimeoutError()
+        throw error
+      } finally {
+        if (canTimeTrade) window.clearTimeout(timer)
+      }
       assertSessionGeneration(generation)
       if (revision !== tokenRevision) throw memberSessionChangedError()
       if (!response.ok) throw new Error('Xano token trade failed')
