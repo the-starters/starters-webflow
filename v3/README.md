@@ -2467,8 +2467,9 @@ declined Free booking also fills the authored
 second reason row. The Free `cancel` and `decline` confirmation steps likewise
 hide an authored `[booking-element="reschedule-reason"]` and omit that summary
 row, because an earlier edit's reason is not the reason for the pending cancel
-or decline. Free base, cancelled, completed, and reschedule panels retain the
-reschedule reason. A Paid booking keeps both labels on every panel and leaves
+or decline. A Free `cancelled` panel also hides the stale reschedule reason and
+shows only the submitted cancellation reason. Free base, completed, and
+reschedule panels retain the reschedule reason. A Paid booking keeps both labels on every panel and leaves
 the authored hook as authored, restoring it when a reused modal showed a Free
 booking first, as PR #974 scoped F09. A hook counts as usable only while it
 renders: a hook that is itself hidden, that sits inside
@@ -2712,7 +2713,11 @@ base panel, it creates the fallback pair once per modal and marks both controls
 with `data-starters-reschedule-respond`. Decline, cancel, and both reschedule
 commands require a non-empty reason. Decline posts `booking_id`, `config_id`,
 `reason`, and `idempotency_key` to `booking/decline/v3`; cancel uses
-`cancelled_reason` at `booking/cancel/v3`. Both reschedule commands post
+`cancelled_reason` at `booking/cancel/v3`. For Free confirmed or rescheduled
+calls, a successful cancellation response must echo the cancelled booking,
+the restored original slot, the next lifecycle revision, and the participant
+role that cancelled; the dashboard commits those values with the just-submitted
+reason and immediately repaints the still-current details modal. Both reschedule commands post
 `rescheduled_reason`,
 `new_start`, `new_end`, and `timezone` with those shared identifiers. A
 confirmed call posts to `booking/reschedule/propose/v3`; a pending Brand request

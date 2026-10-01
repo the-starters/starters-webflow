@@ -1851,7 +1851,7 @@
   function staleEditReasonPanel(panelName, booking) {
     return confirmStepPanel(panelName, booking) || (
       clean(panelName) === 'cancelled' && !paidBooking(booking) &&
-      bookingStatus(booking) === 'cancelled'
+      clean(booking && booking.status).toLowerCase() === 'cancelled'
     )
   }
 
