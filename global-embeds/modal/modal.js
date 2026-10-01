@@ -1,5 +1,9 @@
 // Docs: https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/modal
 
+(function () {
+    if (window.__startersModalInit) return;
+    window.__startersModalInit = true;
+
     document.addEventListener("DOMContentLoaded", function () {
         const modalSystem = ((window.lumos ??= {}).modal ??= {
             list: {}, open(id) { this.list[id]?.open?.(); }, closeAll() { Object.values(this.list).forEach((m) => { if (m.el?.open) m.close?.(); }); },
@@ -106,4 +110,34 @@
         }
         modalSystem.init = createModals;
         createModals();
+        document.addEventListener("click", (e) => {
+            const link = e.target.closest("a[href='#join-starters-cta']");
+            if (!link?.closest("[data-join-starters-link]") || document.getElementById("join-starters-cta")) return;
+            e.preventDefault();
+            const modal = modalSystem.list["join-starters-modal"];
+            try {
+                if (!modal?.open) throw new Error("Membership dialog unavailable");
+                modal.open();
+                if (!modal.el?.open) throw new Error("Membership dialog did not open");
+            } catch (_) {
+                location.assign("/quiz-results#join-starters-cta");
+            }
+        });
+        document.addEventListener("click", (e) => {
+            const tab = e.target.closest("[join-cta-tabs]");
+            const dialog = modalSystem.list["join-starters-modal"]?.el;
+            if (!tab || !dialog?.contains(tab)) return;
+            const wrapper = tab.closest("[join-cta-wrapper]");
+            const selectedPlan = tab.getAttribute("join-cta-tabs");
+            if (!wrapper || !dialog.contains(wrapper) || (selectedPlan !== "monthly" && selectedPlan !== "yearly")) return;
+            wrapper.querySelectorAll("[join-cta-tabs]").forEach((choice) => {
+                const selected = choice.getAttribute("join-cta-tabs") === selectedPlan;
+                selected ? choice.classList.add("is-active") : choice.classList.remove("is-active");
+                choice.setAttribute("data-tab-active", String(selected));
+            });
+            wrapper.querySelectorAll("[join-cta]").forEach((offer) => {
+                offer.setAttribute("data-cta-open", String(offer.getAttribute("join-cta") === selectedPlan));
+            });
+        });
     });
+})();

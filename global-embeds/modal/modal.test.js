@@ -105,6 +105,7 @@ function makeEnv({
   variants = {},
   gsap = false,
   clock = 'instant',
+  doubleLoad = false,
 } = {}) {
   const windowEvents = []
   const body = h('body')
@@ -120,6 +121,7 @@ function makeEnv({
     },
     querySelectorAll: (selector) => body.querySelectorAll(selector),
     querySelector: (selector) => body.querySelector(selector),
+    getElementById: (id) => body.descendants().find((el) => el.getAttribute('id') === id) || null,
   }
 
   function fire(el, type, target) {
@@ -203,6 +205,8 @@ function makeEnv({
   const location = {
     search,
     href: `https://the-starters-3-0.webflow.io/some-page${search}`,
+    assigned: [],
+    assign(url) { this.assigned.push(url) },
   }
 
   /** Records the deep-link cleanup so a test can read the rewritten URL back. */
@@ -230,6 +234,7 @@ function makeEnv({
 
   vm.createContext(context)
   vm.runInContext(SOURCE, context)
+  if (doubleLoad) vm.runInContext(SOURCE, context)
 
   // Registered before boot so a deep-linked open, which happens during boot, is
   // captured too. The registry snapshot pins when an entry becomes visible to a
@@ -265,6 +270,7 @@ function makeEnv({
     document,
     window,
     history,
+    location,
     dialogs,
     dialogsById,
     windowEvents,
@@ -380,6 +386,173 @@ test('a label inside an anchor trigger opens the modal and still suppresses the 
 
   assert.equal(env.dialogsById['modal-a'].open, true)
   assert.equal(event.defaultPrevented, true, 'the anchor that matched decides, not the click target')
+})
+
+test('a join link keeps native section navigation when the join section exists', () => {
+  const env = makeEnv({ ids: ['join-starters-modal'] })
+  const section = env.document.body.append(h('section', { id: 'join-starters-cta' }))
+  const link = env.document.body.append(h('a', {
+    href: '#join-starters-cta',
+    'data-join-starters-link': '',
+  }))
+  env.boot()
+
+  const event = env.clickDocument(link)
+
+  assert.equal(env.document.getElementById('join-starters-cta'), section)
+  assert.equal(event.defaultPrevented, false, 'the browser scrolls to the existing section')
+  assert.equal(env.dialogsById['join-starters-modal'].open, false)
+  assert.deepEqual(env.types(), [])
+})
+
+test('loading the shared modal script twice still handles one join click once', () => {
+  const env = makeEnv({ ids: ['join-starters-modal'], doubleLoad: true })
+  const link = env.document.body.append(h('a', {
+    href: '#join-starters-cta',
+    'data-join-starters-link': '',
+  }))
+  env.boot()
+
+  const event = env.clickDocument(link)
+
+  assert.equal(event.defaultPrevented, true)
+  assert.deepEqual(env.types(), ['modal-open'])
+})
+
+test('a join link opens the generic membership dialog when the section is absent', () => {
+  const env = makeEnv({ ids: ['join-starters-modal'] })
+  const link = env.focusable(env.document.body.append(h('a', {
+    href: '#join-starters-cta',
+    'data-join-starters-link': '',
+  })))
+  env.document.activeElement = link
+  env.boot()
+
+  const event = env.clickDocument(link)
+
+  assert.equal(event.defaultPrevented, true, 'the dead fragment is suppressed')
+  assert.equal(env.dialogsById['join-starters-modal'].open, true)
+  assert.equal(env.document.activeElement, env.dialogsById['join-starters-modal'])
+  assert.deepEqual(env.types(), ['modal-open'])
+  env.clickThrough(env.closeControlIn(env.dialogsById['join-starters-modal']))
+  assert.equal(link.focused, true, 'closing returns focus to the join link')
+})
+
+test('a join link reaches Quiz Results when the generic dialog is missing', () => {
+  const env = makeEnv({ ids: [] })
+  const link = env.document.body.append(h('a', {
+    href: '#join-starters-cta',
+    'data-join-starters-link': '',
+  }))
+  env.boot()
+
+  const event = env.clickDocument(link)
+
+  assert.equal(event.defaultPrevented, true)
+  assert.deepEqual(env.location.assigned, ['/quiz-results#join-starters-cta'])
+  assert.deepEqual(env.types(), [])
+})
+
+test('a join link reaches Quiz Results when the generic dialog cannot open', () => {
+  const env = makeEnv({ ids: ['join-starters-modal'] })
+  const link = env.document.body.append(h('a', {
+    href: '#join-starters-cta',
+    'data-join-starters-link': '',
+  }))
+  env.boot()
+  env.dialogsById['join-starters-modal'].showModal = () => { throw new Error('dialog unavailable') }
+
+  const event = env.clickDocument(link)
+
+  assert.equal(event.defaultPrevented, true)
+  assert.deepEqual(env.location.assigned, ['/quiz-results#join-starters-cta'])
+  assert.equal(env.dialogsById['join-starters-modal'].open, false)
+})
+
+test('a marked shared navigation block opens membership from a nested join link only', () => {
+  const env = makeEnv({ ids: ['join-starters-modal'] })
+  const block = env.document.body.append(h('nav', { 'data-join-starters-link': '' }))
+  const unrelated = block.append(h('a', { href: '#faq' }))
+  const otherPage = block.append(h('a', { href: '/quiz-results#join-starters-cta' }))
+  const label = block.append(h('a', { href: '#join-starters-cta' }, [h('span')])).children[0]
+  env.boot()
+
+  const unrelatedClick = env.clickDocument(unrelated)
+  const otherPageClick = env.clickDocument(otherPage)
+  const joinClick = env.clickDocument(label)
+
+  assert.equal(unrelatedClick.defaultPrevented, false)
+  assert.equal(otherPageClick.defaultPrevented, false)
+  assert.equal(joinClick.defaultPrevented, true)
+  assert.equal(env.dialogsById['join-starters-modal'].open, true)
+  assert.deepEqual(env.types(), ['modal-open'])
+  assert.deepEqual(env.location.assigned, [])
+})
+
+test('repeating a join click keeps one membership dialog and leaves the article prompt intact', () => {
+  const env = makeEnv({ ids: ['join-starters-modal', 'signup-modal'] })
+  const link = env.document.body.append(h('a', {
+    href: '#join-starters-cta',
+    'data-join-starters-link': '',
+  }))
+  env.boot()
+
+  const first = env.clickDocument(link)
+  const second = env.clickDocument(link)
+
+  assert.equal(first.defaultPrevented, true)
+  assert.equal(second.defaultPrevented, true)
+  assert.equal(env.dialogsById['join-starters-modal'].open, true)
+  assert.equal(env.dialogsById['signup-modal'].open, false, 'the article prompt stays contextual')
+  env.clickThrough(env.closeControlIn(env.dialogsById['join-starters-modal']))
+  env.clickDocument(env.triggerFor('signup-modal'))
+  assert.equal(env.dialogsById['signup-modal'].open, true, 'the article trigger still opens its own prompt')
+  assert.equal(env.dialogsById['join-starters-modal'].open, false)
+})
+
+test('generic membership tabs reveal the chosen plan without changing an article prompt', () => {
+  const env = makeEnv({ ids: ['join-starters-modal', 'signup-modal'] })
+  const generic = env.dialogsById['join-starters-modal']
+  const genericChoices = generic.append(h('div', { 'join-cta-wrapper': '' }))
+  const monthlyTab = genericChoices.append(h('button', {
+    'join-cta-tabs': 'monthly', class: 'is-active', 'data-tab-active': 'true',
+  }))
+  const yearlyTab = genericChoices.append(h('button', {
+    'join-cta-tabs': 'yearly', 'data-tab-active': 'false',
+  }))
+  const yearlyLabel = yearlyTab.append(h('span'))
+  const monthlyOffer = genericChoices.append(h('div', { 'join-cta': 'monthly', 'data-cta-open': 'true' }))
+  const yearlyOffer = genericChoices.append(h('div', { 'join-cta': 'yearly', 'data-cta-open': 'false' }))
+  const monthlyAction = monthlyOffer.append(h('div', { 'data-ms-price:add': 'prc_premium-monthly--fn1ae0qjj' }))
+  const yearlyAction = yearlyOffer.append(h('div', { 'data-ms-price:add': 'prc_paid-annual-2o5f040u' }))
+  const contextual = env.dialogsById['signup-modal']
+  const contextualChoices = contextual.append(h('div', { 'join-cta-wrapper': '' }))
+  const contextualMonthly = contextualChoices.append(h('button', {
+    'join-cta-tabs': 'monthly', class: 'is-active', 'data-tab-active': 'true',
+  }))
+  const contextualYearly = contextualChoices.append(h('button', {
+    'join-cta-tabs': 'yearly', 'data-tab-active': 'false',
+  }))
+  env.boot()
+
+  env.clickThrough(yearlyLabel)
+
+  assert.equal(monthlyTab.classList.contains('is-active'), false)
+  assert.equal(monthlyTab.getAttribute('data-tab-active'), 'false')
+  assert.equal(yearlyTab.classList.contains('is-active'), true)
+  assert.equal(yearlyTab.getAttribute('data-tab-active'), 'true')
+  assert.equal(monthlyOffer.getAttribute('data-cta-open'), 'false')
+  assert.equal(yearlyOffer.getAttribute('data-cta-open'), 'true')
+  assert.equal(yearlyOffer.children[0].getAttribute('data-ms-price:add'), 'prc_paid-annual-2o5f040u')
+  assert.equal(env.clickThrough(yearlyAction).defaultPrevented, false, 'Memberstack receives the annual action')
+  assert.equal(contextualMonthly.getAttribute('data-tab-active'), 'true')
+  assert.equal(contextualYearly.getAttribute('data-tab-active'), 'false')
+
+  env.clickThrough(monthlyTab)
+  assert.equal(monthlyOffer.getAttribute('data-cta-open'), 'true')
+  assert.equal(yearlyOffer.getAttribute('data-cta-open'), 'false')
+  assert.equal(monthlyOffer.children[0].getAttribute('data-ms-price:add'), 'prc_premium-monthly--fn1ae0qjj')
+  assert.equal(env.clickThrough(monthlyAction).defaultPrevented, false, 'Memberstack receives the monthly action')
 })
 
 test('ignores a click that is not on any trigger', () => {
