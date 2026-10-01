@@ -2635,6 +2635,13 @@ against the refreshed row. When every later read fails, the committed row keeps
 the confirmed view, and a stale second Accept sends no request and shows no
 error. A refused commit (the row changed or left the list) changes nothing,
 and the refresh repaints instead. A card-level Accept takes the same commit.
+After a successful commit, the controller also repaints each rendered card of
+that call in place, with the same card painters and the existing labels: the
+pill shows "Upcoming", `data-booking-status` becomes `confirmed`, and Accept,
+Decline, and the request countdown hide. This covers an Accept on the card
+with the details dialog closed. The card stays in its section until the
+canonical read moves it from Requests to Calls. A refused commit leaves the
+card as it was.
 All other legacy mutation controls stay hidden until they have current V3-safe
 endpoint contracts.
 
@@ -2889,8 +2896,52 @@ canonical read failure log and leave the rendered list in place instead of
 failing the whole dashboard closed. A missing member is the one exception and
 still fails closed.
 
+F68 (production, 2026-09-30 22:05:56 and 22:07:49 UTC): each canonical list
+read has one 10 s deadline (`CANONICAL_READ_TIMEOUT_MS`). The deadline counts
+the time of the auth bridge's token step, the POST, and the body read. A first read that
+timed out showed both sections unavailable, and nothing read the lists again
+until a reload, because the lifecycle ticker re-reads only for rendered rows.
+Now the first read of a session (the boot read, or the read after an auth
+change) is retried when it fails for any reason except a missing member. The
+retries run 3, 10, and 30 s after the failed attempt ends
+(`INITIAL_READ_RETRY_DELAYS_MS`): at most three, and the first success ends
+the schedule. Each retry keeps the session generation and goes through the
+same serialized refresh, so it never overlaps another read of that session
+and does not reset the sections to loading. A retry reads the live
+Memberstack member, not the boot-time `window.memberReady` snapshot, with the
+short member retries of every later read (`MEMBER_RETRY_DELAYS_MS`). So a
+Brand profile saved during the retries stays on the hero, and a rejected
+snapshot does not block the recovery. On the Brand dashboard, a retry paints
+the hero only after its read succeeds. A failed retry leaves the hero as it
+was: the name does not flash during the retries, and a profile-save repaint
+stays. A retry that finds no member still clears the hero. The unavailable
+display and its copy stay until a read succeeds. No copy is added. A retry that comes due
+while `document.visibilityState` is `hidden` waits for a `visibilitychange`
+to a visible page, and it spends no budget while it waits. An auth change ends
+the old schedule, and the new session's first read gets its own budget. A
+missing member, a missing Memberstack client, and the post-mutation and ticker
+refreshes keep their own failure rules and get no retry. Each attempt keeps
+the 10 s deadline, because the retained errors do not show which step used
+the budget. The deadline aborts only the canonical POST and its body read.
+For those two steps, a fresh attempt after an abort recovers a stuck request
+sooner than a longer deadline. The auth bridge's shared steps in
+`v3/scheduling-auth.js` (the auth reconciliation and the token trade) have no
+timeout and do not take the caller's abort signal. A later attempt for the
+same Memberstack token joins the trade that is still in flight. So a retry
+does not recover a hung token trade: each attempt times out again until the
+page reloads or the Memberstack token changes. A slow trade that finishes
+still helps, because the retry then sends only the POST with the cached
+token. Follow-up outside this change: give the token trade its own timeout in
+`v3/scheduling-auth.js`, or drop an abandoned trade, so that a retry can start
+a new trade. When every attempt times out, the last retry ends
+about 83 s after the boot read started, and a failed page load adds at most
+three canonical POSTs.
+
 Loading, empty, and error displays reuse the authored elements instead of
-generating UI. The filter wrapper stays hidden during identity resolution and
+generating UI. The error display writes its copy into the authored
+`[bookings-empty]` heading and paragraph. The controller keeps the authored
+text first and puts it back on the next successful render, so a section with
+no rows shows its authored empty copy after a recovered failure. The filter wrapper stays hidden during identity resolution and
 on errors, and is shown only when the member's full canonical booking rows for
 that section are non-empty. A selected status that has no matching rows does
 not hide the wrapper, so the member can return to All.
@@ -2932,12 +2983,14 @@ On Brand only, the same resolved Memberstack snapshot paints the existing hero
 through the Designer custom-attribute contract, never through styling classes:
 `free-user` populates `hero-element="brand-first-name"`, `last-name` populates
 `hero-element="brand-last-name"`, and `company` populates
-`hero-element="brand-company"`. Those values clear before every session refresh
-and on any failure, so another member's projection cannot survive an auth
-transition. The avatar carries `hero-element="brand-image"` for contract
-completeness, but the controller never writes it: its `src` stays owned by
-Memberstack's native `data-ms-member="profile-image"` binding, which handles
-both the empty-photo placeholder and a populated member photo.
+`hero-element="brand-company"`. Those values clear before every new session
+refresh and when that refresh cannot prove an authenticated member, so another
+member's projection cannot survive an auth transition. A first-read retry keeps
+the current hero intact until the canonical read succeeds, as described in the
+F68 retry contract above. The avatar carries `hero-element="brand-image"` for
+contract completeness, but the controller never writes it: its `src` stays
+owned by Memberstack's native `data-ms-member="profile-image"` binding, which
+handles both the empty-photo placeholder and a populated member photo.
 
 The Brand dashboard's existing `form[data-ms-form="profile"]` remains a native
 Memberstack form and keeps sole ownership of its submit. The controller observes

@@ -58,6 +58,16 @@
   const MEETING_LINK_POLL_DELAYS_MS = [45000, 90000, 150000]
   const MUTATION_RECONCILIATION_MAX_PASSES = 3
   const CANONICAL_READ_TIMEOUT_MS = 10000
+  // F68 (production, 2026-09-30): a first read (boot or an auth change) that
+  // timed out left both lists unavailable until a reload, because the
+  // lifecycle ticker re-reads only for rendered rows. Retry that read once
+  // after each of these delays, counted from the end of the failed attempt:
+  // at most 3 retries, never while the page is hidden. Each attempt keeps the
+  // 10 s deadline above. The deadline aborts only the canonical POST and its
+  // body read: a retry joins a token trade that is still in flight in
+  // v3/scheduling-auth.js, so a retry does not recover a hung trade.
+  const INITIAL_READ_RETRY_DELAYS_MS = [3000, 10000, 30000]
+  const EMPTY_COPY_SELECTORS = ['h1,h2,h3,h4,h5,h6', 'p']
   const PROFILE_REFRESH_DELAYS_MS = [0, 150, 300, 600, 1000, 1600, 2500]
   const DEEP_LINK_READY_DELAYS_MS = [0, 100, 250, 500, 1000, 1600]
   const PROFILE_FORM_SELECTOR = 'form[data-ms-form="profile"]'
@@ -1607,6 +1617,26 @@
     return card
   }
 
+  /**
+   * F53 follow-up: a card-level Accept kept the card's Pending pill, its
+   * Accept and Decline, and its countdown until the post-confirm list read
+   * returned. Repaint each rendered card of the committed row in place, with
+   * the same painters a render uses and the existing labels. The card moves
+   * to its new section on the canonical read.
+   */
+  function repaintBookingCards(refs, booking, role) {
+    const bookingId = clean(booking && (booking.booking_id || booking.id))
+    if (!bookingId) return
+    ;(Array.isArray(refs) ? refs : []).forEach(function (section) {
+      if (!section || !section.list || typeof section.list.querySelectorAll !== 'function') return
+      section.list.querySelectorAll('[data-booking-id]').forEach(function (card) {
+        if (clean(card.getAttribute('data-booking-id')) === bookingId) {
+          bindCard(card, booking, role)
+        }
+      })
+    })
+  }
+
   function collectSection(section) {
     const name = section.getAttribute('bookings-section')
     const list = section.querySelector('[bookings-list="' + name + '"]')
@@ -1676,6 +1706,7 @@
   }
 
   function renderSection(refs, role, reset) {
+    restoreAuthoredEmptyCopy(refs)
     if (reset) {
       refs.rendered = 0
       refs.list.innerHTML = ''
@@ -3610,6 +3641,8 @@
           status: confirmedStatus,
         }, claim)
         if (committed) {
+          const committedRow = bookingById(refs, bookingId)
+          if (committedRow) repaintBookingCards(refs, committedRow, role)
           refreshOpenDetailPanel(refs, role)
           refreshDetailExpiration(refs, role)
         }
@@ -3689,12 +3722,36 @@
     document.documentElement.setAttribute('data-dashboard-calls-v3', 'loading')
   }
 
+  /**
+   * F68: the failure display writes its copy into the authored empty-state
+   * heading and paragraph. Keep the authored text before the first overwrite,
+   * so a later successful read with no rows shows the authored copy again.
+   */
+  function rememberAuthoredEmptyCopy(refs) {
+    if (!refs || !refs.empty || refs.authoredEmptyCopy) return
+    if (typeof refs.empty.querySelector !== 'function') return
+    refs.authoredEmptyCopy = EMPTY_COPY_SELECTORS.map(function (selector) {
+      const node = refs.empty.querySelector(selector)
+      return node ? { node, text: node.textContent } : null
+    }).filter(Boolean)
+  }
+
+  function restoreAuthoredEmptyCopy(refs) {
+    const saved = refs && refs.authoredEmptyCopy
+    if (!saved) return
+    saved.forEach(function (entry) {
+      entry.node.textContent = entry.text
+    })
+    refs.authoredEmptyCopy = null
+  }
+
   function renderFailure(refs) {
     show(refs.loader, false)
     show(refs.list, false)
     show(refs.loadMore, false)
     show(refs.filters, false)
     show(refs.empty, true)
+    rememberAuthoredEmptyCopy(refs)
     text(
       refs.empty,
       'h1,h2,h3,h4,h5,h6',
@@ -3716,6 +3773,9 @@
     options,
   ) {
     const preserveExisting = Boolean(options && options.preserveExisting)
+    // F68: a first-read retry paints the Brand hero only after its read
+    // succeeds, so a failing retry does not flash the name on and off.
+    const heroAfterRead = Boolean(options && options.heroAfterRead)
     const mutationState = options && options.mutationState
     const mutationSnapshot = snapshotBookingMutations(mutationState)
     try {
@@ -3750,7 +3810,7 @@
         missing.memberMissing = true
         throw missing
       }
-      bindBrandHero(member)
+      if (!heroAfterRead) bindBrandHero(member)
       const canonicalRows = (await fetchBookings(memberId)).filter(function (booking) {
         return memberOwnsBooking(booking, memberId, role)
       })
@@ -3789,6 +3849,7 @@
       })
       refreshMeetingDestinations(refs)
       refreshOpenDetailPanel(refs, role)
+      if (heroAfterRead) bindBrandHero(member)
       document.documentElement.setAttribute('data-dashboard-calls-v3', 'ready')
       if (options && typeof options.onCanonicalRows === 'function') {
         options.onCanonicalRows(rows, memberId, role)
@@ -3816,10 +3877,18 @@
         return false
       }
       if (preserveExisting) resetIdentityState(refs, role, mutationState)
-      clearBrandHero(role)
+      // A retry painted no hero. The failed first read already cleared it, and
+      // a later paint came from a verified profile save, so a retry clears it
+      // again only for a missing member.
+      if (!heroAfterRead || memberMissing) clearBrandHero(role)
       refs.forEach(renderFailure)
       document.documentElement.setAttribute('data-dashboard-calls-v3', 'error')
       console.error('[dashboard-calls] failed closed:', error && error.message)
+      // F68: a member that stays missing is definitive. Any other failure
+      // (a timed-out or failed canonical read) may be retried by the caller.
+      if (!memberMissing && options && typeof options.onRetryableFailure === 'function') {
+        options.onRetryableFailure()
+      }
       return false
     }
   }
@@ -3918,7 +3987,7 @@
               })
           }
         : null
-      return refreshCurrentSession(
+      return readSession(
         generation,
         useSharedMember,
         {
@@ -3927,12 +3996,80 @@
           mutationState,
           onMutationReconciliationRequired: requestMutationReconciliation,
         },
+        preserveExisting ? -1 : 0,
+      )
+    }
+    // F68: a first read of a session (boot or an auth change) that fails for
+    // any reason except a missing member is retried after each
+    // INITIAL_READ_RETRY_DELAYS_MS delay. `attempt` counts the retries
+    // already run; -1 marks a read that keeps the rendered list and gets no
+    // retry. A retry reuses the session's generation and options, so it goes
+    // through the same serialized refresh, keeps the deep-link focus, and
+    // does not reset the sections to loading. The unavailable display stays
+    // until a read succeeds.
+    let parkedRetry = null
+    let visibilityWired = false
+    const readSession = function (generation, useSharedMember, refreshOptions, attempt) {
+      let retryable = false
+      const attemptOptions = Object.assign({}, refreshOptions)
+      if (attempt >= 0) {
+        attemptOptions.onRetryableFailure = function () {
+          retryable = true
+        }
+      }
+      if (attempt > 0) attemptOptions.heroAfterRead = true
+      return refreshCurrentSession(
+        generation,
+        useSharedMember,
+        attemptOptions,
       ).then(function (refreshed) {
-        if (refreshed === true && generation === currentGeneration()) {
+        if (generation !== currentGeneration()) return refreshed
+        if (refreshed === true) {
           initialReadinessPending = false
+        } else if (retryable) {
+          scheduleFirstReadRetry(generation, refreshOptions, attempt)
         }
         return refreshed
       })
+    }
+    const waitUntilVisible = function (run) {
+      const doc = global.document
+      if (!doc || typeof doc.addEventListener !== 'function') return false
+      parkedRetry = run
+      if (!visibilityWired) {
+        visibilityWired = true
+        doc.addEventListener('visibilitychange', function () {
+          if (pageHidden() || !parkedRetry) return
+          const resume = parkedRetry
+          parkedRetry = null
+          resume()
+        })
+      }
+      return true
+    }
+    const scheduleFirstReadRetry = function (generation, refreshOptions, attempt) {
+      const delayMs = INITIAL_READ_RETRY_DELAYS_MS[attempt]
+      if (!(delayMs > 0) || typeof global.setTimeout !== 'function') return
+      const runRetry = function () {
+        // A newer session owns the page and has its own retry budget.
+        if (generation !== currentGeneration()) return
+        // A hidden page keeps the retry, without spending it, until the page
+        // is visible again.
+        if (pageHidden()) {
+          if (!waitUntilVisible(runRetry)) global.setTimeout(runRetry, delayMs)
+          return
+        }
+        // A retry reads the live member, never the boot-time shared snapshot
+        // (`window.memberReady`). That snapshot can predate a profile save,
+        // and a rejected snapshot can never recover. The first attempt has
+        // already passed the readiness boundary, so the short member retries
+        // of every later read apply.
+        readSession(generation, false, refreshOptions, attempt + 1)
+          .catch(function (error) {
+            console.error('[dashboard-calls] first read retry failed:', error && error.message)
+          })
+      }
+      global.setTimeout(runRetry, delayMs)
     }
     const refreshAfterMutation = function () {
       return restart({ preserveExisting: true })

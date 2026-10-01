@@ -114,14 +114,20 @@
             const link = e.target.closest("a[href='#join-starters-cta']");
             if (!link?.closest("[data-join-starters-link]") || document.getElementById("join-starters-cta")) return;
             e.preventDefault();
-            const modal = modalSystem.list["join-starters-modal"];
-            try {
-                if (!modal?.open) throw new Error("Membership dialog unavailable");
-                modal.open();
-                if (!modal.el?.open) throw new Error("Membership dialog did not open");
-            } catch (_) {
-                location.assign("/quiz-results#join-starters-cta");
+            const generic = modalSystem.list["join-starters-modal"];
+            const contextual = modalSystem.list["signup-modal"];
+            const paidArticleOffer = contextual?.el?.querySelector("[join-cta='monthly']") &&
+                contextual.el.querySelector("[join-cta='yearly']") ? contextual : null;
+            for (const modal of [generic, paidArticleOffer]) {
+                if (!modal?.open) continue;
+                try {
+                    modal.open();
+                    if (modal.el?.open) return;
+                } catch (_) {
+                    // Try the other membership offer before leaving this page.
+                }
             }
+            location.assign("/why-us#join-starters-cta");
         });
         document.addEventListener("click", (e) => {
             const tab = e.target.closest("[join-cta-tabs]");
