@@ -10256,3 +10256,71 @@ test('F68: a retry after a rejected boot member snapshot reads the live member a
   assert.equal(env.sections.calls.cards.length, 1)
   assert.deepEqual(env.delays(), [])
 })
+
+test('F68: a Brand retry leaves the hero clear while its read runs and after it fails', async () => {
+  const held = deferred()
+  const env = await bootRetryDashboard([f68Hang, () => held.promise, f68Rows([])], {
+    brand: { member: { id: 'mem_brand', customFields: F68_OLD_PROFILE } },
+  })
+  await failFirstRead(env)
+  assert.deepEqual(env.hero(), ['', '', ''])
+
+  await env.fire(3000)
+  assert.equal(env.state.reads, 2)
+  assert.deepEqual(env.hero(), ['', '', ''], 'the hero stays clear while the retry read runs')
+  held.resolve({ ok: false, json: async () => ({}) })
+  await env.settle()
+  assert.equal(env.sections.calls.state, 'error')
+  assert.deepEqual(env.hero(), ['', '', ''], 'the failed retry shows no name')
+
+  await env.fire(10_000)
+  assert.equal(env.state.reads, 3)
+  assert.equal(env.root.getAttribute('data-dashboard-calls-v3'), 'ready')
+  assert.deepEqual(env.hero(), ['Olive', 'Stone', 'OldCo'], 'a successful retry paints the hero')
+})
+
+test('F68: a failed Brand retry keeps a hero repainted by a profile save', async () => {
+  const env = await bootRetryDashboard([f68Hang, f68Fail, f68Rows([])], {
+    brand: {
+      member: { id: 'mem_brand', customFields: F68_OLD_PROFILE },
+      saved: F68_NEW_PROFILE,
+    },
+  })
+  await failFirstRead(env)
+  env.state.member = { id: 'mem_brand', customFields: F68_NEW_PROFILE }
+  await env.submitProfile()
+  assert.deepEqual(env.hero(), ['Nina', 'Stone', 'NewCo'])
+
+  await env.fire(3000)
+  assert.equal(env.state.reads, 2)
+  assert.equal(env.sections.calls.state, 'error')
+  assert.deepEqual(env.hero(), ['Nina', 'Stone', 'NewCo'], 'a failed retry does not clear the saved profile')
+
+  await env.fire(10_000)
+  assert.equal(env.state.reads, 3)
+  assert.equal(env.sections.calls.state, 'empty')
+  assert.deepEqual(env.hero(), ['Nina', 'Stone', 'NewCo'])
+})
+
+test('F68: a Brand retry that finds no member still clears the hero', async () => {
+  const env = await bootRetryDashboard([f68Hang, f68Rows([])], {
+    brand: {
+      member: { id: 'mem_brand', customFields: F68_OLD_PROFILE },
+      saved: F68_NEW_PROFILE,
+    },
+  })
+  await failFirstRead(env)
+  env.state.member = { id: 'mem_brand', customFields: F68_NEW_PROFILE }
+  await env.submitProfile()
+  assert.deepEqual(env.hero(), ['Nina', 'Stone', 'NewCo'])
+
+  env.state.member = null
+  await env.fire(3000)
+  for (let step = 0; step < 5 && env.delays().some((delay) => delay < 3000); step += 1) {
+    await env.fire(env.delays()[0])
+  }
+  assert.equal(env.state.reads, 1, 'no canonical read runs without a member')
+  assert.equal(env.root.getAttribute('data-dashboard-calls-v3'), 'error')
+  assert.deepEqual(env.hero(), ['', '', ''], 'a missing member fails closed')
+  assert.deepEqual(env.delays(), [])
+})

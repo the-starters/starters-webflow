@@ -2911,8 +2911,11 @@ and does not reset the sections to loading. A retry reads the live
 Memberstack member, not the boot-time `window.memberReady` snapshot, with the
 short member retries of every later read (`MEMBER_RETRY_DELAYS_MS`). So a
 Brand profile saved during the retries stays on the hero, and a rejected
-snapshot does not block the recovery. The unavailable display and its
-copy stay until a read succeeds. No copy is added. A retry that comes due
+snapshot does not block the recovery. On the Brand dashboard, a retry paints
+the hero only after its read succeeds. A failed retry leaves the hero as it
+was: the name does not flash during the retries, and a profile-save repaint
+stays. A retry that finds no member still clears the hero. The unavailable
+display and its copy stay until a read succeeds. No copy is added. A retry that comes due
 while `document.visibilityState` is `hidden` waits for a `visibilitychange`
 to a visible page, and it spends no budget while it waits. An auth change ends
 the old schedule, and the new session's first read gets its own budget. A

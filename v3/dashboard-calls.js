@@ -3771,6 +3771,9 @@
     options,
   ) {
     const preserveExisting = Boolean(options && options.preserveExisting)
+    // F68: a first-read retry paints the Brand hero only after its read
+    // succeeds, so a failing retry does not flash the name on and off.
+    const heroAfterRead = Boolean(options && options.heroAfterRead)
     const mutationState = options && options.mutationState
     const mutationSnapshot = snapshotBookingMutations(mutationState)
     try {
@@ -3805,7 +3808,7 @@
         missing.memberMissing = true
         throw missing
       }
-      bindBrandHero(member)
+      if (!heroAfterRead) bindBrandHero(member)
       const canonicalRows = (await fetchBookings(memberId)).filter(function (booking) {
         return memberOwnsBooking(booking, memberId, role)
       })
@@ -3844,6 +3847,7 @@
       })
       refreshMeetingDestinations(refs)
       refreshOpenDetailPanel(refs, role)
+      if (heroAfterRead) bindBrandHero(member)
       document.documentElement.setAttribute('data-dashboard-calls-v3', 'ready')
       if (options && typeof options.onCanonicalRows === 'function') {
         options.onCanonicalRows(rows, memberId, role)
@@ -3871,7 +3875,10 @@
         return false
       }
       if (preserveExisting) resetIdentityState(refs, role, mutationState)
-      clearBrandHero(role)
+      // A retry painted no hero. The failed first read already cleared it, and
+      // a later paint came from a verified profile save, so a retry clears it
+      // again only for a missing member.
+      if (!heroAfterRead || memberMissing) clearBrandHero(role)
       refs.forEach(renderFailure)
       document.documentElement.setAttribute('data-dashboard-calls-v3', 'error')
       console.error('[dashboard-calls] failed closed:', error && error.message)
@@ -4008,6 +4015,7 @@
           retryable = true
         }
       }
+      if (attempt > 0) attemptOptions.heroAfterRead = true
       return refreshCurrentSession(
         generation,
         useSharedMember,
