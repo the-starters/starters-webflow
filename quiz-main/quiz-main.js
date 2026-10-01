@@ -149,6 +149,7 @@
     let membershipCheck
     let waitingToEnterSignup = false
     let redirectingToResults = false
+    let awaitingFinalContinue = false
 
     // True once a returning member's previously saved answers have been merged
     // into the form from Memberstack member JSON (retake prefill).
@@ -1468,8 +1469,17 @@
             return
         }
 
+        if (awaitingFinalContinue) return
+
         if (membershipStatus === 'pending') {
-            await membershipCheck
+            awaitingFinalContinue = true
+            if (continueButton) continueButton.disabled = true
+            try {
+                await membershipCheck
+            } finally {
+                awaitingFinalContinue = false
+                if (continueButton) continueButton.disabled = false
+            }
         }
 
         saveReadyQuiz()

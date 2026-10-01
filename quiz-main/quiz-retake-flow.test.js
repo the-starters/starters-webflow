@@ -434,6 +434,85 @@ test('an unavailable membership check keeps answers recoverable through signup',
     assert.equal(quiz.pending().status, 'ready')
 })
 
+function setupLegacyStepQuiz({ delayedMember = true } = {}) {
+    const document = element('document')
+    const storage = new Map()
+    const navigations = []
+    let resolveMember
+    const memberPromise = delayedMember
+        ? new Promise((resolve) => { resolveMember = resolve })
+        : Promise.resolve({ data: { id: 'member-1' } })
+
+    const category = choice('paid-media', null, 'Paid Media')
+    category.input.setAttribute('data-category-value', '')
+    category.input.checked = true
+    const categoriesForm = element('form', { 'data-quiz-form': 'categories' }, [category.wrapper])
+    const categoriesStep = element('div', { 'data-main-is-categories': '' }, [categoriesForm])
+
+    const subcategory = choice('media-ads', 'paid-media', 'Media Ads')
+    const subcategoriesForm = element('form', { 'data-quiz-form': 'subcategories' }, [subcategory.wrapper])
+    const subcategoriesStep = element('div', { 'data-main-is-subcategories': '' }, [subcategoriesForm])
+
+    const stepNext = element('div', { 'data-step-next': '' }, [element('button')])
+    const stepBack = element('div', { 'data-step-back': '' }, [element('button')])
+
+    document.append(categoriesStep, subcategoriesStep, stepNext, stepBack)
+
+    const window = {
+        location: { search: '?retake=true', assign: (path) => navigations.push(path) },
+        setTimeout: (callback, delay) => setTimeout(callback, delay),
+        clearTimeout,
+        addEventListener: () => {},
+        $memberstackDom: {
+            getCurrentMember: () => memberPromise,
+            getMemberJSON: async () => ({ data: {} }),
+        },
+    }
+    const sessionStorage = {
+        getItem: (key) => storage.get(key) || null,
+        setItem: (key, value) => storage.set(key, String(value)),
+        removeItem: (key) => storage.delete(key),
+    }
+    const context = { window, document, sessionStorage, localStorage: sessionStorage, URLSearchParams, Event: TestEvent, setTimeout, requestAnimationFrame: (callback) => setTimeout(callback, 0), console, location: { search: '', href: 'https://example.com/quiz' }, Date }
+    vm.runInNewContext(mainSource, context)
+    document.dispatchEvent(new TestEvent('DOMContentLoaded'))
+
+    const continueButton = stepNext.querySelector('button')
+
+    return {
+        category,
+        subcategory,
+        continueButton,
+        continueTwice: () => {
+            continueButton.click()
+            continueButton.click()
+        },
+        pending: () => JSON.parse(sessionStorage.getItem('starterQuizPending')),
+        navigations,
+        resolveMember,
+        settle: () => new Promise((resolve) => setTimeout(resolve, 5)),
+    }
+}
+
+test('double-clicking Continue during a pending membership check does not double-navigate', async () => {
+    const quiz = setupLegacyStepQuiz({ delayedMember: true })
+
+    quiz.continueButton.click()
+    await quiz.settle()
+
+    quiz.subcategory.input.checked = true
+    quiz.subcategory.input.dispatchEvent(new TestEvent('change', { bubbles: true }))
+
+    quiz.continueTwice()
+    assert.equal(quiz.continueButton.disabled, true)
+
+    quiz.resolveMember({ data: { id: 'member-1' } })
+    await quiz.settle()
+
+    assert.deepEqual(quiz.navigations, ['/quiz-results'])
+    assert.equal(quiz.continueButton.disabled, false)
+})
+
 test('a membership check that never settles eventually opens a recoverable signup', async () => {
     const quiz = setup({ member: 'never' })
     quiz.next()
