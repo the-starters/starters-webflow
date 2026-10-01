@@ -122,8 +122,9 @@ step layout and the tab-driven layout. It:
 - saves `sessionStorage.starterQuizPending` as answers change (`draft`, also
   written once on page load) and before signup or results navigation (`ready`);
   and
-- sends a logged-in retaker directly from the final quiz step to
-  `/quiz-results`, bypassing the signup step; and
+- sends a logged-in retaker directly from the final visible quiz step to
+  `/quiz-results`, bypassing the signup step; if the Memberstack check is still
+  pending, Continue waits for it before choosing signup or results; and
 - owns the post-signup redirect attributes on the signup form (next section).
 
 ### Restore-order contract
@@ -244,9 +245,8 @@ Optional integrations:
 - `[data-start-heading]` contains the alternative
   `[data-start-default]` and `[data-start-filled]` copy.
 - Tab-driven subcategory panels use `[data-tab-category-link="<category id>"]`
-  and active slides use `[data-tab-content]`; the final answer slide must be
-  `data-tab-content="ways"` and the signup slide
-  `data-tab-content="signup"`.
+  and active slides use `[data-tab-content]`. The final visible category panel
+  leads to the signup slide, which uses `data-tab-content="signup"`.
 - Non-tab subcategory items use `[data-category="<category id>"]`.
 - `[data-quiz-form="signup"]` and `[data-ms-auth-provider]` triggers cause the ready payload
   to be saved before authentication.
