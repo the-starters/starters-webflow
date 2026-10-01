@@ -8652,7 +8652,7 @@ function acceptActionsModule() {
 // Boots the real controller on /starter-dashboard with a controlled clock,
 // scripted canonical reads, and the captured ten-second lifecycle ticker, then
 // opens the details modal on the view's booking through the details delegate.
-async function bootAcceptDashboard(view, bookingReads, { confirmBody, onConfirm, holdConfirm, holdAfterConfirm } = {}) {
+async function bootAcceptDashboard(view, bookingReads, { confirmBody, onConfirm, holdConfirm, holdAfterConfirm, sections: authoredSections, openDetails = true } = {}) {
   const source = fs.readFileSync(require.resolve('./dashboard-calls.js'), 'utf8')
   const clock = { value: view.now }
   class ClockDate extends Date {
@@ -8682,7 +8682,7 @@ async function bootAcceptDashboard(view, bookingReads, { confirmBody, onConfirm,
     })[selector] || null
     return node
   }
-  const sections = [sectionNode('requests'), sectionNode('calls')]
+  const sections = authoredSections || [sectionNode('requests'), sectionNode('calls')]
   const root = element()
   const document = {
     documentElement: root,
@@ -8780,11 +8780,13 @@ async function bootAcceptDashboard(view, bookingReads, { confirmBody, onConfirm,
   })
   await until(() => state.reads === 1 && root.getAttribute('data-dashboard-calls-v3') === 'ready')
   assert.equal(intervals.length, 1, 'one lifecycle ticker')
-  const card = acceptElement('div', { 'data-booking-id': view.bookingId })
-  const details = acceptElement('a', { 'booking-card-action-btn': 'details' })
-  card.appendChild(details)
-  await click(details)
-  assert.equal(view.modal.getAttribute('data-booking-id'), view.bookingId)
+  if (openDetails) {
+    const card = acceptElement('div', { 'data-booking-id': view.bookingId })
+    const details = acceptElement('a', { 'booking-card-action-btn': 'details' })
+    card.appendChild(details)
+    await click(details)
+    assert.equal(view.modal.getAttribute('data-booking-id'), view.bookingId)
+  }
   return {
     click,
     clock,
@@ -8970,6 +8972,137 @@ test('F53: a card-level Accept commits the call, so a later card Accept sends no
   await env.click(cardAccept)
   assert.equal(env.state.confirms, 1)
   assert.deepEqual(visibleActionErrors(card), [], 'no false "could not be confirmed" alert')
+})
+
+// F53 follow-up: a dashboard section whose list holds real card trees, so a
+// test can click a rendered card's own Accept and read its status pill.
+function acceptCardSection(name) {
+  const buildCard = () => {
+    const card = acceptElement('div', { 'bookings-item-template': name })
+    card.ownerDocument = { createElement: (tag) => acceptElement(tag) }
+    const pill = acceptElement('div', { 'booking-element': 'status' })
+    pill.appendChild(acceptElement('div', { 'label-text': '' }, 'Requested'))
+    const expiration = acceptElement('div', { 'booking-item-expiration': 'wrap' })
+    expiration.appendChild(acceptElement('div', { 'booking-item-expiration': 'time' }))
+    card.appendChild(pill)
+    card.appendChild(expiration)
+    card.appendChild(acceptElement('a', { 'booking-card-action-btn': 'switch-confirm' }, 'Accept'))
+    card.appendChild(acceptElement('a', { 'booking-card-action-btn': 'switch-decline' }, 'Decline'))
+    card.cloneNode = buildCard
+    return card
+  }
+  const list = acceptElement('div', { 'bookings-list': name })
+  Object.defineProperty(list, 'innerHTML', {
+    get() { return '' },
+    set(value) { if (value === '') list.children = [] },
+  })
+  const template = buildCard()
+  const node = element({ 'bookings-section': name })
+  node.querySelector = (selector) => ({
+    ['[bookings-list="' + name + '"]']: list,
+    ['[bookings-item-template="' + name + '"]']: template,
+    ['[bookings-loader="' + name + '"]']: element(),
+    ['[bookings-empty="' + name + '"]']: element(),
+    '[bookings-count]': element(),
+    '.tabs-button_component.is-dashboard': element(),
+  })[selector] || null
+  return { list, node }
+}
+
+function acceptCardSnapshot(card) {
+  const find = (selector) => card.querySelector(selector)
+  return {
+    pill: find('[label-text]').textContent,
+    stored: card.getAttribute('data-booking-status'),
+    accept: find('[booking-card-action-btn="switch-confirm"]').hidden,
+    decline: find('[booking-card-action-btn="switch-decline"]').hidden,
+    countdown: find('[booking-item-expiration="wrap"]').hidden,
+  }
+}
+
+test('F53: a card-level Accept repaints the card to Upcoming before the list read returns', async () => {
+  const view = acceptView()
+  // The details modal stays closed: the Starter accepts on the card.
+  view.modal.open = false
+  const pendingRaw = { ...view.booking }
+  const confirmedRaw = { ...pendingRaw, status: 'confirmed', revision: 2 }
+  const postConfirmRead = deferred()
+  const requests = acceptCardSection('requests')
+  const calls = acceptCardSection('calls')
+  const env = await bootAcceptDashboard(view, [
+    () => ({ ok: true, json: async () => [pendingRaw] }),
+    () => postConfirmRead.promise,
+    () => ({ ok: true, json: async () => [confirmedRaw] }),
+  ], { sections: [requests.node, calls.node], openDetails: false })
+  assert.equal(requests.list.children.length, 1)
+  assert.equal(calls.list.children.length, 0)
+  const card = requests.list.children[0]
+  assert.equal(card.getAttribute('data-booking-id'), view.bookingId)
+  assert.deepEqual(acceptCardSnapshot(card), {
+    pill: 'Pending',
+    stored: 'pending',
+    accept: false,
+    decline: false,
+    countdown: false,
+  })
+
+  const accepted = env.click(card.querySelector('[booking-card-action-btn="switch-confirm"]'))
+  await until(() => env.state.reads === 2)
+  // The confirm has answered and the list read has not.
+  assert.equal(env.state.confirms, 1)
+  assert.deepEqual(acceptCardSnapshot(card), {
+    pill: 'Upcoming',
+    stored: 'confirmed',
+    accept: true,
+    decline: true,
+    countdown: true,
+  })
+  assert.equal(requests.list.children[0], card, 'the card moves only on the canonical read')
+  assert.equal(view.modal.hasAttribute('data-booking-id'), false, 'the closed modal is left alone')
+
+  postConfirmRead.resolve({ ok: true, json: async () => [confirmedRaw] })
+  await accepted
+  assert.equal(requests.list.children.length, 0)
+  assert.equal(calls.list.children.length, 1)
+  const moved = calls.list.children[0]
+  assert.equal(moved.getAttribute('data-booking-id'), view.bookingId)
+  assert.equal(acceptCardSnapshot(moved).pill, 'Upcoming')
+  assert.deepEqual(visibleActionErrors(moved), [])
+})
+
+test('F53: a card-level Accept whose commit is refused leaves the card Pending until the list read', async () => {
+  const view = acceptView()
+  view.modal.open = false
+  const pendingRaw = { ...view.booking }
+  const confirmedRaw = { ...pendingRaw, status: 'confirmed', revision: 2 }
+  const postConfirmRead = deferred()
+  const requests = acceptCardSection('requests')
+  const calls = acceptCardSection('calls')
+  const env = await bootAcceptDashboard(view, [
+    () => ({ ok: true, json: async () => [pendingRaw] }),
+    () => postConfirmRead.promise,
+    () => ({ ok: true, json: async () => [confirmedRaw] }),
+  ], {
+    sections: [requests.node, calls.node],
+    openDetails: false,
+    // Another call action takes the booking's claim while the confirm is in
+    // flight, so the owner refuses the Accept's commit.
+    onConfirm() {
+      const options = env.state.moduleOptions
+      options.releaseBookingMutation(options.captureBookingMutation({ booking_id: view.bookingId }))
+    },
+  })
+  const card = requests.list.children[0]
+  const accepted = env.click(card.querySelector('[booking-card-action-btn="switch-confirm"]'))
+  await until(() => env.state.reads === 2)
+  assert.equal(env.state.confirms, 1)
+  assert.equal(acceptCardSnapshot(card).pill, 'Pending', 'a refused commit paints nothing')
+  assert.equal(card.getAttribute('data-booking-status'), 'pending')
+
+  postConfirmRead.resolve({ ok: true, json: async () => [confirmedRaw] })
+  await accepted
+  assert.equal(requests.list.children.length, 0)
+  assert.equal(acceptCardSnapshot(calls.list.children[0]).pill, 'Upcoming')
 })
 
 test('F53: when the owner refuses the commit, the refreshed row repaints the modal and hides the pending copy right after the read', async () => {

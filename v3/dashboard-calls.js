@@ -1615,6 +1615,26 @@
     return card
   }
 
+  /**
+   * F53 follow-up: a card-level Accept kept the card's Pending pill, its
+   * Accept and Decline, and its countdown until the post-confirm list read
+   * returned. Repaint each rendered card of the committed row in place, with
+   * the same painters a render uses and the existing labels. The card moves
+   * to its new section on the canonical read.
+   */
+  function repaintBookingCards(refs, booking, role) {
+    const bookingId = clean(booking && (booking.booking_id || booking.id))
+    if (!bookingId) return
+    ;(Array.isArray(refs) ? refs : []).forEach(function (section) {
+      if (!section || !section.list || typeof section.list.querySelectorAll !== 'function') return
+      section.list.querySelectorAll('[data-booking-id]').forEach(function (card) {
+        if (clean(card.getAttribute('data-booking-id')) === bookingId) {
+          bindCard(card, booking, role)
+        }
+      })
+    })
+  }
+
   function collectSection(section) {
     const name = section.getAttribute('bookings-section')
     const list = section.querySelector('[bookings-list="' + name + '"]')
@@ -3619,6 +3639,8 @@
           status: confirmedStatus,
         }, claim)
         if (committed) {
+          const committedRow = bookingById(refs, bookingId)
+          if (committedRow) repaintBookingCards(refs, committedRow, role)
           refreshOpenDetailPanel(refs, role)
           refreshDetailExpiration(refs, role)
         }

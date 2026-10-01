@@ -2635,6 +2635,13 @@ against the refreshed row. When every later read fails, the committed row keeps
 the confirmed view, and a stale second Accept sends no request and shows no
 error. A refused commit (the row changed or left the list) changes nothing,
 and the refresh repaints instead. A card-level Accept takes the same commit.
+After a successful commit, the controller also repaints each rendered card of
+that call in place, with the same card painters and the existing labels: the
+pill shows "Upcoming", `data-booking-status` becomes `confirmed`, and Accept,
+Decline, and the request countdown hide. This covers an Accept on the card
+with the details dialog closed. The card stays in its section until the
+canonical read moves it from Requests to Calls. A refused commit leaves the
+card as it was.
 All other legacy mutation controls stay hidden until they have current V3-safe
 endpoint contracts.
 
