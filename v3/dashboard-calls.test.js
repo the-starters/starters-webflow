@@ -9715,3 +9715,323 @@ test('F53: an Accept queued behind an earlier Accept takes no claim until the sl
   assert.deepEqual(visibleActionErrors(view.modal), [])
   assert.deepEqual(visibleActionErrors(card), [])
 })
+
+// F68 (production, 2026-09-30 22:05:56 and 22:07:49 UTC): the first canonical
+// read timed out, both call lists showed the unavailable copy, and nothing
+// read the lists again until a reload. This harness boots the real controller
+// with a hand-driven timer table, so a test can fire the 10 s read deadline
+// and each retry timer itself.
+const F68_EMPTY_COPY = {
+  requests: ['No call requests to show.', 'New requests will appear here as they come in.'],
+  calls: ['No calls to show.', 'Scheduled consultations and past calls will appear here.'],
+}
+const F68_UNAVAILABLE_COPY = {
+  requests: ['Call requests are unavailable right now.', 'Refresh the page to try again.'],
+  calls: ['Calls are unavailable right now.', 'Refresh the page to try again.'],
+}
+
+function f68Row(extra = {}) {
+  const now = Date.now()
+  return {
+    booking_id: 'f68-call',
+    status: 'confirmed',
+    start: now + 2 * 24 * 60 * 60 * 1000,
+    end: now + 2 * 24 * 60 * 60 * 1000 + 30 * 60 * 1000,
+    duration: 30,
+    meeting_link: 'https://meet.google.com/f68-room',
+    brand_data: { name: 'Northwind', memberstack_id: 'mem_brand', timezone: 'UTC' },
+    starter_data: { name: 'Sam', memberstack_id: 'mem_starter', timezone: 'UTC' },
+    ...extra,
+  }
+}
+
+const f68Hang = () => new Promise(() => {})
+const f68Fail = () => ({ ok: false, json: async () => ({}) })
+const f68Rows = (rows) => () => ({ ok: true, json: async () => rows })
+
+async function bootRetryDashboard(reads) {
+  const source = fs.readFileSync(require.resolve('./dashboard-calls.js'), 'utf8')
+  const timers = new Map()
+  let nextTimer = 0
+  const state = { reads: 0, authChange: null, member: { id: 'mem_starter' } }
+  const visibilityListeners = []
+  const sections = {}
+  const sectionNode = (name) => {
+    const cards = []
+    const list = element({ 'bookings-list': name })
+    list.appendChild = (card) => { cards.push(card); return card }
+    Object.defineProperty(list, 'innerHTML', {
+      get() { return '' },
+      set(value) { if (value === '') cards.length = 0 },
+    })
+    const template = element({ 'bookings-item-template': name })
+    const heading = element()
+    heading.textContent = F68_EMPTY_COPY[name][0]
+    const paragraph = element()
+    paragraph.textContent = F68_EMPTY_COPY[name][1]
+    const empty = element({ 'bookings-empty': name })
+    empty.querySelector = (selector) => (
+      selector === 'h1,h2,h3,h4,h5,h6' ? heading : selector === 'p' ? paragraph : null
+    )
+    const node = element({ 'bookings-section': name })
+    const states = []
+    const setAttribute = node.setAttribute
+    node.setAttribute = function (attribute, value) {
+      if (attribute === 'data-bookings-state') states.push(value)
+      return setAttribute.call(this, attribute, value)
+    }
+    node.querySelector = (selector) => ({
+      ['[bookings-list="' + name + '"]']: list,
+      ['[bookings-item-template="' + name + '"]']: template,
+      ['[bookings-loader="' + name + '"]']: element(),
+      ['[bookings-empty="' + name + '"]']: empty,
+      '[bookings-count]': element(),
+      '.tabs-button_component.is-dashboard': element(),
+    })[selector] || null
+    sections[name] = {
+      cards,
+      empty,
+      node,
+      states,
+      get state() { return node.getAttribute('data-bookings-state') },
+      get copy() { return [heading.textContent, paragraph.textContent] },
+    }
+    return node
+  }
+  const nodes = [sectionNode('requests'), sectionNode('calls')]
+  const root = element()
+  const document = {
+    documentElement: root,
+    readyState: 'complete',
+    visibilityState: 'visible',
+    hidden: false,
+    addEventListener(type, listener) {
+      if (type === 'visibilitychange') visibilityListeners.push(listener)
+    },
+    getElementById() { return null },
+    querySelector() { return null },
+    querySelectorAll(selector) {
+      return selector === '[bookings-section]' ? nodes : []
+    },
+  }
+  const window = {
+    $memberstackDom: {
+      async getCurrentMember() { return state.member && { data: state.member } },
+      onAuthChange(listener) { state.authChange = listener },
+    },
+    clearInterval() {},
+    document,
+    location: { pathname: '/starter-dashboard', search: '', hash: '' },
+    setInterval() { return 1 },
+    setTimeout(callback, delay) {
+      nextTimer += 1
+      timers.set(nextTimer, { callback, delay })
+      return nextTimer
+    },
+    clearTimeout(id) { timers.delete(id) },
+    xanoAuthFetch: async () => {
+      const read = reads[Math.min(state.reads, reads.length - 1)]
+      state.reads += 1
+      return read()
+    },
+  }
+  vm.runInNewContext(source, {
+    console: { error() {}, warn() {}, log() {} },
+    document,
+    Intl,
+    URL,
+    URLSearchParams,
+    window,
+  })
+  const settle = async () => {
+    for (let step = 0; step < 30; step += 1) await new Promise(setImmediate)
+  }
+  const active = () => Array.from(timers.entries()).map(([id, timer]) => ({ id, delay: timer.delay }))
+  return {
+    document,
+    root,
+    sections,
+    state,
+    timers,
+    settle,
+    active,
+    delays: () => active().map((timer) => timer.delay),
+    // Runs the one armed timer with this delay, as the browser would.
+    async fire(delay) {
+      const due = Array.from(timers.entries()).filter(([, timer]) => timer.delay === delay)
+      assert.equal(due.length, 1, 'one armed ' + delay + ' ms timer')
+      timers.delete(due[0][0])
+      due[0][1].callback()
+      await settle()
+    },
+    async setVisibility(visibility) {
+      document.visibilityState = visibility
+      document.hidden = visibility === 'hidden'
+      visibilityListeners.forEach((listener) => listener({ type: 'visibilitychange' }))
+      await settle()
+    },
+  }
+}
+
+async function failFirstRead(env) {
+  await until(() => env.state.reads === 1 && env.delays().includes(10_000))
+  // The first read hangs past its 10 s deadline, as the production reads did.
+  await env.fire(10_000)
+  assert.equal(env.root.getAttribute('data-dashboard-calls-v3'), 'error')
+  for (const name of ['requests', 'calls']) {
+    assert.equal(env.sections[name].state, 'error', name + ' shows the failure')
+    assert.deepEqual(env.sections[name].copy, F68_UNAVAILABLE_COPY[name])
+  }
+}
+
+test('F68: a timed-out first read retries 3 s later and renders the lists without a reload', async () => {
+  const env = await bootRetryDashboard([f68Hang, f68Rows([f68Row()])])
+  await failFirstRead(env)
+  assert.deepEqual(env.delays(), [3000], 'one retry is armed 3 s after the failed read')
+  const statesAfterFailure = {
+    requests: env.sections.requests.states.length,
+    calls: env.sections.calls.states.length,
+  }
+
+  await env.fire(3000)
+  assert.equal(env.state.reads, 2)
+  assert.equal(env.root.getAttribute('data-dashboard-calls-v3'), 'ready')
+  assert.equal(env.sections.calls.state, 'ready')
+  assert.equal(env.sections.calls.cards.length, 1)
+  assert.equal(env.sections.calls.cards[0].getAttribute('data-booking-id'), 'f68-call')
+  assert.equal(env.sections.requests.state, 'empty')
+  assert.equal(env.sections.requests.empty.hidden, false)
+  assert.deepEqual(env.sections.requests.copy, F68_EMPTY_COPY.requests, 'the authored empty copy is back')
+  assert.deepEqual(env.sections.calls.copy, F68_EMPTY_COPY.calls)
+  for (const name of ['requests', 'calls']) {
+    assert.equal(
+      env.sections[name].states.slice(statesAfterFailure[name]).includes('loading'),
+      false,
+      name + ' never flashes back to loading during the retry',
+    )
+  }
+  assert.deepEqual(env.delays(), [], 'a successful retry arms nothing more')
+})
+
+test('F68: failed retries keep the unavailable copy and stop after the 3, 10 and 30 s retries', async () => {
+  const env = await bootRetryDashboard([f68Hang, f68Fail])
+  await failFirstRead(env)
+  const retryDelays = []
+  for (let retry = 1; retry <= 3; retry += 1) {
+    const delays = env.delays()
+    assert.equal(delays.length, 1, 'one retry is armed after read ' + retry)
+    retryDelays.push(delays[0])
+    await env.fire(delays[0])
+    assert.equal(env.state.reads, retry + 1)
+    assert.equal(env.root.getAttribute('data-dashboard-calls-v3'), 'error')
+    for (const name of ['requests', 'calls']) {
+      assert.equal(env.sections[name].state, 'error')
+      assert.deepEqual(env.sections[name].copy, F68_UNAVAILABLE_COPY[name], 'no new copy')
+    }
+  }
+  assert.deepEqual(retryDelays, [3000, 10_000, 30_000])
+  assert.deepEqual(env.delays(), [], 'the retry budget is spent')
+  assert.equal(env.state.reads, 4)
+})
+
+test('F68: a retry that comes due while the page is hidden waits until the page is visible', async () => {
+  const env = await bootRetryDashboard([f68Hang, f68Rows([f68Row()])])
+  await failFirstRead(env)
+  await env.setVisibility('hidden')
+  await env.fire(3000)
+  assert.equal(env.state.reads, 1, 'no read runs while the page is hidden')
+  assert.deepEqual(env.delays(), [])
+  assert.equal(env.sections.calls.state, 'error')
+
+  // Another hidden notification does not start the parked retry.
+  await env.setVisibility('hidden')
+  assert.equal(env.state.reads, 1)
+
+  await env.setVisibility('visible')
+  assert.equal(env.state.reads, 2, 'the parked retry runs once the page is visible')
+  assert.equal(env.sections.calls.state, 'ready')
+  assert.equal(env.sections.calls.cards.length, 1)
+
+  await env.setVisibility('hidden')
+  await env.setVisibility('visible')
+  assert.equal(env.state.reads, 2, 'a later visible page starts no read')
+})
+
+test('F68: a parked hidden retry spends no budget, so the full schedule still follows', async () => {
+  const env = await bootRetryDashboard([f68Hang, f68Fail])
+  await failFirstRead(env)
+  await env.setVisibility('hidden')
+  await env.fire(3000)
+  assert.equal(env.state.reads, 1)
+  await env.setVisibility('visible')
+  assert.equal(env.state.reads, 2)
+  assert.deepEqual(env.delays(), [10_000])
+  await env.fire(10_000)
+  assert.deepEqual(env.delays(), [30_000])
+  await env.fire(30_000)
+  assert.equal(env.state.reads, 4)
+  assert.deepEqual(env.delays(), [])
+})
+
+test('F68: an auth change ends the old retry schedule and gives the new session its own', async () => {
+  const env = await bootRetryDashboard([f68Hang, f68Fail, f68Rows([f68Row()])])
+  await failFirstRead(env)
+  const [oldRetry] = env.active()
+  assert.equal(oldRetry.delay, 3000)
+  const oldCallback = env.timers.get(oldRetry.id).callback
+  env.timers.delete(oldRetry.id)
+
+  // The new session's first read fails fast and arms its own retry.
+  env.state.authChange()
+  await until(() => env.state.reads === 2)
+  await env.settle()
+  assert.deepEqual(env.delays(), [3000])
+
+  // The old session's retry comes due and reads nothing.
+  oldCallback()
+  await env.settle()
+  assert.equal(env.state.reads, 2)
+
+  await env.fire(3000)
+  assert.equal(env.state.reads, 3)
+  assert.equal(env.sections.calls.state, 'ready')
+  assert.deepEqual(env.delays(), [])
+})
+
+test('F68: no retry is armed while a retry read is in flight', async () => {
+  const held = deferred()
+  const env = await bootRetryDashboard([f68Hang, () => held.promise, f68Rows([f68Row()])])
+  await failFirstRead(env)
+  await env.fire(3000)
+  assert.equal(env.state.reads, 2)
+  const inFlight = env.active()
+  assert.equal(inFlight.length, 1, 'only the held read deadline is armed')
+  assert.equal(inFlight[0].delay, 10_000)
+
+  held.resolve({ ok: false, json: async () => ({}) })
+  await env.settle()
+  const next = env.active()
+  assert.equal(next.length, 1)
+  assert.equal(next[0].delay, 10_000)
+  assert.notEqual(next[0].id, inFlight[0].id, 'the next retry is armed only after the held read failed')
+  assert.equal(env.timers.has(inFlight[0].id), false, 'the held read deadline is cleared')
+  assert.equal(env.state.reads, 2)
+
+  await env.fire(10_000)
+  assert.equal(env.state.reads, 3)
+  assert.equal(env.sections.calls.state, 'ready')
+})
+
+test('F68: a member that goes missing during the retries stops the schedule', async () => {
+  const env = await bootRetryDashboard([f68Hang, f68Rows([f68Row()])])
+  await failFirstRead(env)
+  env.state.member = null
+  await env.fire(3000)
+  // The initial readiness window waits for Memberstack before it gives up.
+  for (let step = 0; step < 20 && env.delays().some((delay) => delay < 3000); step += 1) {
+    await env.fire(env.delays()[0])
+  }
+  assert.equal(env.state.reads, 1, 'no canonical read runs without a member')
+  assert.equal(env.root.getAttribute('data-dashboard-calls-v3'), 'error')
+  assert.deepEqual(env.delays(), [], 'a missing member is not retried')
+})

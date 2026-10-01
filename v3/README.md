@@ -2889,8 +2889,35 @@ canonical read failure log and leave the rendered list in place instead of
 failing the whole dashboard closed. A missing member is the one exception and
 still fails closed.
 
+F68 (production, 2026-09-30 22:05:56 and 22:07:49 UTC): each canonical list
+read has one 10 s deadline (`CANONICAL_READ_TIMEOUT_MS`). The deadline covers
+the auth bridge's token step, the POST, and the body read. A first read that
+timed out showed both sections unavailable, and nothing read the lists again
+until a reload, because the lifecycle ticker re-reads only for rendered rows.
+Now the first read of a session (the boot read, or the read after an auth
+change) is retried when it fails for any reason except a missing member. The
+retries run 3, 10, and 30 s after the failed attempt ends
+(`INITIAL_READ_RETRY_DELAYS_MS`): at most three, and the first success ends
+the schedule. Each retry keeps the session generation and goes through the
+same serialized refresh, so it never overlaps another read of that session
+and does not reset the sections to loading. The unavailable display and its
+copy stay until a read succeeds. No copy is added. A retry that comes due
+while `document.visibilityState` is `hidden` waits for a `visibilitychange`
+to a visible page, and it spends no budget while it waits. An auth change ends
+the old schedule, and the new session's first read gets its own budget. A
+missing member, a missing Memberstack client, and the post-mutation and ticker
+refreshes keep their own failure rules and get no retry. Each attempt keeps
+the 10 s deadline: the retained errors do not show which step used the
+budget, and a fresh attempt after an abort recovers a stuck request sooner
+than a longer deadline. When every attempt times out, the last retry ends
+about 83 s after the boot read started, and a failed page load adds at most
+three canonical POSTs.
+
 Loading, empty, and error displays reuse the authored elements instead of
-generating UI. The filter wrapper stays hidden during identity resolution and
+generating UI. The error display writes its copy into the authored
+`[bookings-empty]` heading and paragraph. The controller keeps the authored
+text first and puts it back on the next successful render, so a section with
+no rows shows its authored empty copy after a recovered failure. The filter wrapper stays hidden during identity resolution and
 on errors, and is shown only when the member's full canonical booking rows for
 that section are non-empty. A selected status that has no matching rows does
 not hide the wrapper, so the member can return to All.

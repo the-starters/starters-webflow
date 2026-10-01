@@ -58,6 +58,14 @@
   const MEETING_LINK_POLL_DELAYS_MS = [45000, 90000, 150000]
   const MUTATION_RECONCILIATION_MAX_PASSES = 3
   const CANONICAL_READ_TIMEOUT_MS = 10000
+  // F68 (production, 2026-09-30): a first read (boot or an auth change) that
+  // timed out left both lists unavailable until a reload, because the
+  // lifecycle ticker re-reads only for rendered rows. Retry that read once
+  // after each of these delays, counted from the end of the failed attempt:
+  // at most 3 retries, never while the page is hidden. Each attempt keeps the
+  // 10 s deadline above.
+  const INITIAL_READ_RETRY_DELAYS_MS = [3000, 10000, 30000]
+  const EMPTY_COPY_SELECTORS = ['h1,h2,h3,h4,h5,h6', 'p']
   const PROFILE_REFRESH_DELAYS_MS = [0, 150, 300, 600, 1000, 1600, 2500]
   const DEEP_LINK_READY_DELAYS_MS = [0, 100, 250, 500, 1000, 1600]
   const PROFILE_FORM_SELECTOR = 'form[data-ms-form="profile"]'
@@ -1676,6 +1684,7 @@
   }
 
   function renderSection(refs, role, reset) {
+    restoreAuthoredEmptyCopy(refs)
     if (reset) {
       refs.rendered = 0
       refs.list.innerHTML = ''
@@ -3689,12 +3698,36 @@
     document.documentElement.setAttribute('data-dashboard-calls-v3', 'loading')
   }
 
+  /**
+   * F68: the failure display writes its copy into the authored empty-state
+   * heading and paragraph. Keep the authored text before the first overwrite,
+   * so a later successful read with no rows shows the authored copy again.
+   */
+  function rememberAuthoredEmptyCopy(refs) {
+    if (!refs || !refs.empty || refs.authoredEmptyCopy) return
+    if (typeof refs.empty.querySelector !== 'function') return
+    refs.authoredEmptyCopy = EMPTY_COPY_SELECTORS.map(function (selector) {
+      const node = refs.empty.querySelector(selector)
+      return node ? { node, text: node.textContent } : null
+    }).filter(Boolean)
+  }
+
+  function restoreAuthoredEmptyCopy(refs) {
+    const saved = refs && refs.authoredEmptyCopy
+    if (!saved) return
+    saved.forEach(function (entry) {
+      entry.node.textContent = entry.text
+    })
+    refs.authoredEmptyCopy = null
+  }
+
   function renderFailure(refs) {
     show(refs.loader, false)
     show(refs.list, false)
     show(refs.loadMore, false)
     show(refs.filters, false)
     show(refs.empty, true)
+    rememberAuthoredEmptyCopy(refs)
     text(
       refs.empty,
       'h1,h2,h3,h4,h5,h6',
@@ -3820,6 +3853,11 @@
       refs.forEach(renderFailure)
       document.documentElement.setAttribute('data-dashboard-calls-v3', 'error')
       console.error('[dashboard-calls] failed closed:', error && error.message)
+      // F68: a member that stays missing is definitive. Any other failure
+      // (a timed-out or failed canonical read) may be retried by the caller.
+      if (!memberMissing && options && typeof options.onRetryableFailure === 'function') {
+        options.onRetryableFailure()
+      }
       return false
     }
   }
@@ -3918,7 +3956,7 @@
               })
           }
         : null
-      return refreshCurrentSession(
+      return readSession(
         generation,
         useSharedMember,
         {
@@ -3927,12 +3965,74 @@
           mutationState,
           onMutationReconciliationRequired: requestMutationReconciliation,
         },
+        preserveExisting ? -1 : 0,
+      )
+    }
+    // F68: a first read of a session (boot or an auth change) that fails for
+    // any reason except a missing member is retried after each
+    // INITIAL_READ_RETRY_DELAYS_MS delay. `attempt` counts the retries
+    // already run; -1 marks a read that keeps the rendered list and gets no
+    // retry. A retry reuses the session's generation and options, so it goes
+    // through the same serialized refresh, keeps the deep-link focus, and
+    // does not reset the sections to loading. The unavailable display stays
+    // until a read succeeds.
+    let parkedRetry = null
+    let visibilityWired = false
+    const readSession = function (generation, useSharedMember, refreshOptions, attempt) {
+      let retryable = false
+      const attemptOptions = Object.assign({}, refreshOptions)
+      if (attempt >= 0) {
+        attemptOptions.onRetryableFailure = function () {
+          retryable = true
+        }
+      }
+      return refreshCurrentSession(
+        generation,
+        useSharedMember,
+        attemptOptions,
       ).then(function (refreshed) {
-        if (refreshed === true && generation === currentGeneration()) {
+        if (generation !== currentGeneration()) return refreshed
+        if (refreshed === true) {
           initialReadinessPending = false
+        } else if (retryable) {
+          scheduleFirstReadRetry(generation, useSharedMember, refreshOptions, attempt)
         }
         return refreshed
       })
+    }
+    const waitUntilVisible = function (run) {
+      const doc = global.document
+      if (!doc || typeof doc.addEventListener !== 'function') return false
+      parkedRetry = run
+      if (!visibilityWired) {
+        visibilityWired = true
+        doc.addEventListener('visibilitychange', function () {
+          if (pageHidden() || !parkedRetry) return
+          const resume = parkedRetry
+          parkedRetry = null
+          resume()
+        })
+      }
+      return true
+    }
+    const scheduleFirstReadRetry = function (generation, useSharedMember, refreshOptions, attempt) {
+      const delayMs = INITIAL_READ_RETRY_DELAYS_MS[attempt]
+      if (!(delayMs > 0) || typeof global.setTimeout !== 'function') return
+      const runRetry = function () {
+        // A newer session owns the page and has its own retry budget.
+        if (generation !== currentGeneration()) return
+        // A hidden page keeps the retry, without spending it, until the page
+        // is visible again.
+        if (pageHidden()) {
+          if (!waitUntilVisible(runRetry)) global.setTimeout(runRetry, delayMs)
+          return
+        }
+        readSession(generation, useSharedMember, refreshOptions, attempt + 1)
+          .catch(function (error) {
+            console.error('[dashboard-calls] first read retry failed:', error && error.message)
+          })
+      }
+      global.setTimeout(runRetry, delayMs)
     }
     const refreshAfterMutation = function () {
       return restart({ preserveExisting: true })
