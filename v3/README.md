@@ -2907,7 +2907,11 @@ retries run 3, 10, and 30 s after the failed attempt ends
 (`INITIAL_READ_RETRY_DELAYS_MS`): at most three, and the first success ends
 the schedule. Each retry keeps the session generation and goes through the
 same serialized refresh, so it never overlaps another read of that session
-and does not reset the sections to loading. The unavailable display and its
+and does not reset the sections to loading. A retry reads the live
+Memberstack member, not the boot-time `window.memberReady` snapshot, with the
+short member retries of every later read (`MEMBER_RETRY_DELAYS_MS`). So a
+Brand profile saved during the retries stays on the hero, and a rejected
+snapshot does not block the recovery. The unavailable display and its
 copy stay until a read succeeds. No copy is added. A retry that comes due
 while `document.visibilityState` is `hidden` waits for a `visibilitychange`
 to a visible page, and it spends no budget while it waits. An auth change ends

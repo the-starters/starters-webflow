@@ -9882,11 +9882,34 @@ const f68Hang = () => new Promise(() => {})
 const f68Fail = () => ({ ok: false, json: async () => ({}) })
 const f68Rows = (rows) => () => ({ ok: true, json: async () => rows })
 
-async function bootRetryDashboard(reads) {
+// `memberReady` is the boot-time shared member snapshot (`window.memberReady`).
+// `brand` boots /brand-dashboard instead: `brand.member` is what Memberstack
+// returns live, `brand.saved` is the native profile form's values, and the
+// harness exposes the hero text and the form's submit.
+async function bootRetryDashboard(reads, { brand, memberReady } = {}) {
   const source = fs.readFileSync(require.resolve('./dashboard-calls.js'), 'utf8')
   const timers = new Map()
   let nextTimer = 0
-  const state = { reads: 0, authChange: null, member: { id: 'mem_starter' } }
+  const state = {
+    reads: 0,
+    authChange: null,
+    member: brand ? brand.member : { id: 'mem_starter' },
+  }
+  const heroes = {
+    'brand-first-name': element(),
+    'brand-last-name': element(),
+    'brand-company': element(),
+  }
+  const submitListeners = []
+  const profileForm = element()
+  profileForm.addEventListener = (type, listener) => {
+    if (type === 'submit') submitListeners.push(listener)
+  }
+  profileForm.querySelector = (selector) => {
+    const field = selector.match(/data-ms-member="([^"]+)"/)
+    const saved = (brand && brand.saved) || {}
+    return field ? { value: saved[field[1]] || '' } : null
+  }
   const visibilityListeners = []
   const sections = {}
   const sectionNode = (name) => {
@@ -9942,19 +9965,27 @@ async function bootRetryDashboard(reads) {
       if (type === 'visibilitychange') visibilityListeners.push(listener)
     },
     getElementById() { return null },
-    querySelector() { return null },
+    querySelector(selector) {
+      const hero = selector.match(/^\[hero-element="([^"]+)"\]$/)
+      return hero && brand ? heroes[hero[1]] || null : null
+    },
     querySelectorAll(selector) {
-      return selector === '[bookings-section]' ? nodes : []
+      if (selector === '[bookings-section]') return nodes
+      if (brand && selector === 'form[data-ms-form="profile"]') return [profileForm]
+      return []
     },
   }
   const window = {
     $memberstackDom: {
-      async getCurrentMember() { return state.member && { data: state.member } },
+      async getCurrentMember() {
+        if (state.memberError) throw state.memberError
+        return state.member && { data: state.member }
+      },
       onAuthChange(listener) { state.authChange = listener },
     },
     clearInterval() {},
     document,
-    location: { pathname: '/starter-dashboard', search: '', hash: '' },
+    location: { pathname: brand ? '/brand-dashboard' : '/starter-dashboard', search: '', hash: '' },
     setInterval() { return 1 },
     setTimeout(callback, delay) {
       nextTimer += 1
@@ -9968,6 +9999,7 @@ async function bootRetryDashboard(reads) {
       return read()
     },
   }
+  if (memberReady) window.memberReady = memberReady
   vm.runInNewContext(source, {
     console: { error() {}, warn() {}, log() {} },
     document,
@@ -9989,6 +10021,15 @@ async function bootRetryDashboard(reads) {
     settle,
     active,
     delays: () => active().map((timer) => timer.delay),
+    hero: () => [
+      heroes['brand-first-name'].textContent,
+      heroes['brand-last-name'].textContent,
+      heroes['brand-company'].textContent,
+    ],
+    async submitProfile() {
+      submitListeners.forEach((listener) => listener({ type: 'submit' }))
+      await settle()
+    },
     // Runs the one armed timer with this delay, as the browser would.
     async fire(delay) {
       const due = Array.from(timers.entries()).filter(([, timer]) => timer.delay === delay)
@@ -10160,11 +10201,58 @@ test('F68: a member that goes missing during the retries stops the schedule', as
   await failFirstRead(env)
   env.state.member = null
   await env.fire(3000)
-  // The initial readiness window waits for Memberstack before it gives up.
+  // The boot readiness window has passed, so a retry reads the live member
+  // with the short member retries that every later read uses.
+  const memberWaits = []
   for (let step = 0; step < 20 && env.delays().some((delay) => delay < 3000); step += 1) {
+    memberWaits.push(env.delays()[0])
     await env.fire(env.delays()[0])
   }
+  assert.deepEqual(memberWaits, [200, 400])
   assert.equal(env.state.reads, 1, 'no canonical read runs without a member')
   assert.equal(env.root.getAttribute('data-dashboard-calls-v3'), 'error')
   assert.deepEqual(env.delays(), [], 'a missing member is not retried')
+})
+
+const F68_OLD_PROFILE = { 'free-user': 'Olive', 'last-name': 'Stone', company: 'OldCo' }
+const F68_NEW_PROFILE = { 'free-user': 'Nina', 'last-name': 'Stone', company: 'NewCo' }
+
+test('F68: a Brand retry reads the live member, so a profile saved during the retries stays on the hero', async () => {
+  const env = await bootRetryDashboard([f68Hang, f68Rows([])], {
+    memberReady: Promise.resolve({ data: { id: 'mem_brand', customFields: F68_OLD_PROFILE } }),
+    brand: {
+      member: { id: 'mem_brand', customFields: F68_OLD_PROFILE },
+      saved: F68_NEW_PROFILE,
+    },
+  })
+  await until(() => env.state.reads === 1)
+  assert.deepEqual(env.hero(), ['Olive', 'Stone', 'OldCo'], 'the boot read paints the shared snapshot')
+  await failFirstRead(env)
+  assert.deepEqual(env.hero(), ['', '', ''], 'the failed first read clears the hero')
+
+  // The Brand saves the profile, and Memberstack now returns the saved values.
+  env.state.member = { id: 'mem_brand', customFields: F68_NEW_PROFILE }
+  await env.submitProfile()
+  assert.deepEqual(env.hero(), ['Nina', 'Stone', 'NewCo'])
+
+  await env.fire(3000)
+  assert.equal(env.state.reads, 2)
+  assert.equal(env.root.getAttribute('data-dashboard-calls-v3'), 'ready')
+  assert.deepEqual(env.hero(), ['Nina', 'Stone', 'NewCo'], 'the retry does not repaint the boot snapshot')
+})
+
+test('F68: a retry after a rejected boot member snapshot reads the live member and recovers', async () => {
+  const memberReady = Promise.reject(new Error('member snapshot failed'))
+  memberReady.catch(() => {})
+  const env = await bootRetryDashboard([f68Rows([f68Row()])], { memberReady })
+  await until(() => env.root.getAttribute('data-dashboard-calls-v3') === 'error' && env.delays().includes(3000))
+  assert.equal(env.state.reads, 0, 'the boot read fails before the canonical read')
+  assert.equal(env.sections.calls.state, 'error')
+
+  await env.fire(3000)
+  assert.equal(env.state.reads, 1, 'the retry reads the live member and runs the canonical read')
+  assert.equal(env.root.getAttribute('data-dashboard-calls-v3'), 'ready')
+  assert.equal(env.sections.calls.state, 'ready')
+  assert.equal(env.sections.calls.cards.length, 1)
+  assert.deepEqual(env.delays(), [])
 })

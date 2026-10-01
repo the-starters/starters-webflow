@@ -4017,7 +4017,7 @@
         if (refreshed === true) {
           initialReadinessPending = false
         } else if (retryable) {
-          scheduleFirstReadRetry(generation, useSharedMember, refreshOptions, attempt)
+          scheduleFirstReadRetry(generation, refreshOptions, attempt)
         }
         return refreshed
       })
@@ -4037,7 +4037,7 @@
       }
       return true
     }
-    const scheduleFirstReadRetry = function (generation, useSharedMember, refreshOptions, attempt) {
+    const scheduleFirstReadRetry = function (generation, refreshOptions, attempt) {
       const delayMs = INITIAL_READ_RETRY_DELAYS_MS[attempt]
       if (!(delayMs > 0) || typeof global.setTimeout !== 'function') return
       const runRetry = function () {
@@ -4049,7 +4049,12 @@
           if (!waitUntilVisible(runRetry)) global.setTimeout(runRetry, delayMs)
           return
         }
-        readSession(generation, useSharedMember, refreshOptions, attempt + 1)
+        // A retry reads the live member, never the boot-time shared snapshot
+        // (`window.memberReady`). That snapshot can predate a profile save,
+        // and a rejected snapshot can never recover. The first attempt has
+        // already passed the readiness boundary, so the short member retries
+        // of every later read apply.
+        readSession(generation, false, refreshOptions, attempt + 1)
           .catch(function (error) {
             console.error('[dashboard-calls] first read retry failed:', error && error.message)
           })
