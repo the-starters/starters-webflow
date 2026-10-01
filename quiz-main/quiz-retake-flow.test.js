@@ -5,6 +5,26 @@ const vm = require('node:vm')
 
 const mainSource = fs.readFileSync(require.resolve('./quiz-main.js'), 'utf8')
 const tabsSource = fs.readFileSync(require.resolve('./quiz-tabs.js'), 'utf8')
+const resultsSource = fs.readFileSync(require.resolve('../quiz-results.js'), 'utf8')
+
+function resultsSourceBetween(startText, endText) {
+    const start = resultsSource.indexOf(startText)
+    const end = resultsSource.indexOf(endText, start)
+    assert.notEqual(start, -1)
+    assert.notEqual(end, -1)
+    return resultsSource.slice(start, end)
+}
+
+function readPendingAnswersOnResults(sessionStorage) {
+    const reader = [
+        "const pendingQuizStorageKey = 'starterQuizPending'",
+        'function logQuizFlow() {}',
+        resultsSourceBetween('function isPendingQuizReady(pendingQuiz)', '/**\n     * Checks whether starter quiz debug logging is enabled.'),
+        resultsSourceBetween('function getPendingQuiz()', '    /**\n     * Parses legacy starter-quiz custom field JSON'),
+        'getPendingQuiz()',
+    ].join('\n')
+    return vm.runInNewContext(reader, { sessionStorage })
+}
 
 class TestEvent {
     constructor(type, options = {}) {
@@ -185,6 +205,8 @@ function setup({ selected = ['paid-media'], member = { id: 'member-1' }, delayed
         ? new Promise((resolve) => { resolveMember = resolve })
         : member === 'unavailable'
           ? Promise.reject(new Error('Memberstack unavailable'))
+          : member === 'never'
+            ? new Promise(() => {})
           : Promise.resolve({ data: member })
     const categoryChoices = [
         choice('paid-media', null, 'Paid Media'),
@@ -225,6 +247,7 @@ function setup({ selected = ['paid-media'], member = { id: 'member-1' }, delayed
     const window = {
         location: { search: '?retake=true', assign: (path) => navigations.push(path) },
         setTimeout: (callback) => setTimeout(callback, 0),
+        clearTimeout,
         addEventListener: () => {},
         $memberstackDom: {
             getCurrentMember: () => memberPromise,
@@ -252,6 +275,13 @@ function setup({ selected = ['paid-media'], member = { id: 'member-1' }, delayed
         navigations,
         resolveMember,
         refreshTabs: () => tabWrap._quizTabController.refresh(),
+        nextVisiblePanel: () => tabWrap._quizTabController.getNextVisiblePanel(),
+        submitSignup: () => signupForm.dispatchEvent(new TestEvent('submit', { bubbles: true })),
+        signupRedirect: () => ({
+            redirect: signupForm.getAttribute('redirect'),
+            providerRedirect: signupForm.getAttribute('data-ms-redirect'),
+        }),
+        resultsPending: () => readPendingAnswersOnResults(sessionStorage),
         settle: () => new Promise((resolve) => setTimeout(resolve, 5)),
     }
 }
@@ -297,6 +327,7 @@ test('the final step follows a changed category selection', async () => {
     quiz.steps[2].button.setAttribute('data-category-hidden', '')
     quiz.steps[2].panel.setAttribute('data-category-hidden', '')
     quiz.refreshTabs()
+    assert.equal(quiz.nextVisiblePanel().getAttribute('data-tab-content'), 'signup')
     quiz.subcategoryChoices[0].input.checked = true
     quiz.subcategoryChoices[0].input.dispatchEvent(new TestEvent('change', { bubbles: true }))
     quiz.next()
@@ -339,6 +370,28 @@ test('a signed-out visitor enters signup with completed answers saved', async ()
     assert.equal(quiz.pending().subcategories[0].id, 'media-ads')
 })
 
+test('signup submission hands the completed answers to the results reader', async () => {
+    const quiz = setup({ member: null })
+    await quiz.settle()
+    quiz.next()
+    quiz.subcategoryChoices[0].input.checked = true
+    quiz.subcategoryChoices[0].input.dispatchEvent(new TestEvent('change', { bubbles: true }))
+    quiz.next()
+    await quiz.settle()
+    assert.equal(quiz.active(), 'signup')
+    assert.deepEqual(quiz.signupRedirect(), {
+        redirect: '/quiz-results',
+        providerRedirect: '/quiz-results',
+    })
+
+    quiz.submitSignup()
+    const results = quiz.resultsPending()
+    assert.equal(results.status, 'ready')
+    assert.deepEqual(Array.from(results.categories, (entry) => entry.id), ['paid-media'])
+    assert.deepEqual(Array.from(results.subcategories, (entry) => entry.id), ['media-ads'])
+    assert.ok(results.completedAt)
+})
+
 test('a slow membership response keeps signup hidden until the member is known', async () => {
     const quiz = setup({ delayedMember: true })
     quiz.next()
@@ -378,5 +431,17 @@ test('an unavailable membership check keeps answers recoverable through signup',
     await quiz.settle()
     assert.equal(quiz.active(), 'signup')
     assert.deepEqual(quiz.navigations, [])
+    assert.equal(quiz.pending().status, 'ready')
+})
+
+test('a membership check that never settles eventually opens a recoverable signup', async () => {
+    const quiz = setup({ member: 'never' })
+    quiz.next()
+    quiz.subcategoryChoices[0].input.checked = true
+    quiz.subcategoryChoices[0].input.dispatchEvent(new TestEvent('change', { bubbles: true }))
+    quiz.next()
+    assert.equal(quiz.active(), 'paid-media')
+    await quiz.settle()
+    assert.equal(quiz.active(), 'signup')
     assert.equal(quiz.pending().status, 'ready')
 })

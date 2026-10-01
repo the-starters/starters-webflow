@@ -1180,40 +1180,6 @@
     }
 
     /**
-     * Reads the next panel from the same visible panel order used by the tab
-     * controller. Category panels hidden after a selection change are skipped.
-     *
-     * @returns {HTMLElement | null} Next visible panel, when one exists.
-     */
-    function getNextVisibleTabPanel() {
-        const panels = Array.from(
-            tabWrapper?.querySelectorAll('[data-tab-component="panel"]') || [],
-        ).filter((panel) => {
-            if (
-                panel.hasAttribute('data-category-link') ||
-                panel.hasAttribute('data-tab-category-link')
-            ) {
-                return !panel.hasAttribute('data-category-hidden')
-            }
-
-            return true
-        })
-        const activeIndex = panels.findIndex((panel) =>
-            panel.classList.contains('is-active'),
-        )
-
-        return activeIndex < 0 ? null : panels[activeIndex + 1] || null
-    }
-
-    function canAdvanceTab() {
-        return (
-            !continueButton?.disabled &&
-            !tabNextWrap?.hasAttribute('data-nav-disabled') &&
-            !tabNextWrap?.hasAttribute('data-subcategory-nav-disabled')
-        )
-    }
-
-    /**
      * Saves a draft payload after any answer changes.
      *
      * @returns {void}
@@ -1295,8 +1261,22 @@
             return
         }
 
+        const lookupTimedOut = Symbol('member lookup timed out')
+        let timeoutId
         try {
-            const result = await memberstack.getCurrentMember()
+            const result = await Promise.race([
+                memberstack.getCurrentMember(),
+                new Promise((resolve) => {
+                    timeoutId = window.setTimeout(
+                        () => resolve(lookupTimedOut),
+                        10000,
+                    )
+                }),
+            ])
+            if (result === lookupTimedOut) {
+                membershipStatus = 'unavailable'
+                return
+            }
             const payload = result && result.data ? result.data : result
             const member =
                 payload && payload.data && typeof payload.data === 'object'
@@ -1310,6 +1290,8 @@
         } catch (error) {
             memberIsLoggedIn = false
             membershipStatus = 'unavailable'
+        } finally {
+            if (timeoutId !== undefined) window.clearTimeout(timeoutId)
         }
 
         logQuizFlow('membership resolved for signup-slide skip', {
@@ -1331,8 +1313,9 @@
             "[data-tab='next'], [data-step-next]",
         )
         if (!nextTrigger) return
-        if (!canAdvanceTab()) return
-        if (getNextVisibleTabPanel()?.getAttribute('data-tab-content') !== 'signup') return
+        const tabController = tabWrapper?._quizTabController
+        if (!tabController?.canAdvance?.()) return
+        if (tabController.getNextVisiblePanel?.()?.getAttribute('data-tab-content') !== 'signup') return
         if (membershipStatus === 'anonymous' || membershipStatus === 'unavailable') return
 
         event.preventDefault()
@@ -1346,8 +1329,8 @@
         }
 
         waitingToEnterSignup = false
-        if (!canAdvanceTab()) return
-        if (getNextVisibleTabPanel()?.getAttribute('data-tab-content') !== 'signup') return
+        if (!tabController.canAdvance()) return
+        if (tabController.getNextVisiblePanel()?.getAttribute('data-tab-content') !== 'signup') return
 
         if (!memberIsLoggedIn) {
             saveReadyQuiz()

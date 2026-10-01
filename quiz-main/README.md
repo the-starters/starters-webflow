@@ -124,7 +124,9 @@ step layout and the tab-driven layout. It:
   and
 - sends a logged-in retaker directly from the final visible quiz step to
   `/quiz-results`, bypassing the signup step; if the Memberstack check is still
-  pending, Continue waits for it before choosing signup or results; and
+  pending, Continue waits for it before choosing signup or results. A stalled
+  member lookup times out after ten seconds and preserves a `ready` payload
+  before proceeding to signup; and
 - owns the post-signup redirect attributes on the signup form (next section).
 
 ### Restore-order contract
@@ -247,6 +249,8 @@ Optional integrations:
 - Tab-driven subcategory panels use `[data-tab-category-link="<category id>"]`
   and active slides use `[data-tab-content]`. The final visible category panel
   leads to the signup slide, which uses `data-tab-content="signup"`.
+  `quiz-tabs.js` owns the visible panel order and exposes the next panel and
+  Continue gate through the tab wrapper's `_quizTabController` API.
 - Non-tab subcategory items use `[data-category="<category id>"]`.
 - `[data-quiz-form="signup"]` and `[data-ms-auth-provider]` triggers cause the ready payload
   to be saved before authentication.

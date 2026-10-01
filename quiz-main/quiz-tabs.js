@@ -537,11 +537,22 @@ document.addEventListener("DOMContentLoaded", function () {
     /**
      * Public API used by other quiz scripts.
      *
-     * @type {{ refresh: () => void, syncNavState: () => void }}
+     * @type {{ refresh: () => void, syncNavState: () => void, getNextVisiblePanel: () => Element | null, canAdvance: () => boolean }}
      */
     tabWrap._quizTabController = {
       /** Rebuilds the visible tab list after category filters change. */
       refresh: refreshTabs,
+      /** Returns the panel after the active tab in the current visible order. */
+      getNextVisiblePanel: () => {
+        const currentIndex = visibleButtonItems.indexOf(activeButton)
+        return currentIndex < 0 ? null : visiblePanelItems[currentIndex + 1] || null
+      },
+      /** Shares the same answer gate used by Continue. */
+      canAdvance: () =>
+        !nextButton?.disabled &&
+        !isCategoryNavGated() &&
+        !isSubcategoryNavGatedFor(activeButton) &&
+        visibleButtonItems.indexOf(activeButton) < visibleButtonItems.length - 1,
       /** Re-runs nav and tab link gating for the current step. */
       syncNavState: () => {
         const visibleIndex = visibleButtonItems.indexOf(activeButton)
