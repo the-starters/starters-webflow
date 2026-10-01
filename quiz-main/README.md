@@ -40,13 +40,22 @@ return for an unresolved ID or unresolved managed configuration — so the share
 card layout recalculates the company row. A page with no consult cards is left
 untouched.
 
-Load both controllers on `/quiz` with `defer`, after the site Memberstack
-bootstrap:
+Load the entry redirect and main controller on `/quiz` with `defer`, after the
+site Memberstack bootstrap:
 
 ```html
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/quiz-main/quiz-redirect.js"></script>
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/quiz-main/quiz-main.js"></script>
 ```
+
+For the tab-driven layout, also load `quiz-tabs.js` from the same release:
+
+```html
+<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/quiz-main/quiz-tabs.js"></script>
+```
+
+The main controller's signup bypass requires the tab API described in the
+[Webflow markup contract](#webflow-markup-contract); update both scripts together.
 
 ## Entry redirect
 
@@ -124,9 +133,11 @@ step layout and the tab-driven layout. It:
   and
 - sends a logged-in retaker directly from the final visible quiz step to
   `/quiz-results`, bypassing the signup step; if the Memberstack check is still
-  pending, Continue waits for it before choosing signup or results. A stalled
-  member lookup times out after ten seconds and preserves a `ready` payload
-  before proceeding to signup; and
+  pending, Continue waits for it before choosing signup or results and ignores
+  repeated completion clicks during that wait. Detection waits up to ten seconds
+  for the Memberstack SDK, then allows another ten seconds for the member lookup.
+  If either is unavailable or the lookup fails, completion preserves a `ready`
+  payload before proceeding to signup; and
 - owns the post-signup redirect attributes on the signup form (next section).
 
 ### Restore-order contract
