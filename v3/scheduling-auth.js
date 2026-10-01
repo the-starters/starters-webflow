@@ -440,18 +440,22 @@
           ? new window.AbortController()
           : null
       let timer
-      // At the deadline the trade is aborted and every caller gets the error.
-      // The owner call below then releases tokenRequest, so the next caller
-      // starts a new trade. A late response is discarded.
+      let timedOut = false
+      // At the deadline the trade is aborted and every caller gets the timeout
+      // error. A native fetch rejects with AbortError inside abort(), so the
+      // catch below replaces that error. The owner call then releases
+      // tokenRequest, so the next caller starts a new trade. A late response is
+      // discarded.
       const deadline = canTimeTrade
         ? new Promise(function (resolve, reject) {
             timer = window.setTimeout(function () {
+              timedOut = true
+              reject(tokenTradeTimeoutError())
               if (controller) {
                 try {
                   controller.abort()
                 } catch (error) {}
               }
-              reject(tokenTradeTimeoutError())
             }, TOKEN_TRADE_TIMEOUT_MS)
           })
         : null
@@ -466,6 +470,9 @@
           return null
         })
         data = deadline ? await Promise.race([readBody, deadline]) : await readBody
+      } catch (error) {
+        if (timedOut) throw tokenTradeTimeoutError()
+        throw error
       } finally {
         if (canTimeTrade) window.clearTimeout(timer)
       }

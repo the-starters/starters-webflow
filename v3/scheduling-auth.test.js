@@ -119,7 +119,7 @@ function loadBridge(nativeFetch, options = {}) {
     window.__tsSchedulingAuthOriginalFetch = nativeFetch
   }
 
-  vm.runInNewContext(source, {
+  const context = vm.createContext({
     Date: options.Date || Date,
     Headers,
     Request,
@@ -128,9 +128,14 @@ function loadBridge(nativeFetch, options = {}) {
     console: options.console || { info() {}, warn() {} },
     window,
   })
+  vm.runInContext(source, context)
   return {
     authChange: (member) => (authChange || memberstack.listener)(member),
     memberstack,
+    // The bridge realm's Promise. A fake fetch that returns this kind of
+    // promise and rejects it inside abort() has the same race order as a
+    // native browser fetch.
+    RealmPromise: vm.runInContext('Promise', context),
     window,
   }
 }
@@ -571,6 +576,91 @@ test('a stalled token trade times out, aborts its request, and the next call sta
   assert.equal(timers.pending().length, 0)
   assert.equal(await window.getXanoAuthToken(), 'xano-fresh')
   assert.equal(trades, 2)
+})
+
+// Native fetch rejects its promise with AbortError inside abort(). This fake
+// fetch does the same with a promise from the bridge realm, so the race order
+// matches a browser trade that never receives response headers.
+function nativeLikeStalledTrade(getRealmPromise, signal) {
+  const RealmPromise = getRealmPromise()
+  return new RealmPromise((resolve, reject) => {
+    signal.addEventListener('abort', () => {
+      reject(new DOMException('signal is aborted without reason', 'AbortError'))
+    })
+  })
+}
+
+test('a native-like trade stalled before headers rejects owner and joiner with the timeout code', async () => {
+  const timers = timerQueue()
+  let RealmPromise
+  let trades = 0
+  let firstSignal
+  const { window, RealmPromise: realm } = loadBridge((request, init) => {
+    if (isTrade(request)) {
+      trades += 1
+      if (trades === 1) {
+        firstSignal = init.signal
+        return nativeLikeStalledTrade(() => RealmPromise, init.signal)
+      }
+      return RealmPromise.resolve(response({ authToken: 'xano-fresh' }))
+    }
+    return RealmPromise.resolve(response({}))
+  }, { AbortController, setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout })
+  RealmPromise = realm
+
+  const owner = window.getXanoAuthToken()
+  await new Promise(setImmediate)
+  assert.equal(trades, 1)
+  const joiner = window.getXanoAuthToken()
+  await new Promise(setImmediate)
+
+  timers.fire(TRADE_DEADLINE_MS)
+
+  await assert.rejects(owner, (error) => error.code === 'XANO_TOKEN_TRADE_TIMEOUT')
+  await assert.rejects(joiner, (error) => error.code === 'XANO_TOKEN_TRADE_TIMEOUT')
+  assert.equal(firstSignal.aborted, true)
+  assert.equal(await window.getXanoAuthToken(), 'xano-fresh')
+  assert.equal(trades, 2)
+})
+
+test('the legacy wrapper logs the trade timeout for a native-like trade stalled before headers', async () => {
+  const timers = timerQueue()
+  const warnings = []
+  const sent = []
+  let RealmPromise
+  const { window, RealmPromise: realm } = loadBridge((request, init) => {
+    if (isTrade(request)) return nativeLikeStalledTrade(() => RealmPromise, init.signal)
+    sent.push(request.headers.get('Authorization'))
+    return RealmPromise.resolve(response({ message: 'unauthorized' }, 401))
+  }, {
+    AbortController,
+    setTimeout: timers.setTimeout,
+    clearTimeout: timers.clearTimeout,
+    console: { info() {}, warn: (...args) => warnings.push(args.join(' ')) },
+  })
+  RealmPromise = realm
+
+  const pending = window.fetch(SCHEDULING_URL, { method: 'POST', body: '{}' })
+  await new Promise(setImmediate)
+  timers.fire(TRADE_DEADLINE_MS)
+
+  assert.equal((await pending).status, 401)
+  assert.deepEqual(sent, [null])
+  assert.deepEqual(warnings, ['[scheduling-auth] token unavailable: Xano token trade timed out'])
+})
+
+test('a trade network error before the deadline keeps its own error', async () => {
+  const timers = timerQueue()
+  let RealmPromise
+  const { window, RealmPromise: realm } = loadBridge((request) => {
+    if (isTrade(request)) return RealmPromise.reject(new TypeError('Failed to fetch'))
+    return RealmPromise.resolve(response({}))
+  }, { AbortController, setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout })
+  RealmPromise = realm
+
+  await assert.rejects(window.getXanoAuthToken(), (error) =>
+    error.name === 'TypeError' && error.message === 'Failed to fetch')
+  assert.equal(timers.pending(TRADE_DEADLINE_MS).length, 0)
 })
 
 test('a token trade whose body read stalls also times out and is released', async () => {
