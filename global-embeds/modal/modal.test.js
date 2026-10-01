@@ -438,7 +438,58 @@ test('a join link opens the generic membership dialog when the section is absent
   assert.equal(link.focused, true, 'closing returns focus to the join link')
 })
 
-test('a join link reaches Quiz Results when the generic dialog is missing', () => {
+test('a join link opens a paid article offer when the generic dialog is missing', () => {
+  const env = makeEnv({ ids: ['signup-modal'] })
+  const contextual = env.dialogsById['signup-modal']
+  contextual.append(h('div', { 'join-cta': 'monthly' }))
+  contextual.append(h('div', { 'join-cta': 'yearly' }))
+  const link = env.document.body.append(h('a', {
+    href: '#join-starters-cta',
+    'data-join-starters-link': '',
+  }))
+  env.boot()
+
+  const event = env.clickDocument(link)
+
+  assert.equal(event.defaultPrevented, true)
+  assert.equal(contextual.open, true)
+  assert.deepEqual(env.location.assigned, [])
+})
+
+test('a join link ignores a signup dialog without membership plans', () => {
+  const env = makeEnv({ ids: ['signup-modal'] })
+  const link = env.document.body.append(h('a', {
+    href: '#join-starters-cta',
+    'data-join-starters-link': '',
+  }))
+  env.boot()
+
+  env.clickDocument(link)
+
+  assert.equal(env.dialogsById['signup-modal'].open, false)
+  assert.deepEqual(env.location.assigned, ['/why-us#join-starters-cta'])
+})
+
+test('a paid article offer opens if the generic dialog cannot open', () => {
+  const env = makeEnv({ ids: ['join-starters-modal', 'signup-modal'] })
+  const contextual = env.dialogsById['signup-modal']
+  contextual.append(h('div', { 'join-cta': 'monthly' }))
+  contextual.append(h('div', { 'join-cta': 'yearly' }))
+  const link = env.document.body.append(h('a', {
+    href: '#join-starters-cta',
+    'data-join-starters-link': '',
+  }))
+  env.boot()
+  env.dialogsById['join-starters-modal'].showModal = () => { throw new Error('dialog unavailable') }
+
+  env.clickDocument(link)
+
+  assert.equal(env.dialogsById['join-starters-modal'].open, false)
+  assert.equal(contextual.open, true)
+  assert.deepEqual(env.location.assigned, [])
+})
+
+test('a join link reaches Membership when neither offer exists', () => {
   const env = makeEnv({ ids: [] })
   const link = env.document.body.append(h('a', {
     href: '#join-starters-cta',
@@ -449,11 +500,11 @@ test('a join link reaches Quiz Results when the generic dialog is missing', () =
   const event = env.clickDocument(link)
 
   assert.equal(event.defaultPrevented, true)
-  assert.deepEqual(env.location.assigned, ['/quiz-results#join-starters-cta'])
+  assert.deepEqual(env.location.assigned, ['/why-us#join-starters-cta'])
   assert.deepEqual(env.types(), [])
 })
 
-test('a join link reaches Quiz Results when the generic dialog cannot open', () => {
+test('a join link reaches Membership when the generic dialog cannot open', () => {
   const env = makeEnv({ ids: ['join-starters-modal'] })
   const link = env.document.body.append(h('a', {
     href: '#join-starters-cta',
@@ -465,7 +516,7 @@ test('a join link reaches Quiz Results when the generic dialog cannot open', () 
   const event = env.clickDocument(link)
 
   assert.equal(event.defaultPrevented, true)
-  assert.deepEqual(env.location.assigned, ['/quiz-results#join-starters-cta'])
+  assert.deepEqual(env.location.assigned, ['/why-us#join-starters-cta'])
   assert.equal(env.dialogsById['join-starters-modal'].open, false)
 })
 
