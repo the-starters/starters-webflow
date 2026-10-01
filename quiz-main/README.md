@@ -40,13 +40,22 @@ return for an unresolved ID or unresolved managed configuration — so the share
 card layout recalculates the company row. A page with no consult cards is left
 untouched.
 
-Load both controllers on `/quiz` with `defer`, after the site Memberstack
-bootstrap:
+Load the entry redirect and main controller on `/quiz` with `defer`, after the
+site Memberstack bootstrap:
 
 ```html
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/quiz-main/quiz-redirect.js"></script>
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/quiz-main/quiz-main.js"></script>
 ```
+
+For the tab-driven layout, also load `quiz-tabs.js` from the same release:
+
+```html
+<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/quiz-main/quiz-tabs.js"></script>
+```
+
+The main controller's signup bypass requires the tab API described in the
+[Webflow markup contract](#webflow-markup-contract); update both scripts together.
 
 ## Entry redirect
 
@@ -122,8 +131,13 @@ step layout and the tab-driven layout. It:
 - saves `sessionStorage.starterQuizPending` as answers change (`draft`, also
   written once on page load) and before signup or results navigation (`ready`);
   and
-- sends a logged-in retaker directly from the final quiz step to
-  `/quiz-results`, bypassing the signup step; and
+- sends a logged-in retaker directly from the final visible quiz step to
+  `/quiz-results`, bypassing the signup step; if the Memberstack check is still
+  pending, Continue waits for it before choosing signup or results and ignores
+  repeated completion clicks during that wait. Detection waits up to ten seconds
+  for the Memberstack SDK, then allows another ten seconds for the member lookup.
+  If either is unavailable or the lookup fails, completion preserves a `ready`
+  payload before proceeding to signup; and
 - owns the post-signup redirect attributes on the signup form (next section).
 
 ### Restore-order contract
@@ -244,9 +258,10 @@ Optional integrations:
 - `[data-start-heading]` contains the alternative
   `[data-start-default]` and `[data-start-filled]` copy.
 - Tab-driven subcategory panels use `[data-tab-category-link="<category id>"]`
-  and active slides use `[data-tab-content]`; the final answer slide must be
-  `data-tab-content="ways"` and the signup slide
-  `data-tab-content="signup"`.
+  and active slides use `[data-tab-content]`. The final visible category panel
+  leads to the signup slide, which uses `data-tab-content="signup"`.
+  `quiz-tabs.js` owns the visible panel order and exposes the next panel and
+  Continue gate through the tab wrapper's `_quizTabController` API.
 - Non-tab subcategory items use `[data-category="<category id>"]`.
 - `[data-quiz-form="signup"]` and `[data-ms-auth-provider]` triggers cause the ready payload
   to be saved before authentication.
@@ -287,3 +302,22 @@ with:
 ```sh
 node --test quiz-main/*.test.js v3/algolia-environment.test.js quiz-taxonomy-compatibility.test.js quiz-member-json-fallback.test.js quiz-results-pending-draft.test.js
 ```
+
+For the authenticated retake browser check against published markup, install
+Playwright locally and use an evidence directory outside tracked source:
+
+```sh
+npm install --prefix .quiz-test-runtime --no-package-lock --no-audit --no-fund playwright@1.63.0
+NODE_PATH="$PWD/.quiz-test-runtime/node_modules" QUIZ_EVIDENCE_DIR="/path/to/evidence" node quiz-main/quiz-retake.browser.cjs
+rm -rf .quiz-test-runtime
+```
+
+Create the evidence directory before running. The check uses installed Google
+Chrome on macOS; `CHROME_PATH` can select another installed Chrome executable.
+It substitutes the local quiz main, tabs, and results scripts into the published
+pages, simulates Brand membership only at the Memberstack API boundary, and
+intercepts persistence calls. It checks revised answers, keyboard completion,
+delayed double-click completion, and never-settling lookup recovery. Screenshots
+and JSON reports go to the evidence directory. All external non-read HTTP methods
+are blocked, including recommendation search POSTs; recommendation content,
+real server persistence, and actual signup/account creation are not validated.

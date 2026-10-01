@@ -145,6 +145,11 @@
     // True once Memberstack confirms an existing logged-in member, i.e. the
     // user is retaking the quiz and should skip the final signup slide.
     let memberIsLoggedIn = false
+    let membershipStatus = 'pending'
+    let membershipCheck
+    let waitingToEnterSignup = false
+    let redirectingToResults = false
+    let awaitingFinalContinue = false
 
     // True once a returning member's previously saved answers have been merged
     // into the form from Memberstack member JSON (retake prefill).
@@ -1199,12 +1204,10 @@
      * @returns {void}
      */
     function syncTabDrivenNextClick() {
-        const activeBeforeClick = getActiveTabContent()
-
         window.setTimeout(function () {
+            if (redirectingToResults) return
             const activeAfterClick = getActiveTabContent()
-            const isEnteringSignup =
-                activeBeforeClick === 'ways' || activeAfterClick === 'signup'
+            const isEnteringSignup = activeAfterClick === 'signup'
 
             if (isEnteringSignup) {
                 saveReadyQuiz()
@@ -1255,11 +1258,26 @@
     async function detectLoggedInMember() {
         const memberstack = await waitForMemberstack()
         if (!memberstack || typeof memberstack.getCurrentMember !== 'function') {
+            membershipStatus = 'unavailable'
             return
         }
 
+        const lookupTimedOut = Symbol('member lookup timed out')
+        let timeoutId
         try {
-            const result = await memberstack.getCurrentMember()
+            const result = await Promise.race([
+                memberstack.getCurrentMember(),
+                new Promise((resolve) => {
+                    timeoutId = window.setTimeout(
+                        () => resolve(lookupTimedOut),
+                        10000,
+                    )
+                }),
+            ])
+            if (result === lookupTimedOut) {
+                membershipStatus = 'unavailable'
+                return
+            }
             const payload = result && result.data ? result.data : result
             const member =
                 payload && payload.data && typeof payload.data === 'object'
@@ -1269,8 +1287,12 @@
             memberIsLoggedIn = Boolean(
                 member && (member.id || member._id || member.email),
             )
+            membershipStatus = memberIsLoggedIn ? 'authenticated' : 'anonymous'
         } catch (error) {
             memberIsLoggedIn = false
+            membershipStatus = 'unavailable'
+        } finally {
+            if (timeoutId !== undefined) window.clearTimeout(timeoutId)
         }
 
         logQuizFlow('membership resolved for signup-slide skip', {
@@ -1281,26 +1303,43 @@
     /**
      * Skips the signup slide for a logged-in retaker.
      *
-     * Fires in the capture phase before the Webflow tab controller advances to
-     * the signup slide. When the user clicks Next on the "ways" slide while
-     * logged in, the ready payload is saved and the results page is opened
-     * instead of moving to signup.
+     * Fires in the capture phase before the tab controller advances to signup.
+     * Waits for the membership check when it is still in flight.
      *
      * @param {MouseEvent} event Click event from the quiz next control.
-     * @returns {void}
+     * @returns {Promise<void>}
      */
-    function skipSignupForLoggedInMember(event) {
-        if (!memberIsLoggedIn) return
-
+    async function skipSignupForLoggedInMember(event) {
         const nextTrigger = event.target.closest(
             "[data-tab='next'], [data-step-next]",
         )
         if (!nextTrigger) return
-        if (getActiveTabContent() !== 'ways') return
+        const tabController = tabWrapper?._quizTabController
+        if (!tabController?.canAdvance?.()) return
+        if (tabController.getNextVisiblePanel?.()?.getAttribute('data-tab-content') !== 'signup') return
+        if (membershipStatus === 'anonymous' || membershipStatus === 'unavailable') return
 
         event.preventDefault()
         event.stopImmediatePropagation()
 
+        if (waitingToEnterSignup) return
+        waitingToEnterSignup = true
+
+        if (membershipStatus === 'pending') {
+            await membershipCheck
+        }
+
+        waitingToEnterSignup = false
+        if (!tabController.canAdvance()) return
+        if (tabController.getNextVisiblePanel()?.getAttribute('data-tab-content') !== 'signup') return
+
+        if (!memberIsLoggedIn) {
+            saveReadyQuiz()
+            nextTrigger.click()
+            return
+        }
+
+        redirectingToResults = true
         saveReadyQuiz()
 
         logQuizFlow('logged-in retake; skipping signup slide', {
@@ -1394,7 +1433,7 @@
         true,
     )
 
-    continueButton?.addEventListener('click', function (event) {
+    continueButton?.addEventListener('click', async function (event) {
         if (event.isTrusted) {
             userTouchedQuiz = true
         }
@@ -1430,9 +1469,23 @@
             return
         }
 
+        if (awaitingFinalContinue) return
+
+        if (membershipStatus === 'pending') {
+            awaitingFinalContinue = true
+            if (continueButton) continueButton.disabled = true
+            try {
+                await membershipCheck
+            } finally {
+                awaitingFinalContinue = false
+                if (continueButton) continueButton.disabled = false
+            }
+        }
+
         saveReadyQuiz()
 
         if (memberIsLoggedIn) {
+            redirectingToResults = true
             logQuizFlow('logged-in retake; skipping signup step', {
                 resultsRedirectPath,
             })
@@ -1462,7 +1515,7 @@
     // Capture the click before the Webflow tab controller advances to signup,
     // so a logged-in retaker is sent to the results page instead.
     document.addEventListener('click', skipSignupForLoggedInMember, true)
-    detectLoggedInMember()
+    membershipCheck = detectLoggedInMember()
 
     restoreQuizSelections()
     syncStartHeading()
