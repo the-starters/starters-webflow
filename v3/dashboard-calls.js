@@ -1284,19 +1284,45 @@
     return current
   }
 
-  function applyCancellationResult(refs, booking, result, now, commit, claim) {
+  function applyCancellationResult(refs, booking, result, now, commit, claim, reason, role) {
     const cancellation = result && result.cancel
     if (
       !booking || !cancellation ||
       clean(cancellation.booking_id) !== clean(booking.booking_id || booking.id) ||
       clean(cancellation.status).toLowerCase() !== 'cancelled'
     ) return false
+    const changes = { status: cancellation.status }
+    if (!paidBooking(booking) && clean(booking.status).toLowerCase() !== 'pending') {
+      const start = normalizeTimestamp(cancellation.start)
+      const end = normalizeTimestamp(cancellation.end)
+      const revision = cancellation.revision
+      const currentRevision = Number(booking.lifecycle_revision)
+      // The Free response returns the confirmed slot, even when the cached
+      // row still describes an unanswered proposal. Its reason is omitted,
+      // so use only the reason submitted with this successful command.
+      if (
+        !Number.isSafeInteger(cancellation.start) || cancellation.start <= 0 ||
+        !Number.isSafeInteger(cancellation.end) || cancellation.end <= 0 ||
+        !Number.isSafeInteger(start) || !Number.isSafeInteger(end) || end <= start ||
+        !Number.isSafeInteger(revision) || revision <= 0 ||
+        (Number.isFinite(currentRevision) && revision < currentRevision) ||
+        !['brand', 'starter'].includes(role) || clean(cancellation.cancelled_by) !== role ||
+        typeof reason !== 'string' || clean(reason) === ''
+      ) return false
+      Object.assign(changes, {
+        lifecycle_revision: revision,
+        start,
+        end,
+        cancelled_by: role,
+        cancelled_reason: clean(reason),
+      })
+    }
     const apply = typeof commit === 'function'
       ? commit
       : function (model, changes) {
           return commitBookingMutation(refs, model, changes, null, null, now)
         }
-    return Boolean(apply(booking, { status: cancellation.status }, claim))
+    return Boolean(apply(booking, changes, claim))
   }
 
   /**
@@ -1822,21 +1848,28 @@
     return DETAIL_CONFIRM_STEP_PANELS.indexOf(clean(panelName)) !== -1 && !paidBooking(booking)
   }
 
+  function staleEditReasonPanel(panelName, booking) {
+    return confirmStepPanel(panelName, booking) || (
+      clean(panelName) === 'cancelled' && !paidBooking(booking) &&
+      clean(booking && booking.status).toLowerCase() === 'cancelled'
+    )
+  }
+
   /**
-   * Hides the authored `reschedule-reason` hook inside the Free confirmation
-   * steps. Webflow authors it there with the label "Reason", so the cancel
-   * step showed an old edit reason as if it were the cancel reason. The next
-   * populate pass sets every copy again, so a reused modal needs no restore.
+   * Hides an earlier proposal's reason in Free confirmation and cancelled
+   * panels. Their authored "Reason" label describes the current action, not
+   * the old proposal. The next populate pass restores each copy for other
+   * states and Paid calls; the stored proposal history remains intact.
    * @param {HTMLElement} root Modal or panel being populated.
    * @param {object} booking Canonical booking row.
    */
-  function hideConfirmStepEditReason(root, booking) {
+  function hideStaleEditReason(root, booking) {
     bookingFields(root, 'reschedule-reason').forEach(function (field) {
       const panel = field.closest && field.closest('[booking-popup-content]')
       const panelName = panel && typeof panel.getAttribute === 'function'
         ? panel.getAttribute('booking-popup-content')
         : ''
-      if (!confirmStepPanel(panelName, booking)) return
+      if (!staleEditReasonPanel(panelName, booking)) return
       show(field, false)
       const group = field.closest && field.closest('[booking-element-wrap]')
       if (group) show(group, false)
@@ -1985,7 +2018,7 @@
     // panel that is the decline reason, and an earlier edit's reason is
     // stale. Paid keeps its display unchanged, as PR #974 scoped F09.
     const declinedPanel = panelName === 'declined' && !paidBooking(booking)
-    const confirmStep = confirmStepPanel(panelName, booking)
+    const staleEditReason = staleEditReasonPanel(panelName, booking)
     return [
       {
         field: role === 'starter' ? 'brand-name' : 'starter-name',
@@ -1996,7 +2029,7 @@
       { field: 'start-date', label: clean(booking && booking.status).toLowerCase() === 'rescheduled' ? 'Proposed time' : 'Date and time', value: formatDate(booking && booking.start, timezone) },
       { field: 'duration', label: 'Duration', value: formatDuration(booking && booking.duration) },
       { field: 'context', label: 'Call', value: clean(booking && booking.call_context) },
-      { field: 'reschedule-reason', label: 'Reschedule reason', value: declinedPanel || confirmStep ? '' : clean(booking && booking.rescheduled_reason) },
+      { field: 'reschedule-reason', label: 'Reschedule reason', value: declinedPanel || staleEditReason ? '' : clean(booking && booking.rescheduled_reason) },
       declinedPanel
         ? { field: 'decline-reason', label: 'Decline reason', value: clean(booking && booking.cancelled_reason) }
         : { field: 'cancel-reason', label: 'Cancellation reason', value: clean(booking && booking.cancelled_reason) },
@@ -2600,7 +2633,7 @@
     const statusText = proposalStatusText(booking, role)
     setBookingField(root, 'status-text', statusText, statusText !== '')
     setBookingField(root, 'reschedule-reason', booking.rescheduled_reason, Boolean(booking.rescheduled_reason))
-    hideConfirmStepEditReason(root, booking)
+    hideStaleEditReason(root, booking)
   }
 
   // Authored state of each decline-reason hook and its wrap from before a
@@ -3949,7 +3982,7 @@
       releaseBookingMutation: releaseCurrentBooking,
       reconcileBookingMutations: requestMutationReconciliation,
       acquireBookingAction,
-      onCancelSuccess: function (booking, result, claim) {
+      onCancelSuccess: function (booking, result, claim, reason) {
         return applyCancellationResult(
           refs,
           booking,
@@ -3957,6 +3990,8 @@
           Date.now(),
           commitCurrentBooking,
           claim,
+          reason,
+          role,
         )
       },
       onAvailable: function (_module, key) {

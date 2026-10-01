@@ -1868,12 +1868,22 @@
           if (!result) throw new Error(config.failureMessage)
           if (step.kind === 'cancel' && typeof settings.onCancelSuccess === 'function') {
             try {
-              if (settings.onCancelSuccess(booking, result, mutationClaim) === false) return
+              const repaintCancellation = !paidFlag(booking) &&
+                ['confirmed', 'rescheduled'].includes(bookingStatus(booking))
+              if (settings.onCancelSuccess(booking, result, mutationClaim, reason.value) === false) return
+              // A different booking may have been opened while the command
+              // was in flight. Commit the original row, but never repaint or
+              // clear the other booking's modal/form.
+              if (clean(modal.getAttribute('data-booking-id')) !== clean(booking.booking_id || booking.id)) return
+              if (repaintCancellation && typeof settings.refreshDetail === 'function') {
+                settings.refreshDetail(modal, booking)
+              }
             } catch (error) {
               console.error(
                 '[dashboard-call-actions] cancellation repaint failed:',
                 error && error.message,
               )
+              return
             }
           }
           if (reason.field) reason.field.value = ''
