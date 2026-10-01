@@ -2983,12 +2983,14 @@ On Brand only, the same resolved Memberstack snapshot paints the existing hero
 through the Designer custom-attribute contract, never through styling classes:
 `free-user` populates `hero-element="brand-first-name"`, `last-name` populates
 `hero-element="brand-last-name"`, and `company` populates
-`hero-element="brand-company"`. Those values clear before every session refresh
-and on any failure, so another member's projection cannot survive an auth
-transition. The avatar carries `hero-element="brand-image"` for contract
-completeness, but the controller never writes it: its `src` stays owned by
-Memberstack's native `data-ms-member="profile-image"` binding, which handles
-both the empty-photo placeholder and a populated member photo.
+`hero-element="brand-company"`. Those values clear before every new session
+refresh and when that refresh cannot prove an authenticated member, so another
+member's projection cannot survive an auth transition. A first-read retry keeps
+the current hero intact until the canonical read succeeds, as described in the
+F68 retry contract above. The avatar carries `hero-element="brand-image"` for
+contract completeness, but the controller never writes it: its `src` stays
+owned by Memberstack's native `data-ms-member="profile-image"` binding, which
+handles both the empty-photo placeholder and a populated member photo.
 
 The Brand dashboard's existing `form[data-ms-form="profile"]` remains a native
 Memberstack form and keeps sole ownership of its submit. The controller observes
