@@ -8652,7 +8652,7 @@ function acceptActionsModule() {
 // Boots the real controller on /starter-dashboard with a controlled clock,
 // scripted canonical reads, and the captured ten-second lifecycle ticker, then
 // opens the details modal on the view's booking through the details delegate.
-async function bootAcceptDashboard(view, bookingReads, { confirmBody, onConfirm, holdConfirm, holdAfterConfirm } = {}) {
+async function bootAcceptDashboard(view, bookingReads, { confirmBody, onConfirm, holdConfirm, holdAfterConfirm, sections: authoredSections, openDetails = true } = {}) {
   const source = fs.readFileSync(require.resolve('./dashboard-calls.js'), 'utf8')
   const clock = { value: view.now }
   class ClockDate extends Date {
@@ -8682,7 +8682,7 @@ async function bootAcceptDashboard(view, bookingReads, { confirmBody, onConfirm,
     })[selector] || null
     return node
   }
-  const sections = [sectionNode('requests'), sectionNode('calls')]
+  const sections = authoredSections || [sectionNode('requests'), sectionNode('calls')]
   const root = element()
   const document = {
     documentElement: root,
@@ -8780,11 +8780,13 @@ async function bootAcceptDashboard(view, bookingReads, { confirmBody, onConfirm,
   })
   await until(() => state.reads === 1 && root.getAttribute('data-dashboard-calls-v3') === 'ready')
   assert.equal(intervals.length, 1, 'one lifecycle ticker')
-  const card = acceptElement('div', { 'data-booking-id': view.bookingId })
-  const details = acceptElement('a', { 'booking-card-action-btn': 'details' })
-  card.appendChild(details)
-  await click(details)
-  assert.equal(view.modal.getAttribute('data-booking-id'), view.bookingId)
+  if (openDetails) {
+    const card = acceptElement('div', { 'data-booking-id': view.bookingId })
+    const details = acceptElement('a', { 'booking-card-action-btn': 'details' })
+    card.appendChild(details)
+    await click(details)
+    assert.equal(view.modal.getAttribute('data-booking-id'), view.bookingId)
+  }
   return {
     click,
     clock,
@@ -8970,6 +8972,137 @@ test('F53: a card-level Accept commits the call, so a later card Accept sends no
   await env.click(cardAccept)
   assert.equal(env.state.confirms, 1)
   assert.deepEqual(visibleActionErrors(card), [], 'no false "could not be confirmed" alert')
+})
+
+// F53 follow-up: a dashboard section whose list holds real card trees, so a
+// test can click a rendered card's own Accept and read its status pill.
+function acceptCardSection(name) {
+  const buildCard = () => {
+    const card = acceptElement('div', { 'bookings-item-template': name })
+    card.ownerDocument = { createElement: (tag) => acceptElement(tag) }
+    const pill = acceptElement('div', { 'booking-element': 'status' })
+    pill.appendChild(acceptElement('div', { 'label-text': '' }, 'Requested'))
+    const expiration = acceptElement('div', { 'booking-item-expiration': 'wrap' })
+    expiration.appendChild(acceptElement('div', { 'booking-item-expiration': 'time' }))
+    card.appendChild(pill)
+    card.appendChild(expiration)
+    card.appendChild(acceptElement('a', { 'booking-card-action-btn': 'switch-confirm' }, 'Accept'))
+    card.appendChild(acceptElement('a', { 'booking-card-action-btn': 'switch-decline' }, 'Decline'))
+    card.cloneNode = buildCard
+    return card
+  }
+  const list = acceptElement('div', { 'bookings-list': name })
+  Object.defineProperty(list, 'innerHTML', {
+    get() { return '' },
+    set(value) { if (value === '') list.children = [] },
+  })
+  const template = buildCard()
+  const node = element({ 'bookings-section': name })
+  node.querySelector = (selector) => ({
+    ['[bookings-list="' + name + '"]']: list,
+    ['[bookings-item-template="' + name + '"]']: template,
+    ['[bookings-loader="' + name + '"]']: element(),
+    ['[bookings-empty="' + name + '"]']: element(),
+    '[bookings-count]': element(),
+    '.tabs-button_component.is-dashboard': element(),
+  })[selector] || null
+  return { list, node }
+}
+
+function acceptCardSnapshot(card) {
+  const find = (selector) => card.querySelector(selector)
+  return {
+    pill: find('[label-text]').textContent,
+    stored: card.getAttribute('data-booking-status'),
+    accept: find('[booking-card-action-btn="switch-confirm"]').hidden,
+    decline: find('[booking-card-action-btn="switch-decline"]').hidden,
+    countdown: find('[booking-item-expiration="wrap"]').hidden,
+  }
+}
+
+test('F53: a card-level Accept repaints the card to Upcoming before the list read returns', async () => {
+  const view = acceptView()
+  // The details modal stays closed: the Starter accepts on the card.
+  view.modal.open = false
+  const pendingRaw = { ...view.booking }
+  const confirmedRaw = { ...pendingRaw, status: 'confirmed', revision: 2 }
+  const postConfirmRead = deferred()
+  const requests = acceptCardSection('requests')
+  const calls = acceptCardSection('calls')
+  const env = await bootAcceptDashboard(view, [
+    () => ({ ok: true, json: async () => [pendingRaw] }),
+    () => postConfirmRead.promise,
+    () => ({ ok: true, json: async () => [confirmedRaw] }),
+  ], { sections: [requests.node, calls.node], openDetails: false })
+  assert.equal(requests.list.children.length, 1)
+  assert.equal(calls.list.children.length, 0)
+  const card = requests.list.children[0]
+  assert.equal(card.getAttribute('data-booking-id'), view.bookingId)
+  assert.deepEqual(acceptCardSnapshot(card), {
+    pill: 'Pending',
+    stored: 'pending',
+    accept: false,
+    decline: false,
+    countdown: false,
+  })
+
+  const accepted = env.click(card.querySelector('[booking-card-action-btn="switch-confirm"]'))
+  await until(() => env.state.reads === 2)
+  // The confirm has answered and the list read has not.
+  assert.equal(env.state.confirms, 1)
+  assert.deepEqual(acceptCardSnapshot(card), {
+    pill: 'Upcoming',
+    stored: 'confirmed',
+    accept: true,
+    decline: true,
+    countdown: true,
+  })
+  assert.equal(requests.list.children[0], card, 'the card moves only on the canonical read')
+  assert.equal(view.modal.hasAttribute('data-booking-id'), false, 'the closed modal is left alone')
+
+  postConfirmRead.resolve({ ok: true, json: async () => [confirmedRaw] })
+  await accepted
+  assert.equal(requests.list.children.length, 0)
+  assert.equal(calls.list.children.length, 1)
+  const moved = calls.list.children[0]
+  assert.equal(moved.getAttribute('data-booking-id'), view.bookingId)
+  assert.equal(acceptCardSnapshot(moved).pill, 'Upcoming')
+  assert.deepEqual(visibleActionErrors(moved), [])
+})
+
+test('F53: a card-level Accept whose commit is refused leaves the card Pending until the list read', async () => {
+  const view = acceptView()
+  view.modal.open = false
+  const pendingRaw = { ...view.booking }
+  const confirmedRaw = { ...pendingRaw, status: 'confirmed', revision: 2 }
+  const postConfirmRead = deferred()
+  const requests = acceptCardSection('requests')
+  const calls = acceptCardSection('calls')
+  const env = await bootAcceptDashboard(view, [
+    () => ({ ok: true, json: async () => [pendingRaw] }),
+    () => postConfirmRead.promise,
+    () => ({ ok: true, json: async () => [confirmedRaw] }),
+  ], {
+    sections: [requests.node, calls.node],
+    openDetails: false,
+    // Another call action takes the booking's claim while the confirm is in
+    // flight, so the owner refuses the Accept's commit.
+    onConfirm() {
+      const options = env.state.moduleOptions
+      options.releaseBookingMutation(options.captureBookingMutation({ booking_id: view.bookingId }))
+    },
+  })
+  const card = requests.list.children[0]
+  const accepted = env.click(card.querySelector('[booking-card-action-btn="switch-confirm"]'))
+  await until(() => env.state.reads === 2)
+  assert.equal(env.state.confirms, 1)
+  assert.equal(acceptCardSnapshot(card).pill, 'Pending', 'a refused commit paints nothing')
+  assert.equal(card.getAttribute('data-booking-status'), 'pending')
+
+  postConfirmRead.resolve({ ok: true, json: async () => [confirmedRaw] })
+  await accepted
+  assert.equal(requests.list.children.length, 0)
+  assert.equal(acceptCardSnapshot(calls.list.children[0]).pill, 'Upcoming')
 })
 
 test('F53: when the owner refuses the commit, the refreshed row repaints the modal and hides the pending copy right after the read', async () => {
@@ -9714,4 +9847,480 @@ test('F53: an Accept queued behind an earlier Accept takes no claim until the sl
   assert.deepEqual(acceptSnapshot(view), ACCEPTED_SNAPSHOT)
   assert.deepEqual(visibleActionErrors(view.modal), [])
   assert.deepEqual(visibleActionErrors(card), [])
+})
+
+// F68 (production, 2026-09-30 22:05:56 and 22:07:49 UTC): the first canonical
+// read timed out, both call lists showed the unavailable copy, and nothing
+// read the lists again until a reload. This harness boots the real controller
+// with a hand-driven timer table, so a test can fire the 10 s read deadline
+// and each retry timer itself.
+const F68_EMPTY_COPY = {
+  requests: ['No call requests to show.', 'New requests will appear here as they come in.'],
+  calls: ['No calls to show.', 'Scheduled consultations and past calls will appear here.'],
+}
+const F68_UNAVAILABLE_COPY = {
+  requests: ['Call requests are unavailable right now.', 'Refresh the page to try again.'],
+  calls: ['Calls are unavailable right now.', 'Refresh the page to try again.'],
+}
+
+function f68Row(extra = {}) {
+  const now = Date.now()
+  return {
+    booking_id: 'f68-call',
+    status: 'confirmed',
+    start: now + 2 * 24 * 60 * 60 * 1000,
+    end: now + 2 * 24 * 60 * 60 * 1000 + 30 * 60 * 1000,
+    duration: 30,
+    meeting_link: 'https://meet.google.com/f68-room',
+    brand_data: { name: 'Northwind', memberstack_id: 'mem_brand', timezone: 'UTC' },
+    starter_data: { name: 'Sam', memberstack_id: 'mem_starter', timezone: 'UTC' },
+    ...extra,
+  }
+}
+
+const f68Hang = () => new Promise(() => {})
+const f68Fail = () => ({ ok: false, json: async () => ({}) })
+const f68Rows = (rows) => () => ({ ok: true, json: async () => rows })
+
+// `memberReady` is the boot-time shared member snapshot (`window.memberReady`).
+// `brand` boots /brand-dashboard instead: `brand.member` is what Memberstack
+// returns live, `brand.saved` is the native profile form's values, and the
+// harness exposes the hero text and the form's submit.
+async function bootRetryDashboard(reads, { brand, memberReady } = {}) {
+  const source = fs.readFileSync(require.resolve('./dashboard-calls.js'), 'utf8')
+  const timers = new Map()
+  let nextTimer = 0
+  const state = {
+    reads: 0,
+    authChange: null,
+    member: brand ? brand.member : { id: 'mem_starter' },
+  }
+  const heroes = {
+    'brand-first-name': element(),
+    'brand-last-name': element(),
+    'brand-company': element(),
+  }
+  const submitListeners = []
+  const profileForm = element()
+  profileForm.addEventListener = (type, listener) => {
+    if (type === 'submit') submitListeners.push(listener)
+  }
+  profileForm.querySelector = (selector) => {
+    const field = selector.match(/data-ms-member="([^"]+)"/)
+    const saved = (brand && brand.saved) || {}
+    return field ? { value: saved[field[1]] || '' } : null
+  }
+  const visibilityListeners = []
+  const sections = {}
+  const sectionNode = (name) => {
+    const cards = []
+    const list = element({ 'bookings-list': name })
+    list.appendChild = (card) => { cards.push(card); return card }
+    Object.defineProperty(list, 'innerHTML', {
+      get() { return '' },
+      set(value) { if (value === '') cards.length = 0 },
+    })
+    const template = element({ 'bookings-item-template': name })
+    const heading = element()
+    heading.textContent = F68_EMPTY_COPY[name][0]
+    const paragraph = element()
+    paragraph.textContent = F68_EMPTY_COPY[name][1]
+    const empty = element({ 'bookings-empty': name })
+    empty.querySelector = (selector) => (
+      selector === 'h1,h2,h3,h4,h5,h6' ? heading : selector === 'p' ? paragraph : null
+    )
+    const node = element({ 'bookings-section': name })
+    const states = []
+    const setAttribute = node.setAttribute
+    node.setAttribute = function (attribute, value) {
+      if (attribute === 'data-bookings-state') states.push(value)
+      return setAttribute.call(this, attribute, value)
+    }
+    node.querySelector = (selector) => ({
+      ['[bookings-list="' + name + '"]']: list,
+      ['[bookings-item-template="' + name + '"]']: template,
+      ['[bookings-loader="' + name + '"]']: element(),
+      ['[bookings-empty="' + name + '"]']: empty,
+      '[bookings-count]': element(),
+      '.tabs-button_component.is-dashboard': element(),
+    })[selector] || null
+    sections[name] = {
+      cards,
+      empty,
+      node,
+      states,
+      get state() { return node.getAttribute('data-bookings-state') },
+      get copy() { return [heading.textContent, paragraph.textContent] },
+    }
+    return node
+  }
+  const nodes = [sectionNode('requests'), sectionNode('calls')]
+  const root = element()
+  const document = {
+    documentElement: root,
+    readyState: 'complete',
+    visibilityState: 'visible',
+    hidden: false,
+    addEventListener(type, listener) {
+      if (type === 'visibilitychange') visibilityListeners.push(listener)
+    },
+    getElementById() { return null },
+    querySelector(selector) {
+      const hero = selector.match(/^\[hero-element="([^"]+)"\]$/)
+      return hero && brand ? heroes[hero[1]] || null : null
+    },
+    querySelectorAll(selector) {
+      if (selector === '[bookings-section]') return nodes
+      if (brand && selector === 'form[data-ms-form="profile"]') return [profileForm]
+      return []
+    },
+  }
+  const window = {
+    $memberstackDom: {
+      async getCurrentMember() {
+        if (state.memberError) throw state.memberError
+        return state.member && { data: state.member }
+      },
+      onAuthChange(listener) { state.authChange = listener },
+    },
+    clearInterval() {},
+    document,
+    location: { pathname: brand ? '/brand-dashboard' : '/starter-dashboard', search: '', hash: '' },
+    setInterval() { return 1 },
+    setTimeout(callback, delay) {
+      nextTimer += 1
+      timers.set(nextTimer, { callback, delay })
+      return nextTimer
+    },
+    clearTimeout(id) { timers.delete(id) },
+    xanoAuthFetch: async () => {
+      const read = reads[Math.min(state.reads, reads.length - 1)]
+      state.reads += 1
+      return read()
+    },
+  }
+  if (memberReady) window.memberReady = memberReady
+  vm.runInNewContext(source, {
+    console: { error() {}, warn() {}, log() {} },
+    document,
+    Intl,
+    URL,
+    URLSearchParams,
+    window,
+  })
+  const settle = async () => {
+    for (let step = 0; step < 30; step += 1) await new Promise(setImmediate)
+  }
+  const active = () => Array.from(timers.entries()).map(([id, timer]) => ({ id, delay: timer.delay }))
+  return {
+    document,
+    root,
+    sections,
+    state,
+    timers,
+    settle,
+    active,
+    delays: () => active().map((timer) => timer.delay),
+    hero: () => [
+      heroes['brand-first-name'].textContent,
+      heroes['brand-last-name'].textContent,
+      heroes['brand-company'].textContent,
+    ],
+    async submitProfile() {
+      submitListeners.forEach((listener) => listener({ type: 'submit' }))
+      await settle()
+    },
+    // Runs the one armed timer with this delay, as the browser would.
+    async fire(delay) {
+      const due = Array.from(timers.entries()).filter(([, timer]) => timer.delay === delay)
+      assert.equal(due.length, 1, 'one armed ' + delay + ' ms timer')
+      timers.delete(due[0][0])
+      due[0][1].callback()
+      await settle()
+    },
+    async setVisibility(visibility) {
+      document.visibilityState = visibility
+      document.hidden = visibility === 'hidden'
+      visibilityListeners.forEach((listener) => listener({ type: 'visibilitychange' }))
+      await settle()
+    },
+  }
+}
+
+async function failFirstRead(env) {
+  await until(() => env.state.reads === 1 && env.delays().includes(10_000))
+  // The first read hangs past its 10 s deadline, as the production reads did.
+  await env.fire(10_000)
+  assert.equal(env.root.getAttribute('data-dashboard-calls-v3'), 'error')
+  for (const name of ['requests', 'calls']) {
+    assert.equal(env.sections[name].state, 'error', name + ' shows the failure')
+    assert.deepEqual(env.sections[name].copy, F68_UNAVAILABLE_COPY[name])
+  }
+}
+
+test('F68: a timed-out first read retries 3 s later and renders the lists without a reload', async () => {
+  const env = await bootRetryDashboard([f68Hang, f68Rows([f68Row()])])
+  await failFirstRead(env)
+  assert.deepEqual(env.delays(), [3000], 'one retry is armed 3 s after the failed read')
+  const statesAfterFailure = {
+    requests: env.sections.requests.states.length,
+    calls: env.sections.calls.states.length,
+  }
+
+  await env.fire(3000)
+  assert.equal(env.state.reads, 2)
+  assert.equal(env.root.getAttribute('data-dashboard-calls-v3'), 'ready')
+  assert.equal(env.sections.calls.state, 'ready')
+  assert.equal(env.sections.calls.cards.length, 1)
+  assert.equal(env.sections.calls.cards[0].getAttribute('data-booking-id'), 'f68-call')
+  assert.equal(env.sections.requests.state, 'empty')
+  assert.equal(env.sections.requests.empty.hidden, false)
+  assert.deepEqual(env.sections.requests.copy, F68_EMPTY_COPY.requests, 'the authored empty copy is back')
+  assert.deepEqual(env.sections.calls.copy, F68_EMPTY_COPY.calls)
+  for (const name of ['requests', 'calls']) {
+    assert.equal(
+      env.sections[name].states.slice(statesAfterFailure[name]).includes('loading'),
+      false,
+      name + ' never flashes back to loading during the retry',
+    )
+  }
+  assert.deepEqual(env.delays(), [], 'a successful retry arms nothing more')
+})
+
+test('F68: failed retries keep the unavailable copy and stop after the 3, 10 and 30 s retries', async () => {
+  const env = await bootRetryDashboard([f68Hang, f68Fail])
+  await failFirstRead(env)
+  const retryDelays = []
+  for (let retry = 1; retry <= 3; retry += 1) {
+    const delays = env.delays()
+    assert.equal(delays.length, 1, 'one retry is armed after read ' + retry)
+    retryDelays.push(delays[0])
+    await env.fire(delays[0])
+    assert.equal(env.state.reads, retry + 1)
+    assert.equal(env.root.getAttribute('data-dashboard-calls-v3'), 'error')
+    for (const name of ['requests', 'calls']) {
+      assert.equal(env.sections[name].state, 'error')
+      assert.deepEqual(env.sections[name].copy, F68_UNAVAILABLE_COPY[name], 'no new copy')
+    }
+  }
+  assert.deepEqual(retryDelays, [3000, 10_000, 30_000])
+  assert.deepEqual(env.delays(), [], 'the retry budget is spent')
+  assert.equal(env.state.reads, 4)
+})
+
+test('F68: a retry that comes due while the page is hidden waits until the page is visible', async () => {
+  const env = await bootRetryDashboard([f68Hang, f68Rows([f68Row()])])
+  await failFirstRead(env)
+  await env.setVisibility('hidden')
+  await env.fire(3000)
+  assert.equal(env.state.reads, 1, 'no read runs while the page is hidden')
+  assert.deepEqual(env.delays(), [])
+  assert.equal(env.sections.calls.state, 'error')
+
+  // Another hidden notification does not start the parked retry.
+  await env.setVisibility('hidden')
+  assert.equal(env.state.reads, 1)
+
+  await env.setVisibility('visible')
+  assert.equal(env.state.reads, 2, 'the parked retry runs once the page is visible')
+  assert.equal(env.sections.calls.state, 'ready')
+  assert.equal(env.sections.calls.cards.length, 1)
+
+  await env.setVisibility('hidden')
+  await env.setVisibility('visible')
+  assert.equal(env.state.reads, 2, 'a later visible page starts no read')
+})
+
+test('F68: a parked hidden retry spends no budget, so the full schedule still follows', async () => {
+  const env = await bootRetryDashboard([f68Hang, f68Fail])
+  await failFirstRead(env)
+  await env.setVisibility('hidden')
+  await env.fire(3000)
+  assert.equal(env.state.reads, 1)
+  await env.setVisibility('visible')
+  assert.equal(env.state.reads, 2)
+  assert.deepEqual(env.delays(), [10_000])
+  await env.fire(10_000)
+  assert.deepEqual(env.delays(), [30_000])
+  await env.fire(30_000)
+  assert.equal(env.state.reads, 4)
+  assert.deepEqual(env.delays(), [])
+})
+
+test('F68: an auth change ends the old retry schedule and gives the new session its own', async () => {
+  const env = await bootRetryDashboard([f68Hang, f68Fail, f68Rows([f68Row()])])
+  await failFirstRead(env)
+  const [oldRetry] = env.active()
+  assert.equal(oldRetry.delay, 3000)
+  const oldCallback = env.timers.get(oldRetry.id).callback
+  env.timers.delete(oldRetry.id)
+
+  // The new session's first read fails fast and arms its own retry.
+  env.state.authChange()
+  await until(() => env.state.reads === 2)
+  await env.settle()
+  assert.deepEqual(env.delays(), [3000])
+
+  // The old session's retry comes due and reads nothing.
+  oldCallback()
+  await env.settle()
+  assert.equal(env.state.reads, 2)
+
+  await env.fire(3000)
+  assert.equal(env.state.reads, 3)
+  assert.equal(env.sections.calls.state, 'ready')
+  assert.deepEqual(env.delays(), [])
+})
+
+test('F68: no retry is armed while a retry read is in flight', async () => {
+  const held = deferred()
+  const env = await bootRetryDashboard([f68Hang, () => held.promise, f68Rows([f68Row()])])
+  await failFirstRead(env)
+  await env.fire(3000)
+  assert.equal(env.state.reads, 2)
+  const inFlight = env.active()
+  assert.equal(inFlight.length, 1, 'only the held read deadline is armed')
+  assert.equal(inFlight[0].delay, 10_000)
+
+  held.resolve({ ok: false, json: async () => ({}) })
+  await env.settle()
+  const next = env.active()
+  assert.equal(next.length, 1)
+  assert.equal(next[0].delay, 10_000)
+  assert.notEqual(next[0].id, inFlight[0].id, 'the next retry is armed only after the held read failed')
+  assert.equal(env.timers.has(inFlight[0].id), false, 'the held read deadline is cleared')
+  assert.equal(env.state.reads, 2)
+
+  await env.fire(10_000)
+  assert.equal(env.state.reads, 3)
+  assert.equal(env.sections.calls.state, 'ready')
+})
+
+test('F68: a member that goes missing during the retries stops the schedule', async () => {
+  const env = await bootRetryDashboard([f68Hang, f68Rows([f68Row()])])
+  await failFirstRead(env)
+  env.state.member = null
+  await env.fire(3000)
+  // The boot readiness window has passed, so a retry reads the live member
+  // with the short member retries that every later read uses.
+  const memberWaits = []
+  for (let step = 0; step < 20 && env.delays().some((delay) => delay < 3000); step += 1) {
+    memberWaits.push(env.delays()[0])
+    await env.fire(env.delays()[0])
+  }
+  assert.deepEqual(memberWaits, [200, 400])
+  assert.equal(env.state.reads, 1, 'no canonical read runs without a member')
+  assert.equal(env.root.getAttribute('data-dashboard-calls-v3'), 'error')
+  assert.deepEqual(env.delays(), [], 'a missing member is not retried')
+})
+
+const F68_OLD_PROFILE = { 'free-user': 'Olive', 'last-name': 'Stone', company: 'OldCo' }
+const F68_NEW_PROFILE = { 'free-user': 'Nina', 'last-name': 'Stone', company: 'NewCo' }
+
+test('F68: a Brand retry reads the live member, so a profile saved during the retries stays on the hero', async () => {
+  const env = await bootRetryDashboard([f68Hang, f68Rows([])], {
+    memberReady: Promise.resolve({ data: { id: 'mem_brand', customFields: F68_OLD_PROFILE } }),
+    brand: {
+      member: { id: 'mem_brand', customFields: F68_OLD_PROFILE },
+      saved: F68_NEW_PROFILE,
+    },
+  })
+  await until(() => env.state.reads === 1)
+  assert.deepEqual(env.hero(), ['Olive', 'Stone', 'OldCo'], 'the boot read paints the shared snapshot')
+  await failFirstRead(env)
+  assert.deepEqual(env.hero(), ['', '', ''], 'the failed first read clears the hero')
+
+  // The Brand saves the profile, and Memberstack now returns the saved values.
+  env.state.member = { id: 'mem_brand', customFields: F68_NEW_PROFILE }
+  await env.submitProfile()
+  assert.deepEqual(env.hero(), ['Nina', 'Stone', 'NewCo'])
+
+  await env.fire(3000)
+  assert.equal(env.state.reads, 2)
+  assert.equal(env.root.getAttribute('data-dashboard-calls-v3'), 'ready')
+  assert.deepEqual(env.hero(), ['Nina', 'Stone', 'NewCo'], 'the retry does not repaint the boot snapshot')
+})
+
+test('F68: a retry after a rejected boot member snapshot reads the live member and recovers', async () => {
+  const memberReady = Promise.reject(new Error('member snapshot failed'))
+  memberReady.catch(() => {})
+  const env = await bootRetryDashboard([f68Rows([f68Row()])], { memberReady })
+  await until(() => env.root.getAttribute('data-dashboard-calls-v3') === 'error' && env.delays().includes(3000))
+  assert.equal(env.state.reads, 0, 'the boot read fails before the canonical read')
+  assert.equal(env.sections.calls.state, 'error')
+
+  await env.fire(3000)
+  assert.equal(env.state.reads, 1, 'the retry reads the live member and runs the canonical read')
+  assert.equal(env.root.getAttribute('data-dashboard-calls-v3'), 'ready')
+  assert.equal(env.sections.calls.state, 'ready')
+  assert.equal(env.sections.calls.cards.length, 1)
+  assert.deepEqual(env.delays(), [])
+})
+
+test('F68: a Brand retry leaves the hero clear while its read runs and after it fails', async () => {
+  const held = deferred()
+  const env = await bootRetryDashboard([f68Hang, () => held.promise, f68Rows([])], {
+    brand: { member: { id: 'mem_brand', customFields: F68_OLD_PROFILE } },
+  })
+  await failFirstRead(env)
+  assert.deepEqual(env.hero(), ['', '', ''])
+
+  await env.fire(3000)
+  assert.equal(env.state.reads, 2)
+  assert.deepEqual(env.hero(), ['', '', ''], 'the hero stays clear while the retry read runs')
+  held.resolve({ ok: false, json: async () => ({}) })
+  await env.settle()
+  assert.equal(env.sections.calls.state, 'error')
+  assert.deepEqual(env.hero(), ['', '', ''], 'the failed retry shows no name')
+
+  await env.fire(10_000)
+  assert.equal(env.state.reads, 3)
+  assert.equal(env.root.getAttribute('data-dashboard-calls-v3'), 'ready')
+  assert.deepEqual(env.hero(), ['Olive', 'Stone', 'OldCo'], 'a successful retry paints the hero')
+})
+
+test('F68: a failed Brand retry keeps a hero repainted by a profile save', async () => {
+  const env = await bootRetryDashboard([f68Hang, f68Fail, f68Rows([])], {
+    brand: {
+      member: { id: 'mem_brand', customFields: F68_OLD_PROFILE },
+      saved: F68_NEW_PROFILE,
+    },
+  })
+  await failFirstRead(env)
+  env.state.member = { id: 'mem_brand', customFields: F68_NEW_PROFILE }
+  await env.submitProfile()
+  assert.deepEqual(env.hero(), ['Nina', 'Stone', 'NewCo'])
+
+  await env.fire(3000)
+  assert.equal(env.state.reads, 2)
+  assert.equal(env.sections.calls.state, 'error')
+  assert.deepEqual(env.hero(), ['Nina', 'Stone', 'NewCo'], 'a failed retry does not clear the saved profile')
+
+  await env.fire(10_000)
+  assert.equal(env.state.reads, 3)
+  assert.equal(env.sections.calls.state, 'empty')
+  assert.deepEqual(env.hero(), ['Nina', 'Stone', 'NewCo'])
+})
+
+test('F68: a Brand retry that finds no member still clears the hero', async () => {
+  const env = await bootRetryDashboard([f68Hang, f68Rows([])], {
+    brand: {
+      member: { id: 'mem_brand', customFields: F68_OLD_PROFILE },
+      saved: F68_NEW_PROFILE,
+    },
+  })
+  await failFirstRead(env)
+  env.state.member = { id: 'mem_brand', customFields: F68_NEW_PROFILE }
+  await env.submitProfile()
+  assert.deepEqual(env.hero(), ['Nina', 'Stone', 'NewCo'])
+
+  env.state.member = null
+  await env.fire(3000)
+  for (let step = 0; step < 5 && env.delays().some((delay) => delay < 3000); step += 1) {
+    await env.fire(env.delays()[0])
+  }
+  assert.equal(env.state.reads, 1, 'no canonical read runs without a member')
+  assert.equal(env.root.getAttribute('data-dashboard-calls-v3'), 'error')
+  assert.deepEqual(env.hero(), ['', '', ''], 'a missing member fails closed')
+  assert.deepEqual(env.delays(), [])
 })
