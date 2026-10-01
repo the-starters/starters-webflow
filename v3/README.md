@@ -2897,8 +2897,8 @@ failing the whole dashboard closed. A missing member is the one exception and
 still fails closed.
 
 F68 (production, 2026-09-30 22:05:56 and 22:07:49 UTC): each canonical list
-read has one 10 s deadline (`CANONICAL_READ_TIMEOUT_MS`). The deadline covers
-the auth bridge's token step, the POST, and the body read. A first read that
+read has one 10 s deadline (`CANONICAL_READ_TIMEOUT_MS`). The deadline counts
+the time of the auth bridge's token step, the POST, and the body read. A first read that
 timed out showed both sections unavailable, and nothing read the lists again
 until a reload, because the lifecycle ticker re-reads only for rendered rows.
 Now the first read of a session (the boot read, or the read after an auth
@@ -2921,9 +2921,19 @@ to a visible page, and it spends no budget while it waits. An auth change ends
 the old schedule, and the new session's first read gets its own budget. A
 missing member, a missing Memberstack client, and the post-mutation and ticker
 refreshes keep their own failure rules and get no retry. Each attempt keeps
-the 10 s deadline: the retained errors do not show which step used the
-budget, and a fresh attempt after an abort recovers a stuck request sooner
-than a longer deadline. When every attempt times out, the last retry ends
+the 10 s deadline, because the retained errors do not show which step used
+the budget. The deadline aborts only the canonical POST and its body read.
+For those two steps, a fresh attempt after an abort recovers a stuck request
+sooner than a longer deadline. The auth bridge's shared steps in
+`v3/scheduling-auth.js` (the auth reconciliation and the token trade) have no
+timeout and do not take the caller's abort signal. A later attempt for the
+same Memberstack token joins the trade that is still in flight. So a retry
+does not recover a hung token trade: each attempt times out again until the
+page reloads or the Memberstack token changes. A slow trade that finishes
+still helps, because the retry then sends only the POST with the cached
+token. Follow-up outside this change: give the token trade its own timeout in
+`v3/scheduling-auth.js`, or drop an abandoned trade, so that a retry can start
+a new trade. When every attempt times out, the last retry ends
 about 83 s after the boot read started, and a failed page load adds at most
 three canonical POSTs.
 

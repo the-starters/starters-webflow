@@ -63,7 +63,9 @@
   // lifecycle ticker re-reads only for rendered rows. Retry that read once
   // after each of these delays, counted from the end of the failed attempt:
   // at most 3 retries, never while the page is hidden. Each attempt keeps the
-  // 10 s deadline above.
+  // 10 s deadline above. The deadline aborts only the canonical POST and its
+  // body read: a retry joins a token trade that is still in flight in
+  // v3/scheduling-auth.js, so a retry does not recover a hung trade.
   const INITIAL_READ_RETRY_DELAYS_MS = [3000, 10000, 30000]
   const EMPTY_COPY_SELECTORS = ['h1,h2,h3,h4,h5,h6', 'p']
   const PROFILE_REFRESH_DELAYS_MS = [0, 150, 300, 600, 1000, 1600, 2500]
