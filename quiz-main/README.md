@@ -291,3 +291,22 @@ with:
 ```sh
 node --test quiz-main/*.test.js v3/algolia-environment.test.js quiz-taxonomy-compatibility.test.js quiz-member-json-fallback.test.js quiz-results-pending-draft.test.js
 ```
+
+For the authenticated retake browser check against published markup, install
+Playwright locally and use an evidence directory outside tracked source:
+
+```sh
+npm install --prefix .quiz-test-runtime --no-package-lock --no-audit --no-fund playwright@1.63.0
+NODE_PATH="$PWD/.quiz-test-runtime/node_modules" QUIZ_EVIDENCE_DIR="/path/to/evidence" node quiz-main/quiz-retake.browser.cjs
+rm -rf .quiz-test-runtime
+```
+
+Create the evidence directory before running. The check uses installed Google
+Chrome on macOS; `CHROME_PATH` can select another installed Chrome executable.
+It substitutes the local quiz main, tabs, and results scripts into the published
+pages, simulates Brand membership only at the Memberstack API boundary, and
+intercepts persistence calls. It checks revised answers, keyboard completion,
+delayed double-click completion, and never-settling lookup recovery. Screenshots
+and JSON reports go to the evidence directory. All external non-read HTTP methods
+are blocked, including recommendation search POSTs; recommendation content,
+real server persistence, and actual signup/account creation are not validated.
