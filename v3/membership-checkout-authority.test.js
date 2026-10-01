@@ -304,6 +304,29 @@ test('registers from the exact public Join CTA route families', async () => {
   }
 })
 
+test('registers checkout intents from Learn pages', async () => {
+  for (const pathname of [
+    '/learn',
+    '/learn/sessions',
+    '/learn/sessions/partnerships-playbook',
+    '/learn/interviews-analysis/how-to-build-trust',
+    '/learn/playbooks-frameworks/the-live-shopping-playbook',
+    '/learn/frameworks-playbooks',
+    '/learn/events',
+  ]) {
+    for (const priceId of [
+      'prc_premium-monthly--fn1ae0qjj',
+      'prc_paid-annual-2o5f040u',
+    ]) {
+      const state = boot({ pathname: pathname + '/' })
+      const control = target(priceId)
+      await state.listeners[0].listener(clickEvent(control))
+      assert.equal(control.clicks, 1, pathname)
+      assert.equal(JSON.parse(state.requests[1].init.body).source_route, pathname)
+    }
+  }
+})
+
 test('fails closed on non-allowlisted Memberstack prices', async () => {
   const priceState = boot({ pathname: '/all-starters' })
   const control = target('prc_legacy-v2')
@@ -330,6 +353,10 @@ test('fails closed on non-checkout V3 routes', async () => {
     '/partners/example',
     '/services/example',
     '/categories/example/edit',
+    '/learning',
+    '/learn/Bad-Slug',
+    '/learn/sessions//item',
+    '/learn/sessions/%2fitem',
   ]) {
     const state = boot({ pathname })
     const control = target('prc_premium-monthly--fn1ae0qjj')
