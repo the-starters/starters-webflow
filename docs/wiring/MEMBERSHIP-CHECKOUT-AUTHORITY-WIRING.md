@@ -29,13 +29,15 @@ The controller boots only on these V3 hosts:
 - `the-starters-3-0.webflow.io`
 
 It allows checkout on the V3 funnel routes `/` and `/quiz-results`, the public routes
-`/all-starters` and `/why-us`, the `/learn` landing page and paths beneath it,
+`/all-starters`, `/why-us`, `/become-a-starter`, and `/case-studies`,
+the `/learn` landing page and paths beneath it,
 and the single-segment CMS families `/hire`, `/categories`, `/subcategories`,
 `/companies`, `/competitors`, `/functions`,
-`/industries`, `/roles`, `/skills`, and `/tools`. Each CMS route requires one
-slug with only lowercase letters, numbers, and single hyphens. Learn paths may
-have multiple segments with the same character rules. All paths are
-case-sensitive. Malformed paths and nested paths outside Learn fail closed.
+`/industries`, `/roles`, `/skills`, `/tools`, and `/case-studies`. Each CMS
+route requires one slug with only lowercase letters, numbers, and single
+hyphens. Learn paths may have multiple segments with the same character rules.
+All paths are case-sensitive. Malformed paths and nested paths outside Learn
+fail closed.
 `/partners` and `/services` remain excluded because their sampled live items
 returned 404. The controller removes trailing slashes before it records the source path. It gates
 only these V3 Memberstack price IDs:
@@ -58,7 +60,8 @@ Before Memberstack opens Stripe checkout, the controller:
    `auth/trade-token/v3` boundary.
 4. Sends the returned Xano `user_v3` token to the authenticated registrar.
 5. The registrar registers one `membership_checkout_intent`.
-6. Opens the original native Memberstack checkout only after Xano accepts the intent.
+6. Replays the original clicked control so native Memberstack checkout opens
+   only after Xano accepts the intent.
 
 An authentication, secure event identity, intent storage, or registration
 failure blocks checkout. It does not fall back to V2. After the controller

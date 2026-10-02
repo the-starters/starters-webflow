@@ -11,7 +11,7 @@ const source = fs.readFileSync(
 
 function target(priceId) {
   const attributes = new Map([['data-ms-price:add', priceId]])
-  return {
+  const control = {
     clicks: 0,
     closest(selector) {
       return selector === '[data-ms-price\\:add]' ? this : null
@@ -29,6 +29,16 @@ function target(priceId) {
       this.clicks += 1
     },
   }
+  control.child = {
+    clicks: 0,
+    closest(selector) {
+      return selector === '[data-ms-price\\:add]' ? control : null
+    },
+    click() {
+      this.clicks += 1
+    },
+  }
+  return control
 }
 
 function boot(options = {}) {
@@ -157,6 +167,21 @@ test('registers one V3 intent before resuming native Memberstack checkout', asyn
   })
   assert.equal(control.getAttribute('data-v3-checkout-authority'), 'accepted')
   assert.equal(state.storage.size, 1)
+})
+
+test('replays the original child click target after intent registration', async () => {
+  const state = boot()
+  const control = target('prc_premium-monthly--fn1ae0qjj')
+  const event = clickEvent(control.child)
+
+  await state.listeners[0].listener(event)
+
+  assert.equal(event.prevented, true)
+  assert.equal(event.stopped, true)
+  assert.equal(control.clicks, 0)
+  assert.equal(control.child.clicks, 1)
+  assert.equal(state.requests.length, 2)
+  assert.equal(control.getAttribute('data-v3-checkout-authority'), 'accepted')
 })
 
 test('keeps the Memberstack session token out of authentication URLs', async () => {
@@ -327,6 +352,25 @@ test('registers checkout intents from Learn pages', async () => {
   }
 })
 
+test('registers checkout intents from Become a Starter and case studies', async () => {
+  for (const pathname of [
+    '/become-a-starter',
+    '/case-studies',
+    '/case-studies/how-birddogs-found-an-elite-ui-ux-designer-on-the-starters',
+  ]) {
+    for (const priceId of [
+      'prc_premium-monthly--fn1ae0qjj',
+      'prc_paid-annual-2o5f040u',
+    ]) {
+      const state = boot({ pathname: pathname + '/' })
+      const control = target(priceId)
+      await state.listeners[0].listener(clickEvent(control))
+      assert.equal(control.clicks, 1, pathname)
+      assert.equal(JSON.parse(state.requests[1].init.body).source_route, pathname)
+    }
+  }
+})
+
 test('fails closed on non-allowlisted Memberstack prices', async () => {
   for (const pathname of ['/all-starters', '/learn/sessions/partnerships-playbook']) {
     const priceState = boot({ pathname })
@@ -359,6 +403,10 @@ test('fails closed on non-checkout V3 routes', async () => {
     '/learn/Bad-Slug',
     '/learn/sessions//item',
     '/learn/sessions/%2fitem',
+    '/case-studies/Bad-Slug',
+    '/case-studies/example/edit',
+    '/case-studies/%2fbrand-dashboard',
+    '/case-studies-archive/example',
   ]) {
     const state = boot({ pathname })
     const control = target('prc_premium-monthly--fn1ae0qjj')
