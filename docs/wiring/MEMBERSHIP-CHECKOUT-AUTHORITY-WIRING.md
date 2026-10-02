@@ -19,6 +19,12 @@ The controller uses the existing native Memberstack `data-ms-price:add` controls
 It does not create or replace Webflow form or checkout markup.
 It captures clicks on `window`, before Memberstack's `document` capture listener,
 so the authority row is committed first regardless of script load order.
+While checkout is being prepared, the clicked control's authored
+`[data-button-spinner]` is shown through its existing `data-opp-loading`
+contract. The shared Sign Out loader must keep its `data-ms-loader` attribute for
+real logout, form, and profile actions; this controller temporarily hides only
+that loader's visibility during checkout handoff and releases the hold as soon
+as a separate real Memberstack action starts.
 
 ## Runtime allowlists
 
@@ -65,6 +71,12 @@ failure blocks checkout. It does not fall back to V2. After the controller
 clears its pending state, the member can retry. Failed and accepted registrations
 reuse the same pending event identity and original route for that price until
 the two-hour intent expires. A member change replaces that pending identity.
+Failure also restores the clicked checkout control's authored loading state.
+After an accepted intent, the Get Started spinner stays lit while native
+Memberstack checkout starts. If the shared Sign Out loader is absent, never
+appears, or cannot be observed, a bounded three-second fallback restores the
+clicked control. If the Sign Out loader is observed, the clicked control restores
+when that loader finishes or at the two-minute safety cap. Cleanup is idempotent.
 
 The published POST trade endpoint owns Memberstack session verification. The
 Memberstack token stays out of URLs and travels only in its JSON request body.
