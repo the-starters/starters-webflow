@@ -94,7 +94,7 @@ Unbound or legacy subscriptions fail closed from the V3 email path.
 
 - Publish the Xano table and bearer-verifying registrar first, with exact
   draft-free readback.
-- Release this script through GitHub with the `v1.59.430` tag and jsDelivr purge.
+- Release this script through GitHub with the `v1.59.659` tag and jsDelivr purge.
 - Preserve and verify the complete Webflow custom-code block before publish.
 - Run one owned Stripe Test checkout with action-time confirmation.
 - Prove the V3 payment pattern does not match the unchanged V2 Zap filter.
