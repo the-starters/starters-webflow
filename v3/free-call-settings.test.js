@@ -2500,7 +2500,7 @@ test('a Free prerequisite refresh clears an update error while pending and repla
   assert.equal(result.document.documentElement.getAttribute('data-free-call-settings'), 'error')
   assert.equal(
     result.dom.nativeErrorMessage.textContent,
-    'Free-call readiness could not be refreshed. Your account was not changed.',
+    'Free-call settings could not be refreshed. Reload the page to check their current state.',
   )
   assert.equal(result.dom.nativeError.style.display, 'block')
   assert.equal(result.dom.nativeError.getAttribute('aria-hidden'), 'false')
@@ -3547,7 +3547,7 @@ test('a connection-state refresh repaints canonically and survives a transient f
   await settle()
   assert.equal(
     result.dom.status.textContent,
-    'Free-call readiness could not be refreshed. Your account was not changed.',
+    'Free-call settings could not be refreshed. Reload the page to check their current state.',
   )
   assert.notEqual(result.dom.status.textContent, 'Sign in to manage free calls.')
 
@@ -3559,4 +3559,50 @@ test('a connection-state refresh repaints canonically and survives a transient f
     result.calls.filter((call) => call.path === '/starter/free-call-settings/get/v3').length,
     4,
   )
+})
+
+test('a post-availability Free read refusal reports the unresolved settings without claiming a rollback', async () => {
+  let rejectRefresh = false
+  const result = load({
+    initial: canonical({
+      public_description: 'Free introduction',
+      services: [service({ title: 'Free introduction' })],
+      readiness: { free_call_enabled: true, bookable: true },
+    }),
+    routes: {
+      '/starter/free-call-settings/get/v3': ({ state }) => rejectRefresh
+        ? { ok: false, status: 400, json: async () => ({ message: 'Duplicate active Free Call services require reconciliation' }) }
+        : { ok: true, status: 200, json: async () => state },
+    },
+  })
+  await settle()
+  const savedAvailability = { days: [1, 2, 3], start: '11:30', end: '18:00' }
+  result.window.STARTER_AVAILABILITY = savedAvailability
+  const callsBeforeRefresh = result.calls.length
+  rejectRefresh = true
+  await result.dispatchWindowEvent('starterSchedulingConnectionStateChanged', { state: 'connected' })
+  await settle()
+
+  assert.equal(result.window.STARTER_AVAILABILITY, savedAvailability)
+  assert.deepEqual(result.calls.slice(callsBeforeRefresh).map(call => [call.method, call.path]), [
+    ['GET', '/starter/free-call-settings/get/v3'],
+  ])
+  assert.equal(result.dom.title.value, 'Free introduction')
+  assert.equal(result.dom.root.getAttribute('data-free-call-enabled'), 'true')
+  assert.equal(result.document.documentElement.getAttribute('data-free-call-settings'), 'error')
+  assert.equal(result.dom.nativeError.getAttribute('data-call-settings-error-visible'), 'true')
+  assert.equal(result.dom.nativeError.style.display, 'block')
+  assert.equal(result.dom.nativeErrorMessage.textContent,
+    'Free-call settings could not be refreshed. Reload the page to check their current state.')
+  assert.equal(result.dom.nativeError.parentElement.getAttribute('data-call-settings-error-container'), 'true')
+
+  rejectRefresh = false
+  await result.dispatchWindowEvent('starterSchedulingConnectionStateChanged', { state: 'connected' })
+  await settle()
+  assert.equal(result.document.documentElement.getAttribute('data-free-call-settings'), 'ready')
+  assert.equal(result.dom.nativeError.getAttribute('data-call-settings-error-visible'), 'false')
+  assert.equal(result.dom.nativeError.style.display, 'none')
+  assert.equal(result.dom.nativeError.parentElement.getAttribute('data-call-settings-error-container'), 'false')
+  assert.equal(result.window.STARTER_AVAILABILITY, savedAvailability)
+  assert.ok(result.calls.slice(callsBeforeRefresh).every(call => call.method === 'GET'))
 })
