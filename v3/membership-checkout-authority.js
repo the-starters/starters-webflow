@@ -158,7 +158,7 @@
         if (spinner && spinner.style) spinner.style.display = spinnerDisplay
         if (loading === null) target.removeAttribute('data-opp-loading')
         else target.setAttribute('data-opp-loading', loading)
-        if (logoutLoader && logoutLoader.style) {
+        if (logoutLoader && logoutLoader.style && logoutLoaderHolds > 0) {
           logoutLoaderHolds -= 1
           if (logoutLoaderHolds === 0) {
             logoutLoader.style.visibility = logoutLoaderOriginalVisibility
@@ -166,6 +166,30 @@
         }
       },
     }
+  }
+
+  function releaseLogoutLoaderHold() {
+    if (logoutLoaderHolds === 0) return
+    var documentObject = globalObject.document
+    var logoutLoader =
+      documentObject && typeof documentObject.querySelector === 'function'
+        ? documentObject.querySelector('[data-ms-action="logout"] [data-ms-loader]')
+        : null
+    logoutLoaderHolds = 0
+    if (logoutLoader && logoutLoader.style) {
+      logoutLoader.style.visibility = logoutLoaderOriginalVisibility
+    }
+  }
+
+  function isRealMemberstackAction(node) {
+    if (!node || typeof node.closest !== 'function') return false
+    return !!node.closest(
+      '[data-ms-action="logout"], [data-ms-form], [data-ms-action="profile"]',
+    )
+  }
+
+  function handleNativeActionRelease(event) {
+    if (isRealMemberstackAction(event && event.target)) releaseLogoutLoaderHold()
   }
 
   function followNativeLoader(visuals) {
@@ -330,6 +354,8 @@
     // earlier so the V3 authority row is committed before Memberstack can open
     // Stripe checkout, regardless of script load order.
     globalObject.addEventListener('click', handleCheckout, true)
+    globalObject.addEventListener('click', handleNativeActionRelease, true)
+    globalObject.addEventListener('submit', handleNativeActionRelease, true)
     return true
   }
 

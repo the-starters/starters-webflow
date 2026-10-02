@@ -208,6 +208,100 @@ test('shows the clicked checkout spinner without lighting Sign Out while prepari
   assert.equal(logoutLoader.style.visibility, '')
 })
 
+function nativeActionNode(matchFragment) {
+  return {
+    closest(selector) {
+      return selector.indexOf(matchFragment) !== -1 ? this : null
+    },
+  }
+}
+
+test('releases the Sign Out loader hold immediately when a real logout begins mid-checkout', async () => {
+  let finishAuth
+  const logoutLoader = { style: { display: 'none', visibility: 'visible' } }
+  const state = boot({
+    logoutLoader,
+    authResponse: {
+      ok: true,
+      json: () => new Promise((resolve) => { finishAuth = resolve }),
+    },
+  })
+  const control = target('prc_premium-monthly--fn1ae0qjj')
+
+  const operation = state.listeners[0].listener(clickEvent(control))
+  await new Promise(setImmediate)
+  assert.equal(logoutLoader.style.visibility, 'hidden')
+
+  await state.listeners[1].listener({ target: nativeActionNode('data-ms-action="logout"') })
+  assert.equal(logoutLoader.style.visibility, 'visible')
+
+  finishAuth({})
+  await operation
+  assert.equal(logoutLoader.style.visibility, 'visible')
+})
+
+test('releases the Sign Out loader hold when a real logout begins after checkout is accepted', async () => {
+  const logoutLoader = { style: { display: 'none', visibility: 'visible' } }
+  const state = boot({ logoutLoader })
+  const control = target('prc_paid-annual-2o5f040u')
+
+  await state.listeners[0].listener(clickEvent(control))
+  assert.equal(logoutLoader.style.visibility, 'hidden')
+
+  await state.listeners[1].listener({ target: nativeActionNode('data-ms-action="logout"') })
+  assert.equal(logoutLoader.style.visibility, 'visible')
+
+  state.observers[0].callback()
+  assert.equal(logoutLoader.style.visibility, 'visible')
+})
+
+test('releases the Sign Out loader hold on a real profile form submit mid-checkout', async () => {
+  let finishAuth
+  const logoutLoader = { style: { display: 'none', visibility: 'visible' } }
+  const state = boot({
+    logoutLoader,
+    authResponse: {
+      ok: true,
+      json: () => new Promise((resolve) => { finishAuth = resolve }),
+    },
+  })
+  const control = target('prc_premium-monthly--fn1ae0qjj')
+
+  const operation = state.listeners[0].listener(clickEvent(control))
+  await new Promise(setImmediate)
+  assert.equal(logoutLoader.style.visibility, 'hidden')
+
+  await state.listeners[2].listener({ target: nativeActionNode('data-ms-form') })
+  assert.equal(logoutLoader.style.visibility, 'visible')
+
+  finishAuth({})
+  await operation
+})
+
+test('an unrelated click during checkout leaves the Sign Out loader hold in place', async () => {
+  let finishAuth
+  const logoutLoader = { style: { display: 'none', visibility: 'visible' } }
+  const state = boot({
+    logoutLoader,
+    authResponse: {
+      ok: true,
+      json: () => new Promise((resolve) => { finishAuth = resolve }),
+    },
+  })
+  const control = target('prc_premium-monthly--fn1ae0qjj')
+
+  const operation = state.listeners[0].listener(clickEvent(control))
+  await new Promise(setImmediate)
+  assert.equal(logoutLoader.style.visibility, 'hidden')
+
+  await state.listeners[1].listener({ target: nativeActionNode('unrelated') })
+  assert.equal(logoutLoader.style.visibility, 'hidden')
+
+  finishAuth({})
+  await operation
+  assert.equal(logoutLoader.style.visibility, 'visible')
+})
+
 test('keeps Sign Out hidden while Memberstack loads checkout, then restores it', async () => {
   const logoutLoader = { style: { display: 'none', visibility: 'visible' } }
   const state = boot({ logoutLoader })
