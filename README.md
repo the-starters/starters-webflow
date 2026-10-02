@@ -972,6 +972,13 @@ form-flow steps, so author the confirmation title with
 `data-opp-state="not-applied"`. A successful withdrawal shows the success title;
 opening the modal again resets its titles to the confirmation state.
 
+The Apply Opportunity and Edit Application success screens are owned by
+`data-modal-target="apply-opportunity"` and `data-modal-target="edit-application"`.
+Their authored Back to opportunities button always returns to the merged
+`/opportunities` feed. Their authored View Application button keeps the current
+detail page open when already on `/opportunities/<slug>`, or navigates from a feed
+card to that card's active opportunity detail URL.
+
 Brand-side application archiving is private bookkeeping and does not add an
 `archived` talent UI state. An archived application still paints as `applied` or
 `edited`, so Withdraw and Edit Application remain available; if its opportunity is
