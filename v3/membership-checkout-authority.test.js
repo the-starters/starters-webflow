@@ -229,6 +229,22 @@ test('keeps Sign Out hidden while Memberstack loads checkout, then restores it',
   assert.equal(state.observers[0].disconnected, true)
 })
 
+test('keeps the Get Started spinner lit through a bounded fallback when there is no Sign Out loader', async () => {
+  const state = boot({ logoutLoader: null })
+  const control = target('prc_premium-monthly--fn1ae0qjj')
+
+  await state.listeners[0].listener(clickEvent(control))
+
+  assert.equal(control.clicks, 1)
+  assert.equal(control.spinner.style.display, 'flex')
+  assert.equal(control.getAttribute('data-opp-loading'), 'true')
+
+  await new Promise((resolve) => setTimeout(resolve, 3000))
+
+  assert.equal(control.spinner.style.display, 'none')
+  assert.equal(control.getAttribute('data-opp-loading'), null)
+})
+
 test('keeps the Memberstack session token out of authentication URLs', async () => {
   const state = boot({ memberstackToken: 'private-memberstack-token' })
   const control = target('prc_premium-monthly--fn1ae0qjj')

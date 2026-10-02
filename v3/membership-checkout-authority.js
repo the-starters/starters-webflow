@@ -171,7 +171,7 @@
   function followNativeLoader(visuals) {
     var loader = visuals.logoutLoader
     if (!loader || !loader.style || typeof globalObject.MutationObserver !== 'function') {
-      visuals.restore()
+      globalObject.setTimeout(visuals.restore, 3000)
       return
     }
     var seen = !!loader.style.display && loader.style.display !== 'none'
