@@ -2984,6 +2984,23 @@ function clickEvent(target) {
   }
 }
 
+for (const modalName of ['apply-opportunity', 'edit-application']) {
+  test(`${modalName} success returns to the current opportunities page`, async () => {
+    const bridge = await loadBridge(async () => response({}))
+    const anchor = el('a', { href: '/opportunities-freelancer-view?tab=applied' })
+    const wrap = el('div', { class: 'button_main-wrap' }, [anchor])
+    wrap.textContent = 'Back to opportunities'
+    const success = el('div', { class: 'w-form-done' }, [wrap])
+    el('div', { 'data-modal-target': modalName }, [success])
+    const click = clickEvent(anchor)
+
+    bridge.dispatchDocument('click', click.event)
+
+    assert.equal(bridge.location.href, '/opportunities')
+    assert.equal(click.counts.prevented, 1)
+  })
+}
+
 test('Brand project cards expose only canonical actions for their current lifecycle state', async () => {
   const action = (tag, attrs, label) => {
     const control = el(tag, attrs)

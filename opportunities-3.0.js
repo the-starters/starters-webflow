@@ -6747,7 +6747,7 @@
     // and the default navigation would win over the handlers below.
     if (label.includes('back to opportunities')) {
       e.preventDefault()
-      location.href = '/opportunities-freelancer-view?tab=applied'
+      location.href = '/opportunities'
     } else if (label.includes('view application')) {
       e.preventDefault()
       // On the detail page the application is already on screen behind the
