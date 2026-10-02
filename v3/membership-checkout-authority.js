@@ -49,11 +49,14 @@
       route === '/quiz-results' ||
       route === '/all-starters' ||
       route === '/why-us' ||
+      route === '/become-a-starter' ||
+      route === '/case-studies' ||
       route === '/learn'
     ) {
       return true
     }
     if (/^\/learn(?:\/[a-z0-9]+(?:-[a-z0-9]+)*)+$/.test(route)) return true
+    if (/^\/case-studies\/[a-z0-9]+(?:-[a-z0-9]+)*$/.test(route)) return true
     return /^\/(?:hire|categories|subcategories|companies|competitors|functions|industries|roles|skills|tools)\/[a-z0-9]+(?:-[a-z0-9]+)*$/.test(route)
   }
 
@@ -293,9 +296,11 @@
     return payload
   }
 
-  function resumeNativeCheckout(target) {
+  function resumeNativeCheckout(target, clickedNode) {
     if (bypassTargets) bypassTargets.add(target)
-    if (typeof target.click === 'function') target.click()
+    var replayTarget =
+      clickedNode && typeof clickedNode.click === 'function' ? clickedNode : target
+    if (typeof replayTarget.click === 'function') replayTarget.click()
   }
 
   async function handleCheckout(event) {
@@ -333,7 +338,7 @@
         throw new Error('Your signed-in account changed. Refresh and try again')
       }
       setControlState(target, 'accepted', '')
-      resumeNativeCheckout(target)
+      resumeNativeCheckout(target, event && event.target)
       followNativeLoader(visuals)
     } catch (error) {
       visuals.restore()
