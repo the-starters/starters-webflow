@@ -1107,8 +1107,8 @@ the same trimmed, case-insensitive identity check the create path applies, so a
 padded enum value cannot send the two paths to different routes. Any canonical
 row with `handoff_type=final` is a final invoice, whether it is a current
 `kind=payment_link` row or a legacy `kind=stripe_invoice` row: its prompt reads
-`Type CANCEL to void this final invoice. The hosted invoice will stop accepting
-payment.`, it posts to `invoices/final-cancel/v3`, and its idempotency key is
+`Type CANCEL to cancel this final invoice. The payment link will stop working.`,
+it posts to `invoices/final-cancel/v3`, and its idempotency key is
 prefixed `final-invoice-cancel-ui:`. Every other eligible row keeps the ordinary
 prompt, `invoices/cancel/v3`, and the `invoice-cancel-ui:` prefix. Both routes
 post the same `invoice_id`,
@@ -1304,47 +1304,27 @@ entry point: the browser never hides Generate Invoice because the project is in
 a terminal lifecycle state, and the modal always opens. Xano remains the
 authority for whether the signed-in Starter can bill the selected project.
 
-Opening resolves one of four invoice modes from the canonical row, and the mode
-decides the submit contract. A `final_invoice` row is recognised as the project's
-final-invoice handoff when `handoff_type=final` and `sync_origin=v3`, regardless
-of `kind`; this covers both an ungenerated legacy-shaped `stripe_invoice`
-placeholder and its committed `payment_link` row. Its `status` then chooses
-between the two completed modes:
+Opening resolves the invoice mode from the canonical row (JP decision 1a,
+2026-10-02: a final invoice has no requirement that differs from an ordinary
+Payment Link):
 
-- `standard` — the project is not completed. The ordinary create contract below
-  applies unchanged.
-- `final` — the project is completed and its final-invoice handoff is still
-  open, meaning `status` is `unknown` or `unpaid`. The submit routes to the
-  final-invoice contract below.
-- `final_closed` — the project is completed and its final-invoice handoff is
-  already terminal. The submit fails closed and never issues a replacement final
-  invoice: `paid` shows `The final invoice for this project has already been
-  paid. It cannot be billed again.`, and `void` shows `The final invoice for this
-  project was cancelled. It cannot be billed again.`. Neither message asks the
-  member to refresh, because no refresh reopens a terminal handoff.
-- `unavailable` — the project is completed but no usable final-invoice handoff
-  has arrived yet: the row is missing, fails the identity check above, or carries
-  a status that is neither open nor terminal. The modal still opens, and the
-  submit fails closed with `The final invoice is not ready yet. Refresh the
-  dashboard and try again.` rather than billing the completed project through the
-  ordinary create route.
+- `standard` — every project that is not ended, including `active`,
+  `completion_requested`, and `completed` V3 projects and `active` or
+  `completed` `v2_legacy` projects. The ordinary create contract below applies,
+  whether or not the row carries a `final_invoice` placeholder. A placeholder's
+  stored amount and description are never prefilled, and the fields stay
+  editable.
+- `unavailable` — the project has ended: the canonical `lifecycle_state` (or,
+  when it is absent, the dashboard `status`) is `terminated`,
+  `termination_requested`, `canceled`, or `cancelled`. The modal still opens,
+  and the submit fails closed with `This project has ended, so it cannot be
+  invoiced. Contact The Starters if you need help.` before any request.
+  `invoices/create/v3` rejects these states too.
 
-A project counts as completed when **either** the canonical `lifecycle_state`
-**or** the legacy dashboard `status` reads `completed`, so a projection carrying
-only one of the two fields still reaches its final-invoice route.
-
-A `final` placeholder marked `recovery_ready=true` prefills the modal's `Amount`
-and `Description` from its stored values, so a stalled final invoice can be
-regenerated without retyping. Recovery fields are read-only, and submission uses
-the canonical recovery values even if the DOM is edited. Reopening an ordinary
-or new final invoice restores editable fields. Recovery amounts are normalized
-to cents and checked against the billable range; recovery descriptions are
-trimmed and checked against the final-description rule below. Invalid values
-are left blank, remain read-only, and block submission until the canonical data
-is corrected and reloaded. Without the flag both fields are left blank: a placeholder
-the projection has not marked recoverable never leaks a stale amount or
-description into a new submit. The browser sends no provider identity — the
-placeholder's own id and any Stripe reference stay server-side.
+New invoices never post to `invoices/final-create/v3`. The `final` and
+`final_closed` submit branches described below are unreachable from the
+canonical row and are kept only so a rollback is one line; existing final rows
+still display as before and still cancel through `invoices/final-cancel/v3`.
 
 Before opening on the Starter dashboard, the controller resolves the selected
 id against the canonical project-list row, waiting for the current list load when
@@ -1371,7 +1351,9 @@ with a console warning instead of turning another button into an invoice submit
 settle it. A wrapper marked disabled by attribute (`data-validate-disabled`,
 `data-button-theme="disabled"`, `aria-disabled="true"`) is never converted.
 
-`Amount` and `Description` are resolved by id or input name. New final invoices
+`Amount` and `Description` are resolved by id or input name. The remaining
+`final`-mode rules in this section apply only to the unreachable `final` branch.
+New final invoices
 require a decimal amount between $0.01 and $1,000,000 with no more than two
 decimal places; they never silently round the entered amount. Invalid amounts
 in `final` mode show `Enter a final invoice amount between $0.01 and $1,000,000,
