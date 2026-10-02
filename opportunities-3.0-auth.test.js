@@ -1185,7 +1185,9 @@ test('Starter final invoice cancellation uses the isolated void route', async ()
   bridge.dispatchDocument('click', clickEvent(action).event)
 
   assert.ok(await waitFor(() => requests.length === 1))
-  assert.match(promptText, /void this final invoice/i)
+  assert.match(promptText, /cancel this final invoice/i)
+  assert.match(promptText, /payment link will stop working/i)
+  assert.doesNotMatch(promptText, /hosted invoice/i)
   assert.equal(requests[0].invoice_id, 961)
   assert.match(requests[0].idempotency_key, /^final-invoice-cancel-ui:961:/)
 })
@@ -5809,97 +5811,11 @@ test('a completed project card can still open Generate Invoice', async () => {
   assert.equal(click.counts.stopped, 1)
 })
 
-test('invoice context selects only one canonical completed-project final placeholder', async () => {
-  const bridge = await loadBridge(async () => response({}))
-  const card = invoiceCard({ title: 'Completed campaign', company: 'Acme Co' }, '746')
-  const final = {
-    id: 961,
-    kind: 'stripe_invoice',
-    handoff_type: 'final',
-    sync_origin: 'v3',
-    status: 'unknown',
-  }
-
-  const eligible = bridge.window.Opp30.invoiceProjectContext(card, {
-    id: 746,
-    status: 'completed',
-    lifecycle_state: 'completed',
-    final_invoice: final,
-  })
-  assert.equal(eligible.invoiceMode, 'final')
-  assert.equal(eligible.finalInvoiceId, 961)
-  assert.equal(eligible.finalInvoiceAmount, null)
-
-  const recovery = bridge.window.Opp30.invoiceProjectContext(card, {
-    id: 746,
-    status: 'completed',
-    lifecycle_state: 'completed',
-    final_invoice: {
-      ...final,
-      amount: 125.25,
-      description: 'Original final work',
-      recovery_ready: true,
-    },
-  })
-  assert.equal(recovery.invoiceMode, 'final')
-  assert.equal(recovery.finalInvoiceAmount, 125.25)
-  assert.equal(recovery.finalInvoiceDescription, 'Original final work')
-  assert.equal('stripe_ref' in recovery, false)
-
-  const invalid = bridge.window.Opp30.invoiceProjectContext(card, {
-    id: 746,
-    status: 'completed',
-    lifecycle_state: 'completed',
-    final_invoice: { ...final, sync_origin: 'legacy' },
-  })
-  assert.equal(invalid.invoiceMode, 'unavailable')
-
-  for (const status of ['unknown', 'unpaid']) {
-    const blankPlaceholder = bridge.window.Opp30.invoiceProjectContext(card, {
-      id: 746,
-      status: 'completed',
-      lifecycle_state: 'completed',
-      final_invoice: { ...final, status },
-    })
-    assert.equal(blankPlaceholder.invoiceMode, 'final')
-  }
-
-  for (const status of ['paid', 'void']) {
-    const terminal = bridge.window.Opp30.invoiceProjectContext(card, {
-      id: 746,
-      status: 'completed',
-      lifecycle_state: 'completed',
-      final_invoice: { ...final, status },
-    })
-    assert.equal(terminal.invoiceMode, 'final_closed')
-    assert.equal(terminal.finalInvoiceStatus, status)
-  }
-
-  // A status that is neither open nor terminal is not a settled invoice: it is a
-  // handoff that has not arrived, so it keeps the refreshable message.
-  const unrecognised = bridge.window.Opp30.invoiceProjectContext(card, {
-    id: 746,
-    status: 'completed',
-    lifecycle_state: 'completed',
-    final_invoice: { ...final, status: 'draft' },
-  })
-  assert.equal(unrecognised.invoiceMode, 'unavailable')
-  assert.equal(unrecognised.finalInvoiceStatus, '')
-
-  const incomplete = bridge.window.Opp30.invoiceProjectContext(card, {
-    id: 746,
-    status: 'active',
-    lifecycle_state: 'active',
-    invoices: [],
-  })
-  assert.equal(incomplete.invoiceMode, 'standard')
-})
-
 // A projection may carry only the canonical lifecycle_state, only the legacy
-// dashboard status, or two fields that disagree. Every one of those rows is
-// completed, so none of them may fall into the unreachable 'unavailable' mode
-// while its final placeholder is right there in the payload.
-test('either completed field alone routes a final placeholder to the final mode', async () => {
+// dashboard status, or two fields that disagree. Each completed shape bills
+// through the standard route, with or without a final placeholder; only a
+// canonical ended lifecycle refuses the invoice.
+test('every completed projection shape uses the standard invoice mode', async () => {
   const bridge = await loadBridge(async () => response({}))
   const card = invoiceCard({ title: 'Completed campaign', company: 'Acme Co' }, '746')
   const final = {
@@ -5912,30 +5828,30 @@ test('either completed field alone routes a final placeholder to the final mode'
   const completedShapes = [
     { lifecycle_state: 'completed' },
     { status: 'completed' },
-    { status: 'completed', lifecycle_state: 'terminated' },
     { status: 'active', lifecycle_state: 'completed' },
     { status: 'COMPLETED ' },
   ]
 
   for (const shape of completedShapes) {
-    const context = bridge.window.Opp30.invoiceProjectContext(card, {
-      id: 746,
-      ...shape,
-      final_invoice: final,
-    })
-    assert.equal(context.invoiceMode, 'final', JSON.stringify(shape))
-    assert.equal(context.finalInvoiceId, 961)
-
-    // The same row without a usable placeholder still fails closed, so the two
-    // predicates keep agreeing on what "completed" means.
-    const missing = bridge.window.Opp30.invoiceProjectContext(card, { id: 746, ...shape })
-    assert.equal(missing.invoiceMode, 'unavailable', JSON.stringify(shape))
+    for (const extra of [{ final_invoice: final }, {}]) {
+      const context = bridge.window.Opp30.invoiceProjectContext(card, { id: 746, ...shape, ...extra })
+      assert.equal(context.invoiceMode, 'standard', JSON.stringify({ shape, extra }))
+    }
   }
+
+  const ended = bridge.window.Opp30.invoiceProjectContext(card, {
+    id: 746,
+    status: 'completed',
+    lifecycle_state: 'terminated',
+    final_invoice: final,
+  })
+  assert.equal(ended.invoiceMode, 'unavailable')
 })
 
 // invoiceMode is only advisory until it changes the request, so the
-// lifecycle_state-only row has to reach invoices/final-create/v3 end to end.
-test('a lifecycle_state-only completed row submits through the final-create route', async () => {
+// lifecycle_state-only row with a final placeholder has to reach
+// invoices/create/v3 end to end, never final-create.
+test('a lifecycle_state-only completed row submits through the standard create route', async () => {
   const dom = invoiceSubmitDom()
   const card = invoiceCard({ title: 'Completed campaign', company: 'Acme Co' }, '746')
   const requests = []
@@ -5944,9 +5860,9 @@ test('a lifecycle_state-only completed row submits through the final-create rout
     async (input, init = {}) => {
       const url = String(input)
       if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
-      if (url.includes('/invoices/final-create/v3')) {
+      if (url.includes('/invoices/create/v3')) {
         requests.push({ url, body: JSON.parse(init.body) })
-        return response({ invoice_id: 961, status: 'unpaid' })
+        return response({ invoice_id: 1200, status: 'unpaid' })
       }
       throw new Error(`Unexpected request: ${url}`)
     },
@@ -5976,17 +5892,17 @@ test('a lifecycle_state-only completed row submits through the final-create rout
   })
 
   assert.ok(await waitFor(() => requests.length === 1))
-  assert.match(requests[0].url, /\/invoices\/final-create\/v3$/)
+  assert.match(requests[0].url, /\/invoices\/create\/v3$/)
   assert.equal(requests[0].body.project_id, 746)
-  assert.match(requests[0].body.idempotency_key, /^final-invoice-v3-746-/)
+  assert.match(requests[0].body.idempotency_key, /^invoice-v3-746-/)
   assert.ok(await waitFor(() => dom.modal.querySelector('.w-form-done').style.display === 'block'))
   assert.ok(!dom.modal.querySelector('.w-form-fail').textContent)
 })
 
-// recovery_ready is the projection's own signal that the stored placeholder may
-// be reused. Without it a stale amount must not be prefilled and silently
-// billed, the way a member who only retypes the description would.
-test('a final placeholder that is not recovery_ready prefills neither amount nor description', async () => {
+// The standard route bills what the Starter types. A stored final placeholder
+// amount or description is never prefilled, recovery_ready or not, so a stale
+// value cannot be billed silently.
+test('a final placeholder never prefills amount or description in the standard mode', async () => {
   const bridge = await loadBridge(async () => response({}))
   const card = invoiceCard({ title: 'Completed campaign', company: 'Acme Co' }, '746')
   const stale = {
@@ -5999,7 +5915,7 @@ test('a final placeholder that is not recovery_ready prefills neither amount nor
     description: 'Original final work',
   }
 
-  for (const recoveryReady of [undefined, false, 'true', 1]) {
+  for (const recoveryReady of [undefined, false, 'true', 1, true]) {
     const final_invoice = { ...stale }
     if (recoveryReady !== undefined) final_invoice.recovery_ready = recoveryReady
     const context = bridge.window.Opp30.invoiceProjectContext(card, {
@@ -6008,16 +5924,16 @@ test('a final placeholder that is not recovery_ready prefills neither amount nor
       lifecycle_state: 'completed',
       final_invoice,
     })
-    assert.equal(context.invoiceMode, 'final')
-    assert.equal(context.finalInvoiceAmount, null, String(recoveryReady))
-    assert.equal(context.finalInvoiceDescription, '', String(recoveryReady))
+    assert.equal(context.invoiceMode, 'standard')
 
     const dom = invoiceSubmitDom()
     dom.amount.value = ''
     dom.description.value = ''
     bridge.window.Opp30.prepareInvoiceModal(dom.modal, context)
-    assert.equal(dom.amount.value, '')
-    assert.equal(dom.description.value, '')
+    assert.equal(dom.amount.value, '', String(recoveryReady))
+    assert.equal(dom.description.value, '', String(recoveryReady))
+    assert.equal(dom.amount.readOnly, false)
+    assert.equal(dom.description.readOnly, false)
   }
 })
 
@@ -6066,61 +5982,6 @@ test('final invoice submit blocks an invalid description before any request', as
     await new Promise((resolve) => setTimeout(resolve, 0))
     assert.deepEqual(requests, [])
     assert.match(dom.modal.querySelector('.w-form-fail').textContent, /between 1 and 500/)
-  }
-})
-
-// A Starter who bills a completed project, has it paid, and reopens the modal
-// must be told the invoice is settled — not that it is "not ready yet", which
-// prescribes a refresh that can never change a terminal placeholder.
-test('a terminal final invoice blocks submit with its own settled message, never a refresh', async () => {
-  const card = invoiceCard({ title: 'Completed campaign', company: 'Acme Co' }, '746')
-  const identity = {
-    id: 961,
-    kind: 'stripe_invoice',
-    handoff_type: 'final',
-    sync_origin: 'v3',
-  }
-  const cases = [
-    { final_invoice: { ...identity, status: 'paid' }, expected: /already been paid/i },
-    { final_invoice: { ...identity, status: 'void' }, expected: /was cancelled/i },
-    { final_invoice: undefined, expected: /not ready yet/i },
-    { final_invoice: { ...identity, status: 'draft' }, expected: /not ready yet/i },
-  ]
-
-  for (const { final_invoice, expected } of cases) {
-    const dom = invoiceSubmitDom()
-    const requests = []
-    const document = documentWith(dom.modal)
-    const bridge = await loadBridge(
-      async (input) => {
-        requests.push(String(input))
-        return response({})
-      },
-      {
-        member: talentMember,
-        querySelector: document.querySelector,
-        querySelectorAll: document.querySelectorAll,
-      },
-    )
-    const project = { id: 746, status: 'completed', lifecycle_state: 'completed' }
-    if (final_invoice) project.final_invoice = final_invoice
-    const context = bridge.window.Opp30.invoiceProjectContext(card, project)
-    bridge.window.Opp30.prepareInvoiceModal(dom.modal, context)
-
-    bridge.dispatchDocument('submit', {
-      target: dom.form,
-      preventDefault() {},
-      stopPropagation() {},
-    })
-
-    await new Promise((resolve) => setTimeout(resolve, 0))
-    const failure = dom.modal.querySelector('.w-form-fail').textContent
-    assert.deepEqual(requests, [], JSON.stringify(final_invoice))
-    assert.match(failure, expected)
-    // A settled invoice is never described as merely pending, and a pending one
-    // is never described as settled.
-    if (expected.source.includes('not ready')) assert.doesNotMatch(failure, /billed again/i)
-    else assert.doesNotMatch(failure, /refresh/i)
   }
 })
 
@@ -6197,7 +6058,9 @@ test('a whitespace-padded final invoice row still cancels through the final void
   bridge.dispatchDocument('click', clickEvent(action).event)
 
   assert.ok(await waitFor(() => requests.length === 1))
-  assert.match(promptText, /void this final invoice/i)
+  assert.match(promptText, /cancel this final invoice/i)
+  assert.match(promptText, /payment link will stop working/i)
+  assert.doesNotMatch(promptText, /hosted invoice/i)
   assert.match(requests[0].idempotency_key, /^final-invoice-cancel-ui:961:/)
 })
 
@@ -6274,7 +6137,9 @@ test('a final invoice row that is a Payment Link cancels through the final route
   bridge.dispatchDocument('click', clickEvent(action).event)
 
   assert.ok(await waitFor(() => requests.length === 1))
-  assert.match(promptText, /void this final invoice/i)
+  assert.match(promptText, /cancel this final invoice/i)
+  assert.match(promptText, /payment link will stop working/i)
+  assert.doesNotMatch(promptText, /hosted invoice/i)
   assert.match(requests[0].idempotency_key, /^final-invoice-cancel-ui:961:/)
 })
 
@@ -6371,6 +6236,134 @@ test('recoverable final invoice prefills its canonical amount and sends no provi
   assert.equal(requests[0].description, 'Original final work')
   assert.equal('stripe_ref' in requests[0], false)
   assert.doesNotMatch(JSON.stringify(requests[0]), /in_[A-Za-z0-9]/)
+})
+
+// JP decision 1a (2026-10-02): every billable project bills through the
+// ordinary Generate Invoice route (#1691). A completed project, with or without
+// a final placeholder, and a migrated v2_legacy project never reach
+// invoices/final-create/v3 for a new invoice; an ended project bills nothing.
+async function submitInvoiceForProject(project) {
+  const dom = invoiceSubmitDom()
+  const card = invoiceCard({ title: 'Campaign', company: 'Acme Co' }, String(project.id))
+  const requests = []
+  const document = documentWith(dom.modal)
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      requests.push({ url, body: init.body ? JSON.parse(init.body) : null })
+      return response({ invoice_id: 1200, status: 'unpaid', payment_link: 'https://buy.stripe.com/test_std' })
+    },
+    {
+      member: talentMember,
+      querySelector: document.querySelector,
+      querySelectorAll: document.querySelectorAll,
+    },
+  )
+  const context = bridge.window.Opp30.invoiceProjectContext(card, project)
+  bridge.window.Opp30.prepareInvoiceModal(dom.modal, context)
+  bridge.dispatchDocument('submit', {
+    target: dom.form,
+    preventDefault() {},
+    stopPropagation() {},
+  })
+  return { dom, requests, context }
+}
+
+const FINAL_ROW = {
+  id: 961,
+  kind: 'stripe_invoice',
+  handoff_type: 'final',
+  sync_origin: 'v3',
+  status: 'unknown',
+}
+
+test('a completed V3 project with no final row bills through invoices/create/v3', async () => {
+  const { requests, context } = await submitInvoiceForProject({
+    id: 746,
+    sync_origin: 'v3',
+    status: 'completed',
+    lifecycle_state: 'completed',
+    final_invoice: null,
+  })
+  assert.equal(context.invoiceMode, 'standard')
+  assert.ok(await waitFor(() => requests.length === 1))
+  assert.match(requests[0].url, /\/invoices\/create\/v3$/)
+  assert.equal(requests[0].body.project_id, 746)
+  assert.equal(requests[0].body.amount, 250)
+  assert.equal(requests[0].body.description, 'August retainer')
+  assert.match(requests[0].body.idempotency_key, /^invoice-v3-746-/)
+})
+
+test('a completed V3 project with an existing final row still bills through invoices/create/v3', async () => {
+  for (const status of ['unknown', 'unpaid', 'paid', 'void', 'draft']) {
+    const { requests, context } = await submitInvoiceForProject({
+      id: 746,
+      sync_origin: 'v3',
+      status: 'completed',
+      lifecycle_state: 'completed',
+      final_invoice: { ...FINAL_ROW, status, amount: 125.25, description: 'Old', recovery_ready: true },
+    })
+    assert.equal(context.invoiceMode, 'standard', status)
+    assert.ok(await waitFor(() => requests.length === 1), status)
+    assert.match(requests[0].url, /\/invoices\/create\/v3$/, status)
+    assert.equal(requests[0].body.amount, 250, status)
+    assert.equal(requests[0].body.description, 'August retainer', status)
+  }
+})
+
+test('a completed v2_legacy project bills through invoices/create/v3', async () => {
+  for (const shape of [
+    { status: 'completed' },
+    { status: 'completed', lifecycle_state: 'completed' },
+  ]) {
+    const { dom, requests, context } = await submitInvoiceForProject({
+      id: 182,
+      sync_origin: 'v2_legacy',
+      ...shape,
+    })
+    assert.equal(context.invoiceMode, 'standard', JSON.stringify(shape))
+    assert.ok(await waitFor(() => requests.length === 1))
+    assert.match(requests[0].url, /\/invoices\/create\/v3$/)
+    assert.equal(requests[0].body.project_id, 182)
+    assert.doesNotMatch(dom.modal.querySelector('.w-form-fail').textContent || '', /not ready yet/i)
+  }
+})
+
+test('an active or completion_requested project keeps the standard invoice route', async () => {
+  for (const shape of [
+    { sync_origin: 'v3', status: 'active', lifecycle_state: 'active' },
+    { sync_origin: 'v3', status: 'active', lifecycle_state: 'completion_requested' },
+    { sync_origin: 'v2_legacy', status: 'active' },
+  ]) {
+    const { requests, context } = await submitInvoiceForProject({ id: 675, ...shape })
+    assert.equal(context.invoiceMode, 'standard', JSON.stringify(shape))
+    assert.ok(await waitFor(() => requests.length === 1))
+    assert.match(requests[0].url, /\/invoices\/create\/v3$/)
+    assert.match(requests[0].body.idempotency_key, /^invoice-v3-675-/)
+  }
+})
+
+test('an ended project sends no invoice request', async () => {
+  for (const shape of [
+    { status: 'incomplete', lifecycle_state: 'terminated' },
+    { status: 'completed', lifecycle_state: 'terminated' },
+    { status: 'active', lifecycle_state: 'termination_requested' },
+    { lifecycle_state: 'canceled' },
+    { status: 'cancelled' },
+  ]) {
+    const { dom, requests, context } = await submitInvoiceForProject({
+      id: 746,
+      sync_origin: 'v3',
+      ...shape,
+    })
+    assert.equal(context.invoiceMode, 'unavailable', JSON.stringify(shape))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    assert.deepEqual(requests, [], JSON.stringify(shape))
+    const failure = dom.modal.querySelector('.w-form-fail').textContent
+    assert.match(failure, /cannot be invoiced/i)
+    assert.doesNotMatch(failure, /final invoice/i)
+  }
 })
 
 test('Generate Invoice waits for canonical project context before opening', async () => {
@@ -9476,17 +9469,18 @@ test('a validation failure shows our copy, not the Webflow default', async () =>
   assert.doesNotMatch(dom.fail.textContent, /Oops! Something went wrong/)
 })
 
-test('final invoice recovery locks fields and submits the canonical values despite DOM edits', async () => {
+test('a recovery-ready final placeholder no longer locks fields; typed values go to create/v3', async () => {
   const dom = invoiceSubmitDom()
   const requests = []
   const document = documentWith(dom.modal)
   const bridge = await loadBridge(async (input, init = {}) => {
     const url = String(input)
     if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
-    if (url.includes('/invoices/final-create/v3')) {
+    if (url.includes('/invoices/create/v3')) {
       requests.push(JSON.parse(init.body))
-      return response({ invoice_id: 961, status: 'unpaid' })
+      return response({ invoice_id: 1200, status: 'unpaid' })
     }
+    if (url.includes('/invoices/final-create/v3')) throw new Error('final-create must not be called')
     return response({ items: [] })
   }, { member: talentMember, querySelector: document.querySelector, querySelectorAll: document.querySelectorAll })
   const card = invoiceCard({ title: 'Completed campaign', company: 'Acme Co' }, '746')
@@ -9496,18 +9490,15 @@ test('final invoice recovery locks fields and submits the canonical values despi
       recovery_ready: true, amount: 125.29, description: 'Original final work' },
   })
   bridge.window.Opp30.prepareInvoiceModal(dom.modal, context)
-  assert.equal(dom.amount.readOnly, true)
-  assert.equal(dom.description.readOnly, true)
-  dom.amount.value = '200'
-  dom.description.value = 'Changed after preparation'
-  bridge.dispatchDocument('submit', { target: dom.form, preventDefault() {}, stopPropagation() {} })
-  assert.ok(await waitFor(() => requests.length === 1))
-  assert.equal(requests[0].amount, 125.29)
-  assert.equal(requests[0].description, 'Original final work')
-  assert.ok(await waitFor(() => dom.modal.querySelector('.w-form-done').style.display === 'block'))
-  bridge.window.Opp30.prepareInvoiceModal(dom.modal, { projectId: 747, invoiceMode: 'standard' })
   assert.equal(dom.amount.readOnly, false)
   assert.equal(dom.description.readOnly, false)
+  dom.amount.value = '200'
+  dom.description.value = 'Typed by the Starter'
+  bridge.dispatchDocument('submit', { target: dom.form, preventDefault() {}, stopPropagation() {} })
+  assert.ok(await waitFor(() => requests.length === 1))
+  assert.equal(requests[0].amount, 200)
+  assert.equal(requests[0].description, 'Typed by the Starter')
+  assert.ok(await waitFor(() => dom.modal.querySelector('.w-form-done').style.display === 'block'))
 })
 
 test('final invoices reject extra decimal places before any request', async () => {

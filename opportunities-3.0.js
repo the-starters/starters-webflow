@@ -1835,8 +1835,13 @@
     'Enter a final invoice description between 1 and 500 characters.'
   const INVOICE_NO_PROJECT_MESSAGE =
     'Open Generate Invoice from the project you want to bill, so we know which project to invoice.'
-  const INVOICE_FINAL_UNAVAILABLE_MESSAGE =
-    'The final invoice is not ready yet. Refresh the dashboard and try again.'
+  const INVOICE_PROJECT_ENDED_MESSAGE =
+    'This project has ended, so it cannot be invoiced. Contact The Starters if you need help.'
+  // Ended lifecycles that neither invoices/create/v3 (#1691) nor any other
+  // route bills, so the modal refuses them before a request.
+  const INVOICE_ENDED_LIFECYCLES = new Set([
+    'terminated', 'termination_requested', 'canceled', 'cancelled',
+  ])
   const INVOICE_FINAL_PAID_MESSAGE =
     'The final invoice for this project has already been paid. It cannot be billed again.'
   const INVOICE_FINAL_VOID_MESSAGE =
@@ -1848,7 +1853,8 @@
 
   /**
    * A projection may carry the canonical `lifecycle_state`, the legacy dashboard
-   * `status`, or both, so either saying `completed` completes the project.
+   * `status`, or both. This now only gates legacy final-row recognition; completed
+   * projects still bill through the ordinary Payment Link path.
    */
   function projectIsCompleted(project) {
     if (!project || typeof project !== 'object') return false
@@ -1872,9 +1878,9 @@
   }
 
   /**
-   * A completed project's final-invoice handoff, as one of three distinct
-   * states: `open` (billable now), `terminal` (already paid or voided, so it can
-   * never be billed again), or `none` (no usable handoff has arrived yet).
+   * A completed project's historical final-invoice handoff, retained for
+   * rollback data and final-row cancellation. It no longer decides whether the
+   * Generate Invoice modal can create a new Payment Link.
    * @returns {{state: string, invoice: object|null}}
    */
   function finalInvoiceState(project) {
@@ -1891,11 +1897,22 @@
     return absent
   }
 
-  /** The message that names why a terminal final invoice can never be re-billed. */
+  /** Dormant rollback copy for the unreachable `final_closed` submit branch. */
   function finalInvoiceClosedMessage(status) {
     return String(status || '').trim().toLowerCase() === 'paid'
       ? INVOICE_FINAL_PAID_MESSAGE
       : INVOICE_FINAL_VOID_MESSAGE
+  }
+
+  /**
+   * The canonical lifecycle_state wins over the legacy dashboard status, so a
+   * terminated V3 row whose status still says completed is ended.
+   */
+  function invoiceProjectHasEnded(project) {
+    if (!project || typeof project !== 'object') return false
+    const lifecycle = String(project.lifecycle_state || '').trim().toLowerCase()
+    const status = String(project.status || '').trim().toLowerCase()
+    return INVOICE_ENDED_LIFECYCLES.has(lifecycle || status)
   }
 
   function invoiceProjectContext(card, authoritativeProject = null) {
@@ -1903,7 +1920,6 @@
     const projectId = parseInt(card.getAttribute('data-wf-xano-id') || '', 10)
     if (!(projectId > 0)) return null
     const project = authoritativeProject || projectWorkflowItems.get(projectId) || {}
-    const completed = projectIsCompleted(project)
     const finalState = finalInvoiceState(project)
     const finalPlaceholder = finalState.state === 'open' ? finalState.invoice : null
     // Stored placeholder values may only be reused once the projection marks the
@@ -1932,11 +1948,12 @@
         cardFieldText(card, 'hiring_manager_name') ||
         cardFieldText(card, 'party') ||
         cardFieldText(card, 'contact_name'),
-      invoiceMode: finalState.state === 'open'
-        ? 'final'
-        : finalState.state === 'terminal'
-          ? 'final_closed'
-          : (completed ? 'unavailable' : 'standard'),
+      // JP decision 1a (2026-10-02): every billable project, completed ones
+      // included, uses the ordinary Generate Invoice route (#1691). New invoices
+      // never go to final-create (#5970); the 'final' and 'final_closed' submit
+      // branches below are unreachable and kept only for a quick rollback.
+      // Existing final rows still cancel through final-cancel (#5969).
+      invoiceMode: invoiceProjectHasEnded(project) ? 'unavailable' : 'standard',
       finalInvoiceId: Number(finalPlaceholder && finalPlaceholder.id) || null,
       finalInvoiceRecoveryReady: recoveryReady,
       finalInvoiceStatus: finalState.state === 'terminal'
@@ -2442,8 +2459,8 @@
       if (context.invoiceMode === 'unavailable') {
         invoiceError(
           modal,
-          INVOICE_FINAL_UNAVAILABLE_MESSAGE,
-          validationDiagnostic('generate_invoice', 'invoice', 'FINAL_INVOICE_NOT_READY'),
+          INVOICE_PROJECT_ENDED_MESSAGE,
+          validationDiagnostic('generate_invoice', 'invoice', 'PROJECT_NOT_BILLABLE'),
         )
         return
       }
@@ -3499,7 +3516,7 @@
     }
     const isFinalInvoice = isFinalInvoiceRow(invoice)
     const confirmation = window.prompt(isFinalInvoice
-      ? 'Type CANCEL to void this final invoice. The hosted invoice will stop accepting payment.'
+      ? 'Type CANCEL to cancel this final invoice. The payment link will stop working.'
       : 'Type CANCEL to cancel this invoice. The payment link will stop working.')
     if (confirmation !== 'CANCEL') return false
 
