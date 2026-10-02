@@ -200,9 +200,11 @@
     return payload
   }
 
-  function resumeNativeCheckout(target) {
+  function resumeNativeCheckout(target, clickedNode) {
     if (bypassTargets) bypassTargets.add(target)
-    if (typeof target.click === 'function') target.click()
+    var replayTarget =
+      clickedNode && typeof clickedNode.click === 'function' ? clickedNode : target
+    if (typeof replayTarget.click === 'function') replayTarget.click()
   }
 
   async function handleCheckout(event) {
@@ -239,7 +241,7 @@
         throw new Error('Your signed-in account changed. Refresh and try again')
       }
       setControlState(target, 'accepted', '')
-      resumeNativeCheckout(target)
+      resumeNativeCheckout(target, event && event.target)
     } catch (error) {
       setControlState(
         target,
