@@ -3429,10 +3429,14 @@ test('a Paid prerequisite refresh clears an update error while pending and repla
   assert.equal(result.document.documentElement.getAttribute('data-paid-call-settings'), 'error')
   assert.equal(
     result.dom.nativeErrorMessage.textContent,
-    'Paid-call readiness could not be refreshed. Your account was not changed.',
+    'Paid-call settings could not be refreshed. Reload the page to check their current state.',
   )
   assert.equal(result.dom.nativeError.style.display, 'block')
   assert.equal(result.dom.nativeError.getAttribute('aria-hidden'), 'false')
+  assert.equal(result.dom.nativeError.getAttribute('data-call-settings-error-box'), '')
+  if (result.dom.nativeError.parentElement) {
+    assert.equal(result.dom.nativeError.parentElement.getAttribute('data-call-settings-error-container'), 'true')
+  }
 })
 
 test('an expired session fails a Paid disable closed before any POST', async () => {

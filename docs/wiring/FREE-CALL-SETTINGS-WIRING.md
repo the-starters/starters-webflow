@@ -148,7 +148,11 @@ exact server message into its existing inner `div`, or an optional
 `[data-call-settings-error-message]`, and exposes it as an alert. When the card has an authored
 `[data-call-settings-output="status"]`, the controller mirrors the same message there. A retry,
 canonical refresh, or other non-error state clears and hides the native block. The controller does
-not create form markup and never changes canonical state to simulate success.
+not create form markup and never changes canonical state to simulate success. When the authored
+block also has the site's `.hide` class, the controller marks the block with
+`data-call-settings-error-box` and its parent with `data-call-settings-error-container` so the
+shared Free/Paid style can restore the block's width, height, and overflow while the error is
+visible.
 
 `starterSchedulingConnectionStateChanged` triggers a non-destructive canonical re-read after the
 Calendar connection state has settled. The transient `loading` event is ignored so the page does not
