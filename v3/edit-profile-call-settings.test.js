@@ -56,8 +56,25 @@ class El {
     listeners.push(listener)
     this.listeners.set(name, listeners)
   }
+  closest(selector) {
+    let element = this
+    while (element) {
+      const matches = selector === '[data-form="step"][data-index]'
+        ? element.getAttribute('data-form') === 'step' && element.getAttribute('data-index') !== null
+        : element.matches(selector)
+      if (matches) return element
+      element = element.parentElement
+    }
+    return null
+  }
   dispatchEvent(event) {
+    event.target = this
+    let root = this
+    while (root.parentElement) root = root.parentElement
+    const document = root.ownerDocument
+    if (document) document.dispatchListeners(event, true)
     ;(this.listeners.get(event.type) || []).forEach((listener) => listener(event))
+    if (event.bubbles && document) document.dispatchListeners(event, false)
     return true
   }
   querySelector(selector) { return this.querySelectorAll(selector)[0] || null }
@@ -186,6 +203,8 @@ function load({
   const calls = []
   const timers = []
   const warnings = []
+  const documentListeners = new Map()
+  const windowListeners = new Map()
 
   const document = {
     readyState: 'complete',
@@ -194,8 +213,18 @@ function load({
       return selector === '[data-form="step"][data-index="6"]' ? dom.step : null
     },
     querySelectorAll() { return [] },
-    addEventListener() {},
+    addEventListener(name, listener, capture = false) {
+      const listeners = documentListeners.get(name) || []
+      listeners.push({ listener, capture })
+      documentListeners.set(name, listeners)
+    },
+    dispatchListeners(event, capture) {
+      for (const entry of documentListeners.get(event.type) || []) {
+        if (entry.capture === capture) entry.listener(event)
+      }
+    },
   }
+  ;(dom.page || dom.step).ownerDocument = document
 
   const authScope = {}
   const state = { free, paid }
@@ -230,8 +259,14 @@ function load({
       return timer
     },
     clearTimeout(timer) { timer.cancelled = true },
-    addEventListener() {},
-    dispatchEvent() {},
+    addEventListener(name, listener) {
+      const listeners = windowListeners.get(name) || []
+      listeners.push(listener)
+      windowListeners.set(name, listeners)
+    },
+    dispatchEvent(event) {
+      for (const listener of windowListeners.get(event.type) || []) listener(event)
+    },
     $memberstackDom: {
       getCurrentMember: async () => ({ data: { id: 'member-a' } }),
       onAuthChange(handler) { authChangeHandlers.push(handler) },
@@ -262,6 +297,9 @@ function load({
     console: { warn(...a) { warnings.push(a.join(' ')) } },
     document,
     window,
+    // This VM has no provider client or native network entry point. Every
+    // scheduling request uses the two local GET fixtures above.
+    fetch() { throw new Error('Network is forbidden in this disposable fixture') },
   })
   // The page embeds the profile loader alongside the call controllers, and the loader owns the
   // shared hydration window both of them read.
@@ -276,6 +314,16 @@ function load({
     window,
     warnings,
     html,
+    beforeUnload() {
+      const event = {
+        type: 'beforeunload',
+        prevented: false,
+        returnValue: undefined,
+        preventDefault() { this.prevented = true },
+      }
+      window.dispatchEvent(event)
+      return { prevented: event.prevented, returnValue: event.returnValue }
+    },
     installSchedulingAuth,
     notifyAuthChange(member) {
       authChangeHandlers.forEach((handler) => { handler(member) })
@@ -400,7 +448,7 @@ for (const order of [['paid', 'free'], ['free', 'paid']]) {
   })
 }
 
-test('a canonical render announces the radio answer the profile form derives its fields from', async () => {
+test('a canonical render still announces its radio answer without shared hydration state', async () => {
   const result = load({
     free: freeCanonical({
       public_description: 'Free growth review',
@@ -409,6 +457,7 @@ test('a canonical render announces the radio answer the profile form derives its
     }),
   })
   const seen = []
+  assert.equal(result.window.__tsProfileDirtyState, undefined)
   result.dom.freeYes.addEventListener('change', () => seen.push('free-yes'))
   result.dom.paidNo.addEventListener('change', () => seen.push('paid-no'))
   await settle()
@@ -511,5 +560,107 @@ test('the profile loader hydrating step 6 is not a member change to call setting
   result.dom.freeDescription.value = 'Updated free introduction'
   result.dom.freeDescription.dispatchEvent({ type: 'input' })
   assert.equal(result.window.StarterFreeCallSettings.hasChanges(), true)
+  assert.equal(result.window.StarterPaidCallSettings.hasChanges(), false)
+})
+
+function deferred() {
+  let resolve
+  const promise = new Promise((done) => { resolve = done })
+  return { promise, resolve }
+}
+
+for (const controller of ['free', 'paid']) {
+  test(`a late ${controller} canonical radio render stays clean after profile hydration`, async (t) => {
+    const pending = deferred()
+    const result = load({
+      profileDirtyState: true,
+      free: controller === 'free' ? pending.promise : freeCanonical(),
+      paid: controller === 'paid' ? pending.promise : paidCanonical(),
+    })
+    await settle()
+    const dirtyState = result.window.__tsProfileDirtyState
+    dirtyState.finishHydration()
+    assert.equal(dirtyState.isDirty(), false)
+    assert.equal(result.beforeUnload().prevented, false)
+
+    // Match the observed Free Yes / Paid No answers. The response arrives only
+    // after the actual loader's public finishHydration interface has completed.
+    pending.resolve(controller === 'free'
+      ? freeCanonical({ services: [freeService()] })
+      : paidCanonical())
+    await settle()
+
+    const canonicalRender = {
+      globalDirty: dirtyState.isDirty(),
+      freeHasChanges: result.window.StarterFreeCallSettings.hasChanges(),
+      paidHasChanges: result.window.StarterPaidCallSettings.hasChanges(),
+      beforeUnload: result.beforeUnload(),
+    }
+    assert.equal(canonicalRender.freeHasChanges, false)
+    assert.equal(canonicalRender.paidHasChanges, false)
+    assert.equal(controller === 'free' ? result.dom.freeYes.checked : result.dom.paidNo.checked, true)
+
+    // Discard only this disposable step to compare a fresh member edit even on
+    // the unfixed source. A widget's synthetic user event must also stay dirty.
+    dirtyState.setDirty(6, false)
+    const input = controller === 'free' ? result.dom.freeDescription : result.dom.paidDescription
+    input.value = 'A member edit'
+    input.dispatchEvent({ type: 'input', bubbles: true, isTrusted: true })
+    assert.equal(dirtyState.isDirty(), true)
+    assert.equal(result.beforeUnload().prevented, true)
+    assert.equal(result.window[controller === 'free' ? 'StarterFreeCallSettings' : 'StarterPaidCallSettings'].hasChanges(), true)
+    dirtyState.setDirty(6, false)
+    input.dispatchEvent({ type: 'input', bubbles: true, isTrusted: false })
+    assert.equal(dirtyState.isDirty(), true)
+    assert.equal(result.beforeUnload().prevented, true)
+    assert.equal(result.calls.every(({ method }) => method === 'GET'), true)
+
+    t.diagnostic(JSON.stringify({ controller, canonicalRender, memberAndWidgetEditsRemainDirty: true }))
+    assert.equal(canonicalRender.globalDirty, false)
+    assert.deepEqual(canonicalRender.beforeUnload, { prevented: false, returnValue: undefined })
+  })
+
+  test(`a late ${controller} canonical render preserves an unrelated dirty step and in-flight save`, async () => {
+    const pending = deferred()
+    const result = load({
+      profileDirtyState: true,
+      free: controller === 'free' ? pending.promise : freeCanonical(),
+      paid: controller === 'paid' ? pending.promise : paidCanonical(),
+    })
+    await settle()
+    const dirtyState = result.window.__tsProfileDirtyState
+    dirtyState.finishHydration()
+    dirtyState.markDirty(1)
+    const saving = dirtyState.beginSave(2)
+    pending.resolve(controller === 'free' ? freeCanonical({ services: [freeService()] }) : paidCanonical())
+    await settle()
+
+    assert.equal(result.beforeUnload().prevented, true)
+    dirtyState.setDirty(1, false)
+    assert.equal(dirtyState.isDirty(), true, 'canonical rendering must not erase an in-flight save')
+    dirtyState.finishSave(2, true, saving)
+    assert.equal(dirtyState.isDirty(), false, 'canonical rendering must not introduce step 6 changes')
+    assert.equal(result.beforeUnload().prevented, false)
+  })
+}
+
+test('canonical radio announcements retain their fallback when the shared wrapper is unavailable', async () => {
+  const free = deferred()
+  const paid = deferred()
+  const result = load({ profileDirtyState: true, free: free.promise, paid: paid.promise })
+  await settle()
+  result.window.__tsProfileDirtyState.finishHydration()
+  result.window.__tsProfileDirtyState.runHydrationSync = undefined
+  const seen = []
+  result.dom.freeYes.addEventListener('change', () => seen.push('free-yes'))
+  result.dom.paidNo.addEventListener('change', () => seen.push('paid-no'))
+  free.resolve(freeCanonical({ services: [freeService()] }))
+  paid.resolve(paidCanonical())
+  await settle()
+
+  assert.deepEqual(seen.sort(), ['free-yes', 'paid-no'])
+  assert.equal(result.dom.freeYes.checked, true)
+  assert.equal(result.dom.paidNo.checked, true)
+  assert.equal(result.window.StarterFreeCallSettings.hasChanges(), false)
   assert.equal(result.window.StarterPaidCallSettings.hasChanges(), false)
 })
