@@ -3001,6 +3001,25 @@ for (const modalName of ['apply-opportunity', 'edit-application']) {
   })
 }
 
+test('application success view action keeps navigating to the active opportunity', async () => {
+  const bridge = await loadBridge(async () => response({}))
+  const detailLink = el('a', { href: '/opportunities/current-opportunity', 'data-opp-detail-link': '' })
+  const card = el('div', { 'data-opp-id': '719' }, [detailLink])
+  const anchor = el('a', { href: '/opportunities-details---freelancer-view' })
+  const wrap = el('div', { class: 'button_main-wrap' }, [anchor])
+  wrap.textContent = 'View Application'
+  const success = el('div', { class: 'w-form-done' }, [wrap])
+  el('div', { 'data-modal-target': 'apply-opportunity' }, [success])
+  const cardClick = clickEvent(detailLink)
+  const viewClick = clickEvent(anchor)
+
+  bridge.dispatchDocument('click', cardClick.event)
+  bridge.dispatchDocument('click', viewClick.event)
+
+  assert.equal(bridge.location.href, '/opportunities/current-opportunity')
+  assert.equal(viewClick.counts.prevented, 1)
+})
+
 test('Brand project cards expose only canonical actions for their current lifecycle state', async () => {
   const action = (tag, attrs, label) => {
     const control = el(tag, attrs)
