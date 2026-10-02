@@ -27,6 +27,22 @@ function jsonResponse(body, status = 200) {
   }
 }
 
+async function waitFor(assertion, timeoutMs = 1000) {
+  const deadline = Date.now() + timeoutMs
+  let lastError
+  while (Date.now() <= deadline) {
+    try {
+      assertion()
+      return
+    } catch (error) {
+      lastError = error
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+  }
+  assertion()
+  throw lastError
+}
+
 function harness(options = {}) {
   let member = options.member || { id: 'mem_sb_membera' }
   let memberError = null
@@ -833,11 +849,12 @@ test('same-member auth notification reconnects a pending opening', async () => {
   await state.authChange()
   release()
   await assert.rejects(opening, { code: 'TALKJS_IDENTITY_MISMATCH' })
-  await new Promise((resolve) => setTimeout(resolve, 125))
+  await waitFor(() => {
+    assert.equal(state.calls.reconnects, 1)
+    assert.equal(state.calls.sessions.length, 1)
+  })
 
   assert.equal(state.calls.invalidations, 1)
-  assert.equal(state.calls.reconnects, 1)
-  assert.equal(state.calls.sessions.length, 1)
   assert.equal(state.api.debugSnapshot().appId, 'test-app')
 })
 
