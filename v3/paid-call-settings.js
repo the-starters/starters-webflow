@@ -686,6 +686,10 @@
     const content = nativeErrorContent(nativeError)
     content.textContent = text
     if (text) ensureBusyStyles()
+    nativeError.setAttribute('data-call-settings-error-box', '')
+    if (nativeError.parentElement) {
+      nativeError.parentElement.setAttribute('data-call-settings-error-container', text ? 'true' : 'false')
+    }
     nativeError.setAttribute('data-call-settings-error-visible', text ? 'true' : 'false')
     nativeError.style.display = text ? 'block' : 'none'
     nativeError.setAttribute('aria-hidden', text ? 'false' : 'true')
@@ -712,6 +716,9 @@
     const nativeError = findNativeError()
     if (!nativeError) return
     nativeErrorContent(nativeError).textContent = ''
+    if (nativeError.parentElement) {
+      nativeError.parentElement.setAttribute('data-call-settings-error-container', 'false')
+    }
     nativeError.setAttribute('data-call-settings-error-visible', 'false')
     nativeError.style.display = 'none'
     nativeError.setAttribute('aria-hidden', 'true')
@@ -958,7 +965,14 @@
       '[data-call-settings-busy="true"] [data-opp-element="loading-hide"],' +
       '[data-call-settings-busy="true"] [loading-hide]{' +
       'display:none!important}' +
-      '[data-call-settings-error-visible="true"].w-form-fail{display:block!important}'
+      '[data-call-settings-error-visible="true"].w-form-fail{display:block!important}' +
+      '[data-call-settings-error-container="true"]{flex-wrap:wrap!important}' +
+      // The authored error box also carries the site's .hide class (width:0;
+      // height:0;overflow:hidden), so restore all three, not only the width.
+      // Free and Paid share this style element, so both must inject the same rules.
+      '[data-call-settings-error-box][data-call-settings-error-visible="true"]{' +
+      'flex:0 0 100%;width:100%;max-width:100%;min-width:0;box-sizing:border-box;' +
+      'height:auto;overflow:visible}'
     document.head.appendChild(style)
   }
 
@@ -1356,7 +1370,7 @@
       if (currentRender(version, memberId) && !busy) {
         if (!failClosedSession(error)) {
           setStatus('error')
-          setMessage('Paid-call readiness could not be refreshed. Your account was not changed.')
+          setMessage('Paid-call settings could not be refreshed. Reload the page to check their current state.')
         }
       }
       throw error
