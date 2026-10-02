@@ -47,11 +47,14 @@
       route === '/quiz-results' ||
       route === '/all-starters' ||
       route === '/why-us' ||
+      route === '/become-a-starter' ||
+      route === '/case-studies' ||
       route === '/learn'
     ) {
       return true
     }
     if (/^\/learn(?:\/[a-z0-9]+(?:-[a-z0-9]+)*)+$/.test(route)) return true
+    if (/^\/case-studies\/[a-z0-9]+(?:-[a-z0-9]+)*$/.test(route)) return true
     return /^\/(?:hire|categories|subcategories|companies|competitors|functions|industries|roles|skills|tools)\/[a-z0-9]+(?:-[a-z0-9]+)*$/.test(route)
   }
 

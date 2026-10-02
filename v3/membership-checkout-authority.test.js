@@ -327,6 +327,25 @@ test('registers checkout intents from Learn pages', async () => {
   }
 })
 
+test('registers checkout intents from Become a Starter and case studies', async () => {
+  for (const pathname of [
+    '/become-a-starter',
+    '/case-studies',
+    '/case-studies/how-birddogs-found-an-elite-ui-ux-designer-on-the-starters',
+  ]) {
+    for (const priceId of [
+      'prc_premium-monthly--fn1ae0qjj',
+      'prc_paid-annual-2o5f040u',
+    ]) {
+      const state = boot({ pathname: pathname + '/' })
+      const control = target(priceId)
+      await state.listeners[0].listener(clickEvent(control))
+      assert.equal(control.clicks, 1, pathname)
+      assert.equal(JSON.parse(state.requests[1].init.body).source_route, pathname)
+    }
+  }
+})
+
 test('fails closed on non-allowlisted Memberstack prices', async () => {
   for (const pathname of ['/all-starters', '/learn/sessions/partnerships-playbook']) {
     const priceState = boot({ pathname })
@@ -359,6 +378,10 @@ test('fails closed on non-checkout V3 routes', async () => {
     '/learn/Bad-Slug',
     '/learn/sessions//item',
     '/learn/sessions/%2fitem',
+    '/case-studies/Bad-Slug',
+    '/case-studies/example/edit',
+    '/case-studies/%2fbrand-dashboard',
+    '/case-studies-archive/example',
   ]) {
     const state = boot({ pathname })
     const control = target('prc_premium-monthly--fn1ae0qjj')
