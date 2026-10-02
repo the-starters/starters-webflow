@@ -224,11 +224,13 @@ five call fields, so it never becomes a second writer. Both controllers claim th
 root, so each stamps its own radio hook (`data-free-call-settings-input` and
 `data-paid-call-settings-input`) rather than the shared dashboard name. A canonical render
 announces its radio answer with a `change` event so the page re-derives the dependent field's
-enabled and visible state, and a controller that reports no changes never gates the step: a
-failed call-settings read must not block Hourly Rate, Availability, Retainer, or Services. Both
-controllers read the same `isHydrating()` window before marking themselves changed, because the
-profile loader replays `input` and `change` on every control it restores and a hydration write is
-never a member change. The loader restores none of the five call controls: the legacy profile row
+enabled and visible state, but that announcement still runs through the dirty-state hydration
+guard when available; a late canonical Free or Paid GET must not arm the leave-page warning. A
+controller that reports no changes never gates the step: a failed call-settings read must not block
+Hourly Rate, Availability, Retainer, or Services. Both controllers read the same `isHydrating()`
+window before marking themselves changed, because the profile loader replays `input` and `change`
+on every control it restores and a hydration write is never a member change. The loader restores
+none of the five call controls: the legacy profile row
 no longer writes them, so replaying it over a controller's render could silently turn a pending
 Build Profile create into a decline the member never made. An unconsumed Build Profile Call Settings
 receipt prefills the Free or Paid controls and waits there: prefilling is not a member change, so it
