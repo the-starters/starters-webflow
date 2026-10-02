@@ -1853,7 +1853,8 @@
 
   /**
    * A projection may carry the canonical `lifecycle_state`, the legacy dashboard
-   * `status`, or both, so either saying `completed` completes the project.
+   * `status`, or both. This now only gates legacy final-row recognition; completed
+   * projects still bill through the ordinary Payment Link path.
    */
   function projectIsCompleted(project) {
     if (!project || typeof project !== 'object') return false
@@ -1877,9 +1878,9 @@
   }
 
   /**
-   * A completed project's final-invoice handoff, as one of three distinct
-   * states: `open` (billable now), `terminal` (already paid or voided, so it can
-   * never be billed again), or `none` (no usable handoff has arrived yet).
+   * A completed project's historical final-invoice handoff, retained for
+   * rollback data and final-row cancellation. It no longer decides whether the
+   * Generate Invoice modal can create a new Payment Link.
    * @returns {{state: string, invoice: object|null}}
    */
   function finalInvoiceState(project) {
@@ -1896,7 +1897,7 @@
     return absent
   }
 
-  /** The message that names why a terminal final invoice can never be re-billed. */
+  /** Dormant rollback copy for the unreachable `final_closed` submit branch. */
   function finalInvoiceClosedMessage(status) {
     return String(status || '').trim().toLowerCase() === 'paid'
       ? INVOICE_FINAL_PAID_MESSAGE

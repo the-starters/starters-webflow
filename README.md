@@ -1300,9 +1300,10 @@ native `dialog[data-modal-target="generate-invoice"]` component, opened through
 `window.lumos.modal`'s registry so its paused GSAP entrance timeline, scroll
 lock, and focus restore all still run; direct `showModal()` remains only as a
 fallback for pages without `modal.js`. Completed project rows keep this invoice
-entry point: the browser never hides Generate Invoice because the project is in
-a terminal lifecycle state, and the modal always opens. Xano remains the
-authority for whether the signed-in Starter can bill the selected project.
+entry point: the browser treats them as billable unless their canonical
+`lifecycle_state` or fallback `status` is an ended state. The modal always
+opens, and Xano remains the authority for whether the signed-in Starter can bill
+the selected project.
 
 Opening resolves the invoice mode from the canonical row (JP decision 1a,
 2026-10-02: a final invoice has no requirement that differs from an ordinary
@@ -1351,31 +1352,23 @@ with a console warning instead of turning another button into an invoice submit
 settle it. A wrapper marked disabled by attribute (`data-validate-disabled`,
 `data-button-theme="disabled"`, `aria-disabled="true"`) is never converted.
 
-`Amount` and `Description` are resolved by id or input name. The remaining
-`final`-mode rules in this section apply only to the unreachable `final` branch.
-New final invoices
-require a decimal amount between $0.01 and $1,000,000 with no more than two
-decimal places; they never silently round the entered amount. Invalid amounts
-in `final` mode show `Enter a final invoice amount between $0.01 and $1,000,000,
-with no more than two decimal places.` before any request. The ordinary invoice
-amount is rounded to cents and must land between $0.01 and $1,000,000, otherwise the
-inline message `Enter an amount between $0.01 and $1,000,000.` is shown and
+`Amount` and `Description` are resolved by id or input name. The ordinary invoice
+amount is rounded to cents and must land between $0.01 and $1,000,000, otherwise
+the inline message `Enter an amount between $0.01 and $1,000,000.` is shown and
 nothing is sent. A submit from a modal that was opened without a project card
 fails closed with `Open Generate Invoice from the project you want to bill, so
-we know which project to invoice.`. An `unavailable` or `final_closed` submit
-fails closed with that mode's message above, before any request. In `final`
-mode the description carries Xano's own contract and is trimmed to 1..500
-characters; an empty, blank, or longer value shows `Enter a final invoice
-description between 1 and 500 characters.` and nothing is sent. `standard` mode
-keeps its existing trimmed, unvalidated description.
+we know which project to invoice.`. An `unavailable` submit fails closed with
+that mode's message above, before any request. `standard` mode keeps its
+existing trimmed, unvalidated description. The dormant `final` rollback branch
+keeps the old stricter amount and 1..500-character description guards alongside
+its `final_closed` message, but canonical rows no longer reach those modes.
 
 A valid submit posts `project_id`, `amount`, `description`, and
 `idempotency_key` through the same authenticated Memberstack-to-Xano bridge as
 the rest of the file. `standard` mode posts to Xano `POST invoices/create/v3`
-with an `invoice-v3-<project_id>-<uuid>` idempotency key; `final` mode posts the
-same four fields to `POST invoices/final-create/v3` with a
-`final-invoice-v3-<project_id>-<uuid>` key. The key is stored on the form, so a
-retry after a failure reuses it and is cleared once an invoice is created. The
+with an `invoice-v3-<project_id>-<uuid>` idempotency key; new submits do not
+call `POST invoices/final-create/v3`. The key is stored on the form, so a retry
+after a failure reuses it and is cleared once an invoice is created. The
 resolved submit control is disabled while the request is in flight, by the same
 design-system convention `form-validation.js` uses: the wrapper takes
 `aria-disabled="true"`; when it already has a `data-button-theme`, that theme is
