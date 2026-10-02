@@ -9,12 +9,17 @@ const source = fs.readFileSync(
   'utf8',
 )
 
-function target(priceId) {
+function target(priceId, onClick) {
   const attributes = new Map([['data-ms-price:add', priceId]])
+  const spinner = { style: { display: 'none' } }
   const control = {
     clicks: 0,
+    spinner,
     closest(selector) {
       return selector === '[data-ms-price\\:add]' ? this : null
+    },
+    querySelector(selector) {
+      return selector === '[data-button-spinner]' ? spinner : null
     },
     getAttribute(name) {
       return attributes.get(name) || null
@@ -27,6 +32,7 @@ function target(priceId) {
     },
     click() {
       this.clicks += 1
+      if (onClick) onClick()
     },
   }
   control.child = {
@@ -44,6 +50,7 @@ function target(priceId) {
 function boot(options = {}) {
   const requests = []
   const listeners = []
+  const observers = []
   const storage = new Map()
   const sessionStorage = options.sessionStorage || {
     getItem: (key) => storage.get(key) || null,
@@ -64,11 +71,29 @@ function boot(options = {}) {
       listeners.push({ target: 'window', name, listener, capture })
     },
     document: {
+      querySelector(selector) {
+        return selector === '[data-ms-action="logout"] [data-ms-loader]'
+          ? options.logoutLoader || null
+          : null
+      },
       addEventListener(name, listener, capture) {
         listeners.push({ target: 'document', name, listener, capture })
       },
     },
     setTimeout,
+    clearTimeout,
+    MutationObserver: class {
+      constructor(callback) {
+        this.callback = callback
+        observers.push(this)
+      }
+      observe(element) {
+        this.element = element
+      }
+      disconnect() {
+        this.disconnected = true
+      }
+    },
     $memberstackDom: {
       getCurrentMember: async () => ({
         data:
@@ -97,7 +122,7 @@ function boot(options = {}) {
     },
   }
   vm.runInNewContext(source, { window, WeakSet, Promise, JSON, encodeURIComponent, Error })
-  return { window, requests, listeners, storage }
+  return { window, requests, listeners, observers, storage }
 }
 
 test('binds ahead of Memberstack document capture regardless of load order', async () => {
@@ -182,6 +207,161 @@ test('replays the original child click target after intent registration', async 
   assert.equal(control.child.clicks, 1)
   assert.equal(state.requests.length, 2)
   assert.equal(control.getAttribute('data-v3-checkout-authority'), 'accepted')
+})
+
+test('shows the clicked checkout spinner without lighting Sign Out while preparing checkout', async () => {
+  let finishAuth
+  const logoutLoader = { style: { display: 'none', visibility: '' } }
+  const state = boot({
+    logoutLoader,
+    authResponse: {
+      ok: true,
+      json: () => new Promise((resolve) => { finishAuth = resolve }),
+    },
+  })
+  const control = target('prc_premium-monthly--fn1ae0qjj')
+
+  const operation = state.listeners[0].listener(clickEvent(control))
+  await new Promise(setImmediate)
+  assert.equal(control.spinner.style.display, 'flex')
+  assert.equal(control.getAttribute('data-opp-loading'), 'true')
+  assert.equal(logoutLoader.style.visibility, 'hidden')
+
+  finishAuth({})
+  await operation
+  assert.equal(control.spinner.style.display, 'none')
+  assert.equal(logoutLoader.style.visibility, '')
+})
+
+function nativeActionNode(matchFragment) {
+  return {
+    closest(selector) {
+      return selector.indexOf(matchFragment) !== -1 ? this : null
+    },
+  }
+}
+
+test('releases the Sign Out loader hold immediately when a real logout begins mid-checkout', async () => {
+  let finishAuth
+  const logoutLoader = { style: { display: 'none', visibility: 'visible' } }
+  const state = boot({
+    logoutLoader,
+    authResponse: {
+      ok: true,
+      json: () => new Promise((resolve) => { finishAuth = resolve }),
+    },
+  })
+  const control = target('prc_premium-monthly--fn1ae0qjj')
+
+  const operation = state.listeners[0].listener(clickEvent(control))
+  await new Promise(setImmediate)
+  assert.equal(logoutLoader.style.visibility, 'hidden')
+
+  await state.listeners[1].listener({ target: nativeActionNode('data-ms-action="logout"') })
+  assert.equal(logoutLoader.style.visibility, 'visible')
+
+  finishAuth({})
+  await operation
+  assert.equal(logoutLoader.style.visibility, 'visible')
+})
+
+test('releases the Sign Out loader hold when a real logout begins after checkout is accepted', async () => {
+  const logoutLoader = { style: { display: 'none', visibility: 'visible' } }
+  const state = boot({ logoutLoader })
+  const control = target('prc_paid-annual-2o5f040u')
+
+  await state.listeners[0].listener(clickEvent(control))
+  assert.equal(logoutLoader.style.visibility, 'hidden')
+
+  await state.listeners[1].listener({ target: nativeActionNode('data-ms-action="logout"') })
+  assert.equal(logoutLoader.style.visibility, 'visible')
+
+  state.observers[0].callback()
+  assert.equal(logoutLoader.style.visibility, 'visible')
+})
+
+test('releases the Sign Out loader hold on a real profile form submit mid-checkout', async () => {
+  let finishAuth
+  const logoutLoader = { style: { display: 'none', visibility: 'visible' } }
+  const state = boot({
+    logoutLoader,
+    authResponse: {
+      ok: true,
+      json: () => new Promise((resolve) => { finishAuth = resolve }),
+    },
+  })
+  const control = target('prc_premium-monthly--fn1ae0qjj')
+
+  const operation = state.listeners[0].listener(clickEvent(control))
+  await new Promise(setImmediate)
+  assert.equal(logoutLoader.style.visibility, 'hidden')
+
+  await state.listeners[2].listener({ target: nativeActionNode('data-ms-form') })
+  assert.equal(logoutLoader.style.visibility, 'visible')
+
+  finishAuth({})
+  await operation
+})
+
+test('an unrelated click during checkout leaves the Sign Out loader hold in place', async () => {
+  let finishAuth
+  const logoutLoader = { style: { display: 'none', visibility: 'visible' } }
+  const state = boot({
+    logoutLoader,
+    authResponse: {
+      ok: true,
+      json: () => new Promise((resolve) => { finishAuth = resolve }),
+    },
+  })
+  const control = target('prc_premium-monthly--fn1ae0qjj')
+
+  const operation = state.listeners[0].listener(clickEvent(control))
+  await new Promise(setImmediate)
+  assert.equal(logoutLoader.style.visibility, 'hidden')
+
+  await state.listeners[1].listener({ target: nativeActionNode('unrelated') })
+  assert.equal(logoutLoader.style.visibility, 'hidden')
+
+  finishAuth({})
+  await operation
+  assert.equal(logoutLoader.style.visibility, 'visible')
+})
+
+test('keeps Sign Out hidden while Memberstack loads checkout, then restores it', async () => {
+  const logoutLoader = { style: { display: 'none', visibility: 'visible' } }
+  const state = boot({ logoutLoader })
+  const control = target('prc_paid-annual-2o5f040u', () => {
+    logoutLoader.style.display = 'flex'
+  })
+
+  await state.listeners[0].listener(clickEvent(control))
+  assert.equal(control.clicks, 1)
+  assert.equal(control.spinner.style.display, 'flex')
+  assert.equal(control.getAttribute('data-opp-loading'), 'true')
+  assert.equal(logoutLoader.style.visibility, 'hidden')
+
+  logoutLoader.style.display = 'none'
+  state.observers[0].callback()
+  assert.equal(control.spinner.style.display, 'none')
+  assert.equal(control.getAttribute('data-opp-loading'), null)
+  assert.equal(logoutLoader.style.visibility, 'visible')
+  assert.equal(state.observers[0].disconnected, true)
+})
+
+test('keeps the Get Started spinner lit through a bounded fallback when there is no Sign Out loader', async () => {
+  const state = boot({ logoutLoader: null })
+  const control = target('prc_premium-monthly--fn1ae0qjj')
+
+  await state.listeners[0].listener(clickEvent(control))
+
+  assert.equal(control.clicks, 1)
+  assert.equal(control.spinner.style.display, 'flex')
+  assert.equal(control.getAttribute('data-opp-loading'), 'true')
+
+  await new Promise((resolve) => setTimeout(resolve, 3000))
+
+  assert.equal(control.spinner.style.display, 'none')
+  assert.equal(control.getAttribute('data-opp-loading'), null)
 })
 
 test('keeps the Memberstack session token out of authentication URLs', async () => {

@@ -29,6 +29,8 @@
   var INTENT_TTL_MS = 2 * 60 * 60 * 1000
   var bypassTargets = typeof WeakSet === 'function' ? new WeakSet() : null
   var pendingTargets = typeof WeakSet === 'function' ? new WeakSet() : null
+  var logoutLoaderHolds = 0
+  var logoutLoaderOriginalVisibility = ''
 
   function clean(value) {
     return String(value == null ? '' : value).trim()
@@ -126,6 +128,100 @@
     target.setAttribute('aria-busy', state === 'pending' ? 'true' : 'false')
     if (message) target.setAttribute('title', message)
     else if (typeof target.removeAttribute === 'function') target.removeAttribute('title')
+  }
+
+  function checkoutVisuals(target) {
+    var spinner =
+      typeof target.querySelector === 'function'
+        ? target.querySelector('[data-button-spinner]')
+        : null
+    var spinnerDisplay = spinner && spinner.style ? spinner.style.display : null
+    var loading = target.getAttribute('data-opp-loading')
+    var documentObject = globalObject.document
+    var logoutLoader =
+      documentObject && typeof documentObject.querySelector === 'function'
+        ? documentObject.querySelector('[data-ms-action="logout"] [data-ms-loader]')
+        : null
+    if (spinner && spinner.style) spinner.style.display = 'flex'
+    target.setAttribute('data-opp-loading', 'true')
+    if (logoutLoader && logoutLoader.style) {
+      if (logoutLoaderHolds === 0) {
+        logoutLoaderOriginalVisibility = logoutLoader.style.visibility
+      }
+      logoutLoaderHolds += 1
+      logoutLoader.style.visibility = 'hidden'
+    }
+
+    var restored = false
+    return {
+      logoutLoader: logoutLoader,
+      restore: function () {
+        if (restored) return
+        restored = true
+        if (spinner && spinner.style) spinner.style.display = spinnerDisplay
+        if (loading === null) target.removeAttribute('data-opp-loading')
+        else target.setAttribute('data-opp-loading', loading)
+        if (logoutLoader && logoutLoader.style && logoutLoaderHolds > 0) {
+          logoutLoaderHolds -= 1
+          if (logoutLoaderHolds === 0) {
+            logoutLoader.style.visibility = logoutLoaderOriginalVisibility
+          }
+        }
+      },
+    }
+  }
+
+  function releaseLogoutLoaderHold() {
+    if (logoutLoaderHolds === 0) return
+    var documentObject = globalObject.document
+    var logoutLoader =
+      documentObject && typeof documentObject.querySelector === 'function'
+        ? documentObject.querySelector('[data-ms-action="logout"] [data-ms-loader]')
+        : null
+    logoutLoaderHolds = 0
+    if (logoutLoader && logoutLoader.style) {
+      logoutLoader.style.visibility = logoutLoaderOriginalVisibility
+    }
+  }
+
+  function isRealMemberstackAction(node) {
+    if (!node || typeof node.closest !== 'function') return false
+    return !!node.closest(
+      '[data-ms-action="logout"], [data-ms-form], [data-ms-action="profile"]',
+    )
+  }
+
+  function handleNativeActionRelease(event) {
+    if (isRealMemberstackAction(event && event.target)) releaseLogoutLoaderHold()
+  }
+
+  function followNativeLoader(visuals) {
+    var loader = visuals.logoutLoader
+    if (!loader || !loader.style || typeof globalObject.MutationObserver !== 'function') {
+      globalObject.setTimeout(visuals.restore, 3000)
+      return
+    }
+    var seen = !!loader.style.display && loader.style.display !== 'none'
+    var finished = false
+    var startTimer
+    var limitTimer
+    var observer = new globalObject.MutationObserver(function () {
+      if (loader.style.display && loader.style.display !== 'none') seen = true
+      else if (seen) finish()
+    })
+    function finish() {
+      if (finished) return
+      finished = true
+      observer.disconnect()
+      globalObject.clearTimeout(startTimer)
+      globalObject.clearTimeout(limitTimer)
+      visuals.restore()
+    }
+    observer.observe(loader, { attributes: true, attributeFilter: ['style'] })
+    startTimer = globalObject.setTimeout(function () {
+      if (!seen) finish()
+    }, 3000)
+    limitTimer = globalObject.setTimeout(finish, 2 * 60 * 1000)
   }
 
   async function waitForMemberstack() {
@@ -229,6 +325,7 @@
     if (pendingTargets && pendingTargets.has(target)) return
     if (pendingTargets) pendingTargets.add(target)
 
+    var visuals = checkoutVisuals(target)
     setControlState(target, 'pending', '')
     try {
       var session = await authenticatedSession()
@@ -242,7 +339,9 @@
       }
       setControlState(target, 'accepted', '')
       resumeNativeCheckout(target, event && event.target)
+      followNativeLoader(visuals)
     } catch (error) {
+      visuals.restore()
       setControlState(
         target,
         'error',
@@ -260,6 +359,8 @@
     // earlier so the V3 authority row is committed before Memberstack can open
     // Stripe checkout, regardless of script load order.
     globalObject.addEventListener('click', handleCheckout, true)
+    globalObject.addEventListener('click', handleNativeActionRelease, true)
+    globalObject.addEventListener('submit', handleNativeActionRelease, true)
     return true
   }
 
