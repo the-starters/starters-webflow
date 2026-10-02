@@ -773,9 +773,19 @@
   // change, so a canonical write has to announce itself the same way a member click does.
   function notifyRadioChange(item) {
     if (!editProfileMode || !item || typeof item.dispatchEvent !== 'function') return
+    const dirtyState = window.__tsProfileDirtyState
+    const announce = function () {
+      item.dispatchEvent(new CustomEvent('change', { bubbles: true }))
+    }
     applyingCanonicalRender = true
     try {
-      item.dispatchEvent(new CustomEvent('change', { bubbles: true }))
+      // Canonical settings may arrive after profile hydration has finished.
+      // Suppress the shared capture listener as well as our own change listener.
+      if (dirtyState && typeof dirtyState.runHydrationSync === 'function') {
+        dirtyState.runHydrationSync(announce)
+      } else {
+        announce()
+      }
     } finally {
       applyingCanonicalRender = false
     }
