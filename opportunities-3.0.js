@@ -1,5 +1,5 @@
 /*!
- * @release v1.59.604
+ * @release v1.59.660
  * Opportunities 3.0 — Webflow ↔ Xano binder
  * ------------------------------------------------------------------
  * Wires the existing 3.0 UI (opportunity pages, starter-dashboard, and
