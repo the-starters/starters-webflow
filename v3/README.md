@@ -4340,8 +4340,8 @@ flowchart TD
    the provider credential and private Scheduler session off the browser.
    Production initial Paid booking availability begins 24 hours ahead, with
    a slot exactly 24 hours away allowed; the exact staging host keeps its
-   five-minute exception. Dashboard rescheduling uses the same 24-hour
-   availability floor.
+   five-minute exception. Confirmed-call dashboard rescheduling keeps its
+   separate eight-hour server-clock cutoff.
 2. Render the month calendar, timezone dropdown, time buttons and confirmation
    row inside the authored `[nylas-container]` mount. In a wide mount, the month
    calendar spans the left column. The timezone dropdown sits at the top of the
