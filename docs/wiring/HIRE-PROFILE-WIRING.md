@@ -1185,8 +1185,8 @@ The click path also stamps `data-next-slot-state` now, so a hook is
 self-describing whichever writer got there last.
 
 Availability is asked **only** through the controller's exported
-`getNearestSlot`. That export owns the minimum booking notice — 8 hours on
-production, 5 minutes on staging — in both the window it queries and the filter
+`getNearestSlot`. That export owns the minimum booking notice (24 hours on
+production, 5 minutes on staging) in both the window it queries and the filter
 it applies to the answer, so fetching availability here instead would silently
 drop it.
 
@@ -1331,8 +1331,8 @@ listeners. Its install does not require a legacy main Book Call button. Each
 Book Call click makes one availability request, and each Free option click
 mounts one authored calendar in the existing `[nylas-container]` and submits
 one idempotent canonical booking command for the selected slot.
-Production Free availability begins eight hours ahead, with a slot exactly
-eight hours away allowed; the exact staging host keeps its five-minute
+Production Free availability begins 24 hours ahead, with a slot exactly
+24 hours away allowed; the exact staging host keeps its five-minute
 exception. Immediately before the first canonical command, the Free controller
 rechecks that cutoff. If the selected slot has aged below it, no command starts,
 the authored details remain, and the calendar says **This time is no longer

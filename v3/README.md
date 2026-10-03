@@ -3350,8 +3350,9 @@ not to the Scheduler configuration email flags.
 Minimum booking notice: in the non-modal Dashboard / Calendar section, the
 exact TEST/staging host `the-starters-3-0.webflow.io` uses five minutes in new
 Free Scheduler configurations and browser availability query floors;
-production, unknown hosts, and CommonJS contexts use eight hours. Booking
-Preview states the five-minute minimum on staging and the eight-hour minimum
+production, unknown hosts, and CommonJS contexts use 24 hours (JP, 2026-10-03;
+the rule was 8 hours from 2026-09-15 to 2026-10-03). Booking
+Preview states the five-minute minimum on staging and the 24-hour minimum
 on `thestarters.com` and `www.thestarters.com`. Opening the preview does not
 mutate provider configurations. Existing provider notice corrections belong
 to the bounded backend reconciliation; availability-only updates and Paid
@@ -4324,9 +4325,9 @@ flowchart TD
 1. Read the next 14 days through authenticated
    `scheduler/get_availability/v3`. Xano selects the Nylas environment and keeps
    the provider credential and private Scheduler session off the browser.
-   Production initial Paid booking availability begins eight hours ahead, with
-   a slot exactly eight hours away allowed; the exact staging host keeps its
-   five-minute exception. Dashboard rescheduling keeps its existing 24-hour
+   Production initial Paid booking availability begins 24 hours ahead, with
+   a slot exactly 24 hours away allowed; the exact staging host keeps its
+   five-minute exception. Dashboard rescheduling uses the same 24-hour
    availability floor.
 2. Render the month calendar, timezone dropdown, time buttons and confirmation
    row inside the authored `[nylas-container]` mount. In a wide mount, the month
@@ -4533,7 +4534,7 @@ flowchart TD
 7. **Request Call** sends `expected_payment_method_id` with the retained slot,
    message and normalized Guests. The backend claims that reviewed card before
    provider booking creation and persists it even if the account default later changes.
-   Paid rechecks the eight-hour production cutoff at this submit boundary,
+   Paid rechecks the 24-hour production cutoff at this submit boundary,
    including after card review. If the retained slot has aged below the cutoff,
    no booking command starts, the authored details remain, and the calendar says
    **This time is no longer available. Please choose another time.**

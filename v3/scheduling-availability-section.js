@@ -52,7 +52,7 @@
   const DAY_THEME_SELECTED = 'lime'
   const SLOTS_SEARCH_DAYS = 14
   const SLOTS_LIMIT = 8
-  const PRODUCTION_MIN_BOOKING_NOTICE_MINUTES = 8 * 60
+  const PRODUCTION_MIN_BOOKING_NOTICE_MINUTES = 24 * 60 // JP 2026-10-03 (Jai #10): 24 h notice, one rule with Xano
   const STAGING_MIN_BOOKING_NOTICE_MINUTES = 5
   // Canonical Paid Call duration, owned by paid-call-settings.js
   // (FIXED_DURATION_MINUTES) and docs/wiring/PAID-CALL-SETTINGS-WIRING.md.
@@ -114,7 +114,7 @@
   function minimumBookingNoticeCopy() {
     return isStagingHost
       ? "Bookings require at least 5 minutes' notice."
-      : "Bookings require at least 8 hours' notice."
+      : "Bookings require at least 24 hours' notice."
   }
 
   let sessionMemberId = null
