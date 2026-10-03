@@ -2658,14 +2658,15 @@ endpoint contracts.
 
 `dashboard-call-actions.js` owns the details-dialog navigation plus the
 supported decline, cancel, and Free-call reschedule commands. Decline is
-available only to the Starter on a canonical pending row that is not explicitly
-Paid. Paid decline and its settlement are hard-launch work, so an `is_paid` or
-`paid_meeting` request hides every decline step. Accept is unchanged. The authored card
-Decline control also requires an open response window and a loaded, valid
-action module that approves the booking through `canDecline`. Clicking it
-populates the existing details modal with the selected booking and counterpart,
-opens it through the shared Lumos modal owner, then switches to the decline
-panel. If the modal cannot be populated or opened, the panel switch stops.
+available only to the Starter on a canonical pending row, including Paid
+requests that still hold only a saved card. Accept is unchanged. The authored
+card and details-modal Decline controls also require an open response window
+and a loaded, valid action module that approves the booking through
+`canDecline`. An expired pending request is read-only in both places. Clicking
+Decline populates the existing details modal with the selected booking and
+counterpart, opens it through the shared Lumos modal owner, then switches to
+the decline panel. If the modal cannot be populated or opened, the panel switch
+stops.
 In the decline panel, the authored `switch-decline-reason` control reads
 `Decline Call` and opens the reason step for the selected booking. Both
 `booking-action-btn` and `booking-card-action-btn` hooks use the shared
@@ -2675,23 +2676,25 @@ Pending Starter rescheduling remains unsupported.
 
 Cancel is available to either participant on a canonical Free confirmed or
 rescheduled row whose start is in the future. A Brand can also cancel its own
-canonical Free pending request before its start; a Starter declines a pending
-request instead. Xano
-`booking/cancel/v3` rejects Paid cancellation until the paid-cancel follow-up
-ships, so an explicitly Paid row hides Cancel. For Decline and Cancel eligibility,
-a row with neither `is_paid` nor `paid_meeting` is treated as legacy Free so
-older Free bookings keep the action. Reschedule keeps a stricter shared gate:
-the row must be in the future, have an explicit Free flag, a grant, and positive
-duration. A confirmed call uses the proposal contract for either participant,
-and only the counterpart can confirm or decline the resulting proposal. A
-pending request uses the direct-update contract for the Brand only. The two
-contracts never claim the same booking. Every command requires a booking ID,
-configuration ID, participant identity, and exact `test` or `production` data
-environment.
+canonical pending request, Free or Paid, before its start; a Starter declines a
+pending request instead. A confirmed Paid call is cancellable by either
+participant only when the start is more than 48 hours 15 minutes away, before
+the 48-hour card authorization window. Inside that window the server refuses
+Paid cancellation, so the client hides Cancel. Paid rescheduled bookings stay
+hidden because the server admits Paid cancellation only in `confirmed` status.
+For Decline and Cancel eligibility, a row with neither `is_paid` nor
+`paid_meeting` is treated as legacy Free so older Free bookings keep the
+action. Reschedule keeps a stricter shared gate: the row must be in the future,
+have an explicit Free flag, a grant, and positive duration. A confirmed call
+uses the proposal contract for either participant, and only the counterpart can
+confirm or decline the resulting proposal. A pending request uses the
+direct-update contract for the Brand only. The two contracts never claim the
+same booking. Every command requires a booking ID, configuration ID,
+participant identity, and exact `test` or `production` data environment.
 
-During soft launch (JP, 2026-09-30) a gated Paid Reschedule, Cancel, or
-Decline control hides with no explanation, so the modal never names a feature
-that is not live yet. Earlier versions (2026-08-29 to v1.59.640) inserted a
+During soft launch (JP, 2026-10-03) a gated Paid Reschedule or inside-window
+Paid Cancel control hides with no explanation, so the modal never names a
+feature that is not live yet. Earlier versions (2026-08-29 to v1.59.640) inserted a
 module-owned `data-starters-action-hint` node after the hidden authored
 button. Each details populate now hides any such node that an earlier version
 or an earlier booking left in the modal, and it creates no new one. The script
@@ -2861,9 +2864,10 @@ booking recovery still requires “Use this card”. Back returns to the picker.
 If **Change card** cannot open the payment methods, the Brand sees only
 “Your payment methods could not be opened. Please try again.”; the underlying
 failure message remains a support diagnostic in the browser console.
-The `auth_required` helper for `brand/booking/payment-action/v3` remains available
-without activating authentication-confirmation UI. Paid cancellation, reschedule
-policy, charging and payout policy are unchanged.
+The `auth_required` helper for `brand/booking/payment-action/v3` remains
+available without activating authentication-confirmation UI. Paid cancellation
+eligibility is owned by the [Dashboard booking action contract](#dashboard-booking-action-contract);
+reschedule policy, charging and payout policy are unchanged.
 
 `dashboard-calls.js` is also the single owner of the Starter request-expiry
 countdown; the legacy inline dashboard helper no longer renders that list, so
