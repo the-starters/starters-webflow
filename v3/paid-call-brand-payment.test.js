@@ -806,16 +806,16 @@ test('paid availability uses one authenticated read with no booking authority', 
   }
 })
 
-test('Paid initial booking uses the production 8-hour floor and the exact staging exception', async () => {
+test('Paid initial booking uses the production 24-hour floor and the exact staging exception', async () => {
   const now = Date.UTC(2026, 7, 24, 0, 0, 0)
   const nowSeconds = Math.floor(now / 1000)
   const config = { config_id: 'config_paid', grant_id: 'grant_test', duration: 60 }
 
-  assert.equal(api.minimumBookingNoticeMinutes(), 480)
+  assert.equal(api.minimumBookingNoticeMinutes(), 1440)
   assert.equal(
     new URL('https://example.test' + api.availabilityQuery(config, now))
       .searchParams.get('start_time'),
-    String(nowSeconds + 480 * 60),
+    String(nowSeconds + 1440 * 60),
   )
 
   const staging = loadBrowserApi(
@@ -842,17 +842,17 @@ test('Paid initial booking uses the production 8-hour floor and the exact stagin
     'thestarters.com',
     async () => response({
       time_slots: [
-        { start_time: nowSeconds + 8 * 60 * 60 - 1 },
-        { start_time: nowSeconds + 8 * 60 * 60 },
+        { start_time: nowSeconds + 24 * 60 * 60 - 1 },
+        { start_time: nowSeconds + 24 * 60 * 60 },
       ],
     }),
   )
-  assert.equal(production.minimumBookingNoticeMinutes(), 480)
+  assert.equal(production.minimumBookingNoticeMinutes(), 1440)
   assert.deepEqual(
     JSON.parse(JSON.stringify(await production.getPaidAvailability(config, now))),
     [{
-      start: (nowSeconds + 8 * 60 * 60) * 1000,
-      end: (nowSeconds + 9 * 60 * 60) * 1000,
+      start: (nowSeconds + 24 * 60 * 60) * 1000,
+      end: (nowSeconds + 25 * 60 * 60) * 1000,
     }],
   )
   const rescheduleQuery = new URL('https://example.test' + production.availabilityQuery({
@@ -872,8 +872,8 @@ test('Paid initial booking uses the production 8-hour floor and the exact stagin
       end: (nowSeconds + 25 * 60 * 60) * 1000,
     }],
   )
-  assert.equal(loadBrowserApi('staging.thestarters.com').minimumBookingNoticeMinutes(), 480)
-  assert.equal(loadBrowserApi().minimumBookingNoticeMinutes(), 480)
+  assert.equal(loadBrowserApi('staging.thestarters.com').minimumBookingNoticeMinutes(), 1440)
+  assert.equal(loadBrowserApi().minimumBookingNoticeMinutes(), 1440)
 })
 
 test('paid availability fails closed before a request when service identity is incomplete', () => {
@@ -883,9 +883,9 @@ test('paid availability fails closed before a request when service identity is i
   )
 })
 
-test('Paid booking notice uses exact milliseconds at the 8-hour boundary', () => {
+test('Paid booking notice uses exact milliseconds at the 24-hour boundary', () => {
   const now = Date.UTC(2026, 7, 24, 0, 0, 0)
-  const slot = { start: now + 8 * 60 * 60 * 1000 }
+  const slot = { start: now + 24 * 60 * 60 * 1000 }
   assert.equal(api.slotMeetsBookingNotice(slot, now), true)
   assert.equal(api.slotMeetsBookingNotice(slot, now + 1), false)
 })
@@ -1049,7 +1049,7 @@ test('shared calendar keeps the stale-time message from a final booking recheck'
     xanoAuthFetch: global.xanoAuthFetch,
   }
   const now = Date.UTC(2026, 7, 24, 0, 0, 0)
-  const startSeconds = Math.floor(now / 1000) + 8 * 60 * 60
+  const startSeconds = Math.floor(now / 1000) + 24 * 60 * 60
   const container = new CalendarElement('div')
   global.document = calendarDocument()
   global.jQuery = undefined
@@ -3361,7 +3361,7 @@ test('Paid installation stays bookable without optional guest markup', async () 
     xanoAuthFetch: global.xanoAuthFetch,
   }
   const requests = []
-  const start = Date.now() + 9 * 60 * 60 * 1000
+  const start = Date.now() + 25 * 60 * 60 * 1000
   const end = start + 60 * 60 * 1000
   let confirmSlot
   const price = { textContent: '$50' }
@@ -3553,7 +3553,7 @@ test('paid calendar selection is owned by one canonical Xano command', async () 
     xanoAuthFetch: global.xanoAuthFetch,
   }
   const requests = []
-  const start = Date.now() + 9 * 60 * 60 * 1000
+  const start = Date.now() + 25 * 60 * 60 * 1000
   const end = start + 30 * 60 * 1000
   const priceText = { textContent: '$50' }
   const item = {
@@ -4270,8 +4270,8 @@ test('selected-slot readiness opens card choices without mounting secure inputs'
 test('card-required Paid booking rechecks the cutoff before the canonical booking request', async () => {
   const selectedAt = Date.UTC(2026, 7, 24, 0, 0, 0)
   const slot = {
-    start: selectedAt + 8 * 60 * 60 * 1000,
-    end: selectedAt + 9 * 60 * 60 * 1000,
+    start: selectedAt + 24 * 60 * 60 * 1000,
+    end: selectedAt + 25 * 60 * 60 * 1000,
     timezone: 'UTC',
   }
   let readinessCount = 0

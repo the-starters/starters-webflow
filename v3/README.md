@@ -2718,11 +2718,24 @@ pending path's `reschedule-updated` result. A modal that lacks that panel receiv
 a module fallback, so the direct-update success cannot switch to a missing
 target. A modal with no authored `reschedule` view receives the module fallback
 instead.
-The module uses the base "Accept New Time" and "Keep Current Time" responses
-authored beside the reschedule trigger and keeps their authored labels.
-Declining a proposed time on a Free call keeps the original confirmed call: the
-published F13 `booking/reschedule/decline/v3` (#5760) restores `start_old` and
-`end_old`, sets `confirmed`, and makes no provider change. See the
+The module uses the base "Accept New Time" response authored beside the
+reschedule trigger and keeps its authored label. The "Keep Current Time"
+response is retired from the dashboard (Jai list #12, JP decision 2a,
+2026-10-03): `canKeepCurrentTime` returns false, `canAct('reschedule-decline')`
+refuses, no fallback control is generated, and `hideKeepCurrentTime` adds one
+`display:none!important` style for every authored
+`[booking-action-btn="reschedule-decline"]` or
+`[booking-card-action-btn="reschedule-decline"]` control, so an older
+`dashboard-calls.js` cannot show it again. `dashboard-calls.js` shows that
+control only when the actions module exports `canKeepCurrentTime` and it
+returns true. The counterpart still has Accept New Time (outside the 8-hour
+confirmed-call cutoff) and Cancel; an unanswered proposal is expired at the
+proposed start by task #335. To restore the button, set
+`KEEP_CURRENT_TIME_DEFAULT = true` in `dashboard-call-actions.js`.
+The decline rule itself is unchanged: declining a proposed time on a Free call
+keeps the original confirmed call. The published F13
+`booking/reschedule/decline/v3` (#5760) restores `start_old` and `end_old`,
+sets `confirmed`, and makes no provider change. See the
 [CS-17 backend release prerequisite](#cs-17-backend-release-prerequisite) for the
 backend history. If either control is missing from the
 base panel, it creates the fallback pair once per modal and marks both controls
@@ -3350,8 +3363,9 @@ not to the Scheduler configuration email flags.
 Minimum booking notice: in the non-modal Dashboard / Calendar section, the
 exact TEST/staging host `the-starters-3-0.webflow.io` uses five minutes in new
 Free Scheduler configurations and browser availability query floors;
-production, unknown hosts, and CommonJS contexts use eight hours. Booking
-Preview states the five-minute minimum on staging and the eight-hour minimum
+production, unknown hosts, and CommonJS contexts use 24 hours (JP, 2026-10-03;
+the rule was 8 hours from 2026-09-15 to 2026-10-03). Booking
+Preview states the five-minute minimum on staging and the 24-hour minimum
 on `thestarters.com` and `www.thestarters.com`. Opening the preview does not
 mutate provider configurations. Existing provider notice corrections belong
 to the bounded backend reconciliation; availability-only updates and Paid
@@ -4324,10 +4338,10 @@ flowchart TD
 1. Read the next 14 days through authenticated
    `scheduler/get_availability/v3`. Xano selects the Nylas environment and keeps
    the provider credential and private Scheduler session off the browser.
-   Production initial Paid booking availability begins eight hours ahead, with
-   a slot exactly eight hours away allowed; the exact staging host keeps its
-   five-minute exception. Dashboard rescheduling keeps its existing 24-hour
-   availability floor.
+   Production initial Paid booking availability begins 24 hours ahead, with
+   a slot exactly 24 hours away allowed; the exact staging host keeps its
+   five-minute exception. Confirmed-call dashboard rescheduling keeps its
+   separate eight-hour server-clock cutoff.
 2. Render the month calendar, timezone dropdown, time buttons and confirmation
    row inside the authored `[nylas-container]` mount. In a wide mount, the month
    calendar spans the left column. The timezone dropdown sits at the top of the
@@ -4533,7 +4547,7 @@ flowchart TD
 7. **Request Call** sends `expected_payment_method_id` with the retained slot,
    message and normalized Guests. The backend claims that reviewed card before
    provider booking creation and persists it even if the account default later changes.
-   Paid rechecks the eight-hour production cutoff at this submit boundary,
+   Paid rechecks the 24-hour production cutoff at this submit boundary,
    including after card review. If the retained slot has aged below the cutoff,
    no booking command starts, the authored details remain, and the calendar says
    **This time is no longer available. Please choose another time.**

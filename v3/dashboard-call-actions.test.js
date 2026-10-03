@@ -843,6 +843,7 @@ test('decline and proposal responses show a busy label, then restore it and show
 // the clicked control busy, a click on its sibling sent the opposite command
 // while the first was still in flight.
 test('while one proposal response is in flight both respond controls are busy', async () => {
+  const keepCurrentTimeBefore = api.setKeepCurrentTimeEnabledForTest(true)
   const originalFetch = global.xanoAuthFetch
   const originalStorage = global.sessionStorage
   const originalCrypto = global.crypto
@@ -914,6 +915,7 @@ test('while one proposal response is in flight both respond controls are busy', 
       }
     }
   } finally {
+    api.setKeepCurrentTimeEnabledForTest(keepCurrentTimeBefore)
     global.xanoAuthFetch = originalFetch
     global.sessionStorage = originalStorage
     global.crypto = originalCrypto
@@ -1199,6 +1201,7 @@ test('a reschedule proposal posts slot, reason, and a durable propose key', asyn
 // confirmed time, so a declined proposal also answers `confirmed`. The old
 // `cancelled` answer belongs to the retired decline-cancels contract.
 test('reschedule responses require confirmed acceptance and a confirmed decline', async () => {
+  const keepCurrentTimeBefore = api.setKeepCurrentTimeEnabledForTest(true)
   const originalFetch = global.xanoAuthFetch
   const originalStorage = global.sessionStorage
   const originalCrypto = global.crypto
@@ -1242,6 +1245,7 @@ test('reschedule responses require confirmed acceptance and a confirmed decline'
     assert.equal(await api.respondReschedule('reschedule-confirm', booking, 'starter'), null)
     assert.equal(await api.respondReschedule('cancel', booking, 'brand'), null)
   } finally {
+    api.setKeepCurrentTimeEnabledForTest(keepCurrentTimeBefore)
     global.xanoAuthFetch = originalFetch
     global.sessionStorage = originalStorage
     global.crypto = originalCrypto
@@ -1527,7 +1531,14 @@ test('respond controls are rendered into the base view for the counterpart', () 
       return []
     },
   }
-  assert.equal(api.ensureRescheduleViews(doc, modal), true)
+  // Covers the retained two-button fallback; the retired default is covered
+  // by the Keep Current Time tests below.
+  const keepCurrentTimeBefore = api.setKeepCurrentTimeEnabledForTest(true)
+  try {
+    assert.equal(api.ensureRescheduleViews(doc, modal), true)
+  } finally {
+    api.setKeepCurrentTimeEnabledForTest(keepCurrentTimeBefore)
+  }
   const inserted = group.children.filter(
     (child) => child.attributes && child.attributes['data-starters-reschedule-respond'] === '',
   )
@@ -1759,7 +1770,9 @@ test('authored reschedule controls and field label replace Webflow placeholder c
       .map((child) => child.attributes['booking-action-btn'])
       .filter((action) => action !== 'reschedule')
       .sort(),
-    ['confirm-reschedule', 'reschedule-decline'],
+    // "Keep Current Time" is retired (JP 2a, 2026-10-03): only Accept New Time
+    // is generated.
+    ['confirm-reschedule'],
   )
 
   const fallbackHost = fakeElement('div')
@@ -2792,4 +2805,93 @@ test('cancellation hides a legacy proposal form carrying the same panel attribut
   }, 'cancel'), true)
   assert.equal(unique.hidden, false)
   assert.equal(unique.style.display, 'flex')
+})
+
+/* Jai list #12, JP decision 2a (2026-10-03): the "Keep Current Time" button is
+   retired. The #5760 decline rule stays server-side (a declined proposal keeps
+   the original confirmed call); only the dashboard control goes. */
+test('Keep Current Time is retired by default while Accept New Time and Cancel stay', async () => {
+  const originalFetch = global.xanoAuthFetch
+  const requests = []
+  try {
+    global.xanoAuthFetch = async function (url) {
+      requests.push(url)
+      throw new Error('no request expected')
+    }
+    const booking = rescheduleBooking({ status: 'rescheduled', rescheduled_by: 'starter' })
+    // The counterpart is still a valid responder; only the decline control is off.
+    assert.equal(api.canRespondReschedule('brand', booking), true)
+    assert.equal(api.canKeepCurrentTime('brand', booking), false)
+    assert.equal(api.canKeepCurrentTime('starter', booking), false)
+    // The counterpart keeps a non-expiring exit: Cancel stays available.
+    assert.equal(api.canCancel('brand', booking), true)
+    assert.equal(await api.respondReschedule('reschedule-decline', booking, 'brand'), null)
+    assert.deepEqual(requests, [])
+  } finally {
+    global.xanoAuthFetch = originalFetch
+  }
+})
+
+test('hideKeepCurrentTime adds one !important guard and hides authored controls', () => {
+  const appended = []
+  const authored = [
+    { hidden: false, style: {}, attrs: {}, setAttribute(n, v) { this.attrs[n] = v } },
+    { hidden: false, style: {}, attrs: {}, setAttribute(n, v) { this.attrs[n] = v } },
+  ]
+  const doc = {
+    head: { appendChild(node) { appended.push(node) } },
+    createElement(tag) {
+      return { tag, attrs: {}, textContent: '', setAttribute(n, v) { this.attrs[n] = v } }
+    },
+    querySelector(selector) {
+      return selector.startsWith('style[') && appended.length ? appended[0] : null
+    },
+    querySelectorAll(selector) {
+      assert.match(selector, /booking-action-btn="reschedule-decline"/)
+      assert.match(selector, /booking-card-action-btn="reschedule-decline"/)
+      return authored
+    },
+  }
+  assert.equal(api.hideKeepCurrentTime(doc), 2)
+  assert.equal(api.hideKeepCurrentTime(doc), 2)
+  assert.equal(appended.length, 1)
+  assert.equal(appended[0].tag, 'style')
+  assert.match(appended[0].textContent, /\[booking-action-btn="reschedule-decline"\]/)
+  assert.match(appended[0].textContent, /display:none!important/)
+  for (const control of authored) {
+    assert.equal(control.hidden, true)
+    assert.equal(control.style.display, 'none')
+    assert.equal(control.attrs['aria-hidden'], 'true')
+  }
+  // Restored button: the guard is a no-op.
+  const before = api.setKeepCurrentTimeEnabledForTest(true)
+  try {
+    const fresh = { ...doc, querySelector: () => null, head: { appendChild() { throw new Error('no style expected') } } }
+    assert.equal(api.hideKeepCurrentTime(fresh), 0)
+  } finally {
+    api.setKeepCurrentTimeEnabledForTest(before)
+  }
+})
+
+test('an authored Accept New Time alone needs no generated Keep Current Time', () => {
+  const created = []
+  const accept = { attributes: { 'booking-action-btn': 'confirm-reschedule' } }
+  const basePanel = { getAttribute: (n) => (n === 'booking-popup-content' ? 'base' : null) }
+  accept.closest = () => basePanel
+  const modal = {
+    querySelector(selector) {
+      if (selector === '[data-starters-reschedule-views]') return {}
+      return null
+    },
+    querySelectorAll(selector) {
+      if (selector.includes('confirm-reschedule')) return [accept]
+      return []
+    },
+  }
+  const doc = { createElement(tag) { const el = { tag, attributes: {}, setAttribute(n, v) { this.attributes[n] = v } }; created.push(el); return el } }
+  assert.equal(api.ensureRescheduleViews(doc, modal), true)
+  assert.equal(
+    created.some((el) => el.attributes && el.attributes['booking-action-btn'] === 'reschedule-decline'),
+    false,
+  )
 })

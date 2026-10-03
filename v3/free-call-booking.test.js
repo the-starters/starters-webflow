@@ -391,10 +391,10 @@ test('canonical Free reads use one authenticated request and exact V3 routes', a
   assert.equal(new URL(calls[2].url).pathname.endsWith(api.AVAILABILITY_PATH), true)
 })
 
-test('Free initial booking uses the production 8-hour floor and the exact staging exception', async () => {
+test('Free initial booking uses the production 24-hour floor and the exact staging exception', async () => {
   const now = Date.UTC(2026, 7, 24, 0, 0, 0)
   const nowSeconds = Math.floor(now / 1000)
-  assert.equal(api.minimumBookingNoticeMinutes(), 480)
+  assert.equal(api.minimumBookingNoticeMinutes(), 1440)
   const staging = loadBrowserApi('the-starters-3-0.webflow.io', async () => response({
     time_slots: [{ start_time: nowSeconds + 5 * 60 }],
   }))
@@ -402,26 +402,26 @@ test('Free initial booking uses the production 8-hour floor and the exact stagin
   assert.equal(await staging.getNearestSlot('grant', 'config', now), nowSeconds + 5 * 60)
   const production = loadBrowserApi('thestarters.com', async () => response({
     time_slots: [
-      { start_time: nowSeconds + 8 * 60 * 60 - 1 },
-      { start_time: nowSeconds + 8 * 60 * 60 },
+      { start_time: nowSeconds + 24 * 60 * 60 - 1 },
+      { start_time: nowSeconds + 24 * 60 * 60 },
     ],
   }))
-  assert.equal(production.minimumBookingNoticeMinutes(), 480)
+  assert.equal(production.minimumBookingNoticeMinutes(), 1440)
   assert.equal(
     await production.getNearestSlot('grant', 'config', now),
-    nowSeconds + 8 * 60 * 60,
+    nowSeconds + 24 * 60 * 60,
   )
 
   const fractionalNow = now + 999
   const fractional = loadBrowserApi('thestarters.com', async () => response({
     time_slots: [
-      { start_time: nowSeconds + 8 * 60 * 60 },
-      { start_time: nowSeconds + 8 * 60 * 60 + 1 },
+      { start_time: nowSeconds + 24 * 60 * 60 },
+      { start_time: nowSeconds + 24 * 60 * 60 + 1 },
     ],
   }))
   assert.equal(
     await fractional.getNearestSlot('grant', 'config', fractionalNow),
-    nowSeconds + 8 * 60 * 60 + 1,
+    nowSeconds + 24 * 60 * 60 + 1,
   )
 })
 
@@ -607,7 +607,7 @@ test('a failed Free request reuses its bounded booking attempt on retry', async 
   assert.equal(fixture.successStep.style.display, 'flex')
 })
 
-test('Free rechecks the 8-hour cutoff before its first canonical booking command', async () => {
+test('Free rechecks the 24-hour cutoff before its first canonical booking command', async () => {
   const fixture = chooserFixture()
   const booking = bookingApiFixture({ slotMeetsBookingNotice: () => false })
   await withGlobals({ document: fixture.document }, async () => {

@@ -316,6 +316,67 @@
     )
   }
 
+  /* "Keep Current Time" (the proposal-decline response, #5760) is retired
+     from the dashboard by JP decision 2a on 2026-10-03 (Jai list #12). Only
+     the button goes: the server rule stays, so a declined proposal still keeps
+     the original confirmed call (F13 / F48 1a). The counterpart's remaining
+     exits are Accept New Time, Cancel, or no answer, which task #335 expires at
+     the proposed start. Flip this default to restore the button; the test
+     hook below only exists so the retained decline path keeps its coverage. */
+  const KEEP_CURRENT_TIME_DEFAULT = false
+  let keepCurrentTimeEnabled = KEEP_CURRENT_TIME_DEFAULT
+  const KEEP_CURRENT_TIME_SELECTOR =
+    '[booking-action-btn="reschedule-decline"], [booking-card-action-btn="reschedule-decline"]'
+  const KEEP_CURRENT_TIME_GUARD_ATTR = 'data-starters-keep-current-time-guard'
+
+  function canKeepCurrentTime(role, booking) {
+    return keepCurrentTimeEnabled && canRespondReschedule(role, booking)
+  }
+
+  /** Test-only override. Returns the previous value so callers can restore it. */
+  function setKeepCurrentTimeEnabledForTest(enabled) {
+    const previous = keepCurrentTimeEnabled
+    keepCurrentTimeEnabled = enabled === true
+    return previous
+  }
+
+  /**
+   * Hides every authored "Keep Current Time" control while the button is
+   * retired. The Webflow markup still carries the control, so the library
+   * owns the hide: one `!important` style rule (wins over any inline
+   * show/hide toggle from an older dashboard-calls.js) plus `hidden` on each
+   * control present now. Idempotent; returns how many controls were hidden.
+   * @param {Document} document Page document.
+   * @param {ParentNode} [root] Scope to search; defaults to the document.
+   * @returns {number}
+   */
+  function hideKeepCurrentTime(document, root) {
+    if (keepCurrentTimeEnabled || !document) return 0
+    if (
+      typeof document.querySelector === 'function' &&
+      typeof document.createElement === 'function' &&
+      !document.querySelector('style[' + KEEP_CURRENT_TIME_GUARD_ATTR + ']')
+    ) {
+      const style = document.createElement('style')
+      style.setAttribute(KEEP_CURRENT_TIME_GUARD_ATTR, '')
+      style.textContent =
+        '[booking-action-btn="reschedule-decline"],' +
+        '[booking-card-action-btn="reschedule-decline"]{display:none!important}'
+      const host = document.head || document.documentElement
+      if (host && typeof host.appendChild === 'function') host.appendChild(style)
+    }
+    const scope = root || document
+    if (!scope || typeof scope.querySelectorAll !== 'function') return 0
+    let count = 0
+    Array.prototype.forEach.call(scope.querySelectorAll(KEEP_CURRENT_TIME_SELECTOR), function (control) {
+      control.hidden = true
+      if (control.style) control.style.display = 'none'
+      if (typeof control.setAttribute === 'function') control.setAttribute('aria-hidden', 'true')
+      count += 1
+    })
+    return count
+  }
+
   function canConfirmReschedule(role, booking) {
     const reference = canonicalNow(booking)
     return canRespondReschedule(role, booking) && rescheduleWindowOpen(booking) &&
@@ -328,7 +389,7 @@
     if (kind === 'reschedule-propose') return canProposeReschedule(role, booking, now)
     if (kind === 'reschedule-request') return canRequestReschedule(role, booking, now)
     if (kind === 'reschedule-confirm') return canConfirmReschedule(role, booking)
-    if (kind === 'reschedule-decline') return canRespondReschedule(role, booking)
+    if (kind === 'reschedule-decline') return canKeepCurrentTime(role, booking)
     return false
   }
 
@@ -1329,8 +1390,10 @@
       typeof modal.querySelector !== 'function' ||
       typeof document.createElement !== 'function'
     ) return false
-    // Declining a Free proposal keeps the original time (#5760), so the
-    // authored "Keep Current Time" label stays; it is no longer renamed.
+    // Declining a Free proposal keeps the original time (#5760), but the
+    // "Keep Current Time" button is retired (JP 2a, 2026-10-03): hide any
+    // authored copy and never generate one. Accept New Time remains.
+    hideKeepCurrentTime(document, modal)
     if (modal.querySelector('[data-starters-reschedule-respond]')) return true
     /* Both views now author the respond pair in the base panel, where the
        member can reach it. Generating a second pair there left four controls
@@ -1341,10 +1404,10 @@
         modal,
         '[booking-action-btn="confirm-reschedule"], [booking-card-action-btn="confirm-reschedule"]',
       ) &&
-      basePanelControl(
+      (!keepCurrentTimeEnabled || basePanelControl(
         modal,
         '[booking-action-btn="reschedule-decline"], [booking-card-action-btn="reschedule-decline"]',
-      )
+      ))
     ) return true
     // On a page published while the authored confirm-reschedule still sat
     // inside the legacy hidden panel, the counterpart cannot reach it, so the
@@ -1362,6 +1425,8 @@
       'Accept New Time',
     )
     accept.setAttribute('data-starters-reschedule-respond', '')
+    anchor.parentNode.insertBefore(accept, anchor.nextSibling)
+    if (!keepCurrentTimeEnabled) return true
     const decline = styledActionButton(
       document,
       modal,
@@ -1369,7 +1434,6 @@
       'Keep Current Time',
     )
     decline.setAttribute('data-starters-reschedule-respond', '')
-    anchor.parentNode.insertBefore(accept, anchor.nextSibling)
     anchor.parentNode.insertBefore(decline, accept.nextSibling)
     return true
   }
@@ -1681,6 +1745,7 @@
       typeof document.addEventListener !== 'function' ||
       typeof settings.getBooking !== 'function'
     ) return false
+    hideKeepCurrentTime(document)
     document.addEventListener(
       'click',
       async function (event) {
@@ -1924,6 +1989,9 @@
     canRequestReschedule,
     rescheduleKindFor,
     canRespondReschedule,
+    canKeepCurrentTime,
+    hideKeepCurrentTime,
+    setKeepCurrentTimeEnabledForTest,
     ensureRescheduleViews,
     normalizeRescheduleViewCopy,
     applyRescheduleContractCopy,

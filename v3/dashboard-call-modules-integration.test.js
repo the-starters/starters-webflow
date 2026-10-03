@@ -642,14 +642,28 @@ test('Details exposes the reschedule propose and respond chains by eligibility',
   dashboard.configureDetailActions(modal, 'brand', 'confirmed', proposedBooking, Date.now())
   assert.equal(propose.hidden, true)
   assert.equal(accept.hidden, false)
-  assert.equal(keep.hidden, false)
+  // "Keep Current Time" is retired (JP 2a, 2026-10-03): the counterpart sees
+  // Accept New Time only.
+  assert.equal(keep.hidden, true)
 
   dashboard.configureDetailActions(modal, 'starter', 'confirmed', proposedBooking, Date.now())
   assert.equal(accept.hidden, true)
   assert.equal(keep.hidden, true)
+
+  // The retained path still follows eligibility when the button is restored.
+  const actions = global.StartersDashboardCallActions
+  const keepCurrentTimeBefore = actions.setKeepCurrentTimeEnabledForTest(true)
+  try {
+    dashboard.configureDetailActions(modal, 'brand', 'confirmed', proposedBooking, Date.now())
+    assert.equal(keep.hidden, false)
+    dashboard.configureDetailActions(modal, 'starter', 'confirmed', proposedBooking, Date.now())
+    assert.equal(keep.hidden, true)
+  } finally {
+    actions.setKeepCurrentTimeEnabledForTest(keepCurrentTimeBefore)
+  }
 })
 
-test('Details creates and exposes the module-rendered decline response action', () => {
+test('Details keeps Keep Current Time hidden unless the module allows it (fail closed)', () => {
   const originalActions = global.StartersDashboardCallActions
   const accept = button('confirm-reschedule')
   const generatedDecline = button('reschedule-decline')
@@ -660,24 +674,37 @@ test('Details creates and exposes the module-rendered decline response action', 
       return buttons
     },
   }
+  const base = {
+    wire() {},
+    ensureRescheduleViews(document, target) {
+      assert.equal(document, modal.ownerDocument)
+      assert.equal(target, modal)
+      if (!buttons.includes(generatedDecline)) buttons.push(generatedDecline)
+      return true
+    },
+    // An older module that still says the counterpart may respond.
+    canRespondReschedule() {
+      return true
+    },
+    canConfirmReschedule() {
+      return true
+    },
+  }
   try {
-    global.StartersDashboardCallActions = {
-      wire() {},
-      ensureRescheduleViews(document, target) {
-        assert.equal(document, modal.ownerDocument)
-        assert.equal(target, modal)
-        buttons.push(generatedDecline)
-        return true
-      },
-      canRespondReschedule() {
-        return true
-      },
-      canConfirmReschedule() {
-        return true
-      },
-    }
+    // Without canKeepCurrentTime the control stays hidden.
+    global.StartersDashboardCallActions = base
     dashboard.configureDetailActions(modal, 'brand', 'rescheduled', {}, Date.now())
     assert.equal(accept.hidden, false)
+    assert.equal(generatedDecline.hidden, true)
+
+    global.StartersDashboardCallActions = { ...base, canKeepCurrentTime: () => false }
+    dashboard.configureDetailActions(modal, 'brand', 'rescheduled', {}, Date.now())
+    assert.equal(accept.hidden, false)
+    assert.equal(generatedDecline.hidden, true)
+
+    // Rollback path: a module that restores the button shows it again.
+    global.StartersDashboardCallActions = { ...base, canKeepCurrentTime: () => true }
+    dashboard.configureDetailActions(modal, 'brand', 'rescheduled', {}, Date.now())
     assert.equal(generatedDecline.hidden, false)
   } finally {
     global.StartersDashboardCallActions = originalActions
