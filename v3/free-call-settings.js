@@ -76,6 +76,13 @@
   // Retiring a receipt canonical already satisfies is passive: it must never
   // disable a control or reject a member action, only delay one.
   let receiptCleanup = null
+  // Calendar connect creates a placeholder Free configuration through
+  // scheduler/configurations/create/v3. That row is active but has no
+  // ready sync_status, so readiness and the public /hire DTO both keep it
+  // unbookable until starter/free-call-settings/upsert/v3 activates it.
+  // A Build Profile Yes activates it once per member and config, carrying
+  // the Build Profile description into the canonical writer.
+  const activationAttempted = new Set()
 
   function memberJsonValue(response) {
     const value = response && Object.prototype.hasOwnProperty.call(response, 'data')
@@ -262,9 +269,16 @@
   }
 
   function paintStatusPills() {
-    const active = Boolean(settings && canonicalService(settings))
+    const service = settings ? canonicalService(settings) : null
+    const active = Boolean(service) && !serviceAwaitingActivation(service)
     show(output('on'), active)
     show(output('off'), !active)
+    if (root) {
+      root.setAttribute(
+        'data-free-call-activation',
+        !service ? 'none' : active ? 'live' : 'pending',
+      )
+    }
   }
 
   function bindOpenAction() {
@@ -402,12 +416,35 @@
     return canonicalSatisfiesPendingIntent(value) ? null : pendingBuildIntent
   }
 
+  // The canonical GET always returns sync_status. A null or empty status at
+  // revision 1 is the calendar-connect placeholder that no member has saved.
+  function serviceAwaitingActivation(service) {
+    if (!service || !Object.prototype.hasOwnProperty.call(service, 'sync_status')) return false
+    const status = service.sync_status
+    return (status === null || status === '') && Number(service.revision) === 1
+  }
+
   function canonicalSatisfiesPendingIntent(value) {
     if (!pendingBuildIntent) return false
     // Build Profile is a pre-onboarding handoff. Once a canonical service
     // exists, post-onboarding changes belong to Edit Profile or Dashboard and
     // a leftover Build receipt must never replace that service's newer state.
-    return Boolean(canonicalService(value))
+    // The calendar-connect placeholder is not a member save: the receipt is
+    // still the only copy of the member's Free description and choice.
+    const service = canonicalService(value)
+    return Boolean(service) && !serviceAwaitingActivation(service)
+  }
+
+  function maybeActivateFromBuildIntent(value, memberId) {
+    const service = canonicalService(value)
+    if (!pendingBuildIntent || !serviceAwaitingActivation(service)) return null
+    if (!prerequisitesReady(value) || memberId !== sessionMemberId) return null
+    if (busy || activeWrite || authTransitionPending || receiptCleanup) return null
+    const key = memberId + ':' + service.config_id
+    if (activationAttempted.has(key)) return null
+    activationAttempted.add(key)
+    setMessage('Turning on free calls from your Build Profile choice…')
+    return save({ description: pendingBuildIntent.description }).catch(function () { return null })
   }
 
   function radioValue(item) {
@@ -857,7 +894,9 @@
       'data-free-call-price-cents',
       service ? String(servicePriceCents(service) || 0) : '0',
     )
-    root.setAttribute('data-free-call-enabled', service ? 'true' : 'false')
+    const pendingActivation = service ? serviceAwaitingActivation(service) : false
+    const active = Boolean(service) && !pendingActivation
+    root.setAttribute('data-free-call-enabled', active ? 'true' : 'false')
     root.setAttribute('data-free-call-bookable', bookable ? 'true' : 'false')
     Object.keys(readiness).forEach(function (name) {
       qsa('[data-free-call-prerequisite="' + name + '"]', uiScope || root).forEach(function (item) {
@@ -877,7 +916,11 @@
           ? 'Your Build Profile choice is ready. Select Update to save free calls.'
           : 'Your Build Profile choice is saved. Connect your calendar and set availability to turn on free calls.'
         : service
-        ? !contractMatches
+        ? serviceAwaitingActivation(service)
+          ? prerequisitesReady(value)
+            ? 'Free calls are not live yet. Brands cannot book them until you select Update.'
+            : 'Connect your calendar and set availability to turn on free calls.'
+          : !contractMatches
           ? 'Update this service to the required 30-minute Free Call settings.'
           : readiness.bookable
             ? 'Free calls are on and bookable.'
@@ -888,8 +931,9 @@
     )
     setStatus('ready')
     emit('starterFreeCallSettingsChanged', {
-      active: Boolean(service),
+      active: active,
       bookable: bookable,
+      pending_activation: pendingActivation,
       readiness: readiness,
     })
     return value
@@ -941,6 +985,7 @@
       if (pending !== undefined && (receiptCleanupOwed() || canonicalSatisfiesPendingIntent(canonical))) {
         startReceiptCleanup()
       }
+      maybeActivateFromBuildIntent(canonical, memberId)
       return canonical
     } catch (error) {
       if (currentRender(version, memberId) && !busy) {
@@ -953,7 +998,7 @@
     }
   }
 
-  async function save() {
+  async function save(options) {
     if (receiptCleanup) await settleReceiptCleanup()
     if (busy || activeWrite || authTransitionPending) return null
     const pair = radioPair()
@@ -977,7 +1022,11 @@
     try {
       const service = canonicalService(settings)
       const descriptionInput = field('description')
-      const description = String((descriptionInput && descriptionInput.value) || '').trim()
+      // A Build Profile activation passes the receipt text directly so a late
+      // profile hydration of the visible input can never blank it.
+      const description = options && typeof options.description === 'string'
+        ? options.description.trim()
+        : String((descriptionInput && descriptionInput.value) || '').trim()
       if (description.length > 60) {
         throw new Error('Free-call description must be 60 characters or fewer.')
       }
@@ -1280,6 +1329,7 @@
       if (receiptCleanupOwed() || canonicalSatisfiesPendingIntent(canonical)) {
         startReceiptCleanup()
       }
+      maybeActivateFromBuildIntent(canonical, member.id)
       return rendered
     } catch (error) {
       if (version === refreshVersion) {
