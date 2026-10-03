@@ -8135,15 +8135,17 @@ test('a same-tick double direct entry still stamps the booking dialog direct', a
 
 test('a second direct entry supersedes the first, which cannot unhide the chooser', async () => {
   // The chooser here never closes, so both entries run to their time cap. The
-  // first entry's cap comes up 100 ms earlier than the second's: if it is still
+  // first entry's cap comes up 1 s earlier than the second's: if it is still
   // allowed to speak, it hands back a chooser the second entry is holding
   // hidden, and the chooser is on screen for that gap. Nothing may release the
-  // chooser except the entry that currently owns it.
+  // chooser except the entry that currently owns it. The caps run on a
+  // virtual clock so the check between them cannot miss under CI load.
   const page = makePage()
   const { dialog: booking } = addBookingDialog(page)
   page.bookingButton.click = () => { page.bookingDialog.open = true }
   page.freeModalCta.click = () => {}
   const context = readyFreeContext(page)
+  const clock = virtualLongTimers(context)
   vm.createContext(context)
   vm.runInContext(source, context)
   await settle()
@@ -8154,12 +8156,14 @@ test('a second direct entry supersedes the first, which cannot unhide the choose
 
   click()
   await settle()
-  await wait(100)
+  clock.advance(1000)
   click()
   await settle()
 
   // Between the two caps. The chooser is still open, so it must still be hidden.
-  await wait(1950)
+  // The real wait lets the 50 ms release polls run against the advanced clock.
+  clock.advance(1500)
+  await wait(150)
   assert.equal(page.bookingDialog.open, true, 'the fixture keeps the chooser open throughout')
   assert.equal(
     page.bookingDialog.getAttribute(PASS_THROUGH),
@@ -8168,7 +8172,8 @@ test('a second direct entry supersedes the first, which cannot unhide the choose
   )
 
   // Past the owning entry's own cap: it, and only it, lets go.
-  await wait(400)
+  clock.advance(600)
+  for (let i = 0; i < 50 && page.bookingDialog.hasAttribute(PASS_THROUGH); i += 1) await settle()
   assert.equal(page.bookingDialog.getAttribute(PASS_THROUGH), null)
   assert.equal(booking.getAttribute('data-booking-entry'), 'direct')
 })
@@ -8187,6 +8192,7 @@ test('a throw mid-entry still gives the chooser back inside the failsafe', async
   }
   page.freeModalCta.click = () => {}
   const context = readyFreeContext(page)
+  const clock = virtualLongTimers(context)
   vm.createContext(context)
   vm.runInContext(source, context)
   await settle()
@@ -8198,7 +8204,8 @@ test('a throw mid-entry still gives the chooser back inside the failsafe', async
   )
   assert.equal(page.bookingDialog.getAttribute(PASS_THROUGH), '', 'hidden, and nothing ran after')
 
-  await wait(2300)
+  clock.advance(2300)
+  await wait(150)
   assert.equal(
     page.bookingDialog.getAttribute(PASS_THROUGH),
     null,
@@ -8396,6 +8403,51 @@ function f50BrandContext(page, wfx, extra = {}) {
     getConfigs: async () => [F50_FREE_CFG],
     wfXano: wfx.api,
   }, extra))
+}
+
+/**
+ * Runs timers of 1 s or more on a virtual clock, so a test that checks one
+ * moment between two caps does not depend on real sleeps landing on time.
+ * Date.now() in the context moves with the clock; shorter timers stay real.
+ */
+function virtualLongTimers(context) {
+  const RealDate = context.Date
+  const realSetTimeout = context.setTimeout
+  const realClearTimeout = context.clearTimeout
+  const pending = new Map()
+  let offset = 0
+  let nextId = 0
+  context.Date = class extends RealDate {
+    static now() {
+      return RealDate.now() + offset
+    }
+  }
+  context.setTimeout = (fn, ms, ...rest) => {
+    if (ms >= 1000) {
+      const id = `virtual-${nextId++}`
+      pending.set(id, { fn, rest, due: context.Date.now() + ms })
+      return id
+    }
+    return realSetTimeout(fn, ms, ...rest)
+  }
+  context.clearTimeout = (id) => {
+    if (typeof id === 'string' && id.startsWith('virtual-')) {
+      pending.delete(id)
+      return
+    }
+    realClearTimeout(id)
+  }
+  return {
+    advance(ms) {
+      offset += ms
+      const now = context.Date.now()
+      for (const [id, timer] of [...pending]) {
+        if (timer.due > now) continue
+        pending.delete(id)
+        timer.fn(...timer.rest)
+      }
+    },
+  }
 }
 
 /** Holds long timers (the discovery failsafe) so a test fires them itself. */
