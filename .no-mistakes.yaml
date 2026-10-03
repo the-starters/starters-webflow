@@ -10,3 +10,17 @@ intent:
 test:
   evidence:
     store_in_repo: false
+
+document:
+  # JP decision 2026-10-03 (workflow audit): most PRs need no doc change.
+  instructions: |
+    Change documentation only when the diff changes a public contract that a
+    reader of the docs relies on: a data-* attribute, a script tag or loader
+    URL, a config key, an event name or event.detail shape, a public window
+    API, an endpoint the script calls, or a setup step for Webflow authors.
+    For internal refactors, bug fixes, test-only changes, styling, copy, and
+    behavior that keeps the same public contract, make no documentation
+    change and report that no update is needed. Do not add changelog-style
+    notes, fix histories, ticket numbers, or test descriptions to README or
+    WIRING files. When an update is needed, edit only the sections that
+    describe the changed contract.
