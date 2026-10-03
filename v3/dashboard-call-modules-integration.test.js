@@ -1004,10 +1004,10 @@ test('a call with no reschedule control for the viewer shows no reschedule hint'
   }
 })
 
-// Paid pending cancellation is hard-launch work, so canCancel hides the
-// Brand's Cancel on a Paid pending request. Soft launch shows no hint for it,
-// and nothing changes for Free requests or for the Starter, who declines.
-test('Brand pending Paid request hides Cancel with no hint', () => {
+// Paid parity P1 (2026-10-03): the Brand can cancel a Paid pending request
+// (saved card only). No hint appears; a stale hint from an older version stays
+// hidden. The Starter still never cancels a pending request.
+test('Brand pending Paid request shows Cancel with no hint', () => {
   const originalActions = global.StartersDashboardCallActions
   const realActions = require('./dashboard-call-actions.js')
   const now = Date.now()
@@ -1033,7 +1033,7 @@ test('Brand pending Paid request hides Cancel with no hint', () => {
     const paidCancel = button('switch-cancel')
     const paidModal = hintModal([paidCancel], ['cancel'])
     dashboard.configureDetailActions(paidModal, 'brand', 'pending', { ...pending, is_paid: true }, now)
-    assert.equal(paidCancel.hidden, true)
+    assert.equal(paidCancel.hidden, false)
     assert.equal(paidModal.hints.cancel.hidden, true, 'a stale Paid cancel hint hides')
     assert.equal(paidModal.inserted.length, 0)
 
@@ -1060,10 +1060,9 @@ test('Brand pending Paid request hides Cancel with no hint', () => {
   }
 })
 
-// Soft launch (JP, 2026-09-26): Paid decline is hard-launch work. The Starter
-// keeps Accept on a Paid request and loses Decline. Since 2026-09-30 the
-// details modal no longer explains the hidden Decline. Free keeps Decline.
-test('Starter Paid request hides Decline with no hint; Free keeps Decline', () => {
+// Paid parity P2 (2026-10-03): the Starter can decline a Paid pending request
+// like a Free one (saved card only, no Stripe call). No hint appears.
+test('Starter Paid request shows Decline with no hint; Free keeps Decline', () => {
   const originalActions = global.StartersDashboardCallActions
   const now = Date.now()
   const pending = {
@@ -1079,18 +1078,18 @@ test('Starter Paid request hides Decline with no hint; Free keeps Decline', () =
   try {
     global.StartersDashboardCallActions = require('./dashboard-call-actions.js')
 
-    // Card: Accept stays, Decline goes, for Paid only.
+    // Card: Accept and Decline both show, for Paid and Free.
     const cardAccept = button('switch-confirm')
     const cardDecline = button('switch-decline')
     const card = { querySelectorAll() { return [cardAccept, cardDecline] } }
     dashboard.configureActionButtons(card, 'starter', 'pending', { ...pending, is_paid: true }, now)
     assert.equal(cardAccept.hidden, false)
-    assert.equal(cardDecline.hidden, true)
+    assert.equal(cardDecline.hidden, false)
     dashboard.configureActionButtons(card, 'starter', 'pending', { ...pending, is_paid: false }, now)
     assert.equal(cardAccept.hidden, false)
     assert.equal(cardDecline.hidden, false)
 
-    // Details: every authored decline step hides and no hint explains it.
+    // Details: every authored decline step shows for Paid, with no hint.
     const accept = button('switch-confirm')
     const decline = button('switch-decline')
     const declineReason = button('switch-decline-reason')
@@ -1098,10 +1097,10 @@ test('Starter Paid request hides Decline with no hint; Free keeps Decline', () =
     const modal = hintModal([accept, decline, declineReason, declineSubmit])
     dashboard.configureDetailActions(modal, 'starter', 'pending', { ...pending, is_paid: true }, now)
     assert.equal(accept.hidden, false)
-    assert.equal(decline.hidden, true)
-    assert.equal(declineReason.hidden, true)
-    assert.equal(declineSubmit.hidden, true)
-    assert.equal(modal.hints.decline, undefined, 'the hidden Paid Decline has no hint')
+    assert.equal(decline.hidden, false)
+    assert.equal(declineReason.hidden, false)
+    assert.equal(declineSubmit.hidden, false)
+    assert.equal(modal.hints.decline, undefined, 'Paid Decline needs no hint')
     assert.equal(modal.inserted.length, 0)
 
     // Reusing the modal for a Free request restores Decline.
@@ -1111,11 +1110,11 @@ test('Starter Paid request hides Decline with no hint; Free keeps Decline', () =
     assert.equal(declineSubmit.hidden, false)
     assert.equal(modal.hints.decline, undefined)
 
-    // A stale decline hint from an older version hides on a Paid request.
+    // A stale decline hint from an older version stays hidden; Decline shows.
     const staleDecline = button('switch-decline')
     const staleModal = hintModal([staleDecline], ['decline'])
     dashboard.configureDetailActions(staleModal, 'starter', 'pending', { ...pending, is_paid: true }, now)
-    assert.equal(staleDecline.hidden, true)
+    assert.equal(staleDecline.hidden, false)
     assert.equal(staleModal.hints.decline.hidden, true)
 
     // The Brand never declines, and an expired or confirmed Paid request is

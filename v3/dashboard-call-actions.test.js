@@ -38,20 +38,21 @@ test('decline eligibility is Starter-only, pending, scoped, and identified', () 
   assert.equal(api.canDecline('starter', { ...booking, config_id: '' }), false)
 })
 
-// Soft launch (JP, 2026-09-26): Paid decline and its settlement are hard-launch
-// work, so the dashboard must not offer a Paid decline the cohort can click.
-// Free and legacy rows without a paid flag keep Decline exactly as before.
-test('decline eligibility excludes explicitly Paid requests only', () => {
+// Paid parity P2 (2026-10-03): a pending Paid request holds only a saved card,
+// so the Starter declines it exactly like a Free request.
+test('decline eligibility is the same for Paid and Free pending requests', () => {
   const booking = pendingBooking()
-  assert.equal(api.canDecline('starter', { ...booking, is_paid: true }), false)
-  assert.equal(api.canDecline('starter', { ...booking, is_paid: 'true' }), false)
-  assert.equal(api.canDecline('starter', { ...booking, paid_meeting: true }), false)
+  assert.equal(api.canDecline('starter', { ...booking, is_paid: true }), true)
+  assert.equal(api.canDecline('starter', { ...booking, is_paid: 'true' }), true)
+  assert.equal(api.canDecline('starter', { ...booking, paid_meeting: true }), true)
+  assert.equal(api.canDecline('brand', { ...booking, paid_meeting: true }), false)
+  assert.equal(api.canDecline('starter', { ...booking, paid_meeting: true, status: 'confirmed' }), false)
   assert.equal(api.canDecline('starter', { ...booking, is_paid: false }), true)
   assert.equal(api.canDecline('starter', { ...booking, paid_meeting: false }), true)
   assert.equal(api.canDecline('starter', booking), true)
 })
 
-test('a Paid decline never reaches the decline endpoint; Free still does', async () => {
+test('Paid and Free declines both reach the decline endpoint', async () => {
   const originalFetch = global.xanoAuthFetch
   const originalStorage = global.sessionStorage
   const originalCrypto = global.crypto
@@ -74,8 +75,9 @@ test('a Paid decline never reaches the decline endpoint; Free still does', async
       }
     }
     const paid = await api.declineBooking({ ...pendingBooking(), is_paid: true }, 'Not available')
-    assert.equal(paid, null)
-    assert.deepEqual(requests, [])
+    assert.equal(paid.decline.status, 'declined')
+    assert.equal(requests.length, 1)
+    requests.length = 0
 
     const free = await api.declineBooking({ ...pendingBooking(), is_paid: false }, 'Not available')
     assert.equal(free.decline.status, 'declined')
@@ -508,7 +510,9 @@ test('cancel eligibility is participant-only, booked, future, scoped, and identi
   assert.equal(api.canCancel('guest', booking), false)
   assert.equal(api.canCancel('starter', { ...booking, status: 'pending' }), false)
   assert.equal(api.canCancel('brand', { ...booking, status: 'pending' }), true)
-  assert.equal(api.canCancel('brand', { ...booking, status: 'pending', paid_meeting: true }), false)
+  // P1: a Brand may withdraw a Paid pending request (saved card only); a Starter declines instead.
+  assert.equal(api.canCancel('brand', { ...booking, status: 'pending', paid_meeting: true }), true)
+  assert.equal(api.canCancel('starter', { ...booking, status: 'pending', paid_meeting: true }), false)
   assert.equal(api.canCancel('brand', { ...booking, status: 'pending', start: Date.now() - 1000 }), false)
   assert.equal(api.canCancel('brand', { ...booking, status: 'declined' }), false)
   assert.equal(api.canCancel('starter', { ...booking, status: 'rescheduled' }), true)
@@ -517,11 +521,20 @@ test('cancel eligibility is participant-only, booked, future, scoped, and identi
   assert.equal(api.canCancel('starter', { ...booking, data_environment: '' }), false)
   assert.equal(api.canCancel('starter', { ...booking, config_id: '' }), false)
   assert.equal(api.canCancel('brand', { ...booking, brand_data: {} }), false)
-  // booking/cancel/v3 rejects Paid bookings until the paid-cancel fast follow
-  // ships, so the button must stay hidden on them. A missing flag counts as
-  // Free so legacy rows keep their Cancel.
+  // P4: a confirmed Paid call is cancellable only more than 48 h 15 min before
+  // start (before the 48 h authorization). This fixture starts in 1 h, so
+  // Cancel stays hidden. A missing flag counts as Free.
   assert.equal(api.canCancel('starter', { ...booking, is_paid: true }), false)
   assert.equal(api.canCancel('brand', { ...booking, paid_meeting: true }), false)
+  const now = Date.now()
+  const H = 60 * 60 * 1000
+  const far = { ...booking, paid_meeting: true, start: now + 72 * H }
+  assert.equal(api.canCancel('brand', far, now), true)
+  assert.equal(api.canCancel('starter', far, now), true)
+  assert.equal(api.canCancel('brand', { ...far, start: now + 173700000 }, now), false)
+  assert.equal(api.canCancel('brand', { ...far, start: now + 173700001 }, now), true)
+  assert.equal(api.canCancel('brand', { ...far, status: 'rescheduled' }, now), false)
+  assert.equal(api.canCancel('brand', { ...far, status: 'completed' }, now), false)
   assert.equal(api.canCancel('starter', { ...booking, is_paid: false }), true)
   assert.equal(api.canCancel('starter', { ...booking, paid_meeting: null }), true)
 })
