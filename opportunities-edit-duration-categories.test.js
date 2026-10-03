@@ -9,7 +9,53 @@ const test = require('node:test')
 const vm = require('node:vm')
 const { Element: BaseElement } = require('./step-flow-test-dom.js')
 
+function matchesSimple(el, sel) {
+  let rest = sel.trim()
+  if (!rest) return false
+  while (rest) {
+    let m
+    if ((m = /^\[([\w-]+)(?:=(?:"([^"]*)"|'([^']*)'))?\]/.exec(rest))) {
+      const value = el.getAttribute(m[1])
+      if (value === null) return false
+      const expected = m[2] !== undefined ? m[2] : m[3]
+      if (expected !== undefined && value !== expected) return false
+    } else if ((m = /^\.([\w-]+)/.exec(rest))) {
+      if (!el.classList.contains(m[1])) return false
+    } else if ((m = /^([a-zA-Z][\w-]*)/.exec(rest))) {
+      if (el.tagName !== m[1].toUpperCase()) return false
+    } else if ((m = /^:checked/.exec(rest))) {
+      if (!el.checked) return false
+    } else {
+      throw new Error('unsupported selector: ' + sel)
+    }
+    rest = rest.slice(m[0].length)
+  }
+  return true
+}
+
+function matchesSelector(el, selector) {
+  const parts = selector.trim().split(/\s+/)
+  if (!matchesSimple(el, parts[parts.length - 1])) return false
+  let node = el.parentElement
+  for (let index = parts.length - 2; index >= 0; index -= 1) {
+    while (node && !matchesSimple(node, parts[index])) node = node.parentElement
+    if (!node) return false
+    node = node.parentElement
+  }
+  return true
+}
+
 class Element extends BaseElement {
+  constructor(tag, attrs = {}, children = []) {
+    super(tag, attrs, children)
+    this.hidden = false
+  }
+  get value() {
+    return this.getAttribute('value') || ''
+  }
+  set value(value) {
+    this.setAttribute('value', value)
+  }
   get parentNode() {
     return this.parentElement
   }
@@ -32,6 +78,15 @@ class Element extends BaseElement {
     this.children.splice(index, 0, child)
     return child
   }
+  querySelectorAll(selector) {
+    return selector
+      .split(',')
+      .flatMap((part) => this.descendants().filter((el) => matchesSelector(el, part)))
+      .filter((el, index, all) => all.indexOf(el) === index)
+  }
+  matches(selector) {
+    return selector.split(',').some((part) => matchesSelector(this, part))
+  }
   cloneNode(deep) {
     const attrs = {}
     this._attrs.forEach((value, key) => {
@@ -39,8 +94,13 @@ class Element extends BaseElement {
     })
     const copy = new Element(this.tagName.toLowerCase(), attrs)
     copy.textContent = this.textContent
+    copy.checked = this.checked
     if (deep) this.children.forEach((child) => copy.append(child.cloneNode(true)))
     return copy
+  }
+  dispatchEvent() {}
+  setCustomValidity(message) {
+    this.validationMessage = message
   }
 }
 
@@ -49,27 +109,69 @@ const h = (tag, attrs = {}, children = []) => new Element(tag, attrs, children)
 const source = fs.readFileSync(path.join(__dirname, 'opportunities-3.0.js'), 'utf8')
 const createSource = fs.readFileSync(path.join(__dirname, 'opportunities---create.js'), 'utf8')
 
-function extractFunction(name) {
-  const start = source.indexOf(`  function ${name}(`)
-  assert.notEqual(start, -1, `${name} must exist in opportunities-3.0.js`)
-  const end = source.indexOf('\n  }\n', start)
-  return source.slice(start, end + 4)
-}
-
-function loadHelpers(document = new Element('html')) {
-  const context = vm.createContext({ document, Array, String })
-  vm.runInContext(
-    [
-      'const $ = (sel, root = document) => root.querySelector(sel)',
-      'const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel))',
-      extractFunction('promoteDurationGroup'),
-      extractFunction('paintOpportunityCategories'),
-      'this.promoteDurationGroup = promoteDurationGroup',
-      'this.paintOpportunityCategories = paintOpportunityCategories',
-    ].join('\n'),
-    context,
-  )
-  return context
+function loadOpp30(document = new Element('html')) {
+  document.readyState = 'loading'
+  document.addEventListener = () => {}
+  document.removeEventListener = () => {}
+  document.documentElement = document
+  document.head = document
+  document.createElement = (tag) => h(tag)
+  document.getElementById = () => null
+  const location = {
+    href: 'https://example.test/opportunities/123',
+    hostname: 'example.test',
+    pathname: '/opportunities/123',
+    search: '',
+  }
+  const window = {
+    addEventListener() {},
+    removeEventListener() {},
+    dispatchEvent() {},
+    setTimeout,
+    clearTimeout,
+    setInterval,
+    clearInterval,
+    CustomEvent: class CustomEvent {
+      constructor(type, options) {
+        this.type = type
+        this.detail = options?.detail
+      }
+    },
+  }
+  window.window = window
+  window.location = location
+  const context = vm.createContext({
+    Array,
+    Date,
+    Event: class Event {
+      constructor(type, options) {
+        this.type = type
+        this.bubbles = options?.bubbles
+      }
+    },
+    FormData,
+    Headers,
+    MutationObserver: class MutationObserver {
+      observe() {}
+      disconnect() {}
+    },
+    Request,
+    URL,
+    URLSearchParams,
+    alert() {},
+    clearInterval,
+    clearTimeout,
+    console: { error() {}, info() {}, log() {}, warn() {} },
+    document,
+    fetch: async () => ({ ok: true, json: async () => ({}) }),
+    history: { replaceState() {} },
+    location,
+    setInterval,
+    setTimeout,
+    window,
+  })
+  vm.runInContext(source, context)
+  return window.Opp30
 }
 
 const durationRadio = (id, value, checked = false) => {
@@ -117,7 +219,7 @@ function liveEditForm() {
 }
 
 test('Duration group moves out of the One Time panel so every project type shows it', () => {
-  const { promoteDurationGroup } = loadHelpers()
+  const { promoteDurationGroup } = loadOpp30()
   const { form, list, oneTime, durationGroup, inputs } = liveEditForm()
   assert.equal(oneTime.contains(durationGroup), true, 'fixture reproduces the live hidden-panel placement')
 
@@ -126,14 +228,12 @@ test('Duration group moves out of the One Time panel so every project type shows
   assert.equal(durationGroup.closest('[data-project-type]'), null, 'no project-type panel can hide Duration now')
   assert.equal(inputs.children.indexOf(durationGroup), inputs.children.indexOf(list) - 1)
   assert.equal(form.getAttribute('data-opp-duration-promoted'), 'true')
-  // The One Time budget stays in its panel.
   assert.ok(oneTime.querySelector('[name="One-Time-Budget"]'))
-  // The checked radio travels with the group, so prefill and reads keep working.
   assert.equal(form.querySelectorAll('[name="Duration"]').length, 4)
 })
 
 test('Duration promotion is idempotent and a no-op on corrected Designer markup', () => {
-  const { promoteDurationGroup } = loadHelpers()
+  const { promoteDurationGroup } = loadOpp30()
   const { form } = liveEditForm()
   assert.equal(promoteDurationGroup(form), true)
   assert.equal(promoteDurationGroup(form), false)
@@ -147,7 +247,7 @@ test('Duration promotion is idempotent and a no-op on corrected Designer markup'
 })
 
 test('Duration promotion refuses a group that also owns other fields', () => {
-  const { promoteDurationGroup } = loadHelpers()
+  const { promoteDurationGroup } = loadOpp30()
   const shared = h('div', { class: 'app-form_input_group' }, [
     durationRadio('1-months', '≤ 1 months'),
     h('input', { name: 'One-Time-Budget' }),
@@ -156,6 +256,18 @@ test('Duration promotion refuses a group that also owns other fields', () => {
   const form = h('form', {}, [h('div', { 'data-project-type-list': '' }, [panel])])
   assert.equal(promoteDurationGroup(form), false)
   assert.equal(panel.contains(shared), true)
+})
+
+test('prepareOpportunityForms promotes live edit markup through the public interface', () => {
+  const { form, list, durationGroup } = liveEditForm()
+  const modal = h('dialog', { 'data-modal-target': 'edit-opportunity' }, [form])
+  const { prepareOpportunityForms } = loadOpp30()
+  assert.equal(durationGroup.closest('[data-project-type]') !== null, true)
+
+  prepareOpportunityForms(modal)
+
+  assert.equal(durationGroup.closest('[data-project-type]'), null)
+  assert.equal(form.children[0].children.indexOf(durationGroup), form.children[0].children.indexOf(list) - 1)
 })
 
 function categoryList(names) {
@@ -173,7 +285,7 @@ const labels = (list) => list.querySelectorAll('.label_text').map((el) => el.tex
 test('saved categories repaint the CMS category chips in place', () => {
   const list = categoryList(['AI & Technology', 'Marketing Strategy & Brand'])
   const doc = h('html', {}, [list])
-  const { paintOpportunityCategories } = loadHelpers(doc)
+  const { paintOpportunityCategories } = loadOpp30(doc)
   assert.equal(paintOpportunityCategories(['Content & Organic', ' Paid Media ', '']), 1)
   assert.deepEqual(labels(list), ['Content & Organic', 'Paid Media'])
   assert.equal(list.querySelectorAll('.w-dyn-item').length, 2)
@@ -182,7 +294,7 @@ test('saved categories repaint the CMS category chips in place', () => {
 test('empty or missing category names never blank the authored chips', () => {
   const list = categoryList(['AI & Technology'])
   const doc = h('html', {}, [list])
-  const { paintOpportunityCategories } = loadHelpers(doc)
+  const { paintOpportunityCategories } = loadOpp30(doc)
   assert.equal(paintOpportunityCategories([]), 0)
   assert.equal(paintOpportunityCategories(undefined), 0)
   assert.deepEqual(labels(list), ['AI & Technology'])
@@ -195,9 +307,34 @@ test('create page controller never binds the Edit Opportunity form', () => {
     h('dialog', { 'data-modal-target': 'edit-opportunity' }, [editForm]),
     h('dialog', { 'data-modal-target': 'post-opportunity' }, [createForm]),
   ])
-  const match = /const getForm = \(\) => \{[\s\S]*?\n  \}\n/.exec(createSource)
-  assert.ok(match, 'getForm must exist')
-  const context = vm.createContext({ document: doc, Array })
-  vm.runInContext(`${match[0]}\nthis.getForm = getForm`, context)
-  assert.equal(context.getForm(), createForm)
+  doc.readyState = 'complete'
+  doc.addEventListener = () => {}
+  doc.removeEventListener = () => {}
+  const bound = []
+  createForm.addEventListener = (type, listener, capture) => bound.push({ form: createForm, type, listener, capture })
+  editForm.addEventListener = (type, listener, capture) => bound.push({ form: editForm, type, listener, capture })
+  const window = {
+    Opp30: {
+      prepareOpportunityCreateForms() {},
+    },
+  }
+  window.window = window
+  const context = vm.createContext({
+    Array,
+    HTMLInputElement: Element,
+    HTMLSelectElement: Element,
+    console: { error() {}, info() {} },
+    document: doc,
+    location: {
+      href: 'https://example.test/opportunities---create',
+      pathname: '/opportunities---create',
+      search: '',
+    },
+    window,
+  })
+  vm.runInContext(createSource, context)
+  assert.deepEqual(
+    bound.map((entry) => ({ id: entry.form.getAttribute('id'), type: entry.type, capture: entry.capture })),
+    [{ id: 'create', type: 'submit', capture: true }],
+  )
 })
