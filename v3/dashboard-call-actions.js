@@ -223,27 +223,34 @@
     return (
       role === 'starter' &&
       bookingStatus(booking) === 'pending' &&
-      // Paid decline and its settlement are hard-launch work (JP, 2026-09-26),
-      // so an explicitly Paid request hides Decline and dashboard-calls shows
-      // why. Same lenient flag as canCancel: an unflagged legacy row is Free.
-      !paidFlag(booking) &&
+      // A pending Paid request holds only a saved card, so booking/decline/v3
+      // (#1547) declines it with no Stripe call (Paid parity P2, 2026-10-03).
       bookingIdentified(booking)
     )
   }
 
+  // Paid parity P4 (2026-10-03): #2099 cancels a confirmed Paid call only
+  // while it still holds a saved card, i.e. more than 48 h 15 min before start
+  // (task #121 authorizes at 48 h). Inside that window the server refuses, so
+  // the client hides Cancel instead of offering an action that fails.
+  const PAID_CONFIRMED_CANCEL_LEAD_MS = 173700000
+
   function canCancel(role, booking, now) {
     const start = Number(booking && booking.start)
     const reference = Number.isFinite(Number(now)) ? Number(now) : Date.now()
+    const status = bookingStatus(booking)
+    const paid = paidFlag(booking)
     return (
       (role === 'starter' || role === 'brand') &&
-      // booking/cancel/v3 (#1545) rejects Paid bookings until the paid-cancel
-      // fast follow ships; hide the button instead of offering an action the
-      // server always refuses with a 400.
-      !paidFlag(booking) &&
-      // A Brand may also withdraw its own pending request: #1545 routes
-      // pending state to the Brand-only #2126 owner. A Starter declines instead.
-      (['confirmed', 'rescheduled'].includes(bookingStatus(booking)) ||
-        (role === 'brand' && bookingStatus(booking) === 'pending')) &&
+      // A Brand may withdraw its own pending request: #1545 routes pending
+      // state to the Brand-only #2126 owner, which admits a Paid request that
+      // holds only a saved card (P1). A Starter declines instead.
+      ((!paid && ['confirmed', 'rescheduled'].includes(status)) ||
+        (paid &&
+          status === 'confirmed' &&
+          Number.isFinite(start) &&
+          start > reference + PAID_CONFIRMED_CANCEL_LEAD_MS) ||
+        (role === 'brand' && status === 'pending')) &&
       actorMemberId(role, booking) !== '' &&
       Number.isFinite(start) &&
       start > reference &&
@@ -1933,7 +1940,7 @@
           if (!result) throw new Error(config.failureMessage)
           if (step.kind === 'cancel' && typeof settings.onCancelSuccess === 'function') {
             try {
-              const repaintCancellation = !paidFlag(booking) &&
+              const repaintCancellation =
                 ['confirmed', 'rescheduled'].includes(bookingStatus(booking))
               if (settings.onCancelSuccess(booking, result, mutationClaim, reason.value) === false) return
               // A different booking may have been opened while the command

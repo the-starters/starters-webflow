@@ -2384,6 +2384,8 @@
           (action === 'switch-decline' ||
             action === 'switch-decline-reason' ||
             action === 'decline') &&
+          // Same response-window rule as the card: an expired request is read-only.
+          responseWindowOpen(booking, now) &&
           validDashboardModule(global.StartersDashboardCallActions) &&
           typeof global.StartersDashboardCallActions.canDecline === 'function' &&
           global.StartersDashboardCallActions.canDecline(role, booking)
