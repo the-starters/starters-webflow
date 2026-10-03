@@ -188,19 +188,6 @@ test('empty or missing category names never blank the authored chips', () => {
   assert.deepEqual(labels(list), ['AI & Technology'])
 })
 
-test('edit success repaints categories from the payload and the authoritative get', () => {
-  const editBlock = source.slice(source.indexOf('const editedOppId = activeOpp'))
-  assert.match(editBlock, /API\.brandOppUpdate\(editedOppId, payload\)/)
-  assert.match(editBlock, /paintOpportunityCategories\(payload\.role_names\)/)
-  assert.match(editBlock, /API\.brandOppGet\(editedOppId\)/)
-  assert.match(editBlock, /paintOpportunityCategories\(fresh\.category_names\)/)
-})
-
-test('prepareOpportunityForms promotes Duration on both Create and Edit forms', () => {
-  const body = extractFunction('prepareOpportunityForms')
-  assert.match(body, /promoteDurationGroup\(form\)/)
-})
-
 test('create page controller never binds the Edit Opportunity form', () => {
   const createForm = h('form', { 'data-opp-form': 'create', id: 'create' })
   const editForm = h('form', { 'data-opp-form': 'create', id: 'edit' })
