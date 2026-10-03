@@ -100,9 +100,12 @@ the cached Free state is cleared. It also sets these attributes:
 - `data-free-call-settings` on `<html>` —
   `waiting-for-ui|not-applicable|loading|ready|saving|disabling|error`
 - `data-free-call-state` on the card root — the same values
-- `data-free-call-enabled="true|false"`
+- `data-free-call-enabled="true|false"` (`false` for a calendar-connect placeholder until Update
+  activates it)
 - `data-free-call-bookable="true|false"` (also `false` when the stored duration is not `30` or the
   stored price is not `0`)
+- `data-free-call-activation="none|pending|live"` (`pending` means the calendar-connect
+  placeholder exists but is not live yet)
 - `data-free-call-duration-required="30"`
 - `data-free-call-duration-current` — the stored duration in minutes, empty with no active service
 - `data-free-call-price-cents` — the stored price in cents, `0` with no active service
@@ -114,7 +117,8 @@ An absent price on a Free service reads as `0` because the product contract fixe
 
 The controller emits these window events:
 
-- `starterFreeCallSettingsChanged` — `{ active, bookable, readiness }` on every render
+- `starterFreeCallSettingsChanged` — `{ active, bookable, pending_activation, readiness }` on every
+  render
 - `starterFreeCallWriteSuccess` — `{ action: 'upsert'|'disable', configId }`
 - `starterFreeCallWriteError` — `{ action: 'upsert'|'disable', message }`; never emitted for a
   missing or changed Memberstack session, because nothing was written

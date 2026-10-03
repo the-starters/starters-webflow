@@ -3680,6 +3680,18 @@ test('a placeholder without a receipt shows OFF and an Update prompt, then activ
   assert.equal(result.dom.on.hidden, true)
   assert.equal(result.dom.off.hidden, false)
   assert.equal(result.dom.root.getAttribute('data-free-call-activation'), 'pending')
+  assert.equal(result.dom.root.getAttribute('data-free-call-enabled'), 'false')
+  assert.equal(result.dom.yes.checked, true)
+  const pendingChanged = result.events
+    .filter((event) => event.type === 'starterFreeCallSettingsChanged')
+    .at(-1).detail
+  assert.equal(pendingChanged.active, false)
+  assert.equal(pendingChanged.bookable, false)
+  assert.equal(pendingChanged.pending_activation, true)
+  assert.equal(pendingChanged.readiness.calendar, true)
+  assert.equal(pendingChanged.readiness.availability, true)
+  assert.equal(pendingChanged.readiness.enabled, false)
+  assert.equal(pendingChanged.readiness.bookable, false)
   assert.match(result.dom.status.textContent, /not live yet/)
 
   result.dom.title.value = 'Growth teardown'
@@ -3690,6 +3702,31 @@ test('a placeholder without a receipt shows OFF and an Update prompt, then activ
   assert.equal(counter.bodies[0].description, 'Growth teardown')
   assert.equal(result.dom.on.hidden, false)
   assert.equal(result.dom.root.getAttribute('data-free-call-activation'), 'live')
+  assert.equal(result.dom.root.getAttribute('data-free-call-enabled'), 'true')
+  assert.equal(
+    result.events.filter((event) => event.type === 'starterFreeCallSettingsChanged').at(-1).detail.pending_activation,
+    false,
+  )
+  assert.equal(
+    result.events.filter((event) => event.type === 'starterFreeCallSettingsChanged').at(-1).detail.active,
+    true,
+  )
+})
+
+test('a ready Free service reports no pending activation', async () => {
+  const result = load({
+    initial: canonical({
+      services: [service({ sync_status: 'ready' })],
+      readiness: { free_call_enabled: true, bookable: true },
+    }),
+  })
+  await settle()
+
+  const changed = result.events.filter((event) => event.type === 'starterFreeCallSettingsChanged').at(-1)
+  assert.equal(result.dom.root.getAttribute('data-free-call-enabled'), 'true')
+  assert.equal(result.dom.root.getAttribute('data-free-call-activation'), 'live')
+  assert.equal(changed.detail.active, true)
+  assert.equal(changed.detail.pending_activation, false)
 })
 
 test('a failed placeholder activation is attempted once and keeps the receipt', async () => {

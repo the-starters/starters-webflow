@@ -894,7 +894,9 @@
       'data-free-call-price-cents',
       service ? String(servicePriceCents(service) || 0) : '0',
     )
-    root.setAttribute('data-free-call-enabled', service ? 'true' : 'false')
+    const pendingActivation = service ? serviceAwaitingActivation(service) : false
+    const active = Boolean(service) && !pendingActivation
+    root.setAttribute('data-free-call-enabled', active ? 'true' : 'false')
     root.setAttribute('data-free-call-bookable', bookable ? 'true' : 'false')
     Object.keys(readiness).forEach(function (name) {
       qsa('[data-free-call-prerequisite="' + name + '"]', uiScope || root).forEach(function (item) {
@@ -929,8 +931,9 @@
     )
     setStatus('ready')
     emit('starterFreeCallSettingsChanged', {
-      active: Boolean(service),
+      active: active,
       bookable: bookable,
+      pending_activation: pendingActivation,
       readiness: readiness,
     })
     return value
