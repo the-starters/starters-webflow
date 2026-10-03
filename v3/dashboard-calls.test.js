@@ -7698,6 +7698,7 @@ test('pending proposal cards retain confirmed time for both roles and adopt the 
 
 test('reschedule decline clears incomplete original intervals before repaint', async () => {
   const actions = require('./dashboard-call-actions.js')
+  const keepCurrentTimeBefore = actions.setKeepCurrentTimeEnabledForTest(true)
   const previous = {
     actions: global.StartersDashboardCallActions,
     fetch: global.xanoAuthFetch,
@@ -7783,6 +7784,7 @@ test('reschedule decline clears incomplete original intervals before repaint', a
       }
     }
   } finally {
+    actions.setKeepCurrentTimeEnabledForTest(keepCurrentTimeBefore)
     global.StartersDashboardCallActions = previous.actions
     global.xanoAuthFetch = previous.fetch
     global.sessionStorage = previous.storage
@@ -7791,6 +7793,7 @@ test('reschedule decline clears incomplete original intervals before repaint', a
 
 test('a delayed reschedule response cannot overwrite a later cancellation', async () => {
   const actions = require('./dashboard-call-actions.js')
+  const keepCurrentTimeBefore = actions.setKeepCurrentTimeEnabledForTest(true)
   const previous = {
     actions: global.StartersDashboardCallActions,
     document: global.document,
@@ -7899,6 +7902,7 @@ test('a delayed reschedule response cannot overwrite a later cancellation', asyn
     assert.equal(reconciliations, 1)
     assert.equal(restarts, 0)
   } finally {
+    actions.setKeepCurrentTimeEnabledForTest(keepCurrentTimeBefore)
     global.StartersDashboardCallActions = previous.actions
     global.document = previous.document
     global.xanoAuthFetch = previous.fetch
@@ -7908,6 +7912,9 @@ test('a delayed reschedule response cannot overwrite a later cancellation', asyn
 
 test('reschedule responses refresh receipt and base without retaining proposal-only summary rows', async (context) => {
   const actions = require('./dashboard-call-actions.js')
+  // Exercises the retained #5760 decline path behind the retired button.
+  const keepCurrentTimeBefore = actions.setKeepCurrentTimeEnabledForTest(true)
+  context.after(() => actions.setKeepCurrentTimeEnabledForTest(keepCurrentTimeBefore))
   const previous = { fetch: global.xanoAuthFetch, storage: global.sessionStorage, actions: global.StartersDashboardCallActions }
   context.after(() => { global.xanoAuthFetch = previous.fetch; global.sessionStorage = previous.storage; global.StartersDashboardCallActions = previous.actions })
   global.StartersDashboardCallActions = actions
@@ -8255,6 +8262,7 @@ test('booking action queue waits for canonical readback and isolates other booki
 
 test('a queued Cancel cannot post while a proposal response awaits readback', async () => {
   const actions = require('./dashboard-call-actions.js')
+  const keepCurrentTimeBefore = actions.setKeepCurrentTimeEnabledForTest(true)
   const original = {
     document: global.document,
     fetch: global.xanoAuthFetch,
@@ -8368,6 +8376,7 @@ test('a queued Cancel cannot post while a proposal response awaits readback', as
     assert.equal(booking.status, 'cancelled')
     assert.equal(state.refreshRequired.size, 0)
   } finally {
+    actions.setKeepCurrentTimeEnabledForTest(keepCurrentTimeBefore)
     global.document = original.document
     global.xanoAuthFetch = original.fetch
     global.sessionStorage = original.storage

@@ -2407,8 +2407,10 @@
           (action === 'confirm-reschedule'
             ? typeof global.StartersDashboardCallActions.canConfirmReschedule === 'function' &&
               global.StartersDashboardCallActions.canConfirmReschedule(role, booking)
-            : typeof global.StartersDashboardCallActions.canRespondReschedule === 'function' &&
-              global.StartersDashboardCallActions.canRespondReschedule(role, booking))
+            // "Keep Current Time" is retired (JP 2a, 2026-10-03). Fail closed:
+            // an actions module without canKeepCurrentTime keeps it hidden.
+            : typeof global.StartersDashboardCallActions.canKeepCurrentTime === 'function' &&
+              global.StartersDashboardCallActions.canKeepCurrentTime(role, booking))
         const media =
           action === 'notetaker-media' &&
           validDashboardModule(global.StartersDashboardCallMedia) &&

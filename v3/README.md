@@ -2718,11 +2718,24 @@ pending path's `reschedule-updated` result. A modal that lacks that panel receiv
 a module fallback, so the direct-update success cannot switch to a missing
 target. A modal with no authored `reschedule` view receives the module fallback
 instead.
-The module uses the base "Accept New Time" and "Keep Current Time" responses
-authored beside the reschedule trigger and keeps their authored labels.
-Declining a proposed time on a Free call keeps the original confirmed call: the
-published F13 `booking/reschedule/decline/v3` (#5760) restores `start_old` and
-`end_old`, sets `confirmed`, and makes no provider change. See the
+The module uses the base "Accept New Time" response authored beside the
+reschedule trigger and keeps its authored label. The "Keep Current Time"
+response is retired from the dashboard (Jai list #12, JP decision 2a,
+2026-10-03): `canKeepCurrentTime` returns false, `canAct('reschedule-decline')`
+refuses, no fallback control is generated, and `hideKeepCurrentTime` adds one
+`display:none!important` style for every authored
+`[booking-action-btn="reschedule-decline"]` or
+`[booking-card-action-btn="reschedule-decline"]` control, so an older
+`dashboard-calls.js` cannot show it again. `dashboard-calls.js` shows that
+control only when the actions module exports `canKeepCurrentTime` and it
+returns true. The counterpart still has Accept New Time (outside the 8-hour
+confirmed-call cutoff) and Cancel; an unanswered proposal is expired at the
+proposed start by task #335. To restore the button, set
+`KEEP_CURRENT_TIME_DEFAULT = true` in `dashboard-call-actions.js`.
+The decline rule itself is unchanged: declining a proposed time on a Free call
+keeps the original confirmed call. The published F13
+`booking/reschedule/decline/v3` (#5760) restores `start_old` and `end_old`,
+sets `confirmed`, and makes no provider change. See the
 [CS-17 backend release prerequisite](#cs-17-backend-release-prerequisite) for the
 backend history. If either control is missing from the
 base panel, it creates the fallback pair once per modal and marks both controls
