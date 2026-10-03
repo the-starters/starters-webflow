@@ -78,7 +78,7 @@
   let receiptCleanup = null
   // Calendar connect creates a placeholder Free configuration through
   // scheduler/configurations/create/v3. That row is active but has no
-  // sync_status, so readiness and the public /hire DTO both keep it
+  // ready sync_status, so readiness and the public /hire DTO both keep it
   // unbookable until starter/free-call-settings/upsert/v3 activates it.
   // A Build Profile Yes activates it once per member and config, carrying
   // the Build Profile description into the canonical writer.
