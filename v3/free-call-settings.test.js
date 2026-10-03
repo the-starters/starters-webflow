@@ -3606,3 +3606,176 @@ test('a post-availability Free read refusal reports the unresolved settings with
   assert.equal(result.window.STARTER_AVAILABILITY, savedAvailability)
   assert.ok(result.calls.slice(callsBeforeRefresh).every(call => call.method === 'GET'))
 })
+
+// Task 15: calendar connect creates a placeholder Free configuration
+// (scheduler/configurations/create/v3) with sync_status null at revision 1.
+// Readiness and the public /hire DTO keep it unbookable until the canonical
+// upsert activates it, so the card must not claim it is live.
+function placeholderService(overrides = {}) {
+  return service({ revision: 1, sync_status: null, ...overrides })
+}
+
+function activatingUpsertRoute(counter) {
+  return ({ body, setState }) => {
+    counter.calls += 1
+    counter.bodies.push(body)
+    const saved = service({ revision: 2, sync_status: 'ready' })
+    setState(canonical({
+      public_description: body.description,
+      services: [saved],
+      readiness: { free_call_enabled: true, bookable: true },
+    }))
+    return { ok: true, status: 200, json: async () => ({ service: saved }) }
+  }
+}
+
+test('a Build Profile Yes activates the calendar-connect placeholder with its description', async () => {
+  const counter = { calls: 0, bodies: [] }
+  const result = load({
+    authoredPills: true,
+    memberJSON: PENDING_FREE_ENABLE,
+    initial: canonical({ services: [placeholderService()] }),
+    routes: { '/starter/free-call-settings/upsert/v3': activatingUpsertRoute(counter) },
+  })
+  await settle(40)
+
+  assert.equal(counter.calls, 1)
+  assert.equal(counter.bodies[0].description, 'Quick intro')
+  assert.equal(counter.bodies[0].config_id, 'cfg-free-1')
+  assert.equal(counter.bodies[0].expected_revision, 1)
+  assert.equal(result.dom.title.value, 'Quick intro')
+  assert.equal(result.dom.on.hidden, false)
+  assert.equal(result.dom.off.hidden, true)
+  assert.equal(result.dom.root.getAttribute('data-free-call-activation'), 'live')
+  assert.equal(result.memberJsonWrites.length, 1)
+  assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3, undefined)
+})
+
+test('a placeholder never consumes the Build Profile receipt before activation', async () => {
+  const result = load({
+    memberJSON: PENDING_FREE_ENABLE,
+    initial: canonical({
+      services: [placeholderService()],
+      readiness: GATED_FREE_READINESS,
+    }),
+  })
+  await settle(40)
+
+  assert.equal(result.calls.some((call) => call.path === '/starter/free-call-settings/upsert/v3'), false)
+  assert.equal(result.memberJsonWrites.length, 0)
+  assert.equal(result.dom.title.value, 'Quick intro')
+  assert.equal(result.dom.root.getAttribute('data-free-call-activation'), 'pending')
+})
+
+test('a placeholder without a receipt shows OFF and an Update prompt, then activates on Update', async () => {
+  const counter = { calls: 0, bodies: [] }
+  const result = load({
+    authoredPills: true,
+    initial: canonical({ services: [placeholderService()] }),
+    routes: { '/starter/free-call-settings/upsert/v3': activatingUpsertRoute(counter) },
+  })
+  await settle(40)
+
+  assert.equal(counter.calls, 0)
+  assert.equal(result.dom.on.hidden, true)
+  assert.equal(result.dom.off.hidden, false)
+  assert.equal(result.dom.root.getAttribute('data-free-call-activation'), 'pending')
+  assert.match(result.dom.status.textContent, /not live yet/)
+
+  result.dom.title.value = 'Growth teardown'
+  await result.window.StarterFreeCallSettings.submit()
+  await settle()
+
+  assert.equal(counter.calls, 1)
+  assert.equal(counter.bodies[0].description, 'Growth teardown')
+  assert.equal(result.dom.on.hidden, false)
+  assert.equal(result.dom.root.getAttribute('data-free-call-activation'), 'live')
+})
+
+test('a failed placeholder activation is attempted once and keeps the receipt', async () => {
+  let attempts = 0
+  const result = load({
+    memberJSON: PENDING_FREE_ENABLE,
+    initial: canonical({ services: [placeholderService()] }),
+    routes: {
+      '/starter/free-call-settings/upsert/v3': () => {
+        attempts += 1
+        return { ok: false, status: 400, json: async () => ({ message: 'Provider unavailable' }) }
+      },
+    },
+  })
+  await settle(40)
+  assert.equal(attempts, 1)
+
+  await result.dispatchWindowEvent('starterSchedulingConnectionStateChanged', { state: 'connected' })
+  await settle(40)
+  assert.equal(attempts, 1)
+  assert.equal(result.memberJsonWrites.length, 0)
+})
+
+test('a placeholder activates after the calendar connection event makes it ready', async () => {
+  const counter = { calls: 0, bodies: [] }
+  let connected = false
+  const result = load({
+    memberJSON: PENDING_FREE_ENABLE,
+    initial: canonical({ readiness: GATED_FREE_READINESS }),
+    routes: {
+      '/starter/free-call-settings/get/v3': ({ state, setState }) => {
+        let current = state
+        if (connected && state.services.length === 0) {
+          current = canonical({ services: [placeholderService()] })
+          setState(current)
+        }
+        return { ok: true, status: 200, json: async () => current }
+      },
+      '/starter/free-call-settings/upsert/v3': activatingUpsertRoute(counter),
+    },
+  })
+  await settle(40)
+  assert.equal(counter.calls, 0)
+
+  connected = true
+  await result.dispatchWindowEvent('starterSchedulingConnectionStateChanged', { state: 'connected' })
+  await settle(40)
+  assert.equal(counter.calls, 1)
+  assert.equal(counter.bodies[0].description, 'Quick intro')
+})
+
+test('Edit Profile activation sends the receipt text even if the input is blanked later', async () => {
+  const counter = { calls: 0, bodies: [] }
+  const gate = deferred()
+  const result = load({
+    editProfile: true,
+    memberJSON: PENDING_FREE_ENABLE,
+    initial: canonical({ services: [placeholderService()] }),
+    routes: {
+      '/starter/free-call-settings/upsert/v3': async (context) => {
+        await gate.promise
+        return activatingUpsertRoute(counter)(context)
+      },
+    },
+  })
+  await settle(40)
+  result.dom.title.value = ''
+  gate.resolve()
+  await settle(40)
+
+  assert.equal(counter.calls, 1)
+  assert.equal(counter.bodies[0].description, 'Quick intro')
+  assert.equal(result.window.StarterFreeCallSettings.hasChanges(), false)
+})
+
+test('a ready service with a stale receipt is never re-activated', async () => {
+  const result = load({
+    memberJSON: PENDING_FREE_ENABLE,
+    initial: canonical({
+      public_description: 'Newer text',
+      services: [service({ revision: 2, sync_status: 'ready' })],
+      readiness: { free_call_enabled: true, bookable: true },
+    }),
+  })
+  await settle(40)
+  assert.equal(result.calls.some((call) => call.path === '/starter/free-call-settings/upsert/v3'), false)
+  assert.equal(result.dom.title.value, 'Newer text')
+  assert.equal(result.memberJsonWrites.length, 1)
+})
