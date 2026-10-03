@@ -585,11 +585,15 @@ live in
 ## Opportunities 3.0 Create and Edit Forms
 
 Before releasing either opportunity controller, publish
-`data-opp-form="create"` on the one full Webflow create form rendered on each
-supported page, including `/opportunities---create` and the Brand feed's
-post-opportunity modal. Both `opportunities-3.0.js` and
-`opportunities---create.js` resolve that form only through this stable role;
+`data-opp-form="create"` on each full Webflow create/edit opportunity form
+rendered on the supported pages, including `/opportunities---create`, the
+Brand feed's post-opportunity modal, and the Brand detail page's Edit
+Opportunity modal. Both `opportunities-3.0.js` and
+`opportunities---create.js` resolve these forms only through this stable role;
 generated form IDs and styling classes are not supported selector fallbacks.
+The dedicated `/opportunities---create` page controller skips any
+`data-opp-form="create"` form inside `[data-modal-target="edit-opportunity"]`
+so the shared detail-page edit handler remains the only owner of that modal.
 
 The dedicated page controller shares a run-once guard with the core controller,
 so loading both scripts does not submit twice. Keep the existing load order:
@@ -649,6 +653,11 @@ authored default radio cannot replace the opportunity's current Project Type
 when the modal reopens. Project Type prefill also emits the native change event
 used by the authored tab controller, keeping its active pill and conditional
 panel aligned with the checked radio.
+Duration remains required for every Project Type. Until Designer moves the
+Duration radio group out of the authored one-time panel, the controller promotes
+a Duration-only `.app-form_input_group` to just before `[data-project-type-list]`
+once per form. This is a no-op when the group is already outside the conditional
+panels or when the group owns any non-Duration field.
 
 After a successful create or edit, the controller paints the Webflow-authored
 review success screen in place; it binds only existing elements and generates no
@@ -658,17 +667,21 @@ placeholder span or an empty span inside `.heading-style-h1` when that attribute
 is absent. It also rewrites the `.text-size-medium` confirmation message to
 opportunity-specific copy when the authored text still reads as application copy,
 so both flows read "Our team is carefully reviewing your opportunity."
+After a successful edit on the opportunity detail page, the controller also
+repaints the CMS-authored category chip list at `data-opp-bind="category-list"`
+from the submitted category names, then non-fatally confirms them from
+`brand/opportunities/get` when that response includes `category_names`.
 
 Keep `utils/wf-validate.js` on these forms. The controller registers the authored
 field through `window.WfValidate.refresh(form)`, so category and estimated-hours
 failures use the form's normal inline error treatment. Client-side checks remain
 UX only; Xano retains authority over accepted payloads.
 
-Run the focused form-selector, feedback, validation, and create-page authentication
-regressions with:
+Run the focused form-selector, feedback, validation, create-page authentication,
+and edit Duration/category regressions with:
 
 ```sh
-node --test opportunities-form-contract.test.js opportunities-create-auth.test.js opportunities-create-feedback.test.js wf-validate.test.js
+node --test opportunities-form-contract.test.js opportunities-create-auth.test.js opportunities-create-feedback.test.js opportunities-edit-duration-categories.test.js wf-validate.test.js
 ```
 
 ## V3 Scheduling Authentication

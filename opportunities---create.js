@@ -57,8 +57,20 @@
    * Resolve the create form by its stable role.
    * @returns {HTMLFormElement | null}
    */
-  const getForm = () =>
-    /** @type {HTMLFormElement | null} */ (document.querySelector('[data-opp-form="create"]'))
+  const getForm = () => {
+    const first = /** @type {HTMLFormElement | null} */ (
+      document.querySelector('[data-opp-form="create"]')
+    )
+    // The detail page's Edit Opportunity form is also authored with
+    // data-opp-form="create" and comes first in the DOM. Never bind the create
+    // submit to it: that edit is owned by opportunities-3.0.js.
+    if (!first || !first.closest || !first.closest('[data-modal-target="edit-opportunity"]')) return first
+    return (
+      Array.from(document.querySelectorAll('[data-opp-form="create"]')).find(
+        (form) => !form.closest('[data-modal-target="edit-opportunity"]'),
+      ) || null
+    )
+  }
 
   /**
    * Build the Xano create payload from the form's field `name`s.

@@ -953,6 +953,63 @@
     }
   }
 
+  // Duration is required for every project type (validateOpportunityPayload),
+  // but the authored Create/Edit forms place its radio group inside the
+  // data-project-type="one-time" panel. The project-type tab script hides that
+  // panel for Ongoing Part Time and Full Time, so a Brand cannot see or change
+  // Duration there and the hidden radio (prefill or the authored "≤ 1 months"
+  // default) is submitted instead. Move the Duration group, once, to sit just
+  // before the panel list so it shows for every project type. A no-op when the
+  // Designer already places Duration outside the panels.
+  function promoteDurationGroup(form) {
+    if (!form || form.getAttribute('data-opp-duration-promoted') === 'true') return false
+    const radio = form.querySelector('[name="Duration"]')
+    if (!radio) return false
+    const panel = radio.closest('[data-project-type]')
+    if (!panel || panel.matches('input') || !form.contains(panel)) return false
+    const group = radio.closest('.app-form_input_group')
+    if (!group || group === panel || !panel.contains(group)) return false
+    // Only move a group that owns nothing but the Duration control.
+    const foreign = Array.from(group.querySelectorAll('[name]')).some(
+      (el) => el.getAttribute('name') !== 'Duration',
+    )
+    if (foreign) return false
+    const list = panel.closest('[data-project-type-list]')
+    const anchor = list && form.contains(list) ? list : panel
+    if (!anchor.parentNode) return false
+    anchor.parentNode.insertBefore(group, anchor)
+    form.setAttribute('data-opp-duration-promoted', 'true')
+    return true
+  }
+
+  // The detail page renders categories from a Webflow CMS collection list
+  // ([data-opp-bind="category-list"]), so a successful edit left the old chips
+  // on screen until the CMS item and page cache refreshed. Repaint the chips
+  // from the saved category names, reusing the first authored item as the
+  // template. An empty name list leaves the authored list untouched.
+  function paintOpportunityCategories(names, root = document) {
+    const values = Array.isArray(names)
+      ? names.map((name) => String(name == null ? '' : name).trim()).filter(Boolean)
+      : []
+    if (!values.length) return 0
+    let painted = 0
+    $$('[data-opp-bind="category-list"]', root).forEach((list) => {
+      const items = Array.from(list.children || [])
+      const template = items[0]
+      if (!template || typeof template.cloneNode !== 'function') return
+      const fresh = values.map((name) => {
+        const item = template.cloneNode(true)
+        const label = item.querySelector('.label_text') || item
+        label.textContent = name
+        return item
+      })
+      items.forEach((item) => list.removeChild(item))
+      fresh.forEach((item) => list.appendChild(item))
+      painted += 1
+    })
+    return painted
+  }
+
   function prepareOpportunityForms(root = document) {
     const forms = []
     if (root.matches && root.matches('[data-opp-form="create"]')) forms.push(root)
@@ -973,6 +1030,7 @@
       ),
     )
     Array.from(new Set(forms)).forEach((form) => {
+      promoteDurationGroup(form)
       const titleInput = $('[name="Opportunity-title"]', form)
       if (titleInput) {
         titleInput.setAttribute('maxlength', String(OPPORTUNITY_TITLE_MAX_CHARS))
@@ -6452,8 +6510,21 @@
             validationDiagnostic('opportunity_edit', 'opportunity', 'INVALID_FORM'),
           )
         }
-        await guard(editBtn, () => API.brandOppUpdate(activeOpp, payload), (updatedOpportunity) => {
+        const editedOppId = activeOpp
+        await guard(editBtn, () => API.brandOppUpdate(editedOppId, payload), (updatedOpportunity) => {
           paintOpportunityDetail(updatedOpportunity)
+          // The update response carries category refs, not names. Paint the
+          // submitted names now, then confirm from the authoritative get (the
+          // server may normalize or drop a name). Non-fatal either way.
+          paintOpportunityCategories(payload.role_names)
+          Promise.resolve()
+            .then(() => API.brandOppGet(editedOppId))
+            .then((fresh) => {
+              if (fresh && Array.isArray(fresh.category_names)) {
+                paintOpportunityCategories(fresh.category_names)
+              }
+            })
+            .catch(() => {})
           // No-reload success: swap the form for the modal's native w-form-done
           // "pending for review" screen (same pattern as apply/edit-application).
           const form = $('form', modal)
@@ -7201,6 +7272,8 @@
     showOpportunityError,
     prepareOpportunityCreateForms: prepareOpportunityForms,
     prepareOpportunityForms,
+    promoteDurationGroup,
+    paintOpportunityCategories,
     prefillEditOpportunity,
     initOpportunityCategorySelects,
     readOpportunityForm,
