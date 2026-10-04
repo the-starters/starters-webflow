@@ -35,6 +35,7 @@ test('dashboard exposes only supported migrated actions', () => {
     config_id: 'config-1',
     data_environment: 'test',
     status: 'pending',
+    confirmation_expires_at: 4_102_444_800_000,
     starter_data: { memberstack_id: 'mem_sb_starter' },
   }
 

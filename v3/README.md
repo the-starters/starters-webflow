@@ -663,6 +663,42 @@ Run its focused test with:
 node --test v3/starters-ms-redirect.test.js
 ```
 
+## Premade Starter profile claim gate
+
+`starter-profile-claim.js` controls the Claim Profile component on the Hire CMS
+template. The outer wrapper remains authored with its `hide` class,
+`hidden="hidden"`, and `aria-hidden="true"`. On an exact canonical
+`/hire/<slug>` path, the controller asks Xano whether that slug is still
+claimable. It fills the authored hidden
+`data-ms-member="starter-claim-profile-slug"` input and reveals the existing
+signup form only when the claim-status response has the expected schema, exact
+page slug, and `claimable: true`. It keeps the form hidden for `claimable:
+false`, wrong schema, wrong slug, non-200, bad JSON, network error, timeout,
+non-profile paths, and incomplete markup. It does not inspect or change the
+query string. Xano controls rollout through the claim-status endpoint; the
+backend remains responsible for atomically claiming the exact admin-prebuilt
+profile only for an eligible fresh `member.created` signup. Existing accounts
+and later updates cannot establish or switch that binding.
+
+Do not add a Hire-template slug allowlist or direct template script tag for
+`starter-profile-claim.js`. `hire-profile.js` injects the controller once when
+the Claim Profile wrapper exists. Keep Google signup hidden until its
+profile-slug transport is proven.
+
+The complete Designer attribute contract, backend signup-consumption order, and
+release proof are in
+[STARTER-PROFILE-CLAIM-WIRING.md](../docs/wiring/STARTER-PROFILE-CLAIM-WIRING.md).
+This candidate is not release-ready until the Xano claim-status endpoint,
+matching form field, and backend slug-claim path are implemented and verified
+together.
+
+Run its focused test with:
+
+```sh
+node --test v3/starter-profile-claim.test.js
+node v3/browser-tests/starter-profile-claim.browser.cjs
+```
+
 ## Signup attribution
 
 `signup-attribution.js` captures paid-click attribution, reports the signup back
@@ -2872,14 +2908,16 @@ reschedule policy, charging and payout policy are unchanged.
 `dashboard-calls.js` is also the single owner of the Starter request-expiry
 countdown; the legacy inline dashboard helper no longer renders that list, so
 its copy of the countdown is dead and must not be re-enabled. The countdown
-reads canonical `confirmation_expires_at` and falls back to canonical `start`
-only when that field is absent, renders the remaining time as `1d 2h 3m` with
-zero units omitted and any part-minute rounded up, shows `Expired` at or past
-the deadline, and reuses the authored site-wide `text-color-red` error colour
-inside the last 48 hours because the authored countdown has no expiring-state
-combo class. The
-wrap stays hidden for every row it does not own: Brand rows, non-pending rows,
-and pending rows with no usable deadline.
+reads canonical `confirmation_expires_at` as the only countdown deadline,
+renders the remaining time as `1d 2h 3m` with zero units omitted and any
+part-minute rounded up, shows `Expired` at or past the deadline, and reuses the
+authored site-wide `text-color-red` error colour inside the last 48 hours
+because the authored countdown has no expiring-state combo class. The wrap
+stays hidden for every row it does not own: Brand rows, non-pending rows, and
+pending rows with no usable deadline. A pending Starter row without
+`confirmation_expires_at` also hides Accept; Decline can remain available
+because `booking/decline/v3` has no deadline rule and still uses the open
+start-based response window.
 
 One bounded ten-second lifecycle timer, started for either dashboard role,
 repaints every rendered request card and the open `popup-booking-info` dialog
