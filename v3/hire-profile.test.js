@@ -692,6 +692,27 @@ async function settle(times = 30) {
   for (let i = 0; i < times; i += 1) await Promise.resolve()
 }
 
+function holdLongTimers(context) {
+  const held = []
+  const realSetTimeout = context.setTimeout
+  const realClearTimeout = context.clearTimeout
+  context.setTimeout = (fn, ms, ...rest) => {
+    if (ms >= 10000) {
+      held.push({ callback: fn, delay: ms })
+      return `held-${held.length - 1}`
+    }
+    return realSetTimeout(fn, ms, ...rest)
+  }
+  context.clearTimeout = (id) => {
+    if (typeof id === 'string' && id.startsWith('held-')) {
+      held[Number(id.slice(5))] = null
+      return
+    }
+    realClearTimeout(id)
+  }
+  return held
+}
+
 function addXanoServiceFixture(page, serviceName) {
   const wrapper = makeElement('div', {
     'wf-xano-element': 'wrapper',
@@ -964,7 +985,7 @@ function makeWfXanoFixture(root, initialResult = null, { replayOnSubscribe = tru
   }
 }
 
-for (const missingHelper of [false, true]) test(`existing Header call clones bootstrap before qs assignment (helper missing: ${missingHelper})`, () => {
+for (const missingHelper of [false, true]) test(`existing Header call clones bootstrap before qs assignment (helper missing: ${missingHelper})`, async () => {
   const page = makePage()
   const header = addXanoCallCardsFixture(page, 'starter-call-offers-header')
   page.root.appendChild(header.wrapper)
@@ -972,13 +993,54 @@ for (const missingHelper of [false, true]) test(`existing Header call clones boo
     card.root.setAttribute('has-connection', 'free')
     card.root.setAttribute('data-service-card', 'component')
   }
+  for (const card of [header.free, header.paid]) {
+    card.root.setAttribute('booking-popup-open', '')
+    card.root.setAttribute('data-modal-trigger', 'popup-booking-main')
+    card.root.setAttribute('data-signup-trigger-element', 'service')
+    card.root.setAttribute('data-signup-trigger-value', 'Free Call')
+  }
   const context = makeContext({ page })
   if (missingHelper) context.qs = undefined
+  const held = holdLongTimers(context)
   vm.createContext(context)
   assert.doesNotThrow(() => vm.runInContext(source, context))
-  for (const card of [header.free, header.paid]) {
-    assert.equal(card.root.style.display, 'none', 'pre-adapter clones remain fail-closed')
+  const cards = [header.free, header.paid]
+  assert.equal(cards.length, 2)
+  for (const card of cards) {
+    if (missingHelper) {
+      assert.equal(card.root.style.display, 'none', 'stood-down clones remain fail-closed')
+      assert.equal(card.root.getAttribute('aria-hidden'), 'true')
+      assert.equal(card.root.getAttribute('aria-busy'), null)
+      assert.equal(card.root.getAttribute('data-call-offer-state'), null)
+      continue
+    }
+    assert.equal(card.root.style.display, 'block', 'pre-adapter clones read as loading')
+    assert.equal(card.root.getAttribute('aria-hidden'), null)
+    assert.equal(card.root.getAttribute('data-canonical-call-unavailable'), null)
+    assert.equal(card.root.getAttribute('data-call-offer-state'), 'loading')
+    assert.equal(card.root.getAttribute('aria-busy'), 'true')
+    assert.equal(card.root.getAttribute('data-service-card-state'), 'Default')
+    assert.equal(card.root.getAttribute('booking-popup-open'), null)
+    assert.equal(card.root.getAttribute('data-modal-trigger'), null)
+    assert.equal(card.root.getAttribute('data-signup-trigger-element'), null)
+    assert.equal(card.root.getAttribute('data-call-service-direct'), null)
+  }
+  if (missingHelper) {
+    assert.equal(held.length, 0, 'the stand-down path arms no failsafe')
+    return
+  }
+  await settle()
+  for (const card of cards) assert.equal(card.root.getAttribute('data-call-offer-state'), 'loading')
+  const armed = held.filter(Boolean)
+  assert.equal(armed.length, 1, 'one failsafe bounds the wait')
+  assert.equal(armed[0].delay, 15000)
+  armed[0].callback()
+  await settle()
+  for (const card of cards) {
+    assert.equal(card.root.style.display, 'none', 'the failsafe fails the clone closed')
     assert.equal(card.root.getAttribute('aria-hidden'), 'true')
+    assert.equal(card.root.getAttribute('aria-busy'), null)
+    assert.equal(card.root.getAttribute('data-call-offer-state'), 'hidden')
   }
 })
 
@@ -2743,6 +2805,11 @@ test('signed-in Brand keeps Free Call in the existing modal and the inline panel
     guard.textContent,
     '[data-booking-unavailable]{display:none!important}' +
       '[data-booking-trigger-unavailable]{opacity:.55;cursor:help}' +
+      '[data-booking-trigger-loading],[data-booking-trigger-loading] .clickable_wrap > .clickable_btn{cursor:progress}' +
+      '[data-booking-trigger-loading] [data-button-spinner]{display:flex!important}' +
+      '[data-booking-trigger-loading] [data-opp-element="loading-hide"]{display:none!important}' +
+      '[data-call-offer-state="loading"],[data-call-offer-state="settings-loading"]{cursor:progress}' +
+      '[data-call-offer-state="loading"] [next-available-slot],[data-call-offer-state="settings-loading"] [next-available-slot]{visibility:hidden}' +
       '[data-canonical-call-unavailable]{display:none!important}' +
       '[data-call-offer-superseded]{display:none!important}' +
       '[data-header-tout-excluded]{display:none!important}' +
@@ -2789,11 +2856,14 @@ test('a signed-in Brand hides call projections while canonical discovery is pend
   assert.equal(page.servicesList.children[0].style.display, 'none')
   assert.equal(page.servicesList.children[0].getAttribute('data-canonical-call-unavailable'), '')
   assert.equal(page.servicesList.children[0].getAttribute('aria-hidden'), 'true')
-  assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), '')
+  assert.equal(page.bookingButton.getAttribute('data-booking-trigger-loading'), '')
+  assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), null)
   assert.equal(page.bookingButton.getAttribute('aria-disabled'), 'true')
 
   resolveStarter(null)
   await settle()
+  assert.equal(page.bookingButton.getAttribute('data-booking-trigger-loading'), null)
+  assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), '')
 })
 
 test('an anonymous viewer sees only the call touts enabled by canonical public projections', async () => {
@@ -4583,9 +4653,11 @@ test('a healthy owner call card settles while its sibling settings request is pe
   wfx.emit(callCardResult({ free: false, paid: false }))
   await settle()
 
-  assert.equal(xano.free.root.getAttribute('data-service-card-state'), 'Disabled')
+  assert.equal(xano.free.root.getAttribute('data-service-card-state'), 'Default')
   assert.equal(xano.free.root.getAttribute('data-call-offer-state'), 'settings-loading')
-  assert.equal(xano.free.settingsCta.style.display, 'block')
+  assert.equal(xano.free.root.getAttribute('aria-busy'), 'true')
+  assert.equal(xano.free.tooltip.style.display, 'none')
+  assert.equal(xano.paid.root.getAttribute('aria-busy'), null)
   assert.equal(xano.paid.root.getAttribute('data-service-card-state'), 'Default')
   assert.equal(xano.paid.root.getAttribute('data-call-offer-state'), 'available')
   assert.equal(xano.paid.price.textContent, '250')
@@ -4741,22 +4813,20 @@ test('the legacy owner reveal stands down from the wf-xano card it now shares at
   wfx.emit(callCardResult({ free: false, paid: false }))
   await settle()
   assert.equal(xano.paid.root.getAttribute('no-connection'), null)
-  assert.equal(
-    xano.paid.tooltipText.textContent,
-    'Call settings are loading. Open Call Settings if this continues.',
-  )
+  assert.equal(xano.paid.tooltip.style.display, 'none')
+  assert.equal(xano.paid.tooltipText.textContent, '')
 
   resolveStarter(null)
   await settle()
 
   assert.equal(
     xano.paid.tooltipText.textContent,
-    'Call settings are loading. Open Call Settings if this continues.',
+    '',
     'the legacy reveal must not rewrite the adapter-owned tooltip copy',
   )
+  assert.equal(xano.paid.tooltip.style.display, 'none')
   assert.equal(xano.paid.root.getAttribute('data-call-offer-state'), 'settings-loading')
-  assert.equal(xano.paid.calendarCta.style.display, 'none')
-  assert.equal(xano.paid.settingsCta.style.display, 'block')
+  assert.notEqual(xano.paid.calendarCta.style.display, 'block', 'the legacy reveal leaves the adapter-owned CTAs alone')
   assert.equal(
     cmsHoverText.textContent,
     'Connect your calendar to start accepting paid consulting calls.',
@@ -4769,8 +4839,9 @@ test('the rate cards clone the authored card even when a wf-xano clone precedes 
   const page = makePage()
   const xano = addXanoCallCardsFixture(page)
   // Designer order used to decide this. An owner wf-xano card now stays
-  // `Disabled` until readiness resolves, and the rate-card lookup excludes
-  // every wf-xano wrapper regardless of its state.
+  // `settings-loading` (the authored Default look) until readiness resolves,
+  // and the rate-card lookup excludes every wf-xano wrapper regardless of
+  // its state.
   xano.wrapper.remove()
   page.servicesList.prepend(xano.wrapper)
   const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
@@ -4792,8 +4863,9 @@ test('the rate cards clone the authored card even when a wf-xano clone precedes 
 
   wfx.emit(callCardResult({ free: false, paid: false }))
   await settle()
-  assert.equal(xano.free.root.getAttribute('data-service-card-state'), 'Disabled')
-  assert.equal(xano.free.tooltip.style.display, 'block')
+  assert.equal(xano.free.root.getAttribute('data-service-card-state'), 'Default')
+  assert.equal(xano.free.root.getAttribute('data-call-offer-state'), 'settings-loading')
+  assert.equal(xano.free.tooltip.style.display, 'none')
 
   resolveRecord({ rate: 135, 'retainer-rate': 0, 'retainer-enabled': false })
   await settle()
