@@ -147,7 +147,8 @@ The V3 protected-route guard sends logged-out visitors to
 `/login?next=<encoded current path and query>`. For an exact Calls notification
 locator on either dashboard, it also preserves `#calls` or `#calls-section`
 through login. Other fragments are removed, and the router restores only a
-role-allowed same-origin destination.
+role-allowed same-origin destination. For free Brand login destinations, see the
+[login-default contract](ACCESS-MATRIX.md#non-quiz-free-brand-login-default).
 
 Talent logins additionally fork on funnel position, read from Xano
 `starters_onboarding/get_build_profile_status`: `build_profile_done` false goes to
@@ -314,9 +315,8 @@ the page with an explicit error state, and a cross-family Talent + Brand plan
 conflict fails closed. The canonical `/dashboard` route is a thin guarded
 utility page that sends mapped members to `/starter-dashboard`,
 `/brand-dashboard`, `/quiz`, or `/quiz-results`; it does not merge or duplicate
-the two dashboard page bodies. A free Brand's default is `/quiz` until
-the Memberstack `starter-quiz` custom field records completion, then
-`/quiz-results`.
+the two dashboard page bodies. Free Brands use the
+[quiz role home](ACCESS-MATRIX.md#route-level-access) for guarded-page redirects.
 
 Install the guard once sitewide in Site Settings Head Code, before page
 controllers such as `opportunities-3.0.js`. The controller detects the guard's
@@ -355,8 +355,9 @@ Three mechanisms were added on 2026-08-03. **Member-home bounce:** the homepage,
 both login pages, and `/sign-up` are not in the route table — they must keep
 working untouched for signed-out visitors, since they are the pre-signup funnel
 itself — but a member the guard can positively identify and map to a role is sent
-away from them, to a validated `?next=` when one is present and otherwise to the
-role home. Logged out, Memberstack unavailable, and cross-role conflict leave the
+away from them according to the
+[member-home bounce contract](ACCESS-MATRIX.md#route-level-access).
+Logged out, Memberstack unavailable, and cross-role conflict leave the
 page completely alone, with no error attribute and no `checking` stamp, and so
 does an unmapped plan on the two login pages and `/sign-up`. The homepage alone
 carries two overrides added later the same day. A member who cancelled a paid
@@ -364,8 +365,8 @@ Brand plan goes to `/all-starters`, whether their older free plan is still live 
 nothing is active at all — that second case is an unmapped plan which would
 otherwise have stayed, and an unmapped plan with no cancelled paid Brand behind it
 still does stay. And a free Brand who has not finished the quiz stays on `/`
-instead of being pushed to `/quiz`, which is where the login pages still send
-them. A valid `?next=` outranks both overrides; on `/` it is honoured even for a
+instead of being pushed to `/quiz`. Login pages use the separate source-specific
+default above. A valid `?next=` outranks both overrides; on `/` it is honoured even for a
 member with no mapped role, since deep-link intent does not depend on plan state.
 [Route guard wiring](../docs/wiring/ROUTE-GUARD-WIRING.md) has the exact precedence and the cancelled-plan
 definition. **Per-page logged-out destinations:** the three
@@ -757,7 +758,7 @@ carries no signup form at all, so the source can never name it.
 Source and referrer are written at the auth transition and not during the sitewide
 capture that runs on every page load. Capturing on load would make each mean "last
 page loaded", and each signup page would be overwritten by its own redirect:
-`/sign-up` would end up saying `/brand-dashboard` and `/quiz` would say
+`/sign-up` would end up naming its authored destination and `/quiz` would say
 `/quiz-results`. The referrer is the sharper case, because `quiz-results.js` reads
 these cookies a page later: a load-time capture would have replaced the referrer
 with `/quiz-results`'s own referrer, which is `/quiz`, so every quiz signup would
@@ -910,7 +911,7 @@ The path map holds the two hand-audited pages and its policy is used verbatim:
 | Page | After signup | Who writes the fields |
 | --- | --- | --- |
 | `/quiz` | `/quiz-results` | `quiz-results.js` |
-| `/sign-up` | `/brand-dashboard` | `signup-attribution.js` |
+| `/sign-up` | [Authored form redirect and publication status](ACCESS-MATRIX.md#non-quiz-free-brand-login-default) | `signup-attribution.js` |
 
 Path matching ignores case and a single trailing slash. Because the map is checked
 first, those two keep behaving exactly as they do today whatever happens to their
@@ -1070,10 +1071,10 @@ and without the flag the replay would look like a second registration.
 ### Direct signup field save
 
 A signup form's own redirect can navigate the browser away while the `updateMember`
-request is still in flight. The `/sign-up` form carries
-`redirect="/brand-dashboard"`; the `/all-starters` modal redirects to
-`/all-starters?modal-id=signup-modal`, which reloads the same page to reopen the
-modal and cuts the request off just as effectively. The save is therefore written to
+request is still in flight. The `/sign-up` form follows its authored redirect;
+a content modal can return to its current page with `?modal-id=signup-modal`,
+which reloads the page to reopen the modal and cuts the request off just as
+effectively. The save is therefore written to
 survive being cut off:
 
 1. On the transition, the `signup_source` and `signup_referrer` cookies are written
@@ -2059,10 +2060,39 @@ Current safety boundary:
 - Reconciles Memberstack auth notifications against the live cookie. A transient empty DOM
   notification with the same cookie keeps the cached token and in-flight owner requests. A real
   logout or cookie change invalidates the cached token, auth scope, and in-flight scoped responses.
+- Shares identical eligible pure Xano reads for five seconds within one member
+  session. Eligibility is limited to reviewed GET/POST read routes, keyed by
+  method, URL, and body. Pending reads stay joinable until they settle; the
+  five-second reuse window starts only after a successful response settles.
+  Writes, authenticated Xano pass-throughs, session resets, and current
+  shared-read failures clear the shared entries.
+- Wraps `$memberstackDom.getCurrentMember()` only to share identical overlapping
+  calls. It keeps no settled Memberstack result, samples the live cookie before
+  and after the owner call, and clears in-flight member reads on auth changes,
+  cookie rotations, and every Memberstack method except `getCurrentMember`,
+  `getMemberCookie`, and `onAuthChange`.
 - Exposes `window.getXanoAuthToken` and `window.xanoAuthFetch` for page-owned
   code. It also retains its own auth-fetch reference for the stage adapter,
   because another page bundle can replace the public compatibility global
   after this bridge installs.
+- Gives each Xano token trade one 30 s deadline for the trade request and its
+  body read. Callers with the same Memberstack token share one in-flight
+  trade. At the deadline, the bridge aborts the trade request and rejects
+  every caller of that trade with code `XANO_TOKEN_TRADE_TIMEOUT`. The next
+  caller then starts a new trade, and a late response is discarded. Request
+  history on 2026-10-01 (101 trades) had a 567 ms median, a 6.3 s p90 and a
+  17.8 s maximum, so the deadline keeps slow trades that succeed. On a timeout,
+  the legacy `window.fetch` wrapper keeps its failed-trade fallback, and a
+  `401` refresh keeps the original `401` response.
+- On `/starter-dashboard` only, exposes the read-only
+  `window.__tsSchedulingAuthTokenReuse` hook for dashboard list prewarmers. The
+  hook never starts an auth trade: it returns only a cached token or a matching
+  scheduling GET token that is already in flight or starts within 200ms, waits
+  at most 5000ms for that selected owner request, and then rechecks the exact
+  Memberstack cookie, session generation, revision, token value, owner auth
+  base, and `/auth/trade-token/v3` path before returning. A miss, timeout,
+  failed trade, logout, account switch, or token mismatch returns `null` so the
+  consumer keeps its normal session-checked POST fallback.
 - Dashboard data controllers reuse the site-head `window.memberReady` promise
   for their initial identity snapshot and `window.getXanoAuthToken` for the
   Opportunities, Points, Messages, and Stripe reads. This keeps one shared
@@ -2098,7 +2128,11 @@ Public helpers:
 - `window.xanoAuthFetch(input, init)` accepts the same inputs as `fetch`, adds
   Bearer authentication for scoped V3 paths and rejects if initial
   token acquisition fails. Calls outside that scope and calls with an existing
-  `Authorization` header pass through unchanged.
+  `Authorization` header pass through unchanged. For deduped reads, only an
+  `init.signal` passed as the second argument opts the call out of sharing. A
+  signal carried only inside a `Request` input is not detected and is
+  unsupported; pass it again as `init.signal` when cancellation isolation is
+  required.
 - `window.getXanoAuthToken({ forceRefresh: true })` returns the cached,
   member-scoped token or explicitly replaces it. The options argument is
   optional.
@@ -2284,8 +2318,11 @@ successful canonical load restarts that initial window instead of shortening
 it. Later refreshes retain the three-total-read budget with 200ms then 400ms
 backoff before the identity is treated as missing.
 A refresh that follows a successful cancel, decline, confirm, or reschedule
-keeps the rendered list and the success panel in place when the canonical read
-itself fails, and logs instead. A member that is still absent after the bounded
+keeps the rendered list and the open details view in place when the canonical
+read itself fails, and logs instead. Cancel, decline, and reschedule end on
+their authored success panels. A confirm has no success panel: it repaints the
+details view from the committed row, as the Starter Accept paragraph below
+describes. A member that is still absent after the bounded
 retries is not a transient failure: on every refresh path, including the
 post-mutation and expiry-tick refreshes, it clears the rendered identity and
 booking rows and then fails the dashboard closed.
@@ -2372,14 +2409,21 @@ viewing participant's stored timezone first. A Brand then uses the browser's
 timezone, and the counterpart's timezone only when neither exists. A Starter
 with no stored timezone uses the Brand's timezone, as before.
 
-On both roles' cards, the authored Join Call anchor
-`[booking-element="meeting-link"]` receives the canonical `meeting_link` as a
-URL only when it is absolute HTTP(S) and the normalized lifecycle is confirmed
-(including rescheduled calls whose end has not passed). Otherwise, binding
-removes any previous or placeholder `href` and hides the anchor and its closest
-`[booking-element-wrap]`. Rebinding an eligible call restores both. This reader
-does not generate provider links or modify bookings; missing provider
-conferencing remains a separate dependency.
+On both roles' cards and call details, the authored Join Call
+`[booking-element="meeting-link"]` receives the canonical `meeting_link` only
+when it is absolute HTTP(S) and the call's effective confirmed interval is still
+in the future. Confirmed calls use `start` and `end`; canonical `rescheduled`
+rows use `start_old` and `end_old`, so the existing confirmed call remains
+joinable while a proposal is awaiting response. Otherwise, binding removes any
+previous or placeholder destination and hides the field and its closest
+`[booking-element-wrap]`. Rebinding an eligible call restores both. Details
+markup may be either an anchor or the authored paragraph; a paragraph is made
+keyboard-clickable only while its current canonical booking still has the same
+eligible URL. If the booking changes lifecycle, reaches its end, or the saved
+link rotates before activation, the handler fails closed, clears the rendered
+destination, and leaves no stale URL to open. This reader does not generate
+provider links or modify bookings; missing provider conferencing remains a
+separate dependency.
 
 For a local preview, serve the repository root with an HTTP server and open
 [`fixtures/dashboard-join-call.html`](fixtures/dashboard-join-call.html). Its
@@ -2468,8 +2512,9 @@ declined Free booking also fills the authored
 second reason row. The Free `cancel` and `decline` confirmation steps likewise
 hide an authored `[booking-element="reschedule-reason"]` and omit that summary
 row, because an earlier edit's reason is not the reason for the pending cancel
-or decline. Free base, cancelled, completed, and reschedule panels retain the
-reschedule reason. A Paid booking keeps both labels on every panel and leaves
+or decline. A Free `cancelled` panel also hides the stale reschedule reason and
+shows only the submitted cancellation reason. Free base, completed, and
+reschedule panels retain the reschedule reason. A Paid booking keeps both labels on every panel and leaves
 the authored hook as authored, restoring it when a reused modal showed a Free
 booking first, as PR #974 scoped F09. A hook counts as usable only while it
 renders: a hook that is itself hidden, that sits inside
@@ -2506,8 +2551,10 @@ previous member's ID survives an identity change. Compose steps are excluded
 never receive it, because a summary and a navigating Message link below a
 reason form or the slot picker would discard in-progress input.
 
-Confirmed calls and active reschedule proposals can show their existing canonical
-meeting link; cancelled and archived calls cannot. The authored Message controls
+Confirmed calls and active reschedule proposals can show their existing
+canonical meeting link only while the effective confirmed interval is still in
+the future; completed, cancelled, and archived calls cannot. The authored
+Message controls
 navigate to the counterpart's thread. Only the counterpart's identity row carries
 a link — the Starter's
 dashboard restores `brand-message-link`, the Brand's restores
@@ -2608,26 +2655,54 @@ environment, and a non-reversible hash of the Starter identity. The key stays in
 tab-scoped `sessionStorage` after an ambiguous failure so a refresh retries the
 same backend command. Success is read from the published response contract: the
 canonical nested `confirmation.status` equal to `confirmed`, with a top-level
-`status` still accepted for compatibility; the response's `duplicate` replay
-flag does not change that decision. Any pending, malformed, or failed body
-fails closed and keeps the stored key. Only a confirmed response removes it
-before refreshing the canonical list, which moves the accepted row from Starter
-Call Requests to Starter Calls while it remains in Brand Calls. All other
-legacy mutation controls stay hidden until they have current V3-safe endpoint
-contracts.
+`status` still accepted for compatibility. A statusless nested confirmation
+that carries the booking identity is treated as the confirmed compatibility
+shape. The response's `duplicate` replay flag does not change that decision.
+Any pending, unknown-status, malformed, or failed body fails closed and keeps
+the stored key. Only an accepted confirmed response removes it before refreshing
+the canonical list, which moves the accepted row from Starter Call Requests to
+Starter Calls while it remains in Brand Calls.
+
+F53 (JP meeting, 2026-09-30): before that refresh, the controller commits the
+confirmed status validated from the accepted response shape to the canonical
+row through the session's mutation owner, with a claim taken after the
+booking's action slot. This is the same owner the other call actions use, so
+the commit invalidates an in-flight
+background read and a stale pending row cannot come back. The controller then
+repaints the open details dialog from the committed row at once: the status
+hook shows the authored "Upcoming" label, `data-booking-status` becomes
+`confirmed`, and Confirm, Decline, and the `[pending-info-text]` copy hide. No
+new copy is added. The repaint uses the lifecycle painters, so it leaves a
+dialog that shows another step alone and paints only the call the dialog
+shows. After the refresh, the canonical read repaints the status and the
+meeting link, and the controller re-checks the pending copy and actions
+against the refreshed row. When every later read fails, the committed row keeps
+the confirmed view, and a stale second Accept sends no request and shows no
+error. A refused commit (the row changed or left the list) changes nothing,
+and the refresh repaints instead. A card-level Accept takes the same commit.
+After a successful commit, the controller also repaints each rendered card of
+that call in place, with the same card painters and the existing labels: the
+pill shows "Upcoming", `data-booking-status` becomes `confirmed`, and Accept,
+Decline, and the request countdown hide. This covers an Accept on the card
+with the details dialog closed. The card stays in its section until the
+canonical read moves it from Requests to Calls. A refused commit leaves the
+card as it was.
+All other legacy mutation controls stay hidden until they have current V3-safe
+endpoint contracts.
 
 ### Dashboard booking action contract
 
 `dashboard-call-actions.js` owns the details-dialog navigation plus the
 supported decline, cancel, and Free-call reschedule commands. Decline is
-available only to the Starter on a canonical pending row that is not explicitly
-Paid. Paid decline and its settlement are hard-launch work, so an `is_paid` or
-`paid_meeting` request hides every decline step. Accept is unchanged. The authored card
-Decline control also requires an open response window and a loaded, valid
-action module that approves the booking through `canDecline`. Clicking it
-populates the existing details modal with the selected booking and counterpart,
-opens it through the shared Lumos modal owner, then switches to the decline
-panel. If the modal cannot be populated or opened, the panel switch stops.
+available only to the Starter on a canonical pending row, including Paid
+requests that still hold only a saved card. Accept is unchanged. The authored
+card and details-modal Decline controls also require an open response window
+and a loaded, valid action module that approves the booking through
+`canDecline`. An expired pending request is read-only in both places. Clicking
+Decline populates the existing details modal with the selected booking and
+counterpart, opens it through the shared Lumos modal owner, then switches to
+the decline panel. If the modal cannot be populated or opened, the panel switch
+stops.
 In the decline panel, the authored `switch-decline-reason` control reads
 `Decline Call` and opens the reason step for the selected booking. Both
 `booking-action-btn` and `booking-card-action-btn` hooks use the shared
@@ -2637,23 +2712,25 @@ Pending Starter rescheduling remains unsupported.
 
 Cancel is available to either participant on a canonical Free confirmed or
 rescheduled row whose start is in the future. A Brand can also cancel its own
-canonical Free pending request before its start; a Starter declines a pending
-request instead. Xano
-`booking/cancel/v3` rejects Paid cancellation until the paid-cancel follow-up
-ships, so an explicitly Paid row hides Cancel. For Decline and Cancel eligibility,
-a row with neither `is_paid` nor `paid_meeting` is treated as legacy Free so
-older Free bookings keep the action. Reschedule keeps a stricter shared gate:
-the row must be in the future, have an explicit Free flag, a grant, and positive
-duration. A confirmed call uses the proposal contract for either participant,
-and only the counterpart can confirm or decline the resulting proposal. A
-pending request uses the direct-update contract for the Brand only. The two
-contracts never claim the same booking. Every command requires a booking ID,
-configuration ID, participant identity, and exact `test` or `production` data
-environment.
+canonical pending request, Free or Paid, before its start; a Starter declines a
+pending request instead. A confirmed Paid call is cancellable by either
+participant only when the start is more than 48 hours 15 minutes away, before
+the 48-hour card authorization window. Inside that window the server refuses
+Paid cancellation, so the client hides Cancel. Paid rescheduled bookings stay
+hidden because the server admits Paid cancellation only in `confirmed` status.
+For Decline and Cancel eligibility, a row with neither `is_paid` nor
+`paid_meeting` is treated as legacy Free so older Free bookings keep the
+action. Reschedule keeps a stricter shared gate: the row must be in the future,
+have an explicit Free flag, a grant, and positive duration. A confirmed call
+uses the proposal contract for either participant, and only the counterpart can
+confirm or decline the resulting proposal. A pending request uses the
+direct-update contract for the Brand only. The two contracts never claim the
+same booking. Every command requires a booking ID, configuration ID,
+participant identity, and exact `test` or `production` data environment.
 
-During soft launch (JP, 2026-09-30) a gated Paid Reschedule, Cancel, or
-Decline control hides with no explanation, so the modal never names a feature
-that is not live yet. Earlier versions (2026-08-29 to v1.59.640) inserted a
+During soft launch (JP, 2026-10-03) a gated Paid Reschedule or inside-window
+Paid Cancel control hides with no explanation, so the modal never names a
+feature that is not live yet. Earlier versions (2026-08-29 to v1.59.640) inserted a
 module-owned `data-starters-action-hint` node after the hidden authored
 button. Each details populate now hides any such node that an earlier version
 or an earlier booking left in the modal, and it creates no new one. The script
@@ -2680,18 +2757,35 @@ pending path's `reschedule-updated` result. A modal that lacks that panel receiv
 a module fallback, so the direct-update success cannot switch to a missing
 target. A modal with no authored `reschedule` view receives the module fallback
 instead.
-The module uses the base "Accept New Time" and "Keep Current Time" responses
-authored beside the reschedule trigger and keeps their authored labels.
-Declining a proposed time on a Free call keeps the original confirmed call: the
-published F13 `booking/reschedule/decline/v3` (#5760) restores `start_old` and
-`end_old`, sets `confirmed`, and makes no provider change. See the
+The module uses the base "Accept New Time" response authored beside the
+reschedule trigger and keeps its authored label. The "Keep Current Time"
+response is retired from the dashboard (Jai list #12, JP decision 2a,
+2026-10-03): `canKeepCurrentTime` returns false, `canAct('reschedule-decline')`
+refuses, no fallback control is generated, and `hideKeepCurrentTime` adds one
+`display:none!important` style for every authored
+`[booking-action-btn="reschedule-decline"]` or
+`[booking-card-action-btn="reschedule-decline"]` control, so an older
+`dashboard-calls.js` cannot show it again. `dashboard-calls.js` shows that
+control only when the actions module exports `canKeepCurrentTime` and it
+returns true. The counterpart still has Accept New Time (outside the 8-hour
+confirmed-call cutoff) and Cancel; an unanswered proposal is expired at the
+proposed start by task #335. To restore the button, set
+`KEEP_CURRENT_TIME_DEFAULT = true` in `dashboard-call-actions.js`.
+The decline rule itself is unchanged: declining a proposed time on a Free call
+keeps the original confirmed call. The published F13
+`booking/reschedule/decline/v3` (#5760) restores `start_old` and `end_old`,
+sets `confirmed`, and makes no provider change. See the
 [CS-17 backend release prerequisite](#cs-17-backend-release-prerequisite) for the
 backend history. If either control is missing from the
 base panel, it creates the fallback pair once per modal and marks both controls
 with `data-starters-reschedule-respond`. Decline, cancel, and both reschedule
 commands require a non-empty reason. Decline posts `booking_id`, `config_id`,
 `reason`, and `idempotency_key` to `booking/decline/v3`; cancel uses
-`cancelled_reason` at `booking/cancel/v3`. Both reschedule commands post
+`cancelled_reason` at `booking/cancel/v3`. For Free confirmed or rescheduled
+calls, a successful cancellation response must echo the cancelled booking,
+the restored original slot, the next lifecycle revision, and the participant
+role that cancelled; the dashboard commits those values with the just-submitted
+reason and immediately repaints the still-current details modal. Both reschedule commands post
 `rescheduled_reason`,
 `new_start`, `new_end`, and `timezone` with those shared identifiers. A
 confirmed call posts to `booking/reschedule/propose/v3`; a pending Brand request
@@ -2806,9 +2900,10 @@ booking recovery still requires “Use this card”. Back returns to the picker.
 If **Change card** cannot open the payment methods, the Brand sees only
 “Your payment methods could not be opened. Please try again.”; the underlying
 failure message remains a support diagnostic in the browser console.
-The `auth_required` helper for `brand/booking/payment-action/v3` remains available
-without activating authentication-confirmation UI. Paid cancellation, reschedule
-policy, charging and payout policy are unchanged.
+The `auth_required` helper for `brand/booking/payment-action/v3` remains
+available without activating authentication-confirmation UI. Paid cancellation
+eligibility is owned by the [Dashboard booking action contract](#dashboard-booking-action-contract);
+reschedule policy, charging and payout policy are unchanged.
 
 `dashboard-calls.js` is also the single owner of the Starter request-expiry
 countdown; the legacy inline dashboard helper no longer renders that list, so
@@ -2822,21 +2917,93 @@ combo class. The
 wrap stays hidden for every row it does not own: Brand rows, non-pending rows,
 and pending rows with no usable deadline.
 
-One bounded ten-second timer, started only for the Starter role, repaints every
-rendered request card and the open `popup-booking-info` dialog from the already
-loaded canonical rows, so Accept disappears at the deadline without a reload
-and without a second timer per card. Crossing the deadline is the only trigger
-for a canonical re-read, and that read is bounded: at most three refreshes per
-booking-and-deadline pair, no more than one every thirty seconds, and never
-while another is in flight. That background refresh reuses the same identity
-and endpoint contract, skips repainting a section whose canonical rows are
-unchanged, restores the extra pages each section's load-more control had
-already revealed, and on a canonical read failure logs and leaves the rendered
-list in place instead of failing the whole dashboard closed. A missing member is
-the one exception and still fails closed.
+One bounded ten-second lifecycle timer, started for either dashboard role,
+repaints every rendered request card and the open `popup-booking-info` dialog
+from the already loaded canonical rows. For Starter requests, Accept disappears
+at the deadline without a reload and without a second timer per card. For either
+role, an open details view for a confirmed call moves to the completed panel and
+clears Join when the effective confirmed interval ends, including while a
+reschedule proposal is pending on the canonical row. On the Starter dashboard,
+two conditions trigger a timed canonical re-read. Both are bounded, and they
+share one in-flight guard: neither starts while the other is in flight, and a
+tick that the guard blocks spends no budget. Each re-read goes through the
+serialized session refresh (`refreshExpiredRequests`), so it waits behind a
+refresh of the same session, and a newer session discards its result.
+
+- Crossing a pending-request deadline: at most three refreshes per
+  booking-and-deadline pair, and no more than one every thirty seconds.
+- A Meet link that is not written yet (F54, JP meeting 2026-09-30). F40 writes
+  a virtual-calendar Meet link 38 to 56 s after the confirm (task #760). A row
+  in its confirmed meeting window with an empty `meeting_link` gets re-reads
+  on the first ticks at or after 45, 90, and 150 s from the tick that first
+  sees it: at most three per row for the life of the page. The ticker runs
+  every 10 s, so the effective schedule is 50, 90, and 150 s, and the first
+  re-read runs 50 to 60 s after the confirm. The window and the clock are the
+  ones the meeting-link paint uses, so a rescheduled row uses `start_old` to
+  `end_old`, a call in progress still counts, and the canonical booking clock
+  wins. No re-read runs while `document.visibilityState` is `hidden`. When a
+  re-read runs a full tick late (the page was hidden, or another ticker read
+  was in flight), the remaining delays restart from that re-read, so overdue
+  re-reads never run on back-to-back ticks. A row that leaves this set and
+  comes back (a reset of the rendered rows, or a link that came and went)
+  keeps its spent count. Its remaining delays restart from the tick that sees
+  it again, so no re-read runs on that tick. A successful re-read repaints the
+  cards, the open dialog's meeting link, and its actions at once. The Brand
+  dashboard gets no Meet link re-read.
+
+These background refreshes reuse the same identity and endpoint contract, skip
+repainting a section whose canonical rows are unchanged, restore the extra
+pages each section's load-more control had already revealed, and on a
+canonical read failure log and leave the rendered list in place instead of
+failing the whole dashboard closed. A missing member is the one exception and
+still fails closed.
+
+F68 (production, 2026-09-30 22:05:56 and 22:07:49 UTC): each canonical list
+read has one 10 s deadline (`CANONICAL_READ_TIMEOUT_MS`). The deadline counts
+the time of the auth bridge's token step, the POST, and the body read. A first read that
+timed out showed both sections unavailable, and nothing read the lists again
+until a reload, because the lifecycle ticker re-reads only for rendered rows.
+Now the first read of a session (the boot read, or the read after an auth
+change) is retried when it fails for any reason except a missing member. The
+retries run 3, 10, and 30 s after the failed attempt ends
+(`INITIAL_READ_RETRY_DELAYS_MS`): at most three, and the first success ends
+the schedule. Each retry keeps the session generation and goes through the
+same serialized refresh, so it never overlaps another read of that session
+and does not reset the sections to loading. A retry reads the live
+Memberstack member, not the boot-time `window.memberReady` snapshot, with the
+short member retries of every later read (`MEMBER_RETRY_DELAYS_MS`). So a
+Brand profile saved during the retries stays on the hero, and a rejected
+snapshot does not block the recovery. On the Brand dashboard, a retry paints
+the hero only after its read succeeds. A failed retry leaves the hero as it
+was: the name does not flash during the retries, and a profile-save repaint
+stays. A retry that finds no member still clears the hero. The unavailable
+display and its copy stay until a read succeeds. No copy is added. A retry that comes due
+while `document.visibilityState` is `hidden` waits for a `visibilitychange`
+to a visible page, and it spends no budget while it waits. An auth change ends
+the old schedule, and the new session's first read gets its own budget. A
+missing member, a missing Memberstack client, and the post-mutation and ticker
+refreshes keep their own failure rules and get no retry. Each attempt keeps
+the 10 s deadline, because the retained errors do not show which step used
+the budget. The deadline aborts only the canonical POST and its body read.
+For those two steps, a fresh attempt after an abort recovers a stuck request
+sooner than a longer deadline. The auth bridge's shared steps in
+`v3/scheduling-auth.js` do not take the caller's abort signal. A later attempt
+for the same Memberstack token joins the trade that is still in flight. The
+token trade has its own 30 s deadline in the auth bridge. A stuck trade that
+the boot read started is aborted and released about 30 s after it started.
+The first retry (at 13 s) can still join that trade and time out, but the
+second retry (at 33 s or later) starts a new trade.
+A slow trade that finishes still helps, because the retry then sends only the
+POST with the cached token. The auth reconciliation step has no timeout. When
+every attempt times out, the last retry ends
+about 83 s after the boot read started, and a failed page load adds at most
+three canonical POSTs.
 
 Loading, empty, and error displays reuse the authored elements instead of
-generating UI. The filter wrapper stays hidden during identity resolution and
+generating UI. The error display writes its copy into the authored
+`[bookings-empty]` heading and paragraph. The controller keeps the authored
+text first and puts it back on the next successful render, so a section with
+no rows shows its authored empty copy after a recovered failure. The filter wrapper stays hidden during identity resolution and
 on errors, and is shown only when the member's full canonical booking rows for
 that section are non-empty. A selected status that has no matching rows does
 not hide the wrapper, so the member can return to All.
@@ -2878,12 +3045,14 @@ On Brand only, the same resolved Memberstack snapshot paints the existing hero
 through the Designer custom-attribute contract, never through styling classes:
 `free-user` populates `hero-element="brand-first-name"`, `last-name` populates
 `hero-element="brand-last-name"`, and `company` populates
-`hero-element="brand-company"`. Those values clear before every session refresh
-and on any failure, so another member's projection cannot survive an auth
-transition. The avatar carries `hero-element="brand-image"` for contract
-completeness, but the controller never writes it: its `src` stays owned by
-Memberstack's native `data-ms-member="profile-image"` binding, which handles
-both the empty-photo placeholder and a populated member photo.
+`hero-element="brand-company"`. Those values clear before every new session
+refresh and when that refresh cannot prove an authenticated member, so another
+member's projection cannot survive an auth transition. A first-read retry keeps
+the current hero intact until the canonical read succeeds, as described in the
+F68 retry contract above. The avatar carries `hero-element="brand-image"` for
+contract completeness, but the controller never writes it: its `src` stays
+owned by Memberstack's native `data-ms-member="profile-image"` binding, which
+handles both the empty-photo placeholder and a populated member photo.
 
 The Brand dashboard's existing `form[data-ms-form="profile"]` remains a native
 Memberstack form and keeps sole ownership of its submit. The controller observes
@@ -3234,8 +3403,9 @@ not to the Scheduler configuration email flags.
 Minimum booking notice: in the non-modal Dashboard / Calendar section, the
 exact TEST/staging host `the-starters-3-0.webflow.io` uses five minutes in new
 Free Scheduler configurations and browser availability query floors;
-production, unknown hosts, and CommonJS contexts use eight hours. Booking
-Preview states the five-minute minimum on staging and the eight-hour minimum
+production, unknown hosts, and CommonJS contexts use 24 hours (JP, 2026-10-03;
+the rule was 8 hours from 2026-09-15 to 2026-10-03). Booking
+Preview states the five-minute minimum on staging and the 24-hour minimum
 on `thestarters.com` and `www.thestarters.com`. Opening the preview does not
 mutate provider configurations. Existing provider notice corrections belong
 to the bounded backend reconciliation; availability-only updates and Paid
@@ -4170,6 +4340,23 @@ for every Paid request; a request refused for a missing receipt invalidates the
 reviewed card so the Brand chooses and confirms a card again. Retries reuse the
 same SetupIntent and the same idempotency keys.
 
+Stripe.js loads on demand from `https://js.stripe.com/v3/`, and every load
+settles. Concurrent calls share one load. When `Stripe` is ready, the load
+resolves, even if the watched tag stalls or fails, and no second copy is
+inserted. A tag known to be dead (blocked, failed, or loaded without `Stripe`)
+is replaced at most once per load. A tag that other code placed counts as dead
+after the page finishes loading. If the load finds such a tag before the page
+finishes loading, it watches that tag until the 15 second limit, and the next
+attempt replaces it. A load that does not settle within 15 seconds rejects with
+`Stripe.js failed to load`. After a failed **Add payment method**, the dialog
+returns to the saved-card picker and shows that message in `[card-error]`. The
+picker's **Add payment method** tries the load again, and its **Back** returns
+to review. **Use this card** shows its existing verification error. **Add card**
+stays disabled until the secure fields mount. A failed load is not kept, so the
+next attempt loads again. A removed script still runs, so a tag that this
+controller inserted and that is still loading after the limit is kept, and the
+next attempt waits for that same fetch.
+
 The controller uses this sequence:
 
 ```mermaid
@@ -4191,10 +4378,10 @@ flowchart TD
 1. Read the next 14 days through authenticated
    `scheduler/get_availability/v3`. Xano selects the Nylas environment and keeps
    the provider credential and private Scheduler session off the browser.
-   Production initial Paid booking availability begins eight hours ahead, with
-   a slot exactly eight hours away allowed; the exact staging host keeps its
-   five-minute exception. Dashboard rescheduling keeps its existing 24-hour
-   availability floor.
+   Production initial Paid booking availability begins 24 hours ahead, with
+   a slot exactly 24 hours away allowed; the exact staging host keeps its
+   five-minute exception. Confirmed-call dashboard rescheduling keeps its
+   separate eight-hour server-clock cutoff.
 2. Render the month calendar, timezone dropdown, time buttons and confirmation
    row inside the authored `[nylas-container]` mount. In a wide mount, the month
    calendar spans the left column. The timezone dropdown sits at the top of the
@@ -4400,7 +4587,7 @@ flowchart TD
 7. **Request Call** sends `expected_payment_method_id` with the retained slot,
    message and normalized Guests. The backend claims that reviewed card before
    provider booking creation and persists it even if the account default later changes.
-   Paid rechecks the eight-hour production cutoff at this submit boundary,
+   Paid rechecks the 24-hour production cutoff at this submit boundary,
    including after card review. If the retained slot has aged below the cutoff,
    no booking command starts, the authored details remain, and the calendar says
    **This time is no longer available. Please choose another time.**
