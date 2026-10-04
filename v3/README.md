@@ -2908,14 +2908,16 @@ reschedule policy, charging and payout policy are unchanged.
 `dashboard-calls.js` is also the single owner of the Starter request-expiry
 countdown; the legacy inline dashboard helper no longer renders that list, so
 its copy of the countdown is dead and must not be re-enabled. The countdown
-reads canonical `confirmation_expires_at` and falls back to canonical `start`
-only when that field is absent, renders the remaining time as `1d 2h 3m` with
-zero units omitted and any part-minute rounded up, shows `Expired` at or past
-the deadline, and reuses the authored site-wide `text-color-red` error colour
-inside the last 48 hours because the authored countdown has no expiring-state
-combo class. The
-wrap stays hidden for every row it does not own: Brand rows, non-pending rows,
-and pending rows with no usable deadline.
+reads canonical `confirmation_expires_at` as the only countdown deadline,
+renders the remaining time as `1d 2h 3m` with zero units omitted and any
+part-minute rounded up, shows `Expired` at or past the deadline, and reuses the
+authored site-wide `text-color-red` error colour inside the last 48 hours
+because the authored countdown has no expiring-state combo class. The wrap
+stays hidden for every row it does not own: Brand rows, non-pending rows, and
+pending rows with no usable deadline. A pending Starter row without
+`confirmation_expires_at` also hides Accept; Decline can remain available
+because `booking/decline/v3` has no deadline rule and still uses the open
+start-based response window.
 
 One bounded ten-second lifecycle timer, started for either dashboard role,
 repaints every rendered request card and the open `popup-booking-info` dialog
