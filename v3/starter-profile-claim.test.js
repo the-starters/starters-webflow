@@ -5,9 +5,9 @@ const vm = require('node:vm')
 
 const source = fs.readFileSync(require.resolve('./starter-profile-claim.js'), 'utf8')
 const WRAPPER_SELECTOR = '[data-starter-claim="wrapper"]'
-const FORM_SELECTOR = 'form[data-starter-claim="form"][data-ms-form="signup"]'
+const FORM_SELECTOR = 'form[data-starter-claim="form"]'
 const PROFILE_SLUG_FIELD_SELECTOR =
-  'input[type="hidden"][data-ms-member="starter-claim-profile-slug"]'
+  'input[type="hidden"][data-starter-claim="profile-slug"]'
 const GOOGLE_AUTH_SELECTOR = '[data-ms-auth-provider="google"]'
 
 function element(attributes = {}) {
@@ -47,11 +47,15 @@ function jsonResponse(body, status = 200) {
 }
 
 function load(options = {}) {
-  const profileSlugField = options.profileSlugField === false ? null : element()
+  const profileSlugField = options.profileSlugField === false
+    ? null
+    : element({ type: 'hidden', name: 'Profile Slug', 'data-starter-claim': 'profile-slug' })
   const googleAuth = options.googleAuth === false
     ? null
     : element({ class: 'button is-google w-button', 'data-ms-auth-provider': 'google' })
-  const form = options.form === false ? null : element()
+  const form = options.form === false
+    ? null
+    : element(Object.assign({ 'data-starter-claim': 'form' }, options.formAttributes || {}))
   if (form && profileSlugField) {
     form.setQuery(options.fieldSelector || PROFILE_SLUG_FIELD_SELECTOR, profileSlugField)
   }
@@ -131,7 +135,7 @@ function assertHidden(harness) {
   assert.equal(harness.wrapper.getAttribute('aria-hidden'), 'true')
 }
 
-test('claimable true reveals the form and puts the page slug in the signup field', async () => {
+test('claimable true reveals the plain Webflow form and puts the page slug in the hidden field', async () => {
   const harness = load({ search: '?utm_source=gift' })
 
   assertHidden(harness)
@@ -154,6 +158,25 @@ test('claimable true reveals the form and puts the page slug in the signup field
   assert.equal(harness.googleAuth.getAttribute('aria-hidden'), 'true')
   assert.equal(harness.googleAuth.getAttribute('tabindex'), '-1')
   assert.equal(harness.window.location.search, '?utm_source=gift')
+})
+
+test('form with data-ms-form stays hidden without a request', async () => {
+  let calls = 0
+  const harness = load({
+    formAttributes: { 'data-ms-form': 'signup' },
+    fetch: () => {
+      calls += 1
+      return Promise.resolve(jsonResponse({
+        schema: 'starter_profile_claim_status_v3',
+        slug: 'jane-doe',
+        claimable: true,
+      }))
+    },
+  })
+  await harness.dispatch('DOMContentLoaded')
+  assertHidden(harness)
+  assert.equal(harness.profileSlugField.value, '')
+  assert.equal(calls, 0)
 })
 
 test('claimable false keeps the form hidden', async () => {
@@ -250,7 +273,7 @@ test('fails closed when the form or slug field is not authored', async () => {
   for (const options of [
     { form: false },
     { profileSlugField: false },
-    { fieldSelector: '[data-ms-member="starter-claim-profile-slug"]' },
+    { fieldSelector: 'input[type="hidden"][data-ms-member="starter-claim-profile-slug"]' },
   ]) {
     let calls = 0
     const harness = load({ ...options, fetch: () => { calls += 1; return Promise.resolve(jsonResponse({})) } })

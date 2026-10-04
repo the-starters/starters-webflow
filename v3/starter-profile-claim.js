@@ -1,5 +1,5 @@
 /**
- * Show the signup form on approved premade Starter profiles.
+ * Show the claim request form on approved premade Starter profiles.
  *
  * QR codes use the normal public `/hire/<slug>` URL. Xano decides whether the
  * current slug is still claimable. Any failed, slow, malformed, or mismatched
@@ -15,9 +15,9 @@
   window.__starterProfileClaimBooted = true
 
   var WRAPPER_SELECTOR = '[data-starter-claim="wrapper"]'
-  var FORM_SELECTOR = 'form[data-starter-claim="form"][data-ms-form="signup"]'
+  var FORM_SELECTOR = 'form[data-starter-claim="form"]'
   var PROFILE_SLUG_FIELD_SELECTOR =
-    'input[type="hidden"][data-ms-member="starter-claim-profile-slug"]'
+    'input[type="hidden"][data-starter-claim="profile-slug"]'
   var GOOGLE_AUTH_SELECTOR = '[data-ms-auth-provider="google"]'
   var PROFILE_PATH_PATTERN = /^\/hire\/([a-z0-9]+(?:-[a-z0-9]+)*)$/
   var CLAIM_STATUS_URL =
@@ -134,8 +134,11 @@
     if (!path || !slug) return
 
     var form = wrapper.querySelector(FORM_SELECTOR)
-    var profileSlugField = form && form.querySelector(PROFILE_SLUG_FIELD_SELECTOR)
-    if (!form || !profileSlugField) return
+    if (!form) return
+    if (form.getAttribute && form.getAttribute('data-ms-form') !== null) return
+
+    var profileSlugField = form.querySelector(PROFILE_SLUG_FIELD_SELECTOR)
+    if (!profileSlugField) return
 
     fetchClaimStatus(slug).then(function (body) {
       if (!isClaimableResponse(body, slug)) return

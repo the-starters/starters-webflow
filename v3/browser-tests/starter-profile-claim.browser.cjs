@@ -1,5 +1,5 @@
 // Focused rendered acceptance. This mocks Xano claim-status and does not prove
-// Webflow publication or Memberstack webhook behavior.
+// Webflow publication or Webflow form notification behavior.
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const path = require('node:path')
@@ -30,10 +30,10 @@ function markup() {
         <main>Starter profile</main>
         <section class="claim-modal hide" hidden aria-hidden="true"
           data-starter-claim="wrapper">
-          <form data-starter-claim="form" data-ms-form="signup">
+          <form data-starter-claim="form">
             <h1>Claim your profile</h1>
-            <input type="email" data-ms-member="email">
-            <input type="hidden" data-ms-member="starter-claim-profile-slug" autocomplete="off">
+            <input type="email" name="Email">
+            <input type="hidden" name="Profile Slug" data-starter-claim="profile-slug" autocomplete="off">
             <button type="submit">Claim profile</button>
             <a href="#" class="button is-google w-button" data-ms-auth-provider="google">Continue with Google</a>
           </form>
@@ -83,7 +83,7 @@ function markup() {
         display: getComputedStyle(wrapper).display,
         hasHide: wrapper.classList.contains('hide'),
         hidden: wrapper.hidden,
-        profileSlug: wrapper.querySelector('[data-ms-member="starter-claim-profile-slug"]').value,
+        profileSlug: wrapper.querySelector('[data-starter-claim="profile-slug"]').value,
         googleDisplay: getComputedStyle(google).display,
         googleHasHide: google.classList.contains('hide'),
         googleHidden: google.hidden,
@@ -116,7 +116,7 @@ function markup() {
       display: getComputedStyle(wrapper).display,
       hasHide: wrapper.classList.contains('hide'),
       hidden: wrapper.hidden,
-      profileSlug: wrapper.querySelector('[data-ms-member="starter-claim-profile-slug"]').value,
+      profileSlug: wrapper.querySelector('[data-starter-claim="profile-slug"]').value,
       url: location.href,
     }))
 
