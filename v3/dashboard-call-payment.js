@@ -74,6 +74,7 @@
   }
 
   const CHANGE_CARD_ERROR = 'Your payment methods could not be opened. Please try again.'
+  const APPROVE_PAYMENT_ERROR = 'Your payment could not be approved. Please try again.'
 
   async function canonicalPost(path, payload) {
     if (typeof global.xanoAuthFetch !== 'function') {
@@ -109,6 +110,23 @@
       throw new Error('Canonical payment action response is invalid')
     }
     return result
+  }
+
+  // P9: Stripe asked the Brand to confirm the hold (3DS). The canonical route
+  // returns the client secret only for the owning Brand while the
+  // PaymentIntent still requires action; Stripe.js shows the bank step. The
+  // booking state moves only through the Stripe webhook, never from here.
+  async function approvePayment(role, booking, stripe) {
+    if (!stripe || typeof stripe.handleNextAction !== 'function') {
+      throw new Error('Payment approval client unavailable')
+    }
+    const action = await getPaymentAction(role, booking)
+    if (!action) return null
+    const result = await stripe.handleNextAction({ clientSecret: action.client_secret })
+    if (!result || result.error) {
+      throw new Error('Payment approval did not complete')
+    }
+    return clean(result.paymentIntent && result.paymentIntent.status)
   }
 
   async function replacePaymentMethod(
@@ -170,6 +188,9 @@
   function canManageCards(role, booking) {
     return managementReady && canReplacePaymentMethod(role, booking)
   }
+  function canApprovePayment(role, booking) {
+    return managementReady && canRequestPaymentAction(role, booking)
+  }
 
   async function loadPaymentClient(document) {
     const valid = client => client && ['getReadiness', 'installSavedCardPicker', 'installCardSetupForm', 'stripeForPaymentEnvironment']
@@ -208,6 +229,7 @@
     let active = null
     let opening = false
     let selecting = false
+    let approving = false
     function paintAdd(context) {
       context.modal.querySelectorAll?.('[popup-stripe-card-open], [payment-action-btn="add-card"]').forEach(control => {
         control.setAttribute('aria-disabled', String(selecting || context.adding))
@@ -222,6 +244,37 @@
         ? event.target.closest('[payment-action-btn], [popup-stripe-card-open]') : null
       if (!target) return
       const action = target.getAttribute('payment-action-btn')
+      if (action === 'approve-payment') {
+        const modal = target.closest('[popup-booking-info]')
+        const booking = modal && settings.getBooking(modal)
+        if (!modal || !canApprovePayment(settings.role, booking)) return
+        event.preventDefault()
+        event.stopImmediatePropagation()
+        if (approving) return
+        approving = true
+        target.setAttribute('aria-disabled', 'true')
+        const bookingId = clean(booking.booking_id)
+        const isCurrent = () => (!('open' in modal) || modal.open) &&
+          clean(settings.getBooking(modal)?.booking_id) === bookingId
+        try {
+          const stripe = await client.stripeForPaymentEnvironment(booking.payment_environment)
+          if (!isCurrent()) return
+          await approvePayment(settings.role, Object.assign({}, booking), stripe)
+          if (isCurrent() && typeof settings.restart === 'function') await settings.restart()
+        } catch (error) {
+          // Internal errors can carry route paths; keep them for support only.
+          if (typeof console !== 'undefined') console.warn('Approve payment failed:', error?.message || error)
+          const actions = global.StartersDashboardCallActions
+          if (isCurrent() && actions && typeof actions.showActionError === 'function') {
+            const content = modal.querySelector('[booking-popup-content="base"]') || modal
+            actions.showActionError(content, APPROVE_PAYMENT_ERROR)
+          }
+        } finally {
+          approving = false
+          target.setAttribute('aria-disabled', 'false')
+        }
+        return
+      }
       const add = action === 'add-card' || target.hasAttribute('popup-stripe-card-open')
       if (!add && !['change-card', 'change-card-v2'].includes(action)) return
       const modal = target.closest('[popup-booking-info]')
@@ -316,6 +369,8 @@
 
   const api = {
     invalidateModal,
+    approvePayment,
+    canApprovePayment,
     canReplacePaymentMethod,
     canRequestPaymentAction,
     canManageCards,
