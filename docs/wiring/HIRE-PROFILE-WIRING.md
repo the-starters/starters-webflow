@@ -33,10 +33,11 @@ that do not yet have a public Company page.
 
 ## Install
 
-The premade-profile claim candidate has a separate, security-sensitive head
-placement and release gate. Follow
+The premade-profile claim candidate has a separate, security-sensitive wiring
+guide and release gate. Follow
 [`STARTER-PROFILE-CLAIM-WIRING.md`](STARTER-PROFILE-CLAIM-WIRING.md) for that
-controller; do not add it to the scheduling embed below.
+controller; do not add a direct claim-controller script tag to the scheduling
+embed below.
 
 Webflow → hire template → Page Settings → Custom Code → **Head**:
 
