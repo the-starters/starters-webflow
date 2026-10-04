@@ -1657,6 +1657,9 @@
       'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/free-call-booking.js';
   var FREE_CALL_BOOKING_LOADER_ATTR = 'data-starters-free-call-booking-loader';
   var FREE_CALL_BOOKING_TIMEOUT_MS = 5000;
+  var STARTER_PROFILE_CLAIM_URL =
+      'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/starter-profile-claim.js';
+  var STARTER_PROFILE_CLAIM_LOADER_ATTR = 'data-starters-profile-claim-loader';
 
   function validFreeCallBooking(value) {
       return value &&
@@ -1689,6 +1692,28 @@
               script.hasAttribute(FREE_CALL_BOOKING_LOADER_ATTR)
           ) && isFreeCallBookingScript(script);
       }) || null;
+  }
+
+  function isStarterProfileClaimScript(script) {
+      try {
+          return new URL(script.src, window.location.href).pathname
+              .endsWith('/v3/starter-profile-claim.js');
+      } catch (_error) {
+          return false;
+      }
+  }
+
+  function ensureStarterProfileClaimController() {
+      if (!document.querySelector('[data-starter-claim="wrapper"]')) return;
+      var existing = Array.from(document.querySelectorAll('script[src]'))
+          .find(isStarterProfileClaimScript);
+      if (existing) return;
+
+      var loader = document.createElement('script');
+      loader.setAttribute('src', STARTER_PROFILE_CLAIM_URL);
+      loader.setAttribute(STARTER_PROFILE_CLAIM_LOADER_ATTR, '');
+      loader.async = true;
+      (document.head || document.documentElement).appendChild(loader);
   }
 
   function ensureFreeCallBooking() {
@@ -1754,6 +1779,7 @@
 
       return freeCallBookingLoadPromise;
   }
+  ensureStarterProfileClaimController();
   if (typeof qs !== 'function' || typeof qsa !== 'function' || typeof waitForMember !== 'function') {
     console.warn('[hire-profile] page helpers (qs/qsa/waitForMember) missing; profile scripts stood down');
     callDiscoveryPending = false;

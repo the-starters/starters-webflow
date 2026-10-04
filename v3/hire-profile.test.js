@@ -850,41 +850,11 @@ function addLegacyHeaderCallCardsFixture(page) {
     description.textContent = 'Legacy description'
     const price = makeElement('span', { 'data-millify': '', 'data-millify-raw': '0' })
     price.textContent = '0'
-    const bookingRow = makeElement('div', {}, ['service-card_content-wrapper'])
-    const slot = makeElement('span', { 'next-available-slot': '' })
-    slot.textContent = '00:00pm on 00/00'
-    bookingRow.appendChild(slot)
-    const tooltip = makeElement('div', { 'data-call-offer-tooltip': '' })
-    const tooltipText = makeElement('span', { 'data-call-offer-tooltip-text': '', 'hover-text': '' })
-    const calendarCta = makeElement('a', {
-      'hover-cta': '',
-      'data-call-setup-action': 'calendar',
-      'starter-dashboard-url': '',
-    })
-    const stripeCta = makeElement('a', {
-      'hover-cta': '',
-      'data-call-setup-action': 'stripe',
-      'stripe-connect-url': '',
-    })
-    const settingsCta = makeElement('a', {
-      'hover-cta': '',
-      'data-call-setup-action': 'settings',
-      'starter-dashboard-url': '',
-    })
-    tooltip.appendChild(tooltipText)
-    tooltip.appendChild(calendarCta)
-    tooltip.appendChild(stripeCta)
-    tooltip.appendChild(settingsCta)
     root.appendChild(title)
     root.appendChild(description)
     root.appendChild(price)
-    root.appendChild(bookingRow)
-    root.appendChild(tooltip)
     wrapper.appendChild(root)
-    return {
-      root, title, description, price, bookingRow, slot, tooltip, tooltipText,
-      calendarCta, stripeCta, settingsCta,
-    }
+    return { root, title, description, price }
   }
   const free = card('free')
   const paid = card('paid')
@@ -994,7 +964,7 @@ function makeWfXanoFixture(root, initialResult = null, { replayOnSubscribe = tru
   }
 }
 
-for (const missingHelper of [false, true]) test(`existing Header call clones bootstrap before qs assignment (helper missing: ${missingHelper})`, async () => {
+for (const missingHelper of [false, true]) test(`existing Header call clones bootstrap before qs assignment (helper missing: ${missingHelper})`, () => {
   const page = makePage()
   const header = addXanoCallCardsFixture(page, 'starter-call-offers-header')
   page.root.appendChild(header.wrapper)
@@ -1002,58 +972,13 @@ for (const missingHelper of [false, true]) test(`existing Header call clones boo
     card.root.setAttribute('has-connection', 'free')
     card.root.setAttribute('data-service-card', 'component')
   }
-  for (const card of [header.free, header.paid]) {
-    card.root.setAttribute('booking-popup-open', '')
-    card.root.setAttribute('data-modal-trigger', 'popup-booking-main')
-    card.root.setAttribute('data-signup-trigger-element', 'service')
-    card.root.setAttribute('data-signup-trigger-value', 'Free Call')
-  }
   const context = makeContext({ page })
   if (missingHelper) context.qs = undefined
-  const held = holdLongTimers(context)
   vm.createContext(context)
   assert.doesNotThrow(() => vm.runInContext(source, context))
-  const cards = [header.free, header.paid]
-  assert.equal(cards.length, 2)
-  for (const card of cards) {
-    if (missingHelper) {
-      // The stand-down path owns no loading writer, so it stays fail-closed.
-      assert.equal(card.root.style.display, 'none', 'stood-down clones remain fail-closed')
-      assert.equal(card.root.getAttribute('aria-hidden'), 'true')
-      assert.equal(card.root.getAttribute('aria-busy'), null)
-      assert.equal(card.root.getAttribute('data-call-offer-state'), null)
-      continue
-    }
-    // F50: a pre-adapter clone enters the fail-closed loading state at once.
-    assert.equal(card.root.style.display, 'block', 'pre-adapter clones read as loading')
-    assert.equal(card.root.getAttribute('aria-hidden'), null)
-    assert.equal(card.root.getAttribute('data-canonical-call-unavailable'), null)
-    assert.equal(card.root.getAttribute('data-call-offer-state'), 'loading')
-    assert.equal(card.root.getAttribute('aria-busy'), 'true')
-    assert.equal(card.root.getAttribute('data-service-card-state'), 'Default')
-    assert.equal(card.root.getAttribute('booking-popup-open'), null)
-    assert.equal(card.root.getAttribute('data-modal-trigger'), null)
-    assert.equal(card.root.getAttribute('data-signup-trigger-element'), null)
-    assert.equal(card.root.getAttribute('data-call-service-direct'), null)
-  }
-  if (missingHelper) {
-    assert.equal(held.length, 0, 'the stand-down path arms no failsafe')
-    return
-  }
-  // No wf-xano instance ever answers for this signed-out viewer, so only the
-  // bounded failsafe can end loading. It fails the clones closed.
-  await settle()
-  for (const card of cards) assert.equal(card.root.getAttribute('data-call-offer-state'), 'loading')
-  const armed = held.filter(Boolean)
-  assert.equal(armed.length, 1, 'one failsafe bounds the wait')
-  assert.equal(armed[0].delay, 15000)
-  armed[0].callback()
-  await settle()
-  for (const card of cards) {
-    assert.equal(card.root.style.display, 'none', 'the failsafe fails the clone closed')
+  for (const card of [header.free, header.paid]) {
+    assert.equal(card.root.style.display, 'none', 'pre-adapter clones remain fail-closed')
     assert.equal(card.root.getAttribute('aria-hidden'), 'true')
-    assert.equal(card.root.getAttribute('aria-busy'), null)
-    assert.equal(card.root.getAttribute('data-call-offer-state'), 'hidden')
   }
 })
 
@@ -1388,13 +1313,7 @@ for (const identity of [null, '', '1063invalid']) test(`canonical hero rates hid
 
 test('a page missing the Memberstack helpers stands down instead of throwing', () => {
   const page = makePage()
-  const unresolvedCompany = addXanoCompanyLinkFixture(
-    page,
-    'starter-work-histories',
-    '/companies/company-pending-6001',
-    'Pending Company',
-  )
-  const context = makeContext({ page, member: BRAND_MEMBER })
+  const context = makeContext({ page })
   delete context.qs
   delete context.qsa
   delete context.waitForMember
@@ -1411,33 +1330,11 @@ test('a page missing the Memberstack helpers stands down instead of throwing', (
   assert.equal(page.paidModalCta.getAttribute('data-config'), null)
   assert.equal(page.servicesList.children[0].style.display, 'none')
   assert.equal(page.servicesList.children[0].getAttribute('data-canonical-call-unavailable'), '')
-  assert.equal(page.bookingButton.getAttribute('data-booking-trigger-loading'), null)
-  assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), '')
-  assert.equal(page.bookingButton.getAttribute('aria-busy'), null)
-  assert.equal(page.bookingButton.getAttribute('aria-disabled'), 'true')
-  assert.equal(page.bookingButton.getAttribute('data-modal-trigger'), null)
-  assert.equal(page.bookingButton.getAttribute('data-signup-trigger-element'), null)
-  assert.equal(unresolvedCompany.link.getAttribute('href'), null)
-  assert.doesNotThrow(() => {
-    page.bookingButton.listeners.focusin.forEach((listener) => listener({}))
-  })
-
-  const lateCompany = addXanoCompanyLinkFixture(
-    page,
-    'starter-clients',
-    '/companies/',
-    'Late Pending Company',
-  )
-  const mutation = [{ type: 'childList', addedNodes: [lateCompany.wrapper] }]
-  assert.doesNotThrow(() => {
-    context.mutationObserverCallbacks.forEach((callback) => callback(mutation))
-  })
-  assert.equal(lateCompany.link.getAttribute('href'), null)
 })
 
 test('a page missing starter_memberstack_id stands down instead of throwing', () => {
   const page = makePage()
-  const context = makeContext({ page, member: BRAND_MEMBER })
+  const context = makeContext({ page })
   delete context.starter_memberstack_id
   vm.createContext(context)
 
@@ -1452,12 +1349,6 @@ test('a page missing starter_memberstack_id stands down instead of throwing', ()
   assert.equal(page.paidModalCta.getAttribute('data-config'), null)
   assert.equal(page.servicesList.children[0].style.display, 'none')
   assert.equal(page.servicesList.children[0].getAttribute('data-canonical-call-unavailable'), '')
-  assert.equal(page.bookingButton.getAttribute('data-booking-trigger-loading'), null)
-  assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), '')
-  assert.equal(page.bookingButton.getAttribute('aria-busy'), null)
-  assert.equal(page.bookingButton.getAttribute('aria-disabled'), 'true')
-  assert.equal(page.bookingButton.getAttribute('data-modal-trigger'), null)
-  assert.equal(page.bookingButton.getAttribute('data-signup-trigger-element'), null)
 })
 
 test('the jQuery-only blocks are skipped, not fatal, when jQuery is absent', () => {
@@ -2570,30 +2461,6 @@ test('the TEST fixture booking surface stays hidden and inert on production', as
   assert.ok(context.warnings.some((line) => line.includes('TEST booking fixture stayed closed')))
 })
 
-test('the production fixture block settles owner call cards unavailable', async () => {
-  const page = makePage()
-  const xano = addXanoCallCardsFixture(page)
-  const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
-  const requests = []
-  const context = ownerContext(page, ownerController({ requests }), {
-    location: { hostname: 'www.thestarters.com', pathname: '/hire/jp-dionisio' },
-    wfXano: wfx.api,
-  })
-  vm.createContext(context)
-  vm.runInContext(source, context)
-  wfx.emit(callCardResult({ free: false, paid: false }))
-  await settle()
-
-  assert.deepEqual(requests, [])
-  for (const card of [xano.free, xano.paid]) {
-    assert.equal(card.root.getAttribute('data-service-card-state'), 'Disabled')
-    assert.equal(card.root.getAttribute('data-call-offer-state'), 'settings-unavailable')
-    assert.equal(card.root.getAttribute('aria-busy'), null)
-    assert.equal(card.tooltip.style.display, 'block')
-    assert.equal(card.tooltipText.textContent, 'Call settings could not be loaded. Refresh or open Call Settings.')
-  }
-})
-
 test('invalid, inactive, and cross-role plan records fail closed with a legacy Brand field', async () => {
   for (const planConnections of [
     null,
@@ -2870,6 +2737,23 @@ test('signed-in Brand keeps Free Call in the existing modal and the inline panel
   assert.equal(page.paidModalOption.style.display, 'none', 'controller re-closes unavailable Paid')
   assert.equal(page.paidModalOption.getAttribute('data-booking-unavailable'), '')
   assert.equal(page.paidModalOption.getAttribute('aria-hidden'), 'true')
+  const guard = context.document.getElementById('hire-booking-modal-availability-guard')
+  assert.ok(guard)
+  assert.equal(
+    guard.textContent,
+    '[data-booking-unavailable]{display:none!important}' +
+      '[data-booking-trigger-unavailable]{opacity:.55;cursor:help}' +
+      '[data-canonical-call-unavailable]{display:none!important}' +
+      '[data-call-offer-superseded]{display:none!important}' +
+      '[data-header-tout-excluded]{display:none!important}' +
+      '[data-booking-pass-through]{visibility:hidden!important}' +
+      '[data-booking-pass-through] *{visibility:hidden!important}' +
+      '[data-modal-target="popup-booking"]:not([data-booking-entry="chooser"])' +
+      ' [data-booking-back]{display:none!important}' +
+      '[data-modal-target="popup-booking"]' +
+      ' [data-booking-back]:not([data-paid-calendar-element="back"])' +
+      '{display:none!important}',
+  )
   assert.equal(page.inlineWrapper.style.display, 'none')
   assert.equal(page.inlineWrapper.getAttribute('aria-hidden'), 'true')
 })
@@ -2905,15 +2789,11 @@ test('a signed-in Brand hides call projections while canonical discovery is pend
   assert.equal(page.servicesList.children[0].style.display, 'none')
   assert.equal(page.servicesList.children[0].getAttribute('data-canonical-call-unavailable'), '')
   assert.equal(page.servicesList.children[0].getAttribute('aria-hidden'), 'true')
-  // F50: pending Book Call reads as loading, but it stays closed.
-  assert.equal(page.bookingButton.getAttribute('data-booking-trigger-loading'), '')
-  assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), null)
+  assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), '')
   assert.equal(page.bookingButton.getAttribute('aria-disabled'), 'true')
 
   resolveStarter(null)
   await settle()
-  assert.equal(page.bookingButton.getAttribute('data-booking-trigger-loading'), null)
-  assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), '')
 })
 
 test('an anonymous viewer sees only the call touts enabled by canonical public projections', async () => {
@@ -2996,6 +2876,10 @@ test('a chooser trigger outside booking-button-wrapper stays hidden until discov
 
   assert.equal(strayTrigger.getAttribute('data-booking-trigger-unavailable'), '')
   assert.equal(strayTrigger.getAttribute('aria-disabled'), 'true')
+  const guard = context.document.getElementById('hire-booking-modal-availability-guard')
+  assert.ok(guard.textContent.includes(
+    '[data-booking-trigger-unavailable]{opacity:.55;cursor:help}',
+  ))
 })
 
 test('canonical discovery removes legacy Free and Paid projections when the profile is not bookable', async () => {
@@ -4357,16 +4241,6 @@ for (const replayOnSubscribe of [false, true]) {
 for (const publicFirst of [false, true]) {
   test(`Brand cards intersect installed discovery with public readiness (public first: ${publicFirst})`, async () => {
     const page = makePage()
-    const legacyHeader = addLegacyHeaderCallCardsFixture(page)
-    for (const card of [legacyHeader.free, legacyHeader.paid]) {
-      card.root.setAttribute('booking-popup-open', '')
-      card.root.setAttribute('data-modal-trigger', 'popup-booking-main')
-      card.root.setAttribute('data-signup-trigger-element', 'service')
-      card.root.setAttribute(
-        'data-signup-trigger-value',
-        card === legacyHeader.paid ? 'Paid Consulting Call' : 'Free Call',
-      )
-    }
     const xano = addXanoCallCardsFixture(page)
     const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
     let resolveConfigs
@@ -4388,16 +4262,6 @@ for (const publicFirst of [false, true]) {
       wfx.emit(callCardResult({ free: true, paid: false }))
       await settle()
     }
-    for (const card of [legacyHeader.free, legacyHeader.paid]) {
-      assert.equal(card.root.style.display, 'block')
-      assert.equal(card.root.getAttribute('data-call-offer-state'), 'loading')
-      assert.equal(card.root.getAttribute('aria-busy'), 'true')
-      assert.equal(card.root.getAttribute('data-booking-trigger-unavailable'), null)
-      assert.equal(card.root.getAttribute('booking-popup-open'), null)
-      assert.equal(card.root.getAttribute('data-modal-trigger'), null)
-      assert.equal(card.root.getAttribute('data-signup-trigger-element'), null)
-      assert.equal(card.root.getAttribute('data-call-service-direct'), null)
-    }
     resolveConfigs([
       { config_id: 'cfg_free', is_paid: false, active: true, data_environment: 'production', price_cents: 0, duration: 30 },
       { config_id: 'cfg_paid', is_paid: true, active: true, data_environment: 'production', payment_environment: 'live', currency: 'USD', price_cents: 25000, duration: 60 },
@@ -4405,17 +4269,9 @@ for (const publicFirst of [false, true]) {
     await settle()
     if (!publicFirst) {
       assert.equal(page.bookingButtonWrapper.style.display, 'flex', 'discovery alone must not admit cards')
-      for (const card of [legacyHeader.free, legacyHeader.paid]) {
-        assert.equal(card.root.getAttribute('data-call-offer-state'), 'loading')
-        assert.equal(card.root.getAttribute('aria-busy'), 'true')
-      }
       wfx.emit(callCardResult({ free: true, paid: false }))
       await settle()
     }
-    assert.equal(legacyHeader.free.root.getAttribute('data-call-offer-state'), 'available')
-    assert.equal(legacyHeader.free.root.style.display, 'block')
-    assert.equal(legacyHeader.paid.root.getAttribute('data-call-offer-state'), 'hidden')
-    assert.equal(legacyHeader.paid.root.style.display, 'none')
     assert.equal(xano.free.root.style.display, 'block')
     assert.equal(xano.paid.root.style.display, 'none')
     assert.equal(xano.paid.root.getAttribute('data-call-service-direct'), null)
@@ -4727,12 +4583,9 @@ test('a healthy owner call card settles while its sibling settings request is pe
   wfx.emit(callCardResult({ free: false, paid: false }))
   await settle()
 
-  // F50: a pending settings read is loading, not the grey Disabled variant.
-  assert.equal(xano.free.root.getAttribute('data-service-card-state'), 'Default')
+  assert.equal(xano.free.root.getAttribute('data-service-card-state'), 'Disabled')
   assert.equal(xano.free.root.getAttribute('data-call-offer-state'), 'settings-loading')
-  assert.equal(xano.free.root.getAttribute('aria-busy'), 'true')
-  assert.equal(xano.free.tooltip.style.display, 'none')
-  assert.equal(xano.paid.root.getAttribute('aria-busy'), null)
+  assert.equal(xano.free.settingsCta.style.display, 'block')
   assert.equal(xano.paid.root.getAttribute('data-service-card-state'), 'Default')
   assert.equal(xano.paid.root.getAttribute('data-call-offer-state'), 'available')
   assert.equal(xano.paid.price.textContent, '250')
@@ -4888,22 +4741,22 @@ test('the legacy owner reveal stands down from the wf-xano card it now shares at
   wfx.emit(callCardResult({ free: false, paid: false }))
   await settle()
   assert.equal(xano.paid.root.getAttribute('no-connection'), null)
-  // F50: while settings load, the adapter hides the setup tooltip and writes
-  // no copy into it.
-  assert.equal(xano.paid.tooltip.style.display, 'none')
-  assert.equal(xano.paid.tooltipText.textContent, '')
+  assert.equal(
+    xano.paid.tooltipText.textContent,
+    'Call settings are loading. Open Call Settings if this continues.',
+  )
 
   resolveStarter(null)
   await settle()
 
   assert.equal(
     xano.paid.tooltipText.textContent,
-    '',
+    'Call settings are loading. Open Call Settings if this continues.',
     'the legacy reveal must not rewrite the adapter-owned tooltip copy',
   )
-  assert.equal(xano.paid.tooltip.style.display, 'none')
   assert.equal(xano.paid.root.getAttribute('data-call-offer-state'), 'settings-loading')
-  assert.notEqual(xano.paid.calendarCta.style.display, 'block', 'the legacy reveal leaves the adapter-owned CTAs alone')
+  assert.equal(xano.paid.calendarCta.style.display, 'none')
+  assert.equal(xano.paid.settingsCta.style.display, 'block')
   assert.equal(
     cmsHoverText.textContent,
     'Connect your calendar to start accepting paid consulting calls.',
@@ -4916,9 +4769,8 @@ test('the rate cards clone the authored card even when a wf-xano clone precedes 
   const page = makePage()
   const xano = addXanoCallCardsFixture(page)
   // Designer order used to decide this. An owner wf-xano card now stays
-  // `settings-loading` (the authored Default look) until readiness resolves,
-  // and the rate-card lookup excludes every wf-xano wrapper regardless of
-  // its state.
+  // `Disabled` until readiness resolves, and the rate-card lookup excludes
+  // every wf-xano wrapper regardless of its state.
   xano.wrapper.remove()
   page.servicesList.prepend(xano.wrapper)
   const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
@@ -4940,9 +4792,8 @@ test('the rate cards clone the authored card even when a wf-xano clone precedes 
 
   wfx.emit(callCardResult({ free: false, paid: false }))
   await settle()
-  assert.equal(xano.free.root.getAttribute('data-service-card-state'), 'Default')
-  assert.equal(xano.free.root.getAttribute('data-call-offer-state'), 'settings-loading')
-  assert.equal(xano.free.tooltip.style.display, 'none')
+  assert.equal(xano.free.root.getAttribute('data-service-card-state'), 'Disabled')
+  assert.equal(xano.free.tooltip.style.display, 'block')
 
   resolveRecord({ rate: 135, 'retainer-rate': 0, 'retainer-enabled': false })
   await settle()
@@ -8135,17 +7986,15 @@ test('a same-tick double direct entry still stamps the booking dialog direct', a
 
 test('a second direct entry supersedes the first, which cannot unhide the chooser', async () => {
   // The chooser here never closes, so both entries run to their time cap. The
-  // first entry's cap comes up 1 s earlier than the second's: if it is still
+  // first entry's cap comes up 100 ms earlier than the second's: if it is still
   // allowed to speak, it hands back a chooser the second entry is holding
   // hidden, and the chooser is on screen for that gap. Nothing may release the
-  // chooser except the entry that currently owns it. The caps run on a
-  // virtual clock so the check between them cannot miss under CI load.
+  // chooser except the entry that currently owns it.
   const page = makePage()
   const { dialog: booking } = addBookingDialog(page)
   page.bookingButton.click = () => { page.bookingDialog.open = true }
   page.freeModalCta.click = () => {}
   const context = readyFreeContext(page)
-  const clock = virtualLongTimers(context)
   vm.createContext(context)
   vm.runInContext(source, context)
   await settle()
@@ -8156,14 +8005,12 @@ test('a second direct entry supersedes the first, which cannot unhide the choose
 
   click()
   await settle()
-  clock.advance(1000)
+  await wait(100)
   click()
   await settle()
 
   // Between the two caps. The chooser is still open, so it must still be hidden.
-  // The real wait lets the 50 ms release polls run against the advanced clock.
-  clock.advance(1500)
-  await wait(150)
+  await wait(1950)
   assert.equal(page.bookingDialog.open, true, 'the fixture keeps the chooser open throughout')
   assert.equal(
     page.bookingDialog.getAttribute(PASS_THROUGH),
@@ -8172,8 +8019,7 @@ test('a second direct entry supersedes the first, which cannot unhide the choose
   )
 
   // Past the owning entry's own cap: it, and only it, lets go.
-  clock.advance(600)
-  for (let i = 0; i < 50 && page.bookingDialog.hasAttribute(PASS_THROUGH); i += 1) await settle()
+  await wait(400)
   assert.equal(page.bookingDialog.getAttribute(PASS_THROUGH), null)
   assert.equal(booking.getAttribute('data-booking-entry'), 'direct')
 })
@@ -8192,7 +8038,6 @@ test('a throw mid-entry still gives the chooser back inside the failsafe', async
   }
   page.freeModalCta.click = () => {}
   const context = readyFreeContext(page)
-  const clock = virtualLongTimers(context)
   vm.createContext(context)
   vm.runInContext(source, context)
   await settle()
@@ -8204,8 +8049,7 @@ test('a throw mid-entry still gives the chooser back inside the failsafe', async
   )
   assert.equal(page.bookingDialog.getAttribute(PASS_THROUGH), '', 'hidden, and nothing ran after')
 
-  clock.advance(2300)
-  await wait(150)
+  await wait(2300)
   assert.equal(
     page.bookingDialog.getAttribute(PASS_THROUGH),
     null,
@@ -8385,681 +8229,6 @@ test('Book Call leaves the checking state when the booking controller never load
   assert.equal(button.getAttribute('aria-busy'), null)
   button.listeners.focusin.forEach(fn => fn({}))
   assert.equal(hint.textContent, 'This Starter isn’t accepting calls right now.')
-})
-
-/* F50 (JP meeting notes 2026-09-30): while /hire hydrates, Book Call, the call
-   cards and their areas read as LOADING, not as the disabled/unavailable look.
-   The real available or unavailable state follows once the page knows. */
-const F50_FREE_CFG = { config_id: 'cfg_free', is_paid: false, active: true, data_environment: 'production', price_cents: 0, duration: 30 }
-
-function f50BrandContext(page, wfx, extra = {}) {
-  return makeContext(Object.assign({
-    page,
-    record: { rate: 0, 'retainer-enabled': false },
-    member: BRAND_MEMBER,
-    getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_prod' }),
-    initBookingComponents: () => {},
-    paidController: { installPaidBookingController: () => true },
-    getConfigs: async () => [F50_FREE_CFG],
-    wfXano: wfx.api,
-  }, extra))
-}
-
-/**
- * Runs timers of 1 s or more on a virtual clock, so a test that checks one
- * moment between two caps does not depend on real sleeps landing on time.
- * Date.now() in the context moves with the clock; shorter timers stay real.
- */
-function virtualLongTimers(context) {
-  const RealDate = context.Date
-  const realSetTimeout = context.setTimeout
-  const realClearTimeout = context.clearTimeout
-  const pending = new Map()
-  let offset = 0
-  let nextId = 0
-  context.Date = class extends RealDate {
-    static now() {
-      return RealDate.now() + offset
-    }
-  }
-  context.setTimeout = (fn, ms, ...rest) => {
-    if (ms >= 1000) {
-      const id = `virtual-${nextId++}`
-      pending.set(id, { fn, rest, due: context.Date.now() + ms })
-      return id
-    }
-    return realSetTimeout(fn, ms, ...rest)
-  }
-  context.clearTimeout = (id) => {
-    if (typeof id === 'string' && id.startsWith('virtual-')) {
-      pending.delete(id)
-      return
-    }
-    realClearTimeout(id)
-  }
-  return {
-    advance(ms) {
-      offset += ms
-      const now = context.Date.now()
-      for (const [id, timer] of [...pending]) {
-        if (timer.due > now) continue
-        pending.delete(id)
-        timer.fn(...timer.rest)
-      }
-    },
-  }
-}
-
-/** Holds long timers (the discovery failsafe) so a test fires them itself. */
-function holdLongTimers(context) {
-  const held = []
-  const realSetTimeout = context.setTimeout
-  const realClearTimeout = context.clearTimeout
-  context.setTimeout = (fn, ms, ...rest) => {
-    if (ms >= 10000) {
-      held.push({ callback: fn, delay: ms })
-      return `held-${held.length - 1}`
-    }
-    return realSetTimeout(fn, ms, ...rest)
-  }
-  context.clearTimeout = (id) => {
-    if (typeof id === 'string' && id.startsWith('held-')) {
-      held[Number(id.slice(5))] = null
-      return
-    }
-    realClearTimeout(id)
-  }
-  return held
-}
-
-/**
- * Every route a click could take out of a loading call card is closed: no
- * direct booking listener on the card, nothing the modal or signup delegates
- * can match on it or its ancestors, and no document capture listener claims it.
- */
-function assertNoCallClickRoute(context, root, label = '') {
-  assert.deepEqual(root.listeners.click || [], [], label + 'no direct booking listener')
-  assert.equal(root.closest('[data-modal-trigger]'), null, label + 'the modal delegate cannot match')
-  assert.equal(root.closest('[booking-popup-open]'), null, label + 'no booking popup hook')
-  assert.equal(root.closest('[data-signup-trigger-element]'), null, label + 'the signup delegate cannot match')
-  const event = context.clickDocument(root)
-  assert.equal(event.defaultPrevented, false, label + 'no document listener claims the click')
-}
-
-function assertBookCallLoading(button, label = '') {
-  assert.equal(button.getAttribute('data-booking-trigger-loading'), '', label + 'loading marker')
-  assert.equal(button.getAttribute('data-booking-trigger-unavailable'), null, label + 'no unavailable look')
-  assert.equal(button.getAttribute('aria-busy'), 'true', label + 'busy')
-  // Loading is still fail-closed: nothing can open booking or signup.
-  assert.equal(button.getAttribute('aria-disabled'), 'true', label + 'still closed')
-  assert.equal(button.getAttribute('data-modal-trigger'), null, label + 'no modal hook')
-  assert.equal(button.getAttribute('data-signup-trigger-element'), null, label + 'no signup hook')
-}
-
-test('F50 Book Call reads as loading, not disabled, while discovery is pending', async () => {
-  const page = makePage()
-  let answer
-  const lookup = new Promise((resolve) => { answer = resolve })
-  const context = makeContext({ page, member: BRAND_MEMBER, record: { 'free-consulting-calls-t-f': true }, getStarterByMemberId: () => lookup, getConfigs: async () => [] })
-  vm.createContext(context)
-  vm.runInContext(source, context)
-  await settle()
-  const button = page.bookingButton
-  assertBookCallLoading(button)
-  answer(null)
-  await settle()
-  assert.equal(button.getAttribute('data-booking-trigger-loading'), null)
-  assert.equal(button.getAttribute('data-booking-trigger-unavailable'), '')
-  assert.equal(button.getAttribute('aria-busy'), null)
-  assert.equal(button.getAttribute('aria-disabled'), 'true')
-})
-
-test('F50 Book Call stays loading until the public call DTO answers after discovery', async () => {
-  const page = makePage()
-  const xano = addXanoCallCardsFixture(page)
-  const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
-  const installs = []
-  const context = f50BrandContext(page, wfx, { initBookingComponents: () => installs.push('free') })
-  const held = holdLongTimers(context)
-  vm.createContext(context)
-  vm.runInContext(source, context)
-  await settle()
-  const button = page.bookingButton
-  const hint = page.root.querySelector('[data-call-availability-hint]')
-  assert.deepEqual(installs, ['free'], 'discovery installed its controller before the DTO')
-  armedFailsafe(held)
-  assertBookCallLoading(button, 'between discovery and the DTO: ')
-  button.listeners.focusin.forEach(fn => fn({}))
-  assert.equal(hint.textContent, 'Checking this Starter’s call times…')
-  assert.doesNotMatch(hint.textContent, /isn’t accepting calls/)
-  wfx.emit(callCardResult({ free: true, paid: false }))
-  await settle()
-  assert.equal(button.getAttribute('aria-disabled'), null)
-  assert.equal(button.getAttribute('data-booking-trigger-loading'), null)
-  assert.equal(button.getAttribute('data-booking-trigger-unavailable'), null)
-  assert.equal(button.getAttribute('aria-busy'), null)
-  assert.equal(button.getAttribute('data-modal-trigger'), 'popup-booking-main')
-  assert.equal(xano.free.root.getAttribute('data-call-offer-state'), 'available')
-  assert.deepEqual(held.filter(Boolean), [], 'the DTO answer cancels the failsafe')
-})
-
-test('F50 the failsafe ends loading when the public call DTO never answers', async () => {
-  const page = makePage()
-  const { dialog: booking } = addBookingDialog(page)
-  const xano = addXanoCallCardsFixture(page)
-  const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
-  const clickOrder = []
-  page.bookingButton.click = () => {
-    clickOrder.push('shell')
-    page.bookingDialog.open = true
-  }
-  page.freeModalCta.click = () => {
-    clickOrder.push('free')
-    page.bookingDialog.open = false
-  }
-  const context = f50BrandContext(page, wfx, {
-    initBookingComponents: () => {
-      page.freeModalCta.setAttribute('data-free-call-v3', 'ready')
-    },
-  })
-  const held = holdLongTimers(context)
-  vm.createContext(context)
-  vm.runInContext(source, context)
-  await settle()
-  const button = page.bookingButton
-  const hint = page.root.querySelector('[data-call-availability-hint]')
-  assertBookCallLoading(button)
-  assert.equal(held.filter(Boolean).length, 1, 'one failsafe waits for the DTO')
-
-  const failsafe = held.find(Boolean)
-  assert.equal(failsafe.delay, 15000)
-  failsafe.callback()
-  await settle()
-  assert.equal(button.getAttribute('data-booking-trigger-loading'), null)
-  assert.equal(button.getAttribute('data-booking-trigger-unavailable'), '')
-  assert.equal(button.getAttribute('aria-busy'), null)
-  assert.equal(button.getAttribute('aria-disabled'), 'true')
-  assert.equal(hint.textContent, 'This Starter isn’t accepting calls right now.')
-
-  // A DTO that arrives after the failsafe still admits the installed type.
-  wfx.emit(callCardResult({ free: true, paid: false }))
-  await settle()
-  assert.equal(button.getAttribute('aria-disabled'), null)
-  assert.equal(button.getAttribute('data-booking-trigger-unavailable'), null)
-  assert.equal(xano.free.root.getAttribute('data-call-offer-state'), 'available')
-  assert.equal(xano.free.root.getAttribute('data-call-service-direct'), 'ready')
-
-  let stoppedImmediate = false
-  const event = {
-    preventDefault() {},
-    stopPropagation() {},
-    stopImmediatePropagation() { stoppedImmediate = true },
-  }
-  for (const listener of xano.free.root.listeners.click || []) {
-    listener(event)
-    if (stoppedImmediate) break
-  }
-  await wait(10)
-  await settle()
-  assert.deepEqual(clickOrder, ['shell', 'free'])
-  assert.equal(booking.getAttribute('data-booking-entry'), 'direct')
-})
-
-test('F50 an empty discovery ends loading at once, without waiting for the DTO', async () => {
-  const page = makePage()
-  const xano = addXanoCallCardsFixture(page)
-  const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
-  const context = f50BrandContext(page, wfx, { getStarterByMemberId: async () => null })
-  const held = holdLongTimers(context)
-  vm.createContext(context)
-  vm.runInContext(source, context)
-  assertBookCallLoading(page.bookingButton, 'at boot: ')
-  await settle()
-  assert.equal(page.bookingButton.getAttribute('data-booking-trigger-loading'), null)
-  assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), '')
-  assert.equal(page.bookingButton.getAttribute('aria-busy'), null)
-  assert.equal(held.filter(Boolean).length, 0, 'no failsafe remains: the empty answer is already final')
-})
-
-test('F50 Brand call cards stay loading until discovery settles public admission', async () => {
-  const page = makePage()
-  const xano = addXanoCallCardsFixture(page)
-  const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
-  let answer
-  const lookup = new Promise((resolve) => { answer = resolve })
-  const context = f50BrandContext(page, wfx, { getStarterByMemberId: () => lookup })
-  vm.createContext(context)
-  vm.runInContext(source, context)
-  wfx.emit(callCardResult({ free: true, paid: false }))
-  await settle()
-  assert.equal(xano.free.root.style.display, 'block')
-  assert.equal(xano.free.root.getAttribute('data-canonical-call-unavailable'), null)
-  assert.equal(xano.free.root.getAttribute('data-call-offer-state'), 'loading')
-  assert.equal(xano.free.root.getAttribute('aria-busy'), 'true')
-  assert.equal(xano.free.root.getAttribute('data-service-card-state'), 'Default')
-  assert.equal(xano.free.root.getAttribute('data-modal-trigger'), null)
-  assert.equal(xano.paid.root.style.display, 'block')
-  assert.equal(xano.paid.root.getAttribute('data-call-offer-state'), 'loading')
-  assert.equal(xano.paid.root.getAttribute('aria-busy'), 'true')
-  // A click while loading opens nothing: no route to booking or signup exists.
-  let opened = 0
-  page.freeModalCta.click = () => { opened += 1 }
-  page.bookingButton.click = () => { opened += 1 }
-  for (const card of [xano.free, xano.paid]) assertNoCallClickRoute(context, card.root)
-  await settle()
-  assert.equal(opened, 0)
-  answer({ nylas_grant_id: 'grant_prod' })
-  await settle()
-  assert.equal(xano.free.root.getAttribute('data-call-offer-state'), 'available')
-  assert.equal(xano.free.root.getAttribute('aria-busy'), null)
-  assert.equal(xano.free.root.style.display, 'block')
-  assert.equal(xano.paid.root.getAttribute('data-call-offer-state'), 'hidden')
-  assert.equal(xano.paid.root.getAttribute('aria-busy'), null)
-  assert.equal(xano.paid.root.style.display, 'none')
-})
-
-test('F50 loading Brand cards fail closed when discovery ends without an answer', async () => {
-  const page = makePage()
-  const xano = addXanoCallCardsFixture(page)
-  const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
-  let answer
-  const lookup = new Promise((resolve) => { answer = resolve })
-  const context = f50BrandContext(page, wfx, { getStarterByMemberId: () => lookup })
-  vm.createContext(context)
-  vm.runInContext(source, context)
-  wfx.emit(callCardResult({ free: true, paid: true }))
-  await settle()
-  assert.equal(xano.free.root.getAttribute('data-call-offer-state'), 'loading')
-  assert.equal(xano.paid.root.getAttribute('data-call-offer-state'), 'loading')
-  const navRefreshes = context.emptyNavRefreshCalls.length
-  answer(null)
-  await settle()
-  for (const card of [xano.free, xano.paid]) {
-    assert.equal(card.root.style.display, 'none')
-    assert.equal(card.root.getAttribute('aria-hidden'), 'true')
-    assert.equal(card.root.getAttribute('aria-busy'), null)
-    assert.equal(card.root.getAttribute('data-call-offer-state'), 'hidden')
-  }
-  assert.ok(context.emptyNavRefreshCalls.length > navRefreshes, 'the Services area is re-checked once its cards hide')
-  assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), '')
-  assert.equal(page.bookingButton.getAttribute('data-booking-trigger-loading'), null)
-})
-
-test('F50 rejected discovery records an empty result before a late public DTO', async () => {
-  const page = makePage()
-  const xano = addXanoCallCardsFixture(page)
-  const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
-  let rejectStarter
-  const lookup = new Promise((_resolve, reject) => { rejectStarter = reject })
-  lookup.catch(() => {})
-  const context = f50BrandContext(page, wfx, { getStarterByMemberId: () => lookup })
-  vm.createContext(context)
-  vm.runInContext(source, context)
-  await settle()
-  assertBookCallLoading(page.bookingButton)
-
-  const rejections = []
-  const runnerHandlers = process.listeners('unhandledRejection')
-  const capture = (reason) => rejections.push(reason)
-  process.removeAllListeners('unhandledRejection')
-  process.on('unhandledRejection', capture)
-  try {
-    rejectStarter(new Error('Controlled discovery failure'))
-    await settle()
-  } finally {
-    process.off('unhandledRejection', capture)
-    runnerHandlers.forEach((handler) => process.on('unhandledRejection', handler))
-  }
-  assert.deepEqual(rejections.map((reason) => reason && reason.message), ['Controlled discovery failure'])
-
-  const assertDiscoveryClosed = (label) => {
-    for (const card of [xano.free, xano.paid]) {
-      assert.equal(card.root.style.display, 'none', label + ': hidden')
-      assert.equal(card.root.getAttribute('aria-hidden'), 'true', label + ': inaccessible')
-      assert.equal(card.root.getAttribute('aria-busy'), null, label + ': settled')
-      assert.equal(card.root.getAttribute('data-call-offer-state'), 'hidden', label + ': terminal')
-    }
-    assert.equal(page.bookingButton.getAttribute('data-booking-trigger-loading'), null, label + ': loading ended')
-    assert.equal(page.bookingButton.getAttribute('data-booking-trigger-unavailable'), '', label + ': unavailable')
-  }
-
-  assertDiscoveryClosed('after rejection')
-  wfx.emit(callCardResult({ free: true, paid: false }))
-  await settle()
-  assertDiscoveryClosed('after late DTO')
-})
-
-test('F50 owner call cards read as loading, not Disabled, while settings load', async () => {
-  const page = makePage()
-  const xano = addXanoCallCardsFixture(page)
-  const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
-  const controller = ownerController()
-  let failFree
-  controller.authenticatedRequest = async (path) => {
-    if (path === OWNER_FREE_SETTINGS_PATH) return new Promise((_r, reject) => { failFree = reject })
-    return new Promise(() => {})
-  }
-  const context = ownerContext(page, controller, { wfXano: wfx.api })
-  vm.createContext(context)
-  vm.runInContext(source, context)
-  wfx.emit(callCardResult({ free: false, paid: false }))
-  await settle()
-  for (const card of [xano.free, xano.paid]) {
-    assert.equal(card.root.getAttribute('data-service-card-state'), 'Default')
-    assert.equal(card.root.getAttribute('data-call-offer-state'), 'settings-loading')
-    assert.equal(card.root.getAttribute('aria-busy'), 'true')
-    assert.equal(card.tooltip.style.display, 'none')
-  }
-  failFree(new Error('boom'))
-  await settle()
-  assert.equal(xano.free.root.getAttribute('data-service-card-state'), 'Disabled')
-  assert.equal(xano.free.root.getAttribute('data-call-offer-state'), 'settings-unavailable')
-  assert.equal(xano.free.root.getAttribute('aria-busy'), null)
-  assert.equal(xano.free.tooltipText.textContent, 'Call settings could not be loaded. Refresh or open Call Settings.')
-  assert.equal(xano.paid.root.getAttribute('data-call-offer-state'), 'settings-loading', 'the sibling keeps loading')
-})
-
-for (const grantFirst of [true, false]) {
-  test(`F50 legacy owner Header follows settings with ${grantFirst ? 'fast' : 'slow'} grant lookup`, async () => {
-    const page = makePage()
-    const legacyHeader = addLegacyHeaderCallCardsFixture(page)
-    // The published layout: the legacy Header beside the canonical Services wrapper.
-    addXanoCallCardsFixture(page)
-    for (const card of [legacyHeader.free, legacyHeader.paid]) {
-      card.root.setAttribute('booking-popup-open', '')
-      card.root.setAttribute('data-modal-trigger', 'popup-booking-main')
-      card.root.setAttribute('data-signup-trigger-element', 'service')
-      card.root.setAttribute(
-        'data-signup-trigger-value',
-        card === legacyHeader.paid ? 'Paid Consulting Call' : 'Free Call',
-      )
-    }
-    const controller = ownerController()
-    let resolveGrant
-    const heldGrant = new Promise(resolve => { resolveGrant = resolve })
-    controller.getStarterByMemberId = () => grantFirst
-      ? Promise.resolve({ nylas_grant_id: 'grant_owner' })
-      : heldGrant
-    const settingsResolvers = new Map()
-    controller.authenticatedRequest = (path) => new Promise((resolve) => {
-      settingsResolvers.set(path, resolve)
-    })
-    const context = ownerContext(page, controller)
-    vm.createContext(context)
-    vm.runInContext(source, context)
-    await settle()
-
-    for (const card of [legacyHeader.free, legacyHeader.paid]) {
-      assert.equal(card.root.style.display, 'block')
-      assert.equal(card.root.getAttribute('data-service-card-state'), 'Default')
-      assert.equal(card.root.getAttribute('data-call-offer-state'), 'settings-loading')
-      assert.equal(card.root.getAttribute('aria-busy'), 'true')
-      assert.equal(card.root.getAttribute('data-call-owner-preview'), '')
-      assert.equal(card.root.getAttribute('booking-popup-open'), null)
-      assert.equal(card.root.getAttribute('data-modal-trigger'), null)
-      assert.equal(card.root.getAttribute('data-signup-trigger-element'), null)
-      assert.equal(card.root.getAttribute('data-call-service-direct'), null)
-      assert.equal(card.tooltip.style.display, 'none')
-      assert.equal(card.tooltip.getAttribute('hidden'), 'hidden')
-      assert.equal(card.slot.textContent, '00:00pm on 00/00')
-    }
-
-    if (!grantFirst) {
-      const resolveFreeSettings = settingsResolvers.get(OWNER_FREE_SETTINGS_PATH)
-      const resolvePaidSettings = settingsResolvers.get(OWNER_PAID_SETTINGS_PATH)
-      assert.equal(typeof resolveFreeSettings, 'function')
-      assert.equal(typeof resolvePaidSettings, 'function')
-      resolveFreeSettings(ownerFreeSettings())
-      resolvePaidSettings(ownerPaidSettings())
-      await settle()
-
-      const assertLoaded = () => {
-        for (const [card, type] of [[legacyHeader.free, 'free'], [legacyHeader.paid, 'paid']]) {
-          assert.equal(card.root.style.display, 'block')
-          assert.equal(card.root.getAttribute('data-service-card-state'), 'Default')
-          assert.equal(card.root.getAttribute('data-call-offer-state'), 'available')
-          assert.equal(card.root.getAttribute('aria-busy'), null)
-          assert.equal(card.root.getAttribute('has-connection'), type)
-        }
-      }
-      assertLoaded()
-
-      resolveGrant({ nylas_grant_id: 'grant_owner' })
-      await settle()
-      assertLoaded()
-    }
-  })
-}
-
-test('F50 legacy Header enters loading synchronously while member identity is unresolved', async () => {
-  const page = makePage()
-  const legacyHeader = addLegacyHeaderCallCardsFixture(page)
-  // The published layout: the legacy Header beside the canonical Services wrapper.
-  addXanoCallCardsFixture(page)
-  const displayWrites = new Map()
-  for (const card of [legacyHeader.free, legacyHeader.paid]) {
-    card.root.setAttribute('booking-popup-open', '')
-    card.root.setAttribute('data-modal-trigger', 'popup-booking-main')
-    card.root.setAttribute('data-signup-trigger-element', 'service')
-    card.root.setAttribute(
-      'data-signup-trigger-value',
-      card === legacyHeader.paid ? 'Paid Consulting Call' : 'Free Call',
-    )
-    const writes = []
-    let display = card.root.style.display
-    Object.defineProperty(card.root.style, 'display', {
-      configurable: true,
-      get: () => display,
-      set: (value) => {
-        writes.push(value)
-        display = value
-      },
-    })
-    displayWrites.set(card.root, writes)
-  }
-  const memberReady = new Promise(() => {})
-  const context = makeContext({ page, memberReady })
-  context.waitForMember = (callback) => memberReady.then(() => callback(context.MEMBER))
-  vm.createContext(context)
-  vm.runInContext(source, context)
-
-  const assertLoading = () => {
-    for (const card of [legacyHeader.free, legacyHeader.paid]) {
-      assert.equal(card.root.style.display, 'block')
-      assert.equal(card.root.getAttribute('aria-hidden'), null)
-      assert.equal(card.root.getAttribute('data-canonical-call-unavailable'), null)
-      assert.equal(card.root.getAttribute('data-service-card-state'), 'Default')
-      assert.equal(card.root.getAttribute('data-call-offer-state'), 'loading')
-      assert.equal(card.root.getAttribute('aria-busy'), 'true')
-      assert.equal(card.root.getAttribute('booking-popup-open'), null)
-      assert.equal(card.root.getAttribute('data-modal-trigger'), null)
-      assert.equal(card.root.getAttribute('data-signup-trigger-element'), null)
-      assert.equal(card.root.getAttribute('data-call-service-direct'), null)
-      assert.deepEqual(card.root.listeners.click || [], [])
-      assert.equal(displayWrites.get(card.root).includes('none'), false)
-    }
-  }
-
-  assertLoading()
-  await settle()
-  assertLoading()
-})
-
-test('F50 canonical Header and Services enter loading before member identity resolves', async () => {
-  const page = makePage()
-  const header = addXanoCallCardsFixture(page, 'starter-call-offers-header')
-  header.wrapper.remove()
-  page.root.appendChild(header.wrapper)
-  const services = addXanoCallCardsFixture(page)
-  const displayWrites = new Map()
-
-  for (const [fixture, isServices] of [[header, false], [services, true]]) {
-    for (const card of [fixture.free, fixture.paid]) {
-      card.root.setAttribute('data-service-card', 'component')
-      card.root.setAttribute('has-connection', 'free')
-      if (isServices) card.root.setAttribute('data-type', 'free')
-      card.root.setAttribute('booking-popup-open', '')
-      card.root.setAttribute('data-modal-trigger', 'popup-booking-main')
-      card.root.setAttribute('data-signup-trigger-element', 'service')
-      card.root.setAttribute('data-signup-trigger-value', 'Free Call')
-      const writes = []
-      let display = card.root.style.display
-      Object.defineProperty(card.root.style, 'display', {
-        configurable: true,
-        get: () => display,
-        set: (value) => {
-          writes.push(value)
-          display = value
-        },
-      })
-      displayWrites.set(card.root, writes)
-    }
-  }
-
-  let opened = 0
-  page.bookingButton.click = () => { opened += 1 }
-  page.freeModalCta.click = () => { opened += 1 }
-  const memberReady = new Promise(() => {})
-  const context = makeContext({ page, memberReady })
-  context.waitForMember = (callback) => memberReady.then(() => callback(context.MEMBER))
-  vm.createContext(context)
-  vm.runInContext(source, context)
-
-  const cards = [header.free, header.paid, services.free, services.paid]
-  const assertLoading = () => {
-    for (const card of cards) {
-      assert.equal(card.root.style.display, 'block')
-      assert.equal(card.root.getAttribute('aria-hidden'), null)
-      assert.equal(card.root.getAttribute('data-canonical-call-unavailable'), null)
-      assert.equal(card.root.getAttribute('data-service-card-state'), 'Default')
-      assert.equal(card.root.getAttribute('data-call-offer-state'), 'loading')
-      assert.equal(card.root.getAttribute('aria-busy'), 'true')
-      assert.equal(card.root.getAttribute('has-connection'), null)
-      assert.equal(card.root.getAttribute('booking-popup-open'), null)
-      assert.equal(card.root.getAttribute('data-modal-trigger'), null)
-      assert.equal(card.root.getAttribute('data-signup-trigger-element'), null)
-      assert.equal(card.root.getAttribute('data-call-service-direct'), null)
-      assert.deepEqual(card.root.listeners.click || [], [])
-      assert.equal(displayWrites.get(card.root).includes('none'), false)
-    }
-  }
-
-  assertLoading()
-  for (const card of cards) assertNoCallClickRoute(context, card.root)
-  assert.equal(opened, 0)
-  await settle()
-  assertLoading()
-})
-
-test('F50 an unadapted canonical sibling stays loading after partial admission', async () => {
-  const page = makePage()
-  const header = addXanoCallCardsFixture(page, 'starter-call-offers-header')
-  header.wrapper.remove()
-  page.root.appendChild(header.wrapper)
-  const services = addXanoCallCardsFixture(page)
-  for (const card of [services.free, services.paid]) {
-    card.root.setAttribute('data-service-card', 'component')
-    card.root.setAttribute('has-connection', 'free')
-    card.root.setAttribute('data-type', 'free')
-    card.root.setAttribute('booking-popup-open', '')
-    card.root.setAttribute('data-modal-trigger', 'popup-booking-main')
-  }
-  const wfx = makeCallCardsWfXanoFixture(header.wrapper, 'starter-call-offers-header')
-  const context = f50BrandContext(page, wfx)
-  vm.createContext(context)
-  vm.runInContext(source, context)
-  await settle()
-
-  for (const card of [services.free, services.paid]) {
-    assert.equal(card.root.getAttribute('data-call-offer-state'), 'loading')
-    assert.equal(card.root.getAttribute('aria-busy'), 'true')
-  }
-
-  wfx.emit(callCardResult({ free: true, paid: false }))
-  await settle()
-  assert.equal(header.free.root.getAttribute('data-call-offer-state'), 'available')
-  assert.equal(header.paid.root.getAttribute('data-call-offer-state'), 'hidden')
-  for (const card of [services.free, services.paid]) {
-    assert.equal(card.root.style.display, 'block')
-    assert.equal(card.root.getAttribute('aria-hidden'), null)
-    assert.equal(card.root.getAttribute('data-call-offer-state'), 'loading')
-    assert.equal(card.root.getAttribute('aria-busy'), 'true')
-    assert.equal(card.root.getAttribute('has-connection'), null)
-    assert.equal(card.root.getAttribute('data-call-service-direct'), null)
-    assert.deepEqual(card.root.listeners.click || [], [])
-  }
-})
-
-test('F50 ready legacy owner Header click reaches the owner explanation', async () => {
-  const page = makePage()
-  const legacyHeader = addLegacyHeaderCallCardsFixture(page)
-  // The published layout: the legacy Header beside the canonical Services wrapper.
-  addXanoCallCardsFixture(page)
-  for (const card of [legacyHeader.free, legacyHeader.paid]) {
-    card.root.setAttribute('booking-popup-open', '')
-    card.root.setAttribute('data-modal-trigger', 'popup-booking-main')
-    card.root.setAttribute('data-signup-trigger-element', 'service')
-    card.root.setAttribute(
-      'data-signup-trigger-value',
-      card === legacyHeader.paid ? 'Paid Consulting Call' : 'Free Call',
-    )
-  }
-  const context = ownerContext(page, ownerController())
-  vm.createContext(context)
-  vm.runInContext(source, context)
-  await settle()
-
-  const card = legacyHeader.free.root
-  assert.equal(card.getAttribute('data-call-offer-state'), 'available')
-  assert.equal(card.getAttribute('data-owner-preview-action'), 'call')
-  const hint = page.root.querySelector('#' + card.getAttribute('aria-describedby'))
-  assert.ok(hint)
-  assert.equal(hint.getAttribute('data-owner-preview-hint'), '')
-  assert.equal(hint.style.display, 'none')
-
-  let stoppedImmediate = false
-  const event = {
-    preventDefault() {},
-    stopPropagation() {},
-    stopImmediatePropagation() { stoppedImmediate = true },
-  }
-  for (const listener of card.listeners.click || []) {
-    listener(event)
-    if (stoppedImmediate) break
-  }
-  assert.equal(hint.style.display, 'block')
-})
-
-test('F50 a logged-out Book Call goes from loading to signup-only', async () => {
-  const page = makePage()
-  const context = makeContext({ page, member: {}, record: { 'free-consulting-calls-t-f': true } })
-  vm.createContext(context)
-  vm.runInContext(source, context)
-  assertBookCallLoading(page.bookingButton, 'at boot: ')
-  await settle()
-  const button = page.bookingButton
-  assert.equal(button.getAttribute('data-booking-trigger-loading'), null)
-  assert.equal(button.getAttribute('data-booking-trigger-unavailable'), null)
-  assert.equal(button.getAttribute('aria-busy'), null)
-  assert.equal(button.getAttribute('aria-disabled'), null)
-  assert.equal(button.getAttribute('data-signup-trigger-element'), 'book-call')
-  assert.equal(button.getAttribute('data-modal-trigger'), null)
-})
-
-test('F50 the owner Book Call goes from loading to the preview hint', async () => {
-  const page = makePage()
-  const context = ownerContext(page, ownerController())
-  vm.createContext(context)
-  vm.runInContext(source, context)
-  assertBookCallLoading(page.bookingButton, 'at boot: ')
-  await settle()
-  const button = page.bookingButton
-  const hint = page.root.querySelector('[data-call-availability-hint]')
-  assert.equal(button.getAttribute('data-booking-trigger-loading'), null)
-  assert.equal(button.getAttribute('data-booking-trigger-unavailable'), '')
-  assert.equal(button.getAttribute('aria-busy'), null)
-  assert.equal(button.getAttribute('aria-disabled'), 'true')
-  assert.match(hint.textContent, /Clients use this button to book a call with you/)
 })
 
 test('owner Book Call explanation links to existing call settings', async () => {
@@ -9744,1109 +8913,56 @@ test('non-owner talent has no Brand tooltip, signup route, or booking action', a
   assert.equal(context.bookingCalls.length, 0)
 })
 
-/* F50 review follow-ups: every managed call card reaches a terminal state, and
-   the terminal state never keeps the loading marker. */
-
-/** Canonical Header and Services clones that exist before this file boots. */
-function f50LibraryFirstCallCards(page) {
-  const header = addXanoCallCardsFixture(page, 'starter-call-offers-header')
-  header.wrapper.remove()
-  page.root.appendChild(header.wrapper)
-  const services = addXanoCallCardsFixture(page)
-  for (const [fixture, isServices] of [[header, false], [services, true]]) {
-    for (const card of [fixture.free, fixture.paid]) {
-      card.root.setAttribute('data-service-card', 'component')
-      card.root.setAttribute('has-connection', 'free')
-      if (isServices) card.root.setAttribute('data-type', 'free')
-      card.root.setAttribute('booking-popup-open', '')
-      card.root.setAttribute('data-modal-trigger', 'popup-booking-main')
-    }
-  }
-  const headerFeed = makeCallCardsWfXanoFixture(header.wrapper, 'starter-call-offers-header')
-  const servicesFeed = makeCallCardsWfXanoFixture(services.wrapper)
-  const api = {
-    push(callback) {
-      callback({
-        get: (key) => key === 'starter-call-offers-header'
-          ? headerFeed.instance
-          : key === 'starter-call-offers-services' ? servicesFeed.instance : null,
-      })
-    },
-  }
-  return {
-    header,
-    services,
-    api,
-    headerFeed,
-    cards: [header.free, header.paid, services.free, services.paid],
-  }
-}
-
-/** A member whose identity resolves only when the test says so. */
-function f50HeldIdentity(context, member) {
-  let release
-  const ready = new Promise((resolve) => { release = resolve })
-  // The published site head keeps MEMBER null until Memberstack answers.
-  context.MEMBER = null
-  context.memberReady = ready
-  context.waitForMember = (callback) => ready.then(() => callback(member))
-  return () => {
-    context.MEMBER = member
-    release(member)
-  }
-}
-
-function assertF50Loading(cards, label) {
-  assert.ok(cards.length > 0, label + ': cards exist')
-  for (const card of cards) {
-    assert.equal(card.root.style.display, 'block', label + ': shown')
-    assert.equal(card.root.getAttribute('aria-hidden'), null, label + ': accessible')
-    assert.equal(card.root.getAttribute('data-call-offer-state'), 'loading', label + ': loading')
-    assert.equal(card.root.getAttribute('aria-busy'), 'true', label + ': busy')
-    assert.equal(card.root.getAttribute('data-modal-trigger'), null, label + ': no modal hook')
-    assert.equal(card.root.getAttribute('booking-popup-open'), null, label + ': no booking hook')
-    assert.equal(card.root.getAttribute('data-signup-trigger-element'), null, label + ': no signup hook')
-  }
-}
-
-for (const [label, memberName] of [['signed-out', 'none'], ['paywalled', 'free-brand'], ['talent', 'talent']]) {
-  for (const dtoFirst of [true, false]) {
-    test(`F50 ${label} canonical cards drop aria-busy when the DTO settles them (${dtoFirst ? 'DTO first' : 'identity first'})`, async () => {
-      const member = memberName === 'none' ? {} : memberName === 'talent' ? OTHER_TALENT_MEMBER : FREE_BRAND_MEMBER
-      const page = makePage()
-      const fixture = f50LibraryFirstCallCards(page)
-      const context = makeContext({ page, member, wfXano: fixture.api })
-      const releaseIdentity = f50HeldIdentity(context, member)
-      vm.createContext(context)
-      vm.runInContext(source, context)
-      assertF50Loading(fixture.cards, 'at boot')
-      if (dtoFirst) {
-        fixture.headerFeed.emit(callCardResult({ free: true, paid: false }))
-        await settle()
-        assertF50Loading(fixture.cards, 'DTO known, identity unresolved')
-        releaseIdentity()
-      } else {
-        releaseIdentity()
-        await settle()
-        assertF50Loading(fixture.cards, 'identity known, DTO unresolved')
-        fixture.headerFeed.emit(callCardResult({ free: true, paid: false }))
-      }
-      await settle()
-      assert.equal(fixture.cards.length, 4)
-      for (const card of fixture.cards) {
-        const type = card.root.getAttribute('data-type')
-        assert.ok(type === 'free' || type === 'paid', 'every clone is adapted')
-        const offered = memberName !== 'talent' && type === 'free'
-        assert.equal(card.root.getAttribute('data-call-offer-state'), offered ? 'available' : 'hidden')
-        assert.equal(card.root.style.display, offered ? 'block' : 'none')
-        assert.equal(card.root.getAttribute('aria-busy'), null, `${type}: a settled card is not busy`)
-      }
-    })
-  }
-}
-
-/**
- * Page-first order: this file boots while each canonical wrapper still holds
- * only its template, then wf-xano clones that template. The clone inherits the
- * bootstrap fail-closed hide from its template, exactly as cloneNode does.
- */
-function f50PageFirstCallWrappers(page) {
-  const header = addXanoCallCardsFixture(page, 'starter-call-offers-header')
-  header.wrapper.remove()
-  page.root.appendChild(header.wrapper)
-  const services = addXanoCallCardsFixture(page)
-  for (const [fixture, isServices] of [[header, false], [services, true]]) {
-    for (const card of [fixture.free, fixture.paid]) card.root.remove()
-    fixture.template.setAttribute('has-connection', 'free')
-    if (isServices) fixture.template.setAttribute('data-type', 'free')
-    fixture.template.setAttribute('booking-popup-open', '')
-    fixture.template.setAttribute('data-modal-trigger', 'popup-booking-main')
-    fixture.template.setAttribute('data-signup-trigger-element', 'service')
-    fixture.template.setAttribute('data-signup-trigger-value', 'Free Call')
-  }
-  const headerFeed = makeCallCardsWfXanoFixture(header.wrapper, 'starter-call-offers-header')
-  const servicesFeed = makeCallCardsWfXanoFixture(services.wrapper)
-  const api = {
-    push(callback) {
-      callback({
-        get: (key) => key === 'starter-call-offers-header'
-          ? headerFeed.instance
-          : key === 'starter-call-offers-services' ? servicesFeed.instance : null,
-      })
-    },
-  }
-  function render(context) {
-    const clones = []
-    for (const fixture of [header, services]) {
-      for (const id of ['424:call:free', '424:call:paid']) {
-        const clone = fixture.template.cloneNode(true)
-        clone.removeAttribute('wf-xano-element')
-        clone.setAttribute('wf-xano-item', '')
-        clone.setAttribute('data-wf-xano-id', id)
-        clone.style.display = ''
-        fixture.wrapper.appendChild(clone)
-        clones.push({ root: clone })
-      }
-    }
-    const records = clones.map((clone) => ({ type: 'childList', addedNodes: [clone.root] }))
-    context.mutationObserverCallbacks.forEach((callback) => callback(records))
-    return clones
-  }
-  return {
-    header,
-    services,
-    api,
-    render,
-    // Each wrapper announces its own result, as both wf-xano instances do.
-    emit(result) {
-      headerFeed.emit(result)
-      servicesFeed.emit(result)
-    },
-  }
-}
-
-for (const viewer of ['signed-out', 'brand', 'owner']) {
-  test(`F50 canonical clones rendered after bootstrap enter loading while ${viewer} identity is unresolved`, async () => {
-    const page = makePage()
-    const fixture = f50PageFirstCallWrappers(page)
-    const member = viewer === 'brand' ? BRAND_MEMBER : viewer === 'owner' ? OWNER_MEMBER : {}
-    const context = viewer === 'brand'
-      ? f50BrandContext(page, { api: fixture.api })
-      : viewer === 'owner'
-        ? ownerContext(page, ownerController(), { wfXano: fixture.api })
-        : makeContext({ page, member, wfXano: fixture.api })
-    const releaseIdentity = f50HeldIdentity(context, member)
-    vm.createContext(context)
-    vm.runInContext(source, context)
-    await settle()
-    assert.equal(fixture.header.template.getAttribute('data-canonical-call-unavailable'), '',
-      'the template carries the bootstrap hide its clones inherit')
-
-    const clones = fixture.render(context)
-    assert.equal(clones.length, 4)
-    // No click route may open while the viewer is unknown.
-    assertF50Loading(clones, 'late clone, identity unresolved')
-    for (const clone of clones) {
-      assert.deepEqual(clone.root.listeners.click || [], [], 'no direct booking route')
-      assert.equal(clone.root.getAttribute('data-canonical-call-unavailable'), null)
-    }
-
-    fixture.emit(callCardResult({ free: true, paid: false }))
-    await settle()
-    assertF50Loading(clones, 'DTO known, identity unresolved')
-    releaseIdentity()
-    await settle()
-    for (const clone of clones) {
-      const type = clone.root.getAttribute('data-type')
-      assert.ok(type === 'free' || type === 'paid', 'every late clone is adapted')
-      const expected = viewer === 'owner' ? 'available' : type === 'free' ? 'available' : 'hidden'
-      assert.equal(clone.root.getAttribute('data-call-offer-state'), expected, `${viewer} ${type}`)
-      assert.equal(clone.root.getAttribute('aria-busy'), null, `${viewer} ${type}: settled`)
-    }
-  })
-}
-
-/** The published layout: the legacy Header touts plus the canonical Services wrapper. */
-function f50LegacyHeaderPage() {
+test('does not inject the starter claim controller without a claim wrapper', async () => {
   const page = makePage()
-  const legacyHeader = addLegacyHeaderCallCardsFixture(page)
-  for (const card of [legacyHeader.free, legacyHeader.paid]) {
-    card.root.setAttribute('booking-popup-open', '')
-    card.root.setAttribute('data-modal-trigger', 'popup-booking-main')
-    card.root.setAttribute('data-signup-trigger-element', 'service')
-    card.root.setAttribute(
-      'data-signup-trigger-value',
-      card === legacyHeader.paid ? 'Paid Consulting Call' : 'Free Call',
-    )
-  }
-  const services = addXanoCallCardsFixture(page)
-  const feed = makeCallCardsWfXanoFixture(services.wrapper)
-  return { page, legacyHeader, services, feed, legacyCards: [legacyHeader.free, legacyHeader.paid] }
-}
-
-function recordDisplayWrites(card) {
-  const writes = []
-  let display = card.root.style.display
-  Object.defineProperty(card.root.style, 'display', {
-    configurable: true,
-    get: () => display,
-    set: (value) => {
-      writes.push(value)
-      display = value
-    },
-  })
-  return writes
-}
-
-for (const viewer of ['signed-out', 'paywalled', 'talent']) {
-  test(`F50 ${viewer} legacy Header holds loading until its terminal writer, identity first`, async () => {
-    const fixture = f50LegacyHeaderPage()
-    const member = viewer === 'paywalled' ? FREE_BRAND_MEMBER : viewer === 'talent' ? OTHER_TALENT_MEMBER : {}
-    const freeWrites = recordDisplayWrites(fixture.legacyHeader.free)
-    const context = makeContext({ page: fixture.page, member, wfXano: fixture.feed.api })
-    vm.createContext(context)
-    vm.runInContext(source, context)
-    assertF50Loading(fixture.legacyCards, 'at boot')
-    await settle()
-    if (viewer === 'talent') {
-      // Talent never sees a call card, so identity alone is terminal.
-      for (const card of fixture.legacyCards) {
-        assert.equal(card.root.style.display, 'none')
-        assert.equal(card.root.getAttribute('aria-hidden'), 'true')
-        assert.equal(card.root.getAttribute('data-call-offer-state'), 'hidden')
-        assert.equal(card.root.getAttribute('aria-busy'), null)
-      }
-      return
-    }
-    // The public DTO decides these cards; identity alone is not an answer.
-    assertF50Loading(fixture.legacyCards, 'identity known, DTO unresolved')
-    fixture.feed.emit(callCardResult({ free: true, paid: false }))
-    await settle()
-    const [free, paid] = fixture.legacyCards
-    assert.equal(free.root.getAttribute('data-call-offer-state'), 'available')
-    assert.equal(free.root.style.display, 'block')
-    assert.equal(free.root.getAttribute('aria-busy'), null)
-    assert.equal(free.root.getAttribute('data-signup-trigger-element'), 'service')
-    assert.equal(paid.root.getAttribute('data-call-offer-state'), 'hidden')
-    assert.equal(paid.root.style.display, 'none')
-    assert.equal(paid.root.getAttribute('aria-busy'), null)
-    assert.equal(freeWrites.includes('none'), false, 'the offered card never flashes hidden')
-  })
-}
-
-for (const viewer of ['signed-out', 'paywalled']) {
-  test(`F50 ${viewer} legacy Header touts rendered after identity load until the DTO`, async () => {
-    const fixture = f50LegacyHeaderPage()
-    const member = viewer === 'paywalled' ? FREE_BRAND_MEMBER : {}
-    for (const card of fixture.legacyCards) card.root.remove()
-    const context = makeContext({ page: fixture.page, member, wfXano: fixture.feed.api })
-    vm.createContext(context)
-    vm.runInContext(source, context)
-    await settle()
-    for (const card of fixture.legacyCards) fixture.legacyHeader.wrapper.appendChild(card.root)
-    const records = fixture.legacyCards.map((card) => ({ type: 'childList', addedNodes: [card.root] }))
-    context.mutationObserverCallbacks.forEach((callback) => callback(records))
-    assertF50Loading(fixture.legacyCards, 'late legacy touts')
-    for (const card of fixture.legacyCards) {
-      assert.deepEqual(card.root.listeners.click || [], [], 'no direct booking route')
-    }
-    fixture.feed.emit(callCardResult({ free: true, paid: false }))
-    await settle()
-    const [free, paid] = fixture.legacyCards
-    assert.equal(free.root.getAttribute('data-call-offer-state'), 'available')
-    assert.equal(free.root.getAttribute('aria-busy'), null)
-    assert.equal(paid.root.getAttribute('data-call-offer-state'), 'hidden')
-    assert.equal(paid.root.getAttribute('aria-busy'), null)
-  })
-}
-
-for (const viewer of ['signed-out', 'paywalled']) {
-  test(`F50 legacy Header without a canonical wrapper keeps the Algolia reveal for ${viewer} viewers`, async () => {
-    // No canonical call wrapper means no public call DTO will ever answer, so
-    // the legacy touts keep their pre-F50 owner: the public Algolia record.
-    const page = makePage()
-    const legacyHeader = addLegacyHeaderCallCardsFixture(page)
-    const member = viewer === 'paywalled' ? FREE_BRAND_MEMBER : {}
-    const context = makeContext({
-      page,
-      member,
-      record: { 'free-consulting-calls-t-f': true, 'paid-consulting-calls-t-f': false },
-    })
-    vm.createContext(context)
-    vm.runInContext(source, context)
-    await settle()
-    const cards = [legacyHeader.free, legacyHeader.paid]
-    assert.equal(cards.length, 2)
-    for (const card of cards) {
-      assert.notEqual(card.root.getAttribute('data-call-offer-state'), 'loading', 'no DTO can end loading here')
-      assert.equal(card.root.getAttribute('aria-busy'), null)
-    }
-    assert.equal(legacyHeader.free.root.style.display, 'block')
-    assert.equal(legacyHeader.free.root.getAttribute('aria-hidden'), null)
-    assert.equal(legacyHeader.paid.root.style.display, 'none')
-    assert.equal(legacyHeader.paid.root.getAttribute('aria-hidden'), 'true')
-  })
-}
-
-/* F50: one bounded failsafe for every viewer. Identity, discovery or the public
-   call DTO that never answers cannot hold the loading state open. */
-
-function armedFailsafe(held) {
-  const armed = held.filter(Boolean)
-  assert.equal(armed.length, 1, 'exactly one failsafe is armed')
-  assert.equal(armed[0].delay, 15000)
-  return armed[0]
-}
-
-function assertF50FailedClosed(cards, label) {
-  assert.ok(cards.length > 0, label + ': cards exist')
-  for (const card of cards) {
-    assert.equal(card.root.style.display, 'none', label + ': hidden')
-    assert.equal(card.root.getAttribute('aria-hidden'), 'true', label + ': inaccessible')
-    assert.equal(card.root.getAttribute('aria-busy'), null, label + ': not busy')
-    assert.equal(card.root.getAttribute('data-call-offer-state'), 'hidden', label + ': terminal')
-  }
-}
-
-for (const viewer of ['signed-out', 'talent', 'owner', 'owner with a failed read']) {
-  test(`F50 pre-adapter clones fail closed for ${viewer} when the call DTO never answers`, async () => {
-    const page = makePage()
-    const fixture = f50LibraryFirstCallCards(page)
-    let api = fixture.api
-    if (viewer === 'owner with a failed read') {
-      const failed = makeCallCardsWfXanoFixture(fixture.header.wrapper, 'starter-call-offers-header', { initialError: true })
-      api = failed.api
-    } else {
-      // Instances exist but never announce a result.
-    }
-    const member = viewer === 'talent' ? OTHER_TALENT_MEMBER : viewer.startsWith('owner') ? OWNER_MEMBER : {}
-    const context = viewer.startsWith('owner')
-      ? ownerContext(page, ownerController(), { wfXano: api })
-      : makeContext({ page, member, wfXano: api })
-    const held = holdLongTimers(context)
-    vm.createContext(context)
-    vm.runInContext(source, context)
-    await settle()
-    assertF50Loading(fixture.cards, 'identity known, DTO unresolved')
-    armedFailsafe(held).callback()
-    await settle()
-    assertF50FailedClosed(fixture.cards, 'after the failsafe')
-    if (viewer !== 'signed-out') return
-    // A DTO that arrives after the failsafe still reaches its normal writer.
-    fixture.headerFeed.emit(callCardResult({ free: true, paid: false }))
-    await settle()
-    for (const card of fixture.cards) {
-      const offered = card.root.getAttribute('data-type') === 'free'
-      assert.equal(card.root.getAttribute('data-call-offer-state'), offered ? 'available' : 'hidden')
-      assert.equal(card.root.style.display, offered ? 'block' : 'none')
-    }
-  })
-}
-
-test('F50 signed-out legacy Header fails closed when the call DTO never answers', async () => {
-  const fixture = f50LegacyHeaderPage()
-  const context = makeContext({ page: fixture.page, member: {}, wfXano: fixture.feed.api })
-  const held = holdLongTimers(context)
+  const context = paywalledContext(page, BRAND_MEMBER)
   vm.createContext(context)
   vm.runInContext(source, context)
   await settle()
-  const cards = fixture.legacyCards.concat([fixture.services.free, fixture.services.paid])
-  assertF50Loading(cards, 'DTO unresolved')
-  armedFailsafe(held).callback()
-  await settle()
-  assertF50FailedClosed(cards, 'after the failsafe')
 
-  // A legacy tout rendered after the failsafe fails closed too.
-  const late = fixture.legacyHeader.free.root.cloneNode()
-  for (const name of ['data-call-offer-state', 'aria-busy', 'data-canonical-public-call']) late.removeAttribute(name)
-  late.setAttribute('data-modal-trigger', 'popup-booking-main')
-  fixture.legacyHeader.wrapper.appendChild(late)
-  context.mutationObserverCallbacks.forEach((callback) => callback([{ type: 'childList', addedNodes: [late] }]))
-  assertF50FailedClosed([{ root: late }], 'late tout after the failsafe')
-  assert.equal(late.getAttribute('data-modal-trigger'), null)
-
-  fixture.feed.emit(callCardResult({ free: true, paid: false }))
-  await settle()
-  assert.equal(fixture.legacyHeader.free.root.getAttribute('data-call-offer-state'), 'available')
-  assert.equal(fixture.legacyHeader.free.root.style.display, 'block')
-  assert.equal(fixture.legacyHeader.paid.root.getAttribute('data-call-offer-state'), 'hidden')
+  const claimScripts = context.document.head.querySelectorAll('script[src]').filter((script) =>
+    String(script.getAttribute('src') || '').endsWith('/v3/starter-profile-claim.js'),
+  )
+  assert.equal(claimScripts.length, 0)
 })
 
-for (const stalled of ['identity', 'discovery']) {
-  test(`F50 the failsafe bounds a stalled ${stalled} for a Brand, and a later answer still opens`, async () => {
-    const page = makePage()
-    const xano = addXanoCallCardsFixture(page)
-    const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
-    let answerDiscovery
-    const discovery = new Promise((resolve) => { answerDiscovery = resolve })
-    const context = f50BrandContext(page, wfx, stalled === 'discovery'
-      ? { getStarterByMemberId: () => discovery }
-      : {})
-    const releaseIdentity = stalled === 'identity' ? f50HeldIdentity(context, BRAND_MEMBER) : null
-    const held = holdLongTimers(context)
-    vm.createContext(context)
-    vm.runInContext(source, context)
-    wfx.emit(callCardResult({ free: true, paid: false }))
-    await settle()
-    assertBookCallLoading(page.bookingButton, 'stalled: ')
-    assertF50Loading([xano.free, xano.paid], 'stalled')
-
-    armedFailsafe(held).callback()
-    await settle()
-    const button = page.bookingButton
-    assert.equal(button.getAttribute('data-booking-trigger-loading'), null)
-    assert.equal(button.getAttribute('aria-busy'), null)
-    assert.equal(button.getAttribute('data-booking-trigger-unavailable'), '')
-    assert.equal(button.getAttribute('aria-disabled'), 'true', 'the failsafe stays closed')
-    assertF50FailedClosed([xano.free, xano.paid], 'after the failsafe')
-
-    if (releaseIdentity) releaseIdentity()
-    else answerDiscovery({ nylas_grant_id: 'grant_prod' })
-    await settle()
-    assert.equal(button.getAttribute('aria-disabled'), null, 'the late answer opens Book Call')
-    assert.equal(button.getAttribute('data-modal-trigger'), 'popup-booking-main')
-    assert.equal(xano.free.root.getAttribute('data-call-offer-state'), 'available')
-    assert.equal(xano.free.root.style.display, 'block')
-    assert.equal(xano.paid.root.getAttribute('data-call-offer-state'), 'hidden')
-  })
-}
-
-for (const profileType of ['Consult', 'Full']) {
-  test(`F50 loading Header call touts never push a rate tout out of the Header cap (${profileType})`, async () => {
-    // Pre-adapter Header clones carry no call type yet. Their loading
-    // placeholders may use spare capacity but must rank after Hourly and
-    // Retainer, so rate touts that already rendered stay put.
-    const f = makeHeaderToutCapacityFixture({ profileType })
-    f.rate('hourly'); f.rate('retainer')
-    await settle()
-    // The rate wrapper is the tracked Header tout node.
-    const retainer = f.rates.roots[1]
-    assert.ok(retainer.querySelector('[wf-xano-item]'), 'the Retainer tout rendered')
-    assert.equal(f.header.free.root.getAttribute('data-call-offer-state'), 'loading')
-    assert.equal(f.header.free.root.getAttribute('data-type'), null, 'the call type is still unknown')
-    assert.equal(retainer.getAttribute('data-header-tout-excluded'), null, 'Retainer keeps its slot')
-    assert.deepEqual(f.offers(), ['hourly', 'retainer', 'free'], 'one loading call tout fills the spare slot')
-    assert.equal(f.header.paid.root.getAttribute('data-header-tout-excluded'), 'capacity')
-    f.headerFeed.emit(callCardResult()); f.servicesFeed.emit(callCardResult())
-    await settle()
-    assert.deepEqual(f.offers(), ['hourly', 'retainer', 'free'])
-    assert.equal(retainer.getAttribute('data-header-tout-excluded'), null)
-  })
-}
-
-for (const viewer of ['signed-out', 'owner']) {
-  test(`F50 CMS Services call duplicates never flash beside the canonical Services wrapper (${viewer})`, async () => {
-    // The CMS call cards are rollback markup for the canonical Services
-    // clones. Algolia or the owner grant usually answers before the call DTO;
-    // neither may reveal a duplicate that the DTO then hides again.
-    const page = makePage()
-    const cms = page.servicesList.children[0]
-    assert.equal(cms.getAttribute('data-service-card'), 'component')
-    assert.equal(cms.getAttribute('has-connection'), 'free')
-    const services = addXanoCallCardsFixture(page)
-    const feed = makeCallCardsWfXanoFixture(services.wrapper)
-    const writes = recordDisplayWrites({ root: cms })
-    const context = viewer === 'owner'
-      ? ownerContext(page, ownerController(), { wfXano: feed.api })
-      : makeContext({
-        page,
-        member: {},
-        wfXano: feed.api,
-        record: { 'free-consulting-calls-t-f': true, 'paid-consulting-calls-t-f': true },
-      })
-    vm.createContext(context)
-    vm.runInContext(source, context)
-    await settle()
-    assert.equal(cms.style.display, 'none', 'hidden before the DTO')
-    assert.equal(cms.getAttribute('data-call-offer-superseded'), '')
-    feed.emit(callCardResult({ free: true, paid: false }))
-    await settle()
-    assert.equal(cms.style.display, 'none', 'hidden after the DTO')
-    assert.equal(writes.includes('block'), false, 'the rollback duplicate never shows')
-    assert.equal(services.free.root.getAttribute('data-call-offer-state'), 'available')
-  })
-}
-
-test('F50 a clone the DTO released stays hidden through an unrelated mutation', async () => {
-  // The DTO has no item for the paid clone, so the adapter releases and hides
-  // it while Brand discovery is still pending. A later, unrelated childList
-  // mutation must not re-admit that released clone into the loading state.
+test('injects the starter claim controller once when a claim wrapper exists', async () => {
   const page = makePage()
-  const xano = addXanoCallCardsFixture(page)
-  const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
-  let answerDiscovery
-  const discovery = new Promise((resolve) => { answerDiscovery = resolve })
-  const context = f50BrandContext(page, wfx, { getStarterByMemberId: () => discovery })
-  holdLongTimers(context)
+  page.root.appendChild(makeElement('div', { 'data-starter-claim': 'wrapper' }))
+  const context = paywalledContext(page, BRAND_MEMBER)
   vm.createContext(context)
   vm.runInContext(source, context)
   await settle()
-  const full = callCardResult()
-  wfx.emit({ items: full.items.filter((item) => item.type === 'free') })
-  await settle()
-  const paid = xano.paid.root
-  const assertReleased = (label) => {
-    assert.equal(paid.style.display, 'none', label + ': hidden')
-    assert.equal(paid.getAttribute('aria-hidden'), 'true', label + ': inaccessible')
-    assert.equal(paid.getAttribute('data-call-offer-state'), null, label + ': not loading')
-    assert.equal(paid.getAttribute('aria-busy'), null, label + ': not busy')
-  }
-  assertReleased('after the DTO')
-  assertF50Loading([xano.free], 'the offered clone still waits for discovery')
 
-  const unrelated = makeElement('div')
-  page.root.appendChild(unrelated)
-  context.mutationObserverCallbacks.forEach((callback) => callback([{ type: 'childList', addedNodes: [unrelated] }]))
-  await settle()
-  assertReleased('after an unrelated mutation')
-
-  answerDiscovery({ nylas_grant_id: 'grant_prod' })
-  await settle()
-  assertReleased('after discovery')
-  assert.equal(xano.free.root.getAttribute('data-call-offer-state'), 'available')
+  const claimScripts = context.document.head.querySelectorAll('script[src]').filter((script) =>
+    String(script.getAttribute('src') || '').endsWith('/v3/starter-profile-claim.js'),
+  )
+  assert.equal(claimScripts.length, 1)
+  assert.equal(
+    claimScripts[0].getAttribute('src'),
+    'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/starter-profile-claim.js',
+  )
+  assert.equal(claimScripts[0].getAttribute('data-starters-profile-claim-loader'), '')
+  assert.equal(claimScripts[0].async, true)
 })
 
-test('F50 late legacy touts re-arm a released failsafe when the call DTO never answers', async () => {
-  // Page-first, signed out: no Services clone and no legacy tout exists at
-  // bootstrap. Identity ends discovery with nothing loading, so the bootstrap
-  // failsafe is released. Touts the legacy wrapper renders later enter
-  // loading; with the DTO hung, one failsafe must still bound them.
-  const fixture = f50LegacyHeaderPage()
-  for (const card of [fixture.services.free, fixture.services.paid]) card.root.remove()
-  for (const card of fixture.legacyCards) card.root.remove()
-  const context = makeContext({ page: fixture.page, member: {}, wfXano: fixture.feed.api })
-  const held = holdLongTimers(context)
-  vm.createContext(context)
-  vm.runInContext(source, context)
-  await settle()
-  assert.equal(held.filter(Boolean).length, 0, 'nothing loads, so the bootstrap failsafe is released')
-
-  for (const card of fixture.legacyCards) fixture.legacyHeader.wrapper.appendChild(card.root)
-  const records = fixture.legacyCards.map((card) => ({ type: 'childList', addedNodes: [card.root] }))
-  context.mutationObserverCallbacks.forEach((callback) => callback(records))
-  await settle()
-  assertF50Loading(fixture.legacyCards, 'late legacy touts, DTO hung')
-  armedFailsafe(held).callback()
-  await settle()
-  assertF50FailedClosed(fixture.legacyCards, 'late legacy touts after 15 s')
-  assert.equal(held.filter(Boolean).length, 1, 'the fired failsafe is not re-armed')
-
-  // A DTO that arrives after the failsafe still reaches its normal writer.
-  fixture.feed.emit(callCardResult({ free: true, paid: false }))
-  await settle()
-  assert.equal(fixture.legacyHeader.free.root.getAttribute('data-call-offer-state'), 'available')
-  assert.equal(fixture.legacyHeader.paid.root.getAttribute('data-call-offer-state'), 'hidden')
-})
-
-for (const [label, member] of [['signed-out', {}], ['paywalled', FREE_BRAND_MEMBER]]) {
-  test(`F50 ${label} loading Services clones keep the progress cursor after the Algolia record`, async () => {
-    // Published clones inherit data-service-card="component", so the public
-    // record's markServiceCardsClickable reaches them while the DTO is held.
-    // An inline pointer there would outrank the loading progress cursor.
-    const page = makePage()
-    const fixture = f50LibraryFirstCallCards(page)
-    const services = [fixture.services.free, fixture.services.paid]
-    const context = makeContext({
-      page,
-      member,
-      wfXano: fixture.api,
-      record: { 'free-consulting-calls-t-f': true, 'paid-consulting-calls-t-f': true },
-    })
-    holdLongTimers(context)
-    vm.createContext(context)
-    vm.runInContext(source, context)
-    await settle()
-    assert.ok(context.requestedIndexes.length > 0, 'the public record was read')
-    assertF50Loading(services, 'record known, DTO held')
-    for (const card of services) assert.equal(card.root.style.cursor || '', '', 'no inline pointer while loading')
-
-    fixture.headerFeed.emit(callCardResult({ free: true, paid: false }))
-    await settle()
-    const [free, paid] = services
-    assert.equal(free.root.getAttribute('data-call-offer-state'), 'available')
-    assert.equal(free.root.style.cursor, 'pointer', 'an offered card gets the origin/main pointer')
-    assert.equal(paid.root.getAttribute('data-call-offer-state'), 'hidden')
-  })
-}
-
-/* F50: once its state is known, an offered legacy Header tout carries the
-   Book Call semantics origin/main (063cbf09) left on it. These values were
-   read from origin/main running this same fixture and order. Loading strips
-   them; a hidden tout stays fail closed without any hook. */
-const LEGACY_TOUT_SETTLED_KEYS = [
-  'tabindex', 'role', 'aria-label', 'data-profile-book-call', 'data-logged-out-book-call',
-  'data-modal-trigger', 'booking-popup-open', 'data-signup-trigger-element',
-  'data-signup-trigger-value', 'has-connection', 'aria-describedby', 'aria-disabled',
-  'aria-busy', 'data-booking-trigger-unavailable', 'data-booking-trigger-loading',
-]
-const ORIGIN_MAIN_PUBLIC_OFFERED_TOUT = {
-  tabindex: '0',
-  role: 'button',
-  'aria-label': 'Book a Call',
-  'data-profile-book-call': '',
-  'data-logged-out-book-call': '',
-  'data-modal-trigger': null,
-  'booking-popup-open': null,
-  'data-signup-trigger-element': 'service',
-  'data-signup-trigger-value': 'Free Call',
-  'has-connection': 'free',
-  'aria-describedby': null,
-  'aria-disabled': null,
-  'aria-busy': null,
-  'data-booking-trigger-unavailable': null,
-  'data-booking-trigger-loading': null,
-}
-const ORIGIN_MAIN_BRAND_OFFERED_TOUT = Object.assign({}, ORIGIN_MAIN_PUBLIC_OFFERED_TOUT, {
-  'data-logged-out-book-call': null,
-  'data-modal-trigger': 'popup-booking-main',
-})
-
-function legacyToutSemantics(root) {
-  const found = {}
-  for (const key of LEGACY_TOUT_SETTLED_KEYS) found[key] = root.getAttribute(key)
-  return found
-}
-
-for (const viewer of ['signed-out', 'paywalled', 'brand']) {
-  test(`F50 an offered legacy Header tout settles with the origin/main Book Call semantics (${viewer})`, async () => {
-    const fixture = f50LegacyHeaderPage()
-    const context = viewer === 'brand'
-      ? f50BrandContext(fixture.page, fixture.feed)
-      : makeContext({
-        page: fixture.page,
-        member: viewer === 'paywalled' ? FREE_BRAND_MEMBER : {},
-        wfXano: fixture.feed.api,
-      })
-    holdLongTimers(context)
-    vm.createContext(context)
-    vm.runInContext(source, context)
-    await settle()
-    assertF50Loading(fixture.legacyCards, 'identity known, DTO unresolved')
-    for (const card of fixture.legacyCards) {
-      for (const key of ['tabindex', 'role', 'aria-label', 'data-profile-book-call']) {
-        assert.equal(card.root.getAttribute(key), null, `${key} stays removed while loading`)
-      }
-    }
-    fixture.feed.emit(callCardResult({ free: true, paid: false }))
-    await settle()
-    const [free, paid] = fixture.legacyCards
-    const expected = viewer === 'brand' ? ORIGIN_MAIN_BRAND_OFFERED_TOUT : ORIGIN_MAIN_PUBLIC_OFFERED_TOUT
-    assert.equal(free.root.getAttribute('data-call-offer-state'), 'available')
-    assert.deepEqual(legacyToutSemantics(free.root), expected)
-    // Later reconciles keep the same settled semantics.
-    const unrelated = makeElement('div')
-    fixture.page.root.appendChild(unrelated)
-    context.mutationObserverCallbacks.forEach((callback) => callback([{ type: 'childList', addedNodes: [unrelated] }]))
-    await settle()
-    assert.deepEqual(legacyToutSemantics(free.root), expected, 'stable after a reconcile')
-    // A hidden tout is fail closed: nothing can focus or open it.
-    assert.equal(paid.root.getAttribute('data-call-offer-state'), 'hidden')
-    assert.equal(paid.root.style.display, 'none')
-    for (const key of ['tabindex', 'role', 'data-profile-book-call', 'data-modal-trigger', 'data-signup-trigger-element']) {
-      assert.equal(paid.root.getAttribute(key), null, `hidden tout: no ${key}`)
-    }
-  })
-}
-
-/**
- * Records every DOM write under `root` from now on: attribute sets (a real
- * setAttribute queues a mutation even for the same value), removals of an
- * attribute that is present, child insertions and removals, text writes and
- * inline style writes. A body observer pass over a settled page must make
- * none of them, or its own childList writes wake the observer again.
- */
-function recordDomWrites(root, writes = []) {
-  const wrap = (el) => {
-    if (el.__writesRecorded) return
-    el.__writesRecorded = true
-    const label = () => [el.tag, el.getAttribute('data-type'), el.getAttribute('data-call-availability-hint') !== null ? 'hint' : '']
-      .filter(Boolean).join(':')
-    const { setAttribute, removeAttribute, appendChild, insertBefore, prepend, remove } = el
-    el.setAttribute = (name, value) => { writes.push(`${label()} set ${name}=${value}`); setAttribute(name, value) }
-    el.removeAttribute = (name) => {
-      if (el.hasAttribute(name)) writes.push(`${label()} remove ${name}`)
-      removeAttribute(name)
-    }
-    el.appendChild = (child) => { writes.push(`${label()} append ${child.tag}`); const out = appendChild(child); wrap(child); return out }
-    el.insertBefore = (child, ref) => { writes.push(`${label()} insert ${child.tag}`); const out = insertBefore(child, ref); wrap(child); return out }
-    el.prepend = (child) => { writes.push(`${label()} prepend ${child.tag}`); const out = prepend(child); wrap(child); return out }
-    el.remove = () => { if (el.parentElement) writes.push(`${label()} removed`); remove() }
-    let text = el.textContent
-    Object.defineProperty(el, 'textContent', {
-      configurable: true,
-      get: () => text,
-      set: (value) => { writes.push(`${label()} text=${value}`); text = value },
-    })
-    el.style = new Proxy(el.style, {
-      set(target, property, value) {
-        writes.push(`${label()} style.${String(property)}=${value}`)
-        target[property] = value
-        return true
+test('does not inject a second starter claim controller when one is already present', async () => {
+  const page = makePage()
+  page.root.appendChild(makeElement('div', { 'data-starter-claim': 'wrapper' }))
+  const context = paywalledContext(page, BRAND_MEMBER, {
+    existingHeadScripts: [
+      {
+        src: 'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/starter-profile-claim.js',
+        defer: '',
       },
-    })
-    el.children.forEach(wrap)
-  }
-  wrap(root)
-  return writes
-}
-
-/** Fires the body observer for one unrelated added node, as Chrome would. */
-async function reconcileAfterUnrelatedNode(context, page) {
-  const unrelated = makeElement('div')
-  page.root.appendChild(unrelated)
-  const writes = recordDomWrites(page.root)
-  context.mutationObserverCallbacks.forEach((callback) => callback([{ type: 'childList', addedNodes: [unrelated] }]))
-  await settle()
-  return writes
-}
-
-for (const extra of ['template', 'hourly']) {
-  test(`F50 a settled owner legacy Header with a ${extra} card writes nothing on a later reconcile`, async () => {
-    const fixture = f50LegacyHeaderPage()
-    // A card in the legacy wrapper that is not a Free or Paid tout: the
-    // wf-xano template, or a rate tout. It never follows the call DTO.
-    fixture.legacyHeader.wrapper.appendChild(extra === 'template'
-      ? makeElement('div', { 'wf-xano-element': 'template', 'data-service-card': 'component' })
-      : makeElement('a', { 'data-service-card': 'component', 'data-service-card-type': 'tout', 'data-type': 'hourly', href: '#services' }))
-    const context = ownerContext(fixture.page, ownerController(), { wfXano: fixture.feed.api })
-    holdLongTimers(context)
-    vm.createContext(context)
-    vm.runInContext(source, context)
-    fixture.feed.emit(callCardResult({ free: true, paid: true }))
-    await settle()
-    for (const card of fixture.legacyCards) {
-      assert.equal(card.root.getAttribute('data-call-offer-state'), 'available')
-      assert.equal(card.root.getAttribute('data-call-owner-preview'), '')
-    }
-    assert.deepEqual(await reconcileAfterUnrelatedNode(context, fixture.page), [],
-      'a second reconcile with no change writes nothing')
-    assert.deepEqual(await reconcileAfterUnrelatedNode(context, fixture.page), [],
-      'and nor does a third')
+    ],
   })
-}
-
-test('F50 an owner reconcile for a late legacy tout leaves the unchanged Book Call hint alone', async () => {
-  const fixture = f50LegacyHeaderPage()
-  const context = ownerContext(fixture.page, ownerController(), { wfXano: fixture.feed.api })
-  holdLongTimers(context)
-  vm.createContext(context)
-  vm.runInContext(source, context)
-  fixture.feed.emit(callCardResult({ free: true, paid: true }))
-  await settle()
-  const button = fixture.page.bookingButton
-  const hint = fixture.page.root.querySelector('#' + button.getAttribute('aria-describedby'))
-  assert.equal(hint.getAttribute('data-call-availability-hint'), '')
-  assert.equal(hint.textContent, 'Clients use this button to book a call with you. Your calls are available to brands. ')
-  // The mock text setter keeps children, so count links rather than expect one.
-  const links = hint.querySelectorAll('a').length
-  assert.ok(links > 0, 'the owner hint carries the settings link')
-  const bookCallWrites = recordDomWrites(hint, recordDomWrites(button))
-  // A real change: the legacy wrapper renders one more Free tout late, so the
-  // owner writer runs again from the body observer.
-  const late = makeElement('div', { 'data-service-card': 'component', 'data-type': 'free', 'has-connection': 'free' })
-  fixture.legacyHeader.wrapper.appendChild(late)
-  context.mutationObserverCallbacks.forEach((callback) => callback([{ type: 'childList', addedNodes: [late] }]))
-  await settle()
-  assert.equal(late.getAttribute('data-call-offer-state'), 'available', 'the late tout gets the owner state')
-  assert.deepEqual(bookCallWrites, [], 'the unchanged Book Call hint and trigger are not rewritten')
-  assert.equal(hint.querySelectorAll('a').length, links, 'no second settings link')
-})
-
-for (const viewer of ['brand', 'signed-out', 'paywalled']) {
-  test(`F50 a later reconcile leaves a settled offered legacy Header tout alone (${viewer})`, async () => {
-    const fixture = f50LegacyHeaderPage()
-    const context = viewer === 'brand'
-      ? f50BrandContext(fixture.page, fixture.feed)
-      : makeContext({
-        page: fixture.page,
-        member: viewer === 'paywalled' ? FREE_BRAND_MEMBER : {},
-        wfXano: fixture.feed.api,
-      })
-    holdLongTimers(context)
-    vm.createContext(context)
-    vm.runInContext(source, context)
-    fixture.feed.emit(callCardResult({ free: true, paid: false }))
-    await settle()
-    const [free, paid] = fixture.legacyCards
-    const expected = viewer === 'brand' ? ORIGIN_MAIN_BRAND_OFFERED_TOUT : ORIGIN_MAIN_PUBLIC_OFFERED_TOUT
-    assert.equal(free.root.getAttribute('data-call-offer-state'), 'available')
-    assert.deepEqual(legacyToutSemantics(free.root), expected)
-    assert.equal(paid.root.getAttribute('data-call-offer-state'), 'hidden')
-    // A strip would drop tabindex from a focused tout, and blur it.
-    assert.deepEqual(await reconcileAfterUnrelatedNode(context, fixture.page), [],
-      'an unrelated node neither strips nor rewrites a settled tout')
-    assert.deepEqual(legacyToutSemantics(free.root), expected, 'the tout keeps its Book Call semantics')
-    assert.equal(paid.root.getAttribute('data-call-offer-state'), 'hidden')
-  })
-}
-
-for (const viewer of ['brand-loading', 'talent']) {
-  test(`F50 a second reconcile writes no attribute to unchanged legacy Header touts (${viewer})`, async () => {
-    const fixture = f50LegacyHeaderPage()
-    const context = viewer === 'talent'
-      ? makeContext({ page: fixture.page, member: OTHER_TALENT_MEMBER, wfXano: fixture.feed.api })
-      // Discovery never answers, so the Brand touts stay loading.
-      : f50BrandContext(fixture.page, fixture.feed, { getStarterByMemberId: () => new Promise(() => {}) })
-    holdLongTimers(context)
-    vm.createContext(context)
-    vm.runInContext(source, context)
-    fixture.feed.emit(callCardResult({ free: true, paid: true }))
-    await settle()
-    const expected = viewer === 'talent' ? 'hidden' : 'loading'
-    for (const card of fixture.legacyCards) {
-      assert.equal(card.root.getAttribute('data-call-offer-state'), expected)
-      assert.equal(card.root.getAttribute('aria-busy'), viewer === 'talent' ? null : 'true')
-    }
-    // A real setAttribute of an unchanged value still queues a mutation.
-    assert.deepEqual(await reconcileAfterUnrelatedNode(context, fixture.page), [],
-      'a second pass writes no attribute')
-    assert.deepEqual(await reconcileAfterUnrelatedNode(context, fixture.page), [],
-      'and nor does a third')
-  })
-}
-
-test('F50 an owner DTO replay leaves a settled owner-preview legacy tout alone', async () => {
-  const fixture = f50LegacyHeaderPage()
-  const context = ownerContext(fixture.page, ownerController(), { wfXano: fixture.feed.api })
-  holdLongTimers(context)
-  vm.createContext(context)
-  vm.runInContext(source, context)
-  fixture.feed.emit(callCardResult({ free: true, paid: true }))
-  await settle()
-  const semantics = (root) => Object.fromEntries(['tabindex', 'role', 'aria-disabled', 'aria-describedby',
-    'data-owner-preview-action', 'has-connection', 'data-call-offer-state'].map((key) => [key, root.getAttribute(key)]))
-  const before = fixture.legacyCards.map((card) => semantics(card.root))
-  for (const [index, card] of fixture.legacyCards.entries()) {
-    assert.equal(before[index]['data-call-offer-state'], 'available')
-    assert.equal(before[index].tabindex, '0')
-    assert.equal(before[index].role, 'button')
-  }
-  // wf-xano replays the same DTO when the window regains focus. A strip of
-  // tabindex, even one written back at once, blurs a focused tout.
-  const writes = []
-  for (const card of fixture.legacyCards) recordDomWrites(card.root, writes)
-  fixture.feed.emit(callCardResult({ free: true, paid: true }))
-  await settle()
-  const strips = writes.filter((write) =>
-    / remove (tabindex|role|aria-disabled|aria-describedby|has-connection)$/.test(write))
-  assert.deepEqual(strips, [], 'a DTO replay does not strip a settled owner-preview tout')
-  assert.deepEqual(fixture.legacyCards.map((card) => semantics(card.root)), before)
-})
-
-test('F50 a Brand DTO replay leaves a settled offered legacy tout alone', async () => {
-  const fixture = f50LegacyHeaderPage()
-  const context = f50BrandContext(fixture.page, fixture.feed)
-  holdLongTimers(context)
-  vm.createContext(context)
-  vm.runInContext(source, context)
-  fixture.feed.emit(callCardResult({ free: true, paid: false }))
-  await settle()
-  const free = fixture.legacyHeader.free.root
-  assert.equal(free.getAttribute('data-call-offer-state'), 'available')
-  assert.deepEqual(legacyToutSemantics(free), ORIGIN_MAIN_BRAND_OFFERED_TOUT)
-  // The same DTO again reaches adaptXanoCallCards, as a wf-xano refresh does.
-  const writes = recordDomWrites(free)
-  fixture.feed.emit(callCardResult({ free: true, paid: false }))
-  await settle()
-  const strips = writes.filter((write) => / remove (tabindex|role|aria-label|data-profile-book-call|data-modal-trigger|data-signup-trigger-element|has-connection)$/.test(write))
-  assert.deepEqual(strips, [], 'a DTO replay does not strip a focused tout')
-  assert.deepEqual(legacyToutSemantics(free), ORIGIN_MAIN_BRAND_OFFERED_TOUT)
-})
-
-test('F50 a Brand legacy Paid tout the DTO revokes keeps no Book Call hook', async () => {
-  const fixture = f50LegacyHeaderPage()
-  const context = f50BrandContext(fixture.page, fixture.feed, {
-    getConfigs: async () => [F50_FREE_CFG, { config_id: 'cfg_paid', is_paid: true, active: true, data_environment: 'production', payment_environment: 'live', currency: 'USD', price_cents: 25000, duration: 60 }],
-  })
-  holdLongTimers(context)
-  vm.createContext(context)
-  vm.runInContext(source, context)
-  fixture.feed.emit(callCardResult({ free: true, paid: true }))
-  await settle()
-  const paid = fixture.legacyHeader.paid.root
-  assert.equal(paid.getAttribute('data-call-offer-state'), 'available')
-  assert.equal(paid.getAttribute('tabindex'), '0', 'the offered Paid tout is a focusable Book Call button')
-  // The settled Paid tout is kept only while the admitted records offer Paid.
-  fixture.feed.emit(callCardResult({ free: true, paid: false }))
-  await settle()
-  assert.equal(paid.getAttribute('data-call-offer-state'), 'hidden')
-  assert.equal(paid.style.display, 'none')
-  for (const [key, value] of Object.entries(legacyToutSemantics(paid))) {
-    assert.equal(value, null, `a revoked hidden tout keeps no ${key}`)
-  }
-  assert.equal(fixture.legacyHeader.free.root.getAttribute('data-call-offer-state'), 'available')
-})
-
-test('F50 owner clones rendered after the bootstrap release re-arm the one failsafe', async () => {
-  const page = makePage()
-  const fixture = f50PageFirstCallWrappers(page)
-  const controller = ownerController()
-  // The owner settings read never answers.
-  controller.authenticatedRequest = () => new Promise(() => {})
-  const context = ownerContext(page, controller, { wfXano: fixture.api })
-  const held = holdLongTimers(context)
   vm.createContext(context)
   vm.runInContext(source, context)
   await settle()
-  assert.deepEqual(held.filter(Boolean), [], 'no card loads yet, so the bootstrap failsafe is released')
-  const clones = fixture.render(context)
-  fixture.emit(callCardResult({ free: true, paid: true }))
-  await settle()
-  for (const clone of clones) {
-    assert.equal(clone.root.getAttribute('data-call-offer-state'), 'settings-loading')
-    assert.equal(clone.root.getAttribute('aria-busy'), 'true')
-  }
-  armedFailsafe(held).callback()
-  await settle()
-  for (const clone of clones) {
-    assert.equal(clone.root.getAttribute('data-call-offer-state'), 'settings-unavailable')
-    assert.equal(clone.root.getAttribute('data-service-card-state'), 'Disabled')
-    assert.equal(clone.root.getAttribute('aria-busy'), null)
-  }
+
+  const claimScripts = context.document.head.querySelectorAll('script[src]').filter((script) =>
+    String(script.getAttribute('src') || '').endsWith('/v3/starter-profile-claim.js'),
+  )
+  assert.equal(claimScripts.length, 1)
 })
-
-/** Every owner call surface the settings writer decides, as the page shows it. */
-function ownerCallSurfaceState(fixture) {
-  const keys = ['data-service-card-state', 'data-call-offer-state', 'aria-busy', 'has-connection',
-    'no-connection', 'data-call-owner-preview', 'data-modal-trigger', 'data-signup-trigger-element',
-    'tabindex', 'role', 'aria-disabled']
-  const cards = fixture.legacyCards.concat([fixture.services.free, fixture.services.paid])
-  const button = fixture.page.bookingButton
-  const hint = fixture.page.root.querySelector('#' + button.getAttribute('aria-describedby'))
-  return {
-    cards: cards.map((card) => ({
-      attributes: Object.fromEntries(keys.map((key) => [key, card.root.getAttribute(key)])),
-      display: card.root.style.display,
-      tooltip: card.tooltipText.textContent,
-      tooltipDisplay: card.tooltip.style.display,
-      settingsCta: card.settingsCta.style.display,
-    })),
-    bookCall: {
-      disabled: button.getAttribute('aria-disabled'),
-      unavailable: button.getAttribute('data-booking-trigger-unavailable'),
-      loading: button.getAttribute('data-booking-trigger-loading'),
-      hint: hint && hint.textContent,
-    },
-  }
-}
-
-function ownerSettingsPage({ reads }) {
-  const fixture = f50LegacyHeaderPage()
-  const controller = ownerController()
-  const resolvers = new Map()
-  controller.authenticatedRequest = (path) => reads === 'failed'
-    ? Promise.reject(new Error('Controlled settings failure'))
-    : new Promise((resolve) => { resolvers.set(path, resolve) })
-  const context = ownerContext(fixture.page, controller, { wfXano: fixture.feed.api })
-  const held = holdLongTimers(context)
-  vm.createContext(context)
-  vm.runInContext(source, context)
-  fixture.feed.emit(callCardResult({ free: true, paid: true }))
-  return { fixture, context, held, resolvers }
-}
-
-test('F50 the failsafe settles an unanswered owner settings read like a failed read', async () => {
-  const unanswered = ownerSettingsPage({ reads: 'held' })
-  const failed = ownerSettingsPage({ reads: 'failed' })
-  await settle()
-  const cards = (page) => page.fixture.legacyCards.concat([page.fixture.services.free, page.fixture.services.paid])
-  for (const card of cards(unanswered)) {
-    assert.equal(card.root.getAttribute('data-call-offer-state'), 'settings-loading')
-    assert.equal(card.root.getAttribute('aria-busy'), 'true')
-  }
-  // The one failsafe is still armed for owner settings-loading.
-  armedFailsafe(unanswered.held).callback()
-  await settle()
-  const expired = ownerCallSurfaceState(unanswered.fixture)
-  for (const card of expired.cards) {
-    assert.equal(card.attributes['data-service-card-state'], 'Disabled')
-    assert.equal(card.attributes['data-call-offer-state'], 'settings-unavailable')
-    assert.equal(card.attributes['aria-busy'], null)
-    assert.equal(card.tooltip, 'Call settings could not be loaded. Refresh or open Call Settings.')
-  }
-  assert.deepEqual(expired, ownerCallSurfaceState(failed.fixture), 'the same terminal state as a failed read')
-
-  // A later successful read still applies the loaded rules.
-  unanswered.resolvers.get(OWNER_FREE_SETTINGS_PATH)(ownerFreeSettings())
-  await settle()
-  for (const card of cards(unanswered)) {
-    const type = card.root.getAttribute('data-type')
-    assert.equal(card.root.getAttribute('data-call-offer-state'), type === 'free' ? 'available' : 'settings-unavailable')
-    assert.equal(card.root.getAttribute('data-service-card-state'), type === 'free' ? 'Default' : 'Disabled')
-  }
-  unanswered.resolvers.get(OWNER_PAID_SETTINGS_PATH)(ownerPaidSettings())
-  await settle()
-  for (const card of cards(unanswered)) {
-    assert.equal(card.root.getAttribute('data-call-offer-state'), 'available')
-    assert.equal(card.root.getAttribute('has-connection'), card.root.getAttribute('data-type'))
-  }
-  assert.equal(unanswered.held.filter(Boolean).length, 1, 'the fired failsafe is not re-armed')
-})
-
-test('F50 the bootstrap failsafe ends Book Call loading on a Brand page without call cards', async () => {
-  const page = makePage()
-  const context = makeContext({
-    page,
-    member: BRAND_MEMBER,
-    record: { 'free-consulting-calls-t-f': true },
-    // Discovery never answers.
-    getStarterByMemberId: () => new Promise(() => {}),
-    getConfigs: async () => [],
-  })
-  const held = holdLongTimers(context)
-  vm.createContext(context)
-  vm.runInContext(source, context)
-  await settle()
-  assert.equal(page.root.querySelectorAll('[wf-xano-instance], [data-call-canary-legacy-wrapper]').length, 0,
-    'no canonical or legacy call card can arm the failsafe')
-  const button = page.bookingButton
-  assertBookCallLoading(button)
-  // Only the bootstrap arm bounds this page. Fire every long timer it holds.
-  const timers = held.filter(Boolean)
-  assert.deepEqual(timers.map((timer) => timer.delay), [15000], 'the bootstrap arms the one failsafe')
-  timers.forEach((timer) => timer.callback())
-  await settle()
-  assert.equal(button.getAttribute('data-booking-trigger-loading'), null, 'Book Call leaves loading at 15 s')
-  assert.equal(button.getAttribute('aria-busy'), null)
-  assert.equal(button.getAttribute('data-booking-trigger-unavailable'), '')
-  assert.equal(button.getAttribute('aria-disabled'), 'true', 'still fail closed')
-  const hint = page.root.querySelector('#' + button.getAttribute('aria-describedby'))
-  assert.equal(hint.textContent, 'This Starter isn’t accepting calls right now.')
-})
-
-test('F50 a fired failsafe is not re-armed by a late loading tout', async () => {
-  const fixture = f50LegacyHeaderPage()
-  const context = makeContext({ page: fixture.page, member: {}, wfXano: fixture.feed.api })
-  const held = holdLongTimers(context)
-  vm.createContext(context)
-  vm.runInContext(source, context)
-  await settle()
-  armedFailsafe(held).callback()
-  await settle()
-  const armedBefore = held.length
-  // A legacy tout rendered after the failsafe enters loading and fails closed
-  // at once. It must not start a second 15 s clock.
-  const late = fixture.legacyHeader.free.root.cloneNode()
-  for (const name of ['data-call-offer-state', 'aria-busy', 'data-canonical-public-call']) late.removeAttribute(name)
-  fixture.legacyHeader.wrapper.appendChild(late)
-  context.mutationObserverCallbacks.forEach((callback) => callback([{ type: 'childList', addedNodes: [late] }]))
-  await settle()
-  assert.equal(late.getAttribute('data-call-offer-state'), 'hidden')
-  assert.equal(held.length, armedBefore, 'no timer is armed after the failsafe fired')
-})
-
-for (const viewer of ['signed-out', 'paywalled']) {
-  test(`F50 a loading or revoked ${viewer} legacy tout keeps no connection or logged-out hook`, async () => {
-    const fixture = f50LegacyHeaderPage()
-    // Published markup can already carry the logged-out Book Call hook.
-    for (const card of fixture.legacyCards) card.root.setAttribute('data-logged-out-book-call', '')
-    const context = makeContext({
-      page: fixture.page,
-      member: viewer === 'paywalled' ? FREE_BRAND_MEMBER : {},
-      wfXano: fixture.feed.api,
-    })
-    holdLongTimers(context)
-    vm.createContext(context)
-    vm.runInContext(source, context)
-    await settle()
-    for (const card of fixture.legacyCards) {
-      assert.equal(card.root.getAttribute('data-call-offer-state'), 'loading')
-      assert.equal(card.root.getAttribute('data-logged-out-book-call'), null, 'loading strips the logged-out hook')
-      assert.equal(card.root.getAttribute('has-connection'), null)
-    }
-    fixture.feed.emit(callCardResult({ free: true, paid: true }))
-    await settle()
-    const paid = fixture.legacyHeader.paid.root
-    assert.equal(paid.getAttribute('data-call-offer-state'), 'available')
-    assert.equal(paid.getAttribute('has-connection'), 'paid')
-    assert.equal(paid.getAttribute('data-logged-out-book-call'), '')
-    // The DTO revokes Paid: the hidden tout is fail closed.
-    fixture.feed.emit(callCardResult({ free: true, paid: false }))
-    await settle()
-    assert.equal(paid.getAttribute('data-call-offer-state'), 'hidden')
-    assert.equal(paid.style.display, 'none')
-    assert.equal(paid.getAttribute('has-connection'), null, 'a hidden tout keeps no has-connection')
-    assert.equal(paid.getAttribute('data-logged-out-book-call'), null, 'a hidden tout keeps no logged-out hook')
-    assert.equal(fixture.legacyHeader.free.root.getAttribute('data-call-offer-state'), 'available')
-  })
-}
