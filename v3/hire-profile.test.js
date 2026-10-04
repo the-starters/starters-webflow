@@ -10850,3 +10850,56 @@ for (const viewer of ['signed-out', 'paywalled']) {
     assert.equal(fixture.legacyHeader.free.root.getAttribute('data-call-offer-state'), 'available')
   })
 }
+test('does not inject the starter claim controller without a claim wrapper', async () => {
+  const page = makePage()
+  const context = paywalledContext(page, BRAND_MEMBER)
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  const claimScripts = context.document.head.querySelectorAll('script[src]').filter((script) =>
+    String(script.getAttribute('src') || '').endsWith('/v3/starter-profile-claim.js'),
+  )
+  assert.equal(claimScripts.length, 0)
+})
+
+test('injects the starter claim controller once when a claim wrapper exists', async () => {
+  const page = makePage()
+  page.root.appendChild(makeElement('div', { 'data-starter-claim': 'wrapper' }))
+  const context = paywalledContext(page, BRAND_MEMBER)
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  const claimScripts = context.document.head.querySelectorAll('script[src]').filter((script) =>
+    String(script.getAttribute('src') || '').endsWith('/v3/starter-profile-claim.js'),
+  )
+  assert.equal(claimScripts.length, 1)
+  assert.equal(
+    claimScripts[0].getAttribute('src'),
+    'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/starter-profile-claim.js',
+  )
+  assert.equal(claimScripts[0].getAttribute('data-starters-profile-claim-loader'), '')
+  assert.equal(claimScripts[0].async, true)
+})
+
+test('does not inject a second starter claim controller when one is already present', async () => {
+  const page = makePage()
+  page.root.appendChild(makeElement('div', { 'data-starter-claim': 'wrapper' }))
+  const context = paywalledContext(page, BRAND_MEMBER, {
+    existingHeadScripts: [
+      {
+        src: 'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/starter-profile-claim.js',
+        defer: '',
+      },
+    ],
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  const claimScripts = context.document.head.querySelectorAll('script[src]').filter((script) =>
+    String(script.getAttribute('src') || '').endsWith('/v3/starter-profile-claim.js'),
+  )
+  assert.equal(claimScripts.length, 1)
+})

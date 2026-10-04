@@ -663,6 +663,42 @@ Run its focused test with:
 node --test v3/starters-ms-redirect.test.js
 ```
 
+## Premade Starter profile claim gate
+
+`starter-profile-claim.js` controls the Claim Profile component on the Hire CMS
+template. The outer wrapper remains authored with its `hide` class,
+`hidden="hidden"`, and `aria-hidden="true"`. On an exact canonical
+`/hire/<slug>` path, the controller asks Xano whether that slug is still
+claimable. It fills the authored hidden
+`data-ms-member="starter-claim-profile-slug"` input and reveals the existing
+signup form only when the claim-status response has the expected schema, exact
+page slug, and `claimable: true`. It keeps the form hidden for `claimable:
+false`, wrong schema, wrong slug, non-200, bad JSON, network error, timeout,
+non-profile paths, and incomplete markup. It does not inspect or change the
+query string. Xano controls rollout through the claim-status endpoint; the
+backend remains responsible for atomically claiming the exact admin-prebuilt
+profile only for an eligible fresh `member.created` signup. Existing accounts
+and later updates cannot establish or switch that binding.
+
+Do not add a Hire-template slug allowlist or direct template script tag for
+`starter-profile-claim.js`. `hire-profile.js` injects the controller once when
+the Claim Profile wrapper exists. Keep Google signup hidden until its
+profile-slug transport is proven.
+
+The complete Designer attribute contract, backend signup-consumption order, and
+release proof are in
+[STARTER-PROFILE-CLAIM-WIRING.md](../docs/wiring/STARTER-PROFILE-CLAIM-WIRING.md).
+This candidate is not release-ready until the Xano claim-status endpoint,
+matching form field, and backend slug-claim path are implemented and verified
+together.
+
+Run its focused test with:
+
+```sh
+node --test v3/starter-profile-claim.test.js
+node v3/browser-tests/starter-profile-claim.browser.cjs
+```
+
 ## Signup attribution
 
 `signup-attribution.js` captures paid-click attribution, reports the signup back
