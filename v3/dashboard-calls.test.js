@@ -10593,3 +10593,26 @@ test('F08: offer rows render only on live-request panels, never on terminal succ
     global.document = originalDocument
   }
 })
+
+test('P9 payment line reads the canonical payment state, not only the saved-card flag', () => {
+  const paid = extra => Object.assign({
+    booking_id: 'p9-fixture', status: 'confirmed', paid_meeting: true,
+    pm_confirmed: true, payment_status: 'waiting_for_intent',
+    payment_reconciliation_status: 'ready', payment_environment: 'test',
+  }, extra)
+  const cases = [
+    [{ payment_status: 'intent_created', payment_reconciliation_status: 'reconciled' }, 'Payment method confirmed.', 'Payment method confirmed.'],
+    [{}, 'Payment method confirmed.', 'Payment method confirmed.'],
+    [{ payment_status: 'card_or_payment_declined', payment_reconciliation_status: 'failed' }, 'Card declined. Change card.', 'Payment is being checked.'],
+    [{ payment_status: 'auth_required', payment_reconciliation_status: 'pending' }, 'Payment needs attention.', 'Payment is being checked.'],
+    [{ payment_reconciliation_status: 'pending' }, 'Payment is being checked.', 'Payment is being checked.'],
+    [{ payment_reconciliation_status: 'mismatch' }, 'Payment is being checked.', 'Payment is being checked.'],
+    [{ payment_reconciliation_status: 'failed' }, 'Payment is being checked.', 'Payment is being checked.'],
+  ]
+  for (const [extra, brand, starter] of cases) {
+    assert.equal(api.paymentStatusText(paid(extra), 'brand'), brand)
+    assert.equal(api.paymentStatusText(paid(extra), 'starter'), starter)
+  }
+  assert.equal(api.paymentStatusText(paid({ pm_confirmed: false }), 'brand'), 'Payment method pending.')
+  assert.equal(api.paymentStatusText({ paid_meeting: false }, 'brand'), '')
+})
