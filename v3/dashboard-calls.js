@@ -836,11 +836,11 @@
     return !(Number.isFinite(start) && start > 0 && start <= time)
   }
 
+  // booking/confirm/v3 treats the stored deadline as authoritative and rejects a
+  // missing one, so the call start is never a stand-in for it.
   function responseDeadline(booking) {
     const expires = normalizeTimestamp(booking && booking.confirmation_expires_at)
-    if (Number.isFinite(expires) && expires > 0) return expires
-    const start = normalizeTimestamp(booking && booking.start)
-    return Number.isFinite(start) && start > 0 ? start : Number.NaN
+    return Number.isFinite(expires) && expires > 0 ? expires : Number.NaN
   }
 
   function formatResponseTime(deadline, now) {
@@ -1477,7 +1477,9 @@
   }
 
   function canConfirmBooking(role, booking, now) {
-    return role === 'starter' && responseWindowOpen(booking, now)
+    return role === 'starter' &&
+      Number.isFinite(responseDeadline(booking)) &&
+      responseWindowOpen(booking, now)
   }
 
   function decodeBookingRef(compactString) {
