@@ -406,6 +406,41 @@ test('the warm-up also fetches the auth helper, and the mount reuses that load',
   assert.deepEqual(loaded.errors, [])
 })
 
+test('a failed auth-helper warm-up gives the mount path one fresh helper attempt', async () => {
+  const loaded = loadMessages({
+    talk: false,
+    sessionOwner: false,
+    localStorage: memberstackSessionHint,
+  })
+
+  assert.equal(loaded.calls.scripts.length, 2)
+  const warmHelper = loaded.calls.scripts[1]
+  assert.match(warmHelper.src, /\/v3\/talkjs-auth-session\.js$/)
+
+  warmHelper.onerror()
+  await settle(1)
+  const callbacks = loaded.window.Talk.ready.c.slice()
+  loaded.window.Talk = loaded.Talk
+  callbacks.forEach(([callback]) => callback())
+  await settle()
+
+  assert.equal(loaded.calls.scripts.length, 3)
+  assert.equal(loaded.calls.scripts[0].src, 'https://cdn.talkjs.com/talk.js')
+  assert.match(loaded.calls.scripts[1].src, /\/v3\/talkjs-auth-session\.js$/)
+  const freshHelper = loaded.calls.scripts[2]
+  assert.match(freshHelper.src, /\/v3\/talkjs-auth-session\.js$/)
+  assert.equal(freshHelper.dataset.startersTalkjsAuth, 'true')
+  assert.deepEqual(loaded.calls.mounted, [])
+
+  loaded.window.StartersTalkJsSessionOwner = loaded.sessionOwner
+  freshHelper.onload()
+  await settle()
+
+  assert.deepEqual(loaded.calls.mounted, [loaded.container])
+  assert.equal(loaded.calls.authSessions.length, 1)
+  assert.deepEqual(loaded.errors, [])
+})
+
 test('a warm-up script failure is handled once, on the mount path', async () => {
   const loaded = loadMessages({ talk: false, localStorage: memberstackSessionHint })
 

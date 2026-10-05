@@ -26,8 +26,14 @@
  * that key is a cheap hint to start both downloads at script evaluation, in
  * parallel with the Memberstack lookup. Visitors without the hint keep the
  * original order and download nothing before the login redirect. The warm-up
- * never decides the outcome: the mount path waits on the same loader attempts
- * and handles any failure there, exactly as before.
+ * never decides the outcome. For talk.js, the mount path waits on the same
+ * loader attempt; a failed warm-up follows the existing onerror removal plus
+ * single retry, and the readiness-timeout reload guard stays unchanged. For the
+ * auth helper, waitForTalkJsSessionOwner clears its cached promise on onerror
+ * or timeout, so the mount path starts one fresh helper attempt after a failed
+ * warm-up. If a timed-out first helper tag later executes, it is harmless:
+ * v3/talkjs-auth-session.js returns early once window.StartersTalkJsSessionOwner
+ * already exists.
  *
  * Deep linking: `/messages?conversation=<TalkJS conversation id>` selects an
  * existing conversation (used by dashboard preview cards). The existing
@@ -393,10 +399,14 @@
 
   /**
    * Start the TalkJS SDK and auth helper downloads before the Memberstack
-   * lookup, when the visitor looks signed in. Both loaders are idempotent, so
-   * the mount path later waits on these same attempts. Rejections are observed
-   * here only to keep them from surfacing as unhandled; the mount path still
-   * sees and handles the same failure.
+   * lookup, when the visitor looks signed in. The TalkJS SDK attempt stays
+   * cached for the mount path, including its onerror retry and readiness-timeout
+   * reload guard. The auth helper cache is cleared by waitForTalkJsSessionOwner
+   * after onerror or timeout, so a failed warm-up lets the mount path start one
+   * fresh helper attempt; a late first helper tag is harmless because
+   * v3/talkjs-auth-session.js returns early when window.StartersTalkJsSessionOwner
+   * already exists. Rejections are observed here only to keep them from
+   * surfacing as unhandled.
    * @returns {boolean} whether the warm-up started
    */
   function warmTalkJsDependencies() {
