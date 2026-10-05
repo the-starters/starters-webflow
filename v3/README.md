@@ -674,7 +674,8 @@ claim request form only after an exact positive claim-status response. It does
 not inspect or change the query string, and it refuses legacy Memberstack claim
 forms that still have `data-ms-form`. Xano controls rollout through the
 claim-status endpoint; Webflow form notifications send requests to the team for
-manual review.
+manual review. The Claim Profile Button component renders `type="button"`, so the
+controller turns its click into one native `requestSubmit()` after the reveal.
 
 Do not add a Hire-template slug allowlist or direct template script tag for
 `starter-profile-claim.js`. `hire-profile.js` injects the controller once when
@@ -684,9 +685,7 @@ replacement flow is separately approved.
 The complete Designer attribute contract, manual-review contract, fail-closed
 cases, and release proof are in
 [STARTER-PROFILE-CLAIM-WIRING.md](../docs/wiring/STARTER-PROFILE-CLAIM-WIRING.md).
-The script can be released before the Webflow markup change because incomplete
-claim markup fails closed and keeps the live form hidden. Verify the visible
-email field and notification intake before treating the Webflow form as active.
+Incomplete claim markup still fails closed and keeps the form hidden.
 
 Run its focused test with:
 

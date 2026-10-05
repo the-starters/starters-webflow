@@ -34,7 +34,11 @@ function markup() {
             <h1>Claim your profile</h1>
             <input type="email" name="Email Address" required>
             <input type="hidden" name="Profile Slug" data-starter-claim="profile-slug" autocomplete="off">
-            <button type="submit">Claim profile</button>
+            <div class="button_main-wrap">
+              <p class="button_main-text">Claim profile</p>
+              <div class="clickable_wrap"><button type="button" class="clickable_btn">Claim profile</button></div>
+            </div>
+            <input type="submit" class="hide" value="Submit">
             <a href="#" class="button is-google w-button" data-ms-auth-provider="google">Continue with Google</a>
           </form>
         </section>
@@ -106,6 +110,24 @@ function markup() {
     })
     assert.deepEqual(claimRequests, [`${claimStatusUrl}?slug=jane-doe`])
 
+    // The Webflow Button component renders type="button"; its click must
+    // become one native submit, and native validation must still block an
+    // empty email.
+    await page.evaluate(() => {
+      window.__claimSubmits = []
+      document.querySelector('[data-starter-claim="form"]').addEventListener('submit', (event) => {
+        event.preventDefault()
+        window.__claimSubmits.push(new FormData(event.target).get('Profile Slug'))
+      })
+    })
+    await page.click('.clickable_btn')
+    const blockedSubmits = await page.evaluate(() => window.__claimSubmits.length)
+    assert.equal(blockedSubmits, 0)
+    await page.fill('input[name="Email Address"]', 'claimant@example.test')
+    await page.click('.clickable_btn')
+    const submits = await page.evaluate(() => window.__claimSubmits)
+    assert.deepEqual(submits, ['jane-doe'])
+
     const unlistedUrl = 'https://www.thestarters.com/hire/john-smith?claim=unused&utm_source=qr'
     await page.goto(unlistedUrl)
     await page.waitForFunction(() =>
@@ -133,7 +155,7 @@ function markup() {
       `${claimStatusUrl}?slug=john-smith`,
     ])
 
-    console.log(JSON.stringify({ ready, unlisted, claimRequests }))
+    console.log(JSON.stringify({ ready, submits, unlisted, claimRequests }))
   } finally {
     await browser.close()
   }
