@@ -2062,10 +2062,12 @@ Current safety boundary:
   Writes, authenticated Xano pass-throughs, session resets, and current
   shared-read failures clear the shared entries.
 - Wraps `$memberstackDom.getCurrentMember()` only to share identical overlapping
-  calls. It keeps no settled Memberstack result, samples the live cookie before
-  and after the owner call, and clears in-flight member reads on auth changes,
-  cookie rotations, and every Memberstack method except `getCurrentMember`,
-  `getMemberCookie`, and `onAuthChange`.
+  calls when no site-wide shared-read owner is already installed. It keeps no
+  settled Memberstack result, samples the live cookie before and after the owner
+  call, and clears in-flight member reads on auth changes, cookie rotations, and
+  every Memberstack method except `getCurrentMember`, `getMemberCookie`, and
+  `onAuthChange`. When `utils/memberstack-shared-reads.js` owns the SDK wrapper,
+  this bridge leaves it in place and forwards session-reset invalidation to it.
 - Exposes `window.getXanoAuthToken` and `window.xanoAuthFetch` for page-owned
   code. It also retains its own auth-fetch reference for the stage adapter,
   because another page bundle can replace the public compatibility global
