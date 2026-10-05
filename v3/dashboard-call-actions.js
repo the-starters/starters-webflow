@@ -247,6 +247,9 @@
      the server refuses. */
   const PAID_EDIT_OPEN_ENVIRONMENTS = ['test']
   const PAID_RESCHEDULE_OPEN_ENVIRONMENTS = ['test']
+  // P5 (#2099 held-call cancel) is not published yet: keep the client Test-only
+  // too, so a client release before the server can never show a refused Cancel.
+  const PAID_HOLD_CANCEL_OPEN_ENVIRONMENTS = ['test']
 
   // F15 (JP 3a, 2026-10-03): a Brand cancel at or within 24 h of start is
   // charged the full session fee; every other Paid cancel is released.
@@ -275,7 +278,8 @@
       bookingStatus(booking) === 'confirmed' &&
       clean(booking && booking.payment_intent) !== '' &&
       clean(booking && booking.payment_status).toLowerCase() === 'intent_created' &&
-      clean(booking && booking.payment_reconciliation_status).toLowerCase() === 'reconciled'
+      clean(booking && booking.payment_reconciliation_status).toLowerCase() === 'reconciled' &&
+      paidEnvironmentOpen(booking, PAID_HOLD_CANCEL_OPEN_ENVIRONMENTS)
     )
   }
 
@@ -2219,6 +2223,7 @@
 
   const api = {
     PAID_EDIT_OPEN_ENVIRONMENTS,
+    PAID_HOLD_CANCEL_OPEN_ENVIRONMENTS,
     PAID_RESCHEDULE_OPEN_ENVIRONMENTS,
     PAID_CONFIRMED_CANCEL_LEAD_MS,
     PAID_LATE_CANCEL_FEE_WINDOW_MS,
