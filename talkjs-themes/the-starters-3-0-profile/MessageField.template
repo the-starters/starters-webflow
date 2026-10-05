@@ -170,7 +170,7 @@ The `MessageField` component is rendered at the bottom of the chat panel. It inc
 
 .entry-field {
     height: auto;
-    min-height: 8rem;
+    min-height: 3.25rem;
     max-height: 14.5rem;
     background-color: #eee;
     border-radius: 0.25rem;
@@ -189,7 +189,6 @@ The `MessageField` component is rendered at the bottom of the chat panel. It inc
 
 @media (max-width: 644px) {
     .entry-field {
-        min-height: 6.5rem;
         max-height: 10rem;
     }
 }
