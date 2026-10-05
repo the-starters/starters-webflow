@@ -231,6 +231,10 @@
   function invalidateMemberstackReads() {
     memberstackReadRevision += 1
     sharedMemberstackReads.clear()
+    // When utils/memberstack-shared-reads.js owns the SDK wrapper, drop its
+    // in-flight entries too, so a read after a session reset is never shared.
+    const siteWide = window.__tsMemberstackSharedReads
+    if (siteWide && typeof siteWide.invalidate === 'function') siteWide.invalidate()
   }
 
   function clearSharedReads() {
