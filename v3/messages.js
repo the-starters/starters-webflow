@@ -72,8 +72,27 @@
 
   const TALKJS_THEME = 'the-starters-3-0'
   const TALKJS_SCRIPT_URL = 'https://cdn.talkjs.com/talk.js'
-  const TALKJS_AUTH_HELPER_URL =
+  const TALKJS_AUTH_HELPER_BASE_URL =
     'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/talkjs-auth-session.js'
+  // Browsers keep jsDelivr `@latest` files for up to 7 days. The Messages page
+  // tag's `?v=` value is what refreshes this file in returning visitors'
+  // browsers; forwarding the same value to the auth helper URL refreshes the
+  // helper with that one page bump. jsDelivr ignores the query for its own
+  // cache, so the served helper is always the latest tag. Read while this
+  // script is still executing: `document.currentScript` is null afterwards.
+  const PAGE_RELEASE_VERSION = (function () {
+    try {
+      const src = document.currentScript && document.currentScript.src
+      if (!src) return ''
+      const value = new URL(src).searchParams.get('v') || ''
+      return /^[0-9A-Za-z._-]{1,32}$/.test(value) ? value : ''
+    } catch {
+      return ''
+    }
+  })()
+  const TALKJS_AUTH_HELPER_URL = PAGE_RELEASE_VERSION
+    ? TALKJS_AUTH_HELPER_BASE_URL + '?v=' + encodeURIComponent(PAGE_RELEASE_VERSION)
+    : TALKJS_AUTH_HELPER_BASE_URL
   const MEMBERSTACK_TIMEOUT_MS = 10000
   const TALKJS_TIMEOUT_MS = 15000
   const TALKJS_MAX_LOAD_ATTEMPTS = 2
