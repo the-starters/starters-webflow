@@ -678,7 +678,8 @@ paths, incomplete markup, and any form that still has `data-ms-form`. It does
 not inspect or change the query string. Xano controls rollout through the
 claim-status endpoint. Webflow form notifications send claim requests to the
 team with `Email Address` and `Profile Slug` for manual review and hand-created
-Memberstack accounts.
+Memberstack accounts that carry the Talent plan and slug custom field at
+creation time.
 
 Do not add a Hire-template slug allowlist or direct template script tag for
 `starter-profile-claim.js`. `hire-profile.js` injects the controller once when

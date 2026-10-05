@@ -15,7 +15,7 @@ that slug. The QR has no token or special query parameter.
 This is now a manual-review request. The Webflow form sends the request to the
 team through normal Webflow form notifications. The form includes the profile
 slug and the influencer's email address, so the team can create the Memberstack
-account and bind the profile by hand after review.
+account with the required plan and slug field after review.
 
 ## Frontend contract
 
@@ -91,8 +91,19 @@ the `hide` class as the no-JavaScript and pre-initialization state.
 
 Webflow form notifications deliver each claim request to the team. The message
 must include the visible `Email Address` field and the hidden `Profile Slug`
-field. The team reviews the request, confirms the target profile in Xano, and
-creates the Memberstack account by hand with that email address.
+field. The team reviews the request and confirms the target profile in Xano.
+After approval, staff must create the Memberstack account with the influencer's
+email address, a temporary password, the Talent free plan
+`pln_dorxata-test-free-plan-dvcg0k8o`, and custom field
+`starter-claim-profile-slug` set to the approved slug. All four values must be
+present on the initial account creation because Xano `#1513` links this profile
+only from `member.created`.
+
+Use the platform-ops-tools handover script
+`platform-ops/scripts/starter-claim-handover.mjs` for the account handoff. It
+creates the account with the required email, temporary password, Talent plan,
+and slug custom field in one step. Do not use a Memberstack dashboard create
+path that cannot set `starter-claim-profile-slug` at creation time.
 
 The profile slug selects the requested target. It does not prove who scanned
 the QR. Manual review remains the durable ownership gate.
