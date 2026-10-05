@@ -35,6 +35,10 @@ function member(id = MY_ID) {
  *                        navigation does
  * options.hostname  — window.location.hostname, which gates staging diagnostics
  * options.storage   — initial sessionStorage entries
+ * options.localStorage — initial localStorage entries (the Memberstack SDK's
+ *                        member cache lives there and is the warm-up hint)
+ * options.sessionOwner — false to omit the shared session owner, so the module
+ *                        has to load the helper script itself
  */
 function loadMessages(options = {}) {
   const replacements = []
@@ -91,6 +95,7 @@ function loadMessages(options = {}) {
   }
   const container = element('div')
   const storage = new Map(Object.entries(options.storage || {}))
+  const localStorage = new Map(Object.entries(options.localStorage || {}))
 
   if (options.handoff !== undefined) {
     storage.set(
@@ -225,6 +230,11 @@ function loadMessages(options = {}) {
       setItem: (key, value) => storage.set(key, String(value)),
       removeItem: (key) => storage.delete(key),
     },
+    localStorage: {
+      getItem: (key) => (localStorage.has(key) ? localStorage.get(key) : null),
+      setItem: (key, value) => localStorage.set(key, String(value)),
+      removeItem: (key) => localStorage.delete(key),
+    },
     setInterval,
     clearInterval,
     setTimeout(fn, ms, ...rest) {
@@ -252,6 +262,8 @@ function loadMessages(options = {}) {
     },
   }
   if (options.talk !== false) window.Talk = Talk
+  const sessionOwner = window.StartersTalkJsSessionOwner
+  if (options.sessionOwner === false) delete window.StartersTalkJsSessionOwner
 
   const document = {
     addEventListener() {},
@@ -295,6 +307,7 @@ function loadMessages(options = {}) {
     storage,
     Talk,
     window,
+    sessionOwner,
   }
 }
 
@@ -336,6 +349,91 @@ test('a visit without ?with= mounts the inbox and touches no conversation', asyn
   assert.equal(calls.conversations.length, 0)
   assert.equal(calls.selected.length, 0)
   assert.deepEqual(errors, [])
+})
+
+const MEMBERSTACK_SESSION_HINT_KEY = '_ms-mem'
+const memberstackSessionHint = {
+  [MEMBERSTACK_SESSION_HINT_KEY]: JSON.stringify({ id: MY_ID }),
+}
+
+test('a signed-in visitor downloads TalkJS before the Memberstack lookup', async () => {
+  const loaded = loadMessages({ talk: false, localStorage: memberstackSessionHint })
+
+  // Synchronously, before any Memberstack promise has resolved.
+  assert.equal(loaded.calls.scripts.length, 1)
+  assert.equal(loaded.calls.scripts[0].src, 'https://cdn.talkjs.com/talk.js')
+  assert.equal(loaded.calls.scripts[0].dataset.startersMessagesTalkjs, 'true')
+
+  await settle()
+
+  // The mount path waits on the same attempt; it never adds a second tag.
+  assert.equal(loaded.calls.scripts.length, 1)
+  assert.deepEqual(loaded.calls.mounted, [])
+
+  const callbacks = loaded.window.Talk.ready.c.slice()
+  loaded.window.Talk = loaded.Talk
+  callbacks.forEach(([callback]) => callback())
+  await settle()
+
+  assert.deepEqual(loaded.calls.mounted, [loaded.container])
+  assert.deepEqual(loaded.errors, [])
+})
+
+test('the warm-up also fetches the auth helper, and the mount reuses that load', async () => {
+  const loaded = loadMessages({
+    talk: false,
+    sessionOwner: false,
+    localStorage: memberstackSessionHint,
+  })
+
+  assert.equal(loaded.calls.scripts.length, 2)
+  const helper = loaded.calls.scripts[1]
+  assert.match(helper.src, /\/v3\/talkjs-auth-session\.js$/)
+  assert.equal(helper.dataset.startersTalkjsAuth, 'true')
+
+  // Let the loader subscribe to the SDK stub before the SDK "arrives".
+  await settle()
+  const callbacks = loaded.window.Talk.ready.c.slice()
+  loaded.window.Talk = loaded.Talk
+  callbacks.forEach(([callback]) => callback())
+  loaded.window.StartersTalkJsSessionOwner = loaded.sessionOwner
+  helper.onload()
+  await settle()
+
+  assert.equal(loaded.calls.scripts.length, 2)
+  assert.deepEqual(loaded.calls.mounted, [loaded.container])
+  assert.equal(loaded.calls.authSessions.length, 1)
+  assert.deepEqual(loaded.errors, [])
+})
+
+test('a warm-up script failure is handled once, on the mount path', async () => {
+  const loaded = loadMessages({ talk: false, localStorage: memberstackSessionHint })
+
+  assert.equal(loaded.calls.scripts.length, 1)
+  loaded.calls.scripts[0].onerror()
+  await settle()
+
+  // Same recovery as a failure after the Memberstack lookup: removed, retried once.
+  assert.equal(loaded.calls.scripts.length, 2)
+  assert.equal(loaded.calls.scripts[0].removed, true)
+
+  const callbacks = loaded.window.Talk.ready.c.slice()
+  loaded.window.Talk = loaded.Talk
+  callbacks.forEach(([callback]) => callback())
+  await settle()
+
+  assert.deepEqual(loaded.calls.mounted, [loaded.container])
+  assert.deepEqual(loaded.errors, [])
+})
+
+test('a visitor without a session hint downloads nothing before the login redirect', async () => {
+  const loaded = loadMessages({ talk: false, member: null, pathname: '/messages', search: '' })
+
+  assert.equal(loaded.calls.scripts.length, 0)
+  await settle(2)
+
+  assert.equal(loaded.calls.scripts.length, 0)
+  assert.deepEqual(loaded.replacements, ['/login?next=%2Fmessages'])
 })
 
 test('a TalkJS script that fails to load is removed and retried once', async () => {
