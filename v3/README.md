@@ -685,9 +685,7 @@ replacement flow is separately approved.
 The complete Designer attribute contract, manual-review contract, fail-closed
 cases, and release proof are in
 [STARTER-PROFILE-CLAIM-WIRING.md](../docs/wiring/STARTER-PROFILE-CLAIM-WIRING.md).
-The script can be released before the Webflow markup change because incomplete
-claim markup fails closed and keeps the live form hidden. Verify the visible
-email field and notification intake before treating the Webflow form as active.
+Incomplete claim markup still fails closed and keeps the form hidden.
 
 Run its focused test with:
 
