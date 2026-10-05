@@ -48,13 +48,14 @@ function harness(options = {}) {
   let memberError = null
   let memberLookup = null
   let memberstackCookieError = null
+  let cookieLookup = null
   let xanoTokenLookup = null
   let memberstackCookie =
     options.memberstackCookie === undefined
       ? 'memberstack-cookie-a'
       : options.memberstackCookie
   let authListener
-  const calls = { fetches: [], sessions: [], destroys: 0, reconnects: 0, invalidations: 0, xanoTokens: 0, xanoTokenArgs: [] }
+  const calls = { memberReads: 0, cookieReads: 0, fetches: [], sessions: [], destroys: 0, reconnects: 0, invalidations: 0, xanoTokens: 0, xanoTokenArgs: [] }
   const config = {
     getAttribute(name) {
       if (name === 'data-token-url') return 'https://untrusted.example/token'
@@ -67,11 +68,14 @@ function harness(options = {}) {
   }
   const memberstack = {
     async getCurrentMember() {
+      calls.memberReads += 1
       if (memberLookup) return memberLookup()
       if (memberError) throw memberError
       return { data: member }
     },
     async getMemberCookie() {
+      calls.cookieReads += 1
+      if (cookieLookup) return cookieLookup(calls.cookieReads)
       if (memberstackCookieError) throw memberstackCookieError
       return memberstackCookie
     },
@@ -163,6 +167,9 @@ function harness(options = {}) {
     },
     memberstackCookieError(value) {
       memberstackCookieError = value
+    },
+    cookieLookup(value) {
+      cookieLookup = value
     },
     xanoTokenLookup(value) {
       xanoTokenLookup = value
@@ -400,7 +407,9 @@ test('a foreign member cannot join another member pending opening', async () => 
   })
   const first = open(state)
   await started
+  // A real account switch replaces the Memberstack session cookie as well.
   state.member({ id: 'mem_sb_memberb' })
+  state.memberstackCookie('memberstack-cookie-b')
   await assert.rejects(
     open(state, { member: { id: 'mem_sb_memberb' } }),
     /foreign TalkJS session opening/,
@@ -893,23 +902,73 @@ test('cookie rotation after an early auth callback supersedes opening', async ()
 
 test('account switch during opening cannot construct the old member session', async () => {
   const state = harness()
-  let lookups = 0
-  state.memberLookup(() => {
-    lookups += 1
-    if (lookups === 3) {
+  // The switch lands between two identity checks: the member and the cookie
+  // both change after the opening has read member A once.
+  state.cookieLookup((count) => {
+    if (count === 4) {
       state.member({ id: 'mem_sb_memberb' })
       state.memberstackCookie('memberstack-cookie-b')
-      return { data: { id: 'mem_sb_membera' } }
     }
-    return { data: { id: lookups < 3 ? 'mem_sb_membera' : 'mem_sb_memberb' } }
+    return count >= 4 ? 'memberstack-cookie-b' : 'memberstack-cookie-a'
   })
 
-  await assert.rejects(
-    open(state),
-    /Member changed before authenticated request/,
-  )
+  await assert.rejects(open(state), { code: 'TALKJS_IDENTITY_MISMATCH' })
   assert.equal(state.calls.sessions.length, 0)
   assert.equal(state.api.debugSnapshot(), null)
+})
+
+test('an opening reads the member once while the cookie stays the same', async () => {
+  const state = harness()
+  await open(state)
+
+  assert.equal(state.calls.memberReads, 1)
+  assert.equal(state.calls.sessions.length, 1)
+})
+
+test('a second client joining a pending opening adds no member read', async () => {
+  let release
+  const gate = new Promise((resolve) => {
+    release = resolve
+  })
+  const state = harness({
+    fetch: async () => {
+      await gate
+      return jsonResponse({
+        token: token(),
+        me_id: 'mem_sb_membera',
+        data_environment: 'test',
+        expires_in_seconds: 300,
+      })
+    },
+  })
+  const first = open(state)
+  await new Promise((resolve) => setImmediate(resolve))
+  const second = open(state, { clientOwner: 'messages-profile-v3' })
+  await new Promise((resolve) => setImmediate(resolve))
+  release()
+  const sessions = await Promise.all([first, second])
+
+  assert.equal(sessions[0], sessions[1])
+  assert.equal(state.calls.memberReads, 1)
+})
+
+test('reads after the opening settles go to Memberstack again', async () => {
+  const state = harness()
+  await open(state)
+  const after = state.calls.memberReads
+  const fetcher = state.calls.sessions[0].tokenFetcher
+  await fetcher()
+
+  assert.ok(state.calls.memberReads > after)
+})
+
+test('a cookie rotation inside the opening forces a fresh member read', async () => {
+  const state = harness()
+  state.cookieLookup((count) => (count >= 6 ? 'memberstack-cookie-b' : 'memberstack-cookie-a'))
+
+  await assert.rejects(open(state), { code: 'TALKJS_IDENTITY_MISMATCH' })
+  assert.ok(state.calls.memberReads >= 2)
+  assert.equal(state.calls.sessions.length, 0)
 })
 
 test('identity change during refresh destroys the old session', async () => {

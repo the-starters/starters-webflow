@@ -39,6 +39,15 @@
   var active = null
   var pending = null
   var generation = 0
+  // One member read per unchanged Memberstack cookie while a session opening
+  // is in progress. Every `getCurrentMember()` is a separate, queued network
+  // request (about 0.3 s each), and an opening used to make seven of them in a
+  // row to confirm the same identity. The cookie is the session itself: a
+  // different member means a different cookie, and the SDK announces every
+  // sign-in or sign-out through onAuthChange, which destroys the opening and
+  // this memo with it. Reads outside an opening (refresh, reconcile,
+  // conversation authorization, active reuse) are never memoized.
+  var openingMemberMemo = null
   var wiredMemberstack = null
 
   function scriptConfig() {
@@ -106,11 +115,36 @@
     if (!memberstack || typeof memberstack.getCurrentMember !== 'function') {
       throw authenticationError('Memberstack is unavailable')
     }
+    var memo = openingMemberMemo
+    var canMemo = memo && typeof memberstack.getMemberCookie === 'function'
+    var cookieBefore = null
+    if (canMemo) {
+      cookieBefore = await memberstack.getMemberCookie()
+      if (memo.member && cookieBefore && cookieBefore === memo.cookie) {
+        return memo.member
+      }
+    }
     var member = memberFromResponse(await memberstack.getCurrentMember())
     if (!member || !MEMBER_ID_PATTERN.test(String(member.id || ''))) {
       throw authenticationError('No authenticated Memberstack member')
     }
+    if (canMemo && openingMemberMemo === memo && cookieBefore === memo.cookie) {
+      var cookieAfter = await memberstack.getMemberCookie()
+      if (cookieAfter === memo.cookie) memo.member = member
+    }
     return member
+  }
+
+  function beginOpeningMemo(cookie) {
+    if (openingMemberMemo && openingMemberMemo.cookie === cookie) {
+      return openingMemberMemo
+    }
+    openingMemberMemo = { cookie: cookie, member: null }
+    return openingMemberMemo
+  }
+
+  function endOpeningMemo(memo) {
+    if (openingMemberMemo === memo) openingMemberMemo = null
   }
 
   async function currentSessionCookie(memberstack) {
@@ -469,6 +503,7 @@
 
   function destroy(reason) {
     generation += 1
+    openingMemberMemo = null
     var owned = active
     active = null
     pending = null
@@ -558,13 +593,22 @@
       throw new Error('TalkJS is unavailable')
     }
     var memberstackCookie = await currentSessionCookie(options.memberstack)
-    var member = await currentMember(options.memberstack)
+    // Active reuse below revalidates with fresh reads; only an opening memoizes.
+    var memo = pending || !active ? beginOpeningMemo(memberstackCookie) : null
+    var member
+    try {
+      member = await currentMember(options.memberstack)
+    } catch (error) {
+      endOpeningMemo(memo)
+      throw error
+    }
     var memberId = String(member.id)
     if (
       !options.member ||
       String(options.member.id || '') !== memberId ||
       meId(options.me) !== memberId
     ) {
+      endOpeningMemo(memo)
       throw identityError('TalkJS client identity differs from Memberstack')
     }
     var config = scriptConfig()
@@ -713,6 +757,7 @@
       return await pendingState.promise
     } finally {
       if (pending === pendingState) pending = null
+      endOpeningMemo(memo)
     }
   }
 
