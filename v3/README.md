@@ -674,7 +674,8 @@ claim request form only after an exact positive claim-status response. It does
 not inspect or change the query string, and it refuses legacy Memberstack claim
 forms that still have `data-ms-form`. Xano controls rollout through the
 claim-status endpoint; Webflow form notifications send requests to the team for
-manual review.
+manual review. The Claim Profile Button component renders `type="button"`, so the
+controller turns its click into one native `requestSubmit()` after the reveal.
 
 Do not add a Hire-template slug allowlist or direct template script tag for
 `starter-profile-claim.js`. `hire-profile.js` injects the controller once when
@@ -684,9 +685,7 @@ replacement flow is separately approved.
 The complete Designer attribute contract, manual-review contract, fail-closed
 cases, and release proof are in
 [STARTER-PROFILE-CLAIM-WIRING.md](../docs/wiring/STARTER-PROFILE-CLAIM-WIRING.md).
-The script can be released before the Webflow markup change because incomplete
-claim markup fails closed and keeps the live form hidden. Verify the visible
-email field and notification intake before treating the Webflow form as active.
+Incomplete claim markup still fails closed and keeps the form hidden.
 
 Run its focused test with:
 
@@ -2063,10 +2062,12 @@ Current safety boundary:
   Writes, authenticated Xano pass-throughs, session resets, and current
   shared-read failures clear the shared entries.
 - Wraps `$memberstackDom.getCurrentMember()` only to share identical overlapping
-  calls. It keeps no settled Memberstack result, samples the live cookie before
-  and after the owner call, and clears in-flight member reads on auth changes,
-  cookie rotations, and every Memberstack method except `getCurrentMember`,
-  `getMemberCookie`, and `onAuthChange`.
+  calls when no site-wide shared-read owner is already installed. It keeps no
+  settled Memberstack result, samples the live cookie before and after the owner
+  call, and clears in-flight member reads on auth changes, cookie rotations, and
+  every Memberstack method except `getCurrentMember`, `getMemberCookie`, and
+  `onAuthChange`. When `utils/memberstack-shared-reads.js` owns the SDK wrapper,
+  this bridge leaves it in place and forwards session-reset invalidation to it.
 - Exposes `window.getXanoAuthToken` and `window.xanoAuthFetch` for page-owned
   code. It also retains its own auth-fetch reference for the stage adapter,
   because another page bundle can replace the public compatibility global
