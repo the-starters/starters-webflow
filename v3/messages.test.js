@@ -39,6 +39,8 @@ function member(id = MY_ID) {
  *                        member cache lives there and is the warm-up hint)
  * options.sessionOwner — false to omit the shared session owner, so the module
  *                        has to load the helper script itself
+ * options.currentScriptSrc — src of the executing Messages script tag (the
+ *                        page's `?v=` value is forwarded to the helper URL)
  */
 function loadMessages(options = {}) {
   const replacements = []
@@ -266,6 +268,9 @@ function loadMessages(options = {}) {
   if (options.sessionOwner === false) delete window.StartersTalkJsSessionOwner
 
   const document = {
+    currentScript: options.currentScriptSrc
+      ? { src: options.currentScriptSrc }
+      : null,
     addEventListener() {},
     createElement() {
       return element(arguments[0])
@@ -282,6 +287,7 @@ function loadMessages(options = {}) {
   }
 
   vm.runInNewContext(source, {
+    URL,
     URLSearchParams,
     JSON,
     Promise,
@@ -469,6 +475,47 @@ test('a visitor without a session hint downloads nothing before the login redire
 
   assert.equal(loaded.calls.scripts.length, 0)
   assert.deepEqual(loaded.replacements, ['/login?next=%2Fmessages'])
+})
+
+const MESSAGES_SRC =
+  'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/messages.js'
+
+function helperScript(options) {
+  const loaded = loadMessages({
+    talk: false,
+    sessionOwner: false,
+    localStorage: memberstackSessionHint,
+    ...options,
+  })
+  return loaded.calls.scripts.find((script) =>
+    /\/v3\/talkjs-auth-session\.js/.test(script.src),
+  )
+}
+
+test("the page tag's ?v= value is forwarded to the auth helper URL", () => {
+  const helper = helperScript({ currentScriptSrc: MESSAGES_SRC + '?v=1.59.672' })
+
+  assert.equal(
+    helper.src,
+    'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/talkjs-auth-session.js?v=1.59.672',
+  )
+})
+
+test('without a page ?v= value the auth helper URL is unchanged', () => {
+  const helper = helperScript({ currentScriptSrc: MESSAGES_SRC })
+
+  assert.equal(
+    helper.src,
+    'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/talkjs-auth-session.js',
+  )
+})
+
+test('an unexpected page ?v= value is not forwarded', () => {
+  const helper = helperScript({
+    currentScriptSrc: MESSAGES_SRC + '?v=' + encodeURIComponent('1"><script>'),
+  })
+
+  assert.match(helper.src, /\/v3\/talkjs-auth-session\.js$/)
 })
 
 test('a TalkJS script that fails to load is removed and retried once', async () => {
