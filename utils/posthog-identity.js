@@ -6,9 +6,10 @@
  * run before PostHog finishes loading.
  *
  * Logged in:  posthog.identify(<memberstack id>) with persona labels derived
- *             from the same customFields opportunities-3.0.js gates on
- *             (brands-dashboard-url / freelancer-dashboard-url — a member can
- *             be both). No email/name: account ids + capability labels only.
+ *             from the active Memberstack plan connection, or for older
+ *             members from the brands-dashboard-url / freelancer-dashboard-url
+ *             custom fields (a member can be both). No email/name: account ids
+ *             + capability labels only.
  * Logged out: posthog.reset() if the previous identity was a member id, so a
  *             shared browser doesn't chain new anonymous events to the old
  *             member. Anonymous visitors are otherwise untouched.
@@ -34,10 +35,28 @@
     })
   }
 
+  // Same plan map as v3/hire-profile.js. V3 members get their role from the
+  // plan connection; the dashboard-url custom fields were written by a V2 Make
+  // signup scenario and only exist on older members.
+  const PLAN_PERSONA = {
+    'pln_free-plan-f6kn0dxz': 'brand',
+    'pln_new-paid-plan-463h04ph': 'brand',
+    'pln_dorxata-test-brand-plan-777r02pa': 'brand',
+    'pln_dorxata-test-free-plan-dvcg0k8o': 'freelancer',
+  }
+
+  function activePlanPersonas(member) {
+    const connections = Array.isArray(member && member.planConnections) ? member.planConnections : []
+    return connections
+      .filter((c) => c && (c.active === true || c.status === 'ACTIVE'))
+      .map((c) => PLAN_PERSONA[c.planId])
+  }
+
   function personaOf(member) {
     const cf = (member && member.customFields) || {}
-    const brand = Boolean(cf['brands-dashboard-url'])
-    const freelancer = Boolean(cf['freelancer-dashboard-url'])
+    const plans = activePlanPersonas(member)
+    const brand = Boolean(cf['brands-dashboard-url']) || plans.includes('brand')
+    const freelancer = Boolean(cf['freelancer-dashboard-url']) || plans.includes('freelancer')
     return {
       brand,
       freelancer,
