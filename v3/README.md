@@ -677,7 +677,8 @@ schema, wrong slug, non-200, bad JSON, network error, timeout, non-profile
 paths, incomplete markup, and any form that still has `data-ms-form`. It does
 not inspect or change the query string. Xano controls rollout through the
 claim-status endpoint. Webflow form notifications send claim requests to the
-team for manual review and hand-created Memberstack accounts.
+team with `Email Address` and `Profile Slug` for manual review and hand-created
+Memberstack accounts.
 
 Do not add a Hire-template slug allowlist or direct template script tag for
 `starter-profile-claim.js`. `hire-profile.js` injects the controller once when
@@ -687,9 +688,9 @@ replacement flow is separately approved.
 The complete Designer attribute contract, manual-review contract, and release
 proof are in
 [STARTER-PROFILE-CLAIM-WIRING.md](../docs/wiring/STARTER-PROFILE-CLAIM-WIRING.md).
-This candidate is not release-ready until the Xano claim-status endpoint,
-matching Webflow form field, and notification intake are implemented and
-verified together.
+The script can be released before the Webflow markup change because incomplete
+markup fails closed and keeps the live form hidden. Verify the matching Webflow
+form fields and notification intake before treating the form as active.
 
 Run its focused test with:
 

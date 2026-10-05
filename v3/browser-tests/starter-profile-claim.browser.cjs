@@ -32,7 +32,7 @@ function markup() {
           data-starter-claim="wrapper">
           <form data-starter-claim="form">
             <h1>Claim your profile</h1>
-            <input type="email" name="Email">
+            <input type="email" name="Email Address" required>
             <input type="hidden" name="Profile Slug" data-starter-claim="profile-slug" autocomplete="off">
             <button type="submit">Claim profile</button>
             <a href="#" class="button is-google w-button" data-ms-auth-provider="google">Continue with Google</a>

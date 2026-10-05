@@ -17,7 +17,7 @@
   var WRAPPER_SELECTOR = '[data-starter-claim="wrapper"]'
   var FORM_SELECTOR = 'form[data-starter-claim="form"]'
   var PROFILE_SLUG_FIELD_SELECTOR =
-    'input[type="hidden"][data-starter-claim="profile-slug"]'
+    'input[type="hidden"][name="Profile Slug"][data-starter-claim="profile-slug"]'
   var GOOGLE_AUTH_SELECTOR = '[data-ms-auth-provider="google"]'
   var PROFILE_PATH_PATTERN = /^\/hire\/([a-z0-9]+(?:-[a-z0-9]+)*)$/
   var CLAIM_STATUS_URL =

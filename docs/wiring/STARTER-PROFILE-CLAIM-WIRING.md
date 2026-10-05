@@ -14,8 +14,8 @@ that slug. The QR has no token or special query parameter.
 
 This is now a manual-review request. The Webflow form sends the request to the
 team through normal Webflow form notifications. The form includes the profile
-slug, so the team can create the Memberstack account and bind the profile by
-hand after review.
+slug and the influencer's email address, so the team can create the Memberstack
+account and bind the profile by hand after review.
 
 ## Frontend contract
 
@@ -42,6 +42,14 @@ Put this attribute on the plain Webflow form:
 Do not put `data-ms-form` on this form. If the controller finds
 `data-ms-form`, it keeps the wrapper hidden so an old Memberstack signup form
 cannot be revealed.
+
+Keep the existing visible email input inside that form:
+
+| Property or attribute | Value |
+| --- | --- |
+| input type | `email` |
+| `name` | `Email Address` |
+| required | `required` |
 
 Add one hidden input inside that form:
 
@@ -82,9 +90,9 @@ the `hide` class as the no-JavaScript and pre-initialization state.
 ## Manual review contract
 
 Webflow form notifications deliver each claim request to the team. The message
-must include the hidden `Profile Slug` field. The team reviews the request,
-confirms the target profile in Xano, and creates the Memberstack account by
-hand.
+must include the visible `Email Address` field and the hidden `Profile Slug`
+field. The team reviews the request, confirms the target profile in Xano, and
+creates the Memberstack account by hand with that email address.
 
 The profile slug selects the requested target. It does not prove who scanned
 the QR. Manual review remains the durable ownership gate.
@@ -99,8 +107,8 @@ the QR. Manual review remains the durable ownership gate.
 - A form with `data-ms-form` stays hidden.
 - The browser sends one claim-status request only on pages with the Claim
   Profile wrapper and does not modify the URL.
-- Webflow form notifications deliver the request to the team with `Profile
-  Slug`.
+- Webflow form notifications deliver the request to the team with `Email
+  Address` and `Profile Slug`.
 - Google remains hidden.
 
 Run the local frontend checks with:
@@ -110,7 +118,7 @@ node --test v3/starter-profile-claim.test.js
 node v3/browser-tests/starter-profile-claim.browser.cjs
 ```
 
-The current production controller and Webflow attributes may not yet implement
-this manual-review design. Do not release this frontend until the matching
-Webflow form field and notification intake have been implemented and verified
-together.
+The script can be released before the Webflow markup change. Until the matching
+plain Webflow form fields exist, the controller fails closed and keeps the live
+form hidden. Verify the `Email Address`, `Profile Slug`, and notification
+intake before treating the Webflow form as active.
