@@ -97,6 +97,62 @@ test('ten concurrent identical reads make one network request and share the resu
   values.forEach((value) => assert.equal(value.data.id, 'mem_a'))
 })
 
+test('a zero-argument read shares with trailing undefined arguments', async () => {
+  const state = load({ hold: true })
+  const first = state.memberstack.getCurrentMember(undefined)
+  const second = state.memberstack.getCurrentMember()
+  await settle()
+
+  assert.equal(state.calls.reads, 1)
+  assert.equal(state.pendingCount(), 1)
+  state.releaseAll()
+  const values = await Promise.all([first, second])
+  values.forEach((value) => assert.deepEqual(value.args, []))
+})
+
+test('a null argument does not share with a zero-argument read', async () => {
+  const state = load({ hold: true })
+  const first = state.memberstack.getCurrentMember(null)
+  const second = state.memberstack.getCurrentMember()
+  await settle()
+
+  assert.equal(state.calls.reads, 2)
+  state.releaseAll()
+  await Promise.all([first, second])
+})
+
+test('identical JSON-safe option objects share one network request', async () => {
+  const state = load({ hold: true })
+  const first = state.memberstack.getCurrentMember({ useCache: true })
+  const second = state.memberstack.getCurrentMember({ useCache: true })
+  await settle()
+
+  assert.equal(state.calls.reads, 1)
+  assert.equal(state.pendingCount(), 1)
+  state.releaseAll()
+  await Promise.all([first, second])
+})
+
+test('an option object with a function value bypasses sharing', async () => {
+  const state = load({ hold: true })
+  const shared = state.memberstack.getCurrentMember({ useCache: true })
+  await settle()
+
+  const bypassed = state.memberstack.getCurrentMember({
+    useCache: true,
+    transform() {
+      return true
+    },
+  })
+  const stillShared = state.memberstack.getCurrentMember({ useCache: true })
+  await settle()
+
+  assert.equal(state.calls.reads, 2)
+  assert.equal(state.pendingCount(), 2)
+  state.releaseAll()
+  await Promise.all([shared, bypassed, stillShared])
+})
+
 test('a read that starts after the previous one settled goes to the network again', async () => {
   const state = load()
   await state.memberstack.getCurrentMember()

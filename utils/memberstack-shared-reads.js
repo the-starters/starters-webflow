@@ -8,11 +8,12 @@
  * waits behind all of the others (measured 2026-10-05 on /messages: 23 reads,
  * the burst alone cost about 3 s before the TalkJS inbox could open).
  *
- * This module wraps `getCurrentMember` so that identical calls made while one
- * is still in flight share its result. Nothing is kept after a read settles,
- * so a read that starts after a write or an auth change always goes to the
- * network. Any Memberstack write (every other method on `$memberstackDom`)
- * and every `onAuthChange` notification drop the in-flight entries first.
+ * This module wraps `getCurrentMember` so that calls with identical JSON-safe
+ * arguments made while one read is still in flight share its result. Nothing
+ * is kept after a read settles, so a read that starts after a write or an auth
+ * change always goes to the network. Any Memberstack write (every other method
+ * on `$memberstackDom`) and every `onAuthChange` notification drop the
+ * in-flight entries first.
  *
  * Install it with `defer` directly after the Memberstack SDK tag in the site
  * head, before the other deferred scripts, so it is in place when they run:
@@ -72,6 +73,58 @@
     }
   }
 
+  function isFiniteNumber(value) {
+    return value === value && value !== Infinity && value !== -Infinity
+  }
+
+  function isShareablePrimitive(value) {
+    var type = typeof value
+    if (type === 'string' || type === 'boolean') return true
+    return type === 'number' && isFiniteNumber(value)
+  }
+
+  function hasEnumerableSymbolKey(value) {
+    if (typeof Object.getOwnPropertySymbols !== 'function') return false
+    var symbols = Object.getOwnPropertySymbols(value)
+    for (var index = 0; index < symbols.length; index += 1) {
+      if (Object.prototype.propertyIsEnumerable.call(value, symbols[index])) return true
+    }
+    return false
+  }
+
+  function isShareablePlainObject(value) {
+    if (!value || typeof value !== 'object') return false
+    if (Object.getPrototypeOf(value) !== Object.prototype) return false
+    if (hasEnumerableSymbolKey(value)) return false
+    if (Object.prototype.hasOwnProperty.call(value, 'toJSON')) return false
+    var keys = Object.keys(value)
+    for (var index = 0; index < keys.length; index += 1) {
+      var entry = value[keys[index]]
+      if (entry === null || isShareablePrimitive(entry)) continue
+      return false
+    }
+    return true
+  }
+
+  function shareableArgs(args) {
+    if (!args.length) return []
+    var hasDefinedArg = false
+    for (var index = 0; index < args.length; index += 1) {
+      if (args[index] !== undefined) {
+        hasDefinedArg = true
+        break
+      }
+    }
+    if (!hasDefinedArg) return []
+    for (var argIndex = 0; argIndex < args.length; argIndex += 1) {
+      var arg = args[argIndex]
+      if (arg === null || arg === undefined) return null
+      if (isShareablePrimitive(arg) || isShareablePlainObject(arg)) continue
+      return null
+    }
+    return args
+  }
+
   function install(memberstack) {
     if (installed) return true
     if (!memberstack || typeof memberstack.getCurrentMember !== 'function') return false
@@ -91,6 +144,8 @@
 
     memberstack.getCurrentMember = async function () {
       var args = Array.prototype.slice.call(arguments)
+      var sharedArgs = shareableArgs(args)
+      if (!sharedArgs) return original.apply(null, args)
       var cookie
       try {
         cookie = await readCookie()
@@ -99,13 +154,13 @@
       }
       var key
       try {
-        key = JSON.stringify([revision, cookie, args])
+        key = JSON.stringify([revision, cookie, sharedArgs])
       } catch (error) {
         return original.apply(null, args)
       }
       var shared = inFlight.get(key)
       if (shared) return shared
-      var promise = original.apply(null, args)
+      var promise = original.apply(null, sharedArgs)
       inFlight.set(key, promise)
       var release = function () {
         if (inFlight.get(key) === promise) inFlight.delete(key)
