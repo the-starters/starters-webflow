@@ -171,6 +171,9 @@ function harness(options = {}) {
     cookieLookup(value) {
       cookieLookup = value
     },
+    hostname(value) {
+      window.location.hostname = value
+    },
     xanoTokenLookup(value) {
       xanoTokenLookup = value
     },
@@ -969,6 +972,58 @@ test('a cookie rotation inside the opening forces a fresh member read', async ()
   await assert.rejects(open(state), { code: 'TALKJS_IDENTITY_MISMATCH' })
   assert.ok(state.calls.memberReads >= 2)
   assert.equal(state.calls.sessions.length, 0)
+})
+
+test('pre-promise environment refusal clears the opening member memo', async () => {
+  const state = harness({ hostname: 'www.thestarters.com' })
+
+  await assert.rejects(open(state), /Member environment/)
+  assert.equal(state.calls.fetches.length, 0)
+  const before = state.calls.memberReads
+  state.hostname('the-starters-3-0.webflow.io')
+  await open(state)
+
+  assert.equal(state.calls.memberReads, before + 1)
+  assert.equal(state.calls.sessions.length, 1)
+})
+
+test('cookie-rotated pending refusal leaves no memo after openings settle', async () => {
+  let release
+  let startedResolve
+  const started = new Promise((resolve) => {
+    startedResolve = resolve
+  })
+  const gate = new Promise((resolve) => {
+    release = resolve
+  })
+  const state = harness()
+  state.xanoTokenLookup(async () => {
+    startedResolve()
+    await gate
+    return 'xano-bearer'
+  })
+
+  const first = open(state)
+  await started
+  state.member({ id: 'mem_sb_memberb' })
+  state.memberstackCookie('memberstack-cookie-b')
+  await assert.rejects(
+    open(state, {
+      member: { id: 'mem_sb_memberb' },
+      clientOwner: 'messages-profile-v3',
+    }),
+    /foreign TalkJS session opening/,
+  )
+  release()
+  await assert.rejects(first, { code: 'TALKJS_IDENTITY_MISMATCH' })
+  const before = state.calls.memberReads
+  await open(state, {
+    member: { id: 'mem_sb_memberb' },
+    clientOwner: 'dashboard-messages-v3',
+  })
+
+  assert.equal(state.calls.memberReads, before + 1)
+  assert.equal(state.calls.sessions.length, 1)
 })
 
 test('identity change during refresh destroys the old session', async () => {
