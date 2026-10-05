@@ -19,6 +19,22 @@
  * again" button; logged-out visitors still leave through the login redirect
  * without seeing it.
  *
+ * Boot latency: the inbox cannot appear before talk.js (about 350 KB) and the
+ * shared auth helper are on the page. Both used to be fetched only after the
+ * first Memberstack round-trip, one after the other. A visitor who already has
+ * a Memberstack session carries the SDK's member cache in localStorage, so
+ * that key is a cheap hint to start both downloads at script evaluation, in
+ * parallel with the Memberstack lookup. Visitors without the hint keep the
+ * original order and download nothing before the login redirect. The warm-up
+ * never decides the outcome. For talk.js, the mount path waits on the same
+ * loader attempt; a failed warm-up follows the existing onerror removal plus
+ * single retry, and the readiness-timeout reload guard stays unchanged. For the
+ * auth helper, waitForTalkJsSessionOwner clears its cached promise on onerror
+ * or timeout, so the mount path starts one fresh helper attempt after a failed
+ * warm-up. If a timed-out first helper tag later executes, it is harmless:
+ * v3/talkjs-auth-session.js returns early once window.StartersTalkJsSessionOwner
+ * already exists.
+ *
  * Deep linking: `/messages?conversation=<TalkJS conversation id>` selects an
  * existing conversation (used by dashboard preview cards). The existing
  * `/messages?with=<memberstack id>` contract asks Xano to resolve or provision
@@ -63,6 +79,9 @@
   const TALKJS_MAX_LOAD_ATTEMPTS = 2
   const TALKJS_READY_TIMEOUT_CODE = 'TALKJS_READY_TIMEOUT'
   const TALKJS_RELOAD_GUARD_KEY = 'starters:messages-talkjs-recovery-reload'
+  // Written by the Memberstack DOM SDK after a member lookup and removed on
+  // logout. Its presence only decides whether the warm-up starts early.
+  const MEMBERSTACK_SESSION_HINT_KEY = '_ms-mem'
   const LOGIN_PATH = '/login'
   const DEEP_LINK_PARAM = 'with'
   const CONVERSATION_PARAM = 'conversation'
@@ -365,6 +384,36 @@
     })
     window.__startersTalkJsAuthHelperPromise = loading
     return loading
+  }
+
+  function hasMemberstackSessionHint() {
+    try {
+      return Boolean(
+        window.localStorage &&
+          window.localStorage.getItem(MEMBERSTACK_SESSION_HINT_KEY),
+      )
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * Start the TalkJS SDK and auth helper downloads before the Memberstack
+   * lookup, when the visitor looks signed in. The TalkJS SDK attempt stays
+   * cached for the mount path, including its onerror retry and readiness-timeout
+   * reload guard. The auth helper cache is cleared by waitForTalkJsSessionOwner
+   * after onerror or timeout, so a failed warm-up lets the mount path start one
+   * fresh helper attempt; a late first helper tag is harmless because
+   * v3/talkjs-auth-session.js returns early when window.StartersTalkJsSessionOwner
+   * already exists. Rejections are observed here only to keep them from
+   * surfacing as unhandled.
+   * @returns {boolean} whether the warm-up started
+   */
+  function warmTalkJsDependencies() {
+    if (!hasMemberstackSessionHint()) return false
+    installTalkJsLoader().ready.catch(() => {})
+    waitForTalkJsSessionOwner().catch(() => {})
+    return true
   }
 
   // Replicated from v3/route-guard.js PLAN_ROLES — that file is the canonical
@@ -1039,6 +1088,8 @@
   function start() {
     mountWithFailureHandling()
   }
+
+  warmTalkJsDependencies()
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', start, { once: true })
