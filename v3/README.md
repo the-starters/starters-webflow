@@ -669,28 +669,24 @@ node --test v3/starters-ms-redirect.test.js
 template. The outer wrapper remains authored with its `hide` class,
 `hidden="hidden"`, and `aria-hidden="true"`. On an exact canonical
 `/hire/<slug>` path, the controller asks Xano whether that slug is still
-claimable. It fills the authored hidden
-`data-ms-member="starter-claim-profile-slug"` input and reveals the existing
-signup form only when the claim-status response has the expected schema, exact
-page slug, and `claimable: true`. It keeps the form hidden for `claimable:
-false`, wrong schema, wrong slug, non-200, bad JSON, network error, timeout,
-non-profile paths, and incomplete markup. It does not inspect or change the
-query string. Xano controls rollout through the claim-status endpoint; the
-backend remains responsible for atomically claiming the exact admin-prebuilt
-profile only for an eligible fresh `member.created` signup. Existing accounts
-and later updates cannot establish or switch that binding.
+claimable. It fills the authored hidden slug field and reveals the plain Webflow
+claim request form only after an exact positive claim-status response. It does
+not inspect or change the query string, and it refuses legacy Memberstack claim
+forms that still have `data-ms-form`. Xano controls rollout through the
+claim-status endpoint; Webflow form notifications send requests to the team for
+manual review.
 
 Do not add a Hire-template slug allowlist or direct template script tag for
 `starter-profile-claim.js`. `hire-profile.js` injects the controller once when
 the Claim Profile wrapper exists. Keep Google signup hidden until its
-profile-slug transport is proven.
+replacement flow is separately approved.
 
-The complete Designer attribute contract, backend signup-consumption order, and
-release proof are in
+The complete Designer attribute contract, manual-review contract, fail-closed
+cases, and release proof are in
 [STARTER-PROFILE-CLAIM-WIRING.md](../docs/wiring/STARTER-PROFILE-CLAIM-WIRING.md).
-This candidate is not release-ready until the Xano claim-status endpoint,
-matching form field, and backend slug-claim path are implemented and verified
-together.
+The script can be released before the Webflow markup change because incomplete
+claim markup fails closed and keeps the live form hidden. Verify the visible
+email field and notification intake before treating the Webflow form as active.
 
 Run its focused test with:
 
