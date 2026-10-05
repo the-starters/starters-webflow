@@ -367,6 +367,7 @@ test('ambiguous confirmation survives a page rebuild and clears only after succe
     data_environment: 'production',
     starter_data: { memberstack_id: 'mem_starter-one' },
     status: 'pending',
+    confirmation_expires_at: 4_102_444_800_000,
   }
   const storage = memoryStorage()
   const bodies = []
@@ -470,6 +471,7 @@ test('Starter Accept sends one canonical request and blocks a double click', asy
     data_environment: 'production',
     starter_data: { memberstack_id: 'mem_starter-one' },
     status: 'pending',
+    confirmation_expires_at: 4_102_444_800_000,
   }
   const listeners = []
   const requests = []
@@ -568,6 +570,7 @@ test('Starter Accept shows Confirming… in flight and a visible failure', async
     data_environment: 'production',
     starter_data: { memberstack_id: 'mem_starter-one' },
     status: 'pending',
+    confirmation_expires_at: 4_102_444_800_000,
   }
   const original = {
     document: global.document,
@@ -717,6 +720,7 @@ test('Starter Accept alert shows server text only for server answers', async () 
         data_environment: 'production',
         starter_data: { memberstack_id: 'mem_starter-one' },
         status: 'pending',
+        confirmation_expires_at: 4_102_444_800_000,
       }
       const card = {
         children: [],
@@ -851,7 +855,10 @@ test('only the V3-native Starter Accept action is visible on pending cards', () 
     },
   }
 
-  api.configureActionButtons(card, 'starter', 'pending')
+  api.configureActionButtons(card, 'starter', 'pending', {
+    status: 'pending',
+    confirmation_expires_at: 4_102_444_800_000,
+  })
 
   assert.equal(accept.hidden, false)
   assert.equal(accept.style.display, '')
@@ -923,7 +930,8 @@ test('request expiration uses the canonical confirmation deadline before the cal
     confirmation_expires_at: 2_000_000_000,
     start: 3_000_000_000_000,
   }), 2_000_000_000_000)
-  assert.equal(api.responseDeadline({ start: 3_000_000_000 }), 3_000_000_000_000)
+  // booking/confirm/v3 rejects a missing deadline, so the call start is not a stand-in for it.
+  assert.ok(Number.isNaN(api.responseDeadline({ start: 3_000_000_000 })))
   assert.equal(api.formatResponseTime(2_000_000_000_000 + 60_000, 2_000_000_000_000), '1m')
   assert.equal(api.formatResponseTime(2_000_000_000_000 + 61 * 60_000, 2_000_000_000_000), '1h 1m')
   assert.equal(api.formatResponseTime(2_000_000_000_000 + 25 * 60 * 60_000 + 60_000, 2_000_000_000_000), '1d 1h 1m')
@@ -968,6 +976,42 @@ test('pending Starter request cards show the countdown and hide Accept at expira
 
   assert.equal(api.paintRequestExpiration(card, booking, 'brand', now), false)
   assert.equal(wrap.hidden, true)
+})
+
+test('pending Starter request without a stored deadline hides Accept and the countdown but stays declinable', () => {
+  // A V2-copied row (103#1378) had confirmation_expires_at = null. booking/confirm/v3
+  // rejects that, so a start-based countdown and an Accept button promised a confirm that
+  // could not succeed. booking/decline/v3 has no deadline rule, so Decline stays open.
+  const wrap = element()
+  const output = element()
+  const details = element({ 'booking-card-action-btn': 'details' })
+  const accept = element({ 'booking-action-btn': 'switch-confirm' })
+  const card = {
+    querySelector(selector) {
+      if (selector === '[booking-item-expiration="wrap"]') return wrap
+      if (selector === '[booking-item-expiration="time"]') return output
+      return null
+    },
+    querySelectorAll() {
+      return [details, accept]
+    },
+  }
+  const now = 2_000_000_000_000
+  for (const missing of [null, undefined, '', 0]) {
+    const booking = {
+      status: 'pending',
+      start: now + 18 * 60 * 60 * 1000,
+      confirmation_expires_at: missing,
+    }
+
+    assert.equal(api.canConfirmBooking('starter', booking, now), false)
+    assert.equal(api.responseWindowOpen(booking, now), true)
+    assert.equal(api.paintRequestExpiration(card, booking, 'starter', now), false)
+    assert.equal(wrap.hidden, true)
+    api.configureActionButtons(card, 'starter', 'pending', booking, now)
+    assert.equal(accept.hidden, true)
+    assert.equal(details.hidden, false)
+  }
 })
 
 test('GitHub expiration owner polls one expired request at a bounded interval', async () => {

@@ -39,6 +39,15 @@
   var active = null
   var pending = null
   var generation = 0
+  // One member read per unchanged Memberstack cookie while a session opening
+  // is in progress. Every `getCurrentMember()` is a separate, queued network
+  // request (about 0.3 s each), and an opening used to make seven of them in a
+  // row to confirm the same identity. The cookie is the session itself: a
+  // different member means a different cookie, and the SDK announces every
+  // sign-in or sign-out through onAuthChange, which destroys the opening and
+  // this memo with it. Reads outside an opening (refresh, reconcile,
+  // conversation authorization, active reuse) are never memoized.
+  var openingMemberMemo = null
   var wiredMemberstack = null
 
   function scriptConfig() {
@@ -102,15 +111,41 @@
     return response && (response.data || response.member || response)
   }
 
-  async function currentMember(memberstack) {
+  async function currentMember(memberstack, memo) {
     if (!memberstack || typeof memberstack.getCurrentMember !== 'function') {
       throw authenticationError('Memberstack is unavailable')
+    }
+    if (arguments.length < 2) memo = openingMemberMemo
+    var canMemo = memo && typeof memberstack.getMemberCookie === 'function'
+    var cookieBefore = null
+    if (canMemo) {
+      cookieBefore = await memberstack.getMemberCookie()
+      if (memo.member && cookieBefore && cookieBefore === memo.cookie) {
+        return memo.member
+      }
     }
     var member = memberFromResponse(await memberstack.getCurrentMember())
     if (!member || !MEMBER_ID_PATTERN.test(String(member.id || ''))) {
       throw authenticationError('No authenticated Memberstack member')
     }
+    if (canMemo && openingMemberMemo === memo && cookieBefore === memo.cookie) {
+      var cookieAfter = await memberstack.getMemberCookie()
+      if (cookieAfter === memo.cookie) memo.member = member
+    }
     return member
+  }
+
+  function beginOpeningMemo(cookie) {
+    if (openingMemberMemo && openingMemberMemo.cookie === cookie) {
+      return openingMemberMemo
+    }
+    if (openingMemberMemo) return null
+    openingMemberMemo = { cookie: cookie, member: null }
+    return openingMemberMemo
+  }
+
+  function endOpeningMemo(memo) {
+    if (openingMemberMemo === memo) openingMemberMemo = null
   }
 
   async function currentSessionCookie(memberstack) {
@@ -469,6 +504,7 @@
 
   function destroy(reason) {
     generation += 1
+    openingMemberMemo = null
     var owned = active
     active = null
     pending = null
@@ -558,87 +594,101 @@
       throw new Error('TalkJS is unavailable')
     }
     var memberstackCookie = await currentSessionCookie(options.memberstack)
-    var member = await currentMember(options.memberstack)
-    var memberId = String(member.id)
-    if (
-      !options.member ||
-      String(options.member.id || '') !== memberId ||
-      meId(options.me) !== memberId
-    ) {
-      throw identityError('TalkJS client identity differs from Memberstack')
-    }
-    var config = scriptConfig()
-    var environment = expectedEnvironment(memberId, config.environment)
-    wireMemberstack(options.memberstack)
-
-    if (active) {
+    var memo = null
+    var member
+    var memberId
+    var config
+    var environment
+    var openingGeneration
+    var pendingState
+    try {
+      // Active reuse below revalidates with fresh reads; only an opening memoizes.
+      memo = pending || !active ? beginOpeningMemo(memberstackCookie) : null
+      member = await currentMember(options.memberstack, memo)
+      memberId = String(member.id)
       if (
-        active.memberId !== memberId ||
-        active.environment !== environment ||
-        active.memberstackCookie !== memberstackCookie
+        !options.member ||
+        String(options.member.id || '') !== memberId ||
+        meId(options.me) !== memberId
       ) {
-        await destroyAndInvalidate('foreign-client', active)
-        throw identityError('A foreign TalkJS session was refused')
+        throw identityError('TalkJS client identity differs from Memberstack')
       }
-      await validateCapturedIdentity({
-        memberstack: options.memberstack,
-        memberId: memberId,
-        memberstackCookie: memberstackCookie,
-      }, active)
-      active.clientOwners[options.clientOwner] = true
-      addReconnect(
-        active.reconnectors,
-        options.clientOwner,
-        options.onReconnect,
-      )
-      addInvalidator(
-        active.invalidators,
-        options.clientOwner,
-        options.onInvalidate,
-      )
-      return active.session
-    }
-    if (pending) {
-      if (pending.memberId !== memberId || pending.environment !== environment) {
-        throw identityError('A foreign TalkJS session opening was refused')
-      }
-      pending.clientOwners[options.clientOwner] = true
-      addReconnect(
-        pending.reconnectors,
-        options.clientOwner,
-        options.onReconnect,
-      )
-      addInvalidator(
-        pending.invalidators,
-        options.clientOwner,
-        options.onInvalidate,
-      )
-      return pending.promise
-    }
+      config = scriptConfig()
+      environment = expectedEnvironment(memberId, config.environment)
+      wireMemberstack(options.memberstack)
 
-    var openingGeneration = generation
-    var pendingState = {
-      memberId: memberId,
-      environment: environment,
-      memberstack: options.memberstack,
-      memberstackCookie: memberstackCookie,
-      clientOwners: {},
-      reconnectors: {},
-      invalidators: {},
-      promise: null,
+      if (active) {
+        if (
+          active.memberId !== memberId ||
+          active.environment !== environment ||
+          active.memberstackCookie !== memberstackCookie
+        ) {
+          await destroyAndInvalidate('foreign-client', active)
+          throw identityError('A foreign TalkJS session was refused')
+        }
+        await validateCapturedIdentity({
+          memberstack: options.memberstack,
+          memberId: memberId,
+          memberstackCookie: memberstackCookie,
+        }, active)
+        active.clientOwners[options.clientOwner] = true
+        addReconnect(
+          active.reconnectors,
+          options.clientOwner,
+          options.onReconnect,
+        )
+        addInvalidator(
+          active.invalidators,
+          options.clientOwner,
+          options.onInvalidate,
+        )
+        return active.session
+      }
+      if (pending) {
+        if (pending.memberId !== memberId || pending.environment !== environment) {
+          throw identityError('A foreign TalkJS session opening was refused')
+        }
+        pending.clientOwners[options.clientOwner] = true
+        addReconnect(
+          pending.reconnectors,
+          options.clientOwner,
+          options.onReconnect,
+        )
+        addInvalidator(
+          pending.invalidators,
+          options.clientOwner,
+          options.onInvalidate,
+        )
+        return pending.promise
+      }
+
+      openingGeneration = generation
+      pendingState = {
+        memberId: memberId,
+        environment: environment,
+        memberstack: options.memberstack,
+        memberstackCookie: memberstackCookie,
+        clientOwners: {},
+        reconnectors: {},
+        invalidators: {},
+        promise: null,
+      }
+      pendingState.clientOwners[options.clientOwner] = true
+      addReconnect(
+        pendingState.reconnectors,
+        options.clientOwner,
+        options.onReconnect,
+      )
+      addInvalidator(
+        pendingState.invalidators,
+        options.clientOwner,
+        options.onInvalidate,
+      )
+      pending = pendingState
+    } catch (error) {
+      endOpeningMemo(memo)
+      throw error
     }
-    pendingState.clientOwners[options.clientOwner] = true
-    addReconnect(
-      pendingState.reconnectors,
-      options.clientOwner,
-      options.onReconnect,
-    )
-    addInvalidator(
-      pendingState.invalidators,
-      options.clientOwner,
-      options.onInvalidate,
-    )
-    pending = pendingState
     pendingState.promise = (async function () {
       var requestOptions = {
         memberstack: options.memberstack,
@@ -713,6 +763,7 @@
       return await pendingState.promise
     } finally {
       if (pending === pendingState) pending = null
+      endOpeningMemo(memo)
     }
   }
 

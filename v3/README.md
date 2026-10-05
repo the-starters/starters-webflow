@@ -663,6 +663,37 @@ Run its focused test with:
 node --test v3/starters-ms-redirect.test.js
 ```
 
+## Premade Starter profile claim gate
+
+`starter-profile-claim.js` controls the Claim Profile component on the Hire CMS
+template. The outer wrapper remains authored with its `hide` class,
+`hidden="hidden"`, and `aria-hidden="true"`. On an exact canonical
+`/hire/<slug>` path, the controller asks Xano whether that slug is still
+claimable. It fills the authored hidden slug field and reveals the plain Webflow
+claim request form only after an exact positive claim-status response. It does
+not inspect or change the query string, and it refuses legacy Memberstack claim
+forms that still have `data-ms-form`. Xano controls rollout through the
+claim-status endpoint; Webflow form notifications send requests to the team for
+manual review. The Claim Profile Button component renders `type="button"`, so the
+controller turns its click into one native `requestSubmit()` after the reveal.
+
+Do not add a Hire-template slug allowlist or direct template script tag for
+`starter-profile-claim.js`. `hire-profile.js` injects the controller once when
+the Claim Profile wrapper exists. Keep Google signup hidden until its
+replacement flow is separately approved.
+
+The complete Designer attribute contract, manual-review contract, fail-closed
+cases, and release proof are in
+[STARTER-PROFILE-CLAIM-WIRING.md](../docs/wiring/STARTER-PROFILE-CLAIM-WIRING.md).
+Incomplete claim markup still fails closed and keeps the form hidden.
+
+Run its focused test with:
+
+```sh
+node --test v3/starter-profile-claim.test.js
+node v3/browser-tests/starter-profile-claim.browser.cjs
+```
+
 ## Signup attribution
 
 `signup-attribution.js` captures paid-click attribution, reports the signup back
@@ -2031,10 +2062,12 @@ Current safety boundary:
   Writes, authenticated Xano pass-throughs, session resets, and current
   shared-read failures clear the shared entries.
 - Wraps `$memberstackDom.getCurrentMember()` only to share identical overlapping
-  calls. It keeps no settled Memberstack result, samples the live cookie before
-  and after the owner call, and clears in-flight member reads on auth changes,
-  cookie rotations, and every Memberstack method except `getCurrentMember`,
-  `getMemberCookie`, and `onAuthChange`.
+  calls when no site-wide shared-read owner is already installed. It keeps no
+  settled Memberstack result, samples the live cookie before and after the owner
+  call, and clears in-flight member reads on auth changes, cookie rotations, and
+  every Memberstack method except `getCurrentMember`, `getMemberCookie`, and
+  `onAuthChange`. When `utils/memberstack-shared-reads.js` owns the SDK wrapper,
+  this bridge leaves it in place and forwards session-reset invalidation to it.
 - Exposes `window.getXanoAuthToken` and `window.xanoAuthFetch` for page-owned
   code. It also retains its own auth-fetch reference for the stage adapter,
   because another page bundle can replace the public compatibility global
@@ -2872,14 +2905,16 @@ reschedule policy, charging and payout policy are unchanged.
 `dashboard-calls.js` is also the single owner of the Starter request-expiry
 countdown; the legacy inline dashboard helper no longer renders that list, so
 its copy of the countdown is dead and must not be re-enabled. The countdown
-reads canonical `confirmation_expires_at` and falls back to canonical `start`
-only when that field is absent, renders the remaining time as `1d 2h 3m` with
-zero units omitted and any part-minute rounded up, shows `Expired` at or past
-the deadline, and reuses the authored site-wide `text-color-red` error colour
-inside the last 48 hours because the authored countdown has no expiring-state
-combo class. The
-wrap stays hidden for every row it does not own: Brand rows, non-pending rows,
-and pending rows with no usable deadline.
+reads canonical `confirmation_expires_at` as the only countdown deadline,
+renders the remaining time as `1d 2h 3m` with zero units omitted and any
+part-minute rounded up, shows `Expired` at or past the deadline, and reuses the
+authored site-wide `text-color-red` error colour inside the last 48 hours
+because the authored countdown has no expiring-state combo class. The wrap
+stays hidden for every row it does not own: Brand rows, non-pending rows, and
+pending rows with no usable deadline. A pending Starter row without
+`confirmation_expires_at` also hides Accept; Decline can remain available
+because `booking/decline/v3` has no deadline rule and still uses the open
+start-based response window.
 
 One bounded ten-second lifecycle timer, started for either dashboard role,
 repaints every rendered request card and the open `popup-booking-info` dialog
