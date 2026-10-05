@@ -2659,6 +2659,29 @@
     return ' — Awaiting ' + (role === 'brand' ? 'Starter' : 'Brand') + ' confirmation of the proposed time.'
   }
 
+  /**
+   * P7 (JP 2a): an unanswered Paid proposal lapses back to the original call
+   * at min(original, proposed start) - 48 h 15 min. The lapse time comes from
+   * the actions module, which owns the Paid reschedule rule; without it, or
+   * for Free, no note renders.
+   * @param {object} booking Canonical booking row.
+   * @param {string} timezone Viewer timezone for the shared formatter.
+   * @returns {string} Note text, or ''.
+   */
+  function paidProposalLapseText(booking, timezone) {
+    if (!paidBooking(booking) || clean(booking && booking.status).toLowerCase() !== 'rescheduled') return ''
+    const actions = global.StartersDashboardCallActions
+    if (
+      !validDashboardModule(actions) ||
+      typeof actions.paidProposalLapseTime !== 'function'
+    ) return ''
+    const lapse = actions.paidProposalLapseTime(booking)
+    const when = Number.isFinite(lapse) ? formatDate(lapse, timezone) : ''
+    return when
+      ? 'If there is no answer before ' + when + ', the call stays at the original time.'
+      : ''
+  }
+
   function populateDetailSchedule(root, booking, role) {
     const timezone = viewerTimezone(role, booking)
     setBookingField(root, 'start-date', formatDate(booking.start, timezone), true)
@@ -2668,7 +2691,8 @@
     })
     const oldDate = proposalOldDate(booking, timezone)
     setBookingField(root, 'start-date-old', oldDate, oldDate !== '')
-    const statusText = proposalStatusText(booking, role)
+    const lapseNote = paidProposalLapseText(booking, timezone)
+    const statusText = proposalStatusText(booking, role) + (lapseNote ? ' ' + lapseNote : '')
     setBookingField(root, 'status-text', statusText, statusText !== '')
     setBookingField(root, 'reschedule-reason', booking.rescheduled_reason, Boolean(booking.rescheduled_reason))
     hideStaleEditReason(root, booking)
@@ -4168,6 +4192,7 @@
     bindCard,
     bookingStatus,
     paidBooking,
+    paidProposalLapseText,
     responseWindowOpen,
     responseDeadline,
     formatResponseTime,
