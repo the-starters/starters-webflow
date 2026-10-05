@@ -24,6 +24,7 @@
     'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/profile/starter/claim-status/v3'
   var CLAIM_STATUS_SCHEMA = 'starter_profile_claim_status_v3'
   var CLAIM_STATUS_TIMEOUT_MS = 8000
+  var BUTTON_SUBMIT_BOUND_ATTR = 'data-starter-claim-submit-bound'
 
   function close(wrapper) {
     if (!wrapper) return
@@ -144,7 +145,32 @@
       if (!isClaimableResponse(body, slug)) return
       profileSlugField.value = slug
       profileSlugField.setAttribute('value', slug)
+      bindButtonSubmit(form)
       reveal(wrapper)
+    })
+  }
+
+  // The shared Button component renders `<button type="button">`, which never
+  // submits. Memberstack used to drive it through `data-ms-form`; the plain
+  // Webflow form needs the click turned into a native submit so constraint
+  // validation, Turnstile, and the Webflow notification all run as usual.
+  function bindButtonSubmit(form) {
+    if (typeof form.addEventListener !== 'function') return
+    if (form.getAttribute(BUTTON_SUBMIT_BOUND_ATTR) !== null) return
+    form.setAttribute(BUTTON_SUBMIT_BOUND_ATTR, '')
+    form.addEventListener('click', function (event) {
+      var target = event.target
+      var button = target && typeof target.closest === 'function' ? target.closest('button') : null
+      if (!button || button.getAttribute('type') !== 'button') return
+      if (typeof form.contains === 'function' && !form.contains(button)) return
+      if (button.disabled) return
+      event.preventDefault()
+      if (typeof form.requestSubmit === 'function') {
+        form.requestSubmit()
+        return
+      }
+      var nativeSubmit = form.querySelector('input[type="submit"], button[type="submit"]')
+      if (nativeSubmit && typeof nativeSubmit.click === 'function') nativeSubmit.click()
     })
   }
 

@@ -31,8 +31,18 @@ function element(attributes = {}, tagName = '') {
   const classes = new Set(String(own.class || '').split(/\s+/).filter(Boolean))
   const selectors = new Map()
   const children = []
+  const handlers = {}
 
   return {
+    addEventListener(type, handler) {
+      (handlers[type] = handlers[type] || []).push(handler)
+    },
+    fire(type, event) {
+      for (const handler of handlers[type] || []) handler(event)
+    },
+    handlerCount(type) {
+      return (handlers[type] || []).length
+    },
     attributes: own,
     tagName: tagName.toLowerCase(),
     classList: {
@@ -192,6 +202,73 @@ test('claimable true reveals the plain Webflow form and puts the page slug in th
   assert.equal(harness.googleAuth.getAttribute('aria-hidden'), 'true')
   assert.equal(harness.googleAuth.getAttribute('tabindex'), '-1')
   assert.equal(harness.window.location.search, '?utm_source=gift')
+})
+
+function clickOn(button) {
+  const event = { target: { closest: () => button }, defaultPrevented: false }
+  event.preventDefault = () => { event.defaultPrevented = true }
+  return event
+}
+
+function componentButton(attributes = { type: 'button' }) {
+  return element(attributes, 'button')
+}
+
+test('a type=button component click becomes one native submit after reveal', async () => {
+  const harness = load()
+  let submits = 0
+  harness.form.requestSubmit = () => { submits += 1 }
+  await harness.dispatch('DOMContentLoaded')
+
+  const event = clickOn(componentButton())
+  harness.form.fire('click', event)
+  assert.equal(submits, 1)
+  assert.equal(event.defaultPrevented, true)
+  assert.equal(harness.form.getAttribute('data-starter-claim-submit-bound'), '')
+})
+
+test('submit binding ignores native submits, non-buttons, and disabled buttons', async () => {
+  const harness = load()
+  let submits = 0
+  harness.form.requestSubmit = () => { submits += 1 }
+  await harness.dispatch('DOMContentLoaded')
+
+  const disabled = componentButton()
+  disabled.disabled = true
+  for (const event of [
+    clickOn(componentButton({ type: 'submit' })),
+    clickOn(null),
+    clickOn(disabled),
+    { target: null, preventDefault() { throw new Error('should not prevent') } },
+  ]) {
+    harness.form.fire('click', event)
+  }
+  assert.equal(submits, 0)
+})
+
+test('submit binding falls back to the native submit input without requestSubmit', async () => {
+  const harness = load()
+  let clicks = 0
+  const nativeSubmit = element({ type: 'submit' }, 'input')
+  nativeSubmit.click = () => { clicks += 1 }
+  harness.form.setQuery('input[type="submit"], button[type="submit"]', nativeSubmit)
+  await harness.dispatch('DOMContentLoaded')
+
+  harness.form.fire('click', clickOn(componentButton()))
+  assert.equal(clicks, 1)
+})
+
+test('submit binding is not added when the profile is not claimable', async () => {
+  const harness = load({
+    fetch: () => Promise.resolve(jsonResponse({
+      schema: 'starter_profile_claim_status_v3',
+      slug: 'jane-doe',
+      claimable: false,
+    })),
+  })
+  await harness.dispatch('DOMContentLoaded')
+  assert.equal(harness.form.handlerCount('click'), 0)
+  assert.equal(harness.form.getAttribute('data-starter-claim-submit-bound'), null)
 })
 
 test('form with data-ms-form stays hidden without a request', async () => {

@@ -82,7 +82,13 @@ can edit any browser field, so the team must verify the slug against the
 canonical Xano profile during manual review.
 
 Keep the Google signup control hidden. The normal Webflow form submit is the
-launch path.
+launch path. The shared Button component renders `<button type="button">`,
+which does not submit by itself. After a positive claim-status response, the
+controller turns a click on any enabled `type="button"` button inside the
+claim form into one `form.requestSubmit()` call. Native validation, Turnstile,
+and the Webflow notification then run as usual. If the browser has no
+`requestSubmit`, the controller clicks the form's native submit input. The form
+carries `data-starter-claim-submit-bound` once this binding exists.
 
 Load `v3/hire-profile.js` through the existing Hire template script tag. Keep
 the `hide` class as the no-JavaScript and pre-initialization state.

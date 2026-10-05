@@ -674,7 +674,8 @@ claim request form only after an exact positive claim-status response. It does
 not inspect or change the query string, and it refuses legacy Memberstack claim
 forms that still have `data-ms-form`. Xano controls rollout through the
 claim-status endpoint; Webflow form notifications send requests to the team for
-manual review.
+manual review. The Claim Profile Button component renders `type="button"`, so the
+controller turns its click into one native `requestSubmit()` after the reveal.
 
 Do not add a Hire-template slug allowlist or direct template script tag for
 `starter-profile-claim.js`. `hire-profile.js` injects the controller once when
