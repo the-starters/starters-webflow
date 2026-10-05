@@ -669,29 +669,24 @@ node --test v3/starters-ms-redirect.test.js
 template. The outer wrapper remains authored with its `hide` class,
 `hidden="hidden"`, and `aria-hidden="true"`. On an exact canonical
 `/hire/<slug>` path, the controller asks Xano whether that slug is still
-claimable. It fills the authored hidden
-`data-starter-claim="profile-slug"` input and reveals the plain Webflow form
-only when the claim-status response has the expected schema, exact page slug,
-and `claimable: true`. It keeps the form hidden for `claimable: false`, wrong
-schema, wrong slug, non-200, bad JSON, network error, timeout, non-profile
-paths, incomplete markup, and any form that still has `data-ms-form`. It does
-not inspect or change the query string. Xano controls rollout through the
-claim-status endpoint. Webflow form notifications send claim requests to the
-team with `Email Address` and `Profile Slug` for manual review and hand-created
-Memberstack accounts that carry the Talent plan and slug custom field at
-creation time.
+claimable. It fills the authored hidden slug field and reveals the plain Webflow
+claim request form only after an exact positive claim-status response. It does
+not inspect or change the query string, and it refuses legacy Memberstack claim
+forms that still have `data-ms-form`. Xano controls rollout through the
+claim-status endpoint; Webflow form notifications send requests to the team for
+manual review.
 
 Do not add a Hire-template slug allowlist or direct template script tag for
 `starter-profile-claim.js`. `hire-profile.js` injects the controller once when
 the Claim Profile wrapper exists. Keep Google signup hidden until its
 replacement flow is separately approved.
 
-The complete Designer attribute contract, manual-review contract, and release
-proof are in
+The complete Designer attribute contract, manual-review contract, fail-closed
+cases, and release proof are in
 [STARTER-PROFILE-CLAIM-WIRING.md](../docs/wiring/STARTER-PROFILE-CLAIM-WIRING.md).
 The script can be released before the Webflow markup change because incomplete
-markup fails closed and keeps the live form hidden. Verify the matching Webflow
-form fields and notification intake before treating the form as active.
+claim markup fails closed and keeps the live form hidden. Verify the visible
+email field and notification intake before treating the Webflow form as active.
 
 Run its focused test with:
 

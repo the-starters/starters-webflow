@@ -130,6 +130,6 @@ node v3/browser-tests/starter-profile-claim.browser.cjs
 ```
 
 The script can be released before the Webflow markup change. Until the matching
-plain Webflow form fields exist, the controller fails closed and keeps the live
-form hidden. Verify the `Email Address`, `Profile Slug`, and notification
-intake before treating the Webflow form as active.
+plain Webflow form and hidden `Profile Slug` field exist, the controller fails
+closed and keeps the live form hidden. Verify the visible `Email Address` field
+and notification intake before treating the Webflow form as active.
