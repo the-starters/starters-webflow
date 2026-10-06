@@ -251,11 +251,11 @@
   // too, so a client release before the server can never show a refused Cancel.
   const PAID_HOLD_CANCEL_OPEN_ENVIRONMENTS = ['test']
 
-  // F15 (JP 3a, 2026-10-03): a Brand cancel at or within 24 h of start is
+  // F15 (Kaeser + Jai, 2026-10-06): a Brand cancel at or within 8 h of start is
   // charged the full session fee; every other Paid cancel is released.
-  const PAID_LATE_CANCEL_FEE_WINDOW_MS = 24 * 3600000
+  const PAID_LATE_CANCEL_FEE_WINDOW_MS = 8 * 3600000
   const CANCEL_FEE_TEXT = {
-    late: 'This call starts within 24 hours. Cancelling now charges the full session fee.',
+    late: 'This call starts within 8 hours. Cancelling now charges the full session fee.',
     none: 'No charge will be made for this cancellation.',
   }
   const PAID_PROPOSED_START_MESSAGE =
@@ -381,7 +381,7 @@
 
   /**
    * The one fee line of the cancel confirmation. Free returns '' (unchanged).
-   * A Brand cancelling a confirmed Paid call at or within 24 h of start pays
+   * A Brand cancelling a confirmed Paid call at or within 8 h of start pays
    * the full fee; every other Paid cancellation is free of charge.
    */
   function cancelFeeText(role, booking, now) {

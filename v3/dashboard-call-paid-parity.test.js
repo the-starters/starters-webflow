@@ -13,16 +13,17 @@ const calls = require('./dashboard-calls.js')
 const H = 60 * 60 * 1000
 const LEAD = 48 * H + 15 * 60 * 1000
 const DAY = 24 * H
+const LATE = 8 * H // F15 late-cancel window (8 h; the 24 h rule is booking notice only)
 
 test('the Paid constants match the server rules and open Test only', () => {
   assert.equal(api.PAID_CONFIRMED_CANCEL_LEAD_MS, LEAD)
-  assert.equal(api.PAID_LATE_CANCEL_FEE_WINDOW_MS, DAY)
+  assert.equal(api.PAID_LATE_CANCEL_FEE_WINDOW_MS, LATE)
   assert.deepEqual(api.PAID_EDIT_OPEN_ENVIRONMENTS, ['test'])
   assert.deepEqual(api.PAID_RESCHEDULE_OPEN_ENVIRONMENTS, ['test'])
   assert.deepEqual(api.PAID_HOLD_CANCEL_OPEN_ENVIRONMENTS, ['test'])
   assert.equal(
     api.CANCEL_FEE_TEXT.late,
-    'This call starts within 24 hours. Cancelling now charges the full session fee.',
+    'This call starts within 8 hours. Cancelling now charges the full session fee.',
   )
   assert.equal(api.CANCEL_FEE_TEXT.none, 'No charge will be made for this cancellation.')
 })
@@ -199,14 +200,15 @@ test('P5 regression: the P4 saved-card window and Free cancel are unchanged', ()
   assert.equal(api.canCancel('starter', { ...free, status: 'pending', start: now + H }, now), false)
 })
 
-test('P5: the fee line charges a Brand only at or within 24 h of a confirmed Paid start', () => {
+test('P5: the fee line charges a Brand only at or within 8 h of a confirmed Paid start', () => {
   const now = Date.now()
   const late = api.CANCEL_FEE_TEXT.late
   const none = api.CANCEL_FEE_TEXT.none
-  assert.equal(api.cancelFeeText('brand', held({ start: now + DAY }), now), late, 'exactly 24 h')
-  assert.equal(api.cancelFeeText('brand', held({ start: now + DAY - 1 }), now), late)
+  assert.equal(api.cancelFeeText('brand', held({ start: now + LATE }), now), late, 'exactly 8 h')
+  assert.equal(api.cancelFeeText('brand', held({ start: now + LATE - 1 }), now), late)
   assert.equal(api.cancelFeeText('brand', held({ start: now + 1 }), now), late)
-  assert.equal(api.cancelFeeText('brand', held({ start: now + DAY + 1 }), now), none, '24 h + 1 ms')
+  assert.equal(api.cancelFeeText('brand', held({ start: now + LATE + 1 }), now), none, '8 h + 1 ms')
+  assert.equal(api.cancelFeeText('brand', held({ start: now + DAY }), now), none, '24 h out: no charge')
   assert.equal(api.cancelFeeText('brand', held({ start: now + LEAD }), now), none)
   assert.equal(api.cancelFeeText('brand', savedCard({ status: 'confirmed', start: now + 72 * H }), now), none)
   for (const lead of [1, DAY, DAY + 1, 72 * H]) {
@@ -387,7 +389,7 @@ test('P5: an authored cancel-fee slot wins, and a panel without an anchor gets t
   const now = Date.now()
   const authored = cancelModal({ authoredSlot: true })
   openCancel(authored)
-  api.renderCancelFeeNote(authored.document, authored.modal, 'brand', held({ start: now + DAY }), now)
+  api.renderCancelFeeNote(authored.document, authored.modal, 'brand', held({ start: now + LATE }), now)
   const slot = authored.modal.querySelector('[booking-copy="cancel-fee"]')
   assert.equal(slot.textContent, api.CANCEL_FEE_TEXT.late)
   assert.equal(slot.hidden, false)
@@ -397,7 +399,7 @@ test('P5: an authored cancel-fee slot wins, and a panel without an anchor gets t
 
   const bare = cancelModal({ anchor: false })
   openCancel(bare)
-  api.renderCancelFeeNote(bare.document, bare.modal, 'brand', held({ start: now + DAY + 1 }), now)
+  api.renderCancelFeeNote(bare.document, bare.modal, 'brand', held({ start: now + LATE + 1 }), now)
   const note = bare.panels.cancel.querySelector('[data-starters-cancel-fee-note]')
   assert.equal(note.textContent, api.CANCEL_FEE_TEXT.none)
   assert.equal(bare.panels.cancel.children[bare.panels.cancel.children.length - 1], note)
