@@ -132,6 +132,8 @@ The document root also reports `verifying`, `pending`, `unverified`, `queued`,
 or `already-sent`. `queued` confirms the browser call, not receipt by Meta.
 After verification or duplicate suppression, checkout parameters are removed
 with `history.replaceState`; unrelated query parameters and the hash survive.
+The exposed `window.StartersMembershipCheckoutAuthority.resumeCheckoutReturn()`
+method resumes the same captured return without changing the page contract.
 
 The backend deployment candidates are
 [`checkout-receipt`](../../v3/xano-workspace/api/v3_0_starters/membership/checkout/receipt/v_3_POST.xs)
