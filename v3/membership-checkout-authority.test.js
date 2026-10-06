@@ -51,7 +51,11 @@ function boot(options = {}) {
   const requests = []
   const listeners = []
   const observers = []
-  const storage = new Map()
+  const storage = options.storage || new Map()
+  const local = options.local || new Map()
+  const pixelEvents = []
+  const historyUpdates = []
+  const purchaseStates = []
   const sessionStorage = options.sessionStorage || {
     getItem: (key) => storage.get(key) || null,
     setItem: (key, value) => storage.set(key, value),
@@ -61,16 +65,29 @@ function boot(options = {}) {
     location: {
       hostname: options.hostname || 'thestarters.com',
       pathname: options.pathname || '/quiz-results',
+      search: options.search || '',
+      hash: options.hash || '',
     },
     crypto: {
       randomUUID:
         options.randomUUID || (() => '12345678-1234-1234-1234-123456789abc'),
     },
     sessionStorage,
+    localStorage: options.localStorage || {
+      getItem: (key) => local.get(key) || null,
+      setItem: (key, value) => local.set(key, value),
+      removeItem: (key) => local.delete(key),
+    },
+    URLSearchParams,
+    AbortController,
+    history: { state: null, replaceState: (_state, _title, url) => historyUpdates.push(url) },
+    navigator: { locks: options.locks === false ? null : options.locks || { request: async (_name, action) => action() } },
+    fbq: options.fbq === null ? undefined : options.fbq || ((...args) => pixelEvents.push(args)),
     addEventListener(name, listener, capture) {
       listeners.push({ target: 'window', name, listener, capture })
     },
     document: {
+      documentElement: { setAttribute: (_key, value) => purchaseStates.push(value) },
       querySelector(selector) {
         return selector === '[data-ms-action="logout"] [data-ms-loader]'
           ? options.logoutLoader || null
@@ -80,7 +97,7 @@ function boot(options = {}) {
         listeners.push({ target: 'document', name, listener, capture })
       },
     },
-    setTimeout,
+    setTimeout: options.fastTimers ? (fn, ms) => setTimeout(fn, ms === 12000 ? ms : 0) : setTimeout,
     clearTimeout,
     MutationObserver: class {
       constructor(callback) {
@@ -113,6 +130,9 @@ function boot(options = {}) {
           }
         )
       }
+      if (String(url).includes('/membership/checkout-receipt/v3')) {
+        return { ok: true, json: async () => typeof options.receipt === 'function' ? options.receipt() : options.receipt }
+      }
       return (typeof options.registerResponse === 'function'
         ? options.registerResponse()
         : options.registerResponse) || {
@@ -122,7 +142,7 @@ function boot(options = {}) {
     },
   }
   vm.runInNewContext(source, { window, WeakSet, Promise, JSON, encodeURIComponent, Error })
-  return { window, requests, listeners, observers, storage }
+  return { window, requests, listeners, observers, storage, local, pixelEvents, historyUpdates, purchaseStates }
 }
 
 test('binds ahead of Memberstack document capture regardless of load order', async () => {
@@ -738,4 +758,177 @@ test('clears the pending state when secure event identity generation fails', asy
   await state.listeners[0].listener(clickEvent(control))
   assert.equal(control.getAttribute('data-v3-checkout-authority'), 'accepted')
   assert.equal(control.clicks, 1)
+})
+
+const monthlyPrice = 'prc_premium-monthly--fn1ae0qjj'
+const annualPrice = 'prc_paid-annual-2o5f040u'
+const canonicalIntent = 'a'.repeat(64)
+function returnedPurchase(options = {}) {
+  const priceId = options.priceId || monthlyPrice
+  const storage = options.storage || new Map()
+  if (!options.storage) storage.set('ts:v3:membership-checkout-intent:' + priceId, JSON.stringify({
+    memberId: options.memberId || 'mem_production', intentKey: canonicalIntent,
+    eventId: 'evt_12345678-1234-1234-1234-123456789abc', sourceRoute: '/quiz-results',
+    expiresAt: Date.now() + 60000,
+  }))
+  return boot({
+    pathname: '/dashboard', memberId: 'mem_production', storage,
+    search: '?fromCheckout=true&msPriceId=' + priceId + '&stripePriceId=price_real&value=999999&keep=yes',
+    hash: '#welcome', fastTimers: true,
+    receipt: {
+      ok: true, status: 'paid', intent_key: canonicalIntent, stripe_price_id: priceId,
+      transaction_id: 'cs_live_transaction1', amount_total: 29500, currency: 'USD', source_environment: 'production',
+    }, ...options,
+  })
+}
+async function finishPurchase(state) {
+  await state.window.StartersMembershipCheckoutAuthority.resumeCheckoutReturn()
+}
+
+test('sends the verified discounted monthly amount to the installed pixel, ignoring URL value', async () => {
+  const state = returnedPurchase({ receipt: {
+    ok: true, status: 'paid', intent_key: canonicalIntent, stripe_price_id: monthlyPrice,
+    transaction_id: 'cs_live_discounted', amount_total: 22125, currency: 'USD', source_environment: 'production',
+  } })
+  await finishPurchase(state)
+  assert.equal(state.pixelEvents.length, 1)
+  const [action, pixelId, name, payload, identity] = state.pixelEvents[0]
+  assert.equal(action, 'trackSingle')
+  assert.equal(pixelId, '775648331097942')
+  assert.equal(name, 'Purchase')
+  assert.equal(payload.value, 221.25)
+  assert.equal(payload.currency, 'USD')
+  assert.deepEqual(Array.from(payload.content_ids), [monthlyPrice])
+  assert.equal(identity.eventID, 'cs_live_discounted')
+  assert.deepEqual(state.historyUpdates, ['/dashboard?value=999999&keep=yes#welcome'])
+  assert.equal(state.storage.size, 0)
+})
+
+test('sends the annual amount from the receipt', async () => {
+  const state = returnedPurchase({priceId: annualPrice, receipt: {
+    ok: true, status: 'paid', intent_key: canonicalIntent, stripe_price_id: annualPrice,
+    transaction_id: 'cs_live_annual', amount_total: 234000, currency: 'USD', source_environment: 'production',
+  }})
+  await finishPurchase(state)
+  assert.equal(state.pixelEvents[0][3].value, 2340)
+})
+
+test('captures return before dashboard navigation and resumes on the Brand destination', async () => {
+  let resolveAuth
+  const state = returnedPurchase({ authResponse: {ok: true, json: () => new Promise(resolve => { resolveAuth = resolve })} })
+  assert.ok(state.storage.has('ts:v3:membership-checkout-return'))
+  const next = returnedPurchase({ pathname: '/brand-dashboard', search: '', storage: state.storage })
+  await finishPurchase(next)
+  assert.equal(next.pixelEvents.length, 1)
+  assert.equal(next.storage.size, 0)
+  // Simulate destruction of the old page's outstanding fetch during navigation.
+  for (let count = 0; !resolveAuth && count < 10; count++) await new Promise(resolve => setImmediate(resolve))
+  resolveAuth(null)
+  await finishPurchase(state)
+  assert.equal(state.pixelEvents.length, 0)
+})
+
+test('refresh and a second tab use the same transaction marker and cross-tab lock', async () => {
+  let chain = Promise.resolve()
+  const locks = {request: (_key, action) => {
+    const result = chain.then(action)
+    chain = result.catch(() => {})
+    return result
+  }}
+  const local = new Map()
+  const first = returnedPurchase({local, locks})
+  const second = returnedPurchase({local, locks})
+  await Promise.all([finishPurchase(first), finishPurchase(second)])
+  assert.equal(first.pixelEvents.length + second.pixelEvents.length, 1)
+  const refresh = returnedPurchase({local})
+  await finishPurchase(refresh)
+  assert.equal(refresh.pixelEvents.length, 0)
+  assert.ok(refresh.purchaseStates.includes('already-sent'))
+})
+
+test('ordinary dashboard visits, free signup, and cancelled checkout do not send Purchase', async () => {
+  for (const search of ['', '?fromCheckout=false&msPriceId=' + monthlyPrice, '?value=295', '?fromCheckout=true&msPriceId=unknown']) {
+    const state = returnedPurchase({search})
+    await finishPurchase(state)
+    assert.equal(state.pixelEvents.length, 0)
+    assert.equal(state.requests.length, 0)
+  }
+  const noIntent = returnedPurchase({storage: new Map()})
+  await finishPurchase(noIntent)
+  assert.equal(noIntent.pixelEvents.length, 0)
+})
+
+test('pending webhook is retried, and a still-pending receipt is retained for refresh', async () => {
+  let calls = 0
+  const ready = { ok: true, status: 'paid', intent_key: canonicalIntent, stripe_price_id: monthlyPrice,
+    transaction_id: 'cs_live_delayed', amount_total: 29500, currency: 'USD', source_environment: 'production' }
+  const delayed = returnedPurchase({receipt: () => ++calls < 3 ? {ok: true, status: 'pending'} : ready})
+  await finishPurchase(delayed)
+  assert.equal(calls, 3)
+  assert.equal(delayed.pixelEvents.length, 1)
+  const pending = returnedPurchase({receipt: {ok: true, status: 'pending'}})
+  await finishPurchase(pending)
+  assert.equal(pending.pixelEvents.length, 0)
+  assert.ok(pending.storage.has('ts:v3:membership-checkout-return'))
+  assert.equal(pending.purchaseStates.at(-1), 'pending')
+})
+
+test('rejects unverified, zero, non-finite, fractional cents, wrong currency, price, intent and environment receipts', async () => {
+  const valid = {ok: true, status: 'paid', intent_key: canonicalIntent, stripe_price_id: monthlyPrice,
+    transaction_id: 'cs_live_valid', amount_total: 29500, currency: 'USD', source_environment: 'production'}
+  for (const override of [{ok: false}, {status: 'unpaid'}, {amount_total: 0}, {amount_total: -1},
+    {amount_total: Infinity}, {amount_total: '29500'}, {amount_total: 1.5}, {currency: 'EUR'},
+    {stripe_price_id: annualPrice}, {intent_key: 'b'.repeat(64)}, {source_environment: 'test'},
+    {transaction_id: 'cs_test_wrongmode'}, {transaction_id: 'sub_123'}]) {
+    const state = returnedPurchase({receipt: {...valid, ...override}})
+    await finishPurchase(state)
+    assert.equal(state.pixelEvents.length, 0, JSON.stringify(override))
+  }
+})
+
+test('test-mode verification never sends test revenue to the production pixel', async () => {
+  const state = returnedPurchase({hostname: 'the-starters-3-0.webflow.io', memberId: 'mem_sb_test', receipt: {
+    ok: true, status: 'paid', intent_key: canonicalIntent, stripe_price_id: monthlyPrice,
+    transaction_id: 'cs_test_valid', amount_total: 29500, currency: 'USD', source_environment: 'test',
+  }})
+  await finishPurchase(state)
+  assert.equal(state.pixelEvents.length, 0)
+  assert.equal(state.purchaseStates.at(-1), 'test-verified')
+})
+
+test('member changes before the receipt or pixel dispatch fail closed', async () => {
+  for (const changeAt of [1, 3, 4]) {
+    let reads = 0
+    const state = returnedPurchase({currentMember: () => ({id: ++reads >= changeAt ? 'mem_other' : 'mem_production'})})
+    await finishPurchase(state)
+    assert.equal(state.pixelEvents.length, 0)
+  }
+})
+
+test('blocked storage, missing pixel, and unsupported cross-tab locks never send unguarded events', async () => {
+  for (const options of [{localStorage: {getItem() {throw new Error('blocked')}}}, {fbq: null}, {locks: false}]) {
+    const state = returnedPurchase(options)
+    await finishPurchase(state)
+    assert.equal(state.pixelEvents.length, 0)
+    assert.ok(state.storage.has('ts:v3:membership-checkout-return'))
+  }
+})
+
+test('synchronous pixel failure releases the transaction marker so refresh can retry', async () => {
+  const local = new Map()
+  const failure = returnedPurchase({local, fbq: () => {throw new Error('pixel failure')}})
+  await finishPurchase(failure)
+  assert.equal(local.size, 0)
+  const retry = returnedPurchase({local, storage: failure.storage, search: ''})
+  await finishPurchase(retry)
+  assert.equal(retry.pixelEvents.length, 1)
+})
+
+test('a coalesced registration stores the canonical intent key and server expiry', async () => {
+  const expires = Date.now() + 30000
+  const state = boot({registerResponse: {ok: true, json: async () => ({ok: true, intent_key: canonicalIntent, expires_at: expires})}})
+  await state.window.StartersMembershipCheckoutAuthority.handleCheckout(clickEvent(target(monthlyPrice)))
+  const persisted = JSON.parse(state.storage.get('ts:v3:membership-checkout-intent:' + monthlyPrice))
+  assert.equal(persisted.intentKey, canonicalIntent)
+  assert.equal(persisted.expiresAt, expires)
 })

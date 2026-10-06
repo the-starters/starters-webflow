@@ -9,7 +9,8 @@
 
 ## Install
 
-Load this GitHub-owned controller once in the V3 site head:
+Load this GitHub-owned controller once in the V3 site head, before
+`v3/route-guard.js` and other scripts that redirect the dashboard:
 
 ```html
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/membership-checkout-authority.js"></script>
@@ -90,11 +91,62 @@ The server must later bind the exact Memberstack connection and Stripe subscript
 to the pending intent. A V3 renewal email is allowed only after that exact binding.
 Unbound or legacy subscriptions fail closed from the V3 email path.
 
+## Browser Purchase contract
+
+The existing dashboard destination remains the paid-plan success redirect.
+The controller captures Memberstack's `fromCheckout=true` and allowlisted
+`msPriceId` on `/dashboard`, `/brand-dashboard`, `/complete-profile`, or
+`/all-starters` before asynchronous routing can drop the query string. It saves
+an expiring return record in session storage and resumes verification on these
+routes after navigation. A return must match an accepted checkout intent in
+this tab, including the authenticated member and the registrar's canonical
+`intent_key`. URL amounts and a member's current plan amount are never proof of
+payment.
+
+`POST membership/checkout-receipt/v3` requires the same `user_v3` bearer as the
+registrar. Its inputs are `intent_key` and `stripe_price_id` (the existing
+Memberstack price ID vocabulary). The read-only endpoint checks authenticated
+ownership, origin, environment, expiry, the signed lifecycle binding, and the
+exact subscription snapshot. It reads Stripe Checkout Sessions for that
+subscription and customer in the intent's two-hour window. Multiple matches,
+unbound or foreign subscriptions, wrong modes, zero payments, trials, and
+unsupported currencies cannot produce a paid receipt. `pending` means the
+binding, snapshot, or payment is not yet ready; the browser retries up to twelve
+times with 2.5 seconds between reads and a twelve-second timeout per read.
+
+A paid receipt contains `ok: true`, `status: "paid"`, `intent_key`,
+`stripe_price_id`, `transaction_id` (the actual Stripe Checkout Session ID),
+`amount_total` (integer cents including discounts and tax), `currency: "USD"`,
+and `source_environment`. Only production receipts on the production hosts
+send `trackSingle` Purchase to the existing pixel `775648331097942`. The amount
+is cents divided by 100. The Session ID is also the event ID and permanent
+same-browser local-storage deduplication key. A Web Lock serializes dispatch
+across tabs. Missing pixel, blocked storage, or unsupported Web Locks fails
+closed and leaves the pending return available for refresh. Browser storage
+clearing and a different browser are outside this deduplication boundary.
+
+The controller does not install another base pixel or send events through the
+Conversions API. Test receipts on the V3 staging host set
+`data-v3-membership-purchase="test-verified"` without sending fake revenue.
+The document root also reports `verifying`, `pending`, `unverified`, `queued`,
+or `already-sent`. `queued` confirms the browser call, not receipt by Meta.
+After verification or duplicate suppression, checkout parameters are removed
+with `history.replaceState`; unrelated query parameters and the hash survive.
+
+The backend deployment candidates are
+[`checkout-receipt`](../../v3/xano-workspace/api/v3_0_starters/membership/checkout/receipt/v_3_POST.xs)
+and its
+[`Stripe receipt validator`](../../v3/xano-workspace/function/membership/checkout_session_receipt_v_3.xs).
+Committing these documents does not deploy Xano. Deploy and exercise this
+read-only endpoint before releasing the browser controller. The production
+backend branch, Memberstack redirects, and native pixel configuration require
+no change for candidate preparation.
+
 ## Release gate
 
-- Publish the Xano table and bearer-verifying registrar first, with exact
-  draft-free readback.
-- Release this script through GitHub with the `v1.59.659` tag and jsDelivr purge.
+- Deploy the bearer-verifying registrar, receipt endpoint, and receipt
+  validator first, with exact draft-free readback and runtime checks.
+- Release this script through GitHub with a new semver tag and jsDelivr purge.
 - Preserve and verify the complete Webflow custom-code block before publish.
 - Run one owned Stripe Test checkout with action-time confirmation.
 - Prove the V3 payment pattern does not match the unchanged V2 Zap filter.
