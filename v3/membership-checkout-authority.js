@@ -1,6 +1,6 @@
 /**
  * V3 membership checkout authority gate.
- * @release unreleased
+ * @release v1.59.674
  *
  * This controller records one authenticated V3 checkout intent before the
  * native Memberstack price control opens Stripe checkout. It does not create
