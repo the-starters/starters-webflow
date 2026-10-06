@@ -2749,16 +2749,18 @@ returns full rows, so `payment_status`, `payment_reconciliation_status`,
 `payment_intent`, `payment_revision`, `data_environment`, `start` and
 `start_old` are all available client-side.
 
-- **P5 cancel with a hold (#2099 P5, JP F15 24 h).** `paidHoldCancelAdmitted`
-  admits a confirmed Paid row with a `payment_intent`, `payment_status`
-  `intent_created` and `payment_reconciliation_status` `reconciled`. Either
+- **P5 cancel with a hold (#2099 P5, F15 8 h: Kaeser + Jai 2026-10-06).**
+  `paidHoldCancelAdmitted` admits a confirmed Paid row with a
+  `payment_intent`, `payment_status` `intent_created` and
+  `payment_reconciliation_status` `reconciled`, and `data_environment` in
+  `PAID_HOLD_CANCEL_OPEN_ENVIRONMENTS` (Test only until the #2099 P5 draft is
+  published; add 'production' in the release that publishes it). Either
   participant can then cancel until start. Every other Paid payment state
-  inside 48 h 15 min stays hidden. P5 has no environment gate (the server
-  admits both env pairs), so this client must not be released before the
-  #2099 P5 draft is published. `cancelFeeText` gives the cancel confirmation
-  one line: a Brand on a confirmed Paid call with `start - now <= 24 h` sees
-  "This call starts within 24 hours. Cancelling now charges the full session
-  fee."; every other Paid cancellation (Starter, earlier Brand, pending
+  inside 48 h 15 min stays hidden. `cancelFeeText` gives the cancel
+  confirmation one line: a Brand on a confirmed Paid call with
+  `start - now <= 8 h` (`PAID_LATE_CANCEL_FEE_WINDOW_MS`) sees "This call
+  starts within 8 hours. Cancelling now charges the full session fee."; the
+  24 h rule is the minimum booking notice only. Every other Paid cancellation (Starter, earlier Brand, pending
   request) sees "No charge will be made for this cancellation."; Free shows
   nothing. `renderCancelFeeNote` writes it into an authored
   `[booking-copy="cancel-fee"]` slot when the Designer adds one. Until then the
