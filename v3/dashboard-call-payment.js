@@ -20,9 +20,15 @@
     return String(value == null ? '' : value).trim()
   }
 
-  function canRequestPaymentAction(role, booking) {
+  // P9 review 2026-10-06: approve only on a live call before start (JP A=1a:
+  // after start the call runs with no charge, so no new hold is placed).
+  function canRequestPaymentAction(role, booking, now) {
+    const rawStart = booking && booking.start
+    const start = Number.isFinite(Number(rawStart)) ? Number(rawStart) : Date.parse(rawStart)
     return (
       role === 'brand' &&
+      ['confirmed', 'rescheduled'].includes(clean(booking && booking.status).toLowerCase()) &&
+      Number.isFinite(start) && start > Number(now || Date.now()) &&
       Boolean(booking && booking.paid_meeting) &&
       clean(booking && booking.booking_id) !== '' &&
       clean(booking && booking.payment_status).toLowerCase() ===
@@ -116,17 +122,23 @@
   // returns the client secret only for the owning Brand while the
   // PaymentIntent still requires action; Stripe.js shows the bank step. The
   // booking state moves only through the Stripe webhook, never from here.
-  async function approvePayment(role, booking, stripe) {
+  async function approvePayment(role, booking, stripe, isCurrent) {
     if (!stripe || typeof stripe.handleNextAction !== 'function') {
       throw new Error('Payment approval client unavailable')
     }
     const action = await getPaymentAction(role, booking)
     if (!action) return null
+    // The Brand may close the modal while the route answers: no bank step then.
+    if (typeof isCurrent === 'function' && !isCurrent()) return null
     const result = await stripe.handleNextAction({ clientSecret: action.client_secret })
     if (!result || result.error) {
       throw new Error('Payment approval did not complete')
     }
-    return clean(result.paymentIntent && result.paymentIntent.status)
+    const status = clean(result.paymentIntent && result.paymentIntent.status)
+    if (!['requires_capture', 'processing'].includes(status)) {
+      throw new Error('Payment approval ended in an unexpected state')
+    }
+    return status
   }
 
   async function replacePaymentMethod(
@@ -259,7 +271,7 @@
         try {
           const stripe = await client.stripeForPaymentEnvironment(booking.payment_environment)
           if (!isCurrent()) return
-          await approvePayment(settings.role, Object.assign({}, booking), stripe)
+          await approvePayment(settings.role, Object.assign({}, booking), stripe, isCurrent)
           if (isCurrent() && typeof settings.restart === 'function') await settings.restart()
         } catch (error) {
           // Internal errors can carry route paths; keep them for support only.
