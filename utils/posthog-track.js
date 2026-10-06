@@ -55,7 +55,22 @@
     }
   }
 
-  function isWebflowChunkFailure(event) {
+  // Chunk assets of the vendors whose chunk-load failures get one stable
+  // issue each. Webflow is first because only its chunks are recoverable.
+  const CHUNK_FAILURE_VENDORS = [
+    {
+      vendor: 'webflow',
+      asset: /https?:\/\/cdn\.prod\.website-files\.com\/[^\s"'()]+\/js\/webflow\.[^\s"'()]+\.js/i,
+      fingerprint: 'starters-webflow-chunk-load',
+    },
+    {
+      vendor: 'marker.io',
+      asset: /https?:\/\/edge\.marker\.io\/[^\s"'()]+\.js/i,
+      fingerprint: 'starters-markerio-chunk-load',
+    },
+  ]
+
+  function chunkFailure(event) {
     try {
       const error = event && event.error
       const name = safeString(error && error.name)
@@ -65,7 +80,7 @@
       ].join(' ')
       const isChunkFailure =
         name === 'ChunkLoadError' || /Loading chunk\s+\S+\s+failed/i.test(message)
-      if (!isChunkFailure) return false
+      if (!isChunkFailure) return null
 
       const source = [
         safeString(error && error.request),
@@ -73,11 +88,9 @@
         message,
         safeString(event && event.filename),
       ].join(' ')
-      return /https?:\/\/cdn\.prod\.website-files\.com\/[^\s"'()]+\/js\/webflow\.[^\s"'()]+\.js/i.test(
-        source,
-      )
+      return CHUNK_FAILURE_VENDORS.find(({ asset }) => asset.test(source)) || null
     } catch (e) {
-      return false
+      return null
     }
   }
 
@@ -127,7 +140,8 @@
   function recoverWebflowChunkFailure(event) {
     const hostname = safeString(window.location && window.location.hostname)
     if (!WEBFLOW_CHUNK_RECOVERY_HOSTS.has(hostname)) return false
-    if (!isWebflowChunkFailure(event) || !claimWebflowChunkRecovery()) return false
+    const failure = chunkFailure(event)
+    if (!failure || failure.vendor !== 'webflow' || !claimWebflowChunkRecovery()) return false
 
     window.setTimeout(() => {
       try {
@@ -195,15 +209,24 @@
         if (reason instanceof Error) return reason
         if (!reason || typeof reason !== 'object') return new Error(String(reason))
 
-        // Keep only bounded diagnostic fields. Promise rejection objects can
-        // contain request bodies, member data, or circular references.
-        const fields = ['message', 'code', 'status']
-        const details = fields.flatMap((key) => {
-          const value = reason[key]
-          if (!['string', 'number', 'boolean'].includes(typeof value)) return []
-          return [`${key}=${String(value).slice(0, 200)}`]
-        })
-        const err = new Error(details.join(' ') || 'Unhandled rejection object')
+        let err
+        if (typeof reason.message === 'string' && typeof reason.stack === 'string' && reason.stack) {
+          // An error from another realm, or a copy of one, fails `instanceof
+          // Error`. Keep its message and stack so the issue title and frames
+          // match the original error, not this forwarder.
+          err = new Error(reason.message.slice(0, 200))
+          err.stack = reason.stack
+        } else {
+          // Keep only bounded diagnostic fields. Promise rejection objects can
+          // contain request bodies, member data, or circular references.
+          const fields = ['message', 'code', 'status']
+          const details = fields.flatMap((key) => {
+            const value = reason[key]
+            if (!['string', 'number', 'boolean'].includes(typeof value)) return []
+            return [`${key}=${String(value).slice(0, 200)}`]
+          })
+          err = new Error(details.join(' ') || 'Unhandled rejection object')
+        }
         if (typeof reason.name === 'string' && reason.name.trim()) {
           err.name = reason.name.trim().slice(0, 80)
         }
@@ -227,6 +250,17 @@
         return false
       }
     }
+    // A chunk URL carries a content hash, so default grouping opens a new
+    // issue for each Webflow publish and each Marker.io release.
+    const chunkProps = (event) => {
+      const failure = chunkFailure(event)
+      if (!failure) return {}
+      return {
+        starters_error_kind: 'chunk-load',
+        starters_chunk_vendor: failure.vendor,
+        $exception_fingerprint: failure.fingerprint,
+      }
+    }
     window.addEventListener('error', (e) => {
       // Cross-origin script failures reach the page as a bare "Script error."
       // with no error object and no source location — the browser strips the
@@ -239,6 +273,7 @@
       if (e.filename) props.filename = e.filename
       if (e.lineno) props.lineno = e.lineno
       if (e.colno) props.colno = e.colno
+      Object.assign(props, chunkProps(e))
       send(e.error || new Error(e.message), props)
       recoverWebflowChunkFailure(e)
     })
@@ -248,6 +283,7 @@
         props.starters_error_kind = 'network'
         props.$exception_fingerprint = 'starters-network-rejection'
       }
+      Object.assign(props, chunkProps({ error: e.reason }))
       send(rejectionError(e.reason), props)
       recoverWebflowChunkFailure({ error: e.reason })
     })
