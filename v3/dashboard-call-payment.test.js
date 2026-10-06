@@ -10,6 +10,8 @@ function paidBooking(status) {
     paid_meeting: true,
     payment_environment: 'test',
     payment_status: status,
+    status: 'confirmed',
+    start: Date.now() + 30 * 3600000,
   }
 }
 
@@ -384,5 +386,96 @@ test('a failed Change card open shows a Brand-facing message, never a route path
     global.StartersPaidCallBrandPayment = previous.client
     global.StartersDashboardCallActions = previous.actions
     console.warn = previous.warn
+  }
+})
+
+test('P9 approve payment runs the Stripe bank step with the canonical secret only', async () => {
+  const original = global.xanoAuthFetch
+  const requests = []
+  const secrets = []
+  const stripe = { handleNextAction: async ({ clientSecret }) => { secrets.push(clientSecret); return { paymentIntent: { status: 'requires_capture' } } } }
+  global.xanoAuthFetch = async (url, options) => {
+    requests.push({ url, body: JSON.parse(options.body) })
+    return { ok: true, json: async () => ({ booking_id: 'booking-paid-1', payment_status: 'auth_required', client_secret: 'pi_secret_test' }) }
+  }
+  try {
+    assert.equal(await api.approvePayment('brand', paidBooking('auth_required'), stripe), 'requires_capture')
+    assert.deepEqual(secrets, ['pi_secret_test'])
+    assert.match(requests[0].url, /\/brand\/booking\/payment-action\/v3$/)
+    // A declined card, a Starter, or a missing Stripe client never reaches the route.
+    assert.equal(await api.approvePayment('brand', paidBooking('card_or_payment_declined'), stripe), null)
+    assert.equal(await api.approvePayment('starter', paidBooking('auth_required'), stripe), null)
+    await assert.rejects(api.approvePayment('brand', paidBooking('auth_required'), {}))
+    assert.equal(requests.length, 1)
+    const failing = { handleNextAction: async () => ({ error: { message: 'bank said no' } }) }
+    await assert.rejects(api.approvePayment('brand', paidBooking('auth_required'), failing), /did not complete/)
+  } finally { global.xanoAuthFetch = original }
+})
+
+test('P9 dashboard Approve payment is single-flight, Brand-only and reloads the booking', async () => {
+  const previous = { client: global.StartersPaidCallBrandPayment, actions: global.StartersDashboardCallActions, fetch: global.xanoAuthFetch }
+  let listener, restarted = 0, release
+  const errors = []
+  const booking = paidBooking('auth_required')
+  const modal = { open: true, querySelector: () => ({}) }
+  const attrs = {}
+  const button = { getAttribute: name => name === 'payment-action-btn' ? 'approve-payment' : null, hasAttribute: () => false,
+    setAttribute: (name, value) => { attrs[name] = value },
+    closest: selector => selector === '[popup-booking-info]' ? modal : button }
+  const document = { addEventListener: (event, fn) => { if (event === 'click') listener = fn } }
+  const gate = new Promise(resolve => { release = resolve })
+  let bankSteps = 0
+  global.StartersPaidCallBrandPayment = {
+    getReadiness: async () => ({ environment: 'test' }), installSavedCardPicker() {}, installCardSetupForm() {},
+    stripeForPaymentEnvironment: async env => {
+      assert.equal(env, 'test')
+      return { handleNextAction: async () => { bankSteps += 1; await gate; return { paymentIntent: { status: 'requires_capture' } } } }
+    },
+  }
+  global.StartersDashboardCallActions = { switchPopupContent() {}, showActionError: (root, message) => errors.push(message) }
+  global.xanoAuthFetch = async () => ({ ok: true, json: async () => ({ booking_id: booking.booking_id, payment_status: 'auth_required', client_secret: 'pi_secret_test' }) })
+  try {
+    assert.equal(await api.wire({ document, role: 'brand', getBooking: () => booking, restart: async () => { restarted += 1 } }), true)
+    assert.equal(api.canApprovePayment('brand', booking), true)
+    assert.equal(api.canApprovePayment('starter', booking), false)
+    assert.equal(api.canApprovePayment('brand', paidBooking('card_or_payment_declined')), false)
+    const event = () => ({ target: button, preventDefault() {}, stopImmediatePropagation() {} })
+    const first = listener(event())
+    await new Promise(resolve => setImmediate(resolve))
+    await listener(event())
+    assert.equal(attrs['aria-disabled'], 'true')
+    release()
+    await first
+    assert.equal(bankSteps, 1)
+    assert.equal(restarted, 1)
+    assert.deepEqual(errors, [])
+    assert.equal(attrs['aria-disabled'], 'false')
+  } finally {
+    global.StartersPaidCallBrandPayment = previous.client
+    global.StartersDashboardCallActions = previous.actions
+    global.xanoAuthFetch = previous.fetch
+  }
+})
+
+test('P9 review: approve only on a live call before start, never twice for a stale modal', async () => {
+  const H = 3600000
+  const at = (extra) => Object.assign(paidBooking('auth_required'), extra)
+  assert.equal(api.canRequestPaymentAction('brand', at({})), true)
+  assert.equal(api.canRequestPaymentAction('brand', at({ status: 'rescheduled' })), true)
+  assert.equal(api.canRequestPaymentAction('brand', at({ start: new Date(Date.now() + H).toISOString() })), true)
+  for (const extra of [{ status: 'cancelled' }, { status: 'completed' }, { status: 'pending' }, { start: Date.now() - 1 }, { start: null }]) {
+    assert.equal(api.canRequestPaymentAction('brand', at(extra)), false, JSON.stringify(extra))
+  }
+  const previous = global.xanoAuthFetch
+  global.xanoAuthFetch = async () => ({ ok: true, json: async () => ({ booking_id: 'booking-paid-1', payment_status: 'auth_required', client_secret: 'pi_secret_test' }) })
+  try {
+    let calls = 0
+    const stripe = status => ({ handleNextAction: async () => { calls += 1; return { paymentIntent: { status } } } })
+    assert.equal(await api.approvePayment('brand', at({}), stripe('requires_capture'), () => false), null)
+    assert.equal(calls, 0)
+    assert.equal(await api.approvePayment('brand', at({}), stripe('processing'), () => true), 'processing')
+    await assert.rejects(api.approvePayment('brand', at({}), stripe('requires_payment_method')), /unexpected state/)
+  } finally {
+    global.xanoAuthFetch = previous
   }
 })

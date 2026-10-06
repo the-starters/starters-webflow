@@ -5,7 +5,10 @@
  * reason fields. This module binds those elements, creates only missing
  * supporting reschedule views, and sends environment-safe commands with
  * V3 contracts: decline, cancel, direct pending-request time updates,
- * and proposal responses for eligible Free calls. Reschedule-decline release
+ * and proposal responses for eligible Free calls, plus the Paid parity
+ * P5 (held-call cancel and fee line), P6 (pending Paid edit) and P7 (saved-card
+ * Paid reschedule) gates, each mirrored from its server admission rule.
+ * Reschedule-decline release
  * prerequisites are owned by README.md, "CS-17 backend release prerequisite".
  */
 ;(function (global) {
@@ -158,8 +161,9 @@
       reasonField: null,
       responseKey: 'reschedule_decline',
       // F13 soft launch: published #5760 restores a Free call to its original
-      // confirmed time (original_restored true). Only Free calls reach this
-      // action (canRespondReschedule), so `confirmed` is the success status.
+      // confirmed time (original_restored true). The P7 #5760 draft restores
+      // a saved-card Paid proposal the same way, so `confirmed` stays the
+      // success status for both (canRespondReschedule gates who reaches it).
       successStatus: 'confirmed',
       successContent: 'reschedule-declined',
       failureMessage: 'Canonical reschedule response failed',
@@ -235,6 +239,164 @@
   // the client hides Cancel instead of offering an action that fails.
   const PAID_CONFIRMED_CANCEL_LEAD_MS = 173700000
 
+  /* Paid parity P6 / P7 server openings. The Xano drafts (#5921 P6,
+     #5756/#5759 P7) admit Paid only for `data_environment` values in their
+     `$p6_paid_open` / `$p7_paid_open` gates, which are Test-only until
+     release. Production opens later by adding 'production' here in the same
+     release that opens the server gate; the client must never offer a control
+     the server refuses. */
+  const PAID_EDIT_OPEN_ENVIRONMENTS = ['test']
+  const PAID_RESCHEDULE_OPEN_ENVIRONMENTS = ['test']
+  // P5 (#2099 held-call cancel) is not published yet: keep the client Test-only
+  // too, so a client release before the server can never show a refused Cancel.
+  const PAID_HOLD_CANCEL_OPEN_ENVIRONMENTS = ['test']
+
+  // F15 (Kaeser + Jai, 2026-10-06): a Brand cancel at or within 8 h of start is
+  // charged the full session fee; every other Paid cancel is released.
+  const PAID_LATE_CANCEL_FEE_WINDOW_MS = 8 * 3600000
+  const CANCEL_FEE_TEXT = {
+    late: 'This call starts within 8 hours. Cancelling now charges the full session fee.',
+    none: 'No charge will be made for this cancellation.',
+  }
+  const PAID_PROPOSED_START_MESSAGE =
+    'Choose a new time more than 48 hours and 15 minutes from now.'
+
+  function referenceTime(booking, now) {
+    if (now != null && Number.isFinite(Number(now))) return Number(now)
+    const canonical = canonicalNow(booking)
+    return canonical != null ? canonical : Date.now()
+  }
+
+  /**
+   * Paid parity P5: a confirmed Paid call that already holds an authorized
+   * PaymentIntent (#269 at 48 h) is cancellable by either participant until
+   * start, but only while the hold is reconciled (#2099 P5 admission).
+   */
+  function paidHoldCancelAdmitted(booking) {
+    return (
+      paidFlag(booking) &&
+      bookingStatus(booking) === 'confirmed' &&
+      clean(booking && booking.payment_intent) !== '' &&
+      clean(booking && booking.payment_status).toLowerCase() === 'intent_created' &&
+      clean(booking && booking.payment_reconciliation_status).toLowerCase() === 'reconciled' &&
+      paidEnvironmentOpen(booking, PAID_HOLD_CANCEL_OPEN_ENVIRONMENTS)
+    )
+  }
+
+  /**
+   * The saved-card state P6 and P7 admit (no PaymentIntent yet): empty
+   * payment_intent, `waiting_for_intent`, revision 0, reconciliation `ready`.
+   * A missing revision fails closed.
+   */
+  function paidSavedCardState(booking) {
+    const revision = booking && booking.payment_revision
+    return (
+      paidFlag(booking) &&
+      clean(booking && booking.payment_intent) === '' &&
+      clean(booking && booking.payment_status).toLowerCase() === 'waiting_for_intent' &&
+      revision != null &&
+      clean(revision) !== '' &&
+      Number(revision) === 0 &&
+      clean(booking && booking.payment_reconciliation_status).toLowerCase() === 'ready'
+    )
+  }
+
+  function paidEnvironmentOpen(booking, environments) {
+    return environments.indexOf(bookingEnvironment(booking)) !== -1
+  }
+
+  /** Paid parity P6: a Brand may restate the time on its own Paid request. */
+  function paidPendingEditAdmitted(booking) {
+    return (
+      bookingStatus(booking) === 'pending' &&
+      paidSavedCardState(booking) &&
+      paidEnvironmentOpen(booking, PAID_EDIT_OPEN_ENVIRONMENTS)
+    )
+  }
+
+  /** Paid parity P7: whether a start time is outside the 48 h 15 min lead. */
+  function paidProposedStartAllowed(start, reference) {
+    const value = Number(start)
+    const at = Number(reference)
+    return (
+      Number.isFinite(value) &&
+      reference != null &&
+      Number.isFinite(at) &&
+      value > at + PAID_CONFIRMED_CANCEL_LEAD_MS
+    )
+  }
+
+  /** Paid parity P7 (JP 1a): propose on a confirmed saved-card Paid call. */
+  function paidRescheduleProposeAdmitted(booking, reference) {
+    return (
+      bookingStatus(booking) === 'confirmed' &&
+      paidSavedCardState(booking) &&
+      paidEnvironmentOpen(booking, PAID_RESCHEDULE_OPEN_ENVIRONMENTS) &&
+      paidProposedStartAllowed(booking && booking.start, reference)
+    )
+  }
+
+  /**
+   * Paid parity P7 (JP 2a): the last instant the counterpart can accept an
+   * open Paid proposal, min(original start, proposed start) - 48 h 15 min.
+   * At or after it the lapse owner restores the original call. NaN when the
+   * row is not an open proposal with both times.
+   */
+  function paidRescheduleLastAcceptTime(booking) {
+    const original = Number(booking && booking.start_old)
+    const proposed = Number(booking && booking.start)
+    if (
+      bookingStatus(booking) !== 'rescheduled' ||
+      !Number.isFinite(original) || original <= 0 ||
+      !Number.isFinite(proposed) || proposed <= 0
+    ) return Number.NaN
+    return Math.min(original, proposed) - PAID_CONFIRMED_CANCEL_LEAD_MS
+  }
+
+  /** Paid parity P7: the counterpart may answer before the last accept time. */
+  function paidRescheduleRespondAdmitted(booking, reference) {
+    const last = paidRescheduleLastAcceptTime(booking)
+    const at = Number(reference)
+    return (
+      paidSavedCardState(booking) &&
+      paidEnvironmentOpen(booking, PAID_RESCHEDULE_OPEN_ENVIRONMENTS) &&
+      Number.isFinite(last) &&
+      reference != null &&
+      Number.isFinite(at) &&
+      at < last
+    )
+  }
+
+  /**
+   * The open Paid proposal's lapse time for the dashboard note, or NaN when
+   * the row is not an open Paid proposal in an opened environment.
+   */
+  function paidProposalLapseTime(booking) {
+    if (
+      !paidFlag(booking) ||
+      !paidEnvironmentOpen(booking, PAID_RESCHEDULE_OPEN_ENVIRONMENTS)
+    ) return Number.NaN
+    return paidRescheduleLastAcceptTime(booking)
+  }
+
+  /**
+   * The one fee line of the cancel confirmation. Free returns '' (unchanged).
+   * A Brand cancelling a confirmed Paid call at or within 8 h of start pays
+   * the full fee; every other Paid cancellation is free of charge.
+   */
+  function cancelFeeText(role, booking, now) {
+    if (!paidFlag(booking)) return ''
+    const start = Number(booking && booking.start)
+    const reference = referenceTime(booking, now)
+    if (
+      role === 'brand' &&
+      bookingStatus(booking) === 'confirmed' &&
+      Number.isFinite(start) &&
+      start - reference <= PAID_LATE_CANCEL_FEE_WINDOW_MS
+    ) return CANCEL_FEE_TEXT.late
+    return CANCEL_FEE_TEXT.none
+  }
+
   function canCancel(role, booking, now) {
     const start = Number(booking && booking.start)
     const reference = Number.isFinite(Number(now)) ? Number(now) : Date.now()
@@ -250,6 +412,9 @@
           status === 'confirmed' &&
           Number.isFinite(start) &&
           start > reference + PAID_CONFIRMED_CANCEL_LEAD_MS) ||
+        // P5: inside that window only a reconciled authorized hold is
+        // cancellable, by either participant, until start (checked below).
+        (paid && paidHoldCancelAdmitted(booking)) ||
         (role === 'brand' && status === 'pending')) &&
       actorMemberId(role, booking) !== '' &&
       Number.isFinite(start) &&
@@ -263,7 +428,8 @@
     const duration = Number(booking && booking.duration)
     return (
       (role === 'starter' || role === 'brand') &&
-      freeBooking(booking) &&
+      (freeBooking(booking) ||
+        paidRescheduleProposeAdmitted(booking, canonicalNow(booking))) &&
       bookingStatus(booking) === 'confirmed' &&
       actorMemberId(role, booking) !== '' &&
       clean(booking && booking.grant_id) !== '' &&
@@ -287,7 +453,7 @@
     const reference = Number.isFinite(Number(now)) ? Number(now) : Date.now()
     return (
       role === 'brand' &&
-      freeBooking(booking) &&
+      (freeBooking(booking) || paidPendingEditAdmitted(booking)) &&
       bookingStatus(booking) === 'pending' &&
       actorMemberId(role, booking) !== '' &&
       clean(booking && booking.grant_id) !== '' &&
@@ -314,7 +480,8 @@
     const proposer = clean(booking && booking.rescheduled_by).toLowerCase()
     return (
       (role === 'starter' || role === 'brand') &&
-      freeBooking(booking) &&
+      (freeBooking(booking) ||
+        paidRescheduleRespondAdmitted(booking, canonicalNow(booking))) &&
       bookingStatus(booking) === 'rescheduled' &&
       ['starter', 'brand'].includes(proposer) &&
       proposer !== role &&
@@ -692,6 +859,13 @@
     if (resolved !== 'reschedule-propose' && resolved !== 'reschedule-request') {
       return Promise.resolve(null)
     }
+    // P7: a Paid proposal must also start outside the 48 h 15 min lead; the
+    // server (#5756) refuses it otherwise, so it is never sent.
+    if (
+      resolved === 'reschedule-propose' &&
+      paidFlag(booking) &&
+      !paidProposedStartAllowed(start, referenceTime(booking, now))
+    ) return Promise.resolve(null)
     const proposedSlot = { new_start: start, new_end: end }
     if (timezone) proposedSlot.timezone = timezone
     return submitAction(
@@ -1550,6 +1724,11 @@
           const kind = rescheduleKindFor(role, booking)
           if (!kind) return null
           const config = KINDS[kind]
+          if (
+            kind === 'reschedule-propose' &&
+            paidFlag(booking) &&
+            !paidProposedStartAllowed(slot && slot.start, referenceTime(booking))
+          ) throw new Error(PAID_PROPOSED_START_MESSAGE)
           const result = await proposeReschedule(booking, role, reason, {
             start: Number(slot && slot.start),
             end: Number(slot && slot.end),
@@ -1701,6 +1880,64 @@
     }
   }
 
+  /**
+   * Renders the cancel confirmation's fee line (P5 / F15). An authored
+   * `[booking-copy="cancel-fee"]` slot wins when present. Without one, the
+   * module owns one `[data-starters-cancel-fee-note]` line placed right after
+   * the authored `[confirming-cancel-text]` body (copying its class so it
+   * reads as authored copy), or at the end of the open cancel panel. Free
+   * bookings render nothing and hide any earlier line.
+   * @returns {boolean} Whether a fee line is visible.
+   */
+  function renderCancelFeeNote(document, modal, role, booking, now) {
+    if (!modal || typeof modal.querySelectorAll !== 'function') return false
+    const text = cancelFeeText(role, booking, now)
+    const panel = openPopupContent(modal)
+    const inCancel = Boolean(
+      panel && typeof panel.getAttribute === 'function' &&
+      panel.getAttribute('booking-popup-content') === 'cancel',
+    )
+    const authored = inCancel && typeof panel.querySelector === 'function'
+      ? panel.querySelector('[booking-copy="cancel-fee"]')
+      : null
+    Array.prototype.forEach.call(
+      modal.querySelectorAll('[booking-copy="cancel-fee"], [data-starters-cancel-fee-note]'),
+      function (each) {
+        if (each === authored && text) return
+        each.hidden = true
+        if (each.style) each.style.display = 'none'
+      },
+    )
+    if (!text || !inCancel) return false
+    let note = authored
+    if (!note) {
+      note = typeof panel.querySelector === 'function'
+        ? panel.querySelector('[data-starters-cancel-fee-note]')
+        : null
+    }
+    if (!note) {
+      const owner = document || modal.ownerDocument || global.document
+      if (!owner || typeof owner.createElement !== 'function') return false
+      note = owner.createElement('p')
+      note.setAttribute('data-starters-cancel-fee-note', '')
+      const anchor = typeof panel.querySelector === 'function'
+        ? panel.querySelector('[confirming-cancel-text]')
+        : null
+      if (anchor && anchor.parentNode && typeof anchor.parentNode.insertBefore === 'function') {
+        if (anchor.className) note.className = anchor.className
+        anchor.parentNode.insertBefore(note, anchor.nextSibling)
+      } else if (typeof panel.appendChild === 'function') {
+        panel.appendChild(note)
+      } else {
+        return false
+      }
+    }
+    note.textContent = text
+    note.hidden = false
+    if (note.style) note.style.display = ''
+    return true
+  }
+
   function commitBookingMutation(settings, booking, update, claim) {
     if (settings && typeof settings.commitBookingMutation === 'function') {
       return settings.commitBookingMutation(booking, update, claim)
@@ -1817,6 +2054,7 @@
             return
           }
           switchPopupContent(modal, config.firstContent)
+          if (step.kind === 'cancel') renderCancelFeeNote(document, modal, settings.role, booking)
           return
         }
         if (step.step === 'reason') {
@@ -1984,6 +2222,23 @@
   }
 
   const api = {
+    PAID_EDIT_OPEN_ENVIRONMENTS,
+    PAID_HOLD_CANCEL_OPEN_ENVIRONMENTS,
+    PAID_RESCHEDULE_OPEN_ENVIRONMENTS,
+    PAID_CONFIRMED_CANCEL_LEAD_MS,
+    PAID_LATE_CANCEL_FEE_WINDOW_MS,
+    CANCEL_FEE_TEXT,
+    PAID_PROPOSED_START_MESSAGE,
+    paidHoldCancelAdmitted,
+    paidSavedCardState,
+    paidPendingEditAdmitted,
+    paidProposedStartAllowed,
+    paidRescheduleProposeAdmitted,
+    paidRescheduleLastAcceptTime,
+    paidRescheduleRespondAdmitted,
+    paidProposalLapseTime,
+    cancelFeeText,
+    renderCancelFeeNote,
     canCancel,
     canDecline,
     counterpartName,
