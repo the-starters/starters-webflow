@@ -839,18 +839,33 @@
   ]
   const UNRESOLVED_RECONCILIATION_STATUSES = ['pending', 'failed', 'mismatch']
 
-  function paymentStatusText(booking, role) {
+  // P9 review 2026-10-06: the line shows only on a live call (not cancelled,
+  // archived or completed). After start no Brand action is offered (JP A=1a:
+  // the call runs, no charge, the team follows up). "Confirmed" is an
+  // allow-list; any other state reads "being checked".
+  const CONFIRMED_PAYMENT_STATUSES = ['', 'waiting_for_intent', 'intent_created']
+  const CONFIRMED_RECONCILIATION_STATUSES = ['', 'ready', 'reconciled']
+
+  function paymentStatusText(booking, role, now) {
     if (!paidBooking(booking)) return ''
+    const time = Number(now || Date.now())
+    if (['cancelled', 'archived', 'completed'].includes(bookingStatus(booking, time))) return ''
     const paymentStatus = clean(booking.payment_status).toLowerCase()
     const reconciliation = clean(booking.payment_reconciliation_status).toLowerCase()
-    const brand = clean(role).toLowerCase() === 'brand'
+    const start = normalizeTimestamp(booking.start)
+    const started = Number.isFinite(start) && start > 0 && start <= time
+    const brand = clean(role).toLowerCase() === 'brand' && !started
     if (DECLINED_PAYMENT_STATUSES.includes(paymentStatus)) {
       return brand ? 'Card declined. Change card.' : 'Payment is being checked.'
     }
     if (paymentStatus === 'auth_required') {
       return brand ? 'Payment needs attention.' : 'Payment is being checked.'
     }
-    if (UNRESOLVED_RECONCILIATION_STATUSES.includes(reconciliation)) {
+    if (
+      UNRESOLVED_RECONCILIATION_STATUSES.includes(reconciliation) ||
+      !CONFIRMED_PAYMENT_STATUSES.includes(paymentStatus) ||
+      !CONFIRMED_RECONCILIATION_STATUSES.includes(reconciliation)
+    ) {
       return 'Payment is being checked.'
     }
     return booking.pm_confirmed
@@ -2795,7 +2810,7 @@
     const status = bookingStatus(booking, now)
     const isPaid = paidBooking(booking)
     const paymentText = isPaid && status !== 'cancelled' && status !== 'archived'
-      ? paymentStatusText(booking, role)
+      ? paymentStatusText(booking, role, now)
       : ''
 
     modal.setAttribute('data-booking-id', nextBookingId)

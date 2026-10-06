@@ -10400,3 +10400,29 @@ test('P9 payment line reads the canonical payment state, not only the saved-card
   assert.equal(api.paymentStatusText(paid({ pm_confirmed: false }), 'brand'), 'Payment method pending.')
   assert.equal(api.paymentStatusText({ paid_meeting: false }, 'brand'), '')
 })
+
+test('P9 review: payment line only on live calls, allow-list for "confirmed", no Brand action after start', () => {
+  const H = 3600000
+  const now = Date.now()
+  const paid = extra => Object.assign({
+    booking_id: 'p9-review', status: 'confirmed', paid_meeting: true, pm_confirmed: true,
+    payment_status: 'intent_created', payment_reconciliation_status: 'reconciled',
+    payment_environment: 'test', start: now + 30 * H, end: now + 31 * H,
+  }, extra)
+  for (const status of ['cancelled', 'declined', 'expired', 'archived']) {
+    assert.equal(api.paymentStatusText(paid({ status, payment_status: 'card_or_payment_declined' }), 'brand', now), '')
+  }
+  assert.equal(api.paymentStatusText(paid({ start: now - 2 * H, end: now - H }), 'brand', now), '')
+  // In progress: no Brand action text.
+  assert.equal(api.paymentStatusText(paid({ start: now - H, payment_status: 'auth_required' }), 'brand', now), 'Payment is being checked.')
+  assert.equal(api.paymentStatusText(paid({ start: now - H, payment_status: 'insufficient_funds' }), 'brand', now), 'Payment is being checked.')
+  for (const s of ['card_or_payment_declined', 'insufficient_funds', 'lost_or_stolen_card', 'expired_card', 'payment_intent_confirm_expired']) {
+    assert.equal(api.paymentStatusText(paid({ payment_status: s }), 'brand', now), 'Card declined. Change card.')
+    assert.equal(api.paymentStatusText(paid({ payment_status: s }), 'starter', now), 'Payment is being checked.')
+  }
+  for (const s of ['intent_cancelled', 'intent_captured', 'refunded', 'something_new']) {
+    assert.equal(api.paymentStatusText(paid({ payment_status: s }), 'brand', now), 'Payment is being checked.', s)
+  }
+  assert.equal(api.paymentStatusText(paid({}), undefined, now), 'Payment method confirmed.')
+  assert.equal(api.paymentStatusText(paid({ payment_status: 'auth_required' }), undefined, now), 'Payment is being checked.')
+})
