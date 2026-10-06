@@ -60,7 +60,10 @@ function load(options = {}) {
   }
 
   const window = {
-    location: { hostname: options.hostname || 'the-starters-3-0.webflow.io' },
+    location: {
+      hostname: options.hostname || 'the-starters-3-0.webflow.io',
+      pathname: options.pathname === undefined ? '/' : options.pathname,
+    },
     document,
   }
   if (options.debug !== undefined) window.STARTERS_DEBUG = options.debug
@@ -205,6 +208,60 @@ test('rejects values containing ASCII control characters', () => {
     assert.equal(warnings.length, 1, `should warn once for ${JSON.stringify(value)}`)
     assert.match(warnings[0], /ignoring starters-ms-redirect value/)
   }
+})
+
+test('reads the unfilled /PAGE/SLUG placeholder as the current page', () => {
+  const cases = [
+    ['/', '/?modal-id=signup-modal'],
+    ['/learn', '/learn?modal-id=signup-modal'],
+    ['/case-studies/gloss-ventures', '/case-studies/gloss-ventures?modal-id=signup-modal'],
+  ]
+  for (const [pathname, expected] of cases) {
+    const form = signupForm()
+    const { warnings } = load({
+      pathname,
+      forms: [form],
+      markers: [element({ [MARKER]: '/PAGE/SLUG?modal-id=signup-modal' })],
+    })
+    assert.equal(form.getAttribute('redirect'), expected, pathname)
+    assert.equal(form.getAttribute('data-redirect'), expected, pathname)
+    assert.deepEqual(warnings, [], pathname)
+  }
+})
+
+test('the placeholder swap is case-insensitive and keeps hash and extra path', () => {
+  const { api } = load({ pathname: '/learn/sessions' })
+  assert.equal(api.resolvePlaceholder('/page/slug?modal-id=signup-modal'), '/learn/sessions?modal-id=signup-modal')
+  assert.equal(api.resolvePlaceholder('/PAGE/SLUG'), '/learn/sessions')
+  assert.equal(api.resolvePlaceholder('/PAGE/SLUG#top'), '/learn/sessions#top')
+})
+
+test('filled-in markers and look-alike paths are not treated as the placeholder', () => {
+  const { api } = load({ pathname: '/learn' })
+  for (const value of ['/hire/jai?modal-id=signup-modal', '/case-studies/page-slugger', '/PAGE/SLUGS', '/learn/PAGE/SLUG']) {
+    assert.equal(api.resolvePlaceholder(value), value, value)
+  }
+})
+
+test('localPath still rejects a literal placeholder that reaches it', () => {
+  const { api } = load()
+  for (const value of ['/PAGE/SLUG', '/page/slug?modal-id=signup-modal', '/PAGE/SLUG/', '/PAGE/SLUG#top']) {
+    assert.equal(api.localPath(value), null, value)
+  }
+  for (const value of ['/case-studies/page-slugger', '/learn/page/slugs', '/PAGE/SLUGS']) {
+    assert.equal(api.localPath(value), value, value)
+  }
+})
+
+test('the placeholder is rejected when the current pathname is unusable', () => {
+  const form = signupForm()
+  const { warnings } = load({
+    pathname: '',
+    forms: [form],
+    markers: [element({ [MARKER]: '/PAGE/SLUG?modal-id=signup-modal' })],
+  })
+  assert.equal(form.getAttribute('redirect'), null)
+  assert.equal(warnings.length, 1)
 })
 
 test('a whitespace-only marker counts as a missing value, not an invalid one', () => {

@@ -638,8 +638,9 @@ collection template so every item redirects to itself:
 <div hidden starters-ms-redirect="/hire/some-slug?modal-id=signup-modal"></div>
 ```
 
-The value is used verbatim, so `?modal-id=signup-modal` survives the redirect and
-the site's `modal.js` reopens the modal on the reloaded page. A
+Aside from the template fallback below, the value is used verbatim, so
+`?modal-id=signup-modal` survives the redirect and the site's `modal.js` reopens
+the modal on the reloaded page. A
 `starters-ms-redirect` attribute on the form itself overrides the page marker and
 belongs to that form alone — it is never used as the page default for a second
 signup form. A form that already has a non-empty `redirect` value is left
@@ -649,8 +650,11 @@ Accepted values are root-relative same-origin paths. A value must start with `/`
 must not start with `//` or `/\` (both protocol-relative, so both leave the
 site), and must contain no ASCII control characters — the URL parser strips tab,
 LF and CR before parsing, so `/<tab>/evil.example` would otherwise resolve to
-`https://evil.example/`. Anything else is ignored, with a warning on
-[staging hosts only](../README.md#staging-only-console-diagnostics). Signup
+`https://evil.example/`. The Signup Modal's unfilled template default
+`/PAGE/SLUG?modal-id=signup-modal` means "this page": `/PAGE/SLUG` is replaced
+with the current pathname, so on `/learn` the form redirects to
+`/learn?modal-id=signup-modal` instead of a 404. Anything else is ignored, with
+a warning on [staging hosts only](../README.md#staging-only-console-diagnostics). Signup
 forms injected after
 `DOMContentLoaded` are out of scope — call `window.StartersMsRedirect.apply()`
 after injecting one. The behaviour is demonstrated end to end, including the

@@ -17,6 +17,9 @@
  * paths: they must start with `/`, must not start with `//` or `/\` (both
  * protocol-relative), and must contain no ASCII control characters (the URL
  * parser strips tab/LF/CR, so `/\t/evil.example` would otherwise leave the site).
+ * The unfilled template default `/PAGE/SLUG…` means "this page": it becomes the
+ * current pathname, so `/PAGE/SLUG?modal-id=signup-modal` on `/learn` redirects
+ * to `/learn?modal-id=signup-modal`.
  * The value is otherwise used verbatim, so a query string such as
  * `?modal-id=signup-modal` survives the redirect. Anything else is ignored.
  *
@@ -40,6 +43,12 @@
   var REDIRECT_ATTRIBUTES = ['redirect', 'data-redirect']
   var LOG_PREFIX = '[starters-ms-redirect]'
   var CONTROL_CHARACTERS = /[\u0000-\u001F\u007F]/
+  // The Signup Modal embed ships with `/PAGE/SLUG?modal-id=signup-modal` as its
+  // template default, and pages that never filled it in would send a new member
+  // to a 404. apply() reads the placeholder as "this page": `/PAGE/SLUG` becomes
+  // the current pathname and the rest (`?modal-id=signup-modal`) is kept.
+  // localPath() still rejects a literal placeholder that reaches it.
+  var TEMPLATE_PLACEHOLDER = /\/PAGE\/SLUG(?=[/?#]|$)/i
   var STAGING_HOST_SUFFIXES = ['webflow.io', 'trycloudflare.com']
   var STAGING_HOSTS = ['localhost', '127.0.0.1']
 
@@ -76,7 +85,21 @@
     var value = rawValue.trim()
     if (value.charAt(0) !== '/') return null
     if (value.charAt(1) === '/' || value.charAt(1) === '\\') return null
+    if (TEMPLATE_PLACEHOLDER.test(value)) return null
     return value
+  }
+
+  // Swaps a leading `/PAGE/SLUG` for the current pathname. Any other value is
+  // returned unchanged, so filled-in markers keep working exactly as before.
+  function resolvePlaceholder(rawValue) {
+    if (typeof rawValue !== 'string') return rawValue
+    var value = rawValue.trim()
+    var match = TEMPLATE_PLACEHOLDER.exec(value)
+    if (!match || match.index !== 0) return rawValue
+
+    var pathname = (window.location && window.location.pathname) || ''
+    if (pathname.charAt(0) !== '/') return rawValue
+    return pathname + value.slice(match[0].length)
   }
 
   function attributeValue(element, name) {
@@ -139,7 +162,7 @@
         return
       }
 
-      var path = localPath(raw)
+      var path = localPath(resolvePlaceholder(raw))
       if (!path) {
         warn(
           'ignoring ' +
@@ -164,6 +187,7 @@
   window.StartersMsRedirect = {
     apply: apply,
     localPath: localPath,
+    resolvePlaceholder: resolvePlaceholder,
     markerAttribute: MARKER_ATTRIBUTE,
     diagnosticsEnabled: diagnosticsEnabled,
   }
