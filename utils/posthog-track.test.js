@@ -318,6 +318,54 @@ test('other rejections keep default grouping', () => {
   }
 })
 
+test('Webflow chunk failures share one fingerprint across chunk hashes', () => {
+  const app = load()
+  const first = 'https://cdn.prod.website-files.com/site/js/webflow.achunk.deadbeef.js'
+  const second = 'https://cdn.prod.website-files.com/site/js/webflow.achunk.cafef00d.js'
+  app.listeners.unhandledrejection({ reason: chunkError(first) })
+  app.listeners.error({ error: chunkError(second) })
+
+  assert.equal(app.captured.length, 2)
+  for (const { properties } of app.captured) {
+    assert.equal(properties.starters_error_kind, 'chunk-load')
+    assert.equal(properties.starters_chunk_vendor, 'webflow')
+    assert.equal(properties.$exception_fingerprint, 'starters-webflow-chunk-load')
+  }
+})
+
+test('Marker.io chunk failures get their own fingerprint and no recovery', () => {
+  const app = load()
+  app.listeners.unhandledrejection({ reason: chunkError('https://edge.marker.io/latest/2.v2.36.2.f4e0c18f.js') })
+  app.listeners.unhandledrejection({ reason: chunkError('https://edge.marker.io/latest/3.v2.36.5.51ac03ff.js') })
+
+  assert.equal(app.captured.length, 2)
+  for (const { properties } of app.captured) {
+    assert.equal(properties.starters_error_kind, 'chunk-load')
+    assert.equal(properties.starters_chunk_vendor, 'marker.io')
+    assert.equal(properties.$exception_fingerprint, 'starters-markerio-chunk-load')
+  }
+  app.runScheduled()
+  assert.equal(app.reloads, 0)
+})
+
+test('an error-like rejection that fails instanceof Error keeps its message and stack', () => {
+  const app = load()
+  const request = 'https://cdn.prod.website-files.com/site/js/webflow.achunk.deadbeef.js'
+  const stack = `ChunkLoadError: Loading chunk 862 failed.\n    at j.f.j (${request.replace('achunk.deadbeef', 'runtime')}:1:2)`
+  app.listeners.unhandledrejection({
+    reason: { name: 'ChunkLoadError', message: `Loading chunk 862 failed.\n(error: ${request})`, stack, request, type: 'error' },
+  })
+
+  assert.equal(app.captured.length, 1)
+  const { error, properties } = app.captured[0]
+  assert.equal(error.name, 'ChunkLoadError')
+  assert.equal(error.message, `Loading chunk 862 failed.\n(error: ${request})`)
+  assert.equal(error.stack, stack)
+  assert.equal(properties.$exception_fingerprint, 'starters-webflow-chunk-load')
+  app.runScheduled()
+  assert.equal(app.reloads, 1)
+})
+
 test('object promise rejections retain safe diagnostics without leaking arbitrary fields', () => {
   const listeners = {}
   const captured = []
