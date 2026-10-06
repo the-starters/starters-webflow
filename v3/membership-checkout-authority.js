@@ -1,6 +1,6 @@
 /**
  * V3 membership checkout authority gate.
- * @release v1.59.659
+ * @release unreleased
  *
  * This controller records one authenticated V3 checkout intent before the
  * native Memberstack price control opens Stripe checkout. It does not create
@@ -17,6 +17,10 @@
     'https://x08a-5ko8-jj1r.n7c.xano.io/api:g1vmSLWh/auth/trade-token/v3'
   var REGISTER_URL =
     'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/membership/checkout-intent/v3'
+  var RECEIPT_URL =
+    'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/membership/checkout-receipt/v3'
+  var RETURN_KEY = 'ts:v3:membership-checkout-return'
+  var purchaseTask = null
   var PRICE_ATTRIBUTE = 'data-ms-price:add'
   var ALLOWED_HOSTS = {
     'thestarters.com': true,
@@ -331,7 +335,8 @@
     try {
       var session = await authenticatedSession()
       var identity = checkoutIdentity(route, priceId, session.memberId)
-      await registerIntent(identity.sourceRoute, priceId, identity.eventId, session.token)
+      var accepted = await registerIntent(identity.sourceRoute, priceId, identity.eventId, session.token)
+      rememberAcceptedIntent(priceId, session.memberId, accepted)
       var confirmedResult = await session.memberstack.getCurrentMember()
       var confirmedMember =
         confirmedResult && confirmedResult.data ? confirmedResult.data : confirmedResult
@@ -353,9 +358,190 @@
     }
   }
 
+  function readStored(key) {
+    try {
+      return JSON.parse(globalObject.sessionStorage.getItem(key) || 'null')
+    } catch (_error) {
+      return null
+    }
+  }
+
+  function rememberAcceptedIntent(priceId, memberId, accepted) {
+    try {
+      var record = readStored(storageKey(priceId))
+      if (!record || record.memberId !== memberId || !/^[a-f0-9]{64}$/.test(accepted.intent_key)) return
+      record.intentKey = accepted.intent_key
+      // The server expiry wins when a pending intent was coalesced across tabs.
+      record.expiresAt = Math.min(record.expiresAt, (typeof accepted.expires_at === 'number' ? accepted.expires_at : Date.parse(accepted.expires_at)))
+      if (!Number.isFinite(record.expiresAt)) return
+      globalObject.sessionStorage.setItem(storageKey(priceId), JSON.stringify(record))
+    } catch (_error) {
+      // Analytics storage must not prevent an otherwise accepted checkout.
+    }
+  }
+
+  function returnRoute() {
+    return ['/dashboard', '/brand-dashboard', '/complete-profile', '/all-starters'].indexOf(
+      normalizedRoute(globalObject.location && globalObject.location.pathname),
+    ) !== -1
+  }
+
+  function captureCheckoutReturn() {
+    if (!returnRoute()) return
+    try {
+      var params = new globalObject.URLSearchParams(globalObject.location.search || '')
+      if (params.get('fromCheckout') !== 'true') return
+      var priceId = params.get('msPriceId')
+      if (!ALLOWED_PRICE_IDS[priceId]) return
+      var intent = readStored(storageKey(priceId))
+      if (!intent || !/^[a-f0-9]{64}$/.test(intent.intentKey) || intent.expiresAt <= Date.now()) return
+      globalObject.sessionStorage.setItem(RETURN_KEY, JSON.stringify({
+        intentKey: intent.intentKey,
+        memberId: intent.memberId,
+        priceId: priceId,
+        expiresAt: intent.expiresAt,
+      }))
+    } catch (_error) {}
+  }
+
+  function purchaseState(state) {
+    var root = globalObject.document && globalObject.document.documentElement
+    if (root && typeof root.setAttribute === 'function') {
+      root.setAttribute('data-v3-membership-purchase', state)
+    }
+  }
+
+  function clearCheckoutReturn(record) {
+    var current = readStored(RETURN_KEY)
+    if (current && current.intentKey === record.intentKey) {
+      globalObject.sessionStorage.removeItem(RETURN_KEY)
+    }
+    var intent = readStored(storageKey(record.priceId))
+    if (intent && intent.intentKey === record.intentKey) {
+      globalObject.sessionStorage.removeItem(storageKey(record.priceId))
+    }
+    var params = new globalObject.URLSearchParams(globalObject.location.search || '')
+    if (params.get('fromCheckout') === 'true' && params.get('msPriceId') === record.priceId) {
+      params.delete('fromCheckout')
+      params.delete('msPriceId')
+      params.delete('stripePriceId')
+      var query = params.toString()
+      globalObject.history.replaceState(globalObject.history.state, '',
+        globalObject.location.pathname + (query ? '?' + query : '') + (globalObject.location.hash || ''))
+    }
+  }
+
+  async function delay(ms) {
+    await new Promise(function (resolve) { globalObject.setTimeout(resolve, ms) })
+  }
+
+  async function readCheckoutReceipt(record, token) {
+    var controller = new globalObject.AbortController()
+    var timer = globalObject.setTimeout(function () { controller.abort() }, 12000)
+    try {
+      var response = await globalObject.fetch(RECEIPT_URL, {
+        method: 'POST',
+        credentials: 'omit',
+        signal: controller.signal,
+        headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ intent_key: record.intentKey, stripe_price_id: record.priceId }),
+      })
+      var payload = await response.json()
+      if (!response.ok || !payload || payload.ok !== true) throw new Error('Receipt unavailable')
+      return payload
+    } finally {
+      globalObject.clearTimeout(timer)
+    }
+  }
+
+  async function processCheckoutReturn() {
+    var host = clean(globalObject.location && globalObject.location.hostname).toLowerCase()
+    if (!ALLOWED_HOSTS[host] || !returnRoute()) return
+    var record = readStored(RETURN_KEY)
+    if (!record || !/^[a-f0-9]{64}$/.test(record.intentKey) ||
+        !ALLOWED_PRICE_IDS[record.priceId] || !(record.expiresAt > Date.now())) return
+    purchaseState('verifying')
+    try {
+      var session = await authenticatedSession()
+      if (session.memberId !== record.memberId) throw new Error('Checkout member changed')
+      var expectedEnvironment = host === 'the-starters-3-0.webflow.io' ? 'test' : 'production'
+      if ((session.memberId.indexOf('mem_sb_') === 0) !== (expectedEnvironment === 'test')) {
+        throw new Error('Checkout environment mismatch')
+      }
+      var receipt
+      for (var attempt = 0; attempt < 12; attempt += 1) {
+        if (!(record.expiresAt > Date.now())) throw new Error('Checkout expired')
+        receipt = await readCheckoutReceipt(record, session.token)
+        if (receipt.status !== 'pending') break
+        await delay(2500)
+      }
+      if (receipt.status === 'pending') {
+        purchaseState('pending')
+        return
+      }
+      if (receipt.status !== 'paid' || receipt.intent_key !== record.intentKey ||
+          receipt.stripe_price_id !== record.priceId || receipt.source_environment !== expectedEnvironment ||
+          !/^cs_(?:test_|live_)[a-zA-Z0-9]+$/.test(receipt.transaction_id) ||
+          typeof receipt.amount_total !== 'number' || !Number.isSafeInteger(receipt.amount_total) ||
+          receipt.amount_total <= 0 || receipt.currency !== 'USD') {
+        throw new Error('Checkout receipt is invalid')
+      }
+      var confirmed = await session.memberstack.getCurrentMember()
+      var member = confirmed && confirmed.data ? confirmed.data : confirmed
+      if (clean(member && member.id) !== record.memberId) throw new Error('Checkout member changed')
+      if (expectedEnvironment === 'test') {
+        purchaseState('test-verified')
+        clearCheckoutReturn(record)
+        return
+      }
+      if (receipt.transaction_id.indexOf('cs_live_') !== 0) throw new Error('Checkout mode mismatch')
+      for (var pixelAttempt = 0; pixelAttempt < 40 && typeof globalObject.fbq !== 'function'; pixelAttempt += 1) {
+        await delay(250)
+      }
+      if (typeof globalObject.fbq !== 'function') throw new Error('Pixel unavailable')
+      if (!globalObject.navigator || !globalObject.navigator.locks) throw new Error('Purchase lock unavailable')
+      await globalObject.navigator.locks.request('ts:v3:membership-purchase:' + receipt.transaction_id, async function () {
+        // Recheck inside the cross-tab lock after all asynchronous readiness work.
+        var result = await session.memberstack.getCurrentMember()
+        var active = result && result.data ? result.data : result
+        if (clean(active && active.id) !== record.memberId) throw new Error('Checkout member changed')
+        var key = 'ts:v3:membership-purchase:' + receipt.transaction_id
+        if (globalObject.localStorage.getItem(key)) {
+          purchaseState('already-sent')
+        } else {
+          globalObject.localStorage.setItem(key, 'queued')
+          if (globalObject.localStorage.getItem(key) !== 'queued') throw new Error('Purchase storage unavailable')
+          try {
+            globalObject.fbq('trackSingle', '775648331097942', 'Purchase', {
+              value: receipt.amount_total / 100,
+              currency: receipt.currency,
+              content_ids: [record.priceId],
+              content_name: 'The Starters Membership',
+              content_type: 'product',
+            }, { eventID: receipt.transaction_id })
+          } catch (error) {
+            globalObject.localStorage.removeItem(key)
+            throw error
+          }
+          purchaseState('queued')
+        }
+        clearCheckoutReturn(record)
+      })
+    } catch (_error) {
+      purchaseState('unverified')
+    }
+  }
+
+  function resumeCheckoutReturn() {
+    if (!purchaseTask) purchaseTask = processCheckoutReturn()
+    return purchaseTask
+  }
+
   function boot() {
     var host = clean(globalObject.location && globalObject.location.hostname).toLowerCase()
     if (!ALLOWED_HOSTS[host]) return false
+    captureCheckoutReturn()
+    resumeCheckoutReturn()
     // Memberstack also binds a capture listener on document. Bind one level
     // earlier so the V3 authority row is committed before Memberstack can open
     // Stripe checkout, regardless of script load order.
@@ -369,6 +555,7 @@
     boot: boot,
     handleCheckout: handleCheckout,
     registerIntent: registerIntent,
+    resumeCheckoutReturn: resumeCheckoutReturn,
   }
 
   boot()
