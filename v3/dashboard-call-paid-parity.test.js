@@ -15,12 +15,12 @@ const LEAD = 48 * H + 15 * 60 * 1000
 const DAY = 24 * H
 const LATE = 8 * H // F15 late-cancel window (8 h; the 24 h rule is booking notice only)
 
-test('the Paid constants match the server rules and open Test only', () => {
+test('the Paid constants match the server rules; P5 open in production, P6/P7 Test only', () => {
   assert.equal(api.PAID_CONFIRMED_CANCEL_LEAD_MS, LEAD)
   assert.equal(api.PAID_LATE_CANCEL_FEE_WINDOW_MS, LATE)
   assert.deepEqual(api.PAID_EDIT_OPEN_ENVIRONMENTS, ['test'])
   assert.deepEqual(api.PAID_RESCHEDULE_OPEN_ENVIRONMENTS, ['test'])
-  assert.deepEqual(api.PAID_HOLD_CANCEL_OPEN_ENVIRONMENTS, ['test'])
+  assert.deepEqual(api.PAID_HOLD_CANCEL_OPEN_ENVIRONMENTS, ['test', 'production'])
   assert.equal(
     api.CANCEL_FEE_TEXT.late,
     'This call starts within 8 hours. Cancelling now charges the full session fee.',
@@ -144,9 +144,8 @@ test('P5: both participants can cancel a held Paid call until start, inside 48 h
     assert.equal(api.canCancel(role, held({ start: now - 1 }), now), false, role + ' after start')
   }
   assert.equal(api.canCancel('guest', held({ start: now + H }), now), false)
-  // No environment gate on P5: #2099 P5 admits both env pairs.
-  // P5 stays Test-only until #2099 P5 is published (then add 'production').
-  assert.equal(api.canCancel('brand', held({ start: now + H, data_environment: 'production' }), now), false)
+  // P5 opens in production with the #2099 P5 publish (2026-10-07); unknown env stays closed.
+  assert.equal(api.canCancel('brand', held({ start: now + H, data_environment: 'production' }), now), true)
   assert.equal(api.canCancel('brand', held({ start: now + H, data_environment: '' }), now), false)
   assert.equal(api.canCancel('brand', held({ start: now + H, brand_data: {} }), now), false)
 })

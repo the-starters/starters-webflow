@@ -247,9 +247,9 @@
      the server refuses. */
   const PAID_EDIT_OPEN_ENVIRONMENTS = ['test']
   const PAID_RESCHEDULE_OPEN_ENVIRONMENTS = ['test']
-  // P5 (#2099 held-call cancel) is not published yet: keep the client Test-only
-  // too, so a client release before the server can never show a refused Cancel.
-  const PAID_HOLD_CANCEL_OPEN_ENVIRONMENTS = ['test']
+  // P5 (#2099 held-call cancel) opens in production with the #2099 / #263 / #272
+  // publish (Wednesday release 2026-10-07). Ship this only after that publish.
+  const PAID_HOLD_CANCEL_OPEN_ENVIRONMENTS = ['test', 'production']
 
   // F15 (Kaeser + Jai, 2026-10-06): a Brand cancel at or within 8 h of start is
   // charged the full session fee; every other Paid cancel is released.

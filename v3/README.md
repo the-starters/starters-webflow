@@ -2753,8 +2753,8 @@ returns full rows, so `payment_status`, `payment_reconciliation_status`,
   `paidHoldCancelAdmitted` admits a confirmed Paid row with a
   `payment_intent`, `payment_status` `intent_created` and
   `payment_reconciliation_status` `reconciled`, and `data_environment` in
-  `PAID_HOLD_CANCEL_OPEN_ENVIRONMENTS` (Test only until the #2099 P5 draft is
-  published; add 'production' in the release that publishes it). Either
+  `PAID_HOLD_CANCEL_OPEN_ENVIRONMENTS` (`['test', 'production']` since the
+  #2099 P5 publish on 2026-10-07). Either
   participant can then cancel until start. Every other Paid payment state
   inside 48 h 15 min stays hidden. `cancelFeeText` gives the cancel
   confirmation one line: a Brand on a confirmed Paid call with
