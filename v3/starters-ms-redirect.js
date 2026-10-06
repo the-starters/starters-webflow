@@ -17,6 +17,7 @@
  * paths: they must start with `/`, must not start with `//` or `/\` (both
  * protocol-relative), and must contain no ASCII control characters (the URL
  * parser strips tab/LF/CR, so `/\t/evil.example` would otherwise leave the site).
+ * The unfilled template default `/PAGE/SLUG…` is also rejected.
  * The value is otherwise used verbatim, so a query string such as
  * `?modal-id=signup-modal` survives the redirect. Anything else is ignored.
  *
@@ -40,6 +41,10 @@
   var REDIRECT_ATTRIBUTES = ['redirect', 'data-redirect']
   var LOG_PREFIX = '[starters-ms-redirect]'
   var CONTROL_CHARACTERS = /[\u0000-\u001F\u007F]/
+  // The Designer embed ships with `/PAGE/SLUG?modal-id=signup-modal` as its
+  // template default. Following it after signup lands the new member on a 404,
+  // so an unfilled placeholder is rejected and the form keeps its normal redirect.
+  var TEMPLATE_PLACEHOLDER = /\/PAGE\/SLUG(?:[/?#]|$)/i
   var STAGING_HOST_SUFFIXES = ['webflow.io', 'trycloudflare.com']
   var STAGING_HOSTS = ['localhost', '127.0.0.1']
 
@@ -76,6 +81,7 @@
     var value = rawValue.trim()
     if (value.charAt(0) !== '/') return null
     if (value.charAt(1) === '/' || value.charAt(1) === '\\') return null
+    if (TEMPLATE_PLACEHOLDER.test(value)) return null
     return value
   }
 

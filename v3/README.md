@@ -649,7 +649,9 @@ Accepted values are root-relative same-origin paths. A value must start with `/`
 must not start with `//` or `/\` (both protocol-relative, so both leave the
 site), and must contain no ASCII control characters — the URL parser strips tab,
 LF and CR before parsing, so `/<tab>/evil.example` would otherwise resolve to
-`https://evil.example/`. Anything else is ignored, with a warning on
+`https://evil.example/`. The embed's unfilled template default
+`/PAGE/SLUG?modal-id=signup-modal` is rejected too, because following it sends a
+new member to a 404. Anything else is ignored, with a warning on
 [staging hosts only](../README.md#staging-only-console-diagnostics). Signup
 forms injected after
 `DOMContentLoaded` are out of scope — call `window.StartersMsRedirect.apply()`

@@ -207,6 +207,24 @@ test('rejects values containing ASCII control characters', () => {
   }
 })
 
+test('rejects the unfilled /PAGE/SLUG template placeholder and keeps the form redirect unset', () => {
+  const form = signupForm()
+  const { api, warnings } = load({
+    forms: [form],
+    markers: [element({ [MARKER]: '/PAGE/SLUG?modal-id=signup-modal' })],
+  })
+
+  assert.equal(form.getAttribute('redirect'), null)
+  assert.equal(form.getAttribute('data-redirect'), null)
+  assert.equal(warnings.length, 1)
+  for (const value of ['/PAGE/SLUG', '/page/slug?modal-id=signup-modal', '/PAGE/SLUG/', '/PAGE/SLUG#top']) {
+    assert.equal(api.localPath(value), null, value)
+  }
+  for (const value of ['/case-studies/page-slugger', '/learn/page/slugs', '/PAGE/SLUGS']) {
+    assert.equal(api.localPath(value), value, value)
+  }
+})
+
 test('a whitespace-only marker counts as a missing value, not an invalid one', () => {
   const form = signupForm()
   const { warnings } = load({
