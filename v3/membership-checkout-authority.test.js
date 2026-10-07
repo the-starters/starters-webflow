@@ -804,6 +804,26 @@ test('sends the verified discounted monthly amount to the installed pixel, ignor
   assert.equal(state.storage.size, 0)
 })
 
+test('sends zero for a verified fully discounted checkout and suppresses refresh duplicates', async () => {
+  const local = new Map()
+  const receipt = {
+    ok: true, status: 'paid', intent_key: canonicalIntent, stripe_price_id: monthlyPrice,
+    transaction_id: 'cs_live_fullDiscount', amount_total: 0, fully_discounted: true,
+    currency: 'USD', source_environment: 'production',
+  }
+  const first = returnedPurchase({local, receipt})
+  await finishPurchase(first)
+  assert.equal(first.pixelEvents.length, 1)
+  assert.equal(first.pixelEvents[0][2], 'Purchase')
+  assert.equal(first.pixelEvents[0][3].value, 0)
+  assert.equal(first.pixelEvents[0][3].currency, 'USD')
+  assert.equal(first.pixelEvents[0][4].eventID, 'cs_live_fullDiscount')
+  const refresh = returnedPurchase({local, receipt})
+  await finishPurchase(refresh)
+  assert.equal(refresh.pixelEvents.length, 0)
+  assert.ok(refresh.purchaseStates.includes('already-sent'))
+})
+
 test('sends the annual amount from the receipt', async () => {
   const state = returnedPurchase({priceId: annualPrice, receipt: {
     ok: true, status: 'paid', intent_key: canonicalIntent, stripe_price_id: annualPrice,
@@ -873,10 +893,10 @@ test('pending webhook is retried, and a still-pending receipt is retained for re
   assert.equal(pending.purchaseStates.at(-1), 'pending')
 })
 
-test('rejects unverified, zero, non-finite, fractional cents, wrong currency, price, intent and environment receipts', async () => {
+test('rejects unverified, unattested zero, non-finite, fractional cents, wrong currency, price, intent and environment receipts', async () => {
   const valid = {ok: true, status: 'paid', intent_key: canonicalIntent, stripe_price_id: monthlyPrice,
     transaction_id: 'cs_live_valid', amount_total: 29500, currency: 'USD', source_environment: 'production'}
-  for (const override of [{ok: false}, {status: 'unpaid'}, {amount_total: 0}, {amount_total: -1},
+  for (const override of [{ok: false}, {status: 'unpaid'}, {amount_total: 0}, {amount_total: 0, fully_discounted: 'true'}, {amount_total: 0, fully_discounted: false}, {amount_total: -1, fully_discounted: true},
     {amount_total: Infinity}, {amount_total: '29500'}, {amount_total: 1.5}, {currency: 'EUR'},
     {stripe_price_id: annualPrice}, {intent_key: 'b'.repeat(64)}, {source_environment: 'test'},
     {transaction_id: 'cs_test_wrongmode'}, {transaction_id: 'sub_123'}]) {
@@ -887,13 +907,15 @@ test('rejects unverified, zero, non-finite, fractional cents, wrong currency, pr
 })
 
 test('test-mode verification never sends test revenue to the production pixel', async () => {
-  const state = returnedPurchase({hostname: 'the-starters-3-0.webflow.io', memberId: 'mem_sb_test', receipt: {
-    ok: true, status: 'paid', intent_key: canonicalIntent, stripe_price_id: monthlyPrice,
-    transaction_id: 'cs_test_valid', amount_total: 29500, currency: 'USD', source_environment: 'test',
-  }})
-  await finishPurchase(state)
-  assert.equal(state.pixelEvents.length, 0)
-  assert.equal(state.purchaseStates.at(-1), 'test-verified')
+  for (const amount of [{amount_total: 29500}, {amount_total: 0, fully_discounted: true}]) {
+    const state = returnedPurchase({hostname: 'the-starters-3-0.webflow.io', memberId: 'mem_sb_test', receipt: {
+      ok: true, status: 'paid', intent_key: canonicalIntent, stripe_price_id: monthlyPrice,
+      transaction_id: 'cs_test_valid', ...amount, currency: 'USD', source_environment: 'test',
+    }})
+    await finishPurchase(state)
+    assert.equal(state.pixelEvents.length, 0)
+    assert.equal(state.purchaseStates.at(-1), 'test-verified')
+  }
 })
 
 test('member changes before the receipt or pixel dispatch fail closed', async () => {
