@@ -1,6 +1,6 @@
 # `v3/hire-profile.js` — wiring and ownership
 
-Last updated: 2026-09-23
+Last updated: 2026-10-07
 Status: Free Brands and every other signed-in non-paid viewer are paywalled into
 `signup-modal` on all paid CTAs (see [Paywalled viewers](#paywalled-viewers)).
 Call projections and Free Call behavior are GitHub-owned; the Free/Paid
@@ -107,9 +107,9 @@ shared component. Its other page scripts can remain deferred
 | Call projections (hero, sticky header, Services, and chooser) | owner: live connection state with no booking action · anonymous: public-projection Free/Paid touts plus signup-only Book Call; chooser closed · brand: [readiness contract](#signed-in-brand-readiness) | this file / public compatibility projections for anonymous display; authenticated Xano, Nylas, and Stripe for booking |
 | Free and Paid call cards (hero tout and Services card) | same audiences and states as the row above | `starter-call-offers-services` plus the Header call projection read the dedicated public Xano endpoint `profile/starter/calls/v3`; superseded CMS call cards stay hidden as rollback markup — see [The Free and Paid call cards render from one wf-xano template per surface](#the-free-and-paid-call-cards-render-from-one-wf-xano-template-per-surface) |
 | Rate and next-slot text on those projections | see [canonical rate painting](#call-rate-surfaces-are-repainted-from-the-canonical-source) and [public-view limits](#qa-venue-limits-for-the-call-surface-rules) | this file |
-| Non-call Service cards | everyone; logged-out cards open signup, eligible Brand cards open the project modal, Talent cards stay inert, and owner cards remain visible as explained previews | native Webflow CMS plus side-by-side `starter-services` wf-xano canary / canonical `freelancers_v3.Services`; this file adds interaction attributes to rendered Xano clones |
-| Services Freelance rate card | everyone | this file / Algolia record, cloned from the section's own authored Default card — never an element owned by a `[wf-xano-element="wrapper"]`, because every wf-xano adapter stamps the same `data-service-card="component"` / `data-service-card-state="Default"` pair on its template and its rendered clones |
-| Services Retainer rate card | everyone | authored `starter-retainer` wf-xano wrapper / canonical Xano endpoint `profile/starter/retainer/v3`; the Algolia-derived runtime clone remains only as the unresolved/error fallback |
+| Non-call Service cards | claimed profiles: logged-out cards open signup, eligible Brand cards open the project modal, Talent cards stay inert, and owner cards remain visible as explained previews; unclaimed profiles with no `starter_memberstack_id`: Xano clones are display-only | native Webflow CMS plus side-by-side `starter-services` wf-xano canary / canonical `freelancers_v3.Services`; this file adds interaction attributes to rendered Xano clones only outside the unclaimed public-record path |
+| Services Freelance rate card | claimed profiles: everyone; unclaimed profiles with no `starter_memberstack_id`: the Algolia-derived fallback stays down | this file / Algolia record, cloned from the section's own authored Default card — never an element owned by a `[wf-xano-element="wrapper"]`, because every wf-xano adapter stamps the same `data-service-card="component"` / `data-service-card-state="Default"` pair on its template and its rendered clones |
+| Services Retainer rate card | claimed profiles follow the normal signup/project rules; unclaimed profiles with no `starter_memberstack_id` render the canonical Xano card display-only | authored `starter-retainer` wf-xano wrapper / canonical Xano endpoint `profile/starter/retainer/v3`; the Algolia-derived runtime clone remains only as the unresolved/error fallback |
 | Free booking popup | signed-in Brand members | this file + `free-call-booking.js` + shared call calendar / authenticated canonical Xano booking command |
 | Paid booking popup | signed-in Brand members | this file + `paid-call-brand-payment.js` / authenticated Xano + Stripe Elements + Nylas calendar |
 | Hero Hourly and Retainer touts | everyone | native wf-xano lists adapted by this file; see [Hero rate cards](#hero-rate-cards) |
@@ -211,9 +211,12 @@ warns and stands down.
 
 All of these are defined by **other** page or site embeds that run before it.
 The file reads the page-owned identity and shared helper globals from `window`.
-It stands down with a `[hire-profile]` warning when `qs`, `qsa`,
-`waitForMember`, or `starter_memberstack_id` is missing, because an uncaught
-`ReferenceError` would abort the whole file and take every section with it.
+It stands down with a `[hire-profile]` warning when `qs`, `qsa`, or
+`waitForMember` is missing, because an uncaught `ReferenceError` would abort the
+whole file and take every section with it. When `starter_memberstack_id` is
+empty or missing, member-bound profile work stands down after the read-only
+public-record adapters for Hero rate cards, Services, and Retainer are
+installed.
 The Free booking namespace normally comes from the page install order above.
 `hire-profile.js` supplies the bounded GitHub/jsDelivr recovery when that tag is
 missing and stands down if the namespace still cannot load.
@@ -325,7 +328,10 @@ are aligned before selecting the canary.
    the cloned rate cards must keep those attributes (values `Freelance` /
    `Retainer`) and must **not** carry `data-modal-trigger`, `booking-popup-open`,
    or `data-type` — otherwise a logged-in click opens an unconfigured booking
-   popup for a card that cannot be booked.
+   popup for a card that cannot be booked. The exception is an unclaimed profile
+   with no `starter_memberstack_id`: its public-record Services and Retainer
+   wf-xano clones must not carry `data-signup-trigger-*`, because they are
+   display-only.
 3. Eligible signed-in Brand: canonical discovery keeps every call projection
    closed until the [Brand readiness contract](#signed-in-brand-readiness)
    admits the type. Until then, Book Call and each managed call card
@@ -775,9 +781,12 @@ wrapper. Webflow currently drops the nested Label component's title and
 description Attribute-property overrides from published markup, so the adapter
 repaints those two existing text nodes only when the clone's
 `data-wf-xano-id` exactly matches a returned item id. It does not create markup
-or fall back by position. It gives logged-out cards the same signup-attribution
-contract as CMS cards. For an eligible Brand, it adds the normal project
-smart-fill attributes for the exact canonical service name.
+or fall back by position. On claimed profiles, it gives logged-out cards the
+same signup-attribution contract as CMS cards. For an eligible Brand, it adds
+the normal project smart-fill attributes for the exact canonical service name.
+On an unclaimed profile with no `starter_memberstack_id`, the adapter removes
+any signup trigger attributes inherited from the template and does not add
+project wiring, so the rendered public cards are display-only.
 Webflow owns the native `Services` select and all authored options. The adapter
 may add a missing exact option tagged
 `data-xano-service-option="starter-services"`, and it removes only stale options
@@ -797,7 +806,9 @@ shared taxonomy source. `hire-profile.js` upgrades only that named instance
 through wf-xano's public `destroy`/`init` API; it does not change endpoint
 `#5860` or its unrelated draft. Webflow owns the native wrapper and card
 template. The adapter repaints the rendered title, description, and canonical
-price and adds the existing signup or exact project-service attributes.
+price. On claimed profiles, it adds the existing signup or exact project-service
+attributes; on an unclaimed profile with no `starter_memberstack_id`, it removes
+any inherited signup trigger attributes and leaves the card display-only.
 On initial results and refreshes, only the rendered Retainer
 `[wf-xano-bind="price"][data-millify]` hook loses its inherited
 `data-millify-max="5000"` ceiling. Positive safe-integer whole-dollar prices
@@ -814,10 +825,12 @@ The Algolia-derived runtime Retainer clone remains visible while the canonical
 request is pending or when it errors. The first resolved canonical result
 removes that fallback, including when the result is empty, so a disabled or
 unpriced canonical profile cannot leave a stale Retainer card or create a
-duplicate. Logged-out clicks open `signup-modal` with Retainer attribution.
-Eligible signed-in Brands open `generate-contract` with `Monthly retainer`
-selected. Talent and unknown roles stay inert; the profile owner sees the card
-as an explained preview with no signup or project-modal hook.
+duplicate. On claimed profiles, logged-out clicks open `signup-modal` with
+Retainer attribution, eligible signed-in Brands open `generate-contract` with
+`Monthly retainer` selected, Talent and unknown roles stay inert, and the
+profile owner sees the card as an explained preview with no signup or
+project-modal hook. On an unclaimed profile with no `starter_memberstack_id`,
+the canonical Retainer card is display-only.
 
 ## Taxonomy empty groups stay hidden
 
