@@ -561,9 +561,9 @@ touched by a release:
   release tag.
 - Where the script exports a window API object, the same value appears as a
   `release` property on it.
-- The two must stay in sync. Each touched script's test file parses the header
-  marker out of the source and compares it against the exported property, so an
-  edit that updates one and forgets the other fails the suite.
+- The two must stay in sync. Focused release-marker tests pin that invariant
+  where present; otherwise the served-byte check below is the deploy-time proof
+  that the header and exported property match at the selected ref.
 
 `starter-edit-profile.js` is an accepted exception to the second and third
 bullets. Its `window.StartersStarterEditProfile` export exists for the Personal

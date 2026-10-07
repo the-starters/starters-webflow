@@ -1,7 +1,7 @@
 /**
  * V3 protected-route guard.
  *
- * @release v1.59.649
+ * @release v1.59.677
  *
  * A thin, sitewide companion to v3/auth-route.js. auth-route.js only runs at
  * /login, /starter-login, and /auth-route, so a logged-in member can still reach
@@ -1105,7 +1105,7 @@
   }
 
   var api = {
-    release: 'v1.59.649',
+    release: 'v1.59.677',
     activePlanIds: activePlanIds,
     roleResolution: roleResolution,
     memberRole: memberRole,
