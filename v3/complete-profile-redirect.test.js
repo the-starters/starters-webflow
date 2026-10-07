@@ -15,7 +15,7 @@ const routeGuardSource = fs.readFileSync(
 const COMPLETE_PROFILE = '/complete-profile'
 const DASHBOARD = '/brand-dashboard'
 const STARTER_DASHBOARD = '/starter-dashboard'
-const QUIZ = '/quiz'
+const HOME = '/'
 const QUIZ_RESULTS = '/quiz-results'
 const DONE_FIELD = 'completed-brand-profile'
 const QUIZ_FIELD = 'starter-quiz'
@@ -47,7 +47,7 @@ const BRAND_FREE = {
   planConnections: [plan('pln_free-plan-f6kn0dxz')],
 }
 // A free Brand who has already taken the quiz, so the guard's brandFreeHome()
-// resolves to /quiz-results rather than /quiz.
+// resolves to /quiz-results rather than the homepage.
 const BRAND_FREE_DONE = {
   id: 'm-brand-free-done',
   planConnections: [plan('pln_free-plan-f6kn0dxz')],
@@ -415,7 +415,7 @@ test('the guard contract names the destinations the rest of this file expects', 
   // asserts against contractHome(), so if the guard's role homes ever change this
   // single test is what fails and says so.
   assert.equal(contractHome(TALENT), STARTER_DASHBOARD)
-  assert.equal(contractHome(BRAND_FREE), QUIZ)
+  assert.equal(contractHome(BRAND_FREE), HOME)
   assert.equal(contractHome(BRAND_FREE_DONE), QUIZ_RESULTS)
   assert.equal(contractHome(brandPaid('yes')), DASHBOARD)
   // No home for a member the contract cannot place, which is why the module
@@ -799,7 +799,7 @@ test('a Talent member goes straight to the Starter dashboard, no /login hop', as
   assert.notEqual(location.replaced, '/login')
 })
 
-test('a free Brand who has not taken the quiz goes to the quiz', async () => {
+test('a free Brand who has not taken the quiz goes to the homepage', async () => {
   const { location } = loadModule({ member: BRAND_FREE })
   await flush()
   await flush()
@@ -817,7 +817,7 @@ test('a free Brand who has taken the quiz goes to the quiz results', async () =>
 
 test('the free-Brand and Talent destinations are the guard contract, not a copy', async () => {
   // The whole reason this module borrows roleHome() instead of reimplementing
-  // ROLE_DEFAULTS and the quiz-funnel rule: if the guard ever moves a role home,
+  // ROLE_DEFAULTS and the free-Brand home rule: if the guard ever moves a role home,
   // this page must follow without an edit here. Asserted against the guard object
   // from the same load, so not even a stale CONTRACT could mask a divergence.
   for (const member of [TALENT, BRAND_FREE, BRAND_FREE_DONE]) {

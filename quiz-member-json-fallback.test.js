@@ -111,7 +111,7 @@ test('completed member missing usable JSON is sent to an explicit retake', () =>
     )
 })
 
-test('authenticated member without completion marker starts the quiz normally', () => {
+test('authenticated member without completion marker goes to the homepage', () => {
     const { getAuthenticatedNoQuizDataRedirectTarget } =
         getMemberJsonFallbackApi().api
 
@@ -120,7 +120,7 @@ test('authenticated member without completion marker starts the quiz normally', 
             id: 'mem_test',
             custom_fields: { 'starter-quiz': '   ' },
         }),
-        '/quiz',
+        '/',
     )
 })
 
@@ -189,19 +189,25 @@ test('authenticated retake keeps required controls and safe campaign attribution
     )
 })
 
-const LEGACY_FREE_BRAND = {
-    id: 'mem_legacy',
+const FREE_BRAND = {
+    id: 'mem_free',
     planConnections: [{ active: true, planId: 'pln_free-plan-f6kn0dxz' }],
+}
+const LEGACY_FREE_BRAND = {
+    ...FREE_BRAND,
+    id: 'mem_legacy',
     customFields: { quiz: 'true', 'starter-quiz': '' },
 }
 
-test('legacy-quiz free Brand without results goes to the route guard home', () => {
+test('no-quiz free Brand without results goes to the route guard home', () => {
     const contract = loadRouteGuardContract()
     const { getAuthenticatedNoQuizDataRedirectTarget } =
         getMemberJsonFallbackApi(null, '', contract).api
 
-    assert.equal(contract.roleHome(LEGACY_FREE_BRAND), '/')
-    assert.equal(getAuthenticatedNoQuizDataRedirectTarget(LEGACY_FREE_BRAND), '/')
+    for (const member of [FREE_BRAND, LEGACY_FREE_BRAND]) {
+        assert.equal(contract.roleHome(member), '/', member.id)
+        assert.equal(getAuthenticatedNoQuizDataRedirectTarget(member), '/', member.id)
+    }
     // A completion marker still means an explicit retake.
     assert.equal(
         getAuthenticatedNoQuizDataRedirectTarget({
@@ -210,52 +216,31 @@ test('legacy-quiz free Brand without results goes to the route guard home', () =
         }),
         '/quiz?retake=true&quizDataMissing=1',
     )
-    // The legacy field only matters for a free Brand.
-    assert.equal(
-        getAuthenticatedNoQuizDataRedirectTarget({
-            ...LEGACY_FREE_BRAND,
-            planConnections: [
-                { active: true, planId: 'pln_new-paid-plan-463h04ph' },
-            ],
-        }),
-        '/quiz',
-    )
-    assert.equal(
-        getAuthenticatedNoQuizDataRedirectTarget({
-            ...LEGACY_FREE_BRAND,
-            customFields: { quiz: 'false' },
-        }),
-        '/quiz',
-    )
 })
 
-test('without the route guard contract a legacy-quiz member starts the quiz', () => {
-    const { getAuthenticatedNoQuizDataRedirectTarget } =
-        getMemberJsonFallbackApi().api
-
-    assert.equal(getAuthenticatedNoQuizDataRedirectTarget(LEGACY_FREE_BRAND), '/quiz')
-    // A partial contract is treated as missing.
-    const partial = getMemberJsonFallbackApi(null, '', {
-        memberRole: () => 'brand-free',
-    }).api
-    assert.equal(
-        partial.getAuthenticatedNoQuizDataRedirectTarget(LEGACY_FREE_BRAND),
-        '/quiz',
-    )
+test('the no-data fallback is the homepage with or without the route guard', () => {
+    for (const routeGuard of [undefined, { memberRole: () => 'brand-free' }]) {
+        const { getAuthenticatedNoQuizDataRedirectTarget } =
+            getMemberJsonFallbackApi(null, '', routeGuard).api
+        assert.equal(getAuthenticatedNoQuizDataRedirectTarget(FREE_BRAND), '/')
+        assert.equal(getAuthenticatedNoQuizDataRedirectTarget(LEGACY_FREE_BRAND), '/')
+    }
 })
 
-test('no-data runtime sends a legacy-quiz free Brand home with safe attribution', async () => {
-    const { api, redirects } = getMemberJsonFallbackApi(
-        {
-            async getCurrentMember() {
-                return { data: LEGACY_FREE_BRAND }
+test('no-data runtime sends a no-quiz free Brand home with safe attribution', async () => {
+    for (const member of [FREE_BRAND, LEGACY_FREE_BRAND]) {
+        const { api, redirects } = getMemberJsonFallbackApi(
+            {
+                async getCurrentMember() {
+                    return { data: member }
+                },
             },
-        },
-        '?utm_source=mailchimp&memberstack_id=private',
-        loadRouteGuardContract(),
-    )
+            '?utm_source=mailchimp&memberstack_id=private',
+            loadRouteGuardContract(),
+        )
 
-    await api.redirectVisitorWithoutResults()
+        await api.redirectVisitorWithoutResults()
 
-    assert.deepEqual(redirects, ['/?utm_source=mailchimp'])
+        assert.deepEqual(redirects, ['/?utm_source=mailchimp'], member.id)
+    }
 })
