@@ -155,7 +155,7 @@ while the Memberstack webhook mirror catches up.
 3. Add one deferred page-level tag on `/complete-profile`, and nowhere else:
 
    ```html
-   <script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v1.59.86/v3/complete-profile-redirect.js" defer></script>
+   <script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@RELEASE/v3/complete-profile-redirect.js" defer></script>
    ```
 
 4. Load it AFTER the sitewide `v3/route-guard.js`, which owns the role contract
@@ -165,8 +165,8 @@ while the Memberstack webhook mirror catches up.
    `/starter-dashboard`, `/quiz`, `/quiz-results`, or `/`. The path scope
    refuses them anyway, and the test suite asserts no destination is itself a
    scoped page.
-6. Pin the embed to the same tag as the route-guard release it shipped with
-   (`v1.59.86`), the way the sibling redirect embeds are pinned.
+6. Pin the embed to the same tag as the route-guard release it ships with, the
+   way the sibling redirect embeds are pinned.
 
 No redirect-specific page markup is required beyond the hidden input. The module has no spinner and
 no error state: it either navigates away or leaves the page alone, so there is
