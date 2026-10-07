@@ -175,7 +175,7 @@ because a guarded page forces a login and these are the pre-signup funnel itself
 | --- | --- |
 | Logged out, or Memberstack unavailable | Nothing at all: no redirect, no attribute, no event |
 | Mapped member with a valid, permitted `?next=` | Replace with that `next` |
-| Mapped member otherwise | Replace with the role home, except the login-only default below |
+| Mapped member otherwise | Replace with the role home; on `/`, apply the homepage overrides below |
 | Authenticated but unmapped or cross-role conflicted | Stay, with a `console.error` only — no `data-route-guard-error` |
 
 A `?next=` is honoured only when it is same-origin, free of embedded
@@ -250,8 +250,8 @@ treated as cancelled, not as a stay. Rule 3 keeps a browsing free Brand with no
 completed quiz on `/`, which is also their role home. Once the quiz is done they
 go to `/quiz-results`.
 
-Both rules are scoped to `/`. For login defaults and the unchanged role-home
-routing on other entry pages, see the
+Both rules are scoped to `/`. For login and the unchanged role-home routing on
+other entry pages, see the
 [login-default contract](../../v3/ACCESS-MATRIX.md#non-quiz-free-brand-login-default).
 Both login pages and `/sign-up` still leave an unmapped cancelled member where
 they are. `v3/route-guard.test.js` covers these boundaries and verifies that

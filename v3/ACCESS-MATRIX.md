@@ -416,7 +416,7 @@ separate owner:
 | `/admin/talent-applications` staff access and private application records | Xano `admin/session` and talent-admin endpoint authorization | Parked, preparation-only staging Code Component; outside the member-plan route matrix; not production-ready and has not been imported into Webflow, published, tagged, or deployed |
 | Mutations and private records | Xano authorization using authenticated member and role | Profile, Companies, and Portfolio mutations receive `user_v3` Bearer auth from `profile-image-auth-shim.js`; ownership must be enforced server-side |
 | Paid-then-cancelled behavior | `v3/route-guard.js` `hasCancelledPaidBrandPlan` + the homepage branch of `bounceTargetFor` | See [Homepage overrides](#homepage-overrides); role resolution itself is unchanged |
-| Not-yet-quizzed free Brand on the homepage | `v3/route-guard.js` homepage branch of `bounceTargetFor` | See [Homepage overrides](#homepage-overrides), distinct from the [login default](#non-quiz-free-brand-login-default) |
+| Not-yet-quizzed free Brand on the homepage | `v3/route-guard.js` homepage branch of `bounceTargetFor` | See [Homepage overrides](#homepage-overrides); login uses the same [free-Brand home](#non-quiz-free-brand-login-default) |
 
 `Allow` on `/opportunities/<slug>` is the route guard's role-level decision, not
 brand ownership authorization. Xano enforces the underlying ownership boundary.
