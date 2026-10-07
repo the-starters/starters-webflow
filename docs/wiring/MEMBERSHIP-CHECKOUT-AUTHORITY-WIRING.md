@@ -109,15 +109,22 @@ Memberstack price ID vocabulary). The read-only endpoint checks authenticated
 ownership, origin, environment, expiry, the signed lifecycle binding, and the
 exact subscription snapshot. It reads Stripe Checkout Sessions for that
 subscription and customer in the intent's two-hour window. Multiple matches,
-unbound or foreign subscriptions, wrong modes, zero payments, trials, and
-unsupported currencies cannot produce a paid receipt. `pending` means the
-binding, snapshot, or payment is not yet ready; the browser retries up to twelve
+unbound or foreign subscriptions, wrong modes, unverified zero payments, trials,
+and unsupported currencies cannot produce a paid receipt. A zero-dollar checkout
+is accepted only when Stripe reports a positive integer subtotal fully covered
+by its discount, no tax or shipping, and a matching active subscription in the
+same environment. For this case the endpoint also reads the Stripe Subscription;
+trialing subscriptions are excluded even if the checkout reports `paid`.
+`pending` means the binding, snapshot, or payment is not yet ready; the browser retries up to twelve
 times with 2.5 seconds between reads and a twelve-second timeout per read.
 
 A paid receipt contains `ok: true`, `status: "paid"`, `intent_key`,
 `stripe_price_id`, `transaction_id` (the actual Stripe Checkout Session ID),
 `amount_total` (integer cents including discounts and tax), `currency: "USD"`,
-and `source_environment`. Only production receipts on the production hosts
+`fully_discounted` (true only for the verified zero-dollar exception), and
+`source_environment`. The browser requires `fully_discounted: true` to accept
+zero and sends its actual `value: 0`; list prices and URL amounts never replace
+the settled amount. Only production receipts on the production hosts
 send `trackSingle` Purchase to the existing pixel `775648331097942`. The amount
 is cents divided by 100. The Session ID is also the event ID and permanent
 same-browser local-storage deduplication key. A Web Lock serializes dispatch

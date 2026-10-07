@@ -1,6 +1,6 @@
 /**
  * V3 membership checkout authority gate.
- * @release v1.59.674
+ * @release v1.59.676
  *
  * This controller records one authenticated V3 checkout intent before the
  * native Memberstack price control opens Stripe checkout. It does not create
@@ -483,7 +483,8 @@
           receipt.stripe_price_id !== record.priceId || receipt.source_environment !== expectedEnvironment ||
           !/^cs_(?:test_|live_)[a-zA-Z0-9]+$/.test(receipt.transaction_id) ||
           typeof receipt.amount_total !== 'number' || !Number.isSafeInteger(receipt.amount_total) ||
-          receipt.amount_total <= 0 || receipt.currency !== 'USD') {
+          receipt.amount_total < 0 || (receipt.amount_total === 0 && receipt.fully_discounted !== true) ||
+          receipt.currency !== 'USD') {
         throw new Error('Checkout receipt is invalid')
       }
       var confirmed = await session.memberstack.getCurrentMember()
