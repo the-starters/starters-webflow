@@ -1,4 +1,4 @@
-// Read-only proof of the initial paid Checkout Session bound to an owned V3 intent.
+// Read-only proof of the initial settled Checkout Session bound to an owned V3 intent.
 // This endpoint sends no Meta event and never mutates membership or email state.
 query "membership/checkout-receipt/v3" verb=POST {
   api_group = "V3.0 Starters"
@@ -152,11 +152,36 @@ query "membership/checkout-receipt/v3" verb=POST {
       }
     }
 
+    // Only zero-dollar receipts need an additional trial-versus-active check.
+    var $subscription {
+      value = null
+    }
+
+    conditional {
+      if ($checkout.amount_total === 0) {
+        api.request {
+          url = "https://api.stripe.com/v1/subscriptions/" ~ $intent.stripe_subscription_id
+          method = "GET"
+          headers = ["Authorization: Bearer " ~ $stripe_key, "Stripe-Version: 2024-06-20"]
+          timeout = 10
+        } as $subscription_read
+
+        precondition ($subscription_read.response.status == 200) {
+          error = "Stripe subscription verification failed"
+        }
+
+        var.update $subscription {
+          value = $subscription_read.response.result
+        }
+      }
+    }
+
     function.run "membership/checkout_session_receipt_v3" {
       input = {
         intent: $intent
         snapshot: $snapshot
         checkout: $checkout
+        subscription: $subscription
         source_environment: $environment
       }
     } as $receipt
