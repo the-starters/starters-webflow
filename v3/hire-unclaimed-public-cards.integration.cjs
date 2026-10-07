@@ -22,6 +22,8 @@ const card = (extra = '') => `<div wf-xano-element="template" data-service-card=
   <p data-service-card-element="description">Service Description</p>
   <span wf-xano-bind="price" data-millify="" data-millify-max="5000">000</span></div>`
 
+const signupHook = ' data-signup-trigger-element="service" data-signup-trigger-value="Template Signup"'
+
 for (const memberstackId of ['', undefined]) for (const libraryFirst of [false, true]) {
   test(`unclaimed profile paints public cards, id=${JSON.stringify(memberstackId)}, libraryFirst=${libraryFirst}`, async () => {
     const errors = []
@@ -36,9 +38,9 @@ for (const memberstackId of ['', undefined]) for (const libraryFirst of [false, 
       </div>
       <section id="services">
         <div wf-xano-element="wrapper" wf-xano-instance="starter-retainer" wf-xano-source="KZf7nFnk:profile/starter/taxonomy/v3"
-          wf-xano-method="GET" wf-xano-auth="none" wf-xano-param-starter_id="1264" wf-xano-param-kind="retainer">${card()}</div>
+          wf-xano-method="GET" wf-xano-auth="none" wf-xano-param-starter_id="1264" wf-xano-param-kind="retainer">${card(signupHook)}</div>
         <div wf-xano-element="wrapper" wf-xano-instance="starter-services" wf-xano-source="KZf7nFnk:profile/starter/taxonomy/v3"
-          wf-xano-method="GET" wf-xano-auth="none" wf-xano-param-starter_id="1264" wf-xano-param-kind="services">${card()}</div>
+          wf-xano-method="GET" wf-xano-auth="none" wf-xano-param-starter_id="1264" wf-xano-param-kind="services">${card(signupHook)}</div>
       </section></body>`, { url: 'https://www.thestarters.com/hire/nik', runScripts: 'outside-only', virtualConsole: vc })
     const w = dom.window
     const requests = []
@@ -91,6 +93,8 @@ for (const memberstackId of ['', undefined]) for (const libraryFirst of [false, 
     // Read-only: no project wiring and no clickable affordance for a profile with no member.
     for (const node of [service, retainer]) {
       assert.equal(node.getAttribute('data-modal-trigger'), null)
+      assert.equal(node.getAttribute('data-signup-trigger-element'), null)
+      assert.equal(node.getAttribute('data-signup-trigger-value'), null)
       assert.notEqual(node.style.cursor, 'pointer')
     }
     assert.ok(warnings.some(m => m.includes('member profile scripts stood down')))

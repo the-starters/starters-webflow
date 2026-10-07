@@ -3727,8 +3727,13 @@
 
           card.setAttribute('data-service-card', 'component');
           card.setAttribute('data-service-card-state', 'Default');
-          card.setAttribute('data-signup-trigger-element', 'service');
-          card.setAttribute('data-signup-trigger-value', serviceName);
+          if (publicRecordOnly) {
+              card.removeAttribute('data-signup-trigger-element');
+              card.removeAttribute('data-signup-trigger-value');
+          } else {
+              card.setAttribute('data-signup-trigger-element', 'service');
+              card.setAttribute('data-signup-trigger-value', serviceName);
+          }
           card.setAttribute('data-xano-service-card', 'starter-services');
           ['data-modal-trigger', 'data-sp-fill', 'data-sp-fill-category', 'data-sp-fill-value']
               .forEach(function (attribute) { card.removeAttribute(attribute); });
@@ -3992,8 +3997,13 @@
           card.setAttribute('data-service-card', 'component');
           card.setAttribute('data-service-card-state', 'Default');
           card.setAttribute('data-rate-card', 'retainer');
-          card.setAttribute('data-signup-trigger-element', 'service');
-          card.setAttribute('data-signup-trigger-value', 'Retainer');
+          if (publicRecordOnly) {
+              card.removeAttribute('data-signup-trigger-element');
+              card.removeAttribute('data-signup-trigger-value');
+          } else {
+              card.setAttribute('data-signup-trigger-element', 'service');
+              card.setAttribute('data-signup-trigger-value', 'Retainer');
+          }
           card.setAttribute('data-xano-retainer-card', 'starter-retainer');
           ['has-connection', 'no-connection', 'booking-popup-open', 'data-type',
               'data-modal-trigger', 'data-sp-fill', 'data-sp-fill-category', 'data-sp-fill-value']
