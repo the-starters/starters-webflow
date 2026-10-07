@@ -113,7 +113,8 @@ The role **and** the free-Brand and Talent destinations both come from the sitew
 `.roleHome`), never from a second copy of the plan table or of `ROLE_DEFAULTS` —
 the same borrow `v3/auth-route.js` and `v3/build-profile-redirect.js` make. That is
 what keeps the free-Brand quiz-funnel rule (`/quiz-results` once `starter-quiz` is
-set, else `/quiz`) in exactly one place.
+set, `/` when only the legacy `quiz` field is true, else `/quiz`) in exactly one
+place.
 
 Both halves are required together. A contract that can name a role but not its home
 counts as **no contract at all**: identifying a Talent member and then having

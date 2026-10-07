@@ -95,25 +95,50 @@
   }
 
   // Where each role is sent when it is not allowed on the requested page.
-  // brand-free is decided at runtime by quiz completion (see brandFreeHome);
-  // the map value is the not-yet-completed fallback.
+  // brand-free is decided at runtime by quiz state (see brandFreeHome); the
+  // map value is the no-quiz fallback.
   var ROLE_DEFAULTS = {
     talent: '/starter-dashboard',
     'brand-paid': '/brand-dashboard',
     'brand-free': '/quiz',
   }
 
-  // A brand-free member's home is /quiz-results once the quiz is completed,
-  // else /quiz. Same durable signal the /quiz-results page reads: the
-  // Memberstack `starter-quiz` custom field (on the member object, no extra
-  // call). v3/auth-route.js consumes this shared contract.
+  // Completion of the current quiz is the Memberstack `starter-quiz` custom
+  // field, the same durable signal the /quiz-results page reads (on the member
+  // object, no extra call). v3/auth-route.js consumes this shared contract.
   function hasCompletedQuiz(member) {
     var cf = (member && member.customFields) || {}
     var value = cf['starter-quiz']
     return typeof value === 'string' ? value.trim() !== '' : !!value
   }
+
+  // 'current': took the current quiz. 'legacy': only the older `quiz` field is
+  // set; Memberstack stores custom fields as strings, so only true or "true"
+  // count. A ready pending payload keeps a legacy member on the current-quiz
+  // path, so quiz-main/quiz-redirect.js can still forward a just-finished quiz
+  // from /quiz to /quiz-results. 'none': neither.
+  function brandFreeQuizState(member) {
+    if (hasCompletedQuiz(member)) return 'current'
+    var legacy = ((member && member.customFields) || {}).quiz
+    if (
+      (legacy === true ||
+        (typeof legacy === 'string' && legacy.trim().toLowerCase() === 'true')) &&
+      !hasReadyPendingQuiz()
+    ) {
+      return 'legacy'
+    }
+    return 'none'
+  }
+
+  // A legacy-quiz member has no current results to show, so their home is the
+  // homepage, where homepageBounceOverride() lets them stay.
+  var BRAND_FREE_HOMES = {
+    current: '/quiz-results',
+    legacy: '/',
+    none: '/quiz',
+  }
   function brandFreeHome(member) {
-    return hasCompletedQuiz(member) ? '/quiz-results' : '/quiz'
+    return BRAND_FREE_HOMES[brandFreeQuizState(member)]
   }
 
   /**
@@ -682,8 +707,9 @@
       // back to /quiz to redo a quiz they already finished.
       if (hasReadyPendingQuiz()) return ''
       var home = brandFreeHome(member)
-      // Quiz not done: home is /quiz, so this page is the wrong one even though
-      // the role is allowed. Quiz done: home IS this page, so stay.
+      // Quiz not done: home is /quiz (or / for a legacy-quiz member), so this
+      // page is the wrong one even though the role is allowed. Quiz done: home
+      // IS this page, so stay.
       if (!samePage(home, pathname)) return home
     }
     return ''
@@ -1092,6 +1118,7 @@
     hasReadyPendingQuiz: hasReadyPendingQuiz,
     hasCancelledPaidBrandPlan: hasCancelledPaidBrandPlan,
     brandFreeHome: brandFreeHome,
+    brandFreeQuizState: brandFreeQuizState,
     pageRolesFor: pageRolesFor,
     isGuardedPath: isGuardedPath,
     redirectTargetFor: redirectTargetFor,

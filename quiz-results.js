@@ -6114,9 +6114,26 @@
             return null
         }
 
-        return hasStarterQuizCompletionMarker(member)
-            ? '/quiz?retake=true&quizDataMissing=1'
-            : '/quiz'
+        if (hasStarterQuizCompletionMarker(member)) {
+            return '/quiz?retake=true&quizDataMissing=1'
+        }
+
+        // Same destination v3/route-guard.js bounces a legacy-quiz free Brand
+        // to from this page, so the two redirects never race to different
+        // places. Without the guard contract, keep the plain quiz start.
+        const routeGuard = window.StartersV3RouteGuard
+
+        if (
+            routeGuard &&
+            typeof routeGuard.memberRole === 'function' &&
+            typeof routeGuard.brandFreeQuizState === 'function' &&
+            routeGuard.memberRole(member) === 'brand-free' &&
+            routeGuard.brandFreeQuizState(member) === 'legacy'
+        ) {
+            return '/'
+        }
+
+        return '/quiz'
     }
 
     /**
@@ -6359,9 +6376,10 @@
      * visitor back to the quiz. Logged-out visitors start normally. Authenticated
      * members with a completion marker but missing or malformed member JSON are
      * sent through an explicit retake so they do not remain on an empty results
-     * page. If Memberstack is unavailable, stay put rather than risk a redirect
-     * loop. A pre-signup funnel visitor is unaffected because sessionStorage is
-     * checked before this branch.
+     * page. A free Brand who took only the legacy quiz goes to the homepage, the
+     * route guard's home for them. If Memberstack is unavailable, stay put
+     * rather than risk a redirect loop. A pre-signup funnel visitor is
+     * unaffected because sessionStorage is checked before this branch.
      */
     async function redirectVisitorWithoutResults() {
         // Shares resolveMemberstackAuthState() with the stale-cache reset above so
@@ -6388,7 +6406,7 @@
 
         if (authenticatedRedirectTarget) {
             logQuizFlow(
-                'authenticated member with no usable quiz data; redirecting to quiz',
+                'authenticated member with no usable quiz data; redirecting',
                 {
                     hasCompletionMarker: hasStarterQuizCompletionMarker(
                         authState.member,

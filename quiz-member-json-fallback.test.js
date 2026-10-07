@@ -4,6 +4,10 @@ const test = require('node:test')
 const vm = require('node:vm')
 
 const source = fs.readFileSync(require.resolve('./quiz-results.js'), 'utf8')
+const routeGuardSource = fs.readFileSync(
+    require.resolve('./v3/route-guard.js'),
+    'utf8',
+)
 
 function sliceSource(startText, endText) {
     const start = source.indexOf(startText)
@@ -15,7 +19,19 @@ function sliceSource(startText, endText) {
     return source.slice(start, end)
 }
 
-function getMemberJsonFallbackApi(memberstack = null, search = '') {
+/**
+ * The real window.StartersV3RouteGuard contract, booted on a host it does not
+ * enforce on so it only publishes its API.
+ */
+function loadRouteGuardContract() {
+    const window = {
+        location: { hostname: 'localhost', pathname: '/quiz-results' },
+    }
+    vm.runInNewContext(routeGuardSource, { window, URL, URLSearchParams })
+    return window.StartersV3RouteGuard
+}
+
+function getMemberJsonFallbackApi(memberstack = null, search = '', routeGuard) {
     const redirects = []
     const parserSource = sliceSource(
         'function parsePendingQuiz(value)',
@@ -52,6 +68,7 @@ function getMemberJsonFallbackApi(memberstack = null, search = '') {
                         redirects.push(target)
                     },
                 },
+                StartersV3RouteGuard: routeGuard,
             },
             waitForMemberstack: async () => memberstack,
         },
@@ -170,4 +187,75 @@ test('authenticated retake keeps required controls and safe campaign attribution
         ),
         '/quiz?retake=true&quizDataMissing=1&utm_source=mailchimp&utm_medium=email&utm_campaign=v3_quiz_results_drip&utm_content=e1_results',
     )
+})
+
+const LEGACY_FREE_BRAND = {
+    id: 'mem_legacy',
+    planConnections: [{ active: true, planId: 'pln_free-plan-f6kn0dxz' }],
+    customFields: { quiz: 'true', 'starter-quiz': '' },
+}
+
+test('legacy-quiz free Brand without results goes to the route guard home', () => {
+    const contract = loadRouteGuardContract()
+    const { getAuthenticatedNoQuizDataRedirectTarget } =
+        getMemberJsonFallbackApi(null, '', contract).api
+
+    assert.equal(contract.roleHome(LEGACY_FREE_BRAND), '/')
+    assert.equal(getAuthenticatedNoQuizDataRedirectTarget(LEGACY_FREE_BRAND), '/')
+    // A completion marker still means an explicit retake.
+    assert.equal(
+        getAuthenticatedNoQuizDataRedirectTarget({
+            ...LEGACY_FREE_BRAND,
+            customFields: { quiz: 'true', 'starter-quiz': 'ready' },
+        }),
+        '/quiz?retake=true&quizDataMissing=1',
+    )
+    // The legacy field only matters for a free Brand.
+    assert.equal(
+        getAuthenticatedNoQuizDataRedirectTarget({
+            ...LEGACY_FREE_BRAND,
+            planConnections: [
+                { active: true, planId: 'pln_new-paid-plan-463h04ph' },
+            ],
+        }),
+        '/quiz',
+    )
+    assert.equal(
+        getAuthenticatedNoQuizDataRedirectTarget({
+            ...LEGACY_FREE_BRAND,
+            customFields: { quiz: 'false' },
+        }),
+        '/quiz',
+    )
+})
+
+test('without the route guard contract a legacy-quiz member starts the quiz', () => {
+    const { getAuthenticatedNoQuizDataRedirectTarget } =
+        getMemberJsonFallbackApi().api
+
+    assert.equal(getAuthenticatedNoQuizDataRedirectTarget(LEGACY_FREE_BRAND), '/quiz')
+    // A partial contract is treated as missing.
+    const partial = getMemberJsonFallbackApi(null, '', {
+        memberRole: () => 'brand-free',
+    }).api
+    assert.equal(
+        partial.getAuthenticatedNoQuizDataRedirectTarget(LEGACY_FREE_BRAND),
+        '/quiz',
+    )
+})
+
+test('no-data runtime sends a legacy-quiz free Brand home with safe attribution', async () => {
+    const { api, redirects } = getMemberJsonFallbackApi(
+        {
+            async getCurrentMember() {
+                return { data: LEGACY_FREE_BRAND }
+            },
+        },
+        '?utm_source=mailchimp&memberstack_id=private',
+        loadRouteGuardContract(),
+    )
+
+    await api.redirectVisitorWithoutResults()
+
+    assert.deepEqual(redirects, ['/?utm_source=mailchimp'])
 })
