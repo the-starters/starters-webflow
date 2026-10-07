@@ -634,6 +634,10 @@
   // F50: the closed control also LOOKS loading (data-booking-trigger-loading
   // shows its authored spinner), not the faded unavailable state.
   let callDiscoveryPending = true;
+  // Declared before the identity stand-down below: the public-record card
+  // adapters also run on an unclaimed profile, which returns early.
+  let canonicalRetainerState = 'pending';
+  let publicRecordOnly = false;
   function explainBookingAvailability(trigger, available) {
       let entry = bookingHints.get(trigger);
       if (!entry) {
@@ -1787,9 +1791,16 @@
     return;
   }
   if (!window.starter_memberstack_id) {
-    console.warn('[hire-profile] starter_memberstack_id missing; profile scripts stood down');
+    console.warn('[hire-profile] starter_memberstack_id missing; member profile scripts stood down');
     callDiscoveryPending = false;
     setBookingButtonAvailable(false);
+    // An unclaimed admin-prebuilt profile has no Memberstack member yet, but
+    // its public Xano records are complete. Paint only the read-only rate,
+    // Services and Retainer cards; every member-bound control stays down.
+    publicRecordOnly = true;
+    installXanoHeroRateCards();
+    installXanoServiceCardsAdapter();
+    installXanoRetainerCardAdapter();
     return;
   }
 
@@ -2644,7 +2655,6 @@
      signup CTAs and inert tout cards. Brands still use authenticated canonical
      discovery before any booking surface opens. Starter members keep the
      live-derived owner toggles above. */
-  let canonicalRetainerState = 'pending';
   installXanoHeroRateCards();
   installXanoCallCardsAdapter();
   installXanoServiceCardsAdapter();
@@ -3725,7 +3735,9 @@
           card.style.cursor = '';
       });
 
-      if (viewerSeesPublicProjection(MEMBER)) {
+      if (publicRecordOnly) {
+          // No member to start a project with: show the cards only.
+      } else if (viewerSeesPublicProjection(MEMBER)) {
           markServiceCardsClickable();
       } else if (isBrandMember(MEMBER) && !isProfileOwner(MEMBER)) {
           syncProjectServiceOptions(names);
@@ -3993,7 +4005,9 @@
   }
 
   function wireXanoRetainerCardRole() {
-      if (viewerSeesPublicProjection(MEMBER)) {
+      if (publicRecordOnly) {
+          // No member to start a project with: show the card only.
+      } else if (viewerSeesPublicProjection(MEMBER)) {
           markServiceCardsClickable();
       } else if (isBrandMember(MEMBER) && !isProfileOwner(MEMBER)) {
           wireProjectServiceCards();
