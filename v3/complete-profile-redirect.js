@@ -13,8 +13,7 @@
  *     brand_profile_done false                        → STAY. This is exactly who
  *     the page is for.
  *   - paid Brand, any inconclusive Xano answer        → STAY
- *   - free Brand                                      → its guard home
- *     (the quiz funnel: /quiz-results once `starter-quiz` is set, else /quiz)
+ *   - free Brand                                      → its guard quiz home
  *   - Talent                                          → /starter-dashboard
  *
  * COMPLETION IS READ FROM XANO, NOT FROM THE MEMBER OBJECT (change of source,
@@ -208,8 +207,8 @@
    * route-guard.js is loaded sitewide before page controllers and owns the stable
    * plan-ID role contract AND the per-role home table. Reusing its exported API —
    * exactly as v3/build-profile-redirect.js does — keeps this module from carrying
-   * a second copy of either, which is the only way the free-Brand quiz-funnel rule
-   * (/quiz-results once `starter-quiz` is set, else /quiz) can stay in one place.
+   * a second copy of either, which is the only way the free-Brand quiz-funnel home
+   * can stay in one place.
    *
    * Both halves are required together: a contract that can name a role but not its
    * home would let this module identify a Talent member and then have nowhere to
@@ -243,9 +242,9 @@
 
   /**
    * The guard's own answer for "where does this member live?" — /starter-dashboard
-   * for Talent, and for a free Brand the quiz funnel decided by the `starter-quiz`
-   * marker. Deliberately not reimplemented here; if the guard ever changes a role
-   * home, this page follows automatically.
+   * for Talent, and for a free Brand the guard-owned quiz home. Deliberately not
+   * reimplemented here; if the guard ever changes a role home, this page follows
+   * automatically.
    */
   function roleHome(member) {
     var contract = contractOrWarn()

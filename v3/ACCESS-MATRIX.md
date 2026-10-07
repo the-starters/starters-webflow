@@ -63,7 +63,7 @@ one route-level rule that page needs.
 | `/sign-up` | Default quiz home | `/brand-dashboard` | `/starter-dashboard` | Member-home bounce; logged-out visitors untouched |
 | `/dashboard` | Default quiz home | `/brand-dashboard` | `/starter-dashboard` | Canonical authenticated entry only; no dashboard page body lives here |
 | `/quiz` | Allow | Default `/brand-dashboard` | Default `/starter-dashboard`, enforced | Free Brand default until quiz completion; page controller enforces all three columns, and the Talent bounce ignores `?retake=` |
-| `/quiz-results` and `/quiz-results/` | Allow once the quiz is done — either the `starter-quiz` field **or** a `ready` `sessionStorage.starterQuizPending` payload — else `/quiz` | Default `/brand-dashboard`; the exact production email-test canary may stay | Default `/starter-dashboard` | Free Brand default after quiz completion; `ROLE_BOUNCE_PAGES` enforces the logged-in columns, `quiz-results.js` still owns every logged-out case. The paid-Brand exception is limited to the host, path, query, and member combination owned by the root [Quiz-results email tester](../README.md#quiz-results-email-tester) documentation. The pending-payload half is the post-signup exception (see [the note below](#post-signup-pending-quiz)): the field is written by this page *after* it renders, so the field alone cannot be the gate |
+| `/quiz-results` and `/quiz-results/` | Allow once the quiz is done — either the `starter-quiz` field **or** a `ready` `sessionStorage.starterQuizPending` payload — else the default quiz home | Default `/brand-dashboard`; the exact production email-test canary may stay | Default `/starter-dashboard` | Free Brand default after quiz completion; `ROLE_BOUNCE_PAGES` enforces the logged-in columns, `quiz-results.js` still owns every logged-out case. The paid-Brand exception is limited to the host, path, query, and member combination owned by the root [Quiz-results email tester](../README.md#quiz-results-email-tester) documentation. The pending-payload half is the post-signup exception (see [the note below](#post-signup-pending-quiz)): the field is written by this page *after* it renders, so the field alone cannot be the gate |
 | `/all-starters` and `/all-starters/` | Allow, limited/blurred content | Allow, full content | Default `/starter-dashboard` | Both Brand tiers may return regardless of quiz state; `ROLE_BOUNCE_PAGES` enforces only the Talent bounce |
 | `/favorites` and `/favorites/` | Default quiz home | Allow | Default `/starter-dashboard` | Saved Starters list; paid Brand only, matching Xano #1506's plan 4/5 precondition; both slash forms are allowed paid-Brand `next` destinations so a deep link survives login |
 | `/brand-dashboard` | Default quiz home | Allow | Default `/starter-dashboard` | Paid Brand only |
@@ -92,10 +92,13 @@ one route-level rule that page needs.
 > marker outlived missing or malformed member JSON is sent to
 > `/quiz?retake=true&quizDataMissing=1` so they retake instead of landing on an
 > empty page, while an authenticated member with no completion marker starts
-> `/quiz` normally. It redirects only after Memberstack positively reports
+> `/quiz` normally. A free Brand who took only the legacy quiz goes to `/`
+> instead, the same home `route-guard.js` sends them to, read from its
+> `memberRole` and `brandFreeQuizState` contract; without that contract they
+> start `/quiz`. It redirects only after Memberstack positively reports
 > member state; if Memberstack is unavailable or errors, the visitor stays on
 > the page. Pre-signup visitors with a pending quiz and test-mode previews are
-> unaffected. Every redirect from `/quiz-results` back to `/quiz` keeps the
+> unaffected. Every one of these redirects from `/quiz-results` keeps the
 > target's required control parameters and copies only `utm_source`,
 > `utm_medium`, `utm_campaign`, `utm_content`, `utm_term`, and `utm_id` from the
 > results-page query. This keeps explicit email campaign attribution for the
@@ -117,17 +120,23 @@ one route-level rule that page needs.
 > state is the `conflicting-plan-roles` configuration error and this page does
 > not try to resolve it.
 
-> **Free Brand default (updated 2026-07-23):** "Default quiz home" in the
+> **Free Brand default (updated 2026-10-07):** "Default quiz home" in the
 > Brand-free column is conditional — a Brand-free member goes to `/quiz`
 > until they complete the quiz, then `/quiz-results`. Completion is the Memberstack
 > `starter-quiz` custom field (the same signal the `/quiz-results` page reads);
 > a missing, empty, or whitespace-only value is not complete.
+> A free Brand whose older `quiz` custom field is `true` (boolean or the string
+> `"true"`) and whose `starter-quiz` is blank took only the legacy quiz, so their
+> home is the homepage `/`. A `ready` `sessionStorage.starterQuizPending` payload
+> keeps that member on `/quiz` instead, so a just-finished current quiz still
+> reaches `/quiz-results`. Any other `quiz` value is ignored.
 > `route-guard.js` owns this via the exported `brandFreeHome(member)` /
-> `hasCompletedQuiz(member)` contract. `auth-route.js` reuses that contract.
-> That contract is unchanged by the 2026-08-04 fix: the field stays the only
+> `brandFreeQuizState(member)` / `hasCompletedQuiz(member)` contract.
+> `auth-route.js` reuses that contract.
+> The 2026-08-04 fix did not change it: the field stays the only
 > quiz-completion signal for the role home. Login uses the separate
 > [login-default contract](#non-quiz-free-brand-login-default).
-> The extra pending-payload signal
+> Apart from the legacy case above, the extra pending-payload signal
 > applies solely to *whether a free Brand may stay on `/quiz-results`* — see
 > [Post-signup pending quiz](#post-signup-pending-quiz).
 
@@ -163,7 +172,8 @@ one route-level rule that page needs.
 > the role kept on both.
 > `/quiz-results` carries one extra rule the other page does not: an allowed free
 > Brand belongs there only once the quiz is done, because before that their role
-> home is `/quiz` and there are no results to show. `/all-starters` has no
+> home is `/quiz` (or `/` after only the legacy quiz) and there are no results
+> to show. `/all-starters` has no
 > quiz-state rule at all — both Brand tiers stay either way, which is what the
 > `data-ms-content` gating on that page is for. `/quiz-results` is itself the
 > done free Brand's role home and is on its own allowlist, so that resolves to
@@ -228,7 +238,8 @@ one route-level rule that page needs.
 > both `has_record === true` and `brand_profile_done === true`, then goes to
 > `/brand-dashboard`. The durable-submit session marker is a separate fast path.
 > A free Brand goes to its quiz-funnel home (`/quiz-results`
-> once `starter-quiz` is set, else `/quiz`) and a Talent member to
+> once `starter-quiz` is set, `/` after only the legacy quiz, else `/quiz`) and
+> a Talent member to
 > `/starter-dashboard`, both taken from the guard's own `roleHome()` rather than a
 > second copy of `ROLE_DEFAULTS`.
 >
@@ -317,7 +328,8 @@ The guard owns this shared login decision. No current-page, referrer, trigger,
 cookie, or query value classifies the member.
 
 A completed durable `starter-quiz` signal selects `/quiz-results` first.
-Quiz-origin, missing, unknown, and malformed sources retain `/quiz`.
+Quiz-origin, missing, unknown, and malformed sources retain the default quiz
+home (`/quiz`, or `/` after only the legacy quiz).
 Allowed `next` values keep their existing validation and precedence;
 an explicit canonical `/dashboard` or `/dashboard/` return still resolves to
 the quiz role home.

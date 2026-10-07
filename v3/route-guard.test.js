@@ -2126,3 +2126,135 @@ test('an active paid Brand on the homepage is still sent to /brand-dashboard at 
   await flush()
   assert.equal(location.replaced, '/brand-dashboard')
 })
+
+// --- Legacy quiz field (decision 2026-10-07) ----------------------------------
+//
+// Memberstack carries two quiz fields: the older `quiz` and the current
+// `starter-quiz`. A free Brand who took only the older quiz has no current
+// results to show, so their home is the homepage, not /quiz.
+
+function freeBrandWith(customFields) {
+  return { id: 'm-brand-free-fields', planConnections: [plan('pln_free-plan-f6kn0dxz')], customFields }
+}
+
+const LEGACY_FREE = freeBrandWith({ quiz: 'true' })
+const LEGACY_FREE_VARIANTS = [
+  LEGACY_FREE,
+  freeBrandWith({ quiz: 'true', 'starter-quiz': '' }),
+  freeBrandWith({ quiz: 'true', 'starter-quiz': '  ' }),
+  freeBrandWith({ quiz: ' TRUE ' }),
+  freeBrandWith({ quiz: true }),
+]
+
+test('a legacy-quiz free Brand is homed on the homepage', () => {
+  const { api } = loadGuard()
+  for (const member of LEGACY_FREE_VARIANTS) {
+    const label = JSON.stringify(member.customFields)
+    assert.equal(api.hasCompletedQuiz(member), false, label)
+    assert.equal(api.brandFreeQuizState(member), 'legacy', label)
+    assert.equal(api.brandFreeHome(member), '/', label)
+    assert.equal(api.roleHome(member), '/', label)
+    assert.equal(api.loginDefault(member), '/', label)
+    for (const pathname of ['/login', '/starter-login', '/sign-up']) {
+      assert.equal(api.bounceTargetFor(member, null, pathname), '/', pathname + ' ' + label)
+    }
+    // A next pointing at the homepage is refused as a bounce page, and the
+    // login default lands on the same place anyway.
+    assert.equal(api.bounceTargetFor(member, '/', '/login'), '/', label)
+    assert.equal(api.bounceTargetFor(member, '/dashboard', '/login'), '/', label)
+    // On the homepage itself the member stays, so '/' cannot loop.
+    assert.equal(api.bounceTargetFor(member, null, '/'), '', label)
+    assert.equal(api.redirectTargetFor(member, '/'), '', label)
+    assert.equal(api.roleBounceTargetFor(member, '/'), '', label)
+    assert.equal(api.redirectTargetFor(member, '/brand-dashboard'), '/', label)
+    assert.equal(api.redirectTargetFor(member, '/dashboard'), '/', label)
+    assert.equal(api.redirectTargetFor(member, '/messages'), '/', label)
+    for (const path of QUIZ_RESULTS_PATHS) {
+      assert.equal(api.roleBounceTargetFor(member, path), '/', path + ' ' + label)
+    }
+    assert.equal(api.roleBounceTargetFor(member, '/all-starters'), '', label)
+  }
+})
+
+test('only true or "true" in the legacy quiz field counts', () => {
+  const { api } = loadGuard()
+  for (const quiz of ['false', '', '   ', 'yes', '1', 'truthy', false, 1, null, undefined]) {
+    const member = freeBrandWith(quiz === undefined ? {} : { quiz })
+    const label = String(quiz)
+    assert.equal(api.brandFreeQuizState(member), 'none', label)
+    assert.equal(api.brandFreeHome(member), '/quiz', label)
+    assert.equal(api.loginDefault(member), '/quiz', label)
+    assert.equal(api.bounceTargetFor(member, null, '/login'), '/quiz', label)
+    assert.equal(api.redirectTargetFor(member, '/brand-dashboard'), '/quiz', label)
+    assert.equal(api.roleBounceTargetFor(member, '/quiz-results'), '/quiz', label)
+  }
+  assert.equal(api.brandFreeQuizState(BRAND_FREE), 'none')
+  assert.equal(api.brandFreeHome(BRAND_FREE), '/quiz')
+})
+
+test('the current quiz field outranks the legacy one', () => {
+  const { api } = loadGuard()
+  const both = freeBrandWith({ quiz: 'true', 'starter-quiz': '{"status":"ready"}' })
+  assert.equal(api.brandFreeQuizState(both), 'current')
+  assert.equal(api.brandFreeHome(both), '/quiz-results')
+  assert.equal(api.loginDefault(both), '/quiz-results')
+  assert.equal(api.bounceTargetFor(both, null, '/login'), '/quiz-results')
+  assert.equal(api.bounceTargetFor(both, null, '/'), '/quiz-results')
+  assert.equal(api.redirectTargetFor(both, '/brand-dashboard'), '/quiz-results')
+  assert.equal(api.roleBounceTargetFor(both, '/quiz-results'), '')
+})
+
+test('a ready pending payload keeps a legacy-quiz member on the current quiz path', () => {
+  const { api } = loadGuard({ pending: READY_PAYLOAD })
+  assert.equal(api.brandFreeQuizState(LEGACY_FREE), 'none')
+  assert.equal(api.brandFreeHome(LEGACY_FREE), '/quiz')
+  assert.equal(api.loginDefault(LEGACY_FREE), '/quiz')
+  for (const path of QUIZ_RESULTS_PATHS) {
+    assert.equal(api.roleBounceTargetFor(LEGACY_FREE, path), '', path)
+  }
+  // Only an explicit ready payload counts; a draft leaves the legacy home.
+  const draft = loadGuard({ pending: DRAFT_PAYLOAD }).api
+  assert.equal(draft.brandFreeQuizState(LEGACY_FREE), 'legacy')
+  assert.equal(draft.brandFreeHome(LEGACY_FREE), '/')
+})
+
+test('the legacy quiz field does not change paid Brand or Talent homes', () => {
+  const { api } = loadGuard()
+  const paid = { ...BRAND_PAID, customFields: { quiz: 'true' } }
+  const talent = { ...TALENT, customFields: { quiz: 'true' } }
+  assert.equal(api.roleHome(paid), '/brand-dashboard')
+  assert.equal(api.loginDefault(paid), '/brand-dashboard')
+  assert.equal(api.bounceTargetFor(paid, null, '/'), '/brand-dashboard')
+  assert.equal(api.roleHome(talent), '/starter-dashboard')
+  assert.equal(api.loginDefault(talent), '/starter-dashboard')
+  assert.equal(api.bounceTargetFor(talent, null, '/'), '/starter-dashboard')
+})
+
+test('a legacy-quiz free Brand is sent from login to the homepage and stays there at runtime', async () => {
+  for (const [pathname, search] of [
+    ['/login', ''],
+    ['/starter-login', ''],
+    ['/login', '?next=%2F'],
+  ]) {
+    const login = loadGuard({ pathname, search, member: LEGACY_FREE })
+    await flush()
+    assert.equal(login.location.replaced, '/', pathname + search)
+  }
+  const home = loadGuard({ pathname: '/', member: LEGACY_FREE })
+  await flush()
+  assert.equal(home.location.replaced, undefined)
+  assert.deepEqual(home.attributes, {})
+  assert.deepEqual(home.events, [])
+})
+
+test('a legacy-quiz free Brand is moved off guarded and results pages to the homepage at runtime', async () => {
+  for (const pathname of ['/brand-dashboard', '/dashboard', '/quiz-results']) {
+    const { location } = loadGuard({ pathname, member: LEGACY_FREE })
+    await flush()
+    assert.equal(location.replaced, '/', pathname)
+  }
+  // With a ready payload the just-finished quiz still renders on /quiz-results.
+  const pending = loadGuard({ pathname: '/quiz-results', member: LEGACY_FREE, pending: READY_PAYLOAD })
+  await flush()
+  assert.equal(pending.location.replaced, undefined)
+})

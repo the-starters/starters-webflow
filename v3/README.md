@@ -314,7 +314,8 @@ own default page. An authenticated member with no mapped active plan remains on
 the page with an explicit error state, and a cross-family Talent + Brand plan
 conflict fails closed. The canonical `/dashboard` route is a thin guarded
 utility page that sends mapped members to `/starter-dashboard`,
-`/brand-dashboard`, `/quiz`, or `/quiz-results`; it does not merge or duplicate
+`/brand-dashboard`, `/quiz`, `/quiz-results`, or `/` (free Brand quiz home);
+it does not merge or duplicate
 the two dashboard page bodies. Free Brands use the
 [quiz role home](ACCESS-MATRIX.md#route-level-access) for guarded-page redirects.
 
@@ -381,8 +382,9 @@ the exact production paid-Brand email canary documented in the root
 [Quiz-results email tester](../README.md#quiz-results-email-tester) section.
 Talent leaves both; a free Brand
 stays on both, though on `/quiz-results` only once the quiz is done, since before
-that its role home is `/quiz`. "Done" there means either the `starter-quiz`
-custom field or a `ready` `sessionStorage.starterQuizPending` payload — the
+that its role home is `/quiz` (or `/` after only the legacy `quiz` field). "Done"
+there means either the `starter-quiz` custom field or a `ready`
+`sessionStorage.starterQuizPending` payload — the
 second signal was added on 2026-08-04 to fix a regression, because the field is
 written by `quiz-results.js` *after* that page renders, so a member who had just
 signed up was bounced straight back to `/quiz` in a race the field alone could
@@ -403,7 +405,8 @@ way to their role home. See [ACCESS-MATRIX.md](ACCESS-MATRIX.md).
 `/complete-profile` where they belong, with no hop through `/login`. The page is a
 paid-Brand form, so a paid Brand stays until the profile reads as complete and then
 goes to `/brand-dashboard`; a free Brand goes to its quiz-funnel home
-(`/quiz-results` once `starter-quiz` is set, else `/quiz`) and a Talent member to
+(`/quiz-results` once `starter-quiz` is set, `/` when only the legacy `quiz`
+field is true, else `/quiz`) and a Talent member to
 `/starter-dashboard`. Those two destinations come from the guard's own
 `roleHome()`, so both branches cost no network request.
 

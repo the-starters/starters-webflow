@@ -616,6 +616,37 @@ test('canonical /dashboard next always resolves to the role-specific home', () =
   assert.equal(api.destinationFor(completedFreeBrand, '/dashboard'), '/quiz-results')
 })
 
+// The older Memberstack `quiz` field, with `starter-quiz` blank, homes a free
+// Brand on the homepage through the shared route-guard contract.
+test('a legacy-quiz free Brand is routed to the homepage', () => {
+  const { api } = loadRouter()
+  const legacy = {
+    id: 'member-legacy-quiz',
+    planConnections: [plan('pln_free-plan-f6kn0dxz')],
+    customFields: { quiz: 'true', 'starter-quiz': '' },
+  }
+
+  assert.equal(api.destinationFor(legacy, null), '/')
+  assert.equal(api.destinationFor(legacy, '/'), '/')
+  assert.equal(api.destinationFor(legacy, '/dashboard'), '/')
+  assert.equal(api.destinationFor(legacy, '/messages'), '/')
+  // A deliberate request for the current quiz is still honoured.
+  assert.equal(api.destinationFor(legacy, '/quiz'), '/quiz')
+})
+
+test('auth route sends a legacy-quiz free Brand to the homepage', async () => {
+  const member = {
+    id: 'member-legacy-quiz',
+    planConnections: [plan('pln_free-plan-f6kn0dxz')],
+    customFields: { quiz: 'true' },
+  }
+  for (const search of ['', '?next=%2F']) {
+    const { location } = loadRouter({ pathname: '/auth-route', search, member })
+    await flush()
+    assert.equal(location.replaced, '/', search)
+  }
+})
+
 test('preserves the V3 Talent routes defined by the access matrix', () => {
   const { api } = loadRouter()
   const talent = {
