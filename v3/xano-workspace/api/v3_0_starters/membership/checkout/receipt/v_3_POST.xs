@@ -1,4 +1,4 @@
-// Read-only proof of the initial paid Checkout Session bound to an owned V3 intent.
+// Read-only proof of the initial settled Checkout Session bound to an owned V3 intent.
 // This endpoint sends no Meta event and never mutates membership or email state.
 query "membership/checkout-receipt/v3" verb=POST {
   api_group = "V3.0 Starters"
