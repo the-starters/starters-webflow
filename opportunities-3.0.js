@@ -180,17 +180,18 @@
     'pln_dorxata-test-brand-plan-777r02pa': 'brand-paid', // test brand plan (4 members)
   }
   // Non-paying brands are not allowed on role-gated dual pages; send them to the
-  // free-brand home. That home is /quiz-results only once the quiz is completed,
-  // otherwise /quiz — the same durable signal the /quiz-results page reads (the
-  // Memberstack `starter-quiz` custom field, present on the member object).
-  // Mirrors brandFreeHome in v3/auth-route.js and v3/route-guard.js.
+  // free-brand home. That home is /quiz-results once the Memberstack
+  // `starter-quiz` custom field is set (the durable signal the /quiz-results page
+  // reads, present on the member object), otherwise the homepage. Mirrors
+  // brandFreeHome in v3/route-guard.js, minus its sessionStorage pending-quiz
+  // check.
   function hasCompletedQuiz(member) {
     const cf = (member && member.customFields) || {}
     const value = cf['starter-quiz']
     return typeof value === 'string' ? value.trim() !== '' : !!value
   }
   function brandFreeHome(member) {
-    return hasCompletedQuiz(member) ? '/quiz-results' : '/quiz'
+    return hasCompletedQuiz(member) ? '/quiz-results' : '/'
   }
 
   /* ========================= AUTH BRIDGE ========================== */
@@ -1762,7 +1763,7 @@
    *  snapshot with empty planConnections gets a bounded hydration retry, while
    *  a non-empty unmapped snapshot does not. If no guard is authored, legacy
    *  redirects apply: logged-out -> /login?next=..., free brand ->
-   *  brandFreeHome (/quiz or /quiz-results), unmapped plans -> /. A configured
+   *  brandFreeHome (/ or /quiz-results), unmapped plans -> /. A configured
    *  guard that never boots and has no hydrated role fails closed in place. */
   async function gateByPlan() {
     const guardOutcome = await waitForRouteGuardHandoff()

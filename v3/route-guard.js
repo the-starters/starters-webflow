@@ -36,7 +36,8 @@
  * The plan-ID → role map and guarded page roles derive from the stable access
  * matrix used by v3/auth-route.js and documented in v3/ACCESS-MATRIX.md.
  * /quiz stays outside all three tables (its page controller
- * quiz-main/quiz-redirect.js owns it), and /quiz-results and /all-starters are
+ * quiz-main/quiz-redirect.js owns it) and is never a role home, so a member
+ * reaches it only by choosing it. /quiz-results and /all-starters are
  * role-bounce pages rather than guarded pages, so neither ever forces a login.
  * This guard is a routing/UX boundary only; Memberstack gated content and Xano
  * endpoint authorization remain separate, independently enforced layers.
@@ -96,11 +97,11 @@
 
   // Where each role is sent when it is not allowed on the requested page.
   // brand-free is decided at runtime by quiz state (see brandFreeHome); the
-  // map value is the no-quiz fallback.
+  // map value is the home of a free Brand with no recorded quiz.
   var ROLE_DEFAULTS = {
     talent: '/starter-dashboard',
     'brand-paid': '/brand-dashboard',
-    'brand-free': '/quiz',
+    'brand-free': '/',
   }
 
   // Completion of the current quiz is the Memberstack `starter-quiz` custom
@@ -112,33 +113,10 @@
     return typeof value === 'string' ? value.trim() !== '' : !!value
   }
 
-  // 'current': took the current quiz. 'legacy': only the older `quiz` field is
-  // set; Memberstack stores custom fields as strings, so only true or "true"
-  // count. A ready pending payload keeps a legacy member on the current-quiz
-  // path, so quiz-main/quiz-redirect.js can still forward a just-finished quiz
-  // from /quiz to /quiz-results. 'none': neither.
-  function brandFreeQuizState(member) {
-    if (hasCompletedQuiz(member)) return 'current'
-    var legacy = ((member && member.customFields) || {}).quiz
-    if (
-      (legacy === true ||
-        (typeof legacy === 'string' && legacy.trim().toLowerCase() === 'true')) &&
-      !hasReadyPendingQuiz()
-    ) {
-      return 'legacy'
-    }
-    return 'none'
-  }
-
-  // A legacy-quiz member has no current results to show, so their home is the
-  // homepage, where homepageBounceOverride() lets them stay.
-  var BRAND_FREE_HOMES = {
-    current: '/quiz-results',
-    legacy: '/',
-    none: '/quiz',
-  }
+  // A ready pending payload counts as done: a just-finished quiz sits in
+  // sessionStorage before quiz-results.js writes the `starter-quiz` field.
   function brandFreeHome(member) {
-    return BRAND_FREE_HOMES[brandFreeQuizState(member)]
+    return hasCompletedQuiz(member) || hasReadyPendingQuiz() ? '/quiz-results' : '/'
   }
 
   /**
@@ -152,7 +130,7 @@
    * therefore always reads as not-completed for a moment, and hasCompletedQuiz()
    * alone would bounce them off the very page that was about to save their
    * answers. The `ready` payload is the same signal quiz-results.js renders
-   * from, so it counts as "quiz done" for the enforcement branch below.
+   * from, so brandFreeHome() counts it as "quiz done".
    *
    * Read-only on purpose, and never cleared: quiz-loader/quiz-loader.js derives
    * its skip-on-refresh run id from this key's `updatedAt`, and quiz-results.js
@@ -166,7 +144,7 @@
    * at all, malformed JSON, and blocked storage all read as NOT ready, because
    * none of them proves the visitor finished the quiz. quiz-results.js is more
    * tolerant of a status-less payload; this gate is not, so every failure mode
-   * falls back to today's behaviour.
+   * falls back to the field alone.
    *
    * @returns {boolean}
    */
@@ -231,7 +209,7 @@
     '/opportunities-brands-view': ['brand-paid'],
     // Saved Starters list. Paid Brand only, matching Xano #1506's own
     // memberstack_plan 4/5 precondition: a free Brand cannot hold favorites, so
-    // sending it to the quiz funnel beats an empty list it cannot fill.
+    // sending it to its role home beats an empty list it cannot fill.
     // Trailing-slash twin for the same reason as /opportunities/ below.
     '/favorites': ['brand-paid'],
     '/favorites/': ['brand-paid'],
@@ -306,9 +284,9 @@
    *
    * `enforceBrandFreeQuizState` adds a /quiz-results-specific second check: an
    * allowed free Brand still belongs there only once the quiz is done, because
-   * before that their role home is /quiz and the results page has nothing to
-   * show them. /all-starters deliberately does not use it — both Brand tiers
-   * stay regardless of quiz state.
+   * before that their role home is the homepage and the results page has
+   * nothing to show them. /all-starters deliberately does not use it — both
+   * Brand tiers stay regardless of quiz state.
    *
    * "Done" is two signals, not one (regression fix 2026-08-04). The Memberstack
    * `starter-quiz` field alone CANNOT be the gate here, because of the order the
@@ -317,14 +295,14 @@
    * /quiz-results, and the field is written by quiz-results.js on this page,
    * AFTER it renders. Gating on the field alone therefore redirected every
    * brand-new member off /quiz-results before the page could save it — an
-   * intermittent bounce-to-/quiz loop that only "worked" on the attempt where
+   * intermittent bounce loop that only "worked" on the attempt where
    * the Memberstack save happened to win the race (shipped v1.59.76, reproduced
    * on staging 2026-08-04). So a ready `starterQuizPending` payload — the same
    * signal quiz-results.js renders from, and the one it is about to persist —
-   * counts as done too, via hasReadyPendingQuiz(). Only the free-Brand
-   * enforcement branch consults it; the wrong-role bounces above it are
-   * unaffected, so a paid Brand or Talent member is still moved to their own
-   * home whatever is in sessionStorage.
+   * counts as done too, via hasReadyPendingQuiz() inside brandFreeHome(). The
+   * wrong-role bounces run first and never consult it, so a paid Brand or
+   * Talent member is still moved to their own home whatever is in
+   * sessionStorage.
    */
   var ROLE_BOUNCE_PAGES = {
     '/quiz-results': { roles: ['brand-free'], enforceBrandFreeQuizState: true },
@@ -519,21 +497,6 @@
     return ROLE_DEFAULTS[role]
   }
 
-  // Login defaults may differ from the role home used by guarded pages.
-  // Only persisted, recognized Signup Source values select this exception.
-  function loginDefault(member) {
-    var fields = (member && member.customFields) || {}
-    if (
-      memberRole(member) === 'brand-free' &&
-      !hasCompletedQuiz(member) &&
-      (fields['signup-source'] === '/all-starters' ||
-        fields['signup-source'] === '/sign-up' ||
-        (typeof fields['signup-source'] === 'string' &&
-          /^\/learn\/(?:sessions|interviews-analysis|playbooks-frameworks)\/[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(fields['signup-source'])))
-    ) return '/'
-    return roleHome(member)
-  }
-
   // The roles allowed on a pathname, or null when the page is not guarded.
   function pageRolesFor(pathname) {
     if (Object.prototype.hasOwnProperty.call(PAGE_ROLES, pathname)) {
@@ -699,17 +662,12 @@
     if (role === 'brand-paid' && isQuizEmailTestCanary(member, pathname)) return ''
     if (rule.roles.indexOf(role) === -1) return roleHome(member)
     if (rule.enforceBrandFreeQuizState && role === 'brand-free') {
-      // A ready pre-signup payload IS a completed quiz for this decision. It is
-      // what quiz-results.js renders from and is about to write to the
-      // `starter-quiz` field, so the field being empty right now proves only
-      // that this page has not run yet — see the ROLE_BOUNCE_PAGES docblock.
-      // Checked before brandFreeHome() so a just-signed-up member is never sent
-      // back to /quiz to redo a quiz they already finished.
-      if (hasReadyPendingQuiz()) return ''
+      // brandFreeHome() counts a ready pre-signup payload as a completed quiz,
+      // so a just-signed-up member whose field is not written yet stays (see
+      // the ROLE_BOUNCE_PAGES docblock). Quiz not done: home is the homepage, so
+      // this page is the wrong one even though the role is allowed. Quiz done:
+      // home IS this page, so stay.
       var home = brandFreeHome(member)
-      // Quiz not done: home is /quiz (or / for a legacy-quiz member), so this
-      // page is the wrong one even though the role is allowed. Quiz done: home
-      // IS this page, so stay.
       if (!samePage(home, pathname)) return home
     }
     return ''
@@ -782,22 +740,19 @@
   /**
    * Homepage-only bounce overrides (decision by Jerico 2026-08-03).
    *
-   * Two rules that apply on '/' and on no other page. The separate loginDefault
-   * exception applies only to login entry paths; signup and guarded-page
-   * wrong-role redirects continue to use the role home.
+   * Two rules that apply on '/' and on no other page.
    *
    * Precedence, highest first:
    *
    *   1. A valid explicit `?next=` — deep-link intent beats both rules.
    *   2. A cancelled paid Brand goes to '/all-starters'. This overrides BOTH the
-   *      brand-free roleHome fallback (the quiz funnel, which is the wrong ask
-   *      of someone who already paid) AND the unmapped-plan stay-with-an-error
-   *      outcome. Note this outranks rule 3, so a cancelled member whose old
-   *      free plan is still live and who never took the quiz is CANCELLED, not
-   *      a stay.
-   *   3. A free Brand who has not completed the quiz stays on the homepage
-   *      instead of being pushed to '/quiz'. Quiz-done free Brands keep going
-   *      to '/quiz-results'.
+   *      brand-free roleHome (a free-Brand home is the wrong place for someone
+   *      who already paid) AND the unmapped-plan stay-with-an-error outcome.
+   *      Note this outranks rule 3, so a cancelled member whose old free plan
+   *      is still live and who never took the quiz is CANCELLED, not a stay.
+   *   3. A free Brand who has not completed the quiz stays on the homepage,
+   *      which is also their role home, so '/' cannot loop. Quiz-done free
+   *      Brands keep going to '/quiz-results'.
    *
    * `role` and `honoured` are computed once by the caller and passed in, because
    * the fall-through path needs the identical pair — recomputing them here would
@@ -840,14 +795,6 @@
 
     if (!role) return null
     if (next) return next
-
-    if (pathname === '/login' || pathname === '/starter-login') {
-      var requestedPath = pathnameOf(localPath(requestedNext))
-      if (requestedPath === '/dashboard' || requestedPath === '/dashboard/') {
-        return roleHome(member)
-      }
-      return loginDefault(member)
-    }
     return roleHome(member)
   }
 
@@ -1113,12 +1060,10 @@
     recordBrandAllStartersVisit: recordBrandAllStartersVisit,
     hasBrandAllStartersVisit: hasBrandAllStartersVisit,
     roleHome: roleHome,
-    loginDefault: loginDefault,
     hasCompletedQuiz: hasCompletedQuiz,
     hasReadyPendingQuiz: hasReadyPendingQuiz,
     hasCancelledPaidBrandPlan: hasCancelledPaidBrandPlan,
     brandFreeHome: brandFreeHome,
-    brandFreeQuizState: brandFreeQuizState,
     pageRolesFor: pageRolesFor,
     isGuardedPath: isGuardedPath,
     redirectTargetFor: redirectTargetFor,

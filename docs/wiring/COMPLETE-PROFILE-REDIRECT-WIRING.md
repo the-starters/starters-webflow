@@ -28,7 +28,7 @@ On `/complete-profile` and `/complete-profile/` only, on the approved hosts only
 | Paid Brand, Xano `has_record === true` and `brand_profile_done === true` | Replace with `/brand-dashboard` |
 | Paid Brand, Xano `has_record: true` and `brand_profile_done: false` | **Stay** — this page is exactly where the member belongs |
 | Paid Brand, any inconclusive Xano answer (no record, error, timeout, malformed) | **Stay** |
-| Free Brand | Replace with the guard's free-Brand quiz home |
+| Free Brand | Replace with the guard's free-Brand home |
 | Talent | Replace with `/starter-dashboard` |
 | Unmapped plan set, or a cross-role conflicted one (Talent + Brand) | Stay, untouched |
 | Logged out, Memberstack missing or slow, no role contract, a role the guard cannot name a home for, lookup throws, malformed member | Stay, untouched |
@@ -53,9 +53,9 @@ annoyance, sending a member away from a form they still have to fill in is not.
 
 This module already holds the member object and the guard's `roleHome()` answer,
 so it sends free Brands and Talent directly to their role home without a login
-form flashing at an authenticated member. The separate
-[login-default exception](../../v3/ACCESS-MATRIX.md#non-quiz-free-brand-login-default)
-does not apply on `/complete-profile`.
+form flashing at an authenticated member. That is the same home the
+[login default](../../v3/ACCESS-MATRIX.md#non-quiz-free-brand-login-default)
+uses.
 
 The destinations follow the role-home contract: every navigation assertion in
 `v3/complete-profile-redirect.test.js` keys on
@@ -111,9 +111,8 @@ The role **and** the free-Brand and Talent destinations both come from the sitew
 `v3/route-guard.js` export (`window.StartersV3RouteGuard.memberRole` and
 `.roleHome`), never from a second copy of the plan table or of `ROLE_DEFAULTS` —
 the same borrow `v3/auth-route.js` and `v3/build-profile-redirect.js` make. That is
-what keeps the free-Brand quiz-funnel rule (`/quiz-results` once `starter-quiz` is
-set, `/` when only the legacy `quiz` field is true, else `/quiz`) in exactly one
-place.
+what keeps the free-Brand home rule (`/quiz-results` once the quiz is recorded,
+else `/`) in exactly one place.
 
 Both halves are required together. A contract that can name a role but not its home
 counts as **no contract at all**: identifying a Talent member and then having
@@ -209,7 +208,7 @@ is completely silent, on the role redirects and on every fail-open path alike.
   Brand stays and the form works; a paid Brand with the durable-submit marker or
   Xano `has_record === true` and `brand_profile_done === true` lands on
   `/brand-dashboard`; a Talent session lands on `/starter-dashboard`; a free Brand
-  lands on the guard's quiz home for that member state.
+  lands on the guard's free-Brand home for that member state.
 - Verify the free-Brand and Talent trips are a **single** navigation — `/login`
   should never appear in the history for them.
 - Submit the form once as a paid Brand, confirm the marker only appears after the
