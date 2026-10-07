@@ -1,7 +1,7 @@
 /**
  * V3 login router.
  *
- * @release v1.59.643
+ * @release v1.59.679
  *
  * Loaded by the site-head v3/auth-page-loader.js on the V3 login pages
  * (/login and /starter-login) and /auth-route only. Every V3 login form must
@@ -1002,7 +1002,7 @@
   }
 
   var api = {
-    release: 'v1.59.643',
+    release: 'v1.59.679',
     activePlanIds: activePlanIds,
     destinationFor: destinationFor,
     hasCompletedQuiz: hasCompletedQuiz,
