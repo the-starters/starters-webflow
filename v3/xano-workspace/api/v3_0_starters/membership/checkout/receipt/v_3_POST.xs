@@ -111,7 +111,6 @@ query "membership/checkout-receipt/v3" verb=POST {
       params = {
         subscription: $intent.stripe_subscription_id
         customer: $snapshot.stripe_customer_id
-        status: "complete"
         "created[gte]": $intent.created_at_seconds
         "created[lte]": $intent.expires_at_seconds
         limit: 2
