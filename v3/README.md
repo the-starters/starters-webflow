@@ -314,10 +314,10 @@ own default page. An authenticated member with no mapped active plan remains on
 the page with an explicit error state, and a cross-family Talent + Brand plan
 conflict fails closed. The canonical `/dashboard` route is a thin guarded
 utility page that sends mapped members to `/starter-dashboard`,
-`/brand-dashboard`, `/quiz`, `/quiz-results`, or `/` (free Brand quiz home);
+`/brand-dashboard`, `/quiz-results`, or `/` (free Brand home);
 it does not merge or duplicate
 the two dashboard page bodies. Free Brands use the
-[quiz role home](ACCESS-MATRIX.md#route-level-access) for guarded-page redirects.
+[free-Brand role home](ACCESS-MATRIX.md#route-level-access) for guarded-page redirects.
 
 Install the guard once sitewide in Site Settings Head Code, before page
 controllers such as `opportunities-3.0.js`. The controller detects the guard's
@@ -349,8 +349,8 @@ page-controller wiring. When `/quiz-results` has no test,
 pending, or saved quiz data, its page controller returns a positively identified
 logged-out visitor to `/quiz` and sends an authenticated member whose completion
 marker outlived missing or malformed member JSON to
-`/quiz?retake=true&quizDataMissing=1`; pending pre-signup quizzes and Memberstack
-failures do not redirect.
+`/quiz?retake=true&quizDataMissing=1`. Any other authenticated member goes to
+`/`. Pending pre-signup quizzes and Memberstack failures do not redirect.
 
 Three mechanisms were added on 2026-08-03. **Member-home bounce:** the homepage,
 both login pages, and `/sign-up` are not in the route table — they must keep
@@ -365,9 +365,8 @@ carries two overrides added later the same day. A member who cancelled a paid
 Brand plan goes to `/all-starters`, whether their older free plan is still live or
 nothing is active at all — that second case is an unmapped plan which would
 otherwise have stayed, and an unmapped plan with no cancelled paid Brand behind it
-still does stay. And a free Brand who has not finished the quiz stays on `/`
-instead of being pushed to `/quiz`. Login pages use the separate source-specific
-default above. A valid `?next=` outranks both overrides; on `/` it is honoured even for a
+still does stay. And a free Brand who has not finished the quiz stays on `/`,
+which is their role home. Login pages use the same role home. A valid `?next=` outranks both overrides; on `/` it is honoured even for a
 member with no mapped role, since deep-link intent does not depend on plan state.
 [Route guard wiring](../docs/wiring/ROUTE-GUARD-WIRING.md) has the exact precedence and the cancelled-plan
 definition. **Per-page logged-out destinations:** the three
@@ -382,7 +381,7 @@ the exact production paid-Brand email canary documented in the root
 [Quiz-results email tester](../README.md#quiz-results-email-tester) section.
 Talent leaves both; a free Brand
 stays on both, though on `/quiz-results` only once the quiz is done, since before
-that its role home is `/quiz` (or `/` after only the legacy `quiz` field). "Done"
+that its role home is `/`. "Done"
 there means either the `starter-quiz` custom field or a `ready`
 `sessionStorage.starterQuizPending` payload — the
 second signal was added on 2026-08-04 to fix a regression, because the field is
@@ -390,7 +389,7 @@ written by `quiz-results.js` *after* that page renders, so a member who had just
 signed up was bounced straight back to `/quiz` in a race the field alone could
 never win. The guard only reads that key, never clears it, and only an explicit
 `ready` counts, so a free Brand who genuinely never took the quiz still goes to
-`/quiz`. `/generate-invoice` (Talent) also joined the guarded route table.
+`/`. `/generate-invoice` (Talent) also joined the guarded route table.
 
 `/complete-profile` was in that table for part of 2026-08-03 and is not any more.
 Memberstack's `restrict-pages` gated group owns the page on its own, redirecting a
@@ -404,9 +403,8 @@ way to their role home. See [ACCESS-MATRIX.md](ACCESS-MATRIX.md).
 `complete-profile-redirect.js` puts every mapped member who lands on
 `/complete-profile` where they belong, with no hop through `/login`. The page is a
 paid-Brand form, so a paid Brand stays until the profile reads as complete and then
-goes to `/brand-dashboard`; a free Brand goes to its quiz-funnel home
-(`/quiz-results` once `starter-quiz` is set, `/` when only the legacy `quiz`
-field is true, else `/quiz`) and a Talent member to
+goes to `/brand-dashboard`; a free Brand goes to its role home
+(`/quiz-results` once the quiz is recorded, else `/`) and a Talent member to
 `/starter-dashboard`. Those two destinations come from the guard's own
 `roleHome()`, so both branches cost no network request.
 

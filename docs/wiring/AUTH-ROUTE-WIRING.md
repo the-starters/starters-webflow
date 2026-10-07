@@ -297,16 +297,18 @@ Brand Free plus paid Brand is a valid same-family upgrade state and resolves to
 paid Brand. Talent plus either Brand role is a cross-family conflict and remains
 on the utility page with `conflicting-plan-roles`.
 
-The guard's shared login default applies here and on authenticated visits to
-both login pages. Its exact scope and conservative fallbacks are documented in
-the [access matrix](../../v3/ACCESS-MATRIX.md#non-quiz-free-brand-login-default).
+The router's default is the guard's `roleHome(member)`, the same home the guard
+uses on authenticated visits to both login pages. The free-Brand case is
+documented in the
+[access matrix](../../v3/ACCESS-MATRIX.md#non-quiz-free-brand-login-default).
 Canonical `/dashboard` and allowed return destinations retain their existing
 semantics; immediate modal-signup returns are unchanged.
 
 Release the login router together with the guard: update the pinned login-loader
 ref as well as the moving guard asset, purge the moving asset, and verify the
-served bytes for both refs. A cached older guard without the new login-default
-API retains the previous quiz fallback; it does not break login. Matching local
+served bytes for both refs. The router needs only `roleHome` from the guard, so
+a cached older guard does not break login. Until it refreshes, that guard's own
+role homes apply, which can still send a free Brand with no quiz to `/quiz`. Matching local
 tests or a merged PR alone do not prove both published assets are current.
 
 ## Talent funnel position
@@ -436,7 +438,7 @@ returning to `/dashboard`, preventing a redirect loop.
 | --- | --- |
 | Talent | `/dashboard` (resolved to home), `/starter-dashboard`, `/starter-onboarding`, `/build-profile/select-profile`, `/build-profile/full-profile`, `/build-profile/consult`, `/starter-edit-profile`, `/messages`, `/opportunities`, `/opportunities/`, `/opportunities-freelancer-view`, `/opportunities/<slug>`, `/generate-invoice`, `/generate-invoice/` |
 | Brand paid | `/dashboard` (resolved to home), `/all-starters`, `/brand-dashboard`, `/favorites`, `/favorites/`, `/opportunities`, `/opportunities/`, `/opportunities-brands-view`, `/messages`, `/opportunities/<slug>`, `/opportunities---create` |
-| Brand free | `/dashboard` (resolved to quiz home), `/all-starters`, `/quiz`, `/quiz-results` |
+| Brand free | `/dashboard` (resolved to home), `/all-starters`, `/quiz`, `/quiz-results` |
 
 `/starter-onboarding` is allowlisted for Talent because `v3/route-guard.js`
 sends a logged-out visitor there through `/login?next=/starter-onboarding`.

@@ -6962,11 +6962,11 @@ test('the no-route-guard fallback sends a brand off a talent page to the merged 
   assert.equal(unmapped.location.href, '/')
 })
 
-test('brandFreeHome routes to /quiz until the quiz is completed, then /quiz-results', async () => {
+test('brandFreeHome routes to / until the quiz is completed, then /quiz-results', async () => {
   const bridge = await loadBridge(async () => response({}))
   const { Opp30 } = bridge.window
   assert.equal(Opp30.hasCompletedQuiz(freeBrandMember), false)
-  assert.equal(Opp30.brandFreeHome(freeBrandMember), '/quiz')
+  assert.equal(Opp30.brandFreeHome(freeBrandMember), '/')
   const done = {
     ...freeBrandMember,
     customFields: { 'starter-quiz': '{"status":"ready"}' },
@@ -7202,14 +7202,14 @@ test('waitForMappedMemberRole keeps polling after a transient Memberstack reject
   assert.equal(calls, 2)
 })
 
-test('without the guard, gateByPlan sends an un-completed free brand to /quiz', async () => {
+test('without the guard, gateByPlan sends an un-completed free brand to the homepage', async () => {
   const bridge = await loadBridge(async () => response({}), {
     member: freeBrandMember,
     routeGuard: false,
   })
 
   assert.equal(await bridge.window.Opp30.gateByPlan(), null)
-  assert.equal(bridge.location.href, '/quiz')
+  assert.equal(bridge.location.href, '/')
 })
 
 test('without the guard, gateByPlan sends a completed free brand to /quiz-results', async () => {
