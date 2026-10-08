@@ -61,12 +61,14 @@ function formHarness(kind, options = {}) {
   fail.style.display = 'none'
   memberstackDone.style.display = 'none'
   memberstackFail.style.display = 'none'
+  let form = null
   const wrapper = new Element({ class: 'w-form' })
   wrapper.querySelector = (selector) => {
     if (selector === '.w-form-done') return done
     if (selector === '.w-form-fail') return fail
     if (selector === '[data-ms-message="success"]') return memberstackDone
     if (selector === '[data-ms-message="error"]') return memberstackFail
+    if (selector.includes('data-ms-form') || selector.includes('wf-form-')) return form
     return null
   }
   for (const state of [done, fail, memberstackDone]) {
@@ -76,9 +78,13 @@ function formHarness(kind, options = {}) {
   memberstackFail.children.push(memberstackFailText)
   memberstackFail.querySelector = (selector) =>
     selector === '[data-ms-message-text]' ? memberstackFailText : null
-  provider.closest = (selector) => selector === '[data-ms-auth-provider]' ? provider : null
+  provider.closest = (selector) => {
+    if (selector === '[data-ms-auth-provider]') return provider
+    if (selector === '.w-form') return wrapper
+    return null
+  }
   wrapper.children.push(provider)
-  const form = new Element({ 'data-ms-form': kind })
+  form = new Element({ 'data-ms-form': kind })
   form.id = options.id || ''
   form.checkValidity = () => options.valid !== false
   form.closest = (selector) => (selector === '.w-form' ? wrapper : null)
@@ -92,6 +98,7 @@ function boot({ kind = 'login', pathname = '/login', valid = true, id = '', dela
   const session = new Map()
   const fetchCalls = []
   const tracked = []
+  const windowListeners = {}
   const memberstack = {
     getCurrentMember: async () => ({ data: null }),
     onAuthChange(listener) {
@@ -125,6 +132,14 @@ function boot({ kind = 'login', pathname = '/login', valid = true, id = '', dela
     crypto: { randomUUID: () => '12345678-1234-1234-1234-123456789012' },
     Date,
     document,
+    addEventListener: (type, listener) => {
+      ;(windowListeners[type] ||= []).push(listener)
+    },
+    dispatch: (type, extra = {}) => {
+      const event = { type, target: parts.provider, preventDefault() {}, ...extra }
+      for (const listener of windowListeners[type] || []) listener(event)
+      return event
+    },
     fetch: async (input, init = {}) => {
       fetchCalls.push({ input, init })
       return { ok: init.testOk !== false, status: init.testStatus || 200 }
@@ -348,11 +363,13 @@ function showError(page, text) {
 }
 
 function clickProvider(page, extra = {}) {
-  page.wrapper.dispatch('click', {
+  const event = page.window.dispatch('click', {
     target: page.provider,
     preventDefault() { throw new Error('provider click intercepted') },
     ...extra,
   })
+  if (typeof extra.afterWindowCapture === 'function') extra.afterWindowCapture()
+  page.wrapper.dispatch('click', event)
 }
 
 test('a Memberstack login error records an allowlisted detail and never the message text', async () => {
@@ -395,6 +412,21 @@ test('a Google provider click starts tracking so the email-login error is record
   assert.equal(receipt.error_detail, 'use_email_login')
   assert.equal(page.tracked.some((event) => event.name === 'workflow_form_submit_started'), true)
   assert.equal(page.fetchCalls.length, 0)
+})
+
+test('a Google provider click snapshots before Memberstack document capture renders an error', async () => {
+  const page = boot({ kind: 'login' })
+  clickProvider(page, {
+    afterWindowCapture() {
+      page.memberstackFailText.textContent = 'Please login with your email.'
+      page.memberstackFail.style.display = 'block'
+    },
+  })
+  await tick()
+  const receipt = page.window.StartersWorkflowDiagnostics.latest('brand_login')
+  assert.equal(receipt.result, 'failure')
+  assert.equal(receipt.error_detail, 'use_email_login')
+  assert.equal(page.tracked.some((event) => event.name === 'workflow_form_submit_failed'), true)
 })
 
 test('a provider click treats a pre-visible Memberstack error as stale', async () => {

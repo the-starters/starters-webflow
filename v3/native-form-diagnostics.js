@@ -43,6 +43,7 @@
   ]
   var controllerScript = document.currentScript
   var pendingAuthForm = null
+  var providerClicksBound = false
 
   var MUTATION_WORKFLOWS = {
     profile_photo_xano_upload: 'talent_profile_photo',
@@ -383,6 +384,29 @@
     })
   }
 
+  function formForProvider(control) {
+    var wrapper = control && typeof control.closest === 'function'
+      ? control.closest('.w-form')
+      : null
+    return wrapper && typeof wrapper.querySelector === 'function'
+      ? wrapper.querySelector(FORM_SELECTOR)
+      : null
+  }
+
+  function bindProviderClicks() {
+    if (providerClicksBound || typeof window.addEventListener !== 'function') return
+    providerClicksBound = true
+    window.addEventListener('click', function (event) {
+      var target = event && event.target
+      var control = target && typeof target.closest === 'function'
+        ? target.closest(PROVIDER_SELECTOR)
+        : null
+      var form = formForProvider(control)
+      if (!form || !form.__startersMemberstackDiagnosticsBound) return
+      beginProviderDiagnostic(form)
+    }, true)
+  }
+
   function bindForm(form) {
     if (!form || form.__startersMemberstackDiagnosticsBound || !workflowFor(form)) return false
     form.__startersMemberstackDiagnosticsBound = true
@@ -402,14 +426,6 @@
 
     var wrapper = wrapperFor(form)
     if (wrapper && typeof MutationObserver === 'function') {
-      wrapper.addEventListener('click', function (event) {
-        var target = event && event.target
-        var control = target && typeof target.closest === 'function'
-          ? target.closest(PROVIDER_SELECTOR)
-          : null
-        if (!control || !contains(wrapper, control)) return
-        beginProviderDiagnostic(form)
-      }, true)
       var observer = new MutationObserver(function (records) {
         clearStaleError(form, records)
         checkStates(form)
@@ -492,6 +508,7 @@
 
   function init() {
     if (!allowedHost((window.location && window.location.hostname) || '')) return 0
+    bindProviderClicks()
     var count = bindAll()
     watchAuth()
     return count
