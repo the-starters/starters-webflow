@@ -33,6 +33,14 @@
   var TRANSIENT_STATUSES = { 408: true, 425: true, 429: true }
   var MAX_ATTEMPTS = 2
   var MAX_TOKEN_TTL_SECONDS = 600
+  // The server (Xano talkjs/user-token/v3) issues tokens with exactly
+  // MAX_TOKEN_TTL_SECONDS of lifetime, measured on the server clock. The
+  // remaining lifetime below is measured on the browser clock, so a browser
+  // that runs even 1 s slow sees more than MAX_TOKEN_TTL_SECONDS remaining and
+  // used to refuse every valid token. Accept a bounded clock skew on the upper
+  // bound only. An expired token (no lifetime left on the browser clock) is
+  // still refused: there is no tolerance on the lower bound.
+  var CLOCK_SKEW_TOLERANCE_SECONDS = 120
   var MAX_IDENTITY_ATTEMPTS = 3
   var IDENTITY_RETRY_DELAY_MS = 25
 
@@ -254,7 +262,7 @@
       expiresIn > MAX_TOKEN_TTL_SECONDS ||
       !Number.isFinite(remaining) ||
       remaining <= 0 ||
-      remaining > MAX_TOKEN_TTL_SECONDS
+      remaining > MAX_TOKEN_TTL_SECONDS + CLOCK_SKEW_TOLERANCE_SECONDS
     ) {
       throw identityError('TalkJS token does not match the authenticated member')
     }
