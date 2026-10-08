@@ -13,6 +13,9 @@
   var SCHEMA = 'starters_workflow_diagnostic_v1'
   var STORAGE_PREFIX = 'starters.workflow.diagnostic.'
   var STORAGE_LATEST_KEY = STORAGE_PREFIX + 'latest'
+  var ERROR_DETAILS = ['invalid_credentials', 'use_email_login', 'use_google_login',
+    'rate_limited', 'captcha', 'network', 'other']
+  var MEMBER_ROLES = ['talent', 'brand-paid', 'brand-free']
 
   function clean(value, limit) {
     return String(value == null ? '' : value).trim().slice(0, limit || 120)
@@ -81,6 +84,11 @@
     return normalized
   }
 
+  function oneOf(value, allowed) {
+    var normalized = clean(value, 40)
+    return allowed.indexOf(normalized) === -1 ? '' : normalized
+  }
+
   function normalize(input, base) {
     input = input || {}
     base = base || {}
@@ -98,6 +106,8 @@
       result: slug(input.result || base.result, 'unknown'),
       stage: slug(input.stage || base.stage, 'unknown'),
       error_code: errorCode(input.error_code || ''),
+      error_detail: oneOf(input.error_detail, ERROR_DETAILS),
+      member_role: oneOf(input.member_role, MEMBER_ROLES),
       http_status: status === null ? null : Math.max(0, Math.floor(status)),
       duration_ms: duration === null ? null : Math.max(0, Math.round(duration)),
       request_started: Boolean(input.request_started),
@@ -139,6 +149,8 @@
       result: receipt.result,
       stage: receipt.stage,
       error_code: receipt.error_code || undefined,
+      error_detail: receipt.error_detail || undefined,
+      member_role: receipt.member_role || undefined,
       http_status: receipt.http_status == null ? undefined : receipt.http_status,
       duration_ms: receipt.duration_ms == null ? undefined : receipt.duration_ms,
       request_started: receipt.request_started,
