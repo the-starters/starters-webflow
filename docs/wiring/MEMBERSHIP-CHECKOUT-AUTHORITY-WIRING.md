@@ -76,6 +76,16 @@ clears its pending state, the member can retry. Failed and accepted registration
 reuse the same pending event identity and original route for that price until
 the two-hour intent expires. A member change replaces that pending identity.
 Failure also restores the clicked checkout control's authored loading state.
+Every blocked click, including a click on a non-allowlisted route or price,
+inserts one visible `role="alert"` message directly after the clicked control
+(`data-v3-checkout-message` = `not-eligible` or `unavailable`). A registrar 401
+that says the Brand plan is not eligible or the Brand identity is incomplete
+shows "Your account can't be upgraded online right now. Please contact support
+at hello@hirethestarters.com." Every other failure shows "Checkout could not
+start. Please try again." The next click removes the message. The control still
+gets its `title` and `data-v3-checkout-authority="error"`. One `console.warn`
+records only the reason and HTTP status. The message does not change the
+allowlists or the fail-closed result.
 After an accepted intent, the Get Started spinner stays lit while native
 Memberstack checkout starts. If the shared Sign Out loader is absent, never
 appears, or cannot be observed, a bounded three-second fallback restores the
