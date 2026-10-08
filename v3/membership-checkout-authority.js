@@ -36,6 +36,15 @@
   var pendingTargets = typeof WeakSet === 'function' ? new WeakSet() : null
   var logoutLoaderHolds = 0
   var logoutLoaderOriginalVisibility = ''
+  // Existing V3 membership contact (Account Settings membership panel copy).
+  var SUPPORT_EMAIL = 'hello@hirethestarters.com'
+  var MESSAGE_ATTRIBUTE = 'data-v3-checkout-message'
+  var NOT_ELIGIBLE_MESSAGE =
+    "Your account can't be upgraded online right now. Please contact support at " +
+    SUPPORT_EMAIL +
+    '.'
+  var RETRY_MESSAGE = 'Checkout could not start. Please try again.'
+  var activeMessage = null
 
   function clean(value) {
     return String(value == null ? '' : value).trim()
@@ -133,6 +142,84 @@
     target.setAttribute('aria-busy', state === 'pending' ? 'true' : 'false')
     if (message) target.setAttribute('title', message)
     else if (typeof target.removeAttribute === 'function') target.removeAttribute('title')
+  }
+
+  function clearCheckoutMessage() {
+    var note = activeMessage
+    activeMessage = null
+    if (note && note.parentNode && typeof note.parentNode.removeChild === 'function') {
+      note.parentNode.removeChild(note)
+    }
+  }
+
+  // Classify only for the visible copy. Eligibility is decided by the server.
+  function failureReason(error) {
+    return error && error.reason === 'not-eligible' ? 'not-eligible' : 'unavailable'
+  }
+
+  function reportCheckoutFailure(reason, error) {
+    var consoleObject = globalObject.console
+    if (!consoleObject || typeof consoleObject.warn !== 'function') return
+    try {
+      // Reason and HTTP status only: no member, token, email, or price data.
+      consoleObject.warn('[membership-checkout] checkout could not start', {
+        reason: reason,
+        status: (error && error.status) || null,
+      })
+    } catch (_error) {}
+  }
+
+  // Fail-closed checkout must not look like a dead button: show one short,
+  // announced message next to the clicked control. The next attempt removes it.
+  function showCheckoutMessage(target, reason) {
+    clearCheckoutMessage()
+    var documentObject = (target && target.ownerDocument) || globalObject.document
+    if (
+      !target ||
+      !documentObject ||
+      typeof documentObject.createElement !== 'function' ||
+      !target.parentNode ||
+      typeof target.parentNode.insertBefore !== 'function'
+    ) {
+      return null
+    }
+    var note = documentObject.createElement('div')
+    note.setAttribute(MESSAGE_ATTRIBUTE, reason)
+    note.setAttribute('role', 'alert')
+    note.setAttribute('aria-live', 'assertive')
+    if (note.style) {
+      note.style.color = '#b3261e'
+      note.style.fontSize = '14px'
+      note.style.lineHeight = '1.4'
+      note.style.marginTop = '8px'
+      note.style.flexBasis = '100%'
+      note.style.width = '100%'
+    }
+    if (reason === 'not-eligible') {
+      var text = NOT_ELIGIBLE_MESSAGE.split(SUPPORT_EMAIL)
+      note.appendChild(documentObject.createTextNode(text[0]))
+      var link = documentObject.createElement('a')
+      link.setAttribute('href', 'mailto:' + SUPPORT_EMAIL)
+      link.textContent = SUPPORT_EMAIL
+      if (link.style) link.style.color = 'inherit'
+      note.appendChild(link)
+      note.appendChild(documentObject.createTextNode(text[1]))
+    } else {
+      note.textContent = RETRY_MESSAGE
+    }
+    target.parentNode.insertBefore(note, target.nextSibling || null)
+    activeMessage = note
+    return note
+  }
+
+  function failCheckout(target, reason, error, title) {
+    setControlState(target, 'error', title)
+    try {
+      showCheckoutMessage(target, reason)
+    } catch (_error) {
+      // The message is UX only; the checkout stays blocked either way.
+    }
+    reportCheckoutFailure(reason, error)
   }
 
   function checkoutVisuals(target) {
@@ -267,7 +354,11 @@
       typeof payload === 'string'
         ? payload
         : payload && (payload.authToken || payload.token)
-    if (!response.ok || !token) throw new Error('V3 session exchange failed')
+    if (!response.ok || !token) {
+      var authFailure = new Error('V3 session exchange failed')
+      authFailure.status = response.status || null
+      throw authFailure
+    }
     var confirmedResult = await memberstack.getCurrentMember()
     var confirmedMember =
       confirmedResult && confirmedResult.data ? confirmedResult.data : confirmedResult
@@ -296,7 +387,17 @@
       return null
     })
     if (!response.ok || !payload || payload.ok !== true) {
-      throw new Error('V3 checkout could not be prepared')
+      var failure = new Error('V3 checkout could not be prepared')
+      failure.status = response.status || null
+      var serverMessage = clean(payload && payload.message)
+      if (
+        response.status === 401 &&
+        (serverMessage === 'Brand plan is not eligible for V3 checkout' ||
+          serverMessage === 'Canonical V3 Brand identity is incomplete')
+      ) {
+        failure.reason = 'not-eligible'
+      }
+      throw failure
     }
     return payload
   }
@@ -320,14 +421,15 @@
     if (event && typeof event.stopImmediatePropagation === 'function') {
       event.stopImmediatePropagation()
     }
+    if (pendingTargets && pendingTargets.has(target)) return
+    clearCheckoutMessage()
 
     var route = normalizedRoute(globalObject.location && globalObject.location.pathname)
     var priceId = clean(target.getAttribute(PRICE_ATTRIBUTE))
     if (!validSourceRoute(route) || !ALLOWED_PRICE_IDS[priceId]) {
-      setControlState(target, 'error', 'This checkout is not available from this V3 page')
+      failCheckout(target, 'unavailable', null, 'This checkout is not available from this V3 page')
       return
     }
-    if (pendingTargets && pendingTargets.has(target)) return
     if (pendingTargets) pendingTargets.add(target)
 
     var visuals = checkoutVisuals(target)
@@ -348,9 +450,10 @@
       followNativeLoader(visuals)
     } catch (error) {
       visuals.restore()
-      setControlState(
+      failCheckout(
         target,
-        'error',
+        failureReason(error),
+        error,
         (error && error.message) || 'V3 checkout could not be prepared',
       )
     } finally {

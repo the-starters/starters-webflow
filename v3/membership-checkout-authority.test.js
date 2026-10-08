@@ -954,3 +954,171 @@ test('a coalesced registration stores the canonical intent key and server expiry
   assert.equal(persisted.intentKey, canonicalIntent)
   assert.equal(persisted.expiresAt, expires)
 })
+
+// Visible failure message (Lea Richards CX 2026-10-08): a fail-closed click
+// must not look like a dead button.
+function fakeElement(tag) {
+  const attributes = new Map()
+  return {
+    tagName: tag,
+    style: {},
+    childNodes: [],
+    parentNode: null,
+    _text: '',
+    setAttribute(name, value) { attributes.set(name, String(value)) },
+    getAttribute(name) { return attributes.has(name) ? attributes.get(name) : null },
+    appendChild(child) { child.parentNode = this; this.childNodes.push(child); return child },
+    set textContent(value) { this._text = String(value); this.childNodes = [] },
+    get textContent() {
+      return this._text + this.childNodes.map((child) => child.textContent).join('')
+    },
+  }
+}
+
+function withVisibleDom(state, control) {
+  const warnings = []
+  const parent = {
+    children: [control],
+    insertBefore(node, reference) {
+      const index = reference ? this.children.indexOf(reference) : -1
+      if (index === -1) this.children.push(node)
+      else this.children.splice(index, 0, node)
+      node.parentNode = this
+      return node
+    },
+    removeChild(node) {
+      this.children = this.children.filter((child) => child !== node)
+      node.parentNode = null
+      return node
+    },
+  }
+  control.parentNode = parent
+  control.nextSibling = null
+  state.window.document.createElement = (tag) => fakeElement(tag)
+  state.window.document.createTextNode = (text) => ({ textContent: String(text) })
+  state.window.console = { warn: (...args) => warnings.push(args) }
+  const messages = () => parent.children.filter((child) => child !== control)
+  return { parent, warnings, messages }
+}
+
+const notEligibleResponse = (message) => ({
+  ok: false,
+  status: 401,
+  json: async () => ({ code: 'ERROR_CODE_UNAUTHORIZED', message }),
+})
+
+for (const serverMessage of [
+  'Brand plan is not eligible for V3 checkout',
+  'Canonical V3 Brand identity is incomplete',
+]) {
+  test(`shows a visible support message when the server says: ${serverMessage}`, async () => {
+    const state = boot({ registerResponse: notEligibleResponse(serverMessage) })
+    const control = target('prc_premium-monthly--fn1ae0qjj')
+    const dom = withVisibleDom(state, control)
+
+    await state.listeners[0].listener(clickEvent(control))
+
+    assert.equal(control.clicks, 0)
+    assert.equal(control.getAttribute('data-v3-checkout-authority'), 'error')
+    assert.match(control.getAttribute('title'), /could not be prepared/)
+    const [note] = dom.messages()
+    assert.equal(dom.messages().length, 1)
+    assert.equal(note.getAttribute('role'), 'alert')
+    assert.equal(note.getAttribute('aria-live'), 'assertive')
+    assert.equal(note.getAttribute('data-v3-checkout-message'), 'not-eligible')
+    assert.equal(
+      note.textContent,
+      "Your account can't be upgraded online right now. Please contact support at hello@hirethestarters.com.",
+    )
+    const link = note.childNodes.find((child) => child.tagName === 'a')
+    assert.equal(link.getAttribute('href'), 'mailto:hello@hirethestarters.com')
+    assert.deepEqual(JSON.parse(JSON.stringify(dom.warnings)), [
+      ['[membership-checkout] checkout could not start', { reason: 'not-eligible', status: 401 }],
+    ])
+  })
+}
+
+test('shows the retry message for server, network, and session failures', async () => {
+  const cases = [
+    { registerResponse: { ok: false, status: 503, json: async () => ({}) }, status: 503 },
+    { registerResponse: { ok: false, status: 400, json: async () => ({ message: 'Invalid V3 checkout event identity' }) }, status: 400 },
+    { registerResponse: notEligibleResponse('Invalid token'), status: 401 },
+    { registerResponse: notEligibleResponse('Starter is not eligible for V3 checkout during migration'), status: 401 },
+    { registerResponse: () => { throw new TypeError('Failed to fetch') }, status: null },
+    { authResponse: { ok: false, status: 401, json: async () => ({ message: 'not eligible' }) }, status: 401 },
+  ]
+  for (const options of cases) {
+    const state = boot(options)
+    const control = target('prc_paid-annual-2o5f040u')
+    const dom = withVisibleDom(state, control)
+
+    await state.listeners[0].listener(clickEvent(control))
+
+    assert.equal(control.clicks, 0)
+    const [note] = dom.messages()
+    assert.equal(dom.messages().length, 1)
+    assert.equal(note.getAttribute('role'), 'alert')
+    assert.equal(note.getAttribute('data-v3-checkout-message'), 'unavailable')
+    assert.equal(note.textContent, 'Checkout could not start. Please try again.')
+    assert.deepEqual(JSON.parse(JSON.stringify(dom.warnings)), [
+      ['[membership-checkout] checkout could not start', { reason: 'unavailable', status: options.status }],
+    ])
+  }
+})
+
+test('shows a visible message on non-allowlisted routes without calling Xano', async () => {
+  for (const pathname of ['/brand-dashboard', '/favorites', '/messages', '/opportunities', '/complete-profile']) {
+    const state = boot({ pathname })
+    const control = target('prc_premium-monthly--fn1ae0qjj')
+    const dom = withVisibleDom(state, control)
+    const event = clickEvent(control)
+
+    await state.listeners[0].listener(event)
+
+    assert.equal(event.prevented, true, pathname)
+    assert.equal(state.requests.length, 0, pathname)
+    assert.equal(control.clicks, 0, pathname)
+    assert.equal(control.getAttribute('title'), 'This checkout is not available from this V3 page')
+    assert.equal(dom.messages().length, 1, pathname)
+    assert.equal(dom.messages()[0].textContent, 'Checkout could not start. Please try again.')
+  }
+})
+
+test('the next attempt removes the message, and repeated failures keep only one', async () => {
+  let attempts = 0
+  const state = boot({
+    registerResponse: () => {
+      attempts += 1
+      return attempts < 3
+        ? { ok: false, status: 503, json: async () => ({}) }
+        : { ok: true, json: async () => ({ ok: true, checkout_intent_id: 7 }) }
+    },
+  })
+  const control = target('prc_paid-annual-2o5f040u')
+  const dom = withVisibleDom(state, control)
+
+  await state.listeners[0].listener(clickEvent(control))
+  const first = dom.messages()[0]
+  await state.listeners[0].listener(clickEvent(control))
+  assert.equal(dom.messages().length, 1)
+  assert.notEqual(dom.messages()[0], first)
+  assert.equal(first.parentNode, null)
+
+  await state.listeners[0].listener(clickEvent(control))
+  assert.equal(dom.messages().length, 0)
+  assert.equal(control.clicks, 1)
+  assert.equal(control.getAttribute('data-v3-checkout-authority'), 'accepted')
+})
+
+test('a missing DOM API keeps checkout fail-closed without throwing', async () => {
+  const state = boot({ registerResponse: notEligibleResponse('Brand plan is not eligible for V3 checkout') })
+  const control = target('prc_premium-monthly--fn1ae0qjj')
+  control.parentNode = { insertBefore() { throw new Error('detached') } }
+  state.window.document.createElement = (tag) => fakeElement(tag)
+  state.window.document.createTextNode = (text) => ({ textContent: String(text) })
+
+  await state.listeners[0].listener(clickEvent(control))
+
+  assert.equal(control.clicks, 0)
+  assert.equal(control.getAttribute('data-v3-checkout-authority'), 'error')
+})
