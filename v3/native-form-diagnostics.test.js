@@ -20,6 +20,11 @@ class Element {
     this.hidden = false
     this.style = { display: '' }
     this.textContent = ''
+    this.children = []
+  }
+
+  contains(node) {
+    return node === this || this.children.some((child) => child.contains(node))
   }
 
   addEventListener(type, listener) {
@@ -63,22 +68,27 @@ function formHarness(kind, options = {}) {
     if (selector === '[data-ms-message="error"]') return memberstackFail
     return null
   }
-  for (const state of [done, fail, memberstackDone, memberstackFail]) {
+  for (const state of [done, fail, memberstackDone]) {
     state.querySelector = () => null
   }
+  const memberstackFailText = new Element({ 'data-ms-message-text': '' })
+  memberstackFail.children.push(memberstackFailText)
+  memberstackFail.querySelector = (selector) =>
+    selector === '[data-ms-message-text]' ? memberstackFailText : null
   const form = new Element({ 'data-ms-form': kind })
   form.id = options.id || ''
   form.checkValidity = () => options.valid !== false
   form.closest = (selector) => (selector === '.w-form' ? wrapper : null)
-  return { done, fail, form, memberstackDone, memberstackFail, wrapper }
+  return { done, fail, form, memberstackDone, memberstackFail, memberstackFailText, wrapper }
 }
 
-function boot({ kind = 'login', pathname = '/login', valid = true, id = '', delayHelper = false } = {}) {
+function boot({ kind = 'login', pathname = '/login', valid = true, id = '', delayHelper = false, routeGuard = null } = {}) {
   const parts = formHarness(kind, { valid, id })
   const observers = []
   let authListener = null
   const session = new Map()
   const fetchCalls = []
+  const tracked = []
   const memberstack = {
     getCurrentMember: async () => ({ data: null }),
     onAuthChange(listener) {
@@ -104,6 +114,8 @@ function boot({ kind = 'login', pathname = '/login', valid = true, id = '', dela
   }
   const window = {
     $memberstackDom: memberstack,
+    StartersTrack: { track: (name, properties) => tracked.push({ name, properties }) },
+    StartersV3RouteGuard: routeGuard,
     MutationObserver,
     clearTimeout,
     console: { info() {} },
@@ -152,6 +164,7 @@ function boot({ kind = 'login', pathname = '/login', valid = true, id = '', dela
     auth: (payload) => authListener && authListener(payload),
     observers,
     fetchCalls,
+    tracked,
     resolveHelper: delayHelper ? () => {
       new vm.Script(helperSource, { filename: 'workflow-diagnostics.js' }).runInContext(context)
       resolveHelper(window.StartersWorkflowDiagnostics)
@@ -323,4 +336,109 @@ test('profile mutation HTTP failures remain transparent to the caller', async ()
   assert.equal(receipt.result, 'failure')
   assert.equal(receipt.error_code, 'HTTP_ERROR')
   assert.equal(receipt.http_status, 422)
+})
+
+function showError(page, text) {
+  page.memberstackFailText.textContent = text
+  page.memberstackFail.style.display = 'block'
+  page.observers[0].callback([{ target: page.memberstackFailText }])
+}
+
+test('a Memberstack login error records an allowlisted detail and never the message text', async () => {
+  const page = boot({ kind: 'login' })
+  page.form.dispatch('submit')
+  await tick()
+  showError(page, 'The provided credentials are invalid.')
+  const receipt = page.window.StartersWorkflowDiagnostics.latest('brand_login')
+  assert.equal(receipt.result, 'failure')
+  assert.equal(receipt.error_code, 'MEMBERSTACK_FORM_ERROR')
+  assert.equal(receipt.error_detail, 'invalid_credentials')
+  const failed = page.tracked.find((event) => event.name === 'workflow_form_submit_failed')
+  assert.equal(failed.properties.error_detail, 'invalid_credentials')
+  assert.doesNotMatch(JSON.stringify(page.tracked), /provided credentials/i)
+})
+
+test('Google-click and unknown Memberstack messages map to fixed codes', async () => {
+  const google = boot({ kind: 'login' })
+  google.form.dispatch('submit')
+  await tick()
+  showError(google, 'Please login with your email.')
+  assert.equal(google.window.StartersWorkflowDiagnostics.latest('brand_login').error_detail, 'use_email_login')
+
+  const unknown = boot({ kind: 'login' })
+  unknown.form.dispatch('submit')
+  await tick()
+  showError(unknown, 'Something odd happened for jane@example.com')
+  assert.equal(unknown.window.StartersWorkflowDiagnostics.latest('brand_login').error_detail, 'other')
+  assert.doesNotMatch(JSON.stringify(unknown.tracked), /jane@example\.com|odd/)
+})
+
+test('a banner still visible from the previous submit is not counted, and a later login succeeds', async () => {
+  const page = boot({ kind: 'login' })
+  await tick()
+  page.memberstackFailText.textContent = 'The provided credentials are invalid.'
+  page.memberstackFail.style.display = 'block'
+  page.form.dispatch('submit')
+  await tick()
+  page.observers[0].callback([{ target: page.wrapper }])
+  assert.equal(page.window.StartersWorkflowDiagnostics.latest('brand_login').result, 'started')
+  page.auth({ data: { id: 'mem_test' } })
+  assert.equal(page.window.StartersWorkflowDiagnostics.latest('brand_login').result, 'success')
+  assert.equal(page.tracked.some((event) => event.name === 'workflow_form_submit_failed'), false)
+})
+
+test('a new error written into the still-visible banner after submit is counted once', async () => {
+  const page = boot({ kind: 'login' })
+  page.memberstackFailText.textContent = 'The provided credentials are invalid.'
+  page.memberstackFail.style.display = 'block'
+  page.form.dispatch('submit')
+  await tick()
+  showError(page, 'The provided credentials are invalid.')
+  showError(page, 'The provided credentials are invalid.')
+  const failures = page.tracked.filter((event) => event.name === 'workflow_form_submit_failed')
+  assert.equal(failures.length, 1)
+  assert.equal(failures[0].properties.error_detail, 'invalid_credentials')
+})
+
+test('a stale banner that hides and shows again during the submit is counted', async () => {
+  const page = boot({ kind: 'login' })
+  page.memberstackFail.style.display = 'block'
+  page.form.dispatch('submit')
+  await tick()
+  page.memberstackFail.style.display = 'none'
+  page.observers[0].callback([{ target: page.memberstackFail }])
+  assert.equal(page.window.StartersWorkflowDiagnostics.latest('brand_login').result, 'started')
+  page.memberstackFail.style.display = 'block'
+  page.observers[0].callback([{ target: page.memberstackFail }])
+  assert.equal(page.window.StartersWorkflowDiagnostics.latest('brand_login').result, 'failure')
+})
+
+test('a successful login records the role the route guard derives from the on-page member', async () => {
+  const seen = []
+  const page = boot({
+    kind: 'login',
+    routeGuard: { memberRole: (member) => { seen.push(member.id); return 'talent' } },
+  })
+  await tick()
+  page.form.dispatch('submit')
+  await tick()
+  page.auth({ data: { id: 'mem_test' } })
+  const receipt = page.window.StartersWorkflowDiagnostics.latest('brand_login')
+  assert.equal(receipt.member_role, 'talent')
+  assert.deepEqual(seen, ['mem_test'])
+  assert.equal(page.fetchCalls.length, 0)
+})
+
+test('a missing or failing route guard leaves member role empty without breaking success', async () => {
+  const page = boot({
+    kind: 'login',
+    routeGuard: { memberRole: () => { throw new Error('guard failed') } },
+  })
+  await tick()
+  page.form.dispatch('submit')
+  await tick()
+  page.auth({ data: { id: 'mem_test' } })
+  const receipt = page.window.StartersWorkflowDiagnostics.latest('brand_login')
+  assert.equal(receipt.result, 'success')
+  assert.equal(receipt.member_role, '')
 })
