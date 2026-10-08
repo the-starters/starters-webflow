@@ -1043,8 +1043,9 @@ test('shows the retry message for server, network, and session failures', async 
     { registerResponse: { ok: false, status: 503, json: async () => ({}) }, status: 503 },
     { registerResponse: { ok: false, status: 400, json: async () => ({ message: 'Invalid V3 checkout event identity' }) }, status: 400 },
     { registerResponse: notEligibleResponse('Invalid token'), status: 401 },
+    { registerResponse: notEligibleResponse('Starter is not eligible for V3 checkout during migration'), status: 401 },
     { registerResponse: () => { throw new TypeError('Failed to fetch') }, status: null },
-    { authResponse: { ok: false, status: 401, json: async () => ({ message: 'not eligible' }) }, status: null },
+    { authResponse: { ok: false, status: 401, json: async () => ({ message: 'not eligible' }) }, status: 401 },
   ]
   for (const options of cases) {
     const state = boot(options)

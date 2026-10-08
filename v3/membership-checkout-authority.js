@@ -354,7 +354,11 @@
       typeof payload === 'string'
         ? payload
         : payload && (payload.authToken || payload.token)
-    if (!response.ok || !token) throw new Error('V3 session exchange failed')
+    if (!response.ok || !token) {
+      var authFailure = new Error('V3 session exchange failed')
+      authFailure.status = response.status || null
+      throw authFailure
+    }
     var confirmedResult = await memberstack.getCurrentMember()
     var confirmedMember =
       confirmedResult && confirmedResult.data ? confirmedResult.data : confirmedResult
@@ -388,7 +392,8 @@
       var serverMessage = clean(payload && payload.message)
       if (
         response.status === 401 &&
-        /not eligible for V3 checkout|Brand identity is incomplete/i.test(serverMessage)
+        (serverMessage === 'Brand plan is not eligible for V3 checkout' ||
+          serverMessage === 'Canonical V3 Brand identity is incomplete')
       ) {
         failure.reason = 'not-eligible'
       }
