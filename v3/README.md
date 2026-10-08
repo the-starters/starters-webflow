@@ -123,11 +123,11 @@ node --test v3/password-recovery.test.js
 `auth-route.js` owns post-login and post-signup routing for V3 without changing
 the shared Memberstack plan redirects used by V2. The blocking site-head
 `auth-page-loader.js` inserts it only on the V3 `/login`, `/starter-login`, and
-`/auth-route` pages — immediately on the two login paths, which only need the
-form's `/auth-route` redirect written, and after DOMContentLoaded on
-`/auth-route`, which reads the guard's role contract. Keep the static deferred
-sitewide `route-guard.js` unconditional and ahead of the loader because it owns
-the shared stable plan-role contract and completes before DOMContentLoaded.
+`/auth-route` pages — immediately on the two login paths, where it configures
+login-page behavior, and after DOMContentLoaded on `/auth-route`, which reads
+the guard's role contract. Keep the static deferred sitewide `route-guard.js`
+unconditional and ahead of the loader because it owns the shared stable
+plan-role contract and completes before DOMContentLoaded.
 Keep `signup-attribution.js`, both `utils/posthog-*.js` helpers,
 `native-form-diagnostics.js` — the sitewide observer that owns the
 `brand_login` and `talent_login` receipts — and the
@@ -142,6 +142,14 @@ gate. The versioned
 [V3 Member Access Matrix](ACCESS-MATRIX.md) maps stable plan IDs to roles and
 documents route access plus the separate Webflow, content, and Xano enforcement
 layers.
+
+On the two login paths the router also replaces two Memberstack login errors
+in `[data-ms-message="error"]`: the invalid-credentials message and the
+Google-click "login with your email" message. It hides Memberstack's
+`[data-ms-message-text]` element, keeps its text unchanged for banner-text
+classifiers, and adds a `[data-starters-login-error-copy]` alert with a real
+`/forgot-password` link. The banner stays visible until the next form submit or
+`[data-ms-auth-provider]` click. Other messages are not changed.
 
 The V3 protected-route guard sends logged-out visitors to
 `/login?next=<encoded current path and query>`. For an exact Calls notification

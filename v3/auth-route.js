@@ -12,7 +12,7 @@
  * there — the deferred guard has completed by then, and only there is the guard
  * guaranteed to execute before this file. On the two login paths the loader
  * inserts immediately, so this file usually executes BEFORE the deferred guard;
- * that branch only writes the form redirect and never reads the role contract.
+ * that branch configures login-page behavior and never reads the role contract.
  * The loader never inserts a second copy of the guard.
  *
  * Talent members additionally get a funnel-position check here, because
@@ -561,6 +561,7 @@
         )
       })
     bindAttemptClicks()
+    bindLoginErrorCopy()
   }
 
   function bindAttemptSubmit(form, onAttempt) {
@@ -616,6 +617,183 @@
         return
       }
       beginProviderLoginTiming()
+    })
+  }
+
+  /* ---------------------------- login error copy --------------------------- */
+  // JP decision 2026-10-08 (2a). Memberstack writes two terse messages into the
+  // login error banner: "The provided credentials are invalid." and, after a
+  // Google click on a password account, "Please login with your email.". Neither
+  // offers a way out. For those two messages only, this shows plainer copy with a
+  // real link to the shared /forgot-password flow. Any other message stays
+  // exactly as Memberstack wrote it.
+  //
+  // Memberstack's own text node is never rewritten. It is hidden and the copy is
+  // added beside it, so anything that classifies the banner by its
+  // `[data-ms-message-text]` text (native-form-diagnostics.js) still reads the
+  // original Memberstack message. The wrong-password copy is identical for a
+  // wrong email, so it says nothing about whether an account exists.
+  //
+  // Memberstack hides the banner on its own timer about 7 seconds after it shows
+  // it. While the copy is up the banner is shown again, so the message and its
+  // link stay until the next login attempt (a form submit or a provider click),
+  // which hides the banner and puts Memberstack's text back.
+  var ERROR_BANNER_SELECTOR = '[data-ms-message="error"]'
+  var ERROR_TEXT_SELECTOR = '[data-ms-message-text]'
+  var ERROR_COPY_ATTRIBUTE = 'data-starters-login-error-copy'
+  var FORGOT_PASSWORD_PATH = '/forgot-password'
+  // Each line is a list of parts; a `{ link }` part renders as a real anchor to
+  // FORGOT_PASSWORD_PATH.
+  var LOGIN_ERROR_COPY = [
+    {
+      code: 'invalid_credentials',
+      pattern:
+        /credentials are invalid|invalid (email|password|credentials)|incorrect (email|password)/i,
+      lines: [
+        ['That email and password do not match. ', { link: 'Forgot password?' }],
+        ['If you signed up with Google, use "Continue with Google".'],
+      ],
+    },
+    {
+      code: 'use_email_login',
+      pattern: /login with your email|log in with (your )?email/i,
+      lines: [
+        [
+          'This account uses an email and password, not Google. Log in with your email below, or ',
+          { link: 'reset your password' },
+          '.',
+        ],
+      ],
+    },
+  ]
+
+  function loginErrorCopyFor(message) {
+    var text = String(message || '')
+    for (var index = 0; index < LOGIN_ERROR_COPY.length; index += 1) {
+      if (LOGIN_ERROR_COPY[index].pattern.test(text)) return LOGIN_ERROR_COPY[index]
+    }
+    return null
+  }
+
+  function bannerShown(banner) {
+    if (banner.hidden || banner.style.display === 'none') return false
+    if (typeof window.getComputedStyle !== 'function') return true
+    var style = window.getComputedStyle(banner)
+    return !style || style.display !== 'none'
+  }
+
+  function renderLoginErrorCopy(entry, textElement) {
+    var copy = document.createElement('div')
+    copy.setAttribute(ERROR_COPY_ATTRIBUTE, entry.code)
+    copy.setAttribute('role', 'alert')
+    // Same typography as the Memberstack text it stands in for.
+    if (textElement.className) copy.className = textElement.className
+    entry.lines.forEach(function (parts) {
+      var line = document.createElement('span')
+      line.style.display = 'block'
+      parts.forEach(function (part) {
+        if (typeof part === 'string') {
+          line.appendChild(document.createTextNode(part))
+          return
+        }
+        var link = document.createElement('a')
+        link.setAttribute('href', FORGOT_PASSWORD_PATH)
+        link.style.color = 'inherit'
+        link.style.textDecoration = 'underline'
+        link.textContent = part.link
+        line.appendChild(link)
+      })
+      copy.appendChild(line)
+    })
+    return copy
+  }
+
+  function clearLoginErrorCopy(banner) {
+    var state = banner.__startersLoginErrorCopy
+    if (!state) return
+    banner.__startersLoginErrorCopy = null
+    if (state.copy.parentNode) state.copy.parentNode.removeChild(state.copy)
+    state.text.style.display = state.textDisplay
+  }
+
+  function syncLoginErrorCopy(banner) {
+    var text = banner.querySelector(ERROR_TEXT_SELECTOR)
+    var entry = text ? loginErrorCopyFor(text.textContent) : null
+    var state = banner.__startersLoginErrorCopy
+    if (state && (!entry || state.code !== entry.code || state.text !== text)) {
+      clearLoginErrorCopy(banner)
+      state = null
+    }
+    if (!entry) return
+    if (state) {
+      // Memberstack's hide timer fired; keep the copy up until the next attempt.
+      if (banner.style.display === 'none') banner.style.display = state.display
+      return
+    }
+    // Wait until Memberstack actually shows this message.
+    if (!bannerShown(banner)) return
+    var copy = renderLoginErrorCopy(entry, text)
+    banner.__startersLoginErrorCopy = {
+      code: entry.code,
+      copy: copy,
+      display: banner.style.display || 'block',
+      text: text,
+      textDisplay: text.style.display,
+    }
+    text.style.display = 'none'
+    text.parentNode.insertBefore(copy, text.nextSibling)
+  }
+
+  // The banners this page watches, so a new attempt needs no DOM query.
+  var loginErrorBanners = []
+
+  // A new attempt starts: drop the old message so it is never read as this
+  // attempt's outcome.
+  function releaseLoginErrorCopy() {
+    loginErrorBanners.forEach(function (banner) {
+      if (!banner.__startersLoginErrorCopy) return
+      clearLoginErrorCopy(banner)
+      banner.style.display = 'none'
+    })
+  }
+
+  // Capture phase on `document`, so the old message is gone before Memberstack's
+  // own submit or provider handler can show this attempt's result.
+  function isLoginAttempt(event) {
+    var target = event && event.target
+    if (!target || typeof target.closest !== 'function') return false
+    if (event.type === 'click') return Boolean(target.closest('[data-ms-auth-provider]'))
+    return Boolean(target.closest('[data-ms-form]'))
+  }
+
+  function bindLoginErrorCopy() {
+    if (typeof MutationObserver !== 'function') return
+    if (!document.__startersLoginErrorCopyBound) {
+      document.__startersLoginErrorCopyBound = true
+      ;['submit', 'click'].forEach(function (name) {
+        document.addEventListener(
+          name,
+          function (event) {
+            if (isLoginAttempt(event)) releaseLoginErrorCopy()
+          },
+          true,
+        )
+      })
+    }
+    document.querySelectorAll(ERROR_BANNER_SELECTOR).forEach(function (banner) {
+      if (banner.__startersLoginErrorCopyBound) return
+      banner.__startersLoginErrorCopyBound = true
+      loginErrorBanners.push(banner)
+      new MutationObserver(function () {
+        syncLoginErrorCopy(banner)
+      }).observe(banner, {
+        attributes: true,
+        attributeFilter: ['style', 'class', 'hidden'],
+        characterData: true,
+        childList: true,
+        subtree: true,
+      })
+      syncLoginErrorCopy(banner)
     })
   }
 

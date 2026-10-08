@@ -48,11 +48,10 @@ moved to `get_build_profile_status` on 2026-08-04.
    ref. On `/auth-route` it waits for DOMContentLoaded before inserting the
    router, which preserves the current deferred route-guard-before-router order.
    On `/login` and `/starter-login` it inserts immediately, so the fetch
-   overlaps the body parse: those pages only need the router to write
-   `redirect="/auth-route"` onto the form, they never read the guard contract,
-   and a member can submit the form as soon as it paints. Delaying the insert
-   there would leave a submit window in which the login falls through to the
-   shared Memberstack plan redirect.
+   overlaps the body parse: those pages need the router before a member can
+   submit the form or see a Memberstack login error, and they never read the
+   guard contract. Delaying the insert there would leave a submit window in
+   which the login falls through to the shared Memberstack plan redirect.
 
    ```html
    <script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@RELEASE/v3/auth-page-loader.js"></script>
@@ -542,8 +541,8 @@ Production stays silent apart from the configuration errors in the table above.
   fail the gate on it — the loader appends the router during head parsing, so
   `auth-route.js` normally executes before the deferred guard. Confirm only
   that its *request* starts during head parsing, well before DOMContentLoaded,
-  so the form is configured as early as possible. That branch never reads the
-  guard's role contract, so guard-after-router is correct there.
+  so login-page setup is installed as early as possible. That branch never
+  reads the guard's role contract, so guard-after-router is correct there.
 - Confirm `/auth-route` requests no unrelated application controller, and that
   `signup-attribution.js`, `native-form-diagnostics.js`, and both PostHog
   helpers ARE still requested on
