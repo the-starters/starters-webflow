@@ -3843,6 +3843,37 @@ test('an active canonical V3 service remains authoritative over a legacy suggest
   assert.equal(result.dom.statusOutput.textContent, 'Paid calls are on and bookable.')
 })
 
+test('a staff prebuilt rate suggestion prefills the form but stays off until confirmation', async () => {
+  const result = load({
+    cardMode: true,
+    priceTile: { canonical: false, authored: true },
+    initial: canonical({ suggestion: { ...importedSuggestion(50000), source: 'admin_prebuilt' } }),
+  })
+  await settle()
+
+  assert.equal(result.dom.authoredPriceText.textContent, '$500.00')
+  assert.equal(result.dom.price.value, 500)
+  assert.equal(result.dom.disabled.checked, true)
+  assert.equal(result.dom.enabled.checked, false)
+  assert.equal(result.dom.root.getAttribute('data-paid-call-rate-source'), 'admin_prebuilt')
+  assert.equal(result.dom.statusOutput.textContent, 'Paid calls are off. Confirm the suggested rate to turn them on.')
+})
+
+test('an unknown suggestion source renders Not set and never prefills the form', async () => {
+  for (const extra of [{ source: 'unknown' }, { source: 'admin_prebuilt', requires_confirmation: false }]) {
+    const result = load({
+      cardMode: true,
+      initial: canonical({ suggestion: { ...importedSuggestion(50000), ...extra } }),
+    })
+    await settle()
+
+    assert.equal(result.dom.priceOutput.textContent, 'Not set')
+    assert.equal(result.dom.price.value, '')
+    assert.equal(result.dom.disabled.checked, true)
+    assert.equal(result.dom.root.getAttribute('data-paid-call-rate-source'), '')
+  }
+})
+
 test('invalid imported V2 suggestions render Not set and never prefill the form', async () => {
   for (const priceCents of [null, '', 0, '/bin/zsh', 500.5]) {
     const result = load({
