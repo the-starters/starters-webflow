@@ -31,6 +31,7 @@
   var MEMBERSTACK_WAIT_MS = 10000
   var OBSERVED_ATTRIBUTES = ['style', 'class', 'hidden', 'aria-hidden']
   var FAIL_SELECTORS = ['[data-ms-message="error"]', '.w-form-fail']
+  var PROVIDER_SELECTOR = '[data-ms-auth-provider]'
   // Map the visible provider message to an allowlisted reason. Raw text is never sent.
   var ERROR_DETAILS = [
     [/credentials are invalid|invalid (email|password|credentials)|incorrect (email|password)/i, 'invalid_credentials'],
@@ -371,6 +372,17 @@
     })
   }
 
+  function beginProviderDiagnostic(form) {
+    form.__startersStaleError = firstVisibleState(form, FAIL_SELECTORS)
+    Promise.resolve(helperReady).then(function () {
+      started(form)
+      if (form.getAttribute('data-ms-form') === 'login' || form.getAttribute('data-ms-form') === 'signup') {
+        pendingAuthForm = form
+      }
+      checkStates(form)
+    })
+  }
+
   function bindForm(form) {
     if (!form || form.__startersMemberstackDiagnosticsBound || !workflowFor(form)) return false
     form.__startersMemberstackDiagnosticsBound = true
@@ -390,6 +402,14 @@
 
     var wrapper = wrapperFor(form)
     if (wrapper && typeof MutationObserver === 'function') {
+      wrapper.addEventListener('click', function (event) {
+        var target = event && event.target
+        var control = target && typeof target.closest === 'function'
+          ? target.closest(PROVIDER_SELECTOR)
+          : null
+        if (!control || !contains(wrapper, control)) return
+        beginProviderDiagnostic(form)
+      }, true)
       var observer = new MutationObserver(function (records) {
         clearStaleError(form, records)
         checkStates(form)

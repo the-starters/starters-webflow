@@ -56,6 +56,7 @@ function formHarness(kind, options = {}) {
   const fail = new Element()
   const memberstackDone = new Element({ 'data-ms-message': 'success' })
   const memberstackFail = new Element({ 'data-ms-message': 'error' })
+  const provider = new Element({ 'data-ms-auth-provider': 'google' })
   done.style.display = 'none'
   fail.style.display = 'none'
   memberstackDone.style.display = 'none'
@@ -75,11 +76,13 @@ function formHarness(kind, options = {}) {
   memberstackFail.children.push(memberstackFailText)
   memberstackFail.querySelector = (selector) =>
     selector === '[data-ms-message-text]' ? memberstackFailText : null
+  provider.closest = (selector) => selector === '[data-ms-auth-provider]' ? provider : null
+  wrapper.children.push(provider)
   const form = new Element({ 'data-ms-form': kind })
   form.id = options.id || ''
   form.checkValidity = () => options.valid !== false
   form.closest = (selector) => (selector === '.w-form' ? wrapper : null)
-  return { done, fail, form, memberstackDone, memberstackFail, memberstackFailText, wrapper }
+  return { done, fail, form, memberstackDone, memberstackFail, memberstackFailText, provider, wrapper }
 }
 
 function boot({ kind = 'login', pathname = '/login', valid = true, id = '', delayHelper = false, routeGuard = null } = {}) {
@@ -344,6 +347,14 @@ function showError(page, text) {
   page.observers[0].callback([{ target: page.memberstackFailText }])
 }
 
+function clickProvider(page, extra = {}) {
+  page.wrapper.dispatch('click', {
+    target: page.provider,
+    preventDefault() { throw new Error('provider click intercepted') },
+    ...extra,
+  })
+}
+
 test('a Memberstack login error records an allowlisted detail and never the message text', async () => {
   const page = boot({ kind: 'login' })
   page.form.dispatch('submit')
@@ -371,6 +382,33 @@ test('Google-click and unknown Memberstack messages map to fixed codes', async (
   showError(unknown, 'Something odd happened for jane@example.com')
   assert.equal(unknown.window.StartersWorkflowDiagnostics.latest('brand_login').error_detail, 'other')
   assert.doesNotMatch(JSON.stringify(unknown.tracked), /jane@example\.com|odd/)
+})
+
+test('a Google provider click starts tracking so the email-login error is recorded', async () => {
+  const page = boot({ kind: 'login' })
+  assert.doesNotThrow(() => clickProvider(page))
+  await tick()
+  showError(page, 'Please login with your email.')
+  const receipt = page.window.StartersWorkflowDiagnostics.latest('brand_login')
+  assert.equal(receipt.result, 'failure')
+  assert.equal(receipt.error_code, 'MEMBERSTACK_FORM_ERROR')
+  assert.equal(receipt.error_detail, 'use_email_login')
+  assert.equal(page.tracked.some((event) => event.name === 'workflow_form_submit_started'), true)
+  assert.equal(page.fetchCalls.length, 0)
+})
+
+test('a provider click treats a pre-visible Memberstack error as stale', async () => {
+  const page = boot({ kind: 'login' })
+  await tick()
+  page.memberstackFailText.textContent = 'Please login with your email.'
+  page.memberstackFail.style.display = 'block'
+  clickProvider(page)
+  await tick()
+  page.observers[0].callback([{ target: page.wrapper }])
+  assert.equal(page.window.StartersWorkflowDiagnostics.latest('brand_login').result, 'started')
+  page.auth({ data: { id: 'mem_test' } })
+  assert.equal(page.window.StartersWorkflowDiagnostics.latest('brand_login').result, 'success')
+  assert.equal(page.tracked.some((event) => event.name === 'workflow_form_submit_failed'), false)
 })
 
 test('a banner still visible from the previous submit is not counted, and a later login succeeds', async () => {
