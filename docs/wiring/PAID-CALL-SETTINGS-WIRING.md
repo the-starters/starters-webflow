@@ -158,8 +158,8 @@ The authored tile is borrowed, not owned, so the fallback is deliberately narrow
   doubled price. A caption, a `/hr` unit, more than one candidate, and any other shape are never
   rewritten, and such a tile is left entirely to Designer.
 - The canonical output and a resolved authored tile show `Not set` when no valid confirmed,
-  pending, or imported rate exists. They never show `$0.00`, a Designer placeholder, or another fallback for a
-  blank, zero, invalid, or absent rate.
+  pending, or suggested rate exists. They never show `$0.00`, a Designer placeholder, or another
+  fallback for a blank, zero, invalid, or absent rate.
 
 Optional prerequisite rows use `data-paid-call-prerequisite` with one of these values (authorable
 anywhere inside the Paid card scope, including the Call Item header):
@@ -177,8 +177,8 @@ The controller sets `data-ready="true|false"` on each row. It also sets these wr
 - `data-paid-call-enabled="true|false"`
 - `data-paid-call-bookable="true|false"` (also `false` when the stored duration is not `60`)
 - `data-paid-call-card-state="on|off"` on the Paid card scope
-- `data-paid-call-rate-source="legacy_v2"` only while a valid imported suggestion is displayed;
-  otherwise empty
+- `data-paid-call-rate-source="legacy_v2|admin_prebuilt"` only while a valid imported or
+  staff-prebuilt suggestion is displayed; otherwise empty
 - `data-paid-call-rate-state="correction-required"` while an active service's stored rate is outside
   the whole-dollar contract; otherwise empty
 - `data-paid-call-duration-required="60"`
@@ -191,7 +191,7 @@ The controller sets `data-ready="true|false"` on each row. It also sets these wr
 - Initial and terminal state comes from `GET starter/paid-call-settings/get/v3` (`#2924`). With no
   active service, an unconsumed Build Profile receipt can prefill the form controls; it is never
   canonical state.
-- An active service in `services[]` is the confirmed V3 authority. It wins over any imported
+- An active service in `services[]` is the confirmed V3 authority. It wins over any accepted
   suggestion or pending Build Profile receipt. The card output uses that active service's valid
   canonical rate, or `Not set` when that canonical rate cannot be displayed. Any leftover Build
   receipt is retired without overlay or canonical write.
@@ -207,12 +207,15 @@ The controller sets `data-ready="true|false"` on each row. It also sets these wr
   cents still renders `Not set` without inventing a fallback, under the same correction state.
 - With no active service, the GET may return a top-level `suggestion`. The browser accepts it only
   when it is USD, uses a whole-dollar integer amount from 100 through 100000 cents, has
-  `source: "legacy_v2"`, and has `requires_confirmation: true`. A valid suggestion replaces the
-  authored placeholder and prefills the native rate field, but the card and No radio remain Off.
-  The suggestion does not cause a write. The Starter must select Yes and submit the existing native
-  V3 form before the canonical upsert can confirm it. A missing or rejected suggestion renders
-  `Not set` and leaves the rate field blank.
-- An unconsumed Build Profile enable outranks the imported suggestion but never the canonical rate:
+  `source: "legacy_v2"` or `source: "admin_prebuilt"`, and has `requires_confirmation: true`. A
+  valid suggestion replaces the authored placeholder, prefills the native rate field, and sets
+  `data-paid-call-rate-source` to the accepted source, but the card and No radio remain Off. The
+  suggestion does not cause a write. The Starter must select Yes and submit the existing native V3
+  form before the canonical upsert can confirm it. A missing or rejected suggestion renders `Not
+  set` and leaves the rate field blank. A valid `legacy_v2` suggestion keeps the imported V2 status
+  copy; a valid `admin_prebuilt` suggestion says "Paid calls are off. Confirm the suggested rate to
+  turn them on."
+- An unconsumed Build Profile enable outranks the accepted suggestion but never the canonical rate:
   the receipt's title and rate prefill the form, `data-paid-call-rate-source` stays empty, and the Yes
   radio is preselected. The price output shows the pending rate only while no active canonical service
   exists; an active service keeps its own confirmed (or correction-required) rate in that output, so
@@ -294,7 +297,7 @@ The controller sets `data-ready="true|false"` on each row. It also sets these wr
 ### Environment in the canonical GET payload
 
 `GET starter/paid-call-settings/get/v3` (`#2924`) answers with `stripe_environment` at the top
-level, validated to `test` or `live`, alongside `readiness`, `services[]`, and the optional imported
+level, validated to `test` or `live`, alongside `readiness`, `services[]`, and the optional rate
 `suggestion`, and stamps
 `payment_environment` on each service. It does **not** return `data_environment` at either level.
 The payment environment is therefore the only environment authority this payload carries, and it is
@@ -320,7 +323,7 @@ the published `consulting-calls-paid`
 binding, the stale-readiness save of an active service, the expired-session
 fail-closed writes, and the authored price tile fallback — canonical precedence,
 single-leaf and split `$` + number selection, the continued-amount guard that leaves a
-tile with a trailing cents fragment alone, imported V2 suggestion validation and explicit
+tile with a trailing cents fragment alone, suggestion source validation and explicit
 confirmation, `Not set` empty states, scoped Off-state style preservation, and Free-sibling
 isolation, stable accessible control names, preservation of authored labels, and polite status
 announcements — plus
@@ -381,7 +384,7 @@ The release owner runs them by hand, in this order, after the PR merges:
 5. On the published Paid card, confirm the authored price tile itself: with an active TEST
    service it must read the canonical Xano rate as `$1,500.00`-style USD in the amount
    element only, with any authored caption and unit untouched and no doubled currency
-   symbol. With no confirmed or imported rate it must read `Not set`, never `$0.00` or the
+   symbol. With no confirmed or suggested rate it must read `Not set`, never `$0.00` or the
    Designer placeholder. In the Off state, confirm the whole card, price tile, status,
    instructions, and Edit control stay fully opaque and readable, with only the authored Off
    pill as the inactive-state cue and no opacity, filters, outlines, or new price-tile decoration.
@@ -389,11 +392,12 @@ The release owner runs them by hand, in this order, after the PR merges:
    bound shapes — most often the amount is split across more than the `$` and number pair,
    such as a separate cents span — so report the real structure instead of widening the
    fallback by guess, and prefer adding `data-call-settings-output="price"` in Designer.
-6. With no active V3 service, use a TEST response whose valid `legacy_v2` suggestion contains the
-   member's confirmed legacy rate. Confirm the card stays Off, shows and prefills that exact rate,
-   and sends no mutation until the Starter selects Yes and clicks Update. Confirm an active V3
-   service still wins when both values exist, and blank, zero, invalid, or absent suggestions show
-   `Not set` with a blank field.
+6. With no active V3 service, use a TEST response whose valid `legacy_v2` or `admin_prebuilt`
+   suggestion contains the member's suggested rate. Confirm the card stays Off, shows and prefills
+   that exact rate, sets `data-paid-call-rate-source` to the accepted source, and sends no mutation
+   until the Starter selects Yes and clicks Update. Confirm an active V3 service still wins when
+   both values exist, and blank, zero, invalid, unconfirmed, or absent suggestions show `Not set`
+   with a blank field.
 7. Use a pre-existing TEST service with an in-flight TEST booking, pick No, and click Update.
    Confirm Xano blocks the disable, the existing scoped `.w-form-fail` block shows the exact Xano
    message, the editor stays open, and canonical state stays on. A retry must clear the old message
