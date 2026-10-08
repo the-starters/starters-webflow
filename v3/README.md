@@ -143,6 +143,14 @@ gate. The versioned
 documents route access plus the separate Webflow, content, and Xano enforcement
 layers.
 
+On the two login paths the router also replaces two Memberstack login errors
+in `[data-ms-message="error"]`: the invalid-credentials message and the
+Google-click "login with your email" message. It hides Memberstack's
+`[data-ms-message-text]` element, keeps its text unchanged for banner-text
+classifiers, and adds a `[data-starters-login-error-copy]` alert with a real
+`/forgot-password` link. The banner stays visible until the next form submit or
+`[data-ms-auth-provider]` click. Other messages are not changed.
+
 The V3 protected-route guard sends logged-out visitors to
 `/login?next=<encoded current path and query>`. For an exact Calls notification
 locator on either dashboard, it also preserves `#calls` or `#calls-section`
