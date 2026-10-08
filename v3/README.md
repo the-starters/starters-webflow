@@ -123,11 +123,11 @@ node --test v3/password-recovery.test.js
 `auth-route.js` owns post-login and post-signup routing for V3 without changing
 the shared Memberstack plan redirects used by V2. The blocking site-head
 `auth-page-loader.js` inserts it only on the V3 `/login`, `/starter-login`, and
-`/auth-route` pages — immediately on the two login paths, which only need the
-form's `/auth-route` redirect written, and after DOMContentLoaded on
-`/auth-route`, which reads the guard's role contract. Keep the static deferred
-sitewide `route-guard.js` unconditional and ahead of the loader because it owns
-the shared stable plan-role contract and completes before DOMContentLoaded.
+`/auth-route` pages — immediately on the two login paths, where it configures
+login-page behavior, and after DOMContentLoaded on `/auth-route`, which reads
+the guard's role contract. Keep the static deferred sitewide `route-guard.js`
+unconditional and ahead of the loader because it owns the shared stable
+plan-role contract and completes before DOMContentLoaded.
 Keep `signup-attribution.js`, both `utils/posthog-*.js` helpers,
 `native-form-diagnostics.js` — the sitewide observer that owns the
 `brand_login` and `talent_login` receipts — and the

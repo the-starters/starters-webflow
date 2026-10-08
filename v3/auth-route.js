@@ -12,7 +12,7 @@
  * there — the deferred guard has completed by then, and only there is the guard
  * guaranteed to execute before this file. On the two login paths the loader
  * inserts immediately, so this file usually executes BEFORE the deferred guard;
- * that branch only writes the form redirect and never reads the role contract.
+ * that branch configures login-page behavior and never reads the role contract.
  * The loader never inserts a second copy of the guard.
  *
  * Talent members additionally get a funnel-position check here, because
