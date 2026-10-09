@@ -49,6 +49,12 @@
  *     reveals the complete approved set when more case studies exist.
  *  5. Every modal lookup is scoped INSIDE the modal root, so an older hidden
  *     copy of the modal elsewhere in the DOM can never intercept the data.
+ *  6. The approved read is hardened. The embed did a bare fetch with no timeout
+ *     and no retry, and its caller hid the section without a word on failure. It
+ *     now fetches under an AbortController timeout, retries once, and — when
+ *     both attempts fail — reveals an authored retry control instead of leaving
+ *     an empty section. A read that only succeeds on the retry reports
+ *     `portfolio_highlights_recovered`, so a recovered read is not silent.
  *
  * Ownership: this CDN file is the only Highlights renderer. The legacy on-canvas
  * owner-read embed must be removed in the same Webflow whole-block cutover.
@@ -61,10 +67,35 @@
     'https://cdn.prod.website-files.com/plugins/Basic/assets/placeholder.60f9b1840c.svg';
   var OWNED = 'data-portfolio-rendered';
   var INITIAL_VISIBLE_COUNT = 3;
+  // A hung read must not leave the section stuck on its loading state forever.
+  var APPROVED_FETCH_TIMEOUT_MS = 8000;
 
   function pick(attrSelector, classSelector, scope) {
     var root = scope || document;
     return root.querySelector(attrSelector) || root.querySelector(classSelector);
+  }
+
+  /**
+   * fetch with an AbortController deadline. A bare "Failed to fetch" from a
+   * dropped connection rejects on its own; this adds the case the browser never
+   * ends — a request that hangs past the timeout is aborted so the caller's
+   * retry can run.
+   */
+  function fetchWithTimeout(url) {
+    var controller = typeof AbortController === 'function' ? new AbortController() : null;
+    var timer = controller && setTimeout(function () {
+      controller.abort();
+    }, APPROVED_FETCH_TIMEOUT_MS);
+    return fetch(url, controller ? { signal: controller.signal } : undefined).finally(function () {
+      clearTimeout(timer);
+    });
+  }
+
+  /** Fire a diagnostic event through the shared, platform-tagged helper. */
+  function trackEvent(name, props) {
+    if (window.StartersTrack && typeof window.StartersTrack.track === 'function') {
+      window.StartersTrack.track(name, props);
+    }
   }
 
   function stagingHost(hostname) {
@@ -383,8 +414,8 @@
       return card;
     }
 
-    async function loadPortfolios() {
-      var response = await fetch(XANO_GET_APPROVED_URL);
+    async function fetchApprovedPortfolios() {
+      var response = await fetchWithTimeout(XANO_GET_APPROVED_URL);
       var data = await response.json();
 
       if (!response.ok || !Array.isArray(data)) {
@@ -403,6 +434,22 @@
         }
         return Number(a.id) - Number(b.id);
       });
+    }
+
+    /**
+     * The approved read, with one retry. Both "Failed to fetch" and an aborted
+     * hang reject, so the second attempt covers a transient blip. A read that
+     * only succeeds on the retry is reported, so a recovered read leaves a
+     * signal instead of looking identical to one that never failed.
+     */
+    async function loadPortfolios() {
+      try {
+        return await fetchApprovedPortfolios();
+      } catch (firstError) {
+        var portfolios = await fetchApprovedPortfolios();
+        trackEvent('portfolio_highlights_recovered', { attempt: 2 });
+        return portfolios;
+      }
     }
 
     async function getPublicPortfolioImages(portfolioId) {
@@ -492,43 +539,68 @@
       });
     }
 
-    var portfolios;
-    try {
-      portfolios = await loadPortfolios();
-    } catch (error) {
-      console.error('Portfolio: approved public read failed');
-      return;
+    // Authored, optional. Shown only when the approved read fails after its
+    // retry, so a visitor who lost the section can ask for it back rather than
+    // facing an empty heading with no explanation.
+    var retryControl = document.querySelector('[data-highlights-retry]');
+    var loadInFlight = false;
+
+    if (retryControl) {
+      retryControl.style.display = 'none';
+      retryControl.addEventListener('click', function (event) {
+        event.preventDefault();
+        loadAndRender();
+      });
     }
 
-    loadedPortfolios = portfolios;
-    template.classList.add('hidden');
+    function renderPortfolios(portfolios) {
+      loadedPortfolios = portfolios;
+      template.classList.add('hidden');
 
-    if (!portfolios.length) {
-      if (block) block.classList.add('hidden');
-      if (section) section.classList.add('hidden');
-      return;
+      if (!portfolios.length) {
+        if (block) block.classList.add('hidden');
+        if (section) section.classList.add('hidden');
+        return;
+      }
+
+      if (section) section.style.display = 'block';
+
+      if (window.location.hostname === 'the-starters.webflow.io') {
+        if (block) block.classList.remove('hidden');
+      }
+
+      portfolios.forEach(function (portfolio, index) {
+        var card = createCard(portfolio);
+        card.setAttribute('data-portfolio-item', '');
+        if (index >= INITIAL_VISIBLE_COUNT) card.style.display = 'none';
+        wrapper.appendChild(card);
+      });
+
+      canRevealPortfolios = portfolios.length > INITIAL_VISIBLE_COUNT;
+      if (viewAllButton && canRevealPortfolios) viewAllButton.style.display = '';
+
+      // A deep link opened the dialog before these rows existed; fill it now.
+      // The open state is authoritative — the modal-open event may have been
+      // dispatched before this script's listener existed, and a visitor may
+      // have dismissed the dialog while the read was in flight.
+      if (modalIsOpen()) fillDefaultPortfolio();
     }
 
-    if (section) section.style.display = 'block';
-
-    if (window.location.hostname === 'the-starters.webflow.io') {
-      if (block) block.classList.remove('hidden');
+    async function loadAndRender() {
+      if (loadInFlight) return;
+      loadInFlight = true;
+      if (retryControl) retryControl.style.display = 'none';
+      try {
+        renderPortfolios(await loadPortfolios());
+      } catch (error) {
+        console.error('Portfolio: approved public read failed');
+        if (section) section.style.display = 'block';
+        if (retryControl) retryControl.style.display = '';
+      } finally {
+        loadInFlight = false;
+      }
     }
 
-    portfolios.forEach(function (portfolio, index) {
-      var card = createCard(portfolio);
-      card.setAttribute('data-portfolio-item', '');
-      if (index >= INITIAL_VISIBLE_COUNT) card.style.display = 'none';
-      wrapper.appendChild(card);
-    });
-
-    canRevealPortfolios = portfolios.length > INITIAL_VISIBLE_COUNT;
-    if (viewAllButton && canRevealPortfolios) viewAllButton.style.display = '';
-
-    // A deep link opened the dialog before these rows existed; fill it now. The
-    // open state is authoritative — the modal-open event may have been
-    // dispatched before this script's listener existed, and a visitor may have
-    // dismissed the dialog while the read was in flight.
-    if (modalIsOpen()) fillDefaultPortfolio();
+    await loadAndRender();
   });
 })();
