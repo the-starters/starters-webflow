@@ -10377,3 +10377,127 @@ test('F68: a Brand retry that finds no member still clears the hero', async () =
   assert.deepEqual(env.hero(), ['', '', ''], 'a missing member fails closed')
   assert.deepEqual(env.delays(), [])
 })
+
+// ---------------------------------------------------------------------------
+// F08/F10 (JP 2026-10-09/10): a pending request with an open new-time offer.
+// ---------------------------------------------------------------------------
+
+function f08PendingOffer(overrides = {}) {
+  const now = 1_800_000_000_000
+  return {
+    booking_id: 'f08-booking',
+    config_id: 'f08-config',
+    data_environment: 'test',
+    status: 'pending',
+    start: now + 72 * 3600000,
+    end: now + 72 * 3600000 + 1800000,
+    start_old: now + 96 * 3600000,
+    end_old: now + 96 * 3600000 + 1800000,
+    rescheduled_by: 'starter',
+    rescheduled_reason: 'Travel',
+    confirmation_expires_at: now + 48 * 3600000,
+    duration: 30,
+    booking_ref: 'ref',
+    starter_data: { name: 'Sam Starter', memberstack_id: 'mem_sb_starter' },
+    brand_data: { name: 'Acme Brand', memberstack_id: 'mem_sb_brand' },
+    ...overrides,
+  }
+}
+
+test('F08: an open offer shows "New time proposed", never the plain pending label', () => {
+  const now = 1_800_000_000_000
+  const booking = f08PendingOffer()
+  assert.equal(api.pendingOfferOpen(booking), true)
+  for (const role of ['starter', 'brand']) {
+    assert.equal(api.statusLabel(api.bookingStatus(booking, now), role, booking), 'New time proposed')
+  }
+  const plain = f08PendingOffer({ start_old: null, end_old: null, rescheduled_by: '' })
+  assert.equal(api.pendingOfferOpen(plain), false)
+  assert.equal(api.statusLabel(api.bookingStatus(plain, now), 'starter', plain), 'Pending')
+  // Offer fields left on a terminal row do not reopen the offer.
+  assert.equal(api.pendingOfferOpen(f08PendingOffer({ status: 'cancelled' })), false)
+})
+
+test('F08: the offer status names the proposer and who must answer', () => {
+  const starterOffer = f08PendingOffer()
+  assert.equal(api.pendingOfferStatusText(starterOffer, 'brand'), 'Starter proposed a new time. Awaiting your answer.')
+  assert.equal(api.pendingOfferStatusText(starterOffer, 'starter'), 'You proposed a new time. Awaiting Brand answer.')
+  const brandCounter = f08PendingOffer({ rescheduled_by: 'brand' })
+  assert.equal(api.pendingOfferStatusText(brandCounter, 'starter'), 'Brand proposed a new time. Awaiting your answer.')
+  assert.equal(api.pendingOfferStatusText(f08PendingOffer({ status: 'confirmed' }), 'brand'), '')
+})
+
+test('F08: Starter Confirm is hidden while an offer is open', () => {
+  const now = 1_800_000_000_000
+  assert.equal(api.canConfirmBooking('starter', f08PendingOffer(), now), false)
+  assert.equal(api.canConfirmBooking('starter', f08PendingOffer({ rescheduled_by: 'brand' }), now), false)
+  assert.equal(
+    api.canConfirmBooking('starter', f08PendingOffer({ start_old: null, end_old: null, rescheduled_by: '' }), now),
+    true,
+  )
+})
+
+test('F08: the detail rows show the original time, the offer, the status, and the deadline', () => {
+  const booking = f08PendingOffer()
+  const rows = api.detailSupplementRows(booking, 'brand', 'UTC', 'base')
+  const byField = Object.fromEntries(rows.map((row) => [row.field, row]))
+  assert.equal(byField['start-date'].label, 'Date and time')
+  assert.ok(byField['start-date'].value)
+  assert.equal(byField['offer-date'].label, 'Proposed new time')
+  assert.notEqual(byField['offer-date'].value, byField['start-date'].value)
+  assert.equal(byField['offer-status'].value, 'Starter proposed a new time. Awaiting your answer.')
+  assert.equal(byField['offer-deadline'].label, 'Answer before')
+  assert.ok(byField['offer-deadline'].value)
+  assert.equal(byField['reschedule-reason'].value, 'Travel')
+  assert.equal(byField['start-date-old'], undefined, 'no "Current confirmed time" on a request')
+  // No offer rows without an open offer, including terminal rows.
+  for (const row of [
+    f08PendingOffer({ start_old: null, end_old: null, rescheduled_by: '' }),
+    f08PendingOffer({ status: 'cancelled' }),
+  ]) {
+    const fields = api.detailSupplementRows(row, 'brand', 'UTC', 'base').map((each) => each.field)
+    assert.equal(fields.some((field) => field.startsWith('offer-')), false)
+  }
+})
+
+test('F08: an open pending detail refreshes same-status offer changes', () => {
+  const originalDocument = global.document
+  const now = 1_800_000_000_000
+  const view = f52Panel('base', {
+    rows: [['Duration', 'duration', '30min']],
+  })
+  const booking = f08PendingOffer({
+    brand_data: { name: 'Acme Brand', memberstack_id: 'mem_sb_brand', timezone: 'UTC' },
+  })
+  const updated = {
+    ...booking,
+    start_old: booking.start_old + 3600000,
+    end_old: booking.end_old + 3600000,
+    rescheduled_by: 'brand',
+    confirmation_expires_at: booking.confirmation_expires_at + 3600000,
+  }
+  const refs = [{ rows: [booking], list: richElement('div') }]
+  try {
+    global.document = {
+      querySelector(selector) {
+        return selector === '[popup-booking-info], dialog[data-modal-target="popup-booking-info"]'
+          ? view.modal
+          : null
+      },
+    }
+    assert.equal(api.populateDetailModal(view.modal, booking, 'brand', now), true)
+    const firstRows = Object.fromEntries(summaryRowsOf(view.table).map((row) => [row[0], row[2]]))
+    refs[0].rows = [updated]
+    assert.equal(api.refreshOpenDetailPanel(refs, 'brand', now), true)
+    const nextRows = Object.fromEntries(summaryRowsOf(view.table).map((row) => [row[0], row[2]]))
+    const expected = Object.fromEntries(
+      api.detailSupplementRows(updated, 'brand', 'UTC', 'base').map((row) => [row.field, row.value]),
+    )
+    assert.notEqual(nextRows['offer-date'], firstRows['offer-date'])
+    assert.equal(nextRows['offer-date'], expected['offer-date'])
+    assert.equal(nextRows['offer-status'], expected['offer-status'])
+    assert.equal(nextRows['offer-deadline'], expected['offer-deadline'])
+  } finally {
+    global.document = originalDocument
+  }
+})

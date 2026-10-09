@@ -5,9 +5,10 @@
  * reason fields. This module binds those elements, creates only missing
  * supporting reschedule views, and sends environment-safe commands with
  * V3 contracts: decline, cancel, direct pending-request time updates,
- * and proposal responses for eligible Free calls, plus the Paid parity
- * P5 (held-call cancel and fee line), P6 (pending Paid edit) and P7 (saved-card
- * Paid reschedule) gates, each mirrored from its server admission rule.
+ * pending new-time offers, and proposal responses for eligible Free calls,
+ * plus the Paid parity P5 (held-call cancel and fee line), P6 (pending Paid
+ * edit) and P7 (saved-card Paid reschedule) gates, each mirrored from its
+ * server admission rule.
  * Reschedule-decline release
  * prerequisites are owned by README.md, "CS-17 backend release prerequisite".
  */
@@ -169,6 +170,50 @@
       failureMessage: 'Canonical reschedule response failed',
       busyLabel: 'Keeping current time…',
     },
+    /* F08/F10 (JP 2026-10-09/10): a new time offered on a PENDING request.
+       The request keeps `pending` at its original slot; the offer lives in
+       start_old/end_old with rescheduled_by = proposer (#5756 pending branch).
+       First offer: Starter only. Counter: the current responder. */
+    'pending-propose': {
+      path: '/booking/reschedule/propose/v3',
+      storagePrefix: 'starters:dashboard-pending-propose:v1:',
+      attemptPrefix: 'dashboard-pending-propose',
+      reasonField: 'rescheduled_reason',
+      reasonAttribute: 'booking-reschedule-reason',
+      responseKey: 'reschedule',
+      successStatus: 'pending',
+      successContent: 'reschedule-proposed',
+      failureMessage: 'The new time could not be proposed',
+    },
+    /* Accept of an open offer (#5759 pending branch). The server owner is not
+       built yet, so the control stays hidden behind F08_ACCEPT_ENABLED. */
+    'pending-accept': {
+      path: '/booking/reschedule/confirm/v3',
+      storagePrefix: 'starters:dashboard-pending-accept:v1:',
+      attemptPrefix: 'dashboard-pending-accept',
+      reasonField: null,
+      responseKey: 'reschedule_confirm',
+      // The accept replaces the provider booking (design S2).
+      replacesBooking: true,
+      successStatus: 'confirmed',
+      successContent: 'reschedule-accepted',
+      failureMessage: 'The new time could not be confirmed',
+      busyLabel: 'Confirming…',
+    },
+    /* A Brand decline of a Starter offer (#5760 pending branch -> #2126). It
+       ends the whole request with the pending policy (no fee). A Starter
+       answers a Brand counter with the normal Decline Call (#1547). */
+    'pending-decline': {
+      path: '/booking/reschedule/decline/v3',
+      storagePrefix: 'starters:dashboard-pending-decline:v1:',
+      attemptPrefix: 'dashboard-pending-decline',
+      reasonField: null,
+      responseKey: 'reschedule_decline',
+      successStatus: 'cancelled',
+      successContent: 'cancelled',
+      failureMessage: 'The new time could not be declined',
+      busyLabel: 'Declining…',
+    },
   }
 
   const CALENDAR_MODULE_PATH =
@@ -248,6 +293,30 @@
   // P5 (#2099 held-call cancel) opens in production with the #2099 / #263 / #272
   // server publish; keep this list in lockstep with that admission gate.
   const PAID_HOLD_CANCEL_OPEN_ENVIRONMENTS = ['test', 'production']
+  /* F08/F10 pending propose/counter/decline opening. Lockstep with the #5756
+     `$f08_open` / `$f08_paid_open` gates (Test only). Production is a
+     one-line change here after the server switch opens. */
+  const PENDING_PROPOSE_OPEN_ENVIRONMENTS = ['test']
+  /* The accept owner (#5759 pending branch) is not built yet (it waits on a
+     Nylas probe). Keep the accept control hidden until it passes Test. */
+  const F08_ACCEPT_ENABLED = false
+  let f08AcceptEnabled = F08_ACCEPT_ENABLED
+
+  /** Test-only override of F08_ACCEPT_ENABLED. Returns the previous value. */
+  function setF08AcceptEnabledForTest(enabled) {
+    const previous = f08AcceptEnabled
+    f08AcceptEnabled = enabled === true
+    return previous
+  }
+  // #5756: an offer must start more than 24 h from now (offer_start - 24 h > now).
+  const PENDING_PROPOSE_LEAD_MS = 24 * 3600000
+  /* The server range is the configuration's available_days_in_future. The
+     row does not carry it, so the picker uses the writer default (14) unless
+     the row names one; the server stays the authority. */
+  const PENDING_PROPOSE_DEFAULT_RANGE_DAYS = 14
+  const PENDING_PROPOSE_STEP_MINUTES = 30
+  const PENDING_PROPOSE_START_MESSAGE =
+    'Choose a new time more than 24 hours from now.'
 
   // F15 (Kaeser + Jai, 2026-10-06): a Brand cancel at or within 8 h of start is
   // charged the full session fee; every other Paid cancel is released.
@@ -383,6 +452,224 @@
     return paidRescheduleLastAcceptTime(booking)
   }
 
+  function timestampMs(value) {
+    const time = Number(value)
+    if (!Number.isFinite(time) || time === 0) return time
+    return Math.abs(time) < 1e12 ? time * 1000 : time
+  }
+
+  /**
+   * F08: whether a PENDING request carries an open new-time offer
+   * (status pending, start_old > 0, end_old after start_old).
+   * @param {object|null} booking Canonical booking row.
+   * @returns {boolean}
+   */
+  function pendingOfferOpen(booking) {
+    const start = timestampMs(booking && booking.start_old)
+    const end = timestampMs(booking && booking.end_old)
+    return (
+      bookingStatus(booking) === 'pending' &&
+      Number.isFinite(start) && start > 0 &&
+      Number.isFinite(end) && end > start
+    )
+  }
+
+  /** The proposer of the open offer ('starter' | 'brand'), or ''. */
+  function pendingOfferProposer(booking) {
+    if (!pendingOfferOpen(booking)) return ''
+    const proposer = clean(booking && booking.rescheduled_by).toLowerCase()
+    return proposer === 'starter' || proposer === 'brand' ? proposer : ''
+  }
+
+  function pendingDeadlineOpen(booking, reference) {
+    const deadline = timestampMs(booking && booking.confirmation_expires_at)
+    return (
+      reference != null && Number.isFinite(Number(reference)) &&
+      Number.isFinite(deadline) && deadline > Number(reference)
+    )
+  }
+
+  /** Shared F08 admission: environment switch, identity, Free or saved-card Paid. */
+  function pendingNegotiationAdmitted(role, booking) {
+    return (
+      (role === 'starter' || role === 'brand') &&
+      bookingStatus(booking) === 'pending' &&
+      paidEnvironmentOpen(booking, PENDING_PROPOSE_OPEN_ENVIRONMENTS) &&
+      (freeBooking(booking) || paidSavedCardState(booking)) &&
+      actorMemberId(role, booking) !== '' &&
+      bookingIdentified(booking)
+    )
+  }
+
+  /**
+   * F08/F10: whether `role` may propose (first offer, Starter only) or
+   * counter (responder only, no round limit) a new time on a pending request.
+   * Mirrors the #5756 pending-branch admission.
+   */
+  function canProposePending(role, booking, now) {
+    const duration = Number(booking && booking.duration)
+    if (!pendingNegotiationAdmitted(role, booking)) return false
+    if (clean(booking && booking.grant_id) === '' || !Number.isFinite(duration) || duration <= 0) return false
+    if (!pendingDeadlineOpen(booking, referenceTime(booking, now))) return false
+    if (pendingOfferOpen(booking)) {
+      const proposer = pendingOfferProposer(booking)
+      return proposer !== '' && proposer !== role
+    }
+    return role === 'starter'
+  }
+
+  /** F08: whether `role` is the responder of an open offer with time left. */
+  function canRespondPending(role, booking, now) {
+    const proposer = pendingOfferProposer(booking)
+    return (
+      pendingNegotiationAdmitted(role, booking) &&
+      proposer !== '' &&
+      proposer !== role &&
+      pendingDeadlineOpen(booking, referenceTime(booking, now))
+    )
+  }
+
+  /** F08: Accept of an open offer. Hidden while F08_ACCEPT_ENABLED is false. */
+  function canAcceptPendingOffer(role, booking, now) {
+    const offerStart = timestampMs(booking && booking.start_old)
+    return (
+      f08AcceptEnabled &&
+      canRespondPending(role, booking, now) &&
+      offerStart > referenceTime(booking, now)
+    )
+  }
+
+  /**
+   * F08: the Brand declines a Starter offer through #5760 (pending branch).
+   * A Starter answers a Brand counter with the normal Decline Call (#1547).
+   */
+  function canDeclinePendingOffer(role, booking, now) {
+    return role === 'brand' &&
+      pendingOfferProposer(booking) === 'starter' &&
+      canRespondPending(role, booking, now)
+  }
+
+  /** F08: whether a proposed start meets the #5756 lead and range rules. */
+  function pendingProposedStartAllowed(booking, start, reference) {
+    const value = Number(start)
+    const at = Number(reference)
+    if (!Number.isFinite(value) || reference == null || !Number.isFinite(at)) return false
+    return value - PENDING_PROPOSE_LEAD_MS > at &&
+      value <= at + pendingProposeRangeDays(booking) * 86400000
+  }
+
+  function pendingProposeRangeDays(booking) {
+    const named = Number(booking && (booking.available_days_in_future != null
+      ? booking.available_days_in_future
+      : booking.days_in_future))
+    return Number.isFinite(named) && named > 0 ? named : PENDING_PROPOSE_DEFAULT_RANGE_DAYS
+  }
+
+  /**
+   * F08: candidate slots for the pending picker. Posted availability does not
+   * narrow a pending offer (#5756 checks only Starter free/busy), so every
+   * step-aligned start with the call duration is offered from now + 24 h up
+   * to the booking range. The current requested time and the open offer are
+   * left out because the server refuses them. The server is the authority for
+   * free/busy and shows its own message for a busy slot.
+   * @param {object} booking Canonical booking row.
+   * @param {number} [now] Reference time in ms.
+   * @param {object} [options] `{ stepMinutes, rangeDays }` overrides.
+   * @returns {{start:number,end:number}[]}
+   */
+  function pendingProposeSlots(booking, now, options) {
+    const settings = options || {}
+    const reference = Number(referenceTime(booking, now))
+    const durationMs = Number(booking && booking.duration) * 60000
+    const step = Number(settings.stepMinutes) > 0
+      ? Number(settings.stepMinutes) * 60000
+      : PENDING_PROPOSE_STEP_MINUTES * 60000
+    const days = Number(settings.rangeDays) > 0
+      ? Number(settings.rangeDays)
+      : pendingProposeRangeDays(booking)
+    if (!Number.isFinite(reference) || !Number.isFinite(durationMs) || durationMs <= 0) return []
+    const excluded = [
+      timestampMs(booking && booking.start),
+      timestampMs(booking && booking.start_old),
+    ]
+    const last = reference + days * 86400000
+    const slots = []
+    let start = Math.floor((reference + PENDING_PROPOSE_LEAD_MS) / step) * step + step
+    for (; start <= last; start += step) {
+      if (excluded.indexOf(start) !== -1) continue
+      slots.push({ start, end: start + durationMs })
+    }
+    return slots
+  }
+
+  /** Authored label of each relabelled control, so a later booking restores it. */
+  const authoredActionLabels = new WeakMap()
+  const PENDING_OFFER_RESPONSE_ATTR = 'data-starters-pending-offer-response'
+
+  function readActionLabel(control) {
+    const node = typeof control.querySelector === 'function'
+      ? control.querySelector(ACTION_LABEL_SELECTOR)
+      : null
+    return clean((node || control).textContent)
+  }
+
+  function relabelControl(control, label) {
+    if (!authoredActionLabels.has(control)) {
+      authoredActionLabels.set(control, readActionLabel(control))
+    }
+    setAuthoredActionLabel(control, label || authoredActionLabels.get(control))
+  }
+
+  /**
+   * F08: the label of an authored control for a pending offer, or '' to keep
+   * the authored label. One authored control serves each F08 action:
+   * `reschedule` -> Propose New Time / Propose Another Time (counter),
+   * `confirm-reschedule` -> Confirm New Time, `reschedule-decline` ->
+   * Decline New Time (Brand only).
+   */
+  function pendingOfferControlLabel(action, role, booking, now) {
+    if (action === 'reschedule' && rescheduleKindFor(role, booking, now) === 'pending-propose') {
+      return pendingOfferOpen(booking) ? 'Propose Another Time' : 'Propose New Time'
+    }
+    if (action === 'confirm-reschedule' && canAcceptPendingOffer(role, booking, now)) {
+      return 'Confirm New Time'
+    }
+    if (action === 'reschedule-decline' && canDeclinePendingOffer(role, booking, now)) {
+      return 'Decline New Time'
+    }
+    return ''
+  }
+
+  /**
+   * F08: relabels the authored base controls for the booking in the modal,
+   * and marks the Brand's pending Decline so the retired Keep-Current-Time
+   * guard does not hide it. Restores the authored labels otherwise.
+   * @returns {number} How many controls carry an F08 label.
+   */
+  function applyPendingOfferControls(modal, role, booking, now) {
+    if (!modal || typeof modal.querySelectorAll !== 'function') return 0
+    let applied = 0
+    ;['reschedule', 'confirm-reschedule', 'reschedule-decline'].forEach(function (action) {
+      const controls = modal.querySelectorAll(
+        '[booking-action-btn="' + action + '"], [booking-card-action-btn="' + action + '"]',
+      )
+      const label = pendingOfferControlLabel(action, role, booking, now)
+      Array.prototype.forEach.call(controls, function (control) {
+        if (label || authoredActionLabels.has(control)) relabelControl(control, label)
+        if (action === 'reschedule-decline' && typeof control.setAttribute === 'function') {
+          if (label) {
+            control.setAttribute(PENDING_OFFER_RESPONSE_ATTR, '')
+            control.removeAttribute('aria-hidden')
+          } else if (typeof control.removeAttribute === 'function') {
+            control.removeAttribute(PENDING_OFFER_RESPONSE_ATTR)
+          }
+        }
+        if (label) applied += 1
+      })
+    })
+    return applied
+  }
+
   /**
    * The one fee line of the cancel confirmation. Free returns '' (unchanged).
    * A Brand cancelling a confirmed Paid call at or within 8 h of start pays
@@ -459,6 +746,8 @@
       role === 'brand' &&
       (freeBooking(booking) || paidPendingEditAdmitted(booking)) &&
       bookingStatus(booking) === 'pending' &&
+      // F08: #5921 refuses an edit while a new-time offer is open.
+      !pendingOfferOpen(booking) &&
       actorMemberId(role, booking) !== '' &&
       clean(booking && booking.grant_id) !== '' &&
       Number.isFinite(duration) &&
@@ -476,8 +765,21 @@
    */
   function rescheduleKindFor(role, booking, now) {
     if (canProposeReschedule(role, booking, now)) return 'reschedule-propose'
+    if (canProposePending(role, booking, now)) return 'pending-propose'
     if (canRequestReschedule(role, booking, now)) return 'reschedule-request'
     return ''
+  }
+
+  /**
+   * F08: which response contract an authored respond control takes. On a
+   * pending request with an open offer, `confirm-reschedule` is the pending
+   * accept and `reschedule-decline` is the pending decline.
+   */
+  function respondKindFor(kind, booking) {
+    if (!pendingOfferOpen(booking)) return kind
+    if (kind === 'reschedule-confirm') return 'pending-accept'
+    if (kind === 'reschedule-decline') return 'pending-decline'
+    return kind
   }
 
   function canRespondReschedule(role, booking) {
@@ -538,8 +840,8 @@
       const style = document.createElement('style')
       style.setAttribute(KEEP_CURRENT_TIME_GUARD_ATTR, '')
       style.textContent =
-        '[booking-action-btn="reschedule-decline"],' +
-        '[booking-card-action-btn="reschedule-decline"]{display:none!important}'
+        '[booking-action-btn="reschedule-decline"]:not([' + PENDING_OFFER_RESPONSE_ATTR + ']),' +
+        '[booking-card-action-btn="reschedule-decline"]:not([' + PENDING_OFFER_RESPONSE_ATTR + ']){display:none!important}'
       const host = document.head || document.documentElement
       if (host && typeof host.appendChild === 'function') host.appendChild(style)
     }
@@ -547,6 +849,8 @@
     if (!scope || typeof scope.querySelectorAll !== 'function') return 0
     let count = 0
     Array.prototype.forEach.call(scope.querySelectorAll(KEEP_CURRENT_TIME_SELECTOR), function (control) {
+      // F08: the Brand's pending Decline reuses this authored control.
+      if (typeof control.hasAttribute === 'function' && control.hasAttribute(PENDING_OFFER_RESPONSE_ATTR)) return
       control.hidden = true
       if (control.style) control.style.display = 'none'
       if (typeof control.setAttribute === 'function') control.setAttribute('aria-hidden', 'true')
@@ -568,6 +872,9 @@
     if (kind === 'reschedule-request') return canRequestReschedule(role, booking, now)
     if (kind === 'reschedule-confirm') return canConfirmReschedule(role, booking)
     if (kind === 'reschedule-decline') return canKeepCurrentTime(role, booking)
+    if (kind === 'pending-propose') return canProposePending(role, booking, now)
+    if (kind === 'pending-accept') return canAcceptPendingOffer(role, booking, now)
+    if (kind === 'pending-decline') return canDeclinePendingOffer(role, booking, now)
     return false
   }
 
@@ -860,9 +1167,19 @@
     // request takes the direct update. Resolved from the booking when the
     // caller does not name one, so the single authored button serves both.
     const resolved = clean(kind) || rescheduleKindFor(role, booking, now)
-    if (resolved !== 'reschedule-propose' && resolved !== 'reschedule-request') {
+    if (
+      resolved !== 'reschedule-propose' &&
+      resolved !== 'reschedule-request' &&
+      resolved !== 'pending-propose'
+    ) {
       return Promise.resolve(null)
     }
+    // F08: a pending offer must start more than 24 h ahead and inside the
+    // booking range; #5756 refuses it otherwise, so it is never sent.
+    if (
+      resolved === 'pending-propose' &&
+      !pendingProposedStartAllowed(booking, start, referenceTime(booking, now))
+    ) return Promise.resolve(null)
     // P7: a Paid proposal must also start outside the 48 h 15 min lead; the
     // server (#5756) refuses it otherwise, so it is never sent.
     if (
@@ -883,11 +1200,14 @@
     )
   }
 
-  function respondReschedule(kind, booking, role) {
-    if (kind !== 'reschedule-confirm' && kind !== 'reschedule-decline') {
+  function respondReschedule(kind, booking, role, now) {
+    if (
+      kind !== 'reschedule-confirm' && kind !== 'reschedule-decline' &&
+      kind !== 'pending-accept' && kind !== 'pending-decline'
+    ) {
       return Promise.resolve(null)
     }
-    return submitAction(kind, role, booking, '', undefined, null, 'respond')
+    return submitAction(kind, role, booking, '', now, null, 'respond')
   }
 
   function declineBooking(booking, reason) {
@@ -1342,19 +1662,26 @@
     return true
   }
 
-  /* One authored reason panel serves both reschedule contracts, so its copy
+  /* One authored reason panel serves the reschedule contracts, so its copy
      cannot be static: the confirmed flow really does keep the current time
-     until the counterpart answers, while the pending flow changes the time
-     immediately. The panel's heading and body carry authored `booking-copy`
-     hooks (`reschedule-title` / `reschedule-body`) so this targets attributes,
-     never a styling class. The known-string match below is only a fallback for
-     a page served before those hooks were published. */
+     until the counterpart answers, the direct pending edit changes the time
+     immediately, and a pending offer keeps the original requested time while
+     the offer is open. The panel's heading and body carry authored
+     `booking-copy` hooks (`reschedule-title` / `reschedule-body`) so this
+     targets attributes, never a styling class. The known-string match below is
+     only a fallback for a page served before those hooks were published. */
   const RESCHEDULE_COPY = {
     'reschedule-propose': {
       title: 'Propose a new time',
       body:
         'Your call keeps its current time until the other participant confirms the new one.' +
         ' Changes close to the start time can be disruptive, so add a short note about why.',
+    },
+    'pending-propose': {
+      title: 'Propose a new time',
+      body:
+        'The request keeps its requested time until the other participant answers.' +
+        ' Choose any time more than 24 hours from now. Add a short note about why.',
     },
     'reschedule-request': {
       title: 'Update the requested time',
@@ -1696,9 +2023,15 @@
       return false
     }
     if (!authoredLoader) container.textContent = ''
+    // F08: a pending offer is not limited to posted availability, so the
+    // picker gets every step-aligned start in range instead of the posted slots.
+    const pendingSlots = rescheduleKindFor(role, booking) === 'pending-propose'
+      ? pendingProposeSlots(booking)
+      : null
     try {
       await calendarModule.mountPaidCalendar({
       container,
+      slots: pendingSlots || undefined,
       config: {
         booking_id: clean(booking && booking.booking_id),
         config_id: clean(booking && booking.config_id),
@@ -1711,10 +2044,11 @@
         if (!isCurrent()) return null
         showActionError(modal, '')
         // The booking decides the contract, and with it the failure copy and
-        // the success view: a pending request lands on "time updated", not on
-        // "waiting for the other participant".
+        // success view: direct edits land on "time updated"; pending offers
+        // and confirmed proposals wait for the other participant.
         const initialKind = rescheduleKindFor(role, booking)
         if (!initialKind) return null
+        let mutationClaim = null
         let releaseAction = null
         try {
           releaseAction = settings && typeof settings.acquireBookingAction === 'function'
@@ -1733,6 +2067,17 @@
             paidFlag(booking) &&
             !paidProposedStartAllowed(slot && slot.start, referenceTime(booking))
           ) throw new Error(PAID_PROPOSED_START_MESSAGE)
+          if (
+            kind === 'pending-propose' &&
+            !pendingProposedStartAllowed(booking, slot && slot.start, referenceTime(booking))
+          ) throw new Error(PENDING_PROPOSE_START_MESSAGE)
+          if (
+            kind === 'pending-propose' &&
+            settings &&
+            typeof settings.captureBookingMutation === 'function'
+          ) {
+            mutationClaim = settings.captureBookingMutation(booking)
+          }
           const result = await proposeReschedule(booking, role, reason, {
             start: Number(slot && slot.start),
             end: Number(slot && slot.end),
@@ -1752,19 +2097,37 @@
           )
           if (!isCurrent()) {
             // The card still shows the old slot, so re-read the list on close.
-            if (replaced) restartAfterModalClose(document, modal, restart)
+            // F08: the card still shows no offer, so re-read the list on close too.
+            if (replaced || kind === 'pending-propose') restartAfterModalClose(document, modal, restart)
             return result
           }
           const reasonField = modal.querySelector('[booking-reschedule-reason]')
           if (reasonField) reasonField.value = ''
-          // The receipt describes the selected slot. A pending request moves
-          // immediately; a confirmed call keeps its canonical time until the
-          // counterpart accepts, so render its proposal from a separate model.
+          // The receipt describes the selected slot. A direct pending edit
+          // moves immediately; a confirmed call keeps its canonical time until
+          // the counterpart accepts, so render its proposal from a separate model.
           if (kind === 'reschedule-request' && booking) {
             booking.start = Number(slot && slot.start)
             booking.end = Number(slot && slot.end)
             booking.rescheduled_reason = reason || booking.rescheduled_reason
             if (typeof refreshDetail === 'function') refreshDetail(modal, booking)
+          }
+          // F08: the request keeps its original time; the offer, proposer and
+          // new deadline come from the server result.
+          if (kind === 'pending-propose' && booking) {
+            const offer = result[config.responseKey] || {}
+            const deadline = Number(offer.deadline)
+            const committed = commitBookingMutation(settings, booking, {
+              start_old: Number(offer.offer_start) > 0 ? Number(offer.offer_start) : Number(slot && slot.start),
+              end_old: Number(offer.offer_end) > 0 ? Number(offer.offer_end) : Number(slot && slot.end),
+              rescheduled_by: role,
+              rescheduled_reason: reason || booking.rescheduled_reason,
+              confirmation_expires_at: Number.isFinite(deadline) && deadline > 0
+                ? deadline
+                : booking.confirmation_expires_at,
+            }, mutationClaim)
+            if (!committed) return result
+            if (typeof refreshDetail === 'function') refreshDetail(modal, committed, config.successContent)
           }
           if (kind === 'reschedule-propose' && booking && typeof refreshDetail === 'function') {
             refreshDetail(modal, Object.assign({}, booking, {
@@ -1781,7 +2144,11 @@
           }
           throw error
         } finally {
-          await releaseMutationSlot(releaseAction)
+          try {
+            await releaseMutationClaim(settings, mutationClaim)
+          } finally {
+            await releaseMutationSlot(releaseAction)
+          }
         }
       },
       })
@@ -2047,13 +2414,18 @@
           return
         }
         let booking = settings.getBooking(button)
-        /* One authored Reschedule button serves two contracts. The markup
+        /* One authored Reschedule button serves multiple contracts. The markup
            cannot know which, so the booking decides here: a pending request
-           swaps the confirmed-call kind for the direct-update one before the
-           gate runs, otherwise the gate would reject its own button. */
+           swaps the confirmed-call kind for the direct-edit or pending-offer
+           kind before the gate runs, otherwise the gate would reject its own
+           button. */
         if (step.kind === 'reschedule-propose') {
           const resolved = rescheduleKindFor(settings.role, booking)
           if (resolved) step = { kind: resolved, step: step.step }
+        }
+        // F08: the authored respond pair answers a pending offer too.
+        if (step.kind === 'reschedule-confirm' || step.kind === 'reschedule-decline') {
+          step = { kind: respondKindFor(step.kind, booking), step: step.step }
         }
         let now = actionNow(settings, booking)
         if (!canAct(step.kind, settings.role, booking, now)) {
@@ -2072,7 +2444,11 @@
           const card = button.closest && button.closest('[data-booking-id]')
           if (card && typeof settings.openDetail === 'function' &&
               !settings.openDetail(modal, booking)) return
-          if (step.kind === 'reschedule-propose' || step.kind === 'reschedule-request') {
+          if (
+            step.kind === 'reschedule-propose' ||
+            step.kind === 'reschedule-request' ||
+            step.kind === 'pending-propose'
+          ) {
             ensureRescheduleViews(document, modal)
             applyRescheduleContractCopy(modal, step.kind)
             switchPopupContent(modal, 'reschedule')
@@ -2140,11 +2516,31 @@
             mutationClaim = typeof settings.captureBookingMutation === 'function'
               ? settings.captureBookingMutation(booking)
               : null
-            const result = await respondReschedule(step.kind, booking, settings.role)
+            const result = await respondReschedule(step.kind, booking, settings.role, now)
             if (!result) throw new Error(config.failureMessage)
+            let pendingCommitted = null
+            if (step.kind === 'pending-accept' || step.kind === 'pending-decline') {
+              const answer = result[config.responseKey] || {}
+              const replacement = replacementBookingId(step.kind, result, booking)
+              const committed = commitBookingMutation(settings, booking, function (current) {
+                if (step.kind === 'pending-decline') {
+                  return { status: 'cancelled', cancelled_by: 'brand' }
+                }
+                const offerStart = Number(answer.start) > 0 ? Number(answer.start) : Number(current.start_old)
+                const offerEnd = Number(answer.end) > 0 ? Number(answer.end) : Number(current.end_old)
+                return { status: 'confirmed', start: offerStart, end: offerEnd, start_old: null, end_old: null }
+              }, mutationClaim)
+              if (!committed) return
+              if (replacement) adoptReplacementBooking(document, modal, committed, replacement)
+              if (committed !== booking) booking.booking_id = committed.booking_id
+              pendingCommitted = committed
+            }
             const modalIsCurrent =
               clean(modal.getAttribute('data-booking-id')) ===
               clean(booking.booking_id || booking.id)
+            if (pendingCommitted && modalIsCurrent && typeof settings.refreshDetail === 'function') {
+              settings.refreshDetail(modal, pendingCommitted)
+            }
             if (step.kind === 'reschedule-confirm' || step.kind === 'reschedule-decline') {
               const confirmed = result[config.responseKey]
               const confirmedBooking = commitBookingMutation(settings, booking, function (current) {
@@ -2290,6 +2686,23 @@
     canonicalNow,
     monotonicNow,
     canConfirmReschedule,
+    PENDING_PROPOSE_OPEN_ENVIRONMENTS,
+    F08_ACCEPT_ENABLED,
+    PENDING_PROPOSE_LEAD_MS,
+    PENDING_PROPOSE_START_MESSAGE,
+    pendingOfferOpen,
+    pendingOfferProposer,
+    canProposePending,
+    canRespondPending,
+    canAcceptPendingOffer,
+    canDeclinePendingOffer,
+    pendingProposedStartAllowed,
+    pendingProposeSlots,
+    pendingOfferControlLabel,
+    applyPendingOfferControls,
+    respondKindFor,
+    setF08AcceptEnabledForTest,
+    canAct,
     canProposeReschedule,
     canRequestReschedule,
     rescheduleKindFor,
