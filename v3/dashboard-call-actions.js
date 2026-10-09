@@ -2046,6 +2046,7 @@
         // "waiting for the other participant".
         const initialKind = rescheduleKindFor(role, booking)
         if (!initialKind) return null
+        let mutationClaim = null
         let releaseAction = null
         try {
           releaseAction = settings && typeof settings.acquireBookingAction === 'function'
@@ -2068,6 +2069,13 @@
             kind === 'pending-propose' &&
             !pendingProposedStartAllowed(booking, slot && slot.start, referenceTime(booking))
           ) throw new Error(PENDING_PROPOSE_START_MESSAGE)
+          if (
+            kind === 'pending-propose' &&
+            settings &&
+            typeof settings.captureBookingMutation === 'function'
+          ) {
+            mutationClaim = settings.captureBookingMutation(booking)
+          }
           const result = await proposeReschedule(booking, role, reason, {
             start: Number(slot && slot.start),
             end: Number(slot && slot.end),
@@ -2107,7 +2115,7 @@
           if (kind === 'pending-propose' && booking) {
             const offer = result[config.responseKey] || {}
             const deadline = Number(offer.deadline)
-            commitBookingMutation(settings, booking, {
+            const committed = commitBookingMutation(settings, booking, {
               start_old: Number(offer.offer_start) > 0 ? Number(offer.offer_start) : Number(slot && slot.start),
               end_old: Number(offer.offer_end) > 0 ? Number(offer.offer_end) : Number(slot && slot.end),
               rescheduled_by: role,
@@ -2115,8 +2123,9 @@
               confirmation_expires_at: Number.isFinite(deadline) && deadline > 0
                 ? deadline
                 : booking.confirmation_expires_at,
-            })
-            if (typeof refreshDetail === 'function') refreshDetail(modal, booking, config.successContent)
+            }, mutationClaim)
+            if (!committed) return result
+            if (typeof refreshDetail === 'function') refreshDetail(modal, committed, config.successContent)
           }
           if (kind === 'reschedule-propose' && booking && typeof refreshDetail === 'function') {
             refreshDetail(modal, Object.assign({}, booking, {
@@ -2133,7 +2142,11 @@
           }
           throw error
         } finally {
-          await releaseMutationSlot(releaseAction)
+          try {
+            await releaseMutationClaim(settings, mutationClaim)
+          } finally {
+            await releaseMutationSlot(releaseAction)
+          }
         }
       },
       })

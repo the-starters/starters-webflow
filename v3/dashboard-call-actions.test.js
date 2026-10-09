@@ -3252,6 +3252,9 @@ test('F08: the pending picker gets free-time slots and the offer is committed on
   const originalCrypto = global.crypto
   const mounts = []
   const requests = []
+  const captures = []
+  const commits = []
+  const releases = []
   const container = { textContent: '' }
   const reasonField = { value: 'Travel' }
   const booking = pendingOfferBooking({ booking_id: 'booking-f08' })
@@ -3285,7 +3288,24 @@ test('F08: the pending picker gets free-time slots and the offer is committed on
     }
     const refreshed = []
     await api.mountRescheduleCalendar({}, modal, booking, 'starter', 'Travel', null,
-      function (_modal, row, content) { refreshed.push({ row, content }) })
+      function (_modal, row, content) { refreshed.push({ row, content }) },
+      {
+        captureBookingMutation(row) {
+          const claim = { bookingId: row.booking_id, owner: captures.length + 1 }
+          captures.push(claim)
+          return claim
+        },
+        commitBookingMutation(row, update, claim) {
+          const changes = typeof update === 'function' ? update(row) : update
+          commits.push({ changes, claim })
+          Object.assign(row, changes)
+          return row
+        },
+        releaseBookingMutation(claim) {
+          releases.push(claim)
+          return false
+        },
+      })
     assert.equal(mounts.length, 1)
     assert.ok(Array.isArray(mounts[0].slots) && mounts[0].slots.length > 0, 'free-time slots are passed')
     // A slot inside 24 h is refused before any request.
@@ -3302,6 +3322,10 @@ test('F08: the pending picker gets free-time slots and the offer is committed on
     assert.equal(booking.rescheduled_by, 'starter')
     assert.equal(booking.confirmation_expires_at, start - 24 * F08_HOUR)
     assert.equal(refreshed[0].content, 'reschedule-proposed')
+    assert.equal(captures.length, 1)
+    assert.equal(commits.length, 1)
+    assert.equal(commits[0].claim, captures[0])
+    assert.deepEqual(releases, captures)
   } finally {
     global.StartersPaidCallBrandPayment = originalCalendar
     global.xanoAuthFetch = originalFetch

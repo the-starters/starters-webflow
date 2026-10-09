@@ -10459,3 +10459,45 @@ test('F08: the detail rows show the original time, the offer, the status, and th
     assert.equal(fields.some((field) => field.startsWith('offer-')), false)
   }
 })
+
+test('F08: an open pending detail refreshes same-status offer changes', () => {
+  const originalDocument = global.document
+  const now = 1_800_000_000_000
+  const view = f52Panel('base', {
+    rows: [['Duration', 'duration', '30min']],
+  })
+  const booking = f08PendingOffer({
+    brand_data: { name: 'Acme Brand', memberstack_id: 'mem_sb_brand', timezone: 'UTC' },
+  })
+  const updated = {
+    ...booking,
+    start_old: booking.start_old + 3600000,
+    end_old: booking.end_old + 3600000,
+    rescheduled_by: 'brand',
+    confirmation_expires_at: booking.confirmation_expires_at + 3600000,
+  }
+  const refs = [{ rows: [booking], list: richElement('div') }]
+  try {
+    global.document = {
+      querySelector(selector) {
+        return selector === '[popup-booking-info], dialog[data-modal-target="popup-booking-info"]'
+          ? view.modal
+          : null
+      },
+    }
+    assert.equal(api.populateDetailModal(view.modal, booking, 'brand', now), true)
+    const firstRows = Object.fromEntries(summaryRowsOf(view.table).map((row) => [row[0], row[2]]))
+    refs[0].rows = [updated]
+    assert.equal(api.refreshOpenDetailPanel(refs, 'brand', now), true)
+    const nextRows = Object.fromEntries(summaryRowsOf(view.table).map((row) => [row[0], row[2]]))
+    const expected = Object.fromEntries(
+      api.detailSupplementRows(updated, 'brand', 'UTC', 'base').map((row) => [row.field, row.value]),
+    )
+    assert.notEqual(nextRows['offer-date'], firstRows['offer-date'])
+    assert.equal(nextRows['offer-date'], expected['offer-date'])
+    assert.equal(nextRows['offer-status'], expected['offer-status'])
+    assert.equal(nextRows['offer-deadline'], expected['offer-deadline'])
+  } finally {
+    global.document = originalDocument
+  }
+})

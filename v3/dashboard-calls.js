@@ -429,6 +429,24 @@
     return proposer === 'starter' || proposer === 'brand' ? proposer : ''
   }
 
+  function pendingOfferSignature(booking) {
+    if (!pendingOfferOpen(booking)) return ''
+    return JSON.stringify([
+      normalizeTimestamp(booking && booking.start_old),
+      normalizeTimestamp(booking && booking.end_old),
+      clean(booking && booking.rescheduled_by).toLowerCase(),
+      responseDeadline(booking),
+    ])
+  }
+
+  function setDetailPendingOfferSignature(modal, booking) {
+    if (!modal || typeof modal.setAttribute !== 'function') return ''
+    const signature = pendingOfferSignature(booking)
+    if (signature) modal.setAttribute('data-booking-pending-offer', signature)
+    else if (typeof modal.removeAttribute === 'function') modal.removeAttribute('data-booking-pending-offer')
+    return signature
+  }
+
   function bookingStatus(booking, now) {
     const raw = clean(booking && booking.status).toLowerCase()
     if (raw === 'archived') return 'archived'
@@ -2669,10 +2687,15 @@
       currentStatus,
       referenceTime,
     )
+    const currentPendingOffer = pendingOfferSignature(booking)
+    const storedPendingOffer = clean(modal.getAttribute('data-booking-pending-offer'))
     if (currentStatus !== storedStatus) {
       modal.setAttribute('data-booking-status', currentStatus)
       setBookingField(modal, 'status', statusLabel(currentStatus, role, booking), true)
       configureDetailActions(modal, role, currentStatus, booking, referenceTime)
+    }
+    if (nextPanel === previousPanel && currentPendingOffer !== storedPendingOffer) {
+      return populateDetailModal(modal, booking, role, referenceTime)
     }
     if (nextPanel === previousPanel) return false
     const selected = selectDetailPanel(modal, booking, role, nextPanel)
@@ -2850,6 +2873,7 @@
     modal.setAttribute('data-booking-id', nextBookingId)
     modal.setAttribute('data-booking-status', status)
     modal.setAttribute('data-booking-payment', isPaid ? 'paid' : 'free')
+    setDetailPendingOfferSignature(modal, booking)
 
     const naturalPanel = detailOpenPanel(modal, booking, status)
     const openPanel = detailOpenPanelForMeeting(modal, booking, status, referenceTime)
@@ -2952,6 +2976,7 @@
     modal.removeAttribute('data-booking-id')
     modal.removeAttribute('data-booking-status')
     modal.removeAttribute('data-booking-payment')
+    modal.removeAttribute('data-booking-pending-offer')
     modal.querySelectorAll('[booking-element]').forEach(function (field) {
       field.textContent = ''
       if (clean(field.getAttribute && field.getAttribute('booking-element')) === 'meeting-link') {
