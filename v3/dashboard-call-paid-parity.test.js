@@ -576,7 +576,7 @@ test('P7: paidProposedStartAllowed is strict at 48 h 15 min', () => {
   assert.equal(api.paidProposedStartAllowed(now + 3 * DAY, undefined), false)
 })
 
-test('P7: paidRescheduleProposeAdmitted needs confirmed, the saved card, Test and the original start window', () => {
+test('P7: paidRescheduleProposeAdmitted needs confirmed, the saved card, an open environment and the original start window', () => {
   const now = 1_800_000_000_000
   const row = savedCard({ status: 'confirmed', start: now + 3 * DAY })
   assert.equal(api.paidRescheduleProposeAdmitted(row, now), true)
