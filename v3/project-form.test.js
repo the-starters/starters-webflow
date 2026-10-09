@@ -550,6 +550,24 @@ test('serializes only explicitly marked fields into the Xano contract', () => {
   assert.equal(Object.values(result.payload).includes('must-not-submit'), false)
 })
 
+test('never serializes the legacy CMS-bound Starter email or name into the Xano contract', () => {
+  // The /hire Code Embed still renders legacy V2 controls (FreeEmail, FreeName)
+  // filled from the Starter CMS item. V3 identifies the Starter only by
+  // Memberstack ID, so these values must never cross the API.
+  const { api, form } = load()
+  form.children.push(
+    new Element({ id: 'FreeEmail', name: 'FreeEmail', value: 'starter.private@example.com' }),
+    new Element({ id: 'freeName', name: 'FreeName', value: 'Private Starter Name' }),
+  )
+  const result = api.serialize(form)
+  assert.equal(result.payload.starter_memberstack_id, 'mem_starter_123')
+  const keys = Object.keys(result.payload).map((key) => key.toLowerCase())
+  assert.equal(keys.some((key) => key.includes('email') || key === 'freename'), false)
+  const values = JSON.stringify(result.payload)
+  assert.equal(values.includes('starter.private@example.com'), false)
+  assert.equal(values.includes('Private Starter Name'), false)
+})
+
 test('serializes the checked engagement radio before deduplicating its field name', () => {
   const form = projectForm()
   form.children = form.children.filter((child) => child.getAttribute('data-project-field') !== 'engagement_type')
