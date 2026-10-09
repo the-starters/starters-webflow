@@ -76,6 +76,18 @@ clears its pending state, the member can retry. Failed and accepted registration
 reuse the same pending event identity and original route for that price until
 the two-hour intent expires. A member change replaces that pending identity.
 Failure also restores the clicked checkout control's authored loading state.
+Each failed checkout attempt after the pending-click guard, including a click on
+a non-allowlisted route or price, inserts one visible `role="alert"` message
+directly after the clicked control (`data-v3-checkout-message` =
+`not-eligible` or `unavailable`). A registrar 401 whose trimmed `message` is
+exactly `Brand plan is not eligible for V3 checkout` or
+`Canonical V3 Brand identity is incomplete` shows "Your account can't be
+upgraded online right now. Please contact support at hello@hirethestarters.com."
+Every other failure shows "Checkout could not start. Please try again." The next
+click removes the message. The control still gets its `title` and
+`data-v3-checkout-authority="error"`. One `console.warn` records only the reason
+and HTTP status. The message does not change the allowlists or the fail-closed
+result.
 After an accepted intent, the Get Started spinner stays lit while native
 Memberstack checkout starts. If the shared Sign Out loader is absent, never
 appears, or cannot be observed, a bounded three-second fallback restores the
@@ -109,15 +121,22 @@ Memberstack price ID vocabulary). The read-only endpoint checks authenticated
 ownership, origin, environment, expiry, the signed lifecycle binding, and the
 exact subscription snapshot. It reads Stripe Checkout Sessions for that
 subscription and customer in the intent's two-hour window. Multiple matches,
-unbound or foreign subscriptions, wrong modes, zero payments, trials, and
-unsupported currencies cannot produce a paid receipt. `pending` means the
-binding, snapshot, or payment is not yet ready; the browser retries up to twelve
+unbound or foreign subscriptions, wrong modes, unverified zero payments, trials,
+and unsupported currencies cannot produce a paid receipt. A zero-dollar checkout
+is accepted only when Stripe reports a positive integer subtotal fully covered
+by its discount, no tax or shipping, and a matching active subscription in the
+same environment. For this case the endpoint also reads the Stripe Subscription;
+trialing subscriptions are excluded even if the checkout reports `paid`.
+`pending` means the binding, snapshot, or payment is not yet ready; the browser retries up to twelve
 times with 2.5 seconds between reads and a twelve-second timeout per read.
 
 A paid receipt contains `ok: true`, `status: "paid"`, `intent_key`,
 `stripe_price_id`, `transaction_id` (the actual Stripe Checkout Session ID),
 `amount_total` (integer cents including discounts and tax), `currency: "USD"`,
-and `source_environment`. Only production receipts on the production hosts
+`fully_discounted` (true only for the verified zero-dollar exception), and
+`source_environment`. The browser requires `fully_discounted: true` to accept
+zero and sends its actual `value: 0`; list prices and URL amounts never replace
+the settled amount. Only production receipts on the production hosts
 send `trackSingle` Purchase to the existing pixel `775648331097942`. The amount
 is cents divided by 100. The Session ID is also the event ID and permanent
 same-browser local-storage deduplication key. A Web Lock serializes dispatch

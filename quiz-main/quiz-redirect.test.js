@@ -100,6 +100,20 @@ test('keeps incomplete free-plan members on the quiz', async () => {
     )
 })
 
+// The route guard homes a legacy-quiz free Brand on '/', but one who opens /quiz
+// on purpose must be able to take the current quiz.
+test('keeps a legacy-quiz free-plan member on the quiz', async () => {
+    const legacy = member('pln_free-plan-f6kn0dxz')
+    legacy.customFields = { quiz: 'true', 'starter-quiz': '' }
+    assert.equal(await run({ member: legacy }), undefined)
+    assert.equal(await run({ member: legacy, search: '?retake=true' }), undefined)
+    // Finishing the current quiz still forwards them to their results.
+    assert.equal(
+        await run({ member: legacy, pending: readyPayload }),
+        '/quiz-results',
+    )
+})
+
 test('redirects completed free-plan members to results', async () => {
     assert.equal(
         await run({

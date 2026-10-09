@@ -1,7 +1,7 @@
 /**
  * Quiz results page controller.
  *
- * @release v1.59.245
+ * @release v1.59.679
  *
  * Initial data source:
  * - sessionStorage.starterQuizPending saved by quiz-main.js before signup.
@@ -6114,9 +6114,13 @@
             return null
         }
 
-        return hasStarterQuizCompletionMarker(member)
-            ? '/quiz?retake=true&quizDataMissing=1'
-            : '/quiz'
+        if (hasStarterQuizCompletionMarker(member)) {
+            return '/quiz?retake=true&quizDataMissing=1'
+        }
+
+        // Matches v3/route-guard.js, which homes a free Brand with no recorded
+        // quiz on '/', so the two redirects never race to different places.
+        return '/'
     }
 
     /**
@@ -6356,12 +6360,14 @@
 
     /**
      * When the results page has no usable quiz data, send a positively resolved
-     * visitor back to the quiz. Logged-out visitors start normally. Authenticated
-     * members with a completion marker but missing or malformed member JSON are
-     * sent through an explicit retake so they do not remain on an empty results
-     * page. If Memberstack is unavailable, stay put rather than risk a redirect
-     * loop. A pre-signup funnel visitor is unaffected because sessionStorage is
-     * checked before this branch.
+     * visitor away. Logged-out visitors start the quiz. Authenticated members
+     * with a completion marker but missing or malformed member JSON are sent
+     * through an explicit retake so they do not remain on an empty results
+     * page. Other authenticated members go to the homepage, the route guard's
+     * home for a free Brand with no recorded quiz. If Memberstack is
+     * unavailable, stay put rather than risk a redirect loop. A pre-signup
+     * funnel visitor is unaffected because sessionStorage is checked before
+     * this branch.
      */
     async function redirectVisitorWithoutResults() {
         // Shares resolveMemberstackAuthState() with the stale-cache reset above so
@@ -6388,7 +6394,7 @@
 
         if (authenticatedRedirectTarget) {
             logQuizFlow(
-                'authenticated member with no usable quiz data; redirecting to quiz',
+                'authenticated member with no usable quiz data; redirecting',
                 {
                     hasCompletionMarker: hasStarterQuizCompletionMarker(
                         authState.member,

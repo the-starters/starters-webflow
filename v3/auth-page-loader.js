@@ -1,7 +1,7 @@
 /**
  * Minimal V3 authentication-page runtime loader.
  *
- * @release v1.59.643
+ * @release v1.59.679
  *
  * Install once in the V3 site Head Code after Memberstack, the shared
  * `window.memberReady` initializer, the unconditional sitewide
@@ -21,12 +21,13 @@
  * reads the guard's role contract, so only there does this loader wait for
  * DOMContentLoaded before inserting auth-route.js; parser-inserted deferred
  * scripts finish before that event, so the guard has executed first. The two
- * login paths only configure the login form's `/auth-route` redirect and never
- * touch the guard contract, so their insert happens immediately and its fetch
- * overlaps the body parse — the form has to carry `redirect="/auth-route"`
- * before the member can submit it. Inserting a second copy of the guard would
- * download 43 KB — a fresh download whenever the two tags sit on different
- * release refs — purely to hit the guard's own boot guard and return.
+ * login paths configure login-page behavior but never touch the guard contract,
+ * so their insert happens immediately and its fetch overlaps the body parse —
+ * the form has to carry `redirect="/auth-route"` before the member can submit
+ * it, and the login-error observer has to bind before Memberstack paints an
+ * error. Inserting a second copy of the guard would download 43 KB — a fresh
+ * download whenever the two tags sit on different release refs — purely to hit
+ * the guard's own boot guard and return.
  *
  * The inserted script has `async = false`, so it keeps insertion order against
  * anything else inserted dynamically.
@@ -205,7 +206,7 @@
   var startedAt = approvedHost ? consumeNavigationTiming(pathname) : null
   if (startedAt !== null) window.__startersV3PostLoginNavigation = true
   var api = {
-    release: 'v1.59.643',
+    release: 'v1.59.679',
     authPaths: Array.from(AUTH_PATHS),
     isApprovedHost: isApprovedHost,
     isAuthPath: isAuthPath,
@@ -216,8 +217,8 @@
   if (!approvedHost) return
   // /auth-route is the only path whose router reads the deferred guard's role
   // contract, so it is the only one that has to wait for the guard. Waiting on
-  // a login path would instead delay `redirect="/auth-route"` past the point
-  // where the member can already submit the form.
+  // a login path would instead delay login-page setup past the point where the
+  // member can already submit the form or see a Memberstack error.
   if (pathname === ROUTE_PAGE_PATH && document.readyState === 'loading') {
     window.addEventListener(
       'DOMContentLoaded',

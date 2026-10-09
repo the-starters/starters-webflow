@@ -167,10 +167,10 @@ test('auth paths install only the auth router, from the loader own release ref',
   }
 })
 
-// Only /auth-route reads the guard's role contract. A login page's router job
-// is writing `redirect="/auth-route"` onto the form, and the member can submit
-// that form as soon as it paints, so its fetch has to start during head parsing
-// rather than after the whole body is parsed.
+// Only /auth-route reads the guard's role contract. A login page needs the
+// router before the member can submit the form or see a Memberstack error, so
+// its fetch has to start during head parsing rather than after the whole body
+// is parsed.
 test('login paths insert the router while the document is still parsing', () => {
   for (const pathname of ['/login', '/starter-login']) {
     const harness = loadLoader({ pathname, holdDomContentLoaded: true })

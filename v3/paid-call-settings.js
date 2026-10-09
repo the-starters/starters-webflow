@@ -421,11 +421,16 @@
     return Number.isInteger(cents) && cents > 0 ? service : null
   }
 
+  // `legacy_v2` is a rate imported from V2. `admin_prebuilt` is the rate staff
+  // set on a profile they built before the Starter claimed it. Both stay off
+  // until the Starter confirms them.
+  const RATE_SUGGESTION_SOURCES = ['legacy_v2', 'admin_prebuilt']
+
   function importedRateSuggestion(value) {
     const suggestion = value && value.suggestion
     if (
       !displayableRate(suggestion) ||
-      suggestion.source !== 'legacy_v2' ||
+      !RATE_SUGGESTION_SOURCES.includes(suggestion.source) ||
       suggestion.requires_confirmation !== true
     ) return null
     return suggestion
@@ -1173,7 +1178,7 @@
     const suggestion = service || pendingRate ? null : importedRateSuggestion(value)
     const cardStateTarget = uiScope || root
     cardStateTarget.setAttribute('data-paid-call-card-state', service ? 'on' : 'off')
-    root.setAttribute('data-paid-call-rate-source', suggestion ? 'legacy_v2' : '')
+    root.setAttribute('data-paid-call-rate-source', suggestion ? suggestion.source : '')
     root.setAttribute('data-paid-call-rate-state', rateNeedsCorrection ? 'correction-required' : '')
     // A pending Build Profile receipt must stay declinable even before scheduling
     // and Stripe are ready, so Save is live whenever Off is the current choice.
@@ -1205,7 +1210,9 @@
           ? 'Paid calls are on and bookable.'
           : 'Paid calls are saved, but a prerequisite needs attention.'
         : suggestion
-          ? 'Paid calls are off. Confirm the imported V2 rate to turn them on.'
+          ? suggestion.source === 'admin_prebuilt'
+            ? 'Paid calls are off. Confirm the suggested rate to turn them on.'
+            : 'Paid calls are off. Confirm the imported V2 rate to turn them on.'
           : prerequisitesReady(value)
           ? 'Paid calls are off. Add a rate to turn them on.'
           : 'Complete the required setup before you turn on paid calls.',

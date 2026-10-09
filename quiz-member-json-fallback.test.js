@@ -4,6 +4,10 @@ const test = require('node:test')
 const vm = require('node:vm')
 
 const source = fs.readFileSync(require.resolve('./quiz-results.js'), 'utf8')
+const routeGuardSource = fs.readFileSync(
+    require.resolve('./v3/route-guard.js'),
+    'utf8',
+)
 
 function sliceSource(startText, endText) {
     const start = source.indexOf(startText)
@@ -15,7 +19,19 @@ function sliceSource(startText, endText) {
     return source.slice(start, end)
 }
 
-function getMemberJsonFallbackApi(memberstack = null, search = '') {
+/**
+ * The real window.StartersV3RouteGuard contract, booted on a host it does not
+ * enforce on so it only publishes its API.
+ */
+function loadRouteGuardContract() {
+    const window = {
+        location: { hostname: 'localhost', pathname: '/quiz-results' },
+    }
+    vm.runInNewContext(routeGuardSource, { window, URL, URLSearchParams })
+    return window.StartersV3RouteGuard
+}
+
+function getMemberJsonFallbackApi(memberstack = null, search = '', routeGuard) {
     const redirects = []
     const parserSource = sliceSource(
         'function parsePendingQuiz(value)',
@@ -52,6 +68,7 @@ function getMemberJsonFallbackApi(memberstack = null, search = '') {
                         redirects.push(target)
                     },
                 },
+                StartersV3RouteGuard: routeGuard,
             },
             waitForMemberstack: async () => memberstack,
         },
@@ -94,7 +111,7 @@ test('completed member missing usable JSON is sent to an explicit retake', () =>
     )
 })
 
-test('authenticated member without completion marker starts the quiz normally', () => {
+test('authenticated member without completion marker goes to the homepage', () => {
     const { getAuthenticatedNoQuizDataRedirectTarget } =
         getMemberJsonFallbackApi().api
 
@@ -103,7 +120,7 @@ test('authenticated member without completion marker starts the quiz normally', 
             id: 'mem_test',
             custom_fields: { 'starter-quiz': '   ' },
         }),
-        '/quiz',
+        '/',
     )
 })
 
@@ -170,4 +187,60 @@ test('authenticated retake keeps required controls and safe campaign attribution
         ),
         '/quiz?retake=true&quizDataMissing=1&utm_source=mailchimp&utm_medium=email&utm_campaign=v3_quiz_results_drip&utm_content=e1_results',
     )
+})
+
+const FREE_BRAND = {
+    id: 'mem_free',
+    planConnections: [{ active: true, planId: 'pln_free-plan-f6kn0dxz' }],
+}
+const LEGACY_FREE_BRAND = {
+    ...FREE_BRAND,
+    id: 'mem_legacy',
+    customFields: { quiz: 'true', 'starter-quiz': '' },
+}
+
+test('no-quiz free Brand without results goes to the route guard home', () => {
+    const contract = loadRouteGuardContract()
+    const { getAuthenticatedNoQuizDataRedirectTarget } =
+        getMemberJsonFallbackApi(null, '', contract).api
+
+    for (const member of [FREE_BRAND, LEGACY_FREE_BRAND]) {
+        assert.equal(contract.roleHome(member), '/', member.id)
+        assert.equal(getAuthenticatedNoQuizDataRedirectTarget(member), '/', member.id)
+    }
+    // A completion marker still means an explicit retake.
+    assert.equal(
+        getAuthenticatedNoQuizDataRedirectTarget({
+            ...LEGACY_FREE_BRAND,
+            customFields: { quiz: 'true', 'starter-quiz': 'ready' },
+        }),
+        '/quiz?retake=true&quizDataMissing=1',
+    )
+})
+
+test('the no-data fallback is the homepage with or without the route guard', () => {
+    for (const routeGuard of [undefined, { memberRole: () => 'brand-free' }]) {
+        const { getAuthenticatedNoQuizDataRedirectTarget } =
+            getMemberJsonFallbackApi(null, '', routeGuard).api
+        assert.equal(getAuthenticatedNoQuizDataRedirectTarget(FREE_BRAND), '/')
+        assert.equal(getAuthenticatedNoQuizDataRedirectTarget(LEGACY_FREE_BRAND), '/')
+    }
+})
+
+test('no-data runtime sends a no-quiz free Brand home with safe attribution', async () => {
+    for (const member of [FREE_BRAND, LEGACY_FREE_BRAND]) {
+        const { api, redirects } = getMemberJsonFallbackApi(
+            {
+                async getCurrentMember() {
+                    return { data: member }
+                },
+            },
+            '?utm_source=mailchimp&memberstack_id=private',
+            loadRouteGuardContract(),
+        )
+
+        await api.redirectVisitorWithoutResults()
+
+        assert.deepEqual(redirects, ['/?utm_source=mailchimp'], member.id)
+    }
 })

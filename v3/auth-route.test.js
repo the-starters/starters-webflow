@@ -509,14 +509,14 @@ test('uses role defaults for Talent, paid Brand, and free Brand', () => {
     }),
     '/brand-dashboard',
   )
-  // Free Brand with no completed quiz -> /quiz.
+  // Free Brand with no completed quiz -> the homepage.
   assert.equal(
     api.destinationFor({ planConnections: [plan('pln_free-plan-f6kn0dxz')] }),
-    '/quiz',
+    '/',
   )
 })
 
-test('free Brand routes to /quiz until the quiz is completed, then /quiz-results', () => {
+test('free Brand routes to / until the quiz is completed, then /quiz-results', () => {
   const { api } = loadRouter()
   const notDone = { planConnections: [plan('pln_free-plan-f6kn0dxz')] }
   const done = {
@@ -526,7 +526,7 @@ test('free Brand routes to /quiz until the quiz is completed, then /quiz-results
 
   assert.equal(api.hasCompletedQuiz(notDone), false)
   assert.equal(api.hasCompletedQuiz(done), true)
-  assert.equal(api.destinationFor(notDone), '/quiz')
+  assert.equal(api.destinationFor(notDone), '/')
   assert.equal(api.destinationFor(done), '/quiz-results')
   // An empty custom field is not "completed".
   assert.equal(
@@ -535,7 +535,12 @@ test('free Brand routes to /quiz until the quiz is completed, then /quiz-results
   )
   // A requested /quiz or /quiz-results still survives for free Brand.
   assert.equal(api.destinationFor(notDone, '/quiz-results'), '/quiz-results')
+  assert.equal(api.destinationFor(notDone, '/quiz'), '/quiz')
+  assert.equal(api.destinationFor(notDone, '/quiz?retake=true'), '/quiz?retake=true')
   assert.equal(api.destinationFor(done, '/quiz'), '/quiz')
+  // A /dashboard return resolves to the same free-Brand home.
+  assert.equal(api.destinationFor(notDone, '/dashboard'), '/')
+  assert.equal(api.destinationFor(notDone, '/dashboard/'), '/')
 })
 
 test('preserves only same-origin destinations allowed for the member role', () => {
@@ -616,6 +621,37 @@ test('canonical /dashboard next always resolves to the role-specific home', () =
   assert.equal(api.destinationFor(completedFreeBrand, '/dashboard'), '/quiz-results')
 })
 
+// The older Memberstack `quiz` field changes no destination: with `starter-quiz`
+// blank the free Brand is homed on the homepage like any other no-quiz member.
+test('a legacy-quiz free Brand is routed to the homepage', () => {
+  const { api } = loadRouter()
+  const legacy = {
+    id: 'member-legacy-quiz',
+    planConnections: [plan('pln_free-plan-f6kn0dxz')],
+    customFields: { quiz: 'true', 'starter-quiz': '' },
+  }
+
+  assert.equal(api.destinationFor(legacy, null), '/')
+  assert.equal(api.destinationFor(legacy, '/'), '/')
+  assert.equal(api.destinationFor(legacy, '/dashboard'), '/')
+  assert.equal(api.destinationFor(legacy, '/messages'), '/')
+  // A deliberate request for the current quiz is still honoured.
+  assert.equal(api.destinationFor(legacy, '/quiz'), '/quiz')
+})
+
+test('auth route sends a legacy-quiz free Brand to the homepage', async () => {
+  const member = {
+    id: 'member-legacy-quiz',
+    planConnections: [plan('pln_free-plan-f6kn0dxz')],
+    customFields: { quiz: 'true' },
+  }
+  for (const search of ['', '?next=%2F']) {
+    const { location } = loadRouter({ pathname: '/auth-route', search, member })
+    await flush()
+    assert.equal(location.replaced, '/', search)
+  }
+})
+
 test('preserves the V3 Talent routes defined by the access matrix', () => {
   const { api } = loadRouter()
   const talent = {
@@ -644,7 +680,7 @@ test('allows Brand tiers into All Starters but keeps Messages paid-only', () => 
   assert.equal(api.destinationFor(paidBrand, '/all-starters'), '/all-starters')
   assert.equal(api.destinationFor(freeBrand, '/all-starters'), '/all-starters')
   assert.equal(api.destinationFor(paidBrand, '/messages'), '/messages')
-  assert.equal(api.destinationFor(freeBrand, '/messages'), '/quiz')
+  assert.equal(api.destinationFor(freeBrand, '/messages'), '/')
 })
 
 test('deep-links the merged /opportunities feed for Talent and paid Brand only', () => {
@@ -666,8 +702,8 @@ test('deep-links the merged /opportunities feed for Talent and paid Brand only',
     api.destinationFor(paidBrand, '/opportunities/'),
     '/opportunities/',
   )
-  assert.equal(api.destinationFor(freeBrand, '/opportunities'), '/quiz')
-  assert.equal(api.destinationFor(freeBrand, '/opportunities/'), '/quiz')
+  assert.equal(api.destinationFor(freeBrand, '/opportunities'), '/')
+  assert.equal(api.destinationFor(freeBrand, '/opportunities/'), '/')
 })
 
 test('allows opportunity details only for Talent and paid Brand', () => {
@@ -692,7 +728,7 @@ test('allows opportunity details only for Talent and paid Brand', () => {
   )
   assert.equal(
     api.destinationFor(freeBrand, '/opportunities/product-designer'),
-    '/quiz',
+    '/',
   )
   assert.equal(
     api.destinationFor(talent, '/opportunities/product-designer/apply'),
@@ -722,7 +758,7 @@ test('allows opportunity creation only for paid Brand', () => {
   )
   assert.equal(
     api.destinationFor(freeBrand, '/opportunities---create'),
-    '/quiz',
+    '/',
   )
 })
 
@@ -1647,183 +1683,86 @@ test('a logged-out bounce back to /login discards the receipt unconfirmed', asyn
   assert.equal(harness.storage.has(TIMING_KEY), false)
 })
 
-test('an All Starters free Brand lands on the homepage after login', async () => {
-  const { location } = loadRouter({
-    pathname: '/auth-route',
-    member: {
-      id: 'member-all-starters',
-      planConnections: [plan('pln_free-plan-f6kn0dxz')],
-      customFields: { 'signup-source': '/all-starters' },
-    },
-  })
-
-  await flush()
-  assert.equal(location.replaced, '/')
-})
-
-test('a standalone signup free Brand lands on the homepage after a fresh login', async () => {
-  const { location } = loadRouter({
-    pathname: '/auth-route',
-    member: {
-      id: 'member-standalone-signup',
-      planConnections: [plan('pln_free-plan-f6kn0dxz')],
-      customFields: { 'signup-source': '/sign-up' },
-    },
-  })
-  await flush()
-  assert.equal(location.replaced, '/')
-})
-
-test('verified Learn signup free Brands land on the homepage after login', async () => {
-  for (const source of [
-    '/learn/sessions/partnerships-playbook',
-    '/learn/interviews-analysis/how-to-build-trust-on-social-media-in-2026',
-    '/learn/playbooks-frameworks/the-live-shopping-playbook',
+test('a free Brand with no quiz lands on the homepage after login', async () => {
+  for (const customFields of [
+    undefined,
+    {},
+    { quiz: 'true' },
+    { 'signup-source': '/quiz' },
+    { 'signup-source': '/all-starters' },
+    { 'signup-source': '/learn/sessions/partnerships-playbook' },
   ]) {
-    const { location } = loadRouter({
-      pathname: '/auth-route',
-      member: {
-        id: 'member-content',
-        planConnections: [plan('pln_free-plan-f6kn0dxz')],
-        customFields: { 'signup-source': source },
-      },
-    })
-    await flush()
-    assert.equal(location.replaced, '/', source)
-  }
-})
-
-test('Learn listings and malformed or unverified source paths retain the quiz default', async () => {
-  for (const source of [
-    '/learn',
-    '/learn/sessions',
-    '/learn/interviews-analysis',
-    '/learn/frameworks-playbooks',
-    '/learn/playbooks-frameworks',
-    '/learn/sessions/',
-    '/learn/sessions/item/nested',
-    '/learn/sessions/item?modal-id=signup-modal',
-    '/learn/sessions/item#signup-modal',
-    '/learn/sessions/item\n',
-    '/learn/sessions/-item',
-    '/learn/sessions/item-',
-    '/learn/sessions/%69tem',
-    '/learn/sessions/Item',
-    '/learn/sessions/item/',
-    '/learn/interviews-analyses/item',
-    '/learn/other/item',
-    'https://example.com/learn/sessions/item',
-    { path: '/learn/sessions/item' },
-  ]) {
-    const { location } = loadRouter({
-      pathname: '/auth-route',
-      member: {
-        id: 'member-content',
-        planConnections: [plan('pln_free-plan-f6kn0dxz')],
-        customFields: { 'signup-source': source },
-      },
-    })
-    await flush()
-    assert.equal(location.replaced, '/quiz', JSON.stringify(source))
-  }
-})
-
-test('free Brand login keeps quiz precedence and conservative source fallbacks', async () => {
-  const cases = [
-    [{ 'signup-source': '/all-starters', 'starter-quiz': '{"status":"ready"}' }, '/quiz-results'],
-    [{ 'signup-source': '/quiz' }, '/quiz'],
-    [{}, '/quiz'],
-    [{ 'signup-source': '/hire/example' }, '/quiz'],
-    [{ 'signup-source': '/learn' }, '/quiz'],
-    [{ 'signup-source': { path: '/all-starters' } }, '/quiz'],
-    [{ 'signup-source': ['/all-starters'] }, '/quiz'],
-    [{ 'signup-source': 'https://example.com/all-starters' }, '/quiz'],
-    [{ 'signup-referrer': '/all-starters', 'signup-trigger': '/all-starters' }, '/quiz'],
-  ]
-  for (const [customFields, expected] of cases) {
     const { location } = loadRouter({
       pathname: '/auth-route',
       member: { id: 'member-free', planConnections: [plan('pln_free-plan-f6kn0dxz')], customFields },
     })
     await flush()
-    assert.equal(location.replaced, expected, JSON.stringify(customFields))
+    assert.equal(location.replaced, '/', JSON.stringify(customFields))
   }
 })
 
-test('All Starters login preserves allowed returns and uses the homepage for rejected returns', async () => {
+test('a free Brand with a completed or ready pending quiz lands on /quiz-results after login', async () => {
+  const done = loadRouter({
+    pathname: '/auth-route',
+    member: {
+      id: 'member-free-done',
+      planConnections: [plan('pln_free-plan-f6kn0dxz')],
+      customFields: { 'starter-quiz': '{"status":"ready"}' },
+    },
+  })
+  const pending = loadRouter({
+    pathname: '/auth-route',
+    storage: new Map([['starterQuizPending', JSON.stringify({ status: 'ready' })]]),
+    member: { id: 'member-free-pending', planConnections: [plan('pln_free-plan-f6kn0dxz')] },
+  })
+  await flush()
+  assert.equal(done.location.replaced, '/quiz-results')
+  assert.equal(pending.location.replaced, '/quiz-results')
+})
+
+test('free Brand login honours validated returns and homes rejected ones on /', async () => {
   const cases = [
     ['/all-starters?view=favorites', '/all-starters?view=favorites'],
+    ['/quiz', '/quiz'],
     ['/quiz?retake=true', '/quiz?retake=true'],
-    ['/dashboard', '/quiz'],
+    ['/dashboard', '/'],
+    ['/dashboard/', '/'],
+    ['/dashboard/?source=login', '/'],
     ['/brand-dashboard', '/'],
     ['https://example.com/all-starters', '/'],
     ['/login', '/'],
   ]
-  for (const [storedDestination, expected] of cases) {
-    const { location } = loadRouter({
-      pathname: '/auth-route', storedDestination,
-      member: {
-        id: 'member-all-starters', planConnections: [plan('pln_free-plan-f6kn0dxz')],
-        customFields: { 'signup-source': '/all-starters' },
-      },
-    })
-    await flush()
-    assert.equal(location.replaced, expected, storedDestination)
-  }
-})
-
-test('non-quiz login keeps slash-form dashboard returns on the quiz role home', async () => {
-  for (const requested of ['/dashboard/', '/dashboard/?source=login']) {
+  for (const [requested, expected] of cases) {
     for (const returnLink of [
       { storedDestination: requested },
       { search: '?next=' + encodeURIComponent(requested) },
     ]) {
       const { location } = loadRouter({
         pathname: '/auth-route', ...returnLink,
-        member: {
-          id: 'member-all-starters',
-          planConnections: [plan('pln_free-plan-f6kn0dxz')],
-          customFields: { 'signup-source': '/all-starters' },
-        },
+        member: { id: 'member-free', planConnections: [plan('pln_free-plan-f6kn0dxz')] },
       })
       await flush()
-      assert.equal(location.replaced, '/quiz', JSON.stringify(returnLink))
+      assert.equal(location.replaced, expected, JSON.stringify(returnLink))
     }
   }
 })
 
-test('Learn login preserves completed results and validated return destinations', async () => {
-  const cases = [
-    [null, '{"status":"ready"}', '/quiz-results'],
-    ['/all-starters?view=favorites', '', '/all-starters?view=favorites'],
-    ['/quiz?retake=true', '', '/quiz?retake=true'],
-    ['/dashboard', '', '/quiz'],
-    ['/brand-dashboard', '', '/'],
-    ['https://example.com/learn', '', '/'],
-  ]
-  for (const [storedDestination, quiz, expected] of cases) {
-    const { location } = loadRouter({
-      pathname: '/auth-route', storedDestination,
-      member: {
-        id: 'member-content', planConnections: [plan('pln_free-plan-f6kn0dxz')],
-        customFields: {
-          'signup-source': '/learn/playbooks-frameworks/the-live-shopping-playbook',
-          'starter-quiz': quiz,
-        },
-      },
-    })
-    await flush()
-    assert.equal(location.replaced, expected, storedDestination)
-  }
-})
-
-test('a cached role contract without the login exception retains its existing default', () => {
+test('the login destination comes from roleHome, never a route-guard loginDefault', () => {
   const { api, window } = loadRouter()
+  // An older cached guard still exports loginDefault; the router must not use it.
+  window.StartersV3RouteGuard.loginDefault = () => '/stale-login-default'
+  const freeBrand = { planConnections: [plan('pln_free-plan-f6kn0dxz')] }
+  assert.equal(api.destinationFor(freeBrand), '/')
+  assert.equal(
+    api.destinationFor({ planConnections: [plan('pln_new-paid-plan-463h04ph')] }),
+    '/brand-dashboard',
+  )
+  assert.equal(
+    api.destinationFor({ planConnections: [plan('pln_dorxata-test-free-plan-dvcg0k8o')] }),
+    '/starter-dashboard',
+  )
   delete window.StartersV3RouteGuard.loginDefault
-  assert.equal(api.destinationFor({
-    planConnections: [plan('pln_free-plan-f6kn0dxz')],
-    customFields: { 'signup-source': '/all-starters' },
-  }), '/quiz')
+  assert.equal(api.destinationFor(freeBrand), '/')
 })
 
 test('auth route preserves the stored destination from login', async () => {
@@ -2311,7 +2250,7 @@ test('Brand logins never spend a Xano call on the Talent funnel', async () => {
   assert.equal(paidBrand.location.replaced, '/brand-dashboard')
   assert.equal(callsTo(paidBrand.fetchCalls, STATUS_URL).length, 0)
   assert.equal(callsTo(paidBrand.fetchCalls, BRAND_STATUS_URL).length, 1)
-  assert.equal(freeBrand.location.replaced, '/quiz')
+  assert.equal(freeBrand.location.replaced, '/')
   assert.equal(freeBrand.fetchCalls.length, 0)
   assert.equal(unmapped.location.replaced, undefined)
   assert.equal(unmapped.fetchCalls.length, 0)
@@ -2712,7 +2651,7 @@ test('the brand check is paid-Brand only; nobody else touches that endpoint', as
   assert.equal(callsTo(talent.fetchCalls, STATUS_URL).length, 1)
   // brand-free has no /complete-profile form to finish, so it stays a
   // zero-network login.
-  assert.equal(freeBrand.location.replaced, '/quiz')
+  assert.equal(freeBrand.location.replaced, '/')
   assert.deepEqual(freeBrand.fetchCalls, [])
   assert.equal(unmapped.location.replaced, undefined)
   assert.deepEqual(unmapped.fetchCalls, [])

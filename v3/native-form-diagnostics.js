@@ -30,8 +30,20 @@
   var HELPER_TIMEOUT_MS = 2000
   var MEMBERSTACK_WAIT_MS = 10000
   var OBSERVED_ATTRIBUTES = ['style', 'class', 'hidden', 'aria-hidden']
+  var FAIL_SELECTORS = ['[data-ms-message="error"]', '.w-form-fail']
+  var PROVIDER_SELECTOR = '[data-ms-auth-provider]'
+  // Map the visible provider message to an allowlisted reason. Raw text is never sent.
+  var ERROR_DETAILS = [
+    [/credentials are invalid|invalid (email|password|credentials)|incorrect (email|password)/i, 'invalid_credentials'],
+    [/login with your email|log in with (your )?email/i, 'use_email_login'],
+    [/login with google|log in with google|continue with google/i, 'use_google_login'],
+    [/too many|rate limit|try again later/i, 'rate_limited'],
+    [/captcha|turnstile|verify (that )?you are human|\bbot\b/i, 'captcha'],
+    [/network|connection|offline/i, 'network'],
+  ]
   var controllerScript = document.currentScript
   var pendingAuthForm = null
+  var providerClicksBound = false
 
   var MUTATION_WORKFLOWS = {
     profile_photo_xano_upload: 'talent_profile_photo',
@@ -275,7 +287,23 @@
     return receipt
   }
 
-  function completed(form, result, errorCode, target) {
+  function errorDetail(element) {
+    var textElement = element && typeof element.querySelector === 'function'
+      ? element.querySelector('[data-ms-message-text]') || element
+      : element
+    var text = String((textElement && textElement.textContent) || '')
+    for (var index = 0; index < ERROR_DETAILS.length; index += 1) {
+      if (ERROR_DETAILS[index][0].test(text)) return ERROR_DETAILS[index][1]
+    }
+    return 'other'
+  }
+
+  function contains(parent, node) {
+    return Boolean(parent && node && (parent === node ||
+      (typeof parent.contains === 'function' && parent.contains(node))))
+  }
+
+  function completed(form, result, errorCode, target, extra) {
     var api = window.StartersWorkflowDiagnostics
     if (!api || !form || !form.__startersMemberstackDiagnostic) return null
     if (
@@ -284,7 +312,7 @@
     ) {
       return form.__startersMemberstackDiagnostic
     }
-    var receipt = api.record(api.complete(form.__startersMemberstackDiagnostic, {
+    var receipt = api.record(api.complete(form.__startersMemberstackDiagnostic, Object.assign({
       result: result,
       stage: result === 'success' && /_membership_request$/.test(workflowFor(form))
         ? 'request_accepted'
@@ -292,7 +320,7 @@
       error_code: errorCode || '',
       duration_ms: Date.now() - (form.__startersMemberstackDiagnosticStartedAt || Date.now()),
       request_started: true,
-    }))
+    }, extra || {})))
     form.__startersMemberstackDiagnostic = receipt
     return receipt
   }
@@ -315,27 +343,75 @@
 
   function checkStates(form) {
     var done = firstVisibleState(form, ['[data-ms-message="success"]', '.w-form-done'])
-    var fail = firstVisibleState(form, ['[data-ms-message="error"]', '.w-form-fail'])
+    var fail = firstVisibleState(form, FAIL_SELECTORS)
     if (done) {
       completed(form, 'success', '', done)
       return
     }
-    if (fail) {
+    // A banner left visible by the previous submit is not this submit's outcome.
+    if (fail && fail !== form.__startersStaleError) {
+      var webflow = /_membership_request$/.test(workflowFor(form))
       completed(
         form,
         'failure',
-        /_membership_request$/.test(workflowFor(form))
-          ? 'WEBFLOW_FORM_ERROR'
-          : 'MEMBERSTACK_FORM_ERROR',
+        webflow ? 'WEBFLOW_FORM_ERROR' : 'MEMBERSTACK_FORM_ERROR',
         fail,
+        webflow ? null : { error_detail: errorDetail(fail) },
       )
     }
+  }
+
+  function clearStaleError(form, records) {
+    var stale = form.__startersStaleError
+    if (!stale) return
+    if (!visible(stale)) {
+      form.__startersStaleError = null
+      return
+    }
+    Array.prototype.forEach.call(records || [], function (record) {
+      if (contains(stale, record && record.target)) form.__startersStaleError = null
+    })
+  }
+
+  function beginProviderDiagnostic(form) {
+    form.__startersStaleError = firstVisibleState(form, FAIL_SELECTORS)
+    Promise.resolve(helperReady).then(function () {
+      started(form)
+      if (form.getAttribute('data-ms-form') === 'login' || form.getAttribute('data-ms-form') === 'signup') {
+        pendingAuthForm = form
+      }
+      checkStates(form)
+    })
+  }
+
+  function formForProvider(control) {
+    var wrapper = control && typeof control.closest === 'function'
+      ? control.closest('.w-form')
+      : null
+    return wrapper && typeof wrapper.querySelector === 'function'
+      ? wrapper.querySelector(FORM_SELECTOR)
+      : null
+  }
+
+  function bindProviderClicks() {
+    if (providerClicksBound || typeof window.addEventListener !== 'function') return
+    providerClicksBound = true
+    window.addEventListener('click', function (event) {
+      var target = event && event.target
+      var control = target && typeof target.closest === 'function'
+        ? target.closest(PROVIDER_SELECTOR)
+        : null
+      var form = formForProvider(control)
+      if (!form || !form.__startersMemberstackDiagnosticsBound) return
+      beginProviderDiagnostic(form)
+    }, true)
   }
 
   function bindForm(form) {
     if (!form || form.__startersMemberstackDiagnosticsBound || !workflowFor(form)) return false
     form.__startersMemberstackDiagnosticsBound = true
     form.addEventListener('submit', function () {
+      form.__startersStaleError = firstVisibleState(form, FAIL_SELECTORS)
       if (pendingForms.indexOf(form) === -1) pendingForms.push(form)
       Promise.resolve(helperReady).then(flushPendingForms)
     }, true)
@@ -350,7 +426,10 @@
 
     var wrapper = wrapperFor(form)
     if (wrapper && typeof MutationObserver === 'function') {
-      var observer = new MutationObserver(function () { checkStates(form) })
+      var observer = new MutationObserver(function (records) {
+        clearStaleError(form, records)
+        checkStates(form)
+      })
       observer.observe(wrapper, {
         attributes: true,
         attributeFilter: OBSERVED_ATTRIBUTES,
@@ -380,6 +459,16 @@
     return Boolean(member && member.id)
   }
 
+  // Role from the sitewide route guard, using only the member already on the page.
+  function knownRole(member) {
+    var guard = window.StartersV3RouteGuard
+    try {
+      return guard && typeof guard.memberRole === 'function' ? guard.memberRole(member) || '' : ''
+    } catch (error) {
+      return ''
+    }
+  }
+
   function watchAuth() {
     var startedAt = Date.now()
     var poll = function () {
@@ -407,6 +496,7 @@
             'success',
             '',
             stateElement(pendingAuthForm, '.w-form-done'),
+            { member_role: knownRole(memberData(payload)) },
           )
           pendingAuthForm = null
         }
@@ -418,6 +508,7 @@
 
   function init() {
     if (!allowedHost((window.location && window.location.hostname) || '')) return 0
+    bindProviderClicks()
     var count = bindAll()
     watchAuth()
     return count

@@ -135,3 +135,25 @@ test('restores and copies a redirecting receipt on the destination page', async 
   assert.equal(await destination.window.copyWorkflowDiagnostic('brand_account_build'), true)
   assert.match(destination.copied[0], /Workflow: brand_account_build/)
 })
+
+test('error detail and member role pass only allowlisted values to tracking', () => {
+  const { api, tracked } = load()
+  const started = api.create({ workflow: 'brand_login', result: 'started', stage: 'native_form' })
+  api.record(api.complete(started, {
+    result: 'failure',
+    error_code: 'MEMBERSTACK_FORM_ERROR',
+    error_detail: 'invalid_credentials',
+    member_role: 'talent',
+  }))
+  api.record(api.complete(started, {
+    result: 'failure',
+    error_detail: 'The provided credentials are invalid for a@b.co',
+    member_role: 'admin',
+  }))
+  assert.equal(tracked[0].properties.error_detail, 'invalid_credentials')
+  assert.equal(tracked[0].properties.member_role, 'talent')
+  assert.equal(tracked[0].properties.error_code, 'MEMBERSTACK_FORM_ERROR')
+  assert.equal(tracked[1].properties.error_detail, undefined)
+  assert.equal(tracked[1].properties.member_role, undefined)
+  assert.doesNotMatch(JSON.stringify(tracked), /a@b\.co|provided credentials/)
+})

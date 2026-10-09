@@ -123,11 +123,11 @@ node --test v3/password-recovery.test.js
 `auth-route.js` owns post-login and post-signup routing for V3 without changing
 the shared Memberstack plan redirects used by V2. The blocking site-head
 `auth-page-loader.js` inserts it only on the V3 `/login`, `/starter-login`, and
-`/auth-route` pages — immediately on the two login paths, which only need the
-form's `/auth-route` redirect written, and after DOMContentLoaded on
-`/auth-route`, which reads the guard's role contract. Keep the static deferred
-sitewide `route-guard.js` unconditional and ahead of the loader because it owns
-the shared stable plan-role contract and completes before DOMContentLoaded.
+`/auth-route` pages — immediately on the two login paths, where it configures
+login-page behavior, and after DOMContentLoaded on `/auth-route`, which reads
+the guard's role contract. Keep the static deferred sitewide `route-guard.js`
+unconditional and ahead of the loader because it owns the shared stable
+plan-role contract and completes before DOMContentLoaded.
 Keep `signup-attribution.js`, both `utils/posthog-*.js` helpers,
 `native-form-diagnostics.js` — the sitewide observer that owns the
 `brand_login` and `talent_login` receipts — and the
@@ -142,6 +142,14 @@ gate. The versioned
 [V3 Member Access Matrix](ACCESS-MATRIX.md) maps stable plan IDs to roles and
 documents route access plus the separate Webflow, content, and Xano enforcement
 layers.
+
+On the two login paths the router also replaces two Memberstack login errors
+in `[data-ms-message="error"]`: the invalid-credentials message and the
+Google-click "login with your email" message. It hides Memberstack's
+`[data-ms-message-text]` element, keeps its text unchanged for banner-text
+classifiers, and adds a `[data-starters-login-error-copy]` alert with a real
+`/forgot-password` link. The banner stays visible until the next form submit or
+`[data-ms-auth-provider]` click. Other messages are not changed.
 
 The V3 protected-route guard sends logged-out visitors to
 `/login?next=<encoded current path and query>`. For an exact Calls notification
@@ -314,9 +322,10 @@ own default page. An authenticated member with no mapped active plan remains on
 the page with an explicit error state, and a cross-family Talent + Brand plan
 conflict fails closed. The canonical `/dashboard` route is a thin guarded
 utility page that sends mapped members to `/starter-dashboard`,
-`/brand-dashboard`, `/quiz`, or `/quiz-results`; it does not merge or duplicate
+`/brand-dashboard`, `/quiz-results`, or `/` (free Brand home);
+it does not merge or duplicate
 the two dashboard page bodies. Free Brands use the
-[quiz role home](ACCESS-MATRIX.md#route-level-access) for guarded-page redirects.
+[free-Brand role home](ACCESS-MATRIX.md#route-level-access) for guarded-page redirects.
 
 Install the guard once sitewide in Site Settings Head Code, before page
 controllers such as `opportunities-3.0.js`. The controller detects the guard's
@@ -348,8 +357,8 @@ page-controller wiring. When `/quiz-results` has no test,
 pending, or saved quiz data, its page controller returns a positively identified
 logged-out visitor to `/quiz` and sends an authenticated member whose completion
 marker outlived missing or malformed member JSON to
-`/quiz?retake=true&quizDataMissing=1`; pending pre-signup quizzes and Memberstack
-failures do not redirect.
+`/quiz?retake=true&quizDataMissing=1`. Any other authenticated member goes to
+`/`. Pending pre-signup quizzes and Memberstack failures do not redirect.
 
 Three mechanisms were added on 2026-08-03. **Member-home bounce:** the homepage,
 both login pages, and `/sign-up` are not in the route table — they must keep
@@ -364,9 +373,8 @@ carries two overrides added later the same day. A member who cancelled a paid
 Brand plan goes to `/all-starters`, whether their older free plan is still live or
 nothing is active at all — that second case is an unmapped plan which would
 otherwise have stayed, and an unmapped plan with no cancelled paid Brand behind it
-still does stay. And a free Brand who has not finished the quiz stays on `/`
-instead of being pushed to `/quiz`. Login pages use the separate source-specific
-default above. A valid `?next=` outranks both overrides; on `/` it is honoured even for a
+still does stay. And a free Brand who has not finished the quiz stays on `/`,
+which is their role home. Login pages use the same role home. A valid `?next=` outranks both overrides; on `/` it is honoured even for a
 member with no mapped role, since deep-link intent does not depend on plan state.
 [Route guard wiring](../docs/wiring/ROUTE-GUARD-WIRING.md) has the exact precedence and the cancelled-plan
 definition. **Per-page logged-out destinations:** the three
@@ -381,14 +389,15 @@ the exact production paid-Brand email canary documented in the root
 [Quiz-results email tester](../README.md#quiz-results-email-tester) section.
 Talent leaves both; a free Brand
 stays on both, though on `/quiz-results` only once the quiz is done, since before
-that its role home is `/quiz`. "Done" there means either the `starter-quiz`
-custom field or a `ready` `sessionStorage.starterQuizPending` payload — the
+that its role home is `/`. "Done"
+there means either the `starter-quiz` custom field or a `ready`
+`sessionStorage.starterQuizPending` payload — the
 second signal was added on 2026-08-04 to fix a regression, because the field is
 written by `quiz-results.js` *after* that page renders, so a member who had just
 signed up was bounced straight back to `/quiz` in a race the field alone could
 never win. The guard only reads that key, never clears it, and only an explicit
 `ready` counts, so a free Brand who genuinely never took the quiz still goes to
-`/quiz`. `/generate-invoice` (Talent) also joined the guarded route table.
+`/`. `/generate-invoice` (Talent) also joined the guarded route table.
 
 `/complete-profile` was in that table for part of 2026-08-03 and is not any more.
 Memberstack's `restrict-pages` gated group owns the page on its own, redirecting a
@@ -402,8 +411,8 @@ way to their role home. See [ACCESS-MATRIX.md](ACCESS-MATRIX.md).
 `complete-profile-redirect.js` puts every mapped member who lands on
 `/complete-profile` where they belong, with no hop through `/login`. The page is a
 paid-Brand form, so a paid Brand stays until the profile reads as complete and then
-goes to `/brand-dashboard`; a free Brand goes to its quiz-funnel home
-(`/quiz-results` once `starter-quiz` is set, else `/quiz`) and a Talent member to
+goes to `/brand-dashboard`; a free Brand goes to its role home
+(`/quiz-results` once the quiz is recorded, else `/`) and a Talent member to
 `/starter-dashboard`. Those two destinations come from the guard's own
 `roleHome()`, so both branches cost no network request.
 
@@ -638,8 +647,9 @@ collection template so every item redirects to itself:
 <div hidden starters-ms-redirect="/hire/some-slug?modal-id=signup-modal"></div>
 ```
 
-The value is used verbatim, so `?modal-id=signup-modal` survives the redirect and
-the site's `modal.js` reopens the modal on the reloaded page. A
+Aside from the template fallback below, the value is used verbatim, so
+`?modal-id=signup-modal` survives the redirect and the site's `modal.js` reopens
+the modal on the reloaded page. A
 `starters-ms-redirect` attribute on the form itself overrides the page marker and
 belongs to that form alone — it is never used as the page default for a second
 signup form. A form that already has a non-empty `redirect` value is left
@@ -649,8 +659,11 @@ Accepted values are root-relative same-origin paths. A value must start with `/`
 must not start with `//` or `/\` (both protocol-relative, so both leave the
 site), and must contain no ASCII control characters — the URL parser strips tab,
 LF and CR before parsing, so `/<tab>/evil.example` would otherwise resolve to
-`https://evil.example/`. Anything else is ignored, with a warning on
-[staging hosts only](../README.md#staging-only-console-diagnostics). Signup
+`https://evil.example/`. The Signup Modal's unfilled template default
+`/PAGE/SLUG?modal-id=signup-modal` means "this page": `/PAGE/SLUG` is replaced
+with the current pathname, so on `/learn` the form redirects to
+`/learn?modal-id=signup-modal` instead of a 404. Anything else is ignored, with
+a warning on [staging hosts only](../README.md#staging-only-console-diagnostics). Signup
 forms injected after
 `DOMContentLoaded` are out of scope — call `window.StartersMsRedirect.apply()`
 after injecting one. The behaviour is demonstrated end to end, including the

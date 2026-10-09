@@ -32,7 +32,7 @@ On an approved V3 host, for a page it recognises:
 | Member state | Action |
 | --- | --- |
 | Logged out | Replace with `/login?next=<current path+query+validated Calls fragment>`, or with the page's `LOGGED_OUT_DESTINATIONS` override where one is configured |
-| Mapped member on `/dashboard` | Replace with the role-specific authored page (or Free Brand quiz home) |
+| Mapped member on `/dashboard` | Replace with the role-specific authored page (or Free Brand home) |
 | Role allowed on this page | Stay immediately; set `html[data-route-guard="allowed"]` |
 | Role not allowed on this page | Replace with that role's own default (never the other role's page) |
 | Authenticated, no mapped active plan | Stay with `html[data-route-guard-error="unmapped-plan"]` |
@@ -40,8 +40,8 @@ On an approved V3 host, for a page it recognises:
 | Page not in any of the three tables | Do nothing (no Memberstack lookup), except for the V3 compatibility redirect above |
 
 Role defaults (identical to `auth-route.js`): Talent → `/starter-dashboard`,
-Brand paid → `/brand-dashboard`, Brand free → `/quiz` (or `/quiz-results` once
-the quiz is completed — see brand-free routing below).
+Brand paid → `/brand-dashboard`, Brand free → `/` (or `/quiz-results` once
+the quiz is recorded, see brand-free routing below).
 
 For `/brand-dashboard` and `/starter-dashboard`, the logged-out redirect keeps
 `#calls` or `#calls-section` only when the full notification locator is valid
@@ -157,7 +157,7 @@ entry: `v3/complete-profile-redirect.js` sends a paid Brand to
 fast path that skips Xano. This changed from Memberstack-field routing
 on 2026-08-06 so the inbound and outbound redirects use one completion signal.
 The module also routes the other two roles off a form that is not theirs: a free
-Brand to its quiz-funnel home and a Talent member to `/starter-dashboard`. It
+Brand to its role home and a Talent member to `/starter-dashboard`. It
 borrows this guard's `memberRole` **and** `roleHome`, which is why those destinations
 match the member-home bounce without the `/login` trip. It adds no access rule, so
 the division above is unchanged; the `restrict-pages` group must allow **All
@@ -175,7 +175,7 @@ because a guarded page forces a login and these are the pre-signup funnel itself
 | --- | --- |
 | Logged out, or Memberstack unavailable | Nothing at all: no redirect, no attribute, no event |
 | Mapped member with a valid, permitted `?next=` | Replace with that `next` |
-| Mapped member otherwise | Replace with the role home, except the login-only default below |
+| Mapped member otherwise | Replace with the role home; on `/`, apply the homepage overrides below |
 | Authenticated but unmapped or cross-role conflicted | Stay, with a `console.error` only — no `data-route-guard-error` |
 
 A `?next=` is honoured only when it is same-origin, free of embedded
@@ -189,12 +189,13 @@ it), and any page the member's role may not view.
 Unlike a guarded page, a bounce page never gets the `data-route-guard="checking"`
 stamp. These pages are authored for signed-out visitors and must not depend on
 this script to become visible; the only attribute the bounce ever sets is
-`data-route-guard="redirecting"` on the way out. No role home is itself a bounce
-page. For the login default's homepage destination, see the
-[homepage overrides](../../v3/ACCESS-MATRIX.md#homepage-overrides).
+`data-route-guard="redirecting"` on the way out. The only role home that is a
+bounce page is `/`, for a free Brand with no recorded quiz. The
+[homepage overrides](../../v3/ACCESS-MATRIX.md#homepage-overrides) keep that
+member on `/`, so the bounce cannot loop.
 
-`/login`, `/starter-login`, and `/auth-route` share the guard's `loginDefault(member)`
-decision. Its source matching, quiz precedence, and scope are owned by the
+`/login`, `/starter-login`, and `/auth-route` use the guard's `roleHome(member)`.
+The free-Brand case is described in the
 [login-default contract](../../v3/ACCESS-MATRIX.md#non-quiz-free-brand-login-default).
 
 Note that `/login` and `/starter-login` are also configured by
@@ -228,7 +229,7 @@ allowlist test, and the widening is homepage-only: on `/login`,
 
 Rule 2 overrides two different pre-existing outcomes at once. A cancelled member
 whose older free plan is still active resolves to `brand-free` and would have
-been sent into the quiz funnel, which is the wrong ask of someone who already
+stayed on the free-Brand home, which is the wrong place for someone who already
 paid. A cancelled member with no active plans at all is `unmapped-plan` and would
 have sat on the homepage while the console logged a configuration error. Both now
 land on `/all-starters`.
@@ -245,12 +246,12 @@ grace window the payload is unverified; while the paid connection still reports
 active the member keeps full paid-Brand access, which is the fail-safe direction.
 
 Rule 2 outranks rule 3, so a cancelled Brand with a live free plan and no quiz is
-treated as cancelled, not as a stay. Rule 3 exists so the homepage stops pushing
-a browsing free Brand into `/quiz`; once the quiz is done they go to
-`/quiz-results` exactly as before.
+treated as cancelled, not as a stay. Rule 3 keeps a browsing free Brand with no
+completed quiz on `/`, which is also their role home. Once the quiz is done they
+go to `/quiz-results`.
 
-Both rules are scoped to `/`. For login defaults and the unchanged role-home
-routing on other entry pages, see the
+Both rules are scoped to `/`. For login and the unchanged role-home routing on
+other entry pages, see the
 [login-default contract](../../v3/ACCESS-MATRIX.md#non-quiz-free-brand-login-default).
 Both login pages and `/sign-up` still leave an unmapped cancelled member where
 they are. `v3/route-guard.test.js` covers these boundaries and verifies that
@@ -283,8 +284,8 @@ page sends a logged-out visitor to a login form, which would break both.
 
 The quiz-state rule is `/quiz-results`-specific. An allowed free Brand belongs on
 that page only once the quiz is done, because until then `brandFreeHome()` is
-`/quiz` and the results page has nothing to show them — so a mid-funnel free
-Brand is sent to `/quiz` even though its role is on the allowlist.
+`/` and the results page has nothing to show them. A free Brand with no
+recorded quiz is sent to `/` even though its role is on the allowlist.
 `/all-starters` deliberately has no such rule: both Brand tiers stay regardless
 of quiz state.
 
@@ -308,7 +309,7 @@ stuck on roughly the third attempt, because the intermittent success was the rac
 where the Memberstack save happened to land before the guard's redirect. That
 shipped in v1.59.76 and was reproduced on staging on 2026-08-04.
 
-So `enforceBrandFreeQuizState` also accepts a ready pending payload, via
+So `brandFreeHome()` also accepts a ready pending payload, via
 `hasReadyPendingQuiz()` — the same signal `quiz-results.js` renders from and is
 about to persist. Properties worth knowing:
 
@@ -319,19 +320,19 @@ about to persist. Properties worth knowing:
   and member combination.
 - **Only `ready` counts.** A `draft` payload, a payload with no `status` at all,
   malformed JSON, and blocked or absent storage all read as NOT ready, so every
-  failure mode falls back to the pre-fix `/quiz` bounce. (`quiz-results.js` is
+  failure mode falls back to the field alone. (`quiz-results.js` is
   deliberately more tolerant of a status-less payload; this gate is not.)
-- **Scoped to this one branch.** It is consulted only inside
-  `rule.enforceBrandFreeQuizState && role === 'brand-free'`. The wrong-role
-  bounces run first, so a Talent member on `/quiz-results` is still sent to its
+- **Scoped to the free-Brand home.** It is consulted only inside
+  `brandFreeHome()`. The wrong-role bounces run first, so a Talent member on `/quiz-results` is still sent to its
   own home whatever sits in `sessionStorage`. A paid Brand is also sent home
   unless it matches the separately gated production canary documented in the
   root [Quiz-results email tester](../../README.md#quiz-results-email-tester)
   section.
-  `brandFreeHome()`, `roleHome()`, `redirectTargetFor()`, the member-home bounce,
-  and the homepage overrides all still read the durable field only.
-- **A genuine never-took-the-quiz free Brand is still bounced** to `/quiz`, which
-  is the original intent of the rule.
+  `roleHome()`, `redirectTargetFor()`, and the member-home bounce send a free
+  Brand with a ready payload to `/quiz-results`. The homepage overrides read the
+  durable field only.
+- **A free Brand who never took the quiz is still bounced** to `/`, which is the
+  original intent of the rule.
 - The helper is deliberately a second copy of the one in
   `quiz-main/quiz-redirect.js` (added there in v1.59.84 for the mirror-image
   problem on `/quiz`). Two independently loaded browser scripts have no module
@@ -561,9 +562,9 @@ touched by a release:
   release tag.
 - Where the script exports a window API object, the same value appears as a
   `release` property on it.
-- The two must stay in sync. Each touched script's test file parses the header
-  marker out of the source and compares it against the exported property, so an
-  edit that updates one and forgets the other fails the suite.
+- The two must stay in sync. Focused release-marker tests pin that invariant
+  where present; otherwise the served-byte check below is the deploy-time proof
+  that the header and exported property match at the selected ref.
 
 `starter-edit-profile.js` is an accepted exception to the second and third
 bullets. Its `window.StartersStarterEditProfile` export exists for the Personal
@@ -644,14 +645,14 @@ to publish and verify the assets.
   and confirm each one still renders untouched when signed out. On `/` the two
   homepage overrides change two of those cases: a not-yet-quizzed Free Brand must
   stay with no `<html>` attribute at all. On `/login` and `/starter-login`,
-  verify each source cohort and quiz state against the
+  verify each Free Brand quiz state against the
   [login-default contract](../../v3/ACCESS-MATRIX.md#non-quiz-free-brand-login-default).
   Follow any homepage destination and confirm it stays.
 - Verify the homepage cancelled-Brand redirect with a Memberstack account whose
   paid Brand plan is cancelled, in both sub-kinds — free plan still active, and
   no active plan at all. Both must land on `/all-starters` from `/` and then stay
-  there. Confirm `/login` uses the source-dependent free-Brand login default for
-  the first and stays put for the second, and check
+  there. Confirm `/login` sends the first to the free-Brand home `/` and leaves
+  the second where it is, and check
   `window.StartersV3RouteGuard.hasCancelledPaidBrandPlan((await
   $memberstackDom.getCurrentMember()).data)` reads `true` in the console.
 - Verify `/login?next=/messages` bounces a signed-in Talent member to
@@ -665,7 +666,7 @@ to publish and verify the assets.
   for `/starter-dashboard`; a paid Brand must stay on `/all-starters` and leave
   `/quiz-results`; a free Brand must stay on `/all-starters` in either quiz state,
   and on `/quiz-results` only once the quiz is done (before that it goes to
-  `/quiz`).
+  `/`).
 - Verify `/quiz` signed in as Talent, with and without `?retake=true`: both must
   land on `/starter-dashboard`, unlike the Brand redirects which `?retake=`
   suppresses.

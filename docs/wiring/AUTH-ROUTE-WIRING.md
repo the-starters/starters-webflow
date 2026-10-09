@@ -48,11 +48,10 @@ moved to `get_build_profile_status` on 2026-08-04.
    ref. On `/auth-route` it waits for DOMContentLoaded before inserting the
    router, which preserves the current deferred route-guard-before-router order.
    On `/login` and `/starter-login` it inserts immediately, so the fetch
-   overlaps the body parse: those pages only need the router to write
-   `redirect="/auth-route"` onto the form, they never read the guard contract,
-   and a member can submit the form as soon as it paints. Delaying the insert
-   there would leave a submit window in which the login falls through to the
-   shared Memberstack plan redirect.
+   overlaps the body parse: those pages need the router before a member can
+   submit the form or see a Memberstack login error, and they never read the
+   guard contract. Delaying the insert there would leave a submit window in
+   which the login falls through to the shared Memberstack plan redirect.
 
    ```html
    <script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@RELEASE/v3/auth-page-loader.js"></script>
@@ -297,16 +296,18 @@ Brand Free plus paid Brand is a valid same-family upgrade state and resolves to
 paid Brand. Talent plus either Brand role is a cross-family conflict and remains
 on the utility page with `conflicting-plan-roles`.
 
-The guard's shared login default applies here and on authenticated visits to
-both login pages. Its exact scope and conservative fallbacks are documented in
-the [access matrix](../../v3/ACCESS-MATRIX.md#non-quiz-free-brand-login-default).
+The router's default is the guard's `roleHome(member)`, the same home the guard
+uses on authenticated visits to both login pages. The free-Brand case is
+documented in the
+[access matrix](../../v3/ACCESS-MATRIX.md#non-quiz-free-brand-login-default).
 Canonical `/dashboard` and allowed return destinations retain their existing
 semantics; immediate modal-signup returns are unchanged.
 
 Release the login router together with the guard: update the pinned login-loader
 ref as well as the moving guard asset, purge the moving asset, and verify the
-served bytes for both refs. A cached older guard without the new login-default
-API retains the previous quiz fallback; it does not break login. Matching local
+served bytes for both refs. The router needs only `roleHome` from the guard, so
+a cached older guard does not break login. Until it refreshes, that guard's own
+role homes apply, which can still send a free Brand with no quiz to `/quiz`. Matching local
 tests or a merged PR alone do not prove both published assets are current.
 
 ## Talent funnel position
@@ -436,7 +437,7 @@ returning to `/dashboard`, preventing a redirect loop.
 | --- | --- |
 | Talent | `/dashboard` (resolved to home), `/starter-dashboard`, `/starter-onboarding`, `/build-profile/select-profile`, `/build-profile/full-profile`, `/build-profile/consult`, `/starter-edit-profile`, `/messages`, `/opportunities`, `/opportunities/`, `/opportunities-freelancer-view`, `/opportunities/<slug>`, `/generate-invoice`, `/generate-invoice/` |
 | Brand paid | `/dashboard` (resolved to home), `/all-starters`, `/brand-dashboard`, `/favorites`, `/favorites/`, `/opportunities`, `/opportunities/`, `/opportunities-brands-view`, `/messages`, `/opportunities/<slug>`, `/opportunities---create` |
-| Brand free | `/dashboard` (resolved to quiz home), `/all-starters`, `/quiz`, `/quiz-results` |
+| Brand free | `/dashboard` (resolved to home), `/all-starters`, `/quiz`, `/quiz-results` |
 
 `/starter-onboarding` is allowlisted for Talent because `v3/route-guard.js`
 sends a logged-out visitor there through `/login?next=/starter-onboarding`.
@@ -540,8 +541,8 @@ Production stays silent apart from the configuration errors in the table above.
   fail the gate on it — the loader appends the router during head parsing, so
   `auth-route.js` normally executes before the deferred guard. Confirm only
   that its *request* starts during head parsing, well before DOMContentLoaded,
-  so the form is configured as early as possible. That branch never reads the
-  guard's role contract, so guard-after-router is correct there.
+  so login-page setup is installed as early as possible. That branch never
+  reads the guard's role contract, so guard-after-router is correct there.
 - Confirm `/auth-route` requests no unrelated application controller, and that
   `signup-attribution.js`, `native-form-diagnostics.js`, and both PostHog
   helpers ARE still requested on

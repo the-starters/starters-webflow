@@ -1,7 +1,7 @@
 /**
  * /complete-profile — role routing for a page that belongs to exactly one role.
  *
- * @release v1.59.441
+ * @release v1.59.679
  *
  * ONE job: put every MAPPED member who lands on /complete-profile where they
  * actually belong, without a hop through /login. The page is a paid-Brand form,
@@ -13,8 +13,7 @@
  *     brand_profile_done false                        → STAY. This is exactly who
  *     the page is for.
  *   - paid Brand, any inconclusive Xano answer        → STAY
- *   - free Brand                                      → its guard home
- *     (the quiz funnel: /quiz-results once `starter-quiz` is set, else /quiz)
+ *   - free Brand                                      → its guard role home
  *   - Talent                                          → /starter-dashboard
  *
  * COMPLETION IS READ FROM XANO, NOT FROM THE MEMBER OBJECT (change of source,
@@ -208,8 +207,8 @@
    * route-guard.js is loaded sitewide before page controllers and owns the stable
    * plan-ID role contract AND the per-role home table. Reusing its exported API —
    * exactly as v3/build-profile-redirect.js does — keeps this module from carrying
-   * a second copy of either, which is the only way the free-Brand quiz-funnel rule
-   * (/quiz-results once `starter-quiz` is set, else /quiz) can stay in one place.
+   * a second copy of either, which is the only way the free-Brand home can stay
+   * in one place.
    *
    * Both halves are required together: a contract that can name a role but not its
    * home would let this module identify a Talent member and then have nowhere to
@@ -243,9 +242,9 @@
 
   /**
    * The guard's own answer for "where does this member live?" — /starter-dashboard
-   * for Talent, and for a free Brand the quiz funnel decided by the `starter-quiz`
-   * marker. Deliberately not reimplemented here; if the guard ever changes a role
-   * home, this page follows automatically.
+   * for Talent, and for a free Brand the guard-owned home. Deliberately not
+   * reimplemented here; if the guard ever changes a role home, this page follows
+   * automatically.
    */
   function roleHome(member) {
     var contract = contractOrWarn()
@@ -449,8 +448,8 @@
    * The destination this member belongs at, or null to stay. Separated from the
    * navigation itself so it can be called by hand on staging without the page
    * changing underneath the console. It answers for all three roles now, not just
-   * the paid-Brand completion case: /brand-dashboard, the free-Brand quiz funnel,
-   * or /starter-dashboard.
+   * the paid-Brand completion case: /brand-dashboard, the free-Brand home, or
+   * /starter-dashboard.
    */
   async function completeProfileDestination() {
     var memberstack = await waitForMemberstack()
@@ -502,7 +501,7 @@
 
     // Talent and free Brand: this form is not theirs and never will be, so send
     // them to the home the guard would have sent them to after a /login hop —
-    // /starter-dashboard for Talent, the quiz funnel for a free Brand — and skip
+    // /starter-dashboard for Talent, the guard's home for a free Brand — and skip
     // the hop. Neither the completion marker nor the Xano read is consulted for
     // either role: both are paid-Brand signals, a stray marker on the wrong role
     // means nothing, and this endpoint has no record for them anyway.
@@ -536,7 +535,7 @@
   /* ---------------------------------- boot ---------------------------------- */
 
   window.StartersCompleteProfileRedirect = {
-    release: 'v1.59.441',
+    release: 'v1.59.679',
     allowedHost: allowedHost,
     stagingHost: stagingHost,
     isCompleteProfilePath: isCompleteProfilePath,
@@ -551,8 +550,8 @@
     // reproducing the decision by hand.
     memberRole: memberRole,
     roleHome: roleHome,
-    // Answers for all three roles: /brand-dashboard, the free-Brand quiz funnel,
-    // or /starter-dashboard. null means stay.
+    // Answers for all three roles: /brand-dashboard, the free-Brand home, or
+    // /starter-dashboard. null means stay.
     completeProfileDestination: completeProfileDestination,
     redirectPastCompleteProfile: redirectPastCompleteProfile,
     completeProfilePaths: COMPLETE_PROFILE_PATHS.slice(),

@@ -490,6 +490,65 @@ test('wrong signed subject is refused before session construction', async () => 
   assert.equal(state.calls.sessions.length, 0)
 })
 
+function tokenTtlHarness({ exp, expiresIn = 600 }) {
+  return harness({
+    fetch: async () =>
+      jsonResponse({
+        token: token({ exp }),
+        me_id: 'mem_sb_membera',
+        data_environment: 'test',
+        expires_in_seconds: expiresIn,
+      }),
+  })
+}
+
+// The server issues 600 s tokens on its own clock. A browser clock that is
+// N seconds slow sees exp - now = 600 + N.
+for (const slowSeconds of [1, 90]) {
+  test(`a full-lifetime token is accepted when the browser clock is ${slowSeconds} s slow`, async () => {
+    const state = tokenTtlHarness({ exp: NOW_SECONDS + 600 + slowSeconds })
+    await open(state)
+    assert.equal(state.calls.sessions.length, 1)
+    assert.equal(
+      await state.calls.sessions[0].tokenFetcher(),
+      token({ exp: NOW_SECONDS + 600 + slowSeconds }),
+    )
+  })
+}
+
+test('a full-lifetime token is refused when the browser clock is 300 s slow', async () => {
+  const state = tokenTtlHarness({ exp: NOW_SECONDS + 600 + 300 })
+  await assert.rejects(open(state), /does not match/)
+  assert.equal(state.calls.sessions.length, 0)
+})
+
+test('the skew tolerance ends at 600 + 120 s of remaining lifetime', async () => {
+  const atBound = tokenTtlHarness({ exp: NOW_SECONDS + 600 + 120 })
+  await open(atBound)
+  assert.equal(atBound.calls.sessions.length, 1)
+
+  const pastBound = tokenTtlHarness({ exp: NOW_SECONDS + 600 + 120 + 1 })
+  await assert.rejects(open(pastBound), /does not match/)
+  assert.equal(pastBound.calls.sessions.length, 0)
+})
+
+test('a declared lifetime above 600 s is still refused', async () => {
+  const state = tokenTtlHarness({ exp: NOW_SECONDS + 600, expiresIn: 601 })
+  await assert.rejects(open(state), /does not match/)
+  assert.equal(state.calls.sessions.length, 0)
+})
+
+for (const [label, exp] of [
+  ['an expired token', NOW_SECONDS - 1],
+  ['a token that expires now', NOW_SECONDS],
+]) {
+  test(`${label} is refused with no skew tolerance`, async () => {
+    const state = tokenTtlHarness({ exp })
+    await assert.rejects(open(state), /does not match/)
+    assert.equal(state.calls.sessions.length, 0)
+  })
+}
+
 test('wrong environment is refused before session construction', async () => {
   const state = harness({
     fetch: async () =>
