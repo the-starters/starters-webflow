@@ -479,3 +479,23 @@ test('P9 review: approve only on a live call before start, never twice for a sta
     global.xanoAuthFetch = previous
   }
 })
+
+test('P9 A: off-session 3DS (requires_payment_method) confirms on-session with the saved card', async () => {
+  const previous = global.xanoAuthFetch
+  global.xanoAuthFetch = async () => ({ ok: true, json: async () => ({ booking_id: 'booking-paid-1', payment_status: 'auth_required', client_secret: 'pi_secret_test', provider_status: 'requires_payment_method', payment_method: 'pm_saved_1' }) })
+  try {
+    const calls = []
+    const stripe = {
+      handleNextAction: async () => { calls.push('next'); return { paymentIntent: { status: 'requires_capture' } } },
+      confirmCardPayment: async (secret, data) => { calls.push(['confirm', secret, data.payment_method]); return { paymentIntent: { status: 'requires_capture' } } },
+    }
+    assert.equal(await api.approvePayment('brand', paidBooking('auth_required'), stripe, () => true), 'requires_capture')
+    assert.deepEqual(calls, [['confirm', 'pi_secret_test', 'pm_saved_1']])
+    global.xanoAuthFetch = async () => ({ ok: true, json: async () => ({ booking_id: 'booking-paid-1', payment_status: 'auth_required', client_secret: 'pi_secret_test', provider_status: 'requires_payment_method', payment_method: '' }) })
+    await assert.rejects(api.approvePayment('brand', paidBooking('auth_required'), stripe, () => true), /unavailable/)
+    global.xanoAuthFetch = async () => ({ ok: true, json: async () => ({ booking_id: 'booking-paid-1', payment_status: 'auth_required', client_secret: 'pi_secret_test', provider_status: 'requires_action' }) })
+    calls.length = 0
+    assert.equal(await api.approvePayment('brand', paidBooking('auth_required'), stripe, () => true), 'requires_capture')
+    assert.deepEqual(calls, ['next'])
+  } finally { global.xanoAuthFetch = previous }
+})
