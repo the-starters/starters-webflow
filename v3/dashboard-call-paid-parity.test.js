@@ -330,6 +330,7 @@ function cancelModal(options) {
     cancel: el('div', { 'booking-popup-content': 'cancel' }, cancelChildren),
     reason: el('div', { 'booking-popup-content': 'cancel-reason' }, [
       el('textarea', { 'booking-cancel-reason': '' }),
+      el('button', { 'booking-action-btn': 'cancel' }),
     ]),
   }
   const modal = el('div', { 'popup-booking-info': '' }, [panels.base, panels.cancel, panels.reason])
@@ -434,6 +435,66 @@ test('P5: opening Cancel on a held Paid call shows the fee line; Free opens unch
       assert.equal(notes.length, 1)
       assert.equal(notes[0].textContent, scenario.text)
     }
+  }
+})
+
+test('P5: submit refreshes a stale late-fee disclosure before sending cancel', async () => {
+  const originalFetch = global.xanoAuthFetch
+  const originalStorage = global.sessionStorage
+  const originalCrypto = global.crypto
+  let now = 1_800_000_000_000
+  const requests = []
+  try {
+    const values = new Map()
+    global.sessionStorage = {
+      getItem: (key) => (values.has(key) ? values.get(key) : null),
+      setItem: (key, value) => values.set(key, String(value)),
+      removeItem: (key) => values.delete(key),
+    }
+    global.crypto = {
+      subtle: originalCrypto.subtle,
+      randomUUID() { return '00000000-0000-4000-8000-000000000015' },
+    }
+    global.xanoAuthFetch = async function (url, options) {
+      const body = JSON.parse(options.body)
+      requests.push({ url, body })
+      return {
+        ok: true,
+        async json() {
+          return { cancel: { booking_id: body.booking_id, status: 'cancelled' } }
+        },
+      }
+    }
+
+    const fixture = cancelModal()
+    const booking = held({ start: now + LATE + 1000 })
+    api.wire({
+      document: fixture.document,
+      role: 'brand',
+      getBooking: () => booking,
+      now: () => now,
+    })
+    await clickAction(fixture, fixture.panels.base.querySelector('[booking-action-btn="switch-cancel"]'))
+    assert.equal(visibleFeeNotes(fixture.modal)[0].textContent, api.CANCEL_FEE_TEXT.none)
+    await clickAction(fixture, fixture.panels.cancel.querySelector('[booking-action-btn="switch-cancel-reason"]'))
+    assert.equal(fixture.panels.reason.hidden, false)
+    assert.equal(visibleFeeNotes(fixture.modal)[0].textContent, api.CANCEL_FEE_TEXT.none)
+
+    now += 2000
+    fixture.panels.reason.querySelector('[booking-cancel-reason]').value = 'The call is no longer needed.'
+    const submit = fixture.panels.reason.querySelector('[booking-action-btn="cancel"]')
+    await clickAction(fixture, submit)
+    assert.equal(requests.length, 0)
+    assert.equal(visibleFeeNotes(fixture.modal)[0].textContent, api.CANCEL_FEE_TEXT.late)
+
+    await clickAction(fixture, submit)
+    assert.equal(requests.length, 1)
+    assert.match(requests[0].url, /\/booking\/cancel\/v3$/)
+    assert.equal(requests[0].body.cancelled_reason, 'The call is no longer needed.')
+  } finally {
+    global.xanoAuthFetch = originalFetch
+    global.sessionStorage = originalStorage
+    global.crypto = originalCrypto
   }
 })
 

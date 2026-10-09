@@ -267,6 +267,12 @@
     return canonical != null ? canonical : Date.now()
   }
 
+  function actionNow(settings, booking) {
+    const source = settings && settings.now
+    const value = typeof source === 'function' ? source(booking) : source
+    return value != null && Number.isFinite(Number(value)) ? Number(value) : undefined
+  }
+
   /**
    * Paid parity P5: a confirmed Paid call that already holds an authorized
    * PaymentIntent (#269 at 48 h) is cancellable by either participant until
@@ -1806,6 +1812,17 @@
     ) || null
   }
 
+  function visibleCancelFeeText(modal) {
+    if (!modal || typeof modal.querySelectorAll !== 'function') return ''
+    const note = Array.prototype.find.call(
+      modal.querySelectorAll('[booking-copy="cancel-fee"], [data-starters-cancel-fee-note]'),
+      function (each) {
+        return each && !each.hidden && !(each.style && each.style.display === 'none')
+      },
+    )
+    return clean(note && note.textContent)
+  }
+
   const RESPOND_SELECTOR =
     '[booking-action-btn="confirm-reschedule"], [booking-card-action-btn="confirm-reschedule"], ' +
     '[booking-action-btn="reschedule-decline"], [booking-card-action-btn="reschedule-decline"]'
@@ -1893,9 +1910,11 @@
     if (!modal || typeof modal.querySelectorAll !== 'function') return false
     const text = cancelFeeText(role, booking, now)
     const panel = openPopupContent(modal)
+    const panelName = panel && typeof panel.getAttribute === 'function'
+      ? panel.getAttribute('booking-popup-content')
+      : ''
     const inCancel = Boolean(
-      panel && typeof panel.getAttribute === 'function' &&
-      panel.getAttribute('booking-popup-content') === 'cancel',
+      panel && (panelName === 'cancel' || panelName === 'cancel-reason')
     )
     const authored = inCancel && typeof panel.querySelector === 'function'
       ? panel.querySelector('[booking-copy="cancel-fee"]')
@@ -1936,6 +1955,13 @@
     note.hidden = false
     if (note.style) note.style.display = ''
     return true
+  }
+
+  function refreshCancelFeeDisclosure(document, modal, role, booking, now) {
+    const before = visibleCancelFeeText(modal)
+    const expected = clean(cancelFeeText(role, booking, now))
+    const rendered = renderCancelFeeNote(document, modal, role, booking, now)
+    return expected !== '' && before !== expected && rendered
   }
 
   function commitBookingMutation(settings, booking, update, claim) {
@@ -2031,7 +2057,8 @@
           const resolved = rescheduleKindFor(settings.role, booking)
           if (resolved) step = { kind: resolved, step: step.step }
         }
-        if (!canAct(step.kind, settings.role, booking)) {
+        let now = actionNow(settings, booking)
+        if (!canAct(step.kind, settings.role, booking, now)) {
           // Never fail silently: a blocked click with no trace reads as a dead
           // button. The gate snapshot names the reason without member PII.
           console.warn('[dashboard-call-actions] ' + step.kind + ' blocked:', {
@@ -2054,11 +2081,18 @@
             return
           }
           switchPopupContent(modal, config.firstContent)
-          if (step.kind === 'cancel') renderCancelFeeNote(document, modal, settings.role, booking)
+          if (step.kind === 'cancel') renderCancelFeeNote(document, modal, settings.role, booking, now)
           return
         }
         if (step.step === 'reason') {
+          if (
+            step.kind === 'cancel' &&
+            refreshCancelFeeDisclosure(document, modal, settings.role, booking, now)
+          ) return
           switchPopupContent(modal, config.reasonContent)
+          if (step.kind === 'cancel') {
+            renderCancelFeeNote(document, modal, settings.role, booking, now)
+          }
           return
         }
         if (step.step === 'calendar') {
@@ -2103,7 +2137,8 @@
             releaseAction = await acquireMutationSlot(settings, booking, config.failureMessage)
             if (!releaseAction) return
             booking = settings.getBooking(button)
-            if (!canAct(step.kind, settings.role, booking)) return
+            now = actionNow(settings, booking)
+            if (!canAct(step.kind, settings.role, booking, now)) return
             mutationClaim = typeof settings.captureBookingMutation === 'function'
               ? settings.captureBookingMutation(booking)
               : null
@@ -2153,6 +2188,10 @@
           }
           return
         }
+        if (
+          step.kind === 'cancel' &&
+          refreshCancelFeeDisclosure(document, modal, settings.role, booking, actionNow(settings, booking))
+        ) return
         const reason = reasonValue(modal, step.kind)
         if (!validateReason(reason.field, reason.value)) return
         button.__startersActionBusy = true
@@ -2164,7 +2203,12 @@
           releaseAction = await acquireMutationSlot(settings, booking, config.failureMessage)
           if (!releaseAction) return
           booking = settings.getBooking(button)
-          if (!canAct(step.kind, settings.role, booking)) return
+          now = actionNow(settings, booking)
+          if (!canAct(step.kind, settings.role, booking, now)) return
+          if (
+            step.kind === 'cancel' &&
+            refreshCancelFeeDisclosure(document, modal, settings.role, booking, now)
+          ) return
           mutationClaim = step.kind === 'cancel' &&
             typeof settings.captureBookingMutation === 'function'
             ? settings.captureBookingMutation(booking)
@@ -2174,6 +2218,7 @@
             settings.role,
             booking,
             reason.value,
+            now,
           )
           if (!result) throw new Error(config.failureMessage)
           if (step.kind === 'cancel' && typeof settings.onCancelSuccess === 'function') {
