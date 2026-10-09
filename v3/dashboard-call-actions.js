@@ -233,10 +233,10 @@
     )
   }
 
-  // Paid parity P4 (2026-10-03): #2099 cancels a confirmed Paid call only
-  // while it still holds a saved card, i.e. more than 48 h 15 min before start
-  // (task #121 authorizes at 48 h). Inside that window the server refuses, so
-  // the client hides Cancel instead of offering an action that fails.
+  // Paid parity P4 (2026-10-03): a confirmed saved-card Paid call can cancel
+  // only more than 48 h 15 min before start (task #121 authorizes at 48 h).
+  // Inside that saved-card window the server refuses; P5 handles reconciled
+  // authorized holds below.
   const PAID_CONFIRMED_CANCEL_LEAD_MS = 173700000
 
   /* Paid parity P6 / P7 server openings. The Xano drafts (#5921 P6,
@@ -248,7 +248,7 @@
   const PAID_EDIT_OPEN_ENVIRONMENTS = ['test']
   const PAID_RESCHEDULE_OPEN_ENVIRONMENTS = ['test']
   // P5 (#2099 held-call cancel) opens in production with the #2099 / #263 / #272
-  // publish (Wednesday release 2026-10-07). Ship this only after that publish.
+  // server publish; keep this list in lockstep with that admission gate.
   const PAID_HOLD_CANCEL_OPEN_ENVIRONMENTS = ['test', 'production']
 
   // F15 (Kaeser + Jai, 2026-10-06): a Brand cancel at or within 8 h of start is

@@ -2740,9 +2740,10 @@ direct-update contract for the Brand only. The two contracts never claim the
 same booking. Every command requires a booking ID, configuration ID,
 participant identity, and exact `test` or `production` data environment.
 
-During soft launch (JP, 2026-10-03) a gated Paid Reschedule or inside-window
-Paid Cancel control hides with no explanation, so the modal never names a
-feature that is not live yet. Earlier versions (2026-08-29 to v1.59.640) inserted a
+During soft launch (JP, 2026-10-03) a gated Paid Reschedule or an inside-window
+Paid Cancel control without a reconciled authorized hold hides with no
+explanation, so the modal never names a feature that is not live yet. Earlier
+versions (2026-08-29 to v1.59.640) inserted a
 module-owned `data-starters-action-hint` node after the hidden authored
 button. Each details populate now hides any such node that an earlier version
 or an earlier booking left in the modal, and it creates no new one. The script
@@ -2766,8 +2767,8 @@ returns full rows, so `payment_status`, `payment_reconciliation_status`,
   `paidHoldCancelAdmitted` admits a confirmed Paid row with a
   `payment_intent`, `payment_status` `intent_created` and
   `payment_reconciliation_status` `reconciled`, and `data_environment` in
-  `PAID_HOLD_CANCEL_OPEN_ENVIRONMENTS` (`['test', 'production']` since the
-  #2099 P5 publish on 2026-10-07). Either
+  `PAID_HOLD_CANCEL_OPEN_ENVIRONMENTS` (`['test', 'production']` after the
+  #2099 / #263 / #272 P5 server publish). Either
   participant can then cancel until start. Every other Paid payment state
   inside 48 h 15 min stays hidden. `cancelFeeText` gives the cancel
   confirmation one line: a Brand on a confirmed Paid call with

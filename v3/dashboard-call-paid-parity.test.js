@@ -144,7 +144,7 @@ test('P5: both participants can cancel a held Paid call until start, inside 48 h
     assert.equal(api.canCancel(role, held({ start: now - 1 }), now), false, role + ' after start')
   }
   assert.equal(api.canCancel('guest', held({ start: now + H }), now), false)
-  // P5 opens in production with the #2099 P5 publish (2026-10-07); unknown env stays closed.
+  // P5 opens in production with the #2099 / #263 / #272 server publish; unknown env stays closed.
   assert.equal(api.canCancel('brand', held({ start: now + H, data_environment: 'production' }), now), true)
   assert.equal(api.canCancel('brand', held({ start: now + H, data_environment: '' }), now), false)
   assert.equal(api.canCancel('brand', held({ start: now + H, brand_data: {} }), now), false)
