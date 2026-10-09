@@ -130,7 +130,21 @@
     if (!action) return null
     // The Brand may close the modal while the route answers: no bank step then.
     if (typeof isCurrent === 'function' && !isCurrent()) return null
-    const result = await stripe.handleNextAction({ clientSecret: action.client_secret })
+    // #2916 (P9 A, 2026-10-09): #69 confirms off-session, so 3DS usually ends in
+    // requires_payment_method + authentication_required. That PaymentIntent is
+    // confirmed on-session with the same saved card; requires_action uses the
+    // bank step directly.
+    const providerStatus = clean(action.provider_status).toLowerCase()
+    const paymentMethod = clean(action.payment_method)
+    let result
+    if (providerStatus === 'requires_payment_method') {
+      if (!paymentMethod || typeof stripe.confirmCardPayment !== 'function') {
+        throw new Error('Payment approval client unavailable')
+      }
+      result = await stripe.confirmCardPayment(action.client_secret, { payment_method: paymentMethod })
+    } else {
+      result = await stripe.handleNextAction({ clientSecret: action.client_secret })
+    }
     if (!result || result.error) {
       throw new Error('Payment approval did not complete')
     }
