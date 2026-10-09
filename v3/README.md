@@ -2725,22 +2725,25 @@ rescheduled row whose start is in the future. A Brand can also cancel its own
 canonical pending request, Free or Paid, before its start; a Starter declines a
 pending request instead. A confirmed Paid call is cancellable by either
 participant only when the start is more than 48 hours 15 minutes away, before
-the 48-hour card authorization window. Inside that window the server refuses
-Paid cancellation, so the client hides Cancel. Paid rescheduled bookings stay
+the 48-hour card authorization window. Inside that window only a reconciled
+authorized hold is cancellable (P5, below); for every other Paid state the
+server refuses, so the client hides Cancel. Paid rescheduled bookings stay
 hidden because the server admits Paid cancellation only in `confirmed` status.
 For Decline and Cancel eligibility, a row with neither `is_paid` nor
 `paid_meeting` is treated as legacy Free so older Free bookings keep the
 action. Reschedule keeps a stricter shared gate: the row must be in the future,
-have an explicit Free flag, a grant, and positive duration. A confirmed call
+have an explicit Free flag (or pass a P6/P7 Paid gate, below), a grant, and
+positive duration. A confirmed call
 uses the proposal contract for either participant, and only the counterpart can
 confirm or decline the resulting proposal. A pending request uses the
 direct-update contract for the Brand only. The two contracts never claim the
 same booking. Every command requires a booking ID, configuration ID,
 participant identity, and exact `test` or `production` data environment.
 
-During soft launch (JP, 2026-10-03) a gated Paid Reschedule or inside-window
-Paid Cancel control hides with no explanation, so the modal never names a
-feature that is not live yet. Earlier versions (2026-08-29 to v1.59.640) inserted a
+During soft launch (JP, 2026-10-03) a gated Paid Reschedule or an inside-window
+Paid Cancel control without a reconciled authorized hold hides with no
+explanation, so the modal never names a feature that is not live yet. Earlier
+versions (2026-08-29 to v1.59.640) inserted a
 module-owned `data-starters-action-hint` node after the hidden authored
 button. Each details populate now hides any such node that an earlier version
 or an earlier booking left in the modal, and it creates no new one. The script
@@ -2750,6 +2753,60 @@ eligible click to `dashboard-call-actions.js`. It still consumes the
 click when that module is unavailable, the booking cannot be resolved, or the
 booking is ineligible, because the legacy empty `popup-booking-reschedule`
 dialog remains on `/starter-dashboard`.
+
+#### Paid parity P5, P6, P7 (client gates, 2026-10-05)
+
+Each Paid gate is a small exported predicate in `dashboard-call-actions.js`
+that mirrors one server admission rule, so a control shows only when the server
+would admit it. The rows come from `booking_record/get/v3` (api #1551), which
+returns full rows, so `payment_status`, `payment_reconciliation_status`,
+`payment_intent`, `payment_revision`, `data_environment`, `start` and
+`start_old` are all available client-side.
+
+- **P5 cancel with a hold (#2099 P5, F15 8 h: Kaeser + Jai 2026-10-06).**
+  `paidHoldCancelAdmitted` admits a confirmed Paid row with a
+  `payment_intent`, `payment_status` `intent_created` and
+  `payment_reconciliation_status` `reconciled`, and `data_environment` in
+  `PAID_HOLD_CANCEL_OPEN_ENVIRONMENTS` (`['test', 'production']` after the
+  #2099 / #263 / #272 P5 server publish). Either
+  participant can then cancel until start. Every other Paid payment state
+  inside 48 h 15 min stays hidden. `cancelFeeText` gives the cancel
+  confirmation one line: a Brand on a confirmed Paid call with
+  `start - now <= 8 h` (`PAID_LATE_CANCEL_FEE_WINDOW_MS`) sees "This call
+  starts within 8 hours. Cancelling now charges the full session fee."; the
+  24 h rule is the minimum booking notice only. Every other Paid cancellation (Starter, earlier Brand, pending
+  request) sees "No charge will be made for this cancellation."; Free shows
+  nothing. `renderCancelFeeNote` writes it into an authored
+  `[booking-copy="cancel-fee"]` slot when the Designer adds one. Until then the
+  module owns one `[data-starters-cancel-fee-note]` line inserted after the
+  authored `[confirming-cancel-text]` body (with its class), or appended to the
+  open `cancel` panel. The authored body copy is never rewritten.
+- **P6 Brand edits a Paid pending request (#5921 P6).** `canRequestReschedule`
+  also admits `paidPendingEditAdmitted`: Brand, `pending`, the saved-card state
+  (`paidSavedCardState`: empty `payment_intent`, `waiting_for_intent`,
+  `payment_revision` 0, reconciliation `ready`; a missing revision fails
+  closed) and `data_environment` in `PAID_EDIT_OPEN_ENVIRONMENTS`. The Free
+  duration, grant and identity rules apply unchanged.
+- **P7 reschedule a confirmed Paid call (#5756/#5759, JP 1a + 2a).**
+  `canProposeReschedule` also admits `paidRescheduleProposeAdmitted`:
+  `confirmed`, the saved-card state, `start > now + 48 h 15 min` on the
+  canonical clock, and `data_environment` in
+  `PAID_RESCHEDULE_OPEN_ENVIRONMENTS`. The proposed slot must also start more
+  than 48 h 15 min out (`paidProposedStartAllowed`). The calendar does not
+  filter slots by that lead, so `proposeReschedule` sends nothing for an early
+  Paid slot and the calendar confirm shows "Choose a new time more than 48
+  hours and 15 minutes from now." (the server refuses it as well).
+  `canRespondReschedule` admits the counterpart on a Paid `rescheduled` row in
+  the saved-card state while `now < min(start_old, start) - 48 h 15 min`
+  (`paidRescheduleLastAcceptTime`). The details status text of an open Paid
+  proposal adds "If there is no answer before [time], the call stays at the
+  original time." with the shared `formatDate` formatter.
+
+`PAID_EDIT_OPEN_ENVIRONMENTS` and `PAID_RESCHEDULE_OPEN_ENVIRONMENTS` are
+`['test']` because the server gates (`$p6_paid_open`, `$p7_paid_open`) open
+Test only. Production opens by adding `'production'` to the constant in the
+same release that opens the server gate. Free behavior is unchanged; the
+regression tests in `dashboard-call-paid-parity.test.js` pin it.
 
 The native Webflow modal owns `[booking-decline-reason]`,
 `[booking-cancel-reason]`, and the base reschedule trigger. When it also owns the
