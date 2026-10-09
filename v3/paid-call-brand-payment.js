@@ -2427,7 +2427,18 @@
       settings.initialTimezone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
     ).trim() || 'UTC'
     const bookingError = String(settings.bookingError || '').trim()
-    const slots = bookingError ? [] : await getPaidAvailability(config)
+    /* A caller may supply its own candidate slots (F08 pending offers are not
+       limited to posted availability). They pass the same shape filter as
+       server slots; the caller's server stays the authority for free/busy. */
+    const slots = bookingError
+      ? []
+      : Array.isArray(settings.slots)
+        ? settings.slots.map(function (slot) {
+          return { start: Number(slot && slot.start), end: Number(slot && slot.end) }
+        }).filter(function (slot) {
+          return Number.isFinite(slot.start) && Number.isFinite(slot.end) && slot.end > slot.start
+        }).sort(function (a, b) { return a.start - b.start })
+        : await getPaidAvailability(config)
     if (!isCurrent()) return { slots: [], stale: true }
     container.textContent = ''
     container.setAttribute('data-paid-calendar-state', bookingError ? 'error' : slots.length ? 'ready' : 'empty')

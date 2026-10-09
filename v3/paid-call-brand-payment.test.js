@@ -5774,3 +5774,42 @@ test('F66 review: a Stripe.js failure after the Brand leaves the card dialog ins
   assert.equal(modal.querySelectorAll('[data-payment-selection-status]').length, 0, 'the stale failure installs no picker inside the closed dialog')
   assert.equal(modal.querySelector('[card-error]').textContent, '', 'the stale failure shows no card error')
 })
+
+// F08 (2026-10-10): a pending offer is not limited to posted availability, so
+// the dashboard supplies its own candidate slots and no availability read runs.
+test('a caller-supplied slot list replaces the availability read', async () => {
+  const previous = {
+    document: global.document,
+    jQuery: global.jQuery,
+    xanoAuthFetch: global.xanoAuthFetch,
+  }
+  const container = new CalendarElement('div')
+  let reads = 0
+  global.document = calendarDocument()
+  global.jQuery = undefined
+  global.xanoAuthFetch = async () => { reads += 1; return response({ time_slots: [] }) }
+  const base = Math.floor((Date.now() + 3 * 86400000) / 86400000) * 86400000 + 2 * 3600000
+  try {
+    const result = await api.mountPaidCalendar({
+      container,
+      config: { config_id: 'config_paid', grant_id: 'grant_test', duration: 30 },
+      slots: [
+        { start: base + 3600000, end: base + 5400000 },
+        { start: base, end: base + 1800000 },
+        { start: base + 7200000, end: base + 7200000 },
+        { start: 'x', end: 1 },
+      ],
+      async onConfirm() {},
+    })
+    assert.equal(reads, 0)
+    assert.deepEqual(result.slots, [
+      { start: base, end: base + 1800000 },
+      { start: base + 3600000, end: base + 5400000 },
+    ])
+    assert.equal(container.getAttribute('data-paid-calendar-state'), 'ready')
+  } finally {
+    global.document = previous.document
+    global.jQuery = previous.jQuery
+    global.xanoAuthFetch = previous.xanoAuthFetch
+  }
+})

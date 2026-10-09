@@ -2908,3 +2908,404 @@ test('an authored Accept New Time alone needs no generated Keep Current Time', (
     false,
   )
 })
+
+// ---------------------------------------------------------------------------
+// F08/F10 (JP 2026-10-09/10): Propose New Time on a PENDING call.
+// ---------------------------------------------------------------------------
+
+const F08_HOUR = 60 * 60 * 1000
+
+function pendingOfferBooking(overrides) {
+  const now = Date.now()
+  return rescheduleBooking(Object.assign({
+    status: 'pending',
+    start: now + 72 * F08_HOUR,
+    end: now + 72 * F08_HOUR + 30 * 60000,
+    start_old: null,
+    end_old: null,
+    rescheduled_by: '',
+    confirmation_expires_at: now + 48 * F08_HOUR,
+  }, overrides || {}))
+}
+
+function withStarterOffer(overrides) {
+  const now = Date.now()
+  return pendingOfferBooking(Object.assign({
+    start_old: now + 96 * F08_HOUR,
+    end_old: now + 96 * F08_HOUR + 30 * 60000,
+    rescheduled_by: 'starter',
+    rescheduled_reason: 'Travel',
+    confirmation_expires_at: now + 48 * F08_HOUR,
+  }, overrides || {}))
+}
+
+function savedCardPaid() {
+  return {
+    is_paid: true,
+    payment_intent: '',
+    payment_status: 'waiting_for_intent',
+    payment_revision: 0,
+    payment_reconciliation_status: 'ready',
+  }
+}
+
+test('F08: only the Starter makes the first offer on a pending request', () => {
+  const booking = pendingOfferBooking()
+  assert.equal(api.pendingOfferOpen(booking), false)
+  assert.equal(api.canProposePending('starter', booking), true)
+  assert.equal(api.canProposePending('brand', booking), false)
+  assert.equal(api.rescheduleKindFor('starter', booking), 'pending-propose')
+  // The Brand keeps its F04 edit while no offer is open.
+  assert.equal(api.rescheduleKindFor('brand', booking), 'reschedule-request')
+})
+
+test('F08: only the current responder counters an open offer, with no round limit', () => {
+  const starterOffer = withStarterOffer()
+  assert.equal(api.pendingOfferOpen(starterOffer), true)
+  assert.equal(api.pendingOfferProposer(starterOffer), 'starter')
+  assert.equal(api.canProposePending('brand', starterOffer), true)
+  assert.equal(api.canProposePending('starter', starterOffer), false)
+  // Brand Edit (#5921) is refused while an offer is open, so Counter takes the button.
+  assert.equal(api.canRequestReschedule('brand', starterOffer), false)
+  assert.equal(api.rescheduleKindFor('brand', starterOffer), 'pending-propose')
+  assert.equal(api.rescheduleKindFor('starter', starterOffer), '')
+
+  const brandCounter = withStarterOffer({ rescheduled_by: 'brand' })
+  assert.equal(api.canProposePending('starter', brandCounter), true)
+  assert.equal(api.canProposePending('brand', brandCounter), false)
+  // An unknown proposer fails closed for both sides.
+  const unknown = withStarterOffer({ rescheduled_by: '' })
+  assert.equal(api.canProposePending('starter', unknown), false)
+  assert.equal(api.canProposePending('brand', unknown), false)
+})
+
+test('F08: propose is closed outside Test, after the deadline, and for non-saved-card Paid', () => {
+  assert.deepEqual(api.PENDING_PROPOSE_OPEN_ENVIRONMENTS, ['test'])
+  assert.equal(api.canProposePending('starter', pendingOfferBooking({ data_environment: 'production' })), false)
+  assert.equal(api.canProposePending('starter', pendingOfferBooking({ confirmation_expires_at: Date.now() - 1000 })), false)
+  assert.equal(api.canProposePending('starter', pendingOfferBooking({ confirmation_expires_at: null })), false)
+  assert.equal(api.canProposePending('starter', pendingOfferBooking({ status: 'confirmed' })), false)
+  assert.equal(api.canProposePending('starter', pendingOfferBooking({ grant_id: '' })), false)
+  assert.equal(api.canProposePending('starter', pendingOfferBooking({ is_paid: true })), false)
+  assert.equal(api.canProposePending('starter', pendingOfferBooking(savedCardPaid())), true)
+  assert.equal(
+    api.canProposePending('starter', pendingOfferBooking({ ...savedCardPaid(), payment_reconciliation_status: 'pending' })),
+    false,
+  )
+})
+
+test('F08: an offer on a terminal row is not open', () => {
+  for (const status of ['cancelled', 'declined', 'confirmed', 'rescheduled']) {
+    assert.equal(api.pendingOfferOpen(withStarterOffer({ status })), false, status)
+  }
+})
+
+test('F08: Accept is hidden behind F08_ACCEPT_ENABLED; Decline is Brand-only on a Starter offer', () => {
+  const starterOffer = withStarterOffer()
+  assert.equal(api.F08_ACCEPT_ENABLED, false)
+  assert.equal(api.canAcceptPendingOffer('brand', starterOffer), false)
+  assert.equal(api.canAct('pending-accept', 'brand', starterOffer), false)
+  const before = api.setF08AcceptEnabledForTest(true)
+  try {
+    assert.equal(api.canAcceptPendingOffer('brand', starterOffer), true)
+    assert.equal(api.canAcceptPendingOffer('starter', starterOffer), false, 'never the proposer')
+    assert.equal(api.canAcceptPendingOffer('starter', withStarterOffer({ rescheduled_by: 'brand' })), true)
+  } finally {
+    api.setF08AcceptEnabledForTest(before)
+  }
+  assert.equal(api.canDeclinePendingOffer('brand', starterOffer), true)
+  assert.equal(api.canDeclinePendingOffer('starter', starterOffer), false)
+  // A Starter answers a Brand counter with the normal Decline Call (#1547).
+  const brandCounter = withStarterOffer({ rescheduled_by: 'brand' })
+  assert.equal(api.canDeclinePendingOffer('starter', brandCounter), false)
+  assert.equal(api.canDecline('starter', brandCounter), true)
+  assert.equal(api.canDeclinePendingOffer('brand', withStarterOffer({ confirmation_expires_at: Date.now() - 1 })), false)
+})
+
+test('F08: the authored respond pair resolves to the pending kinds only on an open offer', () => {
+  assert.equal(api.respondKindFor('reschedule-confirm', withStarterOffer()), 'pending-accept')
+  assert.equal(api.respondKindFor('reschedule-decline', withStarterOffer()), 'pending-decline')
+  const proposal = rescheduleBooking({ status: 'rescheduled', rescheduled_by: 'starter' })
+  assert.equal(api.respondKindFor('reschedule-confirm', proposal), 'reschedule-confirm')
+  assert.equal(api.respondKindFor('reschedule-decline', proposal), 'reschedule-decline')
+})
+
+test('F08: the start rule is offer_start - 24 h > now and inside the booking range', () => {
+  const booking = pendingOfferBooking()
+  const now = 1_800_000_000_000
+  assert.equal(api.pendingProposedStartAllowed(booking, now + 24 * F08_HOUR, now), false, 'equality is closed')
+  assert.equal(api.pendingProposedStartAllowed(booking, now + 24 * F08_HOUR + 1, now), true)
+  assert.equal(api.pendingProposedStartAllowed(booking, now + 14 * 24 * F08_HOUR, now), true)
+  assert.equal(api.pendingProposedStartAllowed(booking, now + 14 * 24 * F08_HOUR + 1, now), false)
+  assert.equal(
+    api.pendingProposedStartAllowed({ ...booking, available_days_in_future: 30 }, now + 20 * 24 * F08_HOUR, now),
+    true,
+  )
+})
+
+test('F08: the pending picker offers any step-aligned time, not only posted slots', () => {
+  const now = 1_800_000_000_000
+  const booking = pendingOfferBooking({ start: now + 48 * F08_HOUR, duration: 45 })
+  const slots = api.pendingProposeSlots(booking, now)
+  assert.ok(slots.length > 600, 'every 30-minute start for about 13 days')
+  assert.ok(slots.every((slot) => slot.start - 24 * F08_HOUR > now))
+  assert.ok(slots.every((slot) => slot.start <= now + 14 * 24 * F08_HOUR))
+  assert.ok(slots.every((slot) => slot.end - slot.start === 45 * 60000))
+  assert.ok(slots.every((slot) => slot.start % (30 * 60000) === 0))
+  assert.ok(slots.every((slot) => slot.start !== booking.start), 'the requested time is left out')
+  // Night hours are offered too (posted hours never gate a pending offer).
+  const hours = new Set(slots.map((slot) => new Date(slot.start).getUTCHours()))
+  assert.equal(hours.size, 24)
+  assert.deepEqual(api.pendingProposeSlots({ ...booking, duration: 0 }, now), [])
+})
+
+test('F08: a pending offer posts the propose body and accepts a pending result', async () => {
+  const originalFetch = global.xanoAuthFetch
+  const originalStorage = global.sessionStorage
+  const originalCrypto = global.crypto
+  const requests = []
+  try {
+    global.sessionStorage = storage()
+    global.crypto = {
+      subtle: originalCrypto.subtle,
+      randomUUID() { return '00000000-0000-4000-8000-000000000f08' },
+    }
+    const booking = pendingOfferBooking()
+    const start = Math.ceil((Date.now() + 30 * F08_HOUR) / 1800000) * 1800000
+    global.xanoAuthFetch = async function (url, init) {
+      requests.push({ url, body: JSON.parse(init.body) })
+      return {
+        ok: true,
+        async json() {
+          return {
+            reschedule: {
+              booking_id: booking.booking_id,
+              status: 'pending',
+              phase: 'pending_proposed',
+              offer_start: start,
+              offer_end: start + 30 * 60000,
+              deadline: start - 24 * F08_HOUR,
+            },
+          }
+        },
+      }
+    }
+    // Inside 24 h: never sent.
+    assert.equal(
+      await api.proposeReschedule(booking, 'starter', 'Travel', { start: Date.now() + 2 * F08_HOUR, end: Date.now() + 3 * F08_HOUR }),
+      null,
+    )
+    assert.equal(requests.length, 0)
+    const result = await api.proposeReschedule(booking, 'starter', 'Travel', { start, end: start + 30 * 60000, timezone: 'UTC' })
+    assert.equal(result.reschedule.status, 'pending')
+    assert.equal(requests.length, 1)
+    assert.match(requests[0].url, /\/booking\/reschedule\/propose\/v3$/)
+    assert.equal(requests[0].body.booking_id, booking.booking_id)
+    assert.equal(requests[0].body.config_id, booking.config_id)
+    assert.equal(requests[0].body.new_start, start)
+    assert.equal(requests[0].body.new_end, start + 30 * 60000)
+    assert.equal(requests[0].body.rescheduled_reason, 'Travel')
+    assert.match(requests[0].body.idempotency_key, /^dashboard-pending-propose:/)
+    // The Brand cannot make the first offer: nothing is sent.
+    assert.equal(await api.proposeReschedule(booking, 'brand', 'Travel', { start, end: start + 30 * 60000 }, undefined, 'pending-propose'), null)
+    assert.equal(requests.length, 1)
+  } finally {
+    global.xanoAuthFetch = originalFetch
+    global.sessionStorage = originalStorage
+    global.crypto = originalCrypto
+  }
+})
+
+test('F08: a Brand decline of a Starter offer posts to #5760 and expects a cancelled request', async () => {
+  const originalFetch = global.xanoAuthFetch
+  const originalStorage = global.sessionStorage
+  const originalCrypto = global.crypto
+  const requests = []
+  try {
+    global.sessionStorage = storage()
+    global.crypto = {
+      subtle: originalCrypto.subtle,
+      randomUUID() { return '00000000-0000-4000-8000-000000000f09' },
+    }
+    const booking = withStarterOffer()
+    global.xanoAuthFetch = async function (url, init) {
+      requests.push({ url, body: JSON.parse(init.body) })
+      return { ok: true, json: async () => ({ reschedule_decline: { booking_id: booking.booking_id, status: 'cancelled' } }) }
+    }
+    const result = await api.respondReschedule('pending-decline', booking, 'brand')
+    assert.equal(result.reschedule_decline.status, 'cancelled')
+    assert.match(requests[0].url, /\/booking\/reschedule\/decline\/v3$/)
+    assert.deepEqual(Object.keys(requests[0].body).sort(), ['booking_id', 'config_id', 'idempotency_key'])
+    // Accept stays closed while the flag is off: no request.
+    assert.equal(await api.respondReschedule('pending-accept', booking, 'brand'), null)
+    assert.equal(requests.length, 1)
+    // A wrong status (for example a P7 restore) fails closed.
+    global.xanoAuthFetch = async () => ({ ok: true, json: async () => ({ reschedule_decline: { booking_id: booking.booking_id, status: 'confirmed' } }) })
+    global.sessionStorage = storage()
+    await assert.rejects(api.respondReschedule('pending-decline', booking, 'brand'), /could not be declined/)
+  } finally {
+    global.xanoAuthFetch = originalFetch
+    global.sessionStorage = originalStorage
+    global.crypto = originalCrypto
+  }
+})
+
+function labelledControl(action, authoredLabel) {
+  const control = busyControl(action, authoredLabel)
+  control.removeAttribute = function (name) { delete this.attributes[name] }
+  control.hasAttribute = function (name) { return name in this.attributes }
+  control.querySelector = function (selector) { return this.querySelectorAll(selector)[0] || null }
+  control.hidden = false
+  control.style = {}
+  return control
+}
+
+test('F08: authored controls are relabelled for an offer and restored for other bookings', () => {
+  const reschedule = labelledControl('reschedule', 'Reschedule')
+  const accept = labelledControl('confirm-reschedule', 'Accept New Time')
+  const decline = labelledControl('reschedule-decline', 'Keep Current Time')
+  const byAction = { reschedule: [reschedule], 'confirm-reschedule': [accept], 'reschedule-decline': [decline] }
+  const modal = {
+    querySelectorAll(selector) {
+      const match = /booking-action-btn="([^"]+)"/.exec(selector)
+      return match ? byAction[match[1]] || [] : []
+    },
+  }
+  // Starter, no offer yet: Propose New Time.
+  api.applyPendingOfferControls(modal, 'starter', pendingOfferBooking())
+  assert.equal(reschedule.label.textContent, 'Propose New Time')
+  // Brand on a Starter offer: Counter + Decline New Time (marked for the guard).
+  api.applyPendingOfferControls(modal, 'brand', withStarterOffer())
+  assert.equal(reschedule.label.textContent, 'Propose Another Time')
+  assert.equal(decline.label.textContent, 'Decline New Time')
+  assert.ok('data-starters-pending-offer-response' in decline.attributes)
+  assert.equal(accept.label.textContent, 'Accept New Time', 'accept keeps its label while flagged off')
+  // The retired Keep-Current-Time guard leaves the marked Decline alone.
+  const appended = []
+  const doc = {
+    head: { appendChild(node) { appended.push(node) } },
+    createElement(tag) { return { tag, textContent: '', setAttribute() {} } },
+    querySelector: () => null,
+    querySelectorAll: () => [decline],
+  }
+  decline.hidden = false
+  assert.equal(api.hideKeepCurrentTime(doc), 0)
+  assert.equal(decline.hidden, false)
+  assert.match(appended[0].textContent, /:not\(\[data-starters-pending-offer-response\]\)/)
+  // A confirmed call restores every authored label and drops the marker.
+  api.applyPendingOfferControls(modal, 'brand', rescheduleBooking({ status: 'confirmed', start: Date.now() + 72 * F08_HOUR }))
+  assert.equal(reschedule.label.textContent, 'Reschedule')
+  assert.equal(decline.label.textContent, 'Keep Current Time')
+  assert.equal('data-starters-pending-offer-response' in decline.attributes, false)
+})
+
+test('F08: a Brand click on the authored decline control sends the pending decline', async () => {
+  const originalFetch = global.xanoAuthFetch
+  const originalStorage = global.sessionStorage
+  const originalCrypto = global.crypto
+  try {
+    global.sessionStorage = storage()
+    global.crypto = {
+      subtle: originalCrypto.subtle,
+      randomUUID() { return '00000000-0000-4000-8000-000000000f10' },
+    }
+    const booking = withStarterOffer()
+    const { modal, open } = actionErrorModal(['base', 'cancelled'])
+    open('base')
+    modal.getAttribute = (name) => name === 'data-booking-id' ? booking.booking_id : null
+    const handlers = []
+    const commits = []
+    api.wire({
+      document: { addEventListener(type, handler) { if (type === 'click') handlers.push(handler) } },
+      role: 'brand',
+      getBooking: () => booking,
+      commitBookingMutation(row, update) {
+        const changes = typeof update === 'function' ? update(row) : update
+        commits.push(changes)
+        Object.assign(row, changes)
+        return row
+      },
+    })
+    const control = labelledControl('reschedule-decline', 'Decline New Time')
+    control.closest = (selector) => selector.includes('popup-booking-info') ? modal : control
+    const urls = []
+    global.xanoAuthFetch = async (url) => {
+      urls.push(url)
+      return { ok: true, json: async () => ({ reschedule_decline: { booking_id: booking.booking_id, status: 'cancelled' } }) }
+    }
+    await handlers[0]({ target: control, preventDefault() {}, stopImmediatePropagation() {} })
+    assert.equal(urls.length, 1)
+    assert.match(urls[0], /\/booking\/reschedule\/decline\/v3$/)
+    assert.deepEqual(commits, [{ status: 'cancelled', cancelled_by: 'brand' }])
+    assert.equal(booking.status, 'cancelled')
+  } finally {
+    global.xanoAuthFetch = originalFetch
+    global.sessionStorage = originalStorage
+    global.crypto = originalCrypto
+  }
+})
+
+test('F08: the pending picker gets free-time slots and the offer is committed on success', async () => {
+  const originalCalendar = global.StartersPaidCallBrandPayment
+  const originalFetch = global.xanoAuthFetch
+  const originalStorage = global.sessionStorage
+  const originalCrypto = global.crypto
+  const mounts = []
+  const requests = []
+  const container = { textContent: '' }
+  const reasonField = { value: 'Travel' }
+  const booking = pendingOfferBooking({ booking_id: 'booking-f08' })
+  const modal = {
+    getAttribute(name) { return name === 'data-booking-id' ? 'booking-f08' : null },
+    querySelector(selector) {
+      if (selector === '[booking-reschedule-calendar]') return container
+      if (selector === '[booking-reschedule-reason]') return reasonField
+      return null
+    },
+    querySelectorAll() { return [] },
+  }
+  try {
+    global.StartersPaidCallBrandPayment = {
+      async mountPaidCalendar(options) { mounts.push(options); return { slots: options.slots || [] } },
+    }
+    global.sessionStorage = storage()
+    global.crypto = { subtle: originalCrypto.subtle, randomUUID() { return '00000000-0000-4000-8000-000000000f11' } }
+    const start = Math.ceil((Date.now() + 30 * F08_HOUR) / 1800000) * 1800000
+    global.xanoAuthFetch = async (url, init) => {
+      requests.push({ url, body: JSON.parse(init.body) })
+      return {
+        ok: true,
+        json: async () => ({
+          reschedule: {
+            booking_id: 'booking-f08', status: 'pending', offer_start: start,
+            offer_end: start + 30 * 60000, deadline: start - 24 * F08_HOUR,
+          },
+        }),
+      }
+    }
+    const refreshed = []
+    await api.mountRescheduleCalendar({}, modal, booking, 'starter', 'Travel', null,
+      function (_modal, row, content) { refreshed.push({ row, content }) })
+    assert.equal(mounts.length, 1)
+    assert.ok(Array.isArray(mounts[0].slots) && mounts[0].slots.length > 0, 'free-time slots are passed')
+    // A slot inside 24 h is refused before any request.
+    await assert.rejects(mounts[0].onConfirm({ start: Date.now() + F08_HOUR, end: Date.now() + 2 * F08_HOUR }),
+      /more than 24 hours/)
+    assert.equal(requests.length, 0)
+    await mounts[0].onConfirm({ start, end: start + 30 * 60000, timezone: 'UTC' })
+    assert.equal(requests.length, 1)
+    assert.match(requests[0].url, /\/booking\/reschedule\/propose\/v3$/)
+    // The request keeps its original time; the offer lives in start_old/end_old.
+    assert.equal(booking.status, 'pending')
+    assert.equal(booking.start_old, start)
+    assert.equal(booking.end_old, start + 30 * 60000)
+    assert.equal(booking.rescheduled_by, 'starter')
+    assert.equal(booking.confirmation_expires_at, start - 24 * F08_HOUR)
+    assert.equal(refreshed[0].content, 'reschedule-proposed')
+  } finally {
+    global.StartersPaidCallBrandPayment = originalCalendar
+    global.xanoAuthFetch = originalFetch
+    global.sessionStorage = originalStorage
+    global.crypto = originalCrypto
+  }
+})

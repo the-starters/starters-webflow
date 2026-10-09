@@ -408,6 +408,27 @@
     return row
   }
 
+  /**
+   * F08/F10: a PENDING request with an open new-time offer. The request keeps
+   * its original start/end; the offer is start_old/end_old and the proposer is
+   * rescheduled_by (#5756 pending branch). Terminal rows can keep the offer
+   * fields, so only `pending` counts.
+   * @param {object|null} booking Canonical booking row.
+   * @returns {boolean}
+   */
+  function pendingOfferOpen(booking) {
+    if (clean(booking && booking.status).toLowerCase() !== 'pending') return false
+    const start = normalizeTimestamp(booking && booking.start_old)
+    const end = normalizeTimestamp(booking && booking.end_old)
+    return Number.isFinite(start) && start > 0 && Number.isFinite(end) && end > start
+  }
+
+  function pendingOfferProposer(booking) {
+    if (!pendingOfferOpen(booking)) return ''
+    const proposer = clean(booking && booking.rescheduled_by).toLowerCase()
+    return proposer === 'starter' || proposer === 'brand' ? proposer : ''
+  }
+
   function bookingStatus(booking, now) {
     const raw = clean(booking && booking.status).toLowerCase()
     if (raw === 'archived') return 'archived'
@@ -765,6 +786,8 @@
     ) {
       return 'Declined'
     }
+    // F08: an open offer on a pending request reads the same for both sides.
+    if (status === 'pending' && pendingOfferOpen(booking)) return 'New time proposed'
     return {
       pending: role === 'starter' ? 'Pending' : 'Requested',
       rescheduled: 'Pending',
@@ -916,7 +939,12 @@
       base.querySelectorAll ? base.querySelectorAll('[pending-info-text]') : [],
     )
     pendingMessages.forEach(function (message, index) {
-      show(message, index === 0 && status === 'pending' && responseWindowOpen(booking, now))
+      show(
+        message,
+        index === 0 && status === 'pending' && responseWindowOpen(booking, now) &&
+          // F08: the offer status row replaces the plain pending note.
+          !pendingOfferOpen(booking),
+      )
     })
     configureDetailActions(modal, role, status, booking, now)
     return true
@@ -1478,6 +1506,8 @@
 
   function canConfirmBooking(role, booking, now) {
     return role === 'starter' &&
+      // F08: #1652 refuses Confirm while a new-time offer is open.
+      !pendingOfferOpen(booking) &&
       Number.isFinite(responseDeadline(booking)) &&
       responseWindowOpen(booking, now)
   }
@@ -1609,7 +1639,13 @@
     show(paymentWrap, Boolean(paymentText))
 
     const brandStatus = card.querySelector('[brand-status]')
-    text(brandStatus, '[label-text]', status === 'pending' ? 'Awaiting confirmation' : '')
+    text(
+      brandStatus,
+      '[label-text]',
+      status === 'pending'
+        ? pendingOfferOpen(booking) ? 'New time proposed' : 'Awaiting confirmation'
+        : '',
+    )
     show(brandStatus, status === 'pending' && role === 'brand')
 
     if (!requestExpirationOwned(booking, role, now)) {
@@ -2061,6 +2097,12 @@
       },
       { field: 'start-date-old', label: 'Current confirmed time', value: proposalOldDate(booking, timezone) },
       { field: 'start-date', label: clean(booking && booking.status).toLowerCase() === 'rescheduled' ? 'Proposed time' : 'Date and time', value: formatDate(booking && booking.start, timezone) },
+      // F08: an open offer on a pending request. The original requested time
+      // stays in "Date and time"; these rows are the fallback offer banner
+      // until authored `booking-element="offer-*"` hooks exist.
+      { field: 'offer-date', label: 'Proposed new time', value: pendingOfferOpen(booking) ? formatDate(normalizeTimestamp(booking.start_old), timezone) : '' },
+      { field: 'offer-status', label: 'Status', value: pendingOfferStatusText(booking, role) },
+      { field: 'offer-deadline', label: 'Answer before', value: pendingOfferOpen(booking) && Number.isFinite(responseDeadline(booking)) ? formatDate(responseDeadline(booking), timezone) : '' },
       { field: 'duration', label: 'Duration', value: formatDuration(booking && booking.duration) },
       { field: 'context', label: 'Call', value: clean(booking && booking.call_context) },
       { field: 'reschedule-reason', label: 'Reschedule reason', value: declinedPanel || staleEditReason ? '' : clean(booking && booking.rescheduled_reason) },
@@ -2371,6 +2413,14 @@
         modal,
       )
     }
+    // F08: relabel the authored Reschedule / respond controls for a pending
+    // offer, and mark the Brand's pending Decline before the show pass below.
+    if (
+      validDashboardModule(global.StartersDashboardCallActions) &&
+      typeof global.StartersDashboardCallActions.applyPendingOfferControls === 'function'
+    ) {
+      global.StartersDashboardCallActions.applyPendingOfferControls(modal, role, booking, now)
+    }
     modal
       .querySelectorAll(DETAIL_ACTION_SELECTOR)
       .forEach(function (button) {
@@ -2409,12 +2459,18 @@
           (action === 'confirm-reschedule' || action === 'reschedule-decline') &&
           validDashboardModule(global.StartersDashboardCallActions) &&
           (action === 'confirm-reschedule'
-            ? typeof global.StartersDashboardCallActions.canConfirmReschedule === 'function' &&
-              global.StartersDashboardCallActions.canConfirmReschedule(role, booking)
+            ? (typeof global.StartersDashboardCallActions.canConfirmReschedule === 'function' &&
+              global.StartersDashboardCallActions.canConfirmReschedule(role, booking)) ||
+              // F08 accept (hidden while F08_ACCEPT_ENABLED is false).
+              (typeof global.StartersDashboardCallActions.canAcceptPendingOffer === 'function' &&
+              global.StartersDashboardCallActions.canAcceptPendingOffer(role, booking, now))
             // "Keep Current Time" is retired (JP 2a, 2026-10-03). Fail closed:
             // an actions module without canKeepCurrentTime keeps it hidden.
-            : typeof global.StartersDashboardCallActions.canKeepCurrentTime === 'function' &&
-              global.StartersDashboardCallActions.canKeepCurrentTime(role, booking))
+            : (typeof global.StartersDashboardCallActions.canKeepCurrentTime === 'function' &&
+              global.StartersDashboardCallActions.canKeepCurrentTime(role, booking)) ||
+              // F08: the Brand declines a Starter offer with the same control.
+              (typeof global.StartersDashboardCallActions.canDeclinePendingOffer === 'function' &&
+              global.StartersDashboardCallActions.canDeclinePendingOffer(role, booking, now)))
         const media =
           action === 'notetaker-media' &&
           validDashboardModule(global.StartersDashboardCallMedia) &&
@@ -2652,11 +2708,33 @@
   }
 
   function proposalStatusText(booking, role) {
+    const offerProposer = pendingOfferProposer(booking)
+    if (offerProposer && ['brand', 'starter'].includes(role)) {
+      if (offerProposer !== role) return ' — New time proposed. Awaiting your answer.'
+      return ' — New time proposed. Awaiting ' + (role === 'brand' ? 'Starter' : 'Brand') + ' answer.'
+    }
     if (clean(booking && booking.status).toLowerCase() !== 'rescheduled') return ''
     const proposer = clean(booking && booking.rescheduled_by).toLowerCase()
     if (!['brand', 'starter'].includes(proposer) || !['brand', 'starter'].includes(role)) return ''
     if (proposer !== role) return ' — Awaiting your confirmation of the proposed time.'
     return ' — Awaiting ' + (role === 'brand' ? 'Starter' : 'Brand') + ' confirmation of the proposed time.'
+  }
+
+  /**
+   * F08: the offer status line, for example "Brand proposed a new time.
+   * Awaiting your answer." '' when no offer is open.
+   * @param {object} booking Canonical booking row.
+   * @param {string} role Viewer role.
+   * @returns {string}
+   */
+  function pendingOfferStatusText(booking, role) {
+    const proposer = pendingOfferProposer(booking)
+    if (!proposer || !['brand', 'starter'].includes(role)) return ''
+    const proposerName = proposer === 'brand' ? 'Brand' : 'Starter'
+    if (proposer === role) {
+      return 'You proposed a new time. Awaiting ' + (role === 'brand' ? 'Starter' : 'Brand') + ' answer.'
+    }
+    return proposerName + ' proposed a new time. Awaiting your answer.'
   }
 
   /**
@@ -2817,7 +2895,12 @@
       base.querySelectorAll ? base.querySelectorAll('[pending-info-text]') : [],
     )
     pendingMessages.forEach(function (message, index) {
-      show(message, index === 0 && status === 'pending' && responseWindowOpen(booking, now))
+      show(
+        message,
+        index === 0 && status === 'pending' && responseWindowOpen(booking, now) &&
+          // F08: the offer status row replaces the plain pending note.
+          !pendingOfferOpen(booking),
+      )
     })
     modal.querySelectorAll('[reschedule-blocked-info]').forEach(function (info) {
       show(info, false)
@@ -4193,6 +4276,8 @@
     bookingStatus,
     paidBooking,
     paidProposalLapseText,
+    pendingOfferOpen,
+    pendingOfferStatusText,
     responseWindowOpen,
     responseDeadline,
     formatResponseTime,
