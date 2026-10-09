@@ -2804,9 +2804,8 @@ returns full rows, so `payment_status`, `payment_reconciliation_status`,
 
 `PAID_EDIT_OPEN_ENVIRONMENTS` is `['test']` because the server gate
 (`$p6_paid_open`) opens Test only. `PAID_RESCHEDULE_OPEN_ENVIRONMENTS` is
-`['test', 'production']` since the P7 production opening (JP 1a, 2026-10-09:
-`#5756` `$p7_paid_open` and the Paid reschedule notice cutoffs opened in the
-same release). A constant opens production only in the release that opens its
+`['test', 'production']` because the server gate (`$p7_paid_open`) opens Test
+and Production. A constant opens production only in the release that opens its
 server gate. Free behavior is unchanged; the
 regression tests in `dashboard-call-paid-parity.test.js` pin it.
 
