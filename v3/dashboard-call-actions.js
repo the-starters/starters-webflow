@@ -246,7 +246,7 @@
      release that opens the server gate; the client must never offer a control
      the server refuses. */
   const PAID_EDIT_OPEN_ENVIRONMENTS = ['test']
-  const PAID_RESCHEDULE_OPEN_ENVIRONMENTS = ['test']
+  const PAID_RESCHEDULE_OPEN_ENVIRONMENTS = ['test', 'production']
   // P5 (#2099 held-call cancel) opens in production with the #2099 / #263 / #272
   // server publish; keep this list in lockstep with that admission gate.
   const PAID_HOLD_CANCEL_OPEN_ENVIRONMENTS = ['test', 'production']

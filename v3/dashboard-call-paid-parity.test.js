@@ -19,7 +19,7 @@ test('the Paid constants match the server rules; P5 open in production, P6/P7 Te
   assert.equal(api.PAID_CONFIRMED_CANCEL_LEAD_MS, LEAD)
   assert.equal(api.PAID_LATE_CANCEL_FEE_WINDOW_MS, LATE)
   assert.deepEqual(api.PAID_EDIT_OPEN_ENVIRONMENTS, ['test'])
-  assert.deepEqual(api.PAID_RESCHEDULE_OPEN_ENVIRONMENTS, ['test'])
+  assert.deepEqual(api.PAID_RESCHEDULE_OPEN_ENVIRONMENTS, ['test', 'production'])
   assert.deepEqual(api.PAID_HOLD_CANCEL_OPEN_ENVIRONMENTS, ['test', 'production'])
   assert.equal(
     api.CANCEL_FEE_TEXT.late,
@@ -583,7 +583,8 @@ test('P7: paidRescheduleProposeAdmitted needs confirmed, the saved card, Test an
   assert.equal(api.paidRescheduleProposeAdmitted({ ...row, start: now + LEAD }, now), false)
   assert.equal(api.paidRescheduleProposeAdmitted({ ...row, start: now + LEAD + 1 }, now), true)
   assert.equal(api.paidRescheduleProposeAdmitted({ ...row, start: now + DAY }, now), false)
-  assert.equal(api.paidRescheduleProposeAdmitted({ ...row, data_environment: 'production' }, now), false)
+  assert.equal(api.paidRescheduleProposeAdmitted({ ...row, data_environment: 'production' }, now), true)
+  assert.equal(api.paidRescheduleProposeAdmitted({ ...row, data_environment: '' }, now), false)
   assert.equal(api.paidRescheduleProposeAdmitted({ ...row, status: 'pending' }, now), false)
   assert.equal(api.paidRescheduleProposeAdmitted({ ...row, status: 'rescheduled' }, now), false)
   assert.equal(api.paidRescheduleProposeAdmitted(row, null), false)
@@ -603,7 +604,8 @@ test('P7: both participants can propose on a saved-card Paid call more than 48 h
   }
   const row = savedCard({ status: 'confirmed', start: Date.now() + 3 * DAY })
   assert.equal(api.canProposeReschedule('guest', clocked({ ...row })), false)
-  assert.equal(api.canProposeReschedule('brand', clocked({ ...row, data_environment: 'production' })), false)
+  assert.equal(api.canProposeReschedule('brand', clocked({ ...row, data_environment: 'production' })), true)
+  assert.equal(api.canProposeReschedule('brand', clocked({ ...row, data_environment: '' })), false)
   assert.equal(api.canProposeReschedule('brand', clocked({ ...row, grant_id: '' })), false)
   assert.equal(api.canProposeReschedule('brand', clocked({ ...row, duration: 0 })), false)
   for (const [label, change] of SAVED_CARD_REFUSALS) {
@@ -634,7 +636,8 @@ test('P7: paidRescheduleRespondAdmitted closes exactly at the last accept time',
   assert.equal(api.paidRescheduleRespondAdmitted(row, last), false)
   assert.equal(api.paidRescheduleRespondAdmitted(row, last + 1), false)
   assert.equal(api.paidRescheduleRespondAdmitted(row, null), false)
-  assert.equal(api.paidRescheduleRespondAdmitted({ ...row, data_environment: 'production' }, last - 1), false)
+  assert.equal(api.paidRescheduleRespondAdmitted({ ...row, data_environment: 'production' }, last - 1), true)
+  assert.equal(api.paidRescheduleRespondAdmitted({ ...row, data_environment: '' }, last - 1), false)
   for (const [label, change] of SAVED_CARD_REFUSALS) {
     assert.equal(api.paidRescheduleRespondAdmitted({ ...row, ...change }, last - 1), false, label)
   }
@@ -675,7 +678,8 @@ test('P7: only the counterpart can accept a Paid proposal, and only before the l
     start: Date.now() + LEAD - 60000,
   }))
   assert.equal(api.canConfirmReschedule('brand', nearProposal), false, 'proposed start inside lead')
-  assert.equal(api.canConfirmReschedule('brand', clocked({ ...open, data_environment: 'production' })), false)
+  assert.equal(api.canConfirmReschedule('brand', clocked({ ...open, data_environment: 'production' })), true)
+  assert.equal(api.canConfirmReschedule('brand', clocked({ ...open, data_environment: '' })), false)
   for (const [label, change] of SAVED_CARD_REFUSALS) {
     assert.equal(api.canConfirmReschedule('brand', clocked({ ...open, ...change })), false, label)
   }
@@ -809,7 +813,11 @@ test('P7: the open Paid proposal note names the lapse time with the shared forma
       'If there is no answer before ' + lapse + ', the call stays at the original time.',
     )
     assert.equal(calls.paidProposalLapseText({ ...row, status: 'confirmed' }, 'UTC'), '')
-    assert.equal(calls.paidProposalLapseText({ ...row, data_environment: 'production' }, 'UTC'), '')
+    assert.equal(
+      calls.paidProposalLapseText({ ...row, data_environment: 'production' }, 'UTC'),
+      'If there is no answer before ' + lapse + ', the call stays at the original time.',
+    )
+    assert.equal(calls.paidProposalLapseText({ ...row, data_environment: '' }, 'UTC'), '')
     assert.equal(calls.paidProposalLapseText({ ...row, paid_meeting: false }, 'UTC'), '')
     assert.equal(calls.paidProposalLapseText({ ...row, start_old: null }, 'UTC'), '')
     global.StartersDashboardCallActions = undefined
