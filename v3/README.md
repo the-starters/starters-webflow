@@ -2802,10 +2802,11 @@ returns full rows, so `payment_status`, `payment_reconciliation_status`,
   proposal adds "If there is no answer before [time], the call stays at the
   original time." with the shared `formatDate` formatter.
 
-`PAID_EDIT_OPEN_ENVIRONMENTS` and `PAID_RESCHEDULE_OPEN_ENVIRONMENTS` are
-`['test']` because the server gates (`$p6_paid_open`, `$p7_paid_open`) open
-Test only. Production opens by adding `'production'` to the constant in the
-same release that opens the server gate. Free behavior is unchanged; the
+`PAID_EDIT_OPEN_ENVIRONMENTS` is `['test']` because the server gate
+(`$p6_paid_open`) opens Test only. `PAID_RESCHEDULE_OPEN_ENVIRONMENTS` is
+`['test', 'production']` because the server gate (`$p7_paid_open`) opens Test
+and Production. A constant opens production only in the release that opens its
+server gate. Free behavior is unchanged; the
 regression tests in `dashboard-call-paid-parity.test.js` pin it.
 
 The native Webflow modal owns `[booking-decline-reason]`,

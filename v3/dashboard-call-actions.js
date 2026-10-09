@@ -239,14 +239,12 @@
   // authorized holds below.
   const PAID_CONFIRMED_CANCEL_LEAD_MS = 173700000
 
-  /* Paid parity P6 / P7 server openings. The Xano drafts (#5921 P6,
-     #5756/#5759 P7) admit Paid only for `data_environment` values in their
-     `$p6_paid_open` / `$p7_paid_open` gates, which are Test-only until
-     release. Production opens later by adding 'production' here in the same
-     release that opens the server gate; the client must never offer a control
-     the server refuses. */
+  /* Paid parity P6 / P7 server openings. The Xano gates (`$p6_paid_open` /
+     `$p7_paid_open`) admit Paid only for `data_environment` values mirrored
+     below. Keep each list in lockstep with its server gate; the client must
+     never offer a control the server refuses. */
   const PAID_EDIT_OPEN_ENVIRONMENTS = ['test']
-  const PAID_RESCHEDULE_OPEN_ENVIRONMENTS = ['test']
+  const PAID_RESCHEDULE_OPEN_ENVIRONMENTS = ['test', 'production']
   // P5 (#2099 held-call cancel) opens in production with the #2099 / #263 / #272
   // server publish; keep this list in lockstep with that admission gate.
   const PAID_HOLD_CANCEL_OPEN_ENVIRONMENTS = ['test', 'production']
