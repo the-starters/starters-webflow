@@ -55,29 +55,116 @@
     }
   }
 
-  function isWebflowChunkFailure(event) {
+  function field(object, key) {
+    try {
+      return object && object[key]
+    } catch (e) {
+      return undefined
+    }
+  }
+
+  const REJECTION_TEXT_LIMIT = 200
+  const REJECTION_NAME_LIMIT = 80
+  const REJECTION_STACK_LIMIT = 16 * 1024
+  const REJECTION_STACK_LINE_LIMIT = 1024
+  const REJECTION_STACK_FRAME_LIMIT = 20
+
+  function cleanUrl(value) {
+    try {
+      const url = new URL(value)
+      if (!['http:', 'https:'].includes(url.protocol)) return ''
+      url.username = ''
+      url.password = ''
+      url.search = ''
+      url.hash = ''
+      return url.href
+    } catch (e) {
+      return ''
+    }
+  }
+
+  function diagnosticText(value, limit = REJECTION_TEXT_LIMIT) {
+    return value.slice(0, REJECTION_STACK_LIMIT)
+      .replace(/https?:\/\/[^\s)]+/g, url => cleanUrl(url) || '[invalid URL]')
+      .replace(/\s+/g, ' ').trim().slice(0, limit)
+  }
+
+  // Accept browser source frames, not arbitrary text supplied on a rejection.
+  // Rebuild copied stacks without their header, which can itself inject frames.
+  function sourceFrames(stack) {
+    if (typeof stack !== 'string' || stack.length > REJECTION_STACK_LIMIT) return []
+    const frames = []
+    for (const line of stack.split(/\r?\n/)) {
+      if (line.length > REJECTION_STACK_LINE_LIMIT) continue
+      const chrome = line.match(/^\s*at\s+(.+?)\s+\((https?:\/\/[^\s()]+?):(\d+)(?::(\d+))?\)\s*$/)
+      const bare = line.match(/^\s*at\s+(https?:\/\/[^\s()]+?):(\d+)(?::(\d+))?\s*$/)
+      const gecko = line.match(/^(.*?)@(https?:\/\/[^\s()]+?):(\d+)(?::(\d+))?\s*$/)
+      const match = chrome || gecko || (bare && [bare[0], '?', ...bare.slice(1)])
+      if (!match) continue
+      const url = cleanUrl(match[2])
+      const row = Number(match[3])
+      const column = match[4] === undefined ? null : Number(match[4])
+      if (!url || !Number.isSafeInteger(row) || row < 1 || (column !== null && (!Number.isSafeInteger(column) || column < 0))) continue
+      const name = match[1].trim()
+      const fn = /^[\w.$<>\[\] -]{1,80}$/.test(name) ? name : '?'
+      frames.push(`    at ${fn} (${url}:${row}${column === null ? '' : `:${column}`})`)
+      if (frames.length === REJECTION_STACK_FRAME_LIMIT) break
+    }
+    return frames
+  }
+
+  function originatingFrames(reason) {
+    // The SDK reads Safari's stacktrace before stack. A malformed field must
+    // not replace a useful source that is still available in the other field.
+    const first = sourceFrames(field(reason, 'stacktrace'))
+    return first.length ? first : sourceFrames(field(reason, 'stack'))
+  }
+
+  const CHUNK_FAILURE_VENDORS = [
+    {
+      vendor: 'webflow',
+      host: 'cdn.prod.website-files.com',
+      path: /^\/[\w-]+\/js\/webflow\.[\w.-]+\.js$/,
+      fingerprint: 'starters-webflow-chunk-load',
+    },
+    {
+      vendor: 'marker.io',
+      host: 'edge.marker.io',
+      path: /^\/(?:[\w-]+\/)*[\w.-]+\.js$/,
+      fingerprint: 'starters-markerio-chunk-load',
+    },
+  ]
+
+  function chunkVendor(request) {
+    if (typeof request !== 'string' || request.length > 2048 || /[\s\\]/.test(request)) return null
+    try {
+      const url = new URL(request)
+      if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.port) return null
+      return CHUNK_FAILURE_VENDORS.find(({ host, path }) => url.hostname === host && path.test(url.pathname)) || null
+    } catch (e) {
+      return null
+    }
+  }
+
+  function chunkFailure(event) {
     try {
       const error = event && event.error
-      const name = safeString(error && error.name)
+      const name = safeString(field(error, 'name'))
       const message = [
-        safeString(error && error.message),
-        safeString(event && event.message),
+        safeString(field(error, 'message')),
+        safeString(field(event, 'message')),
       ].join(' ')
       const isChunkFailure =
         name === 'ChunkLoadError' || /Loading chunk\s+\S+\s+failed/i.test(message)
-      if (!isChunkFailure) return false
-
-      const source = [
-        safeString(error && error.request),
-        safeString(error && error.stack),
-        message,
-        safeString(event && event.filename),
-      ].join(' ')
-      return /https?:\/\/cdn\.prod\.website-files\.com\/[^\s"'()]+\/js\/webflow\.[^\s"'()]+\.js/i.test(
-        source,
-      )
+      if (!isChunkFailure) return null
+      // A present request is authoritative, including an invalid or unknown
+      // request. Caller frames and filename identify the caller, not the asset.
+      if (error && typeof error === 'object' && 'request' in error) return chunkVendor(error.request)
+      if (message.length > REJECTION_STACK_LIMIT) return null
+      const requests = new Set(Array.from(message.matchAll(/\((?:error|timeout|missing):\s*(https?:\/\/[^\s)]+)\s*\)/g), match => match[1]))
+      return requests.size === 1 ? chunkVendor(requests.values().next().value) : null
     } catch (e) {
-      return false
+      return null
     }
   }
 
@@ -124,10 +211,10 @@
     }
   }
 
-  function recoverWebflowChunkFailure(event) {
+  function recoverWebflowChunkFailure(failure) {
     const hostname = safeString(window.location && window.location.hostname)
     if (!WEBFLOW_CHUNK_RECOVERY_HOSTS.has(hostname)) return false
-    if (!isWebflowChunkFailure(event) || !claimWebflowChunkRecovery()) return false
+    if (!failure || failure.vendor !== 'webflow' || !claimWebflowChunkRecovery()) return false
 
     window.setTimeout(() => {
       try {
@@ -190,28 +277,52 @@
         /* never break the page */
       }
     }
-    const rejectionError = (reason) => {
+    const rejectionError = (reason, frames) => {
       try {
         if (reason instanceof Error) return reason
         if (!reason || typeof reason !== 'object') return new Error(String(reason))
 
-        // Keep only bounded diagnostic fields. Promise rejection objects can
-        // contain request bodies, member data, or circular references.
-        const fields = ['message', 'code', 'status']
-        const details = fields.flatMap((key) => {
-          const value = reason[key]
-          if (!['string', 'number', 'boolean'].includes(typeof value)) return []
-          return [`${key}=${String(value).slice(0, 200)}`]
-        })
-        const err = new Error(details.join(' ') || 'Unhandled rejection object')
-        if (typeof reason.name === 'string' && reason.name.trim()) {
-          err.name = reason.name.trim().slice(0, 80)
+        const message = field(reason, 'message')
+        const err = new Error(typeof message === 'string'
+          ? diagnosticText(message) || 'Unhandled rejection object'
+          : 'Unhandled rejection object')
+        const name = field(reason, 'name')
+        if (typeof name === 'string' && name.trim()) {
+          err.name = diagnosticText(name, REJECTION_NAME_LIMIT)
         }
+        if (frames.length) err.stack = frames.join('\n')
         return err
       } catch (e) {
         return new Error('Unhandled rejection object')
       }
     }
+    const rejectionDiagnostics = (reason) => {
+      const props = {}
+      try {
+        if (!reason || typeof reason !== 'object' || reason instanceof Error) return props
+        for (const key of ['code', 'status']) {
+          const value = field(reason, key)
+          if (typeof value === 'string') props[`starters_error_${key}`] = diagnosticText(value)
+          else if (typeof value === 'boolean' || (typeof value === 'number' && Number.isFinite(value))) {
+            props[`starters_error_${key}`] = value
+          }
+        }
+      } catch (e) { /* hostile objects are still captured */ }
+      return props
+    }
+    const NETWORK_FAILURE = /^(Load failed|Failed to fetch( \(.*\))?|NetworkError when attempting to fetch resource\.?|Network Error)$/
+    const isNetworkFailure = (reason) => {
+      if (typeof reason === 'string') return NETWORK_FAILURE.test(reason)
+      if (!reason || typeof reason !== 'object') return false
+      const message = field(reason, 'message')
+      return field(reason, 'code') === 'network-error' ||
+        (typeof message === 'string' && NETWORK_FAILURE.test(message))
+    }
+    const chunkProps = (failure) => failure ? {
+      starters_error_kind: 'chunk-load',
+      starters_chunk_vendor: failure.vendor,
+      $exception_fingerprint: failure.fingerprint,
+    } : {}
     window.addEventListener('error', (e) => {
       // Cross-origin script failures reach the page as a bare "Script error."
       // with no error object and no source location — the browser strips the
@@ -224,14 +335,23 @@
       if (e.filename) props.filename = e.filename
       if (e.lineno) props.lineno = e.lineno
       if (e.colno) props.colno = e.colno
+      const failure = chunkFailure(e)
+      Object.assign(props, chunkProps(failure))
       send(e.error || new Error(e.message), props)
-      recoverWebflowChunkFailure(e)
+      recoverWebflowChunkFailure(failure)
     })
     window.addEventListener('unhandledrejection', (e) => {
-      send(rejectionError(e.reason), {
-        starters_error_source: 'onunhandledrejection',
-      })
-      recoverWebflowChunkFailure({ error: e.reason })
+      const reason = field(e, 'reason')
+      const frames = originatingFrames(reason)
+      const props = Object.assign({ starters_error_source: 'onunhandledrejection' }, rejectionDiagnostics(reason))
+      if (isNetworkFailure(reason) && !frames.length) {
+        props.starters_error_kind = 'network'
+        props.$exception_fingerprint = 'starters-network-rejection'
+      }
+      const failure = chunkFailure({ error: reason })
+      Object.assign(props, chunkProps(failure))
+      send(rejectionError(reason, frames), props)
+      recoverWebflowChunkFailure(failure)
     })
   }
 
