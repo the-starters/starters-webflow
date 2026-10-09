@@ -5,9 +5,10 @@
  * reason fields. This module binds those elements, creates only missing
  * supporting reschedule views, and sends environment-safe commands with
  * V3 contracts: decline, cancel, direct pending-request time updates,
- * and proposal responses for eligible Free calls, plus the Paid parity
- * P5 (held-call cancel and fee line), P6 (pending Paid edit) and P7 (saved-card
- * Paid reschedule) gates, each mirrored from its server admission rule.
+ * pending new-time offers, and proposal responses for eligible Free calls,
+ * plus the Paid parity P5 (held-call cancel and fee line), P6 (pending Paid
+ * edit) and P7 (saved-card Paid reschedule) gates, each mirrored from its
+ * server admission rule.
  * Reschedule-decline release
  * prerequisites are owned by README.md, "CS-17 backend release prerequisite".
  */
@@ -1661,13 +1662,14 @@
     return true
   }
 
-  /* One authored reason panel serves both reschedule contracts, so its copy
+  /* One authored reason panel serves the reschedule contracts, so its copy
      cannot be static: the confirmed flow really does keep the current time
-     until the counterpart answers, while the pending flow changes the time
-     immediately. The panel's heading and body carry authored `booking-copy`
-     hooks (`reschedule-title` / `reschedule-body`) so this targets attributes,
-     never a styling class. The known-string match below is only a fallback for
-     a page served before those hooks were published. */
+     until the counterpart answers, the direct pending edit changes the time
+     immediately, and a pending offer keeps the original requested time while
+     the offer is open. The panel's heading and body carry authored
+     `booking-copy` hooks (`reschedule-title` / `reschedule-body`) so this
+     targets attributes, never a styling class. The known-string match below is
+     only a fallback for a page served before those hooks were published. */
   const RESCHEDULE_COPY = {
     'reschedule-propose': {
       title: 'Propose a new time',
@@ -2042,8 +2044,8 @@
         if (!isCurrent()) return null
         showActionError(modal, '')
         // The booking decides the contract, and with it the failure copy and
-        // the success view: a pending request lands on "time updated", not on
-        // "waiting for the other participant".
+        // success view: direct edits land on "time updated"; pending offers
+        // and confirmed proposals wait for the other participant.
         const initialKind = rescheduleKindFor(role, booking)
         if (!initialKind) return null
         let mutationClaim = null
@@ -2101,9 +2103,9 @@
           }
           const reasonField = modal.querySelector('[booking-reschedule-reason]')
           if (reasonField) reasonField.value = ''
-          // The receipt describes the selected slot. A pending request moves
-          // immediately; a confirmed call keeps its canonical time until the
-          // counterpart accepts, so render its proposal from a separate model.
+          // The receipt describes the selected slot. A direct pending edit
+          // moves immediately; a confirmed call keeps its canonical time until
+          // the counterpart accepts, so render its proposal from a separate model.
           if (kind === 'reschedule-request' && booking) {
             booking.start = Number(slot && slot.start)
             booking.end = Number(slot && slot.end)
@@ -2412,10 +2414,11 @@
           return
         }
         let booking = settings.getBooking(button)
-        /* One authored Reschedule button serves two contracts. The markup
+        /* One authored Reschedule button serves multiple contracts. The markup
            cannot know which, so the booking decides here: a pending request
-           swaps the confirmed-call kind for the direct-update one before the
-           gate runs, otherwise the gate would reject its own button. */
+           swaps the confirmed-call kind for the direct-edit or pending-offer
+           kind before the gate runs, otherwise the gate would reject its own
+           button. */
         if (step.kind === 'reschedule-propose') {
           const resolved = rescheduleKindFor(settings.role, booking)
           if (resolved) step = { kind: resolved, step: step.step }

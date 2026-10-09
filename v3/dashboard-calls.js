@@ -1596,8 +1596,8 @@
       const messageHref = action === 'message' ? bookingMessageHref(role, booking) : ''
       const message = action === 'message' && messageHref !== ''
       if (action === 'message') setMessageControlDestination(button, messageHref)
-      // Only expose actions backed by a loaded canonical action contract.
-      // Pending Starter rescheduling still has no supported contract.
+      // Only expose card actions backed by a loaded canonical action contract.
+      // Pending new-time offers start from the details modal.
       show(button, details || accept || decline || message)
     })
 
@@ -2466,8 +2466,8 @@
           validDashboardModule(global.StartersDashboardCallActions) &&
           typeof global.StartersDashboardCallActions.canCancel === 'function' &&
           global.StartersDashboardCallActions.canCancel(role, booking, now)
-        // Two contracts share this button: propose-then-confirm on a confirmed
-        // call, and a direct time update on a Brand's own pending request.
+        // The authored Reschedule button resolves to the contract in play:
+        // confirmed proposal, Brand direct edit, or pending new-time offer.
         const proposeReschedule =
           (action === 'reschedule' || action === 'reschedule-calendar') &&
           validDashboardModule(global.StartersDashboardCallActions) &&
