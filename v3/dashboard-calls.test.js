@@ -10427,6 +10427,31 @@ test('F08: the offer status names the proposer and who must answer', () => {
   assert.equal(api.pendingOfferStatusText(f08PendingOffer({ status: 'confirmed' }), 'brand'), '')
 })
 
+test('F08: pending offer headings keep the waiting message in the Status row', () => {
+  const now = 1_800_000_000_000
+  for (const isPaid of [false, true]) {
+    for (const proposer of ['starter', 'brand']) {
+      for (const role of ['starter', 'brand']) {
+        const booking = f08PendingOffer({ is_paid: isPaid, rescheduled_by: proposer })
+        const view = f52Panel('base')
+        const status = richElement('span', { 'booking-element': 'status' })
+        const suffix = richElement('span', { 'booking-element': 'status-text' })
+        view.heading.appendChild(status)
+        view.heading.appendChild(suffix)
+
+        assert.equal(api.populateDetailModal(view.modal, booking, role, now), true)
+        assert.equal(status.textContent, 'New time proposed')
+        assert.equal(suffix.textContent, '', 'no repeated proposal or waiting text in the heading')
+        assert.equal(suffix.hidden, true)
+        const statusRow = summaryRowsOf(view.table).find(([field]) => field === 'offer-status')
+        assert.equal(statusRow[1], 'Status')
+        assert.equal(statusRow[2], api.pendingOfferStatusText(booking, role))
+        assert.match(statusRow[2], /Awaiting/)
+      }
+    }
+  }
+})
+
 test('F08: Starter Confirm is hidden while an offer is open', () => {
   const now = 1_800_000_000_000
   assert.equal(api.canConfirmBooking('starter', f08PendingOffer(), now), false)

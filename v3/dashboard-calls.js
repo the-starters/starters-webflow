@@ -2743,11 +2743,8 @@
   }
 
   function proposalStatusText(booking, role) {
-    const offerProposer = pendingOfferProposer(booking)
-    if (offerProposer && ['brand', 'starter'].includes(role)) {
-      if (offerProposer !== role) return ' — New time proposed. Awaiting your answer.'
-      return ' — New time proposed. Awaiting ' + (role === 'brand' ? 'Starter' : 'Brand') + ' answer.'
-    }
+    // Pending offer details already carry the waiting message in their Status row.
+    if (pendingOfferOpen(booking)) return ''
     if (clean(booking && booking.status).toLowerCase() !== 'rescheduled') return ''
     const proposer = clean(booking && booking.rescheduled_by).toLowerCase()
     if (!['brand', 'starter'].includes(proposer) || !['brand', 'starter'].includes(role)) return ''
