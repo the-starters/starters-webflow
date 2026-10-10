@@ -1712,8 +1712,18 @@
     setStatus(form, 'error', 'Review the highlighted fields and try again.', receipt)
     Promise.resolve().then(function () {
       if (formState.nativeValidationReceipt === receipt) formState.nativeValidationReceipt = null
+      if (formState.nativeValidationRevealReceipt === receipt) formState.nativeValidationRevealReceipt = null
     })
     return receipt
+  }
+
+  function revealNativeValidation(form, globalObject, receipt) {
+    var formState = state(form)
+    if (formState.nativeValidationRevealReceipt === receipt) return ''
+    formState.nativeValidationRevealReceipt = receipt
+    var nativeMessage = revealInvalidNumericControl(form, globalObject)
+    if (nativeMessage) setStatus(form, 'error', nativeMessage, receipt)
+    return nativeMessage
   }
 
   function submit(form, globalObject, documentObject) {
@@ -1723,9 +1733,8 @@
     // example, the own-contract confirmation checkbox while Standard contract
     // is selected), while visible required controls still gate submission.
     if (!reportActiveValidity(form)) {
-      recordNativeValidation(form, globalObject, documentObject)
-      var nativeMessage = revealInvalidNumericControl(form, globalObject)
-      if (nativeMessage) setStatus(form, 'error', nativeMessage, state(form).diagnostic)
+      var nativeReceipt = recordNativeValidation(form, globalObject, documentObject)
+      revealNativeValidation(form, globalObject, nativeReceipt)
       return Promise.resolve(false)
     }
 
@@ -1859,7 +1868,8 @@
     documentObject.addEventListener('invalid', function (event) {
       var form = event.target && event.target.closest ? event.target.closest(FORM_SELECTOR) : null
       if (!form) return
-      recordNativeValidation(form, globalObject, documentObject)
+      var receipt = recordNativeValidation(form, globalObject, documentObject)
+      revealNativeValidation(form, globalObject, receipt)
     }, true)
     documentObject.addEventListener('submit', function (event) {
       var form = event.target && event.target.closest ? event.target.closest(FORM_SELECTOR) : null

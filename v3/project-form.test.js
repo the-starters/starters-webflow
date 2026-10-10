@@ -1169,6 +1169,33 @@ test('Confirm with a hidden invalid hours cap returns to its step and shows the 
   assert.equal(weekly.reported, 1)
 })
 
+test('native invalid reveal returns once to the hidden numeric step', () => {
+  const { form, weekly } = hourlyCapForm('8-10')
+  const step = new Element({ 'data-form-flow-element': 'step-1' })
+  step.style.display = 'none'
+  weekly.parentElement.parentElement.parentElement = step
+  step.parentElement = form
+  const backButton = new Element({ tagName: 'BUTTON', type: 'button' })
+  const back = new Element({ 'data-form-flow-action': 'back', 'data-form-flow-target': 'step-1' })
+  back.querySelector = (selector) => (selector === 'button' ? backButton : null)
+  const baseQuery = form.querySelector.bind(form)
+  form.querySelector = (selector) => (
+    selector === '[data-form-flow-action="back"][data-form-flow-target="step-1"]' ? back : baseQuery(selector)
+  )
+  const timers = []
+  const loaded = load({ form, setTimeout: (fn) => timers.push(fn) })
+
+  loaded.document.listeners.invalid.handler({ target: weekly })
+  loaded.document.listeners.invalid.handler({ target: weekly })
+
+  assert.equal(backButton.events.filter((event) => event === 'click').length, 1)
+  assert.match(form.error.textContent, /one number of hours/)
+  assert.equal(timers.length, 1)
+  timers[0]()
+  assert.equal(weekly.focused, true)
+  assert.equal(weekly.reported, 1)
+})
+
 test('Hours Cap Period hides every maximum-hours field outside Hourly without clearing values', () => {
   const form = projectForm({ engagement_type: 'Weekly Recurring' })
   const panel = new Element({ 'data-input-filter-item': 'hourly' })
