@@ -2100,8 +2100,20 @@
     return line
   }
 
+  // F08: panels that show the live pending request. A Details open renders
+  // every authored panel with the pre-action row, and a Decline or Cancel
+  // success only switches to its terminal panel, so the offer rows must not
+  // be painted into terminal or other-state panels (Paid #1438, 2026-10-10).
+  // '' is the panel-less modal fallback.
+  const OFFER_ROW_PANELS = ['', 'base', 'reschedule-proposed']
+
+  function offerRowsPanel(panelName) {
+    return OFFER_ROW_PANELS.indexOf(clean(panelName)) !== -1
+  }
+
   function detailSupplementRows(booking, role, timezone, panelName) {
     const counterpart = detailCounterpart(role, booking)
+    const offerOpen = offerRowsPanel(panelName) && pendingOfferOpen(booking)
     // A decline writes its reason to cancelled_reason. On a Free declined
     // panel that is the decline reason, and an earlier edit's reason is
     // stale. Paid keeps its display unchanged, as PR #974 scoped F09.
@@ -2118,9 +2130,9 @@
       // F08: an open offer on a pending request. The original requested time
       // stays in "Date and time"; these rows are the fallback offer banner
       // until authored `booking-element="offer-*"` hooks exist.
-      { field: 'offer-date', label: 'Proposed new time', value: pendingOfferOpen(booking) ? formatDate(normalizeTimestamp(booking.start_old), timezone) : '' },
-      { field: 'offer-status', label: 'Status', value: pendingOfferStatusText(booking, role) },
-      { field: 'offer-deadline', label: 'Answer before', value: pendingOfferOpen(booking) && Number.isFinite(responseDeadline(booking)) ? formatDate(responseDeadline(booking), timezone) : '' },
+      { field: 'offer-date', label: 'Proposed new time', value: offerOpen ? formatDate(normalizeTimestamp(booking.start_old), timezone) : '' },
+      { field: 'offer-status', label: 'Status', value: offerOpen ? pendingOfferStatusText(booking, role) : '' },
+      { field: 'offer-deadline', label: 'Answer before', value: offerOpen && Number.isFinite(responseDeadline(booking)) ? formatDate(responseDeadline(booking), timezone) : '' },
       { field: 'duration', label: 'Duration', value: formatDuration(booking && booking.duration) },
       { field: 'context', label: 'Call', value: clean(booking && booking.call_context) },
       { field: 'reschedule-reason', label: 'Reschedule reason', value: declinedPanel || staleEditReason ? '' : clean(booking && booking.rescheduled_reason) },
@@ -2751,6 +2763,7 @@
    * @returns {string}
    */
   function pendingOfferStatusText(booking, role) {
+    if (!pendingOfferOpen(booking)) return ''
     const proposer = pendingOfferProposer(booking)
     if (!proposer || !['brand', 'starter'].includes(role)) return ''
     const proposerName = proposer === 'brand' ? 'Brand' : 'Starter'

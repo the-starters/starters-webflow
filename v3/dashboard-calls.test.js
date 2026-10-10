@@ -10501,3 +10501,70 @@ test('F08: an open pending detail refreshes same-status offer changes', () => {
     global.document = originalDocument
   }
 })
+
+// Codex Test proof 2026-10-10 (Paid #1438): a Starter declines a Brand counter
+// with Decline Call. The success modal switched to "Call Declined" but its
+// rows still showed the open offer, because Details open painted every panel
+// from the pending row and the decline success only switches panels.
+test('F08: offer rows render only on live-request panels, never on terminal success panels', () => {
+  const originalDocument = global.document
+  const now = 1_800_000_000_000
+  const brandCounter = f08PendingOffer({
+    is_paid: true,
+    rescheduled_by: 'brand',
+    brand_data: { name: 'Acme Brand', memberstack_id: 'mem_sb_brand', timezone: 'UTC' },
+    starter_data: { name: 'Sam Starter', memberstack_id: 'mem_sb_starter', timezone: 'UTC' },
+  })
+  const offerFields = (table) => summaryRowsOf(table)
+    .filter(([field]) => field.startsWith('offer-'))
+    .map(([field]) => field)
+  const offerText = (table) => summaryRowsOf(table)
+    .some((row) => row.some((cell) => /proposed a new time|Proposed new time|Answer before/.test(cell)))
+  const base = f52Panel('base')
+  const terminal = ['declined', 'cancelled', 'completed', 'reschedule-accepted', 'reschedule-declined']
+    .map((name) => {
+      const view = f52Panel(name)
+      base.modal.appendChild(view.panel)
+      return view
+    })
+  try {
+    global.document = {
+      querySelector(selector) {
+        return selector === '[popup-booking-info], dialog[data-modal-target="popup-booking-info"]'
+          ? base.modal
+          : null
+      },
+    }
+    // Details open on the pending row with an open Brand counter. Decline Call
+    // success then only switches to the declined panel painted here.
+    assert.equal(api.populateDetailModal(base.modal, brandCounter, 'starter', now), true)
+    assert.deepEqual(offerFields(base.table), ['offer-date', 'offer-status', 'offer-deadline'])
+    assert.ok(summaryRowsOf(base.table).some((row) => row[2] === 'Brand proposed a new time. Awaiting your answer.'))
+    for (const view of terminal) {
+      assert.deepEqual(offerFields(view.table), [], view.panel.getAttribute('booking-popup-content'))
+      assert.equal(offerText(view.table), false)
+    }
+    // The row model agrees: base and the F08 proposed receipt keep the offer.
+    for (const panel of ['base', 'reschedule-proposed', undefined]) {
+      const fields = api.detailSupplementRows(brandCounter, 'starter', 'UTC', panel).map((row) => row.field)
+      assert.ok(fields.includes('offer-status'), String(panel))
+    }
+    for (const panel of ['declined', 'cancelled', 'expired', 'completed', 'reschedule-accepted']) {
+      const fields = api.detailSupplementRows(brandCounter, 'starter', 'UTC', panel).map((row) => row.field)
+      assert.equal(fields.some((field) => field.startsWith('offer-')), false, panel)
+    }
+
+    // A fresh Details open of the declined row (offer fields kept) shows none.
+    const fresh = f52Panel('base')
+    const freshDeclined = f52Panel('declined')
+    fresh.modal.appendChild(freshDeclined.panel)
+    const declinedRow = { ...brandCounter, status: 'declined', cancelled_reason: 'Not available' }
+    global.document.querySelector = () => fresh.modal
+    assert.equal(api.populateDetailModal(fresh.modal, declinedRow, 'starter', now), true)
+    assert.deepEqual(offerFields(fresh.table), [])
+    assert.deepEqual(offerFields(freshDeclined.table), [])
+    assert.equal(api.pendingOfferStatusText(declinedRow, 'starter'), '')
+  } finally {
+    global.document = originalDocument
+  }
+})
