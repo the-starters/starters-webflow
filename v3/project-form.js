@@ -1082,11 +1082,11 @@
 
   function numericControlMessage(rule, value) {
     if (!clean(value)) return ''
+    if (rule.integer) return positiveId(value) ? '' : rule.message
     var parsed = numberValue(value)
     if (parsed === null) return rule.message
     if (rule.allowZero ? parsed < 0 : !(parsed > 0)) return rule.message
     if (rule.max && parsed > rule.max) return rule.message
-    if (rule.integer && parsed % 1 !== 0) return rule.message
     return ''
   }
 

@@ -1118,6 +1118,8 @@ test('numeric commercial controls accept one number and reject ranges or words',
   assert.equal(api.numericControlMessage({ message: 'pct', allowZero: true, max: 100 }, '0%'), '')
   assert.equal(api.numericControlMessage({ message: 'pct', allowZero: true, max: 100 }, '120'), 'pct')
   assert.equal(api.numericControlMessage({ message: 'weeks', integer: true }, '2.5'), 'weeks')
+  assert.equal(api.numericControlMessage({ message: 'weeks', integer: true }, '5.0'), 'weeks')
+  assert.equal(api.numericControlMessage({ message: 'weeks', integer: true }, '1,000'), 'weeks')
 })
 
 test('a weekly hours range is invalid on the control so the step engine blocks Continue', () => {
