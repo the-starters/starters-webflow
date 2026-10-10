@@ -1065,6 +1065,95 @@
     })
   }
 
+  // Webflow authors the commercial number inputs as free text, so a value such
+  // as "8-10" passed step 1 and failed only at Confirm, where the message sat
+  // below the dialog. Put the rule on the control itself: the form-flow step
+  // engine calls checkValidity, so the Brand is stopped at the field.
+  var HOURS_NUMBER_MESSAGE = 'Enter one number of hours, for example 10. Put a range in the project scope.'
+  var NUMERIC_CONTROL_RULES = [
+    { name: 'Amount', message: 'Enter one amount as a number, for example 85.' },
+    { name: 'Percent-Paid-Upfront', allowZero: true, max: 100, message: 'Enter one percentage from 0 to 100.' },
+    { name: 'Maximum-Hours-Billed', message: HOURS_NUMBER_MESSAGE },
+    { name: 'Maximum-Hours-Billed-per-Week', message: HOURS_NUMBER_MESSAGE },
+    { name: 'Maximum-Hours-Billed-per-Month', message: HOURS_NUMBER_MESSAGE },
+    { name: 'Number-of-Weeks', integer: true, message: 'Enter a whole number of weeks.' },
+    { name: 'Number-of-Months', integer: true, message: 'Enter a whole number of months.' },
+  ]
+
+  function numericControlMessage(rule, value) {
+    if (!clean(value)) return ''
+    var parsed = numberValue(value)
+    if (parsed === null) return rule.message
+    if (rule.allowZero ? parsed < 0 : !(parsed > 0)) return rule.message
+    if (rule.max && parsed > rule.max) return rule.message
+    if (rule.integer && parsed % 1 !== 0) return rule.message
+    return ''
+  }
+
+  function insideNode(field, container) {
+    var node = field
+    while (node) {
+      if (node === container) return true
+      node = node.parentElement
+    }
+    return false
+  }
+
+  // Only the selected fee panel can block submission. A stale value in a hidden
+  // panel is never serialized, so it must never hold a custom error either.
+  function numericControls(form) {
+    var panel = engagementPanel(form, readEngagement(form))
+    var controls = []
+    NUMERIC_CONTROL_RULES.forEach(function (rule) {
+      Array.prototype.forEach.call(namedControls(form, rule.name), function (field) {
+        var active = Boolean(panel) && !field.disabled && insideNode(field, panel)
+        controls.push({ field: field, message: active ? numericControlMessage(rule, fieldValue(field)) : '' })
+      })
+    })
+    return controls
+  }
+
+  function syncNumericFieldValidity(form) {
+    numericControls(form).forEach(function (entry) {
+      if (typeof entry.field.setCustomValidity === 'function') entry.field.setCustomValidity(entry.message)
+    })
+  }
+
+  function formFlowStep(field) {
+    var node = field
+    while (node && node !== field.form) {
+      var step = clean(node.getAttribute && node.getAttribute('data-form-flow-element'))
+      if (/^step-/.test(step)) return step
+      node = node.parentElement
+    }
+    return ''
+  }
+
+  // On the confirmation step the invalid control is hidden, so neither the
+  // browser bubble nor the native .w-form-fail line reaches the Brand. Use the
+  // authored "Edit details" back action to return to that step, then focus the
+  // control and show its own message there.
+  function revealInvalidNumericControl(form, globalObject) {
+    var invalid = numericControls(form).filter(function (entry) { return entry.message })[0]
+    if (!invalid) return ''
+    var field = invalid.field
+    var step = formFlowStep(field)
+    var back = step && form.querySelector
+      ? form.querySelector('[data-form-flow-action="back"][data-form-flow-target="' + step + '"]')
+      : null
+    if (back && !activeControl(field)) {
+      var button = (back.querySelector && back.querySelector('button')) || back
+      if (typeof button.click === 'function') button.click()
+    }
+    var focus = function () {
+      if (typeof field.focus === 'function') field.focus()
+      if (typeof field.reportValidity === 'function') field.reportValidity()
+    }
+    if (globalObject && typeof globalObject.setTimeout === 'function') globalObject.setTimeout(focus, 350)
+    else focus()
+    return invalid.message
+  }
+
   function syncDurationFields(form) {
     syncFlatFeeDates(form)
     syncWeeklyStartDate(form)
@@ -1073,6 +1162,7 @@
     syncHoursCapFields(form)
     syncInvoiceFrequencyField(form)
     syncOwnContractConfirmationField(form)
+    syncNumericFieldValidity(form)
   }
 
   // The only place a payload field is normalized. Both entry points - the
@@ -1634,6 +1724,8 @@
     // is selected), while visible required controls still gate submission.
     if (!reportActiveValidity(form)) {
       recordNativeValidation(form, globalObject, documentObject)
+      var nativeMessage = revealInvalidNumericControl(form, globalObject)
+      if (nativeMessage) setStatus(form, 'error', nativeMessage, state(form).diagnostic)
       return Promise.resolve(false)
     }
 
@@ -1647,7 +1739,7 @@
         request_started: false,
       })
       formState.diagnostic = persistDiagnostic(globalObject, validationReceipt)
-      setStatus(form, 'error', error, validationReceipt)
+      setStatus(form, 'error', revealInvalidNumericControl(form, globalObject) || error, validationReceipt)
       return Promise.resolve(false)
     }
 
@@ -1808,6 +1900,8 @@
     syncDurationFields: syncDurationFields,
     syncActiveRequired: syncActiveRequired,
     reportActiveValidity: reportActiveValidity,
+    syncNumericFieldValidity: syncNumericFieldValidity,
+    numericControlMessage: numericControlMessage,
     createIdempotencyKey: createIdempotencyKey,
     createDiagnostic: createDiagnostic,
     completeDiagnostic: completeDiagnostic,

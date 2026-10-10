@@ -1074,6 +1074,99 @@ test('Hours Cap Period shows and enables only its matching maximum-hours field',
   assert.equal(controls[2].getAttribute('required'), '')
 })
 
+function validatableField(name, value, attrs = {}) {
+  const control = nativeField(name, value, attrs)
+  control.customValidity = ''
+  control.setCustomValidity = (message) => { control.customValidity = message }
+  control.focused = false
+  control.reported = 0
+  control.focus = () => { control.focused = true }
+  control.reportValidity = () => { control.reported += 1; return !control.customValidity }
+  return control
+}
+
+function hourlyCapForm(weeklyValue) {
+  const form = projectForm({ engagement_type: 'Ongoing Hourly' })
+  const panel = new Element({ 'data-input-filter-item': 'hourly' })
+  const frequency = nativeField('Frequency', 'Per week', { tagName: 'SELECT' })
+  const rate = validatableField('Amount', '85')
+  const weekly = validatableField('Maximum-Hours-Billed-per-Week', weeklyValue, { id: 'max-week', required: '' })
+  const group = new Element({ class: 'app-form_input_group' })
+  group.controls = [weekly]
+  weekly.parentElement = group
+  group.parentElement = panel
+  ;[frequency, rate, weekly].forEach((control) => { control.form = form })
+  rate.parentElement = panel
+  frequency.parentElement = panel
+  panel.children = [frequency, rate, weekly]
+  panel.parentElement = form
+  form.feePanels = { hourly: panel }
+  form.children = form.children.concat([frequency, rate, weekly])
+  return { form, panel, rate, weekly }
+}
+
+test('numeric commercial controls accept one number and reject ranges or words', () => {
+  const { api } = load()
+  const hours = { message: 'hours' }
+  assert.equal(api.numericControlMessage(hours, ''), '')
+  assert.equal(api.numericControlMessage(hours, '10'), '')
+  assert.equal(api.numericControlMessage(hours, '7.5'), '')
+  assert.equal(api.numericControlMessage(hours, '8-10'), 'hours')
+  assert.equal(api.numericControlMessage(hours, '10 hrs'), 'hours')
+  assert.equal(api.numericControlMessage(hours, '0'), 'hours')
+  assert.equal(api.numericControlMessage({ message: 'rate' }, '$1,250.00'), '')
+  assert.equal(api.numericControlMessage({ message: 'pct', allowZero: true, max: 100 }, '0%'), '')
+  assert.equal(api.numericControlMessage({ message: 'pct', allowZero: true, max: 100 }, '120'), 'pct')
+  assert.equal(api.numericControlMessage({ message: 'weeks', integer: true }, '2.5'), 'weeks')
+})
+
+test('a weekly hours range is invalid on the control so the step engine blocks Continue', () => {
+  const { form, weekly, rate } = hourlyCapForm('8-10')
+  const { api } = load({ form })
+  api.syncDurationFields(form)
+  assert.match(weekly.customValidity, /one number of hours/)
+  assert.equal(rate.customValidity, '')
+
+  weekly.value = '10'
+  api.syncDurationFields(form)
+  assert.equal(weekly.customValidity, '')
+})
+
+test('a stale non-numeric value in an unselected fee panel never blocks submission', () => {
+  const { form, weekly } = hourlyCapForm('8-10')
+  form.children.find((child) => child.getAttribute('data-project-field') === 'engagement_type').value = 'Weekly Recurring'
+  const { api } = load({ form })
+  api.syncNumericFieldValidity(form)
+  assert.equal(weekly.customValidity, '')
+})
+
+test('Confirm with a hidden invalid hours cap returns to its step and shows the field message', async () => {
+  const { form, weekly } = hourlyCapForm('8-10')
+  const step = new Element({ 'data-form-flow-element': 'step-1' })
+  step.style.display = 'none'
+  weekly.parentElement.parentElement.parentElement = step
+  step.parentElement = form
+  const backButton = new Element({ tagName: 'BUTTON', type: 'button' })
+  const back = new Element({ 'data-form-flow-action': 'back', 'data-form-flow-target': 'step-1' })
+  back.querySelector = (selector) => (selector === 'button' ? backButton : null)
+  const baseQuery = form.querySelector.bind(form)
+  form.querySelector = (selector) => (
+    selector === '[data-form-flow-action="back"][data-form-flow-target="step-1"]' ? back : baseQuery(selector)
+  )
+  form.valid = false
+  const timers = []
+  const loaded = load({ form, setTimeout: (fn) => timers.push(fn) })
+
+  assert.equal(await loaded.api.submit(form, loaded.window, loaded.document), false)
+  assert.equal(loaded.calls.length, 0)
+  assert.equal(backButton.events.includes('click'), true)
+  assert.match(form.error.textContent, /one number of hours/)
+  assert.equal(timers.length, 1)
+  timers[0]()
+  assert.equal(weekly.focused, true)
+  assert.equal(weekly.reported, 1)
+})
+
 test('Hours Cap Period hides every maximum-hours field outside Hourly without clearing values', () => {
   const form = projectForm({ engagement_type: 'Weekly Recurring' })
   const panel = new Element({ 'data-input-filter-item': 'hourly' })
