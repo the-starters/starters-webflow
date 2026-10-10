@@ -2495,10 +2495,12 @@ The `status-text` hook tells the counterpart that their confirmation is awaited,
 or tells the proposer which role must confirm; an unknown proposer hides that
 copy. Binding a non-rescheduled row hides both proposal-only fields.
 For a pending row with an open new-time offer, `start-date` stays the original
-requested time. Generated fallback rows named `offer-date`, `offer-status`, and
-`offer-deadline` show the proposed time from `start_old` and `end_old`, the
-next responder from `rescheduled_by`, and the answer deadline from
-`confirmation_expires_at`.
+requested time. On the live pending views (`base`, the panel-less fallback, and
+the `reschedule-proposed` receipt), generated fallback rows named `offer-date`,
+`offer-status`, and `offer-deadline` show the proposed time from `start_old` and
+`end_old`, the next responder from `rescheduled_by`, and the answer deadline
+from `confirmation_expires_at`. Action reason or confirmation steps and
+terminal result panels omit those offer rows.
 
 Not every authored panel repeats every booking hook, so each authored
 `[booking-popup-content]` panel also receives a module-owned
