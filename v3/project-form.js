@@ -1146,8 +1146,14 @@
       if (typeof button.click === 'function') button.click()
     }
     var focus = function () {
-      if (typeof field.focus === 'function') field.focus()
-      if (typeof field.reportValidity === 'function') field.reportValidity()
+      var formState = state(form)
+      formState.revealingNativeValidation = true
+      try {
+        if (typeof field.focus === 'function') field.focus()
+        if (typeof field.reportValidity === 'function') field.reportValidity()
+      } finally {
+        formState.revealingNativeValidation = false
+      }
     }
     if (globalObject && typeof globalObject.setTimeout === 'function') globalObject.setTimeout(focus, 350)
     else focus()
@@ -1868,6 +1874,7 @@
     documentObject.addEventListener('invalid', function (event) {
       var form = event.target && event.target.closest ? event.target.closest(FORM_SELECTOR) : null
       if (!form) return
+      if (state(form).revealingNativeValidation) return
       var receipt = recordNativeValidation(form, globalObject, documentObject)
       revealNativeValidation(form, globalObject, receipt)
     }, true)

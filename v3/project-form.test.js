@@ -1183,7 +1183,13 @@ test('native invalid reveal returns once to the hidden numeric step', () => {
     selector === '[data-form-flow-action="back"][data-form-flow-target="step-1"]' ? back : baseQuery(selector)
   )
   const timers = []
-  const loaded = load({ form, setTimeout: (fn) => timers.push(fn) })
+  let loaded
+  weekly.reportValidity = () => {
+    weekly.reported += 1
+    loaded.document.listeners.invalid.handler({ target: weekly })
+    return false
+  }
+  loaded = load({ form, setTimeout: (fn) => timers.push(fn) })
 
   loaded.document.listeners.invalid.handler({ target: weekly })
   loaded.document.listeners.invalid.handler({ target: weekly })
@@ -1191,7 +1197,11 @@ test('native invalid reveal returns once to the hidden numeric step', () => {
   assert.equal(backButton.events.filter((event) => event === 'click').length, 1)
   assert.match(form.error.textContent, /one number of hours/)
   assert.equal(timers.length, 1)
+  assert.equal(loaded.trackCalls.filter((entry) => entry.name === 'project_form_validation_failed').length, 1)
   timers[0]()
+  assert.equal(backButton.events.filter((event) => event === 'click').length, 1)
+  assert.equal(timers.length, 1)
+  assert.equal(loaded.trackCalls.filter((entry) => entry.name === 'project_form_validation_failed').length, 1)
   assert.equal(weekly.focused, true)
   assert.equal(weekly.reported, 1)
 })
