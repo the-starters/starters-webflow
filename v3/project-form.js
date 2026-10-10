@@ -1076,13 +1076,10 @@
     { name: 'Maximum-Hours-Billed', message: HOURS_NUMBER_MESSAGE },
     { name: 'Maximum-Hours-Billed-per-Week', message: HOURS_NUMBER_MESSAGE },
     { name: 'Maximum-Hours-Billed-per-Month', message: HOURS_NUMBER_MESSAGE },
-    { name: 'Number-of-Weeks', integer: true, message: 'Enter a whole number of weeks.' },
-    { name: 'Number-of-Months', integer: true, message: 'Enter a whole number of months.' },
   ]
 
   function numericControlMessage(rule, value) {
     if (!clean(value)) return ''
-    if (rule.integer) return positiveId(value) ? '' : rule.message
     var parsed = numberValue(value)
     if (parsed === null) return rule.message
     if (rule.allowZero ? parsed < 0 : !(parsed > 0)) return rule.message
@@ -1106,7 +1103,11 @@
     var controls = []
     NUMERIC_CONTROL_RULES.forEach(function (rule) {
       Array.prototype.forEach.call(namedControls(form, rule.name), function (field) {
-        var active = Boolean(panel) && !field.disabled && insideNode(field, panel)
+        // Only free-text inputs need this rule. An authored select (for
+        // example Number-of-Weeks with its "Ongoing" option) offers only
+        // valid choices and must never be blocked here.
+        var freeText = clean(field.tagName).toUpperCase() === 'INPUT'
+        var active = freeText && Boolean(panel) && !field.disabled && insideNode(field, panel)
         controls.push({ field: field, message: active ? numericControlMessage(rule, fieldValue(field)) : '' })
       })
     })
