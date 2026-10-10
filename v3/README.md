@@ -2832,9 +2832,11 @@ returns full rows, so `payment_status`, `payment_reconciliation_status`,
   response deadline, a participant identity, a grant, a positive duration, and
   either Free state or saved-card Paid state. The Starter can make the first
   offer. When an offer is open, only the current responder can counter. The
-  pending accept path is exported but hidden while `F08_ACCEPT_ENABLED` is
-  false. `canDeclinePendingOffer` admits only the Brand answering a Starter
-  offer; a Starter answering a Brand counter uses Decline Call.
+  same admission feeds `canAcceptPendingOffer`: with `F08_ACCEPT_ENABLED` true,
+  only the current responder can accept before the offered start, and setting
+  that switch false hides the control. `canDeclinePendingOffer` admits only the
+  Brand answering a Starter offer; a Starter answering a Brand counter uses
+  Decline Call.
 
 `PAID_EDIT_OPEN_ENVIRONMENTS` is `['test']` because the server gate
 (`$p6_paid_open`) opens Test only. `PAID_RESCHEDULE_OPEN_ENVIRONMENTS` is
@@ -2861,12 +2863,13 @@ pending path's `reschedule-updated` result. A modal that lacks that panel receiv
 a module fallback, so the direct-update success cannot switch to a missing
 target. A modal with no authored `reschedule` view receives the module fallback
 instead.
-The module uses the base "Accept New Time" response authored beside the
-reschedule trigger and keeps its authored label. For pending offers the same
-authored pair is reinterpreted: the accept control remains hidden while
-`F08_ACCEPT_ENABLED` is false, and the Brand's decline of a Starter offer reads
-`Decline New Time`. The confirmed-call "Keep Current Time" response is retired
-from the dashboard (Jai list #12, JP decision 2a, 2026-10-03):
+For confirmed-call proposals, the module uses the base "Accept New Time"
+response authored beside the reschedule trigger and keeps its authored label.
+For pending offers the same authored pair is reinterpreted: the responder's
+accept control reads `Confirm New Time` when `F08_ACCEPT_ENABLED` admits it,
+stays hidden when that switch is false, and the Brand's decline of a Starter
+offer reads `Decline New Time`. The confirmed-call "Keep Current Time" response
+is retired from the dashboard (Jai list #12, JP decision 2a, 2026-10-03):
 `canKeepCurrentTime` returns false, no confirmed-proposal fallback control is
 generated, and `hideKeepCurrentTime` adds one `display:none!important` style for
 every unmarked authored
