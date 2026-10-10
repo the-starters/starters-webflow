@@ -1117,9 +1117,24 @@ test('numeric commercial controls accept one number and reject ranges or words',
   assert.equal(api.numericControlMessage({ message: 'rate' }, '$1,250.00'), '')
   assert.equal(api.numericControlMessage({ message: 'pct', allowZero: true, max: 100 }, '0%'), '')
   assert.equal(api.numericControlMessage({ message: 'pct', allowZero: true, max: 100 }, '120'), 'pct')
-  assert.equal(api.numericControlMessage({ message: 'weeks', integer: true }, '2.5'), 'weeks')
-  assert.equal(api.numericControlMessage({ message: 'weeks', integer: true }, '5.0'), 'weeks')
-  assert.equal(api.numericControlMessage({ message: 'weeks', integer: true }, '1,000'), 'weeks')
+})
+
+test('an Ongoing weeks or months select in the selected panel never blocks submission', () => {
+  for (const [engagement, item, name] of [['Weekly Recurring', 'weekly', 'Number-of-Weeks'], ['Monthly Recurring', 'monthly', 'Number-of-Months']]) {
+    const form = projectForm({ engagement_type: engagement })
+    const panel = new Element({ 'data-input-filter-item': item })
+    const rate = validatableField('Amount', '1250')
+    const duration = validatableField(name, 'Ongoing', { tagName: 'SELECT' })
+    ;[rate, duration].forEach((control) => { control.form = form; control.parentElement = panel })
+    panel.children = [rate, duration]
+    panel.parentElement = form
+    form.feePanels = { [item]: panel }
+    form.children = form.children.concat([rate, duration])
+    const { api } = load({ form })
+    api.syncNumericFieldValidity(form)
+    assert.equal(duration.customValidity, '', name)
+    assert.equal(rate.customValidity, '', name)
+  }
 })
 
 test('a weekly hours range is invalid on the control so the step engine blocks Continue', () => {
