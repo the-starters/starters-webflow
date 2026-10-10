@@ -1190,20 +1190,55 @@ test('native invalid reveal returns once to the hidden numeric step', () => {
     return false
   }
   loaded = load({ form, setTimeout: (fn) => timers.push(fn) })
+  const confirm = new Element({ tagName: 'BUTTON', type: 'submit' })
+  confirm.form = form
 
+  loaded.document.listeners.click.handler({ target: confirm })
+  assert.equal(timers.length, 1)
   loaded.document.listeners.invalid.handler({ target: weekly })
   loaded.document.listeners.invalid.handler({ target: weekly })
 
   assert.equal(backButton.events.filter((event) => event === 'click').length, 1)
   assert.match(form.error.textContent, /one number of hours/)
-  assert.equal(timers.length, 1)
+  assert.equal(timers.length, 2)
   assert.equal(loaded.trackCalls.filter((entry) => entry.name === 'project_form_validation_failed').length, 1)
-  timers[0]()
+  timers[1]()
   assert.equal(backButton.events.filter((event) => event === 'click').length, 1)
-  assert.equal(timers.length, 1)
+  assert.equal(timers.length, 2)
   assert.equal(loaded.trackCalls.filter((entry) => entry.name === 'project_form_validation_failed').length, 1)
   assert.equal(weekly.focused, true)
   assert.equal(weekly.reported, 1)
+})
+
+test('engine-driven checkValidity while typing never moves focus to an invalid numeric control', () => {
+  const { form, weekly } = hourlyCapForm('8-10')
+  const timers = []
+  const loaded = load({ form, setTimeout: (fn) => timers.push(fn) })
+  const scope = nativeField('Project-Scope', 'Growth copy')
+  scope.form = form
+
+  loaded.document.listeners.click.handler({ target: scope })
+  loaded.document.listeners.invalid.handler({ target: weekly })
+
+  assert.equal(timers.length, 0)
+  assert.equal(weekly.focused, false)
+  assert.equal(weekly.reported, 0)
+  assert.equal(form.error.textContent, 'Review the highlighted fields and try again.')
+})
+
+test('a Confirm attempt expires on the next task so later engine checks stay passive', () => {
+  const { form, weekly } = hourlyCapForm('8-10')
+  const timers = []
+  const loaded = load({ form, setTimeout: (fn) => timers.push(fn) })
+  const confirm = new Element({ tagName: 'BUTTON', type: 'submit' })
+  confirm.form = form
+
+  loaded.document.listeners.click.handler({ target: confirm })
+  timers[0]()
+  loaded.document.listeners.invalid.handler({ target: weekly })
+
+  assert.equal(timers.length, 1)
+  assert.equal(weekly.focused, false)
 })
 
 test('Hours Cap Period hides every maximum-hours field outside Hourly without clearing values', () => {

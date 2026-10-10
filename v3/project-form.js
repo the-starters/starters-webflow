@@ -1732,6 +1732,25 @@
     return nativeMessage
   }
 
+  function isSubmitControl(target) {
+    if (!target) return false
+    if (clean(target.type).toLowerCase() === 'submit') return true
+    if (target.getAttribute && target.getAttribute('data-project-submit') !== null) return true
+    return Boolean(target.closest && target.closest('button[type="submit"], input[type="submit"], [data-project-submit]'))
+  }
+
+  // Native interactive validation runs as the click's default action, in the
+  // same task. Clear the marker on the next task so later engine-driven
+  // checkValidity calls are never treated as a Confirm attempt.
+  function markSubmitAttempt(form, target, globalObject) {
+    if (!isSubmitControl(target)) return
+    var formState = state(form)
+    formState.submitAttempt = true
+    if (globalObject && typeof globalObject.setTimeout === 'function') {
+      globalObject.setTimeout(function () { formState.submitAttempt = false }, 0)
+    }
+  }
+
   function submit(form, globalObject, documentObject) {
     var formState = state(form)
     if (formState.active) return formState.active
@@ -1847,6 +1866,7 @@
       if (clickedForm) {
         syncDurationFields(clickedForm)
         syncActiveRequired(clickedForm)
+        markSubmitAttempt(clickedForm, target, globalObject)
       }
     }, true)
     documentObject.addEventListener('change', function (event) {
@@ -1876,7 +1896,10 @@
       if (!form) return
       if (state(form).revealingNativeValidation) return
       var receipt = recordNativeValidation(form, globalObject, documentObject)
-      revealNativeValidation(form, globalObject, receipt)
+      // The form-flow engine also calls checkValidity on every input and
+      // click, which fires `invalid` too. Move focus only for a real Confirm,
+      // never while the Brand is typing in another field.
+      if (state(form).submitAttempt) revealNativeValidation(form, globalObject, receipt)
     }, true)
     documentObject.addEventListener('submit', function (event) {
       var form = event.target && event.target.closest ? event.target.closest(FORM_SELECTOR) : null
