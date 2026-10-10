@@ -3000,16 +3000,20 @@ test('F08: an offer on a terminal row is not open', () => {
   }
 })
 
-test('F08: Accept is hidden behind F08_ACCEPT_ENABLED; Decline is Brand-only on a Starter offer', () => {
+test('F08: Accept is on for the responder in Test only; Decline is Brand-only on a Starter offer', () => {
   const starterOffer = withStarterOffer()
-  assert.equal(api.F08_ACCEPT_ENABLED, false)
-  assert.equal(api.canAcceptPendingOffer('brand', starterOffer), false)
-  assert.equal(api.canAct('pending-accept', 'brand', starterOffer), false)
-  const before = api.setF08AcceptEnabledForTest(true)
+  assert.equal(api.F08_ACCEPT_ENABLED, true)
+  assert.equal(api.canAcceptPendingOffer('brand', starterOffer), true)
+  assert.equal(api.canAct('pending-accept', 'brand', starterOffer), true)
+  assert.equal(api.canAcceptPendingOffer('starter', starterOffer), false, 'never the proposer')
+  assert.equal(api.canAcceptPendingOffer('starter', withStarterOffer({ rescheduled_by: 'brand' })), true)
+  // Production stays closed through PENDING_PROPOSE_OPEN_ENVIRONMENTS.
+  assert.equal(api.canAcceptPendingOffer('brand', withStarterOffer({ data_environment: 'production', payment_environment: 'live' })), false)
+  // The kill switch still hides the control.
+  const before = api.setF08AcceptEnabledForTest(false)
   try {
-    assert.equal(api.canAcceptPendingOffer('brand', starterOffer), true)
-    assert.equal(api.canAcceptPendingOffer('starter', starterOffer), false, 'never the proposer')
-    assert.equal(api.canAcceptPendingOffer('starter', withStarterOffer({ rescheduled_by: 'brand' })), true)
+    assert.equal(api.canAcceptPendingOffer('brand', starterOffer), false)
+    assert.equal(api.canAct('pending-accept', 'brand', starterOffer), false)
   } finally {
     api.setF08AcceptEnabledForTest(before)
   }
@@ -3136,9 +3140,24 @@ test('F08: a Brand decline of a Starter offer posts to #5760 and expects a cance
     assert.equal(result.reschedule_decline.status, 'cancelled')
     assert.match(requests[0].url, /\/booking\/reschedule\/decline\/v3$/)
     assert.deepEqual(Object.keys(requests[0].body).sort(), ['booking_id', 'config_id', 'idempotency_key'])
-    // Accept stays closed while the flag is off: no request.
-    assert.equal(await api.respondReschedule('pending-accept', booking, 'brand'), null)
+    // The kill switch closes Accept: no request.
+    const before = api.setF08AcceptEnabledForTest(false)
+    try {
+      assert.equal(await api.respondReschedule('pending-accept', booking, 'brand'), null)
+    } finally {
+      api.setF08AcceptEnabledForTest(before)
+    }
     assert.equal(requests.length, 1)
+    // Accept (on in Test) posts to #5759 and expects the same booking confirmed.
+    global.sessionStorage = storage()
+    global.xanoAuthFetch = async function (url, init) {
+      requests.push({ url, body: JSON.parse(init.body) })
+      return { ok: true, json: async () => ({ reschedule_confirm: { booking_id: booking.booking_id, status: 'confirmed' } }) }
+    }
+    const accepted = await api.respondReschedule('pending-accept', booking, 'brand')
+    assert.equal(accepted.reschedule_confirm.status, 'confirmed')
+    assert.match(requests[1].url, /\/booking\/reschedule\/confirm\/v3$/)
+    assert.deepEqual(Object.keys(requests[1].body).sort(), ['booking_id', 'config_id', 'idempotency_key'])
     // A wrong status (for example a P7 restore) fails closed.
     global.xanoAuthFetch = async () => ({ ok: true, json: async () => ({ reschedule_decline: { booking_id: booking.booking_id, status: 'confirmed' } }) })
     global.sessionStorage = storage()
@@ -3179,7 +3198,7 @@ test('F08: authored controls are relabelled for an offer and restored for other 
   assert.equal(reschedule.label.textContent, 'Propose Another Time')
   assert.equal(decline.label.textContent, 'Decline New Time')
   assert.ok('data-starters-pending-offer-response' in decline.attributes)
-  assert.equal(accept.label.textContent, 'Accept New Time', 'accept keeps its label while flagged off')
+  assert.equal(accept.label.textContent, 'Confirm New Time', 'accept is relabelled while F08 Accept is on')
   // The retired Keep-Current-Time guard leaves the marked Decline alone.
   const appended = []
   const doc = {
