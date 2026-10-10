@@ -3001,7 +3001,7 @@ test('F08: an offer on a terminal row is not open', () => {
   }
 })
 
-test('F08: Accept is on for the responder in Test only; Decline is Brand-only on a Starter offer', () => {
+test('F08: Accept is on for the responder in Test and production; Decline is Brand-only on a Starter offer', () => {
   const starterOffer = withStarterOffer()
   assert.equal(api.F08_ACCEPT_ENABLED, true)
   assert.equal(api.canAcceptPendingOffer('brand', starterOffer), true)

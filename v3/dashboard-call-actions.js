@@ -301,8 +301,8 @@
      ['test'] here first, then the server gates. */
   const PENDING_PROPOSE_OPEN_ENVIRONMENTS = ['test', 'production']
   /* The accept owner (#5759 pending branch) passed the Test proof on
-     2026-10-10 (A1/A2). The control still follows the environment switch
-     above, so production stays closed until that switch opens. */
+     2026-10-10 (A1/A2, U1-U3). The control follows the environment switch
+     above (Test and production). */
   const F08_ACCEPT_ENABLED = true
   let f08AcceptEnabled = F08_ACCEPT_ENABLED
 
