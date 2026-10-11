@@ -185,7 +185,7 @@
       successContent: 'reschedule-proposed',
       failureMessage: 'The new time could not be proposed',
     },
-    /* Accept of an open offer (#5759 pending branch, published 15aa9c28). The
+    /* Accept of an open offer (#5759 pending branch). The
        server confirms the pending booking and moves it to the offer; it keeps
        the same booking id. Visible only where PENDING_PROPOSE_OPEN_ENVIRONMENTS
        admits the booking (Test and production). */

@@ -3150,7 +3150,7 @@ test('F08: a Brand decline of a Starter offer posts to #5760 and expects a cance
       api.setF08AcceptEnabledForTest(before)
     }
     assert.equal(requests.length, 1)
-    // Accept (on in Test) posts to #5759 and expects the same booking confirmed.
+    // Accept posts to #5759 and expects the same booking confirmed.
     global.sessionStorage = storage()
     global.xanoAuthFetch = async function (url, init) {
       requests.push({ url, body: JSON.parse(init.body) })
