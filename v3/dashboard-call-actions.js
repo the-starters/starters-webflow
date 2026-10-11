@@ -185,10 +185,10 @@
       successContent: 'reschedule-proposed',
       failureMessage: 'The new time could not be proposed',
     },
-    /* Accept of an open offer (#5759 pending branch, published 15aa9c28). The
+    /* Accept of an open offer (#5759 pending branch). The
        server confirms the pending booking and moves it to the offer; it keeps
        the same booking id. Visible only where PENDING_PROPOSE_OPEN_ENVIRONMENTS
-       admits the booking (Test today). */
+       admits the booking (Test and production). */
     'pending-accept': {
       path: '/booking/reschedule/confirm/v3',
       storagePrefix: 'starters:dashboard-pending-accept:v1:',
@@ -295,13 +295,14 @@
   // P5 (#2099 held-call cancel) opens in production with the #2099 / #263 / #272
   // server publish; keep this list in lockstep with that admission gate.
   const PAID_HOLD_CANCEL_OPEN_ENVIRONMENTS = ['test', 'production']
-  /* F08/F10 pending propose/counter/decline opening. Lockstep with the #5756
-     `$f08_open` / `$f08_paid_open` gates (Test only). Production is a
-     one-line change here after the server switch opens. */
-  const PENDING_PROPOSE_OPEN_ENVIRONMENTS = ['test']
+  /* F08/F10 pending propose/counter/decline/accept opening. Lockstep with the
+     #5756 and #5759 `$f08_open` / `$f08_paid_open` gates. Production opened
+     2026-10-11 (JP go) after the Test proof (U1-U4, G1-G3). Rollback: back to
+     ['test'] here first, then the server gates. */
+  const PENDING_PROPOSE_OPEN_ENVIRONMENTS = ['test', 'production']
   /* The accept owner (#5759 pending branch) passed the Test proof on
-     2026-10-10 (A1/A2). The control still follows the environment switch
-     above, so production stays closed until that switch opens. */
+     2026-10-10 (A1/A2, U1-U3). The control follows the environment switch
+     above (Test and production). */
   const F08_ACCEPT_ENABLED = true
   let f08AcceptEnabled = F08_ACCEPT_ENABLED
 

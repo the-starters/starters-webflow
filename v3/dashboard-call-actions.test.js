@@ -2979,9 +2979,10 @@ test('F08: only the current responder counters an open offer, with no round limi
   assert.equal(api.canProposePending('brand', unknown), false)
 })
 
-test('F08: propose is closed outside Test, after the deadline, and for non-saved-card Paid', () => {
-  assert.deepEqual(api.PENDING_PROPOSE_OPEN_ENVIRONMENTS, ['test'])
-  assert.equal(api.canProposePending('starter', pendingOfferBooking({ data_environment: 'production' })), false)
+test('F08: propose is open in Test and production, closed for unknown environments, after the deadline, and for non-saved-card Paid', () => {
+  assert.deepEqual(api.PENDING_PROPOSE_OPEN_ENVIRONMENTS, ['test', 'production'])
+  assert.equal(api.canProposePending('starter', pendingOfferBooking({ data_environment: 'production' })), true)
+  assert.equal(api.canProposePending('starter', pendingOfferBooking({ data_environment: 'staging' })), false)
   assert.equal(api.canProposePending('starter', pendingOfferBooking({ confirmation_expires_at: Date.now() - 1000 })), false)
   assert.equal(api.canProposePending('starter', pendingOfferBooking({ confirmation_expires_at: null })), false)
   assert.equal(api.canProposePending('starter', pendingOfferBooking({ status: 'confirmed' })), false)
@@ -3000,15 +3001,16 @@ test('F08: an offer on a terminal row is not open', () => {
   }
 })
 
-test('F08: Accept is on for the responder in Test only; Decline is Brand-only on a Starter offer', () => {
+test('F08: Accept is on for the responder in Test and production; Decline is Brand-only on a Starter offer', () => {
   const starterOffer = withStarterOffer()
   assert.equal(api.F08_ACCEPT_ENABLED, true)
   assert.equal(api.canAcceptPendingOffer('brand', starterOffer), true)
   assert.equal(api.canAct('pending-accept', 'brand', starterOffer), true)
   assert.equal(api.canAcceptPendingOffer('starter', starterOffer), false, 'never the proposer')
   assert.equal(api.canAcceptPendingOffer('starter', withStarterOffer({ rescheduled_by: 'brand' })), true)
-  // Production stays closed through PENDING_PROPOSE_OPEN_ENVIRONMENTS.
-  assert.equal(api.canAcceptPendingOffer('brand', withStarterOffer({ data_environment: 'production', payment_environment: 'live' })), false)
+  // Production is open; an unknown environment stays closed.
+  assert.equal(api.canAcceptPendingOffer('brand', withStarterOffer({ data_environment: 'production', payment_environment: 'live' })), true)
+  assert.equal(api.canAcceptPendingOffer('brand', withStarterOffer({ data_environment: 'staging' })), false)
   // The kill switch still hides the control.
   const before = api.setF08AcceptEnabledForTest(false)
   try {
@@ -3148,7 +3150,7 @@ test('F08: a Brand decline of a Starter offer posts to #5760 and expects a cance
       api.setF08AcceptEnabledForTest(before)
     }
     assert.equal(requests.length, 1)
-    // Accept (on in Test) posts to #5759 and expects the same booking confirmed.
+    // Accept posts to #5759 and expects the same booking confirmed.
     global.sessionStorage = storage()
     global.xanoAuthFetch = async function (url, init) {
       requests.push({ url, body: JSON.parse(init.body) })

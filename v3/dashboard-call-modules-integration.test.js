@@ -974,9 +974,9 @@ test('a call with no reschedule control for the viewer shows no reschedule hint'
   }
   try {
     global.StartersDashboardCallActions = realActions
-    for (const [role, status, isPaid, start] of [
-      // Free: the Starter cannot restate a pending request.
-      ['starter', 'pending', false, base.start],
+    for (const [role, status, isPaid, start, overrides] of [
+      // Free pending still fails closed outside the admitted environments.
+      ['starter', 'pending', false, base.start, { data_environment: 'staging' }],
       // Free: inside the reschedule window nobody gets a control.
       ['brand', 'confirmed', false, now + 60 * 60 * 1000],
       // Paid: the gate is real, but soft launch shows no explanation.
@@ -985,21 +985,26 @@ test('a call with no reschedule control for the viewer shows no reschedule hint'
     ]) {
       const reschedule = button('reschedule')
       const modal = hintModal([reschedule])
-      const booking = { ...base, status, is_paid: isPaid, start, server_now_ms: now }
+      const booking = { ...base, status, is_paid: isPaid, start, server_now_ms: now, ...(overrides || {}) }
       realActions.bindCanonicalClock([booking], realActions.monotonicNow())
       dashboard.configureDetailActions(modal, role, status, booking, now)
       const label = role + ' ' + status + ' paid=' + isPaid
       assert.equal(reschedule.hidden, true, label + ': no reschedule control')
       assert.equal(modal.hints.reschedule, undefined, label + ': no hint')
     }
-    // A Free call that does offer the control still shows no hint.
-    const reschedule = button('reschedule')
-    const modal = hintModal([reschedule])
-    const eligible = { ...base, status: 'confirmed', is_paid: false, server_now_ms: now }
-    realActions.bindCanonicalClock([eligible], realActions.monotonicNow())
-    dashboard.configureDetailActions(modal, 'brand', 'confirmed', eligible, now)
-    assert.equal(reschedule.hidden, false)
-    assert.equal(modal.hints.reschedule, undefined)
+    // Free calls that do offer the control still show no hint.
+    for (const [role, status] of [
+      ['starter', 'pending'],
+      ['brand', 'confirmed'],
+    ]) {
+      const reschedule = button('reschedule')
+      const modal = hintModal([reschedule])
+      const eligible = { ...base, status, is_paid: false, server_now_ms: now }
+      realActions.bindCanonicalClock([eligible], realActions.monotonicNow())
+      dashboard.configureDetailActions(modal, role, status, eligible, now)
+      assert.equal(reschedule.hidden, false)
+      assert.equal(modal.hints.reschedule, undefined)
+    }
   } finally {
     global.StartersDashboardCallActions = originalActions
   }
