@@ -2841,9 +2841,10 @@ returns full rows, so `payment_status`, `payment_reconciliation_status`,
 `PAID_EDIT_OPEN_ENVIRONMENTS` is `['test']` because the server gate
 (`$p6_paid_open`) opens Test only. `PAID_RESCHEDULE_OPEN_ENVIRONMENTS` is
 `['test', 'production']` because the server gate (`$p7_paid_open`) opens Test
-and Production. `PENDING_PROPOSE_OPEN_ENVIRONMENTS` is `['test']` because the
-pending-offer server gate opens Test only. A constant opens production only in
-the release that opens its server gate. Existing confirmed-call Free behavior is
+and Production. `PENDING_PROPOSE_OPEN_ENVIRONMENTS` is
+`['test', 'production']` in lockstep with the published pending-offer server
+gates (#5756 `2abdfa08` / #5759 `b4180195`); rollback the client admission to
+`['test']` if those gates close. Existing confirmed-call Free behavior is
 unchanged; the regression tests in `dashboard-call-paid-parity.test.js` pin it.
 
 The native Webflow modal owns `[booking-decline-reason]`,
