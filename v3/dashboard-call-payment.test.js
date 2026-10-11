@@ -9,6 +9,7 @@ function paidBooking(status) {
     booking_id: 'booking-paid-1',
     paid_meeting: true,
     payment_environment: 'test',
+    data_environment: 'test',
     payment_status: status,
     status: 'confirmed',
     start: Date.now() + 30 * 3600000,
@@ -465,6 +466,12 @@ test('P9 review: approve only on a live call before start, never twice for a sta
   assert.equal(api.canRequestPaymentAction('brand', at({ start: new Date(Date.now() + H).toISOString() })), true)
   for (const extra of [{ status: 'cancelled' }, { status: 'completed' }, { status: 'pending' }, { start: Date.now() - 1 }, { start: null }]) {
     assert.equal(api.canRequestPaymentAction('brand', at(extra)), false, JSON.stringify(extra))
+  }
+  // W5 environment switch: production rows stay closed until the list opens.
+  assert.deepEqual(api.PAYMENT_ACTION_OPEN_ENVIRONMENTS, ['test'])
+  for (const extra of [{ data_environment: 'production' }, { data_environment: '' }, { data_environment: undefined }]) {
+    assert.equal(api.canRequestPaymentAction('brand', at(extra)), false, JSON.stringify(extra))
+    assert.equal(api.canApprovePayment('brand', at(extra)), false, JSON.stringify(extra))
   }
   const previous = global.xanoAuthFetch
   global.xanoAuthFetch = async () => ({ ok: true, json: async () => ({ booking_id: 'booking-paid-1', payment_status: 'auth_required', client_secret: 'pi_secret_test' }) })

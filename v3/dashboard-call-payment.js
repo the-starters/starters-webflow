@@ -20,6 +20,18 @@
     return String(value == null ? '' : value).trim()
   }
 
+  /* P9 (W5) 3DS approve opening. Lockstep with the #2916 server gate and the
+     other Paid parity switches in dashboard-call-actions.js: the control and
+     the payment-action/v3 call are offered only for `data_environment` values
+     listed here. Production opens after the Stripe Test journey proof. */
+  const PAYMENT_ACTION_OPEN_ENVIRONMENTS = ['test']
+
+  function paymentActionEnvironmentOpen(booking) {
+    return PAYMENT_ACTION_OPEN_ENVIRONMENTS.includes(
+      clean(booking && booking.data_environment).toLowerCase(),
+    )
+  }
+
   // P9 review 2026-10-06: approve only on a live call before start (JP A=1a:
   // after start the call runs with no charge, so no new hold is placed).
   function canRequestPaymentAction(role, booking, now) {
@@ -27,6 +39,7 @@
     const start = Number.isFinite(Number(rawStart)) ? Number(rawStart) : Date.parse(rawStart)
     return (
       role === 'brand' &&
+      paymentActionEnvironmentOpen(booking) &&
       ['confirmed', 'rescheduled'].includes(clean(booking && booking.status).toLowerCase()) &&
       Number.isFinite(start) && start > Number(now || Date.now()) &&
       Boolean(booking && booking.paid_meeting) &&
@@ -397,6 +410,7 @@
     invalidateModal,
     approvePayment,
     canApprovePayment,
+    PAYMENT_ACTION_OPEN_ENVIRONMENTS,
     canReplacePaymentMethod,
     canRequestPaymentAction,
     canManageCards,
