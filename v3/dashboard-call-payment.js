@@ -269,13 +269,58 @@
 
   const wiredDocuments = new WeakSet()
   const paymentOwners = new WeakMap()
+  const approvedPaymentSnapshots = new Map()
   function invalidateModal(modal) { paymentOwners.get(modal)?.() }
+
+  function paymentApprovalSnapshot(booking) {
+    return JSON.stringify([booking.booking_id, booking.payment_intent,
+      booking.payment_revision, booking.lifecycle_revision,
+      booking.data_environment, booking.payment_environment])
+  }
+  function approvalAwaitingProjection(booking) {
+    const bookingId = clean(booking && booking.booking_id)
+    const snapshot = approvedPaymentSnapshots.get(bookingId)
+    if (!snapshot) return false
+    if (snapshot !== paymentApprovalSnapshot(booking) ||
+        (clean(booking.payment_status).toLowerCase() !== 'auth_required' &&
+         clean(booking.payment_reconciliation_status).toLowerCase() === 'reconciled')) {
+      approvedPaymentSnapshots.delete(bookingId)
+      return false
+    }
+    return true
+  }
+
+  // Stripe success precedes the authoritative webhook projection. Retry only
+  // canonical reads, at most eight times over a 100-second delay schedule.
+  // The saved normal receipt-worker cadence can take up to 80 seconds.
+  // Each read retains the dashboard's existing request timeout.
+  const APPROVAL_REFRESH_DELAYS_MS = [0, 1000, 3000, 6000, 10000, 20000, 30000, 30000]
+  async function refreshApprovedPayment(settings, modal, isCurrent, waitForRefresh) {
+    for (const delay of APPROVAL_REFRESH_DELAYS_MS) {
+      if (!isCurrent()) return false
+      if (delay) await waitForRefresh(delay)
+      if (!isCurrent()) return false
+      try {
+        const refreshed = await settings.restart()
+        if (!isCurrent()) return false
+        const booking = settings.getBooking(modal)
+        if (refreshed === true &&
+            clean(booking.payment_status).toLowerCase() !== 'auth_required' &&
+            clean(booking.payment_reconciliation_status).toLowerCase() === 'reconciled') return true
+      } catch (error) {
+        // The bank step already succeeded. A read failure must not ask the
+        // Brand to repeat it or invoke another payment command.
+        if (typeof console !== 'undefined') console.warn('Payment approval refresh failed:', error?.message || error)
+      }
+    }
+    return false
+  }
   let managementReady = false
   function canManageCards(role, booking) {
     return managementReady && canReplacePaymentMethod(role, booking)
   }
   function canApprovePayment(role, booking) {
-    return managementReady && canRequestPaymentAction(role, booking)
+    return managementReady && canRequestPaymentAction(role, booking) && !approvalAwaitingProjection(booking)
   }
 
   async function loadPaymentClient(document) {
@@ -344,9 +389,14 @@
         approving = true
         target.setAttribute('aria-disabled', 'true')
         const bookingId = clean(booking.booking_id)
+        const approvalSnapshot = paymentApprovalSnapshot(booking)
         invalidateModal(modal)
         let valid = true
-        const invalidate = () => { valid = false }
+        let cancelRefreshWait = null
+        const invalidate = () => {
+          valid = false
+          cancelRefreshWait?.()
+        }
         paymentOwners.set(modal, invalidate)
         const isCurrent = () => {
           const dialog = modal.closest?.('dialog')
@@ -354,12 +404,49 @@
             (!('open' in modal) || modal.open) && (!dialog || dialog.open === true) &&
             settings.getBooking(modal) === booking && clean(booking.booking_id) === bookingId
         }
+        // Canonical reads replace row objects. After the bank step, retain
+        // modal and booking identity without requiring the old row object.
+        const isRefreshCurrent = () => {
+          const current = settings.getBooking(modal)
+          const dialog = modal.closest?.('dialog')
+          return valid && paymentOwners.get(modal) === invalidate &&
+            (!('open' in modal) || modal.open) && (!dialog || dialog.open === true) &&
+            clean(current && current.booking_id) === bookingId && paidBooking(current) &&
+            paymentActionEnvironmentOpen(current) &&
+            paymentApprovalSnapshot(current) === approvalSnapshot
+        }
+        // Only the post-bank read delay can be cancelled. An unresolved bank
+        // action keeps document-wide singleflight until its own settlement.
+        const waitForRefresh = delay => new Promise(resolve => {
+          let settled = false
+          let timer
+          const finish = () => {
+            if (settled) return
+            settled = true
+            global.clearTimeout(timer)
+            if (cancelRefreshWait === finish) cancelRefreshWait = null
+            resolve()
+          }
+          cancelRefreshWait = finish
+          timer = global.setTimeout(finish, delay)
+          if (!isRefreshCurrent()) finish()
+        })
         try {
           if (!isCurrent()) return
           const stripe = await client.stripeForPaymentEnvironment(booking.payment_environment)
           if (!isCurrent() || !canRequestPaymentAction(settings.role, booking)) return
           const approved = await approvePayment(settings.role, booking, stripe, isCurrent)
-          if (approved && isCurrent() && typeof settings.restart === 'function') await settings.restart()
+          if (approved) {
+            // Keep this exact successful bank action suppressed even if its
+            // modal closes or its finite read budget expires. A new payment
+            // identity/revision clears the latch; no canonical state is faked.
+            approvedPaymentSnapshots.set(bookingId, approvalSnapshot)
+            if (isRefreshCurrent()) {
+              target.hidden = true
+              if (target.style) target.style.display = 'none'
+              if (typeof settings.restart === 'function') await refreshApprovedPayment(settings, modal, isRefreshCurrent, waitForRefresh)
+            }
+          }
         } catch (error) {
           // Internal errors can carry route paths; keep them for support only.
           if (typeof console !== 'undefined') console.warn('Approve payment failed:', error?.message || error)
@@ -373,7 +460,7 @@
           approving = false
           if (paymentOwners.get(modal) === invalidate) {
             paymentOwners.delete(modal)
-            target.setAttribute('aria-disabled', 'false')
+            target.setAttribute('aria-disabled', String(approvalAwaitingProjection(settings.getBooking(modal))))
           }
         }
         return

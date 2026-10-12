@@ -1,0 +1,133 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Providerless payment convergence proof</title>
+<style>
+  body { font: 17px/1.5 system-ui; max-width: 900px; margin: 32px auto; color: #263229 }
+  article, dialog { padding: 24px; border: 1px solid #a6b9aa; border-radius: 12px; background: #f7fbf8 }
+  dialog { width: 620px }
+  dialog::backdrop { background: #18332255 }
+  button { padding: 10px 18px; margin: 8px; font: inherit }
+  [hidden] { display: none !important }
+</style>
+<h1>Paid Call: delayed webhook projection</h1>
+<p>Local controllers, synthetic Stripe and Xano. External network is blocked.</p>
+<p id="proof" role="status">Ready to approve once.</p>
+<section bookings-section="calls">
+  <div bookings-list="calls"></div>
+  <article id="template" bookings-item-template="calls">
+    <h2 booking-element="starter-name"></h2>
+    <p booking-element="title"></p>
+    <p payment-status-wrap><span booking-element="payment-status-text"></span></p>
+    <p booking-element="start-date"></p>
+  </article>
+</section>
+<dialog popup-booking-info data-modal-target="popup-booking-info">
+  <h2>Call details</h2>
+  <div booking-popup-content="base">
+    <p booking-element="status"></p>
+    <p booking-element-wrap><span booking-element="payment-status-text"></span></p>
+    <button type="button" booking-action-btn="switch-cancel">Cancel call</button>
+    <div payment-action-btn="approve-payment"><button type="button">Approve Payment</button></div>
+  </div>
+  <div booking-popup-content="cancel" hidden>
+    <p>Cancel this call?</p>
+    <button type="button" booking-action-btn="switch-cancel-reason">Continue</button>
+  </div>
+  <div booking-popup-content="cancel-reason" hidden>
+    <label>Reason<textarea booking-cancel-reason></textarea></label>
+    <button type="button" booking-action-btn="switch-base">Back</button>
+  </div>
+  <div booking-popup-content="cancelled" hidden></div>
+  <div booking-popup-content="completed" hidden></div>
+</dialog>
+<dialog id="bank"><h2>Synthetic Test bank</h2><p>Confirm the existing Test hold.</p><button id="complete">Complete</button></dialog>
+<script>window.module = { exports: {} }</script>
+<script src="../dashboard-call-actions.js"></script>
+<script>window.StartersDashboardCallActions = module.exports; window.module = { exports: {} }</script>
+<script src="../dashboard-call-payment.js"></script>
+<script>window.StartersDashboardCallPayment = module.exports; window.module = { exports: {} }</script>
+<script src="../dashboard-calls.js"></script>
+<script>
+  (async function () {
+    const calls = module.exports
+    const payment = StartersDashboardCallPayment
+    const modal = document.querySelector('[popup-booking-info]')
+    const section = document.querySelector('[bookings-section]')
+    const template = document.getElementById('template')
+    const refs = [{ section, name: 'calls', list: document.querySelector('[bookings-list]'),
+      template: template.cloneNode(true), rows: [], rendered: 0, filter: 'all' }]
+    template.remove()
+    const counts = { canonicalReads: 0, paymentActions: 0, bankSteps: 0, completeClicks: 0, productionAccess: 0 }
+    const params = new URLSearchParams(location.search)
+    const actionPanelCase = params.get('action_panel') === 'cancel'
+    const startHours = actionPanelCase ? 49 : 48
+    const booking = { id: 1, booking_id: 'synthetic-post-bank', config_id: 1, status: 'confirmed', lifecycle_revision: 2,
+      data_environment: 'test', payment_environment: 'test', paid_meeting: true, pm_confirmed: true,
+      payment_status: 'auth_required', payment_reconciliation_status: 'reconciled', payment_revision: 2,
+      payment_intent: 'pi_synthetic_hold',
+      start: Date.now() + startHours * 3600000, end: Date.now() + (startHours + 1) * 3600000, duration: 60, price: 1,
+      call_context: 'Synthetic delayed webhook',
+      brand_data: { name: 'Synthetic Brand', memberstack_id: 'synthetic-brand', timezone: 'UTC' },
+      starter_data: { name: 'Synthetic Starter', memberstack_id: 'synthetic-starter', timezone: 'UTC' } }
+    const workerDelayMs = Number(params.get('worker_delay_ms') || 0)
+    let approved = false, afterBankReads = 0, elapsedRetryDelaysMs = 0
+    window.xanoAuthFetch = async (url, options) => {
+      const body = JSON.parse(options.body)
+      let data
+      if (url.endsWith('/brand/booking/payment-action/v3')) {
+        counts.paymentActions++
+        if (body.booking_id !== booking.booking_id) throw Error('wrong booking')
+        data = { booking_id: booking.booking_id, payment_status: 'auth_required',
+          client_secret: 'synthetic-only', provider_status: 'requires_action' }
+      } else if (url.endsWith('/booking_record/get/v3')) {
+        if (body.memberstack_id !== 'synthetic-brand') throw Error('wrong member')
+        counts.canonicalReads++
+        if (approved) afterBankReads++
+        data = [{ ...booking, server_now_ms: Date.now(), ...(afterBankReads >= 3 && elapsedRetryDelaysMs >= workerDelayMs ? {
+          payment_status: 'intent_created', payment_revision: 3,
+        } : {}) }]
+      } else {
+        counts.productionAccess++
+        throw Error('unexpected API request')
+      }
+      return { ok: true, json: async () => data }
+    }
+    const refresh = () => calls.refreshSession({ getCurrentMember: async () => ({ data: { id: 'synthetic-brand' } }) },
+      refs, 'brand', 1, () => 1, false, { preserveExisting: true })
+    window.StartersPaidCallBrandPayment = {
+      getReadiness() {}, installSavedCardPicker() {}, installCardSetupForm() {},
+      stripeForPaymentEnvironment: async environment => {
+        if (environment !== 'test') throw Error('non-Test Stripe')
+        return { handleNextAction: async () => {
+          counts.bankSteps++
+          document.getElementById('bank').showModal()
+          await new Promise(resolve => document.getElementById('complete').addEventListener('click', () => {
+            counts.completeClicks++
+            document.getElementById('bank').close()
+            resolve()
+          }, { once: true }))
+          approved = true
+          return { paymentIntent: { status: 'requires_capture' } }
+        } }
+      },
+    }
+    await refresh()
+    await payment.wire({ document, role: 'brand', getBooking: target => calls.bookingForActionTarget(refs, target), restart: refresh })
+    StartersDashboardCallActions.wire({ document, role: 'brand', getBooking: target => calls.bookingForActionTarget(refs, target), restart: refresh })
+    calls.populateDetailModal(modal, refs[0].rows[0], 'brand')
+    modal.showModal()
+    window.proofState = { counts, refs, modal, calls, refresh,
+      get elapsedRetryDelaysMs() { return elapsedRetryDelaysMs } }
+    // Accelerate only the deliberate retry delays in this synthetic fixture.
+    const timer = window.setTimeout.bind(window)
+    window.setTimeout = (callback, delay, ...args) => {
+      const retry = [1000, 3000, 6000, 10000, 20000, 30000].includes(delay)
+      return timer(() => {
+        // A cancelled request-timeout timer must not advance the worker clock.
+        if (retry && approved) elapsedRetryDelaysMs += delay
+        callback(...args)
+      }, retry && !actionPanelCase ? 15 : delay)
+    }
+    window.fixtureReady = true
+  })().catch(error => { window.fixtureError = error.stack })
+</script>

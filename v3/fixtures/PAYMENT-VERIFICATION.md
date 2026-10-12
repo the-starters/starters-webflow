@@ -8,7 +8,7 @@ Verified: split field completion/error/reset, saved-card selection and readback,
 
 The authenticated read-only card-list route is already published as endpoint 8572. Its client uses only the authenticated member and cursor; never a caller-supplied customer. Production-origin reads returned two whitelisted card summaries, and malformed cursor and wrong mode/origin failed. No provider or canonical writes were made during verification.
 
-Outstanding: actual financial-provider workflow and authenticated production screenshots; successful TEST-mode/no-customer backend reads; auth-required payment confirmation controls (separate existing unactivated path); exact visual parity of the authored decorative radio circle. Selected state currently uses outline and aria-checked. Base date/status placeholders in the connected preview are tracked by separate dashboard status/date changes.
+Historical outstanding items from this local fixture pass were actual financial-provider workflow and authenticated production screenshots, successful TEST-mode/no-customer backend reads, and exact visual parity of the authored decorative radio circle. Current dashboard recovery behavior is owned by the linked contract above. Selected state currently uses outline and aria-checked. Base date/status placeholders in the connected preview are tracked by separate dashboard status/date changes.
 
 The scope and unchanged policy boundaries are documented in the dashboard recovery contract linked above.
 
