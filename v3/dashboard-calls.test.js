@@ -10597,55 +10597,113 @@ test('F08: offer rows render only on live-request panels, never on terminal succ
 })
 
 test('P9 payment line reads the canonical payment state, not only the saved-card flag', () => {
-  const paid = extra => Object.assign({
-    booking_id: 'p9-fixture', status: 'confirmed', paid_meeting: true,
-    pm_confirmed: true, payment_status: 'waiting_for_intent',
-    payment_reconciliation_status: 'ready', payment_environment: 'test',
-  }, extra)
-  const cases = [
-    [{ payment_status: 'intent_created', payment_reconciliation_status: 'reconciled' }, 'Payment method confirmed.', 'Payment method confirmed.'],
-    [{}, 'Payment method confirmed.', 'Payment method confirmed.'],
-    [{ payment_status: 'intent_created', payment_reconciliation_status: 'ready' }, 'Payment is being checked.', 'Payment is being checked.'],
-    [{ payment_status: 'waiting_for_intent', payment_reconciliation_status: 'reconciled' }, 'Payment is being checked.', 'Payment is being checked.'],
-    [{ payment_status: '', payment_reconciliation_status: '' }, 'Payment is being checked.', 'Payment is being checked.'],
-    [{ payment_status: 'card_or_payment_declined', payment_reconciliation_status: 'failed' }, 'Card declined. Change card.', 'Payment is being checked.'],
-    [{ payment_status: 'auth_required', payment_reconciliation_status: 'pending' }, 'Payment needs attention.', 'Payment is being checked.'],
-    [{ payment_reconciliation_status: 'pending' }, 'Payment is being checked.', 'Payment is being checked.'],
-    [{ payment_reconciliation_status: 'mismatch' }, 'Payment is being checked.', 'Payment is being checked.'],
-    [{ payment_reconciliation_status: 'failed' }, 'Payment is being checked.', 'Payment is being checked.'],
-  ]
-  for (const [extra, brand, starter] of cases) {
-    assert.equal(api.paymentStatusText(paid(extra), 'brand'), brand)
-    assert.equal(api.paymentStatusText(paid(extra), 'starter'), starter)
+  const actions = require('./dashboard-call-actions.js')
+  const previous = global.StartersDashboardCallActions
+  global.StartersDashboardCallActions = actions
+  const now = Date.now()
+  const paid = extra => {
+    const booking = Object.assign({
+      booking_id: 'p9-fixture', status: 'confirmed', paid_meeting: true,
+      pm_confirmed: true, payment_status: 'waiting_for_intent',
+      payment_reconciliation_status: 'ready', payment_environment: 'test',
+      start: now + 30 * 3600000, server_now_ms: now,
+    }, extra)
+    actions.bindCanonicalClock([booking], actions.monotonicNow())
+    return booking
   }
-  assert.equal(api.paymentStatusText(paid({ pm_confirmed: false }), 'brand'), 'Payment method pending.')
-  assert.equal(api.paymentStatusText({ paid_meeting: false }, 'brand'), '')
+  try {
+    const cases = [
+      [{ payment_status: 'intent_created', payment_reconciliation_status: 'reconciled' }, 'Payment method confirmed.', 'Payment method confirmed.'],
+      [{}, 'Payment method confirmed.', 'Payment method confirmed.'],
+      [{ payment_status: 'intent_created', payment_reconciliation_status: 'ready' }, 'Payment is being checked.', 'Payment is being checked.'],
+      [{ payment_status: 'waiting_for_intent', payment_reconciliation_status: 'reconciled' }, 'Payment is being checked.', 'Payment is being checked.'],
+      [{ payment_status: '', payment_reconciliation_status: '' }, 'Payment is being checked.', 'Payment is being checked.'],
+      [{ payment_status: 'card_or_payment_declined', payment_reconciliation_status: 'failed' }, 'Card declined. Change card.', 'Payment is being checked.'],
+      [{ payment_status: 'auth_required', payment_reconciliation_status: 'pending' }, 'Payment needs attention.', 'Payment is being checked.'],
+      [{ payment_reconciliation_status: 'pending' }, 'Payment is being checked.', 'Payment is being checked.'],
+      [{ payment_reconciliation_status: 'mismatch' }, 'Payment is being checked.', 'Payment is being checked.'],
+      [{ payment_reconciliation_status: 'failed' }, 'Payment is being checked.', 'Payment is being checked.'],
+    ]
+    for (const [extra, brand, starter] of cases) {
+      assert.equal(api.paymentStatusText(paid(extra), 'brand'), brand)
+      assert.equal(api.paymentStatusText(paid(extra), 'starter'), starter)
+    }
+    assert.equal(api.paymentStatusText(paid({ pm_confirmed: false }), 'brand'), 'Payment method pending.')
+    assert.equal(api.paymentStatusText({ paid_meeting: false }, 'brand'), '')
+  } finally { global.StartersDashboardCallActions = previous }
 })
 
 test('P9 review: payment line only on live calls, allow-list for "confirmed", no Brand action after start', () => {
+  const actions = require('./dashboard-call-actions.js')
+  const previous = global.StartersDashboardCallActions
+  global.StartersDashboardCallActions = actions
   const H = 3600000
   const now = Date.now()
-  const paid = extra => Object.assign({
-    booking_id: 'p9-review', status: 'confirmed', paid_meeting: true, pm_confirmed: true,
-    payment_status: 'intent_created', payment_reconciliation_status: 'reconciled',
-    payment_environment: 'test', start: now + 30 * H, end: now + 31 * H,
-  }, extra)
-  for (const status of ['cancelled', 'declined', 'expired', 'archived']) {
-    assert.equal(api.paymentStatusText(paid({ status, payment_status: 'card_or_payment_declined' }), 'brand', now), '')
+  const paid = extra => {
+    const booking = Object.assign({
+      booking_id: 'p9-review', status: 'confirmed', paid_meeting: true, pm_confirmed: true,
+      payment_status: 'intent_created', payment_reconciliation_status: 'reconciled',
+      payment_environment: 'test', start: now + 30 * H, end: now + 31 * H,
+      server_now_ms: now,
+    }, extra)
+    actions.bindCanonicalClock([booking], actions.monotonicNow())
+    return booking
   }
-  assert.equal(api.paymentStatusText(paid({ start: now - 2 * H, end: now - H }), 'brand', now), '')
-  // In progress: no Brand action text.
-  assert.equal(api.paymentStatusText(paid({ start: now - H, payment_status: 'auth_required' }), 'brand', now), 'Payment is being checked.')
-  assert.equal(api.paymentStatusText(paid({ start: now - H, payment_status: 'insufficient_funds' }), 'brand', now), 'Payment is being checked.')
-  assert.equal(api.paymentStatusText(paid({ status: 'rescheduled', start: now + H, start_old: now - H, payment_status: 'auth_required' }), 'brand', now), 'Payment is being checked.')
-  assert.equal(api.paymentStatusText(paid({ status: 'rescheduled', start: now + H, start_old: now - H, payment_status: 'card_or_payment_declined' }), 'brand', now), 'Payment is being checked.')
-  for (const s of ['card_or_payment_declined', 'insufficient_funds', 'lost_or_stolen_card', 'expired_card', 'payment_intent_confirm_expired']) {
-    assert.equal(api.paymentStatusText(paid({ payment_status: s }), 'brand', now), 'Card declined. Change card.')
-    assert.equal(api.paymentStatusText(paid({ payment_status: s }), 'starter', now), 'Payment is being checked.')
+  try {
+    for (const status of ['cancelled', 'declined', 'expired', 'archived']) {
+      assert.equal(api.paymentStatusText(paid({ status, payment_status: 'card_or_payment_declined' }), 'brand', now), '')
+    }
+    assert.equal(api.paymentStatusText(paid({ start: now - 2 * H, end: now - H }), 'brand', now), '')
+    // In progress: no Brand action text.
+    assert.equal(api.paymentStatusText(paid({ start: now - H, payment_status: 'auth_required' }), 'brand', now), 'Payment is being checked.')
+    assert.equal(api.paymentStatusText(paid({ start: now - H, payment_status: 'insufficient_funds' }), 'brand', now), 'Payment is being checked.')
+    assert.equal(api.paymentStatusText(paid({ status: 'rescheduled', start: now + H, start_old: now - H, payment_status: 'auth_required' }), 'brand', now), 'Payment is being checked.')
+    assert.equal(api.paymentStatusText(paid({ status: 'rescheduled', start: now + H, start_old: now - H, payment_status: 'card_or_payment_declined' }), 'brand', now), 'Payment is being checked.')
+    for (const s of ['card_or_payment_declined', 'insufficient_funds', 'lost_or_stolen_card', 'expired_card', 'payment_intent_confirm_expired']) {
+      assert.equal(api.paymentStatusText(paid({ payment_status: s }), 'brand', now), 'Card declined. Change card.')
+      assert.equal(api.paymentStatusText(paid({ payment_status: s }), 'starter', now), 'Payment is being checked.')
+    }
+    for (const s of ['intent_cancelled', 'intent_captured', 'refunded', 'something_new']) {
+      assert.equal(api.paymentStatusText(paid({ payment_status: s }), 'brand', now), 'Payment is being checked.', s)
+    }
+    assert.equal(api.paymentStatusText(paid({}), undefined, now), 'Payment method confirmed.')
+    assert.equal(api.paymentStatusText(paid({ payment_status: 'auth_required' }), undefined, now), 'Payment is being checked.')
+  } finally { global.StartersDashboardCallActions = previous }
+})
+
+test('P9 Brand payment action copy follows the bound canonical start and fails closed', () => {
+  const actions = require('./dashboard-call-actions.js')
+  const previous = { actions: global.StartersDashboardCallActions, wall: Date.now, performance: Object.getOwnPropertyDescriptor(global, 'performance') }
+  const server = 1800000000000
+  let monotonic = 100
+  let wall = server
+  Object.defineProperty(global, 'performance', { configurable: true, value: { now: () => monotonic } })
+  Date.now = () => wall
+  global.StartersDashboardCallActions = actions
+  try {
+    for (const drift of [-3600000, 3600000]) for (const payment_status of ['auth_required', 'expired_card']) {
+      monotonic = 100
+      wall = server + drift
+      const booking = { booking_id: 'p9-clock-copy', status: 'confirmed', is_paid: true, start: server + 1, end: server + 7200000, server_now_ms: server, payment_status }
+      assert.equal(actions.bindCanonicalClock([booking], monotonic, wall), true)
+      assert.equal(api.paymentStatusText(booking, 'brand', server - 3600000), payment_status === 'auth_required' ? 'Payment needs attention.' : 'Card declined. Change card.')
+      monotonic = 101
+      assert.equal(api.paymentStatusText(booking, 'brand', server - 3600000), 'Payment is being checked.')
+    }
+    monotonic = 100
+    const rescheduled = { booking_id: 'p9-clock-copy', status: 'rescheduled', is_paid: true, start_old: server, start: server + 3600000, end: server + 7200000, server_now_ms: server, payment_status: 'auth_required' }
+    actions.bindCanonicalClock([rescheduled], monotonic, wall)
+    assert.equal(api.paymentStatusText(rescheduled, 'brand'), 'Payment is being checked.')
+    const unbound = { ...rescheduled, status: 'confirmed', start: server + 3600000 }
+    assert.equal(api.paymentStatusText(unbound, 'brand'), 'Payment is being checked.')
+    for (const stamp of [null, undefined, NaN, Infinity, '1800000000000']) {
+      const invalid = { ...unbound, server_now_ms: stamp }
+      assert.equal(actions.bindCanonicalClock([invalid], monotonic, wall), false)
+      assert.equal(api.paymentStatusText(invalid, 'brand'), 'Payment is being checked.')
+    }
+  } finally {
+    global.StartersDashboardCallActions = previous.actions
+    Date.now = previous.wall
+    Object.defineProperty(global, 'performance', previous.performance)
   }
-  for (const s of ['intent_cancelled', 'intent_captured', 'refunded', 'something_new']) {
-    assert.equal(api.paymentStatusText(paid({ payment_status: s }), 'brand', now), 'Payment is being checked.', s)
-  }
-  assert.equal(api.paymentStatusText(paid({}), undefined, now), 'Payment method confirmed.')
-  assert.equal(api.paymentStatusText(paid({ payment_status: 'auth_required' }), undefined, now), 'Payment is being checked.')
 })

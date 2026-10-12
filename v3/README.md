@@ -3010,7 +3010,10 @@ authenticated V3 transcript proxy with an exact ownership contract.
 auth-required approval action for eligible Paid bookings. Declined-card recovery
 still runs in a canonical `test` or `live` `payment_environment`; 3DS approval
 is open only for booking rows whose `data_environment` is listed in
-`PAYMENT_ACTION_OPEN_ENVIRONMENTS` (`['test']`). It loads the
+`PAYMENT_ACTION_OPEN_ENVIRONMENTS` (`['test']`), with the matching
+`payment_environment: "test"`. Test rows with live payment state fail closed
+before loading a Stripe key or calling the approval route. Approval uses
+`is_paid` as the Paid flag when present; `paid_meeting` is the fallback. It loads the
 [shared payment client](#brand-paid-call-payment-method-client) and binds the
 authored saved-card list, Add card dialog, and the existing Call Details control
 authored as `[payment-action-btn="approve-payment"]`. “Use this card” changes
@@ -3034,7 +3037,12 @@ failure message remains a support diagnostic in the browser console.
 A Brand can use the authored Approve payment control only for an owning Paid
 booking in `confirmed` or `rescheduled` status, before the effective current
 start time, with `payment_status: "auth_required"`. Rescheduled rows use
-`start_old` as that current start while `start` remains the proposed time. The
+`start_old` as that current start while `start` remains the proposed time.
+Approval eligibility and Brand action copy use the row's bound canonical
+server clock. Missing or invalid bindings show no Brand action. The click
+retains the bound row and captured booking identity, then rechecks eligibility
+after Stripe-client loading and the canonical response, before either bank
+step. A skipped bank step does not refresh as a successful approval. The
 click posts the booking ID to `brand/booking/payment-action/v3` through
 `window.xanoAuthFetch`; Xano owns Brand identity, booking ownership, the
 canonical PaymentIntent state, and provider selection. The response must echo

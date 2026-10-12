@@ -27,9 +27,26 @@
   const PAYMENT_ACTION_OPEN_ENVIRONMENTS = ['test']
 
   function paymentActionEnvironmentOpen(booking) {
-    return PAYMENT_ACTION_OPEN_ENVIRONMENTS.includes(
-      clean(booking && booking.data_environment).toLowerCase(),
+    const environment = clean(booking && booking.data_environment).toLowerCase()
+    return PAYMENT_ACTION_OPEN_ENVIRONMENTS.includes(environment) &&
+      clean(booking && booking.payment_environment).toLowerCase() ===
+        (environment === 'test' ? 'test' : 'live')
+  }
+
+  function paidBooking(booking) {
+    const value = booking && (
+      booking.is_paid != null ? booking.is_paid : booking.paid_meeting
     )
+    return value === true || value === 1 || clean(value).toLowerCase() === 'true'
+  }
+
+  function paymentActionNow(booking) {
+    const actions = global.StartersDashboardCallActions
+    try {
+      const reference = actions && typeof actions.canonicalNow === 'function'
+        ? actions.canonicalNow(booking) : null
+      return Number.isFinite(reference) && reference > 0 ? reference : null
+    } catch (_error) { return null }
   }
 
   function normalizeTimestamp(value) {
@@ -49,14 +66,15 @@
 
   // P9 review 2026-10-06: approve only on a live call before start (JP A=1a:
   // after start the call runs with no charge, so no new hold is placed).
-  function canRequestPaymentAction(role, booking, now) {
+  function canRequestPaymentAction(role, booking) {
     const start = paymentActionStart(booking)
+    const now = paymentActionNow(booking)
     return (
       role === 'brand' &&
       paymentActionEnvironmentOpen(booking) &&
       ['confirmed', 'rescheduled'].includes(clean(booking && booking.status).toLowerCase()) &&
-      Number.isFinite(start) && start > Number(now || Date.now()) &&
-      Boolean(booking && booking.paid_meeting) &&
+      now != null && Number.isFinite(start) && start > now &&
+      paidBooking(booking) &&
       clean(booking && booking.booking_id) !== '' &&
       clean(booking && booking.payment_status).toLowerCase() ===
         'auth_required' &&
@@ -132,11 +150,13 @@
 
   async function getPaymentAction(role, booking) {
     if (!canRequestPaymentAction(role, booking)) return null
+    const bookingId = clean(booking.booking_id)
     const result = await canonicalPost(PAYMENT_ACTION_PATH, {
-      booking_id: clean(booking.booking_id),
+      booking_id: bookingId,
     })
+    if (clean(booking.booking_id) !== bookingId) return null
     if (
-      clean(result.booking_id) !== clean(booking.booking_id) ||
+      clean(result.booking_id) !== bookingId ||
       clean(result.payment_status).toLowerCase() !== 'auth_required' ||
       clean(result.client_secret) === ''
     ) {
@@ -157,10 +177,14 @@
     ) {
       throw new Error('Payment approval client unavailable')
     }
+    const bookingId = clean(booking && booking.booking_id)
     const action = await getPaymentAction(role, booking)
     if (!action) return null
-    // The Brand may close the modal while the route answers: no bank step then.
-    if (typeof isCurrent === 'function' && !isCurrent()) return null
+    // The route may answer after start or after the modal changes. Keep the
+    // bound row and captured identity, then recheck before either bank step.
+    if (clean(booking.booking_id) !== bookingId ||
+      !canRequestPaymentAction(role, booking) ||
+      (typeof isCurrent === 'function' && !isCurrent())) return null
     // #2916 (P9 A, 2026-10-09): #69 confirms off-session, so 3DS usually ends in
     // requires_payment_method + authentication_required. That PaymentIntent is
     // confirmed on-session with the same saved card; requires_action uses the
@@ -317,12 +341,12 @@
         target.setAttribute('aria-disabled', 'true')
         const bookingId = clean(booking.booking_id)
         const isCurrent = () => (!('open' in modal) || modal.open) &&
-          clean(settings.getBooking(modal)?.booking_id) === bookingId
+          settings.getBooking(modal) === booking && clean(booking.booking_id) === bookingId
         try {
           const stripe = await client.stripeForPaymentEnvironment(booking.payment_environment)
-          if (!isCurrent()) return
-          await approvePayment(settings.role, Object.assign({}, booking), stripe, isCurrent)
-          if (isCurrent() && typeof settings.restart === 'function') await settings.restart()
+          if (!isCurrent() || !canRequestPaymentAction(settings.role, booking)) return
+          const approved = await approvePayment(settings.role, booking, stripe, isCurrent)
+          if (approved && isCurrent() && typeof settings.restart === 'function') await settings.restart()
         } catch (error) {
           // Internal errors can carry route paths; keep them for support only.
           if (typeof console !== 'undefined') console.warn('Approve payment failed:', error?.message || error)

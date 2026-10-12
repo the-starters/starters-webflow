@@ -900,15 +900,23 @@
     return normalizeTimestamp(booking && booking[status === 'rescheduled' ? 'start_old' : 'start'])
   }
 
-  function paymentStatusText(booking, role, now) {
+  function paymentStatusText(booking, role) {
     if (!paidBooking(booking)) return ''
-    const time = Number(now || Date.now())
-    if (['cancelled', 'archived', 'completed'].includes(bookingStatus(booking, time))) return ''
+    const actions = global.StartersDashboardCallActions
+    let time = null
+    try {
+      const reference = actions && typeof actions.canonicalNow === 'function'
+        ? actions.canonicalNow(booking) : null
+      if (Number.isFinite(reference) && reference > 0) time = reference
+    } catch (_error) {}
+    // An unbound row can show neutral payment state, but no Brand action.
+    const status = time == null ? clean(booking.status).toLowerCase() : bookingStatus(booking, time)
+    if (['cancelled', 'canceled', 'declined', 'expired', 'archived', 'completed', 'complete', 'done'].includes(status)) return ''
     const paymentStatus = clean(booking.payment_status).toLowerCase()
     const reconciliation = clean(booking.payment_reconciliation_status).toLowerCase()
     const start = paymentStatusStart(booking)
-    const started = Number.isFinite(start) && start > 0 && start <= time
-    const brand = clean(role).toLowerCase() === 'brand' && !started
+    const brand = clean(role).toLowerCase() === 'brand' && time != null &&
+      Number.isFinite(start) && start > time
     if (DECLINED_PAYMENT_STATUSES.includes(paymentStatus)) {
       return brand ? 'Card declined. Change card.' : 'Payment is being checked.'
     }
