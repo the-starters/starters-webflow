@@ -96,6 +96,18 @@
     'talkjs/conversation/v3',
   ])
   const LEGACY_PROVIDER_PATH = /^stripe\/(?:live\/)?(?:customer|payment_intent|payment_method|setup_intent)(?:\/|$)/
+  // Owner-only Starter readers. Xano accepts these only when the requested
+  // member_id is the authenticated member, so a Brand or any other non-owner
+  // session always receives HTTP 403 from the server. The adapter answers a
+  // known non-owner read locally with the same owner-only shape and never
+  // sends it to Xano. Owner sessions, logged-out visitors, and sessions whose
+  // member is still unknown are forwarded unchanged.
+  const OWNER_ONLY_STARTER_READS = new Set([
+    'starter/get_charges_enabled',
+    'starter/get_charges_enabled/v3',
+    'starter/get_stripe_connect_id',
+    'starter/get_stripe_connect_id/v3',
+  ])
 
   function normalizedPagePath() {
     return window.location.pathname.replace(/\/+$/, '') || '/'
@@ -337,6 +349,57 @@
     )
   }
 
+  function memberstackIdOf(member) {
+    return member && typeof member.id === 'string' && member.id ? member.id : null
+  }
+
+  async function authenticatedMemberstackId() {
+    // window.MEMBER is null until the shared page helper resolves the current
+    // member, then an object ({} when logged out). Wait for that resolution
+    // when the page exposes it, so an owner read issued early is never gated
+    // on a stale null.
+    if (window.MEMBER) return memberstackIdOf(window.MEMBER)
+    const ready = window.memberReady
+    if (!ready || typeof ready.then !== 'function') return null
+    try {
+      await ready
+    } catch (error) {
+      return null
+    }
+    return memberstackIdOf(window.MEMBER)
+  }
+
+  async function requestedMemberId(request) {
+    try {
+      const body = JSON.parse(await request.clone().text())
+      return body && typeof body.member_id === 'string' && body.member_id
+        ? body.member_id
+        : null
+    } catch (error) {
+      return null
+    }
+  }
+
+  function ownerOnlyResponse() {
+    return new Response(
+      JSON.stringify({
+        code: 'SCHEDULING_V3_OWNER_ONLY_READ',
+        message:
+          'Starter reader environment or ownership does not match the authenticated request',
+      }),
+      { status: 403, headers: { 'Content-Type': 'application/json' } },
+    )
+  }
+
+  async function nonOwnerStarterRead(request, route) {
+    if (!OWNER_ONLY_STARTER_READS.has(route)) return null
+    const requested = await requestedMemberId(request)
+    if (!requested) return null
+    const authenticated = await authenticatedMemberstackId()
+    if (!authenticated || authenticated === requested) return null
+    return ownerOnlyResponse()
+  }
+
   async function stageFetch(input, init) {
     const signalHint = callerHasAbortSignal(init)
     const request = new Request(input, init)
@@ -349,6 +412,8 @@
         setStatus('auth-unavailable')
         return blockedResponse(scheduling.route)
       }
+      const ownerOnly = await nonOwnerStarterRead(request, scheduling.route)
+      if (ownerOnly) return ownerOnly
       scheduling.url.pathname = API_PREFIX + target
       return originalXanoAuthFetch(
         requestAt(request, scheduling.url),
@@ -363,6 +428,8 @@
         setStatus('auth-unavailable')
         return blockedResponse(scheduling.route)
       }
+      const ownerOnly = await nonOwnerStarterRead(request, scheduling.route)
+      if (ownerOnly) return ownerOnly
       return originalXanoAuthFetch(request, undefined, undefined, signalHint)
     }
 
@@ -381,6 +448,8 @@
 
     const target = activeRouteMap[scheduling.route]
     if (target) {
+      const ownerOnly = await nonOwnerStarterRead(request, scheduling.route)
+      if (ownerOnly) return ownerOnly
       scheduling.url.pathname = API_PREFIX + target
       return originalXanoAuthFetch(
         requestAt(request, scheduling.url),
@@ -391,6 +460,8 @@
     }
 
     if (activeV3Targets.has(scheduling.route)) {
+      const ownerOnly = await nonOwnerStarterRead(request, scheduling.route)
+      if (ownerOnly) return ownerOnly
       return originalXanoAuthFetch(request, undefined, expectedScope, signalHint)
     }
 

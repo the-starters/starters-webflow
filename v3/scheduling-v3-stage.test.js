@@ -94,7 +94,12 @@ function loadStage(options = {}) {
     location: { hostname, pathname, href: `https://${hostname}${pathname}` },
     fetch: nativeFetch,
     xanoAuthFetch: options.withoutAuth ? undefined : xanoAuthFetch,
-    MEMBER: options.brandMemberstackId ? { id: options.brandMemberstackId } : undefined,
+    MEMBER: Object.prototype.hasOwnProperty.call(options, 'member')
+      ? options.member
+      : options.brandMemberstackId
+        ? { id: options.brandMemberstackId }
+        : undefined,
+    memberReady: options.memberReady,
     starter_memberstack_id: options.starterMemberstackId,
     setInterval(callback) {
       intervals.push({ callback, cleared: false })
@@ -780,6 +785,163 @@ test('routes the environment-bound Stripe Connect lookup through authenticated V
       '/api:tCpV3oqd/starter/get_stripe_connect_id/v3',
     ],
   )
+})
+
+const OWNER_ONLY_STARTER_READS = [
+  'starter/get_charges_enabled',
+  'starter/get_charges_enabled/v3',
+  'starter/get_stripe_connect_id',
+  'starter/get_stripe_connect_id/v3',
+]
+
+function ownerOnlyRead(window, route, memberId, viaAuthHelper = false) {
+  const send = viaAuthHelper ? window.xanoAuthFetch : window.fetch
+  return send(`${API_BASE}${route}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ member_id: memberId }),
+  })
+}
+
+const OWNER_ONLY_SURFACES = [
+  { hostname: 'www.thestarters.com', pathname: '/hire/some-starter' },
+  { hostname: 'thestarters.com', pathname: '/brand-dashboard' },
+  { hostname: 'the-starters-3-0.webflow.io', pathname: '/hire/some-starter' },
+]
+
+test('answers owner-only Starter readers locally for a non-owner session', async () => {
+  for (const surface of OWNER_ONLY_SURFACES) {
+    for (const viaAuthHelper of [false, true]) {
+      const { authenticatedRequests, nativeRequests, window } = loadStage({
+        ...surface,
+        member: { id: 'mem_brand' },
+        starterMemberstackId: 'mem_starter',
+      })
+
+      for (const route of OWNER_ONLY_STARTER_READS) {
+        const result = await ownerOnlyRead(window, route, 'mem_starter', viaAuthHelper)
+        assert.equal(result.status, 403)
+        assert.deepEqual(await result.json(), {
+          code: 'SCHEDULING_V3_OWNER_ONLY_READ',
+          message:
+            'Starter reader environment or ownership does not match the authenticated request',
+        })
+      }
+
+      assert.deepEqual(authenticatedRequests, [])
+      assert.deepEqual(nativeRequests, [])
+    }
+  }
+})
+
+test('forwards owner-only Starter readers unchanged for the owner session', async () => {
+  for (const viaAuthHelper of [false, true]) {
+    const { authenticatedRequests, window } = loadStage({
+      hostname: 'www.thestarters.com',
+      pathname: '/starter-dashboard',
+      member: { id: 'mem_starter' },
+    })
+
+    for (const route of OWNER_ONLY_STARTER_READS) {
+      const result = await ownerOnlyRead(window, route, 'mem_starter', viaAuthHelper)
+      assert.equal(result.status, 200)
+      assert.deepEqual(await result.json(), { authenticated: true })
+    }
+
+    assert.deepEqual(
+      authenticatedRequests.map((request) => new URL(request.url).pathname),
+      [
+        '/api:tCpV3oqd/starter/get_charges_enabled/v3',
+        '/api:tCpV3oqd/starter/get_charges_enabled/v3',
+        '/api:tCpV3oqd/starter/get_stripe_connect_id/v3',
+        '/api:tCpV3oqd/starter/get_stripe_connect_id/v3',
+      ],
+    )
+    for (const request of authenticatedRequests) {
+      assert.equal(request.method, 'POST')
+      assert.equal(await request.text(), JSON.stringify({ member_id: 'mem_starter' }))
+    }
+  }
+})
+
+test('waits for the shared member helper before gating an early Starter read', async () => {
+  for (const [resolvedMember, expectedStatus, expectedCalls] of [
+    [{ id: 'mem_brand' }, 403, 0],
+    [{ id: 'mem_starter' }, 200, 1],
+    [{}, 200, 1],
+  ]) {
+    const harness = loadStage({
+      hostname: 'www.thestarters.com',
+      pathname: '/hire/some-starter',
+      member: null,
+      memberReady: null,
+    })
+    let resolveMember
+    harness.window.memberReady = new Promise((resolve) => {
+      resolveMember = resolve
+    })
+
+    const pending = ownerOnlyRead(harness.window, 'starter/get_charges_enabled/v3', 'mem_starter')
+    await Promise.resolve()
+    assert.equal(harness.authenticatedRequests.length, 0)
+
+    harness.window.MEMBER = resolvedMember
+    resolveMember(resolvedMember)
+    const result = await pending
+
+    assert.equal(result.status, expectedStatus)
+    assert.equal(harness.authenticatedRequests.length, expectedCalls)
+  }
+})
+
+test('forwards owner-only Starter readers when the member is unknown, logged out, or unresolvable', async () => {
+  const cases = [
+    () => ({ member: undefined }),
+    () => ({ member: {} }),
+    () => ({ member: null, memberReady: Promise.reject(new Error('memberstack down')) }),
+  ]
+  for (const options of cases) {
+    const { authenticatedRequests, window } = loadStage({
+      hostname: 'www.thestarters.com',
+      pathname: '/hire/some-starter',
+      ...options(),
+    })
+    const result = await ownerOnlyRead(window, 'starter/get_stripe_connect_id/v3', 'mem_starter')
+    assert.equal(result.status, 200)
+    assert.equal(authenticatedRequests.length, 1)
+  }
+})
+
+test('does not gate owner-only Starter readers without a requested member_id', async () => {
+  const { authenticatedRequests, window } = loadStage({
+    hostname: 'www.thestarters.com',
+    pathname: '/hire/some-starter',
+    member: { id: 'mem_brand' },
+  })
+  for (const body of [undefined, 'not json', JSON.stringify({})]) {
+    const result = await window.fetch(`${API_BASE}starter/get_charges_enabled/v3`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+    })
+    assert.equal(result.status, 200)
+  }
+  assert.equal(authenticatedRequests.length, 3)
+})
+
+test('leaves other authenticated routes untouched for a non-owner session', async () => {
+  const { authenticatedRequests, window } = loadStage({
+    hostname: 'www.thestarters.com',
+    pathname: '/hire/some-starter',
+    member: { id: 'mem_brand' },
+  })
+  const result = await window.fetch(`${API_BASE}starter/get_by_memberstack/v3`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ member_id: 'mem_starter' }),
+  })
+  assert.equal(result.status, 200)
+  assert.equal(authenticatedRequests.length, 1)
 })
 
 test('the real auth bridge authorizes every mapped V3 target', async () => {
