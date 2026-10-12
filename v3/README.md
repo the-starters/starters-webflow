@@ -2516,14 +2516,22 @@ one-field `[booking-element-wrap]` row, such as the Duration row, whose parent
 is not the panel itself), the block goes into that table's padded card column:
 right after the authored `[reschedule-blocked-info]` or `[pending-info-text]`
 block that holds the panel's hidden Message copy, or else right after the
-table (F52, 2026-09-30). Otherwise the block is inserted before the panel's
-direct-child footer. The authored `switch-close` control's group is preferred;
-otherwise the footer is the first direct child that contains a
+table (F52, 2026-09-30). Authored table rows, authored slots, and named
+content anchors stay authoritative before any generated note placement. When
+there is no details table anchor, `detailLayoutHost(panel)` supplies the first
+direct-child `.call-details_layout` block, so the fallback summary stays inside
+the authored details body above `.call-sched_button-group`. With no layout
+block, the older footer fallback remains: the block is inserted before the
+panel's direct-child footer. The authored `switch-close` control's group is
+preferred; otherwise the footer is the first direct child that contains a
 `[booking-action-btn]` and no `[booking-element]`. When neither
 attribute-driven anchor exists, the block is appended after the authored
 content. A modal that authors no such panel receives one block on the modal
-itself. Generated content uses no generated IDs, and the code selects no
-classes. The module lists only the fields that panel has no usable
+itself. Generated content uses no generated IDs. The code selects no classes
+except this narrow authored layout-host contract: `dashboard-call-actions.js`
+exports `detailLayoutHost`, and `dashboard-calls.js` uses that helper, with a
+local mirror only until the actions module is available. The module lists only
+the fields that panel has no usable
 `[booking-element]` hook for and that the canonical row has a value for —
 counterpart name, date and time
 (including the current confirmed and proposed times described above),
@@ -2779,7 +2787,11 @@ versions (2026-08-29 to v1.59.640) inserted a
 module-owned `data-starters-action-hint` node after the hidden authored
 button. Each details populate now hides any such node that an earlier version
 or an earlier booking left in the modal, and it creates no new one. The script
-does not edit Designer markup. The early Reschedule guard resolves the
+does not edit Designer markup. If an authored action anchor is absent, generated
+action hints use the same `detailLayoutHost` placement contract as other modal
+notes: the open panel's direct-child `.call-details_layout` body above the
+button group, falling back to the panel/root when no layout exists. The early
+Reschedule guard resolves the
 confirmed proposal, pending direct-update, or pending-offer contract and passes
 an eligible click to `dashboard-call-actions.js`. It still consumes the
 click when that module is unavailable, the booking cannot be resolved, or the
@@ -2811,8 +2823,10 @@ returns full rows, so `payment_status`, `payment_reconciliation_status`,
   nothing. `renderCancelFeeNote` writes it into an authored
   `[booking-copy="cancel-fee"]` slot when the Designer adds one. Until then the
   module owns one `[data-starters-cancel-fee-note]` line inserted after the
-  authored `[confirming-cancel-text]` body (with its class), or appended to the
-  open `cancel` panel. The authored body copy is never rewritten.
+  authored `[confirming-cancel-text]` body (with its class), or, on `cancel`
+  and `cancel-reason`, appended to the open panel's direct-child
+  `.call-details_layout` body above the button group. If no layout exists, it
+  falls back to the open panel root. The authored body copy is never rewritten.
 - **P6 Brand edits a Paid pending request (#5921 P6).** `canRequestReschedule`
   also admits `paidPendingEditAdmitted`: Brand, `pending`, the saved-card state
   (`paidSavedCardState`: empty `payment_intent`, `waiting_for_intent`,
@@ -2926,10 +2940,13 @@ keeps the existing behavior.
 Each action clears any prior module-owned `[data-starters-action-error]` alert
 when a new attempt starts. A failed command shows the server's `message` or
 `error` text in that alert, falling back to the action's generic failure text.
-The alert renders inside the open `booking-popup-content` panel, below its
-buttons, and scrolls into view with `block: 'nearest'`. The dialog root clips
-to the viewport, so an alert there was invisible. With no open panel, the alert
-stays on the dialog root.
+The alert renders inside the open `booking-popup-content` panel's direct-child
+`.call-details_layout` body, above the button group, and scrolls into view with
+`block: 'nearest'`. The dialog root clips to the viewport, so an alert there
+was invisible. With no layout block, the alert stays on the selected open
+panel. With no open panel, the module selects the dialog root and uses its
+direct-child `.call-details_layout` block when available; otherwise it stays
+on that root.
 While a decline, cancel, or proposal response is in flight, its control reads
 "Declining…", "Cancelling…", "Accepting…", "Confirming…", or "Keeping current time…", is
 `aria-busy`, and it and any button inside it are disabled; the authored label and

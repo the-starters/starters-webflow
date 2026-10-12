@@ -2318,9 +2318,11 @@
         })
       // F52: module rows join the authored details table as clones of an
       // authored row, and the Message line goes into the padded card column.
-      // Only a panel with no authored table keeps the separate row group
-      // above the footer. Rows from an earlier pass go first, so each pass
-      // leaves one row per field.
+      // Only a panel with no authored table keeps the separate row group,
+      // which goes at the end of the panel's `.call-details_layout` block
+      // (above the button group, inside the scrollable body); a panel with
+      // no such block keeps it above the footer. Rows from an earlier pass
+      // go first, so each pass leaves one row per field.
       const templateRow = detailTableTemplateRow(panel)
       const table = templateRow && templateRow.parentNode
       Array.prototype.slice
@@ -2337,10 +2339,13 @@
         supplement.style.marginTop = '12px'
         const anchor = table ? hiddenMessageBlock(panel) || table : null
         const column = anchor && anchor.parentNode
+        const layout = detailLayoutHost(panel)
         const controls = detailFooter(panel)
         if (column && typeof column.insertBefore === 'function') {
           supplement.style.marginTop = '0'
           column.insertBefore(supplement, anchor.nextSibling || null)
+        } else if (layout && layout !== panel && typeof layout.appendChild === 'function') {
+          layout.appendChild(supplement)
         } else if (controls && typeof panel.insertBefore === 'function') {
           panel.insertBefore(supplement, controls)
         } else {
@@ -2476,9 +2481,12 @@
   /**
    * Renders or hides a muted one-line explanation under an authored action
    * button that eligibility gating hides. The node is module-owned and marked
-   * `data-starters-action-hint`; authored markup is never edited. During soft
-   * launch no hint is shown (see configureDetailActions), so this only hides
-   * a node that an earlier version or an earlier booking left in the modal.
+   * `data-starters-action-hint`; authored markup is never edited. It goes
+   * right after the anchor control; without one it goes at the end of the
+   * open panel's `.call-details_layout` block, never on the panel root
+   * (which renders below the dialog). During soft launch no hint is shown
+   * (see configureDetailActions), so this only hides a node that an earlier
+   * version or an earlier booking left in the modal.
    */
   function ensureActionHint(modal, anchor, name, message, visible) {
     if (!modal || typeof modal.querySelector !== 'function') return
@@ -2489,19 +2497,18 @@
     }
     if (!hint) {
       const document = modal.ownerDocument || global.document
-      if (
-        !anchor ||
-        !document ||
-        typeof document.createElement !== 'function' ||
-        typeof anchor.insertAdjacentElement !== 'function'
-      ) return
+      if (!document || typeof document.createElement !== 'function') return
+      const host = anchor ? null : detailLayoutHost(visibleDetailPanels(modal)[0] || modal)
+      if (anchor && typeof anchor.insertAdjacentElement !== 'function') return
+      if (!anchor && !(host && typeof host.appendChild === 'function')) return
       hint = document.createElement('div')
       hint.setAttribute('data-starters-action-hint', name)
       hint.style.fontSize = '13px'
       hint.style.lineHeight = '1.4'
       hint.style.color = '#6b6f66'
       hint.style.marginTop = '8px'
-      anchor.insertAdjacentElement('afterend', hint)
+      if (anchor) anchor.insertAdjacentElement('afterend', hint)
+      else host.appendChild(hint)
     }
     hint.textContent = message
     show(hint, true)
@@ -2746,6 +2753,35 @@
         return !panel.hidden && !(panel.style && panel.style.display === 'none')
       },
     )
+  }
+
+  /**
+   * Where module-generated content goes inside an authored panel: its first
+   * `.call-details_layout` child (the scrollable card body, above the button
+   * group), or the panel itself when it has none. The call-actions module
+   * owns the rule (`detailLayoutHost`); this mirrors it for the moment that
+   * module has not loaded, so both modules place generated nodes alike.
+   * @param {HTMLElement|null} panel Open panel or modal root.
+   * @returns {HTMLElement|null} Block to insert generated content into.
+   */
+  function detailLayoutHost(panel) {
+    const actions = global.StartersDashboardCallActions
+    if (validDashboardModule(actions) && typeof actions.detailLayoutHost === 'function') {
+      return actions.detailLayoutHost(panel)
+    }
+    if (!panel) return null
+    const children = panel.children ? Array.prototype.slice.call(panel.children) : []
+    const layout = children.find(function (child) {
+      if (!child) return false
+      if (child.classList && typeof child.classList.contains === 'function') {
+        try {
+          if (child.classList.contains('call-details_layout')) return true
+        } catch (_error) {}
+      }
+      const className = typeof child.className === 'string' ? child.className : ''
+      return className.split(/\s+/).indexOf('call-details_layout') !== -1
+    })
+    return layout || panel
   }
 
   function refreshOpenDetailPanel(refs, role, now) {
@@ -4428,6 +4464,8 @@
     detailSupplementRows,
     detailFooter,
     ensureDetailSupplements,
+    ensureActionHint,
+    detailLayoutHost,
     scheduleDetailSupplements,
     panelHasUsableField,
     confirmAttemptStorageKey,

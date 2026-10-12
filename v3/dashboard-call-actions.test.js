@@ -644,7 +644,10 @@ function actionErrorModal(panelNames, noteOptions = {}) {
         this.children.push(node)
       },
       notes() {
-        return this.children.filter(node => node.attributes && 'data-starters-action-error' in node.attributes)
+        return this.children.flatMap(node => {
+          if (typeof node.notes === 'function') return node.notes()
+          return node.attributes && 'data-starters-action-error' in node.attributes ? [node] : []
+        })
       },
       querySelector(selector) {
         return this.querySelectorAll(selector)[0] || null
@@ -663,6 +666,15 @@ function actionErrorModal(panelNames, noteOptions = {}) {
     style: {},
     getAttribute(attribute) { return attribute === 'booking-popup-content' ? name : null },
   }, []))
+  // 2026-10-12: authored panels are `.call-details_layout` + `.call-sched_button-group`.
+  if (noteOptions.layout) {
+    panels.forEach(panel => {
+      panel.layout = container({ className: 'call-details_layout' }, [])
+      panel.buttons = container({ className: 'call-sched_button-group' }, [])
+      panel.appendChild(panel.layout)
+      panel.appendChild(panel.buttons)
+    })
+  }
   const modal = container({}, panels)
   function open(name) {
     panels.forEach(panel => {
@@ -705,6 +717,29 @@ test('F21: a note without a working scrollIntoView still shows the message', () 
     assert.equal(created[0].textContent, 'Cancellation failed')
     assert.equal(created[0].hidden, false)
   }
+})
+
+test('2026-10-12: a shown action error goes inside the open panel\'s layout block, above the buttons', () => {
+  const { created, modal, open, panel } = actionErrorModal(['base', 'cancel-reason', 'reschedule-calendar'], { layout: true })
+  open('cancel-reason')
+  api.showActionError(modal, 'Cancellation failed')
+  assert.equal(created.length, 1)
+  assert.equal(created[0].parentNode, panel('cancel-reason').layout)
+  assert.deepEqual(panel('cancel-reason').children, [panel('cancel-reason').layout, panel('cancel-reason').buttons], 'the panel root gains no note')
+  assert.equal(panel('cancel-reason').buttons.children.length, 0)
+  // The reused note follows the open panel into its layout block.
+  open('reschedule-calendar')
+  api.showActionError(modal, 'That time is no longer available.')
+  assert.equal(created.length, 1)
+  assert.equal(created[0].parentNode, panel('reschedule-calendar').layout)
+  assert.equal(panel('cancel-reason').layout.children.length, 0)
+  // The payment module's base-panel note also lands in the base layout block.
+  open('base')
+  api.showActionError(panel('base'), 'Your payment methods could not be opened. Please try again.')
+  assert.equal(created.length, 2)
+  assert.equal(created[1].parentNode, panel('base').layout)
+  api.showActionError(modal, '')
+  assert.deepEqual(created.map(note => note.hidden), [true, true])
 })
 
 test('F21: the alert follows the open panel, falls back to the root, and clears everywhere', () => {
