@@ -2270,8 +2270,8 @@
     }
     // F21: the dialog root clips to the viewport, so a note appended there
     // sat below the fold. Place it in the open panel's layout block (above
-    // the button group, inside the scrollable card body), and keep the root
-    // when no open panel is found.
+    // the button group, inside the scrollable card body), starting from the
+    // dialog root when no open panel is found.
     const host = detailLayoutHost(openPopupContent(modal) || modal)
     if (!note) {
       const document = modal.ownerDocument || global.document
