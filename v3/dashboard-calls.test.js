@@ -2268,6 +2268,41 @@ function completedDetailModalHarness(panelKinds) {
   return { ...view, completedPanels: panels }
 }
 
+test('P9 canonical payment-only refresh repaints the open modal without changing its panel', () => {
+  const previous = { document: global.document, actions: global.StartersDashboardCallActions, payment: global.StartersDashboardCallPayment }
+  const actions = require('./dashboard-call-actions.js')
+  const view = detailModalHarness()
+  const approve = element({ 'payment-action-btn': 'approve-payment' })
+  view.actions.push(approve)
+  const now = Date.now()
+  const booking = { booking_id: 'post-bank-modal', status: 'confirmed', lifecycle_revision: 2,
+    data_environment: 'test', payment_environment: 'test', paid_meeting: true,
+    payment_status: 'auth_required', payment_reconciliation_status: 'reconciled', pm_confirmed: true,
+    start: now + 48 * 3600000, end: now + 49 * 3600000, server_now_ms: now, duration: 60,
+    brand_data: { name: 'Brand', timezone: 'UTC' }, starter_data: { name: 'Starter', timezone: 'UTC' } }
+  actions.bindCanonicalClock([booking], actions.monotonicNow())
+  global.StartersDashboardCallActions = actions
+  global.StartersDashboardCallPayment = { canApprovePayment: (_role, row) => row.payment_status === 'auth_required', canManageCards: () => false }
+  global.document = { querySelector: () => view.modal }
+  try {
+    api.populateDetailModal(view.modal, booking, 'brand')
+    assert.equal(view.fields['payment-status-text'].textContent, 'Payment needs attention.')
+    assert.equal(approve.hidden, false)
+    const fresh = { ...booking, payment_status: 'intent_created', payment_revision: 3 }
+    actions.bindCanonicalClock([fresh], actions.monotonicNow())
+    assert.equal(api.refreshOpenDetailPanel([{ rows: [fresh], list: element() }], 'brand'), true)
+    assert.equal(view.fields['payment-status-text'].textContent, 'Payment method confirmed.')
+    assert.equal(approve.hidden, true)
+    assert.equal(view.base.hidden, false)
+    assert.equal(view.modal.getAttribute('data-booking-status'), 'confirmed')
+    assert.equal(api.refreshOpenDetailPanel([{ rows: [fresh], list: element() }], 'brand'), false)
+  } finally {
+    global.document = previous.document
+    global.StartersDashboardCallActions = previous.actions
+    global.StartersDashboardCallPayment = previous.payment
+  }
+})
+
 test('Free Call details hide paid copy, duplicate copy, and unsupported actions', (context) => {
   const originalActions = global.StartersDashboardCallActions
   global.StartersDashboardCallActions = require('./dashboard-call-actions.js')

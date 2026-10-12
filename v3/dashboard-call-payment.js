@@ -270,6 +270,31 @@
   const wiredDocuments = new WeakSet()
   const paymentOwners = new WeakMap()
   function invalidateModal(modal) { paymentOwners.get(modal)?.() }
+
+  // Stripe success precedes the authoritative webhook projection. Retry only
+  // canonical dashboard reads, at most seven times over a one-minute schedule.
+  // Each read retains the dashboard's existing request timeout.
+  const APPROVAL_REFRESH_DELAYS_MS = [0, 1000, 3000, 6000, 10000, 15000, 25000]
+  async function refreshApprovedPayment(settings, modal, isCurrent) {
+    for (const delay of APPROVAL_REFRESH_DELAYS_MS) {
+      if (!isCurrent()) return false
+      if (delay) await new Promise(resolve => global.setTimeout(resolve, delay))
+      if (!isCurrent()) return false
+      try {
+        const refreshed = await settings.restart()
+        if (!isCurrent()) return false
+        const booking = settings.getBooking(modal)
+        if (refreshed === true &&
+            clean(booking.payment_status).toLowerCase() !== 'auth_required' &&
+            clean(booking.payment_reconciliation_status).toLowerCase() === 'reconciled') return true
+      } catch (error) {
+        // The bank step already succeeded. A read failure must not ask the
+        // Brand to repeat it or invoke another payment command.
+        if (typeof console !== 'undefined') console.warn('Payment approval refresh failed:', error?.message || error)
+      }
+    }
+    return false
+  }
   let managementReady = false
   function canManageCards(role, booking) {
     return managementReady && canReplacePaymentMethod(role, booking)
@@ -354,12 +379,24 @@
             (!('open' in modal) || modal.open) && (!dialog || dialog.open === true) &&
             settings.getBooking(modal) === booking && clean(booking.booking_id) === bookingId
         }
+        // Canonical reads replace row objects. After the bank step, retain
+        // modal and booking identity without requiring the old row object.
+        const isRefreshCurrent = () => {
+          const current = settings.getBooking(modal)
+          const dialog = modal.closest?.('dialog')
+          return valid && paymentOwners.get(modal) === invalidate &&
+            (!('open' in modal) || modal.open) && (!dialog || dialog.open === true) &&
+            clean(current && current.booking_id) === bookingId && paidBooking(current) &&
+            paymentActionEnvironmentOpen(current)
+        }
         try {
           if (!isCurrent()) return
           const stripe = await client.stripeForPaymentEnvironment(booking.payment_environment)
           if (!isCurrent() || !canRequestPaymentAction(settings.role, booking)) return
           const approved = await approvePayment(settings.role, booking, stripe, isCurrent)
-          if (approved && isCurrent() && typeof settings.restart === 'function') await settings.restart()
+          if (approved && isCurrent() && typeof settings.restart === 'function') {
+            await refreshApprovedPayment(settings, modal, isRefreshCurrent)
+          }
         } catch (error) {
           // Internal errors can carry route paths; keep them for support only.
           if (typeof console !== 'undefined') console.warn('Approve payment failed:', error?.message || error)

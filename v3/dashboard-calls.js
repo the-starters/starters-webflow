@@ -2713,6 +2713,12 @@
   }
 
   const meetingForcedDetailBases = new WeakSet()
+  const detailPaymentSignatures = new WeakMap()
+  function detailPaymentSignature(booking) {
+    return JSON.stringify([paidBooking(booking), booking.payment_status,
+      booking.payment_reconciliation_status, booking.pm_confirmed,
+      booking.data_environment, booking.payment_environment])
+  }
 
   function selectDetailPanel(modal, booking, role, openPanel) {
     const isPaid = paidBooking(booking)
@@ -2816,6 +2822,13 @@
     )
     const currentPendingOffer = pendingOfferSignature(booking)
     const storedPendingOffer = clean(modal.getAttribute('data-booking-pending-offer'))
+    const paymentSignature = detailPaymentSignature(booking)
+    const paymentChanged = detailPaymentSignatures.get(modal) !== paymentSignature
+    if (paymentChanged) {
+      setBookingField(modal, 'payment-status-text', paymentStatusText(booking, role), paidBooking(booking))
+      configureDetailActions(modal, role, currentStatus, booking, referenceTime)
+      detailPaymentSignatures.set(modal, paymentSignature)
+    }
     if (currentStatus !== storedStatus) {
       modal.setAttribute('data-booking-status', currentStatus)
       setBookingField(modal, 'status', statusLabel(currentStatus, role, booking), true)
@@ -2824,7 +2837,7 @@
     if (nextPanel === previousPanel && currentPendingOffer !== storedPendingOffer) {
       return populateDetailModal(modal, booking, role, referenceTime)
     }
-    if (nextPanel === previousPanel) return false
+    if (nextPanel === previousPanel) return paymentChanged
     const selected = selectDetailPanel(modal, booking, role, nextPanel)
     if (selected && nextPanel === 'base' && naturalPanel !== 'base') {
       meetingForcedDetailBases.add(modal)
@@ -3016,6 +3029,7 @@
     setBookingField(modal, 'duration', formatDuration(booking.duration), true)
     setBookingPrice(modal, formatPrice(booking.price, isPaid), isPaid)
     setBookingField(modal, 'payment-status-text', paymentText, isPaid)
+    detailPaymentSignatures.set(modal, detailPaymentSignature(booking))
     setBookingField(modal, 'cancel-reason', booking.cancelled_reason, Boolean(booking.cancelled_reason))
     populateDeclineReason(modal, booking, isPaid)
 
@@ -3089,6 +3103,7 @@
     const modal = global.document.querySelector(DETAIL_MODAL_SELECTOR)
     if (!modal) return
     meetingForcedDetailBases.delete(modal)
+    detailPaymentSignatures.delete(modal)
     resetDetailActionState(modal)
     if (typeof modal.close === 'function') {
       try {

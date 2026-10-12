@@ -441,7 +441,7 @@ test('P9 dashboard Approve payment is single-flight, Brand-only and reloads the 
   global.StartersDashboardCallActions = { canonicalNow: canonicalActions.canonicalNow, switchPopupContent() {}, showActionError: (root, message) => errors.push(message) }
   global.xanoAuthFetch = async () => ({ ok: true, json: async () => ({ booking_id: booking.booking_id, payment_status: 'auth_required', client_secret: 'pi_secret_test', provider_status: 'requires_action' }) })
   try {
-    assert.equal(await api.wire({ document, role: 'brand', getBooking: () => booking, restart: async () => { restarted += 1 } }), true)
+    assert.equal(await api.wire({ document, role: 'brand', getBooking: () => booking, restart: async () => { restarted += 1; booking.payment_status = 'intent_created'; booking.payment_reconciliation_status = 'reconciled'; return true } }), true)
     assert.equal(api.canApprovePayment('brand', booking), true)
     assert.equal(api.canApprovePayment('starter', booking), false)
     assert.equal(api.canApprovePayment('brand', paidBooking('card_or_payment_declined')), false)
@@ -586,10 +586,95 @@ async function approvalWireHarness(booking, run, stripeLoad) {
     return { ok: true, json: async () => ({ booking_id: 'booking-paid-1', payment_status: 'auth_required', client_secret: 'pi_secret_test', provider_status: 'requires_action' }) }
   }
   try {
-    assert.equal(await api.wire({ document, role: 'brand', getBooking: () => currentBooking, restart: async () => { calls.refreshes += 1 } }), true)
+    assert.equal(await api.wire({ document, role: 'brand', getBooking: () => currentBooking, restart: async () => { calls.refreshes += 1; currentBooking = { ...currentBooking, payment_status: 'intent_created', payment_reconciliation_status: 'reconciled' }; return true } }), true)
     await run({ calls, modal, replaceBooking: value => { currentBooking = value }, click: () => listener({ target: button, preventDefault() {}, stopImmediatePropagation() {} }) })
   } finally { global.StartersPaidCallBrandPayment = previous.client; global.xanoAuthFetch = previous.fetch }
 }
+
+async function approvalConvergenceHarness(onRefresh) {
+  const previous = { client: global.StartersPaidCallBrandPayment, fetch: global.xanoAuthFetch, timer: global.setTimeout, warn: console.warn }
+  const calls = { reads: 0, bankSteps: 0, paymentActions: 0, delays: [], errors: [] }
+  let booking = paidBooking('auth_required')
+  booking.payment_reconciliation_status = 'reconciled'
+  let click, close
+  const modal = { open: true, querySelector: () => ({}) }
+  const button = { getAttribute: name => name === 'payment-action-btn' ? 'approve-payment' : null,
+    hasAttribute: () => false, setAttribute() {},
+    closest: selector => selector === '[popup-booking-info]' ? modal : button }
+  const document = { addEventListener: (name, listener) => { if (name === 'click') click = listener; if (name === 'close') close = listener } }
+  global.StartersPaidCallBrandPayment = {
+    getReadiness() {}, installSavedCardPicker() {}, installCardSetupForm() {},
+    stripeForPaymentEnvironment: async () => ({ handleNextAction: async () => {
+      calls.bankSteps += 1
+      return { paymentIntent: { status: 'requires_capture' } }
+    } }),
+  }
+  global.xanoAuthFetch = async () => {
+    calls.paymentActions += 1
+    return { ok: true, json: async () => ({ booking_id: booking.booking_id, payment_status: 'auth_required',
+      client_secret: 'synthetic', provider_status: 'requires_action' }) }
+  }
+  global.setTimeout = (callback, delay) => { calls.delays.push(delay); queueMicrotask(callback); return 1 }
+  console.warn = () => {}
+  try {
+    await api.wire({ document, role: 'brand', getBooking: () => booking, restart: async () => {
+      calls.reads += 1
+      return onRefresh({ calls, booking, replace: row => { booking = row }, modal, close: () => close({ target: modal }) })
+    } })
+    await click({ target: button, preventDefault() {}, stopImmediatePropagation() {} })
+    return calls
+  } finally {
+    global.StartersPaidCallBrandPayment = previous.client
+    global.xanoAuthFetch = previous.fetch
+    global.setTimeout = previous.timer
+    console.warn = previous.warn
+  }
+}
+
+test('P9 retries read-only after an early webhook read and stops on the fresh same-booking projection', async () => {
+  const calls = await approvalConvergenceHarness(({ calls, booking, replace }) => {
+    // Real canonical refreshes replace row objects. That must not cancel this
+    // same-booking read loop or allow another Stripe confirmation.
+    replace({ ...booking, ...(calls.reads === 3 ? { payment_status: 'intent_created', payment_reconciliation_status: 'reconciled' } : {}) })
+    return true
+  })
+  assert.equal(calls.reads, 3)
+  assert.equal(calls.bankSteps, 1)
+  assert.equal(calls.paymentActions, 1)
+  assert.equal(calls.delays.length, 2)
+})
+
+test('P9 post-bank refresh failure retries without repeating financial actions', async () => {
+  const calls = await approvalConvergenceHarness(({ calls, booking, replace }) => {
+    if (calls.reads === 1) throw new Error('read failed')
+    replace({ ...booking, payment_status: 'intent_created', payment_reconciliation_status: 'reconciled' })
+    return true
+  })
+  assert.equal(calls.reads, 2)
+  assert.equal(calls.bankSteps, 1)
+  assert.equal(calls.paymentActions, 1)
+})
+
+test('P9 unresolved post-bank reads have a finite budget', async () => {
+  const calls = await approvalConvergenceHarness(() => false)
+  assert.equal(calls.reads, 7)
+  assert.deepEqual(calls.delays, [1000, 3000, 6000, 10000, 15000, 25000])
+  assert.equal(calls.bankSteps, 1)
+  assert.equal(calls.paymentActions, 1)
+})
+
+test('P9 stops post-bank reads when the modal closes or changes booking', async () => {
+  for (const change of ['close', 'booking']) {
+    const calls = await approvalConvergenceHarness(({ booking, replace, modal, close }) => {
+      if (change === 'close') { modal.open = false; close() }
+      else replace({ ...booking, booking_id: 'other-booking' })
+      return true
+    })
+    assert.equal(calls.reads, 1, change)
+    assert.equal(calls.delays.length, 0, change)
+    assert.equal(calls.bankSteps, 1, change)
+  }
+})
 
 test('P9 approval normalizes authoritative is_paid before the legacy Paid flag', () => {
   for (const value of [true, 1, 'true', ' TRUE ']) {
