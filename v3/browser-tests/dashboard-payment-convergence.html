@@ -52,11 +52,13 @@
     const booking = { id: 1, booking_id: 'synthetic-post-bank', status: 'confirmed', lifecycle_revision: 2,
       data_environment: 'test', payment_environment: 'test', paid_meeting: true, pm_confirmed: true,
       payment_status: 'auth_required', payment_reconciliation_status: 'reconciled', payment_revision: 2,
+      payment_intent: 'pi_synthetic_hold',
       start: Date.now() + 48 * 3600000, end: Date.now() + 49 * 3600000, duration: 60, price: 1,
       call_context: 'Synthetic delayed webhook',
       brand_data: { name: 'Synthetic Brand', memberstack_id: 'synthetic-brand', timezone: 'UTC' },
       starter_data: { name: 'Synthetic Starter', memberstack_id: 'synthetic-starter', timezone: 'UTC' } }
-    let approved = false, afterBankReads = 0
+    const workerDelayMs = Number(new URLSearchParams(location.search).get('worker_delay_ms') || 0)
+    let approved = false, afterBankReads = 0, elapsedRetryDelaysMs = 0
     window.xanoAuthFetch = async (url, options) => {
       const body = JSON.parse(options.body)
       let data
@@ -69,7 +71,7 @@
         if (body.memberstack_id !== 'synthetic-brand') throw Error('wrong member')
         counts.canonicalReads++
         if (approved) afterBankReads++
-        data = [{ ...booking, server_now_ms: Date.now(), ...(afterBankReads >= 3 ? {
+        data = [{ ...booking, server_now_ms: Date.now(), ...(afterBankReads >= 3 && elapsedRetryDelaysMs >= workerDelayMs ? {
           payment_status: 'intent_created', payment_revision: 3,
         } : {}) }]
       } else {
@@ -101,11 +103,18 @@
     await payment.wire({ document, role: 'brand', getBooking: target => calls.bookingForActionTarget(refs, target), restart: refresh })
     calls.populateDetailModal(modal, refs[0].rows[0], 'brand')
     modal.showModal()
-    window.proofState = { counts, refs, modal }
+    window.proofState = { counts, refs, modal, calls, refresh,
+      get elapsedRetryDelaysMs() { return elapsedRetryDelaysMs } }
     // Accelerate only the deliberate retry delays in this synthetic fixture.
     const timer = window.setTimeout.bind(window)
-    window.setTimeout = (callback, delay, ...args) => timer(callback,
-      [1000, 3000, 6000, 10000, 15000, 25000].includes(delay) ? 15 : delay, ...args)
+    window.setTimeout = (callback, delay, ...args) => {
+      const retry = [1000, 3000, 6000, 10000, 20000, 30000].includes(delay)
+      return timer(() => {
+        // A cancelled request-timeout timer must not advance the worker clock.
+        if (retry && approved) elapsedRetryDelaysMs += delay
+        callback(...args)
+      }, retry ? 15 : delay)
+    }
     window.fixtureReady = true
   })().catch(error => { window.fixtureError = error.stack })
 </script>

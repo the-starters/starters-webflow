@@ -6,6 +6,7 @@ const api = require('./dashboard-call-payment.js')
 const canonicalActions = require('./dashboard-call-actions.js')
 global.StartersDashboardCallActions = canonicalActions
 
+let nextTestPayment = 0
 function paidBooking(status) {
   const booking = {
     booking_id: 'booking-paid-1',
@@ -13,6 +14,9 @@ function paidBooking(status) {
     payment_environment: 'test',
     data_environment: 'test',
     payment_status: status,
+    payment_intent: 'pi_synthetic_' + ++nextTestPayment,
+    payment_revision: 2,
+    lifecycle_revision: 2,
     status: 'confirmed',
     start: Date.now() + 30 * 3600000,
     server_now_ms: Date.now(),
@@ -591,15 +595,20 @@ async function approvalWireHarness(booking, run, stripeLoad) {
   } finally { global.StartersPaidCallBrandPayment = previous.client; global.xanoAuthFetch = previous.fetch }
 }
 
-async function approvalConvergenceHarness(onRefresh) {
+async function approvalConvergenceHarness(onRefresh, afterApproval) {
   const previous = { client: global.StartersPaidCallBrandPayment, fetch: global.xanoAuthFetch, timer: global.setTimeout, warn: console.warn }
   const calls = { reads: 0, bankSteps: 0, paymentActions: 0, delays: [], errors: [] }
   let booking = paidBooking('auth_required')
   booking.payment_reconciliation_status = 'reconciled'
+  const replace = row => {
+    booking = row
+    canonicalActions.bindCanonicalClock([row], canonicalActions.monotonicNow())
+  }
   let click, close
   const modal = { open: true, querySelector: () => ({}) }
-  const button = { getAttribute: name => name === 'payment-action-btn' ? 'approve-payment' : null,
-    hasAttribute: () => false, setAttribute() {},
+  const attrs = {}
+  const button = { getAttribute: name => name === 'payment-action-btn' ? 'approve-payment' : attrs[name] || null,
+    hasAttribute: () => false, setAttribute: (name, value) => { attrs[name] = value },
     closest: selector => selector === '[popup-booking-info]' ? modal : button }
   const document = { addEventListener: (name, listener) => { if (name === 'click') click = listener; if (name === 'close') close = listener } }
   global.StartersPaidCallBrandPayment = {
@@ -619,9 +628,11 @@ async function approvalConvergenceHarness(onRefresh) {
   try {
     await api.wire({ document, role: 'brand', getBooking: () => booking, restart: async () => {
       calls.reads += 1
-      return onRefresh({ calls, booking, replace: row => { booking = row }, modal, close: () => close({ target: modal }) })
+      return onRefresh({ calls, booking, replace, modal, close: () => close({ target: modal }) })
     } })
     await click({ target: button, preventDefault() {}, stopImmediatePropagation() {} })
+    if (afterApproval) await afterApproval({ calls, booking, replace, modal, button,
+      click: () => click({ target: button, preventDefault() {}, stopImmediatePropagation() {} }) })
     return calls
   } finally {
     global.StartersPaidCallBrandPayment = previous.client
@@ -656,11 +667,44 @@ test('P9 post-bank refresh failure retries without repeating financial actions',
 })
 
 test('P9 unresolved post-bank reads have a finite budget', async () => {
-  const calls = await approvalConvergenceHarness(() => false)
-  assert.equal(calls.reads, 7)
-  assert.deepEqual(calls.delays, [1000, 3000, 6000, 10000, 15000, 25000])
+  const calls = await approvalConvergenceHarness(() => false, async ({ booking, button, modal, click }) => {
+    assert.equal(api.canApprovePayment('brand', booking), false)
+    assert.equal(button.hidden, true)
+    assert.equal(button.getAttribute('aria-disabled'), 'true')
+    modal.open = false
+    modal.open = true
+    await click()
+  })
+  assert.equal(calls.reads, 8)
+  assert.deepEqual(calls.delays, [1000, 3000, 6000, 10000, 20000, 30000, 30000])
   assert.equal(calls.bankSteps, 1)
   assert.equal(calls.paymentActions, 1)
+})
+
+test('P9 read budget covers the saved 80-second natural worker interval', async () => {
+  const calls = await approvalConvergenceHarness(({ calls, booking, replace }) => {
+    const elapsed = calls.delays.reduce((sum, delay) => sum + delay, 0)
+    replace({ ...booking, ...(elapsed >= 80000 ? { payment_status: 'intent_created', payment_revision: 3 } : {}) })
+    return true
+  })
+  assert.equal(calls.delays.reduce((sum, delay) => sum + delay, 0), 100000)
+  assert.equal(calls.reads, 8)
+  assert.equal(calls.bankSteps, 1)
+})
+
+test('P9 a genuinely new payment identity clears the old successful-bank latch', async () => {
+  for (const change of [row => ({ ...row, payment_intent: row.payment_intent + '_new' }),
+    row => ({ ...row, payment_revision: row.payment_revision + 1 }),
+    row => ({ ...row, lifecycle_revision: row.lifecycle_revision + 1 })]) {
+    await approvalConvergenceHarness(() => false, ({ booking, replace }) => {
+      const same = { ...booking }
+      canonicalActions.bindCanonicalClock([same], canonicalActions.monotonicNow())
+      assert.equal(api.canApprovePayment('brand', same), false)
+      const next = change(booking)
+      replace(next)
+      assert.equal(api.canApprovePayment('brand', next), true)
+    })
+  }
 })
 
 test('P9 stops post-bank reads when the modal closes or changes booking', async () => {
@@ -669,6 +713,10 @@ test('P9 stops post-bank reads when the modal closes or changes booking', async 
       if (change === 'close') { modal.open = false; close() }
       else replace({ ...booking, booking_id: 'other-booking' })
       return true
+    }, ({ booking, modal }) => {
+      modal.open = true
+      if (change === 'close') assert.equal(api.canApprovePayment('brand', booking), false)
+      else assert.equal(api.canApprovePayment('brand', booking), true)
     })
     assert.equal(calls.reads, 1, change)
     assert.equal(calls.delays.length, 0, change)
@@ -909,7 +957,8 @@ test('P9 delegated DIV close during either canonical response prevents bank appr
 }))
 
 test('P9 close while the bank step returns cannot refresh an invalidated DIV modal', async () => withPaymentClock(async ({ bound }) => {
-  await approvalModalHarness({ booking: bound({}), phase: 'bank' }, async context => {
+  const booking = bound({})
+  await approvalModalHarness({ booking, phase: 'bank' }, async context => {
     const pending = context.start()
     await context.tick()
     await context.closeControl()
@@ -918,6 +967,10 @@ test('P9 close while the bank step returns cannot refresh an invalidated DIV mod
     assert.equal(context.calls.routes, 1)
     assert.equal(context.calls.bankSteps, 1)
     assert.equal(context.calls.refreshes, 0)
+    assert.equal(api.canApprovePayment('brand', booking), false)
+    await context.start()
+    assert.equal(context.calls.routes, 1)
+    assert.equal(context.calls.bankSteps, 1)
   })
 }))
 

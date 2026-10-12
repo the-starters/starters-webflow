@@ -269,12 +269,32 @@
 
   const wiredDocuments = new WeakSet()
   const paymentOwners = new WeakMap()
+  const approvedPaymentSnapshots = new Map()
   function invalidateModal(modal) { paymentOwners.get(modal)?.() }
 
+  function paymentApprovalSnapshot(booking) {
+    return JSON.stringify([booking.booking_id, booking.payment_intent,
+      booking.payment_revision, booking.lifecycle_revision,
+      booking.data_environment, booking.payment_environment])
+  }
+  function approvalAwaitingProjection(booking) {
+    const bookingId = clean(booking && booking.booking_id)
+    const snapshot = approvedPaymentSnapshots.get(bookingId)
+    if (!snapshot) return false
+    if (snapshot !== paymentApprovalSnapshot(booking) ||
+        (clean(booking.payment_status).toLowerCase() !== 'auth_required' &&
+         clean(booking.payment_reconciliation_status).toLowerCase() === 'reconciled')) {
+      approvedPaymentSnapshots.delete(bookingId)
+      return false
+    }
+    return true
+  }
+
   // Stripe success precedes the authoritative webhook projection. Retry only
-  // canonical dashboard reads, at most seven times over a one-minute schedule.
+  // canonical reads, at most eight times over a 100-second delay schedule.
+  // The saved normal receipt-worker cadence can take up to 80 seconds.
   // Each read retains the dashboard's existing request timeout.
-  const APPROVAL_REFRESH_DELAYS_MS = [0, 1000, 3000, 6000, 10000, 15000, 25000]
+  const APPROVAL_REFRESH_DELAYS_MS = [0, 1000, 3000, 6000, 10000, 20000, 30000, 30000]
   async function refreshApprovedPayment(settings, modal, isCurrent) {
     for (const delay of APPROVAL_REFRESH_DELAYS_MS) {
       if (!isCurrent()) return false
@@ -300,7 +320,7 @@
     return managementReady && canReplacePaymentMethod(role, booking)
   }
   function canApprovePayment(role, booking) {
-    return managementReady && canRequestPaymentAction(role, booking)
+    return managementReady && canRequestPaymentAction(role, booking) && !approvalAwaitingProjection(booking)
   }
 
   async function loadPaymentClient(document) {
@@ -369,6 +389,7 @@
         approving = true
         target.setAttribute('aria-disabled', 'true')
         const bookingId = clean(booking.booking_id)
+        const approvalSnapshot = paymentApprovalSnapshot(booking)
         invalidateModal(modal)
         let valid = true
         const invalidate = () => { valid = false }
@@ -387,15 +408,24 @@
           return valid && paymentOwners.get(modal) === invalidate &&
             (!('open' in modal) || modal.open) && (!dialog || dialog.open === true) &&
             clean(current && current.booking_id) === bookingId && paidBooking(current) &&
-            paymentActionEnvironmentOpen(current)
+            paymentActionEnvironmentOpen(current) &&
+            paymentApprovalSnapshot(current) === approvalSnapshot
         }
         try {
           if (!isCurrent()) return
           const stripe = await client.stripeForPaymentEnvironment(booking.payment_environment)
           if (!isCurrent() || !canRequestPaymentAction(settings.role, booking)) return
           const approved = await approvePayment(settings.role, booking, stripe, isCurrent)
-          if (approved && isCurrent() && typeof settings.restart === 'function') {
-            await refreshApprovedPayment(settings, modal, isRefreshCurrent)
+          if (approved) {
+            // Keep this exact successful bank action suppressed even if its
+            // modal closes or its finite read budget expires. A new payment
+            // identity/revision clears the latch; no canonical state is faked.
+            approvedPaymentSnapshots.set(bookingId, approvalSnapshot)
+            if (isRefreshCurrent()) {
+              target.hidden = true
+              if (target.style) target.style.display = 'none'
+              if (typeof settings.restart === 'function') await refreshApprovedPayment(settings, modal, isRefreshCurrent)
+            }
           }
         } catch (error) {
           // Internal errors can carry route paths; keep them for support only.
@@ -410,7 +440,7 @@
           approving = false
           if (paymentOwners.get(modal) === invalidate) {
             paymentOwners.delete(modal)
-            target.setAttribute('aria-disabled', 'false')
+            target.setAttribute('aria-disabled', String(approvalAwaitingProjection(settings.getBooking(modal))))
           }
         }
         return

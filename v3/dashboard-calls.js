@@ -2717,7 +2717,8 @@
   function detailPaymentSignature(booking) {
     return JSON.stringify([paidBooking(booking), booking.payment_status,
       booking.payment_reconciliation_status, booking.pm_confirmed,
-      booking.data_environment, booking.payment_environment])
+      booking.data_environment, booking.payment_environment, booking.payment_intent,
+      booking.payment_revision, booking.lifecycle_revision])
   }
 
   function selectDetailPanel(modal, booking, role, openPanel) {
