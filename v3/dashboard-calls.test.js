@@ -3456,6 +3456,8 @@ test('confirmed Paid Call details show per-call price and hide every unsupported
     price: 25,
     duration: 30,
     pm_confirmed: true,
+    payment_status: 'waiting_for_intent',
+    payment_reconciliation_status: 'ready',
     meeting_link: 'https://meet.example/current',
     brand_data: { name: 'Brand', timezone: 'UTC' },
     starter_data: { name: 'Starter', timezone: 'UTC' },
@@ -10603,6 +10605,9 @@ test('P9 payment line reads the canonical payment state, not only the saved-card
   const cases = [
     [{ payment_status: 'intent_created', payment_reconciliation_status: 'reconciled' }, 'Payment method confirmed.', 'Payment method confirmed.'],
     [{}, 'Payment method confirmed.', 'Payment method confirmed.'],
+    [{ payment_status: 'intent_created', payment_reconciliation_status: 'ready' }, 'Payment is being checked.', 'Payment is being checked.'],
+    [{ payment_status: 'waiting_for_intent', payment_reconciliation_status: 'reconciled' }, 'Payment is being checked.', 'Payment is being checked.'],
+    [{ payment_status: '', payment_reconciliation_status: '' }, 'Payment is being checked.', 'Payment is being checked.'],
     [{ payment_status: 'card_or_payment_declined', payment_reconciliation_status: 'failed' }, 'Card declined. Change card.', 'Payment is being checked.'],
     [{ payment_status: 'auth_required', payment_reconciliation_status: 'pending' }, 'Payment needs attention.', 'Payment is being checked.'],
     [{ payment_reconciliation_status: 'pending' }, 'Payment is being checked.', 'Payment is being checked.'],
@@ -10632,6 +10637,8 @@ test('P9 review: payment line only on live calls, allow-list for "confirmed", no
   // In progress: no Brand action text.
   assert.equal(api.paymentStatusText(paid({ start: now - H, payment_status: 'auth_required' }), 'brand', now), 'Payment is being checked.')
   assert.equal(api.paymentStatusText(paid({ start: now - H, payment_status: 'insufficient_funds' }), 'brand', now), 'Payment is being checked.')
+  assert.equal(api.paymentStatusText(paid({ status: 'rescheduled', start: now + H, start_old: now - H, payment_status: 'auth_required' }), 'brand', now), 'Payment is being checked.')
+  assert.equal(api.paymentStatusText(paid({ status: 'rescheduled', start: now + H, start_old: now - H, payment_status: 'card_or_payment_declined' }), 'brand', now), 'Payment is being checked.')
   for (const s of ['card_or_payment_declined', 'insufficient_funds', 'lost_or_stolen_card', 'expired_card', 'payment_intent_confirm_expired']) {
     assert.equal(api.paymentStatusText(paid({ payment_status: s }), 'brand', now), 'Card declined. Change card.')
     assert.equal(api.paymentStatusText(paid({ payment_status: s }), 'starter', now), 'Payment is being checked.')

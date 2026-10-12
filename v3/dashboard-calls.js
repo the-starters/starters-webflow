@@ -884,8 +884,21 @@
   // archived or completed). After start no Brand action is offered (JP A=1a:
   // the call runs, no charge, the team follows up). "Confirmed" is an
   // allow-list; any other state reads "being checked".
-  const CONFIRMED_PAYMENT_STATUSES = ['', 'waiting_for_intent', 'intent_created']
-  const CONFIRMED_RECONCILIATION_STATUSES = ['', 'ready', 'reconciled']
+  const CONFIRMED_PAYMENT_STATE_PAIRS = [
+    ['waiting_for_intent', 'ready'],
+    ['intent_created', 'reconciled'],
+  ]
+
+  function confirmedPaymentState(paymentStatus, reconciliation) {
+    return CONFIRMED_PAYMENT_STATE_PAIRS.some(function (pair) {
+      return pair[0] === paymentStatus && pair[1] === reconciliation
+    })
+  }
+
+  function paymentStatusStart(booking) {
+    const status = clean(booking && booking.status).toLowerCase()
+    return normalizeTimestamp(booking && booking[status === 'rescheduled' ? 'start_old' : 'start'])
+  }
 
   function paymentStatusText(booking, role, now) {
     if (!paidBooking(booking)) return ''
@@ -893,7 +906,7 @@
     if (['cancelled', 'archived', 'completed'].includes(bookingStatus(booking, time))) return ''
     const paymentStatus = clean(booking.payment_status).toLowerCase()
     const reconciliation = clean(booking.payment_reconciliation_status).toLowerCase()
-    const start = normalizeTimestamp(booking.start)
+    const start = paymentStatusStart(booking)
     const started = Number.isFinite(start) && start > 0 && start <= time
     const brand = clean(role).toLowerCase() === 'brand' && !started
     if (DECLINED_PAYMENT_STATUSES.includes(paymentStatus)) {
@@ -904,8 +917,7 @@
     }
     if (
       UNRESOLVED_RECONCILIATION_STATUSES.includes(reconciliation) ||
-      !CONFIRMED_PAYMENT_STATUSES.includes(paymentStatus) ||
-      !CONFIRMED_RECONCILIATION_STATUSES.includes(reconciliation)
+      !confirmedPaymentState(paymentStatus, reconciliation)
     ) {
       return 'Payment is being checked.'
     }

@@ -397,7 +397,7 @@ test('P9 approve payment runs the Stripe bank step with the canonical secret onl
   const stripe = { handleNextAction: async ({ clientSecret }) => { secrets.push(clientSecret); return { paymentIntent: { status: 'requires_capture' } } } }
   global.xanoAuthFetch = async (url, options) => {
     requests.push({ url, body: JSON.parse(options.body) })
-    return { ok: true, json: async () => ({ booking_id: 'booking-paid-1', payment_status: 'auth_required', client_secret: 'pi_secret_test' }) }
+    return { ok: true, json: async () => ({ booking_id: 'booking-paid-1', payment_status: 'auth_required', client_secret: 'pi_secret_test', provider_status: 'requires_action' }) }
   }
   try {
     assert.equal(await api.approvePayment('brand', paidBooking('auth_required'), stripe), 'requires_capture')
@@ -434,7 +434,7 @@ test('P9 dashboard Approve payment is single-flight, Brand-only and reloads the 
     },
   }
   global.StartersDashboardCallActions = { switchPopupContent() {}, showActionError: (root, message) => errors.push(message) }
-  global.xanoAuthFetch = async () => ({ ok: true, json: async () => ({ booking_id: booking.booking_id, payment_status: 'auth_required', client_secret: 'pi_secret_test' }) })
+  global.xanoAuthFetch = async () => ({ ok: true, json: async () => ({ booking_id: booking.booking_id, payment_status: 'auth_required', client_secret: 'pi_secret_test', provider_status: 'requires_action' }) })
   try {
     assert.equal(await api.wire({ document, role: 'brand', getBooking: () => booking, restart: async () => { restarted += 1 } }), true)
     assert.equal(api.canApprovePayment('brand', booking), true)
@@ -462,9 +462,10 @@ test('P9 review: approve only on a live call before start, never twice for a sta
   const H = 3600000
   const at = (extra) => Object.assign(paidBooking('auth_required'), extra)
   assert.equal(api.canRequestPaymentAction('brand', at({})), true)
-  assert.equal(api.canRequestPaymentAction('brand', at({ status: 'rescheduled' })), true)
+  assert.equal(api.canRequestPaymentAction('brand', at({ status: 'rescheduled', start_old: Date.now() + H })), true)
+  assert.equal(api.canRequestPaymentAction('brand', at({ status: 'rescheduled', start_old: Date.now() - 1, start: Date.now() + H })), false)
   assert.equal(api.canRequestPaymentAction('brand', at({ start: new Date(Date.now() + H).toISOString() })), true)
-  for (const extra of [{ status: 'cancelled' }, { status: 'completed' }, { status: 'pending' }, { start: Date.now() - 1 }, { start: null }]) {
+  for (const extra of [{ status: 'cancelled' }, { status: 'completed' }, { status: 'pending' }, { status: 'rescheduled', start_old: null }, { status: 'rescheduled', start_old: 'invalid', start: Date.now() + H }, { start: Date.now() - 1 }, { start: null }]) {
     assert.equal(api.canRequestPaymentAction('brand', at(extra)), false, JSON.stringify(extra))
   }
   // W5 environment switch: production rows stay closed until the list opens.
@@ -474,7 +475,7 @@ test('P9 review: approve only on a live call before start, never twice for a sta
     assert.equal(api.canApprovePayment('brand', at(extra)), false, JSON.stringify(extra))
   }
   const previous = global.xanoAuthFetch
-  global.xanoAuthFetch = async () => ({ ok: true, json: async () => ({ booking_id: 'booking-paid-1', payment_status: 'auth_required', client_secret: 'pi_secret_test' }) })
+  global.xanoAuthFetch = async () => ({ ok: true, json: async () => ({ booking_id: 'booking-paid-1', payment_status: 'auth_required', client_secret: 'pi_secret_test', provider_status: 'requires_action' }) })
   try {
     let calls = 0
     const stripe = status => ({ handleNextAction: async () => { calls += 1; return { paymentIntent: { status } } } })
@@ -504,5 +505,26 @@ test('P9 A: off-session 3DS (requires_payment_method) confirms on-session with t
     calls.length = 0
     assert.equal(await api.approvePayment('brand', paidBooking('auth_required'), stripe, () => true), 'requires_capture')
     assert.deepEqual(calls, ['next'])
+  } finally { global.xanoAuthFetch = previous }
+})
+
+test('P9 A: unexpected provider status fails before Stripe action', async () => {
+  const previous = global.xanoAuthFetch
+  const states = [
+    {},
+    { provider_status: '' },
+    { provider_status: 'processing' },
+  ]
+  try {
+    for (const state of states) {
+      let actions = 0
+      global.xanoAuthFetch = async () => ({ ok: true, json: async () => Object.assign({ booking_id: 'booking-paid-1', payment_status: 'auth_required', client_secret: 'pi_secret_test' }, state) })
+      const stripe = {
+        handleNextAction: async () => { actions += 1; return { paymentIntent: { status: 'requires_capture' } } },
+        confirmCardPayment: async () => { actions += 1; return { paymentIntent: { status: 'requires_capture' } } },
+      }
+      await assert.rejects(api.approvePayment('brand', paidBooking('auth_required'), stripe, () => true), /invalid/)
+      assert.equal(actions, 0, JSON.stringify(state))
+    }
   } finally { global.xanoAuthFetch = previous }
 })

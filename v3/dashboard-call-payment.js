@@ -32,11 +32,25 @@
     )
   }
 
+  function normalizeTimestamp(value) {
+    const timestamp = Number(value)
+    if (Number.isFinite(timestamp)) {
+      if (timestamp === 0) return timestamp
+      return Math.abs(timestamp) < 1e12 ? timestamp * 1000 : timestamp
+    }
+    const parsed = Date.parse(value)
+    return Number.isFinite(parsed) ? parsed : Number.NaN
+  }
+
+  function paymentActionStart(booking) {
+    const status = clean(booking && booking.status).toLowerCase()
+    return normalizeTimestamp(booking && booking[status === 'rescheduled' ? 'start_old' : 'start'])
+  }
+
   // P9 review 2026-10-06: approve only on a live call before start (JP A=1a:
   // after start the call runs with no charge, so no new hold is placed).
   function canRequestPaymentAction(role, booking, now) {
-    const rawStart = booking && booking.start
-    const start = Number.isFinite(Number(rawStart)) ? Number(rawStart) : Date.parse(rawStart)
+    const start = paymentActionStart(booking)
     return (
       role === 'brand' &&
       paymentActionEnvironmentOpen(booking) &&
@@ -136,7 +150,11 @@
   // PaymentIntent still requires action; Stripe.js shows the bank step. The
   // booking state moves only through the Stripe webhook, never from here.
   async function approvePayment(role, booking, stripe, isCurrent) {
-    if (!stripe || typeof stripe.handleNextAction !== 'function') {
+    if (
+      !stripe ||
+      (typeof stripe.handleNextAction !== 'function' &&
+        typeof stripe.confirmCardPayment !== 'function')
+    ) {
       throw new Error('Payment approval client unavailable')
     }
     const action = await getPaymentAction(role, booking)
@@ -155,8 +173,13 @@
         throw new Error('Payment approval client unavailable')
       }
       result = await stripe.confirmCardPayment(action.client_secret, { payment_method: paymentMethod })
-    } else {
+    } else if (providerStatus === 'requires_action') {
+      if (typeof stripe.handleNextAction !== 'function') {
+        throw new Error('Payment approval client unavailable')
+      }
       result = await stripe.handleNextAction({ clientSecret: action.client_secret })
+    } else {
+      throw new Error('Canonical payment action response is invalid')
     }
     if (!result || result.error) {
       throw new Error('Payment approval did not complete')
