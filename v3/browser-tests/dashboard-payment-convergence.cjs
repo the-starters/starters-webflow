@@ -26,7 +26,8 @@ async function main() {
     page.on('pageerror', error => errors.push(error.message))
     await page.route('**/*', route => {
       if (new URL(route.request().url()).origin === `http://127.0.0.1:${server.address().port}`) return route.continue()
-      blocked.push(route.request().url()); return route.abort()
+      blocked.push(route.request().url())
+      return route.abort()
     })
     await page.goto(`http://127.0.0.1:${server.address().port}/v3/browser-tests/dashboard-payment-convergence.html`)
     await page.waitForFunction(() => window.fixtureReady || window.fixtureError)

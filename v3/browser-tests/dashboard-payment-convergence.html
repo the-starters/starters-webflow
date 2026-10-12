@@ -72,7 +72,10 @@
         data = [{ ...booking, server_now_ms: Date.now(), ...(afterBankReads >= 3 ? {
           payment_status: 'intent_created', payment_revision: 3,
         } : {}) }]
-      } else { counts.productionAccess++; throw Error('unexpected API request') }
+      } else {
+        counts.productionAccess++
+        throw Error('unexpected API request')
+      }
       return { ok: true, json: async () => data }
     }
     const refresh = () => calls.refreshSession({ getCurrentMember: async () => ({ data: { id: 'synthetic-brand' } }) },
@@ -85,7 +88,9 @@
           counts.bankSteps++
           document.getElementById('bank').showModal()
           await new Promise(resolve => document.getElementById('complete').addEventListener('click', () => {
-            counts.completeClicks++; document.getElementById('bank').close(); resolve()
+            counts.completeClicks++
+            document.getElementById('bank').close()
+            resolve()
           }, { once: true }))
           approved = true
           return { paymentIntent: { status: 'requires_capture' } }
