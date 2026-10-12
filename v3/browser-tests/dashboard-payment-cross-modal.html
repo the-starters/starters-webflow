@@ -1,0 +1,103 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Providerless cross-modal payment proof</title>
+<style>
+  body { font: 17px/1.5 system-ui; max-width: 900px; margin: 32px auto }
+  article, dialog { padding: 24px; border: 1px solid #a6b9aa; border-radius: 12px; background: #f7fbf8 }
+  button { padding: 10px 18px; margin: 8px; font: inherit }
+  [hidden] { display: none !important }
+</style>
+<h1>Providerless payment modal custody</h1>
+<p>Two synthetic Test bookings. Mock Stripe and Xano. External network is blocked.</p>
+<button id="open-first">Open first call</button><button id="open-second">Open second call</button>
+<section bookings-section="calls"><div bookings-list="calls"></div>
+  <article id="template" bookings-item-template="calls"><h2 booking-element="title"></h2>
+    <p payment-status-wrap><span booking-element="payment-status-text"></span></p></article>
+</section>
+<dialog popup-booking-info data-modal-target="popup-booking-info"><h2>Call details</h2>
+  <div booking-popup-content="base"><p booking-element="title"></p>
+    <p booking-element-wrap><span booking-element="payment-status-text"></span></p>
+    <div payment-action-btn="approve-payment"><button>Approve Payment</button></div>
+    <button id="close-details" booking-popup-info-close>Close</button>
+  </div>
+</dialog>
+<dialog id="bank"><h2>Synthetic Test bank</h2><button id="complete">Complete</button></dialog>
+<script>window.module = { exports: {} }</script>
+<script src="../dashboard-call-actions.js"></script>
+<script>window.StartersDashboardCallActions = module.exports; window.module = { exports: {} }</script>
+<script src="../dashboard-call-payment.js"></script>
+<script>window.StartersDashboardCallPayment = module.exports; window.module = { exports: {} }</script>
+<script src="../dashboard-calls.js"></script>
+<script>
+  (async function () {
+    const calls = module.exports, payment = StartersDashboardCallPayment
+    const modal = document.querySelector('[popup-booking-info]'), template = document.getElementById('template')
+    const refs = [{ section: document.querySelector('[bookings-section]'), name: 'calls',
+      list: document.querySelector('[bookings-list]'), template: template.cloneNode(true), rows: [], rendered: 0, filter: 'all' }]
+    template.remove()
+    const counts = { canonicalReads: 0, paymentActions: [], bankSteps: 0, completeClicks: 0, productionAccess: 0 }
+    const rows = [0, 1].map(index => ({ id: index + 1, booking_id: 'synthetic-cross-modal-' + index,
+      config_id: index + 1, status: 'confirmed', lifecycle_revision: 2, data_environment: 'test',
+      payment_environment: 'test', paid_meeting: true, pm_confirmed: true, payment_status: 'auth_required',
+      payment_reconciliation_status: 'reconciled', payment_revision: 2, payment_intent: 'pi_synthetic_cross_' + index,
+      start: Date.now() + 49 * 3600000, end: Date.now() + 50 * 3600000, duration: 60, price: 1,
+      call_context: index ? 'Second synthetic call' : 'First synthetic call',
+      brand_data: { name: 'Synthetic Brand', memberstack_id: 'synthetic-brand', timezone: 'UTC' },
+      starter_data: { name: 'Synthetic Starter', memberstack_id: 'synthetic-starter', timezone: 'UTC' } }))
+    let secondApproved = false, waitingMs = 0, waitingTimer = null, cancelledWait = false
+    window.xanoAuthFetch = async (url, options) => {
+      const body = JSON.parse(options.body)
+      if (url.endsWith('/brand/booking/payment-action/v3')) {
+        if (!rows.some(row => row.booking_id === body.booking_id)) throw Error('wrong synthetic booking')
+        counts.paymentActions.push(body.booking_id)
+        return { ok: true, json: async () => ({ booking_id: body.booking_id, payment_status: 'auth_required',
+          client_secret: 'synthetic-only-' + body.booking_id, provider_status: 'requires_action' }) }
+      }
+      if (url.endsWith('/booking_record/get/v3') && body.memberstack_id === 'synthetic-brand') {
+        counts.canonicalReads++
+        return { ok: true, json: async () => rows.map((row, index) => ({ ...row, server_now_ms: Date.now(),
+          ...(index === 1 && secondApproved ? { payment_status: 'intent_created', payment_revision: 3 } : {}) })) }
+      }
+      counts.productionAccess++
+      throw Error('unexpected API request')
+    }
+    const refresh = () => calls.refreshSession({ getCurrentMember: async () => ({ data: { id: 'synthetic-brand' } }) },
+      refs, 'brand', 1, () => 1, false, { preserveExisting: true })
+    window.StartersPaidCallBrandPayment = { getReadiness() {}, installSavedCardPicker() {}, installCardSetupForm() {},
+      stripeForPaymentEnvironment: async environment => {
+        if (environment !== 'test') throw Error('non-Test Stripe')
+        return { handleNextAction: async () => {
+          counts.bankSteps++
+          document.getElementById('bank').showModal()
+          await new Promise(resolve => document.getElementById('complete').addEventListener('click', () => {
+            counts.completeClicks++
+            document.getElementById('bank').close()
+            resolve()
+          }, { once: true }))
+          if (counts.bankSteps === 2) secondApproved = true
+          return { paymentIntent: { status: 'requires_capture' } }
+        } }
+      } }
+    await refresh()
+    await payment.wire({ document, role: 'brand', getBooking: target => calls.bookingForActionTarget(refs, target), restart: refresh })
+    const open = index => { calls.populateDetailModal(modal, refs[0].rows[index], 'brand'); modal.showModal() }
+    document.getElementById('open-first').addEventListener('click', () => open(0))
+    document.getElementById('open-second').addEventListener('click', () => open(1))
+    document.getElementById('close-details').addEventListener('click', () => modal.close())
+    const timer = window.setTimeout.bind(window), clearTimer = window.clearTimeout.bind(window)
+    window.setTimeout = (callback, delay, ...args) => {
+      const held = delay === 30000 && counts.bankSteps === 1
+      const id = timer(() => { if (held) waitingMs = 0; callback(...args) },
+        held ? delay : [1000, 3000, 6000, 10000, 20000].includes(delay) ? 15 : delay)
+      if (held) { waitingMs = delay; waitingTimer = id }
+      return id
+    }
+    window.clearTimeout = id => {
+      if (id === waitingTimer) { cancelledWait = true; waitingMs = 0; waitingTimer = null }
+      clearTimer(id)
+    }
+    window.crossProof = { counts, refs, modal, payment,
+      get waitingMs() { return waitingMs }, get cancelledWait() { return cancelledWait } }
+    window.fixtureReady = true
+  })().catch(error => { window.fixtureError = error.stack })
+</script>

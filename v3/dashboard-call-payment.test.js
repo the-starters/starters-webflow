@@ -724,6 +724,116 @@ test('P9 stops post-bank reads when the modal closes or changes booking', async 
   }
 })
 
+async function approvalCrossModalHarness(run, options = {}) {
+  const previous = { client: global.StartersPaidCallBrandPayment, fetch: global.xanoAuthFetch,
+    timer: global.setTimeout, clearTimer: global.clearTimeout }
+  const bookings = [paidBooking('auth_required'), paidBooking('auth_required')]
+  bookings.forEach((row, index) => { row.booking_id = 'cross-modal-' + index + '-' + row.payment_intent })
+  const modals = bookings.map(() => ({ open: true, querySelector: () => ({}) }))
+  const buttons = modals.map(modal => {
+    const attrs = {}
+    const button = { getAttribute: name => name === 'payment-action-btn' ? 'approve-payment' : attrs[name],
+      hasAttribute: () => false, setAttribute: (name, value) => { attrs[name] = value },
+      closest: selector => selector === '[popup-booking-info]' ? modal : button }
+    return button
+  })
+  const listeners = {}, timers = new Map(), counts = { routes: [], bankSteps: 0, reads: 0 }
+  let nextTimer = 0, current = 0
+  let releaseBank
+  const bankGate = new Promise(resolve => { releaseBank = resolve })
+  const document = { addEventListener: (name, listener) => { listeners[name] = listener } }
+  global.setTimeout = (callback, delay) => { const id = ++nextTimer; timers.set(id, { callback, delay }); return id }
+  global.clearTimeout = id => timers.delete(id)
+  global.StartersPaidCallBrandPayment = { getReadiness() {}, installSavedCardPicker() {}, installCardSetupForm() {},
+    stripeForPaymentEnvironment: async () => ({ handleNextAction: async () => {
+      counts.bankSteps++
+      if (counts.bankSteps === options.holdBankStep) await bankGate
+      return { paymentIntent: { status: 'requires_capture' } }
+    } }) }
+  global.xanoAuthFetch = async (_url, options) => {
+    const body = JSON.parse(options.body)
+    counts.routes.push(body.booking_id)
+    return { ok: true, json: async () => ({ booking_id: body.booking_id, payment_status: 'auth_required',
+      client_secret: 'synthetic-only', provider_status: 'requires_action' }) }
+  }
+  const pending = []
+  const tick = () => new Promise(resolve => setImmediate(resolve))
+  const click = index => {
+    current = index
+    const promise = listeners.click({ target: buttons[index], preventDefault() {}, stopImmediatePropagation() {} })
+    pending.push(promise)
+    return promise
+  }
+  try {
+    await api.wire({ document, role: 'brand', getBooking: modal => bookings[modals.indexOf(modal)],
+      restart: async () => {
+        counts.reads++
+        if (current === 1) bookings[1] = { ...bookings[1], payment_status: 'intent_created', payment_reconciliation_status: 'reconciled' }
+        return true
+      } })
+    await run({ counts, bookings, modals, buttons, timers, click, tick, releaseBank,
+      close: () => { modals[0].open = false; listeners.close({ target: modals[0] }) },
+      advance: () => {
+        const [id, timer] = timers.entries().next().value
+        timers.delete(id)
+        timer.callback()
+      } })
+  } finally {
+    modals.forEach(modal => { modal.open = false; api.invalidateModal(modal) })
+    releaseBank()
+    for (const timer of timers.values()) timer.callback()
+    await Promise.all(pending)
+    global.StartersPaidCallBrandPayment = previous.client
+    global.xanoAuthFetch = previous.fetch
+    global.setTimeout = previous.timer
+    global.clearTimeout = previous.clearTimer
+  }
+}
+
+test('P9 closing a successful booking during its 30-second read wait permits another eligible booking', async () => {
+  await approvalCrossModalHarness(async h => {
+    const first = h.click(0)
+    await h.tick()
+    while (h.timers.values().next().value.delay !== 30000) { h.advance(); await h.tick() }
+    const oldWait = h.timers.values().next().value
+    assert.equal(h.counts.bankSteps, 1)
+    assert.equal(api.canApprovePayment('brand', h.bookings[0]), false)
+    h.close()
+    await h.tick()
+    assert.equal(api.canApprovePayment('brand', h.bookings[1]), true)
+    await h.click(1)
+    assert.equal(h.counts.routes.length, 2, 'another eligible booking must not remain blocked by the old sleeping read')
+    assert.equal(h.counts.bankSteps, 2)
+    assert.equal(h.timers.size, 0, 'the invalidated read wait must be cancelled')
+    const reads = h.counts.reads
+    oldWait.callback()
+    await h.tick()
+    assert.equal(h.counts.reads, reads, 'a late old timer must not restart a canonical read')
+    await first
+    h.modals[0].open = true
+    await h.click(0)
+    assert.equal(h.counts.routes.length, 2, 'the original successful payment must remain latched')
+  })
+})
+
+test('P9 modal invalidation keeps an unresolved bank action serialized until settlement', async () => {
+  await approvalCrossModalHarness(async h => {
+    const first = h.click(0)
+    await h.tick()
+    assert.equal(h.counts.bankSteps, 1)
+    h.close()
+    await h.click(1)
+    assert.equal(h.counts.routes.length, 1, 'closing during the bank action cannot unlock another payment')
+    h.releaseBank()
+    await first
+    assert.equal(api.canApprovePayment('brand', h.bookings[0]), false)
+    await h.click(1)
+    assert.equal(h.counts.routes.length, 2)
+    assert.equal(h.counts.bankSteps, 2)
+    assert.equal(h.counts.reads, 1, 'the closed first booking must not perform any canonical refresh')
+  }, { holdBankStep: 1 })
+})
+
 test('P9 approval normalizes authoritative is_paid before the legacy Paid flag', () => {
   for (const value of [true, 1, 'true', ' TRUE ']) {
     assert.equal(api.canRequestPaymentAction('brand', Object.assign(paidBooking('auth_required'), { is_paid: value, paid_meeting: false })), true, String(value))

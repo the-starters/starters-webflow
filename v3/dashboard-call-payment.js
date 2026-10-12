@@ -295,10 +295,10 @@
   // The saved normal receipt-worker cadence can take up to 80 seconds.
   // Each read retains the dashboard's existing request timeout.
   const APPROVAL_REFRESH_DELAYS_MS = [0, 1000, 3000, 6000, 10000, 20000, 30000, 30000]
-  async function refreshApprovedPayment(settings, modal, isCurrent) {
+  async function refreshApprovedPayment(settings, modal, isCurrent, waitForRefresh) {
     for (const delay of APPROVAL_REFRESH_DELAYS_MS) {
       if (!isCurrent()) return false
-      if (delay) await new Promise(resolve => global.setTimeout(resolve, delay))
+      if (delay) await waitForRefresh(delay)
       if (!isCurrent()) return false
       try {
         const refreshed = await settings.restart()
@@ -392,7 +392,11 @@
         const approvalSnapshot = paymentApprovalSnapshot(booking)
         invalidateModal(modal)
         let valid = true
-        const invalidate = () => { valid = false }
+        let cancelRefreshWait = null
+        const invalidate = () => {
+          valid = false
+          cancelRefreshWait?.()
+        }
         paymentOwners.set(modal, invalidate)
         const isCurrent = () => {
           const dialog = modal.closest?.('dialog')
@@ -411,6 +415,22 @@
             paymentActionEnvironmentOpen(current) &&
             paymentApprovalSnapshot(current) === approvalSnapshot
         }
+        // Only the post-bank read delay can be cancelled. An unresolved bank
+        // action keeps document-wide singleflight until its own settlement.
+        const waitForRefresh = delay => new Promise(resolve => {
+          let settled = false
+          let timer
+          const finish = () => {
+            if (settled) return
+            settled = true
+            global.clearTimeout(timer)
+            if (cancelRefreshWait === finish) cancelRefreshWait = null
+            resolve()
+          }
+          cancelRefreshWait = finish
+          timer = global.setTimeout(finish, delay)
+          if (!isRefreshCurrent()) finish()
+        })
         try {
           if (!isCurrent()) return
           const stripe = await client.stripeForPaymentEnvironment(booking.payment_environment)
@@ -424,7 +444,7 @@
             if (isRefreshCurrent()) {
               target.hidden = true
               if (target.style) target.style.display = 'none'
-              if (typeof settings.restart === 'function') await refreshApprovedPayment(settings, modal, isRefreshCurrent)
+              if (typeof settings.restart === 'function') await refreshApprovedPayment(settings, modal, isRefreshCurrent, waitForRefresh)
             }
           }
         } catch (error) {
