@@ -10598,8 +10598,16 @@ test('F08: offer rows render only on live-request panels, never on terminal succ
 
 test('P9 payment line reads the canonical payment state, not only the saved-card flag', () => {
   const actions = require('./dashboard-call-actions.js')
-  const previous = global.StartersDashboardCallActions
+  const payment = require('./dashboard-call-payment.js')
+  const previous = {
+    actions: global.StartersDashboardCallActions,
+    payment: global.StartersDashboardCallPayment,
+  }
   global.StartersDashboardCallActions = actions
+  global.StartersDashboardCallPayment = {
+    canReplacePaymentMethod: payment.canReplacePaymentMethod,
+    canManageCards: payment.canReplacePaymentMethod,
+  }
   const now = Date.now()
   const paid = extra => {
     const booking = Object.assign({
@@ -10630,13 +10638,24 @@ test('P9 payment line reads the canonical payment state, not only the saved-card
     }
     assert.equal(api.paymentStatusText(paid({ pm_confirmed: false }), 'brand'), 'Payment method pending.')
     assert.equal(api.paymentStatusText({ paid_meeting: false }, 'brand'), '')
-  } finally { global.StartersDashboardCallActions = previous }
+  } finally {
+    global.StartersDashboardCallActions = previous.actions
+    global.StartersDashboardCallPayment = previous.payment
+  }
 })
 
 test('P9 review: payment line only on live calls, allow-list for "confirmed", no Brand action after start', () => {
   const actions = require('./dashboard-call-actions.js')
-  const previous = global.StartersDashboardCallActions
+  const payment = require('./dashboard-call-payment.js')
+  const previous = {
+    actions: global.StartersDashboardCallActions,
+    payment: global.StartersDashboardCallPayment,
+  }
   global.StartersDashboardCallActions = actions
+  global.StartersDashboardCallPayment = {
+    canReplacePaymentMethod: payment.canReplacePaymentMethod,
+    canManageCards: payment.canReplacePaymentMethod,
+  }
   const H = 3600000
   const now = Date.now()
   const paid = extra => {
@@ -10668,30 +10687,38 @@ test('P9 review: payment line only on live calls, allow-list for "confirmed", no
     }
     assert.equal(api.paymentStatusText(paid({}), undefined, now), 'Payment method confirmed.')
     assert.equal(api.paymentStatusText(paid({ payment_status: 'auth_required' }), undefined, now), 'Payment is being checked.')
-  } finally { global.StartersDashboardCallActions = previous }
+  } finally {
+    global.StartersDashboardCallActions = previous.actions
+    global.StartersDashboardCallPayment = previous.payment
+  }
 })
 
 test('P9 Brand payment action copy follows the bound canonical start and fails closed', () => {
   const actions = require('./dashboard-call-actions.js')
-  const previous = { actions: global.StartersDashboardCallActions, wall: Date.now, performance: Object.getOwnPropertyDescriptor(global, 'performance') }
+  const payment = require('./dashboard-call-payment.js')
+  const previous = { actions: global.StartersDashboardCallActions, payment: global.StartersDashboardCallPayment, wall: Date.now, performance: Object.getOwnPropertyDescriptor(global, 'performance') }
   const server = 1800000000000
   let monotonic = 100
   let wall = server
   Object.defineProperty(global, 'performance', { configurable: true, value: { now: () => monotonic } })
   Date.now = () => wall
   global.StartersDashboardCallActions = actions
+  global.StartersDashboardCallPayment = {
+    canReplacePaymentMethod: payment.canReplacePaymentMethod,
+    canManageCards: payment.canReplacePaymentMethod,
+  }
   try {
     for (const drift of [-3600000, 3600000]) for (const payment_status of ['auth_required', 'expired_card']) {
       monotonic = 100
       wall = server + drift
-      const booking = { booking_id: 'p9-clock-copy', status: 'confirmed', is_paid: true, start: server + 1, end: server + 7200000, server_now_ms: server, payment_status }
+      const booking = { booking_id: 'p9-clock-copy', status: 'confirmed', is_paid: true, paid_meeting: true, start: server + 1, end: server + 7200000, server_now_ms: server, payment_status, payment_environment: 'test' }
       assert.equal(actions.bindCanonicalClock([booking], monotonic, wall), true)
       assert.equal(api.paymentStatusText(booking, 'brand', server - 3600000), payment_status === 'auth_required' ? 'Payment needs attention.' : 'Card declined. Change card.')
       monotonic = 101
       assert.equal(api.paymentStatusText(booking, 'brand', server - 3600000), 'Payment is being checked.')
     }
     monotonic = 100
-    const rescheduled = { booking_id: 'p9-clock-copy', status: 'rescheduled', is_paid: true, start_old: server, start: server + 3600000, end: server + 7200000, server_now_ms: server, payment_status: 'auth_required' }
+    const rescheduled = { booking_id: 'p9-clock-copy', status: 'rescheduled', is_paid: true, paid_meeting: true, start_old: server, start: server + 3600000, end: server + 7200000, server_now_ms: server, payment_status: 'auth_required', payment_environment: 'test' }
     actions.bindCanonicalClock([rescheduled], monotonic, wall)
     assert.equal(api.paymentStatusText(rescheduled, 'brand'), 'Payment is being checked.')
     const unbound = { ...rescheduled, status: 'confirmed', start: server + 3600000 }
@@ -10703,7 +10730,51 @@ test('P9 Brand payment action copy follows the bound canonical start and fails c
     }
   } finally {
     global.StartersDashboardCallActions = previous.actions
+    global.StartersDashboardCallPayment = previous.payment
     Date.now = previous.wall
     Object.defineProperty(global, 'performance', previous.performance)
+  }
+})
+
+test('P9 declined-card copy stays neutral when recovery control is hidden', () => {
+  const actions = require('./dashboard-call-actions.js')
+  const payment = require('./dashboard-call-payment.js')
+  const previous = {
+    actions: global.StartersDashboardCallActions,
+    payment: global.StartersDashboardCallPayment,
+  }
+  const now = Date.now()
+  const booking = {
+    booking_id: 'p9-neutral-declined',
+    status: 'confirmed',
+    is_paid: true,
+    paid_meeting: false,
+    pm_confirmed: true,
+    payment_status: 'expired_card',
+    payment_reconciliation_status: 'failed',
+    payment_environment: 'test',
+    data_environment: 'test',
+    start: now + 3600000,
+    end: now + 5400000,
+    server_now_ms: now,
+    duration: 30,
+    price: 45,
+    brand_data: { name: 'Brand', timezone: 'UTC' },
+    starter_data: { name: 'Starter', timezone: 'UTC' },
+  }
+  try {
+    global.StartersDashboardCallActions = actions
+    global.StartersDashboardCallPayment = payment
+    assert.equal(actions.bindCanonicalClock([booking], actions.monotonicNow()), true)
+    assert.equal(payment.canReplacePaymentMethod('brand', booking), false)
+    assert.equal(payment.canManageCards('brand', booking), false)
+    const view = detailModalHarness()
+    assert.equal(api.populateDetailModal(view.modal, booking, 'brand'), true)
+    assert.equal(view.fields['payment-status-text'].textContent, 'Card declined.')
+    assert.equal(view.actions[6].hidden, true)
+    assert.equal(view.actions[6].style.display, 'none')
+  } finally {
+    global.StartersDashboardCallActions = previous.actions
+    global.StartersDashboardCallPayment = previous.payment
   }
 })

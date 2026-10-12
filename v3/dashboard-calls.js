@@ -900,6 +900,16 @@
     return normalizeTimestamp(booking && booking[status === 'rescheduled' ? 'start_old' : 'start'])
   }
 
+  function paymentCardRecoveryAvailable(role, booking) {
+    const payment = global.StartersDashboardCallPayment
+    if (!payment || typeof payment.canManageCards !== 'function') return false
+    try {
+      return payment.canManageCards(clean(role).toLowerCase(), booking) === true
+    } catch (_error) {
+      return false
+    }
+  }
+
   function paymentStatusText(booking, role) {
     if (!paidBooking(booking)) return ''
     const actions = global.StartersDashboardCallActions
@@ -918,7 +928,10 @@
     const brand = clean(role).toLowerCase() === 'brand' && time != null &&
       Number.isFinite(start) && start > time
     if (DECLINED_PAYMENT_STATUSES.includes(paymentStatus)) {
-      return brand ? 'Card declined. Change card.' : 'Payment is being checked.'
+      if (!brand) return 'Payment is being checked.'
+      return paymentCardRecoveryAvailable(role, booking)
+        ? 'Card declined. Change card.'
+        : 'Card declined.'
     }
     if (paymentStatus === 'auth_required') {
       return brand ? 'Payment needs attention.' : 'Payment is being checked.'
