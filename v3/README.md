@@ -2817,7 +2817,8 @@ returns full rows, so `payment_status`, `payment_reconciliation_status`,
   also admits `paidPendingEditAdmitted`: Brand, `pending`, the saved-card state
   (`paidSavedCardState`: empty `payment_intent`, `waiting_for_intent`,
   `payment_revision` 0, reconciliation `ready`; a missing revision fails
-  closed) and `data_environment` in `PAID_EDIT_OPEN_ENVIRONMENTS`. The Free
+  closed) and `data_environment` in `PAID_EDIT_OPEN_ENVIRONMENTS` (`test` and
+  `production`). The Free
   duration, grant and identity rules apply unchanged. The direct edit is hidden
   while a pending new-time offer is open.
 - **P7 reschedule a confirmed Paid call (#5756/#5759, JP 1a + 2a).**

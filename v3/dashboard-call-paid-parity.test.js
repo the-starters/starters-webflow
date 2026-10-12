@@ -15,10 +15,10 @@ const LEAD = 48 * H + 15 * 60 * 1000
 const DAY = 24 * H
 const LATE = 8 * H // F15 late-cancel window (8 h; the 24 h rule is booking notice only)
 
-test('the Paid constants match the server rules; P5 open in production, P6/P7 Test only', () => {
+test('the Paid constants match the server rules in Test and production', () => {
   assert.equal(api.PAID_CONFIRMED_CANCEL_LEAD_MS, LEAD)
   assert.equal(api.PAID_LATE_CANCEL_FEE_WINDOW_MS, LATE)
-  assert.deepEqual(api.PAID_EDIT_OPEN_ENVIRONMENTS, ['test'])
+  assert.deepEqual(api.PAID_EDIT_OPEN_ENVIRONMENTS, ['test', 'production'])
   assert.deepEqual(api.PAID_RESCHEDULE_OPEN_ENVIRONMENTS, ['test', 'production'])
   assert.deepEqual(api.PAID_HOLD_CANCEL_OPEN_ENVIRONMENTS, ['test', 'production'])
   assert.equal(
@@ -516,39 +516,101 @@ test('P5: a held Paid call inside 48 h 15 min with an unresolved hold cannot ope
 /* ---------- P6: Brand edits a Paid pending request ---------- */
 
 test('P6: paidPendingEditAdmitted needs pending, the saved card and an open environment', () => {
-  const row = savedCard({ status: 'pending' })
-  assert.equal(api.paidPendingEditAdmitted(row), true)
-  assert.equal(api.paidPendingEditAdmitted({ ...row, data_environment: 'production' }), false)
-  assert.equal(api.paidPendingEditAdmitted({ ...row, data_environment: '' }), false)
-  for (const status of ['confirmed', 'rescheduled', 'cancelled', 'declined']) {
-    assert.equal(api.paidPendingEditAdmitted({ ...row, status }), false, status)
+  for (const data_environment of ['test', 'production']) {
+    const row = savedCard({ status: 'pending', data_environment })
+    assert.equal(api.paidPendingEditAdmitted(row), true, data_environment)
+    for (const status of ['confirmed', 'rescheduled', 'cancelled', 'declined']) {
+      assert.equal(api.paidPendingEditAdmitted({ ...row, status }), false, data_environment + ' ' + status)
+    }
+    for (const [label, change] of SAVED_CARD_REFUSALS) {
+      assert.equal(api.paidPendingEditAdmitted({ ...row, ...change }), false, data_environment + ' ' + label)
+    }
   }
-  for (const [label, change] of SAVED_CARD_REFUSALS) {
-    assert.equal(api.paidPendingEditAdmitted({ ...row, ...change }), false, label)
+  for (const data_environment of ['', undefined, 'staging', 'unknown']) {
+    assert.equal(api.paidPendingEditAdmitted(savedCard({ status: 'pending', data_environment })), false)
   }
 })
 
-test('P6: the Brand can edit its Paid pending request in Test only', () => {
-  const now = Date.now()
-  const row = savedCard({ status: 'pending', start: now + 3 * DAY })
-  assert.equal(api.canRequestReschedule('brand', row, now), true)
-  assert.equal(api.rescheduleKindFor('brand', row, now), 'reschedule-request')
-  assert.equal(api.canRequestReschedule('starter', row, now), false)
-  assert.equal(api.canRequestReschedule('guest', row, now), false)
-  assert.equal(api.canRequestReschedule('brand', { ...row, data_environment: 'production' }, now), false)
-  assert.equal(api.rescheduleKindFor('brand', { ...row, data_environment: 'production' }, now), '')
-  for (const [label, change] of SAVED_CARD_REFUSALS) {
-    assert.equal(api.canRequestReschedule('brand', { ...row, ...change }, now), false, label)
+test('P6: only the Brand can edit its saved-card Paid pending request in Test and production', () => {
+  const now = 1_800_000_000_000
+  for (const data_environment of ['test', 'production']) {
+    const row = savedCard({ status: 'pending', start: now + 3 * DAY, data_environment })
+    assert.equal(api.canRequestReschedule('brand', row, now), true, data_environment)
+    assert.equal(api.rescheduleKindFor('brand', row, now), 'reschedule-request')
+    assert.equal(api.canRequestReschedule('starter', row, now), false)
+    assert.equal(api.canRequestReschedule('guest', row, now), false)
+    for (const [label, change] of SAVED_CARD_REFUSALS) {
+      assert.equal(api.canRequestReschedule('brand', { ...row, ...change }, now), false, data_environment + ' ' + label)
+    }
+    // Opening production does not change the role, offer, time or identity guards.
+    for (const change of [
+      { duration: 0 }, { duration: undefined }, { grant_id: '' },
+      { brand_data: {} }, { booking_id: '' }, { config_id: '' },
+      { start: now }, { start: now - 1 },
+      { start_old: now + 2 * DAY, end_old: now + 2 * DAY + H, rescheduled_by: 'starter' },
+    ]) {
+      assert.equal(api.canRequestReschedule('brand', { ...row, ...change }, now), false, JSON.stringify(change))
+    }
+    assert.equal(api.canRequestReschedule('brand', { ...row, start: now + 1 }, now), true)
+    // The confirmed-call proposal contract never claims a pending row.
+    assert.equal(api.canProposeReschedule('brand', clocked({ ...row })), false)
   }
-  // The Free shape rules still apply to Paid: duration, grant, identity, future.
-  assert.equal(api.canRequestReschedule('brand', { ...row, duration: 0 }, now), false)
-  assert.equal(api.canRequestReschedule('brand', { ...row, duration: undefined }, now), false)
-  assert.equal(api.canRequestReschedule('brand', { ...row, grant_id: '' }, now), false)
-  assert.equal(api.canRequestReschedule('brand', { ...row, brand_data: {} }, now), false)
-  assert.equal(api.canRequestReschedule('brand', { ...row, start: now }, now), false)
-  assert.equal(api.canRequestReschedule('brand', { ...row, start: now + 1 }, now), true)
-  // The propose contract never claims a pending row.
-  assert.equal(api.canProposeReschedule('brand', clocked({ ...row })), false)
+  for (const data_environment of ['', undefined, 'staging', 'unknown']) {
+    const row = savedCard({ status: 'pending', start: now + DAY, data_environment })
+    assert.equal(api.rescheduleKindFor('brand', row, now), '')
+  }
+})
+
+test('P6: production Paid edit sends only the pending-update contract and preserves payment state', async () => {
+  const originalFetch = global.xanoAuthFetch
+  const originalStorage = global.sessionStorage
+  const requests = []
+  const now = 1_800_000_000_000
+  const booking = savedCard({ status: 'pending', start: now + 3 * DAY, data_environment: 'production' })
+  const before = structuredClone(booking)
+  const slot = { start: now + 4 * DAY, end: now + 4 * DAY + H, timezone: 'Asia/Manila' }
+  try {
+    const values = new Map()
+    global.sessionStorage = {
+      getItem(key) { return values.get(key) ?? null },
+      setItem(key, value) { values.set(key, String(value)) },
+      removeItem(key) { values.delete(key) },
+    }
+    global.xanoAuthFetch = async (url, options) => {
+      requests.push({ url, method: options.method, body: JSON.parse(options.body) })
+      return {
+        ok: true,
+        async json() {
+          return { reschedule_request: { booking_id: 'replacement-paid-1', replaced_booking_id: booking.booking_id, status: 'pending' } }
+        },
+      }
+    }
+    const result = await api.proposeReschedule(booking, 'brand', 'Use a later time', slot, now)
+    assert.equal(result.reschedule_request.status, 'pending')
+    assert.equal(requests.length, 1)
+    assert.match(requests[0].url, /\/booking\/reschedule\/request\/v3$/)
+    assert.equal(requests[0].method, 'POST')
+    assert.match(requests[0].body.idempotency_key, /^dashboard-reschedule-request:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i)
+    assert.deepEqual(requests[0].body, {
+      booking_id: booking.booking_id,
+      config_id: booking.config_id,
+      idempotency_key: requests[0].body.idempotency_key,
+      rescheduled_reason: 'Use a later time',
+      new_start: slot.start,
+      new_end: slot.end,
+      timezone: slot.timezone,
+    })
+    assert.deepEqual(booking, before, 'edit sends no payment command and changes no local payment field')
+
+    for (const [label, change] of SAVED_CARD_REFUSALS) {
+      assert.equal(await api.proposeReschedule({ ...booking, ...change }, 'brand', 'Use a later time', slot, now), null, label)
+    }
+    assert.equal(await api.proposeReschedule(booking, 'starter', 'Use a later time', slot, now), null)
+    assert.equal(requests.length, 1, 'refused payment states and the Starter send no command')
+  } finally {
+    global.xanoAuthFetch = originalFetch
+    global.sessionStorage = originalStorage
+  }
 })
 
 test('P6 regression: Free pending edit is unchanged in every environment', () => {
