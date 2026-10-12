@@ -290,7 +290,7 @@
      `$p7_paid_open`) admit Paid only for `data_environment` values mirrored
      below. Keep each list in lockstep with its server gate; the client must
      never offer a control the server refuses. */
-  const PAID_EDIT_OPEN_ENVIRONMENTS = ['test']
+  const PAID_EDIT_OPEN_ENVIRONMENTS = ['test', 'production']
   const PAID_RESCHEDULE_OPEN_ENVIRONMENTS = ['test', 'production']
   // P5 (#2099 held-call cancel) opens in production with the #2099 / #263 / #272
   // server publish; keep this list in lockstep with that admission gate.
