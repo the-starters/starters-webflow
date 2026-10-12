@@ -3042,7 +3042,10 @@ Approval eligibility and Brand action copy use the row's bound canonical
 server clock. Missing or invalid bindings show no Brand action. The click
 retains the bound row and captured booking identity, then rechecks eligibility
 after Stripe-client loading and the canonical response, before either bank
-step. A skipped bank step does not refresh as a successful approval. The
+step. Closing or resetting Call Details permanently invalidates that approval,
+including an authored DIV root inside a native dialog. A closed ancestor
+dialog also blocks approval. Cleanup preserves a newer card-picker owner.
+A skipped bank step does not refresh as a successful approval. The
 click posts the booking ID to `brand/booking/payment-action/v3` through
 `window.xanoAuthFetch`; Xano owns Brand identity, booking ownership, the
 canonical PaymentIntent state, and provider selection. The response must echo

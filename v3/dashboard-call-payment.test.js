@@ -186,7 +186,7 @@ test('dashboard Change Payment Method binds the selected booking to recovery', a
   const booking = paidBooking('card_or_payment_declined')
   const modal = { open: true, querySelector: () => ({}) }
   const button = { getAttribute: () => 'change-card', hasAttribute: () => false,
-    closest: selector => selector === '[popup-booking-info]' ? modal : button }
+    closest: selector => selector === '[popup-booking-info]' ? modal : selector === '[payment-action-btn], [popup-stripe-card-open]' ? button : null }
   const document = { addEventListener: (event, fn) => { listener = fn } }
   global.StartersPaidCallBrandPayment = {
     getReadiness: async () => ({ environment: 'test' }),
@@ -369,7 +369,7 @@ test('a failed Change card open shows a Brand-facing message, never a route path
   const basePanel = {}
   const modal = { open: true, querySelector: selector => selector === '[booking-popup-content="base"]' ? basePanel : {} }
   const button = { getAttribute: () => 'change-card', hasAttribute: () => false,
-    closest: selector => selector === '[popup-booking-info]' ? modal : button }
+    closest: selector => selector === '[popup-booking-info]' ? modal : selector === '[payment-action-btn], [popup-stripe-card-open]' ? button : null }
   const document = { addEventListener: (event, fn) => { listener = fn } }
   global.StartersPaidCallBrandPayment = {
     // The real client throws this when the readiness route returns no body.
@@ -427,7 +427,7 @@ test('P9 dashboard Approve payment is single-flight, Brand-only and reloads the 
   const attrs = {}
   const button = { getAttribute: name => name === 'payment-action-btn' ? 'approve-payment' : null, hasAttribute: () => false,
     setAttribute: (name, value) => { attrs[name] = value },
-    closest: selector => selector === '[popup-booking-info]' ? modal : button }
+    closest: selector => selector === '[popup-booking-info]' ? modal : selector === '[payment-action-btn], [popup-stripe-card-open]' ? button : null }
   const document = { addEventListener: (event, fn) => { if (event === 'click') listener = fn } }
   const gate = new Promise(resolve => { release = resolve })
   let bankSteps = 0
@@ -567,7 +567,7 @@ async function approvalWireHarness(booking, run, stripeLoad) {
   const button = {
     getAttribute: name => name === 'payment-action-btn' ? 'approve-payment' : null,
     hasAttribute: () => false, setAttribute() {},
-    closest: selector => selector === '[popup-booking-info]' ? modal : button,
+    closest: selector => selector === '[popup-booking-info]' ? modal : selector === '[payment-action-btn], [popup-stripe-card-open]' ? button : null,
   }
   const document = { addEventListener: (event, fn) => { if (event === 'click') listener = fn } }
   global.StartersPaidCallBrandPayment = {
@@ -712,4 +712,142 @@ test('P9 wire stops closed or replaced modals while Stripe loads', async () => w
       assert.equal(calls.refreshes, 0)
     }, async () => { invalidate() })
   }
+}))
+
+
+async function approvalModalHarness(options, run) {
+  const previous = { client: global.StartersPaidCallBrandPayment, fetch: global.xanoAuthFetch, document: global.document, payment: global.StartersDashboardCallPayment }
+  const booking = options.booking
+  const calls = { stripeLoads: 0, routes: 0, bankSteps: 0, refreshes: 0, pickerDisposals: 0 }
+  let release
+  const gate = new Promise(resolve => { release = resolve })
+  const listeners = {}
+  const ancestor = options.ancestor ? { tagName: 'DIALOG', open: true } : null
+  const modal = { tagName: 'DIV', querySelector: () => null, querySelectorAll: () => [], removeAttribute() {}, closest: selector => selector === 'dialog' ? ancestor : null }
+  if (ancestor) ancestor.querySelectorAll = selector => selector === '[popup-booking-info]' ? [modal] : []
+  const control = action => {
+    const button = { getAttribute: name => name === 'payment-action-btn' ? action : null, hasAttribute: () => false, setAttribute() {} }
+    button.closest = selector => selector === '[popup-booking-info]' ? modal : selector === '[payment-action-btn], [popup-stripe-card-open]' ? button : null
+    return button
+  }
+  const approve = control('approve-payment')
+  const close = { closest: selector => selector === '[popup-booking-info]' ? modal : selector.includes('[data-modal-close]') ? close : null }
+  const document = { addEventListener: (name, listener) => { listeners[name] = listener }, querySelector: () => modal }
+  global.document = document
+  global.StartersDashboardCallPayment = api
+  global.StartersPaidCallBrandPayment = {
+    getReadiness: async () => ({ environment: 'test' }),
+    installSavedCardPicker: () => ({ load: async () => {}, dispose: () => { calls.pickerDisposals += 1 } }),
+    installCardSetupForm() {},
+    stripeForPaymentEnvironment: async () => {
+      calls.stripeLoads += 1
+      if (options.phase === 'stripe') await gate
+      const bankStep = async () => {
+        calls.bankSteps += 1
+        if (options.phase === 'bank') await gate
+        return { paymentIntent: { status: 'requires_capture' } }
+      }
+      return { handleNextAction: bankStep, confirmCardPayment: bankStep }
+    },
+  }
+  global.xanoAuthFetch = async () => {
+    calls.routes += 1
+    if (options.phase === 'route') await gate
+    return { ok: true, json: async () => ({ booking_id: booking.booking_id, payment_status: 'auth_required', client_secret: 'pi_secret_test', provider_status: options.providerStatus || 'requires_action', payment_method: 'pm_saved_1' }) }
+  }
+  const click = target => listeners.click({ target, preventDefault() {}, stopImmediatePropagation() {} })
+  try {
+    assert.equal(await api.wire({ document, role: 'brand', getBooking: () => booking, restart: async () => { calls.refreshes += 1 } }), true)
+    await run({ booking, modal, calls, release,
+      start: () => click(approve), tick: () => new Promise(resolve => setImmediate(resolve)),
+      closeControl: () => click(close), invalidate: () => api.invalidateModal(modal),
+      reset: () => require('./dashboard-calls.js').resetDetailModal(),
+      closeAncestor: (emit, reopen) => {
+        ancestor.open = false
+        if (emit) listeners.close({ target: ancestor })
+        if (reopen) ancestor.open = true
+      },
+      changeCard: () => { booking.payment_status = 'expired_card'; return click(control('change-card')) },
+    })
+  } finally {
+    global.StartersPaidCallBrandPayment = previous.client
+    global.xanoAuthFetch = previous.fetch
+    global.document = previous.document
+    global.StartersDashboardCallPayment = previous.payment
+  }
+}
+
+for (const close of ['closeControl', 'invalidate', 'reset']) {
+  test('P9 DIV approval is permanently invalidated by ' + close + ' while Stripe loads', async () => withPaymentClock(async ({ bound }) => {
+    await approvalModalHarness({ booking: bound({}), phase: 'stripe' }, async context => {
+      const pending = context.start()
+      await context.tick()
+      await context[close]()
+      context.release()
+      await pending
+      assert.equal(context.calls.stripeLoads, 1)
+      assert.equal(context.calls.routes, 0)
+      assert.equal(context.calls.bankSteps, 0)
+      assert.equal(context.calls.refreshes, 0)
+    })
+  }))
+}
+
+test('P9 DIV approval fails closed when its native ancestor dialog closes', async () => withPaymentClock(async ({ bound }) => {
+  for (const [emit, reopen] of [[false, false], [true, true]]) {
+    await approvalModalHarness({ booking: bound({}), phase: 'stripe', ancestor: true }, async context => {
+      const pending = context.start()
+      await context.tick()
+      context.closeAncestor(emit, reopen)
+      context.release()
+      await pending
+      assert.equal(context.calls.routes, 0)
+      assert.equal(context.calls.bankSteps, 0)
+      assert.equal(context.calls.refreshes, 0)
+    })
+  }
+}))
+
+test('P9 delegated DIV close during either canonical response prevents bank approval', async () => withPaymentClock(async ({ bound }) => {
+  for (const providerStatus of ['requires_action', 'requires_payment_method']) {
+    await approvalModalHarness({ booking: bound({}), phase: 'route', providerStatus }, async context => {
+      const pending = context.start()
+      await context.tick()
+      await context.closeControl()
+      context.release()
+      await pending
+      assert.equal(context.calls.routes, 1)
+      assert.equal(context.calls.bankSteps, 0)
+      assert.equal(context.calls.refreshes, 0)
+    })
+  }
+}))
+
+test('P9 close while the bank step returns cannot refresh an invalidated DIV modal', async () => withPaymentClock(async ({ bound }) => {
+  await approvalModalHarness({ booking: bound({}), phase: 'bank' }, async context => {
+    const pending = context.start()
+    await context.tick()
+    await context.closeControl()
+    context.release()
+    await pending
+    assert.equal(context.calls.routes, 1)
+    assert.equal(context.calls.bankSteps, 1)
+    assert.equal(context.calls.refreshes, 0)
+  })
+}))
+
+test('P9 stale approval cleanup preserves a successor card-picker owner', async () => withPaymentClock(async ({ bound }) => {
+  await approvalModalHarness({ booking: bound({}), phase: 'stripe' }, async context => {
+    const pending = context.start()
+    await context.tick()
+    context.invalidate()
+    await context.changeCard()
+    context.release()
+    await pending
+    assert.equal(context.calls.routes, 0)
+    assert.equal(context.calls.bankSteps, 0)
+    assert.equal(context.calls.pickerDisposals, 0)
+    context.invalidate()
+    assert.equal(context.calls.pickerDisposals, 1)
+  })
 }))

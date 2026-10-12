@@ -322,7 +322,11 @@
         control.querySelectorAll('button').forEach(button => { button.disabled = selecting || context.adding })
       })
     }
-    document.addEventListener('close', event => { invalidateModal(event.target) }, true)
+    document.addEventListener('close', event => {
+      invalidateModal(event.target)
+      // The authored booking root can be a DIV inside the native dialog.
+      event.target?.querySelectorAll?.('[popup-booking-info]').forEach(invalidateModal)
+    }, true)
     document.addEventListener('click', async function (event) {
       const close = event.target?.closest?.('[data-modal-close], [booking-popup-info-close], [booking-action-btn="switch-close"], [booking-card-action-btn="switch-close"]')
       if (close) invalidateModal(close.closest('[popup-booking-info]'))
@@ -340,9 +344,18 @@
         approving = true
         target.setAttribute('aria-disabled', 'true')
         const bookingId = clean(booking.booking_id)
-        const isCurrent = () => (!('open' in modal) || modal.open) &&
-          settings.getBooking(modal) === booking && clean(booking.booking_id) === bookingId
+        invalidateModal(modal)
+        let valid = true
+        const invalidate = () => { valid = false }
+        paymentOwners.set(modal, invalidate)
+        const isCurrent = () => {
+          const dialog = modal.closest?.('dialog')
+          return valid && paymentOwners.get(modal) === invalidate &&
+            (!('open' in modal) || modal.open) && (!dialog || dialog.open === true) &&
+            settings.getBooking(modal) === booking && clean(booking.booking_id) === bookingId
+        }
         try {
+          if (!isCurrent()) return
           const stripe = await client.stripeForPaymentEnvironment(booking.payment_environment)
           if (!isCurrent() || !canRequestPaymentAction(settings.role, booking)) return
           const approved = await approvePayment(settings.role, booking, stripe, isCurrent)
@@ -356,8 +369,12 @@
             actions.showActionError(content, APPROVE_PAYMENT_ERROR)
           }
         } finally {
+          valid = false
           approving = false
-          target.setAttribute('aria-disabled', 'false')
+          if (paymentOwners.get(modal) === invalidate) {
+            paymentOwners.delete(modal)
+            target.setAttribute('aria-disabled', 'false')
+          }
         }
         return
       }
