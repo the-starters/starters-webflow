@@ -2207,6 +2207,13 @@ request method, body, headers, and query parameters, and sends the rewritten
 request through the auth bridge owned by `scheduling-auth.js`. The Stripe lookup
 follows the
 [domain-isolated environment contract](#domain-isolated-test-and-live-environments).
+The `starter/get_charges_enabled` and `starter/get_stripe_connect_id` readers
+are owner-only in Xano. When the page's resolved `window.MEMBER.id` differs
+from the requested `member_id`, the adapter answers locally with HTTP `403`
+and code `SCHEDULING_V3_OWNER_ONLY_READ` instead of sending the request. The
+owner session, a logged-out visitor, and a session whose member has not
+resolved are forwarded unchanged; the adapter waits on `window.memberReady`
+when the page exposes it before deciding.
 On every installed surface, the adapter owns both `window.fetch` and direct
 `window.xanoAuthFetch` calls. It reclaims the auth bridge retained by
 `scheduling-auth.js` if another page bundle replaced the public global, so
