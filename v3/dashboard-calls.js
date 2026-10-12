@@ -2806,18 +2806,25 @@
     const naturalPanel = detailOpenPanel(modal, booking, storedStatus)
     const forcedBase = meetingForcedDetailBases.has(modal)
     const previousPanel = forcedBase ? 'base' : naturalPanel
-    if (visible.some(function (panel) {
-      return clean(panel.getAttribute('booking-popup-content')) !== previousPanel
-    })) {
-      if (forcedBase) meetingForcedDetailBases.delete(modal)
-      return false
-    }
     if (
       previousPanel === 'completed' && !paidBooking(booking) &&
       (visible.length !== 1 || visible[0] !== uniqueCompletedDetailPanel(modal))
     ) return false
     const referenceTime = meetingReferenceTime(booking, now)
     const currentStatus = detailStatusAtReference(booking, referenceTime)
+    const paymentSignature = detailPaymentSignature(booking)
+    const paymentChanged = detailPaymentSignatures.get(modal) !== paymentSignature
+    if (paymentChanged) {
+      setBookingField(modal, 'payment-status-text', paymentStatusText(booking, role), paidBooking(booking))
+      configureDetailActions(modal, role, currentStatus, booking, referenceTime)
+      detailPaymentSignatures.set(modal, paymentSignature)
+    }
+    if (visible.some(function (panel) {
+      return clean(panel.getAttribute('booking-popup-content')) !== previousPanel
+    })) {
+      if (forcedBase) meetingForcedDetailBases.delete(modal)
+      return paymentChanged
+    }
     const nextPanel = detailOpenPanelForMeeting(
       modal,
       booking,
@@ -2826,13 +2833,6 @@
     )
     const currentPendingOffer = pendingOfferSignature(booking)
     const storedPendingOffer = clean(modal.getAttribute('data-booking-pending-offer'))
-    const paymentSignature = detailPaymentSignature(booking)
-    const paymentChanged = detailPaymentSignatures.get(modal) !== paymentSignature
-    if (paymentChanged) {
-      setBookingField(modal, 'payment-status-text', paymentStatusText(booking, role), paidBooking(booking))
-      configureDetailActions(modal, role, currentStatus, booking, referenceTime)
-      detailPaymentSignatures.set(modal, paymentSignature)
-    }
     if (currentStatus !== storedStatus) {
       modal.setAttribute('data-booking-status', currentStatus)
       setBookingField(modal, 'status', statusLabel(currentStatus, role, booking), true)

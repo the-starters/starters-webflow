@@ -2309,6 +2309,67 @@ test('P9 canonical payment-only refresh repaints the open modal without changing
   }
 })
 
+for (const panelName of ['cancel-reason', 'reschedule']) {
+  test('P9 payment projection repaints hidden base while preserving ' + panelName + ' input', () => {
+    const previous = { document: global.document, actions: global.StartersDashboardCallActions, payment: global.StartersDashboardCallPayment }
+    const actions = require('./dashboard-call-actions.js')
+    const view = detailModalHarness()
+    const panel = element({ 'booking-popup-content': panelName })
+    const input = element()
+    input.value = 'Keep this typed action input.'
+    const queryAll = view.modal.querySelectorAll
+    const query = view.modal.querySelector
+    view.modal.querySelectorAll = selector => selector === '[booking-popup-content]'
+      ? queryAll(selector).concat(panel) : queryAll(selector)
+    view.modal.querySelector = selector => {
+      if (selector === '[booking-popup-content="' + panelName + '"]') return panel
+      if (selector === '[booking-reschedule-reason]') return input
+      return query(selector)
+    }
+    const approve = element({ 'payment-action-btn': 'approve-payment' })
+    view.actions.push(approve)
+    const now = Date.now()
+    const booking = { booking_id: 'post-bank-' + panelName, config_id: 1,
+      status: 'confirmed', lifecycle_revision: 2, payment_intent: 'pi_' + panelName,
+      data_environment: 'test', payment_environment: 'test', paid_meeting: true,
+      payment_status: 'auth_required', payment_reconciliation_status: 'reconciled',
+      payment_revision: 2, pm_confirmed: true, start: now + 49 * 3600000,
+      end: now + 50 * 3600000, server_now_ms: now, duration: 60,
+      brand_data: { name: 'Brand', timezone: 'UTC', memberstack_id: 'brand' },
+      starter_data: { name: 'Starter', timezone: 'UTC', memberstack_id: 'starter' } }
+    actions.bindCanonicalClock([booking], actions.monotonicNow())
+    global.StartersDashboardCallActions = actions
+    global.StartersDashboardCallPayment = { canApprovePayment: (_role, row) => row.payment_status === 'auth_required', canManageCards: () => false }
+    global.document = { querySelector: () => view.modal }
+    try {
+      api.populateDetailModal(view.modal, booking, 'brand')
+      // Model an already-selected action panel; ordinary navigation is covered
+      // separately by the providerless browser Cancel/reason/Back journey.
+      view.base.hidden = true
+      panel.hidden = false
+      panel.style.display = 'flex'
+      input.value = 'Keep this typed action input.'
+      const fresh = { ...booking, payment_status: 'intent_created', payment_revision: 3 }
+      actions.bindCanonicalClock([fresh], actions.monotonicNow())
+      const changed = api.refreshOpenDetailPanel([{ rows: [fresh], list: element() }], 'brand')
+      assert.equal(view.fields['payment-status-text'].textContent, 'Payment method confirmed.')
+      assert.equal(approve.hidden, true)
+      assert.equal(changed, true)
+      assert.equal(view.base.hidden, true)
+      assert.equal(panel.hidden, false)
+      assert.equal(input.value, 'Keep this typed action input.')
+      assert.equal(api.refreshOpenDetailPanel([{ rows: [fresh], list: element() }], 'brand'), false)
+      assert.equal(view.base.hidden, true)
+      assert.equal(panel.hidden, false)
+      assert.equal(input.value, 'Keep this typed action input.')
+    } finally {
+      global.document = previous.document
+      global.StartersDashboardCallActions = previous.actions
+      global.StartersDashboardCallPayment = previous.payment
+    }
+  })
+}
+
 test('Free Call details hide paid copy, duplicate copy, and unsupported actions', (context) => {
   const originalActions = global.StartersDashboardCallActions
   global.StartersDashboardCallActions = require('./dashboard-call-actions.js')

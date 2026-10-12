@@ -26,7 +26,16 @@
   <div booking-popup-content="base">
     <p booking-element="status"></p>
     <p booking-element-wrap><span booking-element="payment-status-text"></span></p>
+    <button type="button" booking-action-btn="switch-cancel">Cancel call</button>
     <div payment-action-btn="approve-payment"><button type="button">Approve Payment</button></div>
+  </div>
+  <div booking-popup-content="cancel" hidden>
+    <p>Cancel this call?</p>
+    <button type="button" booking-action-btn="switch-cancel-reason">Continue</button>
+  </div>
+  <div booking-popup-content="cancel-reason" hidden>
+    <label>Reason<textarea booking-cancel-reason></textarea></label>
+    <button type="button" booking-action-btn="switch-base">Back</button>
   </div>
   <div booking-popup-content="cancelled" hidden></div>
   <div booking-popup-content="completed" hidden></div>
@@ -49,15 +58,18 @@
       template: template.cloneNode(true), rows: [], rendered: 0, filter: 'all' }]
     template.remove()
     const counts = { canonicalReads: 0, paymentActions: 0, bankSteps: 0, completeClicks: 0, productionAccess: 0 }
-    const booking = { id: 1, booking_id: 'synthetic-post-bank', status: 'confirmed', lifecycle_revision: 2,
+    const params = new URLSearchParams(location.search)
+    const actionPanelCase = params.get('action_panel') === 'cancel'
+    const startHours = actionPanelCase ? 49 : 48
+    const booking = { id: 1, booking_id: 'synthetic-post-bank', config_id: 1, status: 'confirmed', lifecycle_revision: 2,
       data_environment: 'test', payment_environment: 'test', paid_meeting: true, pm_confirmed: true,
       payment_status: 'auth_required', payment_reconciliation_status: 'reconciled', payment_revision: 2,
       payment_intent: 'pi_synthetic_hold',
-      start: Date.now() + 48 * 3600000, end: Date.now() + 49 * 3600000, duration: 60, price: 1,
+      start: Date.now() + startHours * 3600000, end: Date.now() + (startHours + 1) * 3600000, duration: 60, price: 1,
       call_context: 'Synthetic delayed webhook',
       brand_data: { name: 'Synthetic Brand', memberstack_id: 'synthetic-brand', timezone: 'UTC' },
       starter_data: { name: 'Synthetic Starter', memberstack_id: 'synthetic-starter', timezone: 'UTC' } }
-    const workerDelayMs = Number(new URLSearchParams(location.search).get('worker_delay_ms') || 0)
+    const workerDelayMs = Number(params.get('worker_delay_ms') || 0)
     let approved = false, afterBankReads = 0, elapsedRetryDelaysMs = 0
     window.xanoAuthFetch = async (url, options) => {
       const body = JSON.parse(options.body)
@@ -101,6 +113,7 @@
     }
     await refresh()
     await payment.wire({ document, role: 'brand', getBooking: target => calls.bookingForActionTarget(refs, target), restart: refresh })
+    StartersDashboardCallActions.wire({ document, role: 'brand', getBooking: target => calls.bookingForActionTarget(refs, target), restart: refresh })
     calls.populateDetailModal(modal, refs[0].rows[0], 'brand')
     modal.showModal()
     window.proofState = { counts, refs, modal, calls, refresh,
@@ -113,7 +126,7 @@
         // A cancelled request-timeout timer must not advance the worker clock.
         if (retry && approved) elapsedRetryDelaysMs += delay
         callback(...args)
-      }, retry ? 15 : delay)
+      }, retry && !actionPanelCase ? 15 : delay)
     }
     window.fixtureReady = true
   })().catch(error => { window.fixtureError = error.stack })

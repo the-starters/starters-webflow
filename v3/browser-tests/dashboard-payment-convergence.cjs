@@ -31,11 +31,42 @@ async function main() {
     })
     const workerDelayMs = Number(process.argv[3] || 0)
     const exhausted = workerDelayMs > 100000
-    await page.goto(`http://127.0.0.1:${server.address().port}/v3/browser-tests/dashboard-payment-convergence.html?worker_delay_ms=${workerDelayMs}`)
+    const actionPanelCase = process.argv[4] === 'cancel'
+    assert.equal(actionPanelCase && exhausted, false)
+    await page.goto(`http://127.0.0.1:${server.address().port}/v3/browser-tests/dashboard-payment-convergence.html?worker_delay_ms=${workerDelayMs}${actionPanelCase ? '&action_panel=cancel' : ''}`)
     await page.waitForFunction(() => window.fixtureReady || window.fixtureError)
     assert.equal(await page.evaluate(() => window.fixtureError || ''), '')
     await page.locator('[payment-action-btn="approve-payment"] button').click()
     await page.locator('#complete').click()
+    let actionPanelProof
+    if (actionPanelCase) {
+      // Use the ordinary admitted Cancel/reason/Back controls. This mode keeps
+      // the real 0/1/4-second timer cadence, so the input precedes projection.
+      await page.waitForFunction(() => proofState.counts.canonicalReads >= 2)
+      await page.locator('[booking-action-btn="switch-cancel"]').click()
+      await page.locator('[booking-popup-content="cancel"] [booking-action-btn="switch-cancel-reason"]').click()
+      const reason = 'Keep this typed reason while payment converges.'
+      await page.locator('[booking-cancel-reason]').fill(reason)
+      assert.equal(await page.evaluate(() => proofState.refs[0].rows[0].payment_revision), 2)
+      await page.screenshot({ path: path.join(evidence, 'action-panel-before-convergence.png'), fullPage: true })
+      await page.waitForFunction(() => proofState.refs[0].rows[0].payment_revision === 3)
+      await page.waitForTimeout(80)
+      actionPanelProof = await page.evaluate(() => ({
+        visiblePanels: Array.from(proofState.modal.querySelectorAll('[booking-popup-content]'))
+          .filter(panel => !panel.hidden && panel.style.display !== 'none')
+          .map(panel => panel.getAttribute('booking-popup-content')),
+        reason: document.querySelector('[booking-cancel-reason]').value,
+        hiddenBasePayment: proofState.modal.querySelector('[booking-popup-content="base"] [booking-element="payment-status-text"]').textContent,
+        counts: { ...proofState.counts },
+      }))
+      assert.deepEqual(actionPanelProof.visiblePanels, ['cancel-reason'])
+      assert.equal(actionPanelProof.reason, reason)
+      assert.equal(actionPanelProof.hiddenBasePayment, 'Payment method confirmed.')
+      await page.screenshot({ path: path.join(evidence, 'action-panel-input-preserved.png'), fullPage: true })
+      await page.locator('[booking-popup-content="cancel-reason"] [booking-action-btn="switch-base"]').click()
+      assert.equal(await page.evaluate(() => proofState.modal.querySelector('[booking-popup-content="base"]').hidden), false)
+      assert.equal(await page.locator('[booking-cancel-reason]').inputValue(), reason)
+    }
     if (exhausted) {
       await page.waitForFunction(() => proofState.counts.canonicalReads === 9 && proofState.elapsedRetryDelaysMs === 100000)
       // The final mocked read resolves immediately; let its click handler
@@ -85,14 +116,14 @@ async function main() {
         return { visible: !control.hidden, ariaDisabled: control.getAttribute('aria-disabled') }
       })
       assert.deepEqual(result.newPaymentControl, { visible: true, ariaDisabled: 'false' })
-      assert.equal(result.counts.bankSteps, 1)
-      assert.equal(result.counts.paymentActions, 1)
+      result.afterNewPaymentCounts = await page.evaluate(() => ({ ...proofState.counts }))
+      assert.deepEqual(result.afterNewPaymentCounts, { canonicalReads: 10, paymentActions: 1, bankSteps: 1, completeClicks: 1, productionAccess: 0 })
       await page.screenshot({ path: path.join(evidence, 'new-payment-visible.png'), fullPage: true })
     }
     assert.deepEqual(errors, [])
     assert.deepEqual(blocked, [])
     if (!exhausted) await page.screenshot({ path: path.join(evidence, 'converged.png'), fullPage: true })
-    await fs.writeFile(path.join(evidence, 'RESULT.json'), JSON.stringify({ workerDelayMs, exhausted, result, errors, blocked, externalRequests: 0 }, null, 2) + '\n')
+    await fs.writeFile(path.join(evidence, 'RESULT.json'), JSON.stringify({ workerDelayMs, exhausted, actionPanelCase, actionPanelProof, result, errors, blocked, externalRequests: 0 }, null, 2) + '\n')
     console.log(exhausted
       ? 'PASS: exhausted read budget keeps same-payment approval hidden; a new payment restores eligibility. External requests: 0.'
       : 'PASS: one bank step; delayed canonical state repaints card and same open modal. External requests: 0.')
