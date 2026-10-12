@@ -2514,6 +2514,43 @@
     show(hint, true)
   }
 
+  function detailPaymentActionVisible(modal, role, booking, button) {
+    const paymentAction = clean(button.getAttribute('payment-action-btn'))
+    const paymentControl = ['change-card', 'change-card-v2', 'add-card'].includes(paymentAction) ||
+      (typeof button.hasAttribute === 'function' &&
+        (button.hasAttribute('popup-stripe-card-open') || button.hasAttribute('pm-use-this')))
+    const preferredPaymentControl = paymentAction !== 'change-card' ||
+      typeof modal.querySelector !== 'function' ||
+      !modal.querySelector('[payment-action-btn="change-card-v2"]')
+    return (paymentControl && preferredPaymentControl &&
+      typeof global.StartersDashboardCallPayment?.canManageCards === 'function' &&
+      global.StartersDashboardCallPayment.canManageCards(role, booking)) ||
+      (paymentAction === 'approve-payment' &&
+        typeof global.StartersDashboardCallPayment?.canApprovePayment === 'function' &&
+        global.StartersDashboardCallPayment.canApprovePayment(role, booking))
+  }
+
+  function configureDetailPaymentActions(modal, role, booking) {
+    if (!modal || typeof modal.querySelectorAll !== 'function') return
+    modal
+      .querySelectorAll(DETAIL_ACTION_SELECTOR)
+      .forEach(function (button) {
+        const paymentAction = clean(button.getAttribute('payment-action-btn'))
+        const paymentHook = paymentAction ||
+          (typeof button.hasAttribute === 'function' &&
+            (button.hasAttribute('booking-pm-action') ||
+              button.hasAttribute('data-btn-payment') ||
+              button.hasAttribute('popup-stripe-card-open') ||
+              button.hasAttribute('pm-use-this')))
+        if (!paymentHook) return
+        const payment = detailPaymentActionVisible(modal, role, booking, button)
+        if (paymentAction === 'approve-payment' && payment) {
+          button.setAttribute('aria-disabled', 'false')
+        }
+        show(button, payment)
+      })
+  }
+
   function configureDetailActions(modal, role, status, booking, now) {
     if (!modal || typeof modal.querySelectorAll !== 'function') return
     if (
@@ -2591,18 +2628,7 @@
         const message =
           action === 'message' && bookingMessageHref(role, booking) !== ''
         const paymentAction = clean(button.getAttribute('payment-action-btn'))
-        const paymentControl = ['change-card', 'change-card-v2', 'add-card'].includes(paymentAction) ||
-          (typeof button.hasAttribute === 'function' &&
-            (button.hasAttribute('popup-stripe-card-open') || button.hasAttribute('pm-use-this')))
-        const preferredPaymentControl = paymentAction !== 'change-card' ||
-          !modal.querySelector('[payment-action-btn="change-card-v2"]')
-        const payment = (paymentControl && preferredPaymentControl &&
-          typeof global.StartersDashboardCallPayment?.canManageCards === 'function' &&
-          global.StartersDashboardCallPayment.canManageCards(role, booking)) ||
-          // P9: the 3DS approve control shows only while Stripe needs the Brand.
-          (paymentAction === 'approve-payment' &&
-            typeof global.StartersDashboardCallPayment?.canApprovePayment === 'function' &&
-            global.StartersDashboardCallPayment.canApprovePayment(role, booking))
+        const payment = detailPaymentActionVisible(modal, role, booking, button)
         if (paymentAction === 'approve-payment' && payment) {
           button.setAttribute('aria-disabled', 'false')
         }
@@ -2816,7 +2842,7 @@
     const paymentChanged = detailPaymentSignatures.get(modal) !== paymentSignature
     if (paymentChanged) {
       setBookingField(modal, 'payment-status-text', paymentStatusText(booking, role), paidBooking(booking))
-      configureDetailActions(modal, role, currentStatus, booking, referenceTime)
+      configureDetailPaymentActions(modal, role, booking)
       detailPaymentSignatures.set(modal, paymentSignature)
     }
     if (visible.some(function (panel) {

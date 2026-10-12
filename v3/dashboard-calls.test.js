@@ -2313,6 +2313,17 @@ for (const panelName of ['cancel-reason', 'reschedule']) {
   test('P9 payment projection repaints hidden base while preserving ' + panelName + ' input', () => {
     const previous = { document: global.document, actions: global.StartersDashboardCallActions, payment: global.StartersDashboardCallPayment }
     const actions = require('./dashboard-call-actions.js')
+    let pendingOfferPasses = 0
+    const actionModule = {
+      ...actions,
+      applyPendingOfferControls(...args) {
+        pendingOfferPasses += 1
+        return actions.applyPendingOfferControls(...args)
+      },
+      canCancel(_role, row) {
+        return row && row.status === 'confirmed'
+      },
+    }
     const view = detailModalHarness()
     const panel = element({ 'booking-popup-content': panelName })
     const input = element()
@@ -2338,23 +2349,31 @@ for (const panelName of ['cancel-reason', 'reschedule']) {
       brand_data: { name: 'Brand', timezone: 'UTC', memberstack_id: 'brand' },
       starter_data: { name: 'Starter', timezone: 'UTC', memberstack_id: 'starter' } }
     actions.bindCanonicalClock([booking], actions.monotonicNow())
-    global.StartersDashboardCallActions = actions
+    global.StartersDashboardCallActions = actionModule
     global.StartersDashboardCallPayment = { canApprovePayment: (_role, row) => row.payment_status === 'auth_required', canManageCards: () => false }
     global.document = { querySelector: () => view.modal }
     try {
       api.populateDetailModal(view.modal, booking, 'brand')
+      const cancel = view.actions.find(button => button.getAttribute('booking-action-btn') === 'cancel')
+      const initialCancelHidden = cancel.hidden
+      const initialPendingOfferPasses = pendingOfferPasses
+      assert.equal(initialCancelHidden, false)
       // Model an already-selected action panel; ordinary navigation is covered
       // separately by the providerless browser Cancel/reason/Back journey.
       view.base.hidden = true
       panel.hidden = false
       panel.style.display = 'flex'
       input.value = 'Keep this typed action input.'
-      const fresh = { ...booking, payment_status: 'intent_created', payment_revision: 3 }
-      actions.bindCanonicalClock([fresh], actions.monotonicNow())
+      const fresh = { ...booking, status: 'pending', payment_status: 'intent_created',
+        payment_revision: 3, start_old: now + 50 * 3600000, end_old: now + 51 * 3600000,
+        rescheduled_by: 'starter', confirmation_expires_at: now + 24 * 3600000 }
+      actionModule.bindCanonicalClock([fresh], actionModule.monotonicNow())
       const changed = api.refreshOpenDetailPanel([{ rows: [fresh], list: element() }], 'brand')
       assert.equal(view.fields['payment-status-text'].textContent, 'Payment method confirmed.')
       assert.equal(approve.hidden, true)
       assert.equal(changed, true)
+      assert.equal(cancel.hidden, initialCancelHidden)
+      assert.equal(pendingOfferPasses, initialPendingOfferPasses)
       assert.equal(view.base.hidden, true)
       assert.equal(panel.hidden, false)
       assert.equal(input.value, 'Keep this typed action input.')
