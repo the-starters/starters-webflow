@@ -2846,10 +2846,11 @@ returns full rows, so `payment_status`, `payment_reconciliation_status`,
   Brand answering a Starter offer; a Starter answering a Brand counter uses
   Decline Call.
 
-`PAID_EDIT_OPEN_ENVIRONMENTS` is `['test']` because the server gate
-(`$p6_paid_open`) opens Test only. `PAID_RESCHEDULE_OPEN_ENVIRONMENTS` is
-`['test', 'production']` because the server gate (`$p7_paid_open`) opens Test
-and Production. `PENDING_PROPOSE_OPEN_ENVIRONMENTS` is
+`PAID_EDIT_OPEN_ENVIRONMENTS` is `['test', 'production']` because the published
+#5921 P6 server gate (`$p6_paid_open`) opens Test and Production.
+`PAID_RESCHEDULE_OPEN_ENVIRONMENTS` is `['test', 'production']` because the
+server gate (`$p7_paid_open`) opens Test and Production.
+`PENDING_PROPOSE_OPEN_ENVIRONMENTS` is
 `['test', 'production']` in lockstep with the published pending-offer server
 gates (#5756 `2abdfa08` / #5759 `b4180195`); rollback the client admission to
 `['test']` if those gates close. Existing confirmed-call Free behavior is
