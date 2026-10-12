@@ -2603,6 +2603,9 @@
           (paymentAction === 'approve-payment' &&
             typeof global.StartersDashboardCallPayment?.canApprovePayment === 'function' &&
             global.StartersDashboardCallPayment.canApprovePayment(role, booking))
+        if (paymentAction === 'approve-payment' && payment) {
+          button.setAttribute('aria-disabled', 'false')
+        }
         show(
           button,
           action === 'switch-close' ||

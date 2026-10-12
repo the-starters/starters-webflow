@@ -2296,6 +2296,12 @@ test('P9 canonical payment-only refresh repaints the open modal without changing
     assert.equal(view.base.hidden, false)
     assert.equal(view.modal.getAttribute('data-booking-status'), 'confirmed')
     assert.equal(api.refreshOpenDetailPanel([{ rows: [fresh], list: element() }], 'brand'), false)
+    approve.setAttribute('aria-disabled', 'true')
+    const newHold = { ...booking, payment_intent: 'pi_new_hold', payment_revision: 3 }
+    actions.bindCanonicalClock([newHold], actions.monotonicNow())
+    assert.equal(api.refreshOpenDetailPanel([{ rows: [newHold], list: element() }], 'brand'), true)
+    assert.equal(approve.hidden, false)
+    assert.equal(approve.getAttribute('aria-disabled'), 'false')
   } finally {
     global.document = previous.document
     global.StartersDashboardCallActions = previous.actions

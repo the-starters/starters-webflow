@@ -70,7 +70,7 @@ async function main() {
       await page.screenshot({ path: path.join(evidence, 'latched-exhaustion.png'), fullPage: true })
       // A genuinely new canonical payment must regain normal eligibility.
       // Only its read response changes; there is no second bank action.
-      result.newPaymentControlVisible = await page.evaluate(async () => {
+      result.newPaymentControl = await page.evaluate(async () => {
         const originalFetch = window.xanoAuthFetch
         window.xanoAuthFetch = async (url, options) => {
           const response = await originalFetch(url, options)
@@ -81,9 +81,10 @@ async function main() {
           })) }
         }
         await proofState.refresh()
-        return !document.querySelector('[payment-action-btn="approve-payment"]').hidden
+        const control = document.querySelector('[payment-action-btn="approve-payment"]')
+        return { visible: !control.hidden, ariaDisabled: control.getAttribute('aria-disabled') }
       })
-      assert.equal(result.newPaymentControlVisible, true)
+      assert.deepEqual(result.newPaymentControl, { visible: true, ariaDisabled: 'false' })
       assert.equal(result.counts.bankSteps, 1)
       assert.equal(result.counts.paymentActions, 1)
       await page.screenshot({ path: path.join(evidence, 'new-payment-visible.png'), fullPage: true })
