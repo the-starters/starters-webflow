@@ -2941,8 +2941,10 @@ when a new attempt starts. A failed command shows the server's `message` or
 The alert renders inside the open `booking-popup-content` panel's direct-child
 `.call-details_layout` body, above the button group, and scrolls into view with
 `block: 'nearest'`. The dialog root clips to the viewport, so an alert there
-was invisible. With no open panel or layout block, the alert falls back to the
-dialog root.
+was invisible. With no layout block, the alert stays on the selected open
+panel. With no open panel, the module selects the dialog root and uses its
+direct-child `.call-details_layout` block when available; otherwise it stays
+on that root.
 While a decline, cancel, or proposal response is in flight, its control reads
 "Declining…", "Cancelling…", "Accepting…", "Confirming…", or "Keeping current time…", is
 `aria-busy`, and it and any button inside it are disabled; the authored label and
