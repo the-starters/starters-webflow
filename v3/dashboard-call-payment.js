@@ -20,10 +20,61 @@
     return String(value == null ? '' : value).trim()
   }
 
+  /* P9 (W5) 3DS approve opening. Lockstep with the #2916 server gate and the
+     other Paid parity switches in dashboard-call-actions.js: the control and
+     the payment-action/v3 call are offered only for `data_environment` values
+     listed here. Production opens after the Stripe Test journey proof. */
+  const PAYMENT_ACTION_OPEN_ENVIRONMENTS = ['test']
+
+  function paymentActionEnvironmentOpen(booking) {
+    const environment = clean(booking && booking.data_environment).toLowerCase()
+    return PAYMENT_ACTION_OPEN_ENVIRONMENTS.includes(environment) &&
+      clean(booking && booking.payment_environment).toLowerCase() ===
+        (environment === 'test' ? 'test' : 'live')
+  }
+
+  function paidBooking(booking) {
+    const value = booking && (
+      booking.is_paid != null ? booking.is_paid : booking.paid_meeting
+    )
+    return value === true || value === 1 || clean(value).toLowerCase() === 'true'
+  }
+
+  function paymentActionNow(booking) {
+    const actions = global.StartersDashboardCallActions
+    try {
+      const reference = actions && typeof actions.canonicalNow === 'function'
+        ? actions.canonicalNow(booking) : null
+      return Number.isFinite(reference) && reference > 0 ? reference : null
+    } catch (_error) { return null }
+  }
+
+  function normalizeTimestamp(value) {
+    const timestamp = Number(value)
+    if (Number.isFinite(timestamp)) {
+      if (timestamp === 0) return timestamp
+      return Math.abs(timestamp) < 1e12 ? timestamp * 1000 : timestamp
+    }
+    const parsed = Date.parse(value)
+    return Number.isFinite(parsed) ? parsed : Number.NaN
+  }
+
+  function paymentActionStart(booking) {
+    const status = clean(booking && booking.status).toLowerCase()
+    return normalizeTimestamp(booking && booking[status === 'rescheduled' ? 'start_old' : 'start'])
+  }
+
+  // P9 review 2026-10-06: approve only on a live call before start (JP A=1a:
+  // after start the call runs with no charge, so no new hold is placed).
   function canRequestPaymentAction(role, booking) {
+    const start = paymentActionStart(booking)
+    const now = paymentActionNow(booking)
     return (
       role === 'brand' &&
-      Boolean(booking && booking.paid_meeting) &&
+      paymentActionEnvironmentOpen(booking) &&
+      ['confirmed', 'rescheduled'].includes(clean(booking && booking.status).toLowerCase()) &&
+      now != null && Number.isFinite(start) && start > now &&
+      paidBooking(booking) &&
       clean(booking && booking.booking_id) !== '' &&
       clean(booking && booking.payment_status).toLowerCase() ===
         'auth_required' &&
@@ -74,6 +125,7 @@
   }
 
   const CHANGE_CARD_ERROR = 'Your payment methods could not be opened. Please try again.'
+  const APPROVE_PAYMENT_ERROR = 'Your payment could not be approved. Please try again.'
 
   async function canonicalPost(path, payload) {
     if (typeof global.xanoAuthFetch !== 'function') {
@@ -98,17 +150,69 @@
 
   async function getPaymentAction(role, booking) {
     if (!canRequestPaymentAction(role, booking)) return null
+    const bookingId = clean(booking.booking_id)
     const result = await canonicalPost(PAYMENT_ACTION_PATH, {
-      booking_id: clean(booking.booking_id),
+      booking_id: bookingId,
     })
+    if (clean(booking.booking_id) !== bookingId) return null
     if (
-      clean(result.booking_id) !== clean(booking.booking_id) ||
+      clean(result.booking_id) !== bookingId ||
       clean(result.payment_status).toLowerCase() !== 'auth_required' ||
       clean(result.client_secret) === ''
     ) {
       throw new Error('Canonical payment action response is invalid')
     }
     return result
+  }
+
+  // P9: Stripe asked the Brand to confirm the hold (3DS). The canonical route
+  // returns the client secret only for the owning Brand while the
+  // PaymentIntent still requires action; Stripe.js shows the bank step. The
+  // booking state moves only through the Stripe webhook, never from here.
+  async function approvePayment(role, booking, stripe, isCurrent) {
+    if (
+      !stripe ||
+      (typeof stripe.handleNextAction !== 'function' &&
+        typeof stripe.confirmCardPayment !== 'function')
+    ) {
+      throw new Error('Payment approval client unavailable')
+    }
+    const bookingId = clean(booking && booking.booking_id)
+    const action = await getPaymentAction(role, booking)
+    if (!action) return null
+    // The route may answer after start or after the modal changes. Keep the
+    // bound row and captured identity, then recheck before either bank step.
+    if (clean(booking.booking_id) !== bookingId ||
+      !canRequestPaymentAction(role, booking) ||
+      (typeof isCurrent === 'function' && !isCurrent())) return null
+    // #2916 (P9 A, 2026-10-09): #69 confirms off-session, so 3DS usually ends in
+    // requires_payment_method + authentication_required. That PaymentIntent is
+    // confirmed on-session with the same saved card; requires_action uses the
+    // bank step directly.
+    const providerStatus = clean(action.provider_status).toLowerCase()
+    const paymentMethod = clean(action.payment_method)
+    let result
+    if (providerStatus === 'requires_payment_method') {
+      if (!paymentMethod || typeof stripe.confirmCardPayment !== 'function') {
+        throw new Error('Payment approval client unavailable')
+      }
+      result = await stripe.confirmCardPayment(action.client_secret, { payment_method: paymentMethod })
+    } else if (providerStatus === 'requires_action') {
+      if (typeof stripe.handleNextAction !== 'function') {
+        throw new Error('Payment approval client unavailable')
+      }
+      result = await stripe.handleNextAction({ clientSecret: action.client_secret })
+    } else {
+      throw new Error('Canonical payment action response is invalid')
+    }
+    if (!result || result.error) {
+      throw new Error('Payment approval did not complete')
+    }
+    const status = clean(result.paymentIntent && result.paymentIntent.status)
+    if (!['requires_capture', 'processing'].includes(status)) {
+      throw new Error('Payment approval ended in an unexpected state')
+    }
+    return status
   }
 
   async function replacePaymentMethod(
@@ -170,6 +274,9 @@
   function canManageCards(role, booking) {
     return managementReady && canReplacePaymentMethod(role, booking)
   }
+  function canApprovePayment(role, booking) {
+    return managementReady && canRequestPaymentAction(role, booking)
+  }
 
   async function loadPaymentClient(document) {
     const valid = client => client && ['getReadiness', 'installSavedCardPicker', 'installCardSetupForm', 'stripeForPaymentEnvironment']
@@ -208,13 +315,18 @@
     let active = null
     let opening = false
     let selecting = false
+    let approving = false
     function paintAdd(context) {
       context.modal.querySelectorAll?.('[popup-stripe-card-open], [payment-action-btn="add-card"]').forEach(control => {
         control.setAttribute('aria-disabled', String(selecting || context.adding))
         control.querySelectorAll('button').forEach(button => { button.disabled = selecting || context.adding })
       })
     }
-    document.addEventListener('close', event => { invalidateModal(event.target) }, true)
+    document.addEventListener('close', event => {
+      invalidateModal(event.target)
+      // The authored booking root can be a DIV inside the native dialog.
+      event.target?.querySelectorAll?.('[popup-booking-info]').forEach(invalidateModal)
+    }, true)
     document.addEventListener('click', async function (event) {
       const close = event.target?.closest?.('[data-modal-close], [booking-popup-info-close], [booking-action-btn="switch-close"], [booking-card-action-btn="switch-close"]')
       if (close) invalidateModal(close.closest('[popup-booking-info]'))
@@ -222,6 +334,50 @@
         ? event.target.closest('[payment-action-btn], [popup-stripe-card-open]') : null
       if (!target) return
       const action = target.getAttribute('payment-action-btn')
+      if (action === 'approve-payment') {
+        const modal = target.closest('[popup-booking-info]')
+        const booking = modal && settings.getBooking(modal)
+        if (!modal || !canApprovePayment(settings.role, booking)) return
+        event.preventDefault()
+        event.stopImmediatePropagation()
+        if (approving) return
+        approving = true
+        target.setAttribute('aria-disabled', 'true')
+        const bookingId = clean(booking.booking_id)
+        invalidateModal(modal)
+        let valid = true
+        const invalidate = () => { valid = false }
+        paymentOwners.set(modal, invalidate)
+        const isCurrent = () => {
+          const dialog = modal.closest?.('dialog')
+          return valid && paymentOwners.get(modal) === invalidate &&
+            (!('open' in modal) || modal.open) && (!dialog || dialog.open === true) &&
+            settings.getBooking(modal) === booking && clean(booking.booking_id) === bookingId
+        }
+        try {
+          if (!isCurrent()) return
+          const stripe = await client.stripeForPaymentEnvironment(booking.payment_environment)
+          if (!isCurrent() || !canRequestPaymentAction(settings.role, booking)) return
+          const approved = await approvePayment(settings.role, booking, stripe, isCurrent)
+          if (approved && isCurrent() && typeof settings.restart === 'function') await settings.restart()
+        } catch (error) {
+          // Internal errors can carry route paths; keep them for support only.
+          if (typeof console !== 'undefined') console.warn('Approve payment failed:', error?.message || error)
+          const actions = global.StartersDashboardCallActions
+          if (isCurrent() && actions && typeof actions.showActionError === 'function') {
+            const content = modal.querySelector('[booking-popup-content="base"]') || modal
+            actions.showActionError(content, APPROVE_PAYMENT_ERROR)
+          }
+        } finally {
+          valid = false
+          approving = false
+          if (paymentOwners.get(modal) === invalidate) {
+            paymentOwners.delete(modal)
+            target.setAttribute('aria-disabled', 'false')
+          }
+        }
+        return
+      }
       const add = action === 'add-card' || target.hasAttribute('popup-stripe-card-open')
       if (!add && !['change-card', 'change-card-v2'].includes(action)) return
       const modal = target.closest('[popup-booking-info]')
@@ -316,6 +472,9 @@
 
   const api = {
     invalidateModal,
+    approvePayment,
+    canApprovePayment,
+    PAYMENT_ACTION_OPEN_ENVIRONMENTS,
     canReplacePaymentMethod,
     canRequestPaymentAction,
     canManageCards,

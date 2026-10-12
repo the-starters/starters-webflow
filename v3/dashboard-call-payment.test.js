@@ -3,14 +3,22 @@ const test = require('node:test')
 
 global.window = global
 const api = require('./dashboard-call-payment.js')
+const canonicalActions = require('./dashboard-call-actions.js')
+global.StartersDashboardCallActions = canonicalActions
 
 function paidBooking(status) {
-  return {
+  const booking = {
     booking_id: 'booking-paid-1',
     paid_meeting: true,
     payment_environment: 'test',
+    data_environment: 'test',
     payment_status: status,
+    status: 'confirmed',
+    start: Date.now() + 30 * 3600000,
+    server_now_ms: Date.now(),
   }
+  canonicalActions.bindCanonicalClock([booking], canonicalActions.monotonicNow())
+  return booking
 }
 
 test('a booking card replacement retains identity on retry and stops stale callers', async () => {
@@ -178,7 +186,7 @@ test('dashboard Change Payment Method binds the selected booking to recovery', a
   const booking = paidBooking('card_or_payment_declined')
   const modal = { open: true, querySelector: () => ({}) }
   const button = { getAttribute: () => 'change-card', hasAttribute: () => false,
-    closest: selector => selector === '[popup-booking-info]' ? modal : button }
+    closest: selector => selector === '[popup-booking-info]' ? modal : selector === '[payment-action-btn], [popup-stripe-card-open]' ? button : null }
   const document = { addEventListener: (event, fn) => { listener = fn } }
   global.StartersPaidCallBrandPayment = {
     getReadiness: async () => ({ environment: 'test' }),
@@ -361,7 +369,7 @@ test('a failed Change card open shows a Brand-facing message, never a route path
   const basePanel = {}
   const modal = { open: true, querySelector: selector => selector === '[booking-popup-content="base"]' ? basePanel : {} }
   const button = { getAttribute: () => 'change-card', hasAttribute: () => false,
-    closest: selector => selector === '[popup-booking-info]' ? modal : button }
+    closest: selector => selector === '[popup-booking-info]' ? modal : selector === '[payment-action-btn], [popup-stripe-card-open]' ? button : null }
   const document = { addEventListener: (event, fn) => { listener = fn } }
   global.StartersPaidCallBrandPayment = {
     // The real client throws this when the readiness route returns no body.
@@ -386,3 +394,460 @@ test('a failed Change card open shows a Brand-facing message, never a route path
     console.warn = previous.warn
   }
 })
+
+test('P9 approve payment runs the Stripe bank step with the canonical secret only', async () => {
+  const original = global.xanoAuthFetch
+  const requests = []
+  const secrets = []
+  const stripe = { handleNextAction: async ({ clientSecret }) => { secrets.push(clientSecret); return { paymentIntent: { status: 'requires_capture' } } } }
+  global.xanoAuthFetch = async (url, options) => {
+    requests.push({ url, body: JSON.parse(options.body) })
+    return { ok: true, json: async () => ({ booking_id: 'booking-paid-1', payment_status: 'auth_required', client_secret: 'pi_secret_test', provider_status: 'requires_action' }) }
+  }
+  try {
+    assert.equal(await api.approvePayment('brand', paidBooking('auth_required'), stripe), 'requires_capture')
+    assert.deepEqual(secrets, ['pi_secret_test'])
+    assert.match(requests[0].url, /\/brand\/booking\/payment-action\/v3$/)
+    // A declined card, a Starter, or a missing Stripe client never reaches the route.
+    assert.equal(await api.approvePayment('brand', paidBooking('card_or_payment_declined'), stripe), null)
+    assert.equal(await api.approvePayment('starter', paidBooking('auth_required'), stripe), null)
+    await assert.rejects(api.approvePayment('brand', paidBooking('auth_required'), {}))
+    assert.equal(requests.length, 1)
+    const failing = { handleNextAction: async () => ({ error: { message: 'bank said no' } }) }
+    await assert.rejects(api.approvePayment('brand', paidBooking('auth_required'), failing), /did not complete/)
+  } finally { global.xanoAuthFetch = original }
+})
+
+test('P9 dashboard Approve payment is single-flight, Brand-only and reloads the booking', async () => {
+  const previous = { client: global.StartersPaidCallBrandPayment, actions: global.StartersDashboardCallActions, fetch: global.xanoAuthFetch }
+  let listener, restarted = 0, release
+  const errors = []
+  const booking = paidBooking('auth_required')
+  const modal = { open: true, querySelector: () => ({}) }
+  const attrs = {}
+  const button = { getAttribute: name => name === 'payment-action-btn' ? 'approve-payment' : null, hasAttribute: () => false,
+    setAttribute: (name, value) => { attrs[name] = value },
+    closest: selector => selector === '[popup-booking-info]' ? modal : selector === '[payment-action-btn], [popup-stripe-card-open]' ? button : null }
+  const document = { addEventListener: (event, fn) => { if (event === 'click') listener = fn } }
+  const gate = new Promise(resolve => { release = resolve })
+  let bankSteps = 0
+  global.StartersPaidCallBrandPayment = {
+    getReadiness: async () => ({ environment: 'test' }), installSavedCardPicker() {}, installCardSetupForm() {},
+    stripeForPaymentEnvironment: async env => {
+      assert.equal(env, 'test')
+      return { handleNextAction: async () => { bankSteps += 1; await gate; return { paymentIntent: { status: 'requires_capture' } } } }
+    },
+  }
+  global.StartersDashboardCallActions = { canonicalNow: canonicalActions.canonicalNow, switchPopupContent() {}, showActionError: (root, message) => errors.push(message) }
+  global.xanoAuthFetch = async () => ({ ok: true, json: async () => ({ booking_id: booking.booking_id, payment_status: 'auth_required', client_secret: 'pi_secret_test', provider_status: 'requires_action' }) })
+  try {
+    assert.equal(await api.wire({ document, role: 'brand', getBooking: () => booking, restart: async () => { restarted += 1 } }), true)
+    assert.equal(api.canApprovePayment('brand', booking), true)
+    assert.equal(api.canApprovePayment('starter', booking), false)
+    assert.equal(api.canApprovePayment('brand', paidBooking('card_or_payment_declined')), false)
+    const event = () => ({ target: button, preventDefault() {}, stopImmediatePropagation() {} })
+    const first = listener(event())
+    await new Promise(resolve => setImmediate(resolve))
+    await listener(event())
+    assert.equal(attrs['aria-disabled'], 'true')
+    release()
+    await first
+    assert.equal(bankSteps, 1)
+    assert.equal(restarted, 1)
+    assert.deepEqual(errors, [])
+    assert.equal(attrs['aria-disabled'], 'false')
+  } finally {
+    global.StartersPaidCallBrandPayment = previous.client
+    global.StartersDashboardCallActions = previous.actions
+    global.xanoAuthFetch = previous.fetch
+  }
+})
+
+test('P9 review: approve only on a live call before start, never twice for a stale modal', async () => {
+  const H = 3600000
+  const at = (extra) => Object.assign(paidBooking('auth_required'), extra)
+  assert.equal(api.canRequestPaymentAction('brand', at({})), true)
+  assert.equal(api.canRequestPaymentAction('brand', at({ status: 'rescheduled', start_old: Date.now() + H })), true)
+  assert.equal(api.canRequestPaymentAction('brand', at({ status: 'rescheduled', start_old: Date.now() - 1, start: Date.now() + H })), false)
+  assert.equal(api.canRequestPaymentAction('brand', at({ start: new Date(Date.now() + H).toISOString() })), true)
+  for (const extra of [{ status: 'cancelled' }, { status: 'completed' }, { status: 'pending' }, { status: 'rescheduled', start_old: null }, { status: 'rescheduled', start_old: 'invalid', start: Date.now() + H }, { start: Date.now() - 1 }, { start: null }]) {
+    assert.equal(api.canRequestPaymentAction('brand', at(extra)), false, JSON.stringify(extra))
+  }
+  // W5 environment switch: production rows stay closed until the list opens.
+  assert.deepEqual(api.PAYMENT_ACTION_OPEN_ENVIRONMENTS, ['test'])
+  for (const extra of [{ data_environment: 'production' }, { data_environment: '' }, { data_environment: undefined }]) {
+    assert.equal(api.canRequestPaymentAction('brand', at(extra)), false, JSON.stringify(extra))
+    assert.equal(api.canApprovePayment('brand', at(extra)), false, JSON.stringify(extra))
+  }
+  const previous = global.xanoAuthFetch
+  global.xanoAuthFetch = async () => ({ ok: true, json: async () => ({ booking_id: 'booking-paid-1', payment_status: 'auth_required', client_secret: 'pi_secret_test', provider_status: 'requires_action' }) })
+  try {
+    let calls = 0
+    const stripe = status => ({ handleNextAction: async () => { calls += 1; return { paymentIntent: { status } } } })
+    assert.equal(await api.approvePayment('brand', at({}), stripe('requires_capture'), () => false), null)
+    assert.equal(calls, 0)
+    assert.equal(await api.approvePayment('brand', at({}), stripe('processing'), () => true), 'processing')
+    await assert.rejects(api.approvePayment('brand', at({}), stripe('requires_payment_method')), /unexpected state/)
+  } finally {
+    global.xanoAuthFetch = previous
+  }
+})
+
+test('P9 A: off-session 3DS (requires_payment_method) confirms on-session with the saved card', async () => {
+  const previous = global.xanoAuthFetch
+  global.xanoAuthFetch = async () => ({ ok: true, json: async () => ({ booking_id: 'booking-paid-1', payment_status: 'auth_required', client_secret: 'pi_secret_test', provider_status: 'requires_payment_method', payment_method: 'pm_saved_1' }) })
+  try {
+    const calls = []
+    const stripe = {
+      handleNextAction: async () => { calls.push('next'); return { paymentIntent: { status: 'requires_capture' } } },
+      confirmCardPayment: async (secret, data) => { calls.push(['confirm', secret, data.payment_method]); return { paymentIntent: { status: 'requires_capture' } } },
+    }
+    assert.equal(await api.approvePayment('brand', paidBooking('auth_required'), stripe, () => true), 'requires_capture')
+    assert.deepEqual(calls, [['confirm', 'pi_secret_test', 'pm_saved_1']])
+    global.xanoAuthFetch = async () => ({ ok: true, json: async () => ({ booking_id: 'booking-paid-1', payment_status: 'auth_required', client_secret: 'pi_secret_test', provider_status: 'requires_payment_method', payment_method: '' }) })
+    await assert.rejects(api.approvePayment('brand', paidBooking('auth_required'), stripe, () => true), /unavailable/)
+    global.xanoAuthFetch = async () => ({ ok: true, json: async () => ({ booking_id: 'booking-paid-1', payment_status: 'auth_required', client_secret: 'pi_secret_test', provider_status: 'requires_action' }) })
+    calls.length = 0
+    assert.equal(await api.approvePayment('brand', paidBooking('auth_required'), stripe, () => true), 'requires_capture')
+    assert.deepEqual(calls, ['next'])
+  } finally { global.xanoAuthFetch = previous }
+})
+
+test('P9 A: unexpected provider status fails before Stripe action', async () => {
+  const previous = global.xanoAuthFetch
+  const states = [
+    {},
+    { provider_status: '' },
+    { provider_status: 'processing' },
+  ]
+  try {
+    for (const state of states) {
+      let actions = 0
+      global.xanoAuthFetch = async () => ({ ok: true, json: async () => Object.assign({ booking_id: 'booking-paid-1', payment_status: 'auth_required', client_secret: 'pi_secret_test' }, state) })
+      const stripe = {
+        handleNextAction: async () => { actions += 1; return { paymentIntent: { status: 'requires_capture' } } },
+        confirmCardPayment: async () => { actions += 1; return { paymentIntent: { status: 'requires_capture' } } },
+      }
+      await assert.rejects(api.approvePayment('brand', paidBooking('auth_required'), stripe, () => true), /invalid/)
+      assert.equal(actions, 0, JSON.stringify(state))
+    }
+  } finally { global.xanoAuthFetch = previous }
+})
+
+
+const PAYMENT_SERVER_NOW = 1800000000000
+async function withPaymentClock(run) {
+  const originalPerformance = Object.getOwnPropertyDescriptor(global, 'performance')
+  const originalWall = Date.now
+  const originalActions = global.StartersDashboardCallActions
+  let monotonic = 100
+  let wall = PAYMENT_SERVER_NOW
+  Object.defineProperty(global, 'performance', { configurable: true, value: { now: () => monotonic } })
+  Date.now = () => wall
+  global.StartersDashboardCallActions = canonicalActions
+  const bound = extra => {
+    const booking = Object.assign(paidBooking('auth_required'), { server_now_ms: PAYMENT_SERVER_NOW, start: PAYMENT_SERVER_NOW + 1000 }, extra)
+    assert.equal(canonicalActions.bindCanonicalClock([booking], monotonic, wall), true)
+    return booking
+  }
+  try { await run({ bound, setMonotonic: value => { monotonic = value }, setWall: value => { wall = value } }) }
+  finally {
+    Date.now = originalWall
+    Object.defineProperty(global, 'performance', originalPerformance)
+    global.StartersDashboardCallActions = originalActions
+  }
+}
+
+async function approvalWireHarness(booking, run, stripeLoad) {
+  const previous = { client: global.StartersPaidCallBrandPayment, fetch: global.xanoAuthFetch }
+  const calls = { stripeLoads: [], routes: [], bankSteps: [], refreshes: 0 }
+  let currentBooking = booking
+  let listener
+  const modal = { open: true, querySelector: () => ({}) }
+  const button = {
+    getAttribute: name => name === 'payment-action-btn' ? 'approve-payment' : null,
+    hasAttribute: () => false, setAttribute() {},
+    closest: selector => selector === '[popup-booking-info]' ? modal : selector === '[payment-action-btn], [popup-stripe-card-open]' ? button : null,
+  }
+  const document = { addEventListener: (event, fn) => { if (event === 'click') listener = fn } }
+  global.StartersPaidCallBrandPayment = {
+    getReadiness: async () => ({ environment: 'test' }), installSavedCardPicker() {}, installCardSetupForm() {},
+    stripeForPaymentEnvironment: async env => {
+      calls.stripeLoads.push(env)
+      if (stripeLoad) await stripeLoad()
+      return { handleNextAction: async action => {
+        calls.bankSteps.push(action)
+        return { paymentIntent: { status: 'requires_capture' } }
+      } }
+    },
+  }
+  global.xanoAuthFetch = async (url, options) => {
+    calls.routes.push({ url, body: JSON.parse(options.body) })
+    return { ok: true, json: async () => ({ booking_id: 'booking-paid-1', payment_status: 'auth_required', client_secret: 'pi_secret_test', provider_status: 'requires_action' }) }
+  }
+  try {
+    assert.equal(await api.wire({ document, role: 'brand', getBooking: () => currentBooking, restart: async () => { calls.refreshes += 1 } }), true)
+    await run({ calls, modal, replaceBooking: value => { currentBooking = value }, click: () => listener({ target: button, preventDefault() {}, stopImmediatePropagation() {} }) })
+  } finally { global.StartersPaidCallBrandPayment = previous.client; global.xanoAuthFetch = previous.fetch }
+}
+
+test('P9 approval normalizes authoritative is_paid before the legacy Paid flag', () => {
+  for (const value of [true, 1, 'true', ' TRUE ']) {
+    assert.equal(api.canRequestPaymentAction('brand', Object.assign(paidBooking('auth_required'), { is_paid: value, paid_meeting: false })), true, String(value))
+  }
+  for (const value of [false, 0, 'false', '0', 'anything']) {
+    assert.equal(api.canRequestPaymentAction('brand', Object.assign(paidBooking('auth_required'), { is_paid: value, paid_meeting: true })), false, String(value))
+  }
+  for (const value of [null, undefined]) {
+    assert.equal(api.canRequestPaymentAction('brand', Object.assign(paidBooking('auth_required'), { is_paid: value, paid_meeting: 'true' })), true)
+    assert.equal(api.canRequestPaymentAction('brand', Object.assign(paidBooking('auth_required'), { is_paid: value, paid_meeting: 'false' })), false)
+  }
+})
+
+test('P9 Test/live mismatch cannot load Stripe, call the route or open a bank step', async () => {
+  for (const extra of [{ payment_environment: 'live' }, { data_environment: 'production' }, { payment_environment: '' }]) {
+    const booking = Object.assign(paidBooking('auth_required'), extra)
+    assert.equal(api.canRequestPaymentAction('brand', booking), false)
+    await approvalWireHarness(booking, async ({ calls, click }) => {
+      await click()
+      assert.deepEqual(calls, { stripeLoads: [], routes: [], bankSteps: [], refreshes: 0 })
+    })
+  }
+})
+
+test('P9 approval uses the bound server cutoff despite slow or fast browser time', async () => withPaymentClock(async ({ bound, setMonotonic, setWall }) => {
+  for (const drift of [-3600000, 3600000]) {
+    setMonotonic(100)
+    setWall(PAYMENT_SERVER_NOW + drift)
+    const booking = bound({ start: PAYMENT_SERVER_NOW + 1 })
+    assert.equal(api.canRequestPaymentAction('brand', booking, PAYMENT_SERVER_NOW - 3600000), true)
+    setMonotonic(101)
+    assert.equal(api.canRequestPaymentAction('brand', booking, PAYMENT_SERVER_NOW - 3600000), false)
+  }
+  setMonotonic(100)
+  const rescheduled = bound({ status: 'rescheduled', start_old: PAYMENT_SERVER_NOW, start: PAYMENT_SERVER_NOW + 3600000 })
+  assert.equal(api.canRequestPaymentAction('brand', rescheduled), false)
+}))
+
+test('P9 invalid or unbound canonical clocks fail closed without route calls', async () => withPaymentClock(async ({ bound }) => {
+  const previous = global.xanoAuthFetch
+  let calls = 0
+  global.xanoAuthFetch = async () => { calls += 1; throw Error('must not call') }
+  try {
+    const booking = bound({})
+    assert.equal(api.canRequestPaymentAction('brand', { ...booking }), false)
+    for (const stamp of [null, undefined, '1800000000000', NaN, Infinity, 0]) {
+      const invalid = Object.assign(paidBooking('auth_required'), { server_now_ms: stamp })
+      assert.equal(canonicalActions.bindCanonicalClock([invalid], canonicalActions.monotonicNow()), false)
+      assert.equal(await api.getPaymentAction('brand', invalid), null)
+    }
+    global.StartersDashboardCallActions = {}
+    assert.equal(await api.getPaymentAction('brand', booking), null)
+    assert.equal(calls, 0)
+  } finally { global.xanoAuthFetch = previous }
+}))
+
+test('P9 wire keeps the bound booking reference through a successful bank step', async () => withPaymentClock(async ({ bound }) => {
+  await approvalWireHarness(bound({ is_paid: true, paid_meeting: false }), async ({ calls, click }) => {
+    await click()
+    assert.deepEqual(calls.stripeLoads, ['test'])
+    assert.equal(calls.routes.length, 1)
+    assert.deepEqual(calls.routes[0].body, { booking_id: 'booking-paid-1' })
+    assert.deepEqual(calls.bankSteps, [{ clientSecret: 'pi_secret_test' }])
+    assert.equal(calls.refreshes, 1)
+  })
+}))
+
+test('P9 wire rechecks the start after asynchronous Stripe loading', async () => withPaymentClock(async ({ bound, setMonotonic }) => {
+  await approvalWireHarness(bound({}), async ({ calls, click }) => {
+    await click()
+    assert.deepEqual(calls.stripeLoads, ['test'])
+    assert.deepEqual(calls.routes, [])
+    assert.deepEqual(calls.bankSteps, [])
+    assert.equal(calls.refreshes, 0)
+  }, async () => { setMonotonic(1100) })
+}))
+
+test('P9 route latency crossing start blocks both Stripe approval branches', async () => withPaymentClock(async ({ bound, setMonotonic }) => {
+  const previous = global.xanoAuthFetch
+  try {
+    for (const providerStatus of ['requires_action', 'requires_payment_method']) {
+      setMonotonic(100)
+      const booking = bound({})
+      let bankSteps = 0
+      global.xanoAuthFetch = async () => {
+        setMonotonic(1100)
+        return { ok: true, json: async () => ({ booking_id: booking.booking_id, payment_status: 'auth_required', client_secret: 'pi_secret_test', provider_status: providerStatus, payment_method: 'pm_saved_1' }) }
+      }
+      const stripe = {
+        handleNextAction: async () => { bankSteps += 1 },
+        confirmCardPayment: async () => { bankSteps += 1 },
+      }
+      assert.equal(await api.approvePayment('brand', booking, stripe, () => true), null)
+      assert.equal(bankSteps, 0)
+    }
+  } finally { global.xanoAuthFetch = previous }
+}))
+
+test('P9 wire preserves captured booking identity while Stripe loads', async () => withPaymentClock(async ({ bound }) => {
+  const booking = bound({})
+  await approvalWireHarness(booking, async ({ calls, click }) => {
+    await click()
+    assert.deepEqual(calls.routes, [])
+    assert.deepEqual(calls.bankSteps, [])
+    assert.equal(calls.refreshes, 0)
+  }, async () => { booking.booking_id = 'booking-other' })
+}))
+
+
+test('P9 wire stops closed or replaced modals while Stripe loads', async () => withPaymentClock(async ({ bound }) => {
+  for (const stale of ['closed', 'replaced']) {
+    const booking = bound({})
+    let invalidate
+    await approvalWireHarness(booking, async ({ calls, modal, replaceBooking, click }) => {
+      invalidate = () => { if (stale === 'closed') modal.open = false; else replaceBooking(bound({ booking_id: 'booking-other' })) }
+      await click()
+      assert.deepEqual(calls.routes, [])
+      assert.deepEqual(calls.bankSteps, [])
+      assert.equal(calls.refreshes, 0)
+    }, async () => { invalidate() })
+  }
+}))
+
+
+async function approvalModalHarness(options, run) {
+  const previous = { client: global.StartersPaidCallBrandPayment, fetch: global.xanoAuthFetch, document: global.document, payment: global.StartersDashboardCallPayment }
+  const booking = options.booking
+  const calls = { stripeLoads: 0, routes: 0, bankSteps: 0, refreshes: 0, pickerDisposals: 0 }
+  let release
+  const gate = new Promise(resolve => { release = resolve })
+  const listeners = {}
+  const ancestor = options.ancestor ? { tagName: 'DIALOG', open: true } : null
+  const modal = { tagName: 'DIV', querySelector: () => null, querySelectorAll: () => [], removeAttribute() {}, closest: selector => selector === 'dialog' ? ancestor : null }
+  if (ancestor) ancestor.querySelectorAll = selector => selector === '[popup-booking-info]' ? [modal] : []
+  const control = action => {
+    const button = { getAttribute: name => name === 'payment-action-btn' ? action : null, hasAttribute: () => false, setAttribute() {} }
+    button.closest = selector => selector === '[popup-booking-info]' ? modal : selector === '[payment-action-btn], [popup-stripe-card-open]' ? button : null
+    return button
+  }
+  const approve = control('approve-payment')
+  const close = { closest: selector => selector === '[popup-booking-info]' ? modal : selector.includes('[data-modal-close]') ? close : null }
+  const document = { addEventListener: (name, listener) => { listeners[name] = listener }, querySelector: () => modal }
+  global.document = document
+  global.StartersDashboardCallPayment = api
+  global.StartersPaidCallBrandPayment = {
+    getReadiness: async () => ({ environment: 'test' }),
+    installSavedCardPicker: () => ({ load: async () => {}, dispose: () => { calls.pickerDisposals += 1 } }),
+    installCardSetupForm() {},
+    stripeForPaymentEnvironment: async () => {
+      calls.stripeLoads += 1
+      if (options.phase === 'stripe') await gate
+      const bankStep = async () => {
+        calls.bankSteps += 1
+        if (options.phase === 'bank') await gate
+        return { paymentIntent: { status: 'requires_capture' } }
+      }
+      return { handleNextAction: bankStep, confirmCardPayment: bankStep }
+    },
+  }
+  global.xanoAuthFetch = async () => {
+    calls.routes += 1
+    if (options.phase === 'route') await gate
+    return { ok: true, json: async () => ({ booking_id: booking.booking_id, payment_status: 'auth_required', client_secret: 'pi_secret_test', provider_status: options.providerStatus || 'requires_action', payment_method: 'pm_saved_1' }) }
+  }
+  const click = target => listeners.click({ target, preventDefault() {}, stopImmediatePropagation() {} })
+  try {
+    assert.equal(await api.wire({ document, role: 'brand', getBooking: () => booking, restart: async () => { calls.refreshes += 1 } }), true)
+    await run({ booking, modal, calls, release,
+      start: () => click(approve), tick: () => new Promise(resolve => setImmediate(resolve)),
+      closeControl: () => click(close), invalidate: () => api.invalidateModal(modal),
+      reset: () => require('./dashboard-calls.js').resetDetailModal(),
+      closeAncestor: (emit, reopen) => {
+        ancestor.open = false
+        if (emit) listeners.close({ target: ancestor })
+        if (reopen) ancestor.open = true
+      },
+      changeCard: () => { booking.payment_status = 'expired_card'; return click(control('change-card')) },
+    })
+  } finally {
+    global.StartersPaidCallBrandPayment = previous.client
+    global.xanoAuthFetch = previous.fetch
+    global.document = previous.document
+    global.StartersDashboardCallPayment = previous.payment
+  }
+}
+
+for (const close of ['closeControl', 'invalidate', 'reset']) {
+  test('P9 DIV approval is permanently invalidated by ' + close + ' while Stripe loads', async () => withPaymentClock(async ({ bound }) => {
+    await approvalModalHarness({ booking: bound({}), phase: 'stripe' }, async context => {
+      const pending = context.start()
+      await context.tick()
+      await context[close]()
+      context.release()
+      await pending
+      assert.equal(context.calls.stripeLoads, 1)
+      assert.equal(context.calls.routes, 0)
+      assert.equal(context.calls.bankSteps, 0)
+      assert.equal(context.calls.refreshes, 0)
+    })
+  }))
+}
+
+test('P9 DIV approval fails closed when its native ancestor dialog closes', async () => withPaymentClock(async ({ bound }) => {
+  for (const [emit, reopen] of [[false, false], [true, true]]) {
+    await approvalModalHarness({ booking: bound({}), phase: 'stripe', ancestor: true }, async context => {
+      const pending = context.start()
+      await context.tick()
+      context.closeAncestor(emit, reopen)
+      context.release()
+      await pending
+      assert.equal(context.calls.routes, 0)
+      assert.equal(context.calls.bankSteps, 0)
+      assert.equal(context.calls.refreshes, 0)
+    })
+  }
+}))
+
+test('P9 delegated DIV close during either canonical response prevents bank approval', async () => withPaymentClock(async ({ bound }) => {
+  for (const providerStatus of ['requires_action', 'requires_payment_method']) {
+    await approvalModalHarness({ booking: bound({}), phase: 'route', providerStatus }, async context => {
+      const pending = context.start()
+      await context.tick()
+      await context.closeControl()
+      context.release()
+      await pending
+      assert.equal(context.calls.routes, 1)
+      assert.equal(context.calls.bankSteps, 0)
+      assert.equal(context.calls.refreshes, 0)
+    })
+  }
+}))
+
+test('P9 close while the bank step returns cannot refresh an invalidated DIV modal', async () => withPaymentClock(async ({ bound }) => {
+  await approvalModalHarness({ booking: bound({}), phase: 'bank' }, async context => {
+    const pending = context.start()
+    await context.tick()
+    await context.closeControl()
+    context.release()
+    await pending
+    assert.equal(context.calls.routes, 1)
+    assert.equal(context.calls.bankSteps, 1)
+    assert.equal(context.calls.refreshes, 0)
+  })
+}))
+
+test('P9 stale approval cleanup preserves a successor card-picker owner', async () => withPaymentClock(async ({ bound }) => {
+  await approvalModalHarness({ booking: bound({}), phase: 'stripe' }, async context => {
+    const pending = context.start()
+    await context.tick()
+    context.invalidate()
+    await context.changeCard()
+    context.release()
+    await pending
+    assert.equal(context.calls.routes, 0)
+    assert.equal(context.calls.bankSteps, 0)
+    assert.equal(context.calls.pickerDisposals, 0)
+    context.invalidate()
+    assert.equal(context.calls.pickerDisposals, 1)
+  })
+}))

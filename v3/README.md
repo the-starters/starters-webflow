@@ -3006,12 +3006,20 @@ authenticated V3 transcript proxy with an exact ownership contract.
 
 ### Dashboard payment recovery
 
-`dashboard-call-payment.js` owns the Brand dashboard payment-method panel for
-eligible declined Paid bookings in a canonical `test` or `live` environment.
-It loads the [shared payment client](#brand-paid-call-payment-method-client)
-and binds the authored saved-card list and Add card dialog. “Use this card”
-changes the Brand default for future bookings, verifies that default through
-an authenticated card-list readback, then explicitly recovers only the selected
+`dashboard-call-payment.js` owns the Brand dashboard payment-method panel and
+auth-required approval action for eligible Paid bookings. Declined-card recovery
+still runs in a canonical `test` or `live` `payment_environment`; 3DS approval
+is open only for booking rows whose `data_environment` is listed in
+`PAYMENT_ACTION_OPEN_ENVIRONMENTS` (`['test']`), with the matching
+`payment_environment: "test"`. Test rows with live payment state fail closed
+before loading a Stripe key or calling the approval route. Payment status copy
+remains informative in every environment. Approval uses `is_paid` as the
+Paid flag when present; `paid_meeting` is the fallback. It loads the [shared
+payment client](#brand-paid-call-payment-method-client) and binds the authored
+saved-card list, Add card dialog, and the existing Call Details control authored
+as `[payment-action-btn="approve-payment"]`. “Use this card” changes
+the Brand default for future bookings, verifies that default through an
+authenticated card-list readback, then explicitly recovers only the selected
 booking through `brand/booking/payment-method-replace/v3`. That command sends
 the booking ID, selected `pm_` ID and a bounded idempotency key through
 `window.xanoAuthFetch`; Xano owns customer and booking authorization. Success
@@ -3027,8 +3035,28 @@ booking recovery still requires “Use this card”. Back returns to the picker.
 If **Change card** cannot open the payment methods, the Brand sees only
 “Your payment methods could not be opened. Please try again.”; the underlying
 failure message remains a support diagnostic in the browser console.
-The `auth_required` helper for `brand/booking/payment-action/v3` remains
-available without activating authentication-confirmation UI. Paid cancellation
+A Brand can use the authored Approve payment control only for an owning Paid
+booking in `confirmed` or `rescheduled` status, before the effective current
+start time, with `payment_status: "auth_required"`. Rescheduled rows use
+`start_old` as that current start while `start` remains the proposed time.
+Approval eligibility and Brand action copy use the row's bound canonical
+server clock. Missing or invalid bindings show no Brand action. The click
+retains the bound row and captured booking identity, then rechecks eligibility
+after Stripe-client loading and the canonical response, before either bank
+step. Closing or resetting Call Details permanently invalidates that approval,
+including authored close controls and ancestor native-dialog closes. The click
+posts the booking ID to `brand/booking/payment-action/v3` through
+`window.xanoAuthFetch`; Xano owns Brand identity, booking ownership, the
+canonical PaymentIntent state, and provider selection. The response must echo
+the booking ID, keep `payment_status: "auth_required"`, include a
+`client_secret`, and return only `provider_status: "requires_payment_method"`
+with a saved `payment_method` or `provider_status: "requires_action"`. The
+first path calls Stripe.js `confirmCardPayment` with the same saved card; the
+second calls `handleNextAction`. Missing or unexpected provider states fail
+before Stripe.js runs. No dashboard code charges, captures, confirms, or writes
+booking projections directly; webhook/canonical reads own the resulting state.
+If approval fails, the Brand sees only “Your payment could not be approved.
+Please try again.”; technical details stay in the console. Paid cancellation
 eligibility is owned by the [Dashboard booking action contract](#dashboard-booking-action-contract);
 reschedule policy, charging and payout policy are unchanged.
 
@@ -4441,8 +4469,11 @@ visible status; selection is disabled until a valid list is loaded. See
 and [payment verification](fixtures/PAYMENT-VERIFICATION.md) for local fixtures
 and outstanding provider evidence.
 
-The scheduling auth bridge allowlists these paid-call paths:
+The scheduling auth bridge allowlists these paid-call paths for Book Call and
+dashboard payment flows:
 
+- `POST /brand/booking/payment-action/v3`
+- `POST /brand/booking/payment-method-replace/v3`
 - `GET /brand/payment-methods/v3`
 - `POST /brand/payment-method/setup/v3`
 - `POST /brand/payment-method/set-default/v3`

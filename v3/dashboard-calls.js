@@ -868,6 +868,85 @@
     return value === true || value === 1 || clean(value).toLowerCase() === 'true'
   }
 
+  // P9: the payment line reads the canonical payment state, not only the
+  // saved-card flag. A failed or unresolved authorization never reads as
+  // "confirmed". Copy names no deadline and no charge (no approved policy).
+  const DECLINED_PAYMENT_STATUSES = [
+    'card_or_payment_declined',
+    'insufficient_funds',
+    'lost_or_stolen_card',
+    'expired_card',
+    'payment_intent_confirm_expired',
+  ]
+  const UNRESOLVED_RECONCILIATION_STATUSES = ['pending', 'failed', 'mismatch']
+
+  // P9 review 2026-10-06: the line shows only on a live call (not cancelled,
+  // archived or completed). After start no Brand action is offered (JP A=1a:
+  // the call runs, no charge, the team follows up). "Confirmed" is an
+  // allow-list; any other state reads "being checked".
+  const CONFIRMED_PAYMENT_STATE_PAIRS = [
+    ['waiting_for_intent', 'ready'],
+    ['intent_created', 'reconciled'],
+  ]
+
+  function confirmedPaymentState(paymentStatus, reconciliation) {
+    return CONFIRMED_PAYMENT_STATE_PAIRS.some(function (pair) {
+      return pair[0] === paymentStatus && pair[1] === reconciliation
+    })
+  }
+
+  function paymentStatusStart(booking) {
+    const status = clean(booking && booking.status).toLowerCase()
+    return normalizeTimestamp(booking && booking[status === 'rescheduled' ? 'start_old' : 'start'])
+  }
+
+  function paymentCardRecoveryAvailable(role, booking) {
+    const payment = global.StartersDashboardCallPayment
+    if (!payment || typeof payment.canManageCards !== 'function') return false
+    try {
+      return payment.canManageCards(clean(role).toLowerCase(), booking) === true
+    } catch (_error) {
+      return false
+    }
+  }
+
+  function paymentStatusText(booking, role) {
+    if (!paidBooking(booking)) return ''
+    const actions = global.StartersDashboardCallActions
+    let time = null
+    try {
+      const reference = actions && typeof actions.canonicalNow === 'function'
+        ? actions.canonicalNow(booking) : null
+      if (Number.isFinite(reference) && reference > 0) time = reference
+    } catch (_error) {}
+    // An unbound row can show neutral payment state, but no Brand action.
+    const status = time == null ? clean(booking.status).toLowerCase() : bookingStatus(booking, time)
+    if (['cancelled', 'canceled', 'declined', 'expired', 'archived', 'completed', 'complete', 'done'].includes(status)) return ''
+    const paymentStatus = clean(booking.payment_status).toLowerCase()
+    const reconciliation = clean(booking.payment_reconciliation_status).toLowerCase()
+    const start = paymentStatusStart(booking)
+    const brand = clean(role).toLowerCase() === 'brand' && time != null &&
+      Number.isFinite(start) && start > time
+    if (DECLINED_PAYMENT_STATUSES.includes(paymentStatus)) {
+      if (!brand) return 'Payment is being checked.'
+      return paymentCardRecoveryAvailable(role, booking)
+        ? 'Card declined. Change card.'
+        : 'Card declined.'
+    }
+    if (paymentStatus === 'auth_required') {
+      return brand ? 'Payment needs attention.' : 'Payment is being checked.'
+    }
+    if (
+      UNRESOLVED_RECONCILIATION_STATUSES.includes(reconciliation) ||
+      !confirmedPaymentState(paymentStatus, reconciliation)
+    ) {
+      return 'Payment is being checked.'
+    }
+    return booking.pm_confirmed
+      ? 'Payment method confirmed.'
+      : 'Payment method pending.'
+  }
+
   function responseWindowOpen(booking, now) {
     if (bookingStatus(booking, now) !== 'pending') return false
     const time = Number(now || Date.now())
@@ -1648,11 +1727,7 @@
     )
 
     const paymentWrap = card.querySelector('[payment-status-wrap]')
-    const paymentText = paidBooking(booking)
-      ? booking.pm_confirmed
-        ? 'Payment method confirmed.'
-        : 'Payment method pending.'
-      : ''
+    const paymentText = paymentStatusText(booking, role)
     text(card, '[booking-element="payment-status-text"]', paymentText)
     show(paymentWrap, Boolean(paymentText))
 
@@ -2514,9 +2589,13 @@
             (button.hasAttribute('popup-stripe-card-open') || button.hasAttribute('pm-use-this')))
         const preferredPaymentControl = paymentAction !== 'change-card' ||
           !modal.querySelector('[payment-action-btn="change-card-v2"]')
-        const payment = paymentControl && preferredPaymentControl &&
+        const payment = (paymentControl && preferredPaymentControl &&
           typeof global.StartersDashboardCallPayment?.canManageCards === 'function' &&
-          global.StartersDashboardCallPayment.canManageCards(role, booking)
+          global.StartersDashboardCallPayment.canManageCards(role, booking)) ||
+          // P9: the 3DS approve control shows only while Stripe needs the Brand.
+          (paymentAction === 'approve-payment' &&
+            typeof global.StartersDashboardCallPayment?.canApprovePayment === 'function' &&
+            global.StartersDashboardCallPayment.canApprovePayment(role, booking))
         show(
           button,
           action === 'switch-close' ||
@@ -2875,9 +2954,7 @@
     const status = bookingStatus(booking, now)
     const isPaid = paidBooking(booking)
     const paymentText = isPaid && status !== 'cancelled' && status !== 'archived'
-      ? booking.pm_confirmed
-        ? 'Payment method confirmed.'
-        : 'Payment method pending.'
+      ? paymentStatusText(booking, role, now)
       : ''
 
     modal.setAttribute('data-booking-id', nextBookingId)
@@ -4313,6 +4390,7 @@
     paidProposalLapseText,
     pendingOfferOpen,
     pendingOfferStatusText,
+    paymentStatusText,
     responseWindowOpen,
     responseDeadline,
     formatResponseTime,
