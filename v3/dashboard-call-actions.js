@@ -2169,6 +2169,41 @@
     return true
   }
 
+  const DETAIL_LAYOUT_CLASS = 'call-details_layout'
+
+  /**
+   * The authored block of a details panel that module-generated copy belongs
+   * in. Every authored `[booking-popup-content]` panel (Brand and Starter
+   * views) is `.call-details_layout` (headline, table, info blocks) followed
+   * by `.call-sched_button-group`; only the layout block scrolls inside the
+   * dialog card. A node appended to the panel root lands after the button
+   * group and past the card's scrollable body, so it renders below the
+   * dialog (P5 cancel-reason fee line, 2026-10-12; F21 error note before it).
+   * Returns the panel's first `.call-details_layout` child, or the panel
+   * itself when it has none (a generated panel, or a modal root).
+   * @param {HTMLElement|null} panel Open panel (or any root to place in).
+   * @returns {HTMLElement|null} The block to insert generated content into.
+   */
+  function detailLayoutHost(panel) {
+    if (!panel) return null
+    const children = panel.children ? Array.prototype.slice.call(panel.children) : []
+    for (let index = 0; index < children.length; index += 1) {
+      if (hasClassName(children[index], DETAIL_LAYOUT_CLASS)) return children[index]
+    }
+    return panel
+  }
+
+  function hasClassName(node, name) {
+    if (!node) return false
+    if (node.classList && typeof node.classList.contains === 'function') {
+      try {
+        if (node.classList.contains(name)) return true
+      } catch (_error) {}
+    }
+    const className = typeof node.className === 'string' ? node.className : ''
+    return className.split(/\s+/).indexOf(name) !== -1
+  }
+
   // The panel switchPopupContent left open. A root with no nested panels
   // (the payment module passes the base panel itself) returns null.
   function openPopupContent(modal) {
@@ -2234,9 +2269,10 @@
       return
     }
     // F21: the dialog root clips to the viewport, so a note appended there
-    // sat below the fold. Place it in the open panel, next to the failed
-    // action, and keep the root when no open panel is found.
-    const host = openPopupContent(modal) || modal
+    // sat below the fold. Place it in the open panel's layout block (above
+    // the button group, inside the scrollable card body), and keep the root
+    // when no open panel is found.
+    const host = detailLayoutHost(openPopupContent(modal) || modal)
     if (!note) {
       const document = modal.ownerDocument || global.document
       if (
@@ -2271,7 +2307,9 @@
    * `[booking-copy="cancel-fee"]` slot wins when present. Without one, the
    * module owns one `[data-starters-cancel-fee-note]` line placed right after
    * the authored `[confirming-cancel-text]` body (copying its class so it
-   * reads as authored copy), or at the end of the open cancel panel. Free
+   * reads as authored copy), or at the end of the open cancel panel's
+   * `.call-details_layout` block (the cancel-reason panel has neither slot
+   * nor anchor; the panel root would put the line below the dialog). Free
    * bookings render nothing and hide any earlier line.
    * @returns {boolean} Whether a fee line is visible.
    */
@@ -2311,11 +2349,12 @@
       const anchor = typeof panel.querySelector === 'function'
         ? panel.querySelector('[confirming-cancel-text]')
         : null
+      const host = detailLayoutHost(panel)
       if (anchor && anchor.parentNode && typeof anchor.parentNode.insertBefore === 'function') {
         if (anchor.className) note.className = anchor.className
         anchor.parentNode.insertBefore(note, anchor.nextSibling)
-      } else if (typeof panel.appendChild === 'function') {
-        panel.appendChild(note)
+      } else if (host && typeof host.appendChild === 'function') {
+        host.appendChild(note)
       } else {
         return false
       }
@@ -2682,6 +2721,7 @@
     paidProposalLapseTime,
     cancelFeeText,
     renderCancelFeeNote,
+    detailLayoutHost,
     canCancel,
     canDecline,
     counterpartName,

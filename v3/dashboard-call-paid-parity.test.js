@@ -411,6 +411,104 @@ test('P5: an authored cancel-fee slot wins, and a panel without an anchor gets t
   assert.equal(closed.modal.querySelectorAll('[data-starters-cancel-fee-note]').length, 0)
 })
 
+// 2026-10-12 (JP screenshot, staging Brand dashboard, Paid pending #1449): the
+// authored panels are `.call-details_layout` + `.call-sched_button-group`, and
+// only the layout block scrolls inside the card. The cancel-reason panel has no
+// slot and no `[confirming-cancel-text]`, so the panel-root fallback rendered
+// the fee line below the dialog.
+function authoredCancelModal() {
+  const body = el('p', { 'confirming-cancel-text': '' })
+  body.className = 'text-size-medium'
+  body.textContent = 'Are you sure you want to cancel this call?'
+  const cancelLayout = el('div', {}, [el('h3'), el('div', {}, [body])])
+  cancelLayout.className = 'call-details_layout'
+  const cancelButtons = el('div', {}, [
+    el('div', { 'booking-action-btn': 'switch-base' }),
+    el('div', { 'booking-action-btn': 'switch-cancel-reason' }),
+  ])
+  cancelButtons.className = 'call-sched_button-group'
+  const reasonLayout = el('div', {}, [
+    el('h3'),
+    el('textarea', { 'booking-cancel-reason': '' }),
+    el('div', { 'reschedule-blocked-info': '' }),
+  ])
+  reasonLayout.className = 'call-details_layout'
+  const reasonButtons = el('div', {}, [
+    el('div', { 'booking-action-btn': 'switch-cancel' }),
+    el('button', { 'booking-action-btn': 'cancel' }),
+  ])
+  reasonButtons.className = 'call-sched_button-group'
+  const panels = {
+    base: el('div', { 'booking-popup-content': 'base' }, [
+      el('div', { 'booking-action-btn': 'switch-cancel' }),
+    ]),
+    cancel: el('div', { 'booking-popup-content': 'cancel' }, [cancelLayout, cancelButtons]),
+    reason: el('div', { 'booking-popup-content': 'cancel-reason' }, [reasonLayout, reasonButtons]),
+  }
+  panels.cancel.className = 'call-sched_details-layout'
+  panels.reason.className = 'call-sched_details-layout'
+  const modal = el('div', { 'popup-booking-info': '' }, [panels.base, panels.cancel, panels.reason])
+  const document = { createElement(tag) { return el(tag) } }
+  fakeDocumentRef.current = document
+  return { modal, panels, document, body, cancelLayout, cancelButtons, reasonLayout, reasonButtons }
+}
+
+test('P5: on the cancel-reason panel the fee line goes inside the layout block, above the buttons', () => {
+  const fixture = authoredCancelModal()
+  const now = Date.now()
+  api.switchPopupContent(fixture.modal, 'cancel-reason')
+  assert.equal(api.renderCancelFeeNote(fixture.document, fixture.modal, 'brand', held({ start: now + H }), now), true)
+  const notes = visibleFeeNotes(fixture.modal)
+  assert.equal(notes.length, 1)
+  const note = notes[0]
+  assert.equal(note.textContent, api.CANCEL_FEE_TEXT.late)
+  assert.equal(note.parentNode, fixture.reasonLayout, 'the line sits in .call-details_layout')
+  assert.equal(fixture.reasonLayout.children[fixture.reasonLayout.children.length - 1], note)
+  assert.equal(fixture.panels.reason.children.indexOf(note), -1, 'never a direct child of the panel')
+  assert.equal(
+    fixture.panels.reason.children[fixture.panels.reason.children.length - 1],
+    fixture.reasonButtons,
+    'the button group stays the panel\'s last child',
+  )
+  assert.equal(fixture.reasonButtons.querySelectorAll('[data-starters-cancel-fee-note]').length, 0)
+  // Re-render reuses the line in place.
+  api.renderCancelFeeNote(fixture.document, fixture.modal, 'starter', held({ start: now + H }), now)
+  assert.equal(fixture.modal.querySelectorAll('[data-starters-cancel-fee-note]').length, 1)
+  assert.equal(note.parentNode, fixture.reasonLayout)
+})
+
+test('P5: on the cancel panel the authored [confirming-cancel-text] anchor keeps the line in place', () => {
+  const fixture = authoredCancelModal()
+  const now = Date.now()
+  api.switchPopupContent(fixture.modal, 'cancel')
+  assert.equal(api.renderCancelFeeNote(fixture.document, fixture.modal, 'brand', held({ start: now + H }), now), true)
+  const note = visibleFeeNotes(fixture.modal)[0]
+  assert.equal(fixture.body.nextSibling, note, 'unchanged: right after the authored body')
+  assert.equal(note.parentNode, fixture.body.parentNode)
+  assert.equal(note.className, 'text-size-medium')
+  assert.equal(fixture.cancelLayout.children.indexOf(note), -1, 'not appended to the layout block end')
+  assert.equal(fixture.panels.cancel.children.indexOf(note), -1)
+  // Moving on to cancel-reason hides the cancel line and renders one in its layout block.
+  api.switchPopupContent(fixture.modal, 'cancel-reason')
+  api.renderCancelFeeNote(fixture.document, fixture.modal, 'brand', held({ start: now + H }), now)
+  const visible = visibleFeeNotes(fixture.modal)
+  assert.equal(visible.length, 1)
+  assert.equal(visible[0].parentNode, fixture.reasonLayout)
+  assert.equal(note.hidden, true)
+})
+
+test('detailLayoutHost returns the first .call-details_layout child, else the node itself', () => {
+  const fixture = authoredCancelModal()
+  assert.equal(api.detailLayoutHost(fixture.panels.reason), fixture.reasonLayout)
+  assert.equal(api.detailLayoutHost(fixture.panels.cancel), fixture.cancelLayout)
+  assert.equal(api.detailLayoutHost(fixture.panels.base), fixture.panels.base)
+  assert.equal(api.detailLayoutHost(fixture.modal), fixture.modal)
+  assert.equal(api.detailLayoutHost(null), null)
+  const classList = el('div', {}, [el('div')])
+  classList.children[0].classList = { contains: (name) => name === 'call-details_layout' }
+  assert.equal(api.detailLayoutHost(classList), classList.children[0])
+})
+
 async function clickAction(fixture, button) {
   const event = { target: button, preventDefault() {}, stopImmediatePropagation() {} }
   for (const handler of fixture.document.clickHandlers.slice()) await handler(event)

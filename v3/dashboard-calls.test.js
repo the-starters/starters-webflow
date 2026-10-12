@@ -2910,6 +2910,85 @@ test('Paid declined details keep their labels and the authored decline-reason ho
   assert.notEqual(wrap.style.display, 'none')
 })
 
+// 2026-10-12: authored panels are `.call-details_layout` (scrollable card body)
+// + `.call-sched_button-group`; generated nodes on the panel root render
+// below the dialog. The summary and the action hint go into the layout block.
+function layoutPanel(name) {
+  const panel = domElement('div', { 'booking-popup-content': name })
+  const layout = domElement('div')
+  layout.className = 'call-details_layout'
+  const buttons = domElement('div')
+  buttons.className = 'call-sched_button-group'
+  buttons.appendChild(domElement('a', { 'booking-action-btn': 'switch-close' }))
+  panel.appendChild(layout)
+  panel.appendChild(buttons)
+  return { panel, layout, buttons }
+}
+
+test('summary rows without an authored table go inside the layout block, above the button group', () => {
+  const previous = global.StartersDashboardCallActions
+  global.StartersDashboardCallActions = undefined
+  try {
+    const document = { createElement: (tag) => domElement(tag) }
+    const modal = domElement('dialog')
+    modal.ownerDocument = document
+    const cancelled = layoutPanel('cancelled')
+    modal.appendChild(cancelled.panel)
+    const booking = {
+      start: 10_000,
+      duration: 30,
+      cancelled_reason: 'Schedule changed',
+      brand_data: { name: 'Northwind', memberstack_id: 'mem_brand', timezone: 'UTC' },
+      starter_data: { name: 'Sam', memberstack_id: 'mem_starter', timezone: 'UTC' },
+    }
+    assert.ok(api.ensureDetailSupplements(modal, booking, 'starter', 'UTC') > 0)
+    const supplement = cancelled.panel.querySelector('[data-starters-call-summary]')
+    assert.ok(supplement)
+    assert.equal(supplement.parentNode, cancelled.layout)
+    assert.equal(cancelled.layout.children[cancelled.layout.children.length - 1], supplement)
+    assert.deepEqual(cancelled.panel.children, [cancelled.layout, cancelled.buttons], 'the panel root is untouched')
+    assert.ok(supplement.querySelector('[data-starters-call-summary-row="cancel-reason"]'))
+    assert.ok(supplement.querySelector('[data-starters-call-summary-actions]'))
+    // A second pass reuses the same block in place.
+    api.ensureDetailSupplements(modal, booking, 'starter', 'UTC')
+    assert.equal(cancelled.panel.querySelectorAll('[data-starters-call-summary]').length, 1)
+    assert.equal(cancelled.panel.querySelector('[data-starters-call-summary]').parentNode, cancelled.layout)
+  } finally { global.StartersDashboardCallActions = previous }
+})
+
+test('an action hint sits after its anchor, else at the end of the open panel\'s layout block', () => {
+  const previous = global.StartersDashboardCallActions
+  global.StartersDashboardCallActions = undefined
+  try {
+    const document = { createElement: (tag) => domElement(tag) }
+    const modal = domElement('dialog')
+    modal.ownerDocument = document
+    const base = layoutPanel('base')
+    const hidden = layoutPanel('cancel')
+    hidden.panel.hidden = true
+    hidden.panel.style.display = 'none'
+    modal.appendChild(base.panel)
+    modal.appendChild(hidden.panel)
+    api.ensureActionHint(modal, null, 'cancel', 'Cancel opens closer to the call.', true)
+    const hint = modal.querySelector('[data-starters-action-hint="cancel"]')
+    assert.ok(hint)
+    assert.equal(hint.parentNode, base.layout, 'no anchor: the open panel\'s layout block')
+    assert.equal(hint.textContent, 'Cancel opens closer to the call.')
+    assert.deepEqual(base.panel.children, [base.layout, base.buttons])
+    // With an anchor the hint follows it (unchanged).
+    const placed = []
+    const anchor = { insertAdjacentElement(where, node) { placed.push([where, node]) } }
+    api.ensureActionHint(modal, anchor, 'reschedule', 'Reschedule opens later.', true)
+    assert.equal(placed.length, 1)
+    assert.equal(placed[0][0], 'afterend')
+    assert.equal(placed[0][1].getAttribute('data-starters-action-hint'), 'reschedule')
+    assert.equal(base.layout.children.length, 1, 'the anchored hint is not appended to the layout')
+    // Hiding never creates.
+    api.ensureActionHint(modal, null, 'decline', '', false)
+    assert.equal(modal.querySelector('[data-starters-action-hint="decline"]'), null)
+  } finally { global.StartersDashboardCallActions = previous }
+})
+
 test('missing panel details and role-correct Message actions are supplied without duplicates', () => {
   const document = { createElement: (tag) => domElement(tag) }
   const modal = domElement('dialog')
