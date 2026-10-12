@@ -3062,9 +3062,13 @@ Approval eligibility and Brand action copy use the row's bound canonical
 server clock. Missing or invalid bindings show no Brand action. The click
 retains the bound row and captured booking identity, then rechecks eligibility
 after Stripe-client loading and the canonical response, before either bank
-step. Closing or resetting Call Details permanently invalidates that approval,
-including authored close controls and ancestor native-dialog closes. The click
-posts the booking ID to `brand/booking/payment-action/v3` through
+step. Closing or resetting Call Details before the bank step permanently
+invalidates that approval, including authored close controls and ancestor
+native-dialog closes. After Stripe.js reports a successful bank step, the exact
+booking/payment snapshot stays suppressed while canonical state still requires
+action; a changed PaymentIntent, payment revision, or lifecycle revision clears
+that latch. The click posts the booking ID to
+`brand/booking/payment-action/v3` through
 `window.xanoAuthFetch`; Xano owns Brand identity, booking ownership, the
 canonical PaymentIntent state, and provider selection. The response must echo
 the booking ID, keep `payment_status: "auth_required"`, include a
