@@ -3012,11 +3012,12 @@ still runs in a canonical `test` or `live` `payment_environment`; 3DS approval
 is open only for booking rows whose `data_environment` is listed in
 `PAYMENT_ACTION_OPEN_ENVIRONMENTS` (`['test']`), with the matching
 `payment_environment: "test"`. Test rows with live payment state fail closed
-before loading a Stripe key or calling the approval route. Approval uses
-`is_paid` as the Paid flag when present; `paid_meeting` is the fallback. It loads the
-[shared payment client](#brand-paid-call-payment-method-client) and binds the
-authored saved-card list, Add card dialog, and the existing Call Details control
-authored as `[payment-action-btn="approve-payment"]`. “Use this card” changes
+before loading a Stripe key or calling the approval route. Payment status copy
+remains informative in every environment. Approval uses `is_paid` as the
+Paid flag when present; `paid_meeting` is the fallback. It loads the [shared
+payment client](#brand-paid-call-payment-method-client) and binds the authored
+saved-card list, Add card dialog, and the existing Call Details control authored
+as `[payment-action-btn="approve-payment"]`. “Use this card” changes
 the Brand default for future bookings, verifies that default through an
 authenticated card-list readback, then explicitly recovers only the selected
 booking through `brand/booking/payment-method-replace/v3`. That command sends
@@ -3043,10 +3044,8 @@ server clock. Missing or invalid bindings show no Brand action. The click
 retains the bound row and captured booking identity, then rechecks eligibility
 after Stripe-client loading and the canonical response, before either bank
 step. Closing or resetting Call Details permanently invalidates that approval,
-including an authored DIV root inside a native dialog. A closed ancestor
-dialog also blocks approval. Cleanup preserves a newer card-picker owner.
-A skipped bank step does not refresh as a successful approval. The
-click posts the booking ID to `brand/booking/payment-action/v3` through
+including authored close controls and ancestor native-dialog closes. The click
+posts the booking ID to `brand/booking/payment-action/v3` through
 `window.xanoAuthFetch`; Xano owns Brand identity, booking ownership, the
 canonical PaymentIntent state, and provider selection. The response must echo
 the booking ID, keep `payment_status: "auth_required"`, include a
@@ -4470,8 +4469,11 @@ visible status; selection is disabled until a valid list is loaded. See
 and [payment verification](fixtures/PAYMENT-VERIFICATION.md) for local fixtures
 and outstanding provider evidence.
 
-The scheduling auth bridge allowlists these paid-call paths:
+The scheduling auth bridge allowlists these paid-call paths for Book Call and
+dashboard payment flows:
 
+- `POST /brand/booking/payment-action/v3`
+- `POST /brand/booking/payment-method-replace/v3`
 - `GET /brand/payment-methods/v3`
 - `POST /brand/payment-method/setup/v3`
 - `POST /brand/payment-method/set-default/v3`
