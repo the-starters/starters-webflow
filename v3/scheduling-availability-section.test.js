@@ -990,7 +990,7 @@ test('connection pills and actions follow the independent Nylas and Google state
         },
       },
       labels: [false, true, false, true],
-      actions: [false, false, true],
+      actions: [true, false, true],
     },
     {
       name: 'stale Google manager without a Nylas grant',
@@ -1317,9 +1317,83 @@ test('boots directly into connected state when the starter already has a grant/c
   assert.equal(dom.labelGroup.children[1].style.display, '') // Platform connected through Nylas
   assert.equal(dom.labelGroup.children[2].style.display, 'none') // Google disconnected
   assert.equal(dom.labelGroup.children[3].style.display, '') // Google connected
-  assert.equal(dom.connectBtnWrapper.children[0].style.display, 'none') // Nylas is already connected
+  assert.equal(dom.connectBtnWrapper.children[0].style.display, '') // switch future bookings to Platform
+  assert.equal(dom.connectBtnWrapper.children[0].textContent, 'Use Platform Calendar')
   assert.equal(dom.connectBtnWrapper.children[1].style.display, 'none') // already on Google
   assert.equal(dom.connectBtnWrapper.children[2].style.display, '') // disconnect-google visible
+})
+
+test('Use Platform Calendar selects a preserved Platform default without disconnecting Google', async () => {
+  let canonicalState = null
+  const result = loadSection({
+    serverState: {
+      grantId: 'google-grant',
+      grantEmail: 'member-a@gmail.example',
+      calendarId: 'google-cal',
+      configs: [
+        { config_id: 'cfg-free-old', grant_id: 'google-grant', duration: 30, is_paid: false, active: true },
+        { config_id: 'cfg-paid-old', grant_id: 'google-grant', duration: 60, is_paid: true, active: true },
+      ],
+      availability: {
+        items: { general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] } },
+        manager: 'calendar',
+      },
+    },
+    postRoutes: {
+      '/grants/delete/v3': () => ({
+        status: 400,
+        body: { message: 'Resolve active bookings before disconnecting the calendar' },
+      }),
+      '/grants/create_virtual_account/v3': (body) => {
+        canonicalState.grantId = 'platform-grant'
+        canonicalState.grantEmail = 'virtual@example.com'
+        canonicalState.calendarId = 'platform-cal'
+        canonicalState.configs = [
+          { config_id: 'cfg-free-new', grant_id: 'platform-grant', duration: 30, is_paid: false, active: true },
+          { config_id: 'cfg-paid-new', grant_id: 'platform-grant', duration: 60, is_paid: true, active: true },
+        ]
+        canonicalState.availability = {
+          ...canonicalState.availability,
+          manager: 'platform',
+        }
+        return {
+          status: 200,
+          body: {
+            transition_id: body.in_transition_id,
+            previous_grant_retained: true,
+            replaced_grant_id: 'google-grant',
+            grant_id: 'platform-grant',
+            default_selected: true,
+            services_ready: true,
+            manager: 'platform',
+          },
+        }
+      },
+    },
+  })
+  canonicalState = result.state
+  await settle()
+
+  result.dom.connectBtnWrapper.children[0].click()
+  await settle()
+  await settle()
+
+  const request = result.calls.find((call) => call.path === '/grants/create_virtual_account/v3')
+  assert.deepEqual(request.body, {
+    member_id: 'member-a',
+    in_preserve_bookings: true,
+    in_replace_grant_id: 'google-grant',
+    in_transition_id: 'uuid-fixed',
+  })
+  assert.equal(result.calls.filter((call) => call.path === '/grants/delete/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/grants/add_virtual/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/grants/create_virtual_calendar/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/scheduler/configurations/create/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/starter/update_availability/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/starter/paid-call-settings/upsert/v3').length, 0)
+  assert.equal(result.state.availability.manager, 'platform')
+  assert.equal(result.dom.notif.steps['virtual-connected'].style.display, '')
+  assert.equal(result.window.sessionStorage._map.has('starter-scheduling-platform-transition:member-a'), false)
 })
 
 test('disconnecting Google preserves the Platform layer by replacing the Google grant with a virtual grant', async () => {
@@ -1429,29 +1503,6 @@ for (const [label, priceCents] of [
     assert.equal(dom.notif.errorText.textContent, PAID_CALL_RATE_COPY)
   })
 }
-
-test('a stale/programmatic connect-platform click is ignored while a Google-backed Nylas grant exists', async () => {
-  const { dom, calls } = loadSection({
-    serverState: {
-      grantId: 'grant-1',
-      grantEmail: 'g@example.com',
-      calendarId: 'cal-1',
-      availability: {
-        items: { general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] } },
-        manager: 'calendar',
-      },
-    },
-  })
-  await settle()
-
-  assert.equal(dom.connectBtnWrapper.children[0].style.display, 'none')
-  dom.connectBtnWrapper.children[0].click()
-  await settle()
-
-  assert.equal(dom.notif.steps['disconnect-calendar'].style.display, 'none')
-  assert.equal(calls.filter((c) => c.path === '/grants/delete/v3').length, 0)
-  assert.equal(calls.filter((c) => c.path === '/grants/create_virtual_account/v3').length, 0)
-})
 
 test('a Nylas grant persisted without a calendar stays repairable through Connect Platform', async () => {
   // Reproduces the half-built virtual grant: /grants/add_virtual/v3 persisted
@@ -1795,9 +1846,10 @@ test('the OAuth return after a Platform replacement shows Platform and Google bo
   ;[false, true, false, true].forEach((visible, index) => {
     assert.equal(result.dom.labelGroup.children[index].style.display !== 'none', visible, 'label ' + index)
   })
-  ;[false, false, true].forEach((visible, index) => {
+  ;[true, false, true].forEach((visible, index) => {
     assert.equal(result.dom.connectBtnWrapper.children[index].style.display !== 'none', visible, 'action ' + index)
   })
+  assert.equal(result.dom.connectBtnWrapper.children[0].textContent, 'Use Platform Calendar')
   assert.equal(result.window.sessionStorage._map.has(OAUTH_INTENT_KEY), false)
 })
 
@@ -4325,6 +4377,8 @@ function preservedOAuthCase(options = {}) {
     replaced_grant_id: 'old-grant',
     grant_id: 'new-grant',
     default_selected: true,
+    services_ready: true,
+    manager: 'calendar',
     ...options.receipt,
   }
   let selected = options.selected === true
@@ -4407,6 +4461,7 @@ test('preserved OAuth rejects missing or mismatched server attestations before a
   const badReceipts = [
     { transition_id: 'other-transition' }, { previous_grant_retained: false },
     { replaced_grant_id: 'another-old-grant' }, { default_selected: false },
+    { services_ready: false }, { manager: 'platform' },
     { grant_id: 'old-grant' }, { grant_id: '' },
   ]
   for (const receipt of badReceipts) {
@@ -4461,6 +4516,7 @@ test('a persisted completed preservation receipt resumes without re-exchanging t
       grantReceipt: {
         transition_id: 'transition-fixture', previous_grant_retained: true,
         replaced_grant_id: 'old-grant', grant_id: 'new-grant', default_selected: true,
+        services_ready: true, manager: 'calendar',
       },
     },
   })
@@ -4518,6 +4574,7 @@ test('a completed preserved receipt rejects another hosted grant without re-exch
     intent: { grantReceipt: {
       transition_id: 'transition-fixture', previous_grant_retained: true,
       replaced_grant_id: 'old-grant', grant_id: 'new-grant', default_selected: true,
+      services_ready: true, manager: 'calendar',
     } },
   })
   await settle()

@@ -38,6 +38,7 @@
   const CACHE_PREFIX = 'starter-scheduling-availability:'
   const TIMEZONE_CACHE_PREFIX = 'starter-timezone:'
   const OAUTH_INTENT_PREFIX = 'starter-scheduling-oauth-intent:'
+  const PLATFORM_TRANSITION_INTENT_PREFIX = 'starter-scheduling-platform-transition:'
   const OAUTH_CALLBACK_KEY = 'starter-scheduling-oauth-callback'
   const OAUTH_INTENT_MAX_AGE = 15 * 60 * 1000
 
@@ -87,7 +88,7 @@
   const ERROR_TEXT_PAID_CALL_RATE =
     'Your paid call rate must be a whole-dollar amount from $1 to $1,000. Update it in Call Settings, then try again.'
   const PAID_CALL_RATE_UNSUPPORTED = 'PAID_CALL_RATE_UNSUPPORTED'
-  // grants/delete/v3 (Xano #1660) refuses a calendar transition or disconnect while
+  // grants/delete/v3 (Xano #1660) refuses a destructive disconnect while
   // the current calendar still has requested, confirmed or rescheduled calls whose
   // end time has not passed. Nothing is cancelled or deleted in that case. The member
   // can act on it, so name the calls instead of showing generic calendar copy.
@@ -368,12 +369,14 @@
     return Boolean(grantId) && Boolean(availability && availability.manager === 'calendar')
   }
 
-  // Connecting Platform creates a fresh virtual grant, so it is only offered
-  // when neither layer is connected: a usable Platform layer has nothing to
-  // add, and a Google-backed grant must go through the confirmed Google
-  // disconnect instead of being deleted from under the member.
+  // First-time Platform setup creates a fresh virtual grant, so it is only
+  // offered when neither layer is connected.
   function platformConnectAvailable() {
     return !platformLayerConnected() && !googleLayerConnected()
+  }
+
+  function platformActionAvailable() {
+    return platformConnectAvailable() || (platformLayerConnected() && googleLayerConnected())
   }
 
   function googleConnectAvailable() {
@@ -503,11 +506,10 @@
       paidCallIntent: paidCallIntent || null,
     }
     if (previousGrantId) {
-      // Backend dependency: grants/add/v3 must atomically retain the old binding
-      // and attest the selected default. Do not release before that gate passes.
       intent.preserveBookings = true
       intent.replaceGrantId = previousGrantId
       intent.transitionId = crypto.randomUUID()
+      intent.targetManager = 'calendar'
     }
     return writeOAuthIntent(memberId, intent) ? intent : null
   }
@@ -590,13 +592,92 @@
     return intent
   }
 
-  function preservedGrantReceiptMatches(intent, receipt, callbackGrantId) {
+  function platformTransitionIntentKey(memberId) {
+    return PLATFORM_TRANSITION_INTENT_PREFIX + memberId
+  }
+
+  function readPlatformTransitionIntent(memberId, replaceGrantId) {
+    const key = platformTransitionIntentKey(memberId)
+    for (const storage of oauthIntentStorages(['sessionStorage', 'localStorage'])) {
+      try {
+        const raw = storage.getItem(key)
+        const intent = raw ? JSON.parse(raw) : null
+        if (
+          intent &&
+          Number.isFinite(intent.createdAt) &&
+          Date.now() - intent.createdAt >= 0 &&
+          Date.now() - intent.createdAt <= OAUTH_INTENT_MAX_AGE &&
+          intent.preserveBookings === true &&
+          intent.targetManager === 'platform' &&
+          intent.replaceGrantId === replaceGrantId &&
+          typeof intent.transitionId === 'string' &&
+          intent.transitionId
+        ) {
+          return intent
+        }
+        storage.removeItem(key)
+      } catch (error) {
+        try {
+          storage.removeItem(key)
+        } catch (storageError) {
+          /* storage unavailable */
+        }
+      }
+    }
+    return null
+  }
+
+  function writePlatformTransitionIntent(memberId, intent) {
+    const key = platformTransitionIntentKey(memberId)
+    const value = JSON.stringify(intent)
+    let stored = false
+    oauthIntentStorages(['sessionStorage', 'localStorage']).forEach(function (storage) {
+      try {
+        storage.setItem(key, value)
+        stored = true
+      } catch (error) {
+        /* storage unavailable */
+      }
+    })
+    return stored
+  }
+
+  function rememberPlatformTransitionIntent(memberId, replaceGrantId) {
+    const existing = readPlatformTransitionIntent(memberId, replaceGrantId)
+    if (existing) return existing
+    const intent = {
+      createdAt: Date.now(),
+      preserveBookings: true,
+      replaceGrantId: replaceGrantId,
+      transitionId: crypto.randomUUID(),
+      targetManager: 'platform',
+    }
+    if (!writePlatformTransitionIntent(memberId, intent)) {
+      throw new Error('Calendar transition could not be retained')
+    }
+    return intent
+  }
+
+  function clearPlatformTransitionIntent(memberId) {
+    const key = platformTransitionIntentKey(memberId)
+    oauthIntentStorages(['sessionStorage', 'localStorage']).forEach(function (storage) {
+      try {
+        storage.removeItem(key)
+      } catch (error) {
+        /* storage unavailable */
+      }
+    })
+  }
+
+  function preservedGrantReceiptMatches(intent, receipt, expectedManager, callbackGrantId) {
+    const targetManager = expectedManager || (intent && intent.targetManager) || 'calendar'
     return Boolean(
       intent && intent.preserveBookings === true &&
       typeof intent.transitionId === 'string' && intent.transitionId &&
       typeof intent.replaceGrantId === 'string' && intent.replaceGrantId &&
       receipt && receipt.transition_id === intent.transitionId &&
       receipt.previous_grant_retained === true && receipt.default_selected === true &&
+      receipt.services_ready === true && receipt.manager === targetManager &&
       receipt.replaced_grant_id === intent.replaceGrantId &&
       typeof receipt.grant_id === 'string' && receipt.grant_id &&
       receipt.grant_id !== intent.replaceGrantId &&
@@ -611,8 +692,8 @@
     }
     // Only the server receipt proves a preserved switch completed. The old
     // current grant remaining usable is deliberately not completion evidence.
-    if (preserve && preservedGrantReceiptMatches(intent, intent.grantReceipt)) {
-      if (!preservedGrantReceiptMatches(intent, intent.grantReceipt, callback.grantId)) {
+    if (preserve && preservedGrantReceiptMatches(intent, intent.grantReceipt, 'calendar')) {
+      if (!preservedGrantReceiptMatches(intent, intent.grantReceipt, 'calendar', callback.grantId)) {
         throw new Error('Hosted calendar does not match the completed transition')
       }
       return
@@ -638,7 +719,7 @@
       payload.in_transition_id = intent.transitionId
     }
     const receipt = await xanoPost('/grants/add/v3', payload)
-    if (preserve && !preservedGrantReceiptMatches(intent, receipt, callback.grantId)) {
+    if (preserve && !preservedGrantReceiptMatches(intent, receipt, 'calendar', callback.grantId)) {
       throw new Error('Calendar transition did not verify booking preservation')
     }
     if (!(receipt && receipt.grant_id)) throw new Error('grants/add/v3 returned no grant')
@@ -647,11 +728,16 @@
     persistOAuthIntent(memberId, intent)
   }
 
-  function assertPreservedDefault(intent, callbackGrantId) {
+  function assertPreservedDefault(intent, expectedManager, callbackGrantId) {
     if (intent.preserveBookings !== true) return
+    const targetManager = expectedManager || intent.targetManager || 'calendar'
     if (
-      !preservedGrantReceiptMatches(intent, intent.grantReceipt, callbackGrantId) ||
+      !preservedGrantReceiptMatches(intent, intent.grantReceipt, targetManager, callbackGrantId) ||
       grantId !== intent.grantReceipt.grant_id ||
+      !availability ||
+      availability.manager !== targetManager ||
+      !Array.isArray(configs) ||
+      configs.length === 0 ||
       configs.some(function (config) { return !config || config.grant_id !== grantId })
     ) {
       throw new Error('Selected calendar does not match the verified transition')
@@ -1278,6 +1364,27 @@
     })
   }
 
+  async function selectPlatformDefault(memberId) {
+    if (!grantId) throw new Error('Calendar transition identity is missing')
+    const intent = rememberPlatformTransitionIntent(memberId, grantId)
+    if (!preservedGrantReceiptMatches(intent, intent.grantReceipt, 'platform')) {
+      const receipt = await xanoPost('/grants/create_virtual_account/v3', {
+        member_id: memberId,
+        in_preserve_bookings: true,
+        in_replace_grant_id: intent.replaceGrantId,
+        in_transition_id: intent.transitionId,
+      })
+      if (!preservedGrantReceiptMatches(intent, receipt, 'platform')) {
+        throw new Error('Platform transition did not verify booking preservation')
+      }
+      intent.grantReceipt = receipt
+      writePlatformTransitionIntent(memberId, intent)
+    }
+    await refreshCanonicalConnectionState()
+    assertPreservedDefault(intent, 'platform')
+    clearPlatformTransitionIntent(memberId)
+  }
+
   async function clearGrant(currentGrantId, memberId) {
     if (!currentGrantId) return { paidCallIntent: null }
     await ensureTimezone()
@@ -1313,12 +1420,7 @@
   /* ------------------------------------------------------------------ */
 
   async function activatePlatformManager() {
-    // Platform means the canonical Nylas connection layer. A Google-backed
-    // grant is already a Platform connection, so this action is only valid
-    // while neither layer is connected. Google disconnect owns the separate
-    // provider -> virtual-calendar transition. A grant left behind without a
-    // calendar is not a connection, so rebuilding over it is still valid.
-    if (connectBusy || !platformConnectAvailable()) return
+    if (connectBusy || !platformActionAvailable()) return
     connectBusy = true
     calendarTransitionErrorText = null
     setRequestBusy(true)
@@ -1327,6 +1429,13 @@
     let transition = null
     try {
       memberId = await writeMemberId()
+      if (googleLayerConnected()) {
+        await selectPlatformDefault(memberId)
+        renderAvailabilityItems()
+        renderSlotsPreview()
+        console.log('[scheduling-section] selected platform calendar')
+        return true
+      }
       // clearGrant is a no-op without a grant id, so this only ever deletes a
       // half-built grant that never became a connection. Once the canonical
       // route reports it gone, the local copy must go too — otherwise a
@@ -1519,7 +1628,13 @@
       if (!grantId || !grantEmail || !grantCalendarId) {
         throw new Error('Canonical OAuth grant readback is incomplete')
       }
-      assertPreservedDefault(oauthIntent, oauthGrantId)
+      assertPreservedDefault(oauthIntent, 'calendar', oauthGrantId)
+      if (oauthIntent.preserveBookings === true) {
+        clearOAuthIntent(memberId)
+        clearOAuthCallback()
+        console.log('[scheduling-section] Google Calendar connected via preserved OAuth')
+        return
+      }
       // Mirror activatePlatformManager/disconnectGoogleManager: the manager
       // switch must be persisted here, not just left for the caller — this is
       // the only place that observes the freshly-added Google grant.
@@ -1531,7 +1646,7 @@
       if (activeFreeConfigs().length === 0) await createFreeConfig()
       await restorePaidCallIntent(oauthIntent.paidCallIntent)
       await refreshCanonicalConnectionState()
-      assertPreservedDefault(oauthIntent, oauthGrantId)
+      assertPreservedDefault(oauthIntent, 'calendar', oauthGrantId)
       clearOAuthIntent(memberId)
       clearOAuthCallback()
       console.log('[scheduling-section] Google Calendar connected via OAuth')
@@ -1774,12 +1889,19 @@
   // Platform is the canonical Nylas connection layer. Google is an
   // independent provider fact on top of that layer. A Google-backed grant
   // therefore makes both Platform and Google connected.
+  function setActionText(target, text) {
+    if (!target) return
+    const textEl = qs('.button_main-text, [btn-text], [text-element]', target)
+    if (textEl) textEl.textContent = text
+    else if (!target.children || target.children.length === 0) target.textContent = text
+  }
+
   function applyConnectButtonVisibility() {
     const wrapper = qs(elSel('connect-btn-wrapper'))
     if (!wrapper) return
     const hasGoogleConnection = googleLayerConnected()
     const rules = [
-      ['connect-platform', platformConnectAvailable()],
+      ['connect-platform', platformActionAvailable()],
       // JP contract (2026-09-29): Connect Google is offered only once the Platform
       // layer is connected, so a disconnected member sees only Connect Platform.
       ['open-connect-google', googleConnectAvailable()],
@@ -1787,7 +1909,14 @@
     ]
     rules.forEach(function (rule, i) {
       const target = resolveActionTarget(wrapper, rule[0], i)
-      if (target) target.style.display = rule[1] ? '' : 'none'
+      if (!target) return
+      if (rule[0] === 'connect-platform') {
+        setActionText(
+          target,
+          hasGoogleConnection ? 'Use Platform Calendar' : 'Connect Platform Calendar',
+        )
+      }
+      target.style.display = rule[1] ? '' : 'none'
     })
   }
 
@@ -1823,10 +1952,7 @@
     const wrapper = qs(elSel('connect-btn-wrapper'))
     bindActionGroup(wrapper, ['connect-platform', 'open-connect-google', 'open-disconnect-google'], function (action) {
       if (action === 'connect-platform') {
-        // A connected layer already covers Platform. Ignore a stale or
-        // programmatic click rather than misrouting it into Google's
-        // disconnect modal.
-        if (!platformConnectAvailable()) {
+        if (!platformActionAvailable()) {
           applyConnectButtonVisibility()
           return
         }

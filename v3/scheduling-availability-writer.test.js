@@ -1202,7 +1202,7 @@ test('platform setup failure shows config-request-error and writes nothing', asy
   assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'error')
 })
 
-test('platform transition reuses its virtual account after partial calendar creation', async () => {
+test('Google-to-Platform manager switch uses preserved server selection', async () => {
   const availability = defaultAvailability()
   availability.manager = 'calendar'
   let canonicalManager = 'calendar'
@@ -1211,16 +1211,6 @@ test('platform transition reuses its virtual account after partial calendar crea
     email: 'grant@example.com',
     calendarId: 'cal-1',
   }
-  let paidService = {
-    config_id: 'cfg-paid-old',
-    title: 'Paid Strategy Call',
-    price_cents: 100,
-    duration: 45,
-    active: true,
-  }
-  let accountCalls = 0
-  let calendarCalls = 0
-  let freeConfigCreated = false
   const result = loadWriter({
     availability,
     storage: TZ_CACHED,
@@ -1236,28 +1226,14 @@ test('platform transition reuses its virtual account after partial calendar crea
           nylas_calendar_id: canonicalGrant && canonicalGrant.calendarId,
         },
       }),
-      '/starter/paid-call-settings/get/v3': () => ({
-        status: 200,
-        body: {
-          readiness: { paid_call_enabled: Boolean(paidService) },
-          services: paidService ? [paidService] : [],
-        },
-      }),
-      '/starter/paid-call-settings/upsert/v3': (body) => {
-        paidService = {
-          config_id: 'cfg-paid-restored',
-          title: body.title,
-          price_cents: body.price_cents,
-          duration: body.duration_minutes,
-          active: true,
-        }
-        return { status: 200, body: { service: paidService } }
-      },
       '/nylas_configurations/get_all/v3': (body) => ({
         status: 200,
         body:
-          body.grant_id === 'vgrant-1' && freeConfigCreated
-            ? [{ config_id: 'cfg-free-new', grant_id: 'vgrant-1', is_paid: false, active: true }]
+          body.grant_id === 'platform-grant'
+            ? [
+                { config_id: 'cfg-free-new', grant_id: 'platform-grant', is_paid: false, active: true },
+                { config_id: 'cfg-paid-new', grant_id: 'platform-grant', is_paid: true, active: true },
+              ]
             : body.grant_id === 'grant-1'
               ? [
                   { config_id: 'cfg-free-old', grant_id: 'grant-1', is_paid: false, active: true },
@@ -1266,54 +1242,27 @@ test('platform transition reuses its virtual account after partial calendar crea
               : [],
       }),
       '/grants/delete/v3': () => {
-        canonicalGrant = null
-        paidService = null
-        return {
-          status: 200,
-          body: {
-            connected: false,
-            already_disconnected: false,
-            availability: {},
-            deleted_configuration_ids: ['cfg-free-old', 'cfg-paid-old'],
-            provider_response: { status: 200 },
-          },
-        }
+        return { status: 400, body: { message: 'RESOLVE ACTIVE BOOKINGS before disconnecting the calendar' } }
       },
-      '/grants/create_virtual_account/v3': () => {
-        accountCalls += 1
-        return {
-          status: 200,
-          body: {
-            response: {
-              result: { data: { id: 'vgrant-1', email: 'virtual@example.com' } },
-            },
-          },
-        }
-      },
-      '/grants/add_virtual/v3': () => {
+      '/grants/create_virtual_account/v3': (body) => {
+        canonicalManager = 'platform'
         canonicalGrant = {
-          id: 'vgrant-1',
+          id: 'platform-grant',
           email: 'virtual@example.com',
-          calendarId: null,
+          calendarId: 'platform-cal',
         }
-        return { status: 200, body: { id: 5 } }
-      },
-      '/grants/create_virtual_calendar/v3': () => {
-        calendarCalls += 1
-        if (calendarCalls === 1) return { status: 503, body: { message: 'try again' } }
-        canonicalGrant.calendarId = 'vcal-1'
         return {
           status: 200,
-          body: { response: { result: { data: { id: 'vcal-1' } } } },
+          body: {
+            transition_id: body.in_transition_id,
+            previous_grant_retained: true,
+            replaced_grant_id: 'grant-1',
+            grant_id: 'platform-grant',
+            default_selected: true,
+            services_ready: true,
+            manager: 'platform',
+          },
         }
-      },
-      '/scheduler/configurations/create/v3': () => {
-        freeConfigCreated = true
-        return { status: 200, body: { response: { status: 200 } } }
-      },
-      '/starter/update_availability/v3': (body) => {
-        canonicalManager = body.availability.manager
-        return { status: 200, body: { id: 1 } }
       },
     },
   })
@@ -1324,26 +1273,35 @@ test('platform transition reuses its virtual account after partial calendar crea
   await settle()
   await settle()
 
-  assert.equal(accountCalls, 1)
-  assert.equal(calendarCalls, 2)
-  assert.equal(
-    result.calls.filter((call) => call.path === '/grants/add_virtual/v3').length,
-    2,
-  )
-  assert.deepEqual(paidService, {
-    config_id: 'cfg-paid-restored',
-    title: 'Paid Strategy Call',
-    price_cents: 100,
-    duration: 45,
-    active: true,
+  const request = result.calls.find((call) => call.path === '/grants/create_virtual_account/v3')
+  assert.deepEqual(request.body, {
+    member_id: 'member-a',
+    in_preserve_bookings: true,
+    in_replace_grant_id: 'grant-1',
+    in_transition_id: 'uuid-fixed',
   })
+  assert.equal(result.calls.filter((call) => call.path === '/grants/delete/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/grants/add_virtual/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/grants/create_virtual_calendar/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/scheduler/configurations/create/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/starter/update_availability/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/starter/paid-call-settings/upsert/v3').length, 0)
   assert.equal(canonicalManager, 'platform')
-  assert.equal(result.sessionStorage.has('starter-scheduling-oauth-intent:member-a'), false)
+  assert.equal(result.window.STARTER_AVAILABILITY.manager, 'platform')
+  assert.equal(result.dom.steps.success.style.display, 'block')
+  assert.equal(result.sessionStorage.has('starter-scheduling-platform-transition:member-a'), false)
 })
 
-test('an active-booking rejection stops the Google-to-Platform manager switch', async () => {
+test('failed preserved Platform selection retries with the same transition id', async () => {
   const availability = defaultAvailability()
   availability.manager = 'calendar'
+  let canonicalManager = 'calendar'
+  let canonicalGrant = {
+    id: 'grant-1',
+    email: 'grant@example.com',
+    calendarId: 'cal-1',
+  }
+  let attempts = 0
   const result = loadWriter({
     availability,
     storage: TZ_CACHED,
@@ -1353,16 +1311,40 @@ test('an active-booking rejection stops the Google-to-Platform manager switch', 
         body: {
           id: 1,
           timezone: 'Asia/Manila',
-          availability,
-          nylas_grant_id: 'grant-1',
-          nylas_grant_email: 'grant@example.com',
-          nylas_calendar_id: 'cal-1',
+          availability: { ...availability, manager: canonicalManager },
+          nylas_grant_id: canonicalGrant.id,
+          nylas_grant_email: canonicalGrant.email,
+          nylas_calendar_id: canonicalGrant.calendarId,
         },
       }),
-      '/grants/delete/v3': () => ({
-        status: 400,
-        body: { message: 'RESOLVE ACTIVE BOOKINGS before disconnecting the calendar' },
+      '/nylas_configurations/get_all/v3': (body) => ({
+        status: 200,
+        body: body.grant_id === 'platform-grant'
+          ? [{ config_id: 'cfg-free-new', grant_id: 'platform-grant', is_paid: false, active: true }]
+          : [{ config_id: 'cfg-free-old', grant_id: 'grant-1', is_paid: false, active: true }],
       }),
+      '/grants/create_virtual_account/v3': (body) => {
+        attempts += 1
+        if (attempts === 1) return { status: 503, body: { message: 'try again' } }
+        canonicalManager = 'platform'
+        canonicalGrant = {
+          id: 'platform-grant',
+          email: 'virtual@example.com',
+          calendarId: 'platform-cal',
+        }
+        return {
+          status: 200,
+          body: {
+            transition_id: body.in_transition_id,
+            previous_grant_retained: true,
+            replaced_grant_id: 'grant-1',
+            grant_id: 'platform-grant',
+            default_selected: true,
+            services_ready: true,
+            manager: 'platform',
+          },
+        }
+      },
     },
   })
   await settle()
@@ -1371,13 +1353,22 @@ test('an active-booking rejection stops the Google-to-Platform manager switch', 
   result.clickAction(result.dom.buttons.managerSubmit)
   await settle()
 
-  assert.equal(result.calls.filter((c) => c.path === '/grants/delete/v3').length, 1)
-  assert.equal(result.calls.filter((c) => c.path === '/grants/create_virtual_account/v3').length, 0)
+  assert.equal(result.sessionStorage.has('starter-scheduling-platform-transition:member-a'), true)
+  result.clickAction(result.dom.buttons.managerSubmit)
+  await settle()
+  await settle()
+
+  const requests = result.calls.filter((c) => c.path === '/grants/create_virtual_account/v3')
+  assert.equal(requests.length, 2)
+  assert.equal(requests[0].body.in_transition_id, 'uuid-fixed')
+  assert.equal(requests[1].body.in_transition_id, 'uuid-fixed')
+  assert.equal(result.calls.filter((c) => c.path === '/grants/delete/v3').length, 0)
+  assert.equal(result.calls.filter((c) => c.path === '/grants/add_virtual/v3').length, 0)
+  assert.equal(result.calls.filter((c) => c.path === '/grants/create_virtual_calendar/v3').length, 0)
   assert.equal(result.calls.filter((c) => c.path === '/starter/update_availability/v3').length, 0)
-  assert.equal(result.window.STARTER_AVAILABILITY.manager, 'calendar')
-  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'error')
-  assert.equal(result.dom.steps['config-request-error'].style.display, 'block')
-  assert.equal(result.dom.errorText.textContent, ACTIVE_CALLS_COPY)
+  assert.equal(result.sessionStorage.has('starter-scheduling-platform-transition:member-a'), false)
+  assert.equal(result.window.STARTER_AVAILABILITY.manager, 'platform')
+  assert.equal(canonicalManager, 'platform')
 })
 
 test('disconnect flow: confirm navigates to its step, disconnect rebuilds a virtual calendar', async () => {
@@ -3239,6 +3230,8 @@ function preservedOAuthCase(options = {}) {
     replaced_grant_id: 'old-grant',
     grant_id: 'new-grant',
     default_selected: true,
+    services_ready: true,
+    manager: 'calendar',
     ...options.receipt,
   }
   let selected = options.selected === true
@@ -3320,6 +3313,7 @@ test('preserved OAuth rejects missing or mismatched server attestations before a
   const badReceipts = [
     { transition_id: 'other-transition' }, { previous_grant_retained: false },
     { replaced_grant_id: 'another-old-grant' }, { default_selected: false },
+    { services_ready: false }, { manager: 'platform' },
     { grant_id: 'old-grant' }, { grant_id: '' },
   ]
   for (const receipt of badReceipts) {
@@ -3374,6 +3368,7 @@ test('a persisted completed preservation receipt resumes without re-exchanging t
       grantReceipt: {
         transition_id: 'transition-fixture', previous_grant_retained: true,
         replaced_grant_id: 'old-grant', grant_id: 'new-grant', default_selected: true,
+        services_ready: true, manager: 'calendar',
       },
     },
   })
@@ -3428,6 +3423,7 @@ test('a completed preserved receipt rejects another hosted grant without re-exch
     intent: { grantReceipt: {
       transition_id: 'transition-fixture', previous_grant_retained: true,
       replaced_grant_id: 'old-grant', grant_id: 'new-grant', default_selected: true,
+      services_ready: true, manager: 'calendar',
     } },
   })
   await settle()

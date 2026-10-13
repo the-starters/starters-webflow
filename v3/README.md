@@ -3464,14 +3464,16 @@ inside it. All **11** step wrappers exist:
 
 The manager-selection tiles and submit action are normalized at runtime to the
 supported choices: `Use platform availability` or `Connect Google Calendar`.
-Selecting Google clears the previous grant, restores the disconnected state
-from the canonical scheduling row, prepares the authenticated hosted OAuth URL,
-and navigates the current tab without a second confirmation. The same-tab
-handoff intentionally avoids delayed `window.open`, which browsers block after
-asynchronous Xano requests. Before navigation, it writes the member-scoped
-intent to both the current tab's `sessionStorage` and a same-origin
-`localStorage` fallback so a provider redirect that loses tab storage can still
-return to the verified flow.
+Selecting Google while Platform is active preserves the current default during
+OAuth, prepares the authenticated hosted OAuth URL, and navigates the current
+tab without a second confirmation. The same-tab handoff intentionally avoids
+delayed `window.open`, which browsers block after asynchronous Xano requests.
+Before navigation, it writes the member-scoped intent to both the current tab's
+`sessionStorage` and a same-origin `localStorage` fallback so a provider
+redirect that loses tab storage can still return to the verified flow. Selecting
+Platform while Google is active uses the preserved Platform selection receipt
+contract below instead of deleting or rebuilding the Google grant in the
+browser.
 
 Only `setup-form`, `how-to-manage`, and `disconnect-calendar` carry a
 step-scoped `[data-custom-loader]`; `setLoader` is a safe no-op on the rest
@@ -3485,8 +3487,7 @@ Designer follow-up):
 - no `[starter-timezone]` label element exists, so the timezone text renders
   nowhere (resolution/persistence still runs);
 - no `availability-popup-close="pre-redirect"` variant exists (both close
-  controls are plain), so the legacy manager-restore close branch is
-  currently dead but harmless.
+  controls are plain), and closing the modal no longer writes an old manager.
 
 Error-copy contract: when `config-request-error` has a plain-text
 `[error-text-element]`, every reveal restores its Designer-authored copy before
@@ -3523,9 +3524,9 @@ Deliberately NOT ported from the legacy inline writer:
 - the `availability-popup-shown` auto-open behavior (the init module owns
   initial visibility);
 - the bookings list machinery — the writer delegates list rendering to the page
-  embed's `window.generateBookingsList` when present. Disconnects and manager
-  switches never delegate to `window.clearGrantData`: the authenticated
-  `grants/delete/v3` composite route is the single clear owner. While the
+  embed's `window.generateBookingsList` when present. Disconnects never delegate
+  to `window.clearGrantData`: the authenticated `grants/delete/v3` composite
+  route is the single clear owner. While the
   current calendar has a pending (Requested), confirmed, or rescheduled call
   whose end time has not passed, that route returns HTTP 400 with a
   `data.message` matching
@@ -3535,15 +3536,19 @@ Deliberately NOT ported from the legacy inline writer:
   or wait until they end, then try again.` Unrelated failures keep the authored
   generic copy, and the paid-call-rate remediation keeps priority. Once the
   route's preconditions pass, it deletes the provider grant first and only then
-  clears configurations and canonical scheduling state.
+  clears configurations and canonical scheduling state. Preserved manager
+  switches use the receipt contracts below and do not call the clear route.
 - One deliberate behavior fix: a failed configuration update no longer falls
   through to the `success` step (legacy phantom-success bug).
 
 V3 endpoint contract (no Airtable row keys anywhere): the writer calls
 `grants/oauth/v3` with `in_state: <authenticated member id>` and an
 allowlisted `in_redirect_uri`, and sends that same URI and state to
-`grants/add/v3`; it calls `grants/add_virtual/v3` with
-`{ grant_id, member_id }`. Both are new memberstack_id-keyed endpoints; the
+`grants/add/v3`; first-time Platform setup calls `grants/add_virtual/v3` with
+`{ grant_id, member_id }`, while preserved Google-to-Platform selection calls
+`grants/create_virtual_account/v3` with `{ member_id, in_preserve_bookings:
+true, in_replace_grant_id, in_transition_id }`. Both are new
+memberstack_id-keyed endpoints; the
 legacy airtable_id-keyed
 `grants/oauth`/`grants/add`/`grants/add_virtual` remain untouched for V2. The
 OAuth return is handled by the availability writer via `grants/add/v3`
@@ -3637,20 +3642,20 @@ It does not consume an availability-state handoff from
 record itself. The initializer's separate UI-routing contract is documented in
 [Booking-stage availability initializer](#booking-stage-availability-initializer).
 
-Google Calendar disconnect and manager switches follow the provider-first
-composite clear contract in
-[Booking-stage availability writer](#booking-stage-availability-writer); this
-section does not add a second clear owner.
+Google Calendar disconnect follows the provider-first composite clear contract in
+[Booking-stage availability writer](#booking-stage-availability-writer).
+Preserved manager switches follow the receipt contract below; this section does
+not add a second clear owner.
 
 Connect Google goes straight to the `pre-oauth` step; the retired
 `switch-calendar` step never opens, and a stale Connect Google click without a
 connected Platform layer is ignored. V3 keeps one grant per member, so the
-"Done" click deletes the Platform grant through `grants/delete/v3` before the
-OAuth redirect. The shared composite-clear contract above owns its active-call
-refusal and no-cancellation guarantees; this section names any blocking calls in
-the error step. Known limit: if Google sign-in is abandoned after the Platform
-grant is deleted, the member remains disconnected until they click Connect
-Platform; reordering the transition server-side is planned.
+"Done" click starts Google OAuth without deleting, clearing, or changing the
+current default. The current grant remains selected until `grants/add/v3`
+returns the preserved-selection receipt and the controller verifies fresh
+canonical grant, manager, and configuration ownership. If Google sign-in is
+abandoned, the member remains on the old default. Actual Disconnect Google keeps
+the separate guarded destructive path.
 
 Designer markup contract (`data-availability-element="<name>"` unless noted):
 `section` (root), `connect-wrapper`, `connect-label-group`, `connect-label`,
@@ -3717,10 +3722,11 @@ notification, applies native custom validity to both authored inputs, keeps the
 inline form editable, and sends no availability request.
 
 The three `connect-btn-wrapper` actions follow the two-layer state matrix. With
-no connection, only Connect Platform shows. With a virtual Nylas
-grant, only Connect Google shows. With a Google-backed Nylas grant, only
-Disconnect Google shows. Connect Platform is never valid while either layer is
-connected, and a stale or programmatic click is ignored.
+no connection, only Connect Platform shows. With a virtual Nylas grant, only
+Connect Google shows. With a ready Google-backed Nylas grant, Use Platform
+Calendar and Disconnect Google both show: Use Platform Calendar selects the
+future default through the preserved server receipt, while Disconnect Google
+remains the explicit destructive path. A stale or programmatic click is ignored.
 
 A grant left behind without a calendar id is not a connection, so Connect
 Platform stays available there and rebuilds over it: the flow deletes the
@@ -3731,12 +3737,13 @@ still Google-backed keeps the confirmed Disconnect Google path instead, so no
 live provider grant is ever deleted without the confirm step.
 
 Every action that deletes a live Google grant confirms first. Connect Platform
-never touches a live Google grant, so it opens the
+never deletes a live Google grant: first-time setup opens the
 `notification-type="virtual-connect"` spinner and creates the virtual Nylas
-calendar. Disconnect Google opens `notification-type="disconnect-calendar"`.
-After confirmation, the provider-first flow deletes the Google-backed grant
-and creates a virtual Nylas grant. The result is Platform Connected and Google
-Disconnected.
+calendar, while the Google-active Use Platform Calendar action calls the
+preserved Platform selection composite. Disconnect Google opens
+`notification-type="disconnect-calendar"`. After confirmation, the
+provider-first flow deletes the Google-backed grant and creates a virtual Nylas
+grant. The result is Platform Connected and Google Disconnected.
 
 Disconnect Google is the only flow that deletes a live Google grant. If its
 replacement virtual calendar fails after that deletion, it drops the local
@@ -3843,13 +3850,27 @@ intent includes the expected old grant and a stable transition ID. Completion
 adds `in_preserve_bookings: true`, `in_replace_grant_id`, and `in_transition_id`
 to `grants/add/v3`. The endpoint must retain old bookings and return matching
 `transition_id` and `replaced_grant_id`, `previous_grant_retained: true`,
-`default_selected: true`, and a distinct new `grant_id`. Hosted callbacks must
-also match that new grant. The controller verifies the selected canonical grant
-and every returned configuration's `grant_id` before restoring settings. A
-saved completion receipt prevents re-exchanging a completed one-use code;
-a still-connected old grant alone never proves completion. Cancellation or
-abandonment of this handoff does not rebuild a virtual calendar. Actual
-Disconnect keeps the existing deletion guard and recovery path.
+`default_selected: true`, `services_ready: true`, `manager: "calendar"`, and a
+distinct new `grant_id`. Hosted callbacks must also match that new grant. The
+controller verifies the selected canonical grant, canonical manager, and every
+returned configuration's `grant_id` before announcing success. In preserve mode
+it does not update `availability.manager`, create Free configs, or restore Paid
+settings from browser state after the receipt. A saved completion receipt
+prevents re-exchanging a completed one-use code; a still-connected old grant
+alone never proves completion. Cancellation or abandonment of this handoff does
+not rebuild a virtual calendar. Actual Disconnect keeps the existing deletion
+guard and recovery path.
+
+Google-to-Platform future-default selection uses
+`grants/create_virtual_account/v3` with `{ member_id, in_preserve_bookings:
+true, in_replace_grant_id, in_transition_id }`. The endpoint returns the same
+receipt fields with `manager: "platform"` and `services_ready: true`. The
+controller keeps a stable member-scoped transition ID for retries against the
+same expected old grant, verifies fresh canonical grant, manager, and
+configuration ownership, and then clears the saved transition. This preserved
+path does not call `grants/delete/v3`, `grants/add_virtual/v3`,
+`grants/create_virtual_calendar/v3`, `starter/update_availability/v3`,
+configuration create/update, or paid-call settings upsert.
 
 This transition contract requires the compatible backend before the frontend
 release is activated. Availability changes still use canonical save followed
