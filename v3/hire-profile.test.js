@@ -10903,3 +10903,94 @@ test('does not inject a second starter claim controller when one is already pres
   )
   assert.equal(claimScripts.length, 1)
 })
+
+const CALL_BOOKING_HOOKS = ['has-connection', 'no-connection', 'data-type', 'booking-popup-open',
+  'data-modal-trigger', 'data-signup-trigger-element', 'data-signup-trigger-value', 'data-call-service-direct']
+
+function unclaimedPaidDisplayFixture(member = {}) {
+  const page = makePage()
+  const xano = addXanoCallCardsFixture(page)
+  // The published clones inherit the Free template's booking and signup hooks.
+  for (const card of [xano.free, xano.paid]) {
+    card.root.setAttribute('has-connection', 'free')
+    card.root.setAttribute('data-type', 'free')
+    card.root.setAttribute('data-modal-trigger', 'popup-booking')
+    card.root.setAttribute('booking-popup-open', '')
+    card.root.setAttribute('data-signup-trigger-element', 'service')
+    card.root.setAttribute('data-signup-trigger-value', 'Free Call')
+  }
+  const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
+  const context = makeContext({ page, member, wfXano: wfx.api })
+  context.starter_memberstack_id = ''
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  return { page, xano, wfx, context }
+}
+
+for (const [label, member] of [['logged out', {}], ['a Brand', BRAND_MEMBER]]) {
+  test(`an unclaimed profile shows its Paid Call rate display-only to ${label}`, async () => {
+    const { xano, wfx } = unclaimedPaidDisplayFixture(member)
+    wfx.emit({
+      items: callCardResult({ free: false, paid: false }).items.map((item) =>
+        item.type === 'paid' ? { ...item, price: 500, public_available: false } : item),
+    })
+    await settle()
+
+    const paid = xano.paid.root
+    assert.equal(paid.style.display, 'block')
+    assert.equal(paid.getAttribute('data-call-display-only'), 'paid')
+    assert.equal(paid.getAttribute('data-call-offer-state'), 'display-only')
+    assert.equal(paid.getAttribute('data-canonical-call-unavailable'), null)
+    assert.equal(xano.paid.title.textContent, 'Paid Consulting Call')
+    assert.equal(xano.paid.price.getAttribute('data-millify'), '500')
+    assert.equal(paid.children.includes(xano.paid.bookingRow), false)
+    for (const hook of CALL_BOOKING_HOOKS) assert.equal(paid.getAttribute(hook), null, hook)
+    assert.notEqual(paid.style.cursor, 'pointer')
+
+    assert.equal(xano.free.root.style.display, 'none')
+    assert.equal(xano.free.root.getAttribute('data-call-offer-state'), 'hidden')
+    for (const hook of CALL_BOOKING_HOOKS) assert.equal(xano.free.root.getAttribute(hook), null, hook)
+  })
+}
+
+test('an unclaimed profile keeps the paid card hidden without a valid display price', async () => {
+  for (const price of [null, 0, -5, 499.5, 1001, '500']) {
+    const { xano, wfx } = unclaimedPaidDisplayFixture()
+    wfx.emit({
+      items: callCardResult({ free: false, paid: false }).items.map((item) =>
+        item.type === 'paid' ? { ...item, price, public_available: false } : item),
+    })
+    await settle()
+    assert.equal(xano.paid.root.style.display, 'none', `price ${JSON.stringify(price)}`)
+    assert.equal(xano.paid.root.getAttribute('data-call-display-only'), null)
+    for (const hook of CALL_BOOKING_HOOKS) assert.equal(xano.paid.root.getAttribute(hook), null, hook)
+  }
+})
+
+test('an unclaimed profile hides every call card when the call DTO fails', async () => {
+  const { xano, wfx } = unclaimedPaidDisplayFixture()
+  wfx.fail()
+  await settle()
+  for (const card of [xano.free, xano.paid]) {
+    assert.equal(card.root.style.display, 'none')
+    assert.equal(card.root.getAttribute('data-call-display-only'), null)
+  }
+})
+
+test('a claimed Starter never shows a not-available paid price, even when one is sent', async () => {
+  const page = makePage()
+  const xano = addXanoCallCardsFixture(page)
+  const wfx = makeCallCardsWfXanoFixture(xano.wrapper)
+  const context = makeContext({ page, member: {}, wfXano: wfx.api })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  wfx.emit({
+    items: callCardResult({ free: false, paid: false }).items.map((item) =>
+      item.type === 'paid' ? { ...item, price: 500, public_available: false } : item),
+  })
+  await settle()
+  assert.equal(xano.paid.root.style.display, 'none')
+  assert.equal(xano.paid.root.getAttribute('data-call-offer-state'), 'hidden')
+  assert.equal(xano.paid.root.getAttribute('data-call-display-only'), null)
+  assert.notEqual(xano.paid.price.getAttribute('data-millify'), '500')
+})

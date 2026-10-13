@@ -1801,6 +1801,7 @@
     installXanoHeroRateCards();
     installXanoServiceCardsAdapter();
     installXanoRetainerCardAdapter();
+    installPublicRecordPaidCallDisplay();
     return;
   }
 
@@ -3892,6 +3893,87 @@
               }
           });
       });
+  }
+
+  /* PUBLIC-RECORD PAID CALL (display-only)
+     An unclaimed admin-prebuilt profile cannot book: it has no member,
+     calendar or paid service. Xano `profile/starter/calls/v3` still returns
+     the stored Paid Call rate for it with `public_available: false`. Paint
+     that one paid clone as a read-only price card, the same way the Retainer
+     card is display-only here: no booking, signup or modal hook, and no
+     click binding. Every other call clone stays hidden (fail closed). */
+  function installPublicRecordPaidCallDisplay() {
+      window.WfXano = window.WfXano || [];
+      if (typeof window.WfXano.push !== 'function') return;
+
+      window.WfXano.push(function (wfx) {
+          if (!wfx || typeof wfx.get !== 'function') return;
+          ['starter-call-offers-header', 'starter-call-offers-services'].forEach(function (key) {
+              const instance = wfx.get(key);
+              if (!instance || typeof instance.on !== 'function' || !instance.root) return;
+              let receivedResult = false;
+              instance.on('results', function (result) {
+                  receivedResult = true;
+                  adaptPublicRecordPaidCallCards(instance, result);
+              });
+              instance.on('error', function () {
+                  adaptPublicRecordPaidCallCards(instance, { items: [] });
+              });
+              if (!receivedResult && typeof instance.getState === 'function') {
+                  const state = instance.getState();
+                  if (state && state.status === 'success' && state.data) {
+                      adaptPublicRecordPaidCallCards(instance, state.data);
+                  }
+              }
+          });
+      });
+  }
+
+  function publicRecordDisplayPaidPrice(item) {
+      if (!item || callOfferTypeOf(item) !== 'paid' || item.public_available === true) return null;
+      const amount = item.price;
+      return typeof amount === 'number' && Number.isSafeInteger(amount) && amount > 0 && amount <= 1000
+          ? amount
+          : null;
+  }
+
+  function adaptPublicRecordPaidCallCards(instance, result) {
+      const itemsById = callOfferItemMap(result);
+      supersedeCanonicalCallWrapperExtras(instance.root);
+      const cards = Array.from(qsa('[wf-xano-item]', instance.root)).filter(function (card) {
+          return card.closest('[wf-xano-element="wrapper"]') === instance.root;
+      });
+      cards.forEach(function (card) {
+          const item = itemsById.get(String(card.getAttribute('data-wf-xano-id') || ''));
+          const amount = publicRecordDisplayPaidPrice(item);
+          // Strip every booking and signup hook first, on every clone, so no
+          // inherited template hook can open a modal or signup flow.
+          ['has-connection', 'no-connection', 'data-type', 'booking-popup-open',
+              'data-modal-trigger', 'data-signup-trigger-element', 'data-signup-trigger-value',
+              'data-call-service-direct', 'data-profile-book-call', 'aria-busy']
+              .forEach(function (attribute) { card.removeAttribute(attribute); });
+          card.style.cursor = '';
+          const price = amount === null ? null : priceHookIn(card);
+          if (amount === null || !price || !paintRateElement(price, amount * 100)) {
+              card.removeAttribute('data-call-display-only');
+              card.setAttribute('data-call-offer-state', 'hidden');
+              setCallOfferVisible(card, false);
+              return;
+          }
+          const title = qs('[data-service-card-element="title"]', card);
+          const description = qs('[data-service-card-element="description"]', card);
+          if (title) title.textContent = String(item.name || 'Paid Consulting Call');
+          if (description) description.textContent = String(item.description || '');
+          stripCallBookingRow(card);
+          card.setAttribute('data-service-card', 'component');
+          card.setAttribute('data-service-card-state', 'Default');
+          card.setAttribute('data-call-offer-type', 'paid');
+          card.setAttribute('data-call-offer-state', 'display-only');
+          card.setAttribute('data-call-display-only', 'paid');
+          setCallOfferVisible(card, true);
+      });
+      reconcileHeaderTouts();
+      refreshEmptySectionNav();
   }
 
   /* XANO RETAINER CARD
