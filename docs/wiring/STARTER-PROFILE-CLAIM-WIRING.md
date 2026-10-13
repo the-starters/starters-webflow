@@ -44,25 +44,34 @@ The collapsible banner uses these additional bindings inside the wrapper:
 
 | `data-starter-claim` value | Element |
 | --- | --- |
-| `panel` | Wrapper around the existing Background instance, padded content, close X, and collapse control |
+| `panel` | Wrapper around the mask, persistent toggle, and close X |
+| `mask` | Native clipping wrapper around the existing Background instance and content |
 | `content` | Existing padded form and success/error content wrapper |
-| `collapse` | Native `button` with only a down chevron, outside the form, authored `hidden`, using the existing `claim_close` position |
-| `expand` | Native `button` outside the panel and form, authored with `hide`, `hidden`, and `aria-hidden="true"` |
-| `expand-label` | Compact bar text, exactly `Claim Your Profile` |
-| `expand-affordance` | Compact bar's `Expand` text and chevron |
-| `chevron` | Decorative span with `aria-hidden="true"` |
+| `toggle` | One native button outside the mask and form, authored hidden |
+| `visual` | Gray button container inside the toggle |
+| `toggle-label` | `View Less` expanded, `View More` collapsed |
+| `chevron` | Decorative span inside visual, with `aria-hidden="true"` |
+| `compact` | Native compact bar div, direct child of wrapper |
+| `compact-label` | Centered text, exactly `Claim Your Profile` |
 | `success` / `error` | Native Webflow form success and error messages |
 
-When these controls are present, the controller starts expanded. The chevron
-collapses to a 64px bar plus the device safe-area inset, retaining entered email.
-The compact bar reopens the form without opening the mobile keyboard. Native
-Webflow success expands the confirmation and reveals the existing close X;
-native failure reopens the form. Escape collapses the form or dismisses success.
-Keyboard activation and reduced-motion preference skip animation. The controller
-marks the panel's existing Background instance as `data-starter-claim="surface"`
-and animates only that background's vertical scale. Form text stays stationary.
-It owns the scoped animation CSS, inactive controls' accessibility, and the compact
-label's blur fade. It does not replace Webflow validation or submission.
+When all bindings are present, the controller starts expanded. The same toggle
+remains centered on the panel's top edge on desktop and mobile. Its 44px hit
+area contains a 32px gray (#eee) container with Starter's white-button hover
+(#effba8) and press feedback; its chevron rotates 180 degrees between states.
+The compact bar is 88px plus the device safe-area inset, with 40px top and
+24px bottom padding around its 24px label. Collapse retains the entered email.
+The controller does not create or reparent the native mask or controls.
+
+During collapse, the title and input fade and blur in place for 80ms before the
+panel folds down over 240ms. The content counter-translates inside the clipping
+mask so it stays stationary in viewport space. Opening uses 260ms panel motion,
+then fades and sharpens the content over 140ms after a 160ms delay. The compact
+label also fades and blurs. Native Webflow success expands the confirmation and
+reveals the existing close X; native failure reopens the form. Escape collapses
+the form or dismisses success. Keyboard activation and reduced-motion preference
+skip animation. The controller owns scoped motion and control accessibility;
+it does not replace Webflow validation or submission.
 
 `data-starter-claim-state` reports `expanded`, `collapsed`, `success`, or
 `dismissed`; `data-starter-claim-motion` reports `smooth` or `instant`.

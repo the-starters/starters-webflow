@@ -47,20 +47,23 @@ function markup(interaction = false) {
   if (!interaction) return html
   return html.replace('</style>', `
     .claim-modal { inset: auto 0 0; display: flex; background: none; }
+    [data-button-theme="white"][data-button-style="primary"] { background:#fff;border-color:#fff; }
     [data-wf--background--variant] { position:absolute;inset:0;background: linear-gradient(100deg,#d2e0da,#91acb1); }
     [data-starter-claim="content"] { padding: 48px 20px; }
     form { background: none; width: min(100%,500px); padding: 0; margin: auto; }
-    [data-starter-claim="collapse"],[data-starter-claim="close"] { position:absolute;right:20px;top:8px;border:0;background:none; }
+    [data-starter-claim="close"] { position:absolute;right:20px;top:8px;border:0;background:none; }
     input[type="email"] { width:100%;box-sizing:border-box; }
-  </style>`).replace('<form data-starter-claim="form">', '<div data-starter-claim="panel"><div data-wf--background--variant="gradient"></div><div data-starter-claim="content"><form data-starter-claim="form">')
+  </style>`).replace('<form data-starter-claim="form">', '<div data-starter-claim="panel"><div data-starter-claim="mask"><div data-wf--background--variant="gradient"></div><div data-starter-claim="content"><form data-starter-claim="form">')
     .replace('</form>', `</form>
       <div data-starter-claim="success" style="display:none" tabindex="-1">Almost there.</div>
       <div data-starter-claim="error" style="display:none">Please try again.</div>
       </div>
-      <button type="button" data-starter-claim="collapse"><span data-starter-claim="chevron" aria-hidden="true"></span></button>
+      </div>
+      <button type="button" data-starter-claim="toggle" hidden><div data-starter-claim="visual" data-button-theme="white" data-button-style="primary"><span data-starter-claim="toggle-label">View Less</span><span data-starter-claim="chevron" aria-hidden="true"></span></div></button>
       <button type="button" data-starter-claim="close">X</button>
       </div>
-      <button type="button" data-starter-claim="expand" hidden><span data-starter-claim="expand-label">Claim Your Profile</span><span data-starter-claim="expand-affordance">Expand<span data-starter-claim="chevron" aria-hidden="true"></span></span></button>`)
+      <div data-starter-claim="compact" class="hide" hidden><span data-starter-claim="compact-label">Claim Your Profile</span></div>`)
+
 }
 
 ;(async () => {
@@ -180,16 +183,47 @@ function markup(interaction = false) {
     const state = () => wrapper.getAttribute('data-starter-claim-state')
     await page.waitForSelector('[data-starter-claim-state="expanded"]')
     const email = page.locator('input[type="email"]')
-    const collapse = page.getByRole('button', { name: 'Minimize claim banner' })
-    const expand = page.getByRole('button', { name: 'Claim Your Profile Expand' })
+    const toggle = page.locator('[data-starter-claim="toggle"]')
+    const collapse = toggle
+    const expand = toggle
+    await toggle.evaluate(node => { window.__claimToggle = node })
     await email.fill('draft@example.test')
+    const initialContentY = await page.locator('[data-starter-claim="content"]').evaluate(node => node.getBoundingClientRect().y)
+    await page.evaluate(() => {
+      window.__claimMotionSamples = []
+      const content = document.querySelector('[data-starter-claim="content"]')
+      let frames = 0
+      function sample() {
+        window.__claimMotionSamples.push(content.getBoundingClientRect().y)
+        if (++frames < 28) requestAnimationFrame(sample)
+      }
+      requestAnimationFrame(sample)
+    })
     await collapse.click()
     assert.equal(await state(), 'collapsed')
-    assert.equal(await page.locator('[data-starter-claim="panel"]').evaluate(node => node.inert), true)
-    assert.equal((await expand.boundingBox()).height, 64)
-    await page.waitForFunction(() => Math.abs(document.querySelector('[data-starter-claim="surface"]').getBoundingClientRect().height - 64) < 0.1)
-    assert.equal(await page.locator('[data-starter-claim="content"]').evaluate(node => getComputedStyle(node).transform), 'none')
-    await page.waitForFunction(() => getComputedStyle(document.querySelector('[data-starter-claim="expand-label"]')).filter === 'blur(0px)')
+    assert.equal(await page.locator('[data-starter-claim="content"]').evaluate(node => node.inert), true)
+    await page.waitForFunction(() => getComputedStyle(document.querySelector('[data-starter-claim="compact-label"]')).filter === 'blur(0px)')
+    const samples = await page.evaluate(() => window.__claimMotionSamples)
+    assert.ok(samples.length > 8)
+    assert.ok(samples.every(y => Math.abs(y - initialContentY) < 0.2), JSON.stringify(samples))
+    const compactBox = await page.locator('[data-starter-claim="compact"]').boundingBox()
+    const toggleBox = await toggle.boundingBox()
+    const panelBox = await page.locator('[data-starter-claim="panel"]').boundingBox()
+    assert.equal(compactBox.height, 88)
+    assert.ok(Math.abs(panelBox.y - compactBox.y) < 0.2)
+    assert.ok(Math.abs(toggleBox.y + toggleBox.height / 2 - panelBox.y) < 0.2)
+    assert.ok(Math.abs(toggleBox.x + toggleBox.width / 2 - 195) < 0.2)
+    assert.equal(await toggle.textContent(), 'View More')
+    assert.equal(await toggle.evaluate(node => node === window.__claimToggle), true)
+    const visual = page.locator('[data-starter-claim="visual"]')
+    await page.mouse.move(5, 5)
+    await page.waitForFunction(() => getComputedStyle(document.querySelector('[data-starter-claim="visual"]')).backgroundColor === 'rgb(238, 238, 238)')
+    assert.equal((await visual.boundingBox()).height, 32)
+    await toggle.hover()
+    await page.waitForFunction(() => getComputedStyle(document.querySelector('[data-starter-claim="visual"]')).backgroundColor === 'rgb(239, 251, 168)')
+    const labelBox = await page.locator('[data-starter-claim="compact-label"]').boundingBox()
+    assert.ok(Math.abs(labelBox.y - (toggleBox.y + 38) - 24) < 0.2)
+    assert.ok(Math.abs(844 - labelBox.y - labelBox.height - 24) < 0.2)
     await expand.click()
     assert.equal(await state(), 'expanded')
     assert.equal(await email.inputValue(), 'draft@example.test')
@@ -222,17 +256,20 @@ function markup(interaction = false) {
     await page.waitForSelector('[data-starter-claim-state="expanded"]')
     await page.emulateMedia({ reducedMotion: 'reduce' })
     await collapse.click()
-    assert.equal(await page.locator('[data-starter-claim="surface"]').evaluate(node => getComputedStyle(node).transitionDuration), '0s')
-    await page.locator('[data-starter-claim="expand"]').evaluate(node => { node.style.minHeight = '98px' })
-    await page.waitForFunction(() => Math.abs(document.querySelector('[data-starter-claim="surface"]').getBoundingClientRect().height - 98) < 0.1)
-    await page.locator('[data-starter-claim="expand"]').evaluate(node => { node.style.minHeight = '' })
-    await page.waitForFunction(() => Math.abs(document.querySelector('[data-starter-claim="surface"]').getBoundingClientRect().height - 64) < 0.1)
+    assert.equal(await page.locator('[data-starter-claim="panel"]').evaluate(node => getComputedStyle(node).transitionDuration), '0s')
+    await page.locator('[data-starter-claim="compact"]').evaluate(node => { node.style.minHeight = '110px' })
+    await page.waitForFunction(() => Math.abs(document.querySelector('[data-starter-claim="panel"]').getBoundingClientRect().y - document.querySelector('[data-starter-claim="compact"]').getBoundingClientRect().y) < 0.1)
+    await page.locator('[data-starter-claim="compact"]').evaluate(node => { node.style.minHeight = '' })
+    await page.waitForFunction(() => Math.abs(document.querySelector('[data-starter-claim="panel"]').getBoundingClientRect().y - document.querySelector('[data-starter-claim="compact"]').getBoundingClientRect().y) < 0.1)
     await expand.click()
     await page.emulateMedia({ reducedMotion: 'no-preference' })
     for (const viewport of [{ width: 320, height: 568 }, { width: 1280, height: 800 }]) {
       await page.setViewportSize(viewport)
       await collapse.click()
-      assert.equal((await expand.boundingBox()).height, 64)
+      await page.waitForFunction(() => Math.abs(document.querySelector('[data-starter-claim="panel"]').getBoundingClientRect().y - document.querySelector('[data-starter-claim="compact"]').getBoundingClientRect().y) < 0.1)
+      const box = await toggle.boundingBox()
+      assert.ok(Math.abs(box.x + box.width / 2 - viewport.width / 2) < 0.1)
+      assert.equal((await page.locator('[data-starter-claim="compact"]').boundingBox()).height, 88)
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false)
       await expand.click()
     }
