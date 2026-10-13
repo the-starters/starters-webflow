@@ -76,11 +76,14 @@ value is ignored while the product duration is fixed. The rate field accepts who
 to 1000.
 
 The same `$1` to `$1,000` whole-dollar range is enforced by the Brand-side bookable-set filter,
-canonical price renderer, and both calendar-transition controllers. A saved `$1` or `$1,000` Paid
-service stays visible, bookable, and preserved when the Starter changes calendar providers. A stored
-rate outside that range, or one carrying cents, is not displayable and stops a calendar transition
-before the provider grant is deleted; both transition controllers report that specific repairable
-rate instead of generic connection copy.
+canonical price renderer, and the destructive calendar-disconnect recovery paths that still capture
+a browser Paid intent. Preserved calendar-default switches do not read or rewrite Paid settings in
+the browser; the backend-owned transition receipt in the V3 calendar contract preserves service
+readiness. A saved `$1` or `$1,000` Paid service stays visible, bookable, and preserved when the
+Starter changes calendar providers. A stored rate outside that range, or one carrying cents, is not
+displayable and stops only the legacy destructive recovery path before a provider grant is deleted;
+both availability controllers report that specific repairable rate instead of generic connection
+copy.
 
 The current native `Dashboard / Call Item` Paid instance is also supported without generated markup:
 
@@ -283,7 +286,12 @@ The controller sets `data-ready="true|false"` on each row. It also sets these wr
   lock covers native submit and Update click, so they cannot start duplicate writes.
 - The browser sends product intent only. It never sends a member ID, grant ID, calendar ID, Stripe account ID, or payment environment.
 - Calendar setup creates only free-call configurations. Availability edits update the availability block of every active canonical configuration without sending title or price fields. Calendar code does not read `#price`, `data-rate`, or `paid_call_rate` in `localStorage`. Its bookable-slots preview does read the canonical Paid service to render duration and price read-only; the admission rules for that card live in [Booking-stage availability section](../../v3/README.md#booking-stage-availability-section).
-- Calendar transitions carry a one-use intent captured from canonical paid-call GET through the existing OAuth session envelope, then recreate it through paid-call upsert and canonical readback. A canonical rate outside the `$1` to `$1,000` whole-dollar range stops that capture before any destructive provider or calendar request and surfaces the rate-specific remediation message, so the stored service is never preserved, rounded, or silently dropped.
+- Preserved Platform-to-Google and Google-to-Platform default switches follow the backend-owned
+  receipt contract in [Calendar OAuth return](../../v3/README.md#calendar-oauth-return-no-separate-page)
+  and make no browser paid-call GET or upsert. The legacy destructive disconnect/recovery path may
+  still carry a one-use intent captured from canonical paid-call GET through the OAuth session
+  envelope, then recreate it through paid-call upsert and canonical readback; an out-of-range
+  canonical rate stops that destructive recovery before a provider grant is deleted.
 - The Xano projection function remains the only writer to `freelancers_v3.Paid_Call_Enabled` and `Paid_Call_Rate` for this flow.
 - `starterSchedulingConnectionStateChanged` triggers a non-destructive canonical re-read only after
   Calendar connection state has settled. The transient `loading` event is ignored so the page does

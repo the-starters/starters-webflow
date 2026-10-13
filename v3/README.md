@@ -3351,9 +3351,9 @@ Runtime contract:
 - `window.STARTER_SCHEDULING_CONNECTION` contains only non-secret connection
   state. The initializer always supplies `state` and the last canonical
   configuration count; once the writer runs, it also supplies boolean
-  grant/calendar flags and manager. Transient loading and error events do not
-  replace the retained canonical count. Provider identifiers are never exposed
-  through this object.
+  grant/calendar flags, manager, and `calendarBindingVersion`. Transient
+  loading and error events do not replace the retained canonical count.
+  Provider identifiers are never exposed through this object.
 - `starterSchedulingAvailabilityReady` carries
   `{ memberId, source, state, connectionState }`;
   `source` is `starter`, `default`, or `query-test`, and `state` is
@@ -3613,10 +3613,10 @@ Runtime contract:
   `starterSchedulingWriteSuccess` `{ action }`, and
   `starterSchedulingWriteError` `{ action, message }`.
 - `starterSchedulingConnectionStateChanged` carries `{ state, hasGrant,
-  hasCalendar, configurationCount, manager }`. Bootstrap fails closed to
-  `error` when the canonical configuration read fails. An invalid or cancelled
-  OAuth return opens the existing `config-request-error` panel without a grant
-  write.
+  hasCalendar, configurationCount, manager, calendarBindingVersion }`.
+  Bootstrap fails closed to `error` when the canonical configuration read
+  fails. An invalid or cancelled OAuth return opens the existing
+  `config-request-error` panel without a grant write.
 - `window.StarterSchedulingAvailabilityWriter` exposes `initialize()` for
   retries plus `switchStep`, `daysAlias`, `getAvailArray`,
   `minimumBookingNoticeMinutes`, and `publishCalendarConnectionState`.
