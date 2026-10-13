@@ -3837,6 +3837,25 @@ state is also discarded. Intent cleanup removes both storage copies. Provider
 access tokens are never stored in the browser, and the returned `email` and
 `provider` are neither retained nor trusted.
 
+A Google connection started while a calendar is already selected preserves the
+current grant, availability, and configurations during OAuth. Its member-scoped
+intent includes the expected old grant and a stable transition ID. Completion
+adds `in_preserve_bookings: true`, `in_replace_grant_id`, and `in_transition_id`
+to `grants/add/v3`. The endpoint must retain old bookings and return matching
+`transition_id` and `replaced_grant_id`, `previous_grant_retained: true`,
+`default_selected: true`, and a distinct new `grant_id`. Hosted callbacks must
+also match that new grant. The controller verifies the selected canonical grant
+and every returned configuration's `grant_id` before restoring settings. A
+saved completion receipt prevents re-exchanging a completed one-use code;
+a still-connected old grant alone never proves completion. Cancellation or
+abandonment of this handoff does not rebuild a virtual calendar. Actual
+Disconnect keeps the existing deletion guard and recovery path.
+
+This transition contract requires the compatible backend before the frontend
+release is activated. Availability changes still use canonical save followed
+by provider synchronization. If only the canonical save succeeds, the error
+states that availability was saved and booking times need verification.
+
 Nylas-standard OAuth failures (`error`, `error_description`, `error_uri`, or
 `error_code`) are captured without retaining their provider text and stripped
 from the visible URL. They never reach `grants/add/v3`. The modal writer routes

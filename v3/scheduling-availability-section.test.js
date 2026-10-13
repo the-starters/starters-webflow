@@ -1235,7 +1235,7 @@ test('a brand-new member connects Platform first, then Connect Google reaches OA
   dom.notif.oauthRedirectBtn.click() // "Done"
   await settle()
 
-  assert.equal(calls.filter((c) => c.path === '/grants/delete/v3').length, 1)
+  assert.equal(calls.filter((c) => c.path === '/grants/delete/v3').length, 0)
   assert.equal(calls.filter((c) => c.path === '/grants/oauth/v3').length, 1)
   assert.equal(assigned.length, 1)
   assert.ok(assigned[0].includes('nylas.example/oauth'))
@@ -1696,13 +1696,41 @@ test('Connect Google from Platform goes straight to the informational step, with
   dom.notif.oauthRedirectBtn.click() // "Done"
   await settle()
 
-  assert.equal(calls.filter((c) => c.path === '/grants/delete/v3').length, 1)
+  assert.equal(calls.filter((c) => c.path === '/grants/delete/v3').length, 0)
   assert.equal(calls.filter((c) => c.path === '/grants/oauth/v3').length, 1)
   assert.equal(assigned.length, 1)
   const intent = JSON.parse(window.sessionStorage._map.get(OAUTH_INTENT_KEY))
   const durableIntent = JSON.parse(window.localStorage._map.get(OAUTH_INTENT_KEY))
   assert.equal(intent.paidCallIntent, null, 'Free-only member: no paid service captured')
   assert.deepEqual(durableIntent, intent)
+})
+
+test('starting a calendar switch retains the current default and active calls until OAuth completes', async () => {
+  const initial = platformState()
+  const result = loadSection({
+    serverState: initial,
+    postRoutes: {
+      '/grants/delete/v3': () => ({
+        status: 400,
+        body: { message: 'Resolve active bookings before disconnecting the calendar' },
+      }),
+    },
+  })
+  await settle()
+  const originalAvailability = JSON.parse(JSON.stringify(result.state.availability))
+  const originalGrant = result.state.grantId
+  const originalCalendar = result.state.calendarId
+
+  result.dom.connectBtnWrapper.children[1].click()
+  result.dom.notif.oauthRedirectBtn.click()
+  await settle()
+
+  assert.equal(result.calls.filter((call) => call.path === '/grants/delete/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/starter/update_availability/v3').length, 0)
+  assert.deepEqual(result.assigned, ['https://nylas.example/oauth'])
+  assert.equal(result.state.grantId, originalGrant)
+  assert.equal(result.state.calendarId, originalCalendar)
+  assert.deepEqual(result.state.availability, originalAvailability)
 })
 
 test('a stale modal Connect Google action is ignored after Google is connected', async () => {
@@ -1806,39 +1834,6 @@ test('an active-booking rejection stops Google disconnect before the virtual Pla
   assert.equal(dom.notif.errorText.textContent, ACTIVE_CALLS_COPY)
 })
 
-test('an active-booking rejection stops Connect Google from Platform before the OAuth redirect and names the calls', async () => {
-  const { dom, calls, assigned, window } = loadSection({
-    serverState: {
-      grantId: 'grant-virtual-1',
-      grantEmail: 'member-a@virtual.example',
-      calendarId: 'cal-virtual-1',
-      availability: {
-        items: { general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] } },
-        manager: 'platform',
-      },
-    },
-    postRoutes: {
-      '/grants/delete/v3': () => ({
-        status: 400,
-        body: { code: 'ERROR_CODE_INPUT_ERROR', message: 'Resolve active bookings before disconnecting the calendar' },
-      }),
-    },
-  })
-  await settle()
-
-  dom.connectBtnWrapper.children[1].click() // open-connect-google from Platform -> informational step
-  assert.equal(dom.notif.steps['switch-calendar'].style.display, 'none', 'no switch warning')
-  assert.equal(dom.notif.steps['pre-oauth'].style.display, '')
-  dom.notif.oauthRedirectBtn.click() // "Done" -> grant delete is refused
-  await settle()
-
-  assert.equal(calls.filter((c) => c.path === '/grants/delete/v3').length, 1)
-  assert.equal(calls.filter((c) => c.path === '/grants/oauth/v3').length, 0, 'no Google OAuth after the refusal')
-  assert.equal(assigned.length, 0, 'the member stays on the dashboard')
-  assert.equal(window.STARTER_SCHEDULING_CONNECTION.state, 'error')
-  assert.equal(dom.notif.steps['request-error'].style.display, '')
-  assert.equal(dom.notif.errorText.textContent, ACTIVE_CALLS_COPY)
-})
 
 test('only the exact 400 active-bookings refusal replaces section disconnect copy', async () => {
   const cases = [
@@ -4310,4 +4305,224 @@ test('writer.js installs normally when the new section root is absent (e.g. --av
   const withoutSection = loadWriterGuardCheck(false)
   assert.equal(typeof withoutSection.StarterSchedulingAvailabilityWriter.initialize, 'function')
   assert.equal(withoutSection.__tsSchedulingAvailabilityWriter, true)
+})
+
+// Synthetic server admission for the future-default transition contract. These
+// fixtures never use provider credentials or the network.
+function preservedOAuthCase(options = {}) {
+  const intent = {
+    createdAt: Date.now(),
+    redirectUri: 'https://thestarters.com/starter-dashboard',
+    paidCallIntent: options.paidCallIntent || null,
+    preserveBookings: true,
+    replaceGrantId: 'old-grant',
+    transitionId: 'transition-fixture',
+    ...options.intent,
+  }
+  const receipt = {
+    transition_id: 'transition-fixture',
+    previous_grant_retained: true,
+    replaced_grant_id: 'old-grant',
+    grant_id: 'new-grant',
+    default_selected: true,
+    ...options.receipt,
+  }
+  let selected = options.selected === true
+  const availability = {
+    items: { general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] } },
+    manager: selected ? 'calendar' : 'platform',
+  }
+  const routes = {
+    '/starter/get_by_memberstack/v3': () => ({
+      status: 200,
+      body: {
+        id: 1,
+        timezone: 'Asia/Manila',
+        availability: { ...availability, manager: selected ? 'calendar' : 'platform' },
+        nylas_grant_id: selected ? 'new-grant' : 'old-grant',
+        nylas_grant_email: selected ? 'new@example.com' : 'old@example.com',
+        nylas_calendar_id: selected ? 'new-calendar' : 'old-calendar',
+      },
+    }),
+    '/nylas_configurations/get_all/v3': (body) => ({
+      status: 200,
+      body: [{
+        config_id: selected ? 'new-free' : 'old-free',
+        grant_id: options.wrongConfigGrant ? 'old-grant' : body.grant_id,
+        duration: 30,
+        is_paid: false,
+        active: true,
+      }],
+    }),
+    '/grants/add/v3': () => {
+      if (options.addFailure) return { status: 503, body: { message: 'Retry transition' } }
+      if (options.selectOnAdd !== false) selected = true
+      return { status: 200, body: receipt }
+    },
+  }
+  const sessionStorage = {
+    'starter-scheduling-oauth-intent:member-a': JSON.stringify(intent),
+    ...options.sessionStorage,
+  }
+  const search = options.search === undefined ? '?code=fixture-code&state=member-a' : options.search
+  const result = loadSection({
+    search, sessionStorage,
+    serverState: { grantId: 'old-grant', grantEmail: 'old@example.com', calendarId: 'old-calendar', availability },
+    postRoutes: routes,
+  })
+  result.intentStillStored = () => result.window.sessionStorage._map.has('starter-scheduling-oauth-intent:member-a')
+  return result
+}
+
+function assertNoCalendarReplacementWrites(calls) {
+  const forbidden = new Set([
+    '/grants/delete/v3', '/grants/create_virtual_account/v3', '/grants/add_virtual/v3',
+    '/grants/create_virtual_calendar/v3', '/starter/update_availability/v3',
+    '/scheduler/configurations/create/v3', '/scheduler/configurations/update/v3',
+    '/starter/paid-call-settings/upsert/v3',
+  ])
+  assert.deepEqual(calls.filter((call) => forbidden.has(call.path)), [])
+}
+
+test('preserved OAuth completion sends the expected old binding and accepts only an attested new default', async () => {
+  const result = preservedOAuthCase()
+  await settle()
+  const request = result.calls.find((call) => call.path === '/grants/add/v3')
+  assert.deepEqual(request.body, {
+    member_id: 'member-a',
+    in_redirect_uri: 'https://thestarters.com/starter-dashboard',
+    in_state: 'member-a',
+    code: 'fixture-code',
+    in_replace_grant_id: 'old-grant',
+    in_preserve_bookings: true,
+    in_transition_id: 'transition-fixture',
+  })
+  assertNoCalendarReplacementWrites(result.calls)
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
+  assert.equal(result.window.STARTER_AVAILABILITY.manager, 'calendar')
+  assert.equal(result.intentStillStored(), false)
+})
+
+test('preserved OAuth rejects missing or mismatched server attestations before any configuration writes', async () => {
+  const badReceipts = [
+    { transition_id: 'other-transition' }, { previous_grant_retained: false },
+    { replaced_grant_id: 'another-old-grant' }, { default_selected: false },
+    { grant_id: 'old-grant' }, { grant_id: '' },
+  ]
+  for (const receipt of badReceipts) {
+    const result = preservedOAuthCase({ receipt, selectOnAdd: false })
+    await settle()
+    assertNoCalendarReplacementWrites(result.calls)
+    assert.equal(result.calls.filter((call) => call.path === '/grants/add/v3').length, 1)
+    assert.equal(result.window.STARTER_AVAILABILITY.manager, 'platform')
+    assert.equal(result.intentStillStored(), true)
+    assert.ok(result.warnings.some((warning) => warning.includes('did not verify booking preservation')))
+  }
+})
+
+test('preserved hosted OAuth requires the receipt grant to match the hosted callback', async () => {
+  const result = preservedOAuthCase({ search: '?success=true&grant_id=different-grant&state=member-a' })
+  await settle()
+  assertNoCalendarReplacementWrites(result.calls)
+  assert.equal(result.intentStillStored(), true)
+  assert.ok(result.warnings.some((warning) => warning.includes('did not verify booking preservation')))
+})
+
+test('preserved OAuth fails closed if canonical selection or config ownership disagrees with the receipt', async () => {
+  for (const options of [{ selectOnAdd: false }, { wrongConfigGrant: true }]) {
+    const result = preservedOAuthCase(options)
+    await settle()
+    assertNoCalendarReplacementWrites(result.calls)
+    assert.equal(result.intentStillStored(), true)
+    assert.ok(result.warnings.some((warning) => warning.includes('does not match the verified transition')))
+  }
+})
+
+test('a resumed preserved code callback exchanges through the server even while the old default is usable', async () => {
+  const result = preservedOAuthCase({
+    search: '',
+    sessionStorage: {
+      'starter-scheduling-oauth-callback': JSON.stringify({
+        capturedAt: Date.now(), code: 'fixture-code', state: 'member-a',
+      }),
+    },
+  })
+  await settle()
+  assert.equal(result.calls.filter((call) => call.path === '/grants/add/v3').length, 1)
+  assert.equal(result.intentStillStored(), false)
+  assertNoCalendarReplacementWrites(result.calls)
+})
+
+test('a persisted completed preservation receipt resumes without re-exchanging the one-use code', async () => {
+  const result = preservedOAuthCase({
+    selected: true,
+    intent: {
+      oauthGrantSaved: true,
+      grantReceipt: {
+        transition_id: 'transition-fixture', previous_grant_retained: true,
+        replaced_grant_id: 'old-grant', grant_id: 'new-grant', default_selected: true,
+      },
+    },
+  })
+  await settle()
+  assert.equal(result.calls.filter((call) => call.path === '/grants/add/v3').length, 0)
+  assert.equal(result.intentStillStored(), false)
+  assertNoCalendarReplacementWrites(result.calls)
+})
+
+test('cancelled and abandoned preserved OAuth never rebuilds a virtual calendar or restores paid settings', async () => {
+  for (const search of ['?error=access_denied&state=member-a', '']) {
+    const result = preservedOAuthCase({
+      search,
+      paidCallIntent: { title: 'Paid Consultation', price_cents: 15000, duration_minutes: 60 },
+    })
+    await settle()
+    assert.equal(result.calls.filter((call) => call.path === '/grants/add/v3').length, 0)
+    assertNoCalendarReplacementWrites(result.calls)
+    assert.equal(result.window.STARTER_AVAILABILITY.manager, 'platform')
+  }
+})
+
+test('preserved OAuth transient failure leaves the old default and transition available for retry', async () => {
+  const result = preservedOAuthCase({ addFailure: true })
+  await settle()
+  assertNoCalendarReplacementWrites(result.calls)
+  assert.equal(result.window.STARTER_AVAILABILITY.manager, 'platform')
+  assert.equal(result.intentStillStored(), true)
+})
+
+test('a partial availability save explains that canonical settings were saved but booking times need retry', async () => {
+  const result = loadSection({
+    serverState: platformState(),
+    postRoutes: { '/scheduler/configurations/update/v3': () => ({ status: 503, body: null }) },
+  })
+  await settle()
+  const card = result.dom.list.children.find((el) => el.dataset.id === 'general')
+  card.children[0].children[2].children[0].click()
+  const wrapper = card.children[2]
+  const form = wrapper.querySelector('[data-availability-element="availability-form"]')
+  form.querySelector('[name=start-time]').value = '10:00'
+  form.querySelector('[name=end-time]').value = '16:00'
+  wrapper.children[0].children[1].children[1].click()
+  await settle()
+  assert.equal(result.window.STARTER_AVAILABILITY.items.general.start, '10:00')
+  assert.equal(result.dom.notif.steps['availability-saved'].style.display, 'none')
+  assert.equal(result.dom.notif.errorText.textContent,
+    "Your availability was saved, but booking times could not be verified. Please try again or contact support.")
+})
+
+test('a completed preserved receipt rejects another hosted grant without re-exchanging the code', async () => {
+  const result = preservedOAuthCase({
+    search: '?success=true&grant_id=other-grant&state=member-a',
+    selected: true,
+    intent: { grantReceipt: {
+      transition_id: 'transition-fixture', previous_grant_retained: true,
+      replaced_grant_id: 'old-grant', grant_id: 'new-grant', default_selected: true,
+    } },
+  })
+  await settle()
+  assert.equal(result.calls.filter((call) => call.path === '/grants/add/v3').length, 0)
+  assertNoCalendarReplacementWrites(result.calls)
+  assert.equal(result.intentStillStored(), true)
+  assert.ok(result.warnings.some((warning) => warning.includes('does not match the completed transition')))
 })

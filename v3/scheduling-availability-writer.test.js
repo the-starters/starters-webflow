@@ -1045,50 +1045,24 @@ test('refuses to write when the member session changed after bootstrap', async (
   assert.ok(result.events.some((e) => e.type === 'starterSchedulingWriteError'))
 })
 
-test('choosing own-calendar uses the composite disconnect and opens Google OAuth directly', async () => {
-  let cleared = false
-  const result = loadWriter({
-    storage: TZ_CACHED,
-    routes: {
-      '/grants/delete/v3': () => {
-        cleared = true
-        return { status: 200, body: { connected: false } }
-      },
-      '/starter/get_by_memberstack/v3': () => ({
-        status: 200,
-        body: {
-          id: 1,
-          timezone: 'Asia/Manila',
-          availability: {
-            ...defaultAvailability(),
-            manager: cleared ? null : 'platform',
-          },
-          nylas_grant_id: cleared ? null : 'grant-1',
-          nylas_grant_email: cleared ? null : 'grant@example.com',
-          nylas_calendar_id: cleared ? null : 'cal-1',
-        },
-      }),
-    },
-  })
+test('choosing own-calendar starts OAuth while retaining the current default', async () => {
+  const result = loadWriter({ storage: TZ_CACHED })
   await settle()
-
   result.dom.managers.calendar.click()
   result.clickAction(result.dom.buttons.managerSubmit)
   await settle()
 
-  const clear = result.calls.find((c) => c.path === '/grants/delete/v3')
-  assert.deepEqual(clear.body, { in_grant_id: 'grant-1' })
-  const update = result.calls.find((c) => c.path === '/starter/update_availability/v3')
-  assert.equal(update.body.availability.manager, null)
+  assert.equal(result.calls.filter((call) => call.path === '/grants/delete/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/starter/update_availability/v3').length, 0)
   assert.equal(result.dom.steps['success-calendar'].style.display, 'none')
   assert.equal(result.dom.steps['pre-redirect'].style.display, 'block')
   assert.deepEqual(result.assigned, ['https://nylas.example/oauth'])
-  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'disconnected')
-  const paths = result.calls.map((call) => call.path)
-  const clearIndex = paths.indexOf('/grants/delete/v3')
-  const canonicalReadIndex = paths.indexOf('/starter/get_by_memberstack/v3', clearIndex + 1)
-  assert.ok(canonicalReadIndex > clearIndex)
-  assert.ok(paths.indexOf('/grants/oauth/v3') > canonicalReadIndex)
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
+  assert.equal(result.window.STARTER_AVAILABILITY.manager, 'platform')
+  const intent = JSON.parse(result.sessionStorage.get('starter-scheduling-oauth-intent:member-a'))
+  assert.equal(intent.preserveBookings, true)
+  assert.equal(intent.replaceGrantId, 'grant-1')
+  assert.ok(intent.transitionId)
 })
 
 test('own-calendar never delegates disconnect ownership to clearGrantData', async () => {
@@ -1104,13 +1078,12 @@ test('own-calendar never delegates disconnect ownership to clearGrantData', asyn
   await settle()
 
   assert.deepEqual(composite, [])
-  assert.equal(result.calls.filter((c) => c.path === '/grants/delete/v3').length, 1)
+  assert.equal(result.calls.filter((c) => c.path === '/grants/delete/v3').length, 0)
 })
 
-test('an active-booking rejection stops the platform-to-Google manager switch', async () => {
-  const availability = defaultAvailability()
+
+test('starting a calendar switch retains the current default and active calls until OAuth completes', async () => {
   const result = loadWriter({
-    availability,
     storage: TZ_CACHED,
     routes: {
       '/grants/delete/v3': () => ({
@@ -1120,18 +1093,16 @@ test('an active-booking rejection stops the platform-to-Google manager switch', 
     },
   })
   await settle()
+  const originalAvailability = JSON.parse(JSON.stringify(result.window.STARTER_AVAILABILITY))
 
   result.dom.managers.calendar.click()
   result.clickAction(result.dom.buttons.managerSubmit)
   await settle()
 
-  assert.equal(result.calls.filter((c) => c.path === '/grants/delete/v3').length, 1)
-  assert.equal(result.calls.filter((c) => c.path === '/starter/update_availability/v3').length, 0)
-  assert.equal(result.calls.filter((c) => c.path === '/grants/oauth/v3').length, 0)
-  assert.equal(result.window.STARTER_AVAILABILITY.manager, 'platform')
-  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'error')
-  assert.equal(result.dom.steps['config-request-error'].style.display, 'block')
-  assert.equal(result.dom.errorText.textContent, ACTIVE_CALLS_COPY)
+  assert.equal(result.calls.filter((call) => call.path === '/grants/delete/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/starter/update_availability/v3').length, 0)
+  assert.deepEqual(result.assigned, ['https://nylas.example/oauth'])
+  assert.deepEqual(JSON.parse(JSON.stringify(result.window.STARTER_AVAILABILITY)), originalAvailability)
 })
 
 test('choosing platform creates the virtual calendar chain and configs', async () => {
@@ -3248,4 +3219,220 @@ test('resolves and persists the timezone through authenticated endpoints', async
   assert.equal(setCall.body.member_id, 'member-a')
   assert.ok(setCall.body.timezone.length > 0)
   assert.equal(result.storage.get('starter-timezone:member-a'), 'Asia/Manila')
+})
+
+// Synthetic server admission for the future-default transition contract. These
+// fixtures never use provider credentials or the network.
+function preservedOAuthCase(options = {}) {
+  const intent = {
+    createdAt: Date.now(),
+    redirectUri: 'https://thestarters.com/starter-dashboard',
+    paidCallIntent: options.paidCallIntent || null,
+    preserveBookings: true,
+    replaceGrantId: 'old-grant',
+    transitionId: 'transition-fixture',
+    ...options.intent,
+  }
+  const receipt = {
+    transition_id: 'transition-fixture',
+    previous_grant_retained: true,
+    replaced_grant_id: 'old-grant',
+    grant_id: 'new-grant',
+    default_selected: true,
+    ...options.receipt,
+  }
+  let selected = options.selected === true
+  const availability = {
+    items: { general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] } },
+    manager: selected ? 'calendar' : 'platform',
+  }
+  const routes = {
+    '/starter/get_by_memberstack/v3': () => ({
+      status: 200,
+      body: {
+        id: 1,
+        timezone: 'Asia/Manila',
+        availability: { ...availability, manager: selected ? 'calendar' : 'platform' },
+        nylas_grant_id: selected ? 'new-grant' : 'old-grant',
+        nylas_grant_email: selected ? 'new@example.com' : 'old@example.com',
+        nylas_calendar_id: selected ? 'new-calendar' : 'old-calendar',
+      },
+    }),
+    '/nylas_configurations/get_all/v3': (body) => ({
+      status: 200,
+      body: [{
+        config_id: selected ? 'new-free' : 'old-free',
+        grant_id: options.wrongConfigGrant ? 'old-grant' : body.grant_id,
+        duration: 30,
+        is_paid: false,
+        active: true,
+      }],
+    }),
+    '/grants/add/v3': () => {
+      if (options.addFailure) return { status: 503, body: { message: 'Retry transition' } }
+      if (options.selectOnAdd !== false) selected = true
+      return { status: 200, body: receipt }
+    },
+  }
+  const sessionStorage = {
+    'starter-scheduling-oauth-intent:member-a': JSON.stringify(intent),
+    ...options.sessionStorage,
+  }
+  const search = options.search === undefined ? '?code=fixture-code&state=member-a' : options.search
+  const result = loadWriter({
+    hostname: 'thestarters.com', pathname: '/starter-dashboard', origin: 'https://thestarters.com',
+    search, sessionStorage, storage: TZ_CACHED, availability, routes,
+  })
+  result.intentStillStored = () => result.sessionStorage.has('starter-scheduling-oauth-intent:member-a')
+  return result
+}
+
+function assertNoCalendarReplacementWrites(calls) {
+  const forbidden = new Set([
+    '/grants/delete/v3', '/grants/create_virtual_account/v3', '/grants/add_virtual/v3',
+    '/grants/create_virtual_calendar/v3', '/starter/update_availability/v3',
+    '/scheduler/configurations/create/v3', '/scheduler/configurations/update/v3',
+    '/starter/paid-call-settings/upsert/v3',
+  ])
+  assert.deepEqual(calls.filter((call) => forbidden.has(call.path)), [])
+}
+
+test('preserved OAuth completion sends the expected old binding and accepts only an attested new default', async () => {
+  const result = preservedOAuthCase()
+  await settle()
+  const request = result.calls.find((call) => call.path === '/grants/add/v3')
+  assert.deepEqual(request.body, {
+    member_id: 'member-a',
+    in_redirect_uri: 'https://thestarters.com/starter-dashboard',
+    in_state: 'member-a',
+    code: 'fixture-code',
+    in_replace_grant_id: 'old-grant',
+    in_preserve_bookings: true,
+    in_transition_id: 'transition-fixture',
+  })
+  assertNoCalendarReplacementWrites(result.calls)
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
+  assert.equal(result.window.STARTER_AVAILABILITY.manager, 'calendar')
+  assert.equal(result.intentStillStored(), false)
+})
+
+test('preserved OAuth rejects missing or mismatched server attestations before any configuration writes', async () => {
+  const badReceipts = [
+    { transition_id: 'other-transition' }, { previous_grant_retained: false },
+    { replaced_grant_id: 'another-old-grant' }, { default_selected: false },
+    { grant_id: 'old-grant' }, { grant_id: '' },
+  ]
+  for (const receipt of badReceipts) {
+    const result = preservedOAuthCase({ receipt, selectOnAdd: false })
+    await settle()
+    assertNoCalendarReplacementWrites(result.calls)
+    assert.equal(result.calls.filter((call) => call.path === '/grants/add/v3').length, 1)
+    assert.equal(result.window.STARTER_AVAILABILITY.manager, 'platform')
+    assert.equal(result.intentStillStored(), true)
+    assert.ok(result.warnings.some((warning) => warning.includes('did not verify booking preservation')))
+  }
+})
+
+test('preserved hosted OAuth requires the receipt grant to match the hosted callback', async () => {
+  const result = preservedOAuthCase({ search: '?success=true&grant_id=different-grant&state=member-a' })
+  await settle()
+  assertNoCalendarReplacementWrites(result.calls)
+  assert.equal(result.intentStillStored(), true)
+  assert.ok(result.warnings.some((warning) => warning.includes('did not verify booking preservation')))
+})
+
+test('preserved OAuth fails closed if canonical selection or config ownership disagrees with the receipt', async () => {
+  for (const options of [{ selectOnAdd: false }, { wrongConfigGrant: true }]) {
+    const result = preservedOAuthCase(options)
+    await settle()
+    assertNoCalendarReplacementWrites(result.calls)
+    assert.equal(result.intentStillStored(), true)
+    assert.ok(result.warnings.some((warning) => warning.includes('does not match the verified transition')))
+  }
+})
+
+test('a resumed preserved code callback exchanges through the server even while the old default is usable', async () => {
+  const result = preservedOAuthCase({
+    search: '',
+    sessionStorage: {
+      'starter-scheduling-oauth-callback': JSON.stringify({
+        capturedAt: Date.now(), code: 'fixture-code', state: 'member-a',
+      }),
+    },
+  })
+  await settle()
+  assert.equal(result.calls.filter((call) => call.path === '/grants/add/v3').length, 1)
+  assert.equal(result.intentStillStored(), false)
+  assertNoCalendarReplacementWrites(result.calls)
+})
+
+test('a persisted completed preservation receipt resumes without re-exchanging the one-use code', async () => {
+  const result = preservedOAuthCase({
+    selected: true,
+    intent: {
+      oauthGrantSaved: true,
+      grantReceipt: {
+        transition_id: 'transition-fixture', previous_grant_retained: true,
+        replaced_grant_id: 'old-grant', grant_id: 'new-grant', default_selected: true,
+      },
+    },
+  })
+  await settle()
+  assert.equal(result.calls.filter((call) => call.path === '/grants/add/v3').length, 0)
+  assert.equal(result.intentStillStored(), false)
+  assertNoCalendarReplacementWrites(result.calls)
+})
+
+test('cancelled and abandoned preserved OAuth never rebuilds a virtual calendar or restores paid settings', async () => {
+  for (const search of ['?error=access_denied&state=member-a', '']) {
+    const result = preservedOAuthCase({
+      search,
+      paidCallIntent: { title: 'Paid Consultation', price_cents: 15000, duration_minutes: 60 },
+    })
+    await settle()
+    assert.equal(result.calls.filter((call) => call.path === '/grants/add/v3').length, 0)
+    assertNoCalendarReplacementWrites(result.calls)
+    assert.equal(result.window.STARTER_AVAILABILITY.manager, 'platform')
+  }
+})
+
+test('preserved OAuth transient failure leaves the old default and transition available for retry', async () => {
+  const result = preservedOAuthCase({ addFailure: true })
+  await settle()
+  assertNoCalendarReplacementWrites(result.calls)
+  assert.equal(result.window.STARTER_AVAILABILITY.manager, 'platform')
+  assert.equal(result.intentStillStored(), true)
+})
+
+test('a partial availability save explains that canonical settings were saved but booking times need retry', async () => {
+  const result = loadWriter({
+    storage: TZ_CACHED,
+    routes: { '/scheduler/configurations/update/v3': () => ({ status: 503, body: null }) },
+  })
+  await settle()
+  result.dom.fields.days[0].checked = true
+  result.dom.fields.start.value = '10:00'
+  result.dom.fields.end.value = '16:00'
+  result.clickAction(result.dom.buttons.submit)
+  await settle()
+  assert.equal(result.window.STARTER_AVAILABILITY.items.general.start, '10:00')
+  assert.equal(result.dom.steps['config-request-error'].style.display, 'block')
+  assert.equal(result.dom.errorText.textContent,
+    "Your availability was saved, but booking times could not be verified. Please try again or contact support.")
+})
+
+test('a completed preserved receipt rejects another hosted grant without re-exchanging the code', async () => {
+  const result = preservedOAuthCase({
+    search: '?success=true&grant_id=other-grant&state=member-a',
+    selected: true,
+    intent: { grantReceipt: {
+      transition_id: 'transition-fixture', previous_grant_retained: true,
+      replaced_grant_id: 'old-grant', grant_id: 'new-grant', default_selected: true,
+    } },
+  })
+  await settle()
+  assert.equal(result.calls.filter((call) => call.path === '/grants/add/v3').length, 0)
+  assertNoCalendarReplacementWrites(result.calls)
+  assert.equal(result.intentStillStored(), true)
+  assert.ok(result.warnings.some((warning) => warning.includes('does not match the completed transition')))
 })

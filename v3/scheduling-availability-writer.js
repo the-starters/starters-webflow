@@ -42,6 +42,8 @@
   // problem, not a connection failure, so the authored error step must name the
   // rate instead of leaving the member with generic calendar copy.
   const PAID_CALL_RATE_UNSUPPORTED = 'PAID_CALL_RATE_UNSUPPORTED'
+  const ERROR_TEXT_AVAILABILITY_PARTIAL =
+    'Your availability was saved, but booking times could not be verified. Please try again or contact support.'
   const ERROR_TEXT_PAID_CALL_RATE =
     'Your paid call rate must be a whole-dollar amount from $1 to $1,000. Update it in Call Settings, then switch calendars again.'
   // grants/delete/v3 (Xano #1660) refuses a calendar switch or disconnect while the
@@ -331,11 +333,18 @@
       : 'https://' + window.location.hostname + PRODUCTION_PATH
   }
 
-  function rememberOAuthIntent(memberId, redirectUri, paidCallIntent) {
+  function rememberOAuthIntent(memberId, redirectUri, paidCallIntent, previousGrantId) {
     const intent = {
       createdAt: Date.now(),
       redirectUri: redirectUri,
       paidCallIntent: paidCallIntent || null,
+    }
+    if (previousGrantId) {
+      // Backend dependency: grants/add/v3 must atomically retain the old binding
+      // and attest the selected default. Do not release before that gate passes.
+      intent.preserveBookings = true
+      intent.replaceGrantId = previousGrantId
+      intent.transitionId = crypto.randomUUID()
     }
     return writeOAuthIntent(memberId, intent) ? intent : null
   }
@@ -416,6 +425,74 @@
       throw new Error('OAuth transition could not be retained')
     }
     return intent
+  }
+
+  function preservedGrantReceiptMatches(intent, receipt, callbackGrantId) {
+    return Boolean(
+      intent && intent.preserveBookings === true &&
+      typeof intent.transitionId === 'string' && intent.transitionId &&
+      typeof intent.replaceGrantId === 'string' && intent.replaceGrantId &&
+      receipt && receipt.transition_id === intent.transitionId &&
+      receipt.previous_grant_retained === true && receipt.default_selected === true &&
+      receipt.replaced_grant_id === intent.replaceGrantId &&
+      typeof receipt.grant_id === 'string' && receipt.grant_id &&
+      receipt.grant_id !== intent.replaceGrantId &&
+      (!callbackGrantId || receipt.grant_id === callbackGrantId)
+    )
+  }
+
+  async function completeOAuthGrant(memberId, intent, callback) {
+    const preserve = intent.preserveBookings === true
+    if (preserve && !(intent.transitionId && intent.replaceGrantId)) {
+      throw new Error('Calendar transition identity is missing')
+    }
+    // Only the server receipt proves a preserved switch completed. The old
+    // current grant remaining usable is deliberately not completion evidence.
+    if (preserve && preservedGrantReceiptMatches(intent, intent.grantReceipt)) {
+      if (!preservedGrantReceiptMatches(intent, intent.grantReceipt, callback.grantId)) {
+        throw new Error('Hosted calendar does not match the completed transition')
+      }
+      return
+    }
+    if (!preserve && !intent.oauthGrantSaved && callback.resumed) {
+      await refreshCanonicalConnectionState()
+      if (grantId && grantEmail && grantCalendarId && (!callback.grantId || grantId === callback.grantId)) {
+        intent.oauthGrantSaved = true
+        persistOAuthIntent(memberId, intent)
+      }
+    }
+    if (!preserve && intent.oauthGrantSaved) return
+    const payload = {
+      member_id: memberId,
+      in_redirect_uri: intent.redirectUri,
+      in_state: callback.state,
+    }
+    if (callback.code) payload.code = callback.code
+    else payload.in_grant_id = callback.grantId
+    if (preserve) {
+      payload.in_replace_grant_id = intent.replaceGrantId
+      payload.in_preserve_bookings = true
+      payload.in_transition_id = intent.transitionId
+    }
+    const receipt = await xanoPost('/grants/add/v3', payload)
+    if (preserve && !preservedGrantReceiptMatches(intent, receipt, callback.grantId)) {
+      throw new Error('Calendar transition did not verify booking preservation')
+    }
+    if (!(receipt && receipt.grant_id)) throw new Error('grants/add/v3 returned no grant')
+    intent.oauthGrantSaved = true
+    if (preserve) intent.grantReceipt = receipt
+    persistOAuthIntent(memberId, intent)
+  }
+
+  function assertPreservedDefault(intent, callbackGrantId) {
+    if (intent.preserveBookings !== true) return
+    if (
+      !preservedGrantReceiptMatches(intent, intent.grantReceipt, callbackGrantId) ||
+      grantId !== intent.grantReceipt.grant_id ||
+      configs.some(function (config) { return !config || config.grant_id !== grantId })
+    ) {
+      throw new Error('Selected calendar does not match the verified transition')
+    }
   }
 
   function invalidOAuthCallback(message) {
@@ -516,6 +593,12 @@
     if (!text) return
     const errorEl = transitionErrorCopyLeaf(step)
     if (errorEl) errorEl.textContent = text
+  }
+
+  function showAvailabilityError(canonicalSaved) {
+    const step = switchStep('config-request-error')
+    const errorEl = transitionErrorCopyLeaf(step)
+    if (canonicalSaved && errorEl) errorEl.textContent = ERROR_TEXT_AVAILABILITY_PARTIAL
   }
 
   function isActiveCallsRefusal(error) {
@@ -948,7 +1031,7 @@
 
   async function recoverPaidCallAfterOAuthCancellation(memberId, oauthIntent) {
     const intent = oauthIntent && oauthIntent.paidCallIntent
-    if (!intent) return false
+    if (!intent || oauthIntent.preserveBookings === true) return false
     await refreshCanonicalConnectionState()
     let createdVirtual = false
     const recovery = oauthIntent.virtualRecovery
@@ -1395,7 +1478,7 @@
       }
       publishCalendarConnectionError()
       setLoader(false, step)
-      switchStep('config-request-error')
+      showAvailabilityError(canonicalSaved)
       console.warn('[scheduling-writer] availability save failed:', error && error.message)
       emit('starterSchedulingWriteError', {
         action: 'availability-save',
@@ -1461,18 +1544,9 @@
       } else {
         publishCalendarConnectionState('loading')
         memberId = await writeMemberId()
-        transition = await clearGrant(grantId, memberId)
-        grantId = null
-        grantEmail = null
-        grantCalendarId = null
-        configs = []
-        if (availability.manager !== null) {
-          availability.manager = null
-          await updateAvail()
-        }
         await refreshCanonicalConnectionState()
-        emit('starterSchedulingWriteSuccess', { action: 'manager-calendar' })
-        await handlePreRedirect(transition.paidCallIntent, true)
+        const paidCallIntent = await capturePaidCallIntent()
+        await handlePreRedirect(paidCallIntent, true)
       }
     } catch (error) {
       try {
@@ -1568,7 +1642,7 @@
         response.response.result.data &&
         response.response.result.data.url
       if (!url) throw new Error('grants/oauth returned no URL')
-      if (!rememberOAuthIntent(memberId, redirectUri, paidCallIntent)) {
+      if (!rememberOAuthIntent(memberId, redirectUri, paidCallIntent, grantId)) {
         throw new Error('OAuth transition could not be retained')
       }
       // A delayed window.open occurs after awaited requests and is blocked by
@@ -1619,7 +1693,7 @@
         renderAvail()
       }
       publishCalendarConnectionError()
-      switchStep('config-request-error')
+      showAvailabilityError(canonicalSaved)
       console.warn('[scheduling-writer] availability remove failed:', error && error.message)
       emit('starterSchedulingWriteError', {
         action: 'availability-remove',
@@ -1787,7 +1861,7 @@
 
       if (!oauthCallback) {
         const pendingTransition = readOAuthIntent(sessionMemberId)
-        if (pendingTransition && pendingTransition.paidCallIntent) {
+        if (pendingTransition && pendingTransition.preserveBookings !== true && pendingTransition.paidCallIntent) {
           const recovered = await recoverPaidCallAfterOAuthCancellation(
             sessionMemberId,
             pendingTransition,
@@ -1803,7 +1877,6 @@
       // match the logged-in member. grants/add/v3 performs the authoritative
       // server-side exchange or grant lookup before persisting V3 state.
       if (oauthCallback) {
-        const oauthCode = oauthCallback.code
         const oauthGrantId = oauthCallback.grantId
         const oauthState = oauthCallback.state
         let memberId = null
@@ -1827,37 +1900,12 @@
           }
           oauthPaidCallIntent = oauthIntent.paidCallIntent || null
           await ensureTimezone()
-          if (!oauthIntent.oauthGrantSaved && oauthCallback.resumed) {
-            await refreshCanonicalConnectionState()
-            if (
-              grantId &&
-              grantEmail &&
-              grantCalendarId &&
-              (!oauthGrantId || grantId === oauthGrantId)
-            ) {
-              oauthIntent.oauthGrantSaved = true
-              persistOAuthIntent(memberId, oauthIntent)
-            }
-          }
-          if (!oauthIntent.oauthGrantSaved) {
-            const grantPayload = {
-              member_id: memberId,
-              in_redirect_uri: oauthIntent.redirectUri,
-              in_state: oauthState,
-            }
-            if (oauthCode) grantPayload.code = oauthCode
-            else grantPayload.in_grant_id = oauthGrantId
-            const grant = await xanoPost('/grants/add/v3', grantPayload)
-            if (!(grant && grant.grant_id)) {
-              throw new Error('grants/add/v3 returned no grant')
-            }
-            oauthIntent.oauthGrantSaved = true
-            persistOAuthIntent(memberId, oauthIntent)
-          }
+          await completeOAuthGrant(memberId, oauthIntent, oauthCallback)
           await refreshCanonicalConnectionState()
           if (!grantId || !grantEmail || !grantCalendarId) {
             throw new Error('Canonical OAuth grant readback is incomplete')
           }
+          assertPreservedDefault(oauthIntent, oauthGrantId)
           if (availability.manager !== 'calendar') {
             availability.manager = 'calendar'
             await updateAvail()
@@ -1868,6 +1916,7 @@
           if (!hasFreeConfig) await createFreeConfig()
           await restorePaidCallIntent(oauthPaidCallIntent)
           await refreshCanonicalConnectionState()
+          assertPreservedDefault(oauthIntent, oauthGrantId)
           clearOAuthIntent(memberId)
           clearOAuthCallback()
           connectedCalendar = null
@@ -1880,6 +1929,7 @@
             error.code === 'OAUTH_CALLBACK_INVALID' &&
             trustedState &&
             oauthIntent &&
+            oauthIntent.preserveBookings !== true &&
             oauthIntent.paidCallIntent
           ) {
             try {
@@ -1898,7 +1948,7 @@
           if (
             error &&
             error.code === 'OAUTH_CALLBACK_INVALID' &&
-            (!trustedState || !oauthIntent || !oauthIntent.paidCallIntent || recovered)
+            (!trustedState || !oauthIntent || oauthIntent.preserveBookings === true || !oauthIntent.paidCallIntent || recovered)
           ) {
             if (trustedState && memberId) clearOAuthIntent(memberId)
             clearOAuthCallback()
