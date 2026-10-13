@@ -638,6 +638,14 @@
     }
   }
 
+  function verifyCompletedPlatformTransitionReadback() {
+    if (!sessionMemberId || !grantId) return
+    const intent = readPlatformTransitionIntent(sessionMemberId, grantId)
+    if (!intent || !preservedGrantReceiptMatches(intent, intent.grantReceipt, 'platform', grantId)) return
+    assertPreservedDefault(intent, 'platform', grantId)
+    clearPlatformTransitionIntent(sessionMemberId)
+  }
+
   function invalidOAuthCallback(message) {
     return Object.assign(new Error(message), { code: 'OAUTH_CALLBACK_INVALID' })
   }
@@ -1092,6 +1100,7 @@
       availability = canonicalAvailability
       window.STARTER_AVAILABILITY = canonicalAvailability
       writeAvailabilityCache()
+      verifyCompletedPlatformTransitionReadback()
       connectionError = false
       return publishCalendarConnectionState()
     } catch (error) {
@@ -2263,6 +2272,7 @@
         handleAction(btn, form)
       })
 
+      verifyCompletedPlatformTransitionReadback()
       publishCalendarConnectionState()
       setStatus('ready')
       emit('starterSchedulingWriterReady', { memberId: sessionMemberId })

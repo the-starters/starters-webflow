@@ -1419,6 +1419,68 @@ test('availability save keeps a versioned zero-offer binding empty', async () =>
 
 const PLATFORM_TRANSITION_KEY = 'starter-scheduling-platform-transition:member-a'
 
+function platformTransitionIntent(options = {}) {
+  const activeConfigIds = Object.prototype.hasOwnProperty.call(options, 'activeConfigIds')
+    ? options.activeConfigIds
+    : ['cfg-free-new']
+  const transitionId = options.transitionId || 'platform-transition-fixture'
+  return JSON.stringify({
+    createdAt: Date.now(),
+    preserveBookings: true,
+    replaceGrantId: options.replaceGrantId || 'google-grant',
+    transitionId,
+    targetManager: 'platform',
+    grantReceipt: {
+      transition_id: transitionId,
+      previous_grant_retained: true,
+      replaced_grant_id: options.replaceGrantId || 'google-grant',
+      grant_id: options.grantId || 'platform-grant',
+      default_selected: true,
+      services_ready: true,
+      manager: 'platform',
+      active_config_ids: activeConfigIds,
+      active_service_count: activeConfigIds.length,
+    },
+  })
+}
+
+function completedPlatformReceiptReloadSection(options = {}) {
+  const activeConfigIds = Object.prototype.hasOwnProperty.call(options, 'activeConfigIds')
+    ? options.activeConfigIds
+    : ['cfg-free-new']
+  const configs = Object.prototype.hasOwnProperty.call(options, 'configs')
+    ? options.configs
+    : activeConfigIds.map((id) => ({
+        config_id: id,
+        grant_id: 'platform-grant',
+        duration: 30,
+        is_paid: false,
+        active: true,
+      }))
+  const intent = platformTransitionIntent({ activeConfigIds })
+  return loadSection({
+    serverState: {
+      grantId: 'platform-grant',
+      grantEmail: 'virtual@example.com',
+      calendarId: 'platform-cal',
+      calendarBindingVersion: 1,
+      configs,
+      availability: {
+        items: { general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] } },
+        manager: 'platform',
+      },
+    },
+    sessionStorage: options.sessionStorage || { [PLATFORM_TRANSITION_KEY]: intent },
+    localStorage: options.localStorage || { [PLATFORM_TRANSITION_KEY]: intent },
+  })
+}
+
+function connectionStates(events) {
+  return events
+    .filter((event) => event.type === 'starterSchedulingConnectionStateChanged')
+    .map((event) => event.detail && event.detail.state)
+}
+
 test('Use Platform Calendar selects a preserved Platform default without disconnecting Google', async () => {
   let canonicalState = null
   const result = loadSection({
@@ -1714,6 +1776,40 @@ test('Use Platform Calendar replaces a stale old-grant transition for the curren
   assert.equal(result.calls.filter((call) => call.path === '/starter/paid-call-settings/upsert/v3').length, 0)
   assert.equal(result.state.availability.manager, 'platform')
   assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
+  assert.equal(result.window.sessionStorage._map.has(PLATFORM_TRANSITION_KEY), false)
+  assert.equal(result.window.localStorage._map.has(PLATFORM_TRANSITION_KEY), false)
+})
+
+test('completed Platform receipt reload stays closed until active configs match', async () => {
+  const first = completedPlatformReceiptReloadSection({ configs: [] })
+  await settle()
+
+  assertNoCalendarReplacementWrites(first.calls)
+  assert.equal(first.window.STARTER_SCHEDULING_CONNECTION.state, 'error')
+  assert.equal(connectionStates(first.events).includes('connected'), false)
+  assert.equal(first.window.sessionStorage._map.has(PLATFORM_TRANSITION_KEY), true)
+  assert.equal(first.window.localStorage._map.has(PLATFORM_TRANSITION_KEY), true)
+
+  const second = completedPlatformReceiptReloadSection({
+    sessionStorage: Object.fromEntries(first.window.sessionStorage._map),
+    localStorage: Object.fromEntries(first.window.localStorage._map),
+  })
+  await settle()
+
+  assertNoCalendarReplacementWrites(second.calls)
+  assert.equal(second.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
+  assert.equal(second.window.sessionStorage._map.has(PLATFORM_TRANSITION_KEY), false)
+  assert.equal(second.window.localStorage._map.has(PLATFORM_TRANSITION_KEY), false)
+})
+
+test('completed zero-offer Platform receipt reload verifies without provisioning', async () => {
+  const result = completedPlatformReceiptReloadSection({ activeConfigIds: [], configs: [] })
+  await settle()
+
+  assertNoCalendarReplacementWrites(result.calls)
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.configurationCount, 0)
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.calendarBindingVersion, 1)
   assert.equal(result.window.sessionStorage._map.has(PLATFORM_TRANSITION_KEY), false)
   assert.equal(result.window.localStorage._map.has(PLATFORM_TRANSITION_KEY), false)
 })

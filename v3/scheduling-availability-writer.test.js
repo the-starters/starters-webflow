@@ -600,6 +600,78 @@ async function settle() {
 const TZ_CACHED = { 'starter-timezone:member-a': 'Asia/Manila' }
 const PLATFORM_TRANSITION_KEY = 'starter-scheduling-platform-transition:member-a'
 
+function platformTransitionIntent(options = {}) {
+  const activeConfigIds = Object.prototype.hasOwnProperty.call(options, 'activeConfigIds')
+    ? options.activeConfigIds
+    : ['cfg-free-new']
+  const transitionId = options.transitionId || 'platform-transition-fixture'
+  return JSON.stringify({
+    createdAt: Date.now(),
+    preserveBookings: true,
+    replaceGrantId: options.replaceGrantId || 'grant-1',
+    transitionId,
+    targetManager: 'platform',
+    grantReceipt: {
+      transition_id: transitionId,
+      previous_grant_retained: true,
+      replaced_grant_id: options.replaceGrantId || 'grant-1',
+      grant_id: options.grantId || 'platform-grant',
+      default_selected: true,
+      services_ready: true,
+      manager: 'platform',
+      active_config_ids: activeConfigIds,
+      active_service_count: activeConfigIds.length,
+    },
+  })
+}
+
+function completedPlatformReceiptReloadWriter(options = {}) {
+  const activeConfigIds = Object.prototype.hasOwnProperty.call(options, 'activeConfigIds')
+    ? options.activeConfigIds
+    : ['cfg-free-new']
+  const configs = Object.prototype.hasOwnProperty.call(options, 'configs')
+    ? options.configs
+    : activeConfigIds.map((id) => ({
+        config_id: id,
+        grant_id: 'platform-grant',
+        duration: 30,
+        is_paid: false,
+        active: true,
+      }))
+  const intent = platformTransitionIntent({ activeConfigIds })
+  const availability = defaultAvailability()
+  availability.manager = 'platform'
+  return loadWriter({
+    hostname: 'thestarters.com',
+    pathname: '/starter-dashboard',
+    origin: 'https://thestarters.com',
+    availability,
+    storage: options.storage || { ...TZ_CACHED, [PLATFORM_TRANSITION_KEY]: intent },
+    sessionStorage: options.sessionStorage || { [PLATFORM_TRANSITION_KEY]: intent },
+    routes: {
+      '/starter/get_by_memberstack/v3': () => ({
+        status: 200,
+        body: {
+          id: 1,
+          timezone: 'Asia/Manila',
+          availability,
+          nylas_grant_id: 'platform-grant',
+          nylas_grant_email: 'virtual@example.com',
+          nylas_calendar_id: 'platform-cal',
+          calendar_binding_version: 1,
+        },
+      }),
+      '/nylas_configurations/get_all/v3': () => ({ status: 200, body: configs }),
+    },
+  })
+}
+
+function connectionStates(events) {
+  return events
+    .filter((event) => event.type === 'starterSchedulingConnectionStateChanged')
+    .map((event) => event.detail && event.detail.state)
+}
+
 /* ------------------------------------------------------------------ */
 /* Tests                                                               */
 /* ------------------------------------------------------------------ */
@@ -1817,6 +1889,40 @@ test('preserved Platform selection replaces a stale old-grant transition for the
   assert.equal(result.calls.filter((call) => call.path === '/starter/update_availability/v3').length, 0)
   assert.equal(result.calls.filter((call) => call.path === '/starter/paid-call-settings/upsert/v3').length, 0)
   assert.equal(result.window.STARTER_AVAILABILITY.manager, 'platform')
+  assert.equal(result.sessionStorage.has(PLATFORM_TRANSITION_KEY), false)
+  assert.equal(result.storage.has(PLATFORM_TRANSITION_KEY), false)
+})
+
+test('completed Platform receipt reload stays closed until active configs match', async () => {
+  const first = completedPlatformReceiptReloadWriter({ configs: [] })
+  await settle()
+
+  assertNoCalendarReplacementWrites(first.calls)
+  assert.equal(first.window.STARTER_SCHEDULING_CONNECTION.state, 'error')
+  assert.equal(connectionStates(first.events).includes('connected'), false)
+  assert.equal(first.sessionStorage.has(PLATFORM_TRANSITION_KEY), true)
+  assert.equal(first.storage.has(PLATFORM_TRANSITION_KEY), true)
+
+  const second = completedPlatformReceiptReloadWriter({
+    sessionStorage: Object.fromEntries(first.sessionStorage),
+    storage: Object.fromEntries(first.storage),
+  })
+  await settle()
+
+  assertNoCalendarReplacementWrites(second.calls)
+  assert.equal(second.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
+  assert.equal(second.sessionStorage.has(PLATFORM_TRANSITION_KEY), false)
+  assert.equal(second.storage.has(PLATFORM_TRANSITION_KEY), false)
+})
+
+test('completed zero-offer Platform receipt reload verifies without provisioning', async () => {
+  const result = completedPlatformReceiptReloadWriter({ activeConfigIds: [], configs: [] })
+  await settle()
+
+  assertNoCalendarReplacementWrites(result.calls)
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.configurationCount, 0)
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.calendarBindingVersion, 1)
   assert.equal(result.sessionStorage.has(PLATFORM_TRANSITION_KEY), false)
   assert.equal(result.storage.has(PLATFORM_TRANSITION_KEY), false)
 })
