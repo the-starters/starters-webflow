@@ -704,6 +704,16 @@
     return ids
   }
 
+  function activeSchedulerConfigs() {
+    return configs.filter(function (config) {
+      return config && config.active !== false
+    })
+  }
+
+  function hasVersionedBindingAuthority() {
+    return Boolean(grantId && grantEmail && grantCalendarId && calendarBindingVersion === 1)
+  }
+
   function activeReadbackConfigIds(records, expectedGrantId) {
     if (!Array.isArray(records)) return null
     const ids = []
@@ -1335,7 +1345,9 @@
   async function updateConfigs() {
     configs = await getConfigs(grantId, true)
     const configsResponse = []
-    for (const record of configs.filter(function (config) { return config.active !== false })) {
+    const activeConfigs = activeSchedulerConfigs()
+    if (activeConfigs.length === 0) return hasVersionedBindingAuthority()
+    for (const record of activeConfigs) {
       const res = await updateConfigAvailability(record)
       configsResponse.push(res)
     }

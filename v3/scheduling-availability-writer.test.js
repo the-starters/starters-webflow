@@ -774,6 +774,8 @@ test('boots connected for a versioned binding with no active offers', async () =
   assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
   assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.configurationCount, 0)
   assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.calendarBindingVersion, 1)
+  assert.equal(result.calls.filter((call) => call.path === '/scheduler/configurations/create/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/starter/update_availability/v3').length, 0)
 })
 
 test('versioned zero-offer binding without a grant email remains reconnect', async () => {
@@ -836,6 +838,82 @@ test('legacy zero-config binding without a version marker remains reconnect', as
   assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'reconnect')
   assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.configurationCount, 0)
   assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.calendarBindingVersion, null)
+})
+
+test('availability save keeps a versioned zero-offer binding empty', async () => {
+  const availability = defaultAvailability()
+  availability.manager = 'platform'
+  const result = loadWriter({
+    availability,
+    storage: TZ_CACHED,
+    routes: {
+      '/starter/get_by_memberstack/v3': () => ({
+        status: 200,
+        body: {
+          id: 1,
+          timezone: 'Asia/Manila',
+          availability,
+          nylas_grant_id: 'grant-1',
+          nylas_grant_email: 'grant@example.com',
+          nylas_calendar_id: 'cal-1',
+          calendar_binding_version: 1,
+        },
+      }),
+      '/nylas_configurations/get_all/v3': () => ({ status: 200, body: [] }),
+    },
+  })
+  await settle()
+
+  result.dom.fields.days[0].checked = true
+  result.dom.fields.start.value = '10:00'
+  result.dom.fields.end.value = '16:00'
+  result.clickAction(result.dom.buttons.submit)
+  await settle()
+
+  assert.equal(result.calls.filter((call) => call.path === '/scheduler/configurations/create/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/scheduler/configurations/update/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/starter/update_availability/v3').length, 1)
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
+})
+
+test('availability remove keeps a versioned zero-offer binding empty', async () => {
+  const availability = defaultAvailability()
+  availability.manager = 'platform'
+  availability.items.general.days = [1, 2]
+  availability.items['ov-1'] = { days: [3], start: '13:00', end: '15:00' }
+  const result = loadWriter({
+    availability,
+    storage: TZ_CACHED,
+    routes: {
+      '/starter/get_by_memberstack/v3': () => ({
+        status: 200,
+        body: {
+          id: 1,
+          timezone: 'Asia/Manila',
+          availability,
+          nylas_grant_id: 'grant-1',
+          nylas_grant_email: 'grant@example.com',
+          nylas_calendar_id: 'cal-1',
+          calendar_binding_version: 1,
+        },
+      }),
+      '/nylas_configurations/get_all/v3': () => ({ status: 200, body: [] }),
+    },
+  })
+  await settle()
+
+  const item = new El('div', { 'availability-item': '' })
+  item.dataset.id = 'ov-1'
+  const removeBtn = new El('a', { 'availability-action-btn': 'availability-remove' })
+  item.appendChild(removeBtn)
+  result.dom.root.appendChild(item)
+  result.clickAction(removeBtn)
+  await settle()
+
+  assert.equal(result.calls.filter((call) => call.path === '/scheduler/configurations/create/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/scheduler/configurations/update/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/starter/update_availability/v3').length, 1)
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
 })
 
 test('fails closed when canonical configuration state cannot be read', async () => {
@@ -1408,6 +1486,7 @@ test('Google-to-Platform manager switch uses preserved server selection', async 
   assert.equal(result.window.STARTER_AVAILABILITY.manager, 'platform')
   assert.equal(result.dom.steps.success.style.display, 'block')
   assert.equal(result.sessionStorage.has('starter-scheduling-platform-transition:member-a'), false)
+  assert.equal(result.storage.has('prev-availability-manager'), false)
 })
 
 test('Google-to-Platform manager switch accepts a zero-offer preserved binding', async () => {
@@ -1482,6 +1561,7 @@ test('Google-to-Platform manager switch accepts a zero-offer preserved binding',
   assert.equal(result.calls.filter((call) => call.path === '/scheduler/configurations/create/v3').length, 0)
   assert.equal(result.calls.filter((call) => call.path === '/starter/update_availability/v3').length, 0)
   assert.equal(result.sessionStorage.has('starter-scheduling-platform-transition:member-a'), false)
+  assert.equal(result.storage.has('prev-availability-manager'), false)
 })
 
 test('failed preserved Platform selection retries with the same transition id', async () => {
@@ -3273,6 +3353,38 @@ test('returning from the calendar OAuth round trip records the calendar manager'
   assert.equal(result.dom.steps.default.style.display, 'block')
 })
 
+test('staging calendar query does not provision a versioned zero-offer binding', async () => {
+  const availability = defaultAvailability()
+  availability.manager = 'platform'
+  const result = loadWriter({
+    availability,
+    search: '?calendar=google',
+    storage: TZ_CACHED,
+    routes: {
+      '/starter/get_by_memberstack/v3': () => ({
+        status: 200,
+        body: {
+          id: 1,
+          timezone: 'Asia/Manila',
+          availability,
+          nylas_grant_id: 'grant-1',
+          nylas_grant_email: 'grant@example.com',
+          nylas_calendar_id: 'cal-1',
+          calendar_binding_version: 1,
+        },
+      }),
+      '/nylas_configurations/get_all/v3': () => ({ status: 200, body: [] }),
+    },
+  })
+  await settle()
+
+  assert.equal(result.calls.filter((call) => call.path === '/starter/update_availability/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/scheduler/configurations/create/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/starter/paid-call-settings/upsert/v3').length, 0)
+  assert.equal(result.window.STARTER_AVAILABILITY.manager, 'platform')
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
+})
+
 test('a save without a chosen manager routes to the how-to-manage step', async () => {
   const availability = defaultAvailability()
   availability.manager = null
@@ -3491,7 +3603,9 @@ function preservedOAuthCase(options = {}) {
   }
   const search = options.search === undefined ? '?code=fixture-code&state=member-a' : options.search
   const result = loadWriter({
-    hostname: 'thestarters.com', pathname: '/starter-dashboard', origin: 'https://thestarters.com',
+    hostname: options.hostname || 'thestarters.com',
+    pathname: options.pathname || '/starter-dashboard',
+    origin: options.origin || 'https://thestarters.com',
     search, sessionStorage, storage: TZ_CACHED, availability, routes,
   })
   result.intentStillStored = () => result.sessionStorage.has('starter-scheduling-oauth-intent:member-a')
@@ -3536,6 +3650,25 @@ test('preserved OAuth accepts a versioned binding with no active offers', async 
   assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.configurationCount, 0)
   assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.calendarBindingVersion, 1)
   assert.equal(result.window.STARTER_AVAILABILITY.manager, 'calendar')
+  assert.equal(result.intentStillStored(), false)
+})
+
+test('staging preserved OAuth accepts zero offers without bootstrap provisioning', async () => {
+  const result = preservedOAuthCase({
+    hostname: 'the-starters-3-0.webflow.io',
+    pathname: '/starter-dashboard---availability-stage',
+    origin: 'https://the-starters-3-0.webflow.io',
+    intent: { redirectUri: 'https://the-starters-3-0.webflow.io/starter-dashboard---availability-stage' },
+    activeConfigIds: [],
+    newConfigs: [],
+  })
+  await settle()
+
+  const add = result.calls.find((call) => call.path === '/grants/add/v3')
+  assert.equal(add.body.in_redirect_uri, 'https://the-starters-3-0.webflow.io/starter-dashboard---availability-stage')
+  assertNoCalendarReplacementWrites(result.calls)
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.configurationCount, 0)
   assert.equal(result.intentStillStored(), false)
 })
 
@@ -3636,6 +3769,24 @@ test('cancelled and abandoned preserved OAuth never rebuilds a virtual calendar 
     assertNoCalendarReplacementWrites(result.calls)
     assert.equal(result.window.STARTER_AVAILABILITY.manager, 'platform')
   }
+})
+
+test('staging cancelled preserved OAuth does not bootstrap a Free config', async () => {
+  const result = preservedOAuthCase({
+    hostname: 'the-starters-3-0.webflow.io',
+    pathname: '/starter-dashboard---availability-stage',
+    origin: 'https://the-starters-3-0.webflow.io',
+    search: '?error=access_denied&state=member-a',
+    intent: { redirectUri: 'https://the-starters-3-0.webflow.io/starter-dashboard---availability-stage' },
+    oldConfigs: [],
+    paidCallIntent: { title: 'Paid Consultation', price_cents: 15000, duration_minutes: 60 },
+  })
+  await settle()
+
+  assert.equal(result.calls.filter((call) => call.path === '/grants/add/v3').length, 0)
+  assertNoCalendarReplacementWrites(result.calls)
+  assert.equal(result.window.STARTER_AVAILABILITY.manager, 'platform')
+  assert.equal(result.intentStillStored(), false)
 })
 
 test('preserved OAuth transient failure leaves the old default and transition available for retry', async () => {

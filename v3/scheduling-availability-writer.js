@@ -539,6 +539,16 @@
     return ids
   }
 
+  function activeSchedulerConfigs() {
+    return configs.filter(function (config) {
+      return config && config.active !== false
+    })
+  }
+
+  function hasVersionedBindingAuthority() {
+    return Boolean(grantId && grantEmail && grantCalendarId && calendarBindingVersion === 1)
+  }
+
   function activeReadbackConfigIds(records, expectedGrantId) {
     if (!Array.isArray(records)) return null
     const ids = []
@@ -1342,8 +1352,9 @@
   async function updateConfigs(step, removeAvail) {
     configs = await getConfigs(grantId, true)
     const configsResponse = []
-    for (const record of configs) {
-      if (record.active === false) continue
+    const activeConfigs = activeSchedulerConfigs()
+    if (activeConfigs.length === 0) return hasVersionedBindingAuthority()
+    for (const record of activeConfigs) {
       const res = await updateConfigAvailability(record)
       configsResponse.push(res)
     }
@@ -1663,11 +1674,6 @@
         memberId = await writeMemberId()
         if (availability.manager === 'calendar') {
           await selectPlatformDefault(memberId)
-          try {
-            window.localStorage.setItem('prev-availability-manager', activeManager)
-          } catch (error) {
-            /* storage unavailable */
-          }
           showManagerActions()
           switchStep('success')
           emit('starterSchedulingWriteSuccess', { action: 'manager-platform' })
@@ -1692,11 +1698,6 @@
           await restorePaidCallIntent(transition.paidCallIntent)
           await refreshCanonicalConnectionState()
           if (transition.oauthIntent) clearOAuthIntent(memberId)
-          try {
-            window.localStorage.setItem('prev-availability-manager', activeManager)
-          } catch (error) {
-            /* storage unavailable */
-          }
           showManagerActions()
           switchStep('success')
           emit('starterSchedulingWriteSuccess', { action: 'manager-platform' })
@@ -2028,6 +2029,7 @@
       )
       let connectedCalendar = isStagingHost ? urlParams.get('calendar') || null : null
       let oauthPaidCallIntent = null
+      let preservedCallbackIncomplete = false
 
       if (!oauthCallback) {
         const pendingTransition = readOAuthIntent(sessionMemberId)
@@ -2096,6 +2098,10 @@
           emit('starterSchedulingWriteSuccess', { action: 'oauth-connect' })
         } catch (error) {
           let recovered = false
+          if (oauthIntent && oauthIntent.preserveBookings === true) {
+            preservedCallbackIncomplete = true
+            connectedCalendar = null
+          }
           if (
             error &&
             error.code === 'OAUTH_CALLBACK_INVALID' &&
@@ -2136,14 +2142,25 @@
 
       if (grantId) {
         configs = (await getConfigs(grantId, true)) || []
-        if (isStagingHost && !configs.length && !connectedCalendar) {
+        if (
+          isStagingHost &&
+          !configs.length &&
+          !connectedCalendar &&
+          !preservedCallbackIncomplete &&
+          !hasVersionedBindingAuthority()
+        ) {
           await createFreeConfig()
           refreshCanonicalConnectionSoon(500)
         }
       }
 
       // Returning from the calendar OAuth round trip.
-      if (connectedCalendar && !configs.length) {
+      if (
+        connectedCalendar &&
+        !configs.length &&
+        !preservedCallbackIncomplete &&
+        !hasVersionedBindingAuthority()
+      ) {
         urlParams.delete('calendar')
         const remainingQuery = urlParams.toString()
         window.history.replaceState(

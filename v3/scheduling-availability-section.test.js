@@ -1389,6 +1389,34 @@ test('legacy zero-config binding without a version marker remains reconnect', as
   assert.equal(window.STARTER_SCHEDULING_CONNECTION.calendarBindingVersion, null)
 })
 
+test('availability save keeps a versioned zero-offer binding empty', async () => {
+  const result = loadSection({
+    serverState: {
+      grantId: 'grant-1',
+      grantEmail: 'g@example.com',
+      calendarId: 'cal-1',
+      configs: [],
+      calendarBindingVersion: 1,
+      availability: {
+        items: { general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] } },
+        manager: 'calendar',
+      },
+    },
+  })
+  await settle()
+
+  const card = result.dom.list.children.find((el) => el.dataset.id === 'general')
+  card.children[0].children[2].children[0].click()
+  card.children[2].children[0].children[1].children[1].click()
+  await settle()
+
+  assert.equal(result.calls.filter((call) => call.path === '/scheduler/configurations/create/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/scheduler/configurations/update/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/starter/update_availability/v3').length, 1)
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
+  assert.equal(result.dom.notif.steps['availability-saved'].style.display, '')
+})
+
 test('Use Platform Calendar selects a preserved Platform default without disconnecting Google', async () => {
   let canonicalState = null
   const result = loadSection({
@@ -4366,6 +4394,37 @@ test('open-item-remove updates all active configurations without replacing paid 
     assert.equal(call.body.in_event_booking, undefined)
     assert.equal(call.body.in_scheduler, undefined)
   })
+})
+
+test('open-item-remove keeps a versioned zero-offer binding empty', async () => {
+  const result = loadSection({
+    serverState: {
+      grantId: 'grant-1',
+      grantEmail: 'g@example.com',
+      calendarId: 'cal-1',
+      configs: [],
+      calendarBindingVersion: 1,
+      availability: {
+        items: {
+          general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] },
+          override1: { days: [4], start: '10:00', end: '11:00' },
+        },
+        manager: 'calendar',
+      },
+    },
+  })
+  await settle()
+
+  const overrideCard = result.dom.list.children.find((el) => el.dataset.id === 'override1')
+  overrideCard.children[0].children[2].children[1].click()
+  result.dom.notif.itemRemoveBtn.click()
+  await settle()
+
+  assert.equal(result.calls.filter((call) => call.path === '/scheduler/configurations/create/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/scheduler/configurations/update/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/starter/update_availability/v3').length, 1)
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
+  assert.equal(result.dom.notif.steps['availability-removed'].style.display, '')
 })
 
 test('open-item-remove restores the model and card when the canonical save fails', async () => {

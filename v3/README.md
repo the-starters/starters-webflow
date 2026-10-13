@@ -3890,7 +3890,9 @@ The versioned binding marker is durable reload authority. A later ordinary
 page load with a valid grant ID, grant email, calendar ID, and
 `calendar_binding_version: 1` is connected even if the configuration list is
 empty. Without that marker, legacy empty-configuration setup remains incomplete
-and shows the reconnect path.
+and shows the reconnect path. Availability save and remove actions on a valid
+versioned empty-offer binding persist canonical availability and perform no
+configuration create or update writes.
 
 This transition contract requires the compatible backend before the frontend
 release is activated. Availability changes still use canonical save followed
