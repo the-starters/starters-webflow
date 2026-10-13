@@ -6,7 +6,6 @@ const vm = require('node:vm')
 const source = fs.readFileSync(require.resolve('./starter-profile-claim.js'), 'utf8')
 const WRAPPER_SELECTOR = '[data-starter-claim="wrapper"]'
 const FORM_SELECTOR = 'form[data-starter-claim="form"]'
-const CLOSE_SELECTOR = '[data-starter-claim="close"]'
 const PROFILE_SLUG_FIELD_SELECTOR =
   'input[type="hidden"][name="Profile Slug"][data-starter-claim="profile-slug"]'
 const GOOGLE_AUTH_SELECTOR = '[data-ms-auth-provider="google"]'
