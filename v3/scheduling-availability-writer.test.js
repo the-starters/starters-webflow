@@ -2238,6 +2238,88 @@ test('pre-redirect sends the authenticated member id as OAuth state and navigate
   })
   assert.deepEqual(result.assigned, ['https://nylas.example/oauth'])
   assert.deepEqual(result.opened, [])
+  const intent = JSON.parse(result.sessionStorage.get('starter-scheduling-oauth-intent:member-a'))
+  assert.equal(intent.preserveBookings, true)
+  assert.equal(intent.replaceGrantId, 'grant-1')
+  assert.equal(result.storage.has('starter-scheduling-oauth-intent:member-a'), true)
+})
+
+test('pre-redirect refuses Google OAuth when the canonical manager is already Google', async () => {
+  const availability = defaultAvailability()
+  availability.manager = 'calendar'
+  const result = loadWriter({
+    availability,
+    storage: TZ_CACHED,
+    routes: {
+      '/starter/get_by_memberstack/v3': () => ({
+        status: 200,
+        body: {
+          id: 1,
+          timezone: 'Asia/Manila',
+          availability,
+          nylas_grant_id: 'google-grant',
+          nylas_grant_email: 'member@gmail.example',
+          nylas_calendar_id: 'google-cal',
+          calendar_binding_version: null,
+        },
+      }),
+      '/nylas_configurations/get_all/v3': () => ({
+        status: 200,
+        body: [{ config_id: 'cfg-free', grant_id: 'google-grant', duration: 30, is_paid: false, active: true }],
+      }),
+    },
+  })
+  await settle()
+
+  result.clickAction(result.dom.buttons.preRedirect)
+  await settle()
+
+  const intentKey = 'starter-scheduling-oauth-intent:member-a'
+  assert.equal(result.calls.filter((c) => c.path === '/grants/oauth/v3').length, 0)
+  assert.deepEqual(result.assigned, [])
+  assert.equal(result.sessionStorage.has(intentKey), false)
+  assert.equal(result.storage.has(intentKey), false)
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'error')
+  assert.equal(result.dom.steps['config-request-error'].style.display, 'block')
+})
+
+test('pre-redirect still starts first-time Google OAuth without a current grant', async () => {
+  const availability = defaultAvailability()
+  availability.manager = null
+  const result = loadWriter({
+    availability,
+    storage: TZ_CACHED,
+    routes: {
+      '/starter/get_by_memberstack/v3': () => ({
+        status: 200,
+        body: {
+          id: 1,
+          timezone: 'Asia/Manila',
+          availability,
+          nylas_grant_id: '',
+          nylas_grant_email: '',
+          nylas_calendar_id: '',
+          calendar_binding_version: null,
+        },
+      }),
+    },
+  })
+  await settle()
+
+  result.clickAction(result.dom.buttons.preRedirect)
+  await settle()
+
+  const oauth = result.calls.find((c) => c.path === '/grants/oauth/v3')
+  assert.deepEqual(oauth.body, {
+    in_state: 'member-a',
+    in_provider: 'google',
+    in_redirect_uri:
+      'https://the-starters-3-0.webflow.io/starter-dashboard---availability-stage',
+  })
+  assert.deepEqual(result.assigned, ['https://nylas.example/oauth'])
+  const intent = JSON.parse(result.sessionStorage.get('starter-scheduling-oauth-intent:member-a'))
+  assert.equal(intent.preserveBookings, undefined)
+  assert.equal(intent.replaceGrantId, undefined)
 })
 
 test('pre-redirect aborts when the member session changed', async () => {

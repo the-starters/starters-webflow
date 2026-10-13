@@ -1813,6 +1813,10 @@
       // authenticated member id; the callback must round-trip that exact
       // value and a recent member-scoped intent before any grant write.
       const memberId = await writeMemberId()
+      await refreshCanonicalConnectionState()
+      if (grantId && (!availability || availability.manager !== 'platform')) {
+        throw new Error('Google Calendar is already selected')
+      }
       await ensureTimezone()
       const redirectUri = oauthRedirectUri()
       const response = await xanoPost('/grants/oauth/v3', {
