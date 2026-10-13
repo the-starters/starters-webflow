@@ -530,6 +530,7 @@ function buildStatefulRoutes(initialState) {
       Paid_Call_Rate: 150,
       paidService: null,
       configs: null,
+      calendarBindingVersion: null,
       availability: {
         items: { general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] } },
         manager: null,
@@ -552,6 +553,7 @@ function buildStatefulRoutes(initialState) {
         nylas_grant_id: state.grantId,
         nylas_grant_email: state.grantEmail,
         nylas_calendar_id: state.calendarId,
+        calendar_binding_version: state.calendarBindingVersion,
         Paid_Call_Rate: state.Paid_Call_Rate,
       },
     }),
@@ -1323,6 +1325,47 @@ test('boots directly into connected state when the starter already has a grant/c
   assert.equal(dom.connectBtnWrapper.children[2].style.display, '') // disconnect-google visible
 })
 
+test('boots connected for a versioned binding with no active offers', async () => {
+  const { window } = loadSection({
+    serverState: {
+      grantId: 'grant-1',
+      grantEmail: 'g@example.com',
+      calendarId: 'cal-1',
+      configs: [],
+      calendarBindingVersion: 1,
+      availability: {
+        items: { general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] } },
+        manager: 'calendar',
+      },
+    },
+  })
+  await settle()
+
+  assert.equal(window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
+  assert.equal(window.STARTER_SCHEDULING_CONNECTION.configurationCount, 0)
+  assert.equal(window.STARTER_SCHEDULING_CONNECTION.calendarBindingVersion, 1)
+})
+
+test('legacy zero-config binding without a version marker remains reconnect', async () => {
+  const { window } = loadSection({
+    serverState: {
+      grantId: 'grant-1',
+      grantEmail: 'g@example.com',
+      calendarId: 'cal-1',
+      configs: [],
+      availability: {
+        items: { general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] } },
+        manager: 'calendar',
+      },
+    },
+  })
+  await settle()
+
+  assert.equal(window.STARTER_SCHEDULING_CONNECTION.state, 'reconnect')
+  assert.equal(window.STARTER_SCHEDULING_CONNECTION.configurationCount, 0)
+  assert.equal(window.STARTER_SCHEDULING_CONNECTION.calendarBindingVersion, null)
+})
+
 test('Use Platform Calendar selects a preserved Platform default without disconnecting Google', async () => {
   let canonicalState = null
   const result = loadSection({
@@ -1348,6 +1391,7 @@ test('Use Platform Calendar selects a preserved Platform default without disconn
         canonicalState.grantId = 'platform-grant'
         canonicalState.grantEmail = 'virtual@example.com'
         canonicalState.calendarId = 'platform-cal'
+        canonicalState.calendarBindingVersion = 1
         canonicalState.configs = [
           { config_id: 'cfg-free-new', grant_id: 'platform-grant', duration: 30, is_paid: false, active: true },
           { config_id: 'cfg-paid-new', grant_id: 'platform-grant', duration: 60, is_paid: true, active: true },
@@ -1366,6 +1410,8 @@ test('Use Platform Calendar selects a preserved Platform default without disconn
             default_selected: true,
             services_ready: true,
             manager: 'platform',
+            active_config_ids: ['cfg-free-new', 'cfg-paid-new'],
+            active_service_count: 2,
           },
         }
       },
@@ -1393,6 +1439,64 @@ test('Use Platform Calendar selects a preserved Platform default without disconn
   assert.equal(result.calls.filter((call) => call.path === '/starter/paid-call-settings/upsert/v3').length, 0)
   assert.equal(result.state.availability.manager, 'platform')
   assert.equal(result.dom.notif.steps['virtual-connected'].style.display, '')
+  assert.equal(result.window.sessionStorage._map.has('starter-scheduling-platform-transition:member-a'), false)
+})
+
+test('Use Platform Calendar accepts a preserved zero-offer Platform binding', async () => {
+  let canonicalState = null
+  const result = loadSection({
+    serverState: {
+      grantId: 'google-grant',
+      grantEmail: 'member-a@gmail.example',
+      calendarId: 'google-cal',
+      configs: [{ config_id: 'cfg-free-old', grant_id: 'google-grant', duration: 30, is_paid: false, active: true }],
+      availability: {
+        items: { general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] } },
+        manager: 'calendar',
+      },
+    },
+    postRoutes: {
+      '/grants/create_virtual_account/v3': (body) => {
+        canonicalState.grantId = 'platform-grant'
+        canonicalState.grantEmail = 'virtual@example.com'
+        canonicalState.calendarId = 'platform-cal'
+        canonicalState.calendarBindingVersion = 1
+        canonicalState.configs = []
+        canonicalState.availability = {
+          ...canonicalState.availability,
+          manager: 'platform',
+        }
+        return {
+          status: 200,
+          body: {
+            transition_id: body.in_transition_id,
+            previous_grant_retained: true,
+            replaced_grant_id: 'google-grant',
+            grant_id: 'platform-grant',
+            default_selected: true,
+            services_ready: true,
+            manager: 'platform',
+            active_config_ids: [],
+            active_service_count: 0,
+          },
+        }
+      },
+    },
+  })
+  canonicalState = result.state
+  await settle()
+
+  result.dom.connectBtnWrapper.children[0].click()
+  await settle()
+  await settle()
+
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.configurationCount, 0)
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.calendarBindingVersion, 1)
+  assert.equal(result.state.availability.manager, 'platform')
+  assert.equal(result.calls.filter((call) => call.path === '/grants/delete/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/scheduler/configurations/create/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/starter/update_availability/v3').length, 0)
   assert.equal(result.window.sessionStorage._map.has('starter-scheduling-platform-transition:member-a'), false)
 })
 
@@ -1734,8 +1838,18 @@ function platformState(extra) {
   })
 }
 
-test('Connect Google from Platform goes straight to the informational step, with no switch warning', async () => {
-  const { dom, calls, assigned, window } = loadSection({ serverState: platformState() })
+test('Connect Google from Platform skips paid-service capture while preserving the old default', async () => {
+  const { dom, calls, assigned, window } = loadSection({
+    serverState: platformState({
+      paidService: {
+        config_id: 'paid-old',
+        title: 'Paid Legacy Call',
+        price_cents: 100050,
+        duration: 90,
+        active: true,
+      },
+    }),
+  })
   await settle()
 
   assert.equal(dom.connectBtnWrapper.children[0].style.display, 'none') // Platform already connected
@@ -1749,10 +1863,11 @@ test('Connect Google from Platform goes straight to the informational step, with
 
   assert.equal(calls.filter((c) => c.path === '/grants/delete/v3').length, 0)
   assert.equal(calls.filter((c) => c.path === '/grants/oauth/v3').length, 1)
+  assert.equal(calls.filter((c) => c.path === '/starter/paid-call-settings/get/v3').length, 0)
   assert.equal(assigned.length, 1)
   const intent = JSON.parse(window.sessionStorage._map.get(OAUTH_INTENT_KEY))
   const durableIntent = JSON.parse(window.localStorage._map.get(OAUTH_INTENT_KEY))
-  assert.equal(intent.paidCallIntent, null, 'Free-only member: no paid service captured')
+  assert.equal(intent.paidCallIntent, null)
   assert.deepEqual(durableIntent, intent)
 })
 
@@ -4362,6 +4477,8 @@ test('writer.js installs normally when the new section root is absent (e.g. --av
 // Synthetic server admission for the future-default transition contract. These
 // fixtures never use provider credentials or the network.
 function preservedOAuthCase(options = {}) {
+  const activeConfigIds =
+    options.activeConfigIds === undefined ? ['new-free'] : options.activeConfigIds
   const intent = {
     createdAt: Date.now(),
     redirectUri: 'https://thestarters.com/starter-dashboard',
@@ -4379,9 +4496,28 @@ function preservedOAuthCase(options = {}) {
     default_selected: true,
     services_ready: true,
     manager: 'calendar',
+    active_config_ids: activeConfigIds,
+    active_service_count: activeConfigIds.length,
     ...options.receipt,
   }
   let selected = options.selected === true
+  const newConfigs =
+    options.newConfigs === undefined
+      ? activeConfigIds.map((configId) => ({
+          config_id: configId,
+          grant_id: 'new-grant',
+          duration: configId.indexOf('paid') > -1 ? 60 : 30,
+          is_paid: configId.indexOf('paid') > -1,
+          active: true,
+        }))
+      : options.newConfigs
+  const oldConfigs = options.oldConfigs || [{
+    config_id: 'old-free',
+    grant_id: 'old-grant',
+    duration: 30,
+    is_paid: false,
+    active: true,
+  }]
   const availability = {
     items: { general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] } },
     manager: selected ? 'calendar' : 'platform',
@@ -4396,17 +4532,17 @@ function preservedOAuthCase(options = {}) {
         nylas_grant_id: selected ? 'new-grant' : 'old-grant',
         nylas_grant_email: selected ? 'new@example.com' : 'old@example.com',
         nylas_calendar_id: selected ? 'new-calendar' : 'old-calendar',
+        calendar_binding_version: selected
+          ? (options.bindingVersion === undefined ? 1 : options.bindingVersion)
+          : null,
       },
     }),
     '/nylas_configurations/get_all/v3': (body) => ({
       status: 200,
-      body: [{
-        config_id: selected ? 'new-free' : 'old-free',
+      body: (selected ? newConfigs : oldConfigs).map((config) => ({
+        ...config,
         grant_id: options.wrongConfigGrant ? 'old-grant' : body.grant_id,
-        duration: 30,
-        is_paid: false,
-        active: true,
-      }],
+      })),
     }),
     '/grants/add/v3': () => {
       if (options.addFailure) return { status: 503, body: { message: 'Retry transition' } }
@@ -4457,12 +4593,26 @@ test('preserved OAuth completion sends the expected old binding and accepts only
   assert.equal(result.intentStillStored(), false)
 })
 
+test('preserved OAuth accepts a versioned binding with no active offers', async () => {
+  const result = preservedOAuthCase({ activeConfigIds: [], newConfigs: [] })
+  await settle()
+
+  assertNoCalendarReplacementWrites(result.calls)
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.configurationCount, 0)
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.calendarBindingVersion, 1)
+  assert.equal(result.window.STARTER_AVAILABILITY.manager, 'calendar')
+  assert.equal(result.intentStillStored(), false)
+})
+
 test('preserved OAuth rejects missing or mismatched server attestations before any configuration writes', async () => {
   const badReceipts = [
     { transition_id: 'other-transition' }, { previous_grant_retained: false },
     { replaced_grant_id: 'another-old-grant' }, { default_selected: false },
     { services_ready: false }, { manager: 'platform' },
     { grant_id: 'old-grant' }, { grant_id: '' },
+    { active_config_ids: undefined }, { active_config_ids: ['new-free', 'new-free'], active_service_count: 2 },
+    { active_config_ids: ['new-free'], active_service_count: 0 },
   ]
   for (const receipt of badReceipts) {
     const result = preservedOAuthCase({ receipt, selectOnAdd: false })
@@ -4484,7 +4634,21 @@ test('preserved hosted OAuth requires the receipt grant to match the hosted call
 })
 
 test('preserved OAuth fails closed if canonical selection or config ownership disagrees with the receipt', async () => {
-  for (const options of [{ selectOnAdd: false }, { wrongConfigGrant: true }]) {
+  const unexpectedConfig = {
+    config_id: 'unexpected-free',
+    grant_id: 'new-grant',
+    duration: 30,
+    is_paid: false,
+    active: true,
+  }
+  for (const options of [
+    { selectOnAdd: false },
+    { wrongConfigGrant: true },
+    { activeConfigIds: ['new-free'], newConfigs: [] },
+    { activeConfigIds: [], newConfigs: [unexpectedConfig] },
+    { activeConfigIds: ['new-free'], newConfigs: [unexpectedConfig] },
+    { bindingVersion: null },
+  ]) {
     const result = preservedOAuthCase(options)
     await settle()
     assertNoCalendarReplacementWrites(result.calls)
@@ -4517,6 +4681,7 @@ test('a persisted completed preservation receipt resumes without re-exchanging t
         transition_id: 'transition-fixture', previous_grant_retained: true,
         replaced_grant_id: 'old-grant', grant_id: 'new-grant', default_selected: true,
         services_ready: true, manager: 'calendar',
+        active_config_ids: ['new-free'], active_service_count: 1,
       },
     },
   })
@@ -4575,6 +4740,7 @@ test('a completed preserved receipt rejects another hosted grant without re-exch
       transition_id: 'transition-fixture', previous_grant_retained: true,
       replaced_grant_id: 'old-grant', grant_id: 'new-grant', default_selected: true,
       services_ready: true, manager: 'calendar',
+      active_config_ids: ['new-free'], active_service_count: 1,
     } },
   })
   await settle()

@@ -81,6 +81,7 @@
   let grantId = null
   let grantEmail = null
   let grantCalendarId = null
+  let calendarBindingVersion = null
   let activeManager = null
   let timezone = null
   let timezonePersisted = false
@@ -260,7 +261,9 @@
     const hasCalendar = Boolean(grantCalendarId)
     const configurationCount = Array.isArray(configs) ? configs.length : 0
     if (connectionError) return 'error'
-    if (hasGrant && hasCalendar && configurationCount > 0) return 'connected'
+    if (hasGrant && hasCalendar && (configurationCount > 0 || calendarBindingVersion === 1)) {
+      return 'connected'
+    }
     if (
       hasGrant ||
       hasCalendar ||
@@ -280,6 +283,7 @@
       hasCalendar: Boolean(grantCalendarId),
       configurationCount: Array.isArray(configs) ? configs.length : 0,
       manager: (availability && availability.manager) || null,
+      calendarBindingVersion: calendarBindingVersion,
     }
     document.documentElement.setAttribute(CONNECTION_STATUS_ATTRIBUTE, state)
     window.STARTER_SCHEDULING_CONNECTION = detail
@@ -516,8 +520,41 @@
       receipt.replaced_grant_id === intent.replaceGrantId &&
       typeof receipt.grant_id === 'string' && receipt.grant_id &&
       receipt.grant_id !== intent.replaceGrantId &&
+      preservedReceiptActiveConfigIds(receipt) !== null &&
       (!callbackGrantId || receipt.grant_id === callbackGrantId)
     )
+  }
+
+  function preservedReceiptActiveConfigIds(receipt) {
+    if (!receipt || !Array.isArray(receipt.active_config_ids)) return null
+    const ids = []
+    for (const id of receipt.active_config_ids) {
+      if (typeof id !== 'string' || id === '') return null
+      ids.push(id)
+    }
+    if (new Set(ids).size !== ids.length) return null
+    const count = receipt.active_service_count
+    if (!Number.isInteger(count) || count < 0 || count !== ids.length) return null
+    return ids
+  }
+
+  function activeReadbackConfigIds(records, expectedGrantId) {
+    if (!Array.isArray(records)) return null
+    const ids = []
+    for (const config of records) {
+      if (!config || config.grant_id !== expectedGrantId) return null
+      if (config.active === false) continue
+      if (typeof config.config_id !== 'string' || config.config_id === '') return null
+      ids.push(config.config_id)
+    }
+    if (new Set(ids).size !== ids.length) return null
+    return ids
+  }
+
+  function sameConfigIdSet(left, right) {
+    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false
+    const expected = new Set(right)
+    return left.every(function (id) { return expected.has(id) })
   }
 
   async function completeOAuthGrant(memberId, intent, callback) {
@@ -566,14 +603,19 @@
   function assertPreservedDefault(intent, expectedManager, callbackGrantId) {
     if (intent.preserveBookings !== true) return
     const targetManager = expectedManager || intent.targetManager || 'calendar'
+    const expectedActiveConfigIds = preservedReceiptActiveConfigIds(intent.grantReceipt)
+    const actualActiveConfigIds = activeReadbackConfigIds(configs, grantId)
     if (
       !preservedGrantReceiptMatches(intent, intent.grantReceipt, targetManager, callbackGrantId) ||
       grantId !== intent.grantReceipt.grant_id ||
+      !grantEmail ||
+      !grantCalendarId ||
+      calendarBindingVersion !== 1 ||
       !availability ||
       availability.manager !== targetManager ||
-      !Array.isArray(configs) ||
-      configs.length === 0 ||
-      configs.some(function (config) { return !config || config.grant_id !== grantId })
+      expectedActiveConfigIds === null ||
+      actualActiveConfigIds === null ||
+      !sameConfigIdSet(actualActiveConfigIds, expectedActiveConfigIds)
     ) {
       throw new Error('Selected calendar does not match the verified transition')
     }
@@ -1023,6 +1065,8 @@
       grantId = nextGrantId
       grantEmail = (starter && starter.nylas_grant_email) || null
       grantCalendarId = (starter && starter.nylas_calendar_id) || null
+      calendarBindingVersion =
+        Number(starter && starter.calendar_binding_version) === 1 ? 1 : null
       configs = nextConfigs
       availability = canonicalAvailability
       window.STARTER_AVAILABILITY = canonicalAvailability
@@ -1132,6 +1176,7 @@
       grantId = virtual.grant_id
       grantEmail = virtual.email
       grantCalendarId = virtual.calendar_id
+      calendarBindingVersion = null
       configs = []
       createdVirtual = true
     }
@@ -1637,6 +1682,7 @@
           grantId = virtual.grant_id
           grantEmail = virtual.email
           grantCalendarId = virtual.calendar_id
+          calendarBindingVersion = null
 
           await createFreeConfig()
 
@@ -1663,7 +1709,7 @@
         publishCalendarConnectionState('loading')
         memberId = await writeMemberId()
         await refreshCanonicalConnectionState()
-        const paidCallIntent = await capturePaidCallIntent()
+        const paidCallIntent = grantId ? null : await capturePaidCallIntent()
         await handlePreRedirect(paidCallIntent, true)
       }
     } catch (error) {
@@ -1701,6 +1747,7 @@
         grantId = virtual.grant_id
         grantEmail = virtual.email
         grantCalendarId = virtual.calendar_id
+        calendarBindingVersion = null
 
         await createFreeConfig()
 
@@ -1717,6 +1764,7 @@
         grantId = null
         grantEmail = null
         grantCalendarId = null
+        calendarBindingVersion = null
         configs = []
         publishCalendarConnectionError()
         throw new Error('Virtual calendar setup failed after disconnect')
@@ -1941,6 +1989,7 @@
       grantId = null
       grantEmail = null
       grantCalendarId = null
+      calendarBindingVersion = null
 
       availability = await availabilityFromInitializer()
 
@@ -1963,6 +2012,8 @@
       grantId = (starterRecord && starterRecord.nylas_grant_id) || null
       grantEmail = (starterRecord && starterRecord.nylas_grant_email) || null
       grantCalendarId = (starterRecord && starterRecord.nylas_calendar_id) || null
+      calendarBindingVersion =
+        Number(starterRecord && starterRecord.calendar_binding_version) === 1 ? 1 : null
 
       form.addEventListener('submit', function (e) {
         e.preventDefault()

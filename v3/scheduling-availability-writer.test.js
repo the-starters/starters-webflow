@@ -389,6 +389,7 @@ function defaultRoutes(overridesMap = {}) {
         nylas_grant_id: 'grant-1',
         nylas_grant_email: 'grant@example.com',
         nylas_calendar_id: 'cal-1',
+        calendar_binding_version: null,
       },
     }),
     '/starter/set_timezone/v3': () => ({ status: 200, body: { timezone: 'Asia/Manila' } }),
@@ -676,6 +677,7 @@ test('bootstraps a saved schedule: ready state, configs read, cards rendered', a
       hasCalendar: true,
       configurationCount: 2,
       manager: 'platform',
+      calendarBindingVersion: null,
     },
   )
   assert.ok(
@@ -742,6 +744,66 @@ test('reports reconnect for partial canonical provider state', async () => {
 
   assert.equal(result.status(), 'ready')
   assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'reconnect')
+})
+
+test('boots connected for a versioned binding with no active offers', async () => {
+  const availability = defaultAvailability()
+  availability.manager = 'platform'
+  const result = loadWriter({
+    availability,
+    storage: TZ_CACHED,
+    routes: {
+      '/starter/get_by_memberstack/v3': () => ({
+        status: 200,
+        body: {
+          id: 1,
+          timezone: 'Asia/Manila',
+          availability,
+          nylas_grant_id: 'grant-1',
+          nylas_grant_email: 'grant@example.com',
+          nylas_calendar_id: 'cal-1',
+          calendar_binding_version: 1,
+        },
+      }),
+      '/nylas_configurations/get_all/v3': () => ({ status: 200, body: [] }),
+    },
+  })
+  await settle()
+
+  assert.equal(result.status(), 'ready')
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.configurationCount, 0)
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.calendarBindingVersion, 1)
+})
+
+test('legacy zero-config binding without a version marker remains reconnect', async () => {
+  const availability = defaultAvailability()
+  availability.manager = 'platform'
+  const result = loadWriter({
+    availability,
+    storage: TZ_CACHED,
+    routes: {
+      '/starter/get_by_memberstack/v3': () => ({
+        status: 200,
+        body: {
+          id: 1,
+          timezone: 'Asia/Manila',
+          availability,
+          nylas_grant_id: 'grant-1',
+          nylas_grant_email: 'grant@example.com',
+          nylas_calendar_id: 'cal-1',
+          calendar_binding_version: null,
+        },
+      }),
+      '/nylas_configurations/get_all/v3': () => ({ status: 200, body: [] }),
+    },
+  })
+  await settle()
+
+  assert.equal(result.status(), 'ready')
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'reconnect')
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.configurationCount, 0)
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.calendarBindingVersion, null)
 })
 
 test('fails closed when canonical configuration state cannot be read', async () => {
@@ -1046,7 +1108,24 @@ test('refuses to write when the member session changed after bootstrap', async (
 })
 
 test('choosing own-calendar starts OAuth while retaining the current default', async () => {
-  const result = loadWriter({ storage: TZ_CACHED })
+  const result = loadWriter({
+    storage: TZ_CACHED,
+    routes: {
+      '/starter/paid-call-settings/get/v3': () => ({
+        status: 200,
+        body: {
+          readiness: { paid_call_enabled: true },
+          services: [{
+            config_id: 'paid-old',
+            title: 'Paid Legacy Call',
+            price_cents: 100050,
+            duration: 90,
+            active: true,
+          }],
+        },
+      }),
+    },
+  })
   await settle()
   result.dom.managers.calendar.click()
   result.clickAction(result.dom.buttons.managerSubmit)
@@ -1054,6 +1133,7 @@ test('choosing own-calendar starts OAuth while retaining the current default', a
 
   assert.equal(result.calls.filter((call) => call.path === '/grants/delete/v3').length, 0)
   assert.equal(result.calls.filter((call) => call.path === '/starter/update_availability/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/starter/paid-call-settings/get/v3').length, 0)
   assert.equal(result.dom.steps['success-calendar'].style.display, 'none')
   assert.equal(result.dom.steps['pre-redirect'].style.display, 'block')
   assert.deepEqual(result.assigned, ['https://nylas.example/oauth'])
@@ -1062,6 +1142,7 @@ test('choosing own-calendar starts OAuth while retaining the current default', a
   const intent = JSON.parse(result.sessionStorage.get('starter-scheduling-oauth-intent:member-a'))
   assert.equal(intent.preserveBookings, true)
   assert.equal(intent.replaceGrantId, 'grant-1')
+  assert.equal(intent.paidCallIntent, null)
   assert.ok(intent.transitionId)
 })
 
@@ -1211,6 +1292,7 @@ test('Google-to-Platform manager switch uses preserved server selection', async 
     email: 'grant@example.com',
     calendarId: 'cal-1',
   }
+  let calendarBindingVersion = null
   const result = loadWriter({
     availability,
     storage: TZ_CACHED,
@@ -1224,6 +1306,7 @@ test('Google-to-Platform manager switch uses preserved server selection', async 
           nylas_grant_id: canonicalGrant && canonicalGrant.id,
           nylas_grant_email: canonicalGrant && canonicalGrant.email,
           nylas_calendar_id: canonicalGrant && canonicalGrant.calendarId,
+          calendar_binding_version: calendarBindingVersion,
         },
       }),
       '/nylas_configurations/get_all/v3': (body) => ({
@@ -1251,6 +1334,7 @@ test('Google-to-Platform manager switch uses preserved server selection', async 
           email: 'virtual@example.com',
           calendarId: 'platform-cal',
         }
+        calendarBindingVersion = 1
         return {
           status: 200,
           body: {
@@ -1261,6 +1345,8 @@ test('Google-to-Platform manager switch uses preserved server selection', async 
             default_selected: true,
             services_ready: true,
             manager: 'platform',
+            active_config_ids: ['cfg-free-new', 'cfg-paid-new'],
+            active_service_count: 2,
           },
         }
       },
@@ -1292,6 +1378,80 @@ test('Google-to-Platform manager switch uses preserved server selection', async 
   assert.equal(result.sessionStorage.has('starter-scheduling-platform-transition:member-a'), false)
 })
 
+test('Google-to-Platform manager switch accepts a zero-offer preserved binding', async () => {
+  const availability = defaultAvailability()
+  availability.manager = 'calendar'
+  let canonicalManager = 'calendar'
+  let calendarBindingVersion = null
+  let canonicalGrant = {
+    id: 'grant-1',
+    email: 'grant@example.com',
+    calendarId: 'cal-1',
+  }
+  const result = loadWriter({
+    availability,
+    storage: TZ_CACHED,
+    routes: {
+      '/starter/get_by_memberstack/v3': () => ({
+        status: 200,
+        body: {
+          id: 1,
+          timezone: 'Asia/Manila',
+          availability: { ...availability, manager: canonicalManager },
+          nylas_grant_id: canonicalGrant.id,
+          nylas_grant_email: canonicalGrant.email,
+          nylas_calendar_id: canonicalGrant.calendarId,
+          calendar_binding_version: calendarBindingVersion,
+        },
+      }),
+      '/nylas_configurations/get_all/v3': (body) => ({
+        status: 200,
+        body: body.grant_id === 'platform-grant'
+          ? []
+          : [{ config_id: 'cfg-free-old', grant_id: 'grant-1', is_paid: false, active: true }],
+      }),
+      '/grants/create_virtual_account/v3': (body) => {
+        canonicalManager = 'platform'
+        canonicalGrant = {
+          id: 'platform-grant',
+          email: 'virtual@example.com',
+          calendarId: 'platform-cal',
+        }
+        calendarBindingVersion = 1
+        return {
+          status: 200,
+          body: {
+            transition_id: body.in_transition_id,
+            previous_grant_retained: true,
+            replaced_grant_id: 'grant-1',
+            grant_id: 'platform-grant',
+            default_selected: true,
+            services_ready: true,
+            manager: 'platform',
+            active_config_ids: [],
+            active_service_count: 0,
+          },
+        }
+      },
+    },
+  })
+  await settle()
+
+  result.dom.managers.platform.click()
+  result.clickAction(result.dom.buttons.managerSubmit)
+  await settle()
+  await settle()
+
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.configurationCount, 0)
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.calendarBindingVersion, 1)
+  assert.equal(result.window.STARTER_AVAILABILITY.manager, 'platform')
+  assert.equal(result.calls.filter((call) => call.path === '/grants/delete/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/scheduler/configurations/create/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/starter/update_availability/v3').length, 0)
+  assert.equal(result.sessionStorage.has('starter-scheduling-platform-transition:member-a'), false)
+})
+
 test('failed preserved Platform selection retries with the same transition id', async () => {
   const availability = defaultAvailability()
   availability.manager = 'calendar'
@@ -1301,6 +1461,7 @@ test('failed preserved Platform selection retries with the same transition id', 
     email: 'grant@example.com',
     calendarId: 'cal-1',
   }
+  let calendarBindingVersion = null
   let attempts = 0
   const result = loadWriter({
     availability,
@@ -1315,6 +1476,7 @@ test('failed preserved Platform selection retries with the same transition id', 
           nylas_grant_id: canonicalGrant.id,
           nylas_grant_email: canonicalGrant.email,
           nylas_calendar_id: canonicalGrant.calendarId,
+          calendar_binding_version: calendarBindingVersion,
         },
       }),
       '/nylas_configurations/get_all/v3': (body) => ({
@@ -1332,6 +1494,7 @@ test('failed preserved Platform selection retries with the same transition id', 
           email: 'virtual@example.com',
           calendarId: 'platform-cal',
         }
+        calendarBindingVersion = 1
         return {
           status: 200,
           body: {
@@ -1342,6 +1505,8 @@ test('failed preserved Platform selection retries with the same transition id', 
             default_selected: true,
             services_ready: true,
             manager: 'platform',
+            active_config_ids: ['cfg-free-new'],
+            active_service_count: 1,
           },
         }
       },
@@ -3215,6 +3380,8 @@ test('resolves and persists the timezone through authenticated endpoints', async
 // Synthetic server admission for the future-default transition contract. These
 // fixtures never use provider credentials or the network.
 function preservedOAuthCase(options = {}) {
+  const activeConfigIds =
+    options.activeConfigIds === undefined ? ['new-free'] : options.activeConfigIds
   const intent = {
     createdAt: Date.now(),
     redirectUri: 'https://thestarters.com/starter-dashboard',
@@ -3232,9 +3399,28 @@ function preservedOAuthCase(options = {}) {
     default_selected: true,
     services_ready: true,
     manager: 'calendar',
+    active_config_ids: activeConfigIds,
+    active_service_count: activeConfigIds.length,
     ...options.receipt,
   }
   let selected = options.selected === true
+  const newConfigs =
+    options.newConfigs === undefined
+      ? activeConfigIds.map((configId) => ({
+          config_id: configId,
+          grant_id: 'new-grant',
+          duration: configId.indexOf('paid') > -1 ? 60 : 30,
+          is_paid: configId.indexOf('paid') > -1,
+          active: true,
+        }))
+      : options.newConfigs
+  const oldConfigs = options.oldConfigs || [{
+    config_id: 'old-free',
+    grant_id: 'old-grant',
+    duration: 30,
+    is_paid: false,
+    active: true,
+  }]
   const availability = {
     items: { general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] } },
     manager: selected ? 'calendar' : 'platform',
@@ -3249,17 +3435,17 @@ function preservedOAuthCase(options = {}) {
         nylas_grant_id: selected ? 'new-grant' : 'old-grant',
         nylas_grant_email: selected ? 'new@example.com' : 'old@example.com',
         nylas_calendar_id: selected ? 'new-calendar' : 'old-calendar',
+        calendar_binding_version: selected
+          ? (options.bindingVersion === undefined ? 1 : options.bindingVersion)
+          : null,
       },
     }),
     '/nylas_configurations/get_all/v3': (body) => ({
       status: 200,
-      body: [{
-        config_id: selected ? 'new-free' : 'old-free',
+      body: (selected ? newConfigs : oldConfigs).map((config) => ({
+        ...config,
         grant_id: options.wrongConfigGrant ? 'old-grant' : body.grant_id,
-        duration: 30,
-        is_paid: false,
-        active: true,
-      }],
+      })),
     }),
     '/grants/add/v3': () => {
       if (options.addFailure) return { status: 503, body: { message: 'Retry transition' } }
@@ -3309,12 +3495,26 @@ test('preserved OAuth completion sends the expected old binding and accepts only
   assert.equal(result.intentStillStored(), false)
 })
 
+test('preserved OAuth accepts a versioned binding with no active offers', async () => {
+  const result = preservedOAuthCase({ activeConfigIds: [], newConfigs: [] })
+  await settle()
+
+  assertNoCalendarReplacementWrites(result.calls)
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.configurationCount, 0)
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.calendarBindingVersion, 1)
+  assert.equal(result.window.STARTER_AVAILABILITY.manager, 'calendar')
+  assert.equal(result.intentStillStored(), false)
+})
+
 test('preserved OAuth rejects missing or mismatched server attestations before any configuration writes', async () => {
   const badReceipts = [
     { transition_id: 'other-transition' }, { previous_grant_retained: false },
     { replaced_grant_id: 'another-old-grant' }, { default_selected: false },
     { services_ready: false }, { manager: 'platform' },
     { grant_id: 'old-grant' }, { grant_id: '' },
+    { active_config_ids: undefined }, { active_config_ids: ['new-free', 'new-free'], active_service_count: 2 },
+    { active_config_ids: ['new-free'], active_service_count: 0 },
   ]
   for (const receipt of badReceipts) {
     const result = preservedOAuthCase({ receipt, selectOnAdd: false })
@@ -3336,7 +3536,21 @@ test('preserved hosted OAuth requires the receipt grant to match the hosted call
 })
 
 test('preserved OAuth fails closed if canonical selection or config ownership disagrees with the receipt', async () => {
-  for (const options of [{ selectOnAdd: false }, { wrongConfigGrant: true }]) {
+  const unexpectedConfig = {
+    config_id: 'unexpected-free',
+    grant_id: 'new-grant',
+    duration: 30,
+    is_paid: false,
+    active: true,
+  }
+  for (const options of [
+    { selectOnAdd: false },
+    { wrongConfigGrant: true },
+    { activeConfigIds: ['new-free'], newConfigs: [] },
+    { activeConfigIds: [], newConfigs: [unexpectedConfig] },
+    { activeConfigIds: ['new-free'], newConfigs: [unexpectedConfig] },
+    { bindingVersion: null },
+  ]) {
     const result = preservedOAuthCase(options)
     await settle()
     assertNoCalendarReplacementWrites(result.calls)
@@ -3369,6 +3583,7 @@ test('a persisted completed preservation receipt resumes without re-exchanging t
         transition_id: 'transition-fixture', previous_grant_retained: true,
         replaced_grant_id: 'old-grant', grant_id: 'new-grant', default_selected: true,
         services_ready: true, manager: 'calendar',
+        active_config_ids: ['new-free'], active_service_count: 1,
       },
     },
   })
@@ -3424,6 +3639,7 @@ test('a completed preserved receipt rejects another hosted grant without re-exch
       transition_id: 'transition-fixture', previous_grant_retained: true,
       replaced_grant_id: 'old-grant', grant_id: 'new-grant', default_selected: true,
       services_ready: true, manager: 'calendar',
+      active_config_ids: ['new-free'], active_service_count: 1,
     } },
   })
   await settle()

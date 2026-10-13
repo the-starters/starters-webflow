@@ -3547,7 +3547,10 @@ allowlisted `in_redirect_uri`, and sends that same URI and state to
 `grants/add/v3`; first-time Platform setup calls `grants/add_virtual/v3` with
 `{ grant_id, member_id }`, while preserved Google-to-Platform selection calls
 `grants/create_virtual_account/v3` with `{ member_id, in_preserve_bookings:
-true, in_replace_grant_id, in_transition_id }`. Both are new
+true, in_replace_grant_id, in_transition_id }`. Preserved receipts include
+`services_ready: true`, `manager`, `active_config_ids`, and
+`active_service_count`; the count must equal the unique active ID list, which
+may be empty when both call types are off. Both are new
 memberstack_id-keyed endpoints; the
 legacy airtable_id-keyed
 `grants/oauth`/`grants/add`/`grants/add_virtual` remain untouched for V2. The
@@ -3653,9 +3656,10 @@ connected Platform layer is ignored. V3 keeps one grant per member, so the
 "Done" click starts Google OAuth without deleting, clearing, or changing the
 current default. The current grant remains selected until `grants/add/v3`
 returns the preserved-selection receipt and the controller verifies fresh
-canonical grant, manager, and configuration ownership. If Google sign-in is
-abandoned, the member remains on the old default. Actual Disconnect Google keeps
-the separate guarded destructive path.
+canonical grant, manager, versioned binding marker, and exact active
+configuration ownership. If Google sign-in is abandoned, the member remains on
+the old default. Actual Disconnect Google keeps the separate guarded destructive
+path.
 
 Designer markup contract (`data-availability-element="<name>"` unless noted):
 `section` (root), `connect-wrapper`, `connect-label-group`, `connect-label`,
@@ -3851,26 +3855,39 @@ adds `in_preserve_bookings: true`, `in_replace_grant_id`, and `in_transition_id`
 to `grants/add/v3`. The endpoint must retain old bookings and return matching
 `transition_id` and `replaced_grant_id`, `previous_grant_retained: true`,
 `default_selected: true`, `services_ready: true`, `manager: "calendar"`, and a
-distinct new `grant_id`. Hosted callbacks must also match that new grant. The
-controller verifies the selected canonical grant, canonical manager, and every
-returned configuration's `grant_id` before announcing success. In preserve mode
-it does not update `availability.manager`, create Free configs, or restore Paid
-settings from browser state after the receipt. A saved completion receipt
-prevents re-exchanging a completed one-use code; a still-connected old grant
-alone never proves completion. Cancellation or abandonment of this handoff does
-not rebuild a virtual calendar. Actual Disconnect keeps the existing deletion
-guard and recovery path.
+distinct new `grant_id`. The receipt also carries `active_config_ids` and
+`active_service_count`, where the count must equal the unique active ID list and
+the list may be empty when both call types are off. Hosted callbacks must also
+match that new grant. The controller then performs fresh canonical reads only:
+the selected canonical grant, grant email, calendar ID, target manager, and
+`calendar_binding_version: 1` marker must match the completed binding, and the
+fresh configuration readback must be owned by the new grant with the exact
+active `config_id` set attested by the receipt. In preserve mode it does not
+update `availability.manager`, create Free configs, or restore Paid settings
+from browser state after the receipt. A saved completion receipt prevents
+re-exchanging a completed one-use code; a still-connected old grant alone never
+proves completion. Cancellation or abandonment of this handoff does not rebuild
+a virtual calendar. Actual Disconnect keeps the existing deletion guard and
+recovery path.
 
 Google-to-Platform future-default selection uses
 `grants/create_virtual_account/v3` with `{ member_id, in_preserve_bookings:
 true, in_replace_grant_id, in_transition_id }`. The endpoint returns the same
-receipt fields with `manager: "platform"` and `services_ready: true`. The
-controller keeps a stable member-scoped transition ID for retries against the
-same expected old grant, verifies fresh canonical grant, manager, and
-configuration ownership, and then clears the saved transition. This preserved
-path does not call `grants/delete/v3`, `grants/add_virtual/v3`,
+receipt fields with `manager: "platform"`, `services_ready: true`,
+`active_config_ids`, and `active_service_count`. The controller keeps a stable
+member-scoped transition ID for retries against the same expected old grant,
+verifies fresh canonical grant, grant email, calendar ID,
+`calendar_binding_version: 1`, target manager, and exact active configuration
+ID ownership, and then clears the saved transition. This preserved path does
+not call `grants/delete/v3`, `grants/add_virtual/v3`,
 `grants/create_virtual_calendar/v3`, `starter/update_availability/v3`,
 configuration create/update, or paid-call settings upsert.
+
+The versioned binding marker is durable reload authority. A later ordinary
+page load with a valid grant ID, grant email, calendar ID, and
+`calendar_binding_version: 1` is connected even if the configuration list is
+empty. Without that marker, legacy empty-configuration setup remains incomplete
+and shows the reconnect path.
 
 This transition contract requires the compatible backend before the frontend
 release is activated. Availability changes still use canonical save followed
