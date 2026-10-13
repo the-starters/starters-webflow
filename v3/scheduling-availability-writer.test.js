@@ -6,7 +6,7 @@ const vm = require('node:vm')
 const source = fs.readFileSync(require.resolve('./scheduling-availability-writer.js'), 'utf8')
 const API_BASE = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:tCpV3oqd'
 const ACTIVE_CALLS_COPY =
-  'You have Requested or Confirmed calls on your current calendar. Decline or cancel them, or wait until they end, then try again.'
+  'Resolve pending and upcoming calls before disconnecting the calendar. You can still edit settings or switch calendars.'
 const GENERIC_TRANSITION_COPY =
   "We couldn't complete that calendar change. Please try again or contact support."
 
@@ -2159,47 +2159,52 @@ test('a calendar failure unrelated to the paid-call rate keeps the authored gene
   assert.doesNotMatch(result.dom.errorText.textContent, /paid call rate/i)
 })
 
-test('an active-booking rejection preserves calendar state in the disconnect flow', async () => {
-  const availability = defaultAvailability()
-  availability.manager = 'calendar'
-  const legacyClearCalls = []
-  const result = loadWriter({
-    availability,
-    storage: TZ_CACHED,
-    clearGrantData: async (...args) => legacyClearCalls.push(args),
-    routes: {
-      '/starter/get_by_memberstack/v3': () => ({
-        status: 200,
-        body: {
-          id: 1,
-          timezone: 'Asia/Manila',
-          availability,
-          nylas_grant_id: 'grant-1',
-          nylas_grant_email: 'grant@example.com',
-          nylas_calendar_id: 'cal-1',
-        },
-      }),
-      '/grants/delete/v3': () => ({
-        status: 400,
-        body: { message: 'Resolve active bookings before disconnecting the calendar' },
-      }),
-    },
+for (const [refusalContract, refusalMessage] of [
+  ['legacy', 'Resolve active bookings before disconnecting the calendar'],
+  ['owner-wide', ACTIVE_CALLS_COPY],
+]) {
+  test(`an active-booking rejection preserves calendar state in the disconnect flow (${refusalContract})`, async () => {
+    const availability = defaultAvailability()
+    availability.manager = 'calendar'
+    const legacyClearCalls = []
+    const result = loadWriter({
+      availability,
+      storage: TZ_CACHED,
+      clearGrantData: async (...args) => legacyClearCalls.push(args),
+      routes: {
+        '/starter/get_by_memberstack/v3': () => ({
+          status: 200,
+          body: {
+            id: 1,
+            timezone: 'Asia/Manila',
+            availability,
+            nylas_grant_id: 'grant-1',
+            nylas_grant_email: 'grant@example.com',
+            nylas_calendar_id: 'cal-1',
+          },
+        }),
+        '/grants/delete/v3': () => ({
+          status: 400,
+          body: { message: refusalMessage },
+        }),
+      },
+    })
+    await settle()
+
+    result.clickAction(result.dom.buttons.disconnectCalendar)
+    await settle()
+
+    assert.equal(result.calls.filter((c) => c.path === '/grants/delete/v3').length, 1)
+    assert.equal(result.calls.filter((c) => c.path === '/grants/create_virtual_account/v3').length, 0)
+    assert.equal(result.calls.filter((c) => c.path === '/starter/update_availability/v3').length, 0)
+    assert.deepEqual(legacyClearCalls, [])
+    assert.equal(result.window.STARTER_AVAILABILITY.manager, 'calendar')
+    assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'error')
+    assert.equal(result.dom.steps['config-request-error'].style.display, 'block')
+    assert.equal(result.dom.steps['success-disconnect'].style.display, 'none')
+    assert.equal(result.dom.errorText.textContent, ACTIVE_CALLS_COPY)
   })
-  await settle()
-
-  result.clickAction(result.dom.buttons.disconnectCalendar)
-  await settle()
-
-  assert.equal(result.calls.filter((c) => c.path === '/grants/delete/v3').length, 1)
-  assert.equal(result.calls.filter((c) => c.path === '/grants/create_virtual_account/v3').length, 0)
-  assert.equal(result.calls.filter((c) => c.path === '/starter/update_availability/v3').length, 0)
-  assert.deepEqual(legacyClearCalls, [])
-  assert.equal(result.window.STARTER_AVAILABILITY.manager, 'calendar')
-  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'error')
-  assert.equal(result.dom.steps['config-request-error'].style.display, 'block')
-  assert.equal(result.dom.steps['success-disconnect'].style.display, 'none')
-  assert.equal(result.dom.errorText.textContent, ACTIVE_CALLS_COPY)
-})
+}
 
 // A 400 from a different grants/delete/v3 precondition is not the active-calls
 // refusal; it must keep the authored generic copy.
@@ -2237,39 +2242,44 @@ test('a different grant deletion 400 keeps the authored generic copy', async () 
   assert.equal(result.dom.errorText.textContent, GENERIC_TRANSITION_COPY)
 })
 
-test('a matching active-bookings message on non-400 keeps the authored generic copy', async () => {
-  const availability = defaultAvailability()
-  availability.manager = 'calendar'
-  const result = loadWriter({
-    availability,
-    storage: TZ_CACHED,
-    routes: {
-      '/starter/get_by_memberstack/v3': () => ({
-        status: 200,
-        body: {
-          id: 1,
-          timezone: 'Asia/Manila',
-          availability,
-          nylas_grant_id: 'grant-1',
-          nylas_grant_email: 'grant@example.com',
-          nylas_calendar_id: 'cal-1',
-        },
-      }),
-      '/grants/delete/v3': () => ({
-        status: 500,
-        body: { message: 'Resolve active bookings before disconnecting the calendar' },
-      }),
-    },
+for (const [refusalContract, refusalMessage] of [
+  ['legacy', 'Resolve active bookings before disconnecting the calendar'],
+  ['owner-wide', ACTIVE_CALLS_COPY],
+]) {
+  test(`a matching active-bookings message on non-400 keeps the authored generic copy (${refusalContract})`, async () => {
+    const availability = defaultAvailability()
+    availability.manager = 'calendar'
+    const result = loadWriter({
+      availability,
+      storage: TZ_CACHED,
+      routes: {
+        '/starter/get_by_memberstack/v3': () => ({
+          status: 200,
+          body: {
+            id: 1,
+            timezone: 'Asia/Manila',
+            availability,
+            nylas_grant_id: 'grant-1',
+            nylas_grant_email: 'grant@example.com',
+            nylas_calendar_id: 'cal-1',
+          },
+        }),
+        '/grants/delete/v3': () => ({
+          status: 500,
+          body: { message: refusalMessage },
+        }),
+      },
+    })
+    await settle()
+
+    result.clickAction(result.dom.buttons.disconnectCalendar)
+    await settle()
+
+    assert.equal(result.calls.filter((c) => c.path === '/grants/delete/v3').length, 1)
+    assert.equal(result.dom.steps['config-request-error'].style.display, 'block')
+    assert.equal(result.dom.errorText.textContent, GENERIC_TRANSITION_COPY)
   })
-  await settle()
-
-  result.clickAction(result.dom.buttons.disconnectCalendar)
-  await settle()
-
-  assert.equal(result.calls.filter((c) => c.path === '/grants/delete/v3').length, 1)
-  assert.equal(result.dom.steps['config-request-error'].style.display, 'block')
-  assert.equal(result.dom.errorText.textContent, GENERIC_TRANSITION_COPY)
-})
+}
 
 test('calendar connection copy describes the explicit same-tab handoff', async () => {
   const result = loadWriter({ storage: TZ_CACHED })

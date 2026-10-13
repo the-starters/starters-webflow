@@ -9,7 +9,7 @@ const API_BASE = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:tCpV3oqd'
 const DAY_VARIANT_DEFAULT = 'w-variant-89402c65-e26d-c236-91e7-76e9135a2d42'
 const DAY_VARIANT_SELECTED = 'w-variant-30a4a9ed-8474-d414-9314-498a5fe53866'
 const ACTIVE_CALLS_COPY =
-  'You have Requested or Confirmed calls on your current calendar. Decline or cancel them, or wait until they end, then try again.'
+  'Resolve pending and upcoming calls before disconnecting the calendar. You can still edit settings or switch calendars.'
 const DISCONNECT_GOOGLE_GENERIC_COPY =
   "We couldn't disconnect your Google calendar. Please try again or contact support."
 const PAID_CALL_RATE_COPY =
@@ -2222,42 +2222,50 @@ test('the OAuth return after a Platform replacement shows Platform and Google bo
   assert.equal(result.window.sessionStorage._map.has(OAUTH_INTENT_KEY), false)
 })
 
-test('an active-booking rejection stops Google disconnect before the virtual Platform replacement', async () => {
-  const { dom, calls, window } = loadSection({
-    serverState: {
-      grantId: 'grant-1',
-      grantEmail: 'g@example.com',
-      calendarId: 'cal-1',
-      availability: {
-        items: { general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] } },
-        manager: 'calendar',
+for (const [refusalContract, refusalMessage] of [
+  ['legacy', 'Resolve active bookings before disconnecting the calendar'],
+  ['owner-wide', ACTIVE_CALLS_COPY],
+]) {
+  test(`an active-booking rejection stops Google disconnect before the virtual Platform replacement (${refusalContract})`, async () => {
+    const { dom, calls, window } = loadSection({
+      serverState: {
+        grantId: 'grant-1',
+        grantEmail: 'g@example.com',
+        calendarId: 'cal-1',
+        availability: {
+          items: { general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] } },
+          manager: 'calendar',
+        },
       },
-    },
-    postRoutes: {
-      '/grants/delete/v3': () => ({
-        status: 400,
-        body: { code: 'ERROR_CODE_INPUT_ERROR', message: 'Resolve active bookings before disconnecting the calendar' },
-      }),
-    },
+      postRoutes: {
+        '/grants/delete/v3': () => ({
+          status: 400,
+          body: { code: 'ERROR_CODE_INPUT_ERROR', message: refusalMessage },
+        }),
+      },
+    })
+    await settle()
+
+    dom.connectBtnWrapper.children[2].click()
+    dom.notif.disconnectGoogleBtn.click() // confirm Google disconnect
+    await settle()
+
+    assert.equal(calls.filter((c) => c.path === '/grants/delete/v3').length, 1)
+    assert.equal(calls.filter((c) => c.path === '/grants/create_virtual_account/v3').length, 0)
+    assert.equal(window.STARTER_SCHEDULING_CONNECTION.state, 'error')
+    // The refusal is something the member can act on, so it must name the calls
+    // instead of blaming the calendar connection.
+    assert.equal(dom.notif.steps['request-error'].style.display, '')
+    assert.equal(dom.notif.errorText.textContent, ACTIVE_CALLS_COPY)
   })
-  await settle()
-
-  dom.connectBtnWrapper.children[2].click()
-  dom.notif.disconnectGoogleBtn.click() // confirm Google disconnect
-  await settle()
-
-  assert.equal(calls.filter((c) => c.path === '/grants/delete/v3').length, 1)
-  assert.equal(calls.filter((c) => c.path === '/grants/create_virtual_account/v3').length, 0)
-  assert.equal(window.STARTER_SCHEDULING_CONNECTION.state, 'error')
-  // The refusal is something the member can act on, so it must name the calls
-  // instead of blaming the calendar connection.
-  assert.equal(dom.notif.steps['request-error'].style.display, '')
-  assert.equal(dom.notif.errorText.textContent, ACTIVE_CALLS_COPY)
-})
-
+}
 
 test('only the exact 400 active-bookings refusal replaces section disconnect copy', async () => {
   const cases = [
+    {
+      label: 'owner-wide refusal with a non-400 status',
+      response: { status: 500, body: { message: ACTIVE_CALLS_COPY } },
+    },
     {
       label: 'matching message with a non-400 status',
       response: {

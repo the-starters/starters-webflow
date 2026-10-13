@@ -3526,15 +3526,16 @@ Deliberately NOT ported from the legacy inline writer:
 - the bookings list machinery — the writer delegates list rendering to the page
   embed's `window.generateBookingsList` when present. Disconnects never delegate
   to `window.clearGrantData`: the authenticated `grants/delete/v3` composite
-  route is the single clear owner. While the
-  current calendar has a pending (Requested), confirmed, or rescheduled call
-  whose end time has not passed, that route returns HTTP 400 with a
-  `data.message` matching
-  `/resolve active bookings/i` and does not cancel, archive, or delete anything.
-  Both availability controllers map only that status and message to: `You have
-  Requested or Confirmed calls on your current calendar. Decline or cancel them,
-  or wait until they end, then try again.` Unrelated failures keep the authored
-  generic copy, and the paid-call-rate remediation keeps priority. Once the
+  route is the single clear owner. In the preservation backend contract, any
+  Starter-owned pending or rescheduled call blocks true Disconnect, including
+  calls on retained grants. A confirmed call blocks it while its current or
+  original end time is still in the future. The route returns HTTP 400 without
+  cancelling, archiving, or deleting anything. Both availability controllers
+  recognize the new pending/upcoming-call refusal and the legacy
+  `/resolve active bookings/i` refusal. They show: `Resolve pending and upcoming
+  calls before disconnecting the calendar. You can still edit settings or switch
+  calendars.` Unrelated failures keep the authored generic copy, and the
+  paid-call-rate remediation keeps priority. Once the
   route's preconditions pass, it deletes the provider grant first and only then
   clears configurations and canonical scheduling state. Preserved manager
   switches use the receipt contracts below and do not call the clear route.

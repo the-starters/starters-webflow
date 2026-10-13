@@ -47,13 +47,14 @@
     'Your availability was saved, but booking times could not be verified. Please try again or contact support.'
   const ERROR_TEXT_PAID_CALL_RATE =
     'Your paid call rate must be a whole-dollar amount from $1 to $1,000. Update it in Call Settings, then switch calendars again.'
-  // grants/delete/v3 (Xano #1660) refuses a destructive disconnect while the
-  // current calendar still has requested, confirmed or rescheduled calls. Nothing is
-  // cancelled or deleted in that case. The member can act on it, so name the calls
-  // instead of showing generic calendar copy.
+  // The server guards true Disconnect across all of the Starter's calendars,
+  // including retained grants: pending/rescheduled calls and confirmed calls
+  // whose current or original end is still ahead. Editing and switching remain
+  // available. Keep the legacy refusal compatible during backend rollout.
   const ERROR_TEXT_ACTIVE_CALLS =
-    'You have Requested or Confirmed calls on your current calendar. Decline or cancel them, or wait until they end, then try again.'
-  const ACTIVE_CALLS_REFUSAL = /resolve active bookings/i
+    'Resolve pending and upcoming calls before disconnecting the calendar. You can still edit settings or switch calendars.'
+  const ACTIVE_CALLS_REFUSAL =
+    /resolve active bookings|resolve pending and upcoming calls before disconnecting the calendar/i
 
   const activePath = window.location.pathname.replace(/\/+$/, '') || '/'
   const activeHostname = String(window.location.hostname || '').trim().toLowerCase()
