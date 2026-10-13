@@ -290,7 +290,8 @@ The controller sets `data-ready="true|false"` on each row. It also sets these wr
   receipt contract in [Calendar OAuth return](../../v3/README.md#calendar-oauth-return-no-separate-page)
   and make no browser paid-call GET or upsert. The legacy destructive disconnect/recovery path may
   still carry a one-use intent captured from canonical paid-call GET through the OAuth session
-  envelope, then recreate it through paid-call upsert and canonical readback; an out-of-range
+  envelope, but only while no versioned calendar binding already authorizes the current state. That
+  legacy path recreates the service through paid-call upsert and canonical readback; an out-of-range
   canonical rate stops that destructive recovery before a provider grant is deleted.
 - The Xano projection function remains the only writer to `freelancers_v3.Paid_Call_Enabled` and `Paid_Call_Rate` for this flow.
 - `starterSchedulingConnectionStateChanged` triggers a non-destructive canonical re-read only after

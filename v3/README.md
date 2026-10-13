@@ -3344,14 +3344,16 @@ Runtime contract:
   `init`, `update`, `error`, `not-applicable`, or `missing-controls`.
 - `data-scheduling-calendar-state` reports `loading`, `disconnected`,
   `connected`, `reconnect`, or `error`. `connected` is terminal only after the
-  writer proves a grant, a calendar, and at least one scheduler configuration;
-  partial or stale provider state is `reconnect`.
+  active availability controller proves either a grant, calendar, and at least
+  one scheduler configuration, or a versioned zero-offer binding with grant,
+  email, calendar, and `calendarBindingVersion: 1`; partial or stale provider
+  state is `reconnect`.
 - `window.STARTER_AVAILABILITY` contains the normalized availability after a
   successful read and is `null` after an error.
 - `window.STARTER_SCHEDULING_CONNECTION` contains only non-secret connection
   state. The initializer always supplies `state` and the last canonical
-  configuration count; once the writer runs, it also supplies boolean
-  grant/calendar flags, manager, and `calendarBindingVersion`. Transient
+  configuration count; once an availability controller runs, it also supplies
+  boolean grant/calendar flags, manager, and `calendarBindingVersion`. Transient
   loading and error events do not replace the retained canonical count.
   Provider identifiers are never exposed through this object.
 - `starterSchedulingAvailabilityReady` carries
@@ -3843,11 +3845,11 @@ validation (`code` or `grant_id`, `state`, and `success`) stay in the current
 tab's `sessionStorage` for at most 15 minutes so a reload after Memberstack
 login, or a transient grant-save failure, can resume the same handoff. The
 controller clears the saved callback and member-scoped intent only after
-`grants/add/v3` succeeds,
-or clears the callback immediately when validation fails; expired or malformed
-state is also discarded. Intent cleanup removes both storage copies. Provider
-access tokens are never stored in the browser, and the returned `email` and
-`provider` are neither retained nor trusted.
+`grants/add/v3` succeeds, after an already-canonical versioned binding consumes
+a stale legacy callback read-only, or after validation fails; expired or
+malformed state is also discarded. Intent cleanup removes both storage copies.
+Provider access tokens are never stored in the browser, and the returned
+`email` and `provider` are neither retained nor trusted.
 
 A Google connection started while a calendar is already selected preserves the
 current grant, availability, and configurations during OAuth. Its member-scoped
@@ -3893,7 +3895,9 @@ page load with a valid grant ID, grant email, calendar ID, and
 empty. Without that marker, legacy empty-configuration setup remains incomplete
 and shows the reconnect path. Availability save and remove actions on a valid
 versioned empty-offer binding persist canonical availability and perform no
-configuration create or update writes.
+configuration create or update writes. Legacy OAuth callback and destructive
+recovery paths also treat that marker as authoritative and do not create Free
+configs, restore Paid settings, or change the manager from browser state.
 
 This transition contract requires the compatible backend before the frontend
 release is activated. Availability changes still use canonical save followed
