@@ -105,7 +105,7 @@ shared component. Its other page scripts can remain deferred
 | Notable Experience | everyone, incl. logged out | Webflow-authored `starter-work-histories` wf-xano wrapper / public Xano endpoint `#5860`; cards bind the preformatted `date_range` value (`Month Year`) |
 | Clients ("also worked with") | everyone, incl. logged out | Webflow-authored `starter-clients` wf-xano wrapper / public Xano endpoint `#5860` |
 | Call projections (hero, sticky header, Services, and chooser) | owner: live connection state with no booking action · anonymous: public-projection Free/Paid touts plus signup-only Book Call; chooser closed · brand: [readiness contract](#signed-in-brand-readiness) | this file / public compatibility projections for anonymous display; authenticated Xano, Nylas, and Stripe for booking |
-| Free and Paid call cards (hero tout and Services card) | same audiences and states as the row above | `starter-call-offers-services` plus the Header call projection read the dedicated public Xano endpoint `profile/starter/calls/v3`; superseded CMS call cards stay hidden as rollback markup — see [The Free and Paid call cards render from one wf-xano template per surface](#the-free-and-paid-call-cards-render-from-one-wf-xano-template-per-surface) |
+| Free and Paid call cards (hero tout and Services card) | same audiences and states as the row above; unclaimed profiles with no `starter_memberstack_id`: the Paid clone is display-only (`data-call-display-only="paid"`, no booking, signup, or modal hook) when the DTO sends `public_available: false` with a whole-dollar `price` from 1 to 1000; every other call clone stays hidden | `starter-call-offers-services` plus the Header call projection read the dedicated public Xano endpoint `profile/starter/calls/v3`; superseded CMS call cards stay hidden as rollback markup — see [The Free and Paid call cards render from one wf-xano template per surface](#the-free-and-paid-call-cards-render-from-one-wf-xano-template-per-surface) |
 | Rate and next-slot text on those projections | see [canonical rate painting](#call-rate-surfaces-are-repainted-from-the-canonical-source) and [public-view limits](#qa-venue-limits-for-the-call-surface-rules) | this file |
 | Non-call Service cards | claimed profiles: logged-out cards open signup, eligible Brand cards open the project modal, Talent cards stay inert, and owner cards remain visible as explained previews; unclaimed profiles with no `starter_memberstack_id`: Xano clones are display-only | native Webflow CMS plus side-by-side `starter-services` wf-xano canary / canonical `freelancers_v3.Services`; this file adds interaction attributes to rendered Xano clones only outside the unclaimed public-record path |
 | Services Freelance rate card | claimed profiles: everyone; unclaimed profiles with no `starter_memberstack_id`: the Algolia-derived fallback stays down | this file / Algolia record, cloned from the section's own authored Default card — never an element owned by a `[wf-xano-element="wrapper"]`, because every wf-xano adapter stamps the same `data-service-card="component"` / `data-service-card-state="Default"` pair on its template and its rendered clones |
@@ -215,8 +215,8 @@ It stands down with a `[hire-profile]` warning when `qs`, `qsa`, or
 `waitForMember` is missing, because an uncaught `ReferenceError` would abort the
 whole file and take every section with it. When `starter_memberstack_id` is
 empty or missing, member-bound profile work stands down after the read-only
-public-record adapters for Hero rate cards, Services, and Retainer are
-installed.
+public-record adapters for Hero rate cards, Services, Retainer, and the
+display-only Paid Call card are installed.
 The Free booking namespace normally comes from the page install order above.
 `hire-profile.js` supplies the bounded GitHub/jsDelivr recovery when that tag is
 missing and stands down if the namespace still cannot load.
