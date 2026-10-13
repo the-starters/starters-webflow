@@ -449,23 +449,17 @@
           Date.now() - intent.createdAt <= OAUTH_INTENT_MAX_AGE &&
           intent.preserveBookings === true &&
           intent.targetManager === 'platform' &&
-          (!replaceGrantId || intent.replaceGrantId === replaceGrantId) &&
+          (
+            intent.replaceGrantId === replaceGrantId ||
+            (
+              replaceGrantId &&
+              preservedGrantReceiptMatches(intent, intent.grantReceipt, 'platform', replaceGrantId)
+            )
+          ) &&
           typeof intent.transitionId === 'string' &&
           intent.transitionId
         ) {
           return intent
-        }
-        if (
-          intent &&
-          Number.isFinite(intent.createdAt) &&
-          Date.now() - intent.createdAt >= 0 &&
-          Date.now() - intent.createdAt <= OAUTH_INTENT_MAX_AGE &&
-          intent.preserveBookings === true &&
-          intent.targetManager === 'platform' &&
-          replaceGrantId &&
-          intent.replaceGrantId !== replaceGrantId
-        ) {
-          continue
         }
         storage.removeItem(key)
       } catch (error) {
@@ -495,7 +489,7 @@
   }
 
   function rememberPlatformTransitionIntent(memberId, replaceGrantId) {
-    const existing = readPlatformTransitionIntent(memberId, replaceGrantId) || readPlatformTransitionIntent(memberId)
+    const existing = readPlatformTransitionIntent(memberId, replaceGrantId)
     if (existing) return existing
     const intent = {
       createdAt: Date.now(),

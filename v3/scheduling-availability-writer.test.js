@@ -598,6 +598,7 @@ async function settle() {
 }
 
 const TZ_CACHED = { 'starter-timezone:member-a': 'Asia/Manila' }
+const PLATFORM_TRANSITION_KEY = 'starter-scheduling-platform-transition:member-a'
 
 /* ------------------------------------------------------------------ */
 /* Tests                                                               */
@@ -1723,8 +1724,101 @@ test('preserved Platform selection retries a verified receipt without rekeying t
   assert.equal(requests.length, 1)
   assert.equal(requests[0].body.in_replace_grant_id, 'grant-1')
   assert.equal(requests[0].body.in_transition_id, 'uuid-fixed')
+  assert.equal(result.calls.filter((call) => call.path === '/grants/delete/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/grants/add_virtual/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/grants/create_virtual_calendar/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/scheduler/configurations/create/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/starter/update_availability/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/starter/paid-call-settings/upsert/v3').length, 0)
   assert.equal(result.window.STARTER_AVAILABILITY.manager, 'platform')
   assert.equal(result.sessionStorage.has('starter-scheduling-platform-transition:member-a'), false)
+})
+
+test('preserved Platform selection replaces a stale old-grant transition for the current Google grant', async () => {
+  const staleIntent = JSON.stringify({
+    createdAt: Date.now(),
+    preserveBookings: true,
+    replaceGrantId: 'grant-1',
+    transitionId: 'stale-transition',
+    targetManager: 'platform',
+  })
+  const availability = defaultAvailability()
+  availability.manager = 'calendar'
+  let canonicalManager = 'calendar'
+  let canonicalGrant = {
+    id: 'grant-2',
+    email: 'grant-2@example.com',
+    calendarId: 'cal-2',
+  }
+  let calendarBindingVersion = null
+  const result = loadWriter({
+    availability,
+    storage: { ...TZ_CACHED, [PLATFORM_TRANSITION_KEY]: staleIntent },
+    sessionStorage: { [PLATFORM_TRANSITION_KEY]: staleIntent },
+    routes: {
+      '/starter/get_by_memberstack/v3': () => ({
+        status: 200,
+        body: {
+          id: 1,
+          timezone: 'Asia/Manila',
+          availability: { ...availability, manager: canonicalManager },
+          nylas_grant_id: canonicalGrant.id,
+          nylas_grant_email: canonicalGrant.email,
+          nylas_calendar_id: canonicalGrant.calendarId,
+          calendar_binding_version: calendarBindingVersion,
+        },
+      }),
+      '/nylas_configurations/get_all/v3': (body) => ({
+        status: 200,
+        body: body.grant_id === 'platform-grant-2'
+          ? [{ config_id: 'cfg-free-platform-2', grant_id: 'platform-grant-2', is_paid: false, active: true }]
+          : [{ config_id: 'cfg-free-g2', grant_id: 'grant-2', is_paid: false, active: true }],
+      }),
+      '/grants/create_virtual_account/v3': (body) => {
+        canonicalManager = 'platform'
+        canonicalGrant = {
+          id: 'platform-grant-2',
+          email: 'virtual@example.com',
+          calendarId: 'platform-cal-2',
+        }
+        calendarBindingVersion = 1
+        return {
+          status: 200,
+          body: {
+            transition_id: body.in_transition_id,
+            previous_grant_retained: true,
+            replaced_grant_id: body.in_replace_grant_id,
+            grant_id: 'platform-grant-2',
+            default_selected: true,
+            services_ready: true,
+            manager: 'platform',
+            active_config_ids: ['cfg-free-platform-2'],
+            active_service_count: 1,
+          },
+        }
+      },
+    },
+  })
+  await settle()
+
+  result.dom.managers.platform.click()
+  result.clickAction(result.dom.buttons.managerSubmit)
+  await settle()
+  await settle()
+
+  const requests = result.calls.filter((call) => call.path === '/grants/create_virtual_account/v3')
+  assert.equal(requests.length, 1)
+  assert.equal(requests[0].body.in_replace_grant_id, 'grant-2')
+  assert.equal(requests[0].body.in_transition_id, 'uuid-fixed')
+  assert.equal(result.calls.filter((call) => call.path === '/grants/delete/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/grants/add_virtual/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/grants/create_virtual_calendar/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/scheduler/configurations/create/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/starter/update_availability/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/starter/paid-call-settings/upsert/v3').length, 0)
+  assert.equal(result.window.STARTER_AVAILABILITY.manager, 'platform')
+  assert.equal(result.sessionStorage.has(PLATFORM_TRANSITION_KEY), false)
+  assert.equal(result.storage.has(PLATFORM_TRANSITION_KEY), false)
 })
 
 test('disconnect flow: confirm navigates to its step, disconnect rebuilds a virtual calendar', async () => {

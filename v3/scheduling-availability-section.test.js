@@ -1417,6 +1417,8 @@ test('availability save keeps a versioned zero-offer binding empty', async () =>
   assert.equal(result.dom.notif.steps['availability-saved'].style.display, '')
 })
 
+const PLATFORM_TRANSITION_KEY = 'starter-scheduling-platform-transition:member-a'
+
 test('Use Platform Calendar selects a preserved Platform default without disconnecting Google', async () => {
   let canonicalState = null
   const result = loadSection({
@@ -1631,8 +1633,89 @@ test('Use Platform Calendar retries a verified receipt without rekeying the old 
   assert.equal(requests.length, 1)
   assert.equal(requests[0].body.in_replace_grant_id, 'google-grant')
   assert.equal(requests[0].body.in_transition_id, 'uuid-fixed')
+  assert.equal(result.calls.filter((call) => call.path === '/grants/delete/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/grants/add_virtual/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/grants/create_virtual_calendar/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/scheduler/configurations/create/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/starter/update_availability/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/starter/paid-call-settings/upsert/v3').length, 0)
   assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
-  assert.equal(result.window.sessionStorage._map.has('starter-scheduling-platform-transition:member-a'), false)
+  assert.equal(result.window.sessionStorage._map.has(PLATFORM_TRANSITION_KEY), false)
+})
+
+test('Use Platform Calendar replaces a stale old-grant transition for the current Google grant', async () => {
+  const staleIntent = JSON.stringify({
+    createdAt: Date.now(),
+    preserveBookings: true,
+    replaceGrantId: 'google-grant-1',
+    transitionId: 'stale-transition',
+    targetManager: 'platform',
+  })
+  let canonicalState = null
+  const result = loadSection({
+    serverState: {
+      grantId: 'google-grant-2',
+      grantEmail: 'member-a@gmail.example',
+      calendarId: 'google-cal-2',
+      configs: [{ config_id: 'cfg-free-g2', grant_id: 'google-grant-2', duration: 30, is_paid: false, active: true }],
+      availability: {
+        items: { general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] } },
+        manager: 'calendar',
+      },
+    },
+    sessionStorage: { [PLATFORM_TRANSITION_KEY]: staleIntent },
+    localStorage: { [PLATFORM_TRANSITION_KEY]: staleIntent },
+    postRoutes: {
+      '/grants/create_virtual_account/v3': (body) => {
+        canonicalState.grantId = 'platform-grant-2'
+        canonicalState.grantEmail = 'virtual@example.com'
+        canonicalState.calendarId = 'platform-cal-2'
+        canonicalState.calendarBindingVersion = 1
+        canonicalState.configs = [
+          { config_id: 'cfg-free-platform-2', grant_id: 'platform-grant-2', duration: 30, is_paid: false, active: true },
+        ]
+        canonicalState.availability = {
+          ...canonicalState.availability,
+          manager: 'platform',
+        }
+        return {
+          status: 200,
+          body: {
+            transition_id: body.in_transition_id,
+            previous_grant_retained: true,
+            replaced_grant_id: body.in_replace_grant_id,
+            grant_id: 'platform-grant-2',
+            default_selected: true,
+            services_ready: true,
+            manager: 'platform',
+            active_config_ids: ['cfg-free-platform-2'],
+            active_service_count: 1,
+          },
+        }
+      },
+    },
+  })
+  canonicalState = result.state
+  await settle()
+
+  result.dom.connectBtnWrapper.children[0].click()
+  await settle()
+  await settle()
+
+  const requests = result.calls.filter((call) => call.path === '/grants/create_virtual_account/v3')
+  assert.equal(requests.length, 1)
+  assert.equal(requests[0].body.in_replace_grant_id, 'google-grant-2')
+  assert.equal(requests[0].body.in_transition_id, 'uuid-fixed')
+  assert.equal(result.calls.filter((call) => call.path === '/grants/delete/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/grants/add_virtual/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/grants/create_virtual_calendar/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/scheduler/configurations/create/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/starter/update_availability/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/starter/paid-call-settings/upsert/v3').length, 0)
+  assert.equal(result.state.availability.manager, 'platform')
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
+  assert.equal(result.window.sessionStorage._map.has(PLATFORM_TRANSITION_KEY), false)
+  assert.equal(result.window.localStorage._map.has(PLATFORM_TRANSITION_KEY), false)
 })
 
 test('disconnecting Google preserves the Platform layer by replacing the Google grant with a virtual grant', async () => {
