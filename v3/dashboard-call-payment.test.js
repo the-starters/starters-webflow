@@ -477,9 +477,26 @@ test('P9 review: approve only on a live call before start, never twice for a sta
   for (const extra of [{ status: 'cancelled' }, { status: 'completed' }, { status: 'pending' }, { status: 'rescheduled', start_old: null }, { status: 'rescheduled', start_old: 'invalid', start: Date.now() + H }, { start: Date.now() - 1 }, { start: null }]) {
     assert.equal(api.canRequestPaymentAction('brand', at(extra)), false, JSON.stringify(extra))
   }
-  // W5 environment switch: production rows stay closed until the list opens.
-  assert.deepEqual(api.PAYMENT_ACTION_OPEN_ENVIRONMENTS, ['test'])
-  for (const extra of [{ data_environment: 'production' }, { data_environment: '' }, { data_environment: undefined }]) {
+  // JP 1a: Brand approval opens only for matched Test/Test or production/live.
+  assert.deepEqual(api.PAYMENT_ACTION_OPEN_ENVIRONMENTS, ['test', 'production'])
+  for (const extra of [
+    { data_environment: 'test', payment_environment: 'test' },
+    { data_environment: 'production', payment_environment: 'live' },
+  ]) {
+    assert.equal(api.canRequestPaymentAction('brand', at(extra)), true, JSON.stringify(extra))
+    assert.equal(api.canApprovePayment('brand', at(extra)), true, JSON.stringify(extra))
+    assert.equal(api.canRequestPaymentAction('starter', at(extra)), false, JSON.stringify(extra))
+    assert.equal(api.canApprovePayment('starter', at(extra)), false, JSON.stringify(extra))
+  }
+  for (const extra of [
+    { data_environment: 'production', payment_environment: 'test' },
+    { data_environment: 'test', payment_environment: 'live' },
+    { data_environment: 'staging', payment_environment: 'live' },
+    { data_environment: '', payment_environment: 'live' },
+    { data_environment: undefined, payment_environment: 'live' },
+    { data_environment: 'production', payment_environment: '' },
+    { data_environment: 'production', payment_environment: undefined },
+  ]) {
     assert.equal(api.canRequestPaymentAction('brand', at(extra)), false, JSON.stringify(extra))
     assert.equal(api.canApprovePayment('brand', at(extra)), false, JSON.stringify(extra))
   }
