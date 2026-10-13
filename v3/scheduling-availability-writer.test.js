@@ -377,6 +377,52 @@ function defaultAvailability() {
   }
 }
 
+function starterWithoutGrant(availability) {
+  return {
+    id: 1,
+    timezone: 'Asia/Manila',
+    availability: availability || { ...defaultAvailability(), manager: null },
+    nylas_grant_id: null,
+    nylas_grant_email: null,
+    nylas_calendar_id: null,
+    calendar_binding_version: null,
+  }
+}
+
+function firstTimeGoogleRoutes(options = {}) {
+  const availability = options.availability || { ...defaultAvailability(), manager: null }
+  let savedGrantId = null
+  let addCalls = 0
+  return {
+    '/starter/get_by_memberstack/v3': () => ({
+      status: 200,
+      body: savedGrantId
+        ? {
+            id: 1,
+            timezone: 'Asia/Manila',
+            availability,
+            nylas_grant_id: savedGrantId,
+            nylas_grant_email: 'google@example.com',
+            nylas_calendar_id: 'cal-9',
+            calendar_binding_version: null,
+          }
+        : starterWithoutGrant(availability),
+    }),
+    '/nylas_configurations/get_all/v3': () => ({ status: 200, body: [] }),
+    '/grants/add/v3': (body) => {
+      addCalls += 1
+      if (options.failFirstAdd && addCalls === 1) {
+        return { status: 503, body: { message: 'try again' } }
+      }
+      savedGrantId = body.in_grant_id || options.grantId || 'grant-9'
+      return {
+        status: 200,
+        body: { grant_id: savedGrantId, email: 'google@example.com', calendar_id: 'cal-9' },
+      }
+    },
+  }
+}
+
 function defaultRoutes(overridesMap = {}) {
   const routes = {
     '/starter/update_availability/v3': () => ({ status: 200, body: { id: 1 } }),
@@ -3135,9 +3181,7 @@ test('production OAuth return writes only with a recent session intent', async (
         redirectUri: 'https://thestarters.com/starter-dashboard',
       }),
     },
-    routes: {
-      '/nylas_configurations/get_all/v3': () => ({ status: 200, body: [] }),
-    },
+    routes: firstTimeGoogleRoutes(),
   })
   await settle()
 
@@ -3173,9 +3217,7 @@ test('production hosted OAuth callback verifies and persists the returned grant'
         redirectUri: 'https://thestarters.com/starter-dashboard',
       }),
     },
-    routes: {
-      '/nylas_configurations/get_all/v3': () => ({ status: 200, body: [] }),
-    },
+    routes: firstTimeGoogleRoutes({ availability }),
   })
   await settle()
 
@@ -3211,9 +3253,7 @@ test('production hosted OAuth callback accepts a recent durable intent fallback'
         paidCallIntent: null,
       }),
     },
-    routes: {
-      '/nylas_configurations/get_all/v3': () => ({ status: 200, body: [] }),
-    },
+    routes: firstTimeGoogleRoutes({ availability }),
   })
   await settle()
 
@@ -3248,6 +3288,7 @@ test('another tab does not consume the durable OAuth intent without a callback',
 })
 
 test('OAuth callback is stripped before bootstrap failure and survives a login reload', async () => {
+  const routes = firstTimeGoogleRoutes({ grantId: 'hosted-grant-9' })
   const firstLoad = loadWriter({
     hostname: 'thestarters.com',
     pathname: '/starter-dashboard',
@@ -3262,9 +3303,7 @@ test('OAuth callback is stripped before bootstrap failure and survives a login r
         redirectUri: 'https://thestarters.com/starter-dashboard',
       }),
     },
-    routes: {
-      '/nylas_configurations/get_all/v3': () => ({ status: 200, body: [] }),
-    },
+    routes,
   })
 
   assert.equal(firstLoad.historyCalls.at(-1)[2], '/starter-dashboard')
@@ -3280,9 +3319,7 @@ test('OAuth callback is stripped before bootstrap failure and survives a login r
     search: '',
     storage: TZ_CACHED,
     sessionStorage: Object.fromEntries(firstLoad.sessionStorage),
-    routes: {
-      '/nylas_configurations/get_all/v3': () => ({ status: 200, body: [] }),
-    },
+    routes,
   })
   await settle()
 
@@ -3297,6 +3334,7 @@ test('OAuth callback is stripped before bootstrap failure and survives a login r
 })
 
 test('OAuth callback and intent survive a transient grant save failure', async () => {
+  const routes = firstTimeGoogleRoutes({ grantId: 'hosted-grant-9', failFirstAdd: true })
   const sessionStorage = {
     'starter-scheduling-oauth-intent:member-a': JSON.stringify({
       createdAt: Date.now(),
@@ -3310,9 +3348,7 @@ test('OAuth callback and intent survive a transient grant save failure', async (
     search: '?success=true&grant_id=hosted-grant-9&state=member-a',
     storage: TZ_CACHED,
     sessionStorage,
-    routes: {
-      '/grants/add/v3': () => ({ status: 503, body: { message: 'try again' } }),
-    },
+    routes,
   })
   await settle()
 
@@ -3326,6 +3362,7 @@ test('OAuth callback and intent survive a transient grant save failure', async (
     search: '',
     storage: TZ_CACHED,
     sessionStorage: Object.fromEntries(firstLoad.sessionStorage),
+    routes,
   })
   await settle()
 
@@ -4173,14 +4210,14 @@ function completedCalendarIntent(activeConfigIds = ['new-free']) {
   })
 }
 
-function unfinishedCalendarIntent() {
+function unfinishedCalendarIntent(options = {}) {
   return JSON.stringify({
     createdAt: Date.now(),
     redirectUri: 'https://thestarters.com/starter-dashboard',
     paidCallIntent: null,
     preserveBookings: true,
-    replaceGrantId: 'old-grant',
-    transitionId: 'transition-fixture',
+    replaceGrantId: options.replaceGrantId || 'old-grant',
+    transitionId: options.transitionId || 'transition-fixture',
     targetManager: 'calendar',
   })
 }
@@ -4267,10 +4304,12 @@ function preservedOAuthCase(options = {}) {
       return { status: 200, body: receipt }
     },
   }
-  const sessionStorage = {
-    'starter-scheduling-oauth-intent:member-a': JSON.stringify(intent),
-    ...options.sessionStorage,
-  }
+  const sessionStorage = options.includeDefaultIntent === false
+    ? { ...(options.sessionStorage || {}) }
+    : {
+        'starter-scheduling-oauth-intent:member-a': JSON.stringify(intent),
+        ...options.sessionStorage,
+      }
   const search = options.search === undefined ? '?code=fixture-code&state=member-a' : options.search
   const result = loadWriter({
     hostname: options.hostname || 'thestarters.com',
@@ -4325,6 +4364,38 @@ test('preserved OAuth callback prefers current durable intent over stale legacy 
   assertNoCalendarReplacementWrites(result.calls)
   assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
   assert.equal(result.window.STARTER_AVAILABILITY.manager, 'calendar')
+})
+
+test('preserved OAuth callback refuses stale or noncurrent records with current grant', async () => {
+  const cases = [
+    {
+      label: 'stale legacy intent',
+      includeDefaultIntent: false,
+      sessionStorage: { [OAUTH_INTENT_KEY]: stalePaidOAuthIntent() },
+    },
+    {
+      label: 'wrong old grant intent',
+      includeDefaultIntent: false,
+      sessionStorage: {
+        [OAUTH_INTENT_KEY]: unfinishedCalendarIntent({
+          replaceGrantId: 'another-old-grant',
+          transitionId: 'other-transition',
+        }),
+      },
+    },
+    { label: 'missing intent', includeDefaultIntent: false },
+  ]
+  for (const options of cases) {
+    const result = preservedOAuthCase(options)
+    await settle()
+
+    assert.equal(result.calls.filter((call) => call.path === '/grants/add/v3').length, 0, options.label)
+    assertNoCalendarReplacementWrites(result.calls)
+    assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'error', options.label)
+    assert.equal(result.window.STARTER_AVAILABILITY.manager, 'platform', options.label)
+    assert.equal(result.sessionStorage.has(OAUTH_INTENT_KEY), false, options.label)
+    assert.equal(result.storage.has(OAUTH_INTENT_KEY), false, options.label)
+  }
 })
 
 test('preserved OAuth accepts a versioned binding with no active offers', async () => {

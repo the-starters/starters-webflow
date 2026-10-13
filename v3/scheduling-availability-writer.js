@@ -418,24 +418,44 @@
     return records
   }
 
-  function readOAuthIntent(memberId, includeDurableFallback) {
+  function readOAuthIntent(memberId, includeDurableFallback, callback) {
     const records = readOAuthIntentRecords(memberId, includeDurableFallback)
     for (const intent of records) {
       if (isCurrentCalendarPreservationIntent(intent)) return intent
+    }
+    if (callback && grantId) {
+      for (const intent of records) {
+        if (isResumableLegacyOAuthIntent(intent, callback)) return intent
+      }
+      return null
     }
     if (records.length) return records[0]
     return isStagingHost && !grantId ? { redirectUri: oauthRedirectUri(), paidCallIntent: null } : null
   }
 
   function isCurrentCalendarPreservationIntent(intent) {
+    if (
+      !grantId ||
+      !intent ||
+      intent.preserveBookings !== true ||
+      (intent.targetManager && intent.targetManager !== 'calendar') ||
+      typeof intent.transitionId !== 'string' ||
+      !intent.transitionId
+    ) {
+      return false
+    }
+    return intent.replaceGrantId === grantId ||
+      preservedGrantReceiptMatches(intent, intent.grantReceipt, 'calendar', grantId)
+  }
+
+  function isResumableLegacyOAuthIntent(intent, callback) {
     return Boolean(
-      grantId &&
       intent &&
-      intent.preserveBookings === true &&
-      (!intent.targetManager || intent.targetManager === 'calendar') &&
-      typeof intent.transitionId === 'string' &&
-      intent.transitionId &&
-      intent.replaceGrantId === grantId
+      intent.preserveBookings !== true &&
+      callback &&
+      callback.resumed === true &&
+      callback.grantId &&
+      grantId === callback.grantId
     )
   }
 
@@ -2210,7 +2230,7 @@
           trustedState = true
           const completedGrantId = oauthGrantId || grantId
           oauthIntent = (completedGrantId && readCompletedCalendarTransitionIntent(memberId, completedGrantId)) ||
-            readOAuthIntent(memberId, true)
+            readOAuthIntent(memberId, true, oauthCallback)
           if (oauthCallback.hasError) {
             throw invalidOAuthCallback('OAuth authorization was cancelled or failed')
           }

@@ -5048,14 +5048,14 @@ function completedCalendarIntent(activeConfigIds = ['new-free']) {
   })
 }
 
-function unfinishedCalendarIntent() {
+function unfinishedCalendarIntent(options = {}) {
   return JSON.stringify({
     createdAt: Date.now(),
     redirectUri: 'https://thestarters.com/starter-dashboard',
     paidCallIntent: null,
     preserveBookings: true,
-    replaceGrantId: 'old-grant',
-    transitionId: 'transition-fixture',
+    replaceGrantId: options.replaceGrantId || 'old-grant',
+    transitionId: options.transitionId || 'transition-fixture',
     targetManager: 'calendar',
   })
 }
@@ -5142,10 +5142,12 @@ function preservedOAuthCase(options = {}) {
       return { status: 200, body: receipt }
     },
   }
-  const sessionStorage = {
-    'starter-scheduling-oauth-intent:member-a': JSON.stringify(intent),
-    ...options.sessionStorage,
-  }
+  const sessionStorage = options.includeDefaultIntent === false
+    ? { ...(options.sessionStorage || {}) }
+    : {
+        'starter-scheduling-oauth-intent:member-a': JSON.stringify(intent),
+        ...options.sessionStorage,
+      }
   const search = options.search === undefined ? '?code=fixture-code&state=member-a' : options.search
   const result = loadSection({
     search, sessionStorage,
@@ -5200,6 +5202,38 @@ test('preserved OAuth callback prefers current durable intent over stale legacy 
   assertNoCalendarReplacementWrites(result.calls)
   assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
   assert.equal(result.window.STARTER_AVAILABILITY.manager, 'calendar')
+})
+
+test('preserved OAuth callback refuses stale or noncurrent records with current grant', async () => {
+  const cases = [
+    {
+      label: 'stale legacy intent',
+      includeDefaultIntent: false,
+      sessionStorage: { [OAUTH_INTENT_KEY]: stalePaidOAuthIntent() },
+    },
+    {
+      label: 'wrong old grant intent',
+      includeDefaultIntent: false,
+      sessionStorage: {
+        [OAUTH_INTENT_KEY]: unfinishedCalendarIntent({
+          replaceGrantId: 'another-old-grant',
+          transitionId: 'other-transition',
+        }),
+      },
+    },
+    { label: 'missing intent', includeDefaultIntent: false },
+  ]
+  for (const options of cases) {
+    const result = preservedOAuthCase(options)
+    await settle()
+
+    assert.equal(result.calls.filter((call) => call.path === '/grants/add/v3').length, 0, options.label)
+    assertNoCalendarReplacementWrites(result.calls)
+    assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'error', options.label)
+    assert.equal(result.window.STARTER_AVAILABILITY.manager, 'platform', options.label)
+    assert.equal(result.window.sessionStorage._map.has(OAUTH_INTENT_KEY), false, options.label)
+    assert.equal(result.window.localStorage._map.has(OAUTH_INTENT_KEY), false, options.label)
+  }
 })
 
 test('preserved OAuth accepts a versioned binding with no active offers', async () => {
