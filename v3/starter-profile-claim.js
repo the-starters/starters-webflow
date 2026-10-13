@@ -16,6 +16,7 @@
 
   var WRAPPER_SELECTOR = '[data-starter-claim="wrapper"]'
   var FORM_SELECTOR = 'form[data-starter-claim="form"]'
+  var CLOSE_SELECTOR = '[data-starter-claim="close"]'
   var PROFILE_SLUG_FIELD_SELECTOR =
     'input[type="hidden"][name="Profile Slug"][data-starter-claim="profile-slug"]'
   var GOOGLE_AUTH_SELECTOR = '[data-ms-auth-provider="google"]'
@@ -147,6 +148,20 @@
       profileSlugField.setAttribute('value', slug)
       bindButtonSubmit(form)
       reveal(wrapper)
+      var closeButton = wrapper.querySelector(CLOSE_SELECTOR)
+      if (closeButton) {
+        if (closeButton.tagName.toLowerCase() === 'button') {
+          closeButton.setAttribute('type', 'button')
+        }
+        if (!String(closeButton.getAttribute('aria-label') || '').trim()) {
+          closeButton.setAttribute('aria-label', 'Close claim banner')
+        }
+        closeButton.addEventListener('click', function (event) {
+          event.preventDefault()
+          event.stopPropagation()
+          close(wrapper)
+        })
+      }
     })
   }
 
