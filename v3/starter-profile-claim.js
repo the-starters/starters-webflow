@@ -197,6 +197,7 @@
       '[data-starter-claim="chevron"] svg{display:block;width:20px;height:20px}',
       '[data-starter-claim="expand"] [data-starter-claim="chevron"]{transform:rotate(180deg)}',
       '[data-starter-claim="collapse"],[data-starter-claim="close"]{display:flex;align-items:center;justify-content:center;min-width:44px;min-height:44px;cursor:pointer;touch-action:manipulation;transition:transform 120ms cubic-bezier(.23,1,.32,1)}',
+      '[data-starter-claim="collapse"]{right:calc(5vw - 12px);width:44px;height:44px}',
       '[data-starter-claim="collapse"]:active,[data-starter-claim="close"]:active{transform:scale(.97)}',
       '[data-starter-claim-state="expanded"] [data-starter-claim="close"],[data-starter-claim-state="collapsed"] [data-starter-claim="close"],[data-starter-claim-state="success"] [data-starter-claim="collapse"]{display:none!important}',
       '[data-starter-claim="collapse"]:focus-visible,[data-starter-claim="close"]:focus-visible,[data-starter-claim="expand"]:focus-visible{outline:3px solid #355d76;outline-offset:-3px}',
