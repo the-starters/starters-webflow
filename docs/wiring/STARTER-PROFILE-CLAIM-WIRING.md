@@ -57,8 +57,10 @@ The collapsible banner uses these additional bindings inside the wrapper:
 
 When all bindings are present, the controller starts expanded. The same toggle
 remains centered on the panel's top edge on desktop and mobile. Its 44px hit
-area contains a 32px gray (#eee) container with Starter's white-button hover
-(#effba8) and press feedback; its chevron rotates 180 degrees between states.
+area contains a 32px container with Starter's Sunny primary-button theme
+(`data-button-theme="sunny"`, `data-button-style="primary"`): yellow (#effba8)
+at rest, with an olive (#434b43) background and white text on hover. The shared
+theme owns these colors; the controller adds press feedback; its chevron rotates 180 degrees between states.
 The compact bar is 88px plus the device safe-area inset, with 40px top and
 24px bottom padding around its 24px label. Collapse retains the entered email.
 The controller does not create or reparent the native mask or controls.
