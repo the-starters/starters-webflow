@@ -3029,9 +3029,11 @@ authenticated V3 transcript proxy with an exact ownership contract.
 auth-required approval action for eligible Paid bookings. Declined-card recovery
 still runs in a canonical `test` or `live` `payment_environment`; 3DS approval
 is open only for booking rows whose `data_environment` is listed in
-`PAYMENT_ACTION_OPEN_ENVIRONMENTS` (`['test']`), with the matching
-`payment_environment: "test"`. Test rows with live payment state fail closed
-before loading a Stripe key or calling the approval route. Payment status copy
+`PAYMENT_ACTION_OPEN_ENVIRONMENTS` (`['test', 'production']`), with the matching
+`payment_environment` (`"test"` for Test rows and `"live"` for production rows).
+Cross-environment rows, including Test rows with live payment state and
+production rows with test payment state, fail closed before loading a Stripe key
+or calling the approval route. Payment status copy
 remains informative in every environment. Approval uses `is_paid` as the
 Paid flag when present; `paid_meeting` is the fallback. It loads the [shared
 payment client](#brand-paid-call-payment-method-client) and binds the authored
