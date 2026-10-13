@@ -50,7 +50,7 @@ function element(attributes = {}, tagName = '') {
       contains(value) { return classes.has(value) },
       remove(value) { classes.delete(value) },
     },
-    style: {},
+    style: { setProperty(name, value) { this[name] = value } },
     getBoundingClientRect() { return { height: this.height || 300 } },
     hidden: Object.prototype.hasOwnProperty.call(own, 'hidden'),
     value: '',
@@ -130,21 +130,32 @@ function load(options = {}) {
     (options.closeInsideForm ? form : wrapper).appendChild(closeButton)
   }
 
-  let panel, surface, collapseButton, expandButton, success, error
+  let panel, surface, mask, content, toggle, toggleLabel, compact, success, error
   const observers = []
+  const resizeObservers = []
   if (options.interaction) {
     panel = element({ 'data-starter-claim': 'panel' }, 'div')
+    mask = element({ 'data-starter-claim': 'mask' }, 'div')
+    content = element({ 'data-starter-claim': 'content' }, 'div')
     surface = element({ 'data-wf--background--variant': 'gradient' }, 'div')
-    panel.appendChild(surface)
-    collapseButton = element({ 'data-starter-claim': 'collapse' }, 'button')
-    expandButton = element({ 'data-starter-claim': 'expand', hidden: '' }, 'button')
-    expandButton.height = 64
+    mask.appendChild(surface)
+    mask.appendChild(content)
+    if (!options.missingMask) panel.appendChild(mask)
+    toggle = element({ 'data-starter-claim': 'toggle', hidden: '' }, 'button')
+    const visual = element({ 'data-starter-claim': 'visual', 'data-button-theme': 'white', 'data-button-style': 'primary' }, 'div')
+    toggleLabel = element({ 'data-starter-claim': 'toggle-label' }, 'span')
+    visual.appendChild(toggleLabel)
+    visual.appendChild(element({ 'data-starter-claim': 'chevron' }, 'span'))
+    toggle.appendChild(visual)
+    compact = element({ 'data-starter-claim': 'compact', class: 'hide', hidden: '' }, 'div')
+    compact.height = 88
+    compact.appendChild(element({ 'data-starter-claim': 'compact-label' }, 'span'))
     success = element({ 'data-starter-claim': 'success' }, 'div')
     error = element({ 'data-starter-claim': 'error' }, 'div')
     success.display = error.display = 'none'
-    panel.appendChild(collapseButton)
+    panel.appendChild(toggle)
     wrapper.appendChild(panel)
-    wrapper.appendChild(expandButton)
+    wrapper.appendChild(compact)
     wrapper.appendChild(success)
     wrapper.appendChild(error)
   }
@@ -189,6 +200,10 @@ function load(options = {}) {
     AbortController: options.AbortController,
     matchMedia: () => ({ matches: !!options.reducedMotion }),
     getComputedStyle: node => ({ display: node.display || 'block' }),
+    ResizeObserver: class {
+      constructor(callback) { resizeObservers.push(callback) }
+      observe() {}
+    },
     MutationObserver: class {
       constructor(callback) { observers.push(callback) }
       observe() {}
@@ -207,7 +222,7 @@ function load(options = {}) {
     await settle()
   }
 
-  return { panel, surface, collapseButton, expandButton, success, error, observers, dispatch, closeButton, form, listeners, profileSlugField, googleAuth, wrapper, window, requests, timers }
+  return { panel, surface, mask, content, toggle, toggleLabel, compact, success, error, observers, resizeObservers, dispatch, closeButton, form, listeners, profileSlugField, googleAuth, wrapper, window, requests, timers }
 }
 
 async function settle(times = 8) {
@@ -569,19 +584,22 @@ test('banner collapses without hiding its wrapper or submitting, then reopens wi
   h.form.appendChild(email)
   await h.dispatch('DOMContentLoaded')
   assert.equal(h.wrapper.getAttribute('data-starter-claim-state'), 'expanded')
-  activate(h.collapseButton)
+  assert.equal(h.compact.hidden, false)
+  assert.equal(h.compact.classList.contains('hide'), false)
+  assert.equal(h.compact.getAttribute('hidden'), null)
+  activate(h.toggle)
   assert.equal(h.wrapper.hidden, false)
   assert.equal(h.wrapper.getAttribute('data-starter-claim-state'), 'collapsed')
-  assert.equal(h.panel.inert, true)
-  assert.equal(Number(h.surface.style.transform.match(/scaleY\((.+)\)/)[1]) * h.panel.getBoundingClientRect().height, 64)
-  assert.equal(h.panel.getAttribute('aria-hidden'), 'true')
-  assert.equal(h.expandButton.inert, false)
-  assert.equal(h.expandButton.focused, true)
+  assert.equal(h.content.inert, true)
+  assert.equal(h.panel.style['--sheet-offset'], '212px')
+  assert.equal(h.content.getAttribute('aria-hidden'), 'true')
+  assert.equal(h.toggleLabel.textContent, 'View More')
+  assert.equal(h.toggle.getAttribute('aria-expanded'), 'false')
   assert.equal(submits, 0)
-  activate(h.expandButton)
+  activate(h.toggle)
   assert.equal(h.wrapper.getAttribute('data-starter-claim-state'), 'expanded')
-  assert.equal(h.panel.inert, false)
-  assert.equal(h.expandButton.inert, true)
+  assert.equal(h.content.inert, false)
+  assert.equal(h.toggleLabel.textContent, 'View Less')
   assert.equal(email.value, 'draft@example.test')
   assert.equal(h.profileSlugField.value, 'jane-doe')
 })
@@ -592,7 +610,7 @@ test('keyboard collapse is instant and Escape keeps the claim action available',
   h.wrapper.fire('keydown', { key: 'Escape', preventDefault() {} })
   assert.equal(h.wrapper.getAttribute('data-starter-claim-state'), 'collapsed')
   assert.equal(h.wrapper.getAttribute('data-starter-claim-motion'), 'instant')
-  activate(h.expandButton, 0)
+  activate(h.toggle, 0)
   assert.equal(h.wrapper.getAttribute('data-starter-claim-motion'), 'instant')
   assert.equal(h.wrapper.getAttribute('data-starter-claim-state'), 'expanded')
 })
@@ -600,7 +618,7 @@ test('keyboard collapse is instant and Escape keeps the claim action available',
 test('native success reopens a collapsed banner and X dismisses it for this load', async () => {
   const h = load({ interaction: true })
   await h.dispatch('DOMContentLoaded')
-  activate(h.collapseButton)
+  activate(h.toggle)
   h.success.display = 'block'
   h.observers[0]()
   assert.equal(h.wrapper.getAttribute('data-starter-claim-state'), 'success')
@@ -609,7 +627,7 @@ test('native success reopens a collapsed banner and X dismisses it for this load
   assert.equal(h.wrapper.getAttribute('aria-hidden'), 'true')
   assert.equal(h.wrapper.inert, true)
   assert.equal(h.wrapper.hidden, false)
-  h.surface.fire('transitionend', { target: h.surface, propertyName: 'transform' })
+  h.panel.fire('transitionend', { target: h.panel, propertyName: 'transform' })
   assertHidden(h)
   h.observers[0]()
   assertHidden(h)
@@ -618,7 +636,7 @@ test('native success reopens a collapsed banner and X dismisses it for this load
 test('native error reopens the form and reduced motion closes success immediately', async () => {
   const h = load({ interaction: true, reducedMotion: true })
   await h.dispatch('DOMContentLoaded')
-  activate(h.collapseButton)
+  activate(h.toggle)
   h.error.display = 'block'
   h.observers[0]()
   assert.equal(h.wrapper.getAttribute('data-starter-claim-state'), 'expanded')
@@ -634,6 +652,46 @@ test('new banner controls are not bound or revealed for an unclaimable profile',
   })) })
   await h.dispatch('DOMContentLoaded')
   assertHidden(h)
-  assert.equal(h.collapseButton.handlerCount('click'), 0)
-  assert.equal(h.expandButton.hidden, true)
+  assert.equal(h.toggle.handlerCount('click'), 0)
+  assert.equal(h.toggle.hidden, true)
+})
+
+
+test('collapsed geometry follows native compact-bar resizing without changing the toggle node', async () => {
+  const h = load({ interaction: true })
+  await h.dispatch('DOMContentLoaded')
+  const originalToggle = h.toggle
+  activate(h.toggle)
+  h.compact.height = 110
+  h.resizeObservers[0]()
+  assert.equal(h.panel.style['--sheet-offset'], '190px')
+  assert.equal(h.wrapper.getAttribute('data-starter-claim-motion'), 'instant')
+  assert.equal(h.toggle, originalToggle)
+  assert.equal(h.toggleLabel.textContent, 'View More')
+  activate(h.toggle)
+  assert.equal(h.panel.style['--sheet-offset'], '0px')
+  assert.equal(h.wrapper.getAttribute('data-starter-claim-motion'), 'smooth')
+})
+
+test('missing native mask uses the legacy close-only behavior without binding the toggle', async () => {
+  const h = load({ interaction: true, missingMask: true })
+  await h.dispatch('DOMContentLoaded')
+  assert.equal(h.wrapper.hidden, false)
+  assert.equal(h.toggle.handlerCount('click'), 0)
+  assert.equal(h.toggle.hidden, true)
+  activate(h.closeButton)
+  assertHidden(h)
+})
+
+test('dismissal restores the last focused outside element', async () => {
+  const h = load({ interaction: true })
+  await h.dispatch('DOMContentLoaded')
+  const outside = element({}, 'button')
+  outside.isConnected = true
+  h.listeners.find(listener => listener.type === 'focusin').handler({ target: outside })
+  h.success.display = 'block'
+  h.observers[0]()
+  activate(h.closeButton, 0)
+  assert.equal(outside.focused, true)
+  assertHidden(h)
 })
