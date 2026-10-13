@@ -5168,6 +5168,9 @@ function preservedOAuthCase(options = {}) {
       }
   const search = options.search === undefined ? '?code=fixture-code&state=member-a' : options.search
   const result = loadSection({
+    hostname: options.hostname,
+    pathname: options.pathname,
+    origin: options.origin,
     search, sessionStorage,
     localStorage: options.localStorage,
     serverState: { grantId: 'old-grant', grantEmail: 'old@example.com', calendarId: 'old-calendar', availability },
@@ -5175,6 +5178,56 @@ function preservedOAuthCase(options = {}) {
   })
   result.intentStillStored = () => result.window.sessionStorage._map.has('starter-scheduling-oauth-intent:member-a')
   return result
+}
+
+test('staging Google OAuth starts on the published Dashboard and persists that redirect', async () => {
+  const result = loadSection({
+    hostname: 'the-starters-3-0.webflow.io',
+    origin: 'https://the-starters-3-0.webflow.io',
+    serverState: platformState(),
+  })
+  await settle()
+  result.dom.connectBtnWrapper.children[1].click()
+  result.dom.notif.oauthRedirectBtn.click()
+  await settle()
+
+  const redirect = 'https://the-starters-3-0.webflow.io/starter-dashboard'
+  assert.equal(result.calls.find((call) => call.path === '/grants/oauth/v3').body.in_redirect_uri, redirect)
+  assert.equal(JSON.parse(result.window.sessionStorage.getItem(OAUTH_INTENT_KEY)).redirectUri, redirect)
+})
+
+for (const route of ['/starter-dashboard', '/starter-dashboard---availability-stage']) {
+  test('staging Dashboard completes preserved OAuth with exact saved redirect ' + route, async () => {
+    const redirectUri = 'https://the-starters-3-0.webflow.io' + route
+    const result = preservedOAuthCase({
+      hostname: 'the-starters-3-0.webflow.io',
+      origin: 'https://the-starters-3-0.webflow.io',
+      pathname: '/starter-dashboard',
+      intent: { redirectUri },
+    })
+    await settle()
+    assert.equal(result.calls.find((call) => call.path === '/grants/add/v3').body.in_redirect_uri, redirectUri)
+    assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
+    assert.equal(result.intentStillStored(), false)
+    assertNoCalendarReplacementWrites(result.calls)
+  })
+}
+
+for (const redirectUri of [
+  'https://foreign.invalid/starter-dashboard',
+  'https://the-starters-3-0.webflow.io/other',
+  'https://the-starters-3-0.webflow.io/starter-dashboard?override=1',
+]) {
+  test('staging rejects an unapproved saved OAuth redirect ' + redirectUri, async () => {
+    const result = preservedOAuthCase({
+      hostname: 'the-starters-3-0.webflow.io',
+      origin: 'https://the-starters-3-0.webflow.io',
+      intent: { redirectUri },
+    })
+    await settle()
+    assert.equal(result.calls.filter((call) => call.path === '/grants/add/v3').length, 0)
+    assertNoCalendarReplacementWrites(result.calls)
+  })
 }
 
 function assertNoCalendarReplacementWrites(calls) {

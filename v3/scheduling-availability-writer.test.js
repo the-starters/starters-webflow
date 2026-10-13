@@ -2692,7 +2692,7 @@ test('calendar connection copy describes the explicit same-tab handoff', async (
   )
 })
 
-test('pre-redirect sends the authenticated member id as OAuth state and navigates same-tab', async () => {
+test('pre-redirect sends the authenticated member id and published staging Dashboard and navigates same-tab', async () => {
   const result = loadWriter({ storage: TZ_CACHED })
   await settle()
 
@@ -2705,11 +2705,12 @@ test('pre-redirect sends the authenticated member id as OAuth state and navigate
     in_state: 'member-a',
     in_provider: 'google',
     in_redirect_uri:
-      'https://the-starters-3-0.webflow.io/starter-dashboard---availability-stage',
+      'https://the-starters-3-0.webflow.io/starter-dashboard',
   })
   assert.deepEqual(result.assigned, ['https://nylas.example/oauth'])
   assert.deepEqual(result.opened, [])
   const intent = JSON.parse(result.sessionStorage.get('starter-scheduling-oauth-intent:member-a'))
+  assert.equal(intent.redirectUri, 'https://the-starters-3-0.webflow.io/starter-dashboard')
   assert.equal(intent.preserveBookings, true)
   assert.equal(intent.replaceGrantId, 'grant-1')
   assert.equal(result.storage.has('starter-scheduling-oauth-intent:member-a'), true)
@@ -2785,7 +2786,7 @@ test('pre-redirect still starts first-time Google OAuth without a current grant'
     in_state: 'member-a',
     in_provider: 'google',
     in_redirect_uri:
-      'https://the-starters-3-0.webflow.io/starter-dashboard---availability-stage',
+      'https://the-starters-3-0.webflow.io/starter-dashboard',
   })
   assert.deepEqual(result.assigned, ['https://nylas.example/oauth'])
   const intent = JSON.parse(result.sessionStorage.get('starter-scheduling-oauth-intent:member-a'))
@@ -3075,7 +3076,7 @@ test('an OAuth code on this page exchanges the grant and finishes the connect fl
     code: 'abc123',
     member_id: 'member-a',
     in_redirect_uri:
-      'https://the-starters-3-0.webflow.io/starter-dashboard---availability-stage',
+      'https://the-starters-3-0.webflow.io/starter-dashboard',
     in_state: 'member-a',
   })
   assert.ok(result.historyCalls.length >= 1, 'code/state stripped from the URL')
@@ -4417,6 +4418,40 @@ function preservedOAuthCase(options = {}) {
   })
   result.intentStillStored = () => result.sessionStorage.has('starter-scheduling-oauth-intent:member-a')
   return result
+}
+
+for (const route of ['/starter-dashboard', '/starter-dashboard---availability-stage']) {
+  test('staging Dashboard completes preserved OAuth with exact saved redirect ' + route, async () => {
+    const redirectUri = 'https://the-starters-3-0.webflow.io' + route
+    const result = preservedOAuthCase({
+      hostname: 'the-starters-3-0.webflow.io',
+      origin: 'https://the-starters-3-0.webflow.io',
+      pathname: '/starter-dashboard',
+      intent: { redirectUri },
+    })
+    await settle()
+    assert.equal(result.calls.find((call) => call.path === '/grants/add/v3').body.in_redirect_uri, redirectUri)
+    assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
+    assert.equal(result.intentStillStored(), false)
+    assertNoCalendarReplacementWrites(result.calls)
+  })
+}
+
+for (const redirectUri of [
+  'https://foreign.invalid/starter-dashboard',
+  'https://the-starters-3-0.webflow.io/other',
+  'https://the-starters-3-0.webflow.io/starter-dashboard?override=1',
+]) {
+  test('staging rejects an unapproved saved OAuth redirect ' + redirectUri, async () => {
+    const result = preservedOAuthCase({
+      hostname: 'the-starters-3-0.webflow.io',
+      origin: 'https://the-starters-3-0.webflow.io',
+      intent: { redirectUri },
+    })
+    await settle()
+    assert.equal(result.calls.filter((call) => call.path === '/grants/add/v3').length, 0)
+    assertNoCalendarReplacementWrites(result.calls)
+  })
 }
 
 function assertNoCalendarReplacementWrites(calls) {
