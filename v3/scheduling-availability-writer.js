@@ -449,14 +449,19 @@
   }
 
   function isResumableLegacyOAuthIntent(intent, callback) {
-    return Boolean(
-      intent &&
-      intent.preserveBookings !== true &&
-      callback &&
-      callback.resumed === true &&
-      callback.grantId &&
-      grantId === callback.grantId
-    )
+    if (
+      !intent ||
+      intent.preserveBookings === true ||
+      !callback ||
+      callback.resumed !== true
+    ) {
+      return false
+    }
+    if (intent.oauthGrantSaved === true) {
+      if (intent.oauthGrantId) return Boolean(grantId && intent.oauthGrantId === grantId)
+      return Boolean(callback.grantId && grantId === callback.grantId)
+    }
+    return Boolean(callback.grantId && grantId === callback.grantId)
   }
 
   function readCompletedCalendarTransitionIntent(memberId, callbackGrantId) {
@@ -649,10 +654,13 @@
   }
 
   function legacyOAuthRecoveryAllowed(oauthIntent) {
+    return Boolean(legacyOAuthMutationAllowed(oauthIntent) && oauthIntent.paidCallIntent)
+  }
+
+  function legacyOAuthMutationAllowed(oauthIntent) {
     return Boolean(
       oauthIntent &&
       oauthIntent.preserveBookings !== true &&
-      oauthIntent.paidCallIntent &&
       !hasVersionedBindingAuthority()
     )
   }
@@ -693,10 +701,16 @@
       await refreshCanonicalConnectionState()
       if (grantId && grantEmail && grantCalendarId && (!callback.grantId || grantId === callback.grantId)) {
         intent.oauthGrantSaved = true
+        intent.oauthGrantId = grantId
         persistOAuthIntent(memberId, intent)
       }
     }
-    if (!preserve && intent.oauthGrantSaved) return
+    if (!preserve && intent.oauthGrantSaved) {
+      if (intent.oauthGrantId && grantId && intent.oauthGrantId !== grantId) {
+        throw new Error('Saved OAuth grant does not match canonical state')
+      }
+      return
+    }
     const payload = {
       member_id: memberId,
       in_redirect_uri: intent.redirectUri,
@@ -715,6 +729,7 @@
     }
     if (!(receipt && receipt.grant_id)) throw new Error('grants/add/v3 returned no grant')
     intent.oauthGrantSaved = true
+    if (!preserve) intent.oauthGrantId = receipt.grant_id
     if (preserve) intent.grantReceipt = receipt
     persistOAuthIntent(memberId, intent)
   }
@@ -2249,6 +2264,14 @@
           }
           assertPreservedDefault(oauthIntent, 'calendar', oauthGrantId)
           if (oauthIntent.preserveBookings !== true) {
+            if (!legacyOAuthMutationAllowed(oauthIntent)) {
+              clearOAuthIntent(memberId)
+              clearOAuthCallback()
+              connectedCalendar = null
+              switchStep('default')
+              emit('starterSchedulingWriteSuccess', { action: 'oauth-connect' })
+              return
+            }
             if (availability.manager !== 'calendar') {
               availability.manager = 'calendar'
               await updateAvail()

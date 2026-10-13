@@ -5068,6 +5068,24 @@ function stalePaidOAuthIntent() {
   })
 }
 
+function legacyOAuthIntent(options = {}) {
+  const intent = {
+    createdAt: Date.now(),
+    redirectUri: 'https://thestarters.com/starter-dashboard',
+    paidCallIntent: { title: 'Paid Strategy Call', price_cents: 42500, duration_minutes: 45 },
+    ...options,
+  }
+  return JSON.stringify(intent)
+}
+
+function storedOAuthCallback(options = {}) {
+  return JSON.stringify({
+    capturedAt: Date.now(),
+    state: 'member-a',
+    ...options,
+  })
+}
+
 function preservedOAuthCase(options = {}) {
   const activeConfigIds =
     options.activeConfigIds === undefined ? ['new-free'] : options.activeConfigIds
@@ -5234,6 +5252,102 @@ test('preserved OAuth callback refuses stale or noncurrent records with current 
     assert.equal(result.window.sessionStorage._map.has(OAUTH_INTENT_KEY), false, options.label)
     assert.equal(result.window.localStorage._map.has(OAUTH_INTENT_KEY), false, options.label)
   }
+})
+
+for (const manager of ['platform', 'calendar']) {
+  for (const callbackKind of ['hosted', 'saved-code']) {
+    test(`versioned zero-offer ${manager} binding consumes resumed ${callbackKind} legacy callback read-only`, async () => {
+      const currentGrantId = manager + '-grant'
+      const intentOptions = callbackKind === 'saved-code'
+        ? { oauthGrantSaved: true, oauthGrantId: currentGrantId }
+        : {}
+      const callback = callbackKind === 'saved-code'
+        ? storedOAuthCallback({ code: 'fixture-code' })
+        : storedOAuthCallback({ grantId: currentGrantId, success: 'true' })
+      const result = loadSection({
+        serverState: {
+          grantId: currentGrantId,
+          grantEmail: manager + '@example.com',
+          calendarId: manager + '-calendar',
+          calendarBindingVersion: 1,
+          configs: [],
+          availability: {
+            items: { general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] } },
+            manager,
+          },
+        },
+        sessionStorage: {
+          [OAUTH_INTENT_KEY]: legacyOAuthIntent(intentOptions),
+          'starter-scheduling-oauth-callback': callback,
+        },
+      })
+      await settle()
+
+      assert.equal(result.calls.filter((call) => call.path === '/grants/add/v3').length, 0)
+      assertNoCalendarReplacementWrites(result.calls)
+      assert.equal(result.state.availability.manager, manager)
+      assert.equal(result.state.paidService, null)
+      assert.deepEqual(result.state.configs, [])
+      assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
+      assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.configurationCount, 0)
+      assert.equal(result.window.sessionStorage._map.has(OAUTH_INTENT_KEY), false)
+      assert.equal(result.window.sessionStorage._map.has('starter-scheduling-oauth-callback'), false)
+    })
+  }
+}
+
+test('saved code OAuth retry resumes setup without re-exchanging the grant', async () => {
+  let failCreate = true
+  let canonicalState = null
+  let addCalls = 0
+  const postRoutes = {
+    '/grants/add/v3': () => {
+      addCalls += 1
+      canonicalState.grantId = 'grant-9'
+      canonicalState.grantEmail = 'google@example.com'
+      canonicalState.calendarId = 'cal-9'
+      canonicalState.configs = []
+      return { status: 200, body: { grant_id: 'grant-9' } }
+    },
+    '/scheduler/configurations/create/v3': () => failCreate
+      ? { status: 503, body: { message: 'try again' } }
+      : { status: 200, body: { response: { status: 200 } } },
+  }
+  const first = loadSection({
+    search: '?code=fixture-code&state=member-a',
+    sessionStorage: { [OAUTH_INTENT_KEY]: legacyOAuthIntent({ paidCallIntent: null }) },
+    serverState: {
+      availability: {
+        items: { general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] } },
+        manager: null,
+      },
+      configs: [],
+    },
+    postRoutes,
+  })
+  canonicalState = first.state
+  await settle()
+
+  assert.equal(addCalls, 1)
+  assert.equal(first.window.sessionStorage._map.has('starter-scheduling-oauth-callback'), true)
+  const retainedIntent = JSON.parse(first.window.sessionStorage._map.get(OAUTH_INTENT_KEY))
+  assert.equal(retainedIntent.oauthGrantSaved, true)
+  assert.equal(retainedIntent.oauthGrantId, 'grant-9')
+
+  failCreate = false
+  const second = loadSection({
+    search: '',
+    sessionStorage: Object.fromEntries(first.window.sessionStorage._map),
+    serverState: first.state,
+    postRoutes,
+  })
+  canonicalState = second.state
+  await settle()
+
+  assert.equal(addCalls, 1)
+  assert.equal(second.state.availability.manager, 'calendar')
+  assert.equal(second.window.sessionStorage._map.has(OAUTH_INTENT_KEY), false)
+  assert.equal(second.window.sessionStorage._map.has('starter-scheduling-oauth-callback'), false)
 })
 
 test('preserved OAuth accepts a versioned binding with no active offers', async () => {

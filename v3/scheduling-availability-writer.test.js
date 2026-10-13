@@ -3375,6 +3375,7 @@ test('OAuth retry reconciles a committed grant after its response was lost', asy
   let grantPersisted = false
   let manager = null
   let configCreated = false
+  let createAttempts = 0
   const routes = {
     '/grants/add/v3': () => {
       grantPersisted = true
@@ -3526,6 +3527,7 @@ test('OAuth success resumes paid restoration without saving the grant twice', as
     firstLoad.sessionStorage.get('starter-scheduling-oauth-intent:member-a'),
   )
   assert.equal(retainedIntent.oauthGrantSaved, true)
+  assert.equal(retainedIntent.oauthGrantId, 'grant-9')
 
   rejectPaidRestore = false
   const secondLoad = loadWriter({
@@ -3544,6 +3546,84 @@ test('OAuth success resumes paid restoration without saving the grant twice', as
   assert.equal(paidService.title, 'Paid Strategy Call')
   assert.equal(secondLoad.sessionStorage.has('starter-scheduling-oauth-callback'), false)
   assert.equal(secondLoad.sessionStorage.has('starter-scheduling-oauth-intent:member-a'), false)
+})
+
+test('saved code OAuth retry resumes setup without saving the grant twice', async () => {
+  let grantPersisted = false
+  let manager = null
+  let configCreated = false
+  let createAttempts = 0
+  const routes = {
+    '/grants/add/v3': () => {
+      grantPersisted = true
+      return { status: 200, body: { grant_id: 'grant-9' } }
+    },
+    '/starter/get_by_memberstack/v3': () => ({
+      status: 200,
+      body: {
+        id: 1,
+        timezone: 'Asia/Manila',
+        availability: { ...defaultAvailability(), manager },
+        nylas_grant_id: grantPersisted ? 'grant-9' : null,
+        nylas_grant_email: grantPersisted ? 'google@example.com' : null,
+        nylas_calendar_id: grantPersisted ? 'cal-9' : null,
+      },
+    }),
+    '/starter/update_availability/v3': (body) => {
+      manager = body.availability.manager
+      return { status: 200, body: { id: 1 } }
+    },
+    '/nylas_configurations/get_all/v3': () => ({
+      status: 200,
+      body: configCreated
+        ? [{ config_id: 'cfg-free', grant_id: 'grant-9', is_paid: false, active: true }]
+        : [],
+    }),
+    '/scheduler/configurations/create/v3': () => {
+      createAttempts += 1
+      if (createAttempts === 1) {
+        return { status: 503, body: { message: 'try again' } }
+      }
+      configCreated = true
+      return { status: 200, body: { response: { status: 200 } } }
+    },
+  }
+  const firstLoad = loadWriter({
+    hostname: 'thestarters.com',
+    pathname: '/starter-dashboard',
+    origin: 'https://thestarters.com',
+    search: '?code=fixture-code&state=member-a',
+    storage: TZ_CACHED,
+    sessionStorage: {
+      [OAUTH_INTENT_KEY]: legacyOAuthIntent({ paidCallIntent: null }),
+    },
+    routes,
+  })
+  await settle()
+  await settle()
+
+  assert.equal(firstLoad.calls.filter((call) => call.path === '/grants/add/v3').length, 1)
+  assert.equal(firstLoad.sessionStorage.has('starter-scheduling-oauth-callback'), true)
+  const retainedIntent = JSON.parse(firstLoad.sessionStorage.get(OAUTH_INTENT_KEY))
+  assert.equal(retainedIntent.oauthGrantSaved, true)
+  assert.equal(retainedIntent.oauthGrantId, 'grant-9')
+
+  const secondLoad = loadWriter({
+    hostname: 'thestarters.com',
+    pathname: '/starter-dashboard',
+    origin: 'https://thestarters.com',
+    search: '',
+    storage: TZ_CACHED,
+    sessionStorage: Object.fromEntries(firstLoad.sessionStorage),
+    routes,
+  })
+  await settle()
+  await settle()
+
+  assert.equal(secondLoad.calls.filter((call) => call.path === '/grants/add/v3').length, 0)
+  assert.equal(manager, 'calendar')
+  assert.equal(secondLoad.sessionStorage.has('starter-scheduling-oauth-callback'), false)
+  assert.equal(secondLoad.sessionStorage.has(OAUTH_INTENT_KEY), false)
 })
 
 test('hosted OAuth callback without success strips its query and performs no writes', async () => {
@@ -4230,6 +4310,24 @@ function stalePaidOAuthIntent() {
   })
 }
 
+function legacyOAuthIntent(options = {}) {
+  const intent = {
+    createdAt: Date.now(),
+    redirectUri: 'https://thestarters.com/starter-dashboard',
+    paidCallIntent: { title: 'Paid Strategy Call', price_cents: 42500, duration_minutes: 45 },
+    ...options,
+  }
+  return JSON.stringify(intent)
+}
+
+function storedOAuthCallback(options = {}) {
+  return JSON.stringify({
+    capturedAt: Date.now(),
+    state: 'member-a',
+    ...options,
+  })
+}
+
 function preservedOAuthCase(options = {}) {
   const activeConfigIds =
     options.activeConfigIds === undefined ? ['new-free'] : options.activeConfigIds
@@ -4397,6 +4495,57 @@ test('preserved OAuth callback refuses stale or noncurrent records with current 
     assert.equal(result.storage.has(OAUTH_INTENT_KEY), false, options.label)
   }
 })
+
+for (const manager of ['platform', 'calendar']) {
+  for (const callbackKind of ['hosted', 'saved-code']) {
+    test(`versioned zero-offer ${manager} binding consumes resumed ${callbackKind} legacy callback read-only`, async () => {
+      const currentGrantId = manager + '-grant'
+      const availability = defaultAvailability()
+      availability.manager = manager
+      const intentOptions = callbackKind === 'saved-code'
+        ? { oauthGrantSaved: true, oauthGrantId: currentGrantId }
+        : {}
+      const callback = callbackKind === 'saved-code'
+        ? storedOAuthCallback({ code: 'fixture-code' })
+        : storedOAuthCallback({ grantId: currentGrantId, success: 'true' })
+      const result = loadWriter({
+        hostname: 'thestarters.com',
+        pathname: '/starter-dashboard',
+        origin: 'https://thestarters.com',
+        availability,
+        storage: TZ_CACHED,
+        sessionStorage: {
+          [OAUTH_INTENT_KEY]: legacyOAuthIntent(intentOptions),
+          'starter-scheduling-oauth-callback': callback,
+        },
+        routes: {
+          '/starter/get_by_memberstack/v3': () => ({
+            status: 200,
+            body: {
+              id: 1,
+              timezone: 'Asia/Manila',
+              availability,
+              nylas_grant_id: currentGrantId,
+              nylas_grant_email: manager + '@example.com',
+              nylas_calendar_id: manager + '-calendar',
+              calendar_binding_version: 1,
+            },
+          }),
+          '/nylas_configurations/get_all/v3': () => ({ status: 200, body: [] }),
+        },
+      })
+      await settle()
+
+      assert.equal(result.calls.filter((call) => call.path === '/grants/add/v3').length, 0)
+      assertNoCalendarReplacementWrites(result.calls)
+      assert.equal(result.window.STARTER_AVAILABILITY.manager, manager)
+      assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
+      assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.configurationCount, 0)
+      assert.equal(result.sessionStorage.has(OAUTH_INTENT_KEY), false)
+      assert.equal(result.sessionStorage.has('starter-scheduling-oauth-callback'), false)
+    })
+  }
+}
 
 test('preserved OAuth accepts a versioned binding with no active offers', async () => {
   const result = preservedOAuthCase({ activeConfigIds: [], newConfigs: [] })
