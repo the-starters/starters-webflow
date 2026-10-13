@@ -6,6 +6,7 @@ const vm = require('node:vm')
 const source = fs.readFileSync(require.resolve('./starter-profile-claim.js'), 'utf8')
 const WRAPPER_SELECTOR = '[data-starter-claim="wrapper"]'
 const FORM_SELECTOR = 'form[data-starter-claim="form"]'
+const CLOSE_SELECTOR = '[data-starter-claim="close"]'
 const PROFILE_SLUG_FIELD_SELECTOR =
   'input[type="hidden"][name="Profile Slug"][data-starter-claim="profile-slug"]'
 const GOOGLE_AUTH_SELECTOR = '[data-ms-auth-provider="google"]'
@@ -115,6 +116,13 @@ function load(options = {}) {
       }, 'section')
   if (wrapper && form) wrapper.appendChild(form)
 
+  const closeButton = options.closeButton === false
+    ? null
+    : element(Object.assign({ 'data-starter-claim': 'close' }, options.closeAttributes || {}), 'button')
+  if (wrapper && closeButton) {
+    (options.closeInsideForm ? form : wrapper).appendChild(closeButton)
+  }
+
   const listeners = []
   const requests = []
   const pathname = options.pathname || '/hire/jane-doe'
@@ -166,7 +174,7 @@ function load(options = {}) {
     await settle()
   }
 
-  return { dispatch, form, listeners, profileSlugField, googleAuth, wrapper, window, requests, timers }
+  return { dispatch, closeButton, form, listeners, profileSlugField, googleAuth, wrapper, window, requests, timers }
 }
 
 async function settle(times = 8) {
@@ -213,6 +221,66 @@ function clickOn(button) {
 function componentButton(attributes = { type: 'button' }) {
   return element(attributes, 'button')
 }
+
+function clickClose(harness, target = harness.closeButton) {
+  const event = clickOn(harness.closeButton)
+  event.target = target
+  event.propagationStopped = false
+  event.stopPropagation = () => { event.propagationStopped = true }
+  harness.closeButton.fire('click', event)
+  if (!event.propagationStopped && target === harness.closeButton) {
+    harness.form.fire('click', event)
+  }
+  return event
+}
+
+test('close button dismisses the banner for this page load, including clicks on its SVG', async () => {
+  const harness = load()
+  await harness.dispatch('DOMContentLoaded')
+  const svg = element({}, 'svg')
+  harness.closeButton.appendChild(svg)
+
+  const event = clickClose(harness, svg)
+  assertHidden(harness)
+  assert.equal(harness.wrapper.getAttribute('hidden'), '')
+  assert.equal(event.defaultPrevented, true)
+  assert.equal(harness.closeButton.getAttribute('type'), 'button')
+  assert.equal(harness.closeButton.getAttribute('aria-label'), 'Close claim banner')
+
+  vm.runInNewContext(source, { document: harness.window.document, window: harness.window, Promise, URL, encodeURIComponent })
+  await settle()
+  assertHidden(harness)
+  assert.equal(harness.requests.length, 1)
+  assert.equal(harness.closeButton.handlerCount('click'), 1)
+
+  const reloaded = load({ readyState: 'complete' })
+  await settle()
+  assert.equal(reloaded.wrapper.hidden, false)
+})
+
+test('closing from inside the form does not submit and preserves an authored accessible label', async () => {
+  const harness = load({ closeInsideForm: true, closeAttributes: { type: 'submit', 'aria-label': 'Dismiss claim form' } })
+  let submits = 0
+  harness.form.requestSubmit = () => { submits += 1 }
+  await harness.dispatch('DOMContentLoaded')
+
+  clickClose(harness)
+  assertHidden(harness)
+  assert.equal(submits, 0)
+  assert.equal(harness.closeButton.getAttribute('type'), 'button')
+  assert.equal(harness.closeButton.getAttribute('aria-label'), 'Dismiss claim form')
+})
+
+test('a missing close control leaves claim submission working', async () => {
+  const harness = load({ closeButton: false })
+  let submits = 0
+  harness.form.requestSubmit = () => { submits += 1 }
+  await harness.dispatch('DOMContentLoaded')
+
+  harness.form.fire('click', clickOn(componentButton()))
+  assert.equal(harness.wrapper.hidden, false)
+  assert.equal(submits, 1)
+})
 
 test('a type=button component click becomes one native submit after reveal', async () => {
   const harness = load()
