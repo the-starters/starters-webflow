@@ -776,6 +776,38 @@ test('boots connected for a versioned binding with no active offers', async () =
   assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.calendarBindingVersion, 1)
 })
 
+test('versioned zero-offer binding without a grant email remains reconnect', async () => {
+  const availability = defaultAvailability()
+  availability.manager = 'platform'
+  const result = loadWriter({
+    availability,
+    storage: TZ_CACHED,
+    routes: {
+      '/starter/get_by_memberstack/v3': () => ({
+        status: 200,
+        body: {
+          id: 1,
+          timezone: 'Asia/Manila',
+          availability,
+          nylas_grant_id: 'grant-1',
+          nylas_grant_email: '',
+          nylas_calendar_id: 'cal-1',
+          calendar_binding_version: 1,
+        },
+      }),
+      '/nylas_configurations/get_all/v3': () => ({ status: 200, body: [] }),
+    },
+  })
+  await settle()
+
+  assert.equal(result.status(), 'ready')
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'reconnect')
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.hasGrant, true)
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.hasCalendar, true)
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.configurationCount, 0)
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.calendarBindingVersion, 1)
+})
+
 test('legacy zero-config binding without a version marker remains reconnect', async () => {
   const availability = defaultAvailability()
   availability.manager = 'platform'

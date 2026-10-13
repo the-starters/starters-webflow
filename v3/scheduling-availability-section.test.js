@@ -1346,6 +1346,29 @@ test('boots connected for a versioned binding with no active offers', async () =
   assert.equal(window.STARTER_SCHEDULING_CONNECTION.calendarBindingVersion, 1)
 })
 
+test('versioned zero-offer binding without a grant email remains reconnect', async () => {
+  const { window } = loadSection({
+    serverState: {
+      grantId: 'grant-1',
+      grantEmail: '',
+      calendarId: 'cal-1',
+      configs: [],
+      calendarBindingVersion: 1,
+      availability: {
+        items: { general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] } },
+        manager: 'calendar',
+      },
+    },
+  })
+  await settle()
+
+  assert.equal(window.STARTER_SCHEDULING_CONNECTION.state, 'reconnect')
+  assert.equal(window.STARTER_SCHEDULING_CONNECTION.hasGrant, true)
+  assert.equal(window.STARTER_SCHEDULING_CONNECTION.hasCalendar, true)
+  assert.equal(window.STARTER_SCHEDULING_CONNECTION.configurationCount, 0)
+  assert.equal(window.STARTER_SCHEDULING_CONNECTION.calendarBindingVersion, 1)
+})
+
 test('legacy zero-config binding without a version marker remains reconnect', async () => {
   const { window } = loadSection({
     serverState: {

@@ -3883,6 +3883,9 @@ not call `grants/delete/v3`, `grants/add_virtual/v3`,
 `grants/create_virtual_calendar/v3`, `starter/update_availability/v3`,
 configuration create/update, or paid-call settings upsert.
 
+The exposed UI scope is the existing Platform-to-Google and Google-to-Platform
+selection paths. This browser change does not add a Google-account-to-another-Google-account switch control.
+
 The versioned binding marker is durable reload authority. A later ordinary
 page load with a valid grant ID, grant email, calendar ID, and
 `calendar_binding_version: 1` is connected even if the configuration list is

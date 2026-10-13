@@ -386,10 +386,11 @@
 
   function deriveCalendarConnectionState() {
     const hasGrant = Boolean(grantId)
+    const hasEmail = Boolean(grantEmail)
     const hasCalendar = Boolean(grantCalendarId)
     const configurationCount = Array.isArray(configs) ? configs.length : 0
     if (connectionError) return 'error'
-    if (hasGrant && hasCalendar && (configurationCount > 0 || calendarBindingVersion === 1)) {
+    if (hasGrant && hasCalendar && (configurationCount > 0 || (hasEmail && calendarBindingVersion === 1))) {
       return 'connected'
     }
     if (
