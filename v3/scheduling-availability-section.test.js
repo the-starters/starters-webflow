@@ -1551,6 +1551,90 @@ test('Use Platform Calendar accepts a preserved zero-offer Platform binding', as
   assert.equal(result.window.sessionStorage._map.has('starter-scheduling-platform-transition:member-a'), false)
 })
 
+test('Use Platform Calendar retries a verified receipt without rekeying the old grant', async () => {
+  const availability = {
+    items: { general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] } },
+    manager: 'calendar',
+  }
+  let canonicalManager = 'calendar'
+  let canonicalGrant = {
+    id: 'google-grant',
+    email: 'member-a@gmail.example',
+    calendarId: 'google-cal',
+  }
+  let calendarBindingVersion = null
+  const result = loadSection({
+    serverState: {
+      grantId: 'google-grant',
+      grantEmail: 'member-a@gmail.example',
+      calendarId: 'google-cal',
+      configs: [{ config_id: 'cfg-free-old', grant_id: 'google-grant', duration: 30, is_paid: false, active: true }],
+      availability,
+    },
+    postRoutes: {
+      '/starter/get_by_memberstack/v3': () => ({
+        status: 200,
+        body: {
+          id: 1,
+          timezone: 'Asia/Manila',
+          availability: { ...availability, manager: canonicalManager },
+          nylas_grant_id: canonicalGrant.id,
+          nylas_grant_email: canonicalGrant.email,
+          nylas_calendar_id: canonicalGrant.calendarId,
+          calendar_binding_version: calendarBindingVersion,
+        },
+      }),
+      '/nylas_configurations/get_all/v3': (body) => ({
+        status: 200,
+        body: body.grant_id === 'platform-grant'
+          ? [{ config_id: 'cfg-free-new', grant_id: 'platform-grant', duration: 30, is_paid: false, active: true }]
+          : [{ config_id: 'cfg-free-old', grant_id: 'google-grant', duration: 30, is_paid: false, active: true }],
+      }),
+      '/grants/create_virtual_account/v3': (body) => {
+        canonicalGrant = {
+          id: 'platform-grant',
+          email: 'virtual@example.com',
+          calendarId: 'platform-cal',
+        }
+        calendarBindingVersion = 1
+        return {
+          status: 200,
+          body: {
+            transition_id: body.in_transition_id,
+            previous_grant_retained: true,
+            replaced_grant_id: 'google-grant',
+            grant_id: 'platform-grant',
+            default_selected: true,
+            services_ready: true,
+            manager: 'platform',
+            active_config_ids: ['cfg-free-new'],
+            active_service_count: 1,
+          },
+        }
+      },
+    },
+  })
+  await settle()
+
+  result.dom.connectBtnWrapper.children[0].click()
+  await settle()
+  await settle()
+
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'error')
+  assert.equal(result.window.sessionStorage._map.has('starter-scheduling-platform-transition:member-a'), true)
+  canonicalManager = 'platform'
+  result.dom.connectBtnWrapper.children[0].click()
+  await settle()
+  await settle()
+
+  const requests = result.calls.filter((call) => call.path === '/grants/create_virtual_account/v3')
+  assert.equal(requests.length, 1)
+  assert.equal(requests[0].body.in_replace_grant_id, 'google-grant')
+  assert.equal(requests[0].body.in_transition_id, 'uuid-fixed')
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
+  assert.equal(result.window.sessionStorage._map.has('starter-scheduling-platform-transition:member-a'), false)
+})
+
 test('disconnecting Google preserves the Platform layer by replacing the Google grant with a virtual grant', async () => {
   const legacyClearCalls = []
   const { dom, calls } = loadSection({
@@ -4735,6 +4819,7 @@ test('preserved OAuth fails closed if canonical selection or config ownership di
     await settle()
     assertNoCalendarReplacementWrites(result.calls)
     assert.equal(result.intentStillStored(), true)
+    assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'error')
     assert.ok(result.warnings.some((warning) => warning.includes('does not match the verified transition')))
   }
 })

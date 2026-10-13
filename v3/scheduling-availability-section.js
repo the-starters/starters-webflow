@@ -575,7 +575,7 @@
         }
       }
     }
-    return isStagingHost ? { redirectUri: redirectUri, paidCallIntent: null } : null
+    return isStagingHost && !grantId ? { redirectUri: redirectUri, paidCallIntent: null } : null
   }
 
   function clearOAuthIntent(memberId) {
@@ -614,11 +614,23 @@
           Date.now() - intent.createdAt <= OAUTH_INTENT_MAX_AGE &&
           intent.preserveBookings === true &&
           intent.targetManager === 'platform' &&
-          intent.replaceGrantId === replaceGrantId &&
+          (!replaceGrantId || intent.replaceGrantId === replaceGrantId) &&
           typeof intent.transitionId === 'string' &&
           intent.transitionId
         ) {
           return intent
+        }
+        if (
+          intent &&
+          Number.isFinite(intent.createdAt) &&
+          Date.now() - intent.createdAt >= 0 &&
+          Date.now() - intent.createdAt <= OAUTH_INTENT_MAX_AGE &&
+          intent.preserveBookings === true &&
+          intent.targetManager === 'platform' &&
+          replaceGrantId &&
+          intent.replaceGrantId !== replaceGrantId
+        ) {
+          continue
         }
         storage.removeItem(key)
       } catch (error) {
@@ -648,7 +660,7 @@
   }
 
   function rememberPlatformTransitionIntent(memberId, replaceGrantId) {
-    const existing = readPlatformTransitionIntent(memberId, replaceGrantId)
+    const existing = readPlatformTransitionIntent(memberId, replaceGrantId) || readPlatformTransitionIntent(memberId)
     if (existing) return existing
     const intent = {
       createdAt: Date.now(),
@@ -1695,7 +1707,7 @@
         clearOAuthIntent(memberId)
         clearOAuthCallback()
         console.log('[scheduling-section] Google Calendar connected via preserved OAuth')
-        return
+        return true
       }
       // Mirror activatePlatformManager/disconnectGoogleManager: the manager
       // switch must be persisted here, not just left for the caller — this is
@@ -1712,6 +1724,7 @@
       clearOAuthIntent(memberId)
       clearOAuthCallback()
       console.log('[scheduling-section] Google Calendar connected via OAuth')
+      return true
     } catch (error) {
       let recovered = false
       if (
@@ -1744,6 +1757,7 @@
         clearOAuthCallback()
       }
       console.warn('[scheduling-section] OAuth grant save failed:', error && error.message)
+      return false
     }
   }
 
@@ -3349,8 +3363,9 @@
       timezone = await resolveTimezone(starterRecord, false)
       selectedPreviewTimezone = timezone || browserTimezone()
 
+      let oauthCallbackComplete = true
       if (oauthCallback) {
-        await consumeOAuthCallback()
+        oauthCallbackComplete = await consumeOAuthCallback()
       } else {
         const pendingTransition = readOAuthIntent(sessionMemberId)
         if (pendingTransition && pendingTransition.preserveBookings !== true && pendingTransition.paidCallIntent) {
@@ -3371,7 +3386,9 @@
       bindCreateTrigger()
       renderAvailabilityItems()
 
-      const state = await refreshCanonicalConnectionState()
+      const state = oauthCallbackComplete === false
+        ? publishCalendarConnectionState()
+        : await refreshCanonicalConnectionState()
       renderAvailabilityItems()
       renderSlotsPreview()
 

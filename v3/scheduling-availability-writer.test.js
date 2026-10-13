@@ -874,6 +874,7 @@ test('availability save keeps a versioned zero-offer binding empty', async () =>
   assert.equal(result.calls.filter((call) => call.path === '/scheduler/configurations/update/v3').length, 0)
   assert.equal(result.calls.filter((call) => call.path === '/starter/update_availability/v3').length, 1)
   assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
+  assert.equal(result.dom.steps.success.style.display, 'block')
 })
 
 test('availability remove keeps a versioned zero-offer binding empty', async () => {
@@ -1646,6 +1647,84 @@ test('failed preserved Platform selection retries with the same transition id', 
   assert.equal(result.sessionStorage.has('starter-scheduling-platform-transition:member-a'), false)
   assert.equal(result.window.STARTER_AVAILABILITY.manager, 'platform')
   assert.equal(canonicalManager, 'platform')
+})
+
+test('preserved Platform selection retries a verified receipt without rekeying the old grant', async () => {
+  const availability = defaultAvailability()
+  availability.manager = 'calendar'
+  let canonicalManager = 'calendar'
+  let canonicalGrant = {
+    id: 'grant-1',
+    email: 'grant@example.com',
+    calendarId: 'cal-1',
+  }
+  let calendarBindingVersion = null
+  const result = loadWriter({
+    availability,
+    storage: TZ_CACHED,
+    routes: {
+      '/starter/get_by_memberstack/v3': () => ({
+        status: 200,
+        body: {
+          id: 1,
+          timezone: 'Asia/Manila',
+          availability: { ...availability, manager: canonicalManager },
+          nylas_grant_id: canonicalGrant.id,
+          nylas_grant_email: canonicalGrant.email,
+          nylas_calendar_id: canonicalGrant.calendarId,
+          calendar_binding_version: calendarBindingVersion,
+        },
+      }),
+      '/nylas_configurations/get_all/v3': (body) => ({
+        status: 200,
+        body: body.grant_id === 'platform-grant'
+          ? [{ config_id: 'cfg-free-new', grant_id: 'platform-grant', is_paid: false, active: true }]
+          : [{ config_id: 'cfg-free-old', grant_id: 'grant-1', is_paid: false, active: true }],
+      }),
+      '/grants/create_virtual_account/v3': (body) => {
+        canonicalGrant = {
+          id: 'platform-grant',
+          email: 'virtual@example.com',
+          calendarId: 'platform-cal',
+        }
+        calendarBindingVersion = 1
+        return {
+          status: 200,
+          body: {
+            transition_id: body.in_transition_id,
+            previous_grant_retained: true,
+            replaced_grant_id: 'grant-1',
+            grant_id: 'platform-grant',
+            default_selected: true,
+            services_ready: true,
+            manager: 'platform',
+            active_config_ids: ['cfg-free-new'],
+            active_service_count: 1,
+          },
+        }
+      },
+    },
+  })
+  await settle()
+
+  result.dom.managers.platform.click()
+  result.clickAction(result.dom.buttons.managerSubmit)
+  await settle()
+  await settle()
+
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'error')
+  assert.equal(result.sessionStorage.has('starter-scheduling-platform-transition:member-a'), true)
+  canonicalManager = 'platform'
+  result.clickAction(result.dom.buttons.managerSubmit)
+  await settle()
+  await settle()
+
+  const requests = result.calls.filter((call) => call.path === '/grants/create_virtual_account/v3')
+  assert.equal(requests.length, 1)
+  assert.equal(requests[0].body.in_replace_grant_id, 'grant-1')
+  assert.equal(requests[0].body.in_transition_id, 'uuid-fixed')
+  assert.equal(result.window.STARTER_AVAILABILITY.manager, 'platform')
+  assert.equal(result.sessionStorage.has('starter-scheduling-platform-transition:member-a'), false)
 })
 
 test('disconnect flow: confirm navigates to its step, disconnect rebuilds a virtual calendar', async () => {
@@ -3353,6 +3432,43 @@ test('returning from the calendar OAuth round trip records the calendar manager'
   assert.equal(result.dom.steps.default.style.display, 'block')
 })
 
+test('staging OAuth callback without intent fails closed when a grant already exists', async () => {
+  const availability = defaultAvailability()
+  availability.manager = 'platform'
+  const result = loadWriter({
+    hostname: 'the-starters-3-0.webflow.io',
+    pathname: '/starter-dashboard---availability-stage',
+    origin: 'https://the-starters-3-0.webflow.io',
+    availability,
+    search: '?code=fixture-code&state=member-a',
+    storage: TZ_CACHED,
+    routes: {
+      '/starter/get_by_memberstack/v3': () => ({
+        status: 200,
+        body: {
+          id: 1,
+          timezone: 'Asia/Manila',
+          availability,
+          nylas_grant_id: 'old-grant',
+          nylas_grant_email: 'old@example.com',
+          nylas_calendar_id: 'old-calendar',
+          calendar_binding_version: null,
+        },
+      }),
+      '/nylas_configurations/get_all/v3': () => ({
+        status: 200,
+        body: [{ config_id: 'old-free', grant_id: 'old-grant', is_paid: false, active: true }],
+      }),
+    },
+  })
+  await settle()
+
+  assert.equal(result.calls.filter((call) => call.path === '/grants/add/v3').length, 0)
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'error')
+  assert.equal(result.window.STARTER_AVAILABILITY.manager, 'platform')
+  assert.equal(result.dom.steps['config-request-error'].style.display, 'block')
+})
+
 test('staging calendar query does not provision a versioned zero-offer binding', async () => {
   const availability = defaultAvailability()
   availability.manager = 'platform'
@@ -3720,6 +3836,7 @@ test('preserved OAuth fails closed if canonical selection or config ownership di
     await settle()
     assertNoCalendarReplacementWrites(result.calls)
     assert.equal(result.intentStillStored(), true)
+    assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'error')
     assert.ok(result.warnings.some((warning) => warning.includes('does not match the verified transition')))
   }
 })

@@ -410,7 +410,7 @@
         }
       }
     }
-    return isStagingHost ? { redirectUri: redirectUri, paidCallIntent: null } : null
+    return isStagingHost && !grantId ? { redirectUri: redirectUri, paidCallIntent: null } : null
   }
 
   function clearOAuthIntent(memberId) {
@@ -449,11 +449,23 @@
           Date.now() - intent.createdAt <= OAUTH_INTENT_MAX_AGE &&
           intent.preserveBookings === true &&
           intent.targetManager === 'platform' &&
-          intent.replaceGrantId === replaceGrantId &&
+          (!replaceGrantId || intent.replaceGrantId === replaceGrantId) &&
           typeof intent.transitionId === 'string' &&
           intent.transitionId
         ) {
           return intent
+        }
+        if (
+          intent &&
+          Number.isFinite(intent.createdAt) &&
+          Date.now() - intent.createdAt >= 0 &&
+          Date.now() - intent.createdAt <= OAUTH_INTENT_MAX_AGE &&
+          intent.preserveBookings === true &&
+          intent.targetManager === 'platform' &&
+          replaceGrantId &&
+          intent.replaceGrantId !== replaceGrantId
+        ) {
+          continue
         }
         storage.removeItem(key)
       } catch (error) {
@@ -483,7 +495,7 @@
   }
 
   function rememberPlatformTransitionIntent(memberId, replaceGrantId) {
-    const existing = readPlatformTransitionIntent(memberId, replaceGrantId)
+    const existing = readPlatformTransitionIntent(memberId, replaceGrantId) || readPlatformTransitionIntent(memberId)
     if (existing) return existing
     const intent = {
       createdAt: Date.now(),
@@ -1353,7 +1365,12 @@
     configs = await getConfigs(grantId, true)
     const configsResponse = []
     const activeConfigs = activeSchedulerConfigs()
-    if (activeConfigs.length === 0) return hasVersionedBindingAuthority()
+    if (activeConfigs.length === 0) {
+      const succeeded = hasVersionedBindingAuthority()
+      if (succeeded && !removeAvail) switchStep('success')
+      if (step) setLoader(false, step)
+      return succeeded
+    }
     for (const record of activeConfigs) {
       const res = await updateConfigAvailability(record)
       configsResponse.push(res)
