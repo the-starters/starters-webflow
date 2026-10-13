@@ -169,36 +169,46 @@
 
   function bindBannerInteraction(wrapper) {
     var panel = wrapper.querySelector('[data-starter-claim="panel"]')
+    var surface = panel && panel.querySelector('[data-wf--background--variant]')
     var collapseButton = wrapper.querySelector('[data-starter-claim="collapse"]')
     var expandButton = wrapper.querySelector('[data-starter-claim="expand"]')
     var closeButton = wrapper.querySelector(CLOSE_SELECTOR)
     var success = wrapper.querySelector('[data-starter-claim="success"]')
     var error = wrapper.querySelector('[data-starter-claim="error"]')
-    if (!panel || !collapseButton || !expandButton || !closeButton || !success) return false
+    if (!panel || !surface || !collapseButton || !expandButton || !closeButton || !success) return false
 
     var style = document.createElement('style')
     style.textContent = [
       '[data-starter-claim-state]{pointer-events:none}',
-      '[data-starter-claim="panel"]{position:relative;width:100%;pointer-events:auto;max-height:80dvh;overflow:auto;clip-path:inset(0);transition:clip-path 280ms cubic-bezier(.25,.65,.25,1)}',
-      '[data-starter-claim-state="collapsed"] [data-starter-claim="panel"]{clip-path:inset(calc(100% - 64px - env(safe-area-inset-bottom)) 0 0);pointer-events:none;transition-duration:240ms}',
-      '[data-starter-claim-state="dismissed"] [data-starter-claim="panel"]{clip-path:inset(100% 0 0);pointer-events:none;transition-duration:220ms}',
-      '[data-starter-claim="panel"]>[data-starter-claim]{opacity:1;transition:opacity 180ms ease}',
-      '[data-starter-claim-state="collapsed"] [data-starter-claim="panel"]>[data-starter-claim],[data-starter-claim-state="dismissed"] [data-starter-claim="panel"]>[data-starter-claim]{opacity:0;transition-duration:100ms}',
-      '[data-starter-claim="expand"]{position:absolute;bottom:0;left:0;right:0;display:flex;align-items:center;justify-content:space-between;width:100%;min-height:64px;padding:10px 5vw calc(10px + env(safe-area-inset-bottom));border:0;background:linear-gradient(100deg,#d2e0da 12%,#91acb1 100%);color:inherit;font:inherit;font-size:15px;font-weight:600;opacity:0;pointer-events:none;transition:opacity 180ms ease;z-index:1}',
+      '[data-starter-claim="panel"]{position:relative;width:100%;pointer-events:auto;max-height:80dvh;overflow:auto}',
+      '[data-starter-claim="surface"]{transform-origin:bottom;pointer-events:none;will-change:transform;transition:transform 280ms cubic-bezier(.25,.65,.25,1)}',
+      '[data-starter-claim-state="collapsed"] [data-starter-claim="surface"]{transition-duration:240ms}',
+      '[data-starter-claim-state="dismissed"] [data-starter-claim="surface"]{transition-duration:220ms}',
+      '[data-starter-claim-state="collapsed"] [data-starter-claim="panel"]{pointer-events:none}',
+      '[data-starter-claim-state="dismissed"] [data-starter-claim="panel"]{pointer-events:none}',
+      '[data-starter-claim="panel"]>[data-starter-claim]:not([data-starter-claim="surface"]){opacity:1;transition:opacity 180ms ease}',
+      '[data-starter-claim-state="collapsed"] [data-starter-claim="panel"]>[data-starter-claim]:not([data-starter-claim="surface"]),[data-starter-claim-state="dismissed"] [data-starter-claim="panel"]>[data-starter-claim]:not([data-starter-claim="surface"]){opacity:0;transition-duration:100ms}',
+      '[data-starter-claim="expand"]{position:absolute;bottom:0;left:0;right:0;display:flex;align-items:center;justify-content:space-between;width:100%;min-height:calc(64px + env(safe-area-inset-bottom));padding:10px 5vw calc(10px + env(safe-area-inset-bottom));border:0;background:transparent;color:inherit;font:inherit;font-size:15px;font-weight:600;line-height:24px;opacity:0;pointer-events:none;transition:opacity 180ms ease;z-index:1}',
       '[data-starter-claim-state="collapsed"] [data-starter-claim="expand"]{opacity:1;pointer-events:auto}',
       '[data-starter-claim="expand-label"]{opacity:0;filter:blur(3px);transition:opacity 180ms ease,filter 180ms ease}',
       '[data-starter-claim-state="collapsed"] [data-starter-claim="expand-label"]{opacity:1;filter:blur(0)}',
-      '[data-starter-claim="expand-affordance"]{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:400}',
-      '[data-starter-claim="chevron"]{display:block;width:12px;height:12px;border-right:1.7px solid currentColor;border-bottom:1.7px solid currentColor;transform:rotate(45deg)}',
-      '[data-starter-claim="expand"] [data-starter-claim="chevron"]{transform:rotate(225deg)}',
+      '[data-starter-claim="expand-affordance"]{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:400;line-height:20px}',
+      '[data-starter-claim="chevron"]{display:block;flex:none;width:20px;height:20px;border:0;line-height:0}',
+      '[data-starter-claim="chevron"] svg{display:block;width:20px;height:20px}',
+      '[data-starter-claim="expand"] [data-starter-claim="chevron"]{transform:rotate(180deg)}',
       '[data-starter-claim="collapse"],[data-starter-claim="close"]{display:flex;align-items:center;justify-content:center;min-width:44px;min-height:44px;cursor:pointer;touch-action:manipulation;transition:transform 120ms cubic-bezier(.23,1,.32,1)}',
       '[data-starter-claim="collapse"]:active,[data-starter-claim="close"]:active{transform:scale(.97)}',
       '[data-starter-claim-state="expanded"] [data-starter-claim="close"],[data-starter-claim-state="collapsed"] [data-starter-claim="close"],[data-starter-claim-state="success"] [data-starter-claim="collapse"]{display:none!important}',
       '[data-starter-claim="collapse"]:focus-visible,[data-starter-claim="close"]:focus-visible,[data-starter-claim="expand"]:focus-visible{outline:3px solid #355d76;outline-offset:-3px}',
-      '[data-starter-claim-motion="instant"] [data-starter-claim="panel"],[data-starter-claim-motion="instant"] [data-starter-claim="panel"]>[data-starter-claim],[data-starter-claim-motion="instant"] [data-starter-claim="expand"],[data-starter-claim-motion="instant"] [data-starter-claim="expand-label"]{transition:none}',
-      '@media(prefers-reduced-motion:reduce){[data-starter-claim="panel"],[data-starter-claim="panel"]>[data-starter-claim],[data-starter-claim="expand"],[data-starter-claim="expand-label"],[data-starter-claim="collapse"],[data-starter-claim="close"]{transition:none!important}}'
+      '[data-starter-claim-motion="instant"] [data-starter-claim="surface"],[data-starter-claim-motion="instant"] [data-starter-claim="panel"]>[data-starter-claim]:not([data-starter-claim="surface"]),[data-starter-claim-motion="instant"] [data-starter-claim="expand"],[data-starter-claim-motion="instant"] [data-starter-claim="expand-label"]{transition:none}',
+      '@media(prefers-reduced-motion:reduce){[data-starter-claim="surface"],[data-starter-claim="panel"]>[data-starter-claim]:not([data-starter-claim="surface"]),[data-starter-claim="expand"],[data-starter-claim="expand-label"],[data-starter-claim="collapse"],[data-starter-claim="close"]{transition:none!important}}'
     ].join('\n')
     document.head.appendChild(style)
+    surface.setAttribute('data-starter-claim', 'surface')
+    surface.style.transform = 'scaleY(1)'
+    wrapper.querySelectorAll('[data-starter-claim="chevron"]').forEach(function (chevron) {
+      chevron.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true" focusable="false"><path d="m6 9 6 6 6-6"/></svg>'
+    })
 
     var state = 'expanded'
     var lastFocus = null
@@ -216,6 +226,7 @@
 
     function setState(next, animate) {
       state = next
+      surface.style.transitionDuration = ''
       wrapper.setAttribute('data-starter-claim-motion', animate ? 'smooth' : 'instant')
       wrapper.setAttribute('data-starter-claim-state', state)
       var collapsed = state === 'collapsed'
@@ -225,6 +236,7 @@
       expandButton.setAttribute('aria-hidden', String(!collapsed))
       expandButton.setAttribute('aria-expanded', String(!collapsed))
       collapseButton.setAttribute('aria-expanded', String(!collapsed))
+      updateSurface()
       if (collapsed) expandButton.focus({ preventScroll: true })
       if (state === 'expanded') collapseButton.focus({ preventScroll: true })
       if (state === 'success') {
@@ -243,6 +255,22 @@
       }
     }
 
+    function updateSurface() {
+      var panelHeight = panel.getBoundingClientRect().height
+      var barHeight = expandButton.getBoundingClientRect().height
+      if (!panelHeight || !barHeight) return
+      var scale = state === 'dismissed' ? 0 : state === 'collapsed' ? Math.min(1, barHeight / panelHeight) : 1
+      surface.style.transform = 'scaleY(' + scale + ')'
+    }
+    if (typeof window.ResizeObserver === 'function') {
+      var resizeObserver = new window.ResizeObserver(function () {
+        surface.style.transitionDuration = '0s'
+        updateSurface()
+      })
+      resizeObserver.observe(panel)
+      resizeObserver.observe(expandButton)
+    }
+
     function bindControl(button, action) {
       button.addEventListener('click', function (event) {
         event.preventDefault()
@@ -257,8 +285,8 @@
     bindControl(collapseButton, 'collapsed')
     bindControl(expandButton, 'expanded')
     bindControl(closeButton, 'dismissed')
-    panel.addEventListener('transitionend', function (event) {
-      if (state === 'dismissed' && event.target === panel && event.propertyName === 'clip-path') close(wrapper)
+    surface.addEventListener('transitionend', function (event) {
+      if (state === 'dismissed' && event.target === surface && event.propertyName === 'transform') close(wrapper)
     })
     wrapper.addEventListener('keydown', function (event) {
       if (event.key !== 'Escape') return

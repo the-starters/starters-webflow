@@ -59,7 +59,9 @@ The compact bar reopens the form without opening the mobile keyboard. Native
 Webflow success expands the confirmation and reveals the existing close X;
 native failure reopens the form. Escape collapses the form or dismisses success.
 Keyboard activation and reduced-motion preference skip animation. The controller
-owns the scoped animation CSS, inactive controls' accessibility, and the compact
+marks the panel's existing Background instance as `data-starter-claim="surface"`
+and animates only that background's vertical scale. Form text stays stationary.
+It owns the scoped animation CSS, inactive controls' accessibility, and the compact
 label's blur fade. It does not replace Webflow validation or submission.
 
 `data-starter-claim-state` reports `expanded`, `collapsed`, `success`, or
