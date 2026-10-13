@@ -1901,6 +1901,8 @@ test('completed Platform receipt reload stays closed until active configs match'
   assertNoCalendarReplacementWrites(first.calls)
   assert.equal(first.window.STARTER_SCHEDULING_CONNECTION.state, 'error')
   assert.equal(connectionStates(first.events).includes('connected'), false)
+  assert.equal(first.dom.steps['config-request-error'].style.display, 'block')
+  assert.match(first.dom.errorText.textContent, /refresh and try again/i)
   assert.equal(first.sessionStorage.has(PLATFORM_TRANSITION_KEY), true)
   assert.equal(first.storage.has(PLATFORM_TRANSITION_KEY), true)
 
@@ -1963,6 +1965,45 @@ test('completed zero-offer Platform receipt reload verifies without provisioning
   assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.calendarBindingVersion, 1)
   assert.equal(result.sessionStorage.has(PLATFORM_TRANSITION_KEY), false)
   assert.equal(result.storage.has(PLATFORM_TRANSITION_KEY), false)
+})
+
+test('completed zero-offer Platform receipt clears stale paid OAuth recovery across reloads', async () => {
+  const platformIntent = platformTransitionIntent({ activeConfigIds: [] })
+  const paidIntent = stalePaidOAuthIntent()
+  const first = completedPlatformReceiptReloadWriter({
+    activeConfigIds: [],
+    configs: [],
+    sessionStorage: {
+      [PLATFORM_TRANSITION_KEY]: platformIntent,
+      [OAUTH_INTENT_KEY]: paidIntent,
+    },
+    storage: {
+      ...TZ_CACHED,
+      [PLATFORM_TRANSITION_KEY]: platformIntent,
+      [OAUTH_INTENT_KEY]: paidIntent,
+    },
+  })
+  await settle()
+
+  assertNoCalendarReplacementWrites(first.calls)
+  assert.equal(first.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
+  assert.equal(first.window.STARTER_SCHEDULING_CONNECTION.configurationCount, 0)
+  assert.equal(first.sessionStorage.has(OAUTH_INTENT_KEY), false)
+  assert.equal(first.storage.has(OAUTH_INTENT_KEY), false)
+
+  const second = completedPlatformReceiptReloadWriter({
+    activeConfigIds: [],
+    configs: [],
+    sessionStorage: Object.fromEntries(first.sessionStorage),
+    storage: Object.fromEntries(first.storage),
+  })
+  await settle()
+
+  assertNoCalendarReplacementWrites(second.calls)
+  assert.equal(second.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
+  assert.equal(second.window.STARTER_SCHEDULING_CONNECTION.configurationCount, 0)
+  assert.equal(second.sessionStorage.has(OAUTH_INTENT_KEY), false)
+  assert.equal(second.storage.has(OAUTH_INTENT_KEY), false)
 })
 
 test('disconnect flow: confirm navigates to its step, disconnect rebuilds a virtual calendar', async () => {

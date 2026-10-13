@@ -1787,6 +1787,10 @@ test('completed Platform receipt reload stays closed until active configs match'
   assertNoCalendarReplacementWrites(first.calls)
   assert.equal(first.window.STARTER_SCHEDULING_CONNECTION.state, 'error')
   assert.equal(connectionStates(first.events).includes('connected'), false)
+  assert.equal(first.dom.notif.steps['request-error'].style.display, '')
+  assert.match(first.dom.notif.errorText.textContent, /refresh and try again/i)
+  assert.notEqual(first.dom.connectWrapper.style.display, 'flex')
+  assert.notEqual(first.dom.mainWrapper.style.display, 'grid')
   assert.equal(first.window.sessionStorage._map.has(PLATFORM_TRANSITION_KEY), true)
   assert.equal(first.window.localStorage._map.has(PLATFORM_TRANSITION_KEY), true)
 
@@ -1849,6 +1853,44 @@ test('completed zero-offer Platform receipt reload verifies without provisioning
   assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.calendarBindingVersion, 1)
   assert.equal(result.window.sessionStorage._map.has(PLATFORM_TRANSITION_KEY), false)
   assert.equal(result.window.localStorage._map.has(PLATFORM_TRANSITION_KEY), false)
+})
+
+test('completed zero-offer Platform receipt clears stale paid OAuth recovery across reloads', async () => {
+  const platformIntent = platformTransitionIntent({ activeConfigIds: [] })
+  const paidIntent = stalePaidOAuthIntent()
+  const first = completedPlatformReceiptReloadSection({
+    activeConfigIds: [],
+    configs: [],
+    sessionStorage: {
+      [PLATFORM_TRANSITION_KEY]: platformIntent,
+      [OAUTH_INTENT_KEY]: paidIntent,
+    },
+    localStorage: {
+      [PLATFORM_TRANSITION_KEY]: platformIntent,
+      [OAUTH_INTENT_KEY]: paidIntent,
+    },
+  })
+  await settle()
+
+  assertNoCalendarReplacementWrites(first.calls)
+  assert.equal(first.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
+  assert.equal(first.window.STARTER_SCHEDULING_CONNECTION.configurationCount, 0)
+  assert.equal(first.window.sessionStorage._map.has(OAUTH_INTENT_KEY), false)
+  assert.equal(first.window.localStorage._map.has(OAUTH_INTENT_KEY), false)
+
+  const second = completedPlatformReceiptReloadSection({
+    activeConfigIds: [],
+    configs: [],
+    sessionStorage: Object.fromEntries(first.window.sessionStorage._map),
+    localStorage: Object.fromEntries(first.window.localStorage._map),
+  })
+  await settle()
+
+  assertNoCalendarReplacementWrites(second.calls)
+  assert.equal(second.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
+  assert.equal(second.window.STARTER_SCHEDULING_CONNECTION.configurationCount, 0)
+  assert.equal(second.window.sessionStorage._map.has(OAUTH_INTENT_KEY), false)
+  assert.equal(second.window.localStorage._map.has(OAUTH_INTENT_KEY), false)
 })
 
 test('disconnecting Google preserves the Platform layer by replacing the Google grant with a virtual grant', async () => {

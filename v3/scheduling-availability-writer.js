@@ -45,8 +45,11 @@
   const PAID_CALL_RATE_UNSUPPORTED = 'PAID_CALL_RATE_UNSUPPORTED'
   const ERROR_TEXT_AVAILABILITY_PARTIAL =
     'Your availability was saved, but booking times could not be verified. Please try again or contact support.'
+  const ERROR_TEXT_CALENDAR_VERIFY =
+    "We couldn't verify your calendar settings. Please refresh and try again or contact support."
   const ERROR_TEXT_PAID_CALL_RATE =
     'Your paid call rate must be a whole-dollar amount from $1 to $1,000. Update it in Call Settings, then switch calendars again.'
+  const PRESERVATION_READBACK_INVALID = 'PRESERVATION_READBACK_INVALID'
   // The server guards true Disconnect across all of the Starter's calendars,
   // including retained grants: pending/rescheduled calls and confirmed calls
   // whose current or original end is still ahead. Editing and switching remain
@@ -442,6 +445,25 @@
     })
   }
 
+  function clearOAuthRecoveryIntent(memberId) {
+    const key = OAUTH_INTENT_PREFIX + memberId
+    oauthIntentStorages().forEach(function (storage) {
+      try {
+        const raw = storage.getItem(key)
+        const intent = raw ? JSON.parse(raw) : null
+        if (!intent || (intent.preserveBookings !== true && intent.paidCallIntent)) {
+          storage.removeItem(key)
+        }
+      } catch (error) {
+        try {
+          storage.removeItem(key)
+        } catch (storageError) {
+          /* storage unavailable */
+        }
+      }
+    })
+  }
+
   function persistOAuthIntent(memberId, intent) {
     if (!Number.isFinite(intent.createdAt)) intent.createdAt = Date.now()
     if (!writeOAuthIntent(memberId, intent)) {
@@ -675,24 +697,25 @@
   }
 
   function verifyCompletedPlatformTransitionReadback() {
-    if (!sessionMemberId || !grantId) return
+    if (!sessionMemberId || !grantId) return false
     const intent = readCompletedPlatformTransitionIntent(sessionMemberId, grantId)
-    if (!intent || !preservedGrantReceiptMatches(intent, intent.grantReceipt, 'platform', grantId)) return
+    if (!intent || !preservedGrantReceiptMatches(intent, intent.grantReceipt, 'platform', grantId)) return false
     assertPreservedDefault(intent, 'platform', grantId)
     clearPlatformTransitionIntent(sessionMemberId)
+    return true
   }
 
   function verifyCompletedCalendarTransitionReadback() {
-    if (!sessionMemberId || !grantId) return
+    if (!sessionMemberId || !grantId) return false
     const intent = readCompletedCalendarTransitionIntent(sessionMemberId, grantId)
-    if (!intent || !preservedGrantReceiptMatches(intent, intent.grantReceipt, 'calendar', grantId)) return
+    if (!intent || !preservedGrantReceiptMatches(intent, intent.grantReceipt, 'calendar', grantId)) return false
     assertPreservedDefault(intent, 'calendar', grantId)
     clearOAuthIntent(sessionMemberId)
+    return true
   }
 
   function verifyCompletedPreservationReadback() {
-    verifyCompletedPlatformTransitionReadback()
-    verifyCompletedCalendarTransitionReadback()
+    return verifyCompletedPlatformTransitionReadback() || verifyCompletedCalendarTransitionReadback()
   }
 
   function invalidOAuthCallback(message) {
@@ -2115,14 +2138,21 @@
       let oauthPaidCallIntent = null
       let preservedCallbackIncomplete = false
       let canonicalConfigsLoaded = false
+      let preservedReadbackVerified = false
 
       if (!oauthCallback) {
         if (grantId) {
           configs = (await getConfigs(grantId, true)) || []
           canonicalConfigsLoaded = true
-          verifyCompletedPreservationReadback()
+          try {
+            preservedReadbackVerified = verifyCompletedPreservationReadback()
+          } catch (error) {
+            error.code = PRESERVATION_READBACK_INVALID
+            throw error
+          }
+          if (preservedReadbackVerified) clearOAuthRecoveryIntent(sessionMemberId)
         }
-        const pendingTransition = readOAuthIntent(sessionMemberId)
+        const pendingTransition = preservedReadbackVerified ? null : readOAuthIntent(sessionMemberId)
         if (pendingTransition && pendingTransition.preserveBookings !== true && pendingTransition.paidCallIntent) {
           const recovered = await recoverPaidCallAfterOAuthCancellation(
             sessionMemberId,
@@ -2344,6 +2374,13 @@
     } catch (error) {
       publishCalendarConnectionError()
       setStatus('error')
+      if (error && error.code === PRESERVATION_READBACK_INVALID) {
+        const step = switchStep('config-request-error')
+        const errorEl = transitionErrorCopyLeaf(step)
+        if (errorEl) errorEl.textContent = ERROR_TEXT_CALENDAR_VERIFY
+        if (step) setLoader(false, step)
+        bookingsWrapper('hide')
+      }
       console.warn('[scheduling-writer] initialization failed:', error && error.message)
       emit('starterSchedulingWriteError', {
         action: 'initialize',
