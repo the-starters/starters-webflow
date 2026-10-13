@@ -2006,6 +2006,42 @@ test('Connect Google from Platform skips paid-service capture while preserving t
   assert.deepEqual(durableIntent, intent)
 })
 
+test('stale Connect Google confirm refuses a refreshed Google-managed grant', async () => {
+  const result = loadSection({ serverState: platformState() })
+  await settle()
+
+  result.dom.connectBtnWrapper.children[1].click()
+  assert.equal(result.dom.notif.steps['pre-oauth'].style.display, '')
+
+  result.state.grantId = 'google-grant'
+  result.state.grantEmail = 'member-a@gmail.example'
+  result.state.calendarId = 'google-cal'
+  result.state.configs = [{
+    config_id: 'cfg-google',
+    grant_id: 'google-grant',
+    duration: 30,
+    is_paid: false,
+    active: true,
+  }]
+  result.state.availability = {
+    items: { general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] } },
+    manager: 'calendar',
+  }
+
+  result.dom.notif.oauthRedirectBtn.click()
+  await settle()
+
+  assert.equal(result.calls.filter((call) => call.path === '/grants/oauth/v3').length, 0)
+  assert.equal(result.assigned.length, 0)
+  assert.equal(result.window.sessionStorage._map.has(OAUTH_INTENT_KEY), false)
+  assert.equal(result.window.localStorage._map.has(OAUTH_INTENT_KEY), false)
+  assert.equal(result.state.grantId, 'google-grant')
+  assert.equal(result.state.availability.manager, 'calendar')
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'error')
+  assert.equal(result.dom.notif.steps['request-error'].style.display, '')
+  assert.equal(result.dom.notif.steps['oauth-redirect'].style.display, 'none')
+})
+
 test('starting a calendar switch retains the current default and active calls until OAuth completes', async () => {
   const initial = platformState()
   const result = loadSection({

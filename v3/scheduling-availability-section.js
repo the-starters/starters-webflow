@@ -1572,6 +1572,9 @@
     publishCalendarConnectionState('loading')
     try {
       await refreshCanonicalConnectionState()
+      if (!grantId || !grantCalendarId || !availability || availability.manager !== 'platform') {
+        throw new Error('Platform calendar is no longer selected')
+      }
       const paidCallIntent = grantId ? null : await capturePaidCallIntent()
       console.log('[scheduling-section] redirecting to Google Calendar OAuth')
       await handlePreRedirect(paidCallIntent)
