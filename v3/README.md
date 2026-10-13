@@ -3844,10 +3844,11 @@ parameters before fallible bootstrap work. The callback fields needed for
 validation (`code` or `grant_id`, `state`, and `success`) stay in the current
 tab's `sessionStorage` for at most 15 minutes so a reload after Memberstack
 login, or a transient grant-save failure, can resume the same handoff. The
-controller clears the saved callback and member-scoped intent only after
-`grants/add/v3` succeeds, after an already-canonical versioned binding consumes
-a stale legacy callback read-only, or after validation fails; expired or
-malformed state is also discarded. Intent cleanup removes both storage copies.
+controller clears the saved callback and member-scoped intent only after the
+grant write and required readback verification complete, after an
+already-canonical versioned binding consumes a stale legacy callback read-only,
+or after validation fails; expired or malformed state is also discarded. Intent
+cleanup removes both storage copies.
 Provider access tokens are never stored in the browser, and the returned
 `email` and `provider` are neither retained nor trusted.
 
