@@ -148,6 +148,7 @@
       profileSlugField.setAttribute('value', slug)
       bindButtonSubmit(form)
       reveal(wrapper)
+      if (bindBannerInteraction(wrapper)) return
       var closeButton = wrapper.querySelector(CLOSE_SELECTOR)
       if (closeButton) {
         if (closeButton.tagName.toLowerCase() === 'button') {
@@ -165,6 +166,128 @@
     })
   }
 
+
+  function bindBannerInteraction(wrapper) {
+    var panel = wrapper.querySelector('[data-starter-claim="panel"]')
+    var collapseButton = wrapper.querySelector('[data-starter-claim="collapse"]')
+    var expandButton = wrapper.querySelector('[data-starter-claim="expand"]')
+    var closeButton = wrapper.querySelector(CLOSE_SELECTOR)
+    var success = wrapper.querySelector('[data-starter-claim="success"]')
+    var error = wrapper.querySelector('[data-starter-claim="error"]')
+    if (!panel || !collapseButton || !expandButton || !closeButton || !success) return false
+
+    var style = document.createElement('style')
+    style.textContent = [
+      '[data-starter-claim-state]{pointer-events:none}',
+      '[data-starter-claim="panel"]{position:relative;width:100%;pointer-events:auto;max-height:80dvh;overflow:auto;clip-path:inset(0);transition:clip-path 280ms cubic-bezier(.25,.65,.25,1)}',
+      '[data-starter-claim-state="collapsed"] [data-starter-claim="panel"]{clip-path:inset(calc(100% - 64px - env(safe-area-inset-bottom)) 0 0);pointer-events:none;transition-duration:240ms}',
+      '[data-starter-claim-state="dismissed"] [data-starter-claim="panel"]{clip-path:inset(100% 0 0);pointer-events:none;transition-duration:220ms}',
+      '[data-starter-claim="panel"]>[data-starter-claim]{opacity:1;transition:opacity 180ms ease}',
+      '[data-starter-claim-state="collapsed"] [data-starter-claim="panel"]>[data-starter-claim],[data-starter-claim-state="dismissed"] [data-starter-claim="panel"]>[data-starter-claim]{opacity:0;transition-duration:100ms}',
+      '[data-starter-claim="expand"]{position:absolute;bottom:0;left:0;right:0;display:flex;align-items:center;justify-content:space-between;width:100%;min-height:64px;padding:10px 5vw calc(10px + env(safe-area-inset-bottom));border:0;background:linear-gradient(100deg,#d2e0da 12%,#91acb1 100%);color:inherit;font:inherit;font-size:15px;font-weight:600;opacity:0;pointer-events:none;transition:opacity 180ms ease;z-index:1}',
+      '[data-starter-claim-state="collapsed"] [data-starter-claim="expand"]{opacity:1;pointer-events:auto}',
+      '[data-starter-claim="expand-label"]{opacity:0;filter:blur(3px);transition:opacity 180ms ease,filter 180ms ease}',
+      '[data-starter-claim-state="collapsed"] [data-starter-claim="expand-label"]{opacity:1;filter:blur(0)}',
+      '[data-starter-claim="expand-affordance"]{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:400}',
+      '[data-starter-claim="chevron"]{display:block;width:12px;height:12px;border-right:1.7px solid currentColor;border-bottom:1.7px solid currentColor;transform:rotate(45deg)}',
+      '[data-starter-claim="expand"] [data-starter-claim="chevron"]{transform:rotate(225deg)}',
+      '[data-starter-claim="collapse"],[data-starter-claim="close"]{display:flex;align-items:center;justify-content:center;min-width:44px;min-height:44px;cursor:pointer;touch-action:manipulation;transition:transform 120ms cubic-bezier(.23,1,.32,1)}',
+      '[data-starter-claim="collapse"]:active,[data-starter-claim="close"]:active{transform:scale(.97)}',
+      '[data-starter-claim-state="expanded"] [data-starter-claim="close"],[data-starter-claim-state="collapsed"] [data-starter-claim="close"],[data-starter-claim-state="success"] [data-starter-claim="collapse"]{display:none!important}',
+      '[data-starter-claim="collapse"]:focus-visible,[data-starter-claim="close"]:focus-visible,[data-starter-claim="expand"]:focus-visible{outline:3px solid #355d76;outline-offset:-3px}',
+      '[data-starter-claim-motion="instant"] [data-starter-claim="panel"],[data-starter-claim-motion="instant"] [data-starter-claim="panel"]>[data-starter-claim],[data-starter-claim-motion="instant"] [data-starter-claim="expand"],[data-starter-claim-motion="instant"] [data-starter-claim="expand-label"]{transition:none}',
+      '@media(prefers-reduced-motion:reduce){[data-starter-claim="panel"],[data-starter-claim="panel"]>[data-starter-claim],[data-starter-claim="expand"],[data-starter-claim="expand-label"],[data-starter-claim="collapse"],[data-starter-claim="close"]{transition:none!important}}'
+    ].join('\n')
+    document.head.appendChild(style)
+
+    var state = 'expanded'
+    var lastFocus = null
+    ;[collapseButton, expandButton, closeButton].forEach(function (button) {
+      button.setAttribute('type', 'button')
+    })
+    collapseButton.setAttribute('aria-label', 'Minimize claim banner')
+    closeButton.setAttribute('aria-label', 'Close claim confirmation')
+    collapseButton.classList.remove('hide')
+    expandButton.classList.remove('hide')
+    collapseButton.hidden = false
+    collapseButton.removeAttribute('hidden')
+    expandButton.hidden = false
+    expandButton.removeAttribute('hidden')
+
+    function setState(next, animate) {
+      state = next
+      wrapper.setAttribute('data-starter-claim-motion', animate ? 'smooth' : 'instant')
+      wrapper.setAttribute('data-starter-claim-state', state)
+      var collapsed = state === 'collapsed'
+      panel.inert = collapsed || state === 'dismissed'
+      panel.setAttribute('aria-hidden', String(panel.inert))
+      expandButton.inert = !collapsed
+      expandButton.setAttribute('aria-hidden', String(!collapsed))
+      expandButton.setAttribute('aria-expanded', String(!collapsed))
+      collapseButton.setAttribute('aria-expanded', String(!collapsed))
+      if (collapsed) expandButton.focus({ preventScroll: true })
+      if (state === 'expanded') collapseButton.focus({ preventScroll: true })
+      if (state === 'success') {
+        success.setAttribute('tabindex', '-1')
+        success.focus({ preventScroll: true })
+      }
+      if (state === 'dismissed') {
+        wrapper.inert = true
+        wrapper.setAttribute('aria-hidden', 'true')
+        if (lastFocus && lastFocus.isConnected && !wrapper.contains(lastFocus)) {
+          lastFocus.focus({ preventScroll: true })
+        } else {
+          closeButton.blur()
+        }
+        if (!animate || window.matchMedia('(prefers-reduced-motion: reduce)').matches) close(wrapper)
+      }
+    }
+
+    function bindControl(button, action) {
+      button.addEventListener('click', function (event) {
+        event.preventDefault()
+        event.stopPropagation()
+        if (state === 'dismissed') return
+        if (action === 'collapsed' && state !== 'expanded') return
+        if (action === 'expanded' && state !== 'collapsed') return
+        if (action === 'dismissed' && state !== 'success') return
+        setState(action, event.detail !== 0)
+      })
+    }
+    bindControl(collapseButton, 'collapsed')
+    bindControl(expandButton, 'expanded')
+    bindControl(closeButton, 'dismissed')
+    panel.addEventListener('transitionend', function (event) {
+      if (state === 'dismissed' && event.target === panel && event.propertyName === 'clip-path') close(wrapper)
+    })
+    wrapper.addEventListener('keydown', function (event) {
+      if (event.key !== 'Escape') return
+      if (state !== 'expanded' && state !== 'success') return
+      event.preventDefault()
+      setState(state === 'success' ? 'dismissed' : 'collapsed', false)
+    })
+    document.addEventListener('focusin', function (event) {
+      if (!wrapper.contains(event.target)) lastFocus = event.target
+    })
+
+    function visible(element) {
+      return element && !element.hidden && window.getComputedStyle(element).display !== 'none'
+    }
+    var observer = new window.MutationObserver(function () {
+      if (state === 'dismissed') return
+      if (visible(success) && state !== 'success') setState('success', false)
+      else if (visible(error) && state === 'collapsed') setState('expanded', false)
+    })
+    observer.observe(success, { attributes: true, attributeFilter: ['style', 'class', 'hidden'] })
+    if (error) observer.observe(error, { attributes: true, attributeFilter: ['style', 'class', 'hidden'] })
+    wrapper.setAttribute('data-starter-claim-state', state)
+    panel.setAttribute('aria-hidden', 'false')
+    expandButton.inert = true
+    expandButton.setAttribute('aria-hidden', 'true')
+    collapseButton.setAttribute('aria-expanded', 'true')
+    return true
+  }
+
   // The shared Button component renders `<button type="button">`, which never
   // submits. Memberstack used to drive it through `data-ms-form`; the plain
   // Webflow form needs the click turned into a native submit so constraint
@@ -179,6 +302,7 @@
       if (!button || button.getAttribute('type') !== 'button') return
       if (typeof form.contains === 'function' && !form.contains(button)) return
       if (button.disabled) return
+      if (button.getAttribute('data-starter-claim') !== null) return
       event.preventDefault()
       if (typeof form.requestSubmit === 'function') {
         form.requestSubmit()

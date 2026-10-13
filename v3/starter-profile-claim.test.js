@@ -70,6 +70,9 @@ function element(attributes = {}, tagName = '') {
       }
       return null
     },
+    contains(node) { return children.some(child => child === node || child.contains(node)) },
+    focus() { this.focused = true },
+    blur() { this.focused = false },
     appendChild(child) {
       children.push(child)
     },
@@ -122,6 +125,21 @@ function load(options = {}) {
     (options.closeInsideForm ? form : wrapper).appendChild(closeButton)
   }
 
+  let panel, collapseButton, expandButton, success, error
+  const observers = []
+  if (options.interaction) {
+    panel = element({ 'data-starter-claim': 'panel' }, 'div')
+    collapseButton = element({ 'data-starter-claim': 'collapse' }, 'button')
+    expandButton = element({ 'data-starter-claim': 'expand', hidden: '' }, 'button')
+    success = element({ 'data-starter-claim': 'success' }, 'div')
+    error = element({ 'data-starter-claim': 'error' }, 'div')
+    success.display = error.display = 'none'
+    panel.appendChild(collapseButton)
+    wrapper.appendChild(panel)
+    wrapper.appendChild(expandButton)
+    wrapper.appendChild(success)
+    wrapper.appendChild(error)
+  }
   const listeners = []
   const requests = []
   const pathname = options.pathname || '/hire/jane-doe'
@@ -131,6 +149,8 @@ function load(options = {}) {
     href: `https://www.thestarters.com${pathname}${options.search || ''}`,
   }
   const document = {
+    head: element({}, 'head'),
+    createElement: tag => element({}, tag),
     readyState: options.readyState || 'loading',
     addEventListener(type, handler, config) {
       listeners.push({ type, handler, config })
@@ -159,6 +179,12 @@ function load(options = {}) {
       if (timers[id - 1]) timers[id - 1].cleared = true
     },
     AbortController: options.AbortController,
+    matchMedia: () => ({ matches: !!options.reducedMotion }),
+    getComputedStyle: node => ({ display: node.display || 'block' }),
+    MutationObserver: class {
+      constructor(callback) { observers.push(callback) }
+      observe() {}
+    },
   }
   vm.runInNewContext(source, { document, window, Promise, URL, encodeURIComponent })
 
@@ -173,7 +199,7 @@ function load(options = {}) {
     await settle()
   }
 
-  return { dispatch, closeButton, form, listeners, profileSlugField, googleAuth, wrapper, window, requests, timers }
+  return { panel, collapseButton, expandButton, success, error, observers, dispatch, closeButton, form, listeners, profileSlugField, googleAuth, wrapper, window, requests, timers }
 }
 
 async function settle(times = 8) {
@@ -276,7 +302,9 @@ test('a missing close control leaves claim submission working', async () => {
   harness.form.requestSubmit = () => { submits += 1 }
   await harness.dispatch('DOMContentLoaded')
 
-  harness.form.fire('click', clickOn(componentButton()))
+  const button = componentButton()
+  harness.form.appendChild(button)
+  harness.form.fire('click', clickOn(button))
   assert.equal(harness.wrapper.hidden, false)
   assert.equal(submits, 1)
 })
@@ -287,7 +315,9 @@ test('a type=button component click becomes one native submit after reveal', asy
   harness.form.requestSubmit = () => { submits += 1 }
   await harness.dispatch('DOMContentLoaded')
 
-  const event = clickOn(componentButton())
+  const button = componentButton()
+  harness.form.appendChild(button)
+  const event = clickOn(button)
   harness.form.fire('click', event)
   assert.equal(submits, 1)
   assert.equal(event.defaultPrevented, true)
@@ -321,7 +351,9 @@ test('submit binding falls back to the native submit input without requestSubmit
   harness.form.setQuery('input[type="submit"], button[type="submit"]', nativeSubmit)
   await harness.dispatch('DOMContentLoaded')
 
-  harness.form.fire('click', clickOn(componentButton()))
+  const button = componentButton()
+  harness.form.appendChild(button)
+  harness.form.fire('click', clickOn(button))
   assert.equal(clicks, 1)
 })
 
@@ -512,4 +544,87 @@ test('second evaluation respects the global boot guard', () => {
     encodeURIComponent,
   })
   assert.equal(harness.listeners.length, 1)
+})
+
+
+function activate(button, detail = 1) {
+  const event = { detail, preventDefault() {}, stopPropagation() {} }
+  button.fire('click', event)
+}
+
+test('banner collapses without hiding its wrapper or submitting, then reopens with the same email', async () => {
+  const h = load({ interaction: true })
+  let submits = 0
+  h.form.requestSubmit = () => { submits += 1 }
+  const email = element({ type: 'email' }, 'input')
+  email.value = 'draft@example.test'
+  h.form.appendChild(email)
+  await h.dispatch('DOMContentLoaded')
+  assert.equal(h.wrapper.getAttribute('data-starter-claim-state'), 'expanded')
+  activate(h.collapseButton)
+  assert.equal(h.wrapper.hidden, false)
+  assert.equal(h.wrapper.getAttribute('data-starter-claim-state'), 'collapsed')
+  assert.equal(h.panel.inert, true)
+  assert.equal(h.panel.getAttribute('aria-hidden'), 'true')
+  assert.equal(h.expandButton.inert, false)
+  assert.equal(h.expandButton.focused, true)
+  assert.equal(submits, 0)
+  activate(h.expandButton)
+  assert.equal(h.wrapper.getAttribute('data-starter-claim-state'), 'expanded')
+  assert.equal(h.panel.inert, false)
+  assert.equal(h.expandButton.inert, true)
+  assert.equal(email.value, 'draft@example.test')
+  assert.equal(h.profileSlugField.value, 'jane-doe')
+})
+
+test('keyboard collapse is instant and Escape keeps the claim action available', async () => {
+  const h = load({ interaction: true })
+  await h.dispatch('DOMContentLoaded')
+  h.wrapper.fire('keydown', { key: 'Escape', preventDefault() {} })
+  assert.equal(h.wrapper.getAttribute('data-starter-claim-state'), 'collapsed')
+  assert.equal(h.wrapper.getAttribute('data-starter-claim-motion'), 'instant')
+  activate(h.expandButton, 0)
+  assert.equal(h.wrapper.getAttribute('data-starter-claim-motion'), 'instant')
+  assert.equal(h.wrapper.getAttribute('data-starter-claim-state'), 'expanded')
+})
+
+test('native success reopens a collapsed banner and X dismisses it for this load', async () => {
+  const h = load({ interaction: true })
+  await h.dispatch('DOMContentLoaded')
+  activate(h.collapseButton)
+  h.success.display = 'block'
+  h.observers[0]()
+  assert.equal(h.wrapper.getAttribute('data-starter-claim-state'), 'success')
+  assert.equal(h.success.focused, true)
+  activate(h.closeButton)
+  assert.equal(h.wrapper.getAttribute('aria-hidden'), 'true')
+  assert.equal(h.wrapper.inert, true)
+  assert.equal(h.wrapper.hidden, false)
+  h.panel.fire('transitionend', { target: h.panel, propertyName: 'clip-path' })
+  assertHidden(h)
+  h.observers[0]()
+  assertHidden(h)
+})
+
+test('native error reopens the form and reduced motion closes success immediately', async () => {
+  const h = load({ interaction: true, reducedMotion: true })
+  await h.dispatch('DOMContentLoaded')
+  activate(h.collapseButton)
+  h.error.display = 'block'
+  h.observers[0]()
+  assert.equal(h.wrapper.getAttribute('data-starter-claim-state'), 'expanded')
+  h.success.display = 'block'
+  h.observers[0]()
+  activate(h.closeButton)
+  assertHidden(h)
+})
+
+test('new banner controls are not bound or revealed for an unclaimable profile', async () => {
+  const h = load({ interaction: true, fetch: () => Promise.resolve(jsonResponse({
+    schema: 'starter_profile_claim_status_v3', slug: 'jane-doe', claimable: false,
+  })) })
+  await h.dispatch('DOMContentLoaded')
+  assertHidden(h)
+  assert.equal(h.collapseButton.handlerCount('click'), 0)
+  assert.equal(h.expandButton.hidden, true)
 })

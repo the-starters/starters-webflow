@@ -40,6 +40,32 @@ controller sets the button's type to `button` and supplies `aria-label="Close
 claim banner"` when no label is authored. Dismissal lasts for the current page
 load; reloading shows the banner again if the profile is still claimable.
 
+The collapsible banner uses these additional bindings inside the wrapper:
+
+| `data-starter-claim` value | Element |
+| --- | --- |
+| `panel` | Wrapper around the existing Background instance, padded content, close X, and collapse control |
+| `content` | Existing padded form and success/error content wrapper |
+| `collapse` | Native `button` with only a down chevron, outside the form, authored `hidden`, using the existing `claim_close` position |
+| `expand` | Native `button` outside the panel and form, authored with `hide`, `hidden`, and `aria-hidden="true"` |
+| `expand-label` | Compact bar text, exactly `Claim Your Profile` |
+| `expand-affordance` | Compact bar's `Expand` text and chevron |
+| `chevron` | Decorative span with `aria-hidden="true"` |
+| `success` / `error` | Native Webflow form success and error messages |
+
+When these controls are present, the controller starts expanded. The chevron
+collapses to a 64px bar plus the device safe-area inset, retaining entered email.
+The compact bar reopens the form without opening the mobile keyboard. Native
+Webflow success expands the confirmation and reveals the existing close X;
+native failure reopens the form. Escape collapses the form or dismisses success.
+Keyboard activation and reduced-motion preference skip animation. The controller
+owns the scoped animation CSS, inactive controls' accessibility, and the compact
+label's blur fade. It does not replace Webflow validation or submission.
+
+`data-starter-claim-state` reports `expanded`, `collapsed`, `success`, or
+`dismissed`; `data-starter-claim-motion` reports `smooth` or `instant`.
+The original close-only behavior remains when the additional markup is absent.
+
 Put this attribute on the plain Webflow form:
 
 | Attribute | Value |

@@ -12,8 +12,8 @@ const claimStatusUrl =
   'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/profile/starter/claim-status/v3'
 const source = fs.readFileSync(scriptPath, 'utf8')
 
-function markup() {
-  return `<!doctype html>
+function markup(interaction = false) {
+  const html = `<!doctype html>
     <html>
       <head>
         <meta charset="utf-8">
@@ -44,6 +44,23 @@ function markup() {
         </section>
       </body>
     </html>`
+  if (!interaction) return html
+  return html.replace('</style>', `
+    .claim-modal { inset: auto 0 0; display: flex; background: none; }
+    [data-starter-claim="panel"] { background: linear-gradient(100deg,#d2e0da,#91acb1); }
+    [data-starter-claim="content"] { padding: 48px 20px; }
+    form { background: none; width: min(100%,500px); padding: 0; margin: auto; }
+    [data-starter-claim="collapse"],[data-starter-claim="close"] { position:absolute;right:20px;top:8px;border:0;background:none; }
+    input[type="email"] { width:100%;box-sizing:border-box; }
+  </style>`).replace('<form data-starter-claim="form">', '<div data-starter-claim="panel"><div data-starter-claim="content"><form data-starter-claim="form">')
+    .replace('</form>', `</form>
+      <div data-starter-claim="success" style="display:none" tabindex="-1">Almost there.</div>
+      <div data-starter-claim="error" style="display:none">Please try again.</div>
+      </div>
+      <button type="button" data-starter-claim="collapse"><span data-starter-claim="chevron" aria-hidden="true"></span></button>
+      <button type="button" data-starter-claim="close">X</button>
+      </div>
+      <button type="button" data-starter-claim="expand" hidden><span data-starter-claim="expand-label">Claim Your Profile</span><span data-starter-claim="expand-affordance">Expand<span data-starter-claim="chevron" aria-hidden="true"></span></span></button>`)
 }
 
 ;(async () => {
@@ -54,10 +71,11 @@ function markup() {
   })
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
   const claimRequests = []
+  let interaction = false
 
   try {
     await page.route('https://www.thestarters.com/**', (route) =>
-      route.fulfill({ status: 200, contentType: 'text/html', body: markup() }),
+      route.fulfill({ status: 200, contentType: 'text/html', body: markup(interaction) }),
     )
     await page.route(controllerUrl, (route) =>
       route.fulfill({ status: 200, contentType: 'application/javascript', body: source }),
@@ -155,7 +173,64 @@ function markup() {
       `${claimStatusUrl}?slug=john-smith`,
     ])
 
-    console.log(JSON.stringify({ ready, submits, unlisted, claimRequests }))
+
+    interaction = true
+    await page.goto('https://www.thestarters.com/hire/jane-doe')
+    const wrapper = page.locator('[data-starter-claim="wrapper"]')
+    const state = () => wrapper.getAttribute('data-starter-claim-state')
+    await page.waitForSelector('[data-starter-claim-state="expanded"]')
+    const email = page.locator('input[type="email"]')
+    const collapse = page.getByRole('button', { name: 'Minimize claim banner' })
+    const expand = page.getByRole('button', { name: 'Claim Your Profile Expand' })
+    await email.fill('draft@example.test')
+    await collapse.click()
+    assert.equal(await state(), 'collapsed')
+    assert.equal(await page.locator('[data-starter-claim="panel"]').evaluate(node => node.inert), true)
+    assert.equal((await expand.boundingBox()).height, 64)
+    await page.waitForFunction(() => getComputedStyle(document.querySelector('[data-starter-claim="expand-label"]')).filter === 'blur(0px)')
+    await expand.click()
+    assert.equal(await state(), 'expanded')
+    assert.equal(await email.inputValue(), 'draft@example.test')
+    await collapse.press('Enter')
+    assert.equal(await wrapper.getAttribute('data-starter-claim-motion'), 'instant')
+    await expand.press('Enter')
+    await page.evaluate(() => {
+      window.__claimSubmits = []
+      document.querySelector('[data-starter-claim="form"]').addEventListener('submit', event => {
+        event.preventDefault()
+        window.__claimSubmits.push(new FormData(event.target).get('Profile Slug'))
+      })
+    })
+    await email.fill('invalid')
+    await page.locator('.clickable_btn').click()
+    assert.equal(await page.evaluate(() => window.__claimSubmits.length), 0)
+    await email.fill('claimant@example.test')
+    await page.locator('.clickable_btn').click()
+    assert.deepEqual(await page.evaluate(() => window.__claimSubmits), ['jane-doe'])
+    await collapse.click()
+    await page.evaluate(() => {
+      document.querySelector('[data-starter-claim="form"]').style.display = 'none'
+      document.querySelector('[data-starter-claim="success"]').style.display = 'block'
+    })
+    await page.waitForSelector('[data-starter-claim-state="success"]')
+    await page.getByRole('button', { name: 'Close claim confirmation' }).click()
+    await page.waitForFunction(() => document.querySelector('[data-starter-claim="wrapper"]').hidden)
+    assert.equal(await state(), 'dismissed')
+    await page.goto('https://www.thestarters.com/hire/jane-doe')
+    await page.waitForSelector('[data-starter-claim-state="expanded"]')
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await collapse.click()
+    assert.equal(await page.locator('[data-starter-claim="panel"]').evaluate(node => getComputedStyle(node).transitionDuration), '0s')
+    await expand.click()
+    await page.emulateMedia({ reducedMotion: 'no-preference' })
+    for (const viewport of [{ width: 320, height: 568 }, { width: 1280, height: 800 }]) {
+      await page.setViewportSize(viewport)
+      await collapse.click()
+      assert.equal((await expand.boundingBox()).height, 64)
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false)
+      await expand.click()
+    }
+    console.log(JSON.stringify({ ready, submits, unlisted, claimRequests, interaction: 'collapse/reopen/email retention/native validation/success dismissal/reload/reduced motion/mobile and desktop passed' }))
   } finally {
     await browser.close()
   }
