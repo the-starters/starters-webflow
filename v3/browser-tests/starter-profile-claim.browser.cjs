@@ -47,7 +47,8 @@ function markup(interaction = false) {
   if (!interaction) return html
   return html.replace('</style>', `
     .claim-modal { inset: auto 0 0; display: flex; background: none; }
-    [data-button-theme="white"][data-button-style="primary"] { background:#fff;border-color:#fff; }
+    [data-button-theme="sunny"][data-button-style="primary"] { background:#effba8;color:#1e211e;border:1px solid #effba8; }
+    @media(hover:hover) { [data-button-theme="sunny"][data-button-style="primary"]:hover { background:#434b43;color:#fff;border-color:#434b43; } }
     [data-wf--background--variant] { position:absolute;inset:0;background: linear-gradient(100deg,#d2e0da,#91acb1); }
     [data-starter-claim="content"] { padding: 48px 20px; }
     form { background: none; width: min(100%,500px); padding: 0; margin: auto; }
@@ -59,7 +60,7 @@ function markup(interaction = false) {
       <div data-starter-claim="error" style="display:none">Please try again.</div>
       </div>
       </div>
-      <button type="button" data-starter-claim="toggle" hidden><div data-starter-claim="visual" data-button-theme="white" data-button-style="primary"><span data-starter-claim="toggle-label">View Less</span><span data-starter-claim="chevron" aria-hidden="true"></span></div></button>
+      <button type="button" data-starter-claim="toggle" hidden><div data-starter-claim="visual" data-button-theme="sunny" data-button-style="primary"><span data-starter-claim="toggle-label">View Less</span><span data-starter-claim="chevron" aria-hidden="true"></span></div></button>
       <button type="button" data-starter-claim="close">X</button>
       </div>
       <div data-starter-claim="compact" class="hide" hidden><span data-starter-claim="compact-label">Claim Your Profile</span></div>`)
@@ -217,10 +218,14 @@ function markup(interaction = false) {
     assert.equal(await toggle.evaluate(node => node === window.__claimToggle), true)
     const visual = page.locator('[data-starter-claim="visual"]')
     await page.mouse.move(5, 5)
-    await page.waitForFunction(() => getComputedStyle(document.querySelector('[data-starter-claim="visual"]')).backgroundColor === 'rgb(238, 238, 238)')
-    assert.equal((await visual.boundingBox()).height, 32)
-    await toggle.hover()
     await page.waitForFunction(() => getComputedStyle(document.querySelector('[data-starter-claim="visual"]')).backgroundColor === 'rgb(239, 251, 168)')
+    assert.equal((await visual.boundingBox()).height, 32)
+    const faceBox = await visual.boundingBox()
+    assert.ok(Math.abs(faceBox.x + faceBox.width / 2 - 195) < 0.2)
+    assert.ok(toggleBox.width >= faceBox.width)
+    await toggle.hover()
+    await page.waitForFunction(() => getComputedStyle(document.querySelector('[data-starter-claim="visual"]')).backgroundColor === 'rgb(67, 75, 67)')
+    assert.equal(await visual.evaluate(node => getComputedStyle(node).color), 'rgb(255, 255, 255)')
     const labelBox = await page.locator('[data-starter-claim="compact-label"]').boundingBox()
     assert.ok(Math.abs(labelBox.y - (toggleBox.y + 38) - 24) < 0.2)
     assert.ok(Math.abs(844 - labelBox.y - labelBox.height - 24) < 0.2)
