@@ -10620,6 +10620,34 @@ test('F08: an open offer shows "New time proposed", never the plain pending labe
   assert.equal(api.pendingOfferOpen(f08PendingOffer({ status: 'cancelled' })), false)
 })
 
+test('F08: a Brand card with an open offer shows "New time proposed" once', () => {
+  // Kaeser 2026-10-13 (production A1, #1454): the Brand card showed the status
+  // pill and the Brand-only status chip, both reading "New time proposed".
+  function brandCard(booking) {
+    const pillLabel = element({ 'label-text': '' })
+    const pill = element({ 'booking-element': 'status' })
+    pill.querySelector = (selector) => selector === '[label-text]' ? pillLabel : null
+    const chipLabel = element({ 'label-text': '' })
+    const chip = element({ 'brand-status': '' })
+    chip.querySelector = (selector) => selector === '[label-text]' ? chipLabel : null
+    const card = element()
+    card.querySelector = (selector) => ({
+      '[booking-element="status"]': pill,
+      '[brand-status]': chip,
+    })[selector] || null
+    api.bindCard(card, booking, 'brand')
+    return { chip, chipLabel }
+  }
+  for (const proposer of ['starter', 'brand']) {
+    const offer = brandCard(f08PendingOffer({ rescheduled_by: proposer }))
+    assert.equal(offer.chip.hidden, true, 'the Brand chip does not repeat the open-offer pill')
+  }
+  // Without an offer the Brand chip still says the request awaits the Starter.
+  const plain = brandCard(f08PendingOffer({ start_old: null, end_old: null, rescheduled_by: '' }))
+  assert.equal(plain.chip.hidden, false)
+  assert.equal(plain.chipLabel.textContent, 'Awaiting confirmation')
+})
+
 test('F08: the offer status names the proposer and who must answer', () => {
   const starterOffer = f08PendingOffer()
   assert.equal(api.pendingOfferStatusText(starterOffer, 'brand'), 'Starter proposed a new time. Awaiting your answer.')

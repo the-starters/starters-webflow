@@ -1731,15 +1731,12 @@
     text(card, '[booking-element="payment-status-text"]', paymentText)
     show(paymentWrap, Boolean(paymentText))
 
+    // F08: with an open offer the status pill already reads "New time
+    // proposed", so the Brand-only chip stays hidden instead of repeating it.
     const brandStatus = card.querySelector('[brand-status]')
-    text(
-      brandStatus,
-      '[label-text]',
-      status === 'pending'
-        ? pendingOfferOpen(booking) ? 'New time proposed' : 'Awaiting confirmation'
-        : '',
-    )
-    show(brandStatus, status === 'pending' && role === 'brand')
+    const brandChipShown = status === 'pending' && role === 'brand' && !pendingOfferOpen(booking)
+    text(brandStatus, '[label-text]', brandChipShown ? 'Awaiting confirmation' : '')
+    show(brandStatus, brandChipShown)
 
     if (!requestExpirationOwned(booking, role, now)) {
       configureActionButtons(card, role, status, booking, now)
