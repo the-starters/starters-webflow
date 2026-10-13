@@ -589,8 +589,23 @@
 
   function readOAuthIntent(memberId, includeDurableFallback) {
     const records = readOAuthIntentRecords(memberId, includeDurableFallback)
+    for (const intent of records) {
+      if (isCurrentCalendarPreservationIntent(intent)) return intent
+    }
     if (records.length) return records[0]
     return isStagingHost && !grantId ? { redirectUri: oauthRedirectUri(), paidCallIntent: null } : null
+  }
+
+  function isCurrentCalendarPreservationIntent(intent) {
+    return Boolean(
+      grantId &&
+      intent &&
+      intent.preserveBookings === true &&
+      (!intent.targetManager || intent.targetManager === 'calendar') &&
+      typeof intent.transitionId === 'string' &&
+      intent.transitionId &&
+      intent.replaceGrantId === grantId
+    )
   }
 
   function readCompletedCalendarTransitionIntent(memberId, callbackGrantId) {
@@ -780,6 +795,15 @@
 
   function hasVersionedBindingAuthority() {
     return Boolean(grantId && grantEmail && grantCalendarId && calendarBindingVersion === 1)
+  }
+
+  function legacyOAuthRecoveryAllowed(oauthIntent) {
+    return Boolean(
+      oauthIntent &&
+      oauthIntent.preserveBookings !== true &&
+      oauthIntent.paidCallIntent &&
+      !hasVersionedBindingAuthority()
+    )
   }
 
   function activeReadbackConfigIds(records, expectedGrantId) {
@@ -1274,8 +1298,9 @@
 
   async function recoverPaidCallAfterOAuthCancellation(memberId, oauthIntent) {
     const intent = oauthIntent && oauthIntent.paidCallIntent
-    if (!intent || oauthIntent.preserveBookings === true) return false
+    if (!legacyOAuthRecoveryAllowed(oauthIntent)) return false
     await refreshCanonicalConnectionState()
+    if (hasVersionedBindingAuthority()) return false
     let createdVirtual = false
     const recovery = oauthIntent.virtualRecovery
     const resumableGrant =
@@ -1823,8 +1848,7 @@
         error.code === 'OAUTH_CALLBACK_INVALID' &&
         trustedState &&
         oauthIntent &&
-        oauthIntent.preserveBookings !== true &&
-        oauthIntent.paidCallIntent
+        legacyOAuthRecoveryAllowed(oauthIntent)
       ) {
         try {
           recovered = await recoverPaidCallAfterOAuthCancellation(
@@ -1842,7 +1866,7 @@
       if (
         error &&
         error.code === 'OAUTH_CALLBACK_INVALID' &&
-        (!trustedState || !oauthIntent || oauthIntent.preserveBookings === true || !oauthIntent.paidCallIntent || recovered)
+        (!trustedState || !oauthIntent || oauthIntent.preserveBookings === true || !oauthIntent.paidCallIntent || hasVersionedBindingAuthority() || recovered)
       ) {
         if (trustedState && memberId) clearOAuthIntent(memberId)
         clearOAuthCallback()
@@ -3471,8 +3495,11 @@
           }
           if (preservedReadbackVerified) clearOAuthRecoveryIntent(sessionMemberId)
         }
-        const pendingTransition = preservedReadbackVerified ? null : readOAuthIntent(sessionMemberId)
-        if (pendingTransition && pendingTransition.preserveBookings !== true && pendingTransition.paidCallIntent) {
+        if (hasVersionedBindingAuthority()) clearOAuthRecoveryIntent(sessionMemberId)
+        const pendingTransition = (preservedReadbackVerified || hasVersionedBindingAuthority())
+          ? null
+          : readOAuthIntent(sessionMemberId)
+        if (legacyOAuthRecoveryAllowed(pendingTransition)) {
           const recovered = await recoverPaidCallAfterOAuthCancellation(
             sessionMemberId,
             pendingTransition,

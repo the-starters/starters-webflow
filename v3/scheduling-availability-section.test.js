@@ -1893,6 +1893,35 @@ test('completed zero-offer Platform receipt clears stale paid OAuth recovery acr
   assert.equal(second.window.localStorage._map.has(OAUTH_INTENT_KEY), false)
 })
 
+for (const manager of ['platform', 'calendar']) {
+  test(`versioned zero-offer ${manager} binding suppresses stale paid OAuth recovery without receipts`, async () => {
+    const paidIntent = stalePaidOAuthIntent()
+    const result = loadSection({
+      serverState: {
+        grantId: manager + '-grant',
+        grantEmail: manager + '@example.com',
+        calendarId: manager + '-calendar',
+        calendarBindingVersion: 1,
+        configs: [],
+        availability: {
+          items: { general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] } },
+          manager,
+        },
+      },
+      sessionStorage: { [OAUTH_INTENT_KEY]: paidIntent },
+      localStorage: { [OAUTH_INTENT_KEY]: paidIntent },
+    })
+    await settle()
+
+    assert.equal(result.calls.filter((call) => call.path === '/grants/add/v3').length, 0)
+    assertNoCalendarReplacementWrites(result.calls)
+    assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
+    assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.configurationCount, 0)
+    assert.equal(result.window.sessionStorage._map.has(OAUTH_INTENT_KEY), false)
+    assert.equal(result.window.localStorage._map.has(OAUTH_INTENT_KEY), false)
+  })
+}
+
 test('disconnecting Google preserves the Platform layer by replacing the Google grant with a virtual grant', async () => {
   const legacyClearCalls = []
   const { dom, calls } = loadSection({
@@ -5019,6 +5048,18 @@ function completedCalendarIntent(activeConfigIds = ['new-free']) {
   })
 }
 
+function unfinishedCalendarIntent() {
+  return JSON.stringify({
+    createdAt: Date.now(),
+    redirectUri: 'https://thestarters.com/starter-dashboard',
+    paidCallIntent: null,
+    preserveBookings: true,
+    replaceGrantId: 'old-grant',
+    transitionId: 'transition-fixture',
+    targetManager: 'calendar',
+  })
+}
+
 function stalePaidOAuthIntent() {
   return JSON.stringify({
     createdAt: Date.now(),
@@ -5143,6 +5184,22 @@ test('preserved OAuth completion sends the expected old binding and accepts only
   assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
   assert.equal(result.window.STARTER_AVAILABILITY.manager, 'calendar')
   assert.equal(result.intentStillStored(), false)
+})
+
+test('preserved OAuth callback prefers current durable intent over stale legacy session', async () => {
+  const result = preservedOAuthCase({
+    sessionStorage: { [OAUTH_INTENT_KEY]: stalePaidOAuthIntent() },
+    localStorage: { [OAUTH_INTENT_KEY]: unfinishedCalendarIntent() },
+  })
+  await settle()
+
+  const request = result.calls.find((call) => call.path === '/grants/add/v3')
+  assert.equal(request.body.in_preserve_bookings, true)
+  assert.equal(request.body.in_replace_grant_id, 'old-grant')
+  assert.equal(request.body.in_transition_id, 'transition-fixture')
+  assertNoCalendarReplacementWrites(result.calls)
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
+  assert.equal(result.window.STARTER_AVAILABILITY.manager, 'calendar')
 })
 
 test('preserved OAuth accepts a versioned binding with no active offers', async () => {
