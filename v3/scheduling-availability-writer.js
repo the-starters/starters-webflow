@@ -1796,10 +1796,12 @@
         throw new Error('Virtual calendar setup failed after disconnect')
       }
     } catch (error) {
-      try {
-        await recoverFailedCalendarTransition(memberId, transition, error)
-      } catch (recoveryError) {
-        console.warn('[scheduling-writer] disconnect recovery failed:', recoveryError && recoveryError.message)
+      if (!isActiveCallsRefusal(error)) {
+        try {
+          await recoverFailedCalendarTransition(memberId, transition, error)
+        } catch (recoveryError) {
+          console.warn('[scheduling-writer] disconnect recovery failed:', recoveryError && recoveryError.message)
+        }
       }
       publishCalendarConnectionError()
       showTransitionError(error)

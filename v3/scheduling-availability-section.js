@@ -1641,10 +1641,12 @@
       console.log('[scheduling-section] disconnected Google Calendar, reverted to platform')
       return true
     } catch (error) {
-      try {
-        await recoverFailedCalendarTransition(memberId, transition, error)
-      } catch (recoveryError) {
-        console.warn('[scheduling-section] disconnect-google recovery failed:', recoveryError && recoveryError.message)
+      if (!isActiveCallsRefusal(error)) {
+        try {
+          await recoverFailedCalendarTransition(memberId, transition, error)
+        } catch (recoveryError) {
+          console.warn('[scheduling-section] disconnect-google recovery failed:', recoveryError && recoveryError.message)
+        }
       }
       publishCalendarConnectionError()
       noteCalendarTransitionError(error)

@@ -2273,11 +2273,35 @@ for (const [refusalContract, refusalMessage] of [
     const availability = defaultAvailability()
     availability.manager = 'calendar'
     const legacyClearCalls = []
+    let paidService = {
+      config_id: 'cfg-paid-old',
+      title: 'Paid Strategy Call',
+      price_cents: 42500,
+      duration: 45,
+      active: true,
+    }
     const result = loadWriter({
       availability,
       storage: TZ_CACHED,
       clearGrantData: async (...args) => legacyClearCalls.push(args),
       routes: {
+        '/starter/paid-call-settings/get/v3': () => ({
+          status: 200,
+          body: {
+            readiness: { paid_call_enabled: Boolean(paidService) },
+            services: paidService ? [paidService] : [],
+          },
+        }),
+        '/starter/paid-call-settings/upsert/v3': (body) => {
+          paidService = {
+            config_id: 'cfg-paid-restored',
+            title: body.title,
+            price_cents: body.price_cents,
+            duration: body.duration_minutes,
+            active: true,
+          }
+          return { status: 200, body: { service: paidService } }
+        },
         '/starter/get_by_memberstack/v3': () => ({
           status: 200,
           body: {
@@ -2293,6 +2317,10 @@ for (const [refusalContract, refusalMessage] of [
           status: 400,
           body: { message: refusalMessage },
         }),
+        '/nylas_configurations/get_all/v3': () => ({
+          status: 200,
+          body: [{ config_id: 'cfg-paid-old', grant_id: 'grant-1', is_paid: true, active: true }],
+        }),
       },
     })
     await settle()
@@ -2302,8 +2330,19 @@ for (const [refusalContract, refusalMessage] of [
 
     assert.equal(result.calls.filter((c) => c.path === '/grants/delete/v3').length, 1)
     assert.equal(result.calls.filter((c) => c.path === '/grants/create_virtual_account/v3').length, 0)
+    assert.equal(result.calls.filter((c) => c.path === '/grants/add_virtual/v3').length, 0)
+    assert.equal(result.calls.filter((c) => c.path === '/grants/create_virtual_calendar/v3').length, 0)
+    assert.equal(result.calls.filter((c) => c.path === '/scheduler/configurations/create/v3').length, 0)
     assert.equal(result.calls.filter((c) => c.path === '/starter/update_availability/v3').length, 0)
+    assert.equal(result.calls.filter((c) => c.path === '/starter/paid-call-settings/upsert/v3').length, 0)
     assert.deepEqual(legacyClearCalls, [])
+    assert.deepEqual(paidService, {
+      config_id: 'cfg-paid-old',
+      title: 'Paid Strategy Call',
+      price_cents: 42500,
+      duration: 45,
+      active: true,
+    })
     assert.equal(result.window.STARTER_AVAILABILITY.manager, 'calendar')
     assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'error')
     assert.equal(result.dom.steps['config-request-error'].style.display, 'block')

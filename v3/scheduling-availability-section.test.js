@@ -2323,11 +2323,27 @@ for (const [refusalContract, refusalMessage] of [
   ['owner-wide', ACTIVE_CALLS_COPY],
 ]) {
   test(`an active-booking rejection stops Google disconnect before the virtual Platform replacement (${refusalContract})`, async () => {
-    const { dom, calls, window } = loadSection({
+    const paidService = {
+      config_id: 'cfg-paid-old',
+      title: 'Paid Strategy Call',
+      price_cents: 42500,
+      duration: 45,
+      active: true,
+    }
+    const paidConfig = {
+      config_id: 'cfg-paid-old',
+      grant_id: 'grant-1',
+      duration: 45,
+      is_paid: true,
+      active: true,
+    }
+    const { dom, calls, state, window } = loadSection({
       serverState: {
         grantId: 'grant-1',
         grantEmail: 'g@example.com',
         calendarId: 'cal-1',
+        paidService,
+        configs: [paidConfig],
         availability: {
           items: { general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] } },
           manager: 'calendar',
@@ -2348,6 +2364,16 @@ for (const [refusalContract, refusalMessage] of [
 
     assert.equal(calls.filter((c) => c.path === '/grants/delete/v3').length, 1)
     assert.equal(calls.filter((c) => c.path === '/grants/create_virtual_account/v3').length, 0)
+    assert.equal(calls.filter((c) => c.path === '/grants/add_virtual/v3').length, 0)
+    assert.equal(calls.filter((c) => c.path === '/grants/create_virtual_calendar/v3').length, 0)
+    assert.equal(calls.filter((c) => c.path === '/scheduler/configurations/create/v3').length, 0)
+    assert.equal(calls.filter((c) => c.path === '/starter/update_availability/v3').length, 0)
+    assert.equal(calls.filter((c) => c.path === '/starter/paid-call-settings/upsert/v3').length, 0)
+    assert.equal(state.grantId, 'grant-1')
+    assert.equal(state.grantEmail, 'g@example.com')
+    assert.equal(state.calendarId, 'cal-1')
+    assert.deepEqual(state.paidService, paidService)
+    assert.deepEqual(state.configs, [paidConfig])
     assert.equal(window.STARTER_SCHEDULING_CONNECTION.state, 'error')
     // The refusal is something the member can act on, so it must name the calls
     // instead of blaming the calendar connection.
