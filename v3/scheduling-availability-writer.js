@@ -20,7 +20,8 @@
   //   stay owned by the authenticated grants/delete/v3 composite route.
 
   const STAGING_HOST = 'the-starters-3-0.webflow.io'
-  const STAGING_OAUTH_PATH = '/starter-dashboard---availability-stage'
+  const STAGING_OAUTH_PATH = '/starter-dashboard'
+  const LEGACY_STAGING_OAUTH_PATH = '/starter-dashboard---availability-stage'
   const PRODUCTION_HOSTS = new Set(['thestarters.com', 'www.thestarters.com'])
   const PRODUCTION_PATH = '/starter-dashboard'
   const XANO_ORIGIN = 'https://x08a-5ko8-jj1r.n7c.xano.io'
@@ -342,6 +343,11 @@
       : 'https://' + window.location.hostname + PRODUCTION_PATH
   }
 
+  function acceptedOAuthIntentRedirect(redirectUri) {
+    return redirectUri === oauthRedirectUri() ||
+      (isStagingHost && redirectUri === 'https://' + STAGING_HOST + LEGACY_STAGING_OAUTH_PATH)
+  }
+
   function rememberOAuthIntent(memberId, redirectUri, paidCallIntent, previousGrantId) {
     const intent = {
       createdAt: Date.now(),
@@ -386,7 +392,6 @@
   }
 
   function readOAuthIntentRecords(memberId, includeDurableFallback) {
-    const redirectUri = oauthRedirectUri()
     const key = OAUTH_INTENT_PREFIX + memberId
     const storageNames = includeDurableFallback
       ? ['sessionStorage', 'localStorage']
@@ -401,7 +406,7 @@
           Number.isFinite(intent.createdAt) &&
           Date.now() - intent.createdAt >= 0 &&
           Date.now() - intent.createdAt <= OAUTH_INTENT_MAX_AGE &&
-          intent.redirectUri === redirectUri
+          acceptedOAuthIntentRedirect(intent.redirectUri)
         ) {
           records.push(intent)
           continue

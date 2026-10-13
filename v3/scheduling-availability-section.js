@@ -25,7 +25,8 @@
   // below. Every action also still logs its outcome to the console.
 
   const STAGING_HOST = 'the-starters-3-0.webflow.io'
-  const STAGING_OAUTH_PATH = '/starter-dashboard---availability-stage'
+  const STAGING_OAUTH_PATH = '/starter-dashboard'
+  const LEGACY_STAGING_OAUTH_PATH = '/starter-dashboard---availability-stage'
   const PRODUCTION_HOSTS = new Set(['thestarters.com', 'www.thestarters.com'])
   const PRODUCTION_PATH = '/starter-dashboard'
   const XANO_ORIGIN = 'https://x08a-5ko8-jj1r.n7c.xano.io'
@@ -497,18 +498,17 @@
   /* OAuth intent bookkeeping (mirrors scheduling-availability-writer.js)*/
   /* ------------------------------------------------------------------ */
 
-  // NOTE: Nylas' redirect-URI allowlist only contains 3 exact values (the
-  // staging `--availability-stage` page and the two production
-  // `/starter-dashboard` hosts — see grants/oauth/v3's contract). There is no
-  // staging `/starter-dashboard` (non-stage) entry, so on the staging host a
-  // Google-connect started from this section still round-trips back to the
-  // `--availability-stage` page (running the old modal writer), exactly as it
-  // already does for scheduling-availability-writer.js today. Production is
-  // unaffected: PRODUCTION_PATH always matches the page this section lives on.
+  // New staging starts return to the published Dashboard. Deployment requires
+  // the matching server allowlist and provider redirect registration.
   function oauthRedirectUri() {
     return isStagingHost
       ? 'https://' + STAGING_HOST + STAGING_OAUTH_PATH
       : 'https://' + window.location.hostname + PRODUCTION_PATH
+  }
+
+  function acceptedOAuthIntentRedirect(redirectUri) {
+    return redirectUri === oauthRedirectUri() ||
+      (isStagingHost && redirectUri === 'https://' + STAGING_HOST + LEGACY_STAGING_OAUTH_PATH)
   }
 
   function rememberOAuthIntent(memberId, redirectUri, paidCallIntent, previousGrantId) {
@@ -555,7 +555,6 @@
   }
 
   function readOAuthIntentRecords(memberId, includeDurableFallback) {
-    const redirectUri = oauthRedirectUri()
     const key = OAUTH_INTENT_PREFIX + memberId
     const storageNames = includeDurableFallback
       ? ['sessionStorage', 'localStorage']
@@ -570,7 +569,7 @@
           Number.isFinite(intent.createdAt) &&
           Date.now() - intent.createdAt >= 0 &&
           Date.now() - intent.createdAt <= OAUTH_INTENT_MAX_AGE &&
-          intent.redirectUri === redirectUri
+          acceptedOAuthIntentRedirect(intent.redirectUri)
         ) {
           records.push(intent)
           continue

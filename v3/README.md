@@ -3946,13 +3946,19 @@ inputs whose names match table columns — an optional `timezone` input, when
 absent, silently wiped the stored timezone on every edit. Endpoint inputs must
 avoid column names (hence `in_timezone`).
 
-Endpoints 1456/1457 accept the same `in_redirect_uri` for authorization and
-code exchange, and reject values outside the exact allowlist:
-`https://the-starters-3-0.webflow.io/starter-dashboard---availability-stage`,
-`https://thestarters.com/starter-dashboard`, and
-`https://www.thestarters.com/starter-dashboard`. The browser derives these
-values only from the approved host and path; both endpoints must use the same
-value or the OAuth provider rejects the exchange.
+New staging OAuth starts return to the published
+`https://the-starters-3-0.webflow.io/starter-dashboard`. The section and writer
+also accept an existing saved staging intent for the exact older
+`https://the-starters-3-0.webflow.io/starter-dashboard---availability-stage`
+URI and retain it for code exchange. They do not rewrite an in-flight intent.
+Production continues to use the current approved host's `/starter-dashboard`
+URI, on `thestarters.com` or `www.thestarters.com`.
+
+Deploying this route requires matching endpoint 1456/1457 redirect admission
+and Nylas Test redirect registration. The authorization request and code
+exchange must use the same exact `in_redirect_uri`. Local callback fixtures
+prove browser behavior only; they do not prove provider acceptance or publish
+the older draft callback page.
 
 ## V3 reviews frontend
 
