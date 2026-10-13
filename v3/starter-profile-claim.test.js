@@ -50,6 +50,8 @@ function element(attributes = {}, tagName = '') {
       contains(value) { return classes.has(value) },
       remove(value) { classes.delete(value) },
     },
+    style: {},
+    getBoundingClientRect() { return { height: this.height || 300 } },
     hidden: Object.prototype.hasOwnProperty.call(own, 'hidden'),
     value: '',
     getAttribute(name) {
@@ -69,6 +71,9 @@ function element(attributes = {}, tagName = '') {
         if (descendant) return descendant
       }
       return null
+    },
+    querySelectorAll(selector) {
+      return children.flatMap(child => [...(matchesSelector(child, selector) ? [child] : []), ...child.querySelectorAll(selector)])
     },
     contains(node) { return children.some(child => child === node || child.contains(node)) },
     focus() { this.focused = true },
@@ -125,12 +130,15 @@ function load(options = {}) {
     (options.closeInsideForm ? form : wrapper).appendChild(closeButton)
   }
 
-  let panel, collapseButton, expandButton, success, error
+  let panel, surface, collapseButton, expandButton, success, error
   const observers = []
   if (options.interaction) {
     panel = element({ 'data-starter-claim': 'panel' }, 'div')
+    surface = element({ 'data-wf--background--variant': 'gradient' }, 'div')
+    panel.appendChild(surface)
     collapseButton = element({ 'data-starter-claim': 'collapse' }, 'button')
     expandButton = element({ 'data-starter-claim': 'expand', hidden: '' }, 'button')
+    expandButton.height = 64
     success = element({ 'data-starter-claim': 'success' }, 'div')
     error = element({ 'data-starter-claim': 'error' }, 'div')
     success.display = error.display = 'none'
@@ -199,7 +207,7 @@ function load(options = {}) {
     await settle()
   }
 
-  return { panel, collapseButton, expandButton, success, error, observers, dispatch, closeButton, form, listeners, profileSlugField, googleAuth, wrapper, window, requests, timers }
+  return { panel, surface, collapseButton, expandButton, success, error, observers, dispatch, closeButton, form, listeners, profileSlugField, googleAuth, wrapper, window, requests, timers }
 }
 
 async function settle(times = 8) {
@@ -565,6 +573,7 @@ test('banner collapses without hiding its wrapper or submitting, then reopens wi
   assert.equal(h.wrapper.hidden, false)
   assert.equal(h.wrapper.getAttribute('data-starter-claim-state'), 'collapsed')
   assert.equal(h.panel.inert, true)
+  assert.equal(Number(h.surface.style.transform.match(/scaleY\((.+)\)/)[1]) * h.panel.getBoundingClientRect().height, 64)
   assert.equal(h.panel.getAttribute('aria-hidden'), 'true')
   assert.equal(h.expandButton.inert, false)
   assert.equal(h.expandButton.focused, true)
@@ -600,7 +609,7 @@ test('native success reopens a collapsed banner and X dismisses it for this load
   assert.equal(h.wrapper.getAttribute('aria-hidden'), 'true')
   assert.equal(h.wrapper.inert, true)
   assert.equal(h.wrapper.hidden, false)
-  h.panel.fire('transitionend', { target: h.panel, propertyName: 'clip-path' })
+  h.surface.fire('transitionend', { target: h.surface, propertyName: 'transform' })
   assertHidden(h)
   h.observers[0]()
   assertHidden(h)

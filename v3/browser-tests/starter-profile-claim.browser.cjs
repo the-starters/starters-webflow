@@ -47,12 +47,12 @@ function markup(interaction = false) {
   if (!interaction) return html
   return html.replace('</style>', `
     .claim-modal { inset: auto 0 0; display: flex; background: none; }
-    [data-starter-claim="panel"] { background: linear-gradient(100deg,#d2e0da,#91acb1); }
+    [data-wf--background--variant] { position:absolute;inset:0;background: linear-gradient(100deg,#d2e0da,#91acb1); }
     [data-starter-claim="content"] { padding: 48px 20px; }
     form { background: none; width: min(100%,500px); padding: 0; margin: auto; }
     [data-starter-claim="collapse"],[data-starter-claim="close"] { position:absolute;right:20px;top:8px;border:0;background:none; }
     input[type="email"] { width:100%;box-sizing:border-box; }
-  </style>`).replace('<form data-starter-claim="form">', '<div data-starter-claim="panel"><div data-starter-claim="content"><form data-starter-claim="form">')
+  </style>`).replace('<form data-starter-claim="form">', '<div data-starter-claim="panel"><div data-wf--background--variant="gradient"></div><div data-starter-claim="content"><form data-starter-claim="form">')
     .replace('</form>', `</form>
       <div data-starter-claim="success" style="display:none" tabindex="-1">Almost there.</div>
       <div data-starter-claim="error" style="display:none">Please try again.</div>
@@ -187,6 +187,8 @@ function markup(interaction = false) {
     assert.equal(await state(), 'collapsed')
     assert.equal(await page.locator('[data-starter-claim="panel"]').evaluate(node => node.inert), true)
     assert.equal((await expand.boundingBox()).height, 64)
+    await page.waitForFunction(() => Math.abs(document.querySelector('[data-starter-claim="surface"]').getBoundingClientRect().height - 64) < 0.1)
+    assert.equal(await page.locator('[data-starter-claim="content"]').evaluate(node => getComputedStyle(node).transform), 'none')
     await page.waitForFunction(() => getComputedStyle(document.querySelector('[data-starter-claim="expand-label"]')).filter === 'blur(0px)')
     await expand.click()
     assert.equal(await state(), 'expanded')
@@ -220,7 +222,11 @@ function markup(interaction = false) {
     await page.waitForSelector('[data-starter-claim-state="expanded"]')
     await page.emulateMedia({ reducedMotion: 'reduce' })
     await collapse.click()
-    assert.equal(await page.locator('[data-starter-claim="panel"]').evaluate(node => getComputedStyle(node).transitionDuration), '0s')
+    assert.equal(await page.locator('[data-starter-claim="surface"]').evaluate(node => getComputedStyle(node).transitionDuration), '0s')
+    await page.locator('[data-starter-claim="expand"]').evaluate(node => { node.style.minHeight = '98px' })
+    await page.waitForFunction(() => Math.abs(document.querySelector('[data-starter-claim="surface"]').getBoundingClientRect().height - 98) < 0.1)
+    await page.locator('[data-starter-claim="expand"]').evaluate(node => { node.style.minHeight = '' })
+    await page.waitForFunction(() => Math.abs(document.querySelector('[data-starter-claim="surface"]').getBoundingClientRect().height - 64) < 0.1)
     await expand.click()
     await page.emulateMedia({ reducedMotion: 'no-preference' })
     for (const viewport of [{ width: 320, height: 568 }, { width: 1280, height: 800 }]) {
