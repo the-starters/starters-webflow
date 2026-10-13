@@ -477,12 +477,6 @@ test('P9 review: approve only on a live call before start, never twice for a sta
   for (const extra of [{ status: 'cancelled' }, { status: 'completed' }, { status: 'pending' }, { status: 'rescheduled', start_old: null }, { status: 'rescheduled', start_old: 'invalid', start: Date.now() + H }, { start: Date.now() - 1 }, { start: null }]) {
     assert.equal(api.canRequestPaymentAction('brand', at(extra)), false, JSON.stringify(extra))
   }
-  // W5 environment switch: production rows stay closed until the list opens.
-  assert.deepEqual(api.PAYMENT_ACTION_OPEN_ENVIRONMENTS, ['test'])
-  for (const extra of [{ data_environment: 'production' }, { data_environment: '' }, { data_environment: undefined }]) {
-    assert.equal(api.canRequestPaymentAction('brand', at(extra)), false, JSON.stringify(extra))
-    assert.equal(api.canApprovePayment('brand', at(extra)), false, JSON.stringify(extra))
-  }
   const previous = global.xanoAuthFetch
   global.xanoAuthFetch = async () => ({ ok: true, json: async () => ({ booking_id: 'booking-paid-1', payment_status: 'auth_required', client_secret: 'pi_secret_test', provider_status: 'requires_action' }) })
   try {
@@ -494,6 +488,61 @@ test('P9 review: approve only on a live call before start, never twice for a sta
     await assert.rejects(api.approvePayment('brand', at({}), stripe('requires_payment_method')), /unexpected state/)
   } finally {
     global.xanoAuthFetch = previous
+  }
+})
+
+test('P9 JP 1a: environment admission is self-contained and Brand-only', async () => {
+  const previous = {
+    client: global.StartersPaidCallBrandPayment,
+    actions: global.StartersDashboardCallActions,
+    fetch: global.xanoAuthFetch,
+  }
+  let routeCalls = 0
+  let bankCalls = 0
+  const at = extra => Object.assign(paidBooking('auth_required'), extra)
+  const stripe = { handleNextAction: async () => { bankCalls += 1; throw new Error('Denied case reached Stripe') } }
+  global.StartersDashboardCallActions = canonicalActions
+  global.StartersPaidCallBrandPayment = {
+    getReadiness: async () => ({ environment: 'test' }),
+    installSavedCardPicker() {},
+    installCardSetupForm() {},
+    stripeForPaymentEnvironment: async () => stripe,
+  }
+  global.xanoAuthFetch = async () => { routeCalls += 1; throw new Error('Denied case reached the route') }
+  try {
+    assert.equal(await api.wire({ document: { addEventListener() {} }, role: 'brand', getBooking: () => at({}) }), true)
+    // JP 1a: Brand approval opens only for matched Test/Test or production/live.
+    assert.deepEqual(api.PAYMENT_ACTION_OPEN_ENVIRONMENTS, ['test', 'production'])
+    for (const extra of [
+      { data_environment: 'test', payment_environment: 'test' },
+      { data_environment: 'production', payment_environment: 'live' },
+    ]) {
+      assert.equal(api.canRequestPaymentAction('brand', at(extra)), true, JSON.stringify(extra))
+      assert.equal(api.canApprovePayment('brand', at(extra)), true, JSON.stringify(extra))
+      assert.equal(api.canRequestPaymentAction('starter', at(extra)), false, JSON.stringify(extra))
+      assert.equal(api.canApprovePayment('starter', at(extra)), false, JSON.stringify(extra))
+      assert.equal(await api.approvePayment('starter', at(extra), stripe), null)
+    }
+    for (const extra of [
+      { data_environment: 'production', payment_environment: 'test' },
+      { data_environment: 'test', payment_environment: 'live' },
+      { data_environment: 'staging', payment_environment: 'live' },
+      { data_environment: '', payment_environment: 'live' },
+      { data_environment: undefined, payment_environment: 'live' },
+      { data_environment: 'production', payment_environment: '' },
+      { data_environment: 'production', payment_environment: undefined },
+    ]) {
+      assert.equal(api.canRequestPaymentAction('brand', at(extra)), false, JSON.stringify(extra))
+      assert.equal(api.canApprovePayment('brand', at(extra)), false, JSON.stringify(extra))
+      assert.equal(await api.getPaymentAction('brand', at(extra)), null)
+      assert.equal(await api.approvePayment('brand', at(extra), stripe), null)
+    }
+    assert.equal(routeCalls, 0)
+    assert.equal(bankCalls, 0)
+  } finally {
+    global.StartersPaidCallBrandPayment = previous.client
+    global.StartersDashboardCallActions = previous.actions
+    global.xanoAuthFetch = previous.fetch
   }
 })
 
