@@ -53,8 +53,7 @@
   // available. Keep the legacy refusal compatible during backend rollout.
   const ERROR_TEXT_ACTIVE_CALLS =
     'Resolve pending and upcoming calls before disconnecting the calendar. You can still edit settings or switch calendars.'
-  const ACTIVE_CALLS_REFUSAL =
-    /resolve active bookings|resolve pending and upcoming calls before disconnecting the calendar/i
+  const LEGACY_ACTIVE_CALLS_REFUSAL = /resolve active bookings/i
 
   const activePath = window.location.pathname.replace(/\/+$/, '') || '/'
   const activeHostname = String(window.location.hostname || '').trim().toLowerCase()
@@ -748,7 +747,11 @@
   function isActiveCallsRefusal(error) {
     const data = error && error.data
     const message = data && typeof data.message === 'string' ? data.message : ''
-    return Boolean(error) && error.status === 400 && ACTIVE_CALLS_REFUSAL.test(message)
+    return (
+      Boolean(error) &&
+      error.status === 400 &&
+      (message === ERROR_TEXT_ACTIVE_CALLS || LEGACY_ACTIVE_CALLS_REFUSAL.test(message))
+    )
   }
 
   // Matches the page's shared `[data-custom-loader]` contract.

@@ -2280,6 +2280,13 @@ test('only the exact 400 active-bookings refusal replaces section disconnect cop
         body: { message: 'Grant does not belong to the authenticated member' },
       },
     },
+    {
+      label: 'owner-wide refusal plus unrelated suffix with a 400 status',
+      response: {
+        status: 400,
+        body: { message: ACTIVE_CALLS_COPY + ' Invalid grant owner.' },
+      },
+    },
   ]
 
   for (const entry of cases) {

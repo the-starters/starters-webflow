@@ -2209,37 +2209,42 @@ for (const [refusalContract, refusalMessage] of [
 // A 400 from a different grants/delete/v3 precondition is not the active-calls
 // refusal; it must keep the authored generic copy.
 test('a different grant deletion 400 keeps the authored generic copy', async () => {
-  const availability = defaultAvailability()
-  availability.manager = 'calendar'
-  const result = loadWriter({
-    availability,
-    storage: TZ_CACHED,
-    routes: {
-      '/starter/get_by_memberstack/v3': () => ({
-        status: 200,
-        body: {
-          id: 1,
-          timezone: 'Asia/Manila',
-          availability,
-          nylas_grant_id: 'grant-1',
-          nylas_grant_email: 'grant@example.com',
-          nylas_calendar_id: 'cal-1',
-        },
-      }),
-      '/grants/delete/v3': () => ({
-        status: 400,
-        body: { message: 'Grant does not belong to the authenticated member' },
-      }),
-    },
-  })
-  await settle()
+  for (const [label, message] of [
+    ['unrelated precondition', 'Grant does not belong to the authenticated member'],
+    ['owner-wide refusal plus unrelated suffix', ACTIVE_CALLS_COPY + ' Invalid grant owner.'],
+  ]) {
+    const availability = defaultAvailability()
+    availability.manager = 'calendar'
+    const result = loadWriter({
+      availability,
+      storage: TZ_CACHED,
+      routes: {
+        '/starter/get_by_memberstack/v3': () => ({
+          status: 200,
+          body: {
+            id: 1,
+            timezone: 'Asia/Manila',
+            availability,
+            nylas_grant_id: 'grant-1',
+            nylas_grant_email: 'grant@example.com',
+            nylas_calendar_id: 'cal-1',
+          },
+        }),
+        '/grants/delete/v3': () => ({
+          status: 400,
+          body: { message },
+        }),
+      },
+    })
+    await settle()
 
-  result.clickAction(result.dom.buttons.disconnectCalendar)
-  await settle()
+    result.clickAction(result.dom.buttons.disconnectCalendar)
+    await settle()
 
-  assert.equal(result.calls.filter((c) => c.path === '/grants/delete/v3').length, 1)
-  assert.equal(result.dom.steps['config-request-error'].style.display, 'block')
-  assert.equal(result.dom.errorText.textContent, GENERIC_TRANSITION_COPY)
+    assert.equal(result.calls.filter((c) => c.path === '/grants/delete/v3').length, 1, label)
+    assert.equal(result.dom.steps['config-request-error'].style.display, 'block', label)
+    assert.equal(result.dom.errorText.textContent, GENERIC_TRANSITION_COPY, label)
+  }
 })
 
 for (const [refusalContract, refusalMessage] of [
