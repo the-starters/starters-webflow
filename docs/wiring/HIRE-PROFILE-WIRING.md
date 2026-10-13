@@ -105,7 +105,7 @@ shared component. Its other page scripts can remain deferred
 | Notable Experience | everyone, incl. logged out | Webflow-authored `starter-work-histories` wf-xano wrapper / public Xano endpoint `#5860`; cards bind the preformatted `date_range` value (`Month Year`) |
 | Clients ("also worked with") | everyone, incl. logged out | Webflow-authored `starter-clients` wf-xano wrapper / public Xano endpoint `#5860` |
 | Call projections (hero, sticky header, Services, and chooser) | owner: live connection state with no booking action · anonymous: public-projection Free/Paid touts plus signup-only Book Call; chooser closed · brand: [readiness contract](#signed-in-brand-readiness) | this file / public compatibility projections for anonymous display; authenticated Xano, Nylas, and Stripe for booking |
-| Free and Paid call cards (hero tout and Services card) | same audiences and states as the row above; unclaimed profiles with no `starter_memberstack_id`: the Paid clone is display-only (`data-call-display-only="paid"`, no booking, signup, or modal hook) when the DTO sends `public_available: false` with a whole-dollar `price` from 1 to 1000; every other call clone stays hidden | `starter-call-offers-services` plus the Header call projection read the dedicated public Xano endpoint `profile/starter/calls/v3`; superseded CMS call cards stay hidden as rollback markup — see [The Free and Paid call cards render from one wf-xano template per surface](#the-free-and-paid-call-cards-render-from-one-wf-xano-template-per-surface) |
+| Free and Paid call cards (hero tout and Services card) | same audiences and states as the row above; unclaimed profiles with no `starter_memberstack_id`: the Paid clone is display-only (`data-call-display-only="paid"`, no booking, signup, or modal hook) when the DTO's `public_available` is not `true` and its whole-dollar `price` is 1 to 1000; every other call clone stays hidden | `starter-call-offers-services` plus the Header call projection read the dedicated public Xano endpoint `profile/starter/calls/v3`; superseded CMS call cards stay hidden as rollback markup — see [The Free and Paid call cards render from one wf-xano template per surface](#the-free-and-paid-call-cards-render-from-one-wf-xano-template-per-surface) |
 | Rate and next-slot text on those projections | see [canonical rate painting](#call-rate-surfaces-are-repainted-from-the-canonical-source) and [public-view limits](#qa-venue-limits-for-the-call-surface-rules) | this file |
 | Non-call Service cards | claimed profiles: logged-out cards open signup, eligible Brand cards open the project modal, Talent cards stay inert, and owner cards remain visible as explained previews; unclaimed profiles with no `starter_memberstack_id`: Xano clones are display-only | native Webflow CMS plus side-by-side `starter-services` wf-xano canary / canonical `freelancers_v3.Services`; this file adds interaction attributes to rendered Xano clones only outside the unclaimed public-record path |
 | Services Freelance rate card | claimed profiles: everyone; unclaimed profiles with no `starter_memberstack_id`: the Algolia-derived fallback stays down | this file / Algolia record, cloned from the section's own authored Default card — never an element owned by a `[wf-xano-element="wrapper"]`, because every wf-xano adapter stamps the same `data-service-card="component"` / `data-service-card-state="Default"` pair on its template and its rendered clones |
@@ -319,7 +319,9 @@ are aligned before selecting the canary.
    [Header offer selection](#header-offer-selection). Each revealed tout
    carries no "Next Available" row at all. Generic Book Call CTAs follow the
    [availability contract](#call-modal-and-project-service-routing). The Free/Paid chooser stays structurally closed,
-   and no authenticated booking discovery runs.
+   and no authenticated booking discovery runs. For an unclaimed profile with
+   no `starter_memberstack_id`, the Paid clone instead reads display-only from a
+   valid DTO price while booking remains unavailable.
 2. Anonymous click on a visible call tout, enabled Book Call CTA, or non-call service
    card opens the signup modal in place. Logged-out Book Call CTAs have no
    `data-modal-trigger`, so a missing signup controller cannot open the booking
@@ -329,9 +331,9 @@ are aligned before selecting the canary.
    `Retainer`) and must **not** carry `data-modal-trigger`, `booking-popup-open`,
    or `data-type` — otherwise a logged-in click opens an unconfigured booking
    popup for a card that cannot be booked. The exception is an unclaimed profile
-   with no `starter_memberstack_id`: its public-record Services and Retainer
-   wf-xano clones must not carry `data-signup-trigger-*`, because they are
-   display-only.
+   with no `starter_memberstack_id`: its public-record Services, Retainer, and
+   Paid Call display-only wf-xano clones must not carry
+   `data-signup-trigger-*`.
 3. Eligible signed-in Brand: canonical discovery keeps every call projection
    closed until the [Brand readiness contract](#signed-in-brand-readiness)
    admits the type. Until then, Book Call and each managed call card
@@ -473,8 +475,11 @@ groups without removing its spacing. The owner-only mobile exception is describe
 exercises unavailable and ready calls, including authored hidden groups that
 must stay hidden.
 
-Every authored Free and Paid projection starts hidden. Anonymous viewers may
-reveal only tout cards from the writer-maintained public compatibility booleans.
+Every authored Free and Paid projection starts hidden. On claimed profiles,
+anonymous viewers may reveal only tout cards from the writer-maintained public
+compatibility booleans. On unclaimed profiles with no `starter_memberstack_id`,
+the public-record-only adapter may reveal the Paid Call clone display-only and
+strips every booking, modal, and signup hook first.
 Those touts are not structurally inert: `wireCallServiceCardsToDirectEntry` has
 already stamped them `data-call-service-direct="ready"` and bound its
 capture-phase listener, which calls `preventDefault()` and
@@ -878,7 +883,9 @@ unauthenticated, one `starter_id` input), which returns at most one Free and one
 Paid item with `id`, `type`, `name`, `description`, `price` (whole dollars) and
 `public_available`. Webflow owns both templates; wf-xano clones them; this
 file only adds viewer state and routes clicks into the controllers that already
-own signup, booking, and owner settings. It never creates a card or a modal.
+own signup, booking, and owner settings. The public-record-only Paid Call
+exception is display-only and routes no clicks. It never creates a card or a
+modal.
 
 The CMS call cards stay in the page only as hidden rollback markup. While the
 canonical Services wrapper is on the page, bootstrap stamps those old call cards
@@ -966,6 +973,7 @@ clone, so an unrelated DOM mutation cannot show it as `loading` again. The final
 | `setup-required` | owner only: the card is shown as a preview with the next setup step |
 | `settings-loading` | owner only: settings have not resolved yet; the card keeps the authored `Default` look with `aria-busy="true"`, a progress cursor, and its setup tooltip and `[next-available-slot]` hidden; the 15 s failsafe settles a read still unanswered like a failed read (`settings-unavailable`), and a later answer still applies |
 | `settings-unavailable` | owner only: the settings lookup failed; the card is disabled and offers only Call Settings |
+| `display-only` | unclaimed public-record-only profile: Paid clone only, painted from a valid DTO `price` when `public_available` is not `true`; all booking, signup, modal, direct-entry, and next-slot hooks are removed |
 | `hidden` | the type is not offered to this viewer |
 | `loading` | every viewer before identity resolves; then a brand while discovery is pending and after an installed controller until the public DTO settles, and a signed-out, paywalled, talent, or owner viewer's not-yet-adapted clone until the DTO settles it: the card is shown with `Default`, `aria-busy="true"`, a progress cursor, and its `[next-available-slot]` hidden; the public Services pointer (`markServiceCardsClickable`) skips a loading card, and the DTO writer adds it when the card is offered; empty, refused, or failed discovery ends this state immediately for a brand; the 15 s failsafe fails any card still here closed to `hidden`; it is not admitted and opens nothing |
 | `pending` | internal adapter state before the role-specific readiness writer runs; it is not a settled viewer state |
@@ -986,6 +994,17 @@ That attribution pair is the existing signup controller's canonical service
 contract. It opens `signup-modal` for a confirmed logged-out viewer and maps the
 two card values to `booking_free` / `booking_paid` lead entries on the Starter
 Booking track. It does not open a booking surface before signup.
+
+The public-record-only path is the exception. If the page has no
+`starter_memberstack_id`, the member-bound paths stand down before the
+logged-out, paywalled, Brand, or owner writers run. Only the Paid clone may
+become visible, only as `display-only`, and only when its DTO item is Paid,
+`public_available` is not `true`, and `price` is a whole-dollar number from 1
+to 1000. The writer removes `has-connection`, `no-connection`, `data-type`,
+`booking-popup-open`, `data-modal-trigger`, `data-signup-trigger-*`,
+`data-call-service-direct`, `data-profile-book-call`, `aria-busy`, and the
+Next Available row before showing it. Free and invalid Paid clones stay hidden,
+including after a DTO error.
 
 <a id="paywalled-viewers"></a>
 
@@ -1014,10 +1033,11 @@ not a signup/upgrade path for talent accounts.
 Regression coverage: the "paywalled signed-in viewers" block at the end of
 `v3/hire-profile.test.js`.
 
-A public Paid item's amount is painted from the DTO's whole-dollar `price`,
-converted to cents for the shared rate writer. Every other viewer has that value
-overwritten by the canonical `price_cents` repaint described below, so this is
-the only path where the DTO's units reach the screen — read them as dollars.
+A public Paid item's amount, including the unclaimed display-only exception, is
+painted from the DTO's whole-dollar `price`, converted to cents for the shared
+rate writer. Viewers who reach authenticated discovery have that value
+overwritten by the canonical `price_cents` repaint described below, so any DTO
+price that remains on screen must be read as dollars.
 
 **The profile owner.** Both cards are revealed as a read-only preview:
 `data-call-owner-preview`, no signup attribution, and no modal trigger. That
