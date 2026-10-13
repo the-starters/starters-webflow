@@ -34,11 +34,11 @@ and `aria-hidden="true"`. Add these attributes to the outer wrapper:
 | `aria-hidden` | `true` |
 
 An optional close button inside the wrapper uses `data-starter-claim="close"`.
-After the banner is revealed, clicking that button or its icon hides the wrapper
-without submitting the form. The controller sets the button's type to `button`
-and supplies `aria-label="Close claim banner"` when no label is authored.
-Dismissal lasts for the current page load; reloading shows the banner again if
-the profile is still claimable.
+After the banner is revealed, clicking that button, clicking its icon, or using
+native keyboard activation hides the wrapper without submitting the form. The
+controller sets the button's type to `button` and supplies `aria-label="Close
+claim banner"` when no label is authored. Dismissal lasts for the current page
+load; reloading shows the banner again if the profile is still claimable.
 
 Put this attribute on the plain Webflow form:
 
@@ -92,10 +92,11 @@ Keep the Google signup control hidden. The normal Webflow form submit is the
 launch path. The shared Button component renders `<button type="button">`,
 which does not submit by itself. After a positive claim-status response, the
 controller turns a click on any enabled `type="button"` button inside the
-claim form, except the claim close control, into one `form.requestSubmit()` call. Native validation, Turnstile,
-and the Webflow notification then run as usual. If the browser has no
-`requestSubmit`, the controller clicks the form's native submit input. The form
-carries `data-starter-claim-submit-bound` once this binding exists.
+claim form, except the claim close control, into one `form.requestSubmit()`
+call. Native validation, Turnstile, and the Webflow notification then run as
+usual. If the browser has no `requestSubmit`, the controller clicks the form's
+native submit input. The form carries `data-starter-claim-submit-bound` once
+this binding exists.
 
 Load `v3/hire-profile.js` through the existing Hire template script tag. Keep
 the `hide` class as the no-JavaScript and pre-initialization state.
