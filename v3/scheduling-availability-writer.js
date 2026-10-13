@@ -382,12 +382,13 @@
     return stored
   }
 
-  function readOAuthIntent(memberId, includeDurableFallback) {
+  function readOAuthIntentRecords(memberId, includeDurableFallback) {
     const redirectUri = oauthRedirectUri()
     const key = OAUTH_INTENT_PREFIX + memberId
     const storageNames = includeDurableFallback
       ? ['sessionStorage', 'localStorage']
       : ['sessionStorage']
+    const records = []
     for (const storage of oauthIntentStorages(storageNames)) {
       try {
         const raw = storage.getItem(key)
@@ -399,7 +400,8 @@
           Date.now() - intent.createdAt <= OAUTH_INTENT_MAX_AGE &&
           intent.redirectUri === redirectUri
         ) {
-          return intent
+          records.push(intent)
+          continue
         }
         storage.removeItem(key)
       } catch (error) {
@@ -410,7 +412,23 @@
         }
       }
     }
-    return isStagingHost && !grantId ? { redirectUri: redirectUri, paidCallIntent: null } : null
+    return records
+  }
+
+  function readOAuthIntent(memberId, includeDurableFallback) {
+    const records = readOAuthIntentRecords(memberId, includeDurableFallback)
+    if (records.length) return records[0]
+    return isStagingHost && !grantId ? { redirectUri: oauthRedirectUri(), paidCallIntent: null } : null
+  }
+
+  function readCompletedCalendarTransitionIntent(memberId, callbackGrantId) {
+    const records = readOAuthIntentRecords(memberId, true)
+    for (const intent of records) {
+      if (preservedGrantReceiptMatches(intent, intent.grantReceipt, 'calendar', callbackGrantId)) {
+        return intent
+      }
+    }
+    return null
   }
 
   function clearOAuthIntent(memberId) {
@@ -436,8 +454,9 @@
     return PLATFORM_TRANSITION_INTENT_PREFIX + memberId
   }
 
-  function readPlatformTransitionIntent(memberId, replaceGrantId) {
+  function readPlatformTransitionIntentRecords(memberId) {
     const key = platformTransitionIntentKey(memberId)
+    const records = []
     for (const storage of oauthIntentStorages(['sessionStorage', 'localStorage'])) {
       try {
         const raw = storage.getItem(key)
@@ -449,17 +468,11 @@
           Date.now() - intent.createdAt <= OAUTH_INTENT_MAX_AGE &&
           intent.preserveBookings === true &&
           intent.targetManager === 'platform' &&
-          (
-            intent.replaceGrantId === replaceGrantId ||
-            (
-              replaceGrantId &&
-              preservedGrantReceiptMatches(intent, intent.grantReceipt, 'platform', replaceGrantId)
-            )
-          ) &&
           typeof intent.transitionId === 'string' &&
           intent.transitionId
         ) {
-          return intent
+          records.push(intent)
+          continue
         }
         storage.removeItem(key)
       } catch (error) {
@@ -468,6 +481,29 @@
         } catch (storageError) {
           /* storage unavailable */
         }
+      }
+    }
+    return records
+  }
+
+  function readPlatformTransitionIntent(memberId, replaceGrantId) {
+    const records = readPlatformTransitionIntentRecords(memberId)
+    for (const intent of records) {
+      if (replaceGrantId && preservedGrantReceiptMatches(intent, intent.grantReceipt, 'platform', replaceGrantId)) {
+        return intent
+      }
+    }
+    for (const intent of records) {
+      if (intent.replaceGrantId === replaceGrantId) return intent
+    }
+    return null
+  }
+
+  function readCompletedPlatformTransitionIntent(memberId, callbackGrantId) {
+    const records = readPlatformTransitionIntentRecords(memberId)
+    for (const intent of records) {
+      if (preservedGrantReceiptMatches(intent, intent.grantReceipt, 'platform', callbackGrantId)) {
+        return intent
       }
     }
     return null
@@ -640,7 +676,7 @@
 
   function verifyCompletedPlatformTransitionReadback() {
     if (!sessionMemberId || !grantId) return
-    const intent = readPlatformTransitionIntent(sessionMemberId, grantId)
+    const intent = readCompletedPlatformTransitionIntent(sessionMemberId, grantId)
     if (!intent || !preservedGrantReceiptMatches(intent, intent.grantReceipt, 'platform', grantId)) return
     assertPreservedDefault(intent, 'platform', grantId)
     clearPlatformTransitionIntent(sessionMemberId)
@@ -648,7 +684,7 @@
 
   function verifyCompletedCalendarTransitionReadback() {
     if (!sessionMemberId || !grantId) return
-    const intent = readOAuthIntent(sessionMemberId, true)
+    const intent = readCompletedCalendarTransitionIntent(sessionMemberId, grantId)
     if (!intent || !preservedGrantReceiptMatches(intent, intent.grantReceipt, 'calendar', grantId)) return
     assertPreservedDefault(intent, 'calendar', grantId)
     clearOAuthIntent(sessionMemberId)
@@ -2078,8 +2114,14 @@
       let connectedCalendar = isStagingHost ? urlParams.get('calendar') || null : null
       let oauthPaidCallIntent = null
       let preservedCallbackIncomplete = false
+      let canonicalConfigsLoaded = false
 
       if (!oauthCallback) {
+        if (grantId) {
+          configs = (await getConfigs(grantId, true)) || []
+          canonicalConfigsLoaded = true
+          verifyCompletedPreservationReadback()
+        }
         const pendingTransition = readOAuthIntent(sessionMemberId)
         if (pendingTransition && pendingTransition.preserveBookings !== true && pendingTransition.paidCallIntent) {
           const recovered = await recoverPaidCallAfterOAuthCancellation(
@@ -2108,7 +2150,9 @@
             throw invalidOAuthCallback('OAuth state does not match the logged-in member')
           }
           trustedState = true
-          oauthIntent = readOAuthIntent(memberId, true)
+          const completedGrantId = oauthGrantId || grantId
+          oauthIntent = (completedGrantId && readCompletedCalendarTransitionIntent(memberId, completedGrantId)) ||
+            readOAuthIntent(memberId, true)
           if (oauthCallback.hasError) {
             throw invalidOAuthCallback('OAuth authorization was cancelled or failed')
           }
@@ -2189,7 +2233,7 @@
       }
 
       if (grantId) {
-        configs = (await getConfigs(grantId, true)) || []
+        if (!canonicalConfigsLoaded) configs = (await getConfigs(grantId, true)) || []
         if (
           isStagingHost &&
           !configs.length &&

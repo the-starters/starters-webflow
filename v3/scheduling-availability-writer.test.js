@@ -1916,6 +1916,43 @@ test('completed Platform receipt reload stays closed until active configs match'
   assert.equal(second.storage.has(PLATFORM_TRANSITION_KEY), false)
 })
 
+test('completed Platform receipt in localStorage is not masked by stale session intent', async () => {
+  const staleSessionIntent = JSON.stringify({
+    createdAt: Date.now(),
+    preserveBookings: true,
+    replaceGrantId: 'platform-grant',
+    transitionId: 'stale-platform-transition',
+    targetManager: 'platform',
+  })
+  const completedIntent = platformTransitionIntent()
+  const first = completedPlatformReceiptReloadWriter({
+    configs: [],
+    sessionStorage: { [PLATFORM_TRANSITION_KEY]: staleSessionIntent },
+    storage: { ...TZ_CACHED, [PLATFORM_TRANSITION_KEY]: completedIntent },
+  })
+  await settle()
+
+  assertNoCalendarReplacementWrites(first.calls)
+  assert.equal(first.window.STARTER_SCHEDULING_CONNECTION.state, 'error')
+  assert.equal(connectionStates(first.events).includes('connected'), false)
+  assert.equal(first.storage.has(PLATFORM_TRANSITION_KEY), true)
+
+  const zeroOfferIntent = platformTransitionIntent({ activeConfigIds: [] })
+  const second = completedPlatformReceiptReloadWriter({
+    activeConfigIds: [],
+    configs: [],
+    sessionStorage: { [PLATFORM_TRANSITION_KEY]: staleSessionIntent },
+    storage: { ...TZ_CACHED, [PLATFORM_TRANSITION_KEY]: zeroOfferIntent },
+  })
+  await settle()
+
+  assertNoCalendarReplacementWrites(second.calls)
+  assert.equal(second.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
+  assert.equal(second.window.STARTER_SCHEDULING_CONNECTION.configurationCount, 0)
+  assert.equal(second.sessionStorage.has(PLATFORM_TRANSITION_KEY), false)
+  assert.equal(second.storage.has(PLATFORM_TRANSITION_KEY), false)
+})
+
 test('completed zero-offer Platform receipt reload verifies without provisioning', async () => {
   const result = completedPlatformReceiptReloadWriter({ activeConfigIds: [], configs: [] })
   await settle()
@@ -4043,6 +4080,27 @@ function completedCalendarReceipt(activeConfigIds = ['new-free']) {
   }
 }
 
+function completedCalendarIntent(activeConfigIds = ['new-free']) {
+  return JSON.stringify({
+    createdAt: Date.now(),
+    redirectUri: 'https://thestarters.com/starter-dashboard',
+    paidCallIntent: null,
+    preserveBookings: true,
+    replaceGrantId: 'old-grant',
+    transitionId: 'transition-fixture',
+    oauthGrantSaved: true,
+    grantReceipt: completedCalendarReceipt(activeConfigIds),
+  })
+}
+
+function stalePaidOAuthIntent() {
+  return JSON.stringify({
+    createdAt: Date.now(),
+    redirectUri: 'https://thestarters.com/starter-dashboard',
+    paidCallIntent: { title: 'Paid Strategy Call', price_cents: 42500, duration_minutes: 45 },
+  })
+}
+
 function preservedOAuthCase(options = {}) {
   const activeConfigIds =
     options.activeConfigIds === undefined ? ['new-free'] : options.activeConfigIds
@@ -4126,7 +4184,7 @@ function preservedOAuthCase(options = {}) {
     hostname: options.hostname || 'thestarters.com',
     pathname: options.pathname || '/starter-dashboard',
     origin: options.origin || 'https://thestarters.com',
-    search, sessionStorage, storage: TZ_CACHED, availability, routes,
+    search, sessionStorage, storage: { ...TZ_CACHED, ...(options.storage || {}) }, availability, routes,
   })
   result.intentStillStored = () => result.sessionStorage.has('starter-scheduling-oauth-intent:member-a')
   return result
@@ -4303,6 +4361,40 @@ test('completed Google receipt reload stays closed until active configs match', 
   assertNoCalendarReplacementWrites(second.calls)
   assert.equal(second.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
   assert.equal(second.intentStillStored(), false)
+})
+
+test('completed Google receipt in localStorage is not masked by stale session intent', async () => {
+  const first = preservedOAuthCase({
+    search: '',
+    selected: true,
+    newConfigs: [],
+    sessionStorage: { [OAUTH_INTENT_KEY]: stalePaidOAuthIntent() },
+    storage: { [OAUTH_INTENT_KEY]: completedCalendarIntent() },
+  })
+  await settle()
+
+  assert.equal(first.calls.filter((call) => call.path === '/grants/add/v3').length, 0)
+  assertNoCalendarReplacementWrites(first.calls)
+  assert.equal(first.window.STARTER_SCHEDULING_CONNECTION.state, 'error')
+  assert.equal(connectionStates(first.events).includes('connected'), false)
+  assert.equal(first.storage.has(OAUTH_INTENT_KEY), true)
+
+  const second = preservedOAuthCase({
+    search: '',
+    selected: true,
+    activeConfigIds: [],
+    newConfigs: [],
+    sessionStorage: { [OAUTH_INTENT_KEY]: stalePaidOAuthIntent() },
+    storage: { [OAUTH_INTENT_KEY]: completedCalendarIntent([]) },
+  })
+  await settle()
+
+  assert.equal(second.calls.filter((call) => call.path === '/grants/add/v3').length, 0)
+  assertNoCalendarReplacementWrites(second.calls)
+  assert.equal(second.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
+  assert.equal(second.window.STARTER_SCHEDULING_CONNECTION.configurationCount, 0)
+  assert.equal(second.sessionStorage.has(OAUTH_INTENT_KEY), false)
+  assert.equal(second.storage.has(OAUTH_INTENT_KEY), false)
 })
 
 test('completed zero-offer Google receipt reload verifies without provisioning', async () => {
