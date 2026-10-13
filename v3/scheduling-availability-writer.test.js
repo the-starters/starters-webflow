@@ -598,6 +598,7 @@ async function settle() {
 }
 
 const TZ_CACHED = { 'starter-timezone:member-a': 'Asia/Manila' }
+const OAUTH_INTENT_KEY = 'starter-scheduling-oauth-intent:member-a'
 const PLATFORM_TRANSITION_KEY = 'starter-scheduling-platform-transition:member-a'
 
 function platformTransitionIntent(options = {}) {
@@ -2348,6 +2349,59 @@ for (const [refusalContract, refusalMessage] of [
     assert.equal(result.dom.steps['config-request-error'].style.display, 'block')
     assert.equal(result.dom.steps['success-disconnect'].style.display, 'none')
     assert.equal(result.dom.errorText.textContent, ACTIVE_CALLS_COPY)
+
+    const reload = loadWriter({
+      availability,
+      storage: Object.fromEntries(result.storage),
+      sessionStorage: Object.fromEntries(result.sessionStorage),
+      routes: {
+        '/starter/paid-call-settings/get/v3': () => ({
+          status: 200,
+          body: {
+            readiness: { paid_call_enabled: Boolean(paidService) },
+            services: paidService ? [paidService] : [],
+          },
+        }),
+        '/starter/paid-call-settings/upsert/v3': (body) => {
+          paidService = {
+            config_id: 'cfg-paid-restored',
+            title: body.title,
+            price_cents: body.price_cents,
+            duration: body.duration_minutes,
+            active: true,
+          }
+          return { status: 200, body: { service: paidService } }
+        },
+        '/starter/get_by_memberstack/v3': () => ({
+          status: 200,
+          body: {
+            id: 1,
+            timezone: 'Asia/Manila',
+            availability,
+            nylas_grant_id: 'grant-1',
+            nylas_grant_email: 'grant@example.com',
+            nylas_calendar_id: 'cal-1',
+          },
+        }),
+        '/nylas_configurations/get_all/v3': () => ({
+          status: 200,
+          body: [{ config_id: 'cfg-paid-old', grant_id: 'grant-1', is_paid: true, active: true }],
+        }),
+      },
+    })
+    await settle()
+
+    assert.equal(result.sessionStorage.has(OAUTH_INTENT_KEY), false)
+    assert.equal(result.storage.has(OAUTH_INTENT_KEY), false)
+    assertNoCalendarReplacementWrites(reload.calls)
+    assert.deepEqual(paidService, {
+      config_id: 'cfg-paid-old',
+      title: 'Paid Strategy Call',
+      price_cents: 42500,
+      duration: 45,
+      active: true,
+    })
+    assert.equal(reload.window.STARTER_AVAILABILITY.manager, 'calendar')
   })
 }
 
@@ -3975,6 +4029,20 @@ test('resolves and persists the timezone through authenticated endpoints', async
 
 // Synthetic server admission for the future-default transition contract. These
 // fixtures never use provider credentials or the network.
+function completedCalendarReceipt(activeConfigIds = ['new-free']) {
+  return {
+    transition_id: 'transition-fixture',
+    previous_grant_retained: true,
+    replaced_grant_id: 'old-grant',
+    grant_id: 'new-grant',
+    default_selected: true,
+    services_ready: true,
+    manager: 'calendar',
+    active_config_ids: activeConfigIds,
+    active_service_count: activeConfigIds.length,
+  }
+}
+
 function preservedOAuthCase(options = {}) {
   const activeConfigIds =
     options.activeConfigIds === undefined ? ['new-free'] : options.activeConfigIds
@@ -4197,18 +4265,65 @@ test('a persisted completed preservation receipt resumes without re-exchanging t
     selected: true,
     intent: {
       oauthGrantSaved: true,
-      grantReceipt: {
-        transition_id: 'transition-fixture', previous_grant_retained: true,
-        replaced_grant_id: 'old-grant', grant_id: 'new-grant', default_selected: true,
-        services_ready: true, manager: 'calendar',
-        active_config_ids: ['new-free'], active_service_count: 1,
-      },
+      grantReceipt: completedCalendarReceipt(),
     },
   })
   await settle()
   assert.equal(result.calls.filter((call) => call.path === '/grants/add/v3').length, 0)
   assert.equal(result.intentStillStored(), false)
   assertNoCalendarReplacementWrites(result.calls)
+})
+
+test('completed Google receipt reload stays closed until active configs match', async () => {
+  const first = preservedOAuthCase({
+    search: '',
+    selected: true,
+    newConfigs: [],
+    intent: {
+      oauthGrantSaved: true,
+      grantReceipt: completedCalendarReceipt(),
+    },
+  })
+  await settle()
+
+  assert.equal(first.calls.filter((call) => call.path === '/grants/add/v3').length, 0)
+  assertNoCalendarReplacementWrites(first.calls)
+  assert.equal(first.window.STARTER_SCHEDULING_CONNECTION.state, 'error')
+  assert.equal(connectionStates(first.events).includes('connected'), false)
+  assert.equal(first.intentStillStored(), true)
+
+  const second = preservedOAuthCase({
+    search: '',
+    selected: true,
+    sessionStorage: Object.fromEntries(first.sessionStorage),
+  })
+  await settle()
+
+  assert.equal(second.calls.filter((call) => call.path === '/grants/add/v3').length, 0)
+  assertNoCalendarReplacementWrites(second.calls)
+  assert.equal(second.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
+  assert.equal(second.intentStillStored(), false)
+})
+
+test('completed zero-offer Google receipt reload verifies without provisioning', async () => {
+  const result = preservedOAuthCase({
+    search: '',
+    selected: true,
+    activeConfigIds: [],
+    newConfigs: [],
+    intent: {
+      oauthGrantSaved: true,
+      grantReceipt: completedCalendarReceipt([]),
+    },
+  })
+  await settle()
+
+  assert.equal(result.calls.filter((call) => call.path === '/grants/add/v3').length, 0)
+  assertNoCalendarReplacementWrites(result.calls)
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.configurationCount, 0)
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.calendarBindingVersion, 1)
+  assert.equal(result.intentStillStored(), false)
 })
 
 test('cancelled and abandoned preserved OAuth never rebuilds a virtual calendar or restores paid settings', async () => {
@@ -4271,16 +4386,13 @@ test('a completed preserved receipt rejects another hosted grant without re-exch
   const result = preservedOAuthCase({
     search: '?success=true&grant_id=other-grant&state=member-a',
     selected: true,
-    intent: { grantReceipt: {
-      transition_id: 'transition-fixture', previous_grant_retained: true,
-      replaced_grant_id: 'old-grant', grant_id: 'new-grant', default_selected: true,
-      services_ready: true, manager: 'calendar',
-      active_config_ids: ['new-free'], active_service_count: 1,
-    } },
+    intent: { grantReceipt: completedCalendarReceipt() },
   })
   await settle()
   assert.equal(result.calls.filter((call) => call.path === '/grants/add/v3').length, 0)
   assertNoCalendarReplacementWrites(result.calls)
   assert.equal(result.intentStillStored(), true)
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'error')
+  assert.equal(connectionStates(result.events).includes('connected'), false)
   assert.ok(result.warnings.some((warning) => warning.includes('does not match the completed transition')))
 })

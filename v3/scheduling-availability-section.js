@@ -815,6 +815,19 @@
     clearPlatformTransitionIntent(sessionMemberId)
   }
 
+  function verifyCompletedCalendarTransitionReadback() {
+    if (!sessionMemberId || !grantId) return
+    const intent = readOAuthIntent(sessionMemberId, true)
+    if (!intent || !preservedGrantReceiptMatches(intent, intent.grantReceipt, 'calendar', grantId)) return
+    assertPreservedDefault(intent, 'calendar', grantId)
+    clearOAuthIntent(sessionMemberId)
+  }
+
+  function verifyCompletedPreservationReadback() {
+    verifyCompletedPlatformTransitionReadback()
+    verifyCompletedCalendarTransitionReadback()
+  }
+
   function invalidOAuthCallback(message) {
     return Object.assign(new Error(message), { code: 'OAUTH_CALLBACK_INVALID' })
   }
@@ -1113,7 +1126,7 @@
       availability = canonicalAvailability
       window.STARTER_AVAILABILITY = canonicalAvailability
       writeAvailabilityCache()
-      verifyCompletedPlatformTransitionReadback()
+      verifyCompletedPreservationReadback()
       connectionError = false
       return publishCalendarConnectionState()
     } catch (error) {
@@ -1641,7 +1654,12 @@
       console.log('[scheduling-section] disconnected Google Calendar, reverted to platform')
       return true
     } catch (error) {
-      if (!isActiveCallsRefusal(error)) {
+      const recoveryTransition = transition || (error && error.calendarTransition)
+      if (isActiveCallsRefusal(error)) {
+        if (memberId && recoveryTransition && recoveryTransition.oauthIntent) {
+          clearOAuthIntent(memberId)
+        }
+      } else {
         try {
           await recoverFailedCalendarTransition(memberId, transition, error)
         } catch (recoveryError) {

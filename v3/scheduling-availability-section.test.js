@@ -2379,6 +2379,21 @@ for (const [refusalContract, refusalMessage] of [
     // instead of blaming the calendar connection.
     assert.equal(dom.notif.steps['request-error'].style.display, '')
     assert.equal(dom.notif.errorText.textContent, ACTIVE_CALLS_COPY)
+
+    const reload = loadSection({
+      serverState: state,
+      sessionStorage: Object.fromEntries(window.sessionStorage._map),
+      localStorage: Object.fromEntries(window.localStorage._map),
+    })
+    await settle()
+
+    assert.equal(window.sessionStorage._map.has(OAUTH_INTENT_KEY), false)
+    assert.equal(window.localStorage._map.has(OAUTH_INTENT_KEY), false)
+    assertNoCalendarReplacementWrites(reload.calls)
+    assert.equal(reload.state.grantId, 'grant-1')
+    assert.equal(reload.state.availability.manager, 'calendar')
+    assert.deepEqual(reload.state.paidService, paidService)
+    assert.deepEqual(reload.state.configs, [paidConfig])
   })
 }
 
@@ -4898,6 +4913,20 @@ test('writer.js installs normally when the new section root is absent (e.g. --av
 
 // Synthetic server admission for the future-default transition contract. These
 // fixtures never use provider credentials or the network.
+function completedCalendarReceipt(activeConfigIds = ['new-free']) {
+  return {
+    transition_id: 'transition-fixture',
+    previous_grant_retained: true,
+    replaced_grant_id: 'old-grant',
+    grant_id: 'new-grant',
+    default_selected: true,
+    services_ready: true,
+    manager: 'calendar',
+    active_config_ids: activeConfigIds,
+    active_service_count: activeConfigIds.length,
+  }
+}
+
 function preservedOAuthCase(options = {}) {
   const activeConfigIds =
     options.activeConfigIds === undefined ? ['new-free'] : options.activeConfigIds
@@ -5100,18 +5129,65 @@ test('a persisted completed preservation receipt resumes without re-exchanging t
     selected: true,
     intent: {
       oauthGrantSaved: true,
-      grantReceipt: {
-        transition_id: 'transition-fixture', previous_grant_retained: true,
-        replaced_grant_id: 'old-grant', grant_id: 'new-grant', default_selected: true,
-        services_ready: true, manager: 'calendar',
-        active_config_ids: ['new-free'], active_service_count: 1,
-      },
+      grantReceipt: completedCalendarReceipt(),
     },
   })
   await settle()
   assert.equal(result.calls.filter((call) => call.path === '/grants/add/v3').length, 0)
   assert.equal(result.intentStillStored(), false)
   assertNoCalendarReplacementWrites(result.calls)
+})
+
+test('completed Google receipt reload stays closed until active configs match', async () => {
+  const first = preservedOAuthCase({
+    search: '',
+    selected: true,
+    newConfigs: [],
+    intent: {
+      oauthGrantSaved: true,
+      grantReceipt: completedCalendarReceipt(),
+    },
+  })
+  await settle()
+
+  assert.equal(first.calls.filter((call) => call.path === '/grants/add/v3').length, 0)
+  assertNoCalendarReplacementWrites(first.calls)
+  assert.equal(first.window.STARTER_SCHEDULING_CONNECTION.state, 'error')
+  assert.equal(connectionStates(first.events).includes('connected'), false)
+  assert.equal(first.intentStillStored(), true)
+
+  const second = preservedOAuthCase({
+    search: '',
+    selected: true,
+    sessionStorage: Object.fromEntries(first.window.sessionStorage._map),
+  })
+  await settle()
+
+  assert.equal(second.calls.filter((call) => call.path === '/grants/add/v3').length, 0)
+  assertNoCalendarReplacementWrites(second.calls)
+  assert.equal(second.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
+  assert.equal(second.intentStillStored(), false)
+})
+
+test('completed zero-offer Google receipt reload verifies without provisioning', async () => {
+  const result = preservedOAuthCase({
+    search: '',
+    selected: true,
+    activeConfigIds: [],
+    newConfigs: [],
+    intent: {
+      oauthGrantSaved: true,
+      grantReceipt: completedCalendarReceipt([]),
+    },
+  })
+  await settle()
+
+  assert.equal(result.calls.filter((call) => call.path === '/grants/add/v3').length, 0)
+  assertNoCalendarReplacementWrites(result.calls)
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.configurationCount, 0)
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.calendarBindingVersion, 1)
+  assert.equal(result.intentStillStored(), false)
 })
 
 test('cancelled and abandoned preserved OAuth never rebuilds a virtual calendar or restores paid settings', async () => {
@@ -5159,12 +5235,7 @@ test('a completed preserved receipt rejects another hosted grant without re-exch
   const result = preservedOAuthCase({
     search: '?success=true&grant_id=other-grant&state=member-a',
     selected: true,
-    intent: { grantReceipt: {
-      transition_id: 'transition-fixture', previous_grant_retained: true,
-      replaced_grant_id: 'old-grant', grant_id: 'new-grant', default_selected: true,
-      services_ready: true, manager: 'calendar',
-      active_config_ids: ['new-free'], active_service_count: 1,
-    } },
+    intent: { grantReceipt: completedCalendarReceipt() },
   })
   await settle()
   assert.equal(result.calls.filter((call) => call.path === '/grants/add/v3').length, 0)

@@ -646,6 +646,19 @@
     clearPlatformTransitionIntent(sessionMemberId)
   }
 
+  function verifyCompletedCalendarTransitionReadback() {
+    if (!sessionMemberId || !grantId) return
+    const intent = readOAuthIntent(sessionMemberId, true)
+    if (!intent || !preservedGrantReceiptMatches(intent, intent.grantReceipt, 'calendar', grantId)) return
+    assertPreservedDefault(intent, 'calendar', grantId)
+    clearOAuthIntent(sessionMemberId)
+  }
+
+  function verifyCompletedPreservationReadback() {
+    verifyCompletedPlatformTransitionReadback()
+    verifyCompletedCalendarTransitionReadback()
+  }
+
   function invalidOAuthCallback(message) {
     return Object.assign(new Error(message), { code: 'OAUTH_CALLBACK_INVALID' })
   }
@@ -1100,7 +1113,7 @@
       availability = canonicalAvailability
       window.STARTER_AVAILABILITY = canonicalAvailability
       writeAvailabilityCache()
-      verifyCompletedPlatformTransitionReadback()
+      verifyCompletedPreservationReadback()
       connectionError = false
       return publishCalendarConnectionState()
     } catch (error) {
@@ -1796,7 +1809,12 @@
         throw new Error('Virtual calendar setup failed after disconnect')
       }
     } catch (error) {
-      if (!isActiveCallsRefusal(error)) {
+      const recoveryTransition = transition || (error && error.calendarTransition)
+      if (isActiveCallsRefusal(error)) {
+        if (memberId && recoveryTransition && recoveryTransition.oauthIntent) {
+          clearOAuthIntent(memberId)
+        }
+      } else {
         try {
           await recoverFailedCalendarTransition(memberId, transition, error)
         } catch (recoveryError) {
@@ -2274,7 +2292,7 @@
         handleAction(btn, form)
       })
 
-      verifyCompletedPlatformTransitionReadback()
+      if (!preservedCallbackIncomplete) verifyCompletedPreservationReadback()
       publishCalendarConnectionState()
       setStatus('ready')
       emit('starterSchedulingWriterReady', { memberId: sessionMemberId })
