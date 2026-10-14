@@ -335,6 +335,34 @@ test('malformed original network stacks do not prevent stable stackless grouping
   }
 })
 
+test('Algolia unreachable-hosts rejections share one network fingerprint with or without frames', () => {
+  const app = load()
+  const message = 'Unreachable hosts - your application id may be incorrect. If the error persists, please reach out to the Algolia Support team: https://alg.li/support .'
+  const thrown = { name: 'RetryError', message, transporterStackTrace: [{ host: { url: 'example-dsn.algolia.net' } }] }
+  const classed = Object.assign(new Error(message), { name: 'RetryError' })
+  classed.stack = `RetryError: ${message}\n    at at (https://cdn.example.test/wf-algolia/dist/index.min.js:2:108427)`
+  const cacheOnly = { ...thrown, stack: 'r@https://cdn.example.test/wf-algolia/dist/index.min.js:2:10763' }
+  for (const reason of [thrown, classed, cacheOnly]) app.listeners.unhandledrejection({ reason })
+  for (const { properties } of app.captured) {
+    assert.equal(properties.starters_error_kind, 'network')
+    assert.equal(properties.$exception_fingerprint, 'starters-algolia-unreachable-hosts')
+    assert.equal(properties.$exception_list[0].mechanism.handled, false)
+  }
+  assert.equal(app.captured.length, 3)
+  assert.equal(app.captured[1].error, classed)
+})
+
+test('other Algolia retry errors and unrelated unreachable messages retain default grouping', () => {
+  const app = load()
+  for (const reason of [{ name: 'RetryError', message: 'Some other retry failure' },
+    { name: 'Error', message: 'Unreachable hosts' }, { name: 'RetryError', message: 42 }]) {
+    app.listeners.unhandledrejection({ reason })
+    assert.equal(app.captured.at(-1).properties.$exception_fingerprint, undefined)
+    assert.equal(app.captured.at(-1).properties.starters_error_kind, undefined)
+  }
+  assert.equal(app.captured.length, 3)
+})
+
 test('other network-looking rejections and dynamic imports retain default grouping', () => {
   const app = load()
   for (const message of ['Failed to fetch dynamically imported module: https://example.test/x.js',
