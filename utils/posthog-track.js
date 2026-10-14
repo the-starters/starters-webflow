@@ -318,6 +318,14 @@
       return field(reason, 'code') === 'network-error' ||
         (typeof message === 'string' && NETWORK_FAILURE.test(message))
     }
+    // Algolia throws this when no host answers. Its stack varies with the call
+    // path and with how many frames survive, so group it regardless of frames.
+    const isAlgoliaUnreachable = (reason) => {
+      if (!reason || typeof reason !== 'object') return false
+      const message = field(reason, 'message')
+      return field(reason, 'name') === 'RetryError' &&
+        typeof message === 'string' && message.startsWith('Unreachable hosts')
+    }
     const chunkProps = (failure) => failure ? {
       starters_error_kind: 'chunk-load',
       starters_chunk_vendor: failure.vendor,
@@ -347,6 +355,9 @@
       if (isNetworkFailure(reason) && !frames.length) {
         props.starters_error_kind = 'network'
         props.$exception_fingerprint = 'starters-network-rejection'
+      } else if (isAlgoliaUnreachable(reason)) {
+        props.starters_error_kind = 'network'
+        props.$exception_fingerprint = 'starters-algolia-unreachable-hosts'
       }
       const failure = chunkFailure({ error: reason })
       Object.assign(props, chunkProps(failure))
