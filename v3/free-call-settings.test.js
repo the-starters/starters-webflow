@@ -359,7 +359,7 @@ function load(options = {}) {
       hostname: options.hostname || 'the-starters-3-0.webflow.io',
       pathname: options.editProfile === true ? '/starter-edit-profile' : '',
     },
-    crypto: { randomUUID: () => 'uuid-fixed' },
+    crypto: { randomUUID: options.randomUUID || (() => 'uuid-fixed') },
     memberReady: options.memberReady,
     setTimeout(callback, delay) {
       const timer = { callback, delay, cancelled: false }
@@ -963,6 +963,76 @@ test('a Free disable whose own cleanup also fails never repaints the Build Profi
   assert.equal(result.dom.title.value, '', 'the superseded Build choice is not restored')
   assert.equal(result.dom.status.textContent, 'Free calls are off.')
   assert.equal(result.window.StarterFreeCallSettings.hasChanges(), false)
+})
+
+test('a fresh script cannot issue a new Free activation after a completed intent and disable', async () => {
+  const memberJSON = structuredClone(PENDING_FREE_ENABLE)
+  let state = { ...canonical(), data_environment: 'test' }
+  let sequence = 0
+  const activationCommands = []
+  const routes = {
+    '/starter/free-call-settings/get/v3': () => ({
+      ok: true,
+      status: 200,
+      json: async () => structuredClone(state),
+    }),
+    '/starter/free-call-settings/upsert/v3': ({ body }) => {
+      activationCommands.push(body)
+      const saved = service({ revision: 1, sync_status: 'ready' })
+      state = {
+        ...canonical({
+          public_description: body.description,
+          services: [saved],
+          readiness: { free_call_enabled: true, bookable: true },
+        }),
+        data_environment: 'test',
+      }
+      return { ok: true, status: 200, json: async () => ({ service: saved }) }
+    },
+    '/starter/free-call-settings/disable/v3': () => {
+      state = { ...canonical(), data_environment: 'test' }
+      return { ok: true, status: 200, json: async () => ({ ok: true }) }
+    },
+  }
+  const freshPage = () => load({
+    memberId: 'member-free-a',
+    memberJSON: structuredClone(memberJSON),
+    memberJsonUpdateError: new Error('Memberstack outage'),
+    randomUUID: () => '00000000-0000-4000-8000-' + String(++sequence).padStart(12, '0'),
+    routes,
+  })
+  const first = freshPage()
+  await settle(40)
+
+  assert.equal(activationCommands.length, 1, 'the first Build Profile Yes activates Free')
+  assert.equal(first.dom.root.getAttribute('data-free-call-enabled'), 'true')
+  assert.equal(first.memberJsonWrites.length, 0, 'activation receipt cleanup failed')
+
+  first.dom.no.checked = true
+  await first.dom.no.dispatch('change')
+  await first.window.StarterFreeCallSettings.submit()
+  await settle(40)
+
+  assert.equal(first.calls.filter((call) => call.path === '/starter/free-call-settings/disable/v3').length, 1)
+  assert.equal(state.services.length, 0, 'the explicit disable has canonical readback')
+  assert.equal(first.dom.no.checked, true)
+  assert.equal(first.dom.root.getAttribute('data-free-call-enabled'), 'false')
+  assert.equal(first.memberJsonWrites.length, 0, 'disable receipt cleanup also failed')
+  assert.equal(first.warnings.filter((warning) => warning.includes('could not be cleared')).length, 2)
+
+  const reloaded = freshPage()
+  await settle(40)
+
+  assert.notEqual(reloaded.window, first.window, 'reload uses a fresh script and session without browser storage')
+  assert.equal(reloaded.memberJsonWrites.length, 0, 'the same server receipt remains uncleared')
+  assert.equal(
+    new Set(activationCommands.map((command) => command.idempotency_key)).size,
+    1,
+    'an already completed Build Profile intent cannot become a new activation command after disable',
+  )
+  assert.equal(state.services.length, 0)
+  assert.equal(reloaded.dom.root.getAttribute('data-free-call-enabled'), 'false')
+  assert.equal(reloaded.dom.no.checked, true)
 })
 
 test('a later Free disable retires the receipt an earlier best-effort cleanup could not clear', async () => {

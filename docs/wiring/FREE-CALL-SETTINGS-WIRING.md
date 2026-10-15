@@ -194,6 +194,43 @@ configurations, and mismatched grants. Disable blocks while a future pending, co
 rescheduled booking exists. Mutations write Nylas first, then canonical Xano state, and use durable
 idempotency receipts.
 
+### Unresolved R8: durable Build Profile intent consumption
+
+Automatic activation is not safe across a fresh page or device when receipt
+cleanup fails, Free is subsequently disabled, and the old Yes receipt remains.
+The controller loses its in-memory cleanup obligation and submits a new random
+upsert command. The focused regression `a fresh script cannot issue a new Free
+activation after a completed intent and disable` in
+`v3/free-call-settings.test.js` exercises that sequence and remains failing until
+the owning contract is resolved. Its fixture models ordinary new commands; it
+does not invent backend ledger replay behavior.
+
+This worktree does not contain the Free GET, upsert, or disable backend source.
+The documented durable receipt guarantee above does not define the Free command
+fingerprint, retention, replay ordering, or response after a subsequent disable.
+The Build Profile producer currently stores only `version`, `member_id`, and
+the enabled service values. It has no immutable intent ID or generation, so
+hashing member and description cannot distinguish two identical genuine opt-ins.
+
+Root coordination must establish these contracts through the existing owners:
+
+- The Build Profile receipt identifies one immutable intent across retries and
+  devices, while a later genuine opt-in has a distinct identity. Define handling
+  for existing receipts and activations that predate that identity.
+- The existing Free upsert ledger binds that identity to the authenticated member,
+  environment, and original activation request. A completed activation remains
+  consumed after disable and cannot repeat provider or canonical mutations.
+  Define fingerprint and revision checks, concurrent replay, retention, and
+  recovery from ambiguous or failed commands without weakening existing guards.
+- The existing Free endpoint exposes an authenticated completed or superseded
+  outcome. The frontend must reconcile it against fresh canonical state, including
+  Free Off, instead of requiring an active service for every successful replay.
+  Explicit later Call Settings Update actions keep separate command identities.
+
+A browser-storage flag or deterministic key alone does not establish this
+contract. R8 remains unresolved; no frontend runtime fix or backend behavior is
+claimed by this handoff.
+
 ### Environment in the canonical GET payload
 
 `GET starter/free-call-settings/get/v3` (`#5673`) answers with `data_environment` at the top level,
