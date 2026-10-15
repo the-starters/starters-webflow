@@ -81,6 +81,10 @@ class El {
 
 function canonical(overrides = {}) {
   return {
+    data_environment: overrides.data_environment || 'test',
+    has_free_settings_history: Object.hasOwn(overrides, 'has_free_settings_history')
+      ? overrides.has_free_settings_history
+      : false,
     public_description: overrides.public_description || '',
     readiness: {
       calendar_connected: true,
@@ -967,7 +971,7 @@ test('a Free disable whose own cleanup also fails never repaints the Build Profi
 
 test('a fresh script cannot issue a new Free activation after a completed intent and disable', async () => {
   const memberJSON = structuredClone(PENDING_FREE_ENABLE)
-  let state = { ...canonical(), data_environment: 'test' }
+  let state = canonical({ has_free_settings_history: false })
   let sequence = 0
   const activationCommands = []
   const routes = {
@@ -979,18 +983,16 @@ test('a fresh script cannot issue a new Free activation after a completed intent
     '/starter/free-call-settings/upsert/v3': ({ body }) => {
       activationCommands.push(body)
       const saved = service({ revision: 1, sync_status: 'ready' })
-      state = {
-        ...canonical({
-          public_description: body.description,
-          services: [saved],
-          readiness: { free_call_enabled: true, bookable: true },
-        }),
-        data_environment: 'test',
-      }
+      state = canonical({
+        has_free_settings_history: true,
+        public_description: body.description,
+        services: [saved],
+        readiness: { free_call_enabled: true, bookable: true },
+      })
       return { ok: true, status: 200, json: async () => ({ service: saved }) }
     },
     '/starter/free-call-settings/disable/v3': () => {
-      state = { ...canonical(), data_environment: 'test' }
+      state = canonical({ has_free_settings_history: true })
       return { ok: true, status: 200, json: async () => ({ ok: true }) }
     },
   }
@@ -1026,13 +1028,268 @@ test('a fresh script cannot issue a new Free activation after a completed intent
   assert.notEqual(reloaded.window, first.window, 'reload uses a fresh script and session without browser storage')
   assert.equal(reloaded.memberJsonWrites.length, 0, 'the same server receipt remains uncleared')
   assert.equal(
-    new Set(activationCommands.map((command) => command.idempotency_key)).size,
+    activationCommands.length,
     1,
     'an already completed Build Profile intent cannot become a new activation command after disable',
   )
   assert.equal(state.services.length, 0)
   assert.equal(reloaded.dom.root.getAttribute('data-free-call-enabled'), 'false')
   assert.equal(reloaded.dom.no.checked, true)
+})
+
+test('Free history supersedes the receipt without enabling inactive or prior-grant services', async () => {
+  for (const services of [
+    [],
+    [service({ active: false, grant_id: 'current-grant', sync_status: 'ready' })],
+    [service({ active: false, grant_id: 'prior-grant', sync_status: 'mismatch' })],
+    [service({ active: false, grant_id: 'prior-grant', sync_status: 'pending' })],
+    [service({ active: false, grant_id: 'prepared-grant', sync_status: 'ready', revision: 1 })],
+    [placeholderService()],
+  ]) {
+    for (const editProfile of [false, true]) {
+      const counter = { calls: 0, bodies: [] }
+      const result = load({
+        editProfile,
+        memberJSON: structuredClone(PENDING_FREE_ENABLE),
+        memberJsonUpdateError: new Error('Memberstack outage'),
+        initial: canonical({
+          has_free_settings_history: true,
+          public_description: 'Canonical description',
+          services,
+        }),
+        routes: { '/starter/free-call-settings/upsert/v3': activatingUpsertRoute(counter) },
+      })
+      await settle()
+      await result.dispatchWindowEvent('starterSchedulingConnectionStateChanged', { state: 'connected' })
+      await settle()
+
+      assert.equal(result.calls.some((call) => call.method === 'POST'), false)
+      assert.equal(result.memberJsonWrites.length, 0)
+      assert.equal(result.dom.title.value, 'Canonical description')
+      assert.equal(result.dom.root.getAttribute('data-free-call-enabled'), 'false')
+      assert.equal(result.dom.root.getAttribute('data-free-call-bookable'), 'false')
+      if (!services.some((row) => row.active)) assert.equal(result.dom.no.checked, true)
+      assert.doesNotMatch(result.dom.status.textContent, /Build Profile choice/)
+      assert.equal(result.window.StarterFreeCallSettings.hasChanges(), false)
+
+      result.dom.yes.checked = true
+      await result.dom.yes.dispatch('change')
+      result.dom.title.value = 'A later explicit choice'
+      await result.window.StarterFreeCallSettings.submit()
+      await settle()
+      assert.equal(counter.calls, 1)
+      assert.equal(counter.bodies[0].description, 'A later explicit choice')
+      assert.equal(result.dom.root.getAttribute('data-free-call-enabled'), 'true')
+    }
+  }
+})
+
+test('Free history retires only the stale Free receipt while leaving canonical Off', async () => {
+  const result = load({
+    memberJSON: {
+      keep: 'private',
+      starter_call_settings_intent_v3: {
+        ...PENDING_FREE_ENABLE.starter_call_settings_intent_v3,
+        paid: { enabled: true, title: 'Strategy call', price_dollars: 250 },
+      },
+    },
+    initial: canonical({ has_free_settings_history: true }),
+  })
+  await settle()
+
+  assert.equal(result.calls.some((call) => call.method === 'POST'), false)
+  assert.equal(result.dom.no.checked, true)
+  assert.equal(result.dom.root.getAttribute('data-free-call-enabled'), 'false')
+  assert.equal(result.memberJsonWrites.length, 1)
+  assert.equal(result.memberJsonWrites[0].keep, 'private')
+  assert.equal(result.memberJsonWrites[0].starter_call_settings_intent_v3.free, undefined)
+  assert.deepEqual(result.memberJsonWrites[0].starter_call_settings_intent_v3.paid,
+    { enabled: true, title: 'Strategy call', price_dollars: 250 })
+})
+
+test('unknown Free history suppresses the handoff but preserves a fresh explicit enable', async () => {
+  for (const history of [undefined, null, 'false', 'true', 0, 1, [], {}]) {
+    for (const editProfile of [false, true]) {
+      const initial = canonical({ has_free_settings_history: history })
+      if (history === undefined) delete initial.has_free_settings_history
+      const result = load({
+        editProfile,
+        memberJSON: structuredClone(PENDING_FREE_ENABLE),
+        initial,
+        routes: {
+          '/starter/free-call-settings/upsert/v3': ({ body, setState }) => {
+            const saved = service({ sync_status: 'ready' })
+            setState(canonical({
+              has_free_settings_history: true,
+              public_description: body.description,
+              services: [saved],
+              readiness: { free_call_enabled: true, bookable: true },
+            }))
+            return { ok: true, status: 200, json: async () => ({ service: saved }) }
+          },
+        },
+      })
+      await settle()
+      await result.dispatchWindowEvent('starterSchedulingConnectionStateChanged', { state: 'connected' })
+      await settle()
+
+      assert.equal(result.document.documentElement.getAttribute('data-free-call-settings'), 'ready')
+      assert.equal(result.calls.some((call) => call.method === 'POST'), false)
+      assert.equal(result.memberJsonWrites.length, 0, 'unknown history does not consume the receipt')
+      assert.equal(result.dom.no.checked, true)
+      assert.equal(result.dom.yes.checked, false)
+      assert.equal(result.dom.title.value, '')
+      assert.doesNotMatch(result.dom.status.textContent, /Build Profile choice/)
+      assert.equal(result.window.StarterFreeCallSettings.hasChanges(), false)
+
+      result.dom.yes.checked = true
+      await result.dom.yes.dispatch('change')
+      result.dom.title.value = 'My new choice'
+      await result.window.StarterFreeCallSettings.submit()
+      await settle()
+
+      const writes = result.calls.filter((call) => call.method === 'POST')
+      assert.equal(writes.length, 1)
+      assert.equal(writes[0].path, '/starter/free-call-settings/upsert/v3')
+      assert.equal(writes[0].body.description, 'My new choice')
+      assert.equal(result.dom.root.getAttribute('data-free-call-enabled'), 'true')
+      assert.equal(result.dom.root.getAttribute('data-free-call-bookable'), 'true')
+    }
+  }
+})
+
+test('a legacy DTO with an activated Free service still supersedes its receipt and supports updates', async () => {
+  const initial = canonical({
+    public_description: 'Canonical description',
+    services: [service({ sync_status: 'ready' })],
+    readiness: { free_call_enabled: true, bookable: true },
+  })
+  delete initial.has_free_settings_history
+  const counter = { calls: 0, bodies: [] }
+  const result = load({
+    memberJSON: structuredClone(PENDING_FREE_ENABLE),
+    initial,
+    routes: { '/starter/free-call-settings/upsert/v3': activatingUpsertRoute(counter) },
+  })
+  await settle()
+
+  assert.equal(counter.calls, 0)
+  assert.equal(result.dom.title.value, 'Canonical description')
+  assert.equal(result.dom.root.getAttribute('data-free-call-enabled'), 'true')
+  assert.equal(result.memberJsonWrites.length, 1)
+  result.dom.title.value = 'Updated explicitly'
+  await result.window.StarterFreeCallSettings.submit()
+  await settle()
+  assert.equal(counter.calls, 1)
+  assert.equal(counter.bodies[0].config_id, 'cfg-free-1')
+  assert.equal(counter.bodies[0].expected_revision, 4)
+  assert.equal(counter.bodies[0].description, 'Updated explicitly')
+})
+
+test('literal false Free history preserves the first-time description and prerequisite guards', async () => {
+  for (const services of [[], [placeholderService()]]) {
+    let ready = false
+    const counter = { calls: 0, bodies: [] }
+    const result = load({
+      memberJSON: structuredClone(PENDING_FREE_ENABLE),
+      routes: {
+        '/starter/free-call-settings/get/v3': ({ state }) => ({
+          ok: true,
+          status: 200,
+          json: async () => counter.calls ? state : canonical({
+            has_free_settings_history: false,
+            services,
+            readiness: ready ? {} : GATED_FREE_READINESS,
+          }),
+        }),
+        '/starter/free-call-settings/upsert/v3': activatingUpsertRoute(counter),
+      },
+    })
+    await settle()
+    assert.equal(counter.calls, 0)
+    assert.equal(result.dom.yes.checked, true)
+    assert.equal(result.dom.title.value, 'Quick intro')
+    assert.equal(result.memberJsonWrites.length, 0)
+
+    ready = true
+    await result.dispatchWindowEvent('starterSchedulingConnectionStateChanged', { state: 'connected' })
+    await settle()
+    assert.equal(counter.calls, 1)
+    assert.equal(counter.bodies[0].description, 'Quick intro')
+    assert.equal(counter.bodies[0].config_id, services.length ? 'cfg-free-1' : null)
+    assert.equal(counter.bodies[0].expected_revision, services.length ? 1 : 0)
+    assert.equal(result.dom.root.getAttribute('data-free-call-enabled'), 'true')
+  }
+})
+
+test('Free history remains scoped to the current authenticated member and environment', async () => {
+  for (const [hostname, environment] of [
+    ['the-starters-3-0.webflow.io', 'test'],
+    ['www.thestarters.com', 'production'],
+  ]) {
+    const memberJSON = structuredClone(PENDING_FREE_ENABLE)
+    const writes = []
+    const result = load({
+      hostname,
+      memberJSON,
+      memberJsonUpdateError: new Error('Memberstack outage'),
+      routes: {
+        '/starter/free-call-settings/get/v3': ({ member, state }) => ({
+          ok: true,
+          status: 200,
+          json: async () => writes.length ? state : canonical({
+            data_environment: environment,
+            has_free_settings_history: member.id === 'member-free-a',
+          }),
+        }),
+        '/starter/free-call-settings/upsert/v3': ({ member, body, setState }) => {
+          writes.push({ member: member.id, body })
+          const saved = service({ sync_status: 'ready' })
+          setState(canonical({
+            data_environment: environment,
+            has_free_settings_history: true,
+            public_description: body.description,
+            services: [saved],
+            readiness: { free_call_enabled: true, bookable: true },
+          }))
+          return { ok: true, status: 200, json: async () => ({ service: saved }) }
+        },
+      },
+    })
+    await settle()
+    assert.equal(result.dom.no.checked, true)
+    assert.equal(writes.length, 0)
+
+    await result.changeMember({ id: 'member-free-b' })
+    await settle()
+    await result.dispatchWindowEvent('starterSchedulingConnectionStateChanged', { state: 'connected' })
+    await settle()
+    assert.equal(writes.length, 0, 'literal false cannot authorize another member receipt')
+    assert.equal(result.dom.no.checked, true)
+
+    memberJSON.starter_call_settings_intent_v3.member_id = 'member-free-b'
+    await result.dispatchWindowEvent('starterSchedulingConnectionStateChanged', { state: 'connected' })
+    await settle()
+    assert.equal(writes.length, 1, 'previous member history cannot suppress this member first opt-in')
+    assert.equal(writes[0].member, 'member-free-b')
+    assert.equal(writes[0].body.description, 'Quick intro')
+    assert.equal((await result.window.StarterFreeCallSettings.read()).data_environment, environment)
+  }
+})
+
+test('literal false Free history cannot activate without a readable member receipt', async () => {
+  for (const missing of [false, true]) {
+    const result = load({
+      memberJSON: structuredClone(PENDING_FREE_ENABLE),
+      memberJsonReadGate: missing ? undefined : () => Promise.reject(new Error('Memberstack unavailable')),
+      initial: canonical({ has_free_settings_history: false }),
+    })
+    if (missing) delete result.window.$memberstackDom.getMemberJSON
+    await settle()
+    assert.equal(result.calls.some((call) => call.method === 'POST'), false)
+    assert.equal(result.dom.no.checked, true)
+    assert.equal(result.memberJsonWrites.length, 0)
+  }
 })
 
 test('a later Free disable retires the receipt an earlier best-effort cleanup could not clear', async () => {
@@ -3686,6 +3943,7 @@ function activatingUpsertRoute(counter) {
     counter.bodies.push(body)
     const saved = service({ revision: 2, sync_status: 'ready' })
     setState(canonical({
+      has_free_settings_history: true,
       public_description: body.description,
       services: [saved],
       readiness: { free_call_enabled: true, bookable: true },

@@ -24,6 +24,7 @@ window.__tsNotifyAuthChange = () => {
 
 const FREE_SETTINGS = {
   public_description: 'Intro call about growth strategy',
+  has_free_settings_history: true,
   readiness: { calendar_connected: true, availability_configured: true, free_call_enabled: true, bookable: true },
   services: [{ config_id: 'cfg-free-1', title: 'Free Consultation Call - 30min', price_cents: 0, currency: 'usd', duration: 30, active: true, revision: 6 }],
 }

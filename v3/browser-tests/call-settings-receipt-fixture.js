@@ -203,6 +203,7 @@ window.__tsBeforeUnloadPrompts = () => {
 const FREE_CANONICAL = {
   'free-active': {
     public_description: 'Quick intro',
+    has_free_settings_history: true,
     readiness: { calendar_connected: true, availability_configured: true, free_call_enabled: true, bookable: true },
     services: [{ config_id: 'cfg-free-1', title: 'Intro call', price_cents: 0, currency: 'usd', duration: 30, active: true, revision: 3 }],
   },
@@ -210,12 +211,14 @@ const FREE_CANONICAL = {
   // pre-onboarding pending create becomes actionable in.
   'free-ready': {
     public_description: '',
+    has_free_settings_history: false,
     readiness: { calendar_connected: true, availability_configured: true, free_call_enabled: false, bookable: false },
     services: [],
   },
 }
 const FREE_DEFAULT = FREE_CANONICAL[params.get('canonical')] || {
   public_description: '',
+  has_free_settings_history: false,
   readiness: { calendar_connected: false, availability_configured: false, free_call_enabled: false, bookable: false },
   services: [],
 }
@@ -236,6 +239,7 @@ const freeWritable = params.get('writable') === '1'
 function applyFreeUpsert(body) {
   freeByMember[activeMember.id] = {
     public_description: String((body && body.description) || ''),
+    has_free_settings_history: true,
     readiness: { calendar_connected: true, availability_configured: true, free_call_enabled: true, bookable: true },
     services: [{ config_id: 'cfg-free-upserted', title: 'Intro call', price_cents: 0, currency: 'usd', duration: 30, active: true, revision: 1 }],
   }
@@ -243,6 +247,7 @@ function applyFreeUpsert(body) {
 function applyFreeDisable() {
   freeByMember[activeMember.id] = {
     public_description: '',
+    has_free_settings_history: true,
     readiness: { calendar_connected: true, availability_configured: true, free_call_enabled: false, bookable: false },
     services: [],
   }

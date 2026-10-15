@@ -406,7 +406,7 @@
   }
 
   function pendingCreateOverlay(value) {
-    if (!value || !pendingBuildIntent) return null
+    if (!value || value.has_free_settings_history !== false || !pendingBuildIntent) return null
     return canonicalSatisfiesPendingIntent(value) ? null : pendingBuildIntent
   }
 
@@ -426,12 +426,13 @@
     // The calendar-connect placeholder is not a member save: the receipt is
     // still the only copy of the member's Free description and choice.
     const service = canonicalService(value)
-    return Boolean(service) && !serviceAwaitingActivation(service)
+    return Boolean(value && value.has_free_settings_history === true) ||
+      (Boolean(service) && !serviceAwaitingActivation(service))
   }
 
   function maybeActivateFromBuildIntent(value, memberId) {
     const service = canonicalService(value)
-    if (!pendingBuildIntent || (service ? !serviceAwaitingActivation(service) : editProfileMode)) return null
+    if (!pendingCreateOverlay(value) || (!service && editProfileMode)) return null
     if (!prerequisitesReady(value) || memberId !== sessionMemberId) return null
     if (busy || activeWrite || authTransitionPending || receiptCleanup) return null
     const key = memberId + ':' + (service ? service.config_id : 'create')
