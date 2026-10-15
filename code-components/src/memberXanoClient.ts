@@ -17,13 +17,6 @@ export function isXanoAuthError(error: unknown): error is XanoAuthError {
   return error instanceof XanoAuthError
 }
 
-/** Error carrying the HTTP status and Xano message (for stable error-code prefixes). */
-export class XanoRequestError extends Error {
-  constructor(message: string, readonly status: number) {
-    super(message)
-  }
-}
-
 interface MemberstackDom {
   getMemberCookie(): Promise<string | null> | string | null
   onAuthChange?(
@@ -208,7 +201,7 @@ export class MemberXanoClient {
       if (response.status === 401 || response.status === 403) {
         throw new XanoAuthError(message)
       }
-      throw new XanoRequestError(message, response.status)
+      throw new Error(message)
     }
     return data as T
   }

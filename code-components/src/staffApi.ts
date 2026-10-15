@@ -65,9 +65,9 @@ export interface StatusChangeResult {
 }
 
 export class StaffConsoleApi extends MemberXanoClient {
-  constructor(fetcher: typeof fetch = window.fetch.bind(window), base = STAFF_API_BASE) {
+  constructor(fetcher: typeof fetch = window.fetch.bind(window)) {
     super(
-      () => base,
+      () => STAFF_API_BASE,
       {
         noMemberstack: 'Memberstack is not available on this page.',
         loginRequired: 'Please log in to open the staff console.',

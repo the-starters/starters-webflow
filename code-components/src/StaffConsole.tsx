@@ -10,8 +10,6 @@ import { isXanoAuthError } from './memberXanoClient'
 import * as styles from './StaffConsole.module.css'
 
 export interface StaffConsoleProps {
-  title?: string
-  loginUrl?: string
   /** Test seam only. Webflow instances use the default API client. */
   api?: StaffConsoleApi
 }
@@ -88,8 +86,6 @@ function StatusPill({ live }: { live: boolean }) {
 }
 
 export function StaffConsole({
-  title = 'Staff console',
-  loginUrl = '/login?next=/staff',
   api: injectedApi,
 }: StaffConsoleProps) {
   const api = React.useMemo(() => injectedApi ?? new StaffConsoleApi(), [injectedApi])
@@ -98,6 +94,7 @@ export function StaffConsole({
   const [results, setResults] = React.useState<StarterSearchItem[]>([])
   const [searching, setSearching] = React.useState(false)
   const [searchError, setSearchError] = React.useState<string | null>(null)
+  const [searchRefresh, setSearchRefresh] = React.useState(0)
   const [selectedId, setSelectedId] = React.useState<number | null>(initialStarterId)
   const [card, setCard] = React.useState<StarterCard | null>(null)
   const [cardLoading, setCardLoading] = React.useState(false)
@@ -107,15 +104,22 @@ export function StaffConsole({
   const [submitting, setSubmitting] = React.useState(false)
   const [submitError, setSubmitError] = React.useState<string | null>(null)
   const [lastResult, setLastResult] = React.useState<StatusChangeResult | null>(null)
+  const sessionRequest = React.useRef(0)
   const searchRequest = React.useRef(0)
   const cardRequest = React.useRef(0)
+  const selectedIdRef = React.useRef(selectedId)
   const inFlight = React.useRef(false)
 
   const loadSession = React.useCallback(async () => {
+    const request = ++sessionRequest.current
+    ++searchRequest.current
+    ++cardRequest.current
     setGate({ state: 'loading' })
     try {
-      setGate({ state: 'ready', session: await api.session() })
+      const session = await api.session()
+      if (request === sessionRequest.current) setGate({ state: 'ready', session })
     } catch (error) {
+      if (request !== sessionRequest.current) return
       const message = errorText(error, 'Unable to check staff access.')
       if (isXanoAuthError(error)) {
         setGate(/log in|not available/i.test(message) ? { state: 'login' } : { state: 'denied', message })
@@ -127,13 +131,19 @@ export function StaffConsole({
 
   React.useEffect(() => {
     void loadSession()
-    return api.subscribeAuthChanges(() => {
+    const unsubscribe = api.subscribeAuthChanges(() => {
       setResults([])
       setCard(null)
       setReason('')
       setConfirmed(false)
       void loadSession()
     })
+    return () => {
+      ++sessionRequest.current
+      ++searchRequest.current
+      ++cardRequest.current
+      unsubscribe()
+    }
   }, [api, loadSession])
 
   const ready = gate.state === 'ready'
@@ -162,24 +172,30 @@ export function StaffConsole({
       }
     }, SEARCH_DEBOUNCE_MS)
     return () => window.clearTimeout(timer)
-  }, [api, query, ready])
+  }, [api, query, ready, searchRefresh])
 
-  const loadCard = React.useCallback(async (starterId: number) => {
-    const request = ++cardRequest.current
-    setCardLoading(true)
-    setCardError(null)
+  const loadCard = React.useCallback(async (starterId: number, session = sessionRequest.current) => {
+    const active = starterId === selectedIdRef.current && session === sessionRequest.current
+    const request = active ? ++cardRequest.current : null
+    const isCurrent = () => request !== null && request === cardRequest.current &&
+      starterId === selectedIdRef.current && session === sessionRequest.current
+    if (active) {
+      setCardLoading(true)
+      setCardError(null)
+      setConfirmed(false)
+    }
     try {
       const next = await api.detail(starterId)
-      if (request !== cardRequest.current) return
+      if (!isCurrent()) return
       setCard(next)
       if (!next) setCardError('Starter not found.')
     } catch (error) {
-      if (request === cardRequest.current) {
+      if (isCurrent()) {
         setCard(null)
         setCardError(explain(errorText(error, 'Could not load this Starter.')))
       }
     } finally {
-      if (request === cardRequest.current) setCardLoading(false)
+      if (isCurrent()) setCardLoading(false)
     }
   }, [api])
 
@@ -188,6 +204,7 @@ export function StaffConsole({
   }, [ready, selectedId, loadCard])
 
   const choose = (starterId: number) => {
+    selectedIdRef.current = starterId
     setSelectedId(starterId)
     setReason('')
     setConfirmed(false)
@@ -197,29 +214,37 @@ export function StaffConsole({
 
   const reasonLength = reason.trim().length
   const writesEnabled = gate.state === 'ready' && gate.session.writes_enabled === true
+  const formEnabled = !!card && card.starter_id === selectedId && !cardLoading && writesEnabled && !submitting
   const canSubmit =
-    !!card && !!card.preview_token && writesEnabled && confirmed && !submitting &&
+    formEnabled && !!card?.preview_token && confirmed &&
     reasonLength >= REASON_MIN && reasonLength <= REASON_MAX
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault()
     if (!card || !canSubmit || inFlight.current) return
+    const session = sessionRequest.current
+    const request = cardRequest.current
+    const isCurrent = () => card.starter_id === selectedIdRef.current &&
+      request === cardRequest.current && session === sessionRequest.current
     inFlight.current = true
     setSubmitting(true)
     setSubmitError(null)
     setLastResult(null)
     try {
       const result = await api.setStatus(card, reason)
-      setLastResult(result)
-      setReason('')
-      setConfirmed(false)
+      if (isCurrent()) {
+        setLastResult(result)
+        setReason('')
+        setConfirmed(false)
+      }
     } catch (error) {
-      setSubmitError(explain(errorText(error, 'The change failed.')))
+      if (isCurrent()) setSubmitError(explain(errorText(error, 'The change failed.')))
     } finally {
       inFlight.current = false
       setSubmitting(false)
       // Always re-read: shows the new status, the audit row and a fresh preview token.
-      void loadCard(card.starter_id)
+      await loadCard(card.starter_id, session)
+      if (session === sessionRequest.current) setSearchRefresh((refresh) => refresh + 1)
     }
   }
 
@@ -229,16 +254,16 @@ export function StaffConsole({
   if (gate.state === 'login') {
     return (
       <section className={styles.shell}>
-        <h1>{title}</h1>
+        <h1>Staff console</h1>
         <p>Log in with your staff account to use this page.</p>
-        <a className={styles.buttonPrimary} href={loginUrl}>Log in</a>
+        <a className={styles.buttonPrimary} href="/login?next=/staff">Log in</a>
       </section>
     )
   }
   if (gate.state === 'denied' || gate.state === 'error') {
     return (
       <section className={styles.shell}>
-        <h1>{title}</h1>
+        <h1>Staff console</h1>
         <div className={styles.alert} role="alert" data-testid="no-access">
           {gate.state === 'denied' ? denialText(gate.message) : gate.message}
         </div>
@@ -249,11 +274,11 @@ export function StaffConsole({
   const hireUrl = safeUrl(card?.hire_url)
 
   return (
-    <section className={styles.shell} aria-label={title}>
+    <section className={styles.shell} aria-label="Staff console">
       <header className={styles.header}>
         <div>
           <p className={styles.eyebrow}>The Starters staff</p>
-          <h1>{title}</h1>
+          <h1>Staff console</h1>
           <p className={styles.muted}>Signed in as <strong>{gate.session.email}</strong></p>
         </div>
         <span className={writesEnabled ? styles.pillLive : styles.pillRemoved} data-testid="writes-flag">
@@ -342,7 +367,7 @@ export function StaffConsole({
                   value={reason}
                   maxLength={REASON_MAX}
                   onChange={(event) => setReason(event.target.value)}
-                  disabled={!writesEnabled || submitting}
+                  disabled={!formEnabled}
                 />
                 <p className={styles.muted}>{reasonLength}/{REASON_MAX}</p>
                 <label className={styles.check}>
@@ -350,7 +375,7 @@ export function StaffConsole({
                     type="checkbox"
                     checked={confirmed}
                     onChange={(event) => setConfirmed(event.target.checked)}
-                    disabled={!writesEnabled || submitting}
+                    disabled={!formEnabled}
                   />
                   I checked the name, email and #82 id. This is the right Starter.
                 </label>

@@ -31,7 +31,8 @@ Plan and release packet: `platform-ops/staff-admin-platform/` in the workspace.
 - Xano error codes are shown in plain language: `STAFF_ACCESS_DENIED:<reason>`,
   `STAFF_WRITES_DISABLED`, `PREVIEW_STALE`, `RATE_LIMITED`, `REASON_INVALID`.
 - `?starter_id=<id>` in the page URL opens that Starter's card.
-- Webflow props: Title, Login URL (default `/login?next=/staff`).
+- No Webflow props. The heading is `Staff console` and the login link is
+  `/login?next=/staff`.
 - The page must load Memberstack. Keep `/staff` out of `v3/route-guard.js`
   `PAGE_ROLES`; staff accounts have mixed plans.
 

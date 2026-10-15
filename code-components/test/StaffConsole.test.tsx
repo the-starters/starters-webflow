@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { StaffConsole } from '../src/StaffConsole'
 import { STAFF_API_BASE, StaffConsoleApi } from '../src/staffApi'
@@ -6,6 +6,12 @@ import { TRADE_TOKEN_URL } from '../src/memberXanoClient'
 
 function jsonResponse(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } })
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((done) => { resolve = done })
+  return { promise, resolve }
 }
 
 const card = (over: Record<string, unknown> = {}) => ({
@@ -114,6 +120,38 @@ describe('StaffConsole', () => {
     expect(await screen.findByRole('link', { name: 'Log in' })).toHaveAttribute('href', '/login?next=/staff')
   })
 
+  it('keeps the newer account ready when the previous session request finishes late', async () => {
+    const previousSession = deferred<Response>()
+    let memberToken = 'old-member-jwt'
+    let authChange: ((member: unknown) => void) | undefined
+    window.$memberstackDom = {
+      getMemberCookie: () => memberToken,
+      onAuthChange: (listener) => {
+        authChange = listener
+        return vi.fn()
+      },
+    }
+    let sessionRequests = 0
+    const fetcher = setup(staffRoutes({
+      'staff/session': () => ++sessionRequests === 1
+        ? previousSession.promise
+        : jsonResponse({ email: 'jai@thestarters.com', role: 'operator', writes_enabled: true }),
+    }))
+    await waitFor(() => expect(calls(fetcher, 'staff/session')).toHaveLength(1))
+    act(() => {
+      memberToken = 'new-member-jwt'
+      authChange?.({ id: 'new-member' })
+    })
+    expect(await screen.findByText('jai@thestarters.com')).toBeInTheDocument()
+    await act(async () => {
+      previousSession.resolve(jsonResponse({ message: 'STAFF_ACCESS_DENIED:domain_not_staff' }, 403))
+      await previousSession.promise
+    })
+    expect(screen.getByText('jai@thestarters.com')).toBeInTheDocument()
+    expect(screen.getByLabelText('Find a Starter')).toBeEnabled()
+    expect(screen.queryByTestId('no-access')).not.toBeInTheDocument()
+  })
+
   it('searches, opens the card and removes with one request (double click = one request)', async () => {
     const fetcher = setup(staffRoutes())
     expect(await screen.findByText('kaeser@hirethestarters.com')).toBeInTheDocument()
@@ -136,6 +174,116 @@ describe('StaffConsole', () => {
     fireEvent.click(screen.getByRole('checkbox'))
     expect(screen.getByRole('button', { name: 'Remove from platform' })).toBeDisabled()
     expect(calls(fetcher, 'staff/starters/platform-status/set')).toHaveLength(0)
+  })
+
+  it('disables the previous form until the newly selected preview has loaded', async () => {
+    const nextDetail = deferred<Response>()
+    const nextCard = card({ starter_id: 1143, name: 'Next QA Starter', preview_token: 'next-preview' })
+    setup(staffRoutes({
+      'staff/starters/search': () => jsonResponse({ items: [card(), nextCard] }),
+      'staff/starters/detail': (url) => url.searchParams.get('starter_id') === '1143'
+        ? nextDetail.promise
+        : jsonResponse({ items: [card()] }),
+    }))
+    await screen.findByText('kaeser@hirethestarters.com')
+    await openCardAndFill()
+    fireEvent.click(screen.getByRole('button', { name: /Next QA Starter/ }))
+    expect(screen.getByLabelText(/Reason/)).toBeDisabled()
+    expect(screen.getByRole('checkbox')).toBeDisabled()
+    expect(screen.getByRole('checkbox')).not.toBeChecked()
+    expect(screen.getByRole('button', { name: 'Remove from platform' })).toBeDisabled()
+    await act(async () => {
+      nextDetail.resolve(jsonResponse({ items: [nextCard] }))
+      await nextDetail.promise
+    })
+    await screen.findByRole('heading', { name: 'Next QA Starter' })
+    expect(screen.getByLabelText(/Reason/)).toBeEnabled()
+    expect(screen.getByLabelText(/Reason/)).toHaveValue('')
+    expect(screen.getByRole('checkbox')).not.toBeChecked()
+    fireEvent.change(screen.getByLabelText(/Reason/), { target: { value: 'This Starter asked to leave' } })
+    expect(screen.getByRole('button', { name: 'Remove from platform' })).toBeDisabled()
+    fireEvent.click(screen.getByRole('checkbox'))
+    expect(screen.getByRole('button', { name: 'Remove from platform' })).toBeEnabled()
+  })
+
+  it.each(['success', 'failure'] as const)('keeps the selected Starter intact after another Starter mutation %s', async (outcome) => {
+    const mutation = deferred<Response>()
+    const previousReadback = deferred<Response>()
+    const nextDetail = deferred<Response>()
+    const nextCard = card({ starter_id: 1143, name: 'Next QA Starter', preview_token: 'next-preview' })
+    const removedCard = card({
+      platform_status: 'Removed from Platform', is_live: false,
+      target_status: 'Live on Platform', target_label: 'Restore to platform', preview_token: 'refreshed-preview',
+    })
+    let previousDetails = 0
+    let readbackFinished = false
+    const fetcher = setup(staffRoutes({
+      'staff/starters/search': () => jsonResponse({ items: [readbackFinished ? removedCard : card(), nextCard] }),
+      'staff/starters/detail': (url) => {
+        if (url.searchParams.get('starter_id') === '1143') return nextDetail.promise
+        return ++previousDetails === 1 ? jsonResponse({ items: [card()] }) : previousReadback.promise
+      },
+      'staff/starters/platform-status/set': () => mutation.promise,
+    }))
+    await screen.findByText('kaeser@hirethestarters.com')
+    await openCardAndFill()
+    fireEvent.click(screen.getByRole('button', { name: 'Remove from platform' }))
+    await waitFor(() => expect(calls(fetcher, 'staff/starters/platform-status/set')).toHaveLength(1))
+    fireEvent.click(screen.getByRole('button', { name: /Next QA Starter/ }))
+    await waitFor(() => expect(calls(fetcher, 'staff/starters/detail')).toHaveLength(2))
+    await act(async () => {
+      mutation.resolve(outcome === 'success'
+        ? jsonResponse({ replayed: false, starter_id: 1142, status_now: 'Removed from Platform', projection_outcome: 'trigger', projection_error: null })
+        : jsonResponse({ message: 'PREVIEW_STALE: status changed' }, 400))
+      await mutation.promise
+    })
+    await waitFor(() => expect(calls(fetcher, 'staff/starters/detail')).toHaveLength(3))
+    expect(screen.getByLabelText(/Reason/)).toBeDisabled()
+    expect(screen.getByRole('checkbox')).toBeDisabled()
+    expect(screen.queryByTestId('last-result')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('submit-error')).not.toBeInTheDocument()
+    await act(async () => {
+      nextDetail.resolve(jsonResponse({ items: [nextCard] }))
+      await nextDetail.promise
+    })
+    await screen.findByRole('heading', { name: 'Next QA Starter' })
+    expect(screen.getByLabelText(/Reason/)).toBeEnabled()
+    fireEvent.change(screen.getByLabelText(/Reason/), { target: { value: 'A separate reason for the next Starter' } })
+    fireEvent.click(screen.getByRole('checkbox'))
+    await act(async () => {
+      readbackFinished = true
+      previousReadback.resolve(jsonResponse({ items: [removedCard] }))
+      await previousReadback.promise
+    })
+    expect(screen.getByRole('heading', { name: 'Next QA Starter' })).toBeInTheDocument()
+    expect(screen.getByLabelText(/Reason/)).toHaveValue('A separate reason for the next Starter')
+    expect(screen.getByRole('checkbox')).toBeChecked()
+    expect(screen.getByRole('button', { name: 'Remove from platform' })).toBeEnabled()
+    expect(screen.queryByTestId('last-result')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('submit-error')).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.getByRole('button', { name: /Full QA Starter/ })).toHaveTextContent('Removed'), { timeout: 3000 })
+  })
+
+  it('reconciles a search result with the status returned by the mutation readback', async () => {
+    let removed = false
+    setup(staffRoutes({
+      'staff/starters/search': () => jsonResponse({ items: [card({ is_live: !removed })] }),
+      'staff/starters/detail': () => jsonResponse({ items: [removed ? card({
+        platform_status: 'Removed from Platform', is_live: false,
+        target_status: 'Live on Platform', target_label: 'Restore to platform', preview_token: 'refreshed-preview',
+      }) : card()] }),
+      'staff/starters/platform-status/set': () => {
+        removed = true
+        return jsonResponse({ replayed: false, starter_id: 1142, status_now: 'Removed from Platform', projection_outcome: 'trigger', projection_error: null })
+      },
+    }))
+    await screen.findByText('kaeser@hirethestarters.com')
+    await openCardAndFill()
+    expect(screen.getByRole('button', { name: /Full QA Starter/ })).toHaveTextContent('Live')
+    fireEvent.click(screen.getByRole('button', { name: 'Remove from platform' }))
+    await screen.findByRole('button', { name: 'Restore to platform' })
+    await waitFor(() => expect(screen.getByRole('button', { name: /Full QA Starter/ })).toHaveTextContent('Removed'), { timeout: 3000 })
+    expect(screen.getByLabelText('Find a Starter')).toHaveValue('full')
   })
 
   it('is read only when Xano reports writes disabled', async () => {
@@ -162,6 +310,35 @@ describe('StaffConsole', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Remove from platform' }))
     expect(await screen.findByTestId('submit-error')).toHaveTextContent(text)
     await waitFor(() => expect(calls(fetcher, 'staff/starters/detail').length).toBeGreaterThanOrEqual(2))
+  })
+
+  it('requires a new confirmation when a stale preview reload changes removal into restoration', async () => {
+    const readback = deferred<Response>()
+    let detailRequests = 0
+    const fetcher = setup(staffRoutes({
+      'staff/starters/detail': () => ++detailRequests === 1 ? jsonResponse({ items: [card()] }) : readback.promise,
+      'staff/starters/platform-status/set': () => jsonResponse({ message: 'PREVIEW_STALE: status changed' }, 400),
+    }))
+    await screen.findByText('kaeser@hirethestarters.com')
+    await openCardAndFill()
+    fireEvent.click(screen.getByRole('button', { name: 'Remove from platform' }))
+    await screen.findByTestId('submit-error')
+    expect(screen.getByLabelText(/Reason/)).toBeDisabled()
+    expect(screen.getByRole('checkbox')).toBeDisabled()
+    expect(screen.getByRole('checkbox')).not.toBeChecked()
+    await act(async () => {
+      readback.resolve(jsonResponse({ items: [card({
+        platform_status: 'Removed from Platform', is_live: false,
+        target_status: 'Live on Platform', target_label: 'Restore to platform', preview_token: 'replacement-preview',
+      })] }))
+      await readback.promise
+    })
+    expect(await screen.findByRole('button', { name: 'Restore to platform' })).toBeDisabled()
+    expect(screen.getByLabelText(/Reason/)).toHaveValue('Starter asked to leave the platform')
+    expect(screen.getByRole('checkbox')).not.toBeChecked()
+    expect(calls(fetcher, 'staff/starters/platform-status/set')).toHaveLength(1)
+    fireEvent.click(screen.getByRole('checkbox'))
+    expect(screen.getByRole('button', { name: 'Restore to platform' })).toBeEnabled()
   })
 
   it('shows a projection error and tells staff to escalate', async () => {
