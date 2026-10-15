@@ -285,12 +285,10 @@ The controller sets `data-ready="true|false"` on each row. It also sets these wr
   resets the busy attributes when the mutation and canonical readback settle. The same in-flight
   lock covers native submit and Update click, so they cannot start duplicate writes.
 - The browser sends product intent only. It never sends a member ID, grant ID, calendar ID, Stripe account ID, or payment environment.
-- Calendar setup connects the selected grant and calendar without creating Free or Paid offers.
-  Free enablement belongs to the existing Free settings owner after explicit Call Settings intent
-  or the [Build Profile handoff](FREE-CALL-SETTINGS-WIRING.md#build-profile-handoff).
-  Availability edits update the availability block of activated canonical services without
-  sending title or price fields. A legacy Free placeholder with revision `1` and null or empty
-  `sync_status` is preserved but excluded from automatic hours updates and the slots preview.
+- Calendar setup and availability edits follow the
+  [availability writer contract](../../v3/README.md#booking-stage-availability-writer).
+  Free activation follows the
+  [Free settings contract](FREE-CALL-SETTINGS-WIRING.md#build-profile-handoff).
   Calendar code does not read `#price`, `data-rate`, or `paid_call_rate` in `localStorage`.
   Its bookable-slots preview does read the canonical Paid service to render duration and price
   read-only; the admission rules for that card live in

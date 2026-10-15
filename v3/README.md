@@ -3502,8 +3502,9 @@ Designer follow-up):
 
 Error-copy contract: when `config-request-error` has a plain-text
 `[error-text-element]`, every reveal restores its Designer-authored copy before
-considering transition remediation. Only a recognized paid-rate or active-calls
-error may then replace it. If that marker is absent or the element holds nested
+considering transition remediation. Recognized paid-rate, active-calls,
+calendar-verification, or partial-availability-save errors may then replace it.
+If that marker is absent or the element holds nested
 markup — an icon beside the copy, for example — it is neither restored nor
 written, so the step is revealed exactly as authored instead of being flattened
 into a single text node.
@@ -3517,9 +3518,10 @@ the `default` step instead of legacy's silent dead-end on the form.
 
 Connection mutations follow the same authority rule. OAuth persistence,
 virtual-calendar setup, manager changes, and disconnect/clear flows treat their
-write responses only as acknowledgements. Before publishing a terminal Calendar
-state, the writer re-reads the authenticated `availability_v3` projection and
-then reads `nylas_configurations_v3` for the grant returned by that projection.
+write responses as insufficient without canonical readback. Before publishing a
+terminal Calendar state, the writer re-reads the authenticated `availability_v3`
+projection and then reads `nylas_configurations_v3` for the grant returned by
+that projection.
 If either canonical read fails, the UI remains in the authored error path rather
 than inferring readiness from a mutation response.
 
@@ -3597,9 +3599,10 @@ configuration through either calendar connection or availability edits. Free
 creation and activation belong to `starter/free-call-settings/upsert/v3` after
 explicit Call Settings intent or the owned Build Profile handoff. Availability
 edits send an availability-only update for activated canonical services,
-excluding legacy Free placeholders with revision `1` and null or empty
-`sync_status`. Those placeholder rows remain unchanged until the Free owner
-activates them. Paid title and price fields stay under the paid-call settings
+excluding the Free owner's
+[pending-activation placeholders](../docs/wiring/FREE-CALL-SETTINGS-WIRING.md#build-profile-handoff).
+Those placeholder rows remain unchanged until the Free owner activates them.
+Paid title and price fields stay under the paid-call settings
 endpoints. Free Scheduler lifecycle emails remain disabled
 to prevent duplicate Brand and Starter messages. Guest calendar invitations
 belong to the canonical backend event lifecycle after organizer confirmation,
@@ -3693,19 +3696,18 @@ component-variant class swap (`w-variant-89402c65-…` default,
 `connect-label-group` holds the connection status labels. Each
 `data-availability-element="connect-label"` carries `data-type="false"|"true"`
 (the disconnected / connected copy) and `data-manager="platform"|"calendar"`
-(which connection layer the label describes). `platform` means a canonical
-Nylas grant that owns its calendar (`nylas_grant_id` *and*
-`nylas_calendar_id`). `calendar` means that grant is backed by the member's
+(which connection layer the label describes). `platform` follows the
+[canonical connection-readiness contract](#calendar-oauth-return-no-separate-page).
+`calendar` means that grant is backed by the member's
 Google account (`availability.manager === "calendar"`). A Google connection
-therefore makes both Platform and Google connected. The canonical shape is one
-`false`/`true` pair per layer, so both rows state their independent status.
+with a complete canonical binding makes both Platform and Google connected. The
+canonical shape is one `false`/`true` pair per layer, so both rows state their
+independent status.
 
-Visibility is decided per label, never group-wide. A `platform` label tracks
-whether the grant owns a calendar id: a grant persisted without one (the
-virtual account was added but `create_virtual_calendar` failed) can serve
-neither availability nor bookings, so it reads Disconnected rather than
-claiming a connection the member cannot use. A `calendar` label tracks whether
-a grant exists and `availability.manager === "calendar"`, so a Google-backed
+Visibility is decided per label, never group-wide. A `platform` label uses that
+readiness check: a grant persisted without a calendar id (the virtual account
+was added but `create_virtual_calendar` failed) reads Disconnected. A `calendar`
+label tracks whether a grant exists and `availability.manager === "calendar"`, so a Google-backed
 grant stays readable even in that half-built shape. An untagged
 `data-type="false"` label keeps the prior three-label markup's group-wide
 meaning and shows only when neither layer is connected. The earlier shape (one
@@ -3817,11 +3819,11 @@ other-environment Paid service stays out of the preview. The card partitions
 its services explicitly — Free first, then Paid, each tie-broken by `config_id` — because
 Xano returns configurations in table order, so both the rendered order and
 the default selection stay deterministic. The Free admission rule excludes
-the Free owner's pending-activation sentinel: revision `1` with an explicitly
-null or empty `sync_status`. A connected calendar can therefore have no ready
+the Free owner's
+[pending-activation sentinel](../docs/wiring/FREE-CALL-SETTINGS-WIRING.md#build-profile-handoff).
+A connected calendar can therefore have no ready
 service, and a preserved legacy placeholder neither publishes a ready preview
-nor triggers slot requests. Automatic hours updates also exclude that
-placeholder without deleting or activating it. The single-slot version of this
+nor triggers slot requests. The single-slot version of this
 query used by the Bookings pages
 (`getNextAvailableTimeSlot`/`getNearestSlot` in the **separate**, non-repo
 `book-func-lib-2.html` Webflow embed) was refactored alongside this to expose
@@ -3940,10 +3942,11 @@ connection-state contract above.
 
 Before persisting anything, the controller verifies `state` (set server-side from
 the caller's Bearer token) against the logged-in member and, on production,
-requires a recent, member-scoped intent with the exact redirect URI. It reads
-the current tab's copy first and uses the same-origin durable copy only while
-processing a captured OAuth callback; a normal page load in another tab does
-not consume or recover that fallback. Both copies keep the same 15-minute TTL.
+requires a recent, member-scoped intent with the exact redirect URI. A captured
+OAuth callback may use the same-origin durable copy. A normal page load may also
+verify and clear a completed preserved-switch receipt from either copy against
+fresh canonical state; unfinished legacy recovery remains limited to the
+current tab's copy. Both copies keep the same 15-minute TTL.
 For hosted auth, `success` must be exactly `true`, and only the returned
 `grant_id` is forwarded as callback identity. `grants/add/v3` performs the
 authoritative server-side code exchange or grant verification and persists the

@@ -1987,11 +1987,6 @@
   // pair per `[data-manager]`, plus the prior three-label shape this still
   // accepts) is owned by v3/README.md#booking-stage-availability-section.
   //
-  // Visibility is decided per label, never group-wide. Platform names the
-  // canonical Nylas connection layer (a grant that owns its calendar). Google
-  // names the provider connected through that layer (`manager === 'calendar'`).
-  // A Google-backed grant therefore renders both connected variants.
-  //
   // Tagged labels only render when canonical state is readable: 'connected',
   // 'reconnect', or 'disconnected'. 'error' hides them instead of making a
   // provider claim. 'loading' leaves the last accurate paint in place.
@@ -2030,9 +2025,6 @@
     if (group.children[1]) group.children[1].style.display = anyConnection ? '' : 'none'
   }
 
-  // Platform is the canonical Nylas connection layer. Google is an
-  // independent provider fact on top of that layer. A Google-backed grant
-  // therefore makes both Platform and Google connected.
   function setActionText(target, text) {
     if (!target) return
     const textEl = qs('.button_main-text, [btn-text], [text-element]', target)

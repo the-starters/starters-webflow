@@ -4,7 +4,7 @@
   // Writer counterpart to scheduling-availability-init.js for the scheduling
   // Starter dashboards. Ports the legacy V2 availability
   // writer flow (form submit, manager selection, Nylas scheduler configuration
-  // create/update, timezone set, OAuth grant redirect) against the same
+  // availability updates, timezone set, OAuth grant redirect) against the same
   // Webflow `availability-step` markup, with the loader and success/error
   // steps restored. Every api:tCpV3oqd call goes through window.xanoAuthFetch;
   // write payload member ids always come from the authenticated Memberstack

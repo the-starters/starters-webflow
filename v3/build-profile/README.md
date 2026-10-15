@@ -268,8 +268,8 @@ Settings handoff. The
 [Free Call settings contract](../../docs/wiring/FREE-CALL-SETTINGS-WIRING.md#build-profile-handoff)
 and the
 [Paid Call settings contract](../../docs/wiring/PAID-CALL-SETTINGS-WIRING.md#build-profile-handoff)
-own only what differs per branch: which prerequisites gate an enable, and which
-authored controls that branch's receipt part prefills.
+own what differs per branch: which prerequisites gate an enable, when the
+pending choice is activated, and which authored controls it prefills.
 
 Build Profile validates its visible Call Settings controls and stores a
 versioned, member-bound `starter_call_settings_intent_v3` receipt in private
@@ -287,12 +287,11 @@ rate reuses the same `$1` through `$1,000` whole-dollar validator as the other
 direct Build Profile price controls.
 
 Dashboard and Edit Profile hydrate the receipt only as a pre-onboarding create
-choice. If that branch has no canonical service, a pending enable prefills its
-controls without becoming canonical state and stays pending until the branch's
-prerequisites are ready and the member selects Update. The choice remains
-declinable before those prerequisites are ready: selecting Off makes Update live
-so the member can change their mind and submit it. A pending Yes leaves Update
-gated on the existing scheduling and Stripe prerequisite checks.
+choice. A pending enable can prefill controls without becoming canonical state;
+activation follows the branch-specific handoff contracts linked above. The choice
+remains declinable before its prerequisites are ready: selecting Off makes Update
+live so the member can change their mind and submit it. A pending Yes leaves
+Update gated on the existing scheduling and Stripe prerequisite checks.
 
 Initial hydration waits up to two seconds for the site-level `memberReady`
 promise before reading private Memberstack JSON. If that signal stays pending,
@@ -305,7 +304,7 @@ the failure as confirmed absence. While canonical-satisfied receipt cleanup is
 already in flight, auth recovery skips its queued receipt read so the newer
 canonical render does not wait behind that Memberstack JSON write.
 
-Once an active canonical service exists, that service is the sole authority.
+Once an activated canonical service exists, that service is the sole authority.
 The consumer removes any leftover Build Profile receipt without painting it or
 writing to Xano. Post-onboarding changes, including disable, belong to Edit
 Profile or Dashboard. This prevents a failed receipt-cleanup attempt from later
@@ -315,7 +314,7 @@ Each consumer removes only its own part of the receipt; the other branch's
 pending part is preserved. It consumes its part in one of three ways:
 
 - after the canonical Call Settings endpoint returns exact readback;
-- with no canonical write, on load, when there is an active canonical service,
+- with no canonical write, on load, when there is an activated canonical service,
   regardless of whether its current values match the older Build choice. This
   repairs a receipt whose
   best-effort cleanup failed after a verified save, so it cannot re-assert

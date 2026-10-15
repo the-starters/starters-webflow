@@ -40,8 +40,7 @@ same Free owner. Without a Build Profile Yes receipt, connection creates no
 Free offer and any legacy placeholder stays pending: the card shows Off,
 `data-free-call-enabled="false"`, and the member must select Update to make
 free calls live. A pending-activation placeholder has revision `1` and an
-explicitly null or empty `sync_status`; calendar preview and automatic hours
-updates leave it excluded and unchanged.
+explicitly null or empty `sync_status`.
 
 If an activated canonical Free service already exists, the controller consumes any
 leftover Build Profile receipt without overlaying or writing it. Later changes
