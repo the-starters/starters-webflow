@@ -91,3 +91,86 @@ function loadCanaryEnvScript({ name, staging, live, type, productionCanary }) {
   loads.set(name, { key, promise });
   return promise;
 }
+
+// A dependency group selects one source cohort for this page load. It never
+// upgrades an ordinary group or mixes ordinary scripts into a started canary.
+function loadEnvScriptGroup({ name, scripts, type = "module", productionCanary } = {}) {
+  function httpsSource(value) {
+    if (typeof value !== "string" || value !== value.trim()) return false;
+    try {
+      const url = new URL(value);
+      return url.protocol === "https:" && !url.username && !url.password;
+    } catch (_) { return false; }
+  }
+
+  if (typeof name !== "string" || !name.trim() || !Array.isArray(scripts) ||
+      !scripts.length || (type !== "module" && type !== "text/javascript") ||
+      scripts.some(script => !script || typeof script.name !== "string" ||
+        !script.name.trim() || !httpsSource(script.staging) || !httpsSource(script.live)) ||
+      new Set(scripts.map(script => script.name)).size !== scripts.length) {
+    return Promise.reject(new Error("Invalid loadEnvScriptGroup configuration"));
+  }
+  // Snapshot all URLs before any asynchronous work. Callers cannot change a
+  // remaining dependency or canary identity while an earlier script loads.
+  const entries = scripts.map(script => ({ name: script.name, staging: script.staging,
+    live: script.live, canary: script.canary }));
+  const memberId = productionCanary && productionCanary.memberId;
+  let key;
+  try { key = JSON.stringify([type, entries, productionCanary]); }
+  catch (_) { return Promise.reject(new Error("Invalid loadEnvScriptGroup configuration")); }
+  const groups = loadEnvScriptGroup.loads || (loadEnvScriptGroup.loads = new Map());
+  const previous = groups.get(name);
+  if (previous) {
+    return previous.key === key ? previous.promise :
+      Promise.reject(new Error(`Conflicting loadEnvScriptGroup configuration for ${name}`));
+  }
+  const validCanary = typeof memberId === "string" && /^mem_[A-Za-z0-9_]+$/.test(memberId) &&
+    entries.every(script => httpsSource(script.canary));
+
+  function currentMemberMatches() {
+    return new Promise(resolve => {
+      let settled = false;
+      let timer;
+      function finish(matches) {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timer);
+        resolve(matches);
+      }
+      timer = window.setTimeout(() => finish(false), 3000);
+      try {
+        const sdk = window.$memberstackDom;
+        if (!sdk || typeof sdk.getCurrentMember !== "function") return finish(false);
+        Promise.resolve(sdk.getCurrentMember()).then(
+          response => finish(Boolean(response && response.data && response.data.id === memberId)),
+          () => finish(false),
+        );
+      } catch (_) { finish(false); }
+    });
+  }
+  function append(script, cohort) {
+    return new Promise((resolve, reject) => {
+      const element = document.createElement("script");
+      element.setAttribute("src", script[cohort]);
+      element.setAttribute("type", type);
+      element.async = false;
+      element.addEventListener("load", () => resolve(element));
+      element.addEventListener("error", () => reject(new Error(`Failed to load ${name}/${script.name}`)));
+      document.body.appendChild(element);
+    });
+  }
+  const promise = Promise.resolve().then(async () => {
+    const cohort = window.location.host.includes("webflow.io") ? "staging" :
+      validCanary && await currentMemberMatches() ? "canary" : "live";
+    const loaded = [];
+    for (let index = 0; index < entries.length; index++) {
+      if (cohort === "canary" && index > 0 && !await currentMemberMatches()) {
+        throw new Error(`Canary member identity could not be verified for ${name}/${entries[index].name}`);
+      }
+      loaded.push(await append(entries[index], cohort));
+    }
+    return loaded;
+  });
+  groups.set(name, { key, promise });
+  return promise;
+}

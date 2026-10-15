@@ -43,7 +43,7 @@ function fixture(options = {}) {
   const context = { window, document, console: { log() {}, error() {} }, URL, Promise, Map, JSON, setTimeout: window.setTimeout, clearTimeout: window.clearTimeout }
   vm.createContext(context)
   vm.runInContext(source, context)
-  return { load: context.loadEnvScript, scripts, timers, reads, window,
+  return { load: context.loadEnvScript, group: context.loadEnvScriptGroup, scripts, timers, reads, window,
     timeout() { for (const [id, fn] of [...timers]) { timers.delete(id); fn() } },
   }
 }
@@ -161,4 +161,176 @@ test('a later separately named load reads the current member after an account sw
   f.scripts[1].dispatch('load')
   await second
   assert.equal(f.reads.length, 2)
+})
+
+
+const groupConfig = {
+  name: 'calendar-owners', type: 'text/javascript',
+  productionCanary: { memberId: 'mem_canary' },
+  scripts: ['free', 'init', 'section'].map(name => ({ name,
+    staging: 'https://cdn.example.test/staging/' + name + '.js',
+    live: 'https://cdn.example.test/ordinary/' + name + '.js',
+    canary: 'https://cdn.example.test/candidate/' + name + '.js',
+  })),
+}
+
+// Before the new API exists, reproduce the exact old footer's independent
+// chained selections. This makes the baseline red show mixed sources rather
+// than only a missing-function error. The separate API assertion prevents a
+// future deletion from hiding behind this baseline reproducer.
+function startGroup(f, settings = groupConfig) {
+  if (f.group) return f.group(settings)
+  return settings.scripts.reduce((chain, script) => chain.then(() => f.load({
+    name: script.name, type: settings.type, staging: script.staging, live: script.live,
+    productionCanary: { memberId: settings.productionCanary.memberId, src: script.canary },
+  })), Promise.resolve())
+}
+async function finishGroup(f, promise, cohort) {
+  for (let i = 0; i < groupConfig.scripts.length; i++) {
+    await settle()
+    assert.equal(f.scripts.length, i + 1)
+    assert.equal(f.scripts[i].attrs.src, groupConfig.scripts[i][cohort])
+    assert.equal(f.scripts[i].async, false)
+    f.scripts[i].dispatch('load')
+  }
+  await promise
+}
+
+test('group API is provided independently of legacy loadEnvScript', () => {
+  assert.equal(typeof fixture().group, 'function')
+})
+
+test('group timeout then SDK recovery keeps every dependency ordinary', async () => {
+  const pending = deferred()
+  let calls = 0
+  const f = fixture({ memberRead: () => ++calls === 1 ? pending.promise : Promise.resolve({ data: { id: 'mem_canary' } }) })
+  const result = startGroup(f)
+  await settle()
+  f.timeout()
+  await settle()
+  pending.resolve({ data: { id: 'mem_canary' } })
+  await finishGroup(f, result, 'live')
+  assert.equal(f.reads.length, 1)
+  assert.equal(f.timers.size, 0)
+})
+
+for (const [label, next] of [
+  ['foreign', () => Promise.resolve({ data: { id: 'mem_other' } })],
+  ['unknown', () => Promise.resolve({ data: null })],
+  ['reject', () => Promise.reject(Error('SDK failed'))],
+  ['throw', () => { throw Error('SDK failed') }],
+]) {
+  test('group candidate then ' + label + ' identity stops without mixing ordinary assets', async () => {
+    let calls = 0
+    const f = fixture({ memberRead: () => ++calls === 1 ? Promise.resolve({ data: { id: 'mem_canary' } }) : next() })
+    const result = startGroup(f)
+    // Attach immediately; no rejected group promise may escape the fixture.
+    const rejected = assert.rejects(result, /identity|member|canary/i)
+    await settle()
+    assert.equal(f.scripts[0].attrs.src, groupConfig.scripts[0].canary)
+    f.scripts[0].dispatch('load')
+    await settle()
+    // Finish any wrongly appended old-source script so baseline rejects fail
+    // decisively instead of leaving a pending test.
+    if (f.scripts[1]) {
+      f.scripts[1].dispatch('load'); await settle()
+      if (f.scripts[2]) f.scripts[2].dispatch('load')
+    }
+    await rejected
+    assert.equal(f.scripts.length, 1)
+  })
+}
+
+test('group candidate recheck timeout stops and late matching auth cannot resume', async () => {
+  const pending = deferred()
+  let calls = 0
+  const f = fixture({ memberRead: () => ++calls === 1 ? Promise.resolve({ data: { id: 'mem_canary' } }) : pending.promise })
+  const result = startGroup(f), rejected = assert.rejects(result, /identity|member|canary/i)
+  await settle(); f.scripts[0].dispatch('load'); await settle()
+  f.timeout(); await settle()
+  pending.resolve({ data: { id: 'mem_canary' } }); await settle()
+  if (f.scripts[1]) { f.scripts[1].dispatch('load'); await settle(); if (f.scripts[2]) f.scripts[2].dispatch('load') }
+  await rejected
+  assert.equal(f.scripts.length, 1)
+  assert.equal(f.timers.size, 0)
+})
+
+test('group stable canary checks current identity before each ordered append', async () => {
+  const f = fixture(), result = startGroup(f)
+  await finishGroup(f, result, 'canary')
+  assert.equal(f.reads.length, 3)
+})
+
+test('group staging selects every staging dependency without auth', async () => {
+  const f = fixture({ host: 'the-starters-3-0.webflow.io', noSdk: true })
+  await finishGroup(f, startGroup(f), 'staging')
+  assert.equal(f.reads.length, 0)
+})
+
+test('group ordinary mismatch never upgrades after the current account changes', async () => {
+  let calls = 0
+  const f = fixture({ memberRead: () => Promise.resolve({ data: { id: ++calls === 1 ? 'mem_other' : 'mem_canary' } }) })
+  await finishGroup(f, startGroup(f), 'live')
+  assert.equal(f.reads.length, 1)
+})
+
+test('group repeated matching configuration shares its in-flight and completed load', async () => {
+  const f = fixture(), first = startGroup(f), second = startGroup(f, JSON.parse(JSON.stringify(groupConfig)))
+  assert.equal(first, second)
+  await finishGroup(f, first, 'canary')
+  assert.equal(startGroup(f), first)
+  assert.equal(f.scripts.length, 3)
+})
+
+test('group conflicting ordered sources reject instead of silently reusing a load', async () => {
+  const f = fixture(), first = startGroup(f)
+  const changed = JSON.parse(JSON.stringify(groupConfig))
+  changed.scripts[1].live += '?different'
+  const rejected = assert.rejects(startGroup(f, changed), /conflict/i)
+  await finishGroup(f, first, 'canary')
+  await rejected
+})
+
+test('group script failure stops dependencies without a second source attempt', async () => {
+  const f = fixture(), result = startGroup(f), rejected = assert.rejects(result, /failed to load/i)
+  await settle(); f.scripts[0].dispatch('error'); await rejected
+  assert.equal(f.scripts.length, 1)
+})
+
+
+test('group missing SDK on a candidate continuation refuses all remaining scripts', async () => {
+  const f = fixture(), result = startGroup(f), rejected = assert.rejects(result, /identity|member|canary/i)
+  await settle()
+  delete f.window.$memberstackDom
+  f.scripts[0].dispatch('load')
+  await rejected
+  assert.equal(f.scripts.length, 1)
+})
+
+test('group missing initial SDK freezes the whole ordinary cohort', async () => {
+  const f = fixture({ noSdk: true })
+  await finishGroup(f, startGroup(f), 'live')
+  assert.equal(f.reads.length, 0)
+})
+
+test('group malformed canary source selects only ordinary without auth reads', async () => {
+  const f = fixture(), invalid = JSON.parse(JSON.stringify(groupConfig))
+  invalid.scripts[1].canary = 'javascript:alert(1)'
+  await finishGroup(f, startGroup(f, invalid), 'live')
+  assert.equal(f.reads.length, 0)
+})
+
+test('group snapshots ordered dependency URLs before caller mutation', async () => {
+  const f = fixture(), settings = JSON.parse(JSON.stringify(groupConfig)), result = startGroup(f, settings)
+  settings.scripts[1].canary = 'https://cdn.example.test/replaced.js'
+  settings.productionCanary.memberId = 'mem_other'
+  await finishGroup(f, result, 'canary')
+})
+
+test('group duplicate dependency names refuse before any append', async () => {
+  const f = fixture(), invalid = JSON.parse(JSON.stringify(groupConfig))
+  invalid.scripts[1].name = invalid.scripts[0].name
+  await assert.rejects(startGroup(f, invalid), /invalid/i)
+  assert.equal(f.scripts.length, 0)
+  assert.equal(f.reads.length, 0)
 })

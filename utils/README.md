@@ -37,3 +37,56 @@ the returned rejection through the page's normal script-load error reporting.
 Do not create a new repository tag containing candidate application code while
 production still loads that code through `@latest`; install and verify its exact
 production pin first.
+
+
+## One cohort for dependent scripts
+
+Use `loadEnvScriptGroup` when an ordinary/candidate mixture would break a group
+of dependent controllers. Existing `loadEnvScript` calls keep their behavior.
+
+```js
+loadEnvScriptGroup({
+  name: 'starter-calendar-owners',
+  type: 'text/javascript',
+  productionCanary: { memberId: 'mem_REVIEWED_MEMBER' },
+  scripts: [
+    { name: 'free', staging: 'https://cdn.example/stage/free.js',
+      live: 'https://cdn.example/ordinary/free.js', canary: 'https://cdn.example/candidate/free.js' },
+    { name: 'init', staging: 'https://cdn.example/stage/init.js',
+      live: 'https://cdn.example/ordinary/init.js', canary: 'https://cdn.example/candidate/init.js' },
+    { name: 'section', staging: 'https://cdn.example/stage/section.js',
+      live: 'https://cdn.example/ordinary/section.js', canary: 'https://cdn.example/candidate/section.js' },
+  ],
+}).catch(reportScriptLoadError);
+```
+
+Replace these illustrative URLs and member with reviewed static values; use
+immutable production and candidate references. Group/dependency names must be
+nonempty, dependency names unique, and staging/live URLs HTTPS. Invalid group
+structure rejects before loading. Missing or invalid canary configuration chooses
+the ordinary cohort on production. Staging uses every `staging` source without
+a member read.
+
+Production selects a cohort once with an exact current-member match and a
+three-second timeout. An initial mismatch, unknown member, missing SDK, thrown
+error, rejection, or timeout selects every ordinary source. Later SDK recovery
+cannot upgrade that group. For a selected canary, the helper makes another bounded
+current-member read before each remaining dependency. A missing, different, failed,
+or timed-out identity rejects the group without appending that dependency or any
+ordinary fallback. A late response cannot restart it. Already executed scripts
+cannot be unloaded; their own auth/session guards and backend authorization remain
+required. This helper selects code only.
+
+The helper snapshots configuration, appends one script at a time with
+`async=false`, and awaits its load event before the next identity check/append.
+The returned Promise resolves with the loaded elements. Load failure stops the
+group; it does not append a second source. Script execution order does not imply
+completion of internal asynchronous controller reads.
+
+One group name owns one ordered configuration for the page. Identical repeats
+return the same Promise during and after completion or failure; conflicting
+sources/order/member/type reject. A failed group needs a fresh page load after
+recovery. Do not also load its dependencies with direct tags or separate
+`loadEnvScript` calls. Preserve Memberstack/shared-read dependency order and use
+one reviewed immutable helper that includes this API. A previously released
+helper without the API cannot run a group footer.
