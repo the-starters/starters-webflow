@@ -411,7 +411,7 @@
   }
 
   // The canonical GET always returns sync_status. A null or empty status at
-  // revision 1 is the calendar-connect placeholder that no member has saved.
+  // revision 1 is a legacy calendar-connect placeholder that no member has saved.
   function serviceAwaitingActivation(service) {
     if (!service || !Object.prototype.hasOwnProperty.call(service, 'sync_status')) return false
     const status = service.sync_status
@@ -423,7 +423,7 @@
     // Build Profile is a pre-onboarding handoff. Once a canonical service
     // exists, post-onboarding changes belong to Edit Profile or Dashboard and
     // a leftover Build receipt must never replace that service's newer state.
-    // The calendar-connect placeholder is not a member save: the receipt is
+    // A legacy calendar-connect placeholder is not a member save: the receipt is
     // still the only copy of the member's Free description and choice.
     const service = canonicalService(value)
     return Boolean(value && value.has_free_settings_history === true) ||

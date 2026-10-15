@@ -62,7 +62,8 @@ loadEnvScriptGroup({
 
 Replace these illustrative URLs and member with reviewed static values; use
 immutable production and candidate references. Group/dependency names must be
-nonempty, dependency names unique, and staging/live URLs HTTPS. Invalid group
+nonempty, dependency names unique, and staging/live URLs HTTPS. Group `type`
+defaults to `module` and accepts only `module` or `text/javascript`. Invalid group
 structure rejects before loading. Missing or invalid canary configuration chooses
 the ordinary cohort on production. Staging uses every `staging` source without
 a member read.

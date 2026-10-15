@@ -261,9 +261,8 @@ tighter predicate that `STARTERS_DEBUG` cannot unlock, and says so where it live
 - `opportunities---create.js` — dedicated `/opportunities---create` controller; binds the same `[data-opp-form="create"]` contract through the shared Opportunities 3.0 core
 - `starters-list/apply-button-disable.js`
 - `starters-list/range-backfill.js`
-- `utils/loader.js` — env-switch script loader (`loadEnvScript`); its optional
-  [authenticated member source selection](utils/README.md#production-canary-source-selection)
-  keeps other members on a pinned production script
+- `utils/loader.js` — env-switch script loaders (`loadEnvScript`, `loadEnvScriptGroup`);
+  see the [loader contracts](utils/README.md#production-canary-source-selection)
 - `utils/wf-validate.js` — declarative form validation: styled errors and success slots, live counters, selection groups with meters for chip pickers, a linked error summary, soft-disabled submitters while a form is incomplete, and refresh support for late-injected fields (see below)
 - `explore-search/explore-search-chip-fill.js` — chip click copies its text into the search input, fires the engine's `input` event, announces `explore-search:commit`
 - `explore-search/explore-search-tab-counts.js` — live per-index hit counts for the tab bar (intercepts the engine's own Algolia responses; zero extra operations)

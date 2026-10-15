@@ -3291,14 +3291,14 @@ the correct initial modal step. Every boot performs the authenticated canonical
 reader call even when a member-scoped availability cache exists: a grant,
 calendar, or scheduler configuration can change independently of saved hours,
 so the cache is write-through compatibility state rather than connection proof.
-The first-time `availability: []` or `availability: null` projection is accepted
-when canonical grant and calendar fields are absent. With null availability
-and a saved binding, the initializer requires a nonempty canonical grant ID and
-grant email; the calendar may still be missing. It supplies an empty schedule
-for setup, subject to the controller's canonical connection check. Bound arrays,
-bound empty objects, and malformed populated schedules still fail closed at
-this boundary. Authentication, member-change, and test-member guards continue
-to apply to the initializer-to-writer handoff.
+The first-time `availability: []`, `availability: {}`, or `availability: null`
+projection is accepted when canonical grant and calendar fields are absent.
+With null availability and a saved binding, the initializer requires a nonempty
+canonical grant ID and grant email; the calendar may still be missing. It
+supplies an empty schedule for setup, subject to the controller's canonical
+connection check. Bound arrays, bound empty objects, and malformed populated
+schedules still fail closed at this boundary. Authentication, member-change, and
+test-member guards continue to apply to the initializer-to-writer handoff.
 The initializer reads `/api:tCpV3oqd/starter/get_by_memberstack/v3` through
 `window.xanoAuthFetch`, safely treating a JSON `null` response as a first-time
 V3 starter. The authenticated helper is required; an unavailable helper fails

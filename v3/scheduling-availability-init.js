@@ -193,9 +193,9 @@
       // New V3 starters do not necessarily have an availability_v3 row yet.
       // Endpoint 1583 projects that state as availability=[] before the row
       // exists and availability={} after timezone bootstrap creates it. Both
-      // use blank grant fields; older readers may still return null. A non-empty
-      // container or an empty one paired with grant data stays invalid so a
-      // malformed existing scheduling record does not fail open.
+      // use blank grant fields; older readers may still return null. Only
+      // grantless empty containers qualify as first-time projections; bound
+      // null availability is handled separately below.
       return {
         availability: { items: {}, manager: null },
         connectionState: 'disconnected',

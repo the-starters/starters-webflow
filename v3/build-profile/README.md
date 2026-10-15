@@ -287,19 +287,13 @@ rate reuses the same `$1` through `$1,000` whole-dollar validator as the other
 direct Build Profile price controls.
 
 Dashboard and Edit Profile hydrate the receipt only as a pre-onboarding create
-choice. A pending enable can prefill controls without becoming canonical state;
-Free also requires literal `false` canonical `has_free_settings_history` before
-overlaying or passively activating that choice. Literal `true` supersedes the
-Free receipt, including after a later disable; missing or nonboolean history
-suppresses the overlay and automatic write without deleting the receipt solely
-for unknown history. Canonical services and fresh explicit settings actions
-remain usable. The field records prior verified settings, not enabled or
-bookable state; its exact ownership and rollout contract is in
+choice. A pending enable can prefill controls without becoming canonical state,
+subject to the branch-specific handoff contracts linked above. Free's additional
+eligibility and supersession rules are owned by
 [Free settings history](../../docs/wiring/FREE-CALL-SETTINGS-WIRING.md#free-settings-history).
-Activation follows the branch-specific handoff contracts linked above. The choice
-remains declinable before its prerequisites are ready: selecting Off makes Update
-live so the member can change their mind and submit it. A pending Yes leaves
-Update gated on the existing scheduling and Stripe prerequisite checks.
+The choice remains declinable before its prerequisites are ready: selecting Off
+makes Update live so the member can change their mind and submit it. A pending
+Yes leaves Update gated on the existing scheduling and Stripe prerequisite checks.
 
 Initial hydration waits up to two seconds for the site-level `memberReady`
 promise before reading private Memberstack JSON. If that signal stays pending,
@@ -315,16 +309,15 @@ canonical render does not wait behind that Memberstack JSON write.
 Once an activated canonical service exists, that service is the sole authority.
 The consumer removes any leftover Build Profile receipt without painting it or
 writing to Xano. Post-onboarding changes, including disable, belong to Edit
-Profile or Dashboard. Free also retires its receipt when canonical history is
-literal `true`, so a failed cleanup cannot replace a later disabled state across
-fresh scripts, sessions, or devices.
+Profile or Dashboard. Branch-specific canonical supersession also follows the
+handoff contracts linked above.
 
 Each consumer removes only its own part of the receipt; the other branch's
 pending part is preserved. It consumes its part in one of three ways:
 
 - after the canonical Call Settings endpoint returns exact readback;
-- with no canonical write, on load, when there is an activated canonical service
-  or, for Free, literal `true` canonical settings history,
+- with no canonical write, on load, when canonical state supersedes the receipt
+  under the branch-specific handoff contract,
   regardless of whether its current values match the older Build choice. This
   repairs a receipt whose
   best-effort cleanup failed after a verified save, so it cannot re-assert
@@ -357,11 +350,8 @@ belonged to, not whoever the session happens to hold when a failure lands. Recor
 one, discharging it, and asking whether it is outstanding each name a member, so a
 sign-in recovery or same-script session reload of the same member keeps it, while another
 member neither inherits it, nor has their own receipt retired by it, nor discharges
-it by cleaning up their own. Free does not rely on this session state for durable
-supersession: literal `true` history from the authenticated canonical GET suppresses
-the old receipt after a fresh reload even if every Memberstack cleanup fails.
-Literal `false` preserves genuine first-time Free intent, including its pending
-description; unknown history preserves the stored receipt without offering it.
+it by cleaning up their own. Durable Free supersession after a fresh reload
+follows [Free settings history](../../docs/wiring/FREE-CALL-SETTINGS-WIRING.md#free-settings-history).
 Paid retains its existing session cleanup contract: without an activated service
 or a successful cleanup, a fresh script can offer the stored pending create again.
 
