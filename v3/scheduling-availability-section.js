@@ -809,9 +809,16 @@
     return ids
   }
 
+  function isPendingFreeActivation(config) {
+    return Boolean(config && config.is_paid === false &&
+      Object.prototype.hasOwnProperty.call(config, 'sync_status') &&
+      (config.sync_status === null || config.sync_status === '') &&
+      Number(config.revision) === 1)
+  }
+
   function activeSchedulerConfigs() {
     return configs.filter(function (config) {
-      return config && config.active !== false
+      return config && config.active !== false && !isPendingFreeActivation(config)
     })
   }
 
@@ -1179,10 +1186,12 @@
     return starter && typeof starter === 'object' && !Array.isArray(starter) ? starter : null
   }
 
-  function canonicalAvailabilityValue(value) {
+  function canonicalAvailabilityValue(starter) {
+    const value = starter.availability
     // Initial records may have no schedule. Malformed populated schedules
     // remain errors rather than silently discarding the member's settings.
-    if (value === null || (value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === 0)) {
+    if (value === null || (value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === 0) ||
+        (Array.isArray(value) && value.length === 0 && !starter.nylas_grant_id && !starter.nylas_calendar_id)) {
       return { items: {}, manager: null }
     }
     if (!isAvailability(value)) throw new Error('Canonical scheduling reader returned invalid availability')
@@ -1236,7 +1245,7 @@
     try {
       const starter = await readStarterRecord()
       if (!starter) throw new Error('Canonical scheduling reader returned no record')
-      const canonicalAvailability = canonicalAvailabilityValue(starter.availability)
+      const canonicalAvailability = canonicalAvailabilityValue(starter)
       const nextGrantId = (starter && starter.nylas_grant_id) || null
       const nextConfigs = nextGrantId ? await getConfigs(nextGrantId, true) : []
 
@@ -2938,9 +2947,7 @@
         config.config_id &&
         config.is_paid === false &&
         config.active !== false &&
-        !(Object.prototype.hasOwnProperty.call(config, 'sync_status') &&
-          (config.sync_status === null || config.sync_status === '') &&
-          Number(config.revision) === 1) &&
+        !isPendingFreeActivation(config) &&
         configEnvironmentMatches(config),
     )
   }
@@ -3396,7 +3403,7 @@
 
       const starterRecord = await readStarterRecord()
       if (!starterRecord) throw new Error('Canonical scheduling reader returned no record')
-      availability = canonicalAvailabilityValue(starterRecord.availability)
+      availability = canonicalAvailabilityValue(starterRecord)
       window.STARTER_AVAILABILITY = availability
 
       grantId = (starterRecord && starterRecord.nylas_grant_id) || null

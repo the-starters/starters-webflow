@@ -851,6 +851,59 @@ test('connection-only availability save with no offers does not create a Free fa
 })
 
 for (const syncStatus of [null, '']) {
+  for (const includeActivatedServices of [false, true]) {
+    test(`connection-only hours save preserves ${JSON.stringify(syncStatus)}-sync placeholders with activated services ${includeActivatedServices}`, async () => {
+      const placeholder = { config_id: 'pending-free', grant_id: 'existing-grant', duration: 30,
+        active: true, is_paid: false, revision: syncStatus === null ? 1 : '1', sync_status: syncStatus }
+      const activated = includeActivatedServices ? [
+        { config_id: 'ready-free', grant_id: 'existing-grant', duration: 30,
+          active: true, is_paid: false, revision: 2, sync_status: 'ready' },
+        { config_id: 'ready-paid', grant_id: 'existing-grant', duration: 60, price_cents: 100,
+          active: true, is_paid: true, revision: 1, sync_status: null },
+      ] : []
+      const expectedPlaceholder = { ...placeholder }
+      const result = loadSection({
+        serverState: {
+          grantId: 'existing-grant', grantEmail: 'member-a', calendarId: 'existing-calendar',
+          availability: { items: { general: { days: [1], defaultDays: [1], start: '09:00', end: '17:00' } }, manager: 'platform' },
+          configs: [placeholder, ...activated],
+        },
+        postRoutes: {
+          '/scheduler/configurations/update/v3': (body) => {
+            const config = result.state.configs.find((item) => item.config_id === body.config_id)
+            config.revision = Number(config.revision) + 1
+            config.sync_status = 'ready'
+            return { status: 200, body: { response: { status: 200 } } }
+          },
+        },
+      })
+      await settle()
+      const card = result.dom.list.children.find((el) => el.dataset.id === 'general')
+      card.children[0].children[2].children[0].click()
+      const form = card.querySelector('[data-availability-element="availability-form"]')
+      form.querySelector('[name=start-time]').value = '10:00'
+      form.querySelector('[name=end-time]').value = '16:00'
+      card.children[2].children[0].children[1].children[1].click()
+      await settle()
+
+      assert.equal(result.calls.filter((call) => call.path === '/starter/update_availability/v3').length, 1)
+      assert.equal(result.state.availability.items.general.start, '10:00')
+      assert.equal(result.state.availability.items.general.end, '16:00')
+      assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
+      assert.equal(result.dom.notif.steps['availability-saved'].style.display, '')
+      const configUpdates = result.calls.filter((call) => call.path === '/scheduler/configurations/update/v3')
+      assert.deepEqual(configUpdates.map((call) => call.body.config_id), activated.map((config) => config.config_id))
+      assert.deepEqual(result.state.configs[0], expectedPlaceholder)
+      for (const call of configUpdates) {
+        assert.equal(call.body.in_availability.availability_rules.default_open_hours[0].start, '10:00')
+        assert.equal(call.body.in_availability.availability_rules.default_open_hours[0].end, '16:00')
+      }
+      assert.equal(result.calls.filter((call) => /configurations\/create|settings\/upsert/.test(call.path)).length, 0)
+    })
+  }
+}
+
+for (const syncStatus of [null, '']) {
   test(`connection-only null-availability resume preserves the ${JSON.stringify(syncStatus)}-sync Free placeholder without previewing it`, async () => {
     const placeholder = { config_id: 'existing-placeholder', grant_id: 'existing-grant', duration: 30,
       active: true, is_paid: false, revision: syncStatus === null ? 1 : '1', sync_status: syncStatus }
@@ -931,14 +984,40 @@ test('connection-only mismatched canonical finalization never publishes a connec
   assert.equal(connectionStates(result.events).includes('connected'), false)
 })
 
-test('connection-only bootstrap rejects an empty-array canonical availability', async () => {
-  const result = connectionOnlySection({ availability: [] })
+test('connection-only bootstrap connects the grantless empty-array projection without creating offers', async () => {
+  const result = connectionOnlySection({ availability: [], grantId: '', grantEmail: '', calendarId: '' })
   await settle()
-  assert.equal(result.document.documentElement.getAttribute('data-scheduling-availability-section'), 'error')
-  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'error')
+  assert.equal(result.document.documentElement.getAttribute('data-scheduling-availability-section'), 'ready')
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'disconnected')
+  assert.equal(JSON.stringify(result.window.STARTER_AVAILABILITY), JSON.stringify({ items: {}, manager: null }))
   assert.equal(result.calls.filter(c => /create|add_virtual|delete|upsert|update_availability/.test(c.path)).length, 0)
-  assert.ok(result.warnings.some(message => message.includes('Canonical scheduling reader returned invalid availability')))
+  result.dom.connectBtnWrapper.children[0].click()
+  await settle()
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
+  assert.equal(result.state.availability.manager, 'platform')
+  assert.deepEqual(result.state.configs, [])
+  assert.equal(result.calls.filter(c => c.path === '/grants/create_virtual_account/v3').length, 1)
+  assert.equal(result.calls.filter(c => c.path === '/grants/create_virtual_calendar/v3').length, 1)
+  assert.equal(result.calls.filter(c => /configurations\/create|settings\/upsert|grants\/delete/.test(c.path)).length, 0)
 })
+
+for (const state of [
+  { availability: [], grantId: 'existing-grant' },
+  { availability: [], calendarId: 'existing-calendar' },
+  { availability: [], grantId: 'existing-grant', grantEmail: 'member-a', calendarId: 'existing-calendar' },
+  { availability: [{ days: [1], start: '09:00', end: '17:00' }] },
+]) {
+  test(`connection-only bootstrap rejects malformed array projection ${JSON.stringify(state)}`, async () => {
+    const result = connectionOnlySection(state)
+    await settle()
+    assert.equal(result.document.documentElement.getAttribute('data-scheduling-availability-section'), 'error')
+    assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'error')
+    result.dom.connectBtnWrapper.children[0].click()
+    await settle()
+    assert.equal(result.calls.filter(c => /create|add_virtual|delete|upsert|update_availability/.test(c.path)).length, 0)
+    assert.ok(result.warnings.some(message => message.includes('Canonical scheduling reader returned invalid availability')))
+  })
+}
 
 function createDatepickerStub() {
   const jQuery = (element) => {

@@ -71,6 +71,7 @@
   function isFirstTimeV3Projection(starter) {
     const availability = starter && starter.availability
     const isEmptyAvailability =
+      availability === null ||
       (Array.isArray(availability) && availability.length === 0) ||
       (availability &&
         typeof availability === 'object' &&
@@ -202,7 +203,12 @@
       }
     }
 
-    const availability = normalizeAvailability(starter.availability)
+    const hasRecoverableEmptyBinding = starter.availability === null &&
+      typeof starter.nylas_grant_id === 'string' && starter.nylas_grant_id.trim() &&
+      typeof starter.nylas_grant_email === 'string' && starter.nylas_grant_email.trim()
+    const availability = hasRecoverableEmptyBinding
+      ? { items: {}, manager: null }
+      : normalizeAvailability(starter.availability)
     if (!availability) throw new Error('Starter availability is invalid')
     writeCachedAvailability(readMemberId, availability)
     const hasGrant = Boolean(starter.nylas_grant_id)

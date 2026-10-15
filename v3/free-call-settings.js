@@ -76,12 +76,6 @@
   // Retiring a receipt canonical already satisfies is passive: it must never
   // disable a control or reject a member action, only delay one.
   let receiptCleanup = null
-  // Calendar connect creates a placeholder Free configuration through
-  // scheduler/configurations/create/v3. That row is active but has no
-  // ready sync_status, so readiness and the public /hire DTO both keep it
-  // unbookable until starter/free-call-settings/upsert/v3 activates it.
-  // A Build Profile Yes activates it once per member and config, carrying
-  // the Build Profile description into the canonical writer.
   const activationAttempted = new Set()
 
   function memberJsonValue(response) {
@@ -437,10 +431,10 @@
 
   function maybeActivateFromBuildIntent(value, memberId) {
     const service = canonicalService(value)
-    if (!pendingBuildIntent || !serviceAwaitingActivation(service)) return null
+    if (!pendingBuildIntent || (service ? !serviceAwaitingActivation(service) : editProfileMode)) return null
     if (!prerequisitesReady(value) || memberId !== sessionMemberId) return null
     if (busy || activeWrite || authTransitionPending || receiptCleanup) return null
-    const key = memberId + ':' + service.config_id
+    const key = memberId + ':' + (service ? service.config_id : 'create')
     if (activationAttempted.has(key)) return null
     activationAttempted.add(key)
     setMessage('Turning on free calls from your Build Profile choice…')

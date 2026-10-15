@@ -478,6 +478,28 @@ test('shows Connect Calendar after timezone bootstrap creates an empty availabil
   assert.equal(result.events[0].detail.source, 'default')
 })
 
+for (const calendarId of ['calendar-existing', '']) {
+  test(`normalizes owned null availability for a ${calendarId ? 'complete' : 'partial'} saved binding`, async () => {
+    const calls = []
+    const result = loadInitializer({
+      xanoAuthFetch: async (url, init) => {
+        calls.push({ url, body: JSON.parse(init.body) })
+        return { ok: true, status: 200, json: async () => ({
+          id: 320, availability: null, nylas_grant_id: 'grant-existing',
+          nylas_grant_email: 'member-a', nylas_calendar_id: calendarId,
+        }) }
+      },
+    })
+    await settle()
+    assert.equal(result.attributes.get('data-scheduling-availability-init'), 'init')
+    assert.equal(result.attributes.get('data-scheduling-calendar-state'), calendarId ? 'loading' : 'reconnect')
+    assert.deepEqual(JSON.parse(JSON.stringify(result.window.STARTER_AVAILABILITY)), { items: {}, manager: null })
+    assert.equal(result.events[0].type, 'starterSchedulingAvailabilityReady')
+    assert.equal(result.events[0].detail.source, 'starter')
+    assert.deepEqual(calls.map(call => call.body), [{ member_id: 'member-a' }])
+  })
+}
+
 test('rejects an empty availability array when grant data already exists', async () => {
   const result = loadInitializer({
     xanoAuthFetch: async () => ({
@@ -901,7 +923,7 @@ test('rejects a legacy starter response without availability', async () => {
   assert.equal(result.attributes.get('data-scheduling-availability-init'), 'error')
 })
 
-test('rejects null availability on an existing legacy starter', async () => {
+test('shows Connect Calendar for a grantless null availability projection', async () => {
   const result = loadInitializer({
     xanoAuthFetch: async () => ({
       ok: true,
@@ -913,7 +935,11 @@ test('rejects null availability on an existing legacy starter', async () => {
 
   assert.equal(result.init.style.display, 'flex')
   assert.equal(result.update.style.display, 'none')
-  assert.equal(result.attributes.get('data-scheduling-availability-init'), 'error')
+  assert.equal(result.attributes.get('data-scheduling-availability-init'), 'init')
+  assert.equal(result.attributes.get('data-scheduling-calendar-state'), 'disconnected')
+  assert.deepEqual(JSON.parse(JSON.stringify(result.window.STARTER_AVAILABILITY)), { items: {}, manager: null })
+  assert.equal(result.events[0].type, 'starterSchedulingAvailabilityReady')
+  assert.equal(result.events[0].detail.source, 'default')
 })
 
 test('rejects a member switch while scheduling availability is loading', async () => {
