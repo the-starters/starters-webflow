@@ -346,6 +346,52 @@ test('email payload rewrites the legacy interview path to the live V3 CMS route'
     }
 })
 
+for (const [label, fields, expectedSummary] of [
+    ['short normalized text', { description: '  <p>Practical\n guidance</p>  ' }, 'Practical guidance'],
+    ['empty text', { description: '' }, 'Browse practical sessions and playbooks from experienced operators.'],
+    ['exact 360-character text', { description: 'x'.repeat(360) }, 'x'.repeat(360)],
+    ['long unbroken text', { description: 'x'.repeat(361) }, 'x'.repeat(359) + '…'],
+    ['partial final word', { description: 'word '.repeat(70) + 'creative quality matters' }, 'word '.repeat(70) + 'creative…'],
+    ['complete final word', { description: 'x'.repeat(350) + ' creative quality matters' }, 'x'.repeat(350) + ' creative…'],
+    ['boundary whitespace', { description: 'x'.repeat(358) + ' quality matters' }, 'x'.repeat(358) + '…'],
+    ['emoji across the boundary', { description: 'x'.repeat(358) + '😀long' }, 'x'.repeat(358) + '…'],
+    ['summary fallback', { summary: 'Fallback summary', excerpt: 'Other excerpt' }, 'Fallback summary'],
+    ['excerpt fallback', { excerpt: 'Excerpt only' }, 'Excerpt only'],
+    ['description precedence', { description: 'Selected description', summary: 'Other summary' }, 'Selected description'],
+    ['already truncated historical text', { description: 'x'.repeat(346) + 'creative quali' }, 'x'.repeat(346) + 'creative quali'],
+]) {
+    test(`Learn summary enrollment preserves a bounded excerpt for ${label}`, async () => {
+        const storage = createStorage(
+            completedQuiz({ memberstackSavedAt: '2026-08-11T04:01:00.000Z' }),
+        )
+        const harness = await runController({
+            storage,
+            enrollmentResponses: [],
+            learnSelection: {
+                name: 'Canonical public guide',
+                url: '/learn/interviews/example-guide?utm_source=quiz-results#lesson',
+                ...fields,
+            },
+            waitUntil: ({ fetchCalls }) => enrollmentCalls(fetchCalls).length === 1,
+        })
+        const calls = enrollmentCalls(harness.fetchCalls)
+        const payload = JSON.parse(calls[0].options.body)
+
+        assert.equal(calls.length, 1)
+        assert.equal(payload.properties.learn_summary, expectedSummary)
+        assert.ok(payload.properties.learn_summary.length <= 360)
+        assert.equal(payload.properties.learn_count, '1')
+        assert.equal(payload.properties.learn_title, 'Canonical public guide')
+        assert.equal(
+            payload.properties.learn_url,
+            'https://thestarters.com/learn/interviews-analysis/example-guide?utm_source=quiz-results#lesson',
+        )
+        assert.equal(payload.properties.starter_1_first_name, 'Alex')
+        assert.equal(payload.properties.starter_1_reviews, '4.8 (12 Reviews)')
+        assert.equal(payload.properties.quiz_revision, '2026-08-11T04:00:00.000Z')
+    })
+}
+
 test('email payload maps three canonical Algolia profile photos for enrollment', async () => {
     const quiz = completedQuiz({ memberstackSavedAt: '2026-08-11T04:01:00.000Z' })
     quiz.featuredFreelancers = [

@@ -217,6 +217,18 @@
             .slice(0, maxLength)
     }
 
+    function normalizeQuizLeadDripLearnSummary(value) {
+        const text = normalizeQuizLeadDripText(value, Number.MAX_SAFE_INTEGER)
+        if (text.length <= 360) return text
+
+        const prefix = text.slice(0, 359)
+        const lastSpace = prefix.lastIndexOf(' ')
+        const excerpt = lastSpace > 0 && text[359] !== ' '
+            ? prefix.slice(0, lastSpace)
+            : prefix
+        return excerpt.trimEnd().replace(/[\uD800-\uDBFF]$/, '') + '…'
+    }
+
     function getQuizLeadDripValue(record, fields) {
         for (const field of fields) {
             const value = record?.[field]
@@ -477,13 +489,12 @@
 
         return {
             title,
-            summary: normalizeQuizLeadDripText(
+            summary: normalizeQuizLeadDripLearnSummary(
                 getQuizLeadDripValue(hit, [
                     'description',
                     'summary',
                     'excerpt',
                 ]),
-                360,
             ),
             url,
         }
