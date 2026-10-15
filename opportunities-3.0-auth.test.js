@@ -5683,6 +5683,38 @@ test('the invoiced amount is rounded to cents and never below the promised $0.01
   assert.equal(normalizeInvoiceAmount('1000000.01'), null)
 })
 
+test('invoice amounts accept a dollar sign and correct thousands commas', async () => {
+  const bridge = await loadBridge(async () => response({}))
+  const { normalizeInvoiceAmount, normalizeFinalInvoiceAmount } = bridge.window.Opp30
+
+  // Tim Chard 2026-10-15: "6,380.10" was refused as out of range.
+  for (const normalize of [normalizeInvoiceAmount, normalizeFinalInvoiceAmount]) {
+    assert.equal(normalize('6,380.10'), 6380.1)
+    assert.equal(normalize('$6,380.10'), 6380.1)
+    assert.equal(normalize(' $ 6380.10 '), 6380.1)
+    assert.equal(normalize('1,000,000'), 1000000)
+    assert.equal(normalize('1,000,000.01'), null)
+    // A comma that is not a thousands separator is refused, never guessed.
+    assert.equal(normalize('6,38'), null)
+    assert.equal(normalize('6.380,10'), null)
+    assert.equal(normalize('63,80.10'), null)
+    assert.equal(normalize(',100'), null)
+    assert.equal(normalize('$'), null)
+  }
+  assert.equal(normalizeFinalInvoiceAmount('6,380.101'), null)
+  assert.equal(normalizeInvoiceAmount(125.25), 125.25)
+})
+
+test('a comma-formatted amount posts the plain number to invoices/create/v3', async () => {
+  const { requests } = await submitInvoiceForProject(
+    { id: 746, sync_origin: 'v3', status: 'active', lifecycle_state: 'active', final_invoice: null },
+    '6,380.10',
+  )
+  assert.ok(await waitFor(() => requests.length === 1))
+  assert.match(requests[0].url, /\/invoices\/create\/v3$/)
+  assert.equal(requests[0].body.amount, 6380.1)
+})
+
 test('invoiceProjectContext prefers a bound brand field over the pipe-split heading', async () => {
   const bridge = await loadBridge(async () => response({}))
   const { invoiceProjectContext } = bridge.window.Opp30
@@ -6242,7 +6274,7 @@ test('recoverable final invoice prefills its canonical amount and sends no provi
 // ordinary Generate Invoice route (#1691). A completed project, with or without
 // a final placeholder, and a migrated v2_legacy project never reach
 // invoices/final-create/v3 for a new invoice; an ended project bills nothing.
-async function submitInvoiceForProject(project) {
+async function submitInvoiceForProject(project, amountText) {
   const dom = invoiceSubmitDom()
   const card = invoiceCard({ title: 'Campaign', company: 'Acme Co' }, String(project.id))
   const requests = []
@@ -6262,6 +6294,7 @@ async function submitInvoiceForProject(project) {
   )
   const context = bridge.window.Opp30.invoiceProjectContext(card, project)
   bridge.window.Opp30.prepareInvoiceModal(dom.modal, context)
+  if (amountText != null) dom.amount.value = amountText
   bridge.dispatchDocument('submit', {
     target: dom.form,
     preventDefault() {},

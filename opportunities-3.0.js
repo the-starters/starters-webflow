@@ -2025,9 +2025,24 @@
     }
   }
 
+  /**
+   * Starters type amounts like "$6,380.10". Drop one leading "$" and accept
+   * commas only as correct thousands groups, so "6,38" is still rejected and
+   * never read as 638. @returns {string}
+   */
+  function invoiceAmountText(value) {
+    if (typeof value === 'number') return String(value)
+    const text = String(value == null ? '' : value).trim().replace(/^\$\s*/, '')
+    if (!text.includes(',')) return text
+    if (!/^\d{1,3}(?:,\d{3})+(?:\.\d*)?$/.test(text)) return ''
+    return text.replace(/,/g, '')
+  }
+
   /** Round to cents, then accept only a billable amount. @returns {number|null} */
   function normalizeInvoiceAmount(value) {
-    const raw = Number(value)
+    const text = invoiceAmountText(value)
+    if (!text) return null
+    const raw = Number(text)
     if (!Number.isFinite(raw)) return null
     const amount = Math.round(raw * 100) / 100
     if (amount < INVOICE_MIN_AMOUNT || amount > INVOICE_MAX_AMOUNT) return null
@@ -2036,7 +2051,7 @@
 
   // Final invoices must preserve the entered cents, never silently round them.
   function normalizeFinalInvoiceAmount(value) {
-    const text = String(value == null ? '' : value).trim()
+    const text = invoiceAmountText(value)
     if (!/^(?:\d+(?:\.\d{0,2})?|\.\d{1,2})$/.test(text)) return null
     return normalizeInvoiceAmount(text)
   }
@@ -7244,6 +7259,7 @@
     invoiceErrorMessage,
     formatInvoiceAmount,
     normalizeInvoiceAmount,
+    normalizeFinalInvoiceAmount,
     normalizeFinalInvoiceDescription,
     openInvoiceModal,
     prepareInvoiceModal,
