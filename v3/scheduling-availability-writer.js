@@ -2077,11 +2077,6 @@
       timezone = await resolveTimezone(starterRecord, isStagingHost)
       renderTimezone()
 
-      const urlParams = new URLSearchParams(
-        oauthCallback ? oauthCallback.remainingQuery : window.location.search,
-      )
-      let connectedCalendar = isStagingHost ? urlParams.get('calendar') || null : null
-      let oauthPaidCallIntent = null
       let preservedCallbackIncomplete = false
       let canonicalConfigsLoaded = false
       let preservedReadbackVerified = false
@@ -2141,7 +2136,6 @@
           if (!oauthIntent) {
             throw invalidOAuthCallback('OAuth return was not initiated by this session')
           }
-          oauthPaidCallIntent = oauthIntent.paidCallIntent || null
           await ensureTimezone()
           await completeOAuthGrant(memberId, oauthIntent, oauthCallback)
           await refreshCanonicalConnectionState()
@@ -2149,33 +2143,23 @@
             throw new Error('Canonical OAuth grant readback is incomplete')
           }
           assertPreservedDefault(oauthIntent, 'calendar', oauthGrantId)
-          if (oauthIntent.preserveBookings !== true) {
-            if (!legacyOAuthMutationAllowed(oauthIntent)) {
-              clearOAuthIntent(memberId)
-              clearOAuthCallback()
-              connectedCalendar = null
-              switchStep('default')
-              emit('starterSchedulingWriteSuccess', { action: 'oauth-connect' })
-              return
-            }
+          if (legacyOAuthMutationAllowed(oauthIntent)) {
             if (availability.manager !== 'calendar') {
               availability.manager = 'calendar'
               await updateAvail()
             }
-            await restorePaidCallIntent(oauthPaidCallIntent)
+            await restorePaidCallIntent(oauthIntent.paidCallIntent)
             await refreshCanonicalConnectionState()
             assertPreservedDefault(oauthIntent, 'calendar', oauthGrantId)
           }
           clearOAuthIntent(memberId)
           clearOAuthCallback()
-          connectedCalendar = null
           switchStep('default')
           emit('starterSchedulingWriteSuccess', { action: 'oauth-connect' })
         } catch (error) {
           let recovered = false
           if (oauthIntent && oauthIntent.preserveBookings === true) {
             preservedCallbackIncomplete = true
-            connectedCalendar = null
           }
           if (
             error &&
@@ -2216,27 +2200,6 @@
 
       if (grantId) {
         if (!canonicalConfigsLoaded) configs = (await getConfigs(grantId, true)) || []
-      }
-
-      // Returning from the calendar OAuth round trip.
-      if (
-        connectedCalendar &&
-        !configs.length &&
-        !preservedCallbackIncomplete &&
-        !hasVersionedBindingAuthority()
-      ) {
-        urlParams.delete('calendar')
-        const remainingQuery = urlParams.toString()
-        window.history.replaceState(
-          {},
-          document.title,
-          window.location.pathname + (remainingQuery ? '?' + remainingQuery : ''),
-        )
-        availability.manager = 'calendar'
-        await updateAvail()
-        await restorePaidCallIntent(oauthPaidCallIntent)
-        await refreshCanonicalConnectionState()
-        switchStep('default')
       }
 
       // Initial-visibility refinements beyond the init module's state.

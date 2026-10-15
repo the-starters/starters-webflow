@@ -2938,6 +2938,9 @@
         config.config_id &&
         config.is_paid === false &&
         config.active !== false &&
+        !(Object.prototype.hasOwnProperty.call(config, 'sync_status') &&
+          (config.sync_status === null || config.sync_status === '') &&
+          Number(config.revision) === 1) &&
         configEnvironmentMatches(config),
     )
   }

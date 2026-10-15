@@ -850,20 +850,49 @@ test('connection-only availability save with no offers does not create a Free fa
   assert.equal(result.calls.filter(c => /configurations\/(create|update)/.test(c.path)).length, 0)
 })
 
-test('connection-only resume accepts null initial availability and preserves the legacy placeholder without enabling it', async () => {
-  const placeholder = { config_id: 'existing-placeholder', grant_id: 'existing-grant', duration: 30,
-    active: true, is_paid: false, revision: 1, sync_status: null }
+for (const syncStatus of [null, '']) {
+  test(`connection-only null-availability resume preserves the ${JSON.stringify(syncStatus)}-sync Free placeholder without previewing it`, async () => {
+    const placeholder = { config_id: 'existing-placeholder', grant_id: 'existing-grant', duration: 30,
+      active: true, is_paid: false, revision: syncStatus === null ? 1 : '1', sync_status: syncStatus }
+    const result = connectionOnlySection({ grantId: 'existing-grant', grantEmail: 'member-a',
+      calendarId: 'existing-calendar', availability: null, configs: [placeholder] })
+    await settle()
+    assert.equal(result.document.documentElement.getAttribute('data-scheduling-availability-section'), 'ready')
+    assert.equal(result.dom.calendarPreview.getAttribute('data-scheduling-preview-state'), 'empty')
+    assert.equal(result.calls.filter(c => c.path === '/scheduler/get_availability/v3').length, 0)
+    result.dom.connectBtnWrapper.children[0].click()
+    await settle()
+    assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
+    assert.equal(result.state.grantId, 'existing-grant')
+    assert.equal(result.state.calendarId, 'existing-calendar')
+    assert.deepEqual(result.state.configs, [placeholder])
+    assert.equal(result.dom.calendarPreview.getAttribute('data-scheduling-preview-state'), 'empty')
+    assert.equal(result.dom.calendarPreview.querySelector('[data-preview-config-id="existing-placeholder"]'), null)
+    assert.equal(result.calls.filter(c => c.path === '/scheduler/get_availability/v3').length, 0)
+    assert.equal(result.calls.filter(c => /create_virtual_account|add_virtual|grants\/delete|configurations\/(create|update)|settings\/upsert/.test(c.path)).length, 0)
+
+    const reloaded = connectionOnlySection(result.state)
+    await settle()
+    assert.equal(reloaded.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
+    assert.deepEqual(reloaded.state.configs, [placeholder])
+    assert.equal(reloaded.dom.calendarPreview.getAttribute('data-scheduling-preview-state'), 'empty')
+    assert.equal(reloaded.calls.filter(c => c.path === '/scheduler/get_availability/v3').length, 0)
+    assert.equal(reloaded.calls.filter(c => /create|add_virtual|delete|upsert/.test(c.path)).length, 0)
+  })
+}
+
+test('connection-only reload previews the existing Free service after canonical activation', async () => {
+  const service = { config_id: 'existing-placeholder', grant_id: 'existing-grant', duration: 30,
+    active: true, is_paid: false, revision: 2, sync_status: 'ready' }
   const result = connectionOnlySection({ grantId: 'existing-grant', grantEmail: 'member-a',
-    calendarId: 'existing-calendar', availability: null, configs: [placeholder] })
-  await settle()
-  assert.equal(result.document.documentElement.getAttribute('data-scheduling-availability-section'), 'ready')
-  result.dom.connectBtnWrapper.children[0].click()
+    calendarId: 'existing-calendar', availability: { items: {}, manager: 'platform' }, configs: [service] })
   await settle()
   assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
-  assert.equal(result.state.grantId, 'existing-grant')
-  assert.equal(result.state.calendarId, 'existing-calendar')
-  assert.deepEqual(result.state.configs, [placeholder])
-  assert.equal(result.calls.filter(c => /create_virtual_account|add_virtual|grants\/delete|configurations\/(create|update)|settings\/upsert/.test(c.path)).length, 0)
+  assert.equal(result.dom.calendarPreview.getAttribute('data-scheduling-preview-state'), 'ready')
+  assert.equal(result.dom.calendarPreview.querySelector('[data-preview-config-id="existing-placeholder"]').getAttribute('data-preview-service-type'), 'free')
+  assert.deepEqual(result.calls.filter(c => c.path === '/scheduler/get_availability/v3').map(c => c.query.configuration_id), ['existing-placeholder'])
+  assert.deepEqual(result.state.configs, [service])
+  assert.equal(result.calls.filter(c => /create|add_virtual|delete|upsert/.test(c.path)).length, 0)
 })
 
 test('connection-only Paid-only resume preserves the service without manufacturing Free', async () => {
@@ -877,6 +906,10 @@ test('connection-only Paid-only resume preserves the service without manufacturi
   assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
   assert.deepEqual(result.state.configs, [paid])
   assert.deepEqual(result.state.paidService, paid)
+  assert.equal(result.dom.calendarPreview.getAttribute('data-scheduling-preview-state'), 'ready')
+  assert.equal(result.dom.calendarPreview.querySelector('[data-preview-service-type="free"]'), null)
+  assert.ok(result.dom.calendarPreview.querySelector('[data-preview-config-id="existing-paid"]'))
+  assert.ok(result.calls.some(c => c.path === '/scheduler/get_availability/v3' && c.query.configuration_id === 'existing-paid'))
   assert.equal(result.calls.filter(c => /configurations\/(create|update)|settings\/upsert|grants\/delete/.test(c.path)).length, 0)
 })
 

@@ -4081,30 +4081,27 @@ test('hosted OAuth callback with an expired production intent performs no writes
   assert.equal(result.sessionStorage.size, 0)
 })
 
-test('returning from the calendar OAuth round trip records the calendar manager', async () => {
-  const availability = defaultAvailability()
-  availability.manager = null
-  const result = loadWriter({
-    availability,
-    search: '?calendar=google',
-    storage: TZ_CACHED,
-    routes: {
-      '/nylas_configurations/get_all/v3': () => ({ status: 200, body: [] }),
-    },
-  })
-  await settle()
+for (const manager of [null, 'platform', 'calendar']) {
+  test(`staging calendar query preserves markerless ${manager} selection with zero offers`, async () => {
+    const availability = { ...defaultAvailability(), manager }
+    const result = loadWriter({
+      availability,
+      search: '?calendar=google',
+      storage: TZ_CACHED,
+      routes: {
+        '/nylas_configurations/get_all/v3': () => ({ status: 200, body: [] }),
+      },
+    })
+    await settle()
 
-  const update = result.calls.find((c) => c.path === '/starter/update_availability/v3')
-  assert.equal(update.body.member_id, 'member-a')
-  assert.equal(update.body.availability.manager, 'calendar')
-  // An OAuth return without offer intent does not create a service.
-  assert.equal(
-    result.calls.filter((c) => c.path === '/scheduler/configurations/create/v3').length,
-    0,
-  )
-  assert.equal(result.historyCalls.length, 1)
-  assert.equal(result.dom.steps.default.style.display, 'block')
-})
+    assertNoCalendarReplacementWrites(result.calls)
+    assert.equal(result.calls.filter((call) => call.path === '/grants/add/v3').length, 0)
+    assert.equal(result.window.STARTER_AVAILABILITY.manager, manager)
+    assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, manager ? 'connected' : 'reconnect')
+    assert.equal(result.status(), 'ready')
+    assert.equal(result.historyCalls.length, 0)
+  })
+}
 
 test('staging OAuth callback without intent fails closed when a grant already exists', async () => {
   const availability = defaultAvailability()
@@ -4627,6 +4624,32 @@ for (const manager of ['platform', 'calendar']) {
       assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.configurationCount, 0)
       assert.equal(result.sessionStorage.has(OAUTH_INTENT_KEY), false)
       assert.equal(result.sessionStorage.has('starter-scheduling-oauth-callback'), false)
+      assert.equal(result.status(), 'ready')
+      assert.equal(result.events.filter((event) => event.type === 'starterSchedulingWriterReady').length, 1)
+      const cards = result.dom.list.querySelectorAll('[availability-item]')
+      assert.equal(cards.length, 1)
+      assert.equal(cards[0].dataset.id, 'general')
+      assert.equal(cards[0].querySelector('[availability-title]').textContent, 'General Availability')
+
+      result.dom.managers[manager].click()
+      assert.equal(result.dom.managers[manager].classList.contains('is-active'), true)
+      assert.equal(result.dom.buttons.managerSubmit.classList.contains('disabled'), true)
+      const otherManager = manager === 'platform' ? 'calendar' : 'platform'
+      result.dom.managers[otherManager].click()
+      assert.equal(result.dom.managers[manager].classList.contains('is-active'), false)
+      assert.equal(result.dom.managers[otherManager].classList.contains('is-active'), true)
+      assert.equal(result.dom.buttons.managerSubmit.classList.contains('disabled'), false)
+      assert.equal(result.dom.buttons.managerSubmit.querySelector('.button_main-text').textContent,
+        otherManager === 'calendar' ? 'Connect Google Calendar' : 'Use platform availability')
+
+      result.clickAction(result.dom.buttons.disconnectConfirm)
+      assert.equal(result.dom.steps['disconnect-calendar'].style.display, 'block')
+      assert.equal(result.dom.steps.default.style.display, 'none')
+      result.dom.popupClose.click()
+      result.flushTimers(50)
+      assert.equal(result.dom.steps.default.style.display, 'block')
+      assert.equal(result.dom.steps['disconnect-calendar'].style.display, 'none')
+      assertNoCalendarReplacementWrites(result.calls)
     })
   }
 }
