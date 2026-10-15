@@ -10,3 +10,9 @@ it('scopes box sizing to the talent admin component', () => {
   expect(css).toContain('.shell, .shell * { box-sizing: border-box; }')
   expect(css).not.toContain(':global(*)')
 })
+
+it('scopes box sizing to the staff console component', () => {
+  const css = readFileSync(resolve(process.cwd(), 'src/StaffConsole.module.css'), 'utf8')
+  expect(css).toContain('.shell, .shell * { box-sizing: border-box; }')
+  expect(css).not.toContain(':global(')
+})
