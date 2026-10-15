@@ -76,12 +76,6 @@
   // Retiring a receipt canonical already satisfies is passive: it must never
   // disable a control or reject a member action, only delay one.
   let receiptCleanup = null
-  // Calendar connect creates a placeholder Free configuration through
-  // scheduler/configurations/create/v3. That row is active but has no
-  // ready sync_status, so readiness and the public /hire DTO both keep it
-  // unbookable until starter/free-call-settings/upsert/v3 activates it.
-  // A Build Profile Yes activates it once per member and config, carrying
-  // the Build Profile description into the canonical writer.
   const activationAttempted = new Set()
 
   function memberJsonValue(response) {
@@ -412,12 +406,12 @@
   }
 
   function pendingCreateOverlay(value) {
-    if (!value || !pendingBuildIntent) return null
+    if (!value || value.has_free_settings_history !== false || !pendingBuildIntent) return null
     return canonicalSatisfiesPendingIntent(value) ? null : pendingBuildIntent
   }
 
   // The canonical GET always returns sync_status. A null or empty status at
-  // revision 1 is the calendar-connect placeholder that no member has saved.
+  // revision 1 is a legacy calendar-connect placeholder that no member has saved.
   function serviceAwaitingActivation(service) {
     if (!service || !Object.prototype.hasOwnProperty.call(service, 'sync_status')) return false
     const status = service.sync_status
@@ -429,18 +423,19 @@
     // Build Profile is a pre-onboarding handoff. Once a canonical service
     // exists, post-onboarding changes belong to Edit Profile or Dashboard and
     // a leftover Build receipt must never replace that service's newer state.
-    // The calendar-connect placeholder is not a member save: the receipt is
+    // A legacy calendar-connect placeholder is not a member save: the receipt is
     // still the only copy of the member's Free description and choice.
     const service = canonicalService(value)
-    return Boolean(service) && !serviceAwaitingActivation(service)
+    return Boolean(value && value.has_free_settings_history === true) ||
+      (Boolean(service) && !serviceAwaitingActivation(service))
   }
 
   function maybeActivateFromBuildIntent(value, memberId) {
     const service = canonicalService(value)
-    if (!pendingBuildIntent || !serviceAwaitingActivation(service)) return null
+    if (!pendingCreateOverlay(value) || (!service && editProfileMode)) return null
     if (!prerequisitesReady(value) || memberId !== sessionMemberId) return null
     if (busy || activeWrite || authTransitionPending || receiptCleanup) return null
-    const key = memberId + ':' + service.config_id
+    const key = memberId + ':' + (service ? service.config_id : 'create')
     if (activationAttempted.has(key)) return null
     activationAttempted.add(key)
     setMessage('Turning on free calls from your Build Profile choice…')

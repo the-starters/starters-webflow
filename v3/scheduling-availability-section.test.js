@@ -593,6 +593,7 @@ function buildStatefulRoutes(initialState) {
     '/grants/add_virtual/v3': () => ({ status: 200, body: { id: 5 } }),
     '/grants/create_virtual_calendar/v3': () => {
       state.calendarId = 'vcal-1'
+      state.availability = { items: {}, ...state.availability, manager: 'platform' }
       return { status: 200, body: { response: { result: { data: { id: 'vcal-1' } } } } }
     },
     '/grants/delete/v3': () => {
@@ -761,6 +762,261 @@ function loadSection(options = {}) {
 
 async function settle(iterations = 25) {
   for (let i = 0; i < iterations; i++) await new Promise(setImmediate)
+}
+
+function connectionOnlySection(initial = {}) {
+  const result = loadSection({
+    serverState: { configs: [], ...initial },
+    postRoutes: {
+      '/grants/create_virtual_calendar/v3': (body) => {
+        assert.equal(body.grant_id, result.state.grantId)
+        result.state.calendarId = result.state.calendarId || 'vcal-1'
+        result.state.availability = { items: {}, ...result.state.availability, manager: 'platform' }
+        return { status: 200, body: { response: { status: 200, result: { data: { id: result.state.calendarId } } } } }
+      },
+      '/starter/update_availability/v3': (body) => {
+        if (body.availability.manager !== result.state.availability.manager) {
+          return { status: 400, body: { message: 'Use the calendar switch action to select a different manager' } }
+        }
+        result.state.availability = body.availability
+        return { status: 200, body: { id: 1 } }
+      },
+      '/scheduler/configurations/create/v3': () => {
+        throw new Error('Connection must not manufacture a Free offer')
+      },
+    },
+  })
+  return result
+}
+
+test('connection-only initial Platform setup leaves both offers OFF and reloads connected', async () => {
+  const first = connectionOnlySection({ availability: { items: {}, manager: null } })
+  await settle()
+  first.dom.connectBtnWrapper.children[0].click()
+  await settle()
+  assert.equal(first.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
+  assert.deepEqual(first.state.configs, [])
+  assert.equal(first.calls.filter(c => c.path === '/scheduler/configurations/create/v3').length, 0)
+  assert.equal(first.calls.filter(c => c.path === '/grants/create_virtual_account/v3').length, 1)
+  const reloaded = connectionOnlySection(first.state)
+  await settle()
+  assert.equal(reloaded.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
+  assert.equal(reloaded.window.STARTER_SCHEDULING_CONNECTION.calendarBindingVersion, null)
+  assert.equal(reloaded.calls.filter(c => /create|add_virtual|delete|upsert/.test(c.path)).length, 0)
+})
+
+for (const calendarId of [null, 'existing-calendar']) {
+  test(`connection-only Platform resume keeps the existing grant and ${calendarId || 'missing calendar'} without duplicate creation`, async () => {
+    const result = connectionOnlySection({ grantId: 'existing-grant', grantEmail: 'member-a', calendarId })
+    await settle()
+    assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'reconnect')
+    result.dom.connectBtnWrapper.children[0].click()
+    await settle()
+    assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
+    assert.equal(result.state.grantId, 'existing-grant')
+    assert.equal(result.state.calendarId, calendarId || 'vcal-1')
+    assert.equal(result.calls.filter(c => c.path === '/grants/create_virtual_calendar/v3').length, 1)
+    assert.equal(result.calls.filter(c => /create_virtual_account|add_virtual|grants\/delete|configurations\/create/.test(c.path)).length, 0)
+    result.dom.connectBtnWrapper.children[0].click()
+    await settle()
+    assert.equal(result.calls.filter(c => c.path === '/grants/create_virtual_calendar/v3').length, 1)
+  })
+}
+
+test('connection-only resume remains an error until canonical manager finalization is verified', async () => {
+  const result = loadSection({
+    serverState: { grantId: 'existing-grant', grantEmail: 'member-a', calendarId: 'existing-calendar', configs: [] },
+    postRoutes: {
+      '/grants/create_virtual_calendar/v3': () => ({ status: 200, body: { response: { result: { data: { id: 'existing-calendar' } } } } }),
+    },
+  })
+  await settle()
+  result.dom.connectBtnWrapper.children[0].click()
+  await settle()
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'error')
+  assert.equal(result.dom.notif.steps['request-error'].style.display, '')
+  assert.equal(result.calls.filter(c => /create_virtual_account|add_virtual|grants\/delete|configurations\/create|update_availability/.test(c.path)).length, 0)
+})
+
+test('connection-only availability save with no offers does not create a Free fallback', async () => {
+  const result = connectionOnlySection({ grantId: 'existing-grant', grantEmail: 'member-a', calendarId: 'existing-calendar', availability: { items: { general: { days: [1], defaultDays: [1], start: '09:00', end: '17:00' } }, manager: 'platform' } })
+  await settle()
+  const card = result.dom.list.children.find(el => el.dataset.id === 'general')
+  card.children[0].children[2].children[0].click()
+  card.children[2].children[0].children[1].children[1].click()
+  await settle()
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
+  assert.equal(result.dom.notif.steps['availability-saved'].style.display, '')
+  assert.equal(result.calls.filter(c => /configurations\/(create|update)/.test(c.path)).length, 0)
+})
+
+for (const syncStatus of [null, '']) {
+  for (const includeActivatedServices of [false, true]) {
+    test(`connection-only hours save preserves ${JSON.stringify(syncStatus)}-sync placeholders with activated services ${includeActivatedServices}`, async () => {
+      const placeholder = { config_id: 'pending-free', grant_id: 'existing-grant', duration: 30,
+        active: true, is_paid: false, revision: syncStatus === null ? 1 : '1', sync_status: syncStatus }
+      const activated = includeActivatedServices ? [
+        { config_id: 'ready-free', grant_id: 'existing-grant', duration: 30,
+          active: true, is_paid: false, revision: 2, sync_status: 'ready' },
+        { config_id: 'ready-paid', grant_id: 'existing-grant', duration: 60, price_cents: 100,
+          active: true, is_paid: true, revision: 1, sync_status: null },
+      ] : []
+      const expectedPlaceholder = { ...placeholder }
+      const result = loadSection({
+        serverState: {
+          grantId: 'existing-grant', grantEmail: 'member-a', calendarId: 'existing-calendar',
+          availability: { items: { general: { days: [1], defaultDays: [1], start: '09:00', end: '17:00' } }, manager: 'platform' },
+          configs: [placeholder, ...activated],
+        },
+        postRoutes: {
+          '/scheduler/configurations/update/v3': (body) => {
+            const config = result.state.configs.find((item) => item.config_id === body.config_id)
+            config.revision = Number(config.revision) + 1
+            config.sync_status = 'ready'
+            return { status: 200, body: { response: { status: 200 } } }
+          },
+        },
+      })
+      await settle()
+      const card = result.dom.list.children.find((el) => el.dataset.id === 'general')
+      card.children[0].children[2].children[0].click()
+      const form = card.querySelector('[data-availability-element="availability-form"]')
+      form.querySelector('[name=start-time]').value = '10:00'
+      form.querySelector('[name=end-time]').value = '16:00'
+      card.children[2].children[0].children[1].children[1].click()
+      await settle()
+
+      assert.equal(result.calls.filter((call) => call.path === '/starter/update_availability/v3').length, 1)
+      assert.equal(result.state.availability.items.general.start, '10:00')
+      assert.equal(result.state.availability.items.general.end, '16:00')
+      assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
+      assert.equal(result.dom.notif.steps['availability-saved'].style.display, '')
+      const configUpdates = result.calls.filter((call) => call.path === '/scheduler/configurations/update/v3')
+      assert.deepEqual(configUpdates.map((call) => call.body.config_id), activated.map((config) => config.config_id))
+      assert.deepEqual(result.state.configs[0], expectedPlaceholder)
+      for (const call of configUpdates) {
+        assert.equal(call.body.in_availability.availability_rules.default_open_hours[0].start, '10:00')
+        assert.equal(call.body.in_availability.availability_rules.default_open_hours[0].end, '16:00')
+      }
+      assert.equal(result.calls.filter((call) => /configurations\/create|settings\/upsert/.test(call.path)).length, 0)
+    })
+  }
+}
+
+for (const syncStatus of [null, '']) {
+  test(`connection-only null-availability resume preserves the ${JSON.stringify(syncStatus)}-sync Free placeholder without previewing it`, async () => {
+    const placeholder = { config_id: 'existing-placeholder', grant_id: 'existing-grant', duration: 30,
+      active: true, is_paid: false, revision: syncStatus === null ? 1 : '1', sync_status: syncStatus }
+    const result = connectionOnlySection({ grantId: 'existing-grant', grantEmail: 'member-a',
+      calendarId: 'existing-calendar', availability: null, configs: [placeholder] })
+    await settle()
+    assert.equal(result.document.documentElement.getAttribute('data-scheduling-availability-section'), 'ready')
+    assert.equal(result.dom.calendarPreview.getAttribute('data-scheduling-preview-state'), 'empty')
+    assert.equal(result.calls.filter(c => c.path === '/scheduler/get_availability/v3').length, 0)
+    result.dom.connectBtnWrapper.children[0].click()
+    await settle()
+    assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
+    assert.equal(result.state.grantId, 'existing-grant')
+    assert.equal(result.state.calendarId, 'existing-calendar')
+    assert.deepEqual(result.state.configs, [placeholder])
+    assert.equal(result.dom.calendarPreview.getAttribute('data-scheduling-preview-state'), 'empty')
+    assert.equal(result.dom.calendarPreview.querySelector('[data-preview-config-id="existing-placeholder"]'), null)
+    assert.equal(result.calls.filter(c => c.path === '/scheduler/get_availability/v3').length, 0)
+    assert.equal(result.calls.filter(c => /create_virtual_account|add_virtual|grants\/delete|configurations\/(create|update)|settings\/upsert/.test(c.path)).length, 0)
+
+    const reloaded = connectionOnlySection(result.state)
+    await settle()
+    assert.equal(reloaded.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
+    assert.deepEqual(reloaded.state.configs, [placeholder])
+    assert.equal(reloaded.dom.calendarPreview.getAttribute('data-scheduling-preview-state'), 'empty')
+    assert.equal(reloaded.calls.filter(c => c.path === '/scheduler/get_availability/v3').length, 0)
+    assert.equal(reloaded.calls.filter(c => /create|add_virtual|delete|upsert/.test(c.path)).length, 0)
+  })
+}
+
+test('connection-only reload previews the existing Free service after canonical activation', async () => {
+  const service = { config_id: 'existing-placeholder', grant_id: 'existing-grant', duration: 30,
+    active: true, is_paid: false, revision: 2, sync_status: 'ready' }
+  const result = connectionOnlySection({ grantId: 'existing-grant', grantEmail: 'member-a',
+    calendarId: 'existing-calendar', availability: { items: {}, manager: 'platform' }, configs: [service] })
+  await settle()
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
+  assert.equal(result.dom.calendarPreview.getAttribute('data-scheduling-preview-state'), 'ready')
+  assert.equal(result.dom.calendarPreview.querySelector('[data-preview-config-id="existing-placeholder"]').getAttribute('data-preview-service-type'), 'free')
+  assert.deepEqual(result.calls.filter(c => c.path === '/scheduler/get_availability/v3').map(c => c.query.configuration_id), ['existing-placeholder'])
+  assert.deepEqual(result.state.configs, [service])
+  assert.equal(result.calls.filter(c => /create|add_virtual|delete|upsert/.test(c.path)).length, 0)
+})
+
+test('connection-only Paid-only resume preserves the service without manufacturing Free', async () => {
+  const paid = { config_id: 'existing-paid', grant_id: 'existing-grant', duration: 60,
+    title: 'Existing Paid', price_cents: 100, active: true, is_paid: true, sync_status: 'ready' }
+  const result = connectionOnlySection({ grantId: 'existing-grant', grantEmail: 'member-a',
+    calendarId: 'existing-calendar', configs: [paid], paidService: paid })
+  await settle()
+  result.dom.connectBtnWrapper.children[0].click()
+  await settle()
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
+  assert.deepEqual(result.state.configs, [paid])
+  assert.deepEqual(result.state.paidService, paid)
+  assert.equal(result.dom.calendarPreview.getAttribute('data-scheduling-preview-state'), 'ready')
+  assert.equal(result.dom.calendarPreview.querySelector('[data-preview-service-type="free"]'), null)
+  assert.ok(result.dom.calendarPreview.querySelector('[data-preview-config-id="existing-paid"]'))
+  assert.ok(result.calls.some(c => c.path === '/scheduler/get_availability/v3' && c.query.configuration_id === 'existing-paid'))
+  assert.equal(result.calls.filter(c => /configurations\/(create|update)|settings\/upsert|grants\/delete/.test(c.path)).length, 0)
+})
+
+test('connection-only mismatched canonical finalization never publishes a connected state', async () => {
+  const result = loadSection({
+    serverState: { grantId: 'existing-grant', grantEmail: 'member-a', calendarId: 'existing-calendar', configs: [] },
+    postRoutes: {
+      '/grants/create_virtual_calendar/v3': () => {
+        result.state.grantId = 'different-grant'
+        result.state.availability = { ...result.state.availability, manager: 'platform' }
+        return { status: 200, body: { response: { result: { data: { id: 'existing-calendar' } } } } }
+      },
+    },
+  })
+  await settle()
+  result.dom.connectBtnWrapper.children[0].click()
+  await settle()
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'error')
+  assert.equal(connectionStates(result.events).includes('connected'), false)
+})
+
+test('connection-only bootstrap connects the grantless empty-array projection without creating offers', async () => {
+  const result = connectionOnlySection({ availability: [], grantId: '', grantEmail: '', calendarId: '' })
+  await settle()
+  assert.equal(result.document.documentElement.getAttribute('data-scheduling-availability-section'), 'ready')
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'disconnected')
+  assert.equal(JSON.stringify(result.window.STARTER_AVAILABILITY), JSON.stringify({ items: {}, manager: null }))
+  assert.equal(result.calls.filter(c => /create|add_virtual|delete|upsert|update_availability/.test(c.path)).length, 0)
+  result.dom.connectBtnWrapper.children[0].click()
+  await settle()
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
+  assert.equal(result.state.availability.manager, 'platform')
+  assert.deepEqual(result.state.configs, [])
+  assert.equal(result.calls.filter(c => c.path === '/grants/create_virtual_account/v3').length, 1)
+  assert.equal(result.calls.filter(c => c.path === '/grants/create_virtual_calendar/v3').length, 1)
+  assert.equal(result.calls.filter(c => /configurations\/create|settings\/upsert|grants\/delete/.test(c.path)).length, 0)
+})
+
+for (const state of [
+  { availability: [], grantId: 'existing-grant' },
+  { availability: [], calendarId: 'existing-calendar' },
+  { availability: [], grantId: 'existing-grant', grantEmail: 'member-a', calendarId: 'existing-calendar' },
+  { availability: [{ days: [1], start: '09:00', end: '17:00' }] },
+]) {
+  test(`connection-only bootstrap rejects malformed array projection ${JSON.stringify(state)}`, async () => {
+    const result = connectionOnlySection(state)
+    await settle()
+    assert.equal(result.document.documentElement.getAttribute('data-scheduling-availability-section'), 'error')
+    assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'error')
+    result.dom.connectBtnWrapper.children[0].click()
+    await settle()
+    assert.equal(result.calls.filter(c => /create|add_virtual|delete|upsert|update_availability/.test(c.path)).length, 0)
+    assert.ok(result.warnings.some(message => message.includes('Canonical scheduling reader returned invalid availability')))
+  })
 }
 
 function createDatepickerStub() {
@@ -1136,17 +1392,10 @@ test('connecting for the first time (no items at all) seeds a default Mon-Fri 09
     defaultDays: [1, 2, 3, 4, 5],
   })
 
-  // The scheduler config must actually carry those hours — otherwise the
-  // freshly connected calendar would have zero open hours and be unbookable.
-  const configCall = calls.find((c) => c.path === '/scheduler/configurations/create/v3')
-  assert.ok(configCall)
-  assert.deepEqual(configCall.body.in_availability.availability_rules.default_open_hours, [
-    { days: [1, 2, 3, 4, 5], start: '09:00', end: '18:00' },
-  ])
-  assert.equal(configCall.body.in_scheduler.min_booking_notice, 1440)
+  assert.equal(calls.filter(c => c.path === '/scheduler/configurations/create/v3').length, 0)
 })
 
-test('staging scheduler configuration creation uses a five-minute booking notice', async () => {
+test('staging connection keeps the preview notice and creates no offer', async () => {
   const { dom, calls, window } = loadSection({
     hostname: 'the-starters-3-0.webflow.io',
     origin: 'https://the-starters-3-0.webflow.io',
@@ -1159,8 +1408,8 @@ test('staging scheduler configuration creation uses a five-minute booking notice
   await settle()
 
   const configCall = calls.find((call) => call.path === '/scheduler/configurations/create/v3')
-  assert.ok(configCall)
-  assert.equal(configCall.body.in_scheduler.min_booking_notice, 5)
+  assert.equal(configCall, undefined)
+  assert.equal(window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
 })
 
 test('opening the availability preview never rewrites existing provider configurations', async () => {
@@ -1185,13 +1434,13 @@ test('opening the availability preview never rewrites existing provider configur
   assert.equal(slotsList.querySelector('[data-availability-element="preview-times"]').children.length, 1)
 })
 
-test('accepts any successful provider 2xx status when creating a scheduler configuration', async () => {
+test('initial connection ignores an unavailable legacy offer-creation endpoint', async () => {
   const { dom } = loadSection({
     serverState: { availability: { items: {}, manager: null } },
     postRoutes: {
       '/scheduler/configurations/create/v3': () => ({
         status: 200,
-        body: { response: { status: 201 } },
+        body: { response: { status: 503 } },
       }),
     },
   })
@@ -1369,7 +1618,7 @@ test('versioned zero-offer binding without a grant email remains reconnect', asy
   assert.equal(window.STARTER_SCHEDULING_CONNECTION.calendarBindingVersion, 1)
 })
 
-test('legacy zero-config binding without a version marker remains reconnect', async () => {
+test('canonical zero-config binding is connected without a preservation marker', async () => {
   const { window } = loadSection({
     serverState: {
       grantId: 'grant-1',
@@ -1384,7 +1633,7 @@ test('legacy zero-config binding without a version marker remains reconnect', as
   })
   await settle()
 
-  assert.equal(window.STARTER_SCHEDULING_CONNECTION.state, 'reconnect')
+  assert.equal(window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
   assert.equal(window.STARTER_SCHEDULING_CONNECTION.configurationCount, 0)
   assert.equal(window.STARTER_SCHEDULING_CONNECTION.calendarBindingVersion, null)
 })
@@ -2034,7 +2283,7 @@ test('a Nylas grant persisted without a calendar stays repairable through Connec
   // Reproduces the half-built virtual grant: /grants/add_virtual/v3 persisted
   // nylas_grant_id but /grants/create_virtual_calendar/v3 failed, so the
   // reloaded member holds a grant that can serve neither availability nor
-  // bookings. Platform must read Disconnected and keep offering the rebuild.
+  // bookings. Platform must read Disconnected and keep offering completion.
   const { dom, calls, window, state } = loadSection({
     serverState: {
       grantId: 'orphan-grant',
@@ -2054,19 +2303,17 @@ test('a Nylas grant persisted without a calendar stays repairable through Connec
   assert.equal(dom.connectBtnWrapper.children[0].style.display, '') // connect-platform
   assert.equal(dom.connectBtnWrapper.children[2].style.display, 'none') // no Google to disconnect
 
-  dom.connectBtnWrapper.children[0].click() // connect-platform rebuilds over it
+  dom.connectBtnWrapper.children[0].click() // connect-platform resumes it
   await settle()
 
   const deleteCall = calls.find((call) => call.path === '/grants/delete/v3')
-  assert.ok(deleteCall, 'expected the half-built grant to be deleted first')
-  assert.equal(deleteCall.body.in_grant_id, 'orphan-grant')
+  assert.equal(deleteCall, undefined)
   const paths = calls.map((call) => call.path)
-  assert.ok(
-    paths.indexOf('/grants/delete/v3') < paths.indexOf('/grants/create_virtual_account/v3'),
-  )
+  assert.equal(paths.includes('/grants/create_virtual_account/v3'), false)
+  assert.equal(paths.includes('/grants/add_virtual/v3'), false)
   assert.equal(dom.notif.steps['virtual-connected'].style.display, '')
   assert.equal(window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
-  assert.equal(state.grantId, 'vgrant-1')
+  assert.equal(state.grantId, 'orphan-grant')
   assert.equal(state.calendarId, 'vcal-1')
   assert.equal(state.availability.manager, 'platform')
   assert.equal(dom.labelGroup.children[1].style.display, '') // Platform connected
@@ -4282,7 +4529,7 @@ test('calendar-preview admits environment stamps that differ only by case or pad
   )
 })
 
-test('a free configuration stamped for another environment does not block canonical creation', async () => {
+test('a foreign-environment configuration is not previewed or replaced by an implicit Free offer', async () => {
   let canonicalState = null
   const intentKey = 'starter-scheduling-oauth-intent:member-a'
   const future = Math.floor(Date.now() / 1000) + 2 * 24 * 60 * 60
@@ -4344,16 +4591,12 @@ test('a free configuration stamped for another environment does not block canoni
 
   assert.equal(
     result.calls.filter((call) => call.path === '/scheduler/configurations/create/v3').length,
-    1,
+    0,
   )
   const services = result.dom.calendarPreview.querySelector(
     '[data-availability-element="preview-services"]',
   )
-  assert.ok(services)
-  assert.deepEqual(
-    services.children.map((child) => child.getAttribute('data-preview-config-id')),
-    ['cfg-free-production'],
-  )
+  assert.equal(services, null)
 })
 
 test('calendar-preview excludes paid services outside the whole-dollar $1 to $1,000 contract or failed provider sync', async () => {
@@ -5350,7 +5593,7 @@ for (const manager of ['platform', 'calendar']) {
 }
 
 test('saved code OAuth retry resumes setup without re-exchanging the grant', async () => {
-  let failCreate = true
+  let failRead = true
   let canonicalState = null
   let addCalls = 0
   const postRoutes = {
@@ -5362,9 +5605,9 @@ test('saved code OAuth retry resumes setup without re-exchanging the grant', asy
       canonicalState.configs = []
       return { status: 200, body: { grant_id: 'grant-9' } }
     },
-    '/scheduler/configurations/create/v3': () => failCreate
+    '/nylas_configurations/get_all/v3': () => failRead
       ? { status: 503, body: { message: 'try again' } }
-      : { status: 200, body: { response: { status: 200 } } },
+      : { status: 200, body: [] },
   }
   const first = loadSection({
     search: '?code=fixture-code&state=member-a',
@@ -5387,7 +5630,7 @@ test('saved code OAuth retry resumes setup without re-exchanging the grant', asy
   assert.equal(retainedIntent.oauthGrantSaved, true)
   assert.equal(retainedIntent.oauthGrantId, 'grant-9')
 
-  failCreate = false
+  failRead = false
   const second = loadSection({
     search: '',
     sessionStorage: Object.fromEntries(first.window.sessionStorage._map),

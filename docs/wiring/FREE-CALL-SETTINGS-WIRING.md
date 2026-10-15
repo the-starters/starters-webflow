@@ -17,26 +17,30 @@ payload.
   Xano returns it as `public_description` and projects the same value to the public Webflow profile
   and Algolia record.
 - Initial and terminal UI state always comes from
-  `GET starter/free-call-settings/get/v3`. With no active service, an unconsumed
-  Build Profile receipt can prefill the form controls without becoming
-  canonical state. An active service retires that receipt and remains the sole
-  post-onboarding authority — see [Build Profile handoff](#build-profile-handoff).
+  `GET starter/free-call-settings/get/v3`. Pending intent follows the
+  [Build Profile handoff](#build-profile-handoff).
 
 ## Build Profile handoff
 
 Build Profile stores the member's visible Free choice as the `free` part of the
 private, member-bound `starter_call_settings_intent_v3` Memberstack receipt. The
-Free controller keeps a new enable pending, prefilling the radio and the public
-description without becoming canonical state. Once Calendar and Availability are
-ready, a calendar-connect placeholder is activated once per member and config
-through `starter/free-call-settings/upsert/v3` with the receipt description. If
-there is no Build Profile receipt, the same placeholder stays pending: the card
-shows Off, `data-free-call-enabled="false"`, and the member must select Update
-to make free calls live.
-
-If an active canonical Free service already exists, the controller consumes any
-leftover Build Profile receipt without overlaying or writing it. Later changes
-must come from Edit Profile or Dashboard.
+Free controller applies the [Free settings history](#free-settings-history)
+eligibility rules before keeping a new enable pending and prefilling the radio
+and public description without becoming canonical state. Once Calendar and
+Availability are ready, Dashboard fulfills that member's explicit Build Profile
+Yes through `starter/free-call-settings/upsert/v3` with the receipt description even when
+connection leaves zero services. The handoff works after a settled connection
+event and when the Free card first mounts or reloads after connection. Passive
+Edit Profile hydration with no service keeps the receipt as an overlay until
+the member explicitly accepts or re-answers the prefilled Free choice and
+saves step 6; an unrelated step 6 submit does not create Free. An existing
+calendar-connect placeholder continues to activate once per member and config on
+either surface through the same Free owner and history guard. Without a Build
+Profile Yes receipt, connection creates no Free offer and any legacy placeholder
+stays pending: the card shows Off, `data-free-call-enabled="false"`, and the
+member must select Update to make
+free calls live. A pending-activation placeholder has revision `1` and an
+explicitly null or empty `sync_status`.
 
 Everything else about that receipt is branch-agnostic and owned by
 [Call Settings receipt lifecycle](../../v3/build-profile/README.md#call-settings-receipt-lifecycle):
@@ -104,8 +108,8 @@ the cached Free state is cleared. It also sets these attributes:
 - `data-free-call-settings` on `<html>` —
   `waiting-for-ui|not-applicable|loading|ready|saving|disabling|error`
 - `data-free-call-state` on the card root — the same values
-- `data-free-call-enabled="true|false"` (`false` for a calendar-connect placeholder until Update
-  activates it)
+- `data-free-call-enabled="true|false"` (`false` for a calendar-connect placeholder until the
+  Free owner activates it through Update or the explicit Build Profile handoff)
 - `data-free-call-bookable="true|false"` (also `false` when the stored duration is not `30` or the
   stored price is not `0`)
 - `data-free-call-activation="none|pending|live"` (`pending` means the calendar-connect
@@ -185,6 +189,43 @@ mode and the approved page origin. They reject duplicate active Free services, f
 configurations, and mismatched grants. Disable blocks while a future pending, confirmed, or
 rescheduled booking exists. Mutations write Nylas first, then canonical Xano state, and use durable
 idempotency receipts.
+
+### Free settings history
+
+Authenticated `GET starter/free-call-settings/get/v3` (`#5673`) additively returns
+`has_free_settings_history`. Literal `true` means an exact authenticated
+StarterID/member/environment-owned configuration with `is_paid=false` has a
+positive safe-integer `last_nylas_synced_at`. Inactive, prior-grant, pending, and
+sync-mismatch versions remain history. A verified prepared version also counts:
+`prepare_service_version_v3` requires an already active, ready source before it
+creates an inactive verified version, so preparation cannot consume a genuine
+first-time or unused sync-null placeholder. This history flag is neither an
+enabled flag nor a booking-readiness flag; existing canonical service and
+readiness rules remain unchanged.
+
+The Free controller uses the field only after its existing member, environment,
+and session checks pass:
+
+- Literal `true` supersedes both the pending Build Profile overlay and passive
+  activation. The controller consumes any leftover Free receipt without writing
+  to Xano. A later canonical disable stays Off across fresh pages, sessions, and
+  devices even when receipt cleanup fails.
+- Literal `false` allows a genuine first-time pending receipt and passive
+  activation subject to all existing prerequisites, edit-mode, placeholder,
+  member, session, and pending-write guards. The receipt description remains the
+  handoff description.
+- A missing or nonboolean value is unknown. It suppresses the pending overlay
+  and automatic POST without rejecting an otherwise valid legacy DTO, consuming
+  the receipt solely for unknown history, or blocking fresh explicit settings
+  actions. An activated canonical service still supersedes the receipt under
+  the existing rules.
+
+The backend contract provenance is owned by
+`platform-ops/calendar-booking-preservation/settings/candidates/FREE-SETTINGS-HISTORY.md`
+beside `api-5673.candidate.xs`. Publish the additive `#5673` field before paired
+frontend activation. Source changes do not establish backend publication or live
+behavior. The contract preserves the existing `#5674`/`#5675` command keys and
+receipts; browser storage is not an authority for settings history.
 
 ### Environment in the canonical GET payload
 
@@ -295,19 +336,19 @@ order, after the PR merges:
    and a successful canonical refresh must leave the block hidden. Do not create a booking for
    this check; use a pre-existing TEST fixture.
 7. Confirm the [Build Profile handoff](#build-profile-handoff) on a TEST Starter whose private
-   Memberstack JSON holds an unconsumed `starter_call_settings_intent_v3` receipt with a `free`
-   part and whose active Free service is the calendar-connect placeholder (`sync_status` empty or
-   null at revision `1`). With Calendar and Availability ready, loading `Dashboard / Calendar` or
-   Edit Profile step 6 must send exactly one `starter/free-call-settings/upsert/v3` request for
-   that member and config, using the receipt description even if late profile hydration changes the
-   visible input. Confirm canonical readback returns a live, bookable Free service,
+   Memberstack JSON holds an unconsumed `starter_call_settings_intent_v3` receipt whose `free`
+   part records Yes. Use eligible zero-service and legacy-placeholder fixtures under
+   [Free settings history](#free-settings-history), and follow the Dashboard and Edit Profile
+   activation rules in the handoff contract. Confirm canonical readback returns a live, bookable
+   Free service,
    `data-free-call-activation="live"`, `data-free-call-enabled="true"`, and the `free` part is
-   gone from member JSON while any `paid` part survives. Repeat with a second TEST Starter whose
-   placeholder has no Build Profile receipt: hydration must send no canonical request or
+   gone from member JSON while any `paid` part survives. For a legacy placeholder with no
+   receipt, hydration must send no canonical write or
    Memberstack write, the Yes radio stays checked with the description editable,
    `data-free-call-activation="pending"`, `data-free-call-enabled="false"`, and the status says
    brands cannot book until Update. Clicking Update then activates the placeholder through the same
-   canonical writer. None of this creates a booking, charge, provider mutation, message, or email.
+   canonical writer. These live activation checks require separate approval and do not authorize
+   creating a booking, charge, message, or email; providerless source tests are separate evidence.
 
 Record the served-asset check and the TEST enable and disable results before the Free card is
 activated for any Starter outside TEST.

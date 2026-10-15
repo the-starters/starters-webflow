@@ -3291,6 +3291,14 @@ the correct initial modal step. Every boot performs the authenticated canonical
 reader call even when a member-scoped availability cache exists: a grant,
 calendar, or scheduler configuration can change independently of saved hours,
 so the cache is write-through compatibility state rather than connection proof.
+The first-time `availability: []`, `availability: {}`, or `availability: null`
+projection is accepted when canonical grant and calendar fields are absent.
+With null availability and a saved binding, the initializer requires a nonempty
+canonical grant ID and grant email; the calendar may still be missing. It
+supplies an empty schedule for setup, subject to the controller's canonical
+connection check. Bound arrays, bound empty objects, and malformed populated
+schedules still fail closed at this boundary. Authentication, member-change, and
+test-member guards continue to apply to the initializer-to-writer handoff.
 The initializer reads `/api:tCpV3oqd/starter/get_by_memberstack/v3` through
 `window.xanoAuthFetch`, safely treating a JSON `null` response as a first-time
 V3 starter. The authenticated helper is required; an unavailable helper fails
@@ -3344,10 +3352,11 @@ Runtime contract:
   `init`, `update`, `error`, `not-applicable`, or `missing-controls`.
 - `data-scheduling-calendar-state` reports `loading`, `disconnected`,
   `connected`, `reconnect`, or `error`. `connected` is terminal only after the
-  active availability controller proves either a grant, calendar, and at least
-  one scheduler configuration, or a versioned zero-offer binding with grant,
-  email, calendar, and `calendarBindingVersion: 1`; partial or stale provider
-  state is `reconnect`.
+  active availability controller proves a canonical grant, grant email,
+  calendar, and selected `platform` or `calendar` manager, independently of
+  offer count. Ordinary connection readiness does not require
+  `calendarBindingVersion: 1`; preserved switches retain their separate strict
+  versioned receipt checks. Partial or stale provider state is `reconnect`.
 - `window.STARTER_AVAILABILITY` contains the normalized availability after a
   successful read and is `null` after an error.
 - `window.STARTER_SCHEDULING_CONNECTION` contains only non-secret connection
@@ -3422,8 +3431,8 @@ node v3/scheduling-availability-init.test.js
 availability writer for the staging booking page and canonical Starter
 dashboard: availability form submit, manager selection (platform-managed
 virtual calendar vs the member's own calendar), Nylas scheduler configuration
-create/update, timezone set, and the calendar OAuth grant redirect — with the
-loader (`[data-custom-loader]`) and the success/error modal steps restored. It
+availability updates, timezone set, and the calendar OAuth grant redirect, with
+the loader (`[data-custom-loader]`) and the success/error modal steps restored. It
 loads after `scheduling-auth.js` and `scheduling-availability-init.js`; the
 authoritative script order and release URLs live in
 `scheduling-v3-stage-component.html`. Releases use the reviewed semver tag and
@@ -3493,8 +3502,9 @@ Designer follow-up):
 
 Error-copy contract: when `config-request-error` has a plain-text
 `[error-text-element]`, every reveal restores its Designer-authored copy before
-considering transition remediation. Only a recognized paid-rate or active-calls
-error may then replace it. If that marker is absent or the element holds nested
+considering transition remediation. Recognized paid-rate, active-calls,
+calendar-verification, or partial-availability-save errors may then replace it.
+If that marker is absent or the element holds nested
 markup — an icon beside the copy, for example — it is neither restored nor
 written, so the step is revealed exactly as authored instead of being flattened
 into a single text node.
@@ -3508,13 +3518,14 @@ the `default` step instead of legacy's silent dead-end on the form.
 
 Connection mutations follow the same authority rule. OAuth persistence,
 virtual-calendar setup, manager changes, and disconnect/clear flows treat their
-write responses only as acknowledgements. Before publishing a terminal Calendar
-state, the writer re-reads the authenticated `availability_v3` projection and
-then reads `nylas_configurations_v3` for the grant returned by that projection.
+write responses as insufficient without canonical readback. Before publishing a
+terminal Calendar state, the writer re-reads the authenticated `availability_v3`
+projection and then reads `nylas_configurations_v3` for the grant returned by
+that projection.
 If either canonical read fails, the UI remains in the authored error path rather
 than inferring readiness from a mutation response.
 
-Scheduler configuration create/update calls also inspect the nested provider
+Scheduler configuration update calls also inspect the nested provider
 response returned by Xano. Every provider HTTP status from 200 through 299 is a
 success; a missing, non-2xx, or malformed nested status uses the error path even
 when the outer Xano response is HTTP 200.
@@ -3564,7 +3575,7 @@ call).
 All other writer reads and writes now use their reviewed `/v3` routes:
 `starter/get_by_memberstack`, `starter/set_timezone`,
 `starter/update_availability`, `nylas_configurations/get_all`, configuration
-create/update, virtual-account/calendar creation, and the composite
+update, virtual-account/calendar creation, and the composite
 `grants/delete` operation described above.
 On the approved production dashboard, bootstrap remains read-only: a missing
 row timezone is persisted through `starter/set_timezone/v3` only when the
@@ -3583,18 +3594,24 @@ canonical availability write fails, the controller restores the pre-write
 browser model and rendered cards and does not continue to provider updates.
 
 Paid-call rate: the availability controllers do not read `#price`, `data-rate`,
-or `paid_call_rate` in localStorage. They create only the free-call
-configuration. Availability edits send an availability-only update for every
-active canonical configuration, so paid title and price fields stay under the
-paid-call settings endpoints. Free Scheduler lifecycle emails remain disabled
+or `paid_call_rate` in localStorage. They do not create a Free
+configuration through either calendar connection or availability edits. Free
+creation and activation belong to `starter/free-call-settings/upsert/v3` after
+explicit Call Settings intent or the owned Build Profile handoff. Availability
+edits send an availability-only update for activated canonical services,
+excluding the Free owner's
+[pending-activation placeholders](../docs/wiring/FREE-CALL-SETTINGS-WIRING.md#build-profile-handoff).
+Those placeholder rows remain unchanged until the Free owner activates them.
+Paid title and price fields stay under the paid-call settings
+endpoints. Free Scheduler lifecycle emails remain disabled
 to prevent duplicate Brand and Starter messages. Guest calendar invitations
 belong to the canonical backend event lifecycle after organizer confirmation,
 not to the Scheduler configuration email flags.
 
 Minimum booking notice: in the non-modal Dashboard / Calendar section, the
-exact TEST/staging host `the-starters-3-0.webflow.io` uses five minutes in new
-Free Scheduler configurations and browser availability query floors;
-production, unknown hosts, and CommonJS contexts use 24 hours (JP, 2026-10-03;
+exact TEST/staging host `the-starters-3-0.webflow.io` uses five minutes in
+browser availability query floors; production, unknown hosts, and CommonJS
+contexts use 24 hours (JP, 2026-10-03;
 the rule was 8 hours from 2026-09-15 to 2026-10-03). Booking
 Preview states the five-minute minimum on staging and the 24-hour minimum
 on `thestarters.com` and `www.thestarters.com`. Opening the preview does not
@@ -3655,8 +3672,8 @@ not add a second clear owner.
 
 Connect Google goes straight to the `pre-oauth` step; the retired
 `switch-calendar` step never opens, and a stale Connect Google click without a
-connected Platform layer is ignored. V3 keeps one grant per member, so the
-"Done" click starts Google OAuth without deleting, clearing, or changing the
+connected Platform layer is ignored. V3 keeps one selected default per member,
+so the "Done" click starts Google OAuth without deleting, clearing, or changing the
 current default. The current grant remains selected until `grants/add/v3`
 returns the preserved-selection receipt and the controller verifies fresh
 canonical grant, manager, versioned binding marker, and exact active
@@ -3679,19 +3696,18 @@ component-variant class swap (`w-variant-89402c65-…` default,
 `connect-label-group` holds the connection status labels. Each
 `data-availability-element="connect-label"` carries `data-type="false"|"true"`
 (the disconnected / connected copy) and `data-manager="platform"|"calendar"`
-(which connection layer the label describes). `platform` means a canonical
-Nylas grant that owns its calendar (`nylas_grant_id` *and*
-`nylas_calendar_id`). `calendar` means that grant is backed by the member's
+(which connection layer the label describes). `platform` follows the
+[canonical connection-readiness contract](#calendar-oauth-return-no-separate-page).
+`calendar` means that grant is backed by the member's
 Google account (`availability.manager === "calendar"`). A Google connection
-therefore makes both Platform and Google connected. The canonical shape is one
-`false`/`true` pair per layer, so both rows state their independent status.
+with a complete canonical binding makes both Platform and Google connected. The
+canonical shape is one `false`/`true` pair per layer, so both rows state their
+independent status.
 
-Visibility is decided per label, never group-wide. A `platform` label tracks
-whether the grant owns a calendar id: a grant persisted without one (the
-virtual account was added but `create_virtual_calendar` failed) can serve
-neither availability nor bookings, so it reads Disconnected rather than
-claiming a connection the member cannot use. A `calendar` label tracks whether
-a grant exists and `availability.manager === "calendar"`, so a Google-backed
+Visibility is decided per label, never group-wide. A `platform` label uses that
+readiness check: a grant persisted without a calendar id (the virtual account
+was added but `create_virtual_calendar` failed) reads Disconnected. A `calendar`
+label tracks whether a grant exists and `availability.manager === "calendar"`, so a Google-backed
 grant stays readable even in that half-built shape. An untagged
 `data-type="false"` label keeps the prior three-label markup's group-wide
 meaning and shows only when neither layer is connected. The earlier shape (one
@@ -3736,12 +3752,16 @@ future default through the preserved server receipt, while Disconnect Google
 remains the explicit destructive path. A stale or programmatic click is ignored.
 
 A grant left behind without a calendar id is not a connection, so Connect
-Platform stays available there and rebuilds over it: the flow deletes the
-half-built grant through the canonical `/grants/delete/v3` route before
-creating the replacement virtual grant, which is the member's self-serve
-recovery from a `create_virtual_calendar` failure. A half-built grant that is
-still Google-backed keeps the confirmed Disconnect Google path instead, so no
-live provider grant is ever deleted without the confirm step.
+Platform stays available for an incomplete virtual binding. It refreshes
+canonical state and resumes that same grant through
+`grants/create_virtual_calendar/v3` (`#1579`). A saved calendar whose manager
+was not finalized resumes through the same endpoint. The backend verifies the
+exact virtual binding and selects `manager: "platform"`; an existing calendar
+does not cause another provider create. The controller verifies the final
+canonical grant, email, calendar, and selected manager before reporting
+success. This recovery does not delete the saved grant, create another account
+or grant, or create a call configuration. A half-built Google-backed grant
+keeps the confirmed Disconnect Google path.
 
 Every action that deletes a live Google grant confirms first. Connect Platform
 never deletes a live Google grant: first-time setup opens the
@@ -3756,10 +3776,8 @@ Disconnect Google is the only flow that deletes a live Google grant. If its
 replacement virtual calendar fails after that deletion, it drops the local
 grant id/email/calendar id and persists `manager: null` before surfacing the
 error, so the error UI stops offering "Disconnect Google" and a retry never
-re-deletes a grant that no longer exists. Connect Platform drops its local copy
-of a half-built grant as soon as the canonical delete succeeds, so a failure in
-the rebuild that follows cannot leave it re-deleting a grant Xano has already
-removed either.
+re-deletes a grant that no longer exists. Connect Platform retains an incomplete
+virtual binding for the same-binding recovery above.
 
 OAuth-callback ownership: on any page carrying this section's root, this
 module is the sole consumer of the Nylas `?code&state` / `?success&grant_id`
@@ -3769,8 +3787,8 @@ bails out before capturing the callback whenever
 race to redeem the same one-time code. The writer stays fully active on
 `--availability-stage`, which never carries that markup.
 
-The "Live bookable slots preview" card renders every canonical active Free
-and Paid service returned for the starter's grant. Free shows its duration and
+The "Live bookable slots preview" card renders eligible canonical active Free
+and Paid services returned for the starter's grant. Free shows its duration and
 `Free`; Paid shows its duration and canonical USD price. Selecting either
 service fetches that configuration's next upcoming Nylas scheduler slots
 (`scheduler/get_availability/v3`, GET) and renders the available dates and
@@ -3795,15 +3813,18 @@ declared, and no declared non-ready provider sync state. Environment stamps and 
 provider sync state are compared case-insensitively and trimmed, so a
 `Production`/`LIVE`-cased record is not silently dropped. Free carries no
 provider-side duration guarantee, so a Free record without a whole-minute
-duration still renders at the canonical 30 minutes this module creates; a
+duration still renders at the canonical 30 minutes owned by Free settings; a
 malformed, failed-sync, out-of-contract price, legacy-duration, or
 other-environment Paid service stays out of the preview. The card partitions
 its services explicitly — Free first, then Paid, each tie-broken by `config_id` — because
 Xano returns configurations in table order, so both the rendered order and
-the default selection stay deterministic. The Free admission rule is the same
-predicate that decides whether a free configuration still needs creating, so
-the preview can never be empty for a record the create path already counts as
-canonical. The single-slot version of this query used by the Bookings pages
+the default selection stay deterministic. The Free admission rule excludes
+the Free owner's
+[pending-activation sentinel](../docs/wiring/FREE-CALL-SETTINGS-WIRING.md#build-profile-handoff).
+A connected calendar can therefore have no ready
+service, and a preserved legacy placeholder neither publishes a ready preview
+nor triggers slot requests. The single-slot version of this
+query used by the Bookings pages
 (`getNextAvailableTimeSlot`/`getNearestSlot` in the **separate**, non-repo
 `book-func-lib-2.html` Webflow embed) was refactored alongside this to expose
 the full sorted slot list via a new `getUpcomingTimeSlots`, so both stay in
@@ -3890,20 +3911,28 @@ configuration create/update, or paid-call settings upsert.
 The exposed UI scope is the existing Platform-to-Google and Google-to-Platform
 selection paths. This browser change does not add a Google-account-to-another-Google-account switch control.
 
-The versioned binding marker is durable reload authority. A later ordinary
-page load with a valid grant ID, grant email, calendar ID, and
-`calendar_binding_version: 1` is connected even if the configuration list is
-empty. Without that marker, legacy empty-configuration setup remains incomplete
-and shows the reconnect path. Availability save and remove actions on a valid
-versioned empty-offer binding persist canonical availability and perform no
-configuration create or update writes. Legacy OAuth callback and destructive
-recovery paths also treat that marker as authoritative and do not create Free
-configs, restore Paid settings, or change the manager from browser state.
+Ordinary connection readiness and completed-switch authority are separate. A
+fresh canonical grant ID, grant email, calendar ID, and selected manager are
+connected on reload even with zero offers and no version marker. A
+`calendar_binding_version: 1` binding still requires the strict receipt and
+readback checks above when completing a preserved switch. Availability save
+and remove actions with no activated services persist canonical availability
+without configuration create or update writes. Connection alone never enables
+Free or Paid. A legacy callback matching an already-canonical versioned binding
+is consumed without mutations and continues the common UI bootstrap; stale or
+unvalidated query parameters cannot select a manager. Destructive legacy
+recovery requires its explicit authoritative Paid intent and does not create
+Free configurations.
 
 This transition contract requires the compatible backend before the frontend
 release is activated. Availability changes still use canonical save followed
 by provider synchronization. If only the canonical save succeeds, the error
 states that availability was saved and booking times need verification.
+The ordinary production controller `v1.59.663` and current immutable `6f`
+footer selection remain unchanged. Activating these connection-only assets
+requires a separately approved footer candidate that includes the compatible
+initializer, availability controller, and Free owner. Source and native tests
+do not establish live provider, browser, or booked-call preservation proof.
 
 Nylas-standard OAuth failures (`error`, `error_description`, `error_uri`, or
 `error_code`) are captured without retaining their provider text and stripped
@@ -3913,17 +3942,19 @@ connection-state contract above.
 
 Before persisting anything, the controller verifies `state` (set server-side from
 the caller's Bearer token) against the logged-in member and, on production,
-requires a recent, member-scoped intent with the exact redirect URI. It reads
-the current tab's copy first and uses the same-origin durable copy only while
-processing a captured OAuth callback; a normal page load in another tab does
-not consume or recover that fallback. Both copies keep the same 15-minute TTL.
+requires a recent, member-scoped intent with the exact redirect URI. A captured
+OAuth callback may use the same-origin durable copy. A normal page load may also
+verify and clear a completed preserved-switch receipt from either copy against
+fresh canonical state; unfinished legacy recovery remains limited to the
+current tab's copy. Both copies keep the same 15-minute TTL.
 For hosted auth, `success` must be exactly `true`, and only the returned
 `grant_id` is forwarded as callback identity. `grants/add/v3` performs the
 authoritative server-side code exchange or grant verification and persists the
-result in one authenticated call. The controller then continues the existing
-configuration flow in the same tab. After the verified grant and scheduler
-configurations are created, the interface returns to its default dashboard
-state; the legacy `reload-page` step is not part of the current handoff.
+result in one authenticated call. The controller then verifies the canonical
+binding and completes the same-tab handoff without implicitly creating Free.
+Only an explicit retained Paid intent can invoke the legacy Paid restoration
+owner. After verified completion, the interface returns to its default
+dashboard state; the legacy `reload-page` step is not part of the current handoff.
 Booking confirmation/reschedule/cancel links baked into scheduler configurations
 also point at this page, where the bookings embed owns `booking_ref` handling.
 

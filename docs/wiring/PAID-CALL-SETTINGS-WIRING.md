@@ -285,7 +285,14 @@ The controller sets `data-ready="true|false"` on each row. It also sets these wr
   resets the busy attributes when the mutation and canonical readback settle. The same in-flight
   lock covers native submit and Update click, so they cannot start duplicate writes.
 - The browser sends product intent only. It never sends a member ID, grant ID, calendar ID, Stripe account ID, or payment environment.
-- Calendar setup creates only free-call configurations. Availability edits update the availability block of every active canonical configuration without sending title or price fields. Calendar code does not read `#price`, `data-rate`, or `paid_call_rate` in `localStorage`. Its bookable-slots preview does read the canonical Paid service to render duration and price read-only; the admission rules for that card live in [Booking-stage availability section](../../v3/README.md#booking-stage-availability-section).
+- Calendar setup and availability edits follow the
+  [availability writer contract](../../v3/README.md#booking-stage-availability-writer).
+  Free activation follows the
+  [Free settings contract](FREE-CALL-SETTINGS-WIRING.md#build-profile-handoff).
+  Calendar code does not read `#price`, `data-rate`, or `paid_call_rate` in `localStorage`.
+  Its bookable-slots preview does read the canonical Paid service to render duration and price
+  read-only; the admission rules for that card live in
+  [Booking-stage availability section](../../v3/README.md#booking-stage-availability-section).
 - Preserved Platform-to-Google and Google-to-Platform default switches follow the backend-owned
   receipt contract in [Calendar OAuth return](../../v3/README.md#calendar-oauth-return-no-separate-page)
   and make no browser paid-call GET or upsert. The legacy destructive disconnect/recovery path may

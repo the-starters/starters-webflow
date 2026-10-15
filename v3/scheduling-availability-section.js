@@ -125,7 +125,6 @@
   }
 
   let sessionMemberId = null
-  let memberFields = {}
   let availability = null
   let configs = []
   let grantId = null
@@ -365,7 +364,7 @@
   // layer that cannot serve availability or bookings, so it is not a
   // connection.
   function platformLayerConnected() {
-    return Boolean(grantId && grantCalendarId)
+    return hasCanonicalCalendarBinding()
   }
 
   // Google is an independent provider fact carried by whatever grant exists,
@@ -390,11 +389,10 @@
 
   function deriveCalendarConnectionState() {
     const hasGrant = Boolean(grantId)
-    const hasEmail = Boolean(grantEmail)
     const hasCalendar = Boolean(grantCalendarId)
     const configurationCount = Array.isArray(configs) ? configs.length : 0
     if (connectionError) return 'error'
-    if (hasGrant && hasCalendar && (configurationCount > 0 || (hasEmail && calendarBindingVersion === 1))) {
+    if (hasCanonicalCalendarBinding()) {
       return 'connected'
     }
     if (
@@ -811,10 +809,22 @@
     return ids
   }
 
+  function isPendingFreeActivation(config) {
+    return Boolean(config && config.is_paid === false &&
+      Object.prototype.hasOwnProperty.call(config, 'sync_status') &&
+      (config.sync_status === null || config.sync_status === '') &&
+      Number(config.revision) === 1)
+  }
+
   function activeSchedulerConfigs() {
     return configs.filter(function (config) {
-      return config && config.active !== false
+      return config && config.active !== false && !isPendingFreeActivation(config)
     })
+  }
+
+  function hasCanonicalCalendarBinding() {
+    return Boolean(grantId && grantEmail && grantCalendarId && availability &&
+      (availability.manager === 'platform' || availability.manager === 'calendar'))
   }
 
   function hasVersionedBindingAuthority() {
@@ -1109,13 +1119,8 @@
     return availabilityArray
   }
 
-  // A member connecting a calendar for the first time (platform or Google)
-  // has no `general` item yet — left as-is, createFreeConfig() would build
-  // the scheduler config with empty open hours, and nobody could ever book a
-  // slot. Seed a Mon-Fri 09:00-18:00 default so the connection is usable
-  // right away; the member can edit it or add overrides afterward. Never
-  // touches an already-existing `general` item. Returns whether it actually
-  // seeded anything, so callers can tell whether a persist is needed.
+  // Seed an initial schedule after the connection owner verifies the binding.
+  // This saves future availability only; Call Settings owns enabling offers.
   function ensureDefaultAvailability() {
     if (!availability || availability.items.general) return false
     const days = [1, 2, 3, 4, 5]
@@ -1181,6 +1186,18 @@
     return starter && typeof starter === 'object' && !Array.isArray(starter) ? starter : null
   }
 
+  function canonicalAvailabilityValue(starter) {
+    const value = starter.availability
+    // Initial records may have no schedule. Malformed populated schedules
+    // remain errors rather than silently discarding the member's settings.
+    if (value === null || (value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === 0) ||
+        (Array.isArray(value) && value.length === 0 && !starter.nylas_grant_id && !starter.nylas_calendar_id)) {
+      return { items: {}, manager: null }
+    }
+    if (!isAvailability(value)) throw new Error('Canonical scheduling reader returned invalid availability')
+    return value
+  }
+
   function isAvailability(value) {
     if (
       !value ||
@@ -1223,16 +1240,21 @@
     }
   }
 
-  async function refreshCanonicalConnectionState() {
+  async function refreshCanonicalConnectionState(expectedBinding) {
     publishCalendarConnectionState('loading')
     try {
       const starter = await readStarterRecord()
-      const canonicalAvailability = starter && starter.availability
-      if (!isAvailability(canonicalAvailability)) {
-        throw new Error('Canonical scheduling reader returned invalid availability')
-      }
+      if (!starter) throw new Error('Canonical scheduling reader returned no record')
+      const canonicalAvailability = canonicalAvailabilityValue(starter)
       const nextGrantId = (starter && starter.nylas_grant_id) || null
       const nextConfigs = nextGrantId ? await getConfigs(nextGrantId, true) : []
+
+      if (expectedBinding && (nextGrantId !== expectedBinding.grantId ||
+          starter.nylas_grant_email !== expectedBinding.email ||
+          starter.nylas_calendar_id !== expectedBinding.calendarId ||
+          canonicalAvailability.manager !== expectedBinding.manager)) {
+        throw new Error('Canonical Platform calendar finalization is incomplete')
+      }
 
       grantId = nextGrantId
       grantEmail = (starter && starter.nylas_grant_email) || null
@@ -1250,15 +1272,6 @@
       publishCalendarConnectionError()
       throw error
     }
-  }
-
-  // Calendar setup owns only the free-call configuration. Paid services are
-  // created, updated, and disabled through the canonical paid-call settings
-  // endpoints, never from a DOM value or browser cache.
-  async function createFreeConfig() {
-    const free = await setupConfigs('free')
-    if (free === null) throw new Error('Free scheduler configuration failed')
-    return free
   }
 
   function paidCallService(value) {
@@ -1355,7 +1368,6 @@
       createdVirtual = true
     }
     ensureDefaultAvailability()
-    if (activeFreeConfigs().length === 0) await createFreeConfig()
     if (createdVirtual || availability.manager === null) {
       availability.manager = 'platform'
       await updateAvail()
@@ -1374,98 +1386,6 @@
     )
     if (recovered) clearOAuthIntent(memberId)
     return recovered
-  }
-
-  async function setupConfigs(type) {
-    if (type !== 'free') throw new Error('Paid configurations require the paid-call settings endpoint')
-    await ensureTimezone()
-    const openHours = getAvailArray()
-    const price = '0'
-    const duration = FREE_DURATION_MINUTES
-    const interval = 15
-    const buffer = 10
-
-    const firstName = memberFields['free-user'] || ''
-    const lastName = memberFields['last-name'] || ''
-    const memberEmail = (window.MEMBER && window.MEMBER.auth && window.MEMBER.auth.email) || ''
-
-    const tinyTitle = 'Free Consultation Call'
-    const fullTitle = tinyTitle + ' - ' + duration + 'min'
-
-    const redirectURL = window.location.origin + window.location.pathname
-
-    const payload = {
-      grant_id: grantId,
-      in_config_name: fullTitle,
-      in_availability: {
-        duration_minutes: duration,
-        interval_minutes: interval,
-        availability_rules: {
-          availability_method: 'collective',
-          buffer: { before: buffer, after: buffer },
-          default_open_hours: openHours,
-        },
-      },
-      in_event_booking: {
-        title: fullTitle,
-        hide_participants: true,
-        notify_participants: false,
-        disable_emails: true,
-        booking_type: 'organizer-confirmation',
-        timezone: timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || '',
-        conferencing: {
-          provider: 'Google Meet',
-          autocreate: { conf_grant_id: grantId },
-        },
-      },
-      in_participants: [
-        {
-          name: firstName + ' ' + lastName,
-          email: grantEmail,
-          is_organizer: true,
-          availability: { calendar_ids: [grantCalendarId] },
-          booking: { calendar_id: grantCalendarId },
-        },
-      ],
-      in_scheduler: {
-        available_days_in_future: 14,
-        organizer_confirmation_url: redirectURL + '?confirmation=:booking_ref',
-        rescheduling_url: redirectURL + '?reschedule=:booking_ref',
-        cancellation_url: redirectURL + '?cancel=:booking_ref',
-        hide_rescheduling_options: true,
-        hide_cancellation_options: true,
-        min_booking_notice: minimumBookingNoticeMinutes(),
-        additional_fields: {
-          call_full_title: { type: 'metadata', label: 'Call Full Title', default: fullTitle, required: false },
-          call_tiny_title: { type: 'metadata', label: 'Call Tiny Title', default: tinyTitle, required: false },
-          call_type: { type: 'metadata', label: 'Call Type', default: 'free', required: false },
-          starter_name: { type: 'metadata', label: 'Starter Name', default: firstName + ' ' + lastName, required: false },
-          starter_email: { type: 'metadata', label: 'Starter Email', default: memberEmail, required: false },
-          call_price: { type: 'metadata', label: 'Call Price', default: price, required: false },
-          call_provider: { type: 'metadata', label: 'Call Provider', default: 'google', required: false },
-          call_context: { type: 'text', label: 'Call Context', default: '', required: false },
-          rescheduled_by: { type: 'text', label: 'Rescheduled By', default: '', required: false },
-          rescheduled_reason: { type: 'text', label: 'Rescheduled Reason', default: '', required: true },
-          unique_id: { type: 'text', label: 'Unique ID', default: '', required: false },
-          from_stage: { type: 'text', label: 'Is From Stage', default: '', required: false },
-        },
-      },
-    }
-
-    try {
-      const res = await xanoPost(
-        '/scheduler/configurations/create/v3',
-        payload,
-      )
-      if (providerRequestSucceeded(res)) return true
-      publishCalendarConnectionError()
-      console.warn('[scheduling-section] configuration request rejected')
-      return null
-    } catch (error) {
-      publishCalendarConnectionError()
-      console.warn('[scheduling-section] configuration request failed:', error && error.message)
-      return null
-    }
   }
 
   async function updateConfigAvailability(record) {
@@ -1496,7 +1416,7 @@
     configs = await getConfigs(grantId, true)
     const configsResponse = []
     const activeConfigs = activeSchedulerConfigs()
-    if (activeConfigs.length === 0) return hasVersionedBindingAuthority()
+    if (activeConfigs.length === 0) return hasCanonicalCalendarBinding()
     for (const record of activeConfigs) {
       const res = await updateConfigAvailability(record)
       configsResponse.push(res)
@@ -1533,11 +1453,13 @@
     if (!virtualGrantId) return result
 
     try {
-      const grantAdded = await xanoPost('/grants/add_virtual/v3', {
-        grant_id: virtualGrantId,
-        member_id: memberId,
-      })
-      if (!grantAdded) return result
+      if (!(options && options.bound)) {
+        const grantAdded = await xanoPost('/grants/add_virtual/v3', {
+          grant_id: virtualGrantId,
+          member_id: memberId,
+        })
+        if (!grantAdded) return result
+      }
 
       const calendarResponse = await xanoPost('/grants/create_virtual_calendar/v3', {
         grant_id: virtualGrantId,
@@ -1570,6 +1492,27 @@
         persistOAuthIntent(memberId, oauthIntent)
       },
     })
+  }
+
+  // Calendar connection never creates an offer. Resume an existing canonical
+  // virtual binding at its owner; a lost response must not retire/recreate it.
+  async function completeInitialPlatformConnection(memberId) {
+    if (hasCanonicalCalendarBinding() && availability.manager === 'platform') return
+    const expectedGrantId = grantId
+    const expectedCalendarId = grantCalendarId
+    if (grantId && !grantEmail) throw new Error('Canonical calendar transition is incomplete')
+    const virtual = await createVirtualCalendarFlow(memberId, expectedGrantId ? {
+      account: { grant_id: expectedGrantId, email: grantEmail },
+      bound: true,
+    } : undefined)
+    if (virtual.status !== 200) throw new Error('Virtual calendar setup failed')
+    if ((expectedGrantId && virtual.grant_id !== expectedGrantId) ||
+        (expectedCalendarId && virtual.calendar_id !== expectedCalendarId)) {
+      throw new Error('Canonical Platform calendar finalization is incomplete')
+    }
+    await refreshCanonicalConnectionState({ grantId: virtual.grant_id, email: virtual.email,
+      calendarId: virtual.calendar_id, manager: 'platform' })
+    if (!hasCanonicalCalendarBinding()) throw new Error('Canonical Platform calendar finalization is incomplete')
   }
 
   async function selectPlatformDefault(memberId) {
@@ -1637,6 +1580,7 @@
     let transition = null
     try {
       memberId = await writeMemberId()
+      await refreshCanonicalConnectionState()
       if (googleLayerConnected()) {
         await selectPlatformDefault(memberId)
         renderAvailabilityItems()
@@ -1644,39 +1588,11 @@
         console.log('[scheduling-section] selected platform calendar')
         return true
       }
-      // clearGrant is a no-op without a grant id, so this only ever deletes a
-      // half-built grant that never became a connection. Once the canonical
-      // route reports it gone, the local copy must go too — otherwise a
-      // failure below leaves the module re-issuing clearGrant against a
-      // deleted grant on every retry.
-      const clearedGrant = Boolean(grantId)
-      transition = await clearGrant(grantId, memberId)
-      if (clearedGrant) {
-        grantId = null
-        grantEmail = null
-        grantCalendarId = null
-        calendarBindingVersion = null
-        configs = []
-        availability.manager = null
+      await completeInitialPlatformConnection(memberId)
+      if (ensureDefaultAvailability()) {
+        await updateAvail()
+        await refreshCanonicalConnectionState()
       }
-      const virtual = await createTransitionVirtualCalendar(
-        memberId,
-        transition.oauthIntent,
-      )
-      if (virtual.status !== 200) {
-        throw new Error('Virtual calendar setup failed')
-      }
-      grantId = virtual.grant_id
-      grantEmail = virtual.email
-      grantCalendarId = virtual.calendar_id
-      calendarBindingVersion = null
-      ensureDefaultAvailability()
-      await createFreeConfig()
-      availability.manager = 'platform'
-      await updateAvail()
-      await restorePaidCallIntent(transition.paidCallIntent)
-      await refreshCanonicalConnectionState()
-      if (transition.oauthIntent) clearOAuthIntent(memberId)
       renderAvailabilityItems()
       renderSlotsPreview()
       console.log('[scheduling-section] connected to platform calendar')
@@ -1761,7 +1677,6 @@
       grantCalendarId = virtual.calendar_id
       calendarBindingVersion = null
       ensureDefaultAvailability()
-      await createFreeConfig()
       availability.manager = 'platform'
       await updateAvail()
       await restorePaidCallIntent(transition.paidCallIntent)
@@ -1872,7 +1787,6 @@
         availability.manager = 'calendar'
         await updateAvail()
       }
-      if (activeFreeConfigs().length === 0) await createFreeConfig()
       await restorePaidCallIntent(oauthIntent.paidCallIntent)
       await refreshCanonicalConnectionState()
       assertPreservedDefault(oauthIntent, 'calendar', oauthGrantId)
@@ -2073,11 +1987,6 @@
   // pair per `[data-manager]`, plus the prior three-label shape this still
   // accepts) is owned by v3/README.md#booking-stage-availability-section.
   //
-  // Visibility is decided per label, never group-wide. Platform names the
-  // canonical Nylas connection layer (a grant that owns its calendar). Google
-  // names the provider connected through that layer (`manager === 'calendar'`).
-  // A Google-backed grant therefore renders both connected variants.
-  //
   // Tagged labels only render when canonical state is readable: 'connected',
   // 'reconnect', or 'disconnected'. 'error' hides them instead of making a
   // provider claim. 'loading' leaves the last accurate paint in place.
@@ -2116,9 +2025,6 @@
     if (group.children[1]) group.children[1].style.display = anyConnection ? '' : 'none'
   }
 
-  // Platform is the canonical Nylas connection layer. Google is an
-  // independent provider fact on top of that layer. A Google-backed grant
-  // therefore makes both Platform and Google connected.
   function setActionText(target, text) {
     if (!target) return
     const textEl = qs('.button_main-text, [btn-text], [text-element]', target)
@@ -2647,11 +2553,7 @@
       if (grantId) {
         const updated = await updateConfigs()
         if (!updated) {
-          const activeConfigs = configs.filter(function (config) {
-            return config.active !== false
-          })
-          if (activeConfigs.length === 0) await createFreeConfig()
-          else throw new Error('Scheduler configuration update failed')
+          throw new Error('Scheduler configuration update failed')
         }
       }
 
@@ -2694,11 +2596,7 @@
       if (grantId) {
         const updated = await updateConfigs()
         if (!updated) {
-          const activeConfigs = configs.filter(function (config) {
-            return config.active !== false
-          })
-          if (activeConfigs.length === 0) await createFreeConfig()
-          else throw new Error('Scheduler configuration update failed')
+          throw new Error('Scheduler configuration update failed')
         }
       }
       await refreshCanonicalConnectionState()
@@ -3033,22 +2931,17 @@
     return !(paymentEnvironment && paymentEnvironment !== (isStagingHost ? 'test' : 'live'))
   }
 
-  // Single canonical Free predicate: the same record set decides whether a
-  // free configuration still needs creating and whether the preview can
-  // render one, so the preview can never reach a state the create path
-  // considers already satisfied.
+  // Preview only canonical active Free configurations from this environment.
+  // Call Settings owns creating and enabling services.
   function isCanonicalFreeConfig(config) {
     return Boolean(
       config &&
         config.config_id &&
         config.is_paid === false &&
         config.active !== false &&
+        !isPendingFreeActivation(config) &&
         configEnvironmentMatches(config),
     )
-  }
-
-  function activeFreeConfigs() {
-    return configs.filter(isCanonicalFreeConfig)
   }
 
   function previewDuration(config) {
@@ -3057,7 +2950,7 @@
   }
 
   // Free records carry no provider-side duration guarantee, so fall back to
-  // the canonical Free duration this module itself creates rather than
+  // the canonical Free duration rather than
   // dropping the service from the card.
   function previewDurationLabel(config) {
     const duration = previewDuration(config)
@@ -3483,7 +3376,6 @@
     try {
       const member = await currentMember()
       sessionMemberId = member.id
-      memberFields = member.customFields || {}
       timezone = null
       timezonePersisted = false
       connectionError = false
@@ -3502,10 +3394,8 @@
       calendarBindingVersion = null
 
       const starterRecord = await readStarterRecord()
-      const canonicalAvailability = starterRecord && starterRecord.availability
-      availability = isAvailability(canonicalAvailability)
-        ? canonicalAvailability
-        : { items: {}, manager: null }
+      if (!starterRecord) throw new Error('Canonical scheduling reader returned no record')
+      availability = canonicalAvailabilityValue(starterRecord)
       window.STARTER_AVAILABILITY = availability
 
       grantId = (starterRecord && starterRecord.nylas_grant_id) || null

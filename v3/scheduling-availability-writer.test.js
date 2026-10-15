@@ -4,6 +4,7 @@ const test = require('node:test')
 const vm = require('node:vm')
 
 const source = fs.readFileSync(require.resolve('./scheduling-availability-writer.js'), 'utf8')
+const initializerSource = fs.readFileSync(require.resolve('./scheduling-availability-init.js'), 'utf8')
 const API_BASE = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:tCpV3oqd'
 const ACTIVE_CALLS_COPY =
   'Resolve pending and upcoming calls before disconnecting the calendar. You can still edit settings or switch calendars.'
@@ -203,6 +204,10 @@ const STEP_NAMES = [
 
 function buildDom(options) {
   const root = new El('body')
+  if (options.runInitializer) {
+    root.appendChild(new El('a', { 'init-availability': '' }))
+    root.appendChild(new El('a', { 'update-availability': '' }))
+  }
   const steps = {}
   for (const name of STEP_NAMES) {
     const step = new El('div', { 'availability-step': name })
@@ -423,7 +428,7 @@ function firstTimeGoogleRoutes(options = {}) {
   }
 }
 
-function defaultRoutes(overridesMap = {}) {
+function defaultRoutes(overridesMap = {}, availability = defaultAvailability()) {
   const routes = {
     '/starter/update_availability/v3': () => ({ status: 200, body: { id: 1 } }),
     '/starter/get_by_memberstack/v3': () => ({
@@ -431,7 +436,7 @@ function defaultRoutes(overridesMap = {}) {
       body: {
         id: 1,
         timezone: 'Asia/Manila',
-        availability: defaultAvailability(),
+        availability,
         nylas_grant_id: 'grant-1',
         nylas_grant_email: 'grant@example.com',
         nylas_calendar_id: 'cal-1',
@@ -505,7 +510,7 @@ function loadWriter(options = {}) {
     },
   }
 
-  const routes = defaultRoutes(options.routes || {})
+  const routes = defaultRoutes(options.routes || {}, options.availability)
   const xanoAuthFetch =
     options.withoutAuthFetch === true
       ? undefined
@@ -515,7 +520,7 @@ function loadWriter(options = {}) {
           calls.push({ path, method: init.method, body })
           const route = routes[path]
           if (!route) throw new Error('unrouted path ' + path)
-          const result = route(body)
+          const result = await route(body)
           return {
             ok: result.status >= 200 && result.status < 300,
             status: result.status,
@@ -531,6 +536,7 @@ function loadWriter(options = {}) {
   const document = {
     readyState: 'complete',
     title: 'Booking stage',
+    body: dom.root,
     documentElement,
     addEventListener(name, listener) {
       if (!document._listeners.has(name)) document._listeners.set(name, [])
@@ -541,6 +547,7 @@ function loadWriter(options = {}) {
     querySelectorAll: (selector) => dom.root.querySelectorAll(selector),
   }
 
+  const windowListeners = new Map()
   const window = {
     location: {
       hostname: options.hostname || 'the-starters-3-0.webflow.io',
@@ -563,14 +570,21 @@ function loadWriter(options = {}) {
       replaceState: (...args) => historyCalls.push(args),
     },
     open: (url, target) => opened.push({ url, target }),
-    addEventListener() {},
-    dispatchEvent: (event) => events.push(event),
+    addEventListener(name, listener) {
+      if (!windowListeners.has(name)) windowListeners.set(name, [])
+      windowListeners.get(name).push(listener)
+    },
+    dispatchEvent(event) {
+      events.push(event)
+      for (const listener of windowListeners.get(event.type) || []) listener(event)
+    },
     $memberstackDom: {
       getCurrentMember: async () => ({ data: activeMember }),
     },
     MEMBER: { auth: { email: 'member@example.com' } },
-    STARTER_AVAILABILITY:
-      options.availability === undefined ? defaultAvailability() : options.availability,
+    STARTER_AVAILABILITY: options.runInitializer
+      ? undefined
+      : options.availability === undefined ? defaultAvailability() : options.availability,
     xanoAuthFetch,
     clearGrantData: options.clearGrantData,
     generateBookingsList: options.generateBookingsList,
@@ -588,7 +602,7 @@ function loadWriter(options = {}) {
     }
   }
 
-  vm.runInNewContext(source, {
+  const context = vm.createContext({
     CustomEvent,
     MouseEvent,
     URLSearchParams,
@@ -603,6 +617,8 @@ function loadWriter(options = {}) {
     document,
     window,
   })
+  vm.runInContext(source, context)
+  if (options.runInitializer) vm.runInContext(initializerSource, context)
 
   function status() {
     return documentElement.getAttribute('data-scheduling-availability-writer')
@@ -642,6 +658,256 @@ function loadWriter(options = {}) {
 async function settle() {
   for (let i = 0; i < 10; i++) await new Promise(setImmediate)
 }
+
+test('connection-only writer reload keeps zero offers connected without a preservation receipt', async () => {
+  const result = loadWriter({ routes: { '/nylas_configurations/get_all/v3': () => ({ status: 200, body: [] }) } })
+  await settle()
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.calendarBindingVersion, null)
+  assert.equal(result.calls.filter(c => /configurations\/create|paid-call-settings\/upsert/.test(c.path)).length, 0)
+})
+
+test('connection-only writer resumes the current calendar without replacement or offer creation', async () => {
+  let manager = null
+  const result = loadWriter({
+    availability: { ...defaultAvailability(), manager: null },
+    routes: {
+      '/starter/get_by_memberstack/v3': () => ({ status: 200, body: {
+        id: 1, timezone: 'Asia/Manila', availability: { ...defaultAvailability(), manager },
+        nylas_grant_id: 'existing-grant', nylas_grant_email: 'member-a', nylas_calendar_id: 'existing-calendar',
+      } }),
+      '/nylas_configurations/get_all/v3': () => ({ status: 200, body: [] }),
+      '/grants/create_virtual_calendar/v3': body => {
+        assert.equal(body.grant_id, 'existing-grant')
+        manager = 'platform'
+        return { status: 200, body: { response: { result: { data: { id: 'existing-calendar' } } } } }
+      },
+    },
+  })
+  await settle()
+  result.dom.managers.platform.click()
+  result.clickAction(result.dom.buttons.managerSubmit)
+  await settle()
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
+  assert.equal(result.calls.filter(c => c.path === '/grants/create_virtual_calendar/v3').length, 1)
+  assert.equal(result.calls.filter(c => /create_virtual_account|add_virtual|grants\/delete|configurations\/create/.test(c.path)).length, 0)
+})
+
+test('initializer-to-writer handoff accepts only a grantless empty-array projection', async () => {
+  const result = loadWriter({
+    runInitializer: true,
+    routes: {
+      '/starter/get_by_memberstack/v3': () => ({ status: 200, body: starterWithoutGrant([]) }),
+    },
+  })
+  await settle()
+  assert.equal(result.status(), 'ready')
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'disconnected')
+  assert.deepEqual(JSON.parse(JSON.stringify(result.window.STARTER_AVAILABILITY)), { items: {}, manager: null })
+  result.dom.managers.platform.click()
+  assert.equal(result.dom.managers.platform.classList.contains('is-active'), true)
+  assert.equal(result.calls.filter(call => /create|add_virtual|delete|upsert|update_availability/.test(call.path)).length, 0)
+})
+
+test('initializer-to-writer handoff initializes a grantless null availability projection', async () => {
+  const result = loadWriter({ runInitializer: true, routes: {
+    '/starter/get_by_memberstack/v3': () => ({ status: 200, body: {
+      ...starterWithoutGrant(), availability: null,
+    } }),
+  } })
+  await settle()
+  assert.equal(result.status(), 'ready')
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'disconnected')
+  assert.deepEqual(JSON.parse(JSON.stringify(result.window.STARTER_AVAILABILITY)), { items: {}, manager: null })
+  result.dom.managers.platform.click()
+  assert.equal(result.dom.managers.platform.classList.contains('is-active'), true)
+  assert.equal(result.calls.filter(call => /create|add_virtual|delete|upsert|update_availability/.test(call.path)).length, 0)
+})
+
+for (const calendarId of ['partial-calendar', '']) {
+  test(`initializer-to-writer handoff resumes owned null availability with ${calendarId ? 'a saved' : 'a missing'} calendar`, async () => {
+    let availability = null
+    let selectedCalendarId = calendarId
+    const placeholder = {
+      config_id: 'legacy-placeholder', grant_id: 'partial-grant', duration: 30,
+      is_paid: false, active: true, revision: 1, sync_status: null,
+    }
+    const originalPlaceholder = { ...placeholder }
+    const result = loadWriter({
+      runInitializer: true,
+      routes: {
+        '/starter/get_by_memberstack/v3': () => ({ status: 200, body: {
+          id: 320, timezone: 'Asia/Manila', availability,
+          nylas_grant_id: 'partial-grant', nylas_grant_email: 'member-a',
+          nylas_calendar_id: selectedCalendarId,
+        } }),
+        '/nylas_configurations/get_all/v3': () => ({ status: 200, body: [placeholder] }),
+        '/grants/create_virtual_calendar/v3': body => {
+          assert.equal(body.grant_id, 'partial-grant')
+          availability = { items: {}, manager: 'platform' }
+          selectedCalendarId = 'partial-calendar'
+          return { status: 200, body: { response: { result: { data: { id: selectedCalendarId } } } } }
+        },
+      },
+    })
+    await settle()
+    assert.equal(result.status(), 'ready')
+    assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'reconnect')
+    assert.ok(result.events.some(event => event.type === 'starterSchedulingAvailabilityReady'))
+    assert.equal(result.window.STARTER_AVAILABILITY.manager, null)
+    result.dom.managers.platform.click()
+    result.clickAction(result.dom.buttons.managerSubmit)
+    await settle()
+    assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
+    assert.equal(result.window.STARTER_AVAILABILITY.manager, 'platform')
+    assert.equal(result.calls.filter(call => call.path === '/grants/create_virtual_calendar/v3').length, 1)
+    assert.equal(result.calls.filter(call => /create_virtual_account|add_virtual|grants\/delete|configurations\/(create|update)|upsert|update_availability/.test(call.path)).length, 0)
+    assert.deepEqual(placeholder, originalPlaceholder)
+  })
+}
+
+for (const availability of [[], [{ items: {}, manager: null }]]) {
+  test(`initializer-to-writer handoff rejects a bound ${availability.length ? 'populated' : 'empty'} availability array`, async () => {
+    const result = loadWriter({ runInitializer: true, routes: {
+      '/starter/get_by_memberstack/v3': () => ({ status: 200, body: {
+        ...starterWithoutGrant(availability), nylas_grant_id: 'partial-grant',
+        nylas_grant_email: 'member-a', nylas_calendar_id: 'partial-calendar',
+      } }),
+    } })
+    await settle()
+    assert.equal(result.status(), 'error')
+    assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'error')
+    assert.equal(result.calls.filter(call => /create|add_virtual|delete|upsert|update_availability/.test(call.path)).length, 0)
+  })
+}
+
+test('initializer-to-writer handoff keeps owned null-availability recovery read-only for a test-member override', async () => {
+  const result = loadWriter({
+    runInitializer: true,
+    search: '?test_member_id=mem_sb_cmqhuaxn80d270sseeo74fn7i',
+    routes: {
+      '/starter/get_by_memberstack/v3': () => ({ status: 200, body: {
+        id: 320, timezone: 'Asia/Manila', availability: null,
+        nylas_grant_id: 'partial-grant', nylas_grant_email: 'member-a', nylas_calendar_id: 'partial-calendar',
+      } }),
+    },
+  })
+  await settle()
+  assert.equal(result.status(), 'blocked-test-member')
+  assert.deepEqual(result.calls.map(call => ({ path: call.path, body: call.body })), [{
+    path: '/starter/get_by_memberstack/v3', body: { member_id: 'mem_sb_cmqhuaxn80d270sseeo74fn7i' },
+  }])
+  result.dom.managers.platform.click()
+  result.clickAction(result.dom.buttons.managerSubmit)
+  await settle()
+  assert.equal(result.calls.length, 1)
+})
+
+test('initializer-to-writer handoff rejects null availability after the authenticated member changes', async () => {
+  let releaseRead
+  const pendingRead = new Promise(resolve => { releaseRead = resolve })
+  const result = loadWriter({ runInitializer: true, routes: {
+    '/starter/get_by_memberstack/v3': () => pendingRead,
+  } })
+  await settle()
+  result.harness.setActiveMember({ id: 'member-b', customFields: {} })
+  releaseRead({ status: 200, body: {
+    id: 320, timezone: 'Asia/Manila', availability: null,
+    nylas_grant_id: 'partial-grant', nylas_grant_email: 'member-a', nylas_calendar_id: 'partial-calendar',
+  } })
+  await settle()
+  assert.equal(result.status(), 'error')
+  assert.equal(result.window.STARTER_AVAILABILITY, null)
+  assert.ok(result.warnings.some(message => message.includes('Member session changed during availability read')))
+  assert.equal(result.calls.length, 1)
+})
+
+for (const syncStatus of [null, '']) {
+  test(`writer hours save preserves the pending Free placeholder with ${syncStatus === null ? 'null' : 'empty'} sync status`, async () => {
+    let availability = defaultAvailability()
+    const placeholder = {
+      config_id: 'legacy-placeholder', grant_id: 'grant-1', duration: 30,
+      is_paid: false, active: true, revision: 1, sync_status: syncStatus,
+    }
+    const originalPlaceholder = { ...placeholder }
+    const result = loadWriter({ routes: {
+      '/starter/get_by_memberstack/v3': () => ({ status: 200, body: {
+        id: 1, timezone: 'Asia/Manila', availability,
+        nylas_grant_id: 'grant-1', nylas_grant_email: 'grant@example.com', nylas_calendar_id: 'cal-1',
+      } }),
+      '/starter/update_availability/v3': body => {
+        availability = body.availability
+        return { status: 200, body: { id: 1 } }
+      },
+      '/nylas_configurations/get_all/v3': () => ({ status: 200, body: [placeholder] }),
+      '/scheduler/configurations/update/v3': () => {
+        placeholder.revision += 1
+        placeholder.sync_status = 'ready'
+        return { status: 200, body: { response: { status: 200 } } }
+      },
+    } })
+    await settle()
+    result.dom.fields.days[1].checked = true
+    result.dom.fields.start.value = '10:00'
+    result.dom.fields.end.value = '16:00'
+    result.clickAction(result.dom.buttons.submit)
+    await settle()
+    assert.equal(result.calls.filter(call => call.path === '/starter/update_availability/v3').length, 1)
+    assert.equal(result.calls.filter(call => call.path === '/scheduler/configurations/update/v3').length, 0)
+    assert.deepEqual(placeholder, originalPlaceholder)
+    assert.equal(availability.items.general.start, '10:00')
+    assert.equal(result.dom.steps.success.style.display, 'block')
+  })
+}
+
+test('writer hours save updates activated Free and Paid services without activating a Free placeholder', async () => {
+  const configs = [
+    { config_id: 'legacy-placeholder', grant_id: 'grant-1', duration: 30, is_paid: false, active: true, revision: 1, sync_status: null },
+    { config_id: 'free-ready', grant_id: 'grant-1', duration: 30, is_paid: false, active: true, revision: 1, sync_status: 'ready' },
+    { config_id: 'free-legacy', grant_id: 'grant-1', duration: 30, is_paid: false, active: true, revision: 2, sync_status: null },
+    { config_id: 'paid-ready', grant_id: 'grant-1', duration: 60, is_paid: true, active: true, revision: 1, sync_status: 'ready' },
+  ]
+  const result = loadWriter({ routes: {
+    '/nylas_configurations/get_all/v3': () => ({ status: 200, body: configs }),
+  } })
+  await settle()
+  result.dom.fields.days[1].checked = true
+  result.dom.fields.start.value = '10:00'
+  result.dom.fields.end.value = '16:00'
+  result.clickAction(result.dom.buttons.submit)
+  await settle()
+  assert.deepEqual(result.calls.filter(call => call.path === '/scheduler/configurations/update/v3').map(call => call.body.config_id).sort(), ['free-legacy', 'free-ready', 'paid-ready'])
+  assert.equal(result.dom.steps.success.style.display, 'block')
+})
+
+test('connection-only writer bootstrap rejects an empty-array canonical availability', async () => {
+  const result = loadWriter({ routes: {
+    '/starter/get_by_memberstack/v3': () => ({ status: 200, body: {
+      ...starterWithoutGrant([]), nylas_grant_id: 'existing-grant',
+      nylas_grant_email: 'member-a', nylas_calendar_id: 'existing-calendar',
+    } }),
+  } })
+  await settle()
+  assert.equal(result.status(), 'error')
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'error')
+  assert.equal(result.calls.filter(c => /create|add_virtual|delete|upsert|update_availability/.test(c.path)).length, 0)
+  assert.ok(result.warnings.some(message => message.includes('Canonical scheduling reader returned invalid availability')))
+})
+
+test('connection-only writer bootstrap uses canonical manager rather than stale initializer readiness', async () => {
+  const result = loadWriter({ routes: {
+    '/starter/get_by_memberstack/v3': () => ({ status: 200, body: {
+      ...starterWithoutGrant(null), nylas_grant_id: 'existing-grant',
+      nylas_grant_email: 'member-a', nylas_calendar_id: 'existing-calendar',
+    } }),
+    '/nylas_configurations/get_all/v3': () => ({ status: 200, body: [] }),
+  } })
+  await settle()
+  assert.equal(result.status(), 'ready')
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'reconnect')
+  assert.equal(result.window.STARTER_AVAILABILITY.manager, null)
+  assert.equal(result.calls.filter(c => /create|add_virtual|delete|upsert|update_availability/.test(c.path)).length, 0)
+})
 
 const TZ_CACHED = { 'starter-timezone:member-a': 'Asia/Manila' }
 const OAUTH_INTENT_KEY = 'starter-scheduling-oauth-intent:member-a'
@@ -930,7 +1196,7 @@ test('versioned zero-offer binding without a grant email remains reconnect', asy
   assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.calendarBindingVersion, 1)
 })
 
-test('legacy zero-config binding without a version marker remains reconnect', async () => {
+test('canonical zero-config binding is connected without a preservation marker', async () => {
   const availability = defaultAvailability()
   availability.manager = 'platform'
   const result = loadWriter({
@@ -955,7 +1221,7 @@ test('legacy zero-config binding without a version marker remains reconnect', as
   await settle()
 
   assert.equal(result.status(), 'ready')
-  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'reconnect')
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
   assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.configurationCount, 0)
   assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.calendarBindingVersion, null)
 })
@@ -1248,7 +1514,7 @@ test('form submit accepts provider 2xx statuses for configuration updates', asyn
   assert.notEqual(result.dom.steps['config-request-error'].style.display, 'block')
 })
 
-test('form submit recreates a free configuration when every canonical config is inactive', async () => {
+test('form submit preserves OFF when every canonical config is inactive', async () => {
   const result = loadWriter({
     storage: TZ_CACHED,
     routes: {
@@ -1275,7 +1541,7 @@ test('form submit recreates a free configuration when every canonical config is 
 
   assert.equal(
     result.calls.filter((call) => call.path === '/scheduler/configurations/create/v3').length,
-    1,
+    0,
   )
   assert.notEqual(result.dom.steps['config-request-error'].style.display, 'block')
 })
@@ -1417,7 +1683,7 @@ test('starting a calendar switch retains the current default and active calls un
   assert.deepEqual(JSON.parse(JSON.stringify(result.window.STARTER_AVAILABILITY)), originalAvailability)
 })
 
-test('choosing platform creates the virtual calendar chain and configs', async () => {
+test('choosing platform creates only the virtual calendar binding', async () => {
   const availability = defaultAvailability()
   availability.manager = null
   let virtualPersisted = false
@@ -1440,9 +1706,9 @@ test('choosing platform creates the virtual calendar chain and configs', async (
           nylas_calendar_id: virtualPersisted ? 'vcal-1' : null,
         },
       }),
-      '/grants/add_virtual/v3': () => {
+      '/grants/create_virtual_calendar/v3': () => {
         virtualPersisted = true
-        return { status: 200, body: { id: 5 } }
+        return { status: 200, body: { response: { result: { data: { id: 'vcal-1' } } } } }
       },
       '/scheduler/configurations/create/v3': () => {
         configCreated = true
@@ -1471,14 +1737,12 @@ test('choosing platform creates the virtual calendar chain and configs', async (
   const add = result.calls[addIndex]
   assert.deepEqual(add.body, { grant_id: 'vgrant-1', member_id: 'member-a' })
 
-  // No paid-call rate is resolvable, so only the free config is created.
+  // Calendar setup does not express an offer enable intent.
   const creates = result.calls.filter((c) => c.path === '/scheduler/configurations/create/v3')
-  assert.equal(creates.length, 1)
-  assert.match(creates[0].body.in_config_name, /^Free Consultation Call/)
-  for (const create of creates) assert.equal(create.body.grant_id, 'vgrant-1')
+  assert.equal(creates.length, 0)
 
   const update = result.calls.find((c) => c.path === '/starter/update_availability/v3')
-  assert.equal(update.body.availability.manager, 'platform')
+  assert.equal(update, undefined)
   assert.equal(result.dom.steps.success.style.display, 'block')
   assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
   const canonicalReadIndex = paths.indexOf('/starter/get_by_memberstack/v3', calendarIndex + 1)
@@ -1497,6 +1761,7 @@ test('platform setup failure shows config-request-error and writes nothing', asy
     availability,
     storage: TZ_CACHED,
     routes: {
+      '/starter/get_by_memberstack/v3': () => ({ status: 200, body: starterWithoutGrant(availability) }),
       '/grants/create_virtual_account/v3': () => ({ status: 500, body: { message: 'nope' } }),
     },
   })
@@ -2857,13 +3122,11 @@ test('a stored paid rate cannot create a paid configuration', async () => {
   await settle()
 
   const creates = result.calls.filter((c) => c.path === '/scheduler/configurations/create/v3')
-  assert.equal(creates.length, 1)
-  assert.equal(creates[0].body.in_config_name, 'Free Consultation Call - 30min')
-  assert.equal(creates[0].body.in_scheduler.min_booking_notice, 5)
-  assert.equal(result.dom.steps.success.style.display, 'block')
+  assert.equal(creates.length, 0)
+  assert.equal(result.calls.filter(c => c.path === '/starter/paid-call-settings/upsert/v3').length, 0)
 })
 
-test('production scheduler configuration creation keeps the 24-hour booking notice', async () => {
+test('production connection keeps the preview notice without creating offers', async () => {
   const availability = defaultAvailability()
   availability.manager = null
   const result = loadWriter({
@@ -2881,8 +3144,7 @@ test('production scheduler configuration creation keeps the 24-hour booking noti
   await settle()
 
   const creates = result.calls.filter((call) => call.path === '/scheduler/configurations/create/v3')
-  assert.equal(creates.length, 1)
-  assert.equal(creates[0].body.in_scheduler.min_booking_notice, 1440)
+  assert.equal(creates.length, 0)
 })
 
 test('config update rejection lands on config-request-error', async () => {
@@ -3013,7 +3275,7 @@ test('rejects malformed canonical availability after a mutation', async () => {
                   nylas_grant_id: null,
                   nylas_calendar_id: null,
                 }
-              : { id: 1, timezone: 'Asia/Manila', availability: null },
+              : { id: 1, timezone: 'Asia/Manila', availability: { items: 'malformed', manager: null } },
         }
       },
     },
@@ -3094,8 +3356,7 @@ test('an OAuth code on this page exchanges the grant and finishes the connect fl
   const update = result.calls.find((c) => c.path === '/starter/update_availability/v3')
   assert.equal(update.body.availability.manager, 'calendar')
   const creates = result.calls.filter((c) => c.path === '/scheduler/configurations/create/v3')
-  assert.equal(creates.length, 1)
-  assert.equal(creates[0].body.grant_id, 'grant-9')
+  assert.equal(creates.length, 0)
   assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
   assert.equal(result.dom.steps.default.style.display, 'block')
   assert.equal(result.status(), 'ready')
@@ -3196,7 +3457,7 @@ test('production OAuth return writes only with a recent session intent', async (
   assert.equal(result.calls.filter((c) => c.path === '/starter/update_availability/v3').length, 1)
   assert.equal(
     result.calls.filter((c) => c.path === '/scheduler/configurations/create/v3').length,
-    1,
+    0,
   )
   assert.equal(result.sessionStorage.size, 0)
 })
@@ -3232,8 +3493,7 @@ test('production hosted OAuth callback verifies and persists the returned grant'
   assert.equal(result.historyCalls.at(-1)[2], '/starter-dashboard')
   assert.equal(result.calls.filter((c) => c.path === '/starter/update_availability/v3').length, 1)
   const creates = result.calls.filter((c) => c.path === '/scheduler/configurations/create/v3')
-  assert.equal(creates.length, 1)
-  assert.equal(creates[0].body.in_config_name, 'Free Consultation Call - 30min')
+  assert.equal(creates.length, 0)
 })
 
 test('production hosted OAuth callback accepts a recent durable intent fallback', async () => {
@@ -3552,8 +3812,7 @@ test('OAuth success resumes paid restoration without saving the grant twice', as
 test('saved code OAuth retry resumes setup without saving the grant twice', async () => {
   let grantPersisted = false
   let manager = null
-  let configCreated = false
-  let createAttempts = 0
+  let readAttempts = 0
   const routes = {
     '/grants/add/v3': () => {
       grantPersisted = true
@@ -3574,19 +3833,12 @@ test('saved code OAuth retry resumes setup without saving the grant twice', asyn
       manager = body.availability.manager
       return { status: 200, body: { id: 1 } }
     },
-    '/nylas_configurations/get_all/v3': () => ({
-      status: 200,
-      body: configCreated
-        ? [{ config_id: 'cfg-free', grant_id: 'grant-9', is_paid: false, active: true }]
-        : [],
-    }),
-    '/scheduler/configurations/create/v3': () => {
-      createAttempts += 1
-      if (createAttempts === 1) {
+    '/nylas_configurations/get_all/v3': () => {
+      readAttempts += 1
+      if (readAttempts === 1) {
         return { status: 503, body: { message: 'try again' } }
       }
-      configCreated = true
-      return { status: 200, body: { response: { status: 200 } } }
+      return { status: 200, body: [] }
     },
   }
   const firstLoad = loadWriter({
@@ -4032,30 +4284,27 @@ test('hosted OAuth callback with an expired production intent performs no writes
   assert.equal(result.sessionStorage.size, 0)
 })
 
-test('returning from the calendar OAuth round trip records the calendar manager', async () => {
-  const availability = defaultAvailability()
-  availability.manager = null
-  const result = loadWriter({
-    availability,
-    search: '?calendar=google',
-    storage: TZ_CACHED,
-    routes: {
-      '/nylas_configurations/get_all/v3': () => ({ status: 200, body: [] }),
-    },
-  })
-  await settle()
+for (const manager of [null, 'platform', 'calendar']) {
+  test(`staging calendar query preserves markerless ${manager} selection with zero offers`, async () => {
+    const availability = { ...defaultAvailability(), manager }
+    const result = loadWriter({
+      availability,
+      search: '?calendar=google',
+      storage: TZ_CACHED,
+      routes: {
+        '/nylas_configurations/get_all/v3': () => ({ status: 200, body: [] }),
+      },
+    })
+    await settle()
 
-  const update = result.calls.find((c) => c.path === '/starter/update_availability/v3')
-  assert.equal(update.body.member_id, 'member-a')
-  assert.equal(update.body.availability.manager, 'calendar')
-  // Rate-less starter: only the free config is created on the OAuth return.
-  assert.equal(
-    result.calls.filter((c) => c.path === '/scheduler/configurations/create/v3').length,
-    1,
-  )
-  assert.equal(result.historyCalls.length, 1)
-  assert.equal(result.dom.steps.default.style.display, 'block')
-})
+    assertNoCalendarReplacementWrites(result.calls)
+    assert.equal(result.calls.filter((call) => call.path === '/grants/add/v3').length, 0)
+    assert.equal(result.window.STARTER_AVAILABILITY.manager, manager)
+    assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, manager ? 'connected' : 'reconnect')
+    assert.equal(result.status(), 'ready')
+    assert.equal(result.historyCalls.length, 0)
+  })
+}
 
 test('staging OAuth callback without intent fails closed when a grant already exists', async () => {
   const availability = defaultAvailability()
@@ -4578,6 +4827,32 @@ for (const manager of ['platform', 'calendar']) {
       assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.configurationCount, 0)
       assert.equal(result.sessionStorage.has(OAUTH_INTENT_KEY), false)
       assert.equal(result.sessionStorage.has('starter-scheduling-oauth-callback'), false)
+      assert.equal(result.status(), 'ready')
+      assert.equal(result.events.filter((event) => event.type === 'starterSchedulingWriterReady').length, 1)
+      const cards = result.dom.list.querySelectorAll('[availability-item]')
+      assert.equal(cards.length, 1)
+      assert.equal(cards[0].dataset.id, 'general')
+      assert.equal(cards[0].querySelector('[availability-title]').textContent, 'General Availability')
+
+      result.dom.managers[manager].click()
+      assert.equal(result.dom.managers[manager].classList.contains('is-active'), true)
+      assert.equal(result.dom.buttons.managerSubmit.classList.contains('disabled'), true)
+      const otherManager = manager === 'platform' ? 'calendar' : 'platform'
+      result.dom.managers[otherManager].click()
+      assert.equal(result.dom.managers[manager].classList.contains('is-active'), false)
+      assert.equal(result.dom.managers[otherManager].classList.contains('is-active'), true)
+      assert.equal(result.dom.buttons.managerSubmit.classList.contains('disabled'), false)
+      assert.equal(result.dom.buttons.managerSubmit.querySelector('.button_main-text').textContent,
+        otherManager === 'calendar' ? 'Connect Google Calendar' : 'Use platform availability')
+
+      result.clickAction(result.dom.buttons.disconnectConfirm)
+      assert.equal(result.dom.steps['disconnect-calendar'].style.display, 'block')
+      assert.equal(result.dom.steps.default.style.display, 'none')
+      result.dom.popupClose.click()
+      result.flushTimers(50)
+      assert.equal(result.dom.steps.default.style.display, 'block')
+      assert.equal(result.dom.steps['disconnect-calendar'].style.display, 'none')
+      assertNoCalendarReplacementWrites(result.calls)
     })
   }
 }

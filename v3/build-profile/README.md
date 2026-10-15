@@ -268,8 +268,8 @@ Settings handoff. The
 [Free Call settings contract](../../docs/wiring/FREE-CALL-SETTINGS-WIRING.md#build-profile-handoff)
 and the
 [Paid Call settings contract](../../docs/wiring/PAID-CALL-SETTINGS-WIRING.md#build-profile-handoff)
-own only what differs per branch: which prerequisites gate an enable, and which
-authored controls that branch's receipt part prefills.
+own what differs per branch: which prerequisites gate an enable, when the
+pending choice is activated, and which authored controls it prefills.
 
 Build Profile validates its visible Call Settings controls and stores a
 versioned, member-bound `starter_call_settings_intent_v3` receipt in private
@@ -287,12 +287,13 @@ rate reuses the same `$1` through `$1,000` whole-dollar validator as the other
 direct Build Profile price controls.
 
 Dashboard and Edit Profile hydrate the receipt only as a pre-onboarding create
-choice. If that branch has no canonical service, a pending enable prefills its
-controls without becoming canonical state and stays pending until the branch's
-prerequisites are ready and the member selects Update. The choice remains
-declinable before those prerequisites are ready: selecting Off makes Update live
-so the member can change their mind and submit it. A pending Yes leaves Update
-gated on the existing scheduling and Stripe prerequisite checks.
+choice. A pending enable can prefill controls without becoming canonical state,
+subject to the branch-specific handoff contracts linked above. Free's additional
+eligibility and supersession rules are owned by
+[Free settings history](../../docs/wiring/FREE-CALL-SETTINGS-WIRING.md#free-settings-history).
+The choice remains declinable before its prerequisites are ready: selecting Off
+makes Update live so the member can change their mind and submit it. A pending
+Yes leaves Update gated on the existing scheduling and Stripe prerequisite checks.
 
 Initial hydration waits up to two seconds for the site-level `memberReady`
 promise before reading private Memberstack JSON. If that signal stays pending,
@@ -305,17 +306,18 @@ the failure as confirmed absence. While canonical-satisfied receipt cleanup is
 already in flight, auth recovery skips its queued receipt read so the newer
 canonical render does not wait behind that Memberstack JSON write.
 
-Once an active canonical service exists, that service is the sole authority.
+Once an activated canonical service exists, that service is the sole authority.
 The consumer removes any leftover Build Profile receipt without painting it or
 writing to Xano. Post-onboarding changes, including disable, belong to Edit
-Profile or Dashboard. This prevents a failed receipt-cleanup attempt from later
-replacing newer canonical settings.
+Profile or Dashboard. Branch-specific canonical supersession also follows the
+handoff contracts linked above.
 
 Each consumer removes only its own part of the receipt; the other branch's
 pending part is preserved. It consumes its part in one of three ways:
 
 - after the canonical Call Settings endpoint returns exact readback;
-- with no canonical write, on load, when there is an active canonical service,
+- with no canonical write, on load, when canonical state supersedes the receipt
+  under the branch-specific handoff contract,
   regardless of whether its current values match the older Build choice. This
   repairs a receipt whose
   best-effort cleanup failed after a verified save, so it cannot re-assert
@@ -342,23 +344,23 @@ taken as the outstanding removal, never as a fresh pending choice. The stored
 branch is still owed one, so the next verified save or disable, and every later
 prerequisite refresh, retries it, re-reading and member-scoping the envelope.
 
-Supersession is session state scoped to the member who caused it: the obligation
-is keyed by the member whose write superseded the receipt — the member that write
+The cleanup retry obligation is session state scoped to the member who caused it:
+it is keyed by the member whose write superseded the receipt, the member that write
 belonged to, not whoever the session happens to hold when a failure lands. Recording
 one, discharging it, and asking whether it is outstanding each name a member, so a
-sign-in recovery or any other reload of the same member keeps it, while another
+sign-in recovery or same-script session reload of the same member keeps it, while another
 member neither inherits it, nor has their own receipt retired by it, nor discharges
-it by cleaning up their own. It is
-still session state, because the only place to record it durably is
-the Memberstack write that just failed. If that write never succeeds before the
-member reloads, the stored branch is indistinguishable from a pre-onboarding
-pending create and is offered again — retiring it on sight would destroy the
-genuine pending create this receipt exists to carry. What that costs is bounded
-to the offer itself: a pending create is never unsaved work on its own. It
-prefills the branch's controls and waits, and only a member gesture on those
+it by cleaning up their own. Durable Free supersession after a fresh reload
+follows [Free settings history](../../docs/wiring/FREE-CALL-SETTINGS-WIRING.md#free-settings-history).
+Paid retains its existing session cleanup contract: without an activated service
+or a successful cleanup, a fresh script can offer the stored pending create again.
+
+A pending create is never unsaved work on its own. Only a member gesture on the
 controls marks step 6 changed, so an Edit Profile save for an unrelated field
-never commits it. Materializing a pending create always takes a deliberate
-answer on the call controls, on either surface. Because the overlay has already
+never commits a zero-service pending choice. Free's Dashboard handoff and legacy
+placeholder activation follow the guarded passive-activation contract linked
+above. Explicit settings changes still take a deliberate answer on the call
+controls. Because the overlay has already
 checked Yes, re-answering it emits a click and no change event, so the controllers
 accept that click as the answer whenever the branch's prerequisites are ready. The no-service submitted-Off path is
 different because no canonical write backs up the choice: its cleanup is strict.

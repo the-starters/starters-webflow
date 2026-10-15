@@ -4,7 +4,7 @@
   // Writer counterpart to scheduling-availability-init.js for the scheduling
   // Starter dashboards. Ports the legacy V2 availability
   // writer flow (form submit, manager selection, Nylas scheduler configuration
-  // create/update, timezone set, OAuth grant redirect) against the same
+  // availability updates, timezone set, OAuth grant redirect) against the same
   // Webflow `availability-step` markup, with the loader and success/error
   // steps restored. Every api:tCpV3oqd call goes through window.xanoAuthFetch;
   // write payload member ids always come from the authenticated Memberstack
@@ -78,7 +78,6 @@
   window.__tsSchedulingAvailabilityWriter = true
 
   let sessionMemberId = null
-  let memberFields = {}
   let availability = null
   let initialState = true
   let configs = []
@@ -262,11 +261,10 @@
 
   function deriveCalendarConnectionState() {
     const hasGrant = Boolean(grantId)
-    const hasEmail = Boolean(grantEmail)
     const hasCalendar = Boolean(grantCalendarId)
     const configurationCount = Array.isArray(configs) ? configs.length : 0
     if (connectionError) return 'error'
-    if (hasGrant && hasCalendar && (configurationCount > 0 || (hasEmail && calendarBindingVersion === 1))) {
+    if (hasCanonicalCalendarBinding()) {
       return 'connected'
     }
     if (
@@ -648,10 +646,22 @@
     return ids
   }
 
+  function isPendingFreeActivation(config) {
+    return Boolean(config && config.is_paid === false &&
+      Object.prototype.hasOwnProperty.call(config, 'sync_status') &&
+      (config.sync_status === null || config.sync_status === '') &&
+      Number(config.revision) === 1)
+  }
+
   function activeSchedulerConfigs() {
     return configs.filter(function (config) {
-      return config && config.active !== false
+      return config && config.active !== false && !isPendingFreeActivation(config)
     })
+  }
+
+  function hasCanonicalCalendarBinding() {
+    return Boolean(grantId && grantEmail && grantCalendarId && availability &&
+      (availability.manager === 'platform' || availability.manager === 'calendar'))
   }
 
   function hasVersionedBindingAuthority() {
@@ -1216,16 +1226,21 @@
   // Mutation responses are acknowledgements, not scheduling authority: re-read
   // availability_v3 through the authenticated Starter projection, then read
   // configurations for the grant returned by that row before repainting UI.
-  async function refreshCanonicalConnectionState() {
+  async function refreshCanonicalConnectionState(expectedBinding) {
     publishCalendarConnectionState('loading')
     try {
       const starter = await readStarterRecord()
-      const canonicalAvailability = starter && starter.availability
-      if (!isAvailability(canonicalAvailability)) {
-        throw new Error('Canonical scheduling reader returned invalid availability')
-      }
+      if (!starter) throw new Error('Canonical scheduling reader returned no record')
+      const canonicalAvailability = canonicalAvailabilityValue(starter)
       const nextGrantId = (starter && starter.nylas_grant_id) || null
       const nextConfigs = nextGrantId ? await getConfigs(nextGrantId, true) : []
+
+      if (expectedBinding && (nextGrantId !== expectedBinding.grantId ||
+          starter.nylas_grant_email !== expectedBinding.email ||
+          starter.nylas_calendar_id !== expectedBinding.calendarId ||
+          canonicalAvailability.manager !== expectedBinding.manager)) {
+        throw new Error('Canonical Platform calendar finalization is incomplete')
+      }
 
       grantId = nextGrantId
       grantEmail = (starter && starter.nylas_grant_email) || null
@@ -1243,15 +1258,6 @@
       publishCalendarConnectionError()
       throw error
     }
-  }
-
-  // Calendar setup owns only the free-call configuration. Paid services are
-  // owned by starter/paid-call-settings/* and must not be inferred from DOM or
-  // localStorage state.
-  async function createFreeConfig() {
-    const free = await setupConfigs('free')
-    if (free === null) throw new Error('Free scheduler configuration failed')
-    return free
   }
 
   function paidCallService(value) {
@@ -1347,10 +1353,6 @@
       configs = []
       createdVirtual = true
     }
-    const hasFreeConfig = configs.some(function (config) {
-      return config && config.config_id && config.is_paid === false && config.active !== false
-    })
-    if (!hasFreeConfig) await createFreeConfig()
     if (createdVirtual || availability.manager === null) {
       availability.manager = 'platform'
       await updateAvail()
@@ -1369,102 +1371,6 @@
     )
     if (recovered) clearOAuthIntent(memberId)
     return recovered
-  }
-
-  async function setupConfigs(type) {
-    if (type !== 'free') throw new Error('Paid configurations require the paid-call settings endpoint')
-    await ensureTimezone()
-    const openHours = getAvailArray()
-    const price = '0'
-    const duration = 30
-    const interval = 15
-    const buffer = 10
-
-    const firstName = memberFields['free-user'] || ''
-    const lastName = memberFields['last-name'] || ''
-    const memberEmail = (window.MEMBER && window.MEMBER.auth && window.MEMBER.auth.email) || ''
-
-    const tinyTitle = 'Free Consultation Call'
-    const fullTitle = tinyTitle + ' - ' + duration + 'min'
-
-    // Booking confirmation/reschedule/cancel links land back on this page —
-    // its bookings embed owns booking_ref handling. No separate landing page.
-    const redirectURL = window.location.origin + window.location.pathname
-
-    const payload = {
-      grant_id: grantId,
-      in_config_name: fullTitle,
-      in_availability: {
-        duration_minutes: duration,
-        interval_minutes: interval,
-        availability_rules: {
-          availability_method: 'collective',
-          buffer: { before: buffer, after: buffer },
-          default_open_hours: openHours,
-        },
-      },
-      in_event_booking: {
-        title: fullTitle,
-        hide_participants: true,
-        notify_participants: false,
-        disable_emails: true,
-        booking_type: 'organizer-confirmation',
-        timezone: timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || '',
-        conferencing: {
-          provider: 'Google Meet',
-          autocreate: { conf_grant_id: grantId },
-        },
-      },
-      in_participants: [
-        {
-          name: firstName + ' ' + lastName,
-          email: grantEmail,
-          is_organizer: true,
-          availability: { calendar_ids: [grantCalendarId] },
-          booking: { calendar_id: grantCalendarId },
-        },
-      ],
-      in_scheduler: {
-        available_days_in_future: 14,
-        organizer_confirmation_url: redirectURL + '?confirmation=:booking_ref',
-        rescheduling_url: redirectURL + '?reschedule=:booking_ref',
-        cancellation_url: redirectURL + '?cancel=:booking_ref',
-        hide_rescheduling_options: true,
-        hide_cancellation_options: true,
-        min_booking_notice: minimumBookingNoticeMinutes(),
-        additional_fields: {
-          call_full_title: { type: 'metadata', label: 'Call Full Title', default: fullTitle, required: false },
-          call_tiny_title: { type: 'metadata', label: 'Call Tiny Title', default: tinyTitle, required: false },
-          call_type: { type: 'metadata', label: 'Call Type', default: 'free', required: false },
-          starter_name: { type: 'metadata', label: 'Starter Name', default: firstName + ' ' + lastName, required: false },
-          starter_email: { type: 'metadata', label: 'Starter Email', default: memberEmail, required: false },
-          call_price: { type: 'metadata', label: 'Call Price', default: price, required: false },
-          call_provider: { type: 'metadata', label: 'Call Provider', default: 'google', required: false },
-          call_context: { type: 'text', label: 'Call Context', default: '', required: false },
-          rescheduled_by: { type: 'text', label: 'Rescheduled By', default: '', required: false },
-          rescheduled_reason: { type: 'text', label: 'Rescheduled Reason', default: '', required: true },
-          unique_id: { type: 'text', label: 'Unique ID', default: '', required: false },
-          from_stage: { type: 'text', label: 'Is From Stage', default: '', required: false },
-        },
-      },
-    }
-
-    try {
-      const res = await xanoPost(
-        '/scheduler/configurations/create/v3',
-        payload,
-      )
-      if (providerRequestSucceeded(res)) return true
-      publishCalendarConnectionError()
-      switchStep('config-request-error')
-      console.warn('[scheduling-writer] configuration request rejected')
-      return null
-    } catch (error) {
-      publishCalendarConnectionError()
-      switchStep('config-request-error')
-      console.warn('[scheduling-writer] configuration request failed:', error && error.message)
-      return null
-    }
   }
 
   async function updateConfigAvailability(record) {
@@ -1492,25 +1398,12 @@
     return null
   }
 
-  async function refreshCanonicalConnectionSoon(delay) {
-    setTimeout(async function () {
-      try {
-        await refreshCanonicalConnectionState()
-      } catch (error) {
-        console.warn(
-          '[scheduling-writer] canonical connection refresh failed:',
-          error && error.message,
-        )
-      }
-    }, delay)
-  }
-
   async function updateConfigs(step, removeAvail) {
     configs = await getConfigs(grantId, true)
     const configsResponse = []
     const activeConfigs = activeSchedulerConfigs()
     if (activeConfigs.length === 0) {
-      const succeeded = hasVersionedBindingAuthority()
+      const succeeded = hasCanonicalCalendarBinding()
       if (succeeded && !removeAvail) switchStep('success')
       if (step) setLoader(false, step)
       return succeeded
@@ -1520,7 +1413,7 @@
       configsResponse.push(res)
     }
     // Unlike the legacy inline writer, a failed update must not be replaced
-    // by the success step — setupConfigs already switched to the error step.
+    // by the success step; the caller must retain the failed update state.
     // Rate-gated starters may legitimately carry a single (free) config.
     const succeeded = configsResponse.length > 0 && configsResponse.every(Boolean)
     if (succeeded && !removeAvail) {
@@ -1560,11 +1453,13 @@
 
     try {
       // V3 endpoint: keyed on memberstack_id, no Airtable row-key involved.
-      const grantAdded = await xanoPost('/grants/add_virtual/v3', {
-        grant_id: virtualGrantId,
-        member_id: memberId,
-      })
-      if (!grantAdded) return result
+      if (!(options && options.bound)) {
+        const grantAdded = await xanoPost('/grants/add_virtual/v3', {
+          grant_id: virtualGrantId,
+          member_id: memberId,
+        })
+        if (!grantAdded) return result
+      }
 
       const calendarResponse = await xanoPost('/grants/create_virtual_calendar/v3', {
         grant_id: virtualGrantId,
@@ -1597,6 +1492,27 @@
         persistOAuthIntent(memberId, oauthIntent)
       },
     })
+  }
+
+  // Calendar connection never creates an offer. Resume an existing canonical
+  // virtual binding at its owner; a lost response must not retire/recreate it.
+  async function completeInitialPlatformConnection(memberId) {
+    if (hasCanonicalCalendarBinding() && availability.manager === 'platform') return
+    const expectedGrantId = grantId
+    const expectedCalendarId = grantCalendarId
+    if (grantId && !grantEmail) throw new Error('Canonical calendar transition is incomplete')
+    const virtual = await createVirtualCalendarFlow(memberId, expectedGrantId ? {
+      account: { grant_id: expectedGrantId, email: grantEmail },
+      bound: true,
+    } : undefined)
+    if (virtual.status !== 200) throw new Error('Virtual calendar setup failed')
+    if ((expectedGrantId && virtual.grant_id !== expectedGrantId) ||
+        (expectedCalendarId && virtual.calendar_id !== expectedCalendarId)) {
+      throw new Error('Canonical Platform calendar finalization is incomplete')
+    }
+    await refreshCanonicalConnectionState({ grantId: virtual.grant_id, email: virtual.email,
+      calendarId: virtual.calendar_id, manager: 'platform' })
+    if (!hasCanonicalCalendarBinding()) throw new Error('Canonical Platform calendar finalization is incomplete')
   }
 
   async function selectPlatformDefault(memberId) {
@@ -1774,18 +1690,6 @@
           setLoader(false, step)
           return
         }
-        const activeConfigs = configs.filter(function (config) {
-          return config.active !== false
-        })
-        if (activeConfigs.length === 0) {
-          await createFreeConfig()
-          await refreshCanonicalConnectionState()
-          renderAvail()
-          emit('starterSchedulingWriteSuccess', { action: 'availability-save' })
-          switchStep('default')
-          setLoader(false, step)
-          return
-        }
         throw new Error('Scheduler configuration update failed')
       }
       await refreshCanonicalConnectionState()
@@ -1833,6 +1737,7 @@
         switchStep('virtual-connect')
         publishCalendarConnectionState('loading')
         memberId = await writeMemberId()
+        await refreshCanonicalConnectionState()
         if (availability.manager === 'calendar') {
           await selectPlatformDefault(memberId)
           showManagerActions()
@@ -1841,33 +1746,10 @@
           setLoader(false, step)
           return
         }
-        transition = await clearGrant(grantId, memberId)
-        const virtual = await createTransitionVirtualCalendar(
-          memberId,
-          transition.oauthIntent,
-        )
-        if (virtual.status === 200) {
-          grantId = virtual.grant_id
-          grantEmail = virtual.email
-          grantCalendarId = virtual.calendar_id
-          calendarBindingVersion = null
-
-          await createFreeConfig()
-
-          availability.manager = activeManager
-          await updateAvail()
-          await restorePaidCallIntent(transition.paidCallIntent)
-          await refreshCanonicalConnectionState()
-          if (transition.oauthIntent) clearOAuthIntent(memberId)
-          showManagerActions()
-          switchStep('success')
-          emit('starterSchedulingWriteSuccess', { action: 'manager-platform' })
-        } else {
-          publishCalendarConnectionError()
-          switchStep('config-request-error')
-          console.warn('[scheduling-writer] virtual calendar setup failed')
-          throw new Error('Virtual calendar setup failed')
-        }
+        await completeInitialPlatformConnection(memberId)
+        showManagerActions()
+        switchStep('success')
+        emit('starterSchedulingWriteSuccess', { action: 'manager-platform' })
       } else {
         publishCalendarConnectionState('loading')
         memberId = await writeMemberId()
@@ -1911,8 +1793,6 @@
         grantEmail = virtual.email
         grantCalendarId = virtual.calendar_id
         calendarBindingVersion = null
-
-        await createFreeConfig()
 
         availability.manager = 'platform'
         await updateAvail()
@@ -2016,11 +1896,7 @@
       if (grantId) {
         const updated = await updateConfigs(null, true)
         if (!updated) {
-          const activeConfigs = configs.filter(function (config) {
-            return config.active !== false
-          })
-          if (activeConfigs.length === 0) await createFreeConfig()
-          else throw new Error('Scheduler configuration update failed')
+          throw new Error('Scheduler configuration update failed')
         }
       }
       await refreshCanonicalConnectionState()
@@ -2081,6 +1957,19 @@
   /* ------------------------------------------------------------------ */
   /* Bootstrap                                                           */
   /* ------------------------------------------------------------------ */
+
+  function canonicalAvailabilityValue(starter) {
+    const value = starter.availability
+    // Initial records may have no schedule. Malformed populated schedules
+    // remain errors rather than silently discarding the member's settings.
+    if (value === null ||
+        (Array.isArray(value) && value.length === 0 && !starter.nylas_grant_id && !starter.nylas_calendar_id) ||
+        (value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === 0)) {
+      return { items: {}, manager: null }
+    }
+    if (!isAvailability(value)) throw new Error('Canonical scheduling reader returned invalid availability')
+    return value
+  }
 
   function isAvailability(value) {
     if (
@@ -2155,7 +2044,6 @@
     try {
       const member = await currentMember()
       sessionMemberId = member.id
-      memberFields = member.customFields || {}
       timezone = null
       timezonePersisted = false
       connectionError = false
@@ -2178,8 +2066,11 @@
 
       publishCalendarConnectionState('loading')
 
-      initialState = Object.keys(availability.items).length === 0
       const starterRecord = await readStarterRecord()
+      if (!starterRecord) throw new Error('Canonical scheduling reader returned no Starter record')
+      availability = canonicalAvailabilityValue(starterRecord)
+      window.STARTER_AVAILABILITY = availability
+      initialState = Object.keys(availability.items).length === 0
       // Xano availability_v3 is canonical for scheduling connection state.
       // Memberstack remains the browser auth source, but its legacy grant
       // mirrors must never make a missing/stale Xano connection look ready.
@@ -2196,11 +2087,6 @@
       timezone = await resolveTimezone(starterRecord, isStagingHost)
       renderTimezone()
 
-      const urlParams = new URLSearchParams(
-        oauthCallback ? oauthCallback.remainingQuery : window.location.search,
-      )
-      let connectedCalendar = isStagingHost ? urlParams.get('calendar') || null : null
-      let oauthPaidCallIntent = null
       let preservedCallbackIncomplete = false
       let canonicalConfigsLoaded = false
       let preservedReadbackVerified = false
@@ -2260,7 +2146,6 @@
           if (!oauthIntent) {
             throw invalidOAuthCallback('OAuth return was not initiated by this session')
           }
-          oauthPaidCallIntent = oauthIntent.paidCallIntent || null
           await ensureTimezone()
           await completeOAuthGrant(memberId, oauthIntent, oauthCallback)
           await refreshCanonicalConnectionState()
@@ -2268,37 +2153,23 @@
             throw new Error('Canonical OAuth grant readback is incomplete')
           }
           assertPreservedDefault(oauthIntent, 'calendar', oauthGrantId)
-          if (oauthIntent.preserveBookings !== true) {
-            if (!legacyOAuthMutationAllowed(oauthIntent)) {
-              clearOAuthIntent(memberId)
-              clearOAuthCallback()
-              connectedCalendar = null
-              switchStep('default')
-              emit('starterSchedulingWriteSuccess', { action: 'oauth-connect' })
-              return
-            }
+          if (legacyOAuthMutationAllowed(oauthIntent)) {
             if (availability.manager !== 'calendar') {
               availability.manager = 'calendar'
               await updateAvail()
             }
-            const hasFreeConfig = configs.some(function (config) {
-              return config && config.config_id && config.is_paid === false && config.active !== false
-            })
-            if (!hasFreeConfig) await createFreeConfig()
-            await restorePaidCallIntent(oauthPaidCallIntent)
+            await restorePaidCallIntent(oauthIntent.paidCallIntent)
             await refreshCanonicalConnectionState()
             assertPreservedDefault(oauthIntent, 'calendar', oauthGrantId)
           }
           clearOAuthIntent(memberId)
           clearOAuthCallback()
-          connectedCalendar = null
           switchStep('default')
           emit('starterSchedulingWriteSuccess', { action: 'oauth-connect' })
         } catch (error) {
           let recovered = false
           if (oauthIntent && oauthIntent.preserveBookings === true) {
             preservedCallbackIncomplete = true
-            connectedCalendar = null
           }
           if (
             error &&
@@ -2339,38 +2210,6 @@
 
       if (grantId) {
         if (!canonicalConfigsLoaded) configs = (await getConfigs(grantId, true)) || []
-        if (
-          isStagingHost &&
-          !configs.length &&
-          !connectedCalendar &&
-          !preservedCallbackIncomplete &&
-          !hasVersionedBindingAuthority()
-        ) {
-          await createFreeConfig()
-          refreshCanonicalConnectionSoon(500)
-        }
-      }
-
-      // Returning from the calendar OAuth round trip.
-      if (
-        connectedCalendar &&
-        !configs.length &&
-        !preservedCallbackIncomplete &&
-        !hasVersionedBindingAuthority()
-      ) {
-        urlParams.delete('calendar')
-        const remainingQuery = urlParams.toString()
-        window.history.replaceState(
-          {},
-          document.title,
-          window.location.pathname + (remainingQuery ? '?' + remainingQuery : ''),
-        )
-        availability.manager = 'calendar'
-        await updateAvail()
-        await createFreeConfig()
-        await restorePaidCallIntent(oauthPaidCallIntent)
-        await refreshCanonicalConnectionState()
-        switchStep('default')
       }
 
       // Initial-visibility refinements beyond the init module's state.
