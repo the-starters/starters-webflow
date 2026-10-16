@@ -13,6 +13,14 @@
     'pln_dorxata-test-brand-plan-777r02pa',
   ]
   const PAUSED_FIELDS = ['membership-paused', 'membership-is-paused', 'paused-membership']
+  const PRICE_LABELS = {
+    'prc_premium-monthly--fn1ae0qjj': '$295/mo',
+    'prc_paid-annual-2o5f040u': '$2,340/yr',
+    'prc_3-0-premium-monthly-ge4a00iw': '$495/mo',
+    'prc_3-0-premium-annual-xhb200bu': '$3,540/yr',
+    'prc_test-24h-trial-do-not-use-r5ae0vz6': '$495/mo',
+  }
+  const PRICE_SELECTOR = '[data-member-price="recurring"]'
   const SELECTORS = {
     projectComplete: '[data-project-status="complete"]',
     projectIncomplete: '[data-project-status="incomplete"]',
@@ -73,6 +81,21 @@
     })
   }
 
+  function applyPrice(plans) {
+    const current = plans.filter((plan) => plan.active !== false &&
+      ['ACTIVE', 'TRIALING'].includes(status(plan.status)))
+    const connection = current.length === 1 ? current[0] : null
+    const priceId = connection?.payment?.priceId || connection?.priceId
+    const label = Object.prototype.hasOwnProperty.call(PRICE_LABELS, priceId)
+      ? PRICE_LABELS[priceId] : null
+    const inTrial = connection && (status(connection.status) === 'TRIALING' ||
+      status(connection.payment?.status) === 'TRIALING')
+    const text = label ? label + (inTrial ? ' after your trial' : '') : 'Included'
+    document.querySelectorAll(PRICE_SELECTOR).forEach((el) => {
+      if (el.textContent !== text) el.textContent = text
+    })
+  }
+
   function apply(payload) {
     lastMember = unwrap(payload)
     const plans = paidPlans(lastMember)
@@ -95,6 +118,7 @@
     showAll(SELECTORS.projectIncomplete, !!lastMember && incomplete)
     showAll(SELECTORS.memberActive, !!lastMember && !!plans.length && active)
     showAll(SELECTORS.memberPaused, !!lastMember && !!plans.length && paused)
+    applyPrice(plans)
     applyPauseControls()
   }
 

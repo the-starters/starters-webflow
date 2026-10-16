@@ -42,6 +42,23 @@ performs a new read after an in-page subscription change.
 This is browser UI gating. It changes no subscription, price, entitlement or
 payment. The receiving backend must enforce trial Pause eligibility separately.
 
+### Subscription price in cancellation
+
+Add `data-member-price="recurring"` to the cancellation retention price text.
+Keep its Designer text as `Included`, the fallback while the member is loading,
+signed out, or has an unknown or ambiguous subscription. The controller reads
+the single current recognized membership connection's `payment.priceId` or
+`priceId`. It never uses the account creation date or the latest charge amount,
+which may be the $1 trial fee.
+
+The current monthly price displays `$495/mo`; legacy monthly displays
+`$295/mo`. Annual prices display their billing totals, `$3,540/yr` for the new
+annual price and `$2,340/yr` for legacy annual. A trial appends `after your trial`
+to the recurring rate. The staging-only 24-hour test price displays `$495/mo`
+after its trial. These are plan rates, before member-specific discounts or tax.
+Unrecognized legacy prices retain `Included` until their IDs and rates are
+confirmed. Adding a price to this display map does not enable checkout for it.
+
 ## Memberstack plan dates
 
 `plan-dates.js` prints a member's plan and billing dates into the page, formatted

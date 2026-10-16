@@ -80,6 +80,8 @@ function harness(initial, options = {}) {
   const incomplete = add(body, { 'data-project-status': 'incomplete' })
   const cancelFlow = add(body, { 'data-form-flow': 'cancel-membership', 'ms-form-cancel-state': '' })
   const cancelForm = add(cancelFlow, {}, 'form')
+  const price = add(cancelForm, { 'data-member-price': 'recurring' }, 'p')
+  price.textContent = 'Included'
   const firstGroup = add(cancelForm, { 'data-form-flow-button-group': 'step-1' })
   const next = add(firstGroup, { 'data-form-flow-action': 'next' })
   const radioList = add(cancelForm, { 'data-form-flow-element': 'radio-list' })
@@ -128,7 +130,7 @@ function harness(initial, options = {}) {
     MutationObserver: class { constructor(fn) { observers.push(fn) } observe() {} },
   })
   vm.runInContext(source, context)
-  return { root, body, pauseCard, pause, paused, cancel, complete, incomplete, cancelFlow, cancelForm,
+  return { root, body, pauseCard, pause, paused, cancel, complete, incomplete, cancelFlow, cancelForm, price,
     next, back, busyReason, busyInput, pauseInstead, cancelInstead, confirmPause, directPause, pauseForm,
     jumps, resets, listeners, windowListeners, window, add, get reads() { return reads },
     auth: (nextMember) => onAuthChange(nextMember),
@@ -261,4 +263,65 @@ test('refresh after trial conversion restores paid controls; duplicate loads bin
   h.reloadScript()
   assert.equal(h.listeners.click.length, 1)
   assert.equal(h.reads, 2)
+})
+
+for (const [priceId, expected] of [
+  ['prc_premium-monthly--fn1ae0qjj', '$295/mo'],
+  ['prc_paid-annual-2o5f040u', '$2,340/yr'],
+  ['prc_3-0-premium-monthly-ge4a00iw', '$495/mo'],
+  ['prc_3-0-premium-annual-xhb200bu', '$3,540/yr'],
+]) {
+  test('cancellation displays the subscribed rate for ' + priceId, async () => {
+    const data = member([plan('ACTIVE', { payment: { priceId, amount: 1 } })])
+    data.createdAt = '2020-01-01T00:00:00Z'
+    const before = structuredClone(data)
+    const h = harness(data)
+    await flush()
+    assert.equal(h.price.textContent, expected)
+    assert.deepEqual(data, before)
+  })
+}
+
+test('trial shows the recurring rate after trial, not the upfront $1 fee', async () => {
+  const h = harness(member([plan('ACTIVE', { payment: {
+    priceId: 'prc_3-0-premium-monthly-ge4a00iw', status: 'trialing', amount: 1,
+  } })]))
+  await flush()
+  assert.equal(h.price.textContent, '$495/mo after your trial')
+  assert.equal(blocked(h.pause), true)
+  h.auth(member([plan('ACTIVE', { priceId: 'prc_premium-monthly--fn1ae0qjj' })]))
+  assert.equal(h.price.textContent, '$295/mo')
+  h.auth(null)
+  assert.equal(h.price.textContent, 'Included')
+})
+
+test('historical price cannot override the current subscription or a returning member rate', async () => {
+  const h = harness(member([
+    plan('CANCELED', { active: false, priceId: 'prc_premium-monthly--fn1ae0qjj' }),
+    plan('ACTIVE', { priceId: 'prc_3-0-premium-monthly-ge4a00iw' }),
+  ]))
+  await flush()
+  assert.equal(h.price.textContent, '$495/mo')
+})
+
+test('unresolved, unknown and multiple current subscriptions never guess a price', async () => {
+  for (const plans of [[], [plan()], [plan('ACTIVE', { priceId: 'unconfirmed-legacy-rate' })], [
+    plan('ACTIVE', { priceId: 'prc_premium-monthly--fn1ae0qjj' }),
+    plan('ACTIVE', { priceId: 'prc_3-0-premium-monthly-ge4a00iw' }),
+  ]]) {
+    const h = harness(member(plans))
+    await flush()
+    assert.equal(h.price.textContent, 'Included')
+  }
+})
+
+test('late-inserted price text uses the current member and resets after a failed refresh', async () => {
+  const h = harness(member([plan('ACTIVE', { priceId: 'prc_3-0-premium-monthly-ge4a00iw' })]))
+  await flush()
+  const late = h.add(h.body, { 'data-member-price': 'recurring' })
+  h.mutate()
+  assert.equal(late.textContent, '$495/mo')
+  h.setMember(new Error('unavailable'))
+  await h.window.StartersMembershipStatus.refresh()
+  assert.equal(late.textContent, 'Included')
 })
