@@ -6,6 +6,42 @@ Memberstack member in the browser and renders into Designer-authored elements
 through a custom attribute contract; none of it holds a secret or performs a
 billing mutation, which stays behind Xano.
 
+## Membership controls
+
+`membership-status.js` replaces the Account Settings component's **Member Status /
+Project Status - JS** inline script. Replace that embed's code with one deferred
+script tag pointing at the reviewed repository ref. Do not leave both controllers
+installed. A published release can use `@latest`; an unpublished draft must stay
+pinned to its reviewed commit until publication is approved.
+
+The controller reuses `data-project-status="complete|incomplete"`,
+`data-member-status="active|paused"`, `data-members-status="paused"` and the
+existing `data-panel-nav-target` navigation. Existing project, paid-member and
+paused-member behavior remains owned by this controller.
+
+Add `data-member-status="pause-option"` to the Manage Membership Pause
+description wrapper. Trial members see neither the Pause controls nor their
+explanation; the Manage Membership heading stays visible.
+
+For a recognized membership connection, `TRIALING` on the connection or its
+`payment.status` hides the Manage Membership Pause button, cancellation's
+**Pause My Membership Instead** and **Confirm pause** controls, and standalone
+Pause progression. Inactive historical trials and trials for another product do
+not block the current membership. Cancellation remains available. A trial member
+who selects **Too busy right now** skips its Pause-only retention offer and goes
+to the existing cancellation confirmation through
+`window.lumos.formFlow.list['cancel-membership'].goTo('step-3')`.
+
+Unknown, signed-out, free and failed-read states keep Pause blocked. The generated
+`data-membership-pause-blocked="true"` attribute and `inert` keep blocked controls
+hidden and out of keyboard interaction. Capture listeners also reject blocked
+Pause clicks and Pause-form submissions. Login/logout, page restoration, focus
+and inserted controls refresh the display. `window.StartersMembershipStatus.refresh()`
+performs a new read after an in-page subscription change.
+
+This is browser UI gating. It changes no subscription, price, entitlement or
+payment. The receiving backend must enforce trial Pause eligibility separately.
+
 ## Memberstack plan dates
 
 `plan-dates.js` prints a member's plan and billing dates into the page, formatted
