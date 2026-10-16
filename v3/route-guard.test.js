@@ -6,7 +6,7 @@ const vm = require('node:vm')
 const source = fs.readFileSync(require.resolve('./route-guard.js'), 'utf8')
 
 function plan(planId) {
-  return { active: true, planId }
+  return { active: true, status: 'ACTIVE', planId }
 }
 
 const TALENT = { id: 'm-talent', planConnections: [plan('pln_dorxata-test-free-plan-dvcg0k8o')] }
@@ -347,6 +347,56 @@ test('opportunity creation is paid-Brand only', () => {
   assert.equal(api.redirectTargetFor(BRAND_PAID, '/opportunities---create'), '')
   assert.equal(api.redirectTargetFor(TALENT, '/opportunities---create'), '/starter-dashboard')
   assert.equal(api.redirectTargetFor(BRAND_FREE, '/opportunities---create'), '/')
+})
+
+// Memberstack reports a $1 paid trial as status TRIALING with active=false.
+const BRAND_TRIALING = {
+  id: 'm-brand-trialing',
+  planConnections: [
+    { active: false, planId: 'pln_new-paid-plan-463h04ph', status: 'TRIALING' },
+    plan('pln_free-plan-f6kn0dxz'),
+  ],
+}
+const BRAND_CANCELED_PAID = {
+  id: 'm-brand-canceled',
+  planConnections: [
+    { active: false, planId: 'pln_new-paid-plan-463h04ph', status: 'CANCELED' },
+    plan('pln_free-plan-f6kn0dxz'),
+  ],
+}
+
+test('a trialing paid Brand keeps paid-Brand access', () => {
+  const { api } = loadGuard()
+  assert.equal(api.redirectTargetFor(BRAND_TRIALING, '/opportunities---create'), '')
+  assert.equal(api.redirectTargetFor(BRAND_TRIALING, '/opportunities/product-designer'), '')
+  assert.equal(api.redirectTargetFor(BRAND_TRIALING, '/favorites'), '')
+})
+
+test('a cancelled paid connection still counts as free Brand', () => {
+  const { api } = loadGuard()
+  assert.equal(api.redirectTargetFor(BRAND_CANCELED_PAID, '/opportunities---create'), '/')
+})
+
+test('paid Brand access follows plan status regardless of the active flag', () => {
+  const { api } = loadGuard()
+  for (const status of ['ACTIVE', 'TRIALING', 'CANCELED', 'REQUIRES_PAYMENT', 'PAST_DUE', 'EXPIRED', undefined]) {
+    const paid = status === 'ACTIVE' || status === 'TRIALING'
+    for (const active of [true, false, undefined]) {
+      const member = {
+        id: 'm-plan-status',
+        planConnections: [
+          { planId: 'pln_new-paid-plan-463h04ph', status, active },
+          plan('pln_free-plan-f6kn0dxz'),
+        ],
+      }
+      const label = `${status}, active=${active}`
+      assert.equal(api.memberRole(member), paid ? 'brand-paid' : 'brand-free', label)
+      assert.equal(api.hasCancelledPaidBrandPlan(member), !paid, label)
+      for (const path of ['/favorites', '/opportunities---create', '/opportunities/product-designer']) {
+        assert.equal(api.redirectTargetFor(member, path), paid ? '' : '/', `${label}: ${path}`)
+      }
+    }
+  }
 })
 
 test('build-profile onboarding pages are Talent only', () => {
@@ -1847,8 +1897,7 @@ test('an active paid Brand is not cancelled even alongside an inactive paid one'
   assert.equal(api.hasCancelledPaidBrandPlan(TEST_BRAND), false)
   // Still a paid Brand everywhere, override or not.
   assert.equal(api.bounceTargetFor(resubscribed, null, '/'), '/brand-dashboard')
-  // The unverified cancel-at-period-end grace window resolves here: while the
-  // connection still reports active the member keeps full paid-Brand access.
+  // The new ACTIVE connection keeps access despite the older canceled one.
   assert.equal(api.memberRole(resubscribed), 'brand-paid')
 })
 

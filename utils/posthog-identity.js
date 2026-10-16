@@ -48,7 +48,7 @@
   function activePlanPersonas(member) {
     const connections = Array.isArray(member && member.planConnections) ? member.planConnections : []
     return connections
-      .filter((c) => c && (c.active === true || c.status === 'ACTIVE'))
+      .filter((c) => c && (c.status === 'ACTIVE' || c.status === 'TRIALING'))
       .map((c) => PLAN_PERSONA[c.planId])
   }
 

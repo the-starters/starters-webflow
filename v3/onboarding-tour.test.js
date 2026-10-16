@@ -150,7 +150,7 @@ function plain(value) {
 }
 
 function plan(planId) {
-  return { active: true, planId }
+  return { active: true, planId, status: 'ACTIVE' }
 }
 
 test('parseTours groups, sorts, and reads step content', () => {
@@ -424,6 +424,19 @@ test('autoStartTarget respects roles, seen state, and DOM order', () => {
   assert.equal(api.autoStartTarget([repeatTour], null, ['repeat']), repeatTour)
   // Tours without steps never start.
   assert.equal(api.autoStartTarget([emptyTour], null, []), null)
+})
+
+test('plan status controls paid Brand onboarding role regardless of the active flag', () => {
+  const { api } = loadModule()
+  for (const status of ['ACTIVE', 'TRIALING', 'CANCELED', 'REQUIRES_PAYMENT', 'PAST_DUE', 'PENDING', undefined]) {
+    for (const active of [true, false, undefined]) {
+      assert.equal(
+        api.memberRole({ planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', status, active }] }),
+        status === 'ACTIVE' || status === 'TRIALING' ? 'brand-paid' : null,
+        `${status}, active=${active}`,
+      )
+    }
+  }
 })
 
 test('memberRole maps stable plan IDs and prefers the highest mapped role', () => {

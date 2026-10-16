@@ -377,18 +377,15 @@ Precedence on `/`, highest first:
 on `window.StartersV3RouteGuard`): the member's `planConnections` contain at
 least one paid-Brand connection (`pln_new-paid-plan-463h04ph` or
 `pln_dorxata-test-brand-plan-777r02pa`) that is **not** active by the shared
-rule `connection.active === true || connection.status === 'ACTIVE'`, **and** no
+rule `connection.status === 'ACTIVE' || connection.status === 'TRIALING'`, **and** no
 paid-Brand connection that **is** active. Both sub-kinds count: the member whose
 older free plan is still active (resolves `brand-free` today) and the member
-with no active plans at all (unmapped today). `CANCELED` is the expected
-inactive status, but the predicate never reads the status string, so any
-inactive paid connection counts.
+with no active plans at all (unmapped today). Any paid connection outside the
+shared active-status rule counts as inactive.
 
-> **Unverified:** the exact Memberstack payload during a cancel-at-period-end
-> grace window. While the paid connection still reports active the predicate
-> returns false and the member correctly remains a paid Brand with full access,
-> which is the fail-safe direction. The member reads as cancelled only once
-> Memberstack flips that connection inactive.
+Only `ACTIVE` and `TRIALING` grant access, regardless of the `active` flag.
+`TRIALING` with `active=false` retains paid access. `CANCELED`,
+`REQUIRES_PAYMENT`, and other statuses remain inactive even with `active=true`.
 
 ## Enforcement layers
 

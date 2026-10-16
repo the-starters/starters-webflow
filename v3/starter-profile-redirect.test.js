@@ -44,7 +44,7 @@ const NO_RECORD = {
 }
 
 function plan(planId) {
-  return { active: true, planId }
+  return { active: true, status: 'ACTIVE', planId }
 }
 
 const TALENT = {

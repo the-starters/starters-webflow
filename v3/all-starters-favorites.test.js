@@ -129,7 +129,7 @@ function loadModule(options = {}) {
 
 function premiumMember() {
   return {
-    planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', active: true }],
+    planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', active: true, status: 'ACTIVE' }],
   }
 }
 
@@ -259,6 +259,28 @@ test('styles inject when the marked section exists (incl. unmarked-variant hard 
   // this to actually hide anything.
   assert.match(css, /\.expert_favorite-button\[hidden\], \.expert-card_favorite-wrapper\[hidden\] \{ display: none !important; \}/)
 })
+
+for (const status of ['ACTIVE', 'TRIALING', 'CANCELED', 'REQUIRES_PAYMENT', 'PAST_DUE', undefined]) {
+  test(`premium favorites initialization follows plan status ${status} regardless of active flag`, async () => {
+    for (const active of [false, true, undefined]) {
+      const wfXano = fakeWfXano()
+      const mod = loadModule({
+        section: fakeElement(),
+        wfXano,
+        memberReady: Promise.resolve({
+          planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', status, active }],
+        }),
+      })
+      mod.boot()
+      await new Promise((resolve) => setImmediate(resolve))
+
+      const eligible = status === 'ACTIVE' || status === 'TRIALING'
+      assert.equal(wfXano.calls.init, eligible ? 1 : 0)
+      assert.equal(wfXano.calls.refresh, eligible ? 1 : 0)
+      assert.equal(typeof mod.docListeners.change, eligible ? 'function' : 'undefined')
+    }
+  })
+}
 
 test('non-premium member: no decoration, no listeners bound', async () => {
   const section = fakeElement()

@@ -7,7 +7,7 @@
 
   function isBrand(member) {
     const roles = (Array.isArray(member && member.planConnections) ? member.planConnections : [])
-      .filter(p => p && (p.active === true || p.status === 'ACTIVE'))
+      .filter(p => p && (p.status === 'ACTIVE' || p.status === 'TRIALING'))
       .map(p => p.planId)
     return !roles.includes('pln_dorxata-test-free-plan-dvcg0k8o') && roles.some(id =>
       ['pln_free-plan-f6kn0dxz', 'pln_new-paid-plan-463h04ph', 'pln_dorxata-test-brand-plan-777r02pa'].includes(id))

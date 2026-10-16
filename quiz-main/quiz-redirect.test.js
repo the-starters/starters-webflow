@@ -135,6 +135,37 @@ test('keeps paid-plan redirect and retake escape hatch', async () => {
     )
 })
 
+test('treats a trialing paid Brand (TRIALING, active=false) as paid', async () => {
+    const trialing = {
+        id: 'member',
+        planConnections: [
+            { active: false, planId: 'pln_new-paid-plan-463h04ph', status: 'TRIALING' },
+            { active: true, planId: 'pln_free-plan-f6kn0dxz', status: 'ACTIVE' },
+        ],
+    }
+    for (const active of [false, true, undefined]) {
+        trialing.planConnections[0].active = active
+        assert.equal(await run({ member: trialing }), '/brand-dashboard')
+        assert.equal(await run({ member: trialing, search: '?retake=true' }), undefined)
+    }
+})
+
+test('keeps a cancelled paid connection on the free path', async () => {
+    const canceled = {
+        id: 'member',
+        planConnections: [
+            { active: false, planId: 'pln_new-paid-plan-463h04ph', status: 'CANCELED' },
+            { active: true, planId: 'pln_free-plan-f6kn0dxz', status: 'ACTIVE' },
+        ],
+    }
+    for (const status of ['CANCELED', 'REQUIRES_PAYMENT', 'PAST_DUE', 'EXPIRED', undefined]) {
+        for (const active of [false, true, undefined]) {
+            Object.assign(canceled.planConnections[0], { status, active })
+            assert.equal(await run({ member: canceled }), undefined)
+        }
+    }
+})
+
 test('treats Test Brand plan as paid (route-guard parity)', async () => {
     const testBrand = member('pln_dorxata-test-brand-plan-777r02pa')
     assert.equal(await run({ member: testBrand }), '/brand-dashboard')

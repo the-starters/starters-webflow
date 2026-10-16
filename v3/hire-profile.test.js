@@ -9625,6 +9625,48 @@ test('a paid Brand is never taken over by the paywall click owner', async () => 
   assert.equal(opens.signup, 0)
 })
 
+test('ACTIVE and TRIALING Brand plans keep booking access regardless of the active flag', async () => {
+  for (const status of ['ACTIVE', 'TRIALING']) {
+    for (const active of [false, true, undefined]) {
+      const page = makePage()
+      const context = paywalledContext(page, {
+        ...BRAND_MEMBER,
+        planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', status, active }],
+      })
+      const { opens, lumos } = signupRegistry(page)
+      context.lumos = lumos
+      vm.createContext(context)
+      vm.runInContext(source, context)
+      await settle()
+
+      assert.equal(page.bookingButton.getAttribute('data-logged-out-book-call'), null, `${status}/${active}`)
+      assert.equal(context.clickDocument(page.bookingButton).defaultPrevented, false)
+      assert.equal(opens.signup, 0)
+    }
+  }
+})
+
+test('inactive Brand statuses remain paywalled even when active is true', async () => {
+  for (const status of ['CANCELED', 'REQUIRES_PAYMENT', 'PAST_DUE', 'INCOMPLETE', 'PAUSED', undefined]) {
+    const page = makePage()
+    const context = paywalledContext(page, {
+      ...BRAND_MEMBER,
+      planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', status, active: true }],
+    })
+    const { opens, lumos } = signupRegistry(page)
+    context.lumos = lumos
+    vm.createContext(context)
+    vm.runInContext(source, context)
+    await settle()
+
+    assert.equal(context.bookingCalls.length, 0, String(status))
+    assert.equal(page.bookingButton.getAttribute('data-logged-out-book-call'), '', String(status))
+    assert.equal(context.clickDocument(page.bookingButton).defaultPrevented, true)
+    assert.equal(opens.signup, 1)
+    assert.equal(opens.chooser, 0)
+  }
+})
+
 test('a talent viewing another Starter is not paywalled and the owner keeps the preview', async () => {
   for (const member of [OTHER_TALENT_MEMBER, OWNER_MEMBER]) {
     const page = makePage()

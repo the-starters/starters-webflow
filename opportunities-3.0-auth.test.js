@@ -280,17 +280,17 @@ test('builds a login URL that preserves the current V3 path and query', async ()
 const talentMember = {
   id: 'm-talent',
   customFields: {},
-  planConnections: [{ active: true, planId: 'pln_dorxata-test-free-plan-dvcg0k8o' }],
+  planConnections: [{ active: true, status: 'ACTIVE', planId: 'pln_dorxata-test-free-plan-dvcg0k8o' }],
 }
 const paidBrandMember = {
   id: 'm-brand',
   customFields: {},
-  planConnections: [{ active: true, planId: 'pln_new-paid-plan-463h04ph' }],
+  planConnections: [{ active: true, status: 'ACTIVE', planId: 'pln_new-paid-plan-463h04ph' }],
 }
 const freeBrandMember = {
   id: 'm-free',
   customFields: {},
-  planConnections: [{ active: true, planId: 'pln_free-plan-f6kn0dxz' }],
+  planConnections: [{ active: true, status: 'ACTIVE', planId: 'pln_free-plan-f6kn0dxz' }],
 }
 
 test('projectDirectCreate sends its payload through the authenticated V3 route', async () => {
@@ -7273,6 +7273,37 @@ test('gateByPlan resolves paid brand under both guard states', async () => {
   assert.equal(legacyGate.role, 'brand-paid')
 })
 
+test('gateByPlan accepts ACTIVE and TRIALING Brand plans regardless of the active flag', async () => {
+  for (const status of ['ACTIVE', 'TRIALING']) {
+    for (const active of [false, true, undefined]) {
+      for (const routeGuard of [false, true]) {
+        const member = {
+          ...paidBrandMember,
+          planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', status, active }],
+        }
+        const bridge = await loadBridge(async () => response({}), { member, routeGuard })
+        const gate = await bridge.window.Opp30.gateByPlan()
+        assert.equal(gate?.role, 'brand-paid', `${status}/${active}/${routeGuard}`)
+        assert.equal(bridge.location.href, 'https://example.test/all-modals')
+      }
+    }
+  }
+})
+
+test('gateByPlan rejects inactive Brand statuses even when active is true', async () => {
+  for (const status of ['CANCELED', 'REQUIRES_PAYMENT', 'PAST_DUE', 'INCOMPLETE', 'PAUSED', undefined]) {
+    for (const routeGuard of [false, true]) {
+      const member = {
+        ...paidBrandMember,
+        planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', status, active: true }],
+      }
+      const bridge = await loadBridge(async () => response({}), { member, routeGuard })
+      assert.equal(await bridge.window.Opp30.gateByPlan(), null, `${status}/${routeGuard}`)
+      assert.equal(bridge.location.href, routeGuard ? 'https://example.test/all-modals' : '/')
+    }
+  }
+})
+
 test('scheduling auth is limited to the exact Xano origin and path prefix', async () => {
   const requests = []
   const bridge = await loadBridge(
@@ -7805,6 +7836,30 @@ test('merged feed for a paid brand: brand wrapper + only the brand feed activate
   assert.deepEqual(inits, [roots.brand], 'only the brand root is activated')
   assert.equal(bridge.window.__opp30CloseWired, true, 'brand close-opportunity modal wired')
   assert.equal(bridge.window.__opp30CreatePage, true, 'brand create form binder ran')
+})
+
+test('merged feed activates only for ACTIVE and TRIALING Brand statuses', async () => {
+  for (const status of ['ACTIVE', 'TRIALING', 'CANCELED', 'REQUIRES_PAYMENT', 'PAST_DUE']) {
+    const eligible = status === 'ACTIVE' || status === 'TRIALING'
+    const roots = { talent: deferredRoot('talent'), brand: deferredRoot('brand') }
+    const dom = mergedFeedDom(roots)
+    const inits = []
+    const bridge = await loadBridge(async () => response({}), {
+      member: {
+        ...paidBrandMember,
+        planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', status, active: !eligible }],
+      },
+      querySelector: dom.querySelector,
+      querySelectorAll: dom.querySelectorAll,
+      routeGuard: true,
+      wfXano: { init: (root) => inits.push(root) },
+    })
+
+    await bridge.window.Opp30.initMergedOppFeed()
+    assert.deepEqual(inits, eligible ? [roots.brand] : [], status)
+    assert.equal(bridge.documentElement.getAttribute('data-opp-role-resolved'), eligible ? 'brand' : null, status)
+    assert.equal(dom.navbar.getAttribute('data-preview-nav'), eligible ? 'brand' : 'common', status)
+  }
 })
 
 test('standalone create owner sends one request before returning to the published feed', async () => {

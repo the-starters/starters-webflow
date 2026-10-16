@@ -35,7 +35,7 @@ const BRAND_NOT_DONE = { has_record: true, brand_profile_done: false }
 const BRAND_NO_RECORD = { has_record: false, brand_profile_done: false }
 
 function plan(planId) {
-  return { active: true, planId }
+  return { active: true, status: 'ACTIVE', planId }
 }
 
 const TALENT = {

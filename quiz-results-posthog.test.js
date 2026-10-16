@@ -7,7 +7,7 @@ const controllerSource = fs.readFileSync(require.resolve('./quiz-results.js'), '
 const routeGuardSource = fs.readFileSync(require.resolve('./v3/route-guard.js'), 'utf8')
 
 function plan(planId) {
-    return { active: true, planId }
+    return { active: true, status: 'ACTIVE', planId }
 }
 
 const BRAND_FREE = {
