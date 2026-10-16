@@ -318,6 +318,10 @@
       return field(reason, 'code') === 'network-error' ||
         (typeof message === 'string' && NETWORK_FAILURE.test(message))
     }
+    // Instagram's iOS in-app browser injects an autofill script that calls a
+    // handler no page defines. The page URL is the filename, so each page would
+    // otherwise open its own issue.
+    const IN_APP_AUTOFILL = /\b_AutofillCallbackHandler\b/
     const chunkProps = (failure) => failure ? {
       starters_error_kind: 'chunk-load',
       starters_chunk_vendor: failure.vendor,
@@ -335,6 +339,10 @@
       if (e.filename) props.filename = e.filename
       if (e.lineno) props.lineno = e.lineno
       if (e.colno) props.colno = e.colno
+      if (typeof e.message === 'string' && IN_APP_AUTOFILL.test(e.message)) {
+        props.starters_error_kind = 'in-app-browser'
+        props.$exception_fingerprint = 'starters-in-app-autofill'
+      }
       const failure = chunkFailure(e)
       Object.assign(props, chunkProps(failure))
       send(e.error || new Error(e.message), props)

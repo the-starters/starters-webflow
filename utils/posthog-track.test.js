@@ -118,6 +118,28 @@ test('cross-origin "Script error." events with no detail are dropped', () => {
   assert.equal(captured.length, 0)
 })
 
+test('in-app browser autofill errors share one fingerprint across pages', () => {
+  const app = load()
+  for (const filename of ['https://www.thestarters.com/quiz', 'https://www.thestarters.com/hire/tim']) {
+    app.listeners.error({
+      error: new ReferenceError("Can't find variable: _AutofillCallbackHandler"),
+      message: "ReferenceError: Can't find variable: _AutofillCallbackHandler",
+      filename,
+      lineno: 1,
+      colno: 25,
+    })
+  }
+  app.listeners.error({ error: null, message: "Can't find variable: autofillHandler", filename: 'https://www.thestarters.com/quiz' })
+
+  assert.equal(app.captured.length, 3)
+  for (const { properties } of app.captured.slice(0, 2)) {
+    assert.equal(properties.starters_error_kind, 'in-app-browser')
+    assert.equal(properties.$exception_fingerprint, 'starters-in-app-autofill')
+    assert.equal(properties.$exception_list[0].mechanism.handled, false)
+  }
+  assert.equal(app.captured[2].properties.$exception_fingerprint, undefined)
+})
+
 test('a confirmed Webflow chunk failure is captured before one recovery reload', () => {
   const app = load()
   const request =
