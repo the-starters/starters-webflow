@@ -2600,7 +2600,12 @@
           (action === 'reschedule' || action === 'reschedule-calendar') &&
           validDashboardModule(global.StartersDashboardCallActions) &&
           typeof global.StartersDashboardCallActions.rescheduleKindFor === 'function' &&
-          global.StartersDashboardCallActions.rescheduleKindFor(role, booking, now) !== ''
+          (global.StartersDashboardCallActions.rescheduleKindFor(role, booking, now) !== '' ||
+            // G (JP 1a): a too-close confirmed call keeps Reschedule, which then
+            // shows the "Reschedule unavailable" notice.
+            (action === 'reschedule' &&
+              typeof global.StartersDashboardCallActions.rescheduleUnavailableReason === 'function' &&
+              global.StartersDashboardCallActions.rescheduleUnavailableReason(role, booking, now) !== ''))
         const respondReschedule =
           (action === 'confirm-reschedule' || action === 'reschedule-decline') &&
           validDashboardModule(global.StartersDashboardCallActions) &&
@@ -3352,18 +3357,25 @@
         // keep swallowing when it cannot: module not loaded yet, booking
         // unresolved, or booking ineligible.
         const actionsModule = global.StartersDashboardCallActions
+        const rescheduleBooking = bookingForActionTarget(refs, reschedule)
         const eligible =
           validDashboardModule(actionsModule) &&
           typeof actionsModule.rescheduleKindFor === 'function' &&
-          actionsModule.rescheduleKindFor(
-            role,
-            bookingForActionTarget(refs, reschedule),
-            Date.now(),
-          ) !== ''
+          actionsModule.rescheduleKindFor(role, rescheduleBooking, Date.now()) !== ''
         if (eligible) return
         if (event.preventDefault) event.preventDefault()
         if (event.stopImmediatePropagation) event.stopImmediatePropagation()
         else if (event.stopPropagation) event.stopPropagation()
+        // G (JP 1a): explain why a too-close call cannot be moved.
+        const unavailable =
+          validDashboardModule(actionsModule) &&
+          typeof actionsModule.rescheduleUnavailableReason === 'function' &&
+          typeof actionsModule.showActionError === 'function'
+            ? actionsModule.rescheduleUnavailableReason(role, rescheduleBooking, Date.now())
+            : ''
+        if (unavailable) {
+          actionsModule.showActionError(reschedule.closest('[data-booking-id]'), unavailable)
+        }
         return
       }
 

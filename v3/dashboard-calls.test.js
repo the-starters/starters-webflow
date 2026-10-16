@@ -3902,6 +3902,134 @@ test('an eligible Reschedule click is handed to the actions module untouched', (
   }
 })
 
+test('too-close Reschedule clicks show the inline notice without opening the picker', async () => {
+  const actions = require('./dashboard-call-actions.js')
+  const original = {
+    document: global.document,
+    actions: global.StartersDashboardCallActions,
+    calendar: global.StartersPaidCallBrandPayment,
+  }
+  try {
+    global.StartersDashboardCallActions = actions
+    for (const role of ['brand', 'starter']) {
+      for (const isPaid of [false, true]) {
+        const now = Date.now()
+        const booking = {
+          booking_id: 'reschedule-notice-' + role + '-' + isPaid,
+          config_id: 'reschedule-config',
+          grant_id: 'reschedule-grant',
+          data_environment: 'test',
+          status: 'confirmed',
+          is_paid: isPaid,
+          duration: 30,
+          start: now + (isPaid ? 24 : 2) * 3600000,
+          server_now_ms: now,
+          payment_status: 'waiting_for_intent',
+          payment_revision: 0,
+          payment_reconciliation_status: 'ready',
+          brand_data: { memberstack_id: 'mem-brand' },
+          starter_data: { memberstack_id: 'mem-starter' },
+        }
+        actions.bindCanonicalClock([booking], actions.monotonicNow())
+        const modal = acceptElement('dialog', {
+          'popup-booking-info': '',
+          'data-booking-id': booking.booking_id,
+        })
+        const base = acceptElement('div', { 'booking-popup-content': 'base' })
+        const layout = acceptElement('div')
+        layout.className = 'call-details_layout'
+        const footer = acceptElement('div')
+        const button = acceptElement('button', { 'booking-action-btn': 'reschedule' }, 'Propose new time')
+        footer.appendChild(button)
+        base.appendChild(layout)
+        base.appendChild(footer)
+        modal.appendChild(base)
+        const reasonPanel = acceptElement('div', { 'booking-popup-content': 'reschedule' })
+        const reason = acceptElement('textarea', { 'booking-reschedule-reason': '' })
+        reason.value = 'A different time works better'
+        const continueButton = acceptElement('button', { 'booking-action-btn': 'reschedule-calendar' })
+        reasonPanel.appendChild(reason)
+        reasonPanel.appendChild(continueButton)
+        const calendarPanel = acceptElement('div', { 'booking-popup-content': 'reschedule-calendar' })
+        const calendar = acceptElement('div', { 'booking-reschedule-calendar': '' })
+        calendarPanel.appendChild(calendar)
+        modal.appendChild(reasonPanel)
+        modal.appendChild(calendarPanel)
+        actions.switchPopupContent(modal, 'base')
+        const listeners = []
+        const document = {
+          createElement: tag => acceptElement(tag),
+          addEventListener(type, listener, capture) {
+            assert.equal(type, 'click')
+            assert.equal(capture, true)
+            listeners.push(listener)
+          },
+          querySelector(selector) {
+            return selector.includes('popup-booking-info') ? modal : null
+          },
+          querySelectorAll: selector => modal.querySelectorAll(selector),
+        }
+        modal.ownerDocument = document
+        global.document = document
+        const mounted = []
+        global.StartersPaidCallBrandPayment = {
+          async mountPaidCalendar(options) { mounted.push(options.container) },
+        }
+        api.configureDetailActions(modal, role, 'confirmed', booking)
+        assert.equal(button.hidden, false)
+        api.wireBookingDetails([{ rows: [booking] }], role)
+        actions.wire({ document, role, getBooking: () => booking })
+        assert.equal(listeners.length, 2)
+        const click = async target => {
+          let prevented = false
+          let stopped = false
+          const event = {
+            target,
+            preventDefault() { prevented = true },
+            stopImmediatePropagation() { stopped = true },
+          }
+          for (const listener of listeners) {
+            await listener(event)
+            if (stopped) break
+          }
+          assert.equal(prevented, true)
+          assert.equal(stopped, true)
+        }
+
+        await click(button)
+        const note = modal.querySelector('[data-starters-action-error]')
+        assert.ok(note)
+        assert.equal(note.parentNode, layout)
+        assert.equal(note.getAttribute('role'), 'alert')
+        assert.match(note.textContent, isPaid ? /Reschedule unavailable:.*within 2 days/ : /Reschedule unavailable:.*less than 8 hours/)
+        assert.equal(note.hidden, false)
+        assert.notEqual(note.style.display, 'none')
+        assert.equal(base.hidden, false)
+        assert.equal(reasonPanel.hidden, true)
+        assert.equal(calendarPanel.hidden, true)
+        assert.deepEqual(mounted, [])
+
+        booking.start = now + 72 * 3600000
+        api.configureDetailActions(modal, role, 'confirmed', booking)
+        actions.showActionError(modal, '')
+        await click(button)
+        assert.equal(base.hidden, true)
+        assert.equal(reasonPanel.hidden, false)
+        assert.equal(calendarPanel.hidden, true)
+        assert.equal(note.hidden, true)
+        await click(continueButton)
+        assert.equal(reasonPanel.hidden, true)
+        assert.equal(calendarPanel.hidden, false)
+        assert.deepEqual(mounted, [calendar])
+      }
+    }
+  } finally {
+    global.document = original.document
+    global.StartersDashboardCallActions = original.actions
+    global.StartersPaidCallBrandPayment = original.calendar
+  }
+})
+
 test('accepted calls keep every legacy action hidden even with a meeting link', async () => {
   const source = fs.readFileSync(require.resolve('./dashboard-calls.js'), 'utf8')
   const actions = [

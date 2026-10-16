@@ -2770,8 +2770,8 @@ server refuses, so the client hides Cancel. Paid rescheduled bookings stay
 hidden because the server admits Paid cancellation only in `confirmed` status.
 For Decline and Cancel eligibility, a row with neither `is_paid` nor
 `paid_meeting` is treated as legacy Free so older Free bookings keep the
-action. Reschedule keeps a stricter shared gate: the row must be in the future,
-have an explicit Free flag (or pass a P6/P7 Paid gate, below), a grant, and
+action. Reschedule commands keep a stricter shared gate: the row must be in the
+future, have an explicit Free flag (or pass a P6/P7 Paid gate, below), a grant, and
 positive duration. A confirmed call uses the proposal contract for either
 participant, and only the counterpart can confirm or decline the resulting
 proposal. A pending request with no open offer lets the Starter make the first
@@ -2780,10 +2780,9 @@ pending offer lets only the current responder counter or answer. Every command
 requires a booking ID, configuration ID, participant identity, and exact `test`
 or `production` data environment.
 
-During soft launch (JP, 2026-10-03) a gated Paid Reschedule or an inside-window
-Paid Cancel control without a reconciled authorized hold hides with no
-explanation, so the modal never names a feature that is not live yet. Earlier
-versions (2026-08-29 to v1.59.640) inserted a
+A gated Paid Reschedule control without an unavailable notice (described below),
+or an inside-window Paid Cancel control without a reconciled authorized hold,
+hides with no explanation. Earlier versions (2026-08-29 to v1.59.640) inserted a
 module-owned `data-starters-action-hint` node after the hidden authored
 button. Each details populate now hides any such node that an earlier version
 or an earlier booking left in the modal, and it creates no new one. The script
@@ -2798,11 +2797,23 @@ click when that module is unavailable, the booking cannot be resolved, or the
 booking is ineligible, because the legacy empty `popup-booking-reschedule`
 dialog remains on `/starter-dashboard`.
 
+`window.StartersDashboardCallActions.rescheduleUnavailableReason(role, booking, now)`
+returns notice text for an identified, future `confirmed` booking with a valid
+[canonical clock](#confirmed-call-server-clock), or `''` when no notice applies.
+It returns `''` whenever `rescheduleKindFor` already permits rescheduling. For
+`brand` and `starter`, it returns a notice for explicit Free rows when
+`rescheduleWindowOpen` is false, and explicit Paid rows in
+`PAID_RESCHEDULE_OPEN_ENVIRONMENTS` when
+`start - canonicalNow(booking) <= PAID_CONFIRMED_CANCEL_LEAD_MS`. A nonempty
+notice keeps only the authored base Reschedule control visible; its click uses
+the existing `showActionError` on the enclosing `[data-booking-id]` root without
+opening the picker. No new Designer element or endpoint is required.
+
 #### Paid parity P5, P6, P7 (client gates, 2026-10-05)
 
 Each Paid gate is a small exported predicate in `dashboard-call-actions.js`
-that mirrors one server admission rule, so a control shows only when the server
-would admit it. The rows come from `booking_record/get/v3` (api #1551), which
+that mirrors one server admission rule for executing a command.
+The rows come from `booking_record/get/v3` (api #1551), which
 returns full rows, so `payment_status`, `payment_reconciliation_status`,
 `payment_intent`, `payment_revision`, `data_environment`, `start` and
 `start_old` are all available client-side.

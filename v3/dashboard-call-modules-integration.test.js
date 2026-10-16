@@ -974,14 +974,16 @@ test('a call with no reschedule control for the viewer shows no reschedule hint'
   }
   try {
     global.StartersDashboardCallActions = realActions
-    for (const [role, status, isPaid, start, overrides] of [
+    for (const [role, status, isPaid, start, overrides, shown] of [
       // Free pending still fails closed outside the admitted environments.
-      ['starter', 'pending', false, base.start, { data_environment: 'staging' }],
-      // Free: inside the reschedule window nobody gets a control.
-      ['brand', 'confirmed', false, now + 60 * 60 * 1000],
-      // Paid: the gate is real, but soft launch shows no explanation.
-      ['brand', 'confirmed', true, base.start],
-      ['starter', 'confirmed', true, base.start],
+      ['starter', 'pending', false, base.start, { data_environment: 'staging' }, false],
+      // G (JP 1a, 2026-10-16): a too-close confirmed call keeps Reschedule;
+      // its click shows the "Reschedule unavailable" notice, never a hint.
+      ['brand', 'confirmed', false, now + 60 * 60 * 1000, null, true],
+      ['brand', 'confirmed', true, base.start, null, true],
+      ['starter', 'confirmed', true, base.start, null, true],
+      ['brand', 'confirmed', undefined, now + 24 * 60 * 60 * 1000, null, false],
+      ['starter', 'confirmed', undefined, now + 24 * 60 * 60 * 1000, null, false],
     ]) {
       const reschedule = button('reschedule')
       const modal = hintModal([reschedule])
@@ -989,7 +991,8 @@ test('a call with no reschedule control for the viewer shows no reschedule hint'
       realActions.bindCanonicalClock([booking], realActions.monotonicNow())
       dashboard.configureDetailActions(modal, role, status, booking, now)
       const label = role + ' ' + status + ' paid=' + isPaid
-      assert.equal(reschedule.hidden, true, label + ': no reschedule control')
+      assert.equal(reschedule.hidden, !shown, label + (shown ? ': Reschedule stays for the notice' : ': no reschedule control'))
+      if (shown) assert.notEqual(realActions.rescheduleUnavailableReason(role, booking, now), '', label + ': notice text')
       assert.equal(modal.hints.reschedule, undefined, label + ': no hint')
     }
     // Free calls that do offer the control still show no hint.
