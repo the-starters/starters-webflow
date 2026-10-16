@@ -155,7 +155,7 @@
   if (String(window.location && window.location.hostname).toLowerCase() === PREVIEW_HOST) {
     const preview = document.createElement("script")
     preview.src = PREVIEW_SRC
-    preview.defer = true
+    preview.async = true
     document.head.appendChild(preview)
   }
 })()

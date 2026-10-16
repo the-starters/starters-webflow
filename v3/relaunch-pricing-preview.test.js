@@ -19,21 +19,22 @@ class Element {
   constructor(tag, attrs = {}, children = []) {
     this.tagName = tag.toUpperCase()
     this.attrs = Object.assign({}, attrs)
-    this.children = []
-    this._text = ''
-    children.forEach((child) => {
-      if (typeof child === 'string') this._text = child
-      else this.children.push(child)
-    })
+    // childNodes keeps text and element children in order, like the DOM;
+    // `children` holds elements only.
+    this.childNodes = children.map((child) =>
+      typeof child === 'string' ? { text: child } : child,
+    )
+  }
+  get children() {
+    return this.childNodes.filter((child) => child instanceof Element)
   }
   get textContent() {
-    return this.children.length
-      ? this.children.map((child) => child.textContent).join('')
-      : this._text
+    return this.childNodes
+      .map((child) => (child instanceof Element ? child.textContent : child.text))
+      .join('')
   }
   set textContent(value) {
-    this.children = []
-    this._text = String(value)
+    this.childNodes = [{ text: String(value) }]
   }
   getAttribute(name) {
     return Object.prototype.hasOwnProperty.call(this.attrs, name) ? this.attrs[name] : null
@@ -67,9 +68,12 @@ const h = (tag, attrs, children) => new Element(tag, attrs || {}, children || []
 
 function button(label, attrs = {}) {
   return h('div', Object.assign({ class: 'button_main-wrap' }, attrs), [
+    h('div', { class: 'clickable_wrap' }, [h('button', { class: 'clickable_btn' }, [])]),
     h('div', { class: 'button_main-element' }, [
       h('div', { class: 'button_main-text' }, [label]),
-      h('div', { class: 'button_main-icon' }, []),
+      h('div', { class: 'button_main-line' }, []),
+      h('div', { 'data-button-spinner': '', 'aria-hidden': 'true' }, [h('svg', {}, [h('path', {}, [])])]),
+      h('div', { class: 'button_main-icon' }, [h('svg', {}, [h('path', {}, [])])]),
     ]),
   ])
 }
@@ -81,7 +85,7 @@ function joinCta(overrides = {}) {
     h('div', { 'join-cta-tabs': 'wrapper' }, [
       h('button', { 'join-cta-tabs': 'monthly' }, [h('div', {}, ['Monthly'])]),
       h('button', { 'join-cta-tabs': 'yearly' }, [
-        h('div', {}, [h('span', { class: 'join-cta_tab-yearly-text' }, ['(Save $1,200)'])]),
+        h('div', {}, ['Yearly ', h('span', { class: 'join-cta_tab-yearly-text' }, ['(Save $1,200)'])]),
       ]),
     ]),
     h('div', { 'join-cta': 'monthly' }, [
@@ -122,6 +126,10 @@ function texts(root) {
     .map((el) => el.textContent)
 }
 
+function yearlyTabText(root) {
+  return root.querySelectorAll('[join-cta-tabs="yearly"]').map((el) => el.textContent)
+}
+
 function prices(root) {
   return root.querySelectorAll('[data-ms-price\\:add]').map((el) => el.getAttribute(PRICE))
 }
@@ -144,6 +152,7 @@ test('staging host shows the relaunch offer and relaunch price IDs', () => {
     'Get started for $295/mo billed annually',
     'Billed annually at $3,540/year.',
   ])
+  assert.deepEqual(yearlyTabText(root), ['Yearly (Save $2,400)'])
   assert.equal(typeof window.StartersRelaunchPricingPreview.apply, 'function')
 })
 
@@ -239,7 +248,7 @@ test('the navbar gate loads the preview module on the staging host only', () => 
     staging[0].src,
     'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/relaunch-pricing-preview.js',
   )
-  assert.equal(staging[0].defer, true)
+  assert.equal(staging[0].async, true)
 
   for (const hostname of ['www.thestarters.com', 'thestarters.com']) {
     assert.deepEqual(runLoader(hostname), [])
