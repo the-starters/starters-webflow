@@ -49,9 +49,12 @@
       '(Save $1,200)': '(Save $2,400)',
     },
   }
+  // Every live label is unique, so both plan wrappers share one map. Some
+  // Designer blocks mark an annual button with join-cta="monthly".
+  var PLAN_TEXT = Object.assign({}, TEXT_SWAPS.monthly, TEXT_SWAPS.yearly)
   var SCOPES = [
-    { selector: '[join-cta="monthly"]', text: TEXT_SWAPS.monthly },
-    { selector: '[join-cta="yearly"]', text: TEXT_SWAPS.yearly },
+    { selector: '[join-cta="monthly"]', text: PLAN_TEXT },
+    { selector: '[join-cta="yearly"]', text: PLAN_TEXT },
     { selector: '[join-cta-tabs="yearly"]', text: TEXT_SWAPS.yearlyTab },
   ]
 
