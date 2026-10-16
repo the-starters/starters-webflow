@@ -289,7 +289,7 @@
   /* Paid parity P6 / P7 server openings. The Xano gates (`$p6_paid_open` /
      `$p7_paid_open`) admit Paid only for `data_environment` values mirrored
      below. Keep each list in lockstep with its server gate; the client must
-     never offer a control the server refuses. */
+     never admit a command outside its server gate. */
   const PAID_EDIT_OPEN_ENVIRONMENTS = ['test', 'production']
   const PAID_RESCHEDULE_OPEN_ENVIRONMENTS = ['test', 'production']
   // P5 (#2099 held-call cancel) opens in production with the #2099 / #263 / #272
@@ -785,9 +785,9 @@
     'Reschedule unavailable: a Paid call cannot be moved within 2 days of its start, because the card hold is already in place. You can message the other person or cancel the call instead.'
 
   /**
-   * The notice for a confirmed upcoming call that cannot be rescheduled only
-   * because it is too close, or '' when Reschedule is available or does not
-   * apply (other statuses, past calls, unidentified rows).
+   * The notice for a confirmed upcoming call inside its reschedule cutoff,
+   * or '' when Reschedule is available or the notice does not apply
+   * (other statuses, past calls, unidentified rows).
    */
   function rescheduleUnavailableReason(role, booking, now) {
     if (role !== 'starter' && role !== 'brand') return ''
