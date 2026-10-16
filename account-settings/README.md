@@ -32,7 +32,8 @@ who selects **Too busy right now** skips its Pause-only retention offer and goes
 to the existing cancellation confirmation through
 `window.lumos.formFlow.list['cancel-membership'].goTo('step-3')`.
 
-Unknown, signed-out, free and failed-read states keep Pause blocked. The generated
+Members without a recognized membership connection, signed-out visitors and
+failed reads keep Pause blocked. The generated
 `data-membership-pause-blocked="true"` attribute and `inert` keep blocked controls
 hidden and out of keyboard interaction. Capture listeners also reject blocked
 Pause clicks and Pause-form submissions. Login/logout, page restoration, focus
@@ -334,11 +335,11 @@ Run its focused test with:
 node --test account-settings/plan-dates.test.js
 ```
 
-### One attribute prefix for this folder
+### Attribute prefixes
 
-Every script here speaks the `ms-form-*` dialect — `ms-form-pause-*` for plan dates,
-`ms-form-cancel-state-*` for the cancel success state. Match it if a third arrives;
-the repo rule is to reuse the owning vocabulary rather than invent a parallel one.
+Plan dates use `ms-form-pause-*`; the cancel success state uses
+`ms-form-cancel-state-*`. Membership controls use the `data-*` attributes
+described in [Membership controls](#membership-controls).
 
 ## Cancel-flow success state
 
