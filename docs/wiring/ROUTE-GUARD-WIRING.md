@@ -234,16 +234,8 @@ paid. A cancelled member with no active plans at all is `unmapped-plan` and woul
 have sat on the homepage while the console logged a configuration error. Both now
 land on `/all-starters`.
 
-`hasCancelledPaidBrandPlan` (exported on the window API) is true when
-`planConnections` hold at least one paid-Brand connection
-(`pln_new-paid-plan-463h04ph`, `pln_dorxata-test-brand-plan-777r02pa`) that is
-not active by the same `connection.active === true || connection.status ===
-'ACTIVE'` rule the role resolver uses, and no paid-Brand connection that is
-active. It reads the connection shape, not the plan display name, and not the
-status string — `CANCELED` is merely the expected value, so a `PAST_DUE` or
-`EXPIRED` connection counts without a code change. During a cancel-at-period-end
-grace window the payload is unverified; while the paid connection still reports
-active the member keeps full paid-Brand access, which is the fail-safe direction.
+The exported `window.StartersV3RouteGuard.hasCancelledPaidBrandPlan(member)`
+follows the [cancelled paid-Brand definition](../../v3/ACCESS-MATRIX.md#homepage-overrides).
 
 Rule 2 outranks rule 3, so a cancelled Brand with a live free plan and no quiz is
 treated as cancelled, not as a stay. Rule 3 keeps a browsing free Brand with no
