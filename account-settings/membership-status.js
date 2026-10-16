@@ -42,7 +42,7 @@
   let trialing = false
   let memberstack = null
   let revision = 0
-  const trialShortcuts = new WeakSet()
+  const pauseOfferShortcuts = new WeakSet()
 
   const truthy = (value) => value === true || value === 'True' || value === 'true'
   const status = (value) => String(value || '').trim().toUpperCase()
@@ -104,15 +104,18 @@
     trialing = currentPlans.some((plan) => (
       status(plan.status) === 'TRIALING' || status(plan.payment?.status) === 'TRIALING'
     ))
+    const knownPauseStatus = currentPlans.length > 0 && currentPlans.every((plan) => (
+      ['ACTIVE', 'PAUSED'].includes(status(plan.status))
+    ))
     const pausedByField = PAUSED_FIELDS.some((field) => truthy(lastMember?.customFields?.[field]))
     const active = !pausedByField && plans.some((plan) => (
       ['ACTIVE', 'TRIALING'].includes(status(plan.status)) && plan.active !== false
     ))
-    const paused = pausedByField || (plans.some((plan) => (
+    const paused = pausedByField || (knownPauseStatus && plans.some((plan) => (
       status(plan.status) !== 'ACTIVE' || plan.active === false
     )) && !active)
 
-    pauseBlocked = !lastMember || !plans.length || trialing
+    pauseBlocked = !lastMember || !knownPauseStatus || trialing
     const incomplete = truthy(lastMember?.customFields?.['incomplete-ongoing-project'])
     showAll(SELECTORS.projectComplete, !!lastMember && !incomplete)
     showAll(SELECTORS.projectIncomplete, !!lastMember && incomplete)
@@ -139,24 +142,24 @@
     if (!flow) return
     const controller = window.lumos?.formFlow?.list?.['cancel-membership']
     if (controller?.el !== flow) return
-    if (trialShortcuts.has(flow) && action.getAttribute('data-form-flow-action') === 'back' &&
+    if (pauseOfferShortcuts.has(flow) && action.getAttribute('data-form-flow-action') === 'back' &&
         action.closest('[data-form-flow-button-group="step-3"]') && typeof controller.reset === 'function') {
       prevent(event)
-      trialShortcuts.delete(flow)
+      pauseOfferShortcuts.delete(flow)
       controller.reset()
       return
     }
     if (action.getAttribute('data-form-flow-action') !== 'next' ||
         !action.closest('[data-form-flow-button-group="step-1"]')) return
-    trialShortcuts.delete(flow)
-    if (!trialing) return
+    pauseOfferShortcuts.delete(flow)
+    if (!pauseBlocked) return
     const checked = flow.querySelector('[data-form-flow-element="radio-list"] input[type="radio"]:checked')
     if (checked?.closest('[data-form-flow-value]')?.getAttribute('data-form-flow-value') !== 'step-2d') return
 
     // This branch only offers Pause. Use the existing flow API to reach cancellation.
     if (typeof controller.goTo !== 'function') return
     prevent(event)
-    trialShortcuts.add(flow)
+    pauseOfferShortcuts.add(flow)
     controller.goTo('step-3')
   }
 

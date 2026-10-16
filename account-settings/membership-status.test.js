@@ -233,6 +233,79 @@ test('missing member data, free memberships and read failure keep Pause blocked'
   }
 })
 
+for (const membershipStatus of [undefined, '', 'UNKNOWN', 'future-status']) {
+  test('unrecognized membership status withholds Pause despite a paid payment status: ' + membershipStatus, async () => {
+    const data = member([plan(membershipStatus, {
+      status: membershipStatus,
+      payment: { status: 'active', priceId: 'prc_3-0-premium-monthly-ge4a00iw' },
+    })])
+    const before = structuredClone(data)
+    const h = harness(data)
+    await flush()
+    for (const control of [h.pauseCard, h.pause, h.pauseInstead, h.confirmPause, h.directPause]) {
+      assert.equal(blocked(control), true)
+      assert.equal(control.hasAttribute('inert'), true)
+      assert.equal(h.click(control).prevented, true)
+    }
+    assert.equal(h.submit(h.pauseForm).prevented, true)
+    assert.equal(h.click(h.cancel).prevented, false)
+    assert.equal(h.click(h.cancelInstead).prevented, false)
+    assert.equal(h.submit(h.cancelForm).prevented, false)
+    assert.equal(h.price.textContent, 'Included')
+    assert.equal(h.paused.hasAttribute('hidden'), true)
+    assert.deepEqual(data, before)
+  })
+}
+
+test('unknown current status blocks Pause but inactive unknown history does not', async () => {
+  const h = harness(member([plan('UNKNOWN'), plan()]))
+  await flush()
+  assert.equal(blocked(h.pauseInstead), true)
+  h.auth(member([plan('UNKNOWN', { active: false }), plan()]))
+  assert.equal(blocked(h.pauseInstead), false)
+})
+
+test('an explicit paused field stays visible when subscription status is unresolved', async () => {
+  const h = harness(member([plan('UNKNOWN')], { 'membership-paused': true }))
+  await flush()
+  assert.equal(blocked(h.pauseInstead), true)
+  assert.equal(h.paused.hasAttribute('hidden'), false)
+})
+
+test('unknown-status Too busy cancellation skips the unavailable Pause offer and keeps Back working', async () => {
+  const h = harness(member([plan('UNKNOWN')]))
+  await flush()
+  assert.equal(h.click(h.next).prevented, true)
+  assert.deepEqual(h.jumps, ['step-3'])
+  assert.equal(h.click(h.back).prevented, true)
+  assert.deepEqual(h.resets, [true])
+  h.auth(member([plan()]))
+  assert.equal(h.click(h.next).prevented, false)
+  assert.deepEqual(h.jumps, ['step-3'])
+})
+
+test('status resolution restores paid Pause and price labels without changing the member', async () => {
+  const h = harness(member([plan('UNKNOWN')]))
+  await flush()
+  assert.equal(blocked(h.pauseInstead), true)
+  for (const [priceId, label] of [
+    ['prc_premium-monthly--fn1ae0qjj', '$295/mo'],
+    ['prc_3-0-premium-monthly-ge4a00iw', '$495/mo'],
+    ['prc_paid-annual-2o5f040u', '$2,340/yr'],
+    ['prc_3-0-premium-annual-xhb200bu', '$3,540/yr'],
+  ]) {
+    const data = member([plan('ACTIVE', { payment: { priceId, status: 'active' } })])
+    const before = structuredClone(data)
+    h.auth(data)
+    assert.equal(blocked(h.pauseInstead), false)
+    assert.equal(h.price.textContent, label)
+    assert.deepEqual(data, before)
+  }
+  h.auth(member([plan('UNKNOWN')]))
+  assert.equal(blocked(h.pauseInstead), true)
+  assert.equal(h.price.textContent, 'Included')
+})
+
 test('a late member lookup cannot overwrite an auth change', async () => {
   let finish
   const h = harness(null, { reader: () => new Promise((resolve) => { finish = resolve }) })

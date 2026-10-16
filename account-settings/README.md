@@ -33,7 +33,16 @@ to the existing cancellation confirmation through
 `window.lumos.formFlow.list['cancel-membership'].goTo('step-3')`.
 
 Members without a recognized membership connection, signed-out visitors and
-failed reads keep Pause blocked. The generated
+failed reads keep Pause blocked. Current membership connections must have a
+recognized `ACTIVE` or `PAUSED` lifecycle status before Pause can be offered.
+Missing or unrecognized statuses keep Pause blocked even if `payment.status`
+is active. Inactive unknown history does not block a recognized current paid
+connection. Cancellation and the existing price-label rules remain unchanged.
+An unknown status does not imply a paused membership; an explicit paused field
+still shows the existing paused state.
+Members with unresolved Pause eligibility also skip the Pause-only **Too busy
+right now** offer and can use Back to return to the cancellation reasons.
+The generated
 `data-membership-pause-blocked="true"` attribute and `inert` keep blocked controls
 hidden and out of keyboard interaction. Capture listeners also reject blocked
 Pause clicks and Pause-form submissions. Login/logout, page restoration, focus
