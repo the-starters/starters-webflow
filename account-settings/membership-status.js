@@ -47,7 +47,7 @@
   const truthy = (value) => value === true || value === 'True' || value === 'true'
   const status = (value) => String(value || '').trim().toUpperCase()
   const paidPlans = (member) => Array.isArray(member?.planConnections)
-    ? member.planConnections.filter((plan) => PAID_PLAN_IDS.includes(plan?.planId))
+    ? member.planConnections.filter((plan) => PAID_PLAN_IDS.includes(plan?.planId) && status(plan.type) !== 'FREE')
     : []
   const unwrap = (payload) => payload?.data?.data ?? payload?.data ?? payload ?? null
 
@@ -82,8 +82,8 @@
   }
 
   function applyPrice(plans) {
-    const current = plans.filter((plan) => plan.active !== false &&
-      ['ACTIVE', 'TRIALING'].includes(status(plan.status)))
+    const current = plans.filter((plan) => status(plan.status) === 'TRIALING' ||
+      (plan.active !== false && status(plan.status) === 'ACTIVE'))
     const connection = current.length === 1 ? current[0] : null
     const priceId = connection?.payment?.priceId || connection?.priceId
     const label = Object.prototype.hasOwnProperty.call(PRICE_LABELS, priceId)
@@ -121,7 +121,7 @@
     showAll(SELECTORS.projectIncomplete, !!lastMember && incomplete)
     showAll(SELECTORS.memberActive, !!lastMember && !!plans.length && active)
     showAll(SELECTORS.memberPaused, !!lastMember && !!plans.length && paused)
-    applyPrice(plans)
+    applyPrice(currentPlans)
     applyPauseControls()
   }
 

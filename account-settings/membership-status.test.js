@@ -368,6 +368,56 @@ test('trial shows the recurring rate after trial, not the upfront $1 fee', async
   assert.equal(h.price.textContent, 'Included')
 })
 
+test('native SDK trial with active false displays its recurring price and keeps cancellation working', async () => {
+  const data = member([
+    plan('TRIALING', { type: 'SUBSCRIPTION', active: false, payment: {
+      amount: 495, status: 'PAID', priceId: 'prc_test-24h-trial-do-not-use-r5ae0vz6',
+    } }),
+    { planId: 'pln_free-plan-f6kn0dxz', type: 'FREE', active: true, status: 'ACTIVE', payment: null },
+  ])
+  const before = structuredClone(data)
+  const h = harness(data)
+  await flush()
+  assert.equal(h.price.textContent, '$495/mo after your trial')
+  assert.equal(h.paused.hasAttribute('hidden'), true)
+  for (const control of [h.pauseCard, h.pause, h.pauseInstead, h.confirmPause, h.directPause]) {
+    assert.equal(blocked(control), true)
+  }
+  assert.equal(h.click(h.cancel).prevented, false)
+  assert.equal(h.click(h.next).prevented, true)
+  assert.deepEqual(h.jumps, ['step-3'])
+  assert.equal(h.click(h.back).prevented, true)
+  assert.deepEqual(h.resets, [true])
+  assert.deepEqual(data, before)
+})
+
+test('a free test-brand connection cannot enable Pause or supply a cancelled subscription price', async () => {
+  const data = member([
+    plan('ACTIVE', { planId: 'pln_dorxata-test-brand-plan-777r02pa', type: 'FREE', payment: null }),
+    plan('CANCELED', { type: 'SUBSCRIPTION', active: false, payment: {
+      status: 'PAID', priceId: 'prc_premium-monthly--fn1ae0qjj',
+    } }),
+  ])
+  const before = structuredClone(data)
+  const h = harness(data)
+  await flush()
+  assert.equal(blocked(h.pause), true)
+  assert.equal(h.price.textContent, 'Included')
+  assert.equal(h.paused.hasAttribute('hidden'), true)
+  assert.equal(h.click(h.cancel).prevented, false)
+  assert.deepEqual(data, before)
+})
+
+test('a historical inactive trial cannot override the current paid price', async () => {
+  const h = harness(member([
+    plan('TRIALING', { active: false, payment: { priceId: 'prc_test-24h-trial-do-not-use-r5ae0vz6' } }),
+    plan('ACTIVE', { payment: { priceId: 'prc_paid-annual-2o5f040u' } }),
+  ]))
+  await flush()
+  assert.equal(h.price.textContent, '$2,340/yr')
+  assert.equal(blocked(h.pause), false)
+})
+
 test('historical price cannot override the current subscription or a returning member rate', async () => {
   const h = harness(member([
     plan('CANCELED', { active: false, priceId: 'prc_premium-monthly--fn1ae0qjj' }),
