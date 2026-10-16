@@ -229,6 +229,17 @@ The controller sets `data-ready="true|false"` on each row. It also sets these wr
   revision-guards that write and canonical readback still decides the rendered state. With no active
   service, save stays blocked until every prerequisite reads ready. The Save control and the write
   guard use this same rule in both the panel and the Call Item card wiring.
+- On the Dashboard Call Item card, a blocked Save also shows its reason. The controller paints the
+  card's authored native `.w-form-fail` box with the first missing step (calendar and availability,
+  then Stripe link, then Stripe charges, then a stale Stripe status) and sets
+  `data-paid-call-blocker="calendar|stripe|charges|fresh"` on it, with `role="status"`. The Stripe
+  reasons add one `<a data-paid-call-blocker-action="stripe" href="/starter-dashboard">` link. A
+  click on it reuses the first rendered `data-stripe-connect-action="start"` control, else the
+  `earnings` tile, so `starter-dashboard-stripe-connect.js` stays the only OAuth starter. With no
+  such control on the page, the link opens the Dashboard. The box clears when canonical readback
+  allows Save. Edit Profile and the settings panel do not paint it. This is the one generated
+  element in this controller: a disabled Update control never runs the save-time message, so
+  without it the Starter saw a grey button and no reason (CX 2026-10-16).
 - An empty Memberstack auth notification is not logout proof by itself. The scheduling auth bridge
   reconciles that notification against the live Memberstack cookie. While the cookie still belongs
   to the current auth scope, the controller keeps the cached Paid paint and reloads canonical
