@@ -1203,6 +1203,28 @@ test('G (JP 1a): a too-close confirmed call explains why Reschedule is unavailab
   assert.equal(api.rescheduleUnavailableReason('brand', rescheduleBooking({ start: Date.now() - 1000 })), '')
 })
 
+test('legacy confirmed rows without payment flags have no reschedule notice', () => {
+  for (const hours of [2, 24]) {
+    const booking = rescheduleBooking({ start: Date.now() + hours * 3600000 })
+    delete booking.is_paid
+    for (const role of ['brand', 'starter']) {
+      assert.equal(api.rescheduleKindFor(role, booking), '')
+      assert.equal(api.rescheduleUnavailableReason(role, booking), '')
+    }
+  }
+})
+
+test('Free reschedule notice follows the eight-hour proposal boundary', () => {
+  const now = Date.now()
+  for (const [lead, available] of [[8 * 3600000 + 60000, true], [8 * 3600000, false]]) {
+    const booking = rescheduleBooking({ start: now + lead, server_now_ms: now })
+    for (const role of ['brand', 'starter']) {
+      assert.equal(api.rescheduleKindFor(role, booking), available ? 'reschedule-propose' : '')
+      assert.equal(api.rescheduleUnavailableReason(role, booking) === '', available)
+    }
+  }
+})
+
 test('only the counterpart can respond to a pending proposal', () => {
   const booking = rescheduleBooking({ status: 'rescheduled', rescheduled_by: 'starter' })
   assert.equal(api.canRespondReschedule('brand', booking), true)

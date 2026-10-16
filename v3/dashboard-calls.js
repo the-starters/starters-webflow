@@ -3374,9 +3374,7 @@
             ? actionsModule.rescheduleUnavailableReason(role, rescheduleBooking, Date.now())
             : ''
         if (unavailable) {
-          const scope = (reschedule.closest && reschedule.closest('[data-booking-id]')) ||
-            global.document.querySelector(DETAIL_MODAL_SELECTOR)
-          if (scope) actionsModule.showActionError(scope, unavailable)
+          actionsModule.showActionError(reschedule.closest('[data-booking-id]'), unavailable)
         }
         return
       }

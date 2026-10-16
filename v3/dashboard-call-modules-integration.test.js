@@ -982,6 +982,8 @@ test('a call with no reschedule control for the viewer shows no reschedule hint'
       ['brand', 'confirmed', false, now + 60 * 60 * 1000, null, true],
       ['brand', 'confirmed', true, base.start, null, true],
       ['starter', 'confirmed', true, base.start, null, true],
+      ['brand', 'confirmed', undefined, now + 24 * 60 * 60 * 1000, null, false],
+      ['starter', 'confirmed', undefined, now + 24 * 60 * 60 * 1000, null, false],
     ]) {
       const reschedule = button('reschedule')
       const modal = hintModal([reschedule])

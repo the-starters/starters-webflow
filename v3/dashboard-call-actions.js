@@ -797,9 +797,10 @@
     const start = Number(booking && booking.start)
     if (reference == null || !Number.isFinite(start) || start <= reference) return ''
     if (freeBooking(booking)) {
-      return start - reference <= 8 * 3600000 ? RESCHEDULE_UNAVAILABLE_FREE : ''
+      return rescheduleWindowOpen(booking) ? '' : RESCHEDULE_UNAVAILABLE_FREE
     }
     if (
+      paidFlag(booking) &&
       paidEnvironmentOpen(booking, PAID_RESCHEDULE_OPEN_ENVIRONMENTS) &&
       start - reference <= PAID_CONFIRMED_CANCEL_LEAD_MS
     ) return RESCHEDULE_UNAVAILABLE_PAID
