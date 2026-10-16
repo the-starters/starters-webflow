@@ -5353,3 +5353,52 @@ test('clears the blocker after Stripe becomes ready', async () => {
   assert.equal(result.dom.nativeError.style.display, 'none')
   assert.equal(result.dom.save.getAttribute('aria-disabled'), 'false')
 })
+
+test('paints the blocker after turning paid calls off leaves a prerequisite missing', async () => {
+  const result = load({
+    cardMode: true,
+    initial: canonical({
+      services: [service()],
+      readiness: { stripe_charges_enabled: false, paid_call_enabled: true },
+    }),
+    routes: {
+      '/starter/paid-call-settings/disable/v3': ({ setState }) => {
+        setState(canonical({ readiness: { stripe_charges_enabled: false } }))
+        return { ok: true, status: 200, json: async () => ({ service: { active: false } }) }
+      },
+    },
+  })
+  await settle()
+
+  assert.ok(await result.window.StarterPaidCallSettings.disable())
+  await settle()
+
+  assert.equal(result.dom.save.getAttribute('aria-disabled'), 'true')
+  assert.equal(result.dom.nativeError.getAttribute('data-paid-call-blocker'), 'charges')
+  assert.equal(result.dom.nativeError.style.display, 'block')
+  assert.equal(blockerLink(result.dom).textContent, 'Finish Stripe setup')
+})
+
+test('a failed canonical read replaces the painted blocker with the error', async () => {
+  let fail = false
+  const result = load({
+    cardMode: true,
+    initial: stripeNotLinked(),
+    routes: {
+      '/starter/paid-call-settings/get/v3': () => fail
+        ? { ok: false, status: 500, json: async () => ({ message: 'boom' }) }
+        : { ok: true, status: 200, json: async () => stripeNotLinked() },
+    },
+  })
+  await settle()
+  assert.equal(result.dom.nativeError.getAttribute('data-paid-call-blocker'), 'stripe')
+
+  fail = true
+  await result.dispatchWindow('starterStripeConnectReady', {})
+  await settle()
+
+  assert.equal(result.document.documentElement.getAttribute('data-paid-call-settings'), 'error')
+  assert.equal(result.dom.nativeError.getAttribute('data-paid-call-blocker'), '')
+  assert.equal(result.dom.nativeError.getAttribute('role'), 'alert')
+  assert.doesNotMatch(result.dom.nativeErrorMessage.textContent, /connect Stripe first/)
+})

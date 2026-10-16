@@ -693,6 +693,7 @@
       : ''
     const content = nativeErrorContent(nativeError)
     content.textContent = text
+    clearSetupBlocker(nativeError)
     if (text) ensureBusyStyles()
     nativeError.setAttribute('data-call-settings-error-box', '')
     if (nativeError.parentElement) {
@@ -724,6 +725,7 @@
     const nativeError = findNativeError()
     if (!nativeError) return
     nativeErrorContent(nativeError).textContent = ''
+    clearSetupBlocker(nativeError)
     if (nativeError.parentElement) {
       nativeError.parentElement.setAttribute('data-call-settings-error-container', 'false')
     }
@@ -766,15 +768,16 @@
     }
   }
 
+  function clearSetupBlocker(nativeError) {
+    if (nativeError.getAttribute(BLOCKER_ATTRIBUTE)) nativeError.setAttribute(BLOCKER_ATTRIBUTE, '')
+  }
+
   function paintSetupBlocker() {
     const nativeError = findNativeError()
     if (!nativeError) return
     const blocker = busy ? null : setupBlocker(settings)
     if (!blocker) {
-      if (nativeError.getAttribute(BLOCKER_ATTRIBUTE)) {
-        nativeError.setAttribute(BLOCKER_ATTRIBUTE, '')
-        hideNativeError()
-      }
+      if (nativeError.getAttribute(BLOCKER_ATTRIBUTE)) hideNativeError()
       return
     }
     const content = nativeErrorContent(nativeError)
@@ -1039,6 +1042,7 @@
       const service = canonicalService(settings)
       setActionEnabled(action('save'), canSubmitSettings(settings))
       setActionEnabled(action('disable'), Boolean(service))
+      if (document.documentElement.getAttribute(STATUS_ATTRIBUTE) !== 'error') paintSetupBlocker()
     }
   }
 
