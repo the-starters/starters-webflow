@@ -27,9 +27,17 @@
     'www.thestarters.com': true,
     'the-starters-3-0.webflow.io': true,
   }
+  var STAGING_HOST = 'the-starters-3-0.webflow.io'
   var ALLOWED_PRICE_IDS = {
     'prc_premium-monthly--fn1ae0qjj': true,
     'prc_paid-annual-2o5f040u': true,
+  }
+  // Keep staging-only prices isolated even when this script loads on production.
+  // Promotion policy: docs/wiring/MEMBERSHIP-CHECKOUT-AUTHORITY-WIRING.md#runtime-allowlists.
+  var STAGING_ONLY_PRICE_IDS = {
+    'prc_3-0-premium-monthly-ge4a00iw': true,
+    'prc_3-0-premium-annual-xhb200bu': true,
+    'prc_test-24h-trial-do-not-use-r5ae0vz6': true,
   }
   var INTENT_TTL_MS = 2 * 60 * 60 * 1000
   var bypassTargets = typeof WeakSet === 'function' ? new WeakSet() : null
@@ -48,6 +56,12 @@
 
   function clean(value) {
     return String(value == null ? '' : value).trim()
+  }
+
+  function priceAllowed(priceId) {
+    if (ALLOWED_PRICE_IDS[priceId] === true) return true
+    var host = clean(globalObject.location && globalObject.location.hostname).toLowerCase()
+    return host === STAGING_HOST && STAGING_ONLY_PRICE_IDS[priceId] === true
   }
 
   function normalizedRoute(value) {
@@ -426,7 +440,7 @@
 
     var route = normalizedRoute(globalObject.location && globalObject.location.pathname)
     var priceId = clean(target.getAttribute(PRICE_ATTRIBUTE))
-    if (!validSourceRoute(route) || !ALLOWED_PRICE_IDS[priceId]) {
+    if (!validSourceRoute(route) || !priceAllowed(priceId)) {
       failCheckout(target, 'unavailable', null, 'This checkout is not available from this V3 page')
       return
     }
@@ -495,7 +509,7 @@
       var params = new globalObject.URLSearchParams(globalObject.location.search || '')
       if (params.get('fromCheckout') !== 'true') return
       var priceId = params.get('msPriceId')
-      if (!ALLOWED_PRICE_IDS[priceId]) return
+      if (!priceAllowed(priceId)) return
       var intent = readStored(storageKey(priceId))
       if (!intent || !/^[a-f0-9]{64}$/.test(intent.intentKey) || intent.expiresAt <= Date.now()) return
       globalObject.sessionStorage.setItem(RETURN_KEY, JSON.stringify({
@@ -562,12 +576,12 @@
     if (!ALLOWED_HOSTS[host] || !returnRoute()) return
     var record = readStored(RETURN_KEY)
     if (!record || !/^[a-f0-9]{64}$/.test(record.intentKey) ||
-        !ALLOWED_PRICE_IDS[record.priceId] || !(record.expiresAt > Date.now())) return
+        !priceAllowed(record.priceId) || !(record.expiresAt > Date.now())) return
     purchaseState('verifying')
     try {
       var session = await authenticatedSession()
       if (session.memberId !== record.memberId) throw new Error('Checkout member changed')
-      var expectedEnvironment = host === 'the-starters-3-0.webflow.io' ? 'test' : 'production'
+      var expectedEnvironment = host === STAGING_HOST ? 'test' : 'production'
       if ((session.memberId.indexOf('mem_sb_') === 0) !== (expectedEnvironment === 'test')) {
         throw new Error('Checkout environment mismatch')
       }
