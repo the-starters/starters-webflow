@@ -10,7 +10,7 @@
  *
  * Scope: the Join CTA markup used by the Join CTA section, the Signup Modal
  * and the Join Starters Membership Modal. It reads the established
- * `join-cta` (monthly or yearly) and `join-cta-tabs="yearly"` attributes.
+ * `join-cta="monthly" | "yearly"` and `join-cta-tabs="yearly"` attributes.
  * Inside those scopes it changes:
  *   - `data-ms-price:add` from a live price ID to its relaunch price ID;
  *   - leaf text that exactly matches a known live label.
@@ -53,7 +53,8 @@
   // Designer blocks mark an annual button with join-cta="monthly".
   var PLAN_TEXT = Object.assign({}, TEXT_SWAPS.monthly, TEXT_SWAPS.yearly)
   var SCOPES = [
-    { selector: '[join-cta]', text: PLAN_TEXT },
+    { selector: '[join-cta="monthly"]', text: PLAN_TEXT },
+    { selector: '[join-cta="yearly"]', text: PLAN_TEXT },
     { selector: '[join-cta-tabs="yearly"]', text: TEXT_SWAPS.yearlyTab },
   ]
 
