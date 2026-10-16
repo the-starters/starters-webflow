@@ -97,7 +97,7 @@
   function isPremiumBrand(member) {
     return !!(member && (member.planConnections || []).some(function (connection) {
       return PREMIUM_PLAN_IDS[connection.planId] &&
-        (connection.active === true || connection.status === 'ACTIVE')
+        (connection.active === true || (connection.status === 'ACTIVE' || connection.status === 'TRIALING'))
     }))
   }
 

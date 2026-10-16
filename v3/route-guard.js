@@ -338,7 +338,7 @@
   // Everything that reads planConnections goes through it, so the active test
   // cannot drift between role resolution and the cancelled-plan predicate.
   function isActiveConnection(connection) {
-    return connection.active === true || connection.status === 'ACTIVE'
+    return connection.active === true || (connection.status === 'ACTIVE' || connection.status === 'TRIALING')
   }
 
   function planConnectionsOf(member) {

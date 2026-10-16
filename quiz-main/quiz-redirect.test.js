@@ -135,6 +135,28 @@ test('keeps paid-plan redirect and retake escape hatch', async () => {
     )
 })
 
+test('treats a trialing paid Brand (TRIALING, active=false) as paid', async () => {
+    const trialing = {
+        id: 'member',
+        planConnections: [
+            { active: false, planId: 'pln_new-paid-plan-463h04ph', status: 'TRIALING' },
+            { active: true, planId: 'pln_free-plan-f6kn0dxz', status: 'ACTIVE' },
+        ],
+    }
+    assert.equal(await run({ member: trialing }), '/brand-dashboard')
+})
+
+test('keeps a cancelled paid connection on the free path', async () => {
+    const canceled = {
+        id: 'member',
+        planConnections: [
+            { active: false, planId: 'pln_new-paid-plan-463h04ph', status: 'CANCELED' },
+            { active: true, planId: 'pln_free-plan-f6kn0dxz', status: 'ACTIVE' },
+        ],
+    }
+    assert.notEqual(await run({ member: canceled }), '/brand-dashboard')
+})
+
 test('treats Test Brand plan as paid (route-guard parity)', async () => {
     const testBrand = member('pln_dorxata-test-brand-plan-777r02pa')
     assert.equal(await run({ member: testBrand }), '/brand-dashboard')

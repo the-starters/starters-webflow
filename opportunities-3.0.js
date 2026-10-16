@@ -1721,7 +1721,7 @@
    *  @returns {'brand-paid'|'brand-free'|'talent'|null} */
   function memberPlanRole(member) {
     const labels = (member.planConnections || [])
-      .filter((c) => c.active === true || c.status === 'ACTIVE')
+      .filter((c) => c.active === true || (c.status === 'ACTIVE' || c.status === 'TRIALING'))
       .map((c) => MS_PLAN_ROLES[c.planId])
       .filter(Boolean)
     if (labels.includes('brand-paid')) return 'brand-paid'

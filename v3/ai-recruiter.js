@@ -61,7 +61,7 @@
   function activePlanIds(member) {
     const plans = (member && member.planConnections) || []
     return plans
-      .filter((connection) => connection.active === true || connection.status === 'ACTIVE')
+      .filter((connection) => connection.active === true || (connection.status === 'ACTIVE' || connection.status === 'TRIALING'))
       .map((connection) => connection.planId || connection.id)
       .filter(Boolean)
   }

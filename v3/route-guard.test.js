@@ -349,6 +349,34 @@ test('opportunity creation is paid-Brand only', () => {
   assert.equal(api.redirectTargetFor(BRAND_FREE, '/opportunities---create'), '/')
 })
 
+// Memberstack reports a $1 paid trial as status TRIALING with active=false.
+const BRAND_TRIALING = {
+  id: 'm-brand-trialing',
+  planConnections: [
+    { active: false, planId: 'pln_new-paid-plan-463h04ph', status: 'TRIALING' },
+    plan('pln_free-plan-f6kn0dxz'),
+  ],
+}
+const BRAND_CANCELED_PAID = {
+  id: 'm-brand-canceled',
+  planConnections: [
+    { active: false, planId: 'pln_new-paid-plan-463h04ph', status: 'CANCELED' },
+    plan('pln_free-plan-f6kn0dxz'),
+  ],
+}
+
+test('a trialing paid Brand keeps paid-Brand access', () => {
+  const { api } = loadGuard()
+  assert.equal(api.redirectTargetFor(BRAND_TRIALING, '/opportunities---create'), '')
+  assert.equal(api.redirectTargetFor(BRAND_TRIALING, '/opportunities/product-designer'), '')
+  assert.equal(api.redirectTargetFor(BRAND_TRIALING, '/favorites'), '')
+})
+
+test('a cancelled paid connection still counts as free Brand', () => {
+  const { api } = loadGuard()
+  assert.equal(api.redirectTargetFor(BRAND_CANCELED_PAID, '/opportunities---create'), '/')
+})
+
 test('build-profile onboarding pages are Talent only', () => {
   const { api } = loadGuard()
   for (const path of [
