@@ -339,7 +339,7 @@
       if (e.filename) props.filename = e.filename
       if (e.lineno) props.lineno = e.lineno
       if (e.colno) props.colno = e.colno
-      if (typeof e.message === 'string' && IN_APP_AUTOFILL.test(e.message)) {
+      if (IN_APP_AUTOFILL.test(e.message)) {
         props.starters_error_kind = 'in-app-browser'
         props.$exception_fingerprint = 'starters-in-app-autofill'
       }
