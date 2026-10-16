@@ -470,6 +470,51 @@ test('does not activate on V2 host', () => {
   assert.equal(state.requests.length, 0)
 })
 
+const RELAUNCH_PRICE_IDS = [
+  'prc_3-0-premium-monthly-ge4a00iw',
+  'prc_3-0-premium-annual-xhb200bu',
+  'prc_test-24h-trial-do-not-use-r5ae0vz6',
+]
+
+for (const priceId of RELAUNCH_PRICE_IDS) {
+  test(`registers staging-only relaunch price ${priceId} on the V3 staging host`, async () => {
+    const state = boot({ hostname: 'the-starters-3-0.webflow.io' })
+    const control = target(priceId)
+
+    await state.listeners[0].listener(clickEvent(control))
+
+    assert.equal(control.clicks, 1)
+    assert.equal(state.requests.length, 2)
+    assert.equal(JSON.parse(state.requests[1].init.body).stripe_price_id, priceId)
+    assert.equal(control.getAttribute('data-v3-checkout-authority'), 'accepted')
+  })
+
+  for (const hostname of ['thestarters.com', 'www.thestarters.com']) {
+    test(`blocks staging-only relaunch price ${priceId} on production host ${hostname}`, async () => {
+      const state = boot({ hostname })
+      const control = target(priceId)
+      const event = clickEvent(control)
+
+      await state.listeners[0].listener(event)
+
+      assert.equal(event.prevented, true)
+      assert.equal(control.clicks, 0)
+      assert.equal(state.requests.length, 0)
+      assert.equal(state.storage.size, 0)
+    })
+  }
+}
+
+test('keeps current production prices on the V3 staging host', async () => {
+  const state = boot({ hostname: 'the-starters-3-0.webflow.io' })
+  const control = target('prc_premium-monthly--fn1ae0qjj')
+
+  await state.listeners[0].listener(clickEvent(control))
+
+  assert.equal(control.clicks, 1)
+  assert.equal(JSON.parse(state.requests[1].init.body).stripe_price_id, 'prc_premium-monthly--fn1ae0qjj')
+})
+
 test('normalizes the supported quiz-results trailing-slash route', async () => {
   const state = boot({ pathname: '/quiz-results/' })
   const control = target('prc_premium-monthly--fn1ae0qjj')
