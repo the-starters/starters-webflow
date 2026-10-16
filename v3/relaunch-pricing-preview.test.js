@@ -220,6 +220,20 @@ test('while the document is loading, the swap waits for DOMContentLoaded', () =>
   assert.equal(prices(root)[0], 'prc_3-0-premium-monthly-ge4a00iw')
 })
 
+test('an annual button inside a join-cta="monthly" wrapper still gets the annual offer', () => {
+  const mislabeled = h('div', { 'join-cta': 'monthly' }, [
+    button('Get started for $195/mo billed annually', {}),
+    h('p', {}, ['Billed annually at $2,340/year.']),
+  ])
+  const root = h('body', {}, [mislabeled])
+  run(STAGING, root)
+
+  assert.deepEqual(texts(root), [
+    'Get started for $295/mo billed annually',
+    'Billed annually at $3,540/year.',
+  ])
+})
+
 function runLoader(hostname) {
   const appended = []
   const document = {
