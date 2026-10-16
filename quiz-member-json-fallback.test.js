@@ -191,7 +191,7 @@ test('authenticated retake keeps required controls and safe campaign attribution
 
 const FREE_BRAND = {
     id: 'mem_free',
-    planConnections: [{ active: true, planId: 'pln_free-plan-f6kn0dxz' }],
+    planConnections: [{ active: true, status: 'ACTIVE', planId: 'pln_free-plan-f6kn0dxz' }],
 }
 const LEGACY_FREE_BRAND = {
     ...FREE_BRAND,

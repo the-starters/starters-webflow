@@ -81,9 +81,10 @@
      * @returns {boolean}
      */
     var isActivePlan = function (plan) {
-        return (
-            normalizeStatus(plan.status) === 'ACTIVE' && plan.active !== false
-        )
+        var status = normalizeStatus(plan.status)
+        // Memberstack sends TRIALING with active=false during a paid trial.
+        if (status === 'TRIALING') return true
+        return status === 'ACTIVE' && plan.active !== false
     }
 
     /**

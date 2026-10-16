@@ -459,7 +459,7 @@
       .filter(
         (connection) =>
           connection &&
-          (connection.active === true || connection.status === 'ACTIVE'),
+          (connection.status === 'ACTIVE' || connection.status === 'TRIALING'),
       )
       .map((connection) => PLAN_ROLES[connection.planId])
       .filter(Boolean)

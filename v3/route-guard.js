@@ -338,7 +338,7 @@
   // Everything that reads planConnections goes through it, so the active test
   // cannot drift between role resolution and the cancelled-plan predicate.
   function isActiveConnection(connection) {
-    return connection.active === true || connection.status === 'ACTIVE'
+    return connection.status === 'ACTIVE' || connection.status === 'TRIALING'
   }
 
   function planConnectionsOf(member) {
@@ -372,15 +372,12 @@
    * only caller checks this BEFORE the role lookup — the second sub-kind has no
    * role to key off.
    *
-   * `CANCELED` is the expected inactive Memberstack status, but the predicate
-   * deliberately does not look at the status string: any inactive paid-Brand
-   * connection counts, so a `PAST_DUE` or `EXPIRED` shape needs no code change.
+   * Any paid-Brand connection outside the shared active-status rule counts,
+   * including CANCELED, PAST_DUE, and EXPIRED.
    *
-   * Unverified: the exact Memberstack payload during a cancel-at-period-end
-   * grace window. While the paid connection still reports active, this returns
-   * false and the member correctly remains a paid Brand with full access — the
-   * fail-safe direction. Only once Memberstack flips that connection inactive
-   * does the member read as cancelled.
+   * Only ACTIVE and TRIALING statuses grant access, regardless of the active
+   * flag. A paid trial can report active=false; an inactive status must not
+   * retain access merely because active=true.
    */
   function hasCancelledPaidBrandPlan(member) {
     var connections = planConnectionsOf(member)

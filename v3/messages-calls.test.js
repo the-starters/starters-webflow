@@ -2,8 +2,8 @@ const test = require('node:test')
 const assert = require('node:assert/strict')
 const { isBrand, selection, createController } = require('./messages-calls')
 const { selectBookableConfigurations } = require('./free-call-booking')
-const brand = { id: 'mem_brand', planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', active: true }] }
-const starter = { id: 'mem_starter', planConnections: [{ planId: 'pln_dorxata-test-free-plan-dvcg0k8o', active: true }] }
+const brand = { id: 'mem_brand', planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', active: true, status: 'ACTIVE' }] }
+const starter = { id: 'mem_starter', planConnections: [{ planId: 'pln_dorxata-test-free-plan-dvcg0k8o', active: true, status: 'ACTIVE' }] }
 const event = (id = 'a') => ({ conversation: { id }, others: [{ id: 'mem_' + id }] })
 const result = types => ({ configs: types.map(type => ({ is_paid: type === 'paid' })) })
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r }); return { promise, resolve } }
@@ -23,6 +23,23 @@ test('only known active Brand plans admit scheduling', () => {
     { planConnections: [{planId:'pln_new-paid-plan-463h04ph',active:false}] },
     {planConnections:[...brand.planConnections,...starter.planConnections]}]) assert.equal(isBrand(member), false)
   assert.equal(isBrand({planConnections:[{planId:'pln_free-plan-f6kn0dxz',status:'ACTIVE'}]}), true)
+})
+test('plan status controls paid Brand scheduling regardless of the active flag', async () => {
+  for (const status of ['ACTIVE', 'TRIALING', 'CANCELED', 'REQUIRES_PAYMENT', 'PAST_DUE', 'PENDING', undefined]) {
+    for (const active of [true, false, undefined]) {
+      const eligible = status === 'ACTIVE' || status === 'TRIALING'
+      const member = { id: brand.id, planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', status, active }] }
+      let discoveries = 0
+      const { controller, calls } = setup({ member, discover: async () => { discoveries++; return result(['free']) } })
+      await controller.select(event())
+      await controller.open()
+      const label = `${status}, active=${active}`
+      assert.equal(isBrand(member), eligible, label)
+      assert.equal(calls.shown.length, Number(eligible), label)
+      assert.equal(calls.opened.length, Number(eligible), label)
+      assert.equal(discoveries, eligible ? 2 : 0, label)
+    }
+  }
 })
 test('selection requires one other member and a selected conversation', () => {
   assert.deepEqual(selection(event(), brand.id), {conversationId:'a',memberId:'mem_a'})

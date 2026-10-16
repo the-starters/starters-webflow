@@ -175,12 +175,26 @@ function load(options = {}) {
   return { api: window.StartersAIRecruiter, fixture, requests, stored, window, events }
 }
 
+test('plan status controls paid Brand recruiter access regardless of the active flag', () => {
+  const { api } = load()
+  for (const status of ['ACTIVE', 'TRIALING', 'CANCELED', 'REQUIRES_PAYMENT', 'PAST_DUE', 'PENDING', undefined]) {
+    for (const active of [true, false, undefined]) {
+      const member = { planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', status, active }] }
+      assert.equal(
+        api.roleForMember(member, 'thestarters.com'),
+        status === 'ACTIVE' || status === 'TRIALING' ? 'brand-paid' : 'ineligible',
+        `${status}, active=${active}`,
+      )
+    }
+  }
+})
+
 test('only explicitly active paid Brand plans grant access', () => {
   const { api } = load()
   const role = (connection, hostname = 'thestarters.com') => api.roleForMember(
     { planConnections: [connection] }, hostname,
   )
-  assert.equal(role({ planId: 'pln_new-paid-plan-463h04ph', active: true }), 'brand-paid')
+  assert.equal(role({ planId: 'pln_new-paid-plan-463h04ph', active: true }), 'ineligible')
   assert.equal(role({ planId: 'pln_new-paid-plan-463h04ph', status: 'ACTIVE' }), 'brand-paid')
   assert.equal(role({ planId: 'pln_new-paid-plan-463h04ph', active: false }), 'ineligible')
   assert.equal(role({ planId: 'pln_new-paid-plan-463h04ph', status: 'CANCELED' }), 'ineligible')
