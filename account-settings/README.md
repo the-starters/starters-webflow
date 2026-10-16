@@ -64,8 +64,9 @@ which may be the $1 trial fee.
 The current monthly price displays `$495/mo`; legacy monthly displays
 `$295/mo`. Annual prices display their billing totals, `$3,540/yr` for the new
 annual price and `$2,340/yr` for legacy annual. A trial appends `after your trial`
-to the recurring rate. The staging-only 24-hour test price displays `$495/mo`
-after its trial. These are plan rates, before member-specific discounts or tax.
+to the recurring rate. The staging-only 24-hour test price displays `$495/mo`,
+with `after your trial` added while trialing. These are plan rates, before
+member-specific discounts or tax.
 Unrecognized legacy prices retain `Included` until their IDs and rates are
 confirmed. Adding a price to this display map does not enable checkout for it.
 
