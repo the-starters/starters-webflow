@@ -143,7 +143,11 @@ test('treats a trialing paid Brand (TRIALING, active=false) as paid', async () =
             { active: true, planId: 'pln_free-plan-f6kn0dxz', status: 'ACTIVE' },
         ],
     }
-    assert.equal(await run({ member: trialing }), '/brand-dashboard')
+    for (const active of [false, true, undefined]) {
+        trialing.planConnections[0].active = active
+        assert.equal(await run({ member: trialing }), '/brand-dashboard')
+        assert.equal(await run({ member: trialing, search: '?retake=true' }), undefined)
+    }
 })
 
 test('keeps a cancelled paid connection on the free path', async () => {
@@ -154,7 +158,12 @@ test('keeps a cancelled paid connection on the free path', async () => {
             { active: true, planId: 'pln_free-plan-f6kn0dxz', status: 'ACTIVE' },
         ],
     }
-    assert.notEqual(await run({ member: canceled }), '/brand-dashboard')
+    for (const status of ['CANCELED', 'REQUIRES_PAYMENT', 'PAST_DUE', 'EXPIRED', undefined]) {
+        for (const active of [false, true, undefined]) {
+            Object.assign(canceled.planConnections[0], { status, active })
+            assert.equal(await run({ member: canceled }), undefined)
+        }
+    }
 })
 
 test('treats Test Brand plan as paid (route-guard parity)', async () => {

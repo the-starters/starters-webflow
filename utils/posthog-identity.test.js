@@ -45,6 +45,24 @@ test('a Starter with only the talent plan is labelled freelancer', async () => {
   assert.deepEqual({ ...call.props }, { persona: 'freelancer', persona_brand: false, persona_freelancer: true })
 })
 
+test('plan status controls the paid Brand persona regardless of the active flag', async () => {
+  for (const status of ['ACTIVE', 'TRIALING', 'CANCELED', 'REQUIRES_PAYMENT', 'PAST_DUE', 'PENDING', undefined]) {
+    for (const active of [true, false, undefined]) {
+      const [call] = await identify({
+        id: 'mem_brand',
+        customFields: {},
+        planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', status, active }],
+      })
+      const eligible = status === 'ACTIVE' || status === 'TRIALING'
+      assert.deepEqual(
+        { ...call.props },
+        { persona: eligible ? 'brand' : 'none', persona_brand: eligible, persona_freelancer: false },
+        `${status}, active=${active}`,
+      )
+    }
+  }
+})
+
 test('an inactive plan connection does not set a persona', async () => {
   const [call] = await identify({
     id: 'mem_lapsed',

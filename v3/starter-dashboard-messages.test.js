@@ -614,6 +614,25 @@ test('a member carrying only a first-name key still gets that first name', async
   assert.equal(plain(calls.users[0]).name, 'Kaeser')
 })
 
+for (const status of ['ACTIVE', 'TRIALING', 'CANCELED', 'REQUIRES_PAYMENT', 'PAST_DUE', undefined]) {
+  test(`Brand identity follows plan status ${status} regardless of active flag`, async () => {
+    for (const active of [false, true, undefined]) {
+      const { calls } = loadTile({
+        member: {
+          id: MY_ID,
+          customFields: {},
+          planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', status, active }],
+        },
+      })
+      await settle()
+
+      const eligible = status === 'ACTIVE' || status === 'TRIALING'
+      assert.equal(plain(calls.users[0]).name, eligible ? 'Brand Name' : 'The Starters member')
+      assert.deepEqual(plain(calls.users[0]).custom, { company: eligible ? 'Company Name' : '' })
+    }
+  })
+}
+
 test('a nameless Talent member reads "Starter Name", never the email', async () => {
   const { calls } = loadTile({
     member: {
@@ -621,7 +640,7 @@ test('a nameless Talent member reads "Starter Name", never the email', async () 
       auth: { email: 'starter@example.com' },
       customFields: {},
       planConnections: [
-        { planId: 'pln_dorxata-test-free-plan-dvcg0k8o', active: true },
+        { planId: 'pln_dorxata-test-free-plan-dvcg0k8o', active: true, status: 'ACTIVE' },
       ],
     },
   })
@@ -671,7 +690,7 @@ test('a Brand without a company reads "Company Name"', async () => {
       id: MY_ID,
       auth: { email: 'starter@example.com' },
       customFields: {},
-      planConnections: [{ planId: 'pln_free-plan-f6kn0dxz', active: true }],
+      planConnections: [{ planId: 'pln_free-plan-f6kn0dxz', active: true, status: 'ACTIVE' }],
     },
   })
 
@@ -686,7 +705,7 @@ test('a Brand with a company keeps the real company over the placeholder', async
       id: MY_ID,
       auth: { email: 'starter@example.com' },
       customFields: { 'free-user': 'Kaeser', company: '  Acme Co  ' },
-      planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', active: true }],
+      planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', active: true, status: 'ACTIVE' }],
     },
   })
 
@@ -702,8 +721,8 @@ test('conflicting plan roles fail closed to a blank company', async () => {
       auth: { email: 'starter@example.com' },
       customFields: {},
       planConnections: [
-        { planId: 'pln_new-paid-plan-463h04ph', active: true },
-        { planId: 'pln_dorxata-test-free-plan-dvcg0k8o', active: true },
+        { planId: 'pln_new-paid-plan-463h04ph', active: true, status: 'ACTIVE' },
+        { planId: 'pln_dorxata-test-free-plan-dvcg0k8o', active: true, status: 'ACTIVE' },
       ],
     },
   })

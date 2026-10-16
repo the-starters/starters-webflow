@@ -793,11 +793,27 @@ test('a member carrying only a first-name key still gets that first name', async
   assert.equal(plain(calls.users[0]).name, 'Brand')
 })
 
+for (const status of ['ACTIVE', 'TRIALING', 'CANCELED', 'REQUIRES_PAYMENT', 'PAST_DUE', undefined]) {
+  test(`Brand identity follows plan status ${status} regardless of active flag`, async () => {
+    for (const active of [false, true, undefined]) {
+      const viewer = member()
+      viewer.customFields = {}
+      viewer.planConnections = [{ planId: 'pln_new-paid-plan-463h04ph', status, active }]
+      const { calls } = loadMessages({ member: viewer, search: '' })
+      await settle()
+
+      const eligible = status === 'ACTIVE' || status === 'TRIALING'
+      assert.equal(plain(calls.users[0]).name, eligible ? 'Brand Name' : 'The Starters member')
+      assert.deepEqual(plain(calls.users[0]).custom, { company: eligible ? 'Company Name' : '' })
+    }
+  })
+}
+
 test('a nameless member on the free Brand plan reads "Brand Name"', async () => {
   const namelessMember = member()
   namelessMember.customFields = {}
   namelessMember.planConnections = [
-    { planId: 'pln_free-plan-f6kn0dxz', active: true },
+    { planId: 'pln_free-plan-f6kn0dxz', active: true, status: 'ACTIVE' },
   ]
   const { calls } = loadMessages({ member: namelessMember, search: '' })
 
@@ -809,7 +825,7 @@ test('a nameless member on the free Brand plan reads "Brand Name"', async () => 
 test('a nameless member on the paid Brand plan reads "Brand Name"', async () => {
   const namelessMember = member()
   namelessMember.customFields = {}
-  // The status-string flavor of "active" that route-guard also accepts.
+  // An ACTIVE connection does not require a separate active flag.
   namelessMember.planConnections = [
     { planId: 'pln_new-paid-plan-463h04ph', status: 'ACTIVE' },
   ]
@@ -824,7 +840,7 @@ test('a nameless Talent member reads "Starter Name"', async () => {
   const namelessMember = member()
   namelessMember.customFields = {}
   namelessMember.planConnections = [
-    { planId: 'pln_dorxata-test-free-plan-dvcg0k8o', active: true },
+    { planId: 'pln_dorxata-test-free-plan-dvcg0k8o', active: true, status: 'ACTIVE' },
   ]
   const { calls } = loadMessages({ member: namelessMember, search: '' })
 
@@ -837,7 +853,7 @@ test('a nameless member with no mapped active plan keeps the generic default', a
   const namelessMember = member()
   namelessMember.customFields = {}
   namelessMember.planConnections = [
-    { planId: 'pln_something-unmapped-000000', active: true },
+    { planId: 'pln_something-unmapped-000000', active: true, status: 'ACTIVE' },
     { planId: 'pln_new-paid-plan-463h04ph', active: false, status: 'CANCELED' },
   ]
   const { calls } = loadMessages({ member: namelessMember, search: '' })
@@ -851,8 +867,8 @@ test('conflicting Brand and Talent plans fail closed to the generic default', as
   const namelessMember = member()
   namelessMember.customFields = {}
   namelessMember.planConnections = [
-    { planId: 'pln_new-paid-plan-463h04ph', active: true },
-    { planId: 'pln_dorxata-test-free-plan-dvcg0k8o', active: true },
+    { planId: 'pln_new-paid-plan-463h04ph', active: true, status: 'ACTIVE' },
+    { planId: 'pln_dorxata-test-free-plan-dvcg0k8o', active: true, status: 'ACTIVE' },
   ]
   const { calls } = loadMessages({ member: namelessMember, search: '' })
 
@@ -865,7 +881,7 @@ test('the email field stays synced even when the name is a placeholder', async (
   const namelessMember = member()
   namelessMember.customFields = {}
   namelessMember.planConnections = [
-    { planId: 'pln_dorxata-test-free-plan-dvcg0k8o', active: true },
+    { planId: 'pln_dorxata-test-free-plan-dvcg0k8o', active: true, status: 'ACTIVE' },
   ]
   const { calls } = loadMessages({ member: namelessMember, search: '' })
 
@@ -901,7 +917,7 @@ test('a Brand without a company reads "Company Name"', async () => {
   const namelessMember = member()
   namelessMember.customFields = {}
   namelessMember.planConnections = [
-    { planId: 'pln_new-paid-plan-463h04ph', active: true },
+    { planId: 'pln_new-paid-plan-463h04ph', active: true, status: 'ACTIVE' },
   ]
   const { calls } = loadMessages({ member: namelessMember, search: '' })
 
@@ -914,7 +930,7 @@ test('a Brand with a company keeps the real company over the placeholder', async
   const companyMember = member()
   companyMember.customFields = { 'free-user': 'Brand', company: '  Acme Co  ' }
   companyMember.planConnections = [
-    { planId: 'pln_free-plan-f6kn0dxz', active: true },
+    { planId: 'pln_free-plan-f6kn0dxz', active: true, status: 'ACTIVE' },
   ]
   const { calls } = loadMessages({ member: companyMember, search: '' })
 
@@ -927,7 +943,7 @@ test('a Talent member without a company keeps a blank company', async () => {
   const talentMember = member()
   talentMember.customFields = {}
   talentMember.planConnections = [
-    { planId: 'pln_dorxata-test-free-plan-dvcg0k8o', active: true },
+    { planId: 'pln_dorxata-test-free-plan-dvcg0k8o', active: true, status: 'ACTIVE' },
   ]
   const { calls } = loadMessages({ member: talentMember, search: '' })
 
@@ -940,8 +956,8 @@ test('conflicting plan roles fail closed to a blank company', async () => {
   const conflictedMember = member()
   conflictedMember.customFields = {}
   conflictedMember.planConnections = [
-    { planId: 'pln_new-paid-plan-463h04ph', active: true },
-    { planId: 'pln_dorxata-test-free-plan-dvcg0k8o', active: true },
+    { planId: 'pln_new-paid-plan-463h04ph', active: true, status: 'ACTIVE' },
+    { planId: 'pln_dorxata-test-free-plan-dvcg0k8o', active: true, status: 'ACTIVE' },
   ]
   const { calls } = loadMessages({ member: conflictedMember, search: '' })
 

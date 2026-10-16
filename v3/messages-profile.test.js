@@ -602,6 +602,29 @@ test('a viewer carrying only a first-name key still gets that first name', async
   })
 })
 
+for (const status of ['ACTIVE', 'TRIALING', 'CANCELED', 'REQUIRES_PAYMENT', 'PAST_DUE', undefined]) {
+  test(`Brand identity follows plan status ${status} regardless of active flag`, async () => {
+    for (const active of [false, true, undefined]) {
+      const loaded = load({
+        triggers: [starterTrigger()],
+        member: {
+          id: VIEWER_ID,
+          customFields: {},
+          planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', status, active }],
+        },
+        role: 'brand-paid',
+      })
+      await settle()
+      loaded.openModal()
+      await settle()
+
+      const eligible = status === 'ACTIVE' || status === 'TRIALING'
+      assert.equal(plain(loaded.calls.users[0]).name, eligible ? 'Brand Name' : 'The Starters member')
+      assert.deepEqual(plain(loaded.calls.users[0]).custom, { company: eligible ? 'Company Name' : '' })
+    }
+  })
+}
+
 test('a nameless Brand viewer reads "Brand Name", never the email', async () => {
   const loaded = load({
     triggers: [starterTrigger()],
@@ -609,7 +632,7 @@ test('a nameless Brand viewer reads "Brand Name", never the email', async () => 
       id: VIEWER_ID,
       auth: { email: 'viewer@example.com' },
       customFields: {},
-      planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', active: true }],
+      planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', active: true, status: 'ACTIVE' }],
     },
     role: 'brand-paid',
   })
@@ -634,7 +657,7 @@ test('a nameless viewer with conflicting plan roles keeps the generic default', 
       id: VIEWER_ID,
       customFields: {},
       planConnections: [
-        { planId: 'pln_new-paid-plan-463h04ph', active: true },
+        { planId: 'pln_new-paid-plan-463h04ph', active: true, status: 'ACTIVE' },
         { planId: 'pln_dorxata-test-free-plan-dvcg0k8o', status: 'ACTIVE' },
       ],
     },
@@ -689,7 +712,7 @@ test('a Brand viewer keeps the real company over the placeholder', async () => {
     member: {
       id: VIEWER_ID,
       customFields: { 'free-user': 'Brand', company: '  Acme Co  ' },
-      planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', active: true }],
+      planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', active: true, status: 'ACTIVE' }],
     },
     role: 'brand-paid',
   })
@@ -707,7 +730,7 @@ test('a Talent viewer without a company keeps a blank company', async () => {
       id: VIEWER_ID,
       customFields: {},
       planConnections: [
-        { planId: 'pln_dorxata-test-free-plan-dvcg0k8o', active: true },
+        { planId: 'pln_dorxata-test-free-plan-dvcg0k8o', active: true, status: 'ACTIVE' },
       ],
     },
     role: 'brand-paid',

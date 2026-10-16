@@ -1715,13 +1715,13 @@
     return member
   }
 
-  /** Resolve the member's role label from their ACTIVE Memberstack plans via
+  /** Resolve the member's role label from their ACTIVE or TRIALING Memberstack plans via
    *  MS_PLAN_ROLES. Paid brand wins over free brand wins over talent, so a
    *  member carrying several mapped plans lands on the highest-access label.
    *  @returns {'brand-paid'|'brand-free'|'talent'|null} */
   function memberPlanRole(member) {
     const labels = (member.planConnections || [])
-      .filter((c) => c.active === true || (c.status === 'ACTIVE' || c.status === 'TRIALING'))
+      .filter((c) => c.status === 'ACTIVE' || c.status === 'TRIALING')
       .map((c) => MS_PLAN_ROLES[c.planId])
       .filter(Boolean)
     if (labels.includes('brand-paid')) return 'brand-paid'

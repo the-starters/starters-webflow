@@ -541,7 +541,7 @@
       .filter(function (connection) {
         return (
           connection &&
-          (connection.active === true || (connection.status === 'ACTIVE' || connection.status === 'TRIALING'))
+          (connection.status === 'ACTIVE' || connection.status === 'TRIALING')
         )
       })
       .map(function (connection) {

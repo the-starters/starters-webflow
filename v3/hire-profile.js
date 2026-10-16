@@ -1849,7 +1849,7 @@
       );
   }
   function isActivePlanConnection(connection) {
-      return !!connection && (connection.active === true || (connection.status === 'ACTIVE' || connection.status === 'TRIALING'));
+      return !!connection && (connection.status === 'ACTIVE' || connection.status === 'TRIALING');
   }
 
   function memberRole(member) {

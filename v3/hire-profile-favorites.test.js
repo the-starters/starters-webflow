@@ -72,7 +72,7 @@ function profileFavoriteControl() {
 
 function premiumMember() {
   return {
-    planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', active: true }],
+    planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', active: true, status: 'ACTIVE' }],
   }
 }
 
@@ -250,6 +250,29 @@ test('favoritesSource defaults only when the site config lacks it', async () => 
   assert.equal(mod2.window.WfXanoConfig.xanoBase, 'https://x.example')
   assert.equal(mod2.window.WfXanoConfig.favoritesSource, 'opp30:brand/favorites')
 })
+
+for (const status of ['ACTIVE', 'TRIALING', 'CANCELED', 'REQUIRES_PAYMENT', 'PAST_DUE', undefined]) {
+  test(`premium favorites initialization follows plan status ${status} regardless of active flag`, async () => {
+    for (const active of [false, true, undefined]) {
+      const control = profileFavoriteControl()
+      const wfXano = fakeWfXano()
+      const mod = loadModule({
+        controls: [control],
+        wfXano,
+        memberReady: Promise.resolve({
+          planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', status, active }],
+        }),
+      })
+      mod.boot()
+      await new Promise((resolve) => setImmediate(resolve))
+
+      const eligible = status === 'ACTIVE' || status === 'TRIALING'
+      assert.equal(wfXano.calls.init, eligible ? 1 : 0)
+      assert.equal(wfXano.calls.refresh, eligible ? 1 : 0)
+      assert.equal(mod.document.head.children.length, eligible ? 1 : 0)
+    }
+  })
+}
 
 test('non-premium member: no source, no init, no styles, control stays hidden', async () => {
   const cases = [

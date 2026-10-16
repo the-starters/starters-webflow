@@ -84,7 +84,7 @@
   function activePlanIds(member) {
     return (member && member.planConnections ? member.planConnections : [])
       .filter(function (connection) {
-        return connection.active === true || (connection.status === 'ACTIVE' || connection.status === 'TRIALING')
+        return connection.status === 'ACTIVE' || connection.status === 'TRIALING'
       })
       .map(function (connection) {
         return connection.planId
