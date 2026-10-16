@@ -34,6 +34,7 @@
   let trialing = false
   let memberstack = null
   let revision = 0
+  const trialShortcuts = new WeakSet()
 
   const truthy = (value) => value === true || value === 'True' || value === 'true'
   const status = (value) => String(value || '').trim().toUpperCase()
@@ -109,18 +110,29 @@
       prevent(event)
       return
     }
-    if (!trialing) return
-
-    const action = target.closest('[data-form-flow-action="next"]')
+    const action = target.closest('[data-form-flow-action]')
     const flow = action?.closest(CANCEL_FLOW)
-    if (!flow || !action.closest('[data-form-flow-button-group="step-1"]')) return
+    if (!flow) return
+    const controller = window.lumos?.formFlow?.list?.['cancel-membership']
+    if (controller?.el !== flow) return
+    if (trialShortcuts.has(flow) && action.getAttribute('data-form-flow-action') === 'back' &&
+        action.closest('[data-form-flow-button-group="step-3"]') && typeof controller.reset === 'function') {
+      prevent(event)
+      trialShortcuts.delete(flow)
+      controller.reset()
+      return
+    }
+    if (action.getAttribute('data-form-flow-action') !== 'next' ||
+        !action.closest('[data-form-flow-button-group="step-1"]')) return
+    trialShortcuts.delete(flow)
+    if (!trialing) return
     const checked = flow.querySelector('[data-form-flow-element="radio-list"] input[type="radio"]:checked')
     if (checked?.closest('[data-form-flow-value]')?.getAttribute('data-form-flow-value') !== 'step-2d') return
 
     // This branch only offers Pause. Use the existing flow API to reach cancellation.
-    const controller = window.lumos?.formFlow?.list?.['cancel-membership']
-    if (controller?.el !== flow || typeof controller.goTo !== 'function') return
+    if (typeof controller.goTo !== 'function') return
     prevent(event)
+    trialShortcuts.add(flow)
     controller.goTo('step-3')
   }
 

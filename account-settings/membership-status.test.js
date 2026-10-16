@@ -90,6 +90,8 @@ function harness(initial, options = {}) {
   const pauseInstead = add(busyFooter, { 'data-form-flow-action': 'next' })
   const cancelInstead = add(busyFooter, { 'data-form-flow-action': 'branch', 'data-form-flow-target': 'step-3' })
   const confirmPause = add(cancelForm, { 'ms-form-cancel-state-change': 'pause' })
+  const finalFooter = add(cancelForm, { 'data-form-flow-button-group': 'step-3' })
+  const back = add(finalFooter, { 'data-form-flow-action': 'back' })
   const pauseFlow = add(body, { 'data-form-flow': 'pause-membership' })
   const pauseForm = add(pauseFlow, {}, 'form')
   const directPause = add(pauseForm, { 'data-form-flow-action': 'next' })
@@ -97,6 +99,7 @@ function harness(initial, options = {}) {
   const windowListeners = {}
   const observers = []
   const jumps = []
+  const resets = []
   let onAuthChange
   let reads = 0
   let value = initial
@@ -117,15 +120,17 @@ function harness(initial, options = {}) {
       },
       onAuthChange(fn) { onAuthChange = fn },
     },
-    lumos: { formFlow: { list: { 'cancel-membership': { el: cancelFlow, goTo: (id) => jumps.push(id) } } } },
+    lumos: { formFlow: { list: { 'cancel-membership': {
+      el: cancelFlow, goTo: (id) => jumps.push(id), reset: () => resets.push(true),
+    } } } },
   }
   const context = vm.createContext({ window, document, console, Date,
     MutationObserver: class { constructor(fn) { observers.push(fn) } observe() {} },
   })
   vm.runInContext(source, context)
   return { root, body, pauseCard, pause, paused, cancel, complete, incomplete, cancelFlow, cancelForm,
-    next, busyReason, busyInput, pauseInstead, cancelInstead, confirmPause, directPause, pauseForm,
-    jumps, listeners, windowListeners, window, add, get reads() { return reads },
+    next, back, busyReason, busyInput, pauseInstead, cancelInstead, confirmPause, directPause, pauseForm,
+    jumps, resets, listeners, windowListeners, window, add, get reads() { return reads },
     auth: (nextMember) => onAuthChange(nextMember),
     mutate: () => observers.forEach((fn) => fn()),
     setMember(nextMember) { value = nextMember },
@@ -181,6 +186,9 @@ test('trial Too busy reason skips the Pause offer through the existing cancellat
   await flush()
   assert.equal(h.click(h.next).prevented, true)
   assert.deepEqual(h.jumps, ['step-3'])
+  assert.equal(h.click(h.back).prevented, true)
+  assert.deepEqual(h.resets, [true])
+  assert.equal(h.click(h.back).prevented, false)
   h.busyReason.setAttribute('data-form-flow-value', 'step-2c')
   assert.equal(h.click(h.next).prevented, false)
 })
