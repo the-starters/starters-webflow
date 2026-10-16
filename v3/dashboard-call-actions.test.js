@@ -1183,6 +1183,26 @@ test('reschedule proposal eligibility requires a booked future call with calenda
   assert.equal(api.canProposeReschedule('starter', rescheduleBooking({ is_paid: undefined, paid_meeting: undefined })), false)
 })
 
+test('G (JP 1a): a too-close confirmed call explains why Reschedule is unavailable', () => {
+  const H = 3600000
+  // Free: available beyond 8 h, notice inside 8 h.
+  assert.equal(api.rescheduleUnavailableReason('brand', rescheduleBooking({ start: Date.now() + 24 * H })), '')
+  const freeClose = rescheduleBooking({ start: Date.now() + 2 * H })
+  assert.equal(api.rescheduleKindFor('brand', freeClose), '')
+  assert.match(api.rescheduleUnavailableReason('brand', freeClose), /less than 8 hours/)
+  assert.match(api.rescheduleUnavailableReason('starter', freeClose), /less than 8 hours/)
+  // Paid inside the hold window (default helper row: 24 h out) gets the Paid notice.
+  const paidClose = rescheduleBooking({ is_paid: true })
+  assert.match(api.rescheduleUnavailableReason('brand', paidClose), /within 2 days/)
+  // Paid beyond the hold window is not "too close" (other gates decide).
+  assert.equal(api.rescheduleUnavailableReason('brand', rescheduleBooking({ is_paid: true, start: Date.now() + 5 * 24 * H })), '')
+  // Never for other roles, other statuses, or past calls.
+  assert.equal(api.rescheduleUnavailableReason('guest', freeClose), '')
+  assert.equal(api.rescheduleUnavailableReason('brand', rescheduleBooking({ status: 'pending', start: Date.now() + 2 * H })), '')
+  assert.equal(api.rescheduleUnavailableReason('brand', rescheduleBooking({ status: 'cancelled', start: Date.now() + 2 * H })), '')
+  assert.equal(api.rescheduleUnavailableReason('brand', rescheduleBooking({ start: Date.now() - 1000 })), '')
+})
+
 test('only the counterpart can respond to a pending proposal', () => {
   const booking = rescheduleBooking({ status: 'rescheduled', rescheduled_by: 'starter' })
   assert.equal(api.canRespondReschedule('brand', booking), true)

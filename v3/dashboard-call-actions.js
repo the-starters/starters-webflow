@@ -774,6 +774,38 @@
     return ''
   }
 
+  /* G (JP 1a, 2026-10-16; Kaeser Figma "Reschedule Unavailable"): a confirmed
+     call that is too close to move keeps its Reschedule button. A click shows
+     this notice instead of the picker. Free: 8 h. Paid: the card-hold window
+     (PAID_CONFIRMED_CANCEL_LEAD_MS), when the proposal could no longer be
+     answered in time. */
+  const RESCHEDULE_UNAVAILABLE_FREE =
+    'Reschedule unavailable: this call starts in less than 8 hours. You can message the other person or cancel the call instead.'
+  const RESCHEDULE_UNAVAILABLE_PAID =
+    'Reschedule unavailable: a Paid call cannot be moved within 2 days of its start, because the card hold is already in place. You can message the other person or cancel the call instead.'
+
+  /**
+   * The notice for a confirmed upcoming call that cannot be rescheduled only
+   * because it is too close, or '' when Reschedule is available or does not
+   * apply (other statuses, past calls, unidentified rows).
+   */
+  function rescheduleUnavailableReason(role, booking, now) {
+    if (role !== 'starter' && role !== 'brand') return ''
+    if (rescheduleKindFor(role, booking, now)) return ''
+    if (bookingStatus(booking) !== 'confirmed' || !bookingIdentified(booking)) return ''
+    const reference = canonicalNow(booking)
+    const start = Number(booking && booking.start)
+    if (reference == null || !Number.isFinite(start) || start <= reference) return ''
+    if (freeBooking(booking)) {
+      return start - reference <= 8 * 3600000 ? RESCHEDULE_UNAVAILABLE_FREE : ''
+    }
+    if (
+      paidEnvironmentOpen(booking, PAID_RESCHEDULE_OPEN_ENVIRONMENTS) &&
+      start - reference <= PAID_CONFIRMED_CANCEL_LEAD_MS
+    ) return RESCHEDULE_UNAVAILABLE_PAID
+    return ''
+  }
+
   /**
    * F08: which response contract an authored respond control takes. On a
    * pending request with an open offer, `confirm-reschedule` is the pending
@@ -2750,6 +2782,7 @@
     canProposeReschedule,
     canRequestReschedule,
     rescheduleKindFor,
+    rescheduleUnavailableReason,
     canRespondReschedule,
     canKeepCurrentTime,
     hideKeepCurrentTime,
