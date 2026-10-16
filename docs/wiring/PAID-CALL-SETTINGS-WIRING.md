@@ -239,7 +239,7 @@ The controller sets `data-ready="true|false"` on each row. It also sets these wr
   such control on the page, the link opens the Dashboard. The box clears when canonical readback
   allows Save. Edit Profile and the settings panel do not paint it. This is the one generated
   element in this controller: a disabled Update control never runs the save-time message, so
-  without it the Starter saw a grey button and no reason (CX 2026-10-16).
+  without it the Starter saw a grey button and no reason.
 - An empty Memberstack auth notification is not logout proof by itself. The scheduling auth bridge
   reconciles that notification against the live Memberstack cookie. While the cookie still belongs
   to the current auth scope, the controller keeps the cached Paid paint and reloads canonical
