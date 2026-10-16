@@ -66,7 +66,7 @@ const LEGACY_ROW_EXISTS_ENVELOPE = {
 }
 
 function plan(planId) {
-  return { active: true, planId }
+  return { active: true, status: 'ACTIVE', planId }
 }
 
 const TALENT = {
