@@ -32,8 +32,8 @@
     'prc_premium-monthly--fn1ae0qjj': true,
     'prc_paid-annual-2o5f040u': true,
   }
-  // Relaunch prices stay staging-only until the team signs off. Production
-  // keeps the current prices until this list moves into ALLOWED_PRICE_IDS.
+  // Keep staging-only prices isolated even when this script loads on production.
+  // Promotion policy: docs/wiring/MEMBERSHIP-CHECKOUT-AUTHORITY-WIRING.md#runtime-allowlists.
   var STAGING_ONLY_PRICE_IDS = {
     'prc_3-0-premium-monthly-ge4a00iw': true,
     'prc_3-0-premium-annual-xhb200bu': true,

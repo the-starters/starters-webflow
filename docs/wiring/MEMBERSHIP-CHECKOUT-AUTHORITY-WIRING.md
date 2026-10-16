@@ -46,11 +46,26 @@ hyphens. Learn paths may have multiple segments with the same character rules.
 All paths are case-sensitive. Malformed paths and nested paths outside Learn
 fail closed.
 `/partners` and `/services` remain excluded because their sampled live items
-returned 404. The controller removes trailing slashes before it records the source path. It gates
-only these V3 Memberstack price IDs:
+returned 404. The controller removes trailing slashes before it records the source path.
+Native `data-ms-price:add` controls accept these Memberstack price IDs on all
+allowed V3 hosts:
 
 - `prc_premium-monthly--fn1ae0qjj`
 - `prc_paid-annual-2o5f040u`
+
+Only when `location.hostname` is exactly `the-starters-3-0.webflow.io`, the
+controller also accepts these staging-only IDs:
+
+- `prc_3-0-premium-monthly-ge4a00iw`
+- `prc_3-0-premium-annual-xhb200bu`
+- `prc_test-24h-trial-do-not-use-r5ae0vz6` (QA-only; archive after QA)
+
+This host-specific price allowlist applies to clicks, checkout-return capture,
+and receipt processing. Both production hosts accept only the two current IDs.
+Promoting the relaunch monthly and annual IDs to production requires a separate
+change after thorough testing and team sign-off; the QA-only ID must never be
+promoted. Staging checkout also requires matching server allowlists in the test
+environment, configured separately from this browser controller.
 
 The controller does not attach a click listener on any other host. On a V3 host,
 it blocks price controls on non-allowlisted routes or with non-allowlisted price

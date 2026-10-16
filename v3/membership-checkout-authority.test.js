@@ -830,6 +830,140 @@ async function finishPurchase(state) {
   await state.window.StartersMembershipCheckoutAuthority.resumeCheckoutReturn()
 }
 
+const returnStorageKey = 'ts:v3:membership-checkout-return'
+
+function storedReturn(priceId, memberId) {
+  return new Map([[returnStorageKey, JSON.stringify({
+    intentKey: canonicalIntent,
+    memberId,
+    priceId,
+    expiresAt: Date.now() + 60000,
+  })]])
+}
+
+function paidReceipt(priceId, environment) {
+  return {
+    ok: true, status: 'paid', intent_key: canonicalIntent, stripe_price_id: priceId,
+    transaction_id: environment === 'test' ? 'cs_test_relaunch' : 'cs_live_current',
+    amount_total: 100, currency: 'USD', source_environment: environment,
+  }
+}
+
+for (const priceId of RELAUNCH_PRICE_IDS) {
+  test(`captures and verifies staging checkout return for ${priceId} without production analytics`, async () => {
+    const state = returnedPurchase({
+      priceId, hostname: 'the-starters-3-0.webflow.io', memberId: 'mem_sb_relaunch',
+      receipt: paidReceipt(priceId, 'test'),
+    })
+
+    assert.ok(state.storage.has(returnStorageKey), 'checkout return is captured before receipt verification')
+    assert.equal(JSON.parse(state.storage.get(returnStorageKey)).priceId, priceId)
+    await finishPurchase(state)
+
+    const receiptRequest = state.requests.find(({ url }) => url.endsWith('/membership/checkout-receipt/v3'))
+    assert.ok(receiptRequest)
+    assert.deepEqual(JSON.parse(receiptRequest.init.body), {
+      intent_key: canonicalIntent, stripe_price_id: priceId,
+    })
+    assert.equal(state.purchaseStates.at(-1), 'test-verified')
+    assert.equal(state.pixelEvents.length, 0)
+    assert.equal(state.storage.size, 0)
+    assert.deepEqual(state.historyUpdates, ['/dashboard?value=999999&keep=yes#welcome'])
+  })
+
+  test(`resumes persisted staging receipt for ${priceId} after navigation without checkout query parameters`, async () => {
+    const state = returnedPurchase({
+      hostname: 'the-starters-3-0.webflow.io', pathname: '/brand-dashboard', search: '',
+      memberId: 'mem_sb_relaunch', storage: storedReturn(priceId, 'mem_sb_relaunch'),
+      receipt: paidReceipt(priceId, 'test'),
+    })
+
+    await finishPurchase(state)
+
+    assert.equal(state.purchaseStates.at(-1), 'test-verified')
+    assert.equal(state.pixelEvents.length, 0)
+    assert.equal(state.storage.size, 0)
+    assert.equal(state.requests.length, 2)
+    assert.equal(JSON.parse(state.requests[1].init.body).stripe_price_id, priceId)
+  })
+
+  for (const hostname of ['thestarters.com', 'www.thestarters.com']) {
+    test(`ignores forged checkout URL for staging-only ${priceId} on ${hostname}`, async () => {
+      const state = returnedPurchase({ priceId, hostname })
+
+      assert.equal(state.storage.has(returnStorageKey), false)
+      await finishPurchase(state)
+
+      assert.equal(state.requests.length, 0)
+      assert.equal(state.pixelEvents.length, 0)
+      assert.deepEqual(state.purchaseStates, [])
+      assert.deepEqual(state.historyUpdates, [])
+    })
+
+    test(`refuses persisted staging-only ${priceId} receipt on ${hostname}`, async () => {
+      const storage = storedReturn(priceId, 'mem_production')
+      const originalRecord = storage.get(returnStorageKey)
+      const state = returnedPurchase({
+        hostname, search: '', storage, receipt: paidReceipt(priceId, 'production'),
+      })
+
+      await finishPurchase(state)
+
+      assert.equal(state.requests.length, 0)
+      assert.equal(state.pixelEvents.length, 0)
+      assert.deepEqual(state.purchaseStates, [])
+      assert.equal(state.storage.get(returnStorageKey), originalRecord)
+    })
+  }
+}
+
+test('staging-only checkout never activates on lookalike or trailing-dot hosts', async () => {
+  for (const hostname of [
+    'the-starters-3-0.webflow.io.evil.test',
+    'preview.the-starters-3-0.webflow.io',
+    'the-starters-3-0.webflow.io.',
+    'the-starters-3-0.webflow.com',
+  ]) {
+    for (const priceId of RELAUNCH_PRICE_IDS) {
+      const capture = returnedPurchase({ hostname, priceId, memberId: 'mem_sb_relaunch' })
+      await finishPurchase(capture)
+      assert.equal(capture.listeners.length, 0, hostname)
+      assert.equal(capture.storage.has(returnStorageKey), false, hostname)
+      assert.equal(capture.requests.length, 0, hostname)
+
+      const resume = returnedPurchase({
+        hostname, search: '', memberId: 'mem_sb_relaunch',
+        storage: storedReturn(priceId, 'mem_sb_relaunch'), receipt: paidReceipt(priceId, 'test'),
+      })
+      await finishPurchase(resume)
+      assert.equal(resume.requests.length, 0, hostname)
+      assert.equal(resume.pixelEvents.length, 0, hostname)
+      assert.deepEqual(resume.purchaseStates, [], hostname)
+    }
+  }
+})
+
+test('current monthly and annual prices retain click and receipt behavior on staging and both production hosts', async () => {
+  for (const hostname of ['the-starters-3-0.webflow.io', 'thestarters.com', 'www.thestarters.com']) {
+    const environment = hostname === 'the-starters-3-0.webflow.io' ? 'test' : 'production'
+    const memberId = environment === 'test' ? 'mem_sb_current' : 'mem_production'
+    for (const priceId of [monthlyPrice, annualPrice]) {
+      const checkout = boot({ hostname, memberId })
+      const control = target(priceId)
+      await checkout.listeners[0].listener(clickEvent(control))
+      assert.equal(control.clicks, 1, hostname + priceId)
+      assert.equal(JSON.parse(checkout.requests[1].init.body).stripe_price_id, priceId)
+
+      const returned = returnedPurchase({ hostname, memberId, priceId, receipt: paidReceipt(priceId, environment) })
+      assert.equal(JSON.parse(returned.storage.get(returnStorageKey)).priceId, priceId)
+      await finishPurchase(returned)
+      assert.equal(returned.purchaseStates.at(-1), environment === 'test' ? 'test-verified' : 'queued')
+      assert.equal(returned.pixelEvents.length, environment === 'test' ? 0 : 1)
+      assert.equal(returned.storage.size, 0)
+    }
+  }
+})
+
 test('sends the verified discounted monthly amount to the installed pixel, ignoring URL value', async () => {
   const state = returnedPurchase({ receipt: {
     ok: true, status: 'paid', intent_key: canonicalIntent, stripe_price_id: monthlyPrice,
