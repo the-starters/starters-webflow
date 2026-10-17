@@ -29,9 +29,9 @@
  * "Get started for $295/mo", which can be a correct live label. If a
  * Designer publish leaks relaunch copy to production again, the live copy is
  * shown instead, and any `data-relaunch-faq` item is removed. The guard never
- * changes price attributes: checkout acceptance
- * stays owned by `v3/membership-checkout-authority.js`, which refuses the
- * relaunch IDs on production.
+ * changes price attributes: checkout acceptance stays owned by
+ * `v3/membership-checkout-authority.js`, which refuses the relaunch IDs on
+ * production.
  *
  * Text that does not match exactly stays unchanged, so a Designer copy edit
  * can never be overwritten with the wrong offer. Any other host is a no-op.
