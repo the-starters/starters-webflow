@@ -105,6 +105,26 @@ function joinCta(overrides = {}) {
   ])
 }
 
+const FAQ_LIVE =
+  'Membership is $295/month, or $195/month billed annually at $2,340/year. The annual plan saves $1,200 per year compared with paying monthly.'
+const FAQ_RELAUNCH =
+  'Membership is $495/month, or $295/month billed annually at $3,540/year. The annual plan saves $2,400 per year compared with paying monthly.'
+const COST_LIVE = '$295/mo or $195/mo billed annually ($2,340/year), plus freelancer rate'
+const COST_RELAUNCH = '$495/mo or $295/mo billed annually ($3,540/year), plus freelancer rate'
+const WHY_LIVE = ['$195', 'Per month, billed annually at $2,340/year.']
+const WHY_RELAUNCH = ['$295', 'Per month, billed annually at $3,540/year.']
+
+// FAQ answer, Competitors cost cell, and Why Us price pair, as published.
+function pageCopy(faq, cost, why) {
+  return h('div', {}, [
+    h('div', { 'data-accordion': 'content-wrap' }, [h('div', {}, [h('p', {}, [faq])])]),
+    h('table', {}, [h('tr', {}, [h('td', {}, [h('p', {}, ['Cost']), h('p', {}, [cost])])])]),
+    h('div', { class: 'why-comparison_price-wrapper' }, [h('p', {}, [why[0]]), h('p', {}, [why[1]])]),
+  ])
+}
+const livePageCopy = () => pageCopy(FAQ_LIVE, COST_LIVE, WHY_LIVE)
+const relaunchPageCopy = () => pageCopy(FAQ_RELAUNCH, COST_RELAUNCH, WHY_RELAUNCH)
+
 function run(hostname, root, extra = {}) {
   const document = Object.assign(
     {
@@ -158,7 +178,7 @@ test('staging host shows the relaunch offer and relaunch price IDs', () => {
 
 for (const hostname of ['www.thestarters.com', 'thestarters.com', 'localhost', '']) {
   test(`host "${hostname}" keeps live prices and copy unchanged`, () => {
-    const root = h('body', {}, [joinCta()])
+    const root = h('body', {}, [joinCta(), livePageCopy()])
     const before = { prices: prices(root), texts: texts(root) }
     const window = run(hostname, root)
 
@@ -168,9 +188,70 @@ for (const hostname of ['www.thestarters.com', 'thestarters.com', 'localhost', '
       JSON.parse(JSON.stringify(window.StartersRelaunchPricingPreview.apply(root))),
       { prices: 0, labels: 0 },
     )
-    assert.equal(window.StartersRelaunchPricingPreview.boot(), false)
   })
 }
+
+for (const hostname of ['localhost', '', 'the-starters-3-0.webflow.io.evil.test']) {
+  test(`host "${hostname}" does not boot`, () => {
+    const window = run(hostname, h('body', {}, []))
+    assert.equal(window.StartersRelaunchPricingPreview.boot(), false)
+    assert.equal(window.StartersRelaunchPricingPreview.mode(), '')
+  })
+}
+
+test('staging host shows relaunch copy in the FAQ, Competitors cost, and Why Us price', () => {
+  const root = h('body', {}, [livePageCopy()])
+  const window = run(STAGING, root)
+
+  assert.deepEqual(texts(root), [FAQ_RELAUNCH, 'Cost', COST_RELAUNCH, ...WHY_RELAUNCH])
+  assert.equal(window.StartersRelaunchPricingPreview.mode(), 'preview')
+})
+
+for (const hostname of ['www.thestarters.com', 'thestarters.com']) {
+  test(`production host "${hostname}" turns leaked relaunch copy back to live copy`, () => {
+    const leaked = h('body', {}, [relaunchPageCopy()])
+    const window = run(hostname, leaked)
+
+    assert.deepEqual(texts(leaked), [FAQ_LIVE, 'Cost', COST_LIVE, ...WHY_LIVE])
+    assert.equal(window.StartersRelaunchPricingPreview.mode(), 'guard')
+  })
+
+  test(`production host "${hostname}" turns leaked Join CTA copy back but never changes price IDs`, () => {
+    const root = h('body', {}, [joinCta()])
+    run(STAGING, root)
+    const relaunchPrices = prices(root)
+    run(hostname, root)
+
+    assert.deepEqual(prices(root), relaunchPrices)
+    assert.deepEqual(texts(root), [
+      'Monthly',
+      '(Save $1,200)',
+      'Get started for $295/month',
+      'Get started for $295/month',
+      'Cancel anytime.',
+      'Get started for $195/mo',
+      'Get started for $195/mo billed annually',
+      'Billed annually at $2,340/year.',
+    ])
+  })
+}
+
+test('a short Why Us price without its partner sibling stays unchanged', () => {
+  const root = h('body', {}, [
+    h('div', {}, [h('p', {}, ['$195']), h('p', {}, ['Per month'])]),
+    h('div', {}, [h('p', {}, ['$195'])]),
+  ])
+  run(STAGING, root)
+
+  assert.deepEqual(texts(root), ['$195', 'Per month', '$195'])
+})
+
+test('a sentence inside a larger text block stays unchanged', () => {
+  const root = h('body', {}, [h('p', {}, ['Note: ' + FAQ_LIVE])])
+  run(STAGING, root)
+
+  assert.deepEqual(texts(root), ['Note: ' + FAQ_LIVE])
+})
 
 test('copy that does not exactly match a known live label stays unchanged', () => {
   const root = h('body', {}, [joinCta({ monthlyLabel: 'Start your membership' })])
@@ -255,16 +336,18 @@ function runLoader(hostname) {
   return appended
 }
 
-test('the navbar gate loads the preview module on the staging host only', () => {
-  const staging = runLoader(STAGING)
-  assert.equal(staging.length, 1)
-  assert.equal(
-    staging[0].src,
-    'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/relaunch-pricing-preview.js',
-  )
-  assert.equal(staging[0].async, true)
+test('the navbar gate loads the module on the staging and production hosts only', () => {
+  for (const hostname of [STAGING, 'www.thestarters.com', 'thestarters.com']) {
+    const appended = runLoader(hostname)
+    assert.equal(appended.length, 1)
+    assert.equal(
+      appended[0].src,
+      'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/relaunch-pricing-preview.js',
+    )
+    assert.equal(appended[0].async, true)
+  }
 
-  for (const hostname of ['www.thestarters.com', 'thestarters.com']) {
+  for (const hostname of ['localhost', '', 'the-starters-3-0.webflow.io.evil.test']) {
     assert.deepEqual(runLoader(hostname), [])
   }
 })
