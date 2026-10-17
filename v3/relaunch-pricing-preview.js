@@ -19,7 +19,8 @@
  *     Why Us price pair (a "$195" leaf directly followed by its
  *     "Per month, billed annually at $2,340/year." sibling).
  *
- * Production ("guard" mode) applies the same text maps in reverse. If a
+ * Production ("guard" mode) applies the same text maps in reverse, except
+ * "Get started for $295/mo", which can be a correct live label. If a
  * Designer publish leaks relaunch copy to production again, the live copy is
  * shown instead. The guard never changes price attributes: checkout acceptance
  * stays owned by `v3/membership-checkout-authority.js`, which refuses the
@@ -90,8 +91,15 @@
     return out
   }
 
+  // "Get started for $295/mo" is also a valid live monthly label, so the
+  // guard leaves it as is.
+  var GUARD_PLAN_TEXT = invert(PLAN_TEXT)
+  delete GUARD_PLAN_TEXT['Get started for $295/mo']
   var GUARD_SCOPES = SCOPES.map(function (scope) {
-    return { selector: scope.selector, text: invert(scope.text) }
+    return {
+      selector: scope.selector,
+      text: scope.text === PLAN_TEXT ? GUARD_PLAN_TEXT : invert(scope.text),
+    }
   })
   var GUARD_PAGE_TEXT = invert(PAGE_TEXT)
   var GUARD_PAIR_TEXT = PAIR_TEXT.map(function (pair) {

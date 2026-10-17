@@ -229,10 +229,20 @@ for (const hostname of ['www.thestarters.com', 'thestarters.com']) {
       'Get started for $295/month',
       'Get started for $295/month',
       'Cancel anytime.',
-      'Get started for $195/mo',
+      'Get started for $295/mo',
       'Get started for $195/mo billed annually',
       'Billed annually at $2,340/year.',
     ])
+  })
+
+  test(`production host "${hostname}" keeps a "Get started for $295/mo" Join CTA label unchanged`, () => {
+    const root = h('body', {}, [
+      h('div', { 'join-cta': 'monthly' }, [button('Get started for $295/mo', {})]),
+      h('div', { 'join-cta': 'yearly' }, [button('Get started for $295/mo', {})]),
+    ])
+    run(hostname, root)
+
+    assert.deepEqual(texts(root), ['Get started for $295/mo', 'Get started for $295/mo'])
   })
 }
 
