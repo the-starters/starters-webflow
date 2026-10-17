@@ -16,9 +16,8 @@
  *     leaf text that exactly matches a known live label;
  *   - anywhere on the page: leaf text that exactly matches one of the long,
  *     unique live price sentences (FAQ answer, Competitors cost row, Learn
- *     article paywall), and the
- *     Why Us price pair (a "$195" leaf directly followed by its
- *     "Per month, billed annually at $2,340/year." sibling).
+ *     article paywall), and the Why Us price pair (a "$195" leaf directly
+ *     followed by its "Per month, billed annually at $2,340/year." sibling).
  *
  * Production ("guard" mode) applies the same text maps in reverse, except
  * "Get started for $295/mo", which can be a correct live label. If a
