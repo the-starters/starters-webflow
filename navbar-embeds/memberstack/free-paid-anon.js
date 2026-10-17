@@ -150,11 +150,12 @@
   // in the Designer. This site-wide script loads it on the staging host only;
   // production never requests it.
   const PREVIEW_HOST = "the-starters-3-0.webflow.io"
-  const PREVIEW_SRC =
-    "https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/relaunch-pricing-preview.js"
   if (String(window.location && window.location.hostname).toLowerCase() === PREVIEW_HOST) {
+    const loaderSrc = (document.currentScript && document.currentScript.src) || ""
+    const loaderRef = /^https:\/\/cdn\.jsdelivr\.net\/gh\/the-starters\/starters-webflow@([^?#]+)\/navbar-embeds\/memberstack\/free-paid-anon\.js(?:[?#].*)?$/.exec(loaderSrc)
     const preview = document.createElement("script")
-    preview.src = PREVIEW_SRC
+    preview.src = "https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@" +
+      (loaderRef ? loaderRef[1] : "latest") + "/v3/relaunch-pricing-preview.js"
     preview.async = true
     document.head.appendChild(preview)
   }

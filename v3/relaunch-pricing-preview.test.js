@@ -234,10 +234,45 @@ test('an annual button inside a join-cta="monthly" wrapper still gets the annual
   ])
 })
 
-function runLoader(hostname) {
+const standaloneFields = [
+  ['annual-rate', '$195', '$295'],
+  ['annual-total', 'Per month, billed annually at $2,340/year.', 'Per month, billed annually at $3,540/year.'],
+  ['learn-offer', 'Get unlimited access to The Starters` exclusive reporting and ad-free intelligence for just $249/month', 'Get unlimited access to The Starters’ exclusive reporting and ad-free intelligence. Membership is $495/month, or $295/month billed annually at $3,540/year.'],
+  ['comparison-offer', 'Flat $295/mo + freelancer rate', '$495/mo or $295/mo billed annually ($3,540/year), plus freelancer rate'],
+  ['faq-pricing', 'Membership is $295/month, or $195/month billed annually at $2,340/year. The annual plan saves $1,200 per year compared with paying monthly.', 'Membership is $495/month, or $295/month billed annually at $3,540/year. The annual plan saves $2,400 per year compared with paying monthly.'],
+]
+
+for (const [kind, before, after] of standaloneFields) {
+  test(`staging previews the marked ${kind} without changing matching account text`, () => {
+    const field = h('p', { 'data-relaunch-pricing': kind }, [before])
+    const account = h('p', { 'data-member-price': '' }, [before])
+    const root = h('body', {}, [field, account])
+    const window = run(STAGING, root)
+    assert.equal(field.textContent, after)
+    assert.equal(account.textContent, before)
+    assert.deepEqual(JSON.parse(JSON.stringify(window.StartersRelaunchPricingPreview.apply(root))), { prices: 0, labels: 0 })
+  })
+}
+
+test('production retains every standalone baseline field and checkout binding', () => {
+  for (const host of ['www.thestarters.com', 'thestarters.com', 'the-starters-3-0.webflow.io.evil.test']) {
+    const root = h('body', {}, standaloneFields.map(([kind, before]) => h('p', { 'data-relaunch-pricing': kind }, [before])))
+    run(host, root)
+    assert.deepEqual(texts(root), standaloneFields.map(([, before]) => before))
+  }
+})
+
+test('unexpected standalone labels and unknown field kinds remain unchanged', () => {
+  const root = h('body', {}, [h('p', { 'data-relaunch-pricing': 'annual-rate' }, ['$295']), h('p', { 'data-relaunch-pricing': 'unknown' }, ['$195'])])
+  run(STAGING, root)
+  assert.deepEqual(texts(root), ['$295', '$195'])
+})
+
+function runLoader(hostname, loaderSrc = '') {
   const appended = []
   const document = {
     readyState: 'complete',
+    currentScript: { src: loaderSrc },
     addEventListener() {},
     querySelectorAll: () => [],
     documentElement: { classList: { add() {}, remove() {} } },
@@ -267,4 +302,14 @@ test('the navbar gate loads the preview module on the staging host only', () => 
   for (const hostname of ['www.thestarters.com', 'thestarters.com']) {
     assert.deepEqual(runLoader(hostname), [])
   }
+})
+
+test('a pinned navbar preview loads the same repository ref without moving latest', () => {
+  const base = 'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@'
+  for (const ref of ['15e9556c', 'jericolawrence-oai/staging-pricing-reconciliation']) {
+    const loader = base + ref + '/navbar-embeds/memberstack/free-paid-anon.js?qa=1'
+    assert.equal(runLoader(STAGING, loader)[0].src, base + ref + '/v3/relaunch-pricing-preview.js')
+    assert.deepEqual(runLoader('www.thestarters.com', loader), [])
+  }
+  assert.equal(runLoader(STAGING, 'https://other.test/loader.js')[0].src, base + 'latest/v3/relaunch-pricing-preview.js')
 })

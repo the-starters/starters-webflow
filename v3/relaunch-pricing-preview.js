@@ -16,6 +16,8 @@
  *   - leaf text that exactly matches a known live label.
  * Text that does not match exactly stays unchanged, so a Designer copy edit
  * can never be overwritten with the wrong offer.
+ * Standalone Why Us, Learn, comparison and FAQ price fields opt in through
+ * `data-relaunch-pricing`; member account prices are outside these scopes.
  *
  * On any other host the module returns before it reads the DOM. Checkout
  * acceptance of the relaunch price IDs stays owned by
@@ -57,6 +59,24 @@
     { selector: '[join-cta="yearly"]', text: PLAN_TEXT },
     { selector: '[join-cta-tabs="yearly"]', text: TEXT_SWAPS.yearlyTab },
   ]
+  var FIELD_TEXT = {
+    'annual-rate': { '$195': '$295' },
+    'annual-total': {
+      'Per month, billed annually at $2,340/year.': 'Per month, billed annually at $3,540/year.',
+    },
+    'learn-offer': {
+      'Get unlimited access to The Starters` exclusive reporting and ad-free intelligence for just $249/month':
+        'Get unlimited access to The Starters’ exclusive reporting and ad-free intelligence. Membership is $495/month, or $295/month billed annually at $3,540/year.',
+    },
+    'comparison-offer': {
+      'Flat $295/mo + freelancer rate':
+        '$495/mo or $295/mo billed annually ($3,540/year), plus freelancer rate',
+    },
+    'faq-pricing': {
+      'Membership is $295/month, or $195/month billed annually at $2,340/year. The annual plan saves $1,200 per year compared with paying monthly.':
+        'Membership is $495/month, or $295/month billed annually at $3,540/year. The annual plan saves $2,400 per year compared with paying monthly.',
+    },
+  }
 
   function host() {
     return String((globalObject.location && globalObject.location.hostname) || '')
@@ -106,6 +126,13 @@
       for (var i = 0; i < scopes.length; i += 1) {
         result.prices += swapPrices(scopes[i])
         result.labels += swapText(scopes[i], SCOPES[s].text)
+      }
+    }
+    var fields = doc.querySelectorAll('[data-relaunch-pricing]')
+    for (var f = 0; f < fields.length; f += 1) {
+      var kind = fields[f].getAttribute('data-relaunch-pricing')
+      if (Object.prototype.hasOwnProperty.call(FIELD_TEXT, kind)) {
+        result.labels += swapText(fields[f], FIELD_TEXT[kind])
       }
     }
     return result
