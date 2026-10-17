@@ -33,6 +33,7 @@
   const CACHE_PREFIX = 'starter-scheduling-availability:'
   const TIMEZONE_CACHE_PREFIX = 'starter-timezone:'
   const OAUTH_INTENT_PREFIX = 'starter-scheduling-oauth-intent:'
+  const PLATFORM_TRANSITION_INTENT_PREFIX = 'starter-scheduling-platform-transition:'
   const OAUTH_CALLBACK_KEY = 'starter-scheduling-oauth-callback'
   const OAUTH_INTENT_MAX_AGE = 15 * 60 * 1000
   const PRODUCTION_MIN_BOOKING_NOTICE_MINUTES = 24 * 60
@@ -42,15 +43,20 @@
   // problem, not a connection failure, so the authored error step must name the
   // rate instead of leaving the member with generic calendar copy.
   const PAID_CALL_RATE_UNSUPPORTED = 'PAID_CALL_RATE_UNSUPPORTED'
+  const ERROR_TEXT_AVAILABILITY_PARTIAL =
+    'Your availability was saved, but booking times could not be verified. Please try again or contact support.'
+  const ERROR_TEXT_CALENDAR_VERIFY =
+    "We couldn't verify your calendar settings. Please refresh and try again or contact support."
   const ERROR_TEXT_PAID_CALL_RATE =
     'Your paid call rate must be a whole-dollar amount from $1 to $1,000. Update it in Call Settings, then switch calendars again.'
-  // grants/delete/v3 (Xano #1660) refuses a calendar switch or disconnect while the
-  // current calendar still has requested, confirmed or rescheduled calls. Nothing is
-  // cancelled or deleted in that case. The member can act on it, so name the calls
-  // instead of showing generic calendar copy.
+  const PRESERVATION_READBACK_INVALID = 'PRESERVATION_READBACK_INVALID'
+  // The server guards true Disconnect across all of the Starter's calendars,
+  // including retained grants: pending/rescheduled calls and confirmed calls
+  // whose current or original end is still ahead. Editing and switching remain
+  // available. Keep the legacy refusal compatible during backend rollout.
   const ERROR_TEXT_ACTIVE_CALLS =
-    'You have Requested or Confirmed calls on your current calendar. Decline or cancel them, or wait until they end, then try again.'
-  const ACTIVE_CALLS_REFUSAL = /resolve active bookings/i
+    'Resolve pending and upcoming calls before disconnecting the calendar. You can still edit settings or switch calendars.'
+  const LEGACY_ACTIVE_CALLS_REFUSAL = /resolve active bookings/i
 
   const activePath = window.location.pathname.replace(/\/+$/, '') || '/'
   const activeHostname = String(window.location.hostname || '').trim().toLowerCase()
@@ -78,6 +84,7 @@
   let grantId = null
   let grantEmail = null
   let grantCalendarId = null
+  let calendarBindingVersion = null
   let activeManager = null
   let timezone = null
   let timezonePersisted = false
@@ -254,10 +261,13 @@
 
   function deriveCalendarConnectionState() {
     const hasGrant = Boolean(grantId)
+    const hasEmail = Boolean(grantEmail)
     const hasCalendar = Boolean(grantCalendarId)
     const configurationCount = Array.isArray(configs) ? configs.length : 0
     if (connectionError) return 'error'
-    if (hasGrant && hasCalendar && configurationCount > 0) return 'connected'
+    if (hasGrant && hasCalendar && (configurationCount > 0 || (hasEmail && calendarBindingVersion === 1))) {
+      return 'connected'
+    }
     if (
       hasGrant ||
       hasCalendar ||
@@ -277,6 +287,7 @@
       hasCalendar: Boolean(grantCalendarId),
       configurationCount: Array.isArray(configs) ? configs.length : 0,
       manager: (availability && availability.manager) || null,
+      calendarBindingVersion: calendarBindingVersion,
     }
     document.documentElement.setAttribute(CONNECTION_STATUS_ATTRIBUTE, state)
     window.STARTER_SCHEDULING_CONNECTION = detail
@@ -331,11 +342,17 @@
       : 'https://' + window.location.hostname + PRODUCTION_PATH
   }
 
-  function rememberOAuthIntent(memberId, redirectUri, paidCallIntent) {
+  function rememberOAuthIntent(memberId, redirectUri, paidCallIntent, previousGrantId) {
     const intent = {
       createdAt: Date.now(),
       redirectUri: redirectUri,
       paidCallIntent: paidCallIntent || null,
+    }
+    if (previousGrantId) {
+      intent.preserveBookings = true
+      intent.replaceGrantId = previousGrantId
+      intent.transitionId = crypto.randomUUID()
+      intent.targetManager = 'calendar'
     }
     return writeOAuthIntent(memberId, intent) ? intent : null
   }
@@ -368,12 +385,13 @@
     return stored
   }
 
-  function readOAuthIntent(memberId, includeDurableFallback) {
+  function readOAuthIntentRecords(memberId, includeDurableFallback) {
     const redirectUri = oauthRedirectUri()
     const key = OAUTH_INTENT_PREFIX + memberId
     const storageNames = includeDurableFallback
       ? ['sessionStorage', 'localStorage']
       : ['sessionStorage']
+    const records = []
     for (const storage of oauthIntentStorages(storageNames)) {
       try {
         const raw = storage.getItem(key)
@@ -385,7 +403,8 @@
           Date.now() - intent.createdAt <= OAUTH_INTENT_MAX_AGE &&
           intent.redirectUri === redirectUri
         ) {
-          return intent
+          records.push(intent)
+          continue
         }
         storage.removeItem(key)
       } catch (error) {
@@ -396,7 +415,63 @@
         }
       }
     }
-    return isStagingHost ? { redirectUri: redirectUri, paidCallIntent: null } : null
+    return records
+  }
+
+  function readOAuthIntent(memberId, includeDurableFallback, callback) {
+    const records = readOAuthIntentRecords(memberId, includeDurableFallback)
+    for (const intent of records) {
+      if (isCurrentCalendarPreservationIntent(intent)) return intent
+    }
+    if (callback && grantId) {
+      for (const intent of records) {
+        if (isResumableLegacyOAuthIntent(intent, callback)) return intent
+      }
+      return null
+    }
+    if (records.length) return records[0]
+    return isStagingHost && !grantId ? { redirectUri: oauthRedirectUri(), paidCallIntent: null } : null
+  }
+
+  function isCurrentCalendarPreservationIntent(intent) {
+    if (
+      !grantId ||
+      !intent ||
+      intent.preserveBookings !== true ||
+      (intent.targetManager && intent.targetManager !== 'calendar') ||
+      typeof intent.transitionId !== 'string' ||
+      !intent.transitionId
+    ) {
+      return false
+    }
+    return intent.replaceGrantId === grantId ||
+      preservedGrantReceiptMatches(intent, intent.grantReceipt, 'calendar', grantId)
+  }
+
+  function isResumableLegacyOAuthIntent(intent, callback) {
+    if (
+      !intent ||
+      intent.preserveBookings === true ||
+      !callback ||
+      callback.resumed !== true
+    ) {
+      return false
+    }
+    if (intent.oauthGrantSaved === true) {
+      if (intent.oauthGrantId) return Boolean(grantId && intent.oauthGrantId === grantId)
+      return Boolean(callback.grantId && grantId === callback.grantId)
+    }
+    return Boolean(callback.grantId && grantId === callback.grantId)
+  }
+
+  function readCompletedCalendarTransitionIntent(memberId, callbackGrantId) {
+    const records = readOAuthIntentRecords(memberId, true)
+    for (const intent of records) {
+      if (preservedGrantReceiptMatches(intent, intent.grantReceipt, 'calendar', callbackGrantId)) {
+        return intent
+      }
+    }
+    return null
   }
 
   function clearOAuthIntent(memberId) {
@@ -410,12 +485,296 @@
     })
   }
 
+  function clearOAuthRecoveryIntent(memberId) {
+    const key = OAUTH_INTENT_PREFIX + memberId
+    oauthIntentStorages().forEach(function (storage) {
+      try {
+        const raw = storage.getItem(key)
+        const intent = raw ? JSON.parse(raw) : null
+        if (!intent || (intent.preserveBookings !== true && intent.paidCallIntent)) {
+          storage.removeItem(key)
+        }
+      } catch (error) {
+        try {
+          storage.removeItem(key)
+        } catch (storageError) {
+          /* storage unavailable */
+        }
+      }
+    })
+  }
+
   function persistOAuthIntent(memberId, intent) {
     if (!Number.isFinite(intent.createdAt)) intent.createdAt = Date.now()
     if (!writeOAuthIntent(memberId, intent)) {
       throw new Error('OAuth transition could not be retained')
     }
     return intent
+  }
+
+  function platformTransitionIntentKey(memberId) {
+    return PLATFORM_TRANSITION_INTENT_PREFIX + memberId
+  }
+
+  function readPlatformTransitionIntentRecords(memberId) {
+    const key = platformTransitionIntentKey(memberId)
+    const records = []
+    for (const storage of oauthIntentStorages(['sessionStorage', 'localStorage'])) {
+      try {
+        const raw = storage.getItem(key)
+        const intent = raw ? JSON.parse(raw) : null
+        if (
+          intent &&
+          Number.isFinite(intent.createdAt) &&
+          Date.now() - intent.createdAt >= 0 &&
+          Date.now() - intent.createdAt <= OAUTH_INTENT_MAX_AGE &&
+          intent.preserveBookings === true &&
+          intent.targetManager === 'platform' &&
+          typeof intent.transitionId === 'string' &&
+          intent.transitionId
+        ) {
+          records.push(intent)
+          continue
+        }
+        storage.removeItem(key)
+      } catch (error) {
+        try {
+          storage.removeItem(key)
+        } catch (storageError) {
+          /* storage unavailable */
+        }
+      }
+    }
+    return records
+  }
+
+  function readPlatformTransitionIntent(memberId, replaceGrantId) {
+    const records = readPlatformTransitionIntentRecords(memberId)
+    for (const intent of records) {
+      if (replaceGrantId && preservedGrantReceiptMatches(intent, intent.grantReceipt, 'platform', replaceGrantId)) {
+        return intent
+      }
+    }
+    for (const intent of records) {
+      if (intent.replaceGrantId === replaceGrantId) return intent
+    }
+    return null
+  }
+
+  function readCompletedPlatformTransitionIntent(memberId, callbackGrantId) {
+    const records = readPlatformTransitionIntentRecords(memberId)
+    for (const intent of records) {
+      if (preservedGrantReceiptMatches(intent, intent.grantReceipt, 'platform', callbackGrantId)) {
+        return intent
+      }
+    }
+    return null
+  }
+
+  function writePlatformTransitionIntent(memberId, intent) {
+    const key = platformTransitionIntentKey(memberId)
+    const value = JSON.stringify(intent)
+    let stored = false
+    oauthIntentStorages(['sessionStorage', 'localStorage']).forEach(function (storage) {
+      try {
+        storage.setItem(key, value)
+        stored = true
+      } catch (error) {
+        /* storage unavailable */
+      }
+    })
+    return stored
+  }
+
+  function rememberPlatformTransitionIntent(memberId, replaceGrantId) {
+    const existing = readPlatformTransitionIntent(memberId, replaceGrantId)
+    if (existing) return existing
+    const intent = {
+      createdAt: Date.now(),
+      preserveBookings: true,
+      replaceGrantId: replaceGrantId,
+      transitionId: crypto.randomUUID(),
+      targetManager: 'platform',
+    }
+    if (!writePlatformTransitionIntent(memberId, intent)) {
+      throw new Error('Calendar transition could not be retained')
+    }
+    return intent
+  }
+
+  function clearPlatformTransitionIntent(memberId) {
+    const key = platformTransitionIntentKey(memberId)
+    oauthIntentStorages(['sessionStorage', 'localStorage']).forEach(function (storage) {
+      try {
+        storage.removeItem(key)
+      } catch (error) {
+        /* storage unavailable */
+      }
+    })
+  }
+
+  function preservedGrantReceiptMatches(intent, receipt, expectedManager, callbackGrantId) {
+    const targetManager = expectedManager || (intent && intent.targetManager) || 'calendar'
+    return Boolean(
+      intent && intent.preserveBookings === true &&
+      typeof intent.transitionId === 'string' && intent.transitionId &&
+      typeof intent.replaceGrantId === 'string' && intent.replaceGrantId &&
+      receipt && receipt.transition_id === intent.transitionId &&
+      receipt.previous_grant_retained === true && receipt.default_selected === true &&
+      receipt.services_ready === true && receipt.manager === targetManager &&
+      receipt.replaced_grant_id === intent.replaceGrantId &&
+      typeof receipt.grant_id === 'string' && receipt.grant_id &&
+      receipt.grant_id !== intent.replaceGrantId &&
+      preservedReceiptActiveConfigIds(receipt) !== null &&
+      (!callbackGrantId || receipt.grant_id === callbackGrantId)
+    )
+  }
+
+  function preservedReceiptActiveConfigIds(receipt) {
+    if (!receipt || !Array.isArray(receipt.active_config_ids)) return null
+    const ids = []
+    for (const id of receipt.active_config_ids) {
+      if (typeof id !== 'string' || id === '') return null
+      ids.push(id)
+    }
+    if (new Set(ids).size !== ids.length) return null
+    const count = receipt.active_service_count
+    if (!Number.isInteger(count) || count < 0 || count !== ids.length) return null
+    return ids
+  }
+
+  function activeSchedulerConfigs() {
+    return configs.filter(function (config) {
+      return config && config.active !== false
+    })
+  }
+
+  function hasVersionedBindingAuthority() {
+    return Boolean(grantId && grantEmail && grantCalendarId && calendarBindingVersion === 1)
+  }
+
+  function legacyOAuthRecoveryAllowed(oauthIntent) {
+    return Boolean(legacyOAuthMutationAllowed(oauthIntent) && oauthIntent.paidCallIntent)
+  }
+
+  function legacyOAuthMutationAllowed(oauthIntent) {
+    return Boolean(
+      oauthIntent &&
+      oauthIntent.preserveBookings !== true &&
+      !hasVersionedBindingAuthority()
+    )
+  }
+
+  function activeReadbackConfigIds(records, expectedGrantId) {
+    if (!Array.isArray(records)) return null
+    const ids = []
+    for (const config of records) {
+      if (!config || config.grant_id !== expectedGrantId) return null
+      if (config.active === false) continue
+      if (typeof config.config_id !== 'string' || config.config_id === '') return null
+      ids.push(config.config_id)
+    }
+    if (new Set(ids).size !== ids.length) return null
+    return ids
+  }
+
+  function sameConfigIdSet(left, right) {
+    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false
+    const expected = new Set(right)
+    return left.every(function (id) { return expected.has(id) })
+  }
+
+  async function completeOAuthGrant(memberId, intent, callback) {
+    const preserve = intent.preserveBookings === true
+    if (preserve && !(intent.transitionId && intent.replaceGrantId)) {
+      throw new Error('Calendar transition identity is missing')
+    }
+    // Only the server receipt proves a preserved switch completed. The old
+    // current grant remaining usable is deliberately not completion evidence.
+    if (preserve && preservedGrantReceiptMatches(intent, intent.grantReceipt, 'calendar')) {
+      if (!preservedGrantReceiptMatches(intent, intent.grantReceipt, 'calendar', callback.grantId)) {
+        throw new Error('Hosted calendar does not match the completed transition')
+      }
+      return
+    }
+    if (!preserve && !intent.oauthGrantSaved && callback.resumed) {
+      await refreshCanonicalConnectionState()
+      if (grantId && grantEmail && grantCalendarId && (!callback.grantId || grantId === callback.grantId)) {
+        intent.oauthGrantSaved = true
+        intent.oauthGrantId = grantId
+        persistOAuthIntent(memberId, intent)
+      }
+    }
+    if (!preserve && intent.oauthGrantSaved) {
+      if (intent.oauthGrantId && grantId && intent.oauthGrantId !== grantId) {
+        throw new Error('Saved OAuth grant does not match canonical state')
+      }
+      return
+    }
+    const payload = {
+      member_id: memberId,
+      in_redirect_uri: intent.redirectUri,
+      in_state: callback.state,
+    }
+    if (callback.code) payload.code = callback.code
+    else payload.in_grant_id = callback.grantId
+    if (preserve) {
+      payload.in_replace_grant_id = intent.replaceGrantId
+      payload.in_preserve_bookings = true
+      payload.in_transition_id = intent.transitionId
+    }
+    const receipt = await xanoPost('/grants/add/v3', payload)
+    if (preserve && !preservedGrantReceiptMatches(intent, receipt, 'calendar', callback.grantId)) {
+      throw new Error('Calendar transition did not verify booking preservation')
+    }
+    if (!(receipt && receipt.grant_id)) throw new Error('grants/add/v3 returned no grant')
+    intent.oauthGrantSaved = true
+    if (!preserve) intent.oauthGrantId = receipt.grant_id
+    if (preserve) intent.grantReceipt = receipt
+    persistOAuthIntent(memberId, intent)
+  }
+
+  function assertPreservedDefault(intent, expectedManager, callbackGrantId) {
+    if (intent.preserveBookings !== true) return
+    const targetManager = expectedManager || intent.targetManager || 'calendar'
+    const expectedActiveConfigIds = preservedReceiptActiveConfigIds(intent.grantReceipt)
+    const actualActiveConfigIds = activeReadbackConfigIds(configs, grantId)
+    if (
+      !preservedGrantReceiptMatches(intent, intent.grantReceipt, targetManager, callbackGrantId) ||
+      grantId !== intent.grantReceipt.grant_id ||
+      !grantEmail ||
+      !grantCalendarId ||
+      calendarBindingVersion !== 1 ||
+      !availability ||
+      availability.manager !== targetManager ||
+      expectedActiveConfigIds === null ||
+      actualActiveConfigIds === null ||
+      !sameConfigIdSet(actualActiveConfigIds, expectedActiveConfigIds)
+    ) {
+      throw new Error('Selected calendar does not match the verified transition')
+    }
+  }
+
+  function verifyCompletedPlatformTransitionReadback() {
+    if (!sessionMemberId || !grantId) return false
+    const intent = readCompletedPlatformTransitionIntent(sessionMemberId, grantId)
+    if (!intent || !preservedGrantReceiptMatches(intent, intent.grantReceipt, 'platform', grantId)) return false
+    assertPreservedDefault(intent, 'platform', grantId)
+    clearPlatformTransitionIntent(sessionMemberId)
+    return true
+  }
+
+  function verifyCompletedCalendarTransitionReadback() {
+    if (!sessionMemberId || !grantId) return false
+    const intent = readCompletedCalendarTransitionIntent(sessionMemberId, grantId)
+    if (!intent || !preservedGrantReceiptMatches(intent, intent.grantReceipt, 'calendar', grantId)) return false
+    assertPreservedDefault(intent, 'calendar', grantId)
+    clearOAuthIntent(sessionMemberId)
+    return true
+  }
+
+  function verifyCompletedPreservationReadback() {
+    return verifyCompletedPlatformTransitionReadback() || verifyCompletedCalendarTransitionReadback()
   }
 
   function invalidOAuthCallback(message) {
@@ -518,10 +877,20 @@
     if (errorEl) errorEl.textContent = text
   }
 
+  function showAvailabilityError(canonicalSaved) {
+    const step = switchStep('config-request-error')
+    const errorEl = transitionErrorCopyLeaf(step)
+    if (canonicalSaved && errorEl) errorEl.textContent = ERROR_TEXT_AVAILABILITY_PARTIAL
+  }
+
   function isActiveCallsRefusal(error) {
     const data = error && error.data
     const message = data && typeof data.message === 'string' ? data.message : ''
-    return Boolean(error) && error.status === 400 && ACTIVE_CALLS_REFUSAL.test(message)
+    return (
+      Boolean(error) &&
+      error.status === 400 &&
+      (message === ERROR_TEXT_ACTIVE_CALLS || LEGACY_ACTIVE_CALLS_REFUSAL.test(message))
+    )
   }
 
   // Matches the page's shared `[data-custom-loader]` contract.
@@ -856,10 +1225,13 @@
       grantId = nextGrantId
       grantEmail = (starter && starter.nylas_grant_email) || null
       grantCalendarId = (starter && starter.nylas_calendar_id) || null
+      calendarBindingVersion =
+        Number(starter && starter.calendar_binding_version) === 1 ? 1 : null
       configs = nextConfigs
       availability = canonicalAvailability
       window.STARTER_AVAILABILITY = canonicalAvailability
       writeAvailabilityCache()
+      verifyCompletedPreservationReadback()
       connectionError = false
       return publishCalendarConnectionState()
     } catch (error) {
@@ -948,8 +1320,9 @@
 
   async function recoverPaidCallAfterOAuthCancellation(memberId, oauthIntent) {
     const intent = oauthIntent && oauthIntent.paidCallIntent
-    if (!intent) return false
+    if (!legacyOAuthRecoveryAllowed(oauthIntent)) return false
     await refreshCanonicalConnectionState()
+    if (hasVersionedBindingAuthority()) return false
     let createdVirtual = false
     const recovery = oauthIntent.virtualRecovery
     const resumableGrant =
@@ -965,6 +1338,7 @@
       grantId = virtual.grant_id
       grantEmail = virtual.email
       grantCalendarId = virtual.calendar_id
+      calendarBindingVersion = null
       configs = []
       createdVirtual = true
     }
@@ -1129,8 +1503,14 @@
   async function updateConfigs(step, removeAvail) {
     configs = await getConfigs(grantId, true)
     const configsResponse = []
-    for (const record of configs) {
-      if (record.active === false) continue
+    const activeConfigs = activeSchedulerConfigs()
+    if (activeConfigs.length === 0) {
+      const succeeded = hasVersionedBindingAuthority()
+      if (succeeded && !removeAvail) switchStep('success')
+      if (step) setLoader(false, step)
+      return succeeded
+    }
+    for (const record of activeConfigs) {
       const res = await updateConfigAvailability(record)
       configsResponse.push(res)
     }
@@ -1212,6 +1592,27 @@
         persistOAuthIntent(memberId, oauthIntent)
       },
     })
+  }
+
+  async function selectPlatformDefault(memberId) {
+    if (!grantId) throw new Error('Calendar transition identity is missing')
+    const intent = rememberPlatformTransitionIntent(memberId, grantId)
+    if (!preservedGrantReceiptMatches(intent, intent.grantReceipt, 'platform')) {
+      const receipt = await xanoPost('/grants/create_virtual_account/v3', {
+        member_id: memberId,
+        in_preserve_bookings: true,
+        in_replace_grant_id: intent.replaceGrantId,
+        in_transition_id: intent.transitionId,
+      })
+      if (!preservedGrantReceiptMatches(intent, receipt, 'platform')) {
+        throw new Error('Platform transition did not verify booking preservation')
+      }
+      intent.grantReceipt = receipt
+      writePlatformTransitionIntent(memberId, intent)
+    }
+    await refreshCanonicalConnectionState()
+    assertPreservedDefault(intent, 'platform')
+    clearPlatformTransitionIntent(memberId)
   }
 
   async function clearGrant(currentGrantId, memberId) {
@@ -1395,7 +1796,7 @@
       }
       publishCalendarConnectionError()
       setLoader(false, step)
-      switchStep('config-request-error')
+      showAvailabilityError(canonicalSaved)
       console.warn('[scheduling-writer] availability save failed:', error && error.message)
       emit('starterSchedulingWriteError', {
         action: 'availability-save',
@@ -1427,6 +1828,14 @@
         switchStep('virtual-connect')
         publishCalendarConnectionState('loading')
         memberId = await writeMemberId()
+        if (availability.manager === 'calendar') {
+          await selectPlatformDefault(memberId)
+          showManagerActions()
+          switchStep('success')
+          emit('starterSchedulingWriteSuccess', { action: 'manager-platform' })
+          setLoader(false, step)
+          return
+        }
         transition = await clearGrant(grantId, memberId)
         const virtual = await createTransitionVirtualCalendar(
           memberId,
@@ -1436,6 +1845,7 @@
           grantId = virtual.grant_id
           grantEmail = virtual.email
           grantCalendarId = virtual.calendar_id
+          calendarBindingVersion = null
 
           await createFreeConfig()
 
@@ -1444,11 +1854,6 @@
           await restorePaidCallIntent(transition.paidCallIntent)
           await refreshCanonicalConnectionState()
           if (transition.oauthIntent) clearOAuthIntent(memberId)
-          try {
-            window.localStorage.setItem('prev-availability-manager', activeManager)
-          } catch (error) {
-            /* storage unavailable */
-          }
           showManagerActions()
           switchStep('success')
           emit('starterSchedulingWriteSuccess', { action: 'manager-platform' })
@@ -1461,18 +1866,9 @@
       } else {
         publishCalendarConnectionState('loading')
         memberId = await writeMemberId()
-        transition = await clearGrant(grantId, memberId)
-        grantId = null
-        grantEmail = null
-        grantCalendarId = null
-        configs = []
-        if (availability.manager !== null) {
-          availability.manager = null
-          await updateAvail()
-        }
         await refreshCanonicalConnectionState()
-        emit('starterSchedulingWriteSuccess', { action: 'manager-calendar' })
-        await handlePreRedirect(transition.paidCallIntent, true)
+        const paidCallIntent = grantId ? null : await capturePaidCallIntent()
+        await handlePreRedirect(paidCallIntent, true)
       }
     } catch (error) {
       try {
@@ -1509,6 +1905,7 @@
         grantId = virtual.grant_id
         grantEmail = virtual.email
         grantCalendarId = virtual.calendar_id
+        calendarBindingVersion = null
 
         await createFreeConfig()
 
@@ -1525,15 +1922,23 @@
         grantId = null
         grantEmail = null
         grantCalendarId = null
+        calendarBindingVersion = null
         configs = []
         publishCalendarConnectionError()
         throw new Error('Virtual calendar setup failed after disconnect')
       }
     } catch (error) {
-      try {
-        await recoverFailedCalendarTransition(memberId, transition, error)
-      } catch (recoveryError) {
-        console.warn('[scheduling-writer] disconnect recovery failed:', recoveryError && recoveryError.message)
+      const recoveryTransition = transition || (error && error.calendarTransition)
+      if (isActiveCallsRefusal(error)) {
+        if (memberId && recoveryTransition && recoveryTransition.oauthIntent) {
+          clearOAuthIntent(memberId)
+        }
+      } else {
+        try {
+          await recoverFailedCalendarTransition(memberId, transition, error)
+        } catch (recoveryError) {
+          console.warn('[scheduling-writer] disconnect recovery failed:', recoveryError && recoveryError.message)
+        }
       }
       publishCalendarConnectionError()
       showTransitionError(error)
@@ -1554,6 +1959,10 @@
       // authenticated member id; the callback must round-trip that exact
       // value and a recent member-scoped intent before any grant write.
       const memberId = await writeMemberId()
+      await refreshCanonicalConnectionState()
+      if (grantId && (!availability || availability.manager !== 'platform')) {
+        throw new Error('Google Calendar is already selected')
+      }
       await ensureTimezone()
       const redirectUri = oauthRedirectUri()
       const response = await xanoPost('/grants/oauth/v3', {
@@ -1568,7 +1977,7 @@
         response.response.result.data &&
         response.response.result.data.url
       if (!url) throw new Error('grants/oauth returned no URL')
-      if (!rememberOAuthIntent(memberId, redirectUri, paidCallIntent)) {
+      if (!rememberOAuthIntent(memberId, redirectUri, paidCallIntent, grantId)) {
         throw new Error('OAuth transition could not be retained')
       }
       // A delayed window.open occurs after awaited requests and is blocked by
@@ -1619,7 +2028,7 @@
         renderAvail()
       }
       publishCalendarConnectionError()
-      switchStep('config-request-error')
+      showAvailabilityError(canonicalSaved)
       console.warn('[scheduling-writer] availability remove failed:', error && error.message)
       emit('starterSchedulingWriteError', {
         action: 'availability-remove',
@@ -1749,6 +2158,7 @@
       grantId = null
       grantEmail = null
       grantCalendarId = null
+      calendarBindingVersion = null
 
       availability = await availabilityFromInitializer()
 
@@ -1771,6 +2181,8 @@
       grantId = (starterRecord && starterRecord.nylas_grant_id) || null
       grantEmail = (starterRecord && starterRecord.nylas_grant_email) || null
       grantCalendarId = (starterRecord && starterRecord.nylas_calendar_id) || null
+      calendarBindingVersion =
+        Number(starterRecord && starterRecord.calendar_binding_version) === 1 ? 1 : null
 
       form.addEventListener('submit', function (e) {
         e.preventDefault()
@@ -1784,10 +2196,27 @@
       )
       let connectedCalendar = isStagingHost ? urlParams.get('calendar') || null : null
       let oauthPaidCallIntent = null
+      let preservedCallbackIncomplete = false
+      let canonicalConfigsLoaded = false
+      let preservedReadbackVerified = false
 
       if (!oauthCallback) {
-        const pendingTransition = readOAuthIntent(sessionMemberId)
-        if (pendingTransition && pendingTransition.paidCallIntent) {
+        if (grantId) {
+          configs = (await getConfigs(grantId, true)) || []
+          canonicalConfigsLoaded = true
+          try {
+            preservedReadbackVerified = verifyCompletedPreservationReadback()
+          } catch (error) {
+            error.code = PRESERVATION_READBACK_INVALID
+            throw error
+          }
+          if (preservedReadbackVerified) clearOAuthRecoveryIntent(sessionMemberId)
+        }
+        if (hasVersionedBindingAuthority()) clearOAuthRecoveryIntent(sessionMemberId)
+        const pendingTransition = (preservedReadbackVerified || hasVersionedBindingAuthority())
+          ? null
+          : readOAuthIntent(sessionMemberId)
+        if (legacyOAuthRecoveryAllowed(pendingTransition)) {
           const recovered = await recoverPaidCallAfterOAuthCancellation(
             sessionMemberId,
             pendingTransition,
@@ -1803,7 +2232,6 @@
       // match the logged-in member. grants/add/v3 performs the authoritative
       // server-side exchange or grant lookup before persisting V3 state.
       if (oauthCallback) {
-        const oauthCode = oauthCallback.code
         const oauthGrantId = oauthCallback.grantId
         const oauthState = oauthCallback.state
         let memberId = null
@@ -1815,7 +2243,9 @@
             throw invalidOAuthCallback('OAuth state does not match the logged-in member')
           }
           trustedState = true
-          oauthIntent = readOAuthIntent(memberId, true)
+          const completedGrantId = oauthGrantId || grantId
+          oauthIntent = (completedGrantId && readCompletedCalendarTransitionIntent(memberId, completedGrantId)) ||
+            readOAuthIntent(memberId, true, oauthCallback)
           if (oauthCallback.hasError) {
             throw invalidOAuthCallback('OAuth authorization was cancelled or failed')
           }
@@ -1827,47 +2257,33 @@
           }
           oauthPaidCallIntent = oauthIntent.paidCallIntent || null
           await ensureTimezone()
-          if (!oauthIntent.oauthGrantSaved && oauthCallback.resumed) {
-            await refreshCanonicalConnectionState()
-            if (
-              grantId &&
-              grantEmail &&
-              grantCalendarId &&
-              (!oauthGrantId || grantId === oauthGrantId)
-            ) {
-              oauthIntent.oauthGrantSaved = true
-              persistOAuthIntent(memberId, oauthIntent)
-            }
-          }
-          if (!oauthIntent.oauthGrantSaved) {
-            const grantPayload = {
-              member_id: memberId,
-              in_redirect_uri: oauthIntent.redirectUri,
-              in_state: oauthState,
-            }
-            if (oauthCode) grantPayload.code = oauthCode
-            else grantPayload.in_grant_id = oauthGrantId
-            const grant = await xanoPost('/grants/add/v3', grantPayload)
-            if (!(grant && grant.grant_id)) {
-              throw new Error('grants/add/v3 returned no grant')
-            }
-            oauthIntent.oauthGrantSaved = true
-            persistOAuthIntent(memberId, oauthIntent)
-          }
+          await completeOAuthGrant(memberId, oauthIntent, oauthCallback)
           await refreshCanonicalConnectionState()
           if (!grantId || !grantEmail || !grantCalendarId) {
             throw new Error('Canonical OAuth grant readback is incomplete')
           }
-          if (availability.manager !== 'calendar') {
-            availability.manager = 'calendar'
-            await updateAvail()
+          assertPreservedDefault(oauthIntent, 'calendar', oauthGrantId)
+          if (oauthIntent.preserveBookings !== true) {
+            if (!legacyOAuthMutationAllowed(oauthIntent)) {
+              clearOAuthIntent(memberId)
+              clearOAuthCallback()
+              connectedCalendar = null
+              switchStep('default')
+              emit('starterSchedulingWriteSuccess', { action: 'oauth-connect' })
+              return
+            }
+            if (availability.manager !== 'calendar') {
+              availability.manager = 'calendar'
+              await updateAvail()
+            }
+            const hasFreeConfig = configs.some(function (config) {
+              return config && config.config_id && config.is_paid === false && config.active !== false
+            })
+            if (!hasFreeConfig) await createFreeConfig()
+            await restorePaidCallIntent(oauthPaidCallIntent)
+            await refreshCanonicalConnectionState()
+            assertPreservedDefault(oauthIntent, 'calendar', oauthGrantId)
           }
-          const hasFreeConfig = configs.some(function (config) {
-            return config && config.config_id && config.is_paid === false && config.active !== false
-          })
-          if (!hasFreeConfig) await createFreeConfig()
-          await restorePaidCallIntent(oauthPaidCallIntent)
-          await refreshCanonicalConnectionState()
           clearOAuthIntent(memberId)
           clearOAuthCallback()
           connectedCalendar = null
@@ -1875,12 +2291,16 @@
           emit('starterSchedulingWriteSuccess', { action: 'oauth-connect' })
         } catch (error) {
           let recovered = false
+          if (oauthIntent && oauthIntent.preserveBookings === true) {
+            preservedCallbackIncomplete = true
+            connectedCalendar = null
+          }
           if (
             error &&
             error.code === 'OAUTH_CALLBACK_INVALID' &&
             trustedState &&
             oauthIntent &&
-            oauthIntent.paidCallIntent
+            legacyOAuthRecoveryAllowed(oauthIntent)
           ) {
             try {
               recovered = await recoverPaidCallAfterOAuthCancellation(
@@ -1898,7 +2318,7 @@
           if (
             error &&
             error.code === 'OAUTH_CALLBACK_INVALID' &&
-            (!trustedState || !oauthIntent || !oauthIntent.paidCallIntent || recovered)
+            (!trustedState || !oauthIntent || oauthIntent.preserveBookings === true || !oauthIntent.paidCallIntent || hasVersionedBindingAuthority() || recovered)
           ) {
             if (trustedState && memberId) clearOAuthIntent(memberId)
             clearOAuthCallback()
@@ -1913,15 +2333,26 @@
       }
 
       if (grantId) {
-        configs = (await getConfigs(grantId, true)) || []
-        if (isStagingHost && !configs.length && !connectedCalendar) {
+        if (!canonicalConfigsLoaded) configs = (await getConfigs(grantId, true)) || []
+        if (
+          isStagingHost &&
+          !configs.length &&
+          !connectedCalendar &&
+          !preservedCallbackIncomplete &&
+          !hasVersionedBindingAuthority()
+        ) {
           await createFreeConfig()
           refreshCanonicalConnectionSoon(500)
         }
       }
 
       // Returning from the calendar OAuth round trip.
-      if (connectedCalendar && !configs.length) {
+      if (
+        connectedCalendar &&
+        !configs.length &&
+        !preservedCallbackIncomplete &&
+        !hasVersionedBindingAuthority()
+      ) {
         urlParams.delete('calendar')
         const remainingQuery = urlParams.toString()
         window.history.replaceState(
@@ -1988,30 +2419,7 @@
 
       // Popup close.
       qsa('[availability-popup-close]').forEach(function (btn) {
-        btn.addEventListener('click', async function () {
-          if (btn.getAttribute('availability-popup-close') === 'pre-redirect') {
-            let previousManager = null
-            try {
-              previousManager = window.localStorage.getItem('prev-availability-manager')
-            } catch (error) {
-              /* storage unavailable */
-            }
-            availability.manager = previousManager || null
-            try {
-              await updateAvail()
-              await refreshCanonicalConnectionState()
-            } catch (error) {
-              publishCalendarConnectionError()
-              console.warn(
-                '[scheduling-writer] manager restore failed:',
-                error && error.message,
-              )
-            }
-            if (availability.manager === null) {
-              switchStep('how-to-manage')
-              return
-            }
-          }
+        btn.addEventListener('click', function () {
           if (initialState) return
           setTimeout(function () {
             switchStep('default')
@@ -2028,6 +2436,7 @@
         handleAction(btn, form)
       })
 
+      if (!preservedCallbackIncomplete) verifyCompletedPreservationReadback()
       publishCalendarConnectionState()
       setStatus('ready')
       emit('starterSchedulingWriterReady', { memberId: sessionMemberId })
@@ -2035,6 +2444,13 @@
     } catch (error) {
       publishCalendarConnectionError()
       setStatus('error')
+      if (error && error.code === PRESERVATION_READBACK_INVALID) {
+        const step = switchStep('config-request-error')
+        const errorEl = transitionErrorCopyLeaf(step)
+        if (errorEl) errorEl.textContent = ERROR_TEXT_CALENDAR_VERIFY
+        if (step) setLoader(false, step)
+        bookingsWrapper('hide')
+      }
       console.warn('[scheduling-writer] initialization failed:', error && error.message)
       emit('starterSchedulingWriteError', {
         action: 'initialize',

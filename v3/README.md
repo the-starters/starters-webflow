@@ -3357,16 +3357,18 @@ Runtime contract:
   `init`, `update`, `error`, `not-applicable`, or `missing-controls`.
 - `data-scheduling-calendar-state` reports `loading`, `disconnected`,
   `connected`, `reconnect`, or `error`. `connected` is terminal only after the
-  writer proves a grant, a calendar, and at least one scheduler configuration;
-  partial or stale provider state is `reconnect`.
+  active availability controller proves either a grant, calendar, and at least
+  one scheduler configuration, or a versioned zero-offer binding with grant,
+  email, calendar, and `calendarBindingVersion: 1`; partial or stale provider
+  state is `reconnect`.
 - `window.STARTER_AVAILABILITY` contains the normalized availability after a
   successful read and is `null` after an error.
 - `window.STARTER_SCHEDULING_CONNECTION` contains only non-secret connection
   state. The initializer always supplies `state` and the last canonical
-  configuration count; once the writer runs, it also supplies boolean
-  grant/calendar flags and manager. Transient loading and error events do not
-  replace the retained canonical count. Provider identifiers are never exposed
-  through this object.
+  configuration count; once an availability controller runs, it also supplies
+  boolean grant/calendar flags, manager, and `calendarBindingVersion`. Transient
+  loading and error events do not replace the retained canonical count.
+  Provider identifiers are never exposed through this object.
 - `starterSchedulingAvailabilityReady` carries
   `{ memberId, source, state, connectionState }`;
   `source` is `starter`, `default`, or `query-test`, and `state` is
@@ -3477,14 +3479,16 @@ inside it. All **11** step wrappers exist:
 
 The manager-selection tiles and submit action are normalized at runtime to the
 supported choices: `Use platform availability` or `Connect Google Calendar`.
-Selecting Google clears the previous grant, restores the disconnected state
-from the canonical scheduling row, prepares the authenticated hosted OAuth URL,
-and navigates the current tab without a second confirmation. The same-tab
-handoff intentionally avoids delayed `window.open`, which browsers block after
-asynchronous Xano requests. Before navigation, it writes the member-scoped
-intent to both the current tab's `sessionStorage` and a same-origin
-`localStorage` fallback so a provider redirect that loses tab storage can still
-return to the verified flow.
+Selecting Google while Platform is active preserves the current default during
+OAuth, prepares the authenticated hosted OAuth URL, and navigates the current
+tab without a second confirmation. The same-tab handoff intentionally avoids
+delayed `window.open`, which browsers block after asynchronous Xano requests.
+Before navigation, it writes the member-scoped intent to both the current tab's
+`sessionStorage` and a same-origin `localStorage` fallback so a provider
+redirect that loses tab storage can still return to the verified flow. Selecting
+Platform while Google is active uses the preserved Platform selection receipt
+contract below instead of deleting or rebuilding the Google grant in the
+browser.
 
 Only `setup-form`, `how-to-manage`, and `disconnect-calendar` carry a
 step-scoped `[data-custom-loader]`; `setLoader` is a safe no-op on the rest
@@ -3498,8 +3502,7 @@ Designer follow-up):
 - no `[starter-timezone]` label element exists, so the timezone text renders
   nowhere (resolution/persistence still runs);
 - no `availability-popup-close="pre-redirect"` variant exists (both close
-  controls are plain), so the legacy manager-restore close branch is
-  currently dead but harmless.
+  controls are plain), and closing the modal no longer writes an old manager.
 
 Error-copy contract: when `config-request-error` has a plain-text
 `[error-text-element]`, every reveal restores its Designer-authored copy before
@@ -3536,27 +3539,35 @@ Deliberately NOT ported from the legacy inline writer:
 - the `availability-popup-shown` auto-open behavior (the init module owns
   initial visibility);
 - the bookings list machinery — the writer delegates list rendering to the page
-  embed's `window.generateBookingsList` when present. Disconnects and manager
-  switches never delegate to `window.clearGrantData`: the authenticated
-  `grants/delete/v3` composite route is the single clear owner. While the
-  current calendar has a pending (Requested), confirmed, or rescheduled call
-  whose end time has not passed, that route returns HTTP 400 with a
-  `data.message` matching
-  `/resolve active bookings/i` and does not cancel, archive, or delete anything.
-  Both availability controllers map only that status and message to: `You have
-  Requested or Confirmed calls on your current calendar. Decline or cancel them,
-  or wait until they end, then try again.` Unrelated failures keep the authored
-  generic copy, and the paid-call-rate remediation keeps priority. Once the
+  embed's `window.generateBookingsList` when present. Disconnects never delegate
+  to `window.clearGrantData`: the authenticated `grants/delete/v3` composite
+  route is the single clear owner. In the preservation backend contract, any
+  Starter-owned pending or rescheduled call blocks true Disconnect, including
+  calls on retained grants. A confirmed call blocks it while its current or
+  original end time is still in the future. The route returns HTTP 400 without
+  cancelling, archiving, or deleting anything. Both availability controllers
+  recognize the new pending/upcoming-call refusal and the legacy
+  `/resolve active bookings/i` refusal. They show: `Resolve pending and upcoming
+  calls before disconnecting the calendar. You can still edit settings or switch
+  calendars.` Unrelated failures keep the authored generic copy, and the
+  paid-call-rate remediation keeps priority. Once the
   route's preconditions pass, it deletes the provider grant first and only then
-  clears configurations and canonical scheduling state.
+  clears configurations and canonical scheduling state. Preserved manager
+  switches use the receipt contracts below and do not call the clear route.
 - One deliberate behavior fix: a failed configuration update no longer falls
   through to the `success` step (legacy phantom-success bug).
 
 V3 endpoint contract (no Airtable row keys anywhere): the writer calls
 `grants/oauth/v3` with `in_state: <authenticated member id>` and an
 allowlisted `in_redirect_uri`, and sends that same URI and state to
-`grants/add/v3`; it calls `grants/add_virtual/v3` with
-`{ grant_id, member_id }`. Both are new memberstack_id-keyed endpoints; the
+`grants/add/v3`; first-time Platform setup calls `grants/add_virtual/v3` with
+`{ grant_id, member_id }`, while preserved Google-to-Platform selection calls
+`grants/create_virtual_account/v3` with `{ member_id, in_preserve_bookings:
+true, in_replace_grant_id, in_transition_id }`. Preserved receipts include
+`services_ready: true`, `manager`, `active_config_ids`, and
+`active_service_count`; the count must equal the unique active ID list, which
+may be empty when both call types are off. Both are new
+memberstack_id-keyed endpoints; the
 legacy airtable_id-keyed
 `grants/oauth`/`grants/add`/`grants/add_virtual` remain untouched for V2. The
 OAuth return is handled by the availability writer via `grants/add/v3`
@@ -3618,10 +3629,10 @@ Runtime contract:
   `starterSchedulingWriteSuccess` `{ action }`, and
   `starterSchedulingWriteError` `{ action, message }`.
 - `starterSchedulingConnectionStateChanged` carries `{ state, hasGrant,
-  hasCalendar, configurationCount, manager }`. Bootstrap fails closed to
-  `error` when the canonical configuration read fails. An invalid or cancelled
-  OAuth return opens the existing `config-request-error` panel without a grant
-  write.
+  hasCalendar, configurationCount, manager, calendarBindingVersion }`.
+  Bootstrap fails closed to `error` when the canonical configuration read
+  fails. An invalid or cancelled OAuth return opens the existing
+  `config-request-error` panel without a grant write.
 - `window.StarterSchedulingAvailabilityWriter` exposes `initialize()` for
   retries plus `switchStep`, `daysAlias`, `getAvailArray`,
   `minimumBookingNoticeMinutes`, and `publishCalendarConnectionState`.
@@ -3650,20 +3661,21 @@ It does not consume an availability-state handoff from
 record itself. The initializer's separate UI-routing contract is documented in
 [Booking-stage availability initializer](#booking-stage-availability-initializer).
 
-Google Calendar disconnect and manager switches follow the provider-first
-composite clear contract in
-[Booking-stage availability writer](#booking-stage-availability-writer); this
-section does not add a second clear owner.
+Google Calendar disconnect follows the provider-first composite clear contract in
+[Booking-stage availability writer](#booking-stage-availability-writer).
+Preserved manager switches follow the receipt contract below; this section does
+not add a second clear owner.
 
 Connect Google goes straight to the `pre-oauth` step; the retired
 `switch-calendar` step never opens, and a stale Connect Google click without a
 connected Platform layer is ignored. V3 keeps one grant per member, so the
-"Done" click deletes the Platform grant through `grants/delete/v3` before the
-OAuth redirect. The shared composite-clear contract above owns its active-call
-refusal and no-cancellation guarantees; this section names any blocking calls in
-the error step. Known limit: if Google sign-in is abandoned after the Platform
-grant is deleted, the member remains disconnected until they click Connect
-Platform; reordering the transition server-side is planned.
+"Done" click starts Google OAuth without deleting, clearing, or changing the
+current default. The current grant remains selected until `grants/add/v3`
+returns the preserved-selection receipt and the controller verifies fresh
+canonical grant, manager, versioned binding marker, and exact active
+configuration ownership. If Google sign-in is abandoned, the member remains on
+the old default. Actual Disconnect Google keeps the separate guarded destructive
+path.
 
 Designer markup contract (`data-availability-element="<name>"` unless noted):
 `section` (root), `connect-wrapper`, `connect-label-group`, `connect-label`,
@@ -3730,10 +3742,11 @@ notification, applies native custom validity to both authored inputs, keeps the
 inline form editable, and sends no availability request.
 
 The three `connect-btn-wrapper` actions follow the two-layer state matrix. With
-no connection, only Connect Platform shows. With a virtual Nylas
-grant, only Connect Google shows. With a Google-backed Nylas grant, only
-Disconnect Google shows. Connect Platform is never valid while either layer is
-connected, and a stale or programmatic click is ignored.
+no connection, only Connect Platform shows. With a virtual Nylas grant, only
+Connect Google shows. With a ready Google-backed Nylas grant, Use Platform
+Calendar and Disconnect Google both show: Use Platform Calendar selects the
+future default through the preserved server receipt, while Disconnect Google
+remains the explicit destructive path. A stale or programmatic click is ignored.
 
 A grant left behind without a calendar id is not a connection, so Connect
 Platform stays available there and rebuilds over it: the flow deletes the
@@ -3744,12 +3757,13 @@ still Google-backed keeps the confirmed Disconnect Google path instead, so no
 live provider grant is ever deleted without the confirm step.
 
 Every action that deletes a live Google grant confirms first. Connect Platform
-never touches a live Google grant, so it opens the
+never deletes a live Google grant: first-time setup opens the
 `notification-type="virtual-connect"` spinner and creates the virtual Nylas
-calendar. Disconnect Google opens `notification-type="disconnect-calendar"`.
-After confirmation, the provider-first flow deletes the Google-backed grant
-and creates a virtual Nylas grant. The result is Platform Connected and Google
-Disconnected.
+calendar, while the Google-active Use Platform Calendar action calls the
+preserved Platform selection composite. Disconnect Google opens
+`notification-type="disconnect-calendar"`. After confirmation, the
+provider-first flow deletes the Google-backed grant and creates a virtual Nylas
+grant. The result is Platform Connected and Google Disconnected.
 
 Disconnect Google is the only flow that deletes a live Google grant. If its
 replacement virtual calendar fails after that deletion, it drops the local
@@ -3844,11 +3858,64 @@ validation (`code` or `grant_id`, `state`, and `success`) stay in the current
 tab's `sessionStorage` for at most 15 minutes so a reload after Memberstack
 login, or a transient grant-save failure, can resume the same handoff. The
 controller clears the saved callback and member-scoped intent only after
-`grants/add/v3` succeeds,
-or clears the callback immediately when validation fails; expired or malformed
-state is also discarded. Intent cleanup removes both storage copies. Provider
-access tokens are never stored in the browser, and the returned `email` and
-`provider` are neither retained nor trusted.
+`grants/add/v3` succeeds, after an already-canonical versioned binding consumes
+a stale legacy callback read-only, or after validation fails; expired or
+malformed state is also discarded. Intent cleanup removes both storage copies.
+Provider access tokens are never stored in the browser, and the returned
+`email` and `provider` are neither retained nor trusted.
+
+A Google connection started while a calendar is already selected preserves the
+current grant, availability, and configurations during OAuth. Its member-scoped
+intent includes the expected old grant and a stable transition ID. Completion
+adds `in_preserve_bookings: true`, `in_replace_grant_id`, and `in_transition_id`
+to `grants/add/v3`. The endpoint must retain old bookings and return matching
+`transition_id` and `replaced_grant_id`, `previous_grant_retained: true`,
+`default_selected: true`, `services_ready: true`, `manager: "calendar"`, and a
+distinct new `grant_id`. The receipt also carries `active_config_ids` and
+`active_service_count`, where the count must equal the unique active ID list and
+the list may be empty when both call types are off. Hosted callbacks must also
+match that new grant. The controller then performs fresh canonical reads only:
+the selected canonical grant, grant email, calendar ID, target manager, and
+`calendar_binding_version: 1` marker must match the completed binding, and the
+fresh configuration readback must be owned by the new grant with the exact
+active `config_id` set attested by the receipt. In preserve mode it does not
+update `availability.manager`, create Free configs, or restore Paid settings
+from browser state after the receipt. A saved completion receipt prevents
+re-exchanging a completed one-use code; a still-connected old grant alone never
+proves completion. Cancellation or abandonment of this handoff does not rebuild
+a virtual calendar. Actual Disconnect keeps the existing deletion guard and
+recovery path.
+
+Google-to-Platform future-default selection uses
+`grants/create_virtual_account/v3` with `{ member_id, in_preserve_bookings:
+true, in_replace_grant_id, in_transition_id }`. The endpoint returns the same
+receipt fields with `manager: "platform"`, `services_ready: true`,
+`active_config_ids`, and `active_service_count`. The controller keeps a stable
+member-scoped transition ID for retries against the same expected old grant,
+verifies fresh canonical grant, grant email, calendar ID,
+`calendar_binding_version: 1`, target manager, and exact active configuration
+ID ownership, and then clears the saved transition. This preserved path does
+not call `grants/delete/v3`, `grants/add_virtual/v3`,
+`grants/create_virtual_calendar/v3`, `starter/update_availability/v3`,
+configuration create/update, or paid-call settings upsert.
+
+The exposed UI scope is the existing Platform-to-Google and Google-to-Platform
+selection paths. This browser change does not add a Google-account-to-another-Google-account switch control.
+
+The versioned binding marker is durable reload authority. A later ordinary
+page load with a valid grant ID, grant email, calendar ID, and
+`calendar_binding_version: 1` is connected even if the configuration list is
+empty. Without that marker, legacy empty-configuration setup remains incomplete
+and shows the reconnect path. Availability save and remove actions on a valid
+versioned empty-offer binding persist canonical availability and perform no
+configuration create or update writes. Legacy OAuth callback and destructive
+recovery paths also treat that marker as authoritative and do not create Free
+configs, restore Paid settings, or change the manager from browser state.
+
+This transition contract requires the compatible backend before the frontend
+release is activated. Availability changes still use canonical save followed
+by provider synchronization. If only the canonical save succeeds, the error
+states that availability was saved and booking times need verification.
 
 Nylas-standard OAuth failures (`error`, `error_description`, `error_uri`, or
 `error_code`) are captured without retaining their provider text and stripped
