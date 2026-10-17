@@ -19,11 +19,61 @@ class Element {
   constructor(tag, attrs = {}, children = []) {
     this.tagName = tag.toUpperCase()
     this.attrs = Object.assign({}, attrs)
+    this.style = {}
+    this.parentNode = null
     // childNodes keeps text and element children in order, like the DOM;
     // `children` holds elements only.
     this.childNodes = children.map((child) =>
       typeof child === 'string' ? { text: child } : child,
     )
+    this.childNodes.forEach((child) => {
+      if (child instanceof Element) child.parentNode = this
+    })
+    const el = this
+    this.classList = {
+      contains: (name) => String(el.attrs.class || '').split(/\s+/).includes(name),
+      add: (name) => {
+        if (!el.classList.contains(name)) el.attrs.class = (String(el.attrs.class || '') + ' ' + name).trim()
+      },
+      remove: (name) => {
+        el.attrs.class = String(el.attrs.class || '')
+          .split(/\s+/)
+          .filter((c) => c && c !== name)
+          .join(' ')
+      },
+    }
+  }
+  get nextSibling() {
+    if (!this.parentNode) return null
+    const siblings = this.parentNode.childNodes
+    return siblings[siblings.indexOf(this) + 1] || null
+  }
+  cloneNode(deep) {
+    const copy = new Element(
+      this.tagName,
+      this.attrs,
+      deep
+        ? this.childNodes.map((child) => (child instanceof Element ? child.cloneNode(true) : child.text))
+        : [],
+    )
+    copy.style = Object.assign({}, this.style)
+    return copy
+  }
+  insertBefore(node, reference) {
+    if (node.parentNode) node.parentNode.removeChild(node)
+    const index = reference ? this.childNodes.indexOf(reference) : -1
+    if (index === -1) this.childNodes.push(node)
+    else this.childNodes.splice(index, 0, node)
+    node.parentNode = this
+    return node
+  }
+  removeChild(node) {
+    this.childNodes = this.childNodes.filter((child) => child !== node)
+    node.parentNode = null
+    return node
+  }
+  removeAttribute(name) {
+    delete this.attrs[name]
   }
   get children() {
     return this.childNodes.filter((child) => child instanceof Element)
@@ -138,7 +188,7 @@ function run(hostname, root, extra = {}) {
     },
     extra.document || {},
   )
-  const window = { location: { hostname }, document }
+  const window = Object.assign({ location: { hostname }, document }, extra.window || {})
   vm.runInNewContext(source, { window, Object, Array, String })
   return window
 }
@@ -377,3 +427,121 @@ test('staging shows the relaunch Learn paywall price; production turns a leaked 
     assert.deepEqual(texts(leaked), [PAYWALL_LIVE])
   }
 })
+
+const TRIAL_Q = 'How does the 7-day monthly trial work?'
+const GRANDFATHER_Q = 'Will my existing membership price change?'
+
+// Same structure as the published FAQ component: the pricing answer carries
+// data-relaunch-pricing="faq-pricing"; a second list follows in the wrapper.
+function faqWrapper(wrapperAttrs = {}) {
+  const item = (question, answer, answerAttrs = {}) =>
+    h('div', { role: 'listitem', class: 'accordion_item' }, [
+      h('div', { 'data-accordion': 'component', class: 'accordion_component is-active' }, [
+        h('h3', { class: 'accordion_toggle-heading' }, [
+          h('button', { type: 'button', 'data-accordion': 'toggle-button', 'aria-expanded': 'true', id: 'accordion_button_1', 'aria-controls': 'accordion_content_1' }, [
+            h('span', { class: 'accordion_toggle-text' }, [question]),
+            h('span', { class: 'accordion_toggle-icon' }, [h('div', { class: 'icon-12' }, [h('svg', {}, [h('path', {}, [])])])]),
+          ]),
+        ]),
+        h('div', { 'data-accordion': 'content-wrap', id: 'accordion_content_1', 'aria-labelledby': 'accordion_button_1' }, [
+          h('div', { class: 'accordion_content-padding' }, [h('p', Object.assign({ class: 'text-size-medium' }, answerAttrs), [answer])]),
+        ]),
+      ]),
+    ])
+  const pricing = item('How much is a Starters membership?', FAQ_LIVE, { 'data-relaunch-pricing': 'faq-pricing' })
+  pricing.childNodes[0].childNodes[1].style.display = 'block'
+  const firstList = h('div', { class: 'accordion_list' }, [pricing])
+  const otherList = h('div', { 'data-accordion': 'list', role: 'list' }, [item('Who are the Starters?', 'Vetted operators.')])
+  return h('div', Object.assign({ 'data-accordion': 'wrapper', 'data-close-on-second-click': 'true' }, wrapperAttrs), [firstList, otherList])
+}
+
+function faqQuestions(root) {
+  return root.querySelectorAll('[data-accordion="toggle-button"]').map((b) => texts(b)[0])
+}
+
+test('staging adds the two relaunch FAQ items right after the pricing item', () => {
+  const root = h('body', {}, [faqWrapper()])
+  run(STAGING, root)
+
+  assert.deepEqual(faqQuestions(root), [
+    'How much is a Starters membership?',
+    TRIAL_Q,
+    GRANDFATHER_Q,
+    'Who are the Starters?',
+  ])
+  const added = root.querySelectorAll('[data-relaunch-faq]')
+  assert.deepEqual(added.map((el) => el.getAttribute('data-relaunch-faq')), ['trial', 'grandfathering'])
+  assert.ok(texts(added[0]).some((t) => t.startsWith('Start your monthly membership with 7 days for $1')))
+  assert.ok(texts(added[1]).includes('Existing members keep their current price. If you cancel and later rejoin, the new pricing applies: $495/month, or $295/month billed annually at $3,540/year.'))
+  // The pricing answer shows relaunch copy; copies keep no anchor, state, or generated IDs.
+  assert.equal(root.querySelectorAll('[data-relaunch-pricing="faq-pricing"]').length, 1)
+  assert.ok(texts(root).includes(FAQ_RELAUNCH))
+  for (const el of added) {
+    const button = el.querySelectorAll('[data-accordion="toggle-button"]')[0]
+    const content = el.querySelectorAll('[data-accordion="content-wrap"]')[0]
+    assert.equal(button.getAttribute('aria-expanded'), 'false')
+    assert.equal(button.getAttribute('id'), null)
+    assert.equal(button.getAttribute('aria-controls'), null)
+    assert.equal(content.getAttribute('id'), null)
+    assert.equal(content.style.display, 'none')
+    assert.equal(el.querySelectorAll('[data-accordion="component"]')[0].classList.contains('is-active'), false)
+  }
+})
+
+test('staging registers the added cards with an already initialized accordion', () => {
+  const registered = []
+  const groups = []
+  const accordions = {
+    group: (settings) => {
+      groups.push(settings)
+      return { register: (card, button, content) => registered.push([card, button, content]) }
+    },
+  }
+  const root = h('body', {}, [faqWrapper({ 'data-script-initialized': 'true' })])
+  run(STAGING, root, { window: { StarterAccordions: accordions } })
+
+  assert.equal(registered.length, 2)
+  assert.deepEqual(JSON.parse(JSON.stringify(groups)), [{ closeOnSecondClick: true }])
+  for (const [card, button, content] of registered) {
+    assert.equal(card.getAttribute('data-accordion'), 'component')
+    assert.equal(button.getAttribute('data-accordion'), 'toggle-button')
+    assert.equal(content.getAttribute('data-accordion'), 'content-wrap')
+  }
+})
+
+test('staging leaves registration to the accordion scan when it has not run yet', () => {
+  let calls = 0
+  const root = h('body', {}, [faqWrapper()])
+  run(STAGING, root, { window: { StarterAccordions: { group: () => { calls += 1; return { register() {} } } } } })
+
+  assert.equal(calls, 0)
+  assert.equal(root.querySelectorAll('[data-relaunch-faq]').length, 2)
+})
+
+test('the FAQ items are added once, and not when the Designer already shows them', () => {
+  const root = h('body', {}, [faqWrapper()])
+  const window = run(STAGING, root)
+  window.StartersRelaunchPricingPreview.apply(root)
+  assert.equal(root.querySelectorAll('[data-relaunch-faq]').length, 2)
+
+  const designer = faqWrapper()
+  const list = designer.childNodes[0]
+  list.insertBefore(h('div', { role: 'listitem', 'data-relaunch-faq': 'trial' }, ['Designer item']), null)
+  const page = h('body', {}, [designer])
+  run(STAGING, page)
+  assert.equal(page.querySelectorAll('[data-relaunch-faq]').length, 1)
+})
+
+for (const hostname of ['www.thestarters.com', 'thestarters.com']) {
+  test(`production host "${hostname}" removes leaked relaunch FAQ items and adds none`, () => {
+    const root = h('body', {}, [faqWrapper()])
+    root.childNodes[0].childNodes[0].insertBefore(
+      h('div', { role: 'listitem', 'data-relaunch-faq': 'trial' }, [TRIAL_Q]),
+      null,
+    )
+    run(hostname, root)
+
+    assert.equal(root.querySelectorAll('[data-relaunch-faq]').length, 0)
+    assert.deepEqual(faqQuestions(root), ['How much is a Starters membership?', 'Who are the Starters?'])
+  })
+}
