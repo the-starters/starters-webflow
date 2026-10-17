@@ -23,6 +23,8 @@ Add `data-member-status="pause-option"` to the Manage Membership Pause
 description wrapper. Trial members see neither the Pause controls nor their
 explanation; the Manage Membership heading stays visible.
 
+Connections whose type is `FREE` (such as the Test Brand plan) are never
+recognized membership connections, so they cannot enable Pause or supply a price.
 For a recognized membership connection, `TRIALING` on the connection or its
 `payment.status` hides the Manage Membership Pause button, cancellation's
 **Pause My Membership Instead** and **Confirm pause** controls, and standalone
