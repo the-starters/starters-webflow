@@ -18,6 +18,8 @@
  * can never be overwritten with the wrong offer.
  * Standalone Why Us, Learn, comparison and FAQ price fields opt in through
  * `data-relaunch-pricing`; member account prices are outside these scopes.
+ * FAQ rows marked `data-relaunch-faq="trial" | "grandfathering"` keep a
+ * native hidden-by-default style and are revealed on the staging host only.
  *
  * On any other host the module returns before it reads the DOM. Checkout
  * acceptance of the relaunch price IDs stays owned by
@@ -133,6 +135,13 @@
       var kind = fields[f].getAttribute('data-relaunch-pricing')
       if (Object.prototype.hasOwnProperty.call(FIELD_TEXT, kind)) {
         result.labels += swapText(fields[f], FIELD_TEXT[kind])
+      }
+    }
+    var faqs = doc.querySelectorAll('[data-relaunch-faq]')
+    for (var q = 0; q < faqs.length; q += 1) {
+      var faqKind = faqs[q].getAttribute('data-relaunch-faq')
+      if (faqKind === 'trial' || faqKind === 'grandfathering') {
+        faqs[q].style.setProperty('display', 'block', 'important')
       }
     }
     return result
