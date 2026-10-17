@@ -15,7 +15,8 @@
  *     `data-ms-price:add` from a live price ID to its relaunch price ID, and
  *     leaf text that exactly matches a known live label;
  *   - anywhere on the page: leaf text that exactly matches one of the long,
- *     unique live price sentences (FAQ answer, Competitors cost row), and the
+ *     unique live price sentences (FAQ answer, Competitors cost row, Learn
+ *     article paywall), and the
  *     Why Us price pair (a "$195" leaf directly followed by its
  *     "Per month, billed annually at $2,340/year." sibling).
  *
@@ -69,6 +70,8 @@
       'Membership is $495/month, or $295/month billed annually at $3,540/year. The annual plan saves $2,400 per year compared with paying monthly.',
     '$295/mo or $195/mo billed annually ($2,340/year), plus freelancer rate':
       '$495/mo or $295/mo billed annually ($3,540/year), plus freelancer rate',
+    'Get unlimited access to The Starters\u2019 exclusive reporting and ad-free intelligence. Membership is $295/month, or $195/month billed annually at $2,340/year.':
+      'Get unlimited access to The Starters\u2019 exclusive reporting and ad-free intelligence. Membership is $495/month, or $295/month billed annually at $3,540/year.',
   }
   // Short texts that are only safe next to their partner sibling.
   var PAIR_TEXT = [

@@ -111,6 +111,10 @@ const FAQ_RELAUNCH =
   'Membership is $495/month, or $295/month billed annually at $3,540/year. The annual plan saves $2,400 per year compared with paying monthly.'
 const COST_LIVE = '$295/mo or $195/mo billed annually ($2,340/year), plus freelancer rate'
 const COST_RELAUNCH = '$495/mo or $295/mo billed annually ($3,540/year), plus freelancer rate'
+const PAYWALL_LIVE =
+  'Get unlimited access to The Starters\u2019 exclusive reporting and ad-free intelligence. Membership is $295/month, or $195/month billed annually at $2,340/year.'
+const PAYWALL_RELAUNCH =
+  'Get unlimited access to The Starters\u2019 exclusive reporting and ad-free intelligence. Membership is $495/month, or $295/month billed annually at $3,540/year.'
 const WHY_LIVE = ['$195', 'Per month, billed annually at $2,340/year.']
 const WHY_RELAUNCH = ['$295', 'Per month, billed annually at $3,540/year.']
 
@@ -359,5 +363,17 @@ test('the navbar gate loads the module on the staging and production hosts only'
 
   for (const hostname of ['localhost', '', 'the-starters-3-0.webflow.io.evil.test']) {
     assert.deepEqual(runLoader(hostname), [])
+  }
+})
+
+test('staging shows the relaunch Learn paywall price; production turns a leaked one back', () => {
+  const staging = h('body', {}, [h('p', { class: 'text-size-medium' }, [PAYWALL_LIVE])])
+  run(STAGING, staging)
+  assert.deepEqual(texts(staging), [PAYWALL_RELAUNCH])
+
+  for (const hostname of ['www.thestarters.com', 'thestarters.com']) {
+    const leaked = h('body', {}, [h('p', { class: 'text-size-medium' }, [PAYWALL_RELAUNCH])])
+    run(hostname, leaked)
+    assert.deepEqual(texts(leaked), [PAYWALL_LIVE])
   }
 })
