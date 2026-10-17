@@ -14,6 +14,9 @@
   const AUTHORED_PRICE_AMOUNT = /^\$\s*[\d.,]+$/
   const AUTHORED_PRICE_NUMBER = /^[\d.,]+$/
   const STATUS_ATTRIBUTE = 'data-paid-call-settings'
+  const BLOCKER_ATTRIBUTE = 'data-paid-call-blocker'
+  const BLOCKER_ACTION_ATTRIBUTE = 'data-paid-call-blocker-action'
+  const STRIPE_CONNECT_FALLBACK_URL = '/starter-dashboard'
   const PANEL_SELECTOR =
     '[data-call-settings-element="panel"], [data-availability-element="call-form-wrapper"]'
   const OPEN_ACTION_SELECTOR =
@@ -690,6 +693,7 @@
       : ''
     const content = nativeErrorContent(nativeError)
     content.textContent = text
+    clearSetupBlocker(nativeError)
     if (text) ensureBusyStyles()
     nativeError.setAttribute('data-call-settings-error-box', '')
     if (nativeError.parentElement) {
@@ -721,12 +725,104 @@
     const nativeError = findNativeError()
     if (!nativeError) return
     nativeErrorContent(nativeError).textContent = ''
+    clearSetupBlocker(nativeError)
     if (nativeError.parentElement) {
       nativeError.parentElement.setAttribute('data-call-settings-error-container', 'false')
     }
     nativeError.setAttribute('data-call-settings-error-visible', 'false')
     nativeError.style.display = 'none'
     nativeError.setAttribute('aria-hidden', 'true')
+  }
+
+  // With no active service, Update stays disabled until every prerequisite is
+  // ready, so the save-time message never runs and the Starter sees a grey
+  // button with no reason. Paint the blocker into the authored native message
+  // box instead. The Stripe link reuses the dashboard's own Stripe Connect
+  // control, so this controller never starts OAuth itself.
+  function setupBlocker(value) {
+    if (!cardMode || editProfileMode || !value || canSubmitSettings(value)) return null
+    const readiness = readinessState(value)
+    if (!readiness.calendar || !readiness.availability) {
+      return {
+        reason: 'calendar',
+        message: 'To turn on paid calls, first connect your calendar and set your availability.',
+      }
+    }
+    if (!readiness.stripe) {
+      return {
+        reason: 'stripe',
+        message: 'To turn on paid calls, connect Stripe first. Stripe sends call payments to you.',
+        label: 'Connect Stripe',
+      }
+    }
+    if (!readiness.charges) {
+      return {
+        reason: 'charges',
+        message: 'To turn on paid calls, finish your Stripe setup first. Stripe must be able to accept payments.',
+        label: 'Finish Stripe setup',
+      }
+    }
+    return {
+      reason: 'fresh',
+      message: 'Your Stripe status is updating. Try again in a minute.',
+    }
+  }
+
+  function clearSetupBlocker(nativeError) {
+    if (nativeError.getAttribute(BLOCKER_ATTRIBUTE)) nativeError.setAttribute(BLOCKER_ATTRIBUTE, '')
+  }
+
+  function paintSetupBlocker() {
+    const nativeError = findNativeError()
+    if (!nativeError) return
+    const blocker = busy ? null : setupBlocker(settings)
+    if (!blocker) {
+      if (nativeError.getAttribute(BLOCKER_ATTRIBUTE)) hideNativeError()
+      return
+    }
+    const content = nativeErrorContent(nativeError)
+    content.textContent = blocker.label ? blocker.message + ' ' : blocker.message
+    if (blocker.label && typeof document.createElement === 'function') {
+      const link = document.createElement('a')
+      link.setAttribute('href', STRIPE_CONNECT_FALLBACK_URL)
+      link.setAttribute(BLOCKER_ACTION_ATTRIBUTE, 'stripe')
+      link.textContent = blocker.label
+      link.addEventListener('click', openStripeConnect)
+      content.appendChild(link)
+    }
+    ensureBusyStyles()
+    nativeError.setAttribute(BLOCKER_ATTRIBUTE, blocker.reason)
+    nativeError.setAttribute('data-call-settings-error-box', '')
+    if (nativeError.parentElement) {
+      nativeError.parentElement.setAttribute('data-call-settings-error-container', 'true')
+    }
+    nativeError.setAttribute('data-call-settings-error-visible', 'true')
+    nativeError.style.display = 'block'
+    nativeError.setAttribute('aria-hidden', 'false')
+    nativeError.setAttribute('role', 'status')
+  }
+
+  function renderedControl(element) {
+    for (let node = element; node && node !== document.documentElement; node = node.parentElement) {
+      if (node.hidden === true || (node.style && node.style.display === 'none')) return false
+    }
+    return true
+  }
+
+  function stripeConnectControl() {
+    const starts = Array.prototype.slice.call(qsa('[data-stripe-connect-action="start"]', document))
+    const tiles = Array.prototype.slice.call(qsa('[data-stripe-connect-action="earnings"]', document))
+    return starts.concat(tiles).filter(renderedControl)[0] || null
+  }
+
+  function openStripeConnect(event) {
+    const control = stripeConnectControl()
+    // Without a Stripe control on this page, the link's own href opens the
+    // dashboard, where the Stripe card lives.
+    if (!control || typeof control.click !== 'function') return
+    if (event && typeof event.preventDefault === 'function') event.preventDefault()
+    // The click stays inside this user gesture, so the Stripe tab can open.
+    control.click()
   }
 
   function setFieldValidity(input, message) {
@@ -946,12 +1042,14 @@
       const service = canonicalService(settings)
       setActionEnabled(action('save'), canSubmitSettings(settings))
       setActionEnabled(action('disable'), Boolean(service))
+      if (document.documentElement.getAttribute(STATUS_ATTRIBUTE) !== 'error') paintSetupBlocker()
     }
   }
 
   function refreshSubmitEnabled() {
     if (busy || !settings) return
     setActionEnabled(action('save'), canSubmitSettings(settings))
+    paintSetupBlocker()
   }
 
   function setActionEnabled(button, enabled) {
@@ -1218,6 +1316,7 @@
           : 'Complete the required setup before you turn on paid calls.',
     )
     setStatus('ready')
+    paintSetupBlocker()
     emit('starterPaidCallSettingsChanged', {
       active: Boolean(service),
       bookable: bookable,
