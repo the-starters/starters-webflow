@@ -18,18 +18,18 @@
  *     unique live price sentences (FAQ answer, Competitors cost row, Learn
  *     article paywall), and the Why Us price pair (a "$195" leaf directly
  *     followed by its "Per month, billed annually at $2,340/year." sibling);
- *   - the FAQ: two relaunch items (trial, existing-member price) are added
- *     after the item that holds the `data-relaunch-pricing="faq-pricing"`
- *     answer. Each is a copy of that item with new text, marked
- *     `data-relaunch-faq`, and registered with `window.StarterAccordions` when
- *     the accordion has already initialized. When the Designer already holds
- *     a `data-relaunch-faq` item in that list, nothing is added.
+ *   - anywhere on the page: a text node that exactly matches the pause or
+ *     cancel confirmation legal line. In the cancel step a Terms of Use link
+ *     splits that line, so the swap reads text nodes, not leaf elements.
+ *
+ * No relaunch FAQ items are added (Jai, 10-19). Any `data-relaunch-faq` item
+ * from an earlier Designer or script version is removed on both hosts.
  *
  * Production ("guard" mode) applies the same text maps in reverse, except
  * "Get started for $295/mo", which can be a correct live label. If a
  * Designer publish leaks relaunch copy to production again, the live copy is
- * shown instead, and any `data-relaunch-faq` item is removed. The guard never
- * changes price attributes: checkout acceptance stays owned by
+ * shown instead. The guard never changes price attributes: checkout
+ * acceptance stays owned by
  * `v3/membership-checkout-authority.js`, which refuses the relaunch IDs on
  * production.
  *
@@ -83,9 +83,17 @@
   var PAIR_TEXT = [
     {
       live: ['$195', 'Per month, billed annually at $2,340/year.'],
-      relaunch: ['$295', 'Per month, billed annually at $3,540/year.'],
+      relaunch: ['$295', 'Per month when billed annually at $3,540/year. Or $495 month to month.'],
     },
   ]
+  // Legal line in the pause and cancel confirmations. Jai (10-19): show the
+  // new annual price to all members.
+  var NODE_TEXT = {
+    'I confirm that I am not actively working with any Starter on the platform, nor do I plan on initiating outreach with a Starter out-of-platform. I acknowledge that doing so will be in direct violation of The Starters\u2019 Terms of Use and will result in a $2,340 charge on my card on file (cost of annual membership).':
+      'I confirm that I am not actively working with any Starter on the platform, nor do I plan on initiating outreach with a Starter out-of-platform. I acknowledge that doing so will be in direct violation of The Starters\u2019 Terms of Use and will result in a $3,540 charge on my card on file (cost of annual membership).',
+    'and will result in a $2,340 charge on my card on file (cost of annual membership).':
+      'and will result in a $3,540 charge on my card on file (cost of annual membership).',
+  }
   var SCOPES = [
     { selector: '[join-cta="monthly"]', text: PLAN_TEXT },
     { selector: '[join-cta="yearly"]', text: PLAN_TEXT },
@@ -111,24 +119,8 @@
     }
   })
   var GUARD_PAGE_TEXT = invert(PAGE_TEXT)
-  // Relaunch FAQ items, shown on staging only. The Designer keeps them hidden.
-  var FAQ_ANCHOR = 'data-relaunch-pricing'
-  var FAQ_ANCHOR_VALUE = 'faq-pricing'
+  var GUARD_NODE_TEXT = invert(NODE_TEXT)
   var FAQ_MARK = 'data-relaunch-faq'
-  var FAQ_ITEMS = [
-    {
-      key: 'trial',
-      question: 'How does the 7-day monthly trial work?',
-      answer:
-        'Start your monthly membership with 7 days for $1 and get full member access during the trial. We\u2019ll send a reminder on day 5. Your first $495 monthly charge is on day 7 unless you cancel before the trial ends. If you cancel during the trial, your access ends when the trial ends.',
-    },
-    {
-      key: 'grandfathering',
-      question: 'Will my existing membership price change?',
-      answer:
-        'Existing members keep their current price. If you cancel and later rejoin, the new pricing applies: $495/month, or $295/month billed annually at $3,540/year.',
-    },
-  ]
   var GUARD_PAIR_TEXT = PAIR_TEXT.map(function (pair) {
     return { live: pair.relaunch, relaunch: pair.live }
   })
@@ -206,79 +198,22 @@
     return count
   }
 
-  function closestWith(node, name, value) {
-    for (var current = node; current && current.getAttribute; current = current.parentNode) {
-      var found = current.getAttribute(name)
-      if (found !== null && (value === undefined || found === value)) return current
-    }
-    return null
-  }
-
-  function firstWith(scope, name, value) {
-    var selector = value === undefined ? '[' + name + ']' : '[' + name + '="' + value + '"]'
-    var nodes = scope.querySelectorAll(selector)
-    return nodes.length ? nodes[0] : null
-  }
-
-  function firstTextLeaf(scope) {
-    var nodes = scope.querySelectorAll('*')
-    for (var i = 0; i < nodes.length; i += 1) {
-      if (isLeaf(nodes[i]) && textOf(nodes[i])) return nodes[i]
-    }
-    return null
-  }
-
-  // A copy of a live FAQ item carries the accordion state and generated IDs of
-  // its source; clear them so the accordion can register it as a new card.
-  function faqItemFrom(source, def) {
-    var item = source.cloneNode(true)
-    item.setAttribute(FAQ_MARK, def.key)
-    var nodes = [item].concat(Array.prototype.slice.call(item.querySelectorAll('*')))
-    for (var i = 0; i < nodes.length; i += 1) {
-      if (nodes[i].classList) nodes[i].classList.remove('is-active')
-    }
-    var button = firstWith(item, 'data-accordion', 'toggle-button')
-    var content = firstWith(item, 'data-accordion', 'content-wrap')
-    var answer = firstWith(item, FAQ_ANCHOR, FAQ_ANCHOR_VALUE)
-    var question = button ? firstTextLeaf(button) : null
-    if (!button || !content || !answer || !question) return null
-    question.textContent = def.question
-    button.setAttribute('aria-expanded', 'false')
-    button.removeAttribute('id')
-    button.removeAttribute('aria-controls')
-    content.removeAttribute('id')
-    content.removeAttribute('aria-labelledby')
-    if (content.style) {
-      content.style.display = 'none'
-      content.style.height = ''
-    }
-    answer.removeAttribute(FAQ_ANCHOR)
-    answer.textContent = def.answer
-    return { item: item, card: firstWith(item, 'data-accordion', 'component'), button: button, content: content }
-  }
-
-  function addFaqItems(doc) {
+  // Text nodes keep their surrounding spaces; only the trimmed text must match.
+  function swapNodeText(node, map) {
     var count = 0
-    var anchors = doc.querySelectorAll('[' + FAQ_ANCHOR + '="' + FAQ_ANCHOR_VALUE + '"]')
-    for (var a = 0; a < anchors.length; a += 1) {
-      if (closestWith(anchors[a], FAQ_MARK)) continue
-      var source = closestWith(anchors[a], 'role', 'listitem')
-      var list = source && source.parentNode
-      if (!list || firstWith(list, FAQ_MARK)) continue
-      var wrapper = closestWith(source, 'data-accordion', 'wrapper')
-      var accordions = globalObject.StarterAccordions
-      var group =
-        wrapper && wrapper.getAttribute('data-script-initialized') === 'true' && accordions && typeof accordions.group === 'function'
-          ? accordions.group({ closeOnSecondClick: wrapper.getAttribute('data-close-on-second-click') === 'true' })
-          : null
-      var after = source
-      for (var f = 0; f < FAQ_ITEMS.length; f += 1) {
-        var made = faqItemFrom(source, FAQ_ITEMS[f])
-        if (!made) break
-        list.insertBefore(made.item, after.nextSibling)
-        after = made.item
-        if (group && made.card) group.register(made.card, made.button, made.content)
-        count += 1
+    var kids = node.childNodes || []
+    for (var i = 0; i < kids.length; i += 1) {
+      var kid = kids[i]
+      if (kid.nodeType === 3) {
+        var value = String(kid.nodeValue || '')
+        var current = value.trim()
+        if (current && Object.prototype.hasOwnProperty.call(map, current)) {
+          var start = value.indexOf(current)
+          kid.nodeValue = value.slice(0, start) + map[current] + value.slice(start + current.length)
+          count += 1
+        }
+      } else if (kid.nodeType === 1) {
+        count += swapNodeText(kid, map)
       }
     }
     return count
@@ -322,7 +257,9 @@
       }
     }
     result.labels += swapPairs(doc, preview ? PAIR_TEXT : GUARD_PAIR_TEXT)
-    result.labels += preview ? addFaqItems(doc) : removeFaqItems(doc)
+    var body = doc.body || doc.documentElement || doc
+    result.labels += swapNodeText(body, preview ? NODE_TEXT : GUARD_NODE_TEXT)
+    result.labels += removeFaqItems(doc)
     return result
   }
 
