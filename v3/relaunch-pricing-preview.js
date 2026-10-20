@@ -25,13 +25,17 @@
  * No relaunch FAQ items are added (Jai, 10-19). Any `data-relaunch-faq` item
  * from an earlier Designer or script version is removed on both hosts.
  *
+ * Production runs "preview" mode too when `PRODUCTION_LIVE` is true (the
+ * script-first relaunch cutover), or for one browser tab that opened a page
+ * with `?relaunch=preview` (staff canary; kept in sessionStorage until the tab
+ * closes or a page opens with `?relaunch=off`). Otherwise production runs
+ * "guard" mode.
+ *
  * Production ("guard" mode) applies the same text maps in reverse, except
  * "Get started for $295/mo", which can be a correct live label. If a
  * Designer publish leaks relaunch copy to production again, the live copy is
  * shown instead. The guard never changes price attributes: checkout
- * acceptance stays owned by
- * `v3/membership-checkout-authority.js`, which refuses the relaunch IDs on
- * production.
+ * acceptance stays owned by `v3/membership-checkout-authority.js`.
  *
  * Text that does not match exactly stays unchanged, so a Designer copy edit
  * can never be overwritten with the wrong offer. Any other host is a no-op.
@@ -47,6 +51,10 @@
 
   var STAGING_HOST = 'the-starters-3-0.webflow.io'
   var PRODUCTION_HOSTS = ['www.thestarters.com', 'thestarters.com']
+  // Script-first cutover switch: true shows the relaunch offer to everyone on
+  // production. Rollback = a release with false.
+  var PRODUCTION_LIVE = false
+  var CANARY_KEY = 'ts:relaunch-pricing-canary'
   var PRICE_ATTRIBUTE = 'data-ms-price:add'
   var PRICE_SWAPS = {
     'prc_premium-monthly--fn1ae0qjj': 'prc_3-0-premium-monthly-ge4a00iw',
@@ -131,10 +139,41 @@
       .toLowerCase()
   }
 
+  // Reads ?relaunch=preview|off once per page and remembers it for the tab.
+  var canaryState = null
+  function canary() {
+    if (canaryState !== null) return canaryState
+    var search = String((globalObject.location && globalObject.location.search) || '')
+    var match = /[?&]relaunch=([^&#]*)/.exec(search)
+    var requested = match ? decodeURIComponent(match[1]).toLowerCase() : ''
+    var storage = null
+    try {
+      storage = globalObject.sessionStorage || null
+    } catch (error) {
+      storage = null
+    }
+    canaryState = false
+    try {
+      if (requested === 'preview') {
+        canaryState = true
+        if (storage) storage.setItem(CANARY_KEY, '1')
+      } else if (requested === 'off') {
+        if (storage) storage.removeItem(CANARY_KEY)
+      } else if (storage) {
+        canaryState = storage.getItem(CANARY_KEY) === '1'
+      }
+    } catch (error) {
+      // Storage can be blocked; the URL flag still applies to this page.
+    }
+    return canaryState
+  }
+
   function mode() {
     var current = host()
     if (current === STAGING_HOST) return 'preview'
-    if (PRODUCTION_HOSTS.indexOf(current) !== -1) return 'guard'
+    if (PRODUCTION_HOSTS.indexOf(current) !== -1) {
+      return PRODUCTION_LIVE || canary() ? 'preview' : 'guard'
+    }
     return ''
   }
 

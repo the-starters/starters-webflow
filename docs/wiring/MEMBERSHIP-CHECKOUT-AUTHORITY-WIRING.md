@@ -50,22 +50,26 @@ returned 404. The controller removes trailing slashes before it records the sour
 Native `data-ms-price:add` controls accept these Memberstack price IDs on all
 allowed V3 hosts:
 
-- `prc_premium-monthly--fn1ae0qjj`
-- `prc_paid-annual-2o5f040u`
+- `prc_premium-monthly--fn1ae0qjj` (current $295/month)
+- `prc_paid-annual-2o5f040u` (current $2,340/year)
+- `prc_3-0-premium-monthly-ge4a00iw` (relaunch $495/month with a $1 7-day trial)
+- `prc_3-0-premium-annual-xhb200bu` (relaunch $3,540/year)
+
+Both sets are accepted during the script-first relaunch cutover: the Designer
+keeps the current IDs while `v3/relaunch-pricing-preview.js` swaps buttons to the
+relaunch IDs. A later release removes the current IDs for new checkouts after the
+Designer carries the relaunch IDs. Existing members keep their prices: Stripe
+renews their subscriptions without a new checkout.
 
 Only when `location.hostname` is exactly `the-starters-3-0.webflow.io`, the
-controller also accepts these staging-only IDs:
+controller also accepts this staging-only ID:
 
-- `prc_3-0-premium-monthly-ge4a00iw`
-- `prc_3-0-premium-annual-xhb200bu`
 - `prc_test-24h-trial-do-not-use-r5ae0vz6` (QA-only; archive after QA)
 
 This host-specific price allowlist applies to clicks, checkout-return capture,
-and receipt processing. Both production hosts accept only the two current IDs.
-Promoting the relaunch monthly and annual IDs to production requires a separate
-change after thorough testing and team sign-off; the QA-only ID must never be
-promoted. Staging checkout also requires matching server allowlists in the test
-environment, configured separately from this browser controller.
+and receipt processing. The server allowlists (Xano `membership/checkout-intent/v3`
+and its receipt, binding and email-sync owners) are configured separately and must
+accept the same IDs in the live environment.
 
 The controller does not attach a click listener on any other host. On a V3 host,
 it blocks price controls on non-allowlisted routes or with non-allowlisted price

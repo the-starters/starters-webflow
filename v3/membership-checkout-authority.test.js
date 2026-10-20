@@ -471,10 +471,41 @@ test('does not activate on V2 host', () => {
 })
 
 const RELAUNCH_PRICE_IDS = [
-  'prc_3-0-premium-monthly-ge4a00iw',
-  'prc_3-0-premium-annual-xhb200bu',
   'prc_test-24h-trial-do-not-use-r5ae0vz6',
 ]
+const PRODUCTION_RELAUNCH_PRICE_IDS = [
+  'prc_3-0-premium-monthly-ge4a00iw',
+  'prc_3-0-premium-annual-xhb200bu',
+]
+
+for (const priceId of PRODUCTION_RELAUNCH_PRICE_IDS) {
+  for (const hostname of ['thestarters.com', 'www.thestarters.com', 'the-starters-3-0.webflow.io']) {
+    test(`registers relaunch price ${priceId} on ${hostname}`, async () => {
+      const state = boot({ hostname })
+      const control = target(priceId)
+
+      await state.listeners[0].listener(clickEvent(control))
+
+      assert.equal(control.clicks, 1)
+      assert.equal(state.requests.length, 2)
+      assert.equal(JSON.parse(state.requests[1].init.body).stripe_price_id, priceId)
+      assert.equal(control.getAttribute('data-v3-checkout-authority'), 'accepted')
+    })
+  }
+
+  test(`verifies a production relaunch receipt for ${priceId}`, async () => {
+    const state = returnedPurchase({ priceId, receipt: paidReceipt(priceId, 'production') })
+
+    await finishPurchase(state)
+
+    const receiptRequest = state.requests.find(({ url }) => url.endsWith('/membership/checkout-receipt/v3'))
+    assert.ok(receiptRequest)
+    assert.equal(JSON.parse(receiptRequest.init.body).stripe_price_id, priceId)
+    assert.equal(state.purchaseStates.at(-1), 'queued')
+    assert.equal(state.pixelEvents.length, 1)
+    assert.equal(state.storage.size, 0)
+  })
+}
 
 for (const priceId of RELAUNCH_PRICE_IDS) {
   test(`registers staging-only relaunch price ${priceId} on the V3 staging host`, async () => {

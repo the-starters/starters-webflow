@@ -193,8 +193,9 @@ function run(hostname, root, extra = {}) {
     },
     extra.document || {},
   )
-  const window = Object.assign({ location: { hostname }, document }, extra.window || {})
-  vm.runInNewContext(source, { window, Object, Array, String })
+  const location = Object.assign({ hostname }, extra.location || {})
+  const window = Object.assign({ location, document }, extra.window || {})
+  vm.runInNewContext(extra.source || source, { window, Object, Array, String })
   return window
 }
 
@@ -495,3 +496,90 @@ for (const hostname of [STAGING, 'www.thestarters.com', 'thestarters.com']) {
     assert.deepEqual(texts(root), ['Who are the Starters?'])
   })
 }
+
+// Staff canary and script-first cutover on production.
+function memoryStorage(initial = {}) {
+  const data = new Map(Object.entries(initial))
+  return {
+    data,
+    getItem: (key) => (data.has(key) ? data.get(key) : null),
+    setItem: (key, value) => data.set(key, String(value)),
+    removeItem: (key) => data.delete(key),
+  }
+}
+const CANARY_KEY = 'ts:relaunch-pricing-canary'
+const PROD_RELAUNCH_PRICES = ['prc_3-0-premium-monthly-ge4a00iw', 'prc_3-0-premium-annual-xhb200bu']
+
+for (const hostname of ['www.thestarters.com', 'thestarters.com']) {
+  test(`production host "${hostname}" shows the relaunch offer for a ?relaunch=preview canary tab`, () => {
+    const sessionStorage = memoryStorage()
+    const root = h('body', {}, [joinCta(), livePageCopy()])
+    const window = run(hostname, root, { location: { search: '?relaunch=preview' }, window: { sessionStorage } })
+
+    assert.equal(window.StartersRelaunchPricingPreview.mode(), 'preview')
+    assert.deepEqual(prices(root), PROD_RELAUNCH_PRICES)
+    assert.ok(texts(root).includes('7 Day Trial for $1'))
+    assert.ok(texts(root).includes(FAQ_RELAUNCH))
+    assert.equal(sessionStorage.data.get(CANARY_KEY), '1')
+  })
+
+  test(`production host "${hostname}" keeps the canary on later pages of the same tab`, () => {
+    const sessionStorage = memoryStorage({ [CANARY_KEY]: '1' })
+    const root = h('body', {}, [joinCta()])
+    const window = run(hostname, root, { location: { search: '' }, window: { sessionStorage } })
+
+    assert.equal(window.StartersRelaunchPricingPreview.mode(), 'preview')
+    assert.deepEqual(prices(root), PROD_RELAUNCH_PRICES)
+  })
+
+  test(`production host "${hostname}" ends the canary with ?relaunch=off`, () => {
+    const sessionStorage = memoryStorage({ [CANARY_KEY]: '1' })
+    const root = h('body', {}, [joinCta()])
+    const window = run(hostname, root, { location: { search: '?relaunch=off' }, window: { sessionStorage } })
+
+    assert.equal(window.StartersRelaunchPricingPreview.mode(), 'guard')
+    assert.equal(sessionStorage.data.has(CANARY_KEY), false)
+    assert.deepEqual(prices(root), ['prc_premium-monthly--fn1ae0qjj', 'prc_paid-annual-2o5f040u'])
+  })
+
+  test(`production host "${hostname}" stays in guard mode without a canary flag`, () => {
+    const root = h('body', {}, [joinCta()])
+    const window = run(hostname, root, { location: { search: '?relaunch=yes' }, window: { sessionStorage: memoryStorage() } })
+
+    assert.equal(window.StartersRelaunchPricingPreview.mode(), 'guard')
+    assert.deepEqual(prices(root), ['prc_premium-monthly--fn1ae0qjj', 'prc_paid-annual-2o5f040u'])
+  })
+
+  test(`production host "${hostname}" canary URL still works when sessionStorage throws`, () => {
+    const blocked = {
+      getItem() { throw new Error('blocked') },
+      setItem() { throw new Error('blocked') },
+      removeItem() { throw new Error('blocked') },
+    }
+    const root = h('body', {}, [joinCta()])
+    const window = run(hostname, root, { location: { search: '?relaunch=preview' }, window: { sessionStorage: blocked } })
+
+    assert.equal(window.StartersRelaunchPricingPreview.mode(), 'preview')
+    assert.deepEqual(prices(root), PROD_RELAUNCH_PRICES)
+  })
+
+  test(`production host "${hostname}" shows the relaunch offer to everyone when PRODUCTION_LIVE is true`, () => {
+    const liveSource = source.replace('var PRODUCTION_LIVE = false', 'var PRODUCTION_LIVE = true')
+    assert.notEqual(liveSource, source)
+    const root = h('body', {}, [joinCta(), livePageCopy()])
+    const window = run(hostname, root, { source: liveSource, location: { search: '' } })
+
+    assert.equal(window.StartersRelaunchPricingPreview.mode(), 'preview')
+    assert.deepEqual(prices(root), PROD_RELAUNCH_PRICES)
+    assert.ok(texts(root).includes(FAQ_RELAUNCH))
+  })
+}
+
+test('the canary flag never turns on preview for other hosts', () => {
+  for (const hostname of ['localhost', 'the-starters-3-0.webflow.io.evil.test']) {
+    const window = run(hostname, h('body', {}, [joinCta()]), {
+      location: { search: '?relaunch=preview' }, window: { sessionStorage: memoryStorage() },
+    })
+    assert.equal(window.StartersRelaunchPricingPreview.mode(), '')
+  }
+})
