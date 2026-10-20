@@ -57,7 +57,7 @@ Only when `location.hostname` is exactly `the-starters-3-0.webflow.io`, the
 controller also accepts these staging-only IDs:
 
 - `prc_3-0-premium-monthly-ge4a00iw`
-- `prc_3-0-premium-annual-xhb200bu`
+- `prc_3-0-premium-annual-nt3d0pjh`
 - `prc_test-24h-trial-do-not-use-r5ae0vz6` (QA-only; archive after QA)
 
 This host-specific price allowlist applies to clicks, checkout-return capture,

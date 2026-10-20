@@ -472,7 +472,7 @@ test('does not activate on V2 host', () => {
 
 const RELAUNCH_PRICE_IDS = [
   'prc_3-0-premium-monthly-ge4a00iw',
-  'prc_3-0-premium-annual-xhb200bu',
+  'prc_3-0-premium-annual-nt3d0pjh',
   'prc_test-24h-trial-do-not-use-r5ae0vz6',
 ]
 

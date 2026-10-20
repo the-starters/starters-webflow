@@ -50,7 +50,7 @@
   var PRICE_ATTRIBUTE = 'data-ms-price:add'
   var PRICE_SWAPS = {
     'prc_premium-monthly--fn1ae0qjj': 'prc_3-0-premium-monthly-ge4a00iw',
-    'prc_paid-annual-2o5f040u': 'prc_3-0-premium-annual-xhb200bu',
+    'prc_paid-annual-2o5f040u': 'prc_3-0-premium-annual-nt3d0pjh',
   }
   var TEXT_SWAPS = {
     monthly: {

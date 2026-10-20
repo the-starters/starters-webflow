@@ -36,7 +36,7 @@
   // Promotion policy: docs/wiring/MEMBERSHIP-CHECKOUT-AUTHORITY-WIRING.md#runtime-allowlists.
   var STAGING_ONLY_PRICE_IDS = {
     'prc_3-0-premium-monthly-ge4a00iw': true,
-    'prc_3-0-premium-annual-xhb200bu': true,
+    'prc_3-0-premium-annual-nt3d0pjh': true,
     'prc_test-24h-trial-do-not-use-r5ae0vz6': true,
   }
   var INTENT_TTL_MS = 2 * 60 * 60 * 1000

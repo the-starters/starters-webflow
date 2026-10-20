@@ -219,7 +219,7 @@ test('staging host shows the relaunch offer and relaunch price IDs', () => {
 
   assert.deepEqual(prices(root), [
     'prc_3-0-premium-monthly-ge4a00iw',
-    'prc_3-0-premium-annual-xhb200bu',
+    'prc_3-0-premium-annual-nt3d0pjh',
   ])
   assert.deepEqual(texts(root), [
     'Monthly',
