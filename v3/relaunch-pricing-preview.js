@@ -145,7 +145,7 @@
     if (canaryState !== null) return canaryState
     var search = String((globalObject.location && globalObject.location.search) || '')
     var match = /[?&]relaunch=([^&#]*)/.exec(search)
-    var requested = match ? decodeURIComponent(match[1]).toLowerCase() : ''
+    var requested = match ? match[1].toLowerCase() : ''
     var storage = null
     try {
       storage = globalObject.sessionStorage || null

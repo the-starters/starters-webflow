@@ -147,8 +147,10 @@
 
   // Relaunch pricing module (v3/relaunch-pricing-preview.js). Staging and
   // production share one Webflow site, so the preview cannot live in the
-  // Designer. On staging it shows the relaunch offer; on production it only
-  // guards the live copy against leaked relaunch text. No other host loads it.
+  // Designer. On staging it shows the relaunch offer; on production it shows
+  // it to ?relaunch=preview canary tabs (or everyone once PRODUCTION_LIVE is
+  // on) and otherwise guards the live copy against leaked relaunch text. No
+  // other host loads it.
   const PREVIEW_HOSTS = ["the-starters-3-0.webflow.io", "www.thestarters.com", "thestarters.com"]
   const PREVIEW_SRC =
     "https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/relaunch-pricing-preview.js"

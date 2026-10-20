@@ -550,6 +550,14 @@ for (const hostname of ['www.thestarters.com', 'thestarters.com']) {
     assert.deepEqual(prices(root), ['prc_premium-monthly--fn1ae0qjj', 'prc_paid-annual-2o5f040u'])
   })
 
+  test(`production host "${hostname}" stays in guard mode for a malformed ?relaunch=% flag`, () => {
+    const leaked = h('body', {}, [relaunchPageCopy()])
+    const window = run(hostname, leaked, { location: { search: '?relaunch=%' }, window: { sessionStorage: memoryStorage() } })
+
+    assert.equal(window.StartersRelaunchPricingPreview.mode(), 'guard')
+    assert.deepEqual(texts(leaked), [FAQ_LIVE, 'Cost', COST_LIVE, ...WHY_LIVE])
+  })
+
   test(`production host "${hostname}" canary URL still works when sessionStorage throws`, () => {
     const blocked = {
       getItem() { throw new Error('blocked') },
