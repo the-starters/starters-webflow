@@ -288,7 +288,7 @@ test('releases the Sign Out loader hold immediately when a real logout begins mi
 test('releases the Sign Out loader hold when a real logout begins after checkout is accepted', async () => {
   const logoutLoader = { style: { display: 'none', visibility: 'visible' } }
   const state = boot({ logoutLoader })
-  const control = target('prc_3-0-premium-annual-xhb200bu')
+  const control = target('prc_3-0-premium-annual-nt3d0pjh')
 
   await state.listeners[0].listener(clickEvent(control))
   assert.equal(logoutLoader.style.visibility, 'hidden')
@@ -350,7 +350,7 @@ test('an unrelated click during checkout leaves the Sign Out loader hold in plac
 test('keeps Sign Out hidden while Memberstack loads checkout, then restores it', async () => {
   const logoutLoader = { style: { display: 'none', visibility: 'visible' } }
   const state = boot({ logoutLoader })
-  const control = target('prc_3-0-premium-annual-xhb200bu', () => {
+  const control = target('prc_3-0-premium-annual-nt3d0pjh', () => {
     logoutLoader.style.display = 'flex'
   })
 
@@ -407,7 +407,7 @@ test('fails closed when V3 intent registration fails', async () => {
   const state = boot({
     registerResponse: { ok: false, status: 409, json: async () => ({}) },
   })
-  const control = target('prc_3-0-premium-annual-xhb200bu')
+  const control = target('prc_3-0-premium-annual-nt3d0pjh')
   const event = clickEvent(control)
 
   await state.listeners[0].listener(event)
@@ -449,7 +449,7 @@ test('retries registration with the same event identity after cleanup', async ()
           }
     },
   })
-  const control = target('prc_3-0-premium-annual-xhb200bu')
+  const control = target('prc_3-0-premium-annual-nt3d0pjh')
 
   await state.listeners[0].listener(clickEvent(control))
   const firstEventId = JSON.parse(state.requests[1].init.body).source_event_id
@@ -531,7 +531,7 @@ test('normalizes the supported quiz-results trailing-slash route', async () => {
 
 test('registers an exact V3 intent from the all-starters shared paywall', async () => {
   const state = boot({ pathname: '/all-starters/' })
-  const control = target('prc_3-0-premium-annual-xhb200bu')
+  const control = target('prc_3-0-premium-annual-nt3d0pjh')
 
   await state.listeners[0].listener(clickEvent(control))
 
@@ -539,7 +539,7 @@ test('registers an exact V3 intent from the all-starters shared paywall', async 
   assert.deepEqual(JSON.parse(state.requests[1].init.body), {
     source_event_id: 'evt_12345678-1234-1234-1234-123456789abc',
     source_route: '/all-starters',
-    stripe_price_id: 'prc_3-0-premium-annual-xhb200bu',
+    stripe_price_id: 'prc_3-0-premium-annual-nt3d0pjh',
   })
 })
 
@@ -586,7 +586,7 @@ test('registers checkout intents from Learn pages', async () => {
   ]) {
     for (const priceId of [
       'prc_3-0-premium-monthly-ge4a00iw',
-      'prc_3-0-premium-annual-xhb200bu',
+      'prc_3-0-premium-annual-nt3d0pjh',
     ]) {
       const state = boot({ pathname: pathname + '/' })
       const control = target(priceId)
@@ -605,7 +605,7 @@ test('registers checkout intents from Become a Starter and case studies', async 
   ]) {
     for (const priceId of [
       'prc_3-0-premium-monthly-ge4a00iw',
-      'prc_3-0-premium-annual-xhb200bu',
+      'prc_3-0-premium-annual-nt3d0pjh',
     ]) {
       const state = boot({ pathname: pathname + '/' })
       const control = target(priceId)
@@ -692,7 +692,7 @@ test('a bypassed replay continues without a second registration', async () => {
 
 test('a closed checkout reuses the accepted pending intent', async () => {
   const state = boot({ pathname: '/all-starters' })
-  const control = target('prc_3-0-premium-annual-xhb200bu')
+  const control = target('prc_3-0-premium-annual-nt3d0pjh')
 
   await state.listeners[0].listener(clickEvent(control))
   await state.listeners[0].listener(clickEvent(control))
@@ -806,7 +806,7 @@ test('clears the pending state when secure event identity generation fails', asy
 })
 
 const monthlyPrice = 'prc_3-0-premium-monthly-ge4a00iw'
-const annualPrice = 'prc_3-0-premium-annual-xhb200bu'
+const annualPrice = 'prc_3-0-premium-annual-nt3d0pjh'
 const canonicalIntent = 'a'.repeat(64)
 function returnedPurchase(options = {}) {
   const priceId = options.priceId || monthlyPrice
@@ -1228,7 +1228,7 @@ test('shows the retry message for server, network, and session failures', async 
   ]
   for (const options of cases) {
     const state = boot(options)
-    const control = target('prc_3-0-premium-annual-xhb200bu')
+    const control = target('prc_3-0-premium-annual-nt3d0pjh')
     const dom = withVisibleDom(state, control)
 
     await state.listeners[0].listener(clickEvent(control))
@@ -1273,7 +1273,7 @@ test('the next attempt removes the message, and repeated failures keep only one'
         : { ok: true, json: async () => ({ ok: true, checkout_intent_id: 7 }) }
     },
   })
-  const control = target('prc_3-0-premium-annual-xhb200bu')
+  const control = target('prc_3-0-premium-annual-nt3d0pjh')
   const dom = withVisibleDom(state, control)
 
   await state.listeners[0].listener(clickEvent(control))

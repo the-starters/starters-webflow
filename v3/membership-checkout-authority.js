@@ -31,7 +31,7 @@
   // Relaunch prices ($495/month with a $1 7-day trial, $3,540/year).
   var ALLOWED_PRICE_IDS = {
     'prc_3-0-premium-monthly-ge4a00iw': true,
-    'prc_3-0-premium-annual-xhb200bu': true,
+    'prc_3-0-premium-annual-nt3d0pjh': true,
   }
   // Pre-relaunch prices stay testable on staging only; new production checkouts
   // cannot buy them. Policy: docs/wiring/MEMBERSHIP-CHECKOUT-AUTHORITY-WIRING.md#runtime-allowlists.
