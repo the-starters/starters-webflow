@@ -48,24 +48,27 @@ fail closed.
 `/partners` and `/services` remain excluded because their sampled live items
 returned 404. The controller removes trailing slashes before it records the source path.
 Native `data-ms-price:add` controls accept these Memberstack price IDs on all
-allowed V3 hosts:
+allowed V3 hosts (relaunch pricing: $495/month with a $1 7-day trial, and
+$3,540/year):
 
-- `prc_premium-monthly--fn1ae0qjj`
-- `prc_paid-annual-2o5f040u`
+- `prc_3-0-premium-monthly-ge4a00iw`
+- `prc_3-0-premium-annual-xhb200bu`
 
 Only when `location.hostname` is exactly `the-starters-3-0.webflow.io`, the
 controller also accepts these staging-only IDs:
 
-- `prc_3-0-premium-monthly-ge4a00iw`
-- `prc_3-0-premium-annual-xhb200bu`
+- `prc_premium-monthly--fn1ae0qjj` (pre-relaunch $295/month)
+- `prc_paid-annual-2o5f040u` (pre-relaunch $2,340/year)
 - `prc_test-24h-trial-do-not-use-r5ae0vz6` (QA-only; archive after QA)
 
 This host-specific price allowlist applies to clicks, checkout-return capture,
-and receipt processing. Both production hosts accept only the two current IDs.
-Promoting the relaunch monthly and annual IDs to production requires a separate
-change after thorough testing and team sign-off; the QA-only ID must never be
-promoted. Staging checkout also requires matching server allowlists in the test
-environment, configured separately from this browser controller.
+and receipt processing. Both production hosts accept only the two relaunch IDs,
+so new production checkouts cannot buy the pre-relaunch prices. Existing members
+keep their prices: Stripe renews their subscriptions without a new checkout.
+The server allowlists (Xano `membership/checkout-intent/v3` and its receipt,
+binding and email-sync owners) are configured separately from this browser
+controller and must accept the same IDs before this version is pinned on
+production.
 
 The controller does not attach a click listener on any other host. On a V3 host,
 it blocks price controls on non-allowlisted routes or with non-allowlisted price

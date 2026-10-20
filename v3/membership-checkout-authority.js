@@ -28,15 +28,16 @@
     'the-starters-3-0.webflow.io': true,
   }
   var STAGING_HOST = 'the-starters-3-0.webflow.io'
+  // Relaunch prices ($495/month with a $1 7-day trial, $3,540/year).
   var ALLOWED_PRICE_IDS = {
-    'prc_premium-monthly--fn1ae0qjj': true,
-    'prc_paid-annual-2o5f040u': true,
-  }
-  // Keep staging-only prices isolated even when this script loads on production.
-  // Promotion policy: docs/wiring/MEMBERSHIP-CHECKOUT-AUTHORITY-WIRING.md#runtime-allowlists.
-  var STAGING_ONLY_PRICE_IDS = {
     'prc_3-0-premium-monthly-ge4a00iw': true,
     'prc_3-0-premium-annual-xhb200bu': true,
+  }
+  // Pre-relaunch prices stay testable on staging only; new production checkouts
+  // cannot buy them. Policy: docs/wiring/MEMBERSHIP-CHECKOUT-AUTHORITY-WIRING.md#runtime-allowlists.
+  var STAGING_ONLY_PRICE_IDS = {
+    'prc_premium-monthly--fn1ae0qjj': true,
+    'prc_paid-annual-2o5f040u': true,
     'prc_test-24h-trial-do-not-use-r5ae0vz6': true,
   }
   var INTENT_TTL_MS = 2 * 60 * 60 * 1000

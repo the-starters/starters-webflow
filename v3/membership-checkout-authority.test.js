@@ -147,7 +147,7 @@ function boot(options = {}) {
 
 test('binds ahead of Memberstack document capture regardless of load order', async () => {
   const state = boot()
-  const control = target('prc_premium-monthly--fn1ae0qjj')
+  const control = target('prc_3-0-premium-monthly-ge4a00iw')
   const event = clickEvent(control)
   let nativeCheckoutOpened = false
 
@@ -190,7 +190,7 @@ function clickEvent(element) {
 
 test('registers one V3 intent before resuming native Memberstack checkout', async () => {
   const state = boot()
-  const control = target('prc_premium-monthly--fn1ae0qjj')
+  const control = target('prc_3-0-premium-monthly-ge4a00iw')
   const event = clickEvent(control)
 
   await state.listeners[0].listener(event)
@@ -208,7 +208,7 @@ test('registers one V3 intent before resuming native Memberstack checkout', asyn
   assert.deepEqual(JSON.parse(register.init.body), {
     source_event_id: 'evt_12345678-1234-1234-1234-123456789abc',
     source_route: '/quiz-results',
-    stripe_price_id: 'prc_premium-monthly--fn1ae0qjj',
+    stripe_price_id: 'prc_3-0-premium-monthly-ge4a00iw',
   })
   assert.equal(control.getAttribute('data-v3-checkout-authority'), 'accepted')
   assert.equal(state.storage.size, 1)
@@ -216,7 +216,7 @@ test('registers one V3 intent before resuming native Memberstack checkout', asyn
 
 test('replays the original child click target after intent registration', async () => {
   const state = boot()
-  const control = target('prc_premium-monthly--fn1ae0qjj')
+  const control = target('prc_3-0-premium-monthly-ge4a00iw')
   const event = clickEvent(control.child)
 
   await state.listeners[0].listener(event)
@@ -239,7 +239,7 @@ test('shows the clicked checkout spinner without lighting Sign Out while prepari
       json: () => new Promise((resolve) => { finishAuth = resolve }),
     },
   })
-  const control = target('prc_premium-monthly--fn1ae0qjj')
+  const control = target('prc_3-0-premium-monthly-ge4a00iw')
 
   const operation = state.listeners[0].listener(clickEvent(control))
   await new Promise(setImmediate)
@@ -271,7 +271,7 @@ test('releases the Sign Out loader hold immediately when a real logout begins mi
       json: () => new Promise((resolve) => { finishAuth = resolve }),
     },
   })
-  const control = target('prc_premium-monthly--fn1ae0qjj')
+  const control = target('prc_3-0-premium-monthly-ge4a00iw')
 
   const operation = state.listeners[0].listener(clickEvent(control))
   await new Promise(setImmediate)
@@ -288,7 +288,7 @@ test('releases the Sign Out loader hold immediately when a real logout begins mi
 test('releases the Sign Out loader hold when a real logout begins after checkout is accepted', async () => {
   const logoutLoader = { style: { display: 'none', visibility: 'visible' } }
   const state = boot({ logoutLoader })
-  const control = target('prc_paid-annual-2o5f040u')
+  const control = target('prc_3-0-premium-annual-xhb200bu')
 
   await state.listeners[0].listener(clickEvent(control))
   assert.equal(logoutLoader.style.visibility, 'hidden')
@@ -310,7 +310,7 @@ test('releases the Sign Out loader hold on a real profile form submit mid-checko
       json: () => new Promise((resolve) => { finishAuth = resolve }),
     },
   })
-  const control = target('prc_premium-monthly--fn1ae0qjj')
+  const control = target('prc_3-0-premium-monthly-ge4a00iw')
 
   const operation = state.listeners[0].listener(clickEvent(control))
   await new Promise(setImmediate)
@@ -333,7 +333,7 @@ test('an unrelated click during checkout leaves the Sign Out loader hold in plac
       json: () => new Promise((resolve) => { finishAuth = resolve }),
     },
   })
-  const control = target('prc_premium-monthly--fn1ae0qjj')
+  const control = target('prc_3-0-premium-monthly-ge4a00iw')
 
   const operation = state.listeners[0].listener(clickEvent(control))
   await new Promise(setImmediate)
@@ -350,7 +350,7 @@ test('an unrelated click during checkout leaves the Sign Out loader hold in plac
 test('keeps Sign Out hidden while Memberstack loads checkout, then restores it', async () => {
   const logoutLoader = { style: { display: 'none', visibility: 'visible' } }
   const state = boot({ logoutLoader })
-  const control = target('prc_paid-annual-2o5f040u', () => {
+  const control = target('prc_3-0-premium-annual-xhb200bu', () => {
     logoutLoader.style.display = 'flex'
   })
 
@@ -370,7 +370,7 @@ test('keeps Sign Out hidden while Memberstack loads checkout, then restores it',
 
 test('keeps the Get Started spinner lit through a bounded fallback when there is no Sign Out loader', async () => {
   const state = boot({ logoutLoader: null })
-  const control = target('prc_premium-monthly--fn1ae0qjj')
+  const control = target('prc_3-0-premium-monthly-ge4a00iw')
 
   await state.listeners[0].listener(clickEvent(control))
 
@@ -386,7 +386,7 @@ test('keeps the Get Started spinner lit through a bounded fallback when there is
 
 test('keeps the Memberstack session token out of authentication URLs', async () => {
   const state = boot({ memberstackToken: 'private-memberstack-token' })
-  const control = target('prc_premium-monthly--fn1ae0qjj')
+  const control = target('prc_3-0-premium-monthly-ge4a00iw')
 
   await state.listeners[0].listener(clickEvent(control))
 
@@ -407,7 +407,7 @@ test('fails closed when V3 intent registration fails', async () => {
   const state = boot({
     registerResponse: { ok: false, status: 409, json: async () => ({}) },
   })
-  const control = target('prc_paid-annual-2o5f040u')
+  const control = target('prc_3-0-premium-annual-xhb200bu')
   const event = clickEvent(control)
 
   await state.listeners[0].listener(event)
@@ -423,7 +423,7 @@ test('fails closed when the Memberstack session cannot authenticate as user_v3',
   const state = boot({
     authResponse: { ok: false, status: 401, json: async () => ({}) },
   })
-  const control = target('prc_premium-monthly--fn1ae0qjj')
+  const control = target('prc_3-0-premium-monthly-ge4a00iw')
   const event = clickEvent(control)
 
   await state.listeners[0].listener(event)
@@ -449,7 +449,7 @@ test('retries registration with the same event identity after cleanup', async ()
           }
     },
   })
-  const control = target('prc_paid-annual-2o5f040u')
+  const control = target('prc_3-0-premium-annual-xhb200bu')
 
   await state.listeners[0].listener(clickEvent(control))
   const firstEventId = JSON.parse(state.requests[1].init.body).source_event_id
@@ -470,14 +470,14 @@ test('does not activate on V2 host', () => {
   assert.equal(state.requests.length, 0)
 })
 
-const RELAUNCH_PRICE_IDS = [
-  'prc_3-0-premium-monthly-ge4a00iw',
-  'prc_3-0-premium-annual-xhb200bu',
+const STAGING_ONLY_PRICE_IDS = [
+  'prc_premium-monthly--fn1ae0qjj',
+  'prc_paid-annual-2o5f040u',
   'prc_test-24h-trial-do-not-use-r5ae0vz6',
 ]
 
-for (const priceId of RELAUNCH_PRICE_IDS) {
-  test(`registers staging-only relaunch price ${priceId} on the V3 staging host`, async () => {
+for (const priceId of STAGING_ONLY_PRICE_IDS) {
+  test(`registers staging-only price ${priceId} on the V3 staging host`, async () => {
     const state = boot({ hostname: 'the-starters-3-0.webflow.io' })
     const control = target(priceId)
 
@@ -490,7 +490,7 @@ for (const priceId of RELAUNCH_PRICE_IDS) {
   })
 
   for (const hostname of ['thestarters.com', 'www.thestarters.com']) {
-    test(`blocks staging-only relaunch price ${priceId} on production host ${hostname}`, async () => {
+    test(`blocks staging-only price ${priceId} on production host ${hostname}`, async () => {
       const state = boot({ hostname })
       const control = target(priceId)
       const event = clickEvent(control)
@@ -507,17 +507,17 @@ for (const priceId of RELAUNCH_PRICE_IDS) {
 
 test('keeps current production prices on the V3 staging host', async () => {
   const state = boot({ hostname: 'the-starters-3-0.webflow.io' })
-  const control = target('prc_premium-monthly--fn1ae0qjj')
+  const control = target('prc_3-0-premium-monthly-ge4a00iw')
 
   await state.listeners[0].listener(clickEvent(control))
 
   assert.equal(control.clicks, 1)
-  assert.equal(JSON.parse(state.requests[1].init.body).stripe_price_id, 'prc_premium-monthly--fn1ae0qjj')
+  assert.equal(JSON.parse(state.requests[1].init.body).stripe_price_id, 'prc_3-0-premium-monthly-ge4a00iw')
 })
 
 test('normalizes the supported quiz-results trailing-slash route', async () => {
   const state = boot({ pathname: '/quiz-results/' })
-  const control = target('prc_premium-monthly--fn1ae0qjj')
+  const control = target('prc_3-0-premium-monthly-ge4a00iw')
 
   await state.listeners[0].listener(clickEvent(control))
 
@@ -525,13 +525,13 @@ test('normalizes the supported quiz-results trailing-slash route', async () => {
   assert.deepEqual(JSON.parse(state.requests[1].init.body), {
     source_event_id: 'evt_12345678-1234-1234-1234-123456789abc',
     source_route: '/quiz-results',
-    stripe_price_id: 'prc_premium-monthly--fn1ae0qjj',
+    stripe_price_id: 'prc_3-0-premium-monthly-ge4a00iw',
   })
 })
 
 test('registers an exact V3 intent from the all-starters shared paywall', async () => {
   const state = boot({ pathname: '/all-starters/' })
-  const control = target('prc_paid-annual-2o5f040u')
+  const control = target('prc_3-0-premium-annual-xhb200bu')
 
   await state.listeners[0].listener(clickEvent(control))
 
@@ -539,13 +539,13 @@ test('registers an exact V3 intent from the all-starters shared paywall', async 
   assert.deepEqual(JSON.parse(state.requests[1].init.body), {
     source_event_id: 'evt_12345678-1234-1234-1234-123456789abc',
     source_route: '/all-starters',
-    stripe_price_id: 'prc_paid-annual-2o5f040u',
+    stripe_price_id: 'prc_3-0-premium-annual-xhb200bu',
   })
 })
 
 test('registers an exact V3 intent from one canonical hire profile', async () => {
   const state = boot({ pathname: '/hire/jp-test/' })
-  const control = target('prc_premium-monthly--fn1ae0qjj')
+  const control = target('prc_3-0-premium-monthly-ge4a00iw')
 
   await state.listeners[0].listener(clickEvent(control))
 
@@ -567,7 +567,7 @@ test('registers from the exact public Join CTA route families', async () => {
     '/tools/klaviyo',
   ]) {
     const state = boot({ pathname })
-    const control = target('prc_premium-monthly--fn1ae0qjj')
+    const control = target('prc_3-0-premium-monthly-ge4a00iw')
     await state.listeners[0].listener(clickEvent(control))
     assert.equal(control.clicks, 1, pathname)
     assert.equal(JSON.parse(state.requests[1].init.body).source_route, pathname)
@@ -585,8 +585,8 @@ test('registers checkout intents from Learn pages', async () => {
     '/learn/events',
   ]) {
     for (const priceId of [
-      'prc_premium-monthly--fn1ae0qjj',
-      'prc_paid-annual-2o5f040u',
+      'prc_3-0-premium-monthly-ge4a00iw',
+      'prc_3-0-premium-annual-xhb200bu',
     ]) {
       const state = boot({ pathname: pathname + '/' })
       const control = target(priceId)
@@ -604,8 +604,8 @@ test('registers checkout intents from Become a Starter and case studies', async 
     '/case-studies/how-birddogs-found-an-elite-ui-ux-designer-on-the-starters',
   ]) {
     for (const priceId of [
-      'prc_premium-monthly--fn1ae0qjj',
-      'prc_paid-annual-2o5f040u',
+      'prc_3-0-premium-monthly-ge4a00iw',
+      'prc_3-0-premium-annual-xhb200bu',
     ]) {
       const state = boot({ pathname: pathname + '/' })
       const control = target(priceId)
@@ -654,7 +654,7 @@ test('fails closed on non-checkout V3 routes', async () => {
     '/case-studies-archive/example',
   ]) {
     const state = boot({ pathname })
-    const control = target('prc_premium-monthly--fn1ae0qjj')
+    const control = target('prc_3-0-premium-monthly-ge4a00iw')
     const event = clickEvent(control)
     await state.listeners[0].listener(event)
     assert.equal(event.prevented, true, pathname)
@@ -679,7 +679,7 @@ test('does not activate on other hosts for a Learn checkout route', () => {
 
 test('a bypassed replay continues without a second registration', async () => {
   const state = boot()
-  const control = target('prc_premium-monthly--fn1ae0qjj')
+  const control = target('prc_3-0-premium-monthly-ge4a00iw')
   await state.listeners[0].listener(clickEvent(control))
 
   const replayEvent = clickEvent(control)
@@ -692,7 +692,7 @@ test('a bypassed replay continues without a second registration', async () => {
 
 test('a closed checkout reuses the accepted pending intent', async () => {
   const state = boot({ pathname: '/all-starters' })
-  const control = target('prc_paid-annual-2o5f040u')
+  const control = target('prc_3-0-premium-annual-xhb200bu')
 
   await state.listeners[0].listener(clickEvent(control))
   await state.listeners[0].listener(clickEvent(control))
@@ -707,7 +707,7 @@ test('a closed checkout reuses the accepted pending intent', async () => {
 
 test('a route change reuses the original immutable pending route and event', async () => {
   const state = boot({ pathname: '/all-starters' })
-  const control = target('prc_premium-monthly--fn1ae0qjj')
+  const control = target('prc_3-0-premium-monthly-ge4a00iw')
 
   await state.listeners[0].listener(clickEvent(control))
   await state.listeners[0].listener(clickEvent(control))
@@ -732,11 +732,11 @@ test('replaces a pending identity when the authenticated member changes', async 
   })
 
   await state.listeners[0].listener(
-    clickEvent(target('prc_premium-monthly--fn1ae0qjj')),
+    clickEvent(target('prc_3-0-premium-monthly-ge4a00iw')),
   )
   memberId = 'member-b'
   await state.listeners[0].listener(
-    clickEvent(target('prc_premium-monthly--fn1ae0qjj')),
+    clickEvent(target('prc_3-0-premium-monthly-ge4a00iw')),
   )
 
   const first = JSON.parse(state.requests[1].init.body)
@@ -745,7 +745,7 @@ test('replaces a pending identity when the authenticated member changes', async 
   assert.equal(
     JSON.parse(
       state.storage.get(
-        'ts:v3:membership-checkout-intent:prc_premium-monthly--fn1ae0qjj',
+        'ts:v3:membership-checkout-intent:prc_3-0-premium-monthly-ge4a00iw',
       ),
     ).memberId,
     'member-b',
@@ -759,7 +759,7 @@ test('fails closed when checkout identity storage is unavailable', async () => {
       setItem: () => {},
     },
   })
-  const control = target('prc_premium-monthly--fn1ae0qjj')
+  const control = target('prc_3-0-premium-monthly-ge4a00iw')
 
   await state.listeners[0].listener(clickEvent(control))
 
@@ -773,10 +773,10 @@ test('fails closed when checkout identity storage is unavailable', async () => {
 test('replaces malformed stored identity before checkout', async () => {
   const state = boot()
   state.storage.set(
-    'ts:v3:membership-checkout-intent:prc_premium-monthly--fn1ae0qjj',
+    'ts:v3:membership-checkout-intent:prc_3-0-premium-monthly-ge4a00iw',
     '{malformed',
   )
-  const control = target('prc_premium-monthly--fn1ae0qjj')
+  const control = target('prc_3-0-premium-monthly-ge4a00iw')
 
   await state.listeners[0].listener(clickEvent(control))
 
@@ -793,7 +793,7 @@ test('clears the pending state when secure event identity generation fails', asy
   state.window.crypto.randomUUID = () => {
     throw new Error('entropy unavailable')
   }
-  const control = target('prc_premium-monthly--fn1ae0qjj')
+  const control = target('prc_3-0-premium-monthly-ge4a00iw')
 
   await state.listeners[0].listener(clickEvent(control))
   assert.equal(control.getAttribute('data-v3-checkout-authority'), 'error')
@@ -805,8 +805,8 @@ test('clears the pending state when secure event identity generation fails', asy
   assert.equal(control.clicks, 1)
 })
 
-const monthlyPrice = 'prc_premium-monthly--fn1ae0qjj'
-const annualPrice = 'prc_paid-annual-2o5f040u'
+const monthlyPrice = 'prc_3-0-premium-monthly-ge4a00iw'
+const annualPrice = 'prc_3-0-premium-annual-xhb200bu'
 const canonicalIntent = 'a'.repeat(64)
 function returnedPurchase(options = {}) {
   const priceId = options.priceId || monthlyPrice
@@ -849,7 +849,7 @@ function paidReceipt(priceId, environment) {
   }
 }
 
-for (const priceId of RELAUNCH_PRICE_IDS) {
+for (const priceId of STAGING_ONLY_PRICE_IDS) {
   test(`captures and verifies staging checkout return for ${priceId} without production analytics`, async () => {
     const state = returnedPurchase({
       priceId, hostname: 'the-starters-3-0.webflow.io', memberId: 'mem_sb_relaunch',
@@ -924,7 +924,7 @@ test('staging-only checkout never activates on lookalike or trailing-dot hosts',
     'the-starters-3-0.webflow.io.',
     'the-starters-3-0.webflow.com',
   ]) {
-    for (const priceId of RELAUNCH_PRICE_IDS) {
+    for (const priceId of STAGING_ONLY_PRICE_IDS) {
       const capture = returnedPurchase({ hostname, priceId, memberId: 'mem_sb_relaunch' })
       await finishPurchase(capture)
       assert.equal(capture.listeners.length, 0, hostname)
@@ -1192,7 +1192,7 @@ for (const serverMessage of [
 ]) {
   test(`shows a visible support message when the server says: ${serverMessage}`, async () => {
     const state = boot({ registerResponse: notEligibleResponse(serverMessage) })
-    const control = target('prc_premium-monthly--fn1ae0qjj')
+    const control = target('prc_3-0-premium-monthly-ge4a00iw')
     const dom = withVisibleDom(state, control)
 
     await state.listeners[0].listener(clickEvent(control))
@@ -1228,7 +1228,7 @@ test('shows the retry message for server, network, and session failures', async 
   ]
   for (const options of cases) {
     const state = boot(options)
-    const control = target('prc_paid-annual-2o5f040u')
+    const control = target('prc_3-0-premium-annual-xhb200bu')
     const dom = withVisibleDom(state, control)
 
     await state.listeners[0].listener(clickEvent(control))
@@ -1248,7 +1248,7 @@ test('shows the retry message for server, network, and session failures', async 
 test('shows a visible message on non-allowlisted routes without calling Xano', async () => {
   for (const pathname of ['/brand-dashboard', '/favorites', '/messages', '/opportunities', '/complete-profile']) {
     const state = boot({ pathname })
-    const control = target('prc_premium-monthly--fn1ae0qjj')
+    const control = target('prc_3-0-premium-monthly-ge4a00iw')
     const dom = withVisibleDom(state, control)
     const event = clickEvent(control)
 
@@ -1273,7 +1273,7 @@ test('the next attempt removes the message, and repeated failures keep only one'
         : { ok: true, json: async () => ({ ok: true, checkout_intent_id: 7 }) }
     },
   })
-  const control = target('prc_paid-annual-2o5f040u')
+  const control = target('prc_3-0-premium-annual-xhb200bu')
   const dom = withVisibleDom(state, control)
 
   await state.listeners[0].listener(clickEvent(control))
@@ -1291,7 +1291,7 @@ test('the next attempt removes the message, and repeated failures keep only one'
 
 test('a missing DOM API keeps checkout fail-closed without throwing', async () => {
   const state = boot({ registerResponse: notEligibleResponse('Brand plan is not eligible for V3 checkout') })
-  const control = target('prc_premium-monthly--fn1ae0qjj')
+  const control = target('prc_3-0-premium-monthly-ge4a00iw')
   control.parentNode = { insertBefore() { throw new Error('detached') } }
   state.window.document.createElement = (tag) => fakeElement(tag)
   state.window.document.createTextNode = (text) => ({ textContent: String(text) })
