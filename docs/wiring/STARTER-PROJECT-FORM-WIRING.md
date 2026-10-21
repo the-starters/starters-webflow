@@ -18,18 +18,18 @@ Airtable, Make, or a legacy TalkJS table.
 - Keep `#Project-Name` and the existing commercial fields.
 - Do not add or send Connection Type.
 - Do not show opportunity choices or prefill Project Scope yet.
-- Create a project *request* after the server verifies the Starter-to-Brand
-  relationship and commercial fields. A Starter submission never creates a
-  canonical project on its own.
-- The Brand accepts or declines that request from `/brand-dashboard`. Acceptance
-  creates the canonical project and, for a Standard Contract, enqueues the single
-  PandaDoc contract invitation through the existing project outbox. The proposal
-  path adds no second invitation.
+- Create the canonical project directly after the server verifies the
+  Starter-to-Brand relationship and commercial fields (JP decision 2026-10-21).
+  The Brand does not approve a separate request: a Standard Contract enqueues
+  the single PandaDoc invitation through the existing project outbox, and both
+  signatures activate the project. An Own Contract starts `active`.
 - Brand and Starter can sign in either order. Both signatures activate the
   project.
-- The Brand **Approve Project** / **Decline Request** step is required. Its
-  Designer, endpoint, and install contract lives in
-  [BRAND-PROJECT-PROPOSALS-WIRING.md](BRAND-PROJECT-PROPOSALS-WIRING.md).
+- History: from 2026-09-20 to 2026-10-21 this form created
+  `core_project_proposals_v3` rows that waited for Brand approval in
+  [BRAND-PROJECT-PROPOSALS-WIRING.md](BRAND-PROJECT-PROPOSALS-WIRING.md). Brands
+  had no installed approval screen, so requests stayed stuck. The Brand
+  controller stays installed to clear any request created before this change.
 
 ## Backend contract required before Webflow wiring
 
@@ -61,60 +61,41 @@ authenticated Brand member ID, normalizes it to its internal
 
 Do not return message text or use the browser's Brand value as authority.
 
-`POST projects/proposal-request/v3` accepts the stable `brand_id`, the shared
-commercial payload, and an idempotency key. It must recheck the active
-relationship and create one proposal row awaiting Brand approval:
+`POST projects/submit/v3` (#4717) accepts the stable `brand_id`, the shared
+commercial payload, and an idempotency key. It runs
+`project/normalize_contract_v3` and `project/create_from_starter_v3` (#648),
+which recheck the paid Brand plan and the active relationship, then create one
+project:
 
 ```json
 {
-  "proposal": { "id": 669, "status": "awaiting_brand_approval", "lifecycle_version": 1 },
+  "kind": "project",
+  "project": { "id": 669, "lifecycle_state": "active", "contract_status": "not_requested" },
   "replayed": false
 }
 ```
 
-The browser requires a positive `proposal.id`, a positive
-`proposal.lifecycle_version`, and a known proposal status. This keeps idempotent
-terminal replays valid while a fulfilled malformed response remains a retryable
-failure. The known statuses are exactly the three this lifecycle produces:
-`awaiting_brand_approval`, plus `accepted` and `rejected` from a Brand decision.
-The success panel paints copy for the returned status, so a replay of a request
-the Brand already declined reads as declined rather than as still pending.
+The browser requires a positive `project.id` and a created lifecycle state:
+`contract_create_pending`, `contract_draft`, `contract_sent`,
+`signature_partial`, or `active`. Any other reply, including a `proposal`
+object, is a retryable failure that keeps the idempotency key, so a replay
+lands on the same project row.
 
-For submission this form calls only `Opp30.API.projectProposalSubmit`. The
-bridge carries three submit capabilities, and the split exists because the two
-jsDelivr assets cache independently, so either one can be stale on its own:
+For submission this form calls only `Opp30.API.projectDirectSubmit`:
 
 | Capability | Route | Why it exists |
 | --- | --- | --- |
-| `projectProposalSubmit` | `projects/proposal-request/v3` | The canonical capability this form calls. |
-| `projectSubmit` | `projects/proposal-request/v3` | Temporary compatibility alias for the already-released form, which calls `projectSubmit`. It must stay on the proposal route until that form is no longer served from any cache. |
-| `projectDirectSubmit` | `projects/submit/v3` | The only capability that reaches the direct-project route. |
+| `projectDirectSubmit` | `projects/submit/v3` | The capability this form calls. |
+| `projectProposalSubmit` | `projects/proposal-request/v3` | Rollback target: the Brand-approval request route. |
+| `projectSubmit` | `projects/proposal-request/v3` | Alias kept for cached forms from the proposal release. Never used as a fallback. |
 
-Both stale-asset directions therefore fail safe. A cached form plus a fresh
-bridge calls `projectSubmit` and still lands on the proposal route. A fresh form
-plus a cached bridge from before `projectProposalSubmit` existed finds no such
-capability, so the form fails closed and never falls back to a direct-project
-method. The pre-proposal route `projects/options/v3`
-(`Opp30.API.projectOptions`) likewise stays wired without a shipped caller.
+A fresh form plus a cached bridge without `projectDirectSubmit` fails closed
+with **The project service is not available.** A cached proposal-release form
+keeps sending requests until its cache expires; the Brand controller still
+handles those.
 
-The executable rollback is removing this loader together with the Brand loader
-in [BRAND-PROJECT-PROPOSALS-WIRING.md](BRAND-PROJECT-PROPOSALS-WIRING.md#script-order),
-which returns `/starter-dashboard` to its authored Designer state. Repointing
-this form at `projectDirectSubmit` alone does **not** work and must not be
-attempted as a hotfix: `projects/submit/v3` answers with
-`{ "project": { "id": 669, "lifecycle_state": "contract_draft" } }` and no
-`proposal` object, which this form's response validation rejects, so every
-Starter would be told the request could not be sent for a project that was in
-fact created, and the retained idempotency key would replay onto the same row
-forever. A repoint therefore also requires restoring the direct-create response
-validation, success copy, and `starters:project-created` event that this
-release removed.
-
-The endpoint must not create a `core_projects_v3` row, a `project.created`
-lifecycle event, or a PandaDoc outbox job. Those belong to Brand acceptance —
-see [BRAND-PROJECT-PROPOSALS-WIRING.md](BRAND-PROJECT-PROPOSALS-WIRING.md).
-Replaying the same idempotency key must return the same proposal instead of
-creating a second one.
+Rollback: point `submit()` back at `projectProposalSubmit` and restore
+`createdProposal` as the reply check (the previous release tag).
 
 ## Starter service names
 
@@ -302,58 +283,39 @@ cached `opportunities-3.0.js` lacking `Opp30.API.starterProfile` cannot load
 canonical services. The controller still removes the generic placeholders and
 `Monthly retainer`, and keeps every other valid authored option.
 
-Do not add the last loader until both backend endpoints exist and pass backend
-tests. After release, install it on the Starter Dashboard so the existing Navbar
-action opens the detached shared Contract Generation form. Ship it in the same
-release as the Brand loader in
-[BRAND-PROJECT-PROPOSALS-WIRING.md](BRAND-PROJECT-PROPOSALS-WIRING.md#script-order);
-the Starter half alone leaves every request unactionable.
+Install the last loader on the Starter Dashboard so the existing Navbar action
+opens the detached shared Contract Generation form. Submissions create projects
+directly, so it does not depend on the Brand loader.
 The deferred Starter adapter must execute before `global-embeds/modal/modal.js`
 initializes the shared modal registry, because it normalizes duplicate targets
 and the Navbar link during boot.
 
 ## Backend release evidence
 
-Frontend unit tests and mocked route tests do not prove canonical Xano writes or
-PandaDoc outbox behavior. Before installing the loader, run a separately approved,
-bounded backend canary and read back the canonical records. The evidence must show
-one proposal row and no project, no `project.created` event, and no PandaDoc
-outbox job for each Starter submission; then, after the Brand accepts, exactly
-one project, one `project.created` event, exactly one PandaDoc outbox job for a
-Standard Contract, and no PandaDoc outbox job for an Own Contract. A replayed
-idempotency key must add nothing on either side. Stop at the first mismatch and
-do not treat prior frontend evidence as backend acceptance.
-
-For this release, validation is staging-only and must use PandaDoc DEV routing.
-Production must retain PandaDoc live routing, but this release does not authorize
-a production project, PandaDoc document, signature, or email canary.
+Before release, run one staging canary with a staff Test Starter and Test Brand
+and read back the canonical rows: exactly one `core_projects_v3` row, one
+`project.created` lifecycle event, no PandaDoc outbox job for an Own Contract,
+exactly one for a Standard Contract, and no `core_project_proposals_v3` row. A
+replayed idempotency key must add nothing.
 
 ## User states
 
 - No eligible Brand: **You can start a project after a Brand messages you.**
-- Successful submit, either contract type: **Project request sent. The Brand can
-  review your project terms. A project and contract are created only after
-  approval.**
-- Replay of a request the Brand already approved: **Project request approved. The
-  Brand approved this request. Your project and contract are being prepared.**
-- Replay of a request the Brand already declined: **Project request declined. The
-  Brand declined this request. Adjust the terms and send a new request.**
-- Duplicate request (409): **A project request already exists for this Brand.**
+- Successful submit, Own Contract: **Project successfully created. Your project
+  is now active.**
+- Successful submit, Standard Contract: **Project successfully created. Your
+  contract is being prepared. You and the Brand can sign when it is ready.**
+- Duplicate request (409): **A project already exists for this request.**
 - Stale relationship: ask the Starter to refresh the available Brands and retry.
-- Cached bridge without `projectProposalSubmit` (the fail-closed case above):
-  **The project service is not available. Reload and try again.** No request is
-  sent and Confirm stays disabled.
+- Cached bridge without `projectDirectSubmit`: **The project service is not
+  available. Reload and try again.** No request is sent.
 
-The success event is `starters:project-proposal-requested`. Its detail contains
-only the stable `proposal_id` and replay state.
+The success event is `starters:project-created`. Its detail contains only the
+stable `project_id` and replay state.
 
-The PostHog funnel event is `project_proposal_requested` with a `proposal_id`
-property, renamed from `project_created`. `v3/project-form.js` keeps emitting
-`project_created` for the Brand direct-hire path on `/hire/<slug>`, so any
-dashboard keyed on `project_created` now measures direct hires only. The rename
-needs its migration note in `platform-ops/architecture/posthog-funnel-events-plan.md`,
-which lives outside this repository; land that note before reading the renamed
-event in a funnel.
+The PostHog funnel event is `project_created` with a `project_id` property, the
+same event `v3/project-form.js` emits for the Brand direct-hire path.
+`project_proposal_requested` events exist only from 2026-09-20 to 2026-10-21.
 
 ## Screen-share diagnostics
 

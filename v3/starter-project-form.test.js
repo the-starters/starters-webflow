@@ -307,9 +307,9 @@ function load(options = {}) {
         calls.options.push(payload)
         return { counterparties: options.counterparties || [] }
       }),
-      projectProposalSubmit: options.projectProposalSubmit || (async (payload) => {
+      projectDirectSubmit: options.projectDirectSubmit || (async (payload) => {
         calls.submit.push(payload)
-        return { proposal: { id: 81, status: 'awaiting_brand_approval', lifecycle_version: 1 }, replayed: false }
+        return { kind: 'project', project: { id: 81, lifecycle_state: 'active', contract_status: 'not_requested' }, replayed: false }
       }),
     } },
   }
@@ -351,10 +351,11 @@ test('diagnostics stay off by default and emit only the safe options-to-submit t
       counterparties: [{ counterparty_id: 31, company_name: 'Brand', hiring_manager_name: 'Brand Member' }],
       blocked_reason: 'starter mem_starter cannot use sample@example.com for project_scope',
     }),
-    projectProposalSubmit: async (payload) => {
+    projectDirectSubmit: async (payload) => {
       submittedPayload = payload
       return {
-        proposal: { id: 81, status: 'awaiting_brand_approval', lifecycle_version: 1 },
+        kind: 'project',
+        project: { id: 81, lifecycle_state: 'active', contract_status: 'not_requested' },
         replayed: false,
         member_id: 'mem_starter',
         email: 'sample@example.com',
@@ -374,8 +375,8 @@ test('diagnostics stay off by default and emit only the safe options-to-submit t
     ['[StarterProjectV3]', 'options_response', { eligible_count: 1 }],
     ['[StarterProjectV3]', 'submit_request', { selected_brand_id: 31 }],
     ['[StarterProjectV3]', 'submit_success', {
-      proposal_id: 81,
-      proposal_status: 'awaiting_brand_approval',
+      project_id: 81,
+      lifecycle_state: 'active',
       replayed: false,
     }],
   ])
@@ -426,7 +427,7 @@ test('diagnostic error entries expose status only and omit free-form server deta
     noDocument: true,
     debug: true,
     counterparties: [{ counterparty_id: 31, company_name: 'Brand', hiring_manager_name: 'Brand Member' }],
-    projectProposalSubmit: async () => {
+    projectDirectSubmit: async () => {
       throw Object.assign(new Error('mem_starter sample@example.com secret-token project_scope'), {
         status: 422,
         response: { idempotency_key: 'project-key-123', contract_payload: { private: true } },
@@ -1277,7 +1278,7 @@ test('reopening during an options request supersedes its stale response', async 
   assert.equal(loaded.form.fields.select.options.length, 2)
 })
 
-test('submission reports the canonical proposal and approval-first success state', async () => {
+test('submission creates the canonical project directly and reports success', async () => {
   const loaded = load({
     noDocument: true,
     counterparties: [{ counterparty_id: 31, company_name: 'Brand', hiring_manager_name: 'Brand Member' }],
@@ -1296,16 +1297,16 @@ test('submission reports the canonical proposal and approval-first success state
   assert.equal(loaded.calls.submit[0].brand_id, 31)
   assert.equal(loaded.calls.submit[0].idempotency_key, 'project-key-123')
   assert.equal(Object.prototype.hasOwnProperty.call(loaded.calls.submit[0], 'connection_type'), false)
-  assert.equal(loaded.events[0].type, 'starters:project-proposal-requested')
-  assert.equal(loaded.events[0].detail.proposal_id, 81)
-  assert.equal(loaded.tracks[0].name, 'project_proposal_requested')
+  assert.equal(loaded.events[0].type, 'starters:project-created')
+  assert.equal(loaded.events[0].detail.project_id, 81)
+  assert.equal(loaded.tracks[0].name, 'project_created')
   assert.deepEqual(loaded.wrapper.success.successTitles.map((title) => title.textContent), [
-    'Project request sent',
-    'Project request sent',
+    'Project successfully created',
+    'Project successfully created',
   ])
   assert.equal(
     loaded.wrapper.success.querySelector('[data-project-success-message]').textContent,
-    'The Brand can review your project terms. A project and contract are created only after approval.',
+    'Your project is now active.',
   )
   assert.equal(loaded.context.successLinks[0].getAttribute('href'), '/starter-dashboard#projects')
   assert.equal(loaded.wrapper.success.getAttribute('aria-hidden'), 'false')
@@ -1390,7 +1391,7 @@ test('Confirm enables only for ready and retryable submit errors', async () => {
   const loaded = load({
     fixture,
     counterparties: [{ counterparty_id: 31, company_name: 'Brand', hiring_manager_name: 'Brand Member' }],
-    projectProposalSubmit: () => new Promise((resolve, reject) => { rejectSubmit = reject }),
+    projectDirectSubmit: () => new Promise((resolve, reject) => { rejectSubmit = reject }),
   })
 
   await loaded.api.loadOptions(loaded.form, loaded.window)
@@ -1441,7 +1442,7 @@ test('Confirm stays disabled for non-retryable errors', async () => {
       load: { counterparties: [{ counterparty_id: 31, company_name: 'Brand', hiring_manager_name: 'Brand Member' }] },
       run: async (loaded) => {
         await loaded.api.loadOptions(loaded.form, loaded.window)
-        delete loaded.window.Opp30.API.projectProposalSubmit
+        delete loaded.window.Opp30.API.projectDirectSubmit
         return loaded.api.submit(loaded.form, loaded.window, loaded.document)
       },
     },
@@ -1449,7 +1450,7 @@ test('Confirm stays disabled for non-retryable errors', async () => {
       name: 'authorization invalidation',
       load: {
         counterparties: [{ counterparty_id: 31, company_name: 'Brand', hiring_manager_name: 'Brand Member' }],
-        projectProposalSubmit: async () => { throw Object.assign(new Error('forbidden'), { status: 403 }) },
+        projectDirectSubmit: async () => { throw Object.assign(new Error('forbidden'), { status: 403 }) },
       },
       run: async (loaded) => {
         await loaded.api.loadOptions(loaded.form, loaded.window)
@@ -1460,7 +1461,7 @@ test('Confirm stays disabled for non-retryable errors', async () => {
       name: 'reload required',
       load: {
         counterparties: [{ counterparty_id: 31, company_name: 'Brand', hiring_manager_name: 'Brand Member' }],
-        projectProposalSubmit: async () => { throw Object.assign(new Error('expired'), { status: 401 }) },
+        projectDirectSubmit: async () => { throw Object.assign(new Error('expired'), { status: 401 }) },
       },
       run: async (loaded) => {
         await loaded.api.loadOptions(loaded.form, loaded.window)
@@ -1525,21 +1526,21 @@ test('Review Edit fee change refreshes preview controls and preserves authored d
   assert.equal(loaded.form.fields.email.disabled, true)
 })
 
-test('Own Contract submission still waits for Brand approval', async () => {
+test('Own Contract submission reports an active project', async () => {
   let loaded
   loaded = load({
     noDocument: true,
     counterparties: [{ counterparty_id: 31, company_name: 'Brand', hiring_manager_name: 'Brand Member' }],
-    projectProposalSubmit: async (payload) => {
+    projectDirectSubmit: async (payload) => {
       loaded.calls.submit.push(payload)
-      return { proposal: { id: 82, status: 'awaiting_brand_approval', lifecycle_version: 1 }, replayed: false }
+      return { kind: 'project', project: { id: 82, lifecycle_state: 'active', contract_status: 'not_requested' }, replayed: false }
     },
   })
   await loaded.api.loadOptions(loaded.form, loaded.window)
   assert.equal(await loaded.api.submit(loaded.form, loaded.window, loaded.document), true)
   assert.equal(
     loaded.wrapper.success.querySelector('[data-project-success-message]').textContent,
-    'The Brand can review your project terms. A project and contract are created only after approval.',
+    'Your project is now active.',
   )
 })
 
@@ -1565,7 +1566,7 @@ test('reopening during submission cannot let an options refresh replace success'
   let resolveSubmit
   const loaded = load({
     counterparties: [{ counterparty_id: 63, company_name: 'Brand', hiring_manager_name: 'Brand Member' }],
-    projectProposalSubmit: (payload) => {
+    projectDirectSubmit: (payload) => {
       loaded.calls.submit.push(payload)
       return new Promise((resolve) => { resolveSubmit = resolve })
     },
@@ -1580,7 +1581,7 @@ test('reopening during submission cannot let an options refresh replace success'
   assert.equal(loaded.calls.options.length, 1)
   assert.equal(loaded.form.getAttribute('data-starter-project-status'), 'submitting')
 
-  resolveSubmit({ proposal: { id: 92, status: 'awaiting_brand_approval', lifecycle_version: 1 }, replayed: false })
+  resolveSubmit({ kind: 'project', project: { id: 92, lifecycle_state: 'active', contract_status: 'not_requested' }, replayed: false })
   assert.equal(await submission, true)
   assert.equal(loaded.form.getAttribute('data-starter-project-status'), 'success')
 
@@ -1629,11 +1630,11 @@ test('failed retry keeps the same idempotency key', async () => {
   const loaded = load({
     noDocument: true,
     counterparties: [{ counterparty_id: 41, company_name: 'Brand', hiring_manager_name: 'Brand Member' }],
-    projectProposalSubmit: async (payload) => {
+    projectDirectSubmit: async (payload) => {
       submitted.push({ ...payload })
       attempt += 1
       if (attempt === 1) throw Object.assign(new Error('temporary'), { status: 503 })
-      return { proposal: { id: 91, status: 'awaiting_brand_approval', lifecycle_version: 1 }, replayed: true }
+      return { kind: 'project', project: { id: 91, lifecycle_state: 'active', contract_status: 'not_requested' }, replayed: true }
     },
   })
   await loaded.api.loadOptions(loaded.form, loaded.window)
@@ -1643,17 +1644,17 @@ test('failed retry keeps the same idempotency key', async () => {
   assert.equal(submitted[0].idempotency_key, submitted[1].idempotency_key)
 })
 
-test('malformed proposal responses fail and preserve the retry key', async () => {
+test('malformed or proposal-shaped responses fail and preserve the retry key', async () => {
   const submitted = []
   const responses = [
-    { proposal: { id: 0, status: 'awaiting_brand_approval' } },
-    { project: { id: 91, lifecycle_state: 'contract_create_pending' } },
-    { proposal: { id: 91, status: 'awaiting_brand_approval', lifecycle_version: 1 }, replayed: true },
+    { proposal: { id: 91, status: 'awaiting_brand_approval', lifecycle_version: 1 }, replayed: false },
+    { kind: 'project', project: { id: 0, lifecycle_state: 'active' } },
+    { kind: 'project', project: { id: 91, lifecycle_state: 'active', contract_status: 'not_requested' }, replayed: true },
   ]
   const loaded = load({
     noDocument: true,
     counterparties: [{ counterparty_id: 41, company_name: 'Brand', hiring_manager_name: 'Brand Member' }],
-    projectProposalSubmit: async (payload) => {
+    projectDirectSubmit: async (payload) => {
       submitted.push({ ...payload })
       return responses.shift()
     },
@@ -1665,7 +1666,7 @@ test('malformed proposal responses fail and preserve the retry key', async () =>
   assert.equal(loaded.events.length, 0)
   assert.equal(loaded.tracks.length, 0)
   assert.equal(loaded.form.style.display, '')
-  assert.match(loaded.wrapper.error.textContent, /could not be sent/)
+  assert.match(loaded.wrapper.error.textContent, /could not be created/)
 
   assert.equal(await loaded.api.submit(loaded.form, loaded.window, loaded.document), true)
   assert.deepEqual(submitted.map((payload) => payload.idempotency_key), [
@@ -1673,28 +1674,28 @@ test('malformed proposal responses fail and preserve the retry key', async () =>
     'project-key-123',
     'project-key-123',
   ])
-  assert.equal(loaded.events[0].detail.proposal_id, 91)
+  assert.equal(loaded.events[0].detail.project_id, 91)
 })
 
-test('the direct-project rollback route response is not accepted by this form', async () => {
-  const submitted = []
+test('a Standard Contract project reports contract preparation', async () => {
   const loaded = load({
     noDocument: true,
     counterparties: [{ counterparty_id: 41, company_name: 'Brand', hiring_manager_name: 'Brand Member' }],
-    projectProposalSubmit: async (payload) => {
-      submitted.push({ ...payload })
-      return { project: { id: 669, lifecycle_state: 'contract_draft' }, replayed: false }
-    },
+    projectDirectSubmit: async () => ({
+      kind: 'project',
+      project: { id: 669, lifecycle_state: 'contract_create_pending', contract_status: 'create_pending' },
+      replayed: false,
+    }),
   })
   await loaded.api.loadOptions(loaded.form, loaded.window)
 
-  assert.equal(await loaded.api.submit(loaded.form, loaded.window, loaded.document), false)
-  assert.equal(await loaded.api.submit(loaded.form, loaded.window, loaded.document), false)
-
-  assert.equal(loaded.events.length, 0)
-  assert.equal(loaded.tracks.length, 0)
-  assert.equal(submitted[0].idempotency_key, submitted[1].idempotency_key)
-  assert.match(loaded.wrapper.error.textContent, /could not be sent/)
+  assert.equal(await loaded.api.submit(loaded.form, loaded.window, loaded.document), true)
+  assert.equal(loaded.events[0].type, 'starters:project-created')
+  assert.equal(loaded.events[0].detail.project_id, 669)
+  assert.equal(
+    loaded.wrapper.success.querySelector('[data-project-success-message]').textContent,
+    'Your contract is being prepared. You and the Brand can sign when it is ready.',
+  )
 })
 
 test('a cached bridge with only the legacy direct submit capability fails closed', async () => {
@@ -1703,7 +1704,7 @@ test('a cached bridge with only the legacy direct submit capability fails closed
     counterparties: [{ counterparty_id: 41, company_name: 'Brand', hiring_manager_name: 'Brand Member' }],
   })
   let directCalls = 0
-  delete loaded.window.Opp30.API.projectProposalSubmit
+  delete loaded.window.Opp30.API.projectDirectSubmit
   loaded.window.Opp30.API.projectSubmit = async () => {
     directCalls += 1
     return { project: { id: 669, lifecycle_state: 'contract_draft' }, replayed: false }
@@ -1717,17 +1718,17 @@ test('a cached bridge with only the legacy direct submit capability fails closed
   assert.match(loaded.wrapper.error.textContent, /service is not available/)
 })
 
-test('an idempotent replay of an already-resolved proposal still reports success', async () => {
+test('an idempotent replay of an already-created project still reports success', async () => {
   const submitted = []
   let attempt = 0
   const loaded = load({
     noDocument: true,
     counterparties: [{ counterparty_id: 31, company_name: 'Brand', hiring_manager_name: 'Brand Member' }],
-    projectProposalSubmit: async (payload) => {
+    projectDirectSubmit: async (payload) => {
       submitted.push({ ...payload })
       attempt += 1
       if (attempt === 1) throw Object.assign(new Error('gateway'), { status: 503 })
-      return { proposal: { id: 88, status: 'accepted', lifecycle_version: 2 }, replayed: true }
+      return { kind: 'project', project: { id: 88, lifecycle_state: 'active', contract_status: 'not_requested' }, replayed: true }
     },
   })
   await loaded.api.loadOptions(loaded.form, loaded.window)
@@ -1736,61 +1737,63 @@ test('an idempotent replay of an already-resolved proposal still reports success
   assert.equal(await loaded.api.submit(loaded.form, loaded.window, loaded.document), true)
 
   assert.equal(submitted[0].idempotency_key, submitted[1].idempotency_key)
-  assert.equal(loaded.events[0].type, 'starters:project-proposal-requested')
-  assert.equal(loaded.events[0].detail.proposal_id, 88)
+  assert.equal(loaded.events[0].type, 'starters:project-created')
+  assert.equal(loaded.events[0].detail.project_id, 88)
   assert.equal(loaded.events[0].detail.replayed, true)
   assert.equal(loaded.wrapper.success.getAttribute('aria-hidden'), 'false')
 })
 
-test('a replayed proposal paints copy for the status the server returned', async () => {
+test('each created lifecycle state paints the matching success copy', async () => {
   const cases = [
-    ['awaiting_brand_approval', 'Project request sent', /created only after approval/],
-    ['accepted', 'Project request approved', /project and contract are being prepared/],
-    ['rejected', 'Project request declined', /Adjust the terms and send a new request/],
+    ['active', /now active/],
+    ['contract_create_pending', /contract is being prepared/],
+    ['contract_draft', /contract is being prepared/],
+    ['contract_sent', /contract is being prepared/],
+    ['signature_partial', /contract is being prepared/],
   ]
-  for (const [status, title, messagePattern] of cases) {
+  for (const [lifecycleState, messagePattern] of cases) {
     const loaded = load({
       noDocument: true,
       counterparties: [{ counterparty_id: 31, company_name: 'Brand', hiring_manager_name: 'Brand Member' }],
-      projectProposalSubmit: async () => ({
-        proposal: { id: 88, status, lifecycle_version: 2 },
+      projectDirectSubmit: async () => ({
+        kind: 'project',
+        project: { id: 88, lifecycle_state: lifecycleState },
         replayed: true,
       }),
     })
     await loaded.api.loadOptions(loaded.form, loaded.window)
 
-    assert.equal(await loaded.api.submit(loaded.form, loaded.window, loaded.document), true)
-
+    assert.equal(await loaded.api.submit(loaded.form, loaded.window, loaded.document), true, lifecycleState)
     assert.deepEqual(
       loaded.wrapper.success.successTitles.map((element) => element.textContent),
-      [title, title],
-      status,
+      ['Project successfully created', 'Project successfully created'],
+      lifecycleState,
     )
     assert.match(
       loaded.wrapper.success.querySelector('[data-project-success-message]').textContent,
       messagePattern,
-      status,
+      lifecycleState,
     )
   }
 })
 
-test('an unsupported proposal status is not reported as a sent request', async () => {
-  for (const status of ['queued_for_review', 'withdrawn', 'expired']) {
+test('an unsupported project lifecycle state is not reported as created', async () => {
+  for (const lifecycleState of ['completed', 'cancelled', '']) {
     const loaded = load({
       noDocument: true,
       counterparties: [{ counterparty_id: 31, company_name: 'Brand', hiring_manager_name: 'Brand Member' }],
-      projectProposalSubmit: async () => ({ proposal: { id: 88, status, lifecycle_version: 2 }, replayed: true }),
+      projectDirectSubmit: async () => ({ kind: 'project', project: { id: 88, lifecycle_state: lifecycleState }, replayed: true }),
     })
     await loaded.api.loadOptions(loaded.form, loaded.window)
 
-    assert.equal(await loaded.api.submit(loaded.form, loaded.window, loaded.document), false, status)
-    assert.equal(loaded.events.length, 0, status)
+    assert.equal(await loaded.api.submit(loaded.form, loaded.window, loaded.document), false, lifecycleState)
+    assert.equal(loaded.events.length, 0, lifecycleState)
     assert.deepEqual(
       loaded.wrapper.success.successTitles.map((element) => element.textContent),
       ['', ''],
-      status,
+      lifecycleState,
     )
-    assert.match(loaded.wrapper.error.textContent, /could not be sent/, status)
+    assert.match(loaded.wrapper.error.textContent, /could not be created/, lifecycleState)
   }
 })
 
@@ -1804,7 +1807,7 @@ test('a rejected Brand authorization is invalidated before another submit', asyn
         ? [{ counterparty_id: 42, company_name: 'Revoked Brand', hiring_manager_name: 'Revoked Member' }]
         : [{ counterparty_id: 43, company_name: 'Current Brand', hiring_manager_name: 'Current Member' }] }
     },
-    projectProposalSubmit: async (payload) => {
+    projectDirectSubmit: async (payload) => {
       loaded.calls.submit.push(payload)
       throw Object.assign(new Error('revoked'), { status: 403 })
     },
@@ -1838,7 +1841,7 @@ test('duplicate open proposal 400 shows the waiting-for-approval copy, other 400
   const { api } = load({ noDocument: true })
   const duplicateMessage = 'An open proposal already exists for this Brand and Starter'
   const duplicateCopy = 'You already sent a proposal to this Brand. It is waiting for the Brand to approve it.'
-  const generic = 'The project request could not be sent. Try again.'
+  const generic = 'The project could not be created. Try again.'
   const bridgeError = (status, message, data) => Object.assign(new Error(message), { status, data })
 
   assert.equal(api.safeError(bridgeError(400, duplicateMessage, {
@@ -1850,14 +1853,14 @@ test('duplicate open proposal 400 shows the waiting-for-approval copy, other 400
   assert.equal(api.safeError(bridgeError(400, 'Missing brand_id', { message: 'Missing brand_id' })), generic)
   assert.equal(api.safeError(bridgeError(400, 'An open proposal already exists', { message: 'An open proposal already exists' })), generic)
   assert.equal(api.safeError(bridgeError(500, duplicateMessage, { message: duplicateMessage })), generic)
-  assert.equal(api.safeError(bridgeError(409, 'conflict', {})), 'A project request already exists for this Brand.')
+  assert.equal(api.safeError(bridgeError(409, 'conflict', {})), 'A project already exists for this request.')
   assert.equal(api.safeError(), generic)
 
   const fixture = formFixture()
   const loaded = load({
     fixture,
     counterparties: [{ counterparty_id: 31, company_name: 'Brand', hiring_manager_name: 'Brand Member' }],
-    projectProposalSubmit: async () => {
+    projectDirectSubmit: async () => {
       throw bridgeError(400, duplicateMessage, { code: 'ERROR_CODE_INPUT_ERROR', message: duplicateMessage })
     },
   })
