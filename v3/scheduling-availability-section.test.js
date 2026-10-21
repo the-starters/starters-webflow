@@ -2547,6 +2547,30 @@ test('a General edit that overlaps an extra-hours window is blocked', async () =
   assert.match(dom.notif.errorText.textContent, /overlaps another window on Monday \(13:00 - 17:00\)/)
 })
 
+test('moving a replacing window names the two other windows that would overlap', async () => {
+  const { dom, calls } = splitDaySection({
+    general: { days: [2, 3, 4, 5], start: '09:00', end: '12:00', defaultDays: [1, 2, 3, 4, 5] },
+    mon: { days: [1], start: '07:00', end: '10:00' },
+    monpm: { days: [1], start: '11:00', end: '14:00', mode: 'add' },
+  })
+  await settle()
+
+  const card = dom.list.children.find((el) => el.dataset.id === 'mon')
+  card.children[0].children[2].children[0].click()
+  const formWrapper = card.children[2]
+  const form = formWrapper.querySelector('[data-availability-element="availability-form"]')
+  assert.equal(form.querySelector('[name=avail-replace]').checked, true)
+  fillItemForm(form, [2], '07:00', '10:00')
+  formWrapper.children[0].children[1].children[1].click()
+  await settle()
+
+  assert.equal(calls.some((call) => call.path === '/starter/update_availability/v3'), false)
+  assert.equal(
+    dom.notif.errorText.textContent,
+    'This change makes two windows overlap on Monday (09:00 - 12:00 and 11:00 - 14:00). Change the time or the days, then try again.',
+  )
+})
+
 test('a saved window without mode keeps replace behavior when edited', async () => {
   const { dom, calls } = splitDaySection({
     general: { days: [1, 2, 4, 5], start: '09:00', end: '17:00', defaultDays: [1, 2, 3, 4, 5] },

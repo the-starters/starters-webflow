@@ -816,6 +816,21 @@
   }
 
   function windowClashText(clash, ownId) {
+    if (clash.ids.indexOf(ownId) === -1) {
+      return (
+        'This change makes two windows overlap on ' +
+        DAY_FULL_NAMES[clash.day] +
+        ' (' +
+        clash.windows[0].start +
+        ' - ' +
+        clash.windows[0].end +
+        ' and ' +
+        clash.windows[1].start +
+        ' - ' +
+        clash.windows[1].end +
+        '). Change the time or the days, then try again.'
+      )
+    }
     const other = clash.ids[0] === ownId ? clash.windows[1] : clash.windows[0]
     return (
       'This availability window overlaps another window on ' +
