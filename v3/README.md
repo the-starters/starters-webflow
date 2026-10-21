@@ -3587,8 +3587,8 @@ removal, and `starter/update_availability/v3` enforces the same rule. Only the
 section creates extra-hours items: its item forms add a "Replace General hours
 on these days" checkbox (cloned from the first day checkbox), off for new
 windows and on for saved windows without `mode`. The modal writer keeps an
-existing `mode` when it edits an item. The empty `general` item remains in the canonical Xano payload for
-that future restoration, but is omitted from Nylas
+existing `mode` when it edits an item. The empty `general` item remains in the
+canonical Xano payload for that future restoration, but is omitted from Nylas
 `default_open_hours` because the provider cannot accept an empty window. If the
 canonical availability write fails, the controller restores the pre-write
 browser model and rendered cards and does not continue to provider updates.
