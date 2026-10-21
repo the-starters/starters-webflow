@@ -989,8 +989,23 @@
     }
   }
 
+  // Endpoint 9181 rejects a second open proposal for the same Brand with a
+  // 400 input error, not 409. Match only this exact server message so other
+  // 400s keep the generic copy.
+  var DUPLICATE_PROPOSAL_MESSAGE = 'An open proposal already exists for this Brand and Starter'
+
+  function duplicateProposalError(error) {
+    if (!error || Number(error.status) !== 400) return false
+    var data = error.data && typeof error.data === 'object' ? error.data : null
+    return clean(data && data.message) === DUPLICATE_PROPOSAL_MESSAGE ||
+      clean(error.message) === DUPLICATE_PROPOSAL_MESSAGE
+  }
+
   function safeError(error) {
     var status = error && Number(error.status)
+    if (duplicateProposalError(error)) {
+      return 'You already sent a proposal to this Brand. It is waiting for the Brand to approve it.'
+    }
     if (status === 401) return 'Your session expired. Sign in and try again.'
     if (status === 403) return 'That Brand is no longer eligible. Refresh the Brand list.'
     if (status === 409) return 'A project request already exists for this Brand.'
@@ -1191,6 +1206,7 @@
     syncCommercialForm: syncCommercialForm,
     starterPayload: starterPayload,
     validationError: validationError,
+    safeError: safeError,
     loadOptions: loadOptions,
     submit: submit,
     normalizeModalMarkup: normalizeModalMarkup,
