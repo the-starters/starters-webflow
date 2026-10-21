@@ -68,11 +68,11 @@ tighter predicate that `STARTERS_DEBUG` cannot unlock, and says so where it live
 
 ## Current Scripts
 
-- `code-components/` — parked, preparation-only Webflow React package containing
-  the staging-pinned V3 Talent Applications Admin dashboard; it is not imported
-  into Webflow, published, tagged, or deployed through jsDelivr; see
+- `code-components/` — Webflow React Code Components package (not deployed
+  through jsDelivr): the staff **Staff Console** (the only component in the
+  library manifest) and the parked Talent Applications Admin; see
   [`code-components/README.md`](code-components/README.md) for local commands,
-  Webflow properties, Xano endpoints, security boundaries, and workflow states
+  Webflow properties, Xano endpoints, security boundaries, and release constraints
 - `quiz-main/quiz-home.js` — Home-only controller; saves selected category bucket IDs to `sessionStorage.quizSelectedCategories`, redirects to `/quiz`, and replaces the Home consult rail's legacy `also-worked-with` company text with ordered Algolia `work-history` names looked up by the stable profile ID read from the `freelancer-{id}` CMS image filename, taking its credentials and Starter index only from the managed host resolution in `v3/algolia-environment.js` (so the Home tag must load after it; see `quiz-main/README.md`)
 - `quiz-main/quiz-main.js` — `/quiz` controller: combines homepage bucket selections with saved Memberstack answers, persists draft/ready payloads for results, and owns the signup redirect contract; authoritative restore-order, markup, and redirect contracts live in [`quiz-main/README.md`](quiz-main/README.md#main-controller)
 - `quiz-main/quiz-redirect.js` — `/quiz` member entry redirect by role and quiz state, including the ready-payload safety net for new members; authoritative rules live in [`quiz-main/README.md`](quiz-main/README.md#entry-redirect)
