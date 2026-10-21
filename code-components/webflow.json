@@ -4,9 +4,9 @@
     "id": "the-starters-v3-admin",
     "name": "The Starters V3 Admin",
     "components": [
-      "./src/**/*.webflow.@(js|jsx|mjs|ts|tsx)"
+      "./src/StaffConsole.webflow.tsx"
     ],
-    "description": "Secure V3 talent application admin components"
+    "description": "The Starters V3 staff components (Staff Console). The parked Talent Applications Admin is excluded until its own cutover review."
   },
   "telemetry": {
     "global": {
