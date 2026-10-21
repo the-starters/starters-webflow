@@ -499,7 +499,9 @@ function load(options = {}) {
       }
       return null
     },
-    querySelectorAll() { return [] },
+    querySelectorAll(selector) {
+      return typeof options.querySelectorAll === 'function' ? options.querySelectorAll(selector) : []
+    },
     addEventListener() {},
   }
 
@@ -5224,4 +5226,179 @@ test('fails closed when canonical state has duplicate active paid services', asy
   await settle()
   assert.equal(result.document.documentElement.getAttribute('data-paid-call-settings'), 'error')
   assert.match(result.dom.status.textContent, /unavailable/i)
+})
+
+function stripeNotLinked(overrides = {}) {
+  return canonical({
+    readiness: { stripe_connect_linked: false, stripe_charges_enabled: false, ...overrides },
+  })
+}
+
+function blockerLink(dom) {
+  return dom.nativeErrorMessage.children.find((child) => child.getAttribute('data-paid-call-blocker-action') === 'stripe') || null
+}
+
+function stripeControl(attrs = {}) {
+  const control = new El('div', { 'data-stripe-connect-action': 'start', ...attrs })
+  control.clicks = 0
+  control.click = () => { control.clicks += 1 }
+  return control
+}
+
+test('shows why Update is blocked when Stripe is not connected', async () => {
+  const result = load({ cardMode: true, initial: stripeNotLinked() })
+  await settle()
+
+  assert.equal(result.dom.save.getAttribute('aria-disabled'), 'true')
+  assert.equal(result.dom.nativeError.style.display, 'block')
+  assert.equal(result.dom.nativeError.getAttribute('data-paid-call-blocker'), 'stripe')
+  assert.equal(result.dom.nativeError.getAttribute('data-call-settings-error-visible'), 'true')
+  assert.equal(result.dom.nativeError.getAttribute('aria-hidden'), 'false')
+  assert.equal(result.dom.nativeError.getAttribute('role'), 'status')
+  assert.match(result.dom.nativeErrorMessage.textContent, /connect Stripe first/)
+  const link = blockerLink(result.dom)
+  assert.ok(link, 'Connect Stripe link is painted')
+  assert.equal(link.textContent, 'Connect Stripe')
+  assert.equal(link.getAttribute('href'), '/starter-dashboard')
+  assert.equal(result.calls.filter((call) => call.method === 'POST').length, 0)
+})
+
+test('the Connect Stripe link reuses the visible dashboard Stripe control', async () => {
+  const hiddenState = new El('div', { 'data-stripe-connect-element': 'incomplete' })
+  hiddenState.hidden = true
+  const hiddenStart = stripeControl()
+  hiddenState.append(hiddenStart)
+  const visibleStart = stripeControl()
+  const result = load({
+    cardMode: true,
+    initial: stripeNotLinked(),
+    querySelectorAll: (selector) =>
+      selector === '[data-stripe-connect-action="start"]' ? [hiddenStart, visibleStart] : [],
+  })
+  await settle()
+
+  let prevented = false
+  blockerLink(result.dom).listeners.get('click')[0]({ preventDefault: () => { prevented = true } })
+  assert.equal(prevented, true)
+  assert.equal(hiddenStart.clicks, 0)
+  assert.equal(visibleStart.clicks, 1)
+})
+
+test('the Connect Stripe link falls back to the dashboard URL with no Stripe control', async () => {
+  const result = load({ cardMode: true, initial: stripeNotLinked() })
+  await settle()
+
+  let prevented = false
+  blockerLink(result.dom).listeners.get('click')[0]({ preventDefault: () => { prevented = true } })
+  assert.equal(prevented, false)
+})
+
+test('names the unfinished Stripe setup when charges are not enabled', async () => {
+  const result = load({
+    cardMode: true,
+    initial: canonical({ readiness: { stripe_charges_enabled: false } }),
+  })
+  await settle()
+
+  assert.equal(result.dom.nativeError.getAttribute('data-paid-call-blocker'), 'charges')
+  assert.equal(blockerLink(result.dom).textContent, 'Finish Stripe setup')
+})
+
+test('names the calendar step first and offers no Stripe link', async () => {
+  const result = load({
+    cardMode: true,
+    initial: stripeNotLinked({ calendar_connected: false }),
+  })
+  await settle()
+
+  assert.equal(result.dom.nativeError.getAttribute('data-paid-call-blocker'), 'calendar')
+  assert.match(result.dom.nativeErrorMessage.textContent, /connect your calendar/)
+  assert.equal(blockerLink(result.dom), null)
+})
+
+test('paints no blocker when every prerequisite is ready', async () => {
+  const result = load({ cardMode: true, initial: canonical() })
+  await settle()
+
+  assert.equal(result.dom.nativeError.style.display, 'none')
+  assert.equal(result.dom.nativeError.getAttribute('data-paid-call-blocker'), null)
+  assert.equal(result.dom.save.getAttribute('aria-disabled'), 'false')
+})
+
+test('paints no blocker on Edit Profile', async () => {
+  const result = load({ editProfile: true, initial: stripeNotLinked() })
+  await settle()
+
+  assert.equal(result.dom.nativeError.getAttribute('data-paid-call-blocker'), null)
+  assert.equal(blockerLink(result.dom), null)
+})
+
+test('clears the blocker after Stripe becomes ready', async () => {
+  let current = stripeNotLinked()
+  const result = load({
+    cardMode: true,
+    initial: current,
+    routes: {
+      '/starter/paid-call-settings/get/v3': () => ({ ok: true, status: 200, json: async () => current }),
+    },
+  })
+  await settle()
+  assert.equal(result.dom.nativeError.getAttribute('data-paid-call-blocker'), 'stripe')
+
+  current = canonical()
+  await result.dispatchWindow('starterStripeConnectReady', {})
+  await settle()
+
+  assert.equal(result.dom.nativeError.getAttribute('data-paid-call-blocker'), '')
+  assert.equal(result.dom.nativeError.style.display, 'none')
+  assert.equal(result.dom.save.getAttribute('aria-disabled'), 'false')
+})
+
+test('paints the blocker after turning paid calls off leaves a prerequisite missing', async () => {
+  const result = load({
+    cardMode: true,
+    initial: canonical({
+      services: [service()],
+      readiness: { stripe_charges_enabled: false, paid_call_enabled: true },
+    }),
+    routes: {
+      '/starter/paid-call-settings/disable/v3': ({ setState }) => {
+        setState(canonical({ readiness: { stripe_charges_enabled: false } }))
+        return { ok: true, status: 200, json: async () => ({ service: { active: false } }) }
+      },
+    },
+  })
+  await settle()
+
+  assert.ok(await result.window.StarterPaidCallSettings.disable())
+  await settle()
+
+  assert.equal(result.dom.save.getAttribute('aria-disabled'), 'true')
+  assert.equal(result.dom.nativeError.getAttribute('data-paid-call-blocker'), 'charges')
+  assert.equal(result.dom.nativeError.style.display, 'block')
+  assert.equal(blockerLink(result.dom).textContent, 'Finish Stripe setup')
+})
+
+test('a failed canonical read replaces the painted blocker with the error', async () => {
+  let fail = false
+  const result = load({
+    cardMode: true,
+    initial: stripeNotLinked(),
+    routes: {
+      '/starter/paid-call-settings/get/v3': () => fail
+        ? { ok: false, status: 500, json: async () => ({ message: 'boom' }) }
+        : { ok: true, status: 200, json: async () => stripeNotLinked() },
+    },
+  })
+  await settle()
+  assert.equal(result.dom.nativeError.getAttribute('data-paid-call-blocker'), 'stripe')
+
+  fail = true
+  await result.dispatchWindow('starterStripeConnectReady', {})
+  await settle()
+
+  assert.equal(result.document.documentElement.getAttribute('data-paid-call-settings'), 'error')
+  assert.equal(result.dom.nativeError.getAttribute('data-paid-call-blocker'), '')
+  assert.equal(result.dom.nativeError.getAttribute('role'), 'alert')
+  assert.doesNotMatch(result.dom.nativeErrorMessage.textContent, /connect Stripe first/)
 })
