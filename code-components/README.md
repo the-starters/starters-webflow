@@ -1,11 +1,43 @@
 # Webflow code components
 
-This package contains the parked V3 `Talent Applications Admin` React Code
-Component as a preparation-only foundation. It is not production-ready, has not
-been imported into Webflow or published on a Webflow page, and must not receive
-a semver tag or jsDelivr deployment. Xano is the application and audit source of
-truth. The component has no Airtable, Make, or Zapier integration and leaves the
-existing Admin Ops, Marketing Ops, and V2 application workflows unchanged.
+This package holds The Starters V3 staff React Code Components:
+
+- **Staff Console** (`src/StaffConsole*.tsx`): Starter lookup and remove/restore for
+  staff (Phase 1, JP decision 2b on 2026-10-16). This is the only component in the
+  Webflow library manifest (`webflow.json`).
+- **Talent Applications Admin**: parked, preparation only. It is excluded from the
+  library manifest and must not be imported until its own cutover review.
+
+Xano is the application and audit source of truth. No component contains a secret
+or an Airtable, Make, or Zapier integration. Both components share one
+Memberstack-to-Xano auth client (`src/memberXanoClient.ts`).
+
+## Staff Console
+
+Plan and release packet: `platform-ops/staff-admin-platform/` in the workspace.
+
+- API group `Staff Console v1` (`/api:kR5gpIDB`, workspace 2, group 403). Xano checks
+  the staff rule on every call (live Memberstack member, verified email, domain
+  exactly `thestarters.com` or `hirethestarters.com`, not a shared mailbox, not
+  deactivated). The component never decides access.
+- Endpoints used: `GET staff/session`, `GET staff/starters/search?q=`,
+  `GET staff/starters/detail?starter_id=` (card with a dry-run `preview_token`),
+  `POST staff/starters/platform-status/set` (`starter_id`, `status`,
+  `preview_token`, `reason`). There is no actor input; Xano takes the actor from
+  the Bearer token.
+- The set button needs a reason of 10 to 500 characters and a ticked check box.
+  One click sends one request; the preview token is the server idempotency key.
+  After every attempt the card reloads (new status, audit row, fresh token).
+- Xano error codes are shown in plain language: `STAFF_ACCESS_DENIED:<reason>`,
+  `STAFF_WRITES_DISABLED`, `PREVIEW_STALE`, `RATE_LIMITED`, `REASON_INVALID`.
+- `?starter_id=<id>` in the page URL opens that Starter's card.
+- No Webflow props. The heading is `Staff console` and the login link is
+  `/login?next=/staff`.
+- The page must load Memberstack. Keep `/staff` out of `v3/route-guard.js`
+  `PAGE_ROLES`; staff accounts have mixed plans.
+
+Do not share the library to Webflow, place the component on a published page, or
+publish the site without JP's release approval (T2).
 
 ## Local verification
 
@@ -22,7 +54,9 @@ Run these commands from `code-components/`. The build script bundles the
 component with the Webflow CLI; `dist/`, `node_modules/`, and local `.env` files
 are intentionally ignored.
 
-## Webflow component
+## Talent Applications Admin (parked)
+
+### Webflow component
 
 `src/TalentApplicationsAdmin.webflow.tsx` registers **Talent Applications
 Admin** in the **Admin** group for the site configured in `webflow.json`. The

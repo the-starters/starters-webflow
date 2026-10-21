@@ -144,18 +144,4 @@
   } else {
     init()
   }
-
-  // Staging-only relaunch pricing preview (v3/relaunch-pricing-preview.js).
-  // Staging and production share one Webflow site, so the preview cannot live
-  // in the Designer. This site-wide script loads it on the staging host only;
-  // production never requests it.
-  const PREVIEW_HOST = "the-starters-3-0.webflow.io"
-  const PREVIEW_SRC =
-    "https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/relaunch-pricing-preview.js"
-  if (String(window.location && window.location.hostname).toLowerCase() === PREVIEW_HOST) {
-    const preview = document.createElement("script")
-    preview.src = PREVIEW_SRC
-    preview.async = true
-    document.head.appendChild(preview)
-  }
 })()

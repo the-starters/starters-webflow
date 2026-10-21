@@ -126,6 +126,24 @@
       : null
   }
 
+  // Starter submissions create the canonical project directly (JP 2026-10-21).
+  // #9181 Brand-approval proposals stayed stuck because Brands never saw them.
+  var CREATED_PROJECT_STATES = {
+    contract_create_pending: true,
+    contract_draft: true,
+    contract_sent: true,
+    signature_partial: true,
+    active: true,
+  }
+
+  function createdProject(result) {
+    var project = result && result.project
+    var lifecycleState = clean(project && project.lifecycle_state).toLowerCase()
+    return positiveId(project && project.id) && CREATED_PROJECT_STATES[lifecycleState]
+      ? project
+      : null
+  }
+
   function createdProposal(result) {
     var proposal = result && result.proposal
     return positiveId(proposal && proposal.id) &&
@@ -954,9 +972,18 @@
     var current = formState(form)
     current.key = ''
     current.keyPayload = ''
-    var proposal = result && result.proposal
+    var project = createdProject(result)
+    var proposal = project ? null : result && result.proposal
     var proposalId = positiveId(proposal && proposal.id)
-    var copy = proposalStatusCopy(proposal)
+    var projectId = positiveId(project && project.id)
+    var copy = project
+      ? {
+          title: 'Project successfully created',
+          message: clean(project.lifecycle_state).toLowerCase() === 'active'
+            ? 'Your project is now active.'
+            : 'Your contract is being prepared. You and the Brand can sign when it is ready.',
+        }
+      : proposalStatusCopy(proposal)
     var success = stateElement(form, SUCCESS_SELECTOR)
     if (success) {
       var titles = success.querySelectorAll ? success.querySelectorAll('[data-project-success-title], .generate-contract_success-text') : []
@@ -980,22 +1007,42 @@
       }
     }
     if (typeof global.CustomEvent === 'function' && documentObject && documentObject.dispatchEvent) {
-      documentObject.dispatchEvent(new global.CustomEvent('starters:project-proposal-requested', {
-        detail: { proposal_id: proposalId, replayed: Boolean(result && result.replayed) },
-      }))
+      documentObject.dispatchEvent(project
+        ? new global.CustomEvent('starters:project-created', {
+            detail: { project_id: projectId, replayed: Boolean(result && result.replayed) },
+          })
+        : new global.CustomEvent('starters:project-proposal-requested', {
+            detail: { proposal_id: proposalId, replayed: Boolean(result && result.replayed) },
+          }))
     }
     if (global.StartersTrack && typeof global.StartersTrack.track === 'function') {
-      global.StartersTrack.track('project_proposal_requested', { proposal_id: proposalId })
+      if (project) global.StartersTrack.track('project_created', { project_id: projectId })
+      else global.StartersTrack.track('project_proposal_requested', { proposal_id: proposalId })
     }
+  }
+
+  // Endpoint 9181 rejects a second open proposal for the same Brand with a
+  // 400 input error, not 409. Match only this exact server message so other
+  // 400s keep the generic copy.
+  var DUPLICATE_PROPOSAL_MESSAGE = 'An open proposal already exists for this Brand and Starter'
+
+  function duplicateProposalError(error) {
+    if (!error || Number(error.status) !== 400) return false
+    var data = error.data && typeof error.data === 'object' ? error.data : null
+    return clean(data && data.message) === DUPLICATE_PROPOSAL_MESSAGE ||
+      clean(error.message) === DUPLICATE_PROPOSAL_MESSAGE
   }
 
   function safeError(error) {
     var status = error && Number(error.status)
+    if (duplicateProposalError(error)) {
+      return 'You already sent a proposal to this Brand. It is waiting for the Brand to approve it.'
+    }
     if (status === 401) return 'Your session expired. Sign in and try again.'
     if (status === 403) return 'That Brand is no longer eligible. Refresh the Brand list.'
-    if (status === 409) return 'A project request already exists for this Brand.'
+    if (status === 409) return 'A project already exists for this request.'
     if (status === 422) return 'Review the project details and try again.'
-    return 'The project request could not be sent. Try again.'
+    return 'The project could not be created. Try again.'
   }
 
   function retryableSubmitError(error) {
@@ -1026,10 +1073,10 @@
       current.keyPayload = signature
     }
     serialized.payload.idempotency_key = current.key
-    // Keep proposal submission on a distinct capability. A cached bridge from
-    // before the proposal release exposes projectSubmit for direct project
-    // creation; falling back to it would create a project before Brand review.
-    var request = projectApi(globalObject, 'projectProposalSubmit')
+    // Direct creation uses its own bridge capability (projects/submit/v3,
+    // #4717). projectSubmit is still mapped to the proposal route, so never
+    // fall back to it. Rollback: point this back at projectProposalSubmit.
+    var request = projectApi(globalObject, 'projectDirectSubmit')
     if (!request) {
       setStatus(form, 'error', 'The project service is not available. Reload and try again.')
       return Promise.resolve(false)
@@ -1041,15 +1088,15 @@
       .then(function () { return request(serialized.payload) })
       .then(function (result) {
         if (generation !== current.generation) return false
-        if (!createdProposal(result)) {
+        if (!createdProject(result)) {
           debugLog(globalObject, 'submit_invalid_response', {})
           setStatus(form, 'error', safeError(), true)
           return false
         }
         showSuccess(form, result, documentObject)
         debugLog(globalObject, 'submit_success', {
-          proposal_id: positiveId(result && result.proposal && result.proposal.id),
-          proposal_status: clean(result && result.proposal && result.proposal.status) || null,
+          project_id: positiveId(result && result.project && result.project.id),
+          lifecycle_state: clean(result && result.project && result.project.lifecycle_state) || null,
           replayed: Boolean(result && result.replayed),
         })
         return true
@@ -1191,6 +1238,7 @@
     syncCommercialForm: syncCommercialForm,
     starterPayload: starterPayload,
     validationError: validationError,
+    safeError: safeError,
     loadOptions: loadOptions,
     submit: submit,
     normalizeModalMarkup: normalizeModalMarkup,
