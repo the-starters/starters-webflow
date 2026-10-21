@@ -1,11 +1,12 @@
 # V3 Brand project-proposal approval wiring
 
 `v3/brand-project-proposals.js` owns the Brand half of the Starter project
-request lifecycle on `/brand-dashboard`. A Starter submission through
-[STARTER-PROJECT-FORM-WIRING.md](STARTER-PROJECT-FORM-WIRING.md) creates a
-proposal row only. Nothing becomes a canonical project, a lifecycle event, or a
-PandaDoc invitation until a Brand approves the request here, so this controller
-must be installed alongside the Starter form — not after it.
+request lifecycle on `/brand-dashboard`. The Starter form in
+[STARTER-PROJECT-FORM-WIRING.md](STARTER-PROJECT-FORM-WIRING.md) now creates
+projects directly, so this controller only clears proposal rows that already
+exist, including ones sent by a cached proposal-release Starter form. A proposal
+row becomes a canonical project, a lifecycle event, or a PandaDoc invitation
+only after a Brand approves it here.
 
 ## Scope
 
@@ -167,10 +168,8 @@ Install on `/brand-dashboard` Page Settings -> Custom Code -> Footer, after
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/brand-project-proposals.js"></script>
 ```
 
-Install this loader in the same release as the Starter loader in
-[STARTER-PROJECT-FORM-WIRING.md](STARTER-PROJECT-FORM-WIRING.md#script-order).
-Shipping the Starter half alone leaves every new request unactionable, because
-no other surface can accept or decline one.
+Keep this loader installed while any proposal row awaits a decision. No other
+surface can accept or decline one.
 
 ## Refresh and user states
 

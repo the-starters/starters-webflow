@@ -19,17 +19,15 @@ Airtable, Make, or a legacy TalkJS table.
 - Do not add or send Connection Type.
 - Do not show opportunity choices or prefill Project Scope yet.
 - Create the canonical project directly after the server verifies the
-  Starter-to-Brand relationship and commercial fields (JP decision 2026-10-21).
+  Starter-to-Brand relationship and commercial fields.
   The Brand does not approve a separate request: a Standard Contract enqueues
   the single PandaDoc invitation through the existing project outbox, and both
   signatures activate the project. An Own Contract starts `active`.
 - Brand and Starter can sign in either order. Both signatures activate the
   project.
-- History: from 2026-09-20 to 2026-10-21 this form created
-  `core_project_proposals_v3` rows that waited for Brand approval in
-  [BRAND-PROJECT-PROPOSALS-WIRING.md](BRAND-PROJECT-PROPOSALS-WIRING.md). Brands
-  had no installed approval screen, so requests stayed stuck. The Brand
-  controller stays installed to clear any request created before this change.
+- Proposal rows from the earlier Brand-approval release are still cleared by
+  the Brand controller in
+  [BRAND-PROJECT-PROPOSALS-WIRING.md](BRAND-PROJECT-PROPOSALS-WIRING.md).
 
 ## Backend contract required before Webflow wiring
 
