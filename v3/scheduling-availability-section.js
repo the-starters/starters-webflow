@@ -72,6 +72,9 @@
     'Enter a valid start and end time. The end time must be later than the start time.'
   const ERROR_TEXT_ITEM_REMOVE =
     "We couldn't remove this availability window. Please try again or contact support."
+  const DAY_FULL_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+  const REPLACE_TOGGLE_NAME = 'avail-replace'
+  const REPLACE_TOGGLE_TEXT = 'Replace General hours on these days'
   const ERROR_TEXT_CONNECT_PLATFORM =
     "We couldn't connect your platform calendar. Please try again or contact support."
   const ERROR_TEXT_CONNECT_GOOGLE =
@@ -758,15 +761,20 @@
     return true
   }
 
-  // Days already claimed by OTHER override items (never `general`, never
-  // `excludeId`) — used to block a day from being double-assigned to two
-  // custom windows at once.
-  function computeOverrides(excludeId) {
+  // An override item either replaces General hours on its days (no `mode`,
+  // the original behavior) or adds an extra block next to them
+  // (`mode: 'add'`), e.g. a morning and an afternoon block with a lunch break.
+  function isAddWindow(item) {
+    return Boolean(item) && item.mode === 'add'
+  }
+
+  // Days that replacing override items take away from `general`.
+  function computeOverrides(items) {
     const claimed = []
-    const avails = availability.items
+    const avails = items || availability.items
     for (const key in avails) {
       if (!Object.prototype.hasOwnProperty.call(avails, key)) continue
-      if (key === 'general' || key === excludeId) continue
+      if (key === 'general' || isAddWindow(avails[key])) continue
       avails[key].days.forEach(function (day) {
         if (claimed.indexOf(day) === -1) claimed.push(day)
       })
@@ -774,14 +782,50 @@
     return claimed
   }
 
-  function reconcileGeneralDays() {
-    const general = availability.items.general
+  function reconcileGeneralDays(items) {
+    const avails = items || availability.items
+    const general = avails.general
     if (!general) return
     const baseDays = Array.isArray(general.defaultDays) ? general.defaultDays : general.days
-    const claimed = computeOverrides()
+    const claimed = computeOverrides(avails)
     general.days = baseDays.filter(function (day) {
       return claimed.indexOf(day) === -1
     })
+  }
+
+  // Two windows that share a weekday must not overlap in time. Touching
+  // windows (12:00 end, 12:00 start) are allowed. This is the same rule as
+  // starter/update_availability/v3.
+  function findWindowClash(items) {
+    const keys = Object.keys(items)
+    for (let i = 0; i < keys.length; i++) {
+      for (let j = i + 1; j < keys.length; j++) {
+        const left = items[keys[i]]
+        const right = items[keys[j]]
+        if (!left || !right || !Array.isArray(left.days) || !Array.isArray(right.days)) continue
+        const day = left.days.find(function (d) {
+          return right.days.indexOf(d) > -1
+        })
+        if (day === undefined) continue
+        if (left.start < right.end && right.start < left.end) {
+          return { day: day, ids: [keys[i], keys[j]], windows: [left, right] }
+        }
+      }
+    }
+    return null
+  }
+
+  function windowClashText(clash, ownId) {
+    const other = clash.ids[0] === ownId ? clash.windows[1] : clash.windows[0]
+    return (
+      'This availability window overlaps another window on ' +
+      DAY_FULL_NAMES[clash.day] +
+      ' (' +
+      other.start +
+      ' - ' +
+      other.end +
+      '). Change the time or the days, then try again.'
+    )
   }
 
   function writeAvailabilityCache() {
@@ -1634,8 +1678,8 @@
           setNotificationBusy(target, true)
           handleAvailabilityRemove(id)
             .then(function (ok) {
-              if (!ok) {
-                showNotificationError(ERROR_TEXT_ITEM_REMOVE)
+              if (ok !== true) {
+                showNotificationError(typeof ok === 'string' ? ok : ERROR_TEXT_ITEM_REMOVE)
                 return
               }
               pendingRemoveId = null
@@ -1905,9 +1949,48 @@
     return Boolean(wrapper) && wrapper.style.display === 'block'
   }
 
+  // The item form has no Designer element for the replace/add choice, so
+  // clone the first day checkbox and turn it into that toggle. Override
+  // forms only; `general` cannot replace itself.
+  function ensureReplaceToggle(form) {
+    const existing = qs('[type=checkbox][name=' + REPLACE_TOGGLE_NAME + ']', form)
+    if (existing) return existing
+    const day = qs('[type=checkbox][name=avail-day]', form)
+    const source = day ? day.closest('.checkbox_component') || day.parentElement : null
+    const group = source ? source.parentElement : null
+    if (!group) return null
+    const copy = source.cloneNode(true)
+    copy.setAttribute(EL, 'replace-toggle')
+    const input = qs('[type=checkbox]', copy)
+    if (!input) return null
+    input.setAttribute('name', REPLACE_TOGGLE_NAME)
+    input.setAttribute('id', REPLACE_TOGGLE_NAME)
+    input.setAttribute('data-name', REPLACE_TOGGLE_NAME)
+    input.checked = false
+    input.disabled = false
+    if (input.parentElement) input.parentElement.classList.remove('overridden')
+    const text = qs('.w-form-label', copy)
+    if (text) {
+      text.textContent = REPLACE_TOGGLE_TEXT
+      text.setAttribute('for', REPLACE_TOGGLE_NAME)
+    }
+    const host = group === form ? form : group.parentElement || form
+    host.appendChild(copy)
+    return input
+  }
+
+  function setCheckboxSkin(input, checked) {
+    const box = input.parentElement ? qs('.w-checkbox-input', input.parentElement) : null
+    if (!box) return
+    if (checked) box.classList.add('w--redirected-checked')
+    else box.classList.remove('w--redirected-checked')
+  }
+
   function populateItemForm(form, id) {
     const item = availability.items[id]
-    const overrides = computeOverrides(id)
+    // Only the General form blocks days: days that a replacing override owns.
+    // Override forms may share any day; the save checks time overlaps.
+    const overrides = id === 'general' ? computeOverrides() : []
     const dayInputs = qsa('[type=checkbox][name=avail-day]', form)
     dayInputs.forEach(function (day, i) {
       const selected = Boolean(item && item.days.indexOf(i) > -1)
@@ -1931,6 +2014,15 @@
     if (startInput) startInput.value = item ? item.start : ''
     const endInput = qs('[name=end-time]', form)
     if (endInput) endInput.value = item ? item.end : ''
+    if (id !== 'general') {
+      const toggle = ensureReplaceToggle(form)
+      if (toggle) {
+        // New windows add a block by default. Saved windows without `mode`
+        // keep their original replace behavior.
+        toggle.checked = Boolean(item) && !isAddWindow(item)
+        setCheckboxSkin(toggle, toggle.checked)
+      }
+    }
     const card = form.closest(elSel('item-card'))
     if (card) applyDayBadges(card, item ? item.days : [])
   }
@@ -2059,7 +2151,10 @@
 
       const titleEl = qs(elSel('item-title'), card)
       if (titleEl) {
-        titleEl.textContent = id === 'general' ? 'General Availability' : daysAlias(avail.days).full
+        titleEl.textContent =
+          id === 'general'
+            ? 'General Availability'
+            : daysAlias(avail.days).full + (isAddWindow(avail) ? ' (extra hours)' : '')
       }
 
       applyItemTag(card, id)
@@ -2243,17 +2338,35 @@
 
     const availId = form.dataset.availabilityId || id || 'general'
     const avail = { days: selectedDays, start: startTime, end: endTime }
+    if (availId === 'general') {
+      avail.defaultDays = avail.days
+    } else {
+      const toggle = qs('[type=checkbox][name=' + REPLACE_TOGGLE_NAME + ']', form)
+      const previous = availability.items[availId]
+      const replace = toggle ? toggle.checked : !previous || !isAddWindow(previous)
+      if (!replace) avail.mode = 'add'
+    }
+
+    const nextItems = JSON.parse(JSON.stringify(availability.items))
+    nextItems[availId] = avail
+    reconcileGeneralDays(nextItems)
+    const clash = findWindowClash(nextItems)
+    if (clash) {
+      const clashText = windowClashText(clash, availId)
+      setTimeInputValidity(startInput, clashText)
+      setTimeInputValidity(endInput, clashText)
+      showNotificationError(clashText)
+      console.warn('[scheduling-section] availability windows overlap on day', clash.day)
+      return
+    }
+
     const previousAvailability = JSON.parse(JSON.stringify(availability))
     let canonicalSaved = false
 
     setRequestBusy(true)
     try {
-      if (availId === 'general') {
-        avail.defaultDays = avail.days
-      }
-
       availability.items[availId] = avail
-      if (availId !== 'general') reconcileGeneralDays()
+      reconcileGeneralDays()
       await updateAvail()
       canonicalSaved = true
 
@@ -2294,6 +2407,25 @@
     const removed = availability.items[id]
     const general = availability.items.general
     if (!removed || !general) return false
+    // Removing a replacing window gives its days back to General, which can
+    // overlap an extra-hours window on those days.
+    const nextItems = JSON.parse(JSON.stringify(availability.items))
+    delete nextItems[id]
+    reconcileGeneralDays(nextItems)
+    const clash = findWindowClash(nextItems)
+    if (clash) {
+      console.warn('[scheduling-section] removal would overlap windows on day', clash.day)
+      const other = clash.ids[0] === 'general' ? clash.windows[1] : clash.windows[0]
+      return (
+        'Removing this window gives ' +
+        DAY_FULL_NAMES[clash.day] +
+        ' back to General Availability, which overlaps another window (' +
+        other.start +
+        ' - ' +
+        other.end +
+        '). Change that window first, then try again.'
+      )
+    }
     const previousAvailability = JSON.parse(JSON.stringify(availability))
     let canonicalSaved = false
     delete availability.items[id]

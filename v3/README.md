@@ -3573,12 +3573,21 @@ row timezone is persisted through `starter/set_timezone/v3` only when the
 member submits an availability or calendar action. A member-scoped cached
 timezone can supply that value, but does not count as canonical persistence.
 
-Availability item persistence is identical in this writer and the non-modal
-section below. The canonical `general` item keeps its `defaultDays` and may
-legitimately have `days: []` while overrides cover every default day. Override
-edits and removals always recompute `general.days` as the default days not
-claimed by any current override, so moving or deleting an override restores its
-former day. The empty `general` item remains in the canonical Xano payload for
+Availability item persistence is shared by this writer and the non-modal
+section below. An override item either replaces General hours on its days (no
+`mode` key) or adds an extra block next to them (`mode: "add"`, for example a
+morning and an afternoon block with a lunch break). The canonical `general` item
+keeps its `defaultDays` and may legitimately have `days: []` while replacing
+overrides cover every default day. Override edits and removals always recompute
+`general.days` as the default days not claimed by any current replacing
+override, so moving or deleting one restores its former day. Extra-hours items
+never claim a General day. Windows that share a weekday must not overlap in time
+(touching windows are allowed); the section checks this before every save and
+removal, and `starter/update_availability/v3` enforces the same rule. Only the
+section creates extra-hours items: its item forms add a "Replace General hours
+on these days" checkbox (cloned from the first day checkbox), off for new
+windows and on for saved windows without `mode`. The modal writer keeps an
+existing `mode` when it edits an item. The empty `general` item remains in the canonical Xano payload for
 that future restoration, but is omitted from Nylas
 `default_open_hours` because the provider cannot accept an empty window. If the
 canonical availability write fails, the controller restores the pre-write
