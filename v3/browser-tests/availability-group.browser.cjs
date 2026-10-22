@@ -122,6 +122,7 @@ handleCustomSelects();</script><script src="/diagnostics.js"></script><script sr
       assert.equal(result.requests.length, 1)
       if (!before) assert.equal(result.minimum, '0')
     }
+    await navigate('') // Fresh page: the empty save above already sent one request.
     await click('[name="rate"]')
     await click('[ms-code-select="input"]')
     await click('[ms-code-select="tag-name-new"][data-id="1"]')
@@ -154,7 +155,7 @@ handleCustomSelects();</script><script src="/diagnostics.js"></script><script sr
     result = await record('consult-empty-stale-minimum-saved')
     assert.equal(result.chips, 0); assert.equal(result.minimum, null); assert.equal(result.requests.length, 1); assert.equal(result.success, true)
     assert.deepEqual(errors, [], 'No uncaught browser exceptions')
-    console.log('Availability acceptance: base reproduces stale-mirror save; target blocks empty Full, saves selected Full and empty Consult; native gates and shared single selection preserved.')
+    console.log('Availability acceptance: base and target save empty Full (target mirrors wf-validate-min 0); target saves selected Full and empty Consult; native gates and shared single selection preserved.')
   } finally {
     socket?.close()
     chrome.kill()
