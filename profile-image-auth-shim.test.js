@@ -1012,6 +1012,48 @@ async function run() {
       'Bearer xano-token',
     )
   }
+
+  // CAS_RETRY_EXHAUSTED 500 retries once after a wait; nothing else retries.
+  for (const [first, second, uploads, finalStatus, tracked] of [
+    [[500, { code: 'ERROR_FATAL', message: 'PROFILE_IMAGE_CAS_RETRY_EXHAUSTED' }], 200, 2, 200, 0],
+    [[500, { code: 'ERROR_FATAL', message: 'PROFILE_IMAGE_CAS_RETRY_EXHAUSTED' }], 500, 2, 500, 1],
+    [[500, { code: 'ERROR_FATAL', message: 'PROFILE_IMAGE_STATE_CHANGED' }], 200, 1, 500, 1],
+    [[409, { message: 'PROFILE_IMAGE_CAS_RETRY_EXHAUSTED' }], 200, 1, 409, 1],
+    [[500, 'not-json'], 200, 1, 500, 1],
+  ]) {
+    const posts = []
+    const events = []
+    const delays = []
+    const { window } = loadShim({
+      hostname: 'thestarters.com',
+      fetchImpl: async (input, init) => {
+        if (String(input).includes('/auth/trade-token/v3')) {
+          return new Response(JSON.stringify({ authToken: 'xano-token' }), { status: 200 })
+        }
+        posts.push(init.body)
+        if (posts.length === 1) {
+          const body = typeof first[1] === 'string' ? first[1] : JSON.stringify(first[1])
+          return new Response(body, { status: first[0] })
+        }
+        return second === 200
+          ? new Response(JSON.stringify({ starter_image: 'a', starter_image_small: 'b' }), { status: 200 })
+          : new Response(JSON.stringify(first[1]), { status: second })
+      },
+    })
+    window.setTimeout = (fn, ms) => { delays.push(ms); fn() }
+    window.StartersTrack = { track: (name, props) => events.push([name, props]) }
+    const response = await window.fetch(photoEndpoint, { method: 'POST', body: photoBody() })
+    assert.equal(response.status, finalStatus)
+    assert.equal(posts.length, uploads)
+    assert.equal(delays.length, uploads - 1)
+    if (uploads === 2) {
+      assert.ok(delays[0] >= 2000 && delays[0] <= 3000)
+      assert.equal(posts[1].get('source_mutation_id'), posts[0].get('source_mutation_id'))
+      assert.equal(await posts[1].get('image').text(), await posts[0].get('image').text())
+    }
+    assert.equal(events.length, tracked)
+    if (tracked) assert.equal(events[0][1].status, finalStatus)
+  }
 }
 
 run()
