@@ -1356,31 +1356,6 @@ node --test v3/project-form.test.js v3/project-form-workflow.test.js \
 scope, endpoint, Designer, user-state, and release contract lives in
 [STARTER-PROJECT-FORM-WIRING.md](../docs/wiring/STARTER-PROJECT-FORM-WIRING.md).
 
-## Brand project proposal approval
-
-`brand-project-proposals.js` binds the Brand Dashboard accept/decline step for
-pending Starter project requests. A Starter submission creates a proposal row
-only; acceptance creates the canonical project and the single PandaDoc
-invitation owned by the existing project outbox. The authoritative endpoint,
-Designer, install, and release contract lives in
-[BRAND-PROJECT-PROPOSALS-WIRING.md](../docs/wiring/BRAND-PROJECT-PROPOSALS-WIRING.md).
-Install it in the same release as `starter-project-form.js`; the Starter half
-alone leaves every request unactionable.
-
-Its Designer markers are proposal-only: `data-project-request-template` for the
-row template and `data-project-request-list` for the list host. It never reads
-`data-project-proposal-template`, which the [Action Items
-panel](#dashboard-action-items-panel) below owns as the Brand first-opportunity
-row and hides once that Brand has an opportunity. With neither proposal marker
-authored the controller builds its own labelled request section next to the
-Action Items wrapper rather than borrowing a row from it.
-
-Run the focused tests with:
-
-```sh
-node --test v3/starter-project-form.test.js v3/brand-project-proposals.test.js
-```
-
 ## All Starters favorites
 
 `all-starters-favorites.js` decorates Starter favourite controls and binds the

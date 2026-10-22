@@ -323,7 +323,7 @@ test('projectDirectCreate sends its payload through the authenticated V3 route',
   assert.deepEqual(JSON.parse(requests[1].init.body), payload)
 })
 
-test('project options use the authenticated v4 route and canonical Starter submission stays on V3', async () => {
+test('project options use the authenticated v4 route', async () => {
   const requests = []
   const bridge = await loadBridge(
     async (input, init = {}) => {
@@ -338,20 +338,12 @@ test('project options use the authenticated v4 route and canonical Starter submi
           counterparty_memberstack_id: 'mem_brand81',
         }] })
       }
-      if (url.includes('/projects/proposal-request/v3')) {
-        return response({
-          proposal: { id: 669, status: 'awaiting_brand_approval', lifecycle_version: 1 },
-          replayed: false,
-        })
-      }
       throw new Error(`Unexpected request: ${url}`)
     },
     { member: paidBrandMember },
   )
 
   const options = await bridge.API.projectProposalOptions()
-  const payload = { brand_id: 81, title: 'Launch project', idempotency_key: 'starter-project-test' }
-  const result = await bridge.API.projectProposalSubmit(payload)
 
   assert.deepEqual(options.counterparties, [{
     counterparty_id: 81,
@@ -359,15 +351,10 @@ test('project options use the authenticated v4 route and canonical Starter submi
     hiring_manager_name: 'Owner',
     counterparty_memberstack_id: 'mem_brand81',
   }])
-  assert.equal(result.proposal.id, 669)
-  assert.equal(result.proposal.status, 'awaiting_brand_approval')
   assert.equal(requests[1].url, 'https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30/projects/proposal-options/v4')
   assert.equal(requests[1].init.method, 'POST')
   assert.equal(requests[1].init.headers.Authorization, 'Bearer xano-token')
   assert.deepEqual(JSON.parse(requests[1].init.body), {})
-  assert.equal(requests[2].url, 'https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30/projects/proposal-request/v3')
-  assert.equal(requests[2].init.headers.Authorization, 'Bearer xano-token')
-  assert.deepEqual(JSON.parse(requests[2].init.body), payload)
 })
 
 test('proposal options fail closed on v4 without falling back to the staged v3 endpoint', async () => {
@@ -388,37 +375,7 @@ test('proposal options fail closed on v4 without falling back to the staged v3 e
   await assert.rejects(bridge.API.projectProposalOptions(), /Unavailable/)
   assert.equal(requests[1].url, 'https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30/projects/proposal-options/v4')
   assert.equal(requests.filter((entry) => entry.url.endsWith('/projects/proposal-options/v3')).length, 0)
-  assert.equal(requests.filter((entry) => entry.url.endsWith('/projects/proposal-request/v3')).length, 0)
   assert.equal(requests.filter((entry) => entry.url.endsWith('/projects/submit/v3')).length, 0)
-})
-
-test('the legacy projectSubmit alias keeps the released form on the proposal route', async () => {
-  const requests = []
-  const bridge = await loadBridge(
-    async (input, init = {}) => {
-      const url = String(input)
-      requests.push({ url, init })
-      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
-      if (url.includes('/projects/proposal-request/v3')) {
-        return response({
-          proposal: { id: 669, status: 'awaiting_brand_approval', lifecycle_version: 1 },
-          replayed: false,
-        })
-      }
-      throw new Error(`Unexpected request: ${url}`)
-    },
-    { member: paidBrandMember },
-  )
-  const payload = { brand_id: 81, title: 'Launch project', idempotency_key: 'starter-cached-form-test' }
-
-  const result = await bridge.API.projectSubmit(payload)
-
-  assert.equal(result.proposal.id, 669)
-  assert.equal(result.proposal.status, 'awaiting_brand_approval')
-  assert.equal(requests[1].url, 'https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30/projects/proposal-request/v3')
-  assert.equal(requests[1].init.method, 'POST')
-  assert.equal(requests[1].init.headers.Authorization, 'Bearer xano-token')
-  assert.deepEqual(JSON.parse(requests[1].init.body), payload)
 })
 
 test('only projectDirectSubmit reaches the direct-project route', async () => {
@@ -444,11 +401,6 @@ test('only projectDirectSubmit reaches the direct-project route', async () => {
   assert.equal(requests[1].init.method, 'POST')
   assert.equal(requests[1].init.headers.Authorization, 'Bearer xano-token')
   assert.deepEqual(JSON.parse(requests[1].init.body), payload)
-
-  await assert.rejects(bridge.API.projectSubmit(payload), /Unexpected request/)
-  await assert.rejects(bridge.API.projectProposalSubmit(payload), /Unexpected request/)
-  assert.equal(requests[2].url, 'https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30/projects/proposal-request/v3')
-  assert.equal(requests[3].url, 'https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30/projects/proposal-request/v3')
   assert.equal(
     requests.filter((entry) => entry.url.endsWith('/projects/submit/v3')).length,
     1,
@@ -476,42 +428,6 @@ test('authenticated Starter profile uses the V3 self-profile route', async () =>
   assert.equal(requests[1].url, 'https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30/starter/profile/me')
   assert.equal(requests[1].init.headers.Authorization, 'Bearer xano-token')
   assert.deepEqual(JSON.parse(requests[1].init.body), {})
-})
-
-test('proposal controller uses dedicated authenticated projection and decision routes', async () => {
-  const requests = []
-  const bridge = await loadBridge(
-    async (input, init = {}) => {
-      const url = String(input)
-      requests.push({ url, init })
-      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
-      if (url.includes('/projects/proposal-action/v3')) {
-        return response({ proposal: { id: 72, status: 'accepted' }, project: { id: 669 } })
-      }
-      if (url.includes('/brand/project-proposals/mine/v3')) {
-        return response({ project_proposals: [{ proposal_id: 72, status: 'awaiting_brand_approval' }] })
-      }
-      throw new Error(`Unexpected request: ${url}`)
-    },
-    { member: paidBrandMember },
-  )
-  const decision = {
-    proposal_id: 72,
-    expected_version: 1,
-    action: 'accept',
-    idempotency_key: 'proposal-action-test',
-  }
-
-  const pending = await bridge.API.brandProjectProposalList(2, 6)
-  const accepted = await bridge.API.projectProposalAction(decision)
-
-  assert.equal(pending.project_proposals[0].proposal_id, 72)
-  assert.equal(accepted.project.id, 669)
-  assert.equal(requests[1].url, 'https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30/brand/project-proposals/mine/v3')
-  assert.deepEqual(JSON.parse(requests[1].init.body), { page: 2, per_page: 6 })
-  assert.equal(requests[2].url, 'https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30/projects/proposal-action/v3')
-  assert.equal(requests[2].init.headers.Authorization, 'Bearer xano-token')
-  assert.deepEqual(JSON.parse(requests[2].init.body), decision)
 })
 
 test('invoiceCreate sends the V3 invoice payload through the authenticated Xano bridge', async () => {
