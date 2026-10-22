@@ -5813,3 +5813,39 @@ test('a caller-supplied slot list replaces the availability read', async () => {
     global.xanoAuthFetch = previous.xanoAuthFetch
   }
 })
+
+test('a booking refused by a server input check shows the server sentence (stability F2)', async () => {
+  // 400 ERROR_CODE_INPUT_ERROR from brand/booking/request/v3: the Brand reads the
+  // real reason instead of "We could not book this call".
+  const refused = await mountFooterFixture({
+    onConfirm: async () => {
+      throw Object.assign(new Error('/brand/booking/request/v3 failed (400)'), {
+        status: 400,
+        data: { code: 'ERROR_CODE_INPUT_ERROR', message: 'Select a call more than 24 hours from now', payload: '' },
+        retrySameBooking: false,
+        bookingNotSubmitted: true,
+      })
+    },
+  })
+  const times = refused.shell.querySelectorAll('[data-paid-calendar-element]')
+    .find((child) => child.getAttribute('data-paid-calendar-element') === 'times')
+  times.children[0].listeners.click()
+  await refused.confirmParts.button.listeners.click()
+  assert.equal(refused.status.textContent, 'Select a call more than 24 hours from now')
+  assert.equal(refused.status.getAttribute('data-paid-calendar-status'), 'error')
+})
+
+test('server failures that are not input errors keep the generic booking copy (stability F2)', async () => {
+  for (const error of [
+    Object.assign(new Error('fatal'), { status: 500, data: { code: 'ERROR_FATAL', message: 'Unable to locate var: starter.x' }, retrySameBooking: false }),
+    Object.assign(new Error('odd'), { status: 400, data: { code: 'ERROR_CODE_INPUT_ERROR', message: '<b>x</b>' }, retrySameBooking: false }),
+    Object.assign(new Error('no data'), { status: 400, retrySameBooking: false }),
+  ]) {
+    const failing = await mountFooterFixture({ onConfirm: async () => { throw error } })
+    const times = failing.shell.querySelectorAll('[data-paid-calendar-element]')
+      .find((child) => child.getAttribute('data-paid-calendar-element') === 'times')
+    times.children[0].listeners.click()
+    await failing.confirmParts.button.listeners.click()
+    assert.equal(failing.status.textContent, 'We could not book this call. Please try again.', error.message)
+  }
+})
