@@ -4994,10 +4994,7 @@ is also recorded in the module header. Remove the fallback once every row
 carries `data-action-element="item"`.
 
 On `/brand-dashboard`, the controller finds the first-opportunity row through
-`[data-project-proposal-template="true"]`, which it owns exclusively — the
-[Brand project proposal approval](#brand-project-proposal-approval) controller
-uses its own `data-project-request-*` markers and never matches this one. It
-then resolves that authored inner
+`[data-project-proposal-template="true"]`, which it owns exclusively. It then resolves that authored inner
 template to its closest `.dash-hero_action-item` so the full outer row hides. If
 there is no outer row, it uses the template itself as a compatibility fallback.
 It requests the first owned opportunity through
