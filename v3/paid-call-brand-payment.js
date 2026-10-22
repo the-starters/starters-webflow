@@ -37,6 +37,18 @@
   const PRODUCTION_MIN_RESCHEDULE_NOTICE_MINUTES = 24 * 60
   const STAGING_MIN_BOOKING_NOTICE_MINUTES = 5
   const STALE_SLOT_ERROR = 'This time is no longer available. Please choose another time.'
+  /* Stability F2 (2026-10-22): a booking refused by a Xano input check (HTTP
+     4xx, code ERROR_CODE_INPUT_ERROR) shows the server's own sentence, for
+     example "Select a call more than 24 hours from now". Every other failure
+     keeps the generic copy so internal errors never reach the Brand. */
+  function bookingInputErrorMessage(error) {
+    const status = Number(error && error.status)
+    const data = error && error.data
+    if (!(status >= 400 && status < 500) || !data || data.code !== 'ERROR_CODE_INPUT_ERROR') return ''
+    const message = typeof data.message === 'string' ? data.message.trim() : ''
+    if (!message || message.length > 200 || /[{}<>$`]/.test(message)) return ''
+    return message
+  }
   const MAX_KEY_LENGTH = 128
   const MAX_PAYMENT_METHOD_LENGTH = 128
   const MAX_GUEST_EMAILS = 5
@@ -2983,7 +2995,7 @@
             ? STALE_SLOT_ERROR
             : retrySameBooking
               ? 'Your request may have been received. Retry to check the same request.'
-              : 'We could not book this call. Please try again.',
+              : bookingInputErrorMessage(error) || 'We could not book this call. Please try again.',
           'error',
         )
       } finally {
