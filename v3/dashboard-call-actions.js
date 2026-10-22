@@ -312,15 +312,16 @@
     f08AcceptEnabled = enabled === true
     return previous
   }
-  // #5756: an offer must start more than 24 h from now (offer_start - 24 h > now).
-  const PENDING_PROPOSE_LEAD_MS = 24 * 3600000
+  // #5756: an offer must start more than 8 h from now (offer_start - 8 h > now).
+  // JP group A item 4 (2026-10-22): no 24 h floor; the 8 h response deadline is the only notice.
+  const PENDING_PROPOSE_LEAD_MS = 8 * 3600000
   /* The server range is the configuration's available_days_in_future. The
      row does not carry it, so the picker uses the writer default (14) unless
      the row names one; the server stays the authority. */
   const PENDING_PROPOSE_DEFAULT_RANGE_DAYS = 14
   const PENDING_PROPOSE_STEP_MINUTES = 30
   const PENDING_PROPOSE_START_MESSAGE =
-    'Choose a new time more than 24 hours from now.'
+    'Choose a new time more than 8 hours from now.'
 
   // F15 (Kaeser + Jai, 2026-10-06): a Brand cancel at or within 8 h of start is
   // charged the full session fee; every other Paid cancel is released.
@@ -1718,7 +1719,7 @@
       title: 'Propose a new time',
       body:
         'The request keeps its requested time until the other participant answers.' +
-        ' Choose any time more than 24 hours from now. Add a short note about why.',
+        ' Choose any time more than 8 hours from now. Add a short note about why.',
     },
     'reschedule-request': {
       title: 'Update the requested time',

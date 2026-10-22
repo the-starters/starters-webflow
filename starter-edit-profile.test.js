@@ -560,11 +560,11 @@ async function testEnabledOptionalRatesNeverSilentlyPersistZero() {
 	await submit(environment)
 	assert.equal(environment.requests.length, 0)
 	assert.equal(environment.fields['[name="rate-retainer"]'].reportValidityCount, 1)
-	assert.match(environment.fields['[name="rate-retainer"]'].validationMessage, /\$1 to \$25,000/)
+	assert.match(environment.fields['[name="rate-retainer"]'].validationMessage, /retainer rate of \$1 or more\./)
 }
 
 async function testStepSixRejectsInvalidWholeDollarPricesBeforeFetch() {
-	for (const value of ['0', '1001', '-1', '1.5', '1,000', '$50', '1e2']) {
+	for (const value of ['0', '-1', '1.5', '1,000', '$50', '1e2']) {
 		const environment = saved({
 			stepIndex: 6,
 			fieldOverrides: { '[name="rate"]': { value } },
@@ -573,7 +573,7 @@ async function testStepSixRejectsInvalidWholeDollarPricesBeforeFetch() {
 		assert.equal(environment.requests.length, 0, `hourly ${value} must not send`)
 	}
 
-	for (const value of ['25001', '1.5']) {
+	for (const value of ['0', '1.5']) {
 		const environment = saved({
 			stepIndex: 6,
 			additionalFormValues: [
@@ -585,7 +585,7 @@ async function testStepSixRejectsInvalidWholeDollarPricesBeforeFetch() {
 		assert.equal(environment.requests.length, 0, `retainer ${value} must not send`)
 	}
 
-	for (const value of ['0', '50001', '1.5']) {
+	for (const value of ['0', '1.5']) {
 		const environment = saved({
 			stepIndex: 6,
 			additionalFormValues: [['service', JSON.stringify({ name: 'Audit', price: value })]],
@@ -595,14 +595,15 @@ async function testStepSixRejectsInvalidWholeDollarPricesBeforeFetch() {
 	}
 }
 
-async function testStepSixPersistsExactPriceBoundaries() {
+// JP group A item 8 (2026-10-22): profile rates have no upper cap.
+async function testStepSixPersistsRatesAboveTheOldCaps() {
 	const environment = saved({
 		stepIndex: 6,
-		fieldOverrides: { '[name="rate"]': { value: '1000' } },
+		fieldOverrides: { '[name="rate"]': { value: '7500' } },
 		additionalFormValues: [
 			['offer-monthly-retainers', 'yes'],
-			['rate-retainer', '25000'],
-			['service', JSON.stringify({ name: 'Audit', price: '50000' })],
+			['rate-retainer', '30000'],
+			['service', JSON.stringify({ name: 'Audit', price: '60000' })],
 		],
 	})
 	await submit(environment)
@@ -613,9 +614,9 @@ async function testStepSixPersistsExactPriceBoundaries() {
 		modalEvents: environment.modalEvents,
 	}))
 	const payload = JSON.parse(environment.requests[0][1].body)
-	assert.equal(payload.Hourly_Rate, 1000)
-	assert.equal(payload.Retainer_Rate, 25000)
-	assert.equal(JSON.parse(payload.Services)['service-1'].price, 50000)
+	assert.equal(payload.Hourly_Rate, 7500)
+	assert.equal(payload.Retainer_Rate, 30000)
+	assert.equal(JSON.parse(payload.Services)['service-1'].price, 60000)
 }
 
 async function testEnabledRetainerLexicalInputUsesItsOwnWriterGuard() {
@@ -626,7 +627,7 @@ async function testEnabledRetainerLexicalInputUsesItsOwnWriterGuard() {
 		})
 		await submit(environment)
 		assert.equal(environment.requests.length, 0, `enabled Retainer ${JSON.stringify(value)} must not send`)
-		assert.match(environment.fields['[name="rate-retainer"]'].validationMessage, /\$1 to \$25,000/)
+		assert.match(environment.fields['[name="rate-retainer"]'].validationMessage, /retainer rate of \$1 or more\./)
 		assert.equal(environment.fields['[name="rate-retainer"]'].reportValidityCount, 1)
 	}
 	const padded = saved({
@@ -650,7 +651,7 @@ async function testStepSixPriceContractSurvivesABlankServiceCaptureField() {
 	await submit(environment)
 	assert.equal(environment.requests.length, 0)
 	assert.equal(environment.fields['[name="rate-retainer"]'].reportValidityCount, 1)
-	assert.match(environment.fields['[name="rate-retainer"]'].validationMessage, /\$1 to \$25,000/)
+	assert.match(environment.fields['[name="rate-retainer"]'].validationMessage, /retainer rate of \$1 or more\./)
 }
 
 async function testServiceFailuresExplainThemselvesInTheErrorModal() {
@@ -670,7 +671,7 @@ async function testServiceFailuresExplainThemselvesInTheErrorModal() {
 	await submit(invalidPrice)
 	assert.equal(invalidPrice.requests.length, 0)
 	assert.equal(invalidPrice.modalEvents.error, 1)
-	assert.match(invalidPrice.errorFeedback.textContent, /\$1 to \$50,000/)
+	assert.match(invalidPrice.errorFeedback.textContent, /service price of \$1 or more\./)
 }
 
 // The error modal is shared. A price message written for one blocked save must
@@ -688,7 +689,7 @@ async function testAPriceMessageNeverSurvivesIntoAnUnrelatedFailure() {
 
 	await submit(environment)
 	assert.equal(environment.requests.length, 0)
-	assert.match(environment.errorFeedback.textContent, /\$1 to \$50,000/)
+	assert.match(environment.errorFeedback.textContent, /service price of \$1 or more\./)
 
 	service[1] = JSON.stringify({ name: 'Audit', price: '500' })
 	failRequest = true
@@ -748,11 +749,10 @@ async function testFeedbackMessagesNeverFlattenNestedAuthoredMarkup() {
 	assert.deepEqual(environment.errorFeedback.children, [icon])
 }
 
-// A canonical Hourly_Rate stored before the contract narrowed is real member data
-// this page must not repair. It hydrates unchanged, blocks every resave before any
-// Xano request while it is still out of contract, and only the member's own
-// whole-dollar replacement clears the stale validity and reaches Xano.
-async function testLegacyOutOfContractHourlyRateBlocksUntilTheMemberRepairsIt() {
+// JP group A item 8 (2026-10-22): profile rates have no upper cap. A stored
+// Hourly_Rate above the old $1,000 cap (agencies keep retainer figures there, Jai
+// 2026-08-28) hydrates unchanged and resaves as-is; malformed values still block.
+async function testStoredHighHourlyRateResavesUnchanged() {
 	const environment = createEnvironment(async () => ({
 		ok: true,
 		status: 200,
@@ -762,30 +762,22 @@ async function testLegacyOutOfContractHourlyRateBlocksUntilTheMemberRepairsIt() 
 		fieldOverrides: { '[name="rate"]': { value: '2500' } },
 	})
 	const rate = environment.fields['[name="rate"]']
-	assert.equal(rate.value, '2500', 'hydration must not rewrite the stored outlier')
-	assert.equal(rate.getAttribute('max'), '1000')
+	assert.equal(rate.value, '2500', 'hydration must not rewrite the stored value')
+	assert.equal(rate.getAttribute('max'), null)
 
-	for (const attempt of [1, 2]) {
-		await submit(environment)
-		assert.equal(environment.requests.length, 0, `attempt ${attempt} must not reach Xano`)
-		assert.match(rate.validationMessage, /\$1 to \$1,000/)
-		assert.equal(rate.value, '2500', 'the stored outlier is never silently rewritten')
-	}
-
-	for (const invalid of ['1001', '2500.00', '1,000', '$900']) {
+	for (const invalid of ['2500.00', '1,000', '$900', '0']) {
 		rate.value = invalid
 		await submit(environment)
 		assert.equal(environment.requests.length, 0, `${invalid} must not reach Xano`)
-		assert.match(rate.validationMessage, /\$1 to \$1,000/)
+		assert.match(rate.validationMessage, /hourly rate of \$1 or more\./)
 	}
 
-	rate.value = '900'
+	rate.value = '2500'
 	await submit(environment)
 	assert.equal(environment.requests.length, 1, rate.validationMessage)
 	const [, options] = environment.requests[0]
-	assert.equal(JSON.parse(options.body).Hourly_Rate, 900)
+	assert.equal(JSON.parse(options.body).Hourly_Rate, 2500)
 	assert.equal(rate.validationMessage, '')
-	assert.equal(environment.errorFeedback.textContent, 'Your profile could not be saved.')
 }
 
 // Clearing a custom-service price is the only remove gesture these forms author.
@@ -837,7 +829,7 @@ async function testClearingAServicePriceRemovesThatService() {
 }
 
 async function testANonBlankMalformedServicePriceStillBlocksTheStep() {
-	for (const price of ['0', '500.50', '50001', '1,000', '$50', '1e2', '-5']) {
+	for (const price of ['0', '500.50', '1,000', '$50', '1e2', '-5']) {
 		const environment = createEnvironment(async () => {
 			throw new Error('fetch must not run')
 		}, {
@@ -846,7 +838,7 @@ async function testANonBlankMalformedServicePriceStillBlocksTheStep() {
 		})
 		await submit(environment)
 		assert.equal(environment.requests.length, 0, `service ${price} must not send`)
-		assert.match(environment.errorFeedback.textContent, /\$1 to \$50,000/)
+		assert.match(environment.errorFeedback.textContent, /service price of \$1 or more\./)
 	}
 }
 
@@ -921,8 +913,8 @@ async function testStepSixSavesAuthoredRatesWhileTheLiveFormatterIsPresent() {
 		rate.getAttribute('step'),
 		rate.getAttribute('min'),
 		rate.getAttribute('max'),
-	], ['number', 'numeric', '1', '1', '1000'])
-	assert.equal(environment.fields['[name="rate-retainer"]'].getAttribute('max'), '25000')
+	], ['number', 'numeric', '1', '1', null])
+	assert.equal(environment.fields['[name="rate-retainer"]'].getAttribute('max'), null)
 }
 
 // Service rows are cloned after load and formatted through the page global, so the
@@ -944,7 +936,7 @@ async function testClonedServicePriceRowsGetTheWholeDollarContract() {
 		clonedPrice.getAttribute('step'),
 		clonedPrice.getAttribute('min'),
 		clonedPrice.getAttribute('max'),
-	], ['number', '1', '1', '50000'])
+	], ['number', '1', '1', null])
 }
 
 async function testHourlyRateUsesCanonicalZeroOnlyWhenOptional() {
@@ -1012,7 +1004,7 @@ async function testCorrectedPriceSavesAfterAReportedPriceFailure() {
 
   await submit(environment)
   assert.equal(environment.requests.length, 0, 'a decimal hourly rate must not reach Xano')
-  assert.match(rate.validationMessage, /\$1 to \$1,000/)
+  assert.match(rate.validationMessage, /hourly rate of \$1 or more\./)
 
   rate.value = '125'
   await submit(environment)
@@ -1232,20 +1224,23 @@ async function testInvalidNativeFieldReportsWithoutStartingRequest() {
   assert.equal(environment.window.__startersWorkflowDiagnosticLast.request_started, false)
 }
 
-async function testEmptyMirrorFocusesAuthoredControlWithoutStartingRequest() {
-  const environment = createEnvironment(async () => {
-    throw new Error('fetch must not run')
-  }, {
+// JP group A item 8 (2026-10-22): no picker minimum blocks a save, so a legacy
+// profile with no function chips still saves the step.
+async function testEmptyPickerGroupNeverBlocksTheSave() {
+  const environment = createEnvironment(async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ saved: true, projection_pending: false }),
+  }), {
     workflowDiagnostics: true,
     fieldOverrides: { '[select-wrap-entity="functions"]': { chips: 0 } },
   })
 
   await submit(environment)
 
-  assert.equal(environment.requests.length, 0)
-  assert.equal(environment.focusTarget.focusCount, 1)
-  assert.equal(environment.button.style.pointerEvents ?? '', '')
-  assert.equal(environment.window.__startersWorkflowDiagnosticLast.error_code, 'GROUP_MIN_NOT_MET')
+  assert.equal(environment.requests.length, 1)
+  assert.equal(environment.focusTarget.focusCount, 0)
+  assert.equal(environment.stepFields['[select-wrap-entity="functions"]'].getAttribute('wf-validate-min'), '0')
 }
 
 async function testMissingAuthoredMarkerFailsClosed() {
@@ -1290,14 +1285,17 @@ async function testProfileTypeSelectsOnlyItsOwnedMirrorBranch() {
   await submit(consultValid)
   assert.equal(consultValid.requests.length, 1)
 
-  const consultInvalid = createEnvironment(async () => {
-    throw new Error('fetch must not run')
-  }, {
+  // JP group A item 8 (2026-10-22): an empty subcategory picker no longer blocks.
+  const consultEmpty = createEnvironment(async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ saved: true, projection_pending: false }),
+  }), {
     profileType: 'consult',
     fieldOverrides: { '[select-wrap-entity="subcategories"]': { chips: 0 } },
   })
-  await submit(consultInvalid)
-  assert.equal(consultInvalid.requests.length, 0)
+  await submit(consultEmpty)
+  assert.equal(consultEmpty.requests.length, 1)
 }
 
 async function testProfileTypeOwnsSkillsToolsAndAvailabilityOnlyForFullProfiles() {
@@ -1318,14 +1316,17 @@ async function testProfileTypeOwnsSkillsToolsAndAvailabilityOnlyForFullProfiles(
     await submit(consult)
     assert.equal(consult.requests.length, 1, `consult step ${stepIndex} ignores ${selector}`)
 
-    const full = createEnvironment(async () => {
-      throw new Error('fetch must not run')
-    }, {
+    // JP group A item 8 (2026-10-22): Full profiles below the old minimums save too.
+    const full = createEnvironment(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ saved: true, projection_pending: false }),
+    }), {
       stepIndex,
       fieldOverrides: { [selector]: emptyOverride },
     })
     await submit(full)
-    assert.equal(full.requests.length, 0, `full step ${stepIndex} requires ${selector}`)
+    assert.equal(full.requests.length, 1, `full step ${stepIndex} saves below the old ${selector} minimum`)
   }
 
   const consultRate = createEnvironment(async () => ({
@@ -1646,7 +1647,7 @@ Promise.all([
   testPhoneCountryChangeCountsAsAMemberEdit(),
   testEnabledOptionalRatesNeverSilentlyPersistZero(),
 	testStepSixRejectsInvalidWholeDollarPricesBeforeFetch(),
-	testStepSixPersistsExactPriceBoundaries(),
+	testStepSixPersistsRatesAboveTheOldCaps(),
 	testEnabledRetainerLexicalInputUsesItsOwnWriterGuard(),
 	testStepSixPriceContractSurvivesABlankServiceCaptureField(),
 	testServiceFailuresExplainThemselvesInTheErrorModal(),
@@ -1660,7 +1661,7 @@ Promise.all([
   testAPriceMessageNeverSurvivesIntoAnUnrelatedFailure(),
   testAnAuthFailureNeverInheritsAPriceMessage(),
   testFeedbackMessagesNeverFlattenNestedAuthoredMarkup(),
-  testLegacyOutOfContractHourlyRateBlocksUntilTheMemberRepairsIt(),
+  testStoredHighHourlyRateResavesUnchanged(),
   testClearingAServicePriceRemovesThatService(),
   testServicePriceRequiresScalarBeforeCoercion(),
   testANonBlankMalformedServicePriceStillBlocksTheStep(),
@@ -1675,7 +1676,7 @@ Promise.all([
   testAuthSwitchAfterPatchDoesNotProjectToNewSession(),
   testLogoutAndSameMemberReauthenticationInvalidatesSave(),
   testInvalidNativeFieldReportsWithoutStartingRequest(),
-  testEmptyMirrorFocusesAuthoredControlWithoutStartingRequest(),
+  testEmptyPickerGroupNeverBlocksTheSave(),
   testMissingAuthoredMarkerFailsClosed(),
   testProfileHydrationMustFinishBeforeValidationCanWrite(),
   testProfileTypeSelectsOnlyItsOwnedMirrorBranch(),
@@ -1701,17 +1702,19 @@ Promise.all([
 
 
 async function testStepFiveGroupRulesCountChipsAndSyncBounds() {
-  const blocked = createEnvironment(async () => {
-    throw new Error('fetch must not run')
-  }, {
+  // JP group A item 8 (2026-10-22): fewer picks than the old minimums still save.
+  const fewer = createEnvironment(async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ saved: true, projection_pending: false }),
+  }), {
     stepIndex: 5,
     workflowDiagnostics: true,
     fieldOverrides: { '[select-wrap-entity="skills"]': { chips: 2 } },
   })
-  await submit(blocked)
-  assert.equal(blocked.requests.length, 0, 'two skills on a Full profile must not save')
-  assert.equal(blocked.focusTarget.focusCount, 1, 'the picker input receives focus')
-  assert.equal(blocked.window.__startersWorkflowDiagnosticLast.error_code, 'GROUP_MIN_NOT_MET')
+  await submit(fewer)
+  assert.equal(fewer.requests.length, 1, 'two skills on a Full profile save')
+  assert.equal(fewer.focusTarget.focusCount, 0)
 
   const saved = createEnvironment(async () => ({
     ok: true,
@@ -1722,8 +1725,8 @@ async function testStepFiveGroupRulesCountChipsAndSyncBounds() {
   assert.equal(saved.requests.length, 1, 'three skills and two tools save')
   const skills = saved.stepFields['[select-wrap-entity="skills"]']
   const tools = saved.stepFields['[select-wrap-entity="tools"]']
-  assert.equal(skills.getAttribute('wf-validate-min'), '3', 'Full profile: skills minimum mirrored for wf-validate')
-  assert.equal(tools.getAttribute('wf-validate-min'), '2', 'Full profile: tools minimum mirrored for wf-validate')
+  assert.equal(skills.getAttribute('wf-validate-min'), '0', 'Full profile: zero skills minimum mirrored for wf-validate')
+  assert.equal(tools.getAttribute('wf-validate-min'), '0', 'Full profile: zero tools minimum mirrored for wf-validate')
 
   const consult = createEnvironment(async () => ({
     ok: true,
@@ -1737,23 +1740,25 @@ async function testStepFiveGroupRulesCountChipsAndSyncBounds() {
 
 async function testAvailabilityGroupIgnoresMirrorAndSyncsTypeBounds() {
   const selector = '[select-wrap-entity="availability"]'
-  const blocked = createEnvironment(async () => { throw new Error('fetch must not run') }, {
+  // JP group A item 8 (2026-10-22): no availability chip is required to save.
+  const empty = createEnvironment(async () => ({
+    ok: true, status: 200, json: async () => ({ saved: true, projection_pending: false }),
+  }), {
     stepIndex: 6,
     workflowDiagnostics: true,
     fieldOverrides: { [selector]: { chips: 0 }, '#availability-required': { value: 'stale' } },
   })
-  await submit(blocked)
-  assert.equal(blocked.requests.length, 0, 'a stale mirror cannot replace a selected availability chip')
-  assert.equal(blocked.focusTarget.focusCount, 1)
-  assert.equal(blocked.window.__startersWorkflowDiagnosticLast.error_code, 'GROUP_MIN_NOT_MET')
-  assert.equal(blocked.stepFields[selector].getAttribute('wf-validate-min'), '1')
+  await submit(empty)
+  assert.equal(empty.requests.length, 1, 'zero availability chips still save')
+  assert.equal(empty.focusTarget.focusCount, 0)
+  assert.equal(empty.stepFields[selector].getAttribute('wf-validate-min'), '0')
 
   const saved = createEnvironment(async () => ({
     ok: true, status: 200, json: async () => ({ saved: true, projection_pending: false }),
   }), { stepIndex: 6, fieldOverrides: { '#availability-required': { value: '' } } })
   await submit(saved)
   assert.equal(saved.requests.length, 1, 'one chip saves even when the legacy mirror is empty')
-  assert.equal(saved.stepFields[selector].getAttribute('wf-validate-min'), '1')
+  assert.equal(saved.stepFields[selector].getAttribute('wf-validate-min'), '0')
 
   const consult = createEnvironment(async () => ({
     ok: true, status: 200, json: async () => ({ saved: true, projection_pending: false }),

@@ -239,8 +239,8 @@ test('sets native whole-dollar constraints on profile-owned direct price inputs'
       max: result.inputs[selector].getAttribute('max'),
     })),
     [
-      { type: 'number', inputmode: 'numeric', step: '1', min: '1', max: '1000' },
-      { type: 'number', inputmode: 'numeric', step: '1', min: '1', max: '25000' },
+      { type: 'number', inputmode: 'numeric', step: '1', min: '1', max: null },
+      { type: 'number', inputmode: 'numeric', step: '1', min: '1', max: null },
     ],
   )
 })
@@ -248,11 +248,10 @@ test('sets native whole-dollar constraints on profile-owned direct price inputs'
 test('rejects malformed and out-of-range authored prices before the canonical request', async () => {
   const cases = [
     { rate: '0' },
-    { rate: '1001' },
     { rate: '1.5' },
     { rate: '1e2' },
-    { 'offer-monthly-retainers': 'yes', 'rate-retainer': '25001' },
-    { service: JSON.stringify({ name: 'Audit', price: '50001' }) },
+    { 'offer-monthly-retainers': 'yes', 'rate-retainer': '0' },
+    { service: JSON.stringify({ name: 'Audit', price: '0' }) },
   ]
   for (const values of cases) {
     const result = load(values)
@@ -262,19 +261,21 @@ test('rejects malformed and out-of-range authored prices before the canonical re
   }
 })
 
-test('persists exact maximums and converts service values once without rounding', async () => {
+// JP group A item 8 (2026-10-22): profile rates have no upper cap. Agencies keep
+// retainer figures in the hourly field (Jai 2026-08-28).
+test('persists rates above the old caps and converts service values once without rounding', async () => {
   const result = load({
-    rate: '1000',
+    rate: '7500',
     'offer-monthly-retainers': 'yes',
-    'rate-retainer': '25000',
-    service: JSON.stringify({ name: 'Audit', price: '50000' }),
+    'rate-retainer': '30000',
+    service: JSON.stringify({ name: 'Audit', price: '60000' }),
   })
   await result.submit.click()
   assert.equal(result.requests.length, 1)
   const payload = result.requests[0].body
-  assert.equal(payload.hourly_rate, 1000)
-  assert.equal(payload.retainer_rate, 25000)
-  assert.equal(payload.services['service-1'].price, 50000)
+  assert.equal(payload.hourly_rate, 7500)
+  assert.equal(payload.retainer_rate, 30000)
+  assert.equal(payload.services['service-1'].price, 60000)
 })
 
 for (const value of ['1,000', '$100', '1e2', '   ', '-1']) {
@@ -284,7 +285,7 @@ for (const value of ['1,000', '$100', '1e2', '   ', '-1']) {
     assert.equal(result.requests.length, 0)
     assert.match(result.inputs['[name="rate-retainer"]'].validationMessage, value.trim() === ''
       ? /rate is required\./
-      : /1 to \$25,000/)
+      : /of \$1 or more\./)
     assert.equal(result.inputs['[name="rate-retainer"]'].reportValidityCount, 1)
   })
 }
@@ -436,15 +437,14 @@ test('Build Profile blocks combined success when enabled Paid intent is invalid'
 })
 
 test('Build Profile points invalid Call Settings copy at the exact authored field', async () => {
+  // JP group A item 9 (2026-10-22): the Free call description has no 60-character limit.
   const free = load({
     'free-consulting-calls': 'yes',
     'free-call-description': 'x'.repeat(61),
   })
   await free.submit.click()
-  assert.equal(free.requests.length, 0)
-  assert.equal(free.inputs['[name="free-call-description"]'].focusCount, 1)
-  assert.equal(free.inputs['[name="free-call-description"]'].reportValidityCount, 1)
-  assert.match(free.inputs['[name="free-call-description"]'].validationMessage, /60 characters or fewer/)
+  assert.equal(free.requests.length, 1)
+  assert.equal(free.inputs['[name="free-call-description"]'].reportValidityCount, 0)
 
   const paid = load({
     'paid-consulting-calls': 'yes',
@@ -477,7 +477,7 @@ test('a consult profile round-trips the canonical zero hourly rate it persists',
 // behind that hidden control must keep the zero compatibility state instead of
 // blocking a submit on a price the member can neither see nor repair.
 test('a consult profile never blocks on hidden hourly-rate data the contract rejects', async () => {
-  for (const stale of ['1500', '1.50', '1,000', '$50', '1e2', '-5', '9007199254740993']) {
+  for (const stale of ['1.50', '1,000', '$50', '1e2', '-5', '9007199254740993']) {
     const result = load({ rate: stale }, '/build-profile/consult')
     await result.submit.click()
     assert.equal(
@@ -495,12 +495,12 @@ test('a consult profile never blocks on hidden hourly-rate data the contract rej
   assert.equal(inContract.requests[0].body.hourly_rate, 750)
 })
 
-test('Full Profile still rejects an out-of-range hourly rate on its own visible control', async () => {
-  const fullProfile = load({ rate: '1500' }, '/build-profile/full')
+test('Full Profile still rejects a malformed hourly rate on its own visible control', async () => {
+  const fullProfile = load({ rate: '15.50' }, '/build-profile/full')
   await fullProfile.submit.click()
   assert.equal(fullProfile.requests.length, 0)
   assert.equal(fullProfile.error.style.display, 'block')
-  assert.match(fullProfile.inputs['[name="rate"]'].validationMessage, /\$1 to \$1,000/)
+  assert.match(fullProfile.inputs['[name="rate"]'].validationMessage, /hourly rate of \$1 or more\./)
   assert.equal(fullProfile.inputs['[name="rate"]'].reportValidityCount, 1)
 })
 
@@ -509,7 +509,7 @@ test('Full Profile rejects a required hourly rate of zero', async () => {
   await fullProfile.submit.click()
   assert.equal(fullProfile.requests.length, 0)
   assert.equal(fullProfile.error.style.display, 'block')
-  assert.match(fullProfile.inputs['[name="rate"]'].validationMessage, /\$1 to \$1,000/)
+  assert.match(fullProfile.inputs['[name="rate"]'].validationMessage, /hourly rate of \$1 or more\./)
 })
 
 // A service price and name live in hidden JSON capture inputs, so focus() and
@@ -522,14 +522,14 @@ test('a service price failure names itself in the authored error panel', async (
   assert.equal(price.error.style.display, 'block')
   assert.equal(
     price.errorMessage.textContent,
-    'Use a whole-dollar service price from $1 to $50,000.',
+    'Use a whole-dollar service price of $1 or more.',
   )
   assert.equal(price.inputs['#service'].reportValidityCount, 0)
 
-  const range = load({ service: JSON.stringify({ name: 'Audit', price: '50001' }) })
+  const range = load({ service: JSON.stringify({ name: 'Audit', price: '0' }) })
   await range.submit.click()
   assert.equal(range.requests.length, 0)
-  assert.equal(range.errorMessage.textContent, 'Use a whole-dollar service price from $1 to $50,000.')
+  assert.equal(range.errorMessage.textContent, 'Use a whole-dollar service price of $1 or more.')
 
   const unnamed = load({ service: JSON.stringify({ name: '', price: '500' }) })
   await unnamed.submit.click()
@@ -618,7 +618,7 @@ test('clearing a service price removes that service instead of blocking the subm
 })
 
 test('a non-blank malformed service price still blocks before any request', async () => {
-  for (const price of ['0', '500.50', '50001', '1,000', '$50', '1e2', '-5']) {
+  for (const price of ['0', '500.50', '1,000', '$50', '1e2', '-5']) {
     const result = load({ service: JSON.stringify({ name: 'Audit', price }) })
     await result.submit.click()
     assert.equal(result.requests.length, 0, `${price} must not reach Xano`)
@@ -663,12 +663,12 @@ test('a consult profile ignores the hidden retainer radio over data the contract
   assert.equal(inContract.requests[0].body.retainer_rate, 0)
 })
 
-test('Full Profile still rejects an enabled out-of-range monthly retainer', async () => {
-  const result = load({ 'offer-monthly-retainers': 'yes', 'rate-retainer': '30000' })
+test('Full Profile still rejects an enabled monthly retainer below $1', async () => {
+  const result = load({ 'offer-monthly-retainers': 'yes', 'rate-retainer': '0' })
   await result.submit.click()
   assert.equal(result.requests.length, 0)
   assert.equal(result.error.style.display, 'block')
-  assert.match(result.inputs['[name="rate-retainer"]'].validationMessage, /\$1 to \$25,000/)
+  assert.match(result.inputs['[name="rate-retainer"]'].validationMessage, /retainer rate of \$1 or more\./)
   assert.equal(result.inputs['[name="rate-retainer"]'].reportValidityCount, 1)
 })
 

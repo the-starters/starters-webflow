@@ -283,8 +283,9 @@ an active service and is not a `freelancers_v3` projection. The active
 environment-matched `nylas_configurations_v3` row and provider readback remain
 the sole call authority. The visible Free description, Paid title, and Paid
 whole-dollar rate report validation on their exact authored controls. The Paid
-rate reuses the same `$1` through `$1,000` whole-dollar validator as the other
-direct Build Profile price controls.
+rate keeps its `$1` through `$1,000` whole-dollar cap; the other direct Build Profile
+price controls have no upper cap since JP group A item 8 (2026-10-22). The Free
+description has no 60-character limit since JP group A item 9 (2026-10-22).
 
 Dashboard and Edit Profile hydrate the receipt only as a pre-onboarding create
 choice. If that branch has no canonical service, a pending enable prefills its

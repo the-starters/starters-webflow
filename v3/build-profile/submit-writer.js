@@ -13,8 +13,10 @@
       if (!form || !formSubmit || !success || !error) return;
 
       [
-        { selector: '[name="rate"]', min: 1, max: 1000 },
-        { selector: '[name="rate-retainer"]', min: 1, max: 25000 },
+        // JP group A item 8 (2026-10-22): profile rates have no upper cap (agencies keep
+        // retainer figures in the hourly field, Jai 2026-08-28). The paid-call price keeps its cap.
+        { selector: '[name="rate"]', min: 1 },
+        { selector: '[name="rate-retainer"]', min: 1 },
         { selector: '[name="paid-call-rate"]', min: 1, max: 1000 },
       ].forEach(({ selector, min, max }) => {
         const input = qs(selector, form);
@@ -23,7 +25,7 @@
         input.setAttribute('inputmode', 'numeric');
         input.setAttribute('step', '1');
         input.setAttribute('min', String(min));
-        input.setAttribute('max', String(max));
+        if (Number.isFinite(max)) input.setAttribute('max', String(max));
       });
 
       success.style.display = 'none';
@@ -75,13 +77,6 @@
         if (hasFree) {
           const freeEnabled = enabled(formData['free-consulting-calls']);
           const description = freeEnabled ? String(formData['free-call-description'] || '').trim() : '';
-          if (freeEnabled && description.length > 60) {
-            fieldError(
-              qs('[name="free-call-description"]', form),
-              'Free-call description must be 60 characters or fewer.',
-              'FREE_CALL_DESCRIPTION_TOO_LONG',
-            );
-          }
           if (freeEnabled) {
             intent.free = {
               enabled: true,
@@ -286,7 +281,7 @@
           if (!/^[0-9]+$/.test(raw)) return 'PRICE_NOT_INTEGER';
           const number = Number(raw);
           if (!Number.isSafeInteger(number)) return 'PRICE_NOT_INTEGER';
-          if (number < min || number > max) return 'PRICE_OUT_OF_RANGE';
+          if (number < min || (Number.isFinite(max) && number > max)) return 'PRICE_OUT_OF_RANGE';
           return null;
         };
 
@@ -297,7 +292,9 @@
           if (failure) {
             const message = failure === 'PRICE_REQUIRED'
               ? `${label} is required.`
-              : `Use a whole-dollar ${label} from $${min.toLocaleString('en-US')} to $${max.toLocaleString('en-US')}.`;
+              : Number.isFinite(max)
+                ? `Use a whole-dollar ${label} from $${min.toLocaleString('en-US')} to $${max.toLocaleString('en-US')}.`
+                : `Use a whole-dollar ${label} of $${min.toLocaleString('en-US')} or more.`;
             return fieldError(field, message, failure, mirror);
           }
           clearPriceFeedback(field);
@@ -349,7 +346,6 @@
           }
           data.price = wholeDollar(data.price, {
             min: 1,
-            max: 50000,
             label: 'service price',
             selector,
             mirror: true,
@@ -374,7 +370,6 @@
         const fullProfile = !isConsultProfile;
         const HOURLY_PRICE = {
           min: 1,
-          max: 1000,
           label: 'hourly rate',
           selector: '[name="rate"]',
           allowBlank: !fullProfile,
@@ -385,7 +380,6 @@
           : null;
         const RETAINER_PRICE = {
           min: 1,
-          max: 25000,
           label: 'monthly retainer rate',
           selector: '[name="rate-retainer"]',
         };

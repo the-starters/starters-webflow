@@ -345,11 +345,13 @@ function setLoader(state, wrapper) {
 	loader.style.opacity = state ? '1' : '0';
 }
 
+// JP group A item 8 (2026-10-22): profile rates have no upper cap (agencies keep retainer
+// figures in Hourly_Rate, Jai 2026-08-28). The paid-call price keeps its cap.
 const PRICE_CONTRACTS = Object.freeze({
-	Hourly_Rate: Object.freeze({ min: 1, max: 1000, label: 'hourly rate' }),
-	Retainer_Rate: Object.freeze({ min: 1, max: 25000, label: 'monthly retainer rate' }),
+	Hourly_Rate: Object.freeze({ min: 1, max: Infinity, label: 'hourly rate' }),
+	Retainer_Rate: Object.freeze({ min: 1, max: Infinity, label: 'monthly retainer rate' }),
 	Paid_Call_Rate: Object.freeze({ min: 1, max: 1000, label: 'paid call rate' }),
-	Services: Object.freeze({ min: 1, max: 50000, label: 'service price' }),
+	Services: Object.freeze({ min: 1, max: Infinity, label: 'service price' }),
 });
 
 function rateInputContract(input) {
@@ -366,7 +368,7 @@ function applyRateInputContract(input, contract) {
 	input.setAttribute('inputmode', 'numeric');
 	input.setAttribute('step', '1');
 	input.setAttribute('min', String(contract.min));
-	input.setAttribute('max', String(contract.max));
+	if (Number.isFinite(contract.max)) input.setAttribute('max', String(contract.max));
 }
 
 // The published shared foundation rewrites every authored rate through
@@ -402,12 +404,14 @@ const STEP_VALIDATION_CONTRACT = Object.freeze({
 		{ selector: '[name="state"]', kind: 'nativeConditional' },
 		{ selector: '[name="city"]', kind: 'nativeConditional' },
 		{ selector: '#profile-photo-url', kind: 'mirror', focusSelector: '[data-profile-photo-input], input[type="file"]' },
+		// JP group A item 8 (2026-10-22): no picker minimum blocks a save, so every group
+		// rule is min 0 (legacy profiles below the old minimums must still save).
 		// Selection groups (see step 5): chip counts inside the picker wrapper, not the
 		// hidden `input-required` mirrors. syncSelectionGroupBounds() mirrors each
 		// minimum onto the wrapper as wf-validate-min for the active profile type.
-		{ selector: '[select-wrap-entity="functions"]', kind: 'group', min: 1, focusSelector: '[name="function-option"], [fs-list-instance="function"] input' },
-		{ selector: '[select-wrap-entity="roles"]', kind: 'group', min: 1, profileTypes: ['full'], focusSelector: '[name="role-option"], [fs-list-instance="roles"] input' },
-		{ selector: '[select-wrap-entity="subcategories"]', kind: 'group', min: 1, profileTypes: ['consult'], focusSelector: '[name="subcategories-option"], [fs-list-instance="subcategories"] input' },
+		{ selector: '[select-wrap-entity="functions"]', kind: 'group', min: 0, focusSelector: '[name="function-option"], [fs-list-instance="function"] input' },
+		{ selector: '[select-wrap-entity="roles"]', kind: 'group', min: 0, profileTypes: ['full'], focusSelector: '[name="role-option"], [fs-list-instance="roles"] input' },
+		{ selector: '[select-wrap-entity="subcategories"]', kind: 'group', min: 0, profileTypes: ['consult'], focusSelector: '[name="subcategories-option"], [fs-list-instance="subcategories"] input' },
 	],
 	2: [
 		{ selector: '#tagline', kind: 'native' },
@@ -420,13 +424,13 @@ const STEP_VALIDATION_CONTRACT = Object.freeze({
 		// wf-validate-element="group", and syncSelectionGroupBounds() keeps its
 		// wf-validate-min in step with the active profile type so the library's gate
 		// and this contract enforce one rule.
-		{ selector: '[select-wrap-entity="skills"]', kind: 'group', min: 3, profileTypes: ['full'], focusSelector: '[name="skill-option"], [fs-list-instance="skills"] input' },
-		{ selector: '[select-wrap-entity="tools"]', kind: 'group', min: 2, profileTypes: ['full'], focusSelector: '[name="tool-option"], [fs-list-instance="tools"] input' },
+		{ selector: '[select-wrap-entity="skills"]', kind: 'group', min: 0, profileTypes: ['full'], focusSelector: '[name="skill-option"], [fs-list-instance="skills"] input' },
+		{ selector: '[select-wrap-entity="tools"]', kind: 'group', min: 0, profileTypes: ['full'], focusSelector: '[name="tool-option"], [fs-list-instance="tools"] input' },
 	],
 	6: [
 		{ selector: '[name="rate"]', kind: 'nativeConditional' },
 		{ selector: '[data-input-capture][required]', kind: 'nativeGroup' },
-		{ selector: '[select-wrap-entity="availability"]', kind: 'group', min: 1, profileTypes: ['full'], focusSelector: '[name="availability-option"], [fs-list-instance="availability"] input' },
+		{ selector: '[select-wrap-entity="availability"]', kind: 'group', min: 0, profileTypes: ['full'], focusSelector: '[name="availability-option"], [fs-list-instance="availability"] input' },
 	],
 	7: [
 		{
@@ -785,6 +789,7 @@ onDomReady(function () {
 		}
 
 		function priceMessage(contract) {
+			if (!Number.isFinite(contract.max)) return `Use a whole-dollar ${contract.label} of $${contract.min.toLocaleString('en-US')} or more.`;
 			return `Use a whole-dollar ${contract.label} from $${contract.min.toLocaleString('en-US')} to $${contract.max.toLocaleString('en-US')}.`;
 		}
 

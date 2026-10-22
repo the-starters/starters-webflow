@@ -1032,6 +1032,10 @@ into with `wf-validate-element="group"`, gates the tab 5 save with the same rule
 stay authored in Webflow because the shared picker widget and the Build pages still write them;
 this controller's step 1 and step 5 picker rules stopped depending on them. Failure code: `GROUP_MIN_NOT_MET`.
 
+JP group A item 8 (2026-10-22): every picker minimum above is now `0`, so no picker count blocks a
+save (legacy profiles below the old minimums must still save). `syncSelectionGroupBounds` mirrors
+`wf-validate-min="0"` for the profile types each rule applies to, and `GROUP_MIN_NOT_MET` can no longer fire.
+
 
 ## Proposed step 6 availability group (PR only)
 
@@ -1041,7 +1045,8 @@ Consult profiles have no availability minimum. The controller no longer reads
 `#availability-required`; that mirror stays authored for existing picker writers.
 A stale nonempty mirror cannot pass an empty picker, and an empty mirror cannot
 block a selected picker. `syncSelectionGroupBounds` sets `wf-validate-min="1"`
-for Full and removes it for Consult. Failure code: `GROUP_MIN_NOT_MET`.
+for Full and removes it for Consult. Failure code: `GROUP_MIN_NOT_MET`. Since JP group A item 8
+(2026-10-22) the Full minimum is `0` (`wf-validate-min="0"`), so zero chips save.
 
 The `[name="rate"]` and `nativeGroup` rules remain unchanged. The call fields stay
 editable and un-required, owned by the canonical settings controllers described above.

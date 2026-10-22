@@ -107,7 +107,7 @@
     ) return null
     return {
       enabled: true,
-      description: String(envelope.free.description || '').trim().slice(0, 60),
+      description: String(envelope.free.description || '').trim(),
     }
   }
 
@@ -1027,9 +1027,6 @@
       const description = options && typeof options.description === 'string'
         ? options.description.trim()
         : String((descriptionInput && descriptionInput.value) || '').trim()
-      if (description.length > 60) {
-        throw new Error('Free-call description must be 60 characters or fewer.')
-      }
       await xanoRequest('/starter/free-call-settings/upsert/v3', 'POST', {
         config_id: service ? service.config_id : null,
         description: description,

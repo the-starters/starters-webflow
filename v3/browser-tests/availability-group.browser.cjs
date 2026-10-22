@@ -115,10 +115,12 @@ handleCustomSelects();</script><script src="/diagnostics.js"></script><script sr
       await navigate(before ? '?base=1' : '')
       await evaluate(`document.querySelector('#availability-required').value='stale'`)
       await click('[data-edit-submit]')
-      let result = await record(before ? 'before-full-empty-stale-mirror' : 'full-empty-stale-mirror-blocked')
+      // JP group A item 8 (2026-10-22): no picker minimum blocks a save, so zero
+      // availability chips save on both builds and the mirrored minimum is 0.
+      let result = await record(before ? 'before-full-empty-stale-mirror' : 'full-empty-stale-mirror-saved')
       assert.equal(result.chips, 0)
-      assert.equal(result.requests.length, before ? 1 : 0)
-      if (!before) { assert.equal(result.diagnostic.error_code, 'GROUP_MIN_NOT_MET'); assert.equal(result.focused, 'availability-option'); assert.equal(result.minimum, '1') }
+      assert.equal(result.requests.length, 1)
+      if (!before) assert.equal(result.minimum, '0')
     }
     await click('[name="rate"]')
     await click('[ms-code-select="input"]')

@@ -3113,11 +3113,13 @@ test('F08: the authored respond pair resolves to the pending kinds only on an op
   assert.equal(api.respondKindFor('reschedule-decline', proposal), 'reschedule-decline')
 })
 
-test('F08: the start rule is offer_start - 24 h > now and inside the booking range', () => {
+// JP group A item 4 (2026-10-22): no 24 h floor; the 8 h response deadline is the only notice.
+test('F08: the start rule is offer_start - 8 h > now and inside the booking range', () => {
   const booking = pendingOfferBooking()
   const now = 1_800_000_000_000
-  assert.equal(api.pendingProposedStartAllowed(booking, now + 24 * F08_HOUR, now), false, 'equality is closed')
-  assert.equal(api.pendingProposedStartAllowed(booking, now + 24 * F08_HOUR + 1, now), true)
+  assert.equal(api.pendingProposedStartAllowed(booking, now + 8 * F08_HOUR, now), false, 'equality is closed')
+  assert.equal(api.pendingProposedStartAllowed(booking, now + 8 * F08_HOUR + 1, now), true)
+  assert.equal(api.pendingProposedStartAllowed(booking, now + 12 * F08_HOUR, now), true, 'inside the old 24 h floor')
   assert.equal(api.pendingProposedStartAllowed(booking, now + 14 * 24 * F08_HOUR, now), true)
   assert.equal(api.pendingProposedStartAllowed(booking, now + 14 * 24 * F08_HOUR + 1, now), false)
   assert.equal(
@@ -3131,7 +3133,8 @@ test('F08: the pending picker offers any step-aligned time, not only posted slot
   const booking = pendingOfferBooking({ start: now + 48 * F08_HOUR, duration: 45 })
   const slots = api.pendingProposeSlots(booking, now)
   assert.ok(slots.length > 600, 'every 30-minute start for about 13 days')
-  assert.ok(slots.every((slot) => slot.start - 24 * F08_HOUR > now))
+  assert.ok(slots.every((slot) => slot.start - 8 * F08_HOUR > now))
+  assert.ok(slots.some((slot) => slot.start - 24 * F08_HOUR <= now), 'times inside the old 24 h floor are offered')
   assert.ok(slots.every((slot) => slot.start <= now + 14 * 24 * F08_HOUR))
   assert.ok(slots.every((slot) => slot.end - slot.start === 45 * 60000))
   assert.ok(slots.every((slot) => slot.start % (30 * 60000) === 0))
@@ -3406,9 +3409,9 @@ test('F08: the pending picker gets free-time slots and the offer is committed on
       })
     assert.equal(mounts.length, 1)
     assert.ok(Array.isArray(mounts[0].slots) && mounts[0].slots.length > 0, 'free-time slots are passed')
-    // A slot inside 24 h is refused before any request.
+    // A slot inside 8 h is refused before any request.
     await assert.rejects(mounts[0].onConfirm({ start: Date.now() + F08_HOUR, end: Date.now() + 2 * F08_HOUR }),
-      /more than 24 hours/)
+      /more than 8 hours/)
     assert.equal(requests.length, 0)
     await mounts[0].onConfirm({ start, end: start + 30 * 60000, timezone: 'UTC' })
     assert.equal(requests.length, 1)
