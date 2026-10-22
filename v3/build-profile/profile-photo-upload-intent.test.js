@@ -182,6 +182,8 @@ function createHarness({
       origin: 'https://thestarters.com',
     },
     localStorage: { setItem() {}, removeItem() {} },
+    // The auth shim's single CAS retry wait; controller backoff uses retryTimer.
+    setTimeout: (callback) => callback(),
     fetch: originalFetch,
     $memberstackDom: {
       async getMemberCookie() { return 'memberstack-token'; },
@@ -424,7 +426,7 @@ async function run() {
   const successResponse = () => new Response(JSON.stringify({ starter_image: 'https://example.invalid/retried.jpg', starter_image_small: 'https://example.invalid/retried-small.jpg' }), { status: 200 });
   for (const pathname of ['/starter-edit-profile', '/build-profile/full-profile', '/build-profile/consult']) {
     let now = 0;
-    const retried = createHarness({ pathname, clock: { now: () => now }, retryTimer(callback, delay) { now += delay; callback(); }, uploadResponder: index => index < 7 ? busyResponse() : successResponse() });
+    const retried = createHarness({ pathname, clock: { now: () => now }, retryTimer(callback, delay) { now += delay; callback(); }, uploadResponder: index => index < 14 ? busyResponse() : successResponse() });
     retried.input.files = [firstFile];
     retried.input.dispatchEvent(new retried.TestEvent('change'));
     await settle();
@@ -434,7 +436,7 @@ async function run() {
       await retried.window.StartersBuildProfilePhotoUpload.commitPending();
     }
     await settle();
-    assert.equal(retried.uploads.length, 8);
+    assert.equal(retried.uploads.length, 15); // Each controller attempt includes the auth shim's one CAS retry.
     assert.equal(new Set(retried.uploads.map(x => x.sourceMutationId)).size, 1);
     assert(retried.uploads.every(x => x.image === retried.uploads[0].image));
     assert.equal(retried.resizeCount(), 1);
@@ -446,7 +448,7 @@ async function run() {
   let retryNow = 0;
   const exhausted = createHarness({ pathname: '/starter-edit-profile', clock: { now: () => retryNow }, retryTimer(callback, delay) { retryNow += delay; callback(); }, uploadResponder: busyResponse });
   exhausted.input.files = [firstFile]; exhausted.input.dispatchEvent(new exhausted.TestEvent('change')); await settle();
-  assert.equal(exhausted.uploads.length, 13);
+  assert.equal(exhausted.uploads.length, 26);
   assert(retryNow < 180000);
   assert.equal(exhausted.uploadError.textContent, 'Image upload failed. Click here to try again.');
   assert.notEqual(exhausted.photoUrlInput.value, 'https://example.invalid/retried.jpg');
@@ -457,14 +459,14 @@ async function run() {
   }
   for (const replace of [false, true]) {
     const timers = [];
-    const cancelled = createHarness({ pathname: '/starter-edit-profile', retryTimer: callback => timers.push(callback), uploadResponder: index => index === 0 ? busyResponse() : successResponse() });
+    const cancelled = createHarness({ pathname: '/starter-edit-profile', retryTimer: callback => timers.push(callback), uploadResponder: index => index < 2 ? busyResponse() : successResponse() });
     cancelled.input.files = [firstFile]; cancelled.input.dispatchEvent(new cancelled.TestEvent('change')); await settle();
-    assert.equal(cancelled.uploads.length, 1);
+    assert.equal(cancelled.uploads.length, 2);
     assert.equal(cancelled.uploadError.textContent, 'Your profile is still syncing. We will retry the photo automatically.');
     cancelled.removeBtn.click();
     if (replace) { cancelled.input.files = [secondFile]; cancelled.input.dispatchEvent(new cancelled.TestEvent('change')); await settle(); }
     for (const callback of timers) callback(); await settle();
-    assert.equal(cancelled.uploads.length, replace ? 2 : 1);
+    assert.equal(cancelled.uploads.length, replace ? 3 : 2);
     assert.equal(cancelled.photoUrlInput.value, replace ? 'https://example.invalid/retried.jpg' : '');
     assert.equal(cancelled.uploadError.style.display, 'none');
   }
@@ -475,7 +477,7 @@ async function run() {
       const cancelled = createHarness({
         pathname,
         retryTimer: callback => timers.push(callback),
-        uploadResponder: index => index === 0 ? busyResponse() : successResponse(),
+        uploadResponder: index => index < 2 ? busyResponse() : successResponse(),
       });
       const api = cancelled.window.StartersBuildProfilePhotoUpload;
       cancelled.input.files = [firstFile];
@@ -493,17 +495,17 @@ async function run() {
         cancelled.removeBtn.click();
       }
       await settle();
-      assert.equal(cancelled.uploads.length, 1);
+      assert.equal(cancelled.uploads.length, 2);
       timers.shift()();
       await rejected;
-      assert.equal(cancelled.uploads.length, 1);
+      assert.equal(cancelled.uploads.length, 2);
       assert.equal(api.hasPendingUpload(), replace);
       assert.equal(cancelled.photoUrlInput.value, replace ? 'pending-profile-photo-upload' : '');
       assert.equal(cancelled.uploadError.style.display, 'none');
       if (replace) {
         await api.commitPending();
-        assert.equal(cancelled.uploads.length, 2);
-        assert.notEqual(cancelled.uploads[0].sourceMutationId, cancelled.uploads[1].sourceMutationId);
+        assert.equal(cancelled.uploads.length, 3);
+        assert.notEqual(cancelled.uploads[0].sourceMutationId, cancelled.uploads[2].sourceMutationId);
         assert.equal(cancelled.photoUrlInput.value, 'https://example.invalid/retried.jpg');
         assert.equal(api.hasPendingUpload(), false);
       }
