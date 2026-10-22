@@ -573,7 +573,7 @@
   /**
    * F08: candidate slots for the pending picker. Posted availability does not
    * narrow a pending offer (#5756 checks only Starter free/busy), so every
-   * step-aligned start with the call duration is offered from now + 24 h up
+   * step-aligned start with the call duration is offered from now + 8 h up
    * to the booking range. The current requested time and the open offer are
    * left out because the server refuses them. The server is the authority for
    * free/busy and shows its own message for a busy slot.
@@ -1212,7 +1212,7 @@
     ) {
       return Promise.resolve(null)
     }
-    // F08: a pending offer must start more than 24 h ahead and inside the
+    // F08: a pending offer must start more than 8 h ahead and inside the
     // booking range; #5756 refuses it otherwise, so it is never sent.
     if (
       resolved === 'pending-propose' &&

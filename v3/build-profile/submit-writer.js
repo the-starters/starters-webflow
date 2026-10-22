@@ -338,7 +338,7 @@
           // Validate JSON type before blank detection or numeric conversion:
           // [] is not a remove gesture and [100] is not a scalar price.
           if (typeof data.price !== 'string' && typeof data.price !== 'number') {
-            return fieldError(qs(selector, form), 'Use a whole-dollar service price from $1 to $50,000.', 'PRICE_NOT_INTEGER', true);
+            return fieldError(qs(selector, form), 'Use a whole-dollar service price of $1 or more.', 'PRICE_NOT_INTEGER', true);
           }
           if (typeof data.price === 'string' && !data.price.trim()) return null;
           if (!String(data.name ?? '').trim()) {
