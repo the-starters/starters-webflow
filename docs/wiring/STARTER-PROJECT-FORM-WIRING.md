@@ -312,8 +312,8 @@ controller then writes structured `[StarterProjectV3]` entries to the browser
 console for controller bind, Brand-option request/result/error, submit
 request/result/error, and member-scope reset.
 
-The entries can include Xano Brand or proposal row IDs, HTTP status, proposal
-status, and eligible count. They never include member IDs, email, tokens,
+The entries can include Xano Brand or project IDs, HTTP status, project
+lifecycle state, and eligible count. They never include member IDs, email, tokens,
 idempotency keys, contract payloads, project scope, or free-form server text.
 
 For a multi-navigation session, an operator can set local storage key
