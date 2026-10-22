@@ -2622,8 +2622,8 @@ endpoints, and receipt behavior are owned by the
 [dashboard booking action contract](#dashboard-booking-action-contract).
 A pending-offer proposal or counter posts the same endpoint and fields with a
 durable `dashboard-pending-propose:` key. The picker offers 30-minute starts
-from more than 8 hours after the current canonical clock (JP group A item 4,
-2026-10-22: no 24-hour floor; the 8-hour response deadline is the only notice) through the booking
+from more than 8 hours after the current canonical clock (the 8-hour response
+deadline is the only notice) through the booking
 range (`available_days_in_future` or `days_in_future`, default 14), excluding
 the current requested time and the current open offer.
 A pending-request update posts the same slot and reason

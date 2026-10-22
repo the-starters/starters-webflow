@@ -1023,30 +1023,27 @@ workflow is tracked in [PROGRESS-CHECKLIST.md](PROGRESS-CHECKLIST.md).
 ## Step 1 and step 5 validation (pickers) since 2026-09-07
 
 Step 1 no longer reads `#function-required` / `#roles-required` / `#subcategories-required`, and step 5 no
-longer reads `#skills-required` / `#tools-required`. Those rules are `kind: 'group'` (step 1: functions min 1 for
-both types, roles min 1 Full only, subcategories min 1 Consult only; `#profile-photo-url` stays a mirror): the controller counts selected chips (`[ms-code-select="tag"]`) inside
-`[select-wrap-entity="skills"]` (minimum 3) and `[select-wrap-entity="tools"]` (minimum 2), for Full
-profiles only. `syncSelectionGroupBounds(type)` mirrors that minimum onto each wrapper as
+longer reads `#skills-required` / `#tools-required`. Those rules are `kind: 'group'` (step 1: functions for
+both types, roles Full only, subcategories Consult only; `#profile-photo-url` stays a mirror): the controller counts selected chips (`[ms-code-select="tag"]`) inside
+`[select-wrap-entity="skills"]` and `[select-wrap-entity="tools"]`, for Full
+profiles only. Every picker minimum is `0`, so no picker count blocks a save and a legacy profile
+below an older minimum still saves. `syncSelectionGroupBounds(type)` mirrors that minimum onto each wrapper as
 `wf-validate-min` (and removes it for Consult), so `utils/wf-validate.js`, which the wrappers opt
 into with `wf-validate-element="group"`, gates the tab 5 save with the same rule. The mirror inputs
 stay authored in Webflow because the shared picker widget and the Build pages still write them;
-this controller's step 1 and step 5 picker rules stopped depending on them. Failure code: `GROUP_MIN_NOT_MET`.
-
-JP group A item 8 (2026-10-22): every picker minimum above is now `0`, so no picker count blocks a
-save (legacy profiles below the old minimums must still save). `syncSelectionGroupBounds` mirrors
-`wf-validate-min="0"` for the profile types each rule applies to, and `GROUP_MIN_NOT_MET` can no longer fire.
+this controller's step 1 and step 5 picker rules stopped depending on them. Failure code:
+`GROUP_MIN_NOT_MET`, which a `0` minimum never triggers.
 
 
 ## Proposed step 6 availability group (PR only)
 
 Step 6 counts `[ms-code-select="tag"]` chips inside
-`[select-wrap-entity="availability"]`. Full profiles require at least one chip.
+`[select-wrap-entity="availability"]`. The Full minimum is `0`, so zero chips save.
 Consult profiles have no availability minimum. The controller no longer reads
 `#availability-required`; that mirror stays authored for existing picker writers.
 A stale nonempty mirror cannot pass an empty picker, and an empty mirror cannot
-block a selected picker. `syncSelectionGroupBounds` sets `wf-validate-min="1"`
-for Full and removes it for Consult. Failure code: `GROUP_MIN_NOT_MET`. Since JP group A item 8
-(2026-10-22) the Full minimum is `0` (`wf-validate-min="0"`), so zero chips save.
+block a selected picker. `syncSelectionGroupBounds` sets `wf-validate-min="0"`
+for Full and removes it for Consult. Failure code: `GROUP_MIN_NOT_MET`.
 
 The `[name="rate"]` and `nativeGroup` rules remain unchanged. The call fields stay
 editable and un-required, owned by the canonical settings controllers described above.

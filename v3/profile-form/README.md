@@ -157,8 +157,8 @@ jsdom has no layout. Browser message/focus UX still requires browser QA.
 Profile price inputs preserve the member's authored text until validation. They do not strip symbols,
 round decimals, or convert exponent notation. The native inputs use `type="number"`,
 `inputmode="numeric"`, and `step="1"`. The Hourly Rate, Monthly Retainer, and each Custom Service
-allow any whole dollar of `$1` or more, with no upper cap (JP group A item 8, 2026-10-22: agencies keep
-retainer figures in the hourly field, Jai 2026-08-28), so these controls get no `max` attribute.
+allow any whole dollar of `$1` or more, with no upper cap (agencies keep
+retainer figures in the hourly field), so these controls get no `max` attribute.
 An enabled blank, zero, decimal, comma, currency symbol, sign, exponent, or unsafe integer
 stops before the Xano request. A toggle-owned rate is only validated while its own section
 says yes. A collapsed Monthly Retainer section never forwards the stale text behind it,
