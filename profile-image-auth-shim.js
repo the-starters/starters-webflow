@@ -223,6 +223,18 @@
     return intent
   }
 
+  const CAS_RETRY_CODE = 'PROFILE_IMAGE_CAS_RETRY_EXHAUSTED'
+  const CAS_RETRY_DELAY_MS = 2500
+
+  // Only a 500 whose body code or message is exactly the CAS token qualifies.
+  async function casRetryExhausted(response) {
+    if (response.status !== 500) return false
+    const data = await response.clone().json().catch(() => null)
+    return Boolean(
+      data && (data.code === CAS_RETRY_CODE || data.message === CAS_RETRY_CODE)
+    )
+  }
+
   async function uploadResponseComplete(response) {
     if (!response.ok) return false
     const data = await response.clone().json().catch(() => null)
@@ -514,6 +526,13 @@
       if (res.status === 401) {
         invalidateXanoToken(token)
         token = await ensureXanoToken(originalFetch)
+        res = await upload(token)
+      }
+      if (await casRetryExhausted(res)) {
+        // fn 970 lost a short race with the projection worker lease; the
+        // same bytes and source_mutation_id succeed seconds later. Retry once.
+        log('CAS retry exhausted; retrying once in', CAS_RETRY_DELAY_MS, 'ms')
+        await new Promise((resolve) => window.setTimeout(resolve, CAS_RETRY_DELAY_MS))
         res = await upload(token)
       }
       log('upload response', res.status)
