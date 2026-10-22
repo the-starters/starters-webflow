@@ -164,6 +164,16 @@
   const originalFetch = legacyBridgeInstalled
     ? window.__tsSchedulingAuthOriginalFetch
     : window.fetch.bind(window)
+  const sourceRelease = (function () {
+    try {
+      const script = window.document && window.document.currentScript
+      const url = new URL(script && script.src)
+      const tag = url.pathname.match(/^\/gh\/the-starters\/starters-webflow@(v\d+\.\d+\.\d+)\/v3\/scheduling-auth\.js$/)
+      return url.origin === 'https://cdn.jsdelivr.net' && tag ? tag[1] : 'unknown'
+    } catch (error) {
+      return 'unknown'
+    }
+  })()
   let xanoAuthToken = null
   let xanoAuthTokenMemberstackToken = null
   let tokenRequest = null
@@ -607,28 +617,69 @@
     }
   }
 
+  function reportSchedulingFailure(request, status, failureKind, generation, error) {
+    try {
+      if ((status >= 200 && status < 300) || generation !== sessionGeneration) return
+      if (request.signal.aborted || (error && error.name === 'AbortError')) return
+      const url = schedulingUrl(request)
+      const tracker = window.StartersTrack
+      if (!url || !tracker || typeof tracker.track !== 'function') return
+      // Only the reviewed route and fixed metadata enter analytics. Query strings,
+      // credentials, payloads, response bodies and exception text stay private.
+      tracker.track('bridge_error', {
+        path: url.pathname.replace(/^\/api:[^/]+\//, ''),
+        status: status,
+        method: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'].includes(request.method)
+          ? request.method : 'OTHER',
+        flow: 'calls_and_booking',
+        source: 'scheduling-auth',
+        source_environment: isStagingHost ? 'staging' : 'production',
+        source_release: sourceRelease,
+        instrumentation_version: 1,
+        failure_kind: failureKind,
+      })
+    } catch (error) {
+      // Analytics must never change an auth result or prevent a request.
+    }
+  }
+
+  async function schedulingFetchAttempt(request, token, generation) {
+    const authorizedRequest = withAuthorization(request, token)
+    try {
+      return await originalFetch(authorizedRequest)
+    } catch (error) {
+      reportSchedulingFailure(request, 0, 'network', generation, error)
+      throw error
+    }
+  }
+
   async function fetchWithToken(request, token, generation, expectedScope) {
     await awaitLatestAuthReconciliation()
     assertSessionGeneration(generation)
     assertExpectedScope(expectedScope)
-    let response = await originalFetch(withAuthorization(request, token))
+    let response = await schedulingFetchAttempt(request, token, generation)
     await awaitLatestAuthReconciliation()
     assertSessionGeneration(generation)
-    if (response.status !== 401) return response
+    if (response.status !== 401) {
+      reportSchedulingFailure(request, response.status, 'http', generation)
+      return response
+    }
 
     try {
       token = await getXanoAuthToken({ forceRefresh: true })
     } catch (error) {
       await awaitLatestAuthReconciliation()
       assertSessionGeneration(generation)
+      reportSchedulingFailure(request, response.status, 'http', generation)
       return response
     }
     await awaitLatestAuthReconciliation()
     assertSessionGeneration(generation)
     assertExpectedScope(expectedScope)
-    response = await originalFetch(withAuthorization(request, token))
+    response = await schedulingFetchAttempt(request, token, generation)
     await awaitLatestAuthReconciliation()
     assertSessionGeneration(generation)
+    reportSchedulingFailure(request, response.status, 'http', generation)
     return response
   }
 
