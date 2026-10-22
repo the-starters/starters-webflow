@@ -2197,7 +2197,7 @@ not confirmation that PostHog received the event.
 
 The existing neutral-path `scheduling-bridge.js` alias implements the same
 telemetry contract for Edit Profile. Its older auth implementation is retained;
-this change does not import the main owner's newer shared-read features. Network
+it does not include the main owner's newer shared-read features. Network
 telemetry waits for pending auth reconciliation in contained background work,
 so a deferred cookie read cannot delay the original transport rejection.
 
