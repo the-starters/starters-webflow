@@ -6,7 +6,8 @@
  * native Brand select to Xano-authorized options, removes the authored generic
  * Service 1/2/3 slots, appends the authenticated Starter's canonical Xano
  * service names, reuses the shared commercial serializer from
- * v3/project-form.js, and sends a canonical proposal for Brand approval.
+ * v3/project-form.js, and creates the project directly through
+ * projects/submit/v3.
  */
 ;(function (global) {
   'use strict'
@@ -104,28 +105,6 @@
     return id ? '/messages?with=' + encodeURIComponent(id) : '#'
   }
 
-  var PROPOSAL_STATUS_COPY = {
-    awaiting_brand_approval: {
-      title: 'Project request sent',
-      message: 'The Brand can review your project terms. A project and contract are created only after approval.',
-    },
-    accepted: {
-      title: 'Project request approved',
-      message: 'The Brand approved this request. Your project and contract are being prepared.',
-    },
-    rejected: {
-      title: 'Project request declined',
-      message: 'The Brand declined this request. Adjust the terms and send a new request.',
-    },
-  }
-
-  function proposalStatusCopy(proposal) {
-    var status = clean(proposal && proposal.status).toLowerCase()
-    return Object.prototype.hasOwnProperty.call(PROPOSAL_STATUS_COPY, status)
-      ? PROPOSAL_STATUS_COPY[status]
-      : null
-  }
-
   // Starter submissions create the canonical project directly (JP 2026-10-21).
   // #9181 Brand-approval proposals stayed stuck because Brands never saw them.
   var CREATED_PROJECT_STATES = {
@@ -141,14 +120,6 @@
     var lifecycleState = clean(project && project.lifecycle_state).toLowerCase()
     return positiveId(project && project.id) && CREATED_PROJECT_STATES[lifecycleState]
       ? project
-      : null
-  }
-
-  function createdProposal(result) {
-    var proposal = result && result.proposal
-    return positiveId(proposal && proposal.id) &&
-      positiveId(proposal && proposal.lifecycle_version) && proposalStatusCopy(proposal)
-      ? proposal
       : null
   }
 
@@ -973,17 +944,13 @@
     current.key = ''
     current.keyPayload = ''
     var project = createdProject(result)
-    var proposal = project ? null : result && result.proposal
-    var proposalId = positiveId(proposal && proposal.id)
     var projectId = positiveId(project && project.id)
-    var copy = project
-      ? {
-          title: 'Project successfully created',
-          message: clean(project.lifecycle_state).toLowerCase() === 'active'
-            ? 'Your project is now active.'
-            : 'Your contract is being prepared. You and the Brand can sign when it is ready.',
-        }
-      : proposalStatusCopy(proposal)
+    var copy = {
+      title: 'Project successfully created',
+      message: clean(project.lifecycle_state).toLowerCase() === 'active'
+        ? 'Your project is now active.'
+        : 'Your contract is being prepared. You and the Brand can sign when it is ready.',
+    }
     var success = stateElement(form, SUCCESS_SELECTOR)
     if (success) {
       var titles = success.querySelectorAll ? success.querySelectorAll('[data-project-success-title], .generate-contract_success-text') : []
@@ -1007,37 +974,17 @@
       }
     }
     if (typeof global.CustomEvent === 'function' && documentObject && documentObject.dispatchEvent) {
-      documentObject.dispatchEvent(project
-        ? new global.CustomEvent('starters:project-created', {
-            detail: { project_id: projectId, replayed: Boolean(result && result.replayed) },
-          })
-        : new global.CustomEvent('starters:project-proposal-requested', {
-            detail: { proposal_id: proposalId, replayed: Boolean(result && result.replayed) },
-          }))
+      documentObject.dispatchEvent(new global.CustomEvent('starters:project-created', {
+        detail: { project_id: projectId, replayed: Boolean(result && result.replayed) },
+      }))
     }
     if (global.StartersTrack && typeof global.StartersTrack.track === 'function') {
-      if (project) global.StartersTrack.track('project_created', { project_id: projectId })
-      else global.StartersTrack.track('project_proposal_requested', { proposal_id: proposalId })
+      global.StartersTrack.track('project_created', { project_id: projectId })
     }
-  }
-
-  // Endpoint 9181 rejects a second open proposal for the same Brand with a
-  // 400 input error, not 409. Match only this exact server message so other
-  // 400s keep the generic copy.
-  var DUPLICATE_PROPOSAL_MESSAGE = 'An open proposal already exists for this Brand and Starter'
-
-  function duplicateProposalError(error) {
-    if (!error || Number(error.status) !== 400) return false
-    var data = error.data && typeof error.data === 'object' ? error.data : null
-    return clean(data && data.message) === DUPLICATE_PROPOSAL_MESSAGE ||
-      clean(error.message) === DUPLICATE_PROPOSAL_MESSAGE
   }
 
   function safeError(error) {
     var status = error && Number(error.status)
-    if (duplicateProposalError(error)) {
-      return 'You already sent a proposal to this Brand. It is waiting for the Brand to approve it.'
-    }
     if (status === 401) return 'Your session expired. Sign in and try again.'
     if (status === 403) return 'That Brand is no longer eligible. Refresh the Brand list.'
     if (status === 409) return 'A project already exists for this request.'
@@ -1074,8 +1021,7 @@
     }
     serialized.payload.idempotency_key = current.key
     // Direct creation uses its own bridge capability (projects/submit/v3,
-    // #4717). projectSubmit is still mapped to the proposal route, so never
-    // fall back to it. Rollback: point this back at projectProposalSubmit.
+    // #4717). Never fall back to another submit capability.
     var request = projectApi(globalObject, 'projectDirectSubmit')
     if (!request) {
       setStatus(form, 'error', 'The project service is not available. Reload and try again.')

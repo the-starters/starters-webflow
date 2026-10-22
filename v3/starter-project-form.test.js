@@ -1837,35 +1837,12 @@ test('an injected Brand ID cannot bypass the V3 options response', async () => {
   assert.match(loaded.wrapper.error.textContent, /Select an eligible Brand/)
 })
 
-test('duplicate open proposal 400 shows the waiting-for-approval copy, other 400s stay generic', async () => {
+test('400 errors keep the generic copy', async () => {
   const { api } = load({ noDocument: true })
-  const duplicateMessage = 'An open proposal already exists for this Brand and Starter'
-  const duplicateCopy = 'You already sent a proposal to this Brand. It is waiting for the Brand to approve it.'
   const generic = 'The project could not be created. Try again.'
   const bridgeError = (status, message, data) => Object.assign(new Error(message), { status, data })
 
-  assert.equal(api.safeError(bridgeError(400, duplicateMessage, {
-    code: 'ERROR_CODE_INPUT_ERROR',
-    message: duplicateMessage,
-  })), duplicateCopy)
-  assert.equal(api.safeError(bridgeError(400, 'API 400', { message: ` ${duplicateMessage} ` })), duplicateCopy)
-  assert.equal(api.safeError(bridgeError(400, duplicateMessage, null)), duplicateCopy)
   assert.equal(api.safeError(bridgeError(400, 'Missing brand_id', { message: 'Missing brand_id' })), generic)
-  assert.equal(api.safeError(bridgeError(400, 'An open proposal already exists', { message: 'An open proposal already exists' })), generic)
-  assert.equal(api.safeError(bridgeError(500, duplicateMessage, { message: duplicateMessage })), generic)
   assert.equal(api.safeError(bridgeError(409, 'conflict', {})), 'A project already exists for this request.')
   assert.equal(api.safeError(), generic)
-
-  const fixture = formFixture()
-  const loaded = load({
-    fixture,
-    counterparties: [{ counterparty_id: 31, company_name: 'Brand', hiring_manager_name: 'Brand Member' }],
-    projectDirectSubmit: async () => {
-      throw bridgeError(400, duplicateMessage, { code: 'ERROR_CODE_INPUT_ERROR', message: duplicateMessage })
-    },
-  })
-  await loaded.api.loadOptions(loaded.form, loaded.window)
-  assert.equal(await loaded.api.submit(loaded.form, loaded.window, loaded.document), false)
-  assert.equal(loaded.form.getAttribute('data-starter-project-status'), 'error')
-  assert.equal(loaded.wrapper.error.textContent, duplicateCopy)
 })

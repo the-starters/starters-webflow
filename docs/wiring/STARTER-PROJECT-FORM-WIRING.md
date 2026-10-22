@@ -25,9 +25,6 @@ Airtable, Make, or a legacy TalkJS table.
   signatures activate the project. An Own Contract starts `active`.
 - Brand and Starter can sign in either order. Both signatures activate the
   project.
-- Proposal rows from the earlier Brand-approval release are still cleared by
-  the Brand controller in
-  [BRAND-PROJECT-PROPOSALS-WIRING.md](BRAND-PROJECT-PROPOSALS-WIRING.md).
 
 ## Backend contract required before Webflow wiring
 
@@ -84,16 +81,9 @@ For submission this form calls only `Opp30.API.projectDirectSubmit`:
 | Capability | Route | Why it exists |
 | --- | --- | --- |
 | `projectDirectSubmit` | `projects/submit/v3` | The capability this form calls. |
-| `projectProposalSubmit` | `projects/proposal-request/v3` | Rollback target: the Brand-approval request route. |
-| `projectSubmit` | `projects/proposal-request/v3` | Alias kept for cached forms from the proposal release. Never used as a fallback. |
 
 A fresh form plus a cached bridge without `projectDirectSubmit` fails closed
-with **The project service is not available.** A cached proposal-release form
-keeps sending requests until its cache expires; the Brand controller still
-handles those.
-
-Rollback: point `submit()` back at `projectProposalSubmit` and restore
-`createdProposal` as the reply check (the previous release tag).
+with **The project service is not available.**
 
 ## Starter service names
 
@@ -322,8 +312,8 @@ controller then writes structured `[StarterProjectV3]` entries to the browser
 console for controller bind, Brand-option request/result/error, submit
 request/result/error, and member-scope reset.
 
-The entries can include Xano Brand or proposal row IDs, HTTP status, proposal
-status, and eligible count. They never include member IDs, email, tokens,
+The entries can include Xano Brand or project IDs, HTTP status, project
+lifecycle state, and eligible count. They never include member IDs, email, tokens,
 idempotency keys, contract payloads, project scope, or free-form server text.
 
 For a multi-navigation session, an operator can set local storage key
