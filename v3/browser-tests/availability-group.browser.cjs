@@ -115,11 +115,14 @@ handleCustomSelects();</script><script src="/diagnostics.js"></script><script sr
       await navigate(before ? '?base=1' : '')
       await evaluate(`document.querySelector('#availability-required').value='stale'`)
       await click('[data-edit-submit]')
-      let result = await record(before ? 'before-full-empty-stale-mirror' : 'full-empty-stale-mirror-blocked')
+      // JP group A item 8 (2026-10-22): no picker minimum blocks a save, so zero
+      // availability chips save on both builds and the mirrored minimum is 0.
+      let result = await record(before ? 'before-full-empty-stale-mirror' : 'full-empty-stale-mirror-saved')
       assert.equal(result.chips, 0)
-      assert.equal(result.requests.length, before ? 1 : 0)
-      if (!before) { assert.equal(result.diagnostic.error_code, 'GROUP_MIN_NOT_MET'); assert.equal(result.focused, 'availability-option'); assert.equal(result.minimum, '1') }
+      assert.equal(result.requests.length, 1)
+      if (!before) assert.equal(result.minimum, '0')
     }
+    await navigate('') // Fresh page: the empty save above already sent one request.
     await click('[name="rate"]')
     await click('[ms-code-select="input"]')
     await click('[ms-code-select="tag-name-new"][data-id="1"]')
@@ -152,7 +155,7 @@ handleCustomSelects();</script><script src="/diagnostics.js"></script><script sr
     result = await record('consult-empty-stale-minimum-saved')
     assert.equal(result.chips, 0); assert.equal(result.minimum, null); assert.equal(result.requests.length, 1); assert.equal(result.success, true)
     assert.deepEqual(errors, [], 'No uncaught browser exceptions')
-    console.log('Availability acceptance: base reproduces stale-mirror save; target blocks empty Full, saves selected Full and empty Consult; native gates and shared single selection preserved.')
+    console.log('Availability acceptance: base and target save empty Full (target mirrors wf-validate-min 0); target saves selected Full and empty Consult; native gates and shared single selection preserved.')
   } finally {
     socket?.close()
     chrome.kill()

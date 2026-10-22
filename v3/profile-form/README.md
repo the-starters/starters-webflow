@@ -156,10 +156,11 @@ jsdom has no layout. Browser message/focus UX still requires browser QA.
 
 Profile price inputs preserve the member's authored text until validation. They do not strip symbols,
 round decimals, or convert exponent notation. The native inputs use `type="number"`,
-`inputmode="numeric"`, and `step="1"`. The Hourly Rate allows `$1` through `$1,000`,
-Monthly Retainer allows `$1` through `$25,000`, and each Custom Service allows `$1` through `$50,000`.
-An enabled blank, zero, decimal, comma, currency symbol, sign, exponent, unsafe integer, or value outside
-its range stops before the Xano request. A toggle-owned rate is only validated while its own section
+`inputmode="numeric"`, and `step="1"`. The Hourly Rate, Monthly Retainer, and each Custom Service
+allow any whole dollar of `$1` or more, with no upper cap (agencies keep
+retainer figures in the hourly field), so these controls get no `max` attribute.
+An enabled blank, zero, decimal, comma, currency symbol, sign, exponent, or unsafe integer
+stops before the Xano request. A toggle-owned rate is only validated while its own section
 says yes. A collapsed Monthly Retainer section never forwards the stale text behind it,
 because an unvalidated collapsed value would violate this contract: Build Profile replaces it with the
 same zero compatibility value it uses for a section that was never filled in, so turning a
@@ -173,10 +174,10 @@ unconditionally inapplicable on Consult — it always submits `retainer: false, 
 regardless of the hidden radio and regardless of whether the hidden rate satisfies this contract.
 Full Profile authors both controls, so an enabled or required section there stays strict.
 
-The Paid Call rate in Build Profile uses the same `$1` through `$1,000`
-whole-dollar contract as Dashboard and Edit Profile, and the writer stamps the
-same native `type="number"`, `inputmode="numeric"`, `step="1"`, `min`, and `max`
-attributes on `[name="paid-call-rate"]` as on the other price controls. Build
+The Paid Call rate in Build Profile keeps its `$1` through `$1,000`
+whole-dollar contract, shared with Dashboard and Edit Profile, and the writer stamps
+native `type="number"`, `inputmode="numeric"`, `step="1"`, `min`, and `max`
+attributes on `[name="paid-call-rate"]`. Build
 Profile validates and stores that private setup intent but never sends call
 fields to the profile endpoint and never creates provider state. The receipt is
 validated through the same shared whole-dollar validator as the other prices,

@@ -859,17 +859,22 @@ test('Paid initial booking uses the production 24-hour floor and the exact stagi
     ...config,
     booking_id: 'booking_existing',
   }, now))
+  // JP group A item 4 (2026-10-22): a reschedule has no 24 h floor; the picker
+  // starts 8 h out because the counterpart must answer by new start - 8 h.
   assert.equal(
     rescheduleQuery.searchParams.get('start_time'),
-    String(nowSeconds + 24 * 60 * 60),
+    String(nowSeconds + 8 * 60 * 60),
   )
   assert.deepEqual(
     JSON.parse(JSON.stringify(production.normalizeAvailabilitySlots({
-      time_slots: [{ start_time: nowSeconds + 24 * 60 * 60 }],
+      time_slots: [
+        { start_time: nowSeconds + 8 * 60 * 60 - 1 },
+        { start_time: nowSeconds + 8 * 60 * 60 },
+      ],
     }, { ...config, booking_id: 'booking_existing' }, now + 999))),
     [{
-      start: (nowSeconds + 24 * 60 * 60) * 1000,
-      end: (nowSeconds + 25 * 60 * 60) * 1000,
+      start: (nowSeconds + 8 * 60 * 60) * 1000,
+      end: (nowSeconds + 9 * 60 * 60) * 1000,
     }],
   )
   assert.equal(loadBrowserApi('staging.thestarters.com').minimumBookingNoticeMinutes(), 1440)

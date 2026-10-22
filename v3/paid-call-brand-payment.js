@@ -34,7 +34,9 @@
     'pk_live_51MMhu4AW8v1kanawUQQjQTpTWBAsdVusIXoXSA26AcTHtZPYbJt6sr98ishd7cs5DXx4QeSMHw45QqrTuzftXaJm005MjZL3sz'
   const STAGING_HOST = 'the-starters-3-0.webflow.io'
   const PRODUCTION_MIN_BOOKING_NOTICE_MINUTES = 24 * 60 // JP 2026-10-03 (Jai #10): 24 h notice, one rule with Xano
-  const PRODUCTION_MIN_RESCHEDULE_NOTICE_MINUTES = 24 * 60
+  // JP group A item 4 (2026-10-22): a reschedule has no 24 h floor. The counterpart
+  // must answer by new start - 8 h (#5759), so the picker starts 8 h out.
+  const PRODUCTION_MIN_RESCHEDULE_NOTICE_MINUTES = 8 * 60
   const STAGING_MIN_BOOKING_NOTICE_MINUTES = 5
   const STALE_SLOT_ERROR = 'This time is no longer available. Please choose another time.'
   /* Stability F2 (2026-10-22): a booking refused by a Xano input check (HTTP

@@ -170,12 +170,12 @@
       }
     },
     "v3/build-profile/submit-writer.js": {
-      "candidateCharacters": 24266,
-      "candidateSha256": "3f4c6a703e208f4a2a2b997c7228ab3c22e9a8633b2e5a2f905d8f7d42d5bc02",
+      "candidateCharacters": 24261,
+      "candidateSha256": "c1aef2452b0e18d47e646cbfea7f069e20dc6b0d238e7beb555f1e95ab258314",
       "transformation": {
         "kind": "whitespace_plus_idempotency_guard_plus_behavior_change",
         "guardKey": "buildProfileSubmitWriter",
-        "restoreTrailingWhitespace": { "531": "          " },
+        "restoreTrailingWhitespace": { "525": "          " },
         "terminalNewlinesRemoved": 0,
         "liveCaptureAsset": "v3/profile-form/build-submit-writer-published.capture.txt"
       }

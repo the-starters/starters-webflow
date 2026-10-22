@@ -2506,17 +2506,21 @@ test('a Free prerequisite refresh clears an update error while pending and repla
   assert.equal(result.dom.nativeError.getAttribute('aria-hidden'), 'false')
 })
 
-test('Free description longer than 60 characters fails before any write', async () => {
+// JP group A item 9 (2026-10-22): the Free call description has no 60-character limit.
+test('Free description longer than 60 characters is sent unchanged', async () => {
   const result = load({ initial: canonical() })
   await settle()
-  result.dom.title.value = 'x'.repeat(61)
+  const description = 'x'.repeat(61)
+  result.dom.title.value = description
   result.dom.yes.checked = true
   result.dom.no.checked = false
   await result.dom.save.dispatch('click')
   await settle()
 
-  assert.equal(result.calls.some((call) => call.method === 'POST'), false)
-  assert.equal(result.dom.status.textContent, 'Free-call description must be 60 characters or fewer.')
+  const upsert = result.calls.find((call) => call.path === '/starter/free-call-settings/upsert/v3')
+  assert.ok(upsert, 'the upsert request is sent')
+  assert.equal(upsert.body.description, description)
+  assert.notEqual(result.dom.status.textContent, 'Free-call description must be 60 characters or fewer.')
 })
 
 test('No plus Update sends the guarded disable payload and verifies canonical absence', async () => {
