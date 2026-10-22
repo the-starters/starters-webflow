@@ -2182,7 +2182,7 @@ failure), `method` (known HTTP method or `OTHER`), `flow` (`calls_and_booking`),
 `source` (`scheduling-auth`), `source_environment` (`staging` or `production`),
 `source_release`, `instrumentation_version` (`1`), and `failure_kind` (`http`
 or `network`). The shared tracker adds `platform`. Only an immutable semver
-from the exact jsDelivr scheduling-auth script URL supplies `source_release`;
+from the exact jsDelivr `scheduling-auth.js` or `scheduling-bridge.js` URL supplies `source_release`;
 `@latest`, module loading without a current script, or an unknown URL records
 `unknown`. Host classification does not identify Test members on production.
 
@@ -2194,6 +2194,16 @@ requests are outside this event contract. Queries, credentials, request and
 response bodies, member IDs, and exception text are excluded. Missing or
 failing analytics does not change request behavior; emission is an attempt,
 not confirmation that PostHog received the event.
+
+The existing neutral-path `scheduling-bridge.js` alias implements the same
+telemetry contract for Edit Profile. Its older auth implementation is retained;
+this change does not import the main owner's newer shared-read features. Network
+telemetry waits for pending auth reconciliation in contained background work,
+so a deferred cookie read cannot delay the original transport rejection.
+
+Edit Profile currently pins the alias to `v1.59.593`. Releasing `@latest` does
+not update that immutable loader. Exposing the corrected alias needs the
+separate guarded Webflow loader and publication workflow.
 
 ## Scheduling V3 stage adapter
 

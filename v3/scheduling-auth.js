@@ -168,7 +168,7 @@
     try {
       const script = window.document && window.document.currentScript
       const url = new URL(script && script.src)
-      const tag = url.pathname.match(/^\/gh\/the-starters\/starters-webflow@(v\d+\.\d+\.\d+)\/v3\/scheduling-auth\.js$/)
+      const tag = url.pathname.match(/^\/gh\/the-starters\/starters-webflow@(v\d+\.\d+\.\d+)\/v3\/scheduling-(?:auth|bridge)\.js$/)
       return url.origin === 'https://cdn.jsdelivr.net' && tag ? tag[1] : 'unknown'
     } catch (error) {
       return 'unknown'
@@ -643,12 +643,24 @@
     }
   }
 
+  async function reportSchedulingNetworkFailure(request, generation, error) {
+    try {
+      // A pending auth notification may still advance the session generation.
+      // Wait only in analytics work, so a deferred cookie read cannot hold the
+      // caller's original transport rejection.
+      await awaitLatestAuthReconciliation()
+      reportSchedulingFailure(request, 0, 'network', generation, error)
+    } catch (error) {
+      // Reconciliation or analytics failure must not create an unhandled error.
+    }
+  }
+
   async function schedulingFetchAttempt(request, token, generation) {
     const authorizedRequest = withAuthorization(request, token)
     try {
       return await originalFetch(authorizedRequest)
     } catch (error) {
-      reportSchedulingFailure(request, 0, 'network', generation, error)
+      reportSchedulingNetworkFailure(request, generation, error)
       throw error
     }
   }
