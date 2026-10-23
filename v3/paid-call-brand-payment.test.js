@@ -135,7 +135,7 @@ test('a saved-card Stripe confirm that never settles times out, and the retry ac
     const first = selection.save({ consent: true })
     for (let i = 0; i < 5; i += 1) await Promise.resolve()
     await new Promise(resolve => setImmediate(resolve))
-    t.mock.timers.tick(30000)
+    t.mock.timers.tick(300000)
     await assert.rejects(first, /timed out/)
     assert.equal(posts.length, 0, 'no default change after an unconfirmed card')
     assert.equal(selection.snapshot().busy, false, 'the picker is usable again')

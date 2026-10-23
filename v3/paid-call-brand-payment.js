@@ -663,8 +663,9 @@
             const stripe = typeof stripeProvider === 'function' ? await stripeProvider() : stripeProvider
             if (!stripe || typeof stripe.confirmCardSetup !== 'function') throw new Error('Stripe is unavailable for the saved card')
             // Stability B58 (2026-10-23): a Stripe confirm that never settles left the
-            // Brand on "Updating your default card…". Bound the wait; the attempt keeps
-            // its command identity, so a retry reuses the same SetupIntent.
+            // Brand on "Updating your default card…". Bound the wait; the bound must
+            // exceed a 3D Secure challenge (bank SMS/OTP), which this call also covers.
+            // The attempt keeps its command identity, so a retry reuses the same SetupIntent.
             let confirmed = await withSavedCardConfirmTimeout(
               stripe.confirmCardSetup(setup.client_secret, { payment_method: selectedId }),
             )
@@ -1173,7 +1174,7 @@
   const STRIPE_JS_SRC = 'https://js.stripe.com/v3/'
   const STRIPE_JS_STATE = 'data-stripe-js-state'
   const STRIPE_LOAD_TIMEOUT_MS = 15000
-  const SAVED_CARD_CONFIRM_TIMEOUT_MS = 30000
+  const SAVED_CARD_CONFIRM_TIMEOUT_MS = 300000
 
   function withSavedCardConfirmTimeout(promise) {
     let timer = null
