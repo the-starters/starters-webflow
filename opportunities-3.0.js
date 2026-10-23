@@ -1880,10 +1880,11 @@
   const INVOICE_PAYMENT_LINK_PLACEHOLDER = '#invoice-payment-link'
   const INVOICE_SUCCESS_CLOSE_SELECTOR =
     '[data-wf-invoice="close-success"], .w-form-done a[href="/starter-dashboard"]'
-  const INVOICE_MIN_AMOUNT = 0.01
+  // Stripe Payment Links reject totals under $0.50 (stability B57, JP 2a 2026-10-23).
+  const INVOICE_MIN_AMOUNT = 0.5
   const INVOICE_MAX_AMOUNT = 1000000
-  const INVOICE_AMOUNT_MESSAGE = 'Enter an amount between $0.01 and $1,000,000.'
-  const INVOICE_FINAL_AMOUNT_MESSAGE = 'Enter a final invoice amount between $0.01 and $1,000,000, with no more than two decimal places.'
+  const INVOICE_AMOUNT_MESSAGE = 'Enter an amount between $0.50 and $1,000,000.'
+  const INVOICE_FINAL_AMOUNT_MESSAGE = 'Enter a final invoice amount between $0.50 and $1,000,000, with no more than two decimal places.'
   const INVOICE_FINAL_DESCRIPTION_MAX_LENGTH = 500
   const INVOICE_FINAL_DESCRIPTION_MESSAGE =
     'Enter a final invoice description between 1 and 500 characters.'

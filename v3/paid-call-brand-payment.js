@@ -662,7 +662,20 @@
             const setup = await attempt.setup.run()
             const stripe = typeof stripeProvider === 'function' ? await stripeProvider() : stripeProvider
             if (!stripe || typeof stripe.confirmCardSetup !== 'function') throw new Error('Stripe is unavailable for the saved card')
-            const confirmed = await stripe.confirmCardSetup(setup.client_secret, { payment_method: selectedId })
+            // Stability B58 (2026-10-23): a Stripe confirm that never settles left the
+            // Brand on "Updating your default card…". Bound the wait; the attempt keeps
+            // its command identity, so a retry reuses the same SetupIntent.
+            let confirmed = await withSavedCardConfirmTimeout(
+              stripe.confirmCardSetup(setup.client_secret, { payment_method: selectedId }),
+            )
+            // A retry after a timed-out wait can meet a SetupIntent that Stripe already
+            // confirmed; Stripe then returns it with setup_intent_unexpected_state.
+            if (
+              confirmed.error &&
+              confirmed.error.code === 'setup_intent_unexpected_state' &&
+              confirmed.error.setup_intent &&
+              confirmed.error.setup_intent.status === 'succeeded'
+            ) confirmed = { setupIntent: confirmed.error.setup_intent }
             if (confirmed.error) throw new Error(confirmed.error.message || 'The saved card could not be confirmed')
             const confirmedMethod = confirmed.setupIntent && confirmed.setupIntent.payment_method
             const confirmedMethodId = confirmedMethod && typeof confirmedMethod === 'object' ? confirmedMethod.id : confirmedMethod
@@ -1160,6 +1173,17 @@
   const STRIPE_JS_SRC = 'https://js.stripe.com/v3/'
   const STRIPE_JS_STATE = 'data-stripe-js-state'
   const STRIPE_LOAD_TIMEOUT_MS = 15000
+  const SAVED_CARD_CONFIRM_TIMEOUT_MS = 30000
+
+  function withSavedCardConfirmTimeout(promise) {
+    let timer = null
+    const timeout = new Promise(function (resolve, reject) {
+      timer = setTimeout(function () {
+        reject(new Error('The saved card confirmation timed out'))
+      }, SAVED_CARD_CONFIRM_TIMEOUT_MS)
+    })
+    return Promise.race([promise, timeout]).finally(function () { clearTimeout(timer) })
+  }
   let stripeLoad = null
 
   function stripeReady() {

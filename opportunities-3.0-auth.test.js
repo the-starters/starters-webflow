@@ -5582,14 +5582,17 @@ function invoiceCard(fields, id = '675') {
   }
 }
 
-test('the invoiced amount is rounded to cents and never below the promised $0.01', async () => {
+test('the invoiced amount is rounded to cents and never below the Stripe Payment Link minimum of $0.50', async () => {
   const bridge = await loadBridge(async () => response({}))
   const { normalizeInvoiceAmount } = bridge.window.Opp30
 
   // What gets posted is exactly what the success screen shows.
   assert.equal(normalizeInvoiceAmount('25.555'), 25.56)
   assert.equal(bridge.window.Opp30.formatInvoiceAmount(normalizeInvoiceAmount('25.555')), '$25.56')
-  assert.equal(normalizeInvoiceAmount('0.01'), 0.01)
+  // Stability B57 (JP 2a 2026-10-23): Stripe Payment Links reject totals under $0.50.
+  assert.equal(normalizeInvoiceAmount('0.50'), 0.5)
+  assert.equal(normalizeInvoiceAmount('0.49'), null)
+  assert.equal(normalizeInvoiceAmount('0.01'), null)
   assert.equal(normalizeInvoiceAmount('0.004'), null)
   assert.equal(normalizeInvoiceAmount('0'), null)
   assert.equal(normalizeInvoiceAmount('-5'), null)

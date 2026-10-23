@@ -102,6 +102,55 @@ test('saved card selection verifies the default and preserves command identity o
   } finally { global.xanoAuthFetch = previous }
 })
 
+test('a saved-card Stripe confirm that never settles times out, and the retry accepts the already-confirmed SetupIntent (stability B58)', async (t) => {
+  const previous = global.xanoAuthFetch
+  const setups = []
+  const posts = []
+  let currentDefault = 'pm_one'
+  const cards = () => ['pm_one', 'pm_two'].map(id => ({ id, brand: 'visa', last4: '4242',
+    exp_month: 12, exp_year: 2030, is_default: currentDefault === id }))
+  global.xanoAuthFetch = async (url, options) => {
+    if (options.method === 'POST' && url.endsWith(api.SETUP_PATH)) {
+      setups.push(JSON.parse(options.body))
+      return response({ environment: 'test', setup_intent_id: 'seti_saved', client_secret: 'secret_saved' })
+    }
+    if (options.method === 'POST') {
+      posts.push(JSON.parse(options.body))
+      currentDefault = posts.at(-1).payment_method_id
+      return response({ environment: 'test', bookable: true })
+    }
+    return response({ environment: 'test', items: cards(), has_more: false, next_cursor: '' })
+  }
+  let hang = true
+  const stripe = { confirmCardSetup: (secret, options) => {
+    if (hang) return new Promise(() => {})
+    return Promise.resolve({ error: { code: 'setup_intent_unexpected_state', message: 'already succeeded',
+      setup_intent: { id: 'seti_saved', payment_method: options.payment_method, status: 'succeeded' } } })
+  } }
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  try {
+    const selection = api.createSavedCardSelection('test', { stripe: () => stripe })
+    await selection.load()
+    selection.select('pm_two')
+    const first = selection.save({ consent: true })
+    for (let i = 0; i < 5; i += 1) await Promise.resolve()
+    await new Promise(resolve => setImmediate(resolve))
+    t.mock.timers.tick(30000)
+    await assert.rejects(first, /timed out/)
+    assert.equal(posts.length, 0, 'no default change after an unconfirmed card')
+    assert.equal(selection.snapshot().busy, false, 'the picker is usable again')
+    hang = false
+    const saved = await selection.save({ consent: true })
+    assert.equal(saved.cards.find(card => card.is_default).id, 'pm_two')
+    assert.equal(setups.length, 2)
+    assert.equal(setups[1].idempotency_key, setups[0].idempotency_key, 'the retry keeps the same SetupIntent command identity')
+    assert.deepEqual(posts[0], { setup_intent_id: 'seti_saved', payment_method_id: 'pm_two', idempotency_key: posts[0].idempotency_key })
+  } finally {
+    t.mock.timers.reset()
+    global.xanoAuthFetch = previous
+  }
+})
+
 test('saved cards use authenticated pagination and return only display fields', async () => {
   const previous = global.xanoAuthFetch
   const calls = []
