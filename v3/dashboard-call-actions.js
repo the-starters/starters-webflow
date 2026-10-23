@@ -708,6 +708,15 @@
           status === 'confirmed' &&
           Number.isFinite(start) &&
           start > reference + PAID_CONFIRMED_CANCEL_LEAD_MS) ||
+        // Gap B (JP 3a, 2026-10-23): a saved card with no hold yet stays
+        // cancellable until start. A Brand at or within 8 h is refused: there
+        // is no hold to take the late-cancel fee from.
+        (paid &&
+          status === 'confirmed' &&
+          paidSavedCardState(booking) &&
+          (role === 'starter' ||
+            (Number.isFinite(start) &&
+              start > reference + PAID_LATE_CANCEL_FEE_WINDOW_MS))) ||
         // P5: inside that window only a reconciled authorized hold is
         // cancellable, by either participant, until start (checked below).
         (paid && paidHoldCancelAdmitted(booking)) ||

@@ -178,10 +178,38 @@ test('P5: every other Paid payment state inside 48 h 15 min hides Cancel', () =>
   assert.equal(api.canCancel('brand', held({ status: 'rescheduled', start: now + H }), now), false)
 })
 
+test('Gap B: a saved-card Paid call stays cancellable until start; a Brand is refused at or within 8 h', () => {
+  const now = Date.now()
+  const p4 = savedCard({ status: 'confirmed' })
+  for (const lead of [LATE + 1, DAY, LEAD, LEAD + 1]) {
+    assert.equal(api.canCancel('brand', { ...p4, start: now + lead }, now), true, 'brand +' + lead)
+  }
+  assert.equal(api.canCancel('brand', { ...p4, start: now + LATE }, now), false, 'brand at 8 h')
+  assert.equal(api.canCancel('brand', { ...p4, start: now + H }, now), false, 'brand inside 8 h')
+  for (const lead of [1, H, LATE, DAY, LEAD]) {
+    assert.equal(api.canCancel('starter', { ...p4, start: now + lead }, now), true, 'starter +' + lead)
+  }
+  for (const role of ['brand', 'starter']) {
+    assert.equal(api.canCancel(role, { ...p4, start: now }, now), false, role + ' at start')
+    assert.equal(api.canCancel(role, { ...p4, start: now - 1 }, now), false, role + ' after start')
+    // A failed hold keeps the JP 10-04 rule (3c): no cancel inside 48 h 15 min.
+    for (const state of ['card_or_payment_declined', 'auth_required']) {
+      assert.equal(
+        api.canCancel(role, { ...p4, payment_status: state, start: now + DAY }, now),
+        false,
+        role + ' ' + state,
+      )
+    }
+    // Every saved-card refusal inside 48 h 15 min stays hidden.
+    for (const [label, override] of SAVED_CARD_REFUSALS) {
+      assert.equal(api.canCancel(role, { ...p4, ...override, start: now + DAY }, now), false, role + ' ' + label)
+    }
+  }
+})
+
 test('P5 regression: the P4 saved-card window and Free cancel are unchanged', () => {
   const now = Date.now()
   const p4 = savedCard({ status: 'confirmed' })
-  assert.equal(api.canCancel('brand', { ...p4, start: now + LEAD }, now), false)
   assert.equal(api.canCancel('brand', { ...p4, start: now + LEAD + 1 }, now), true)
   assert.equal(api.canCancel('starter', { ...p4, start: now + LEAD + 1 }, now), true)
   // P1: a Brand may still withdraw a Paid pending request; a Starter may not.
