@@ -1367,8 +1367,8 @@ settle it. A wrapper marked disabled by attribute (`data-validate-disabled`,
 `data-button-theme="disabled"`, `aria-disabled="true"`) is never converted.
 
 `Amount` and `Description` are resolved by id or input name. The ordinary invoice
-amount is rounded to cents and must land between $0.01 and $1,000,000, otherwise
-the inline message `Enter an amount between $0.01 and $1,000,000.` is shown and
+amount is rounded to cents and must land between $0.50 and $1,000,000, otherwise
+the inline message `Enter an amount between $0.50 and $1,000,000.` is shown and
 nothing is sent. A submit from a modal that was opened without a project card
 fails closed with `Open Generate Invoice from the project you want to bill, so
 we know which project to invoice.`. An `unavailable` submit fails closed with
