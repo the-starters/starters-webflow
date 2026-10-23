@@ -2035,6 +2035,28 @@ test('config update rejection lands on config-request-error', async () => {
   assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'error')
 })
 
+test('removing an override keeps extra-hours windows and their General days', async () => {
+  const availability = defaultAvailability()
+  availability.items.general = { days: [1, 2], start: '09:00', end: '12:00', defaultDays: [1, 2, 3] }
+  availability.items['ov-1'] = { days: [3], start: '13:00', end: '15:00' }
+  availability.items['pm'] = { days: [1, 2], start: '13:00', end: '17:00', mode: 'add' }
+  const result = loadWriter({ availability, storage: TZ_CACHED })
+  await settle()
+
+  const item = new El('div', { 'availability-item': '' })
+  item.dataset.id = 'ov-1'
+  const removeBtn = new El('a', { 'availability-action-btn': 'availability-remove' })
+  item.appendChild(removeBtn)
+  result.dom.root.appendChild(item)
+
+  result.clickAction(removeBtn)
+  await settle()
+
+  const update = result.calls.find((c) => c.path === '/starter/update_availability/v3')
+  assert.deepEqual(update.body.availability.items.general.days, [1, 2, 3])
+  assert.deepEqual(update.body.availability.items.pm, { days: [1, 2], start: '13:00', end: '17:00', mode: 'add' })
+})
+
 test('removing an override returns its days to the general schedule', async () => {
   let paidCreated = false
   const availability = defaultAvailability()
