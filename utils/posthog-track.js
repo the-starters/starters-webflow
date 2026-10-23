@@ -318,6 +318,20 @@
       return field(reason, 'code') === 'network-error' ||
         (typeof message === 'string' && NETWORK_FAILURE.test(message))
     }
+    // Algolia rejects with a RetryError when no search host answers. Its stack
+    // changes with the call path, so group the family regardless of frames.
+    const isAlgoliaUnreachable = (reason) => {
+      if (!reason || typeof reason !== 'object') return false
+      const message = safeString(field(reason, 'message'))
+      return safeString(field(reason, 'name')) === 'RetryError' && message.startsWith('Unreachable hosts')
+    }
+    // Instagram and Facebook iOS in-app browsers inject an autofill script that
+    // calls a handler no page defines. The filename is the page URL, so default
+    // grouping opens one issue per page. Group the family into one issue.
+    const IN_APP_AUTOFILL = /\b_AutofillCallbackHandler\b/
+    const isInAppAutofill = (event) =>
+      IN_APP_AUTOFILL.test(safeString(field(event, 'message'))) ||
+      IN_APP_AUTOFILL.test(safeString(field(field(event, 'error'), 'message')))
     const chunkProps = (failure) => failure ? {
       starters_error_kind: 'chunk-load',
       starters_chunk_vendor: failure.vendor,
@@ -335,6 +349,10 @@
       if (e.filename) props.filename = e.filename
       if (e.lineno) props.lineno = e.lineno
       if (e.colno) props.colno = e.colno
+      if (isInAppAutofill(e)) {
+        props.starters_error_kind = 'in-app-browser'
+        props.$exception_fingerprint = 'starters-in-app-autofill'
+      }
       const failure = chunkFailure(e)
       Object.assign(props, chunkProps(failure))
       send(e.error || new Error(e.message), props)
@@ -347,6 +365,9 @@
       if (isNetworkFailure(reason) && !frames.length) {
         props.starters_error_kind = 'network'
         props.$exception_fingerprint = 'starters-network-rejection'
+      } else if (isAlgoliaUnreachable(reason)) {
+        props.starters_error_kind = 'network'
+        props.$exception_fingerprint = 'starters-algolia-unreachable-hosts'
       }
       const failure = chunkFailure({ error: reason })
       Object.assign(props, chunkProps(failure))

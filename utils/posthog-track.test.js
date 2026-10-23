@@ -118,6 +118,31 @@ test('cross-origin "Script error." events with no detail are dropped', () => {
   assert.equal(captured.length, 0)
 })
 
+test('iOS in-app autofill ReferenceErrors share one fingerprint across pages', () => {
+  const app = load()
+  const text = "Can't find variable: _AutofillCallbackHandler"
+  app.listeners.error({ error: new ReferenceError(text), message: `ReferenceError: ${text}`, filename: 'https://www.thestarters.com/quiz', lineno: 1, colno: 25 })
+  app.listeners.error({ error: null, message: `ReferenceError: ${text}`, filename: 'https://www.thestarters.com/hire/tim', lineno: 1, colno: 25 })
+  app.listeners.error({ error: new ReferenceError(text), message: 42, filename: 'https://www.thestarters.com/skills' })
+  for (const { properties } of app.captured) {
+    assert.equal(properties.starters_error_kind, 'in-app-browser')
+    assert.equal(properties.$exception_fingerprint, 'starters-in-app-autofill')
+    assert.equal(properties.$exception_list[0].mechanism.handled, false)
+  }
+  assert.equal(app.captured.length, 3)
+  assert.equal(app.reloads, 0)
+})
+
+test('other ReferenceErrors and look-alike names retain default grouping', () => {
+  const app = load()
+  for (const message of ["Can't find variable: autofillHandler", "Can't find variable: _AutofillCallbackHandlerX", '$ is not defined']) {
+    app.listeners.error({ error: new ReferenceError(message), message, filename: 'https://www.thestarters.com/quiz' })
+    assert.equal(app.captured.at(-1).properties.$exception_fingerprint, undefined)
+    assert.equal(app.captured.at(-1).properties.starters_error_kind, undefined)
+  }
+  assert.equal(app.captured.length, 3)
+})
+
 test('a confirmed Webflow chunk failure is captured before one recovery reload', () => {
   const app = load()
   const request =
@@ -333,6 +358,36 @@ test('malformed original network stacks do not prevent stable stackless grouping
     assert.equal(app.captured.at(-1).properties.$exception_fingerprint, 'starters-network-rejection')
     assert.notEqual(app.captured.at(-1).error.stack, stack)
   }
+})
+
+test('Algolia unreachable-hosts rejections share one network fingerprint with or without frames', () => {
+  const app = load()
+  const message = 'Unreachable hosts - your application id may be incorrect. If the error persists, contact Algolia support.'
+  const plain = { name: 'RetryError', message, transporterStackTrace: [{ host: { url: 'example-dsn.algolia.net' } }] }
+  const native = Object.assign(new Error(message), { name: 'RetryError' })
+  native.stack = `RetryError: ${message}\n    at run (https://cdn.example.test/wf-algolia/index.min.js:2:108427)`
+  const framed = { ...plain, stack: 'r@https://cdn.example.test/wf-algolia/index.min.js:2:10763' }
+  for (const reason of [plain, native, framed]) app.listeners.unhandledrejection({ reason })
+  assert.equal(app.captured.length, 3)
+  for (const { properties } of app.captured) {
+    assert.equal(properties.starters_error_kind, 'network')
+    assert.equal(properties.$exception_fingerprint, 'starters-algolia-unreachable-hosts')
+    assert.equal(properties.$exception_list[0].mechanism.handled, false)
+  }
+  assert.equal(app.captured[1].error, native)
+  assert.equal(app.reloads, 0)
+})
+
+test('other retry errors, look-alike messages and hostile Algolia fields retain default grouping', () => {
+  const app = load()
+  const hostile = { get name() { throw new Error('boom') }, message: 'Unreachable hosts' }
+  for (const reason of [{ name: 'RetryError', message: 'Some other retry failure' },
+    { name: 'Error', message: 'Unreachable hosts' }, { name: 'RetryError', message: 42 }, hostile]) {
+    app.listeners.unhandledrejection({ reason })
+    assert.equal(app.captured.at(-1).properties.$exception_fingerprint, undefined)
+    assert.equal(app.captured.at(-1).properties.starters_error_kind, undefined)
+  }
+  assert.equal(app.captured.length, 4)
 })
 
 test('other network-looking rejections and dynamic imports retain default grouping', () => {
