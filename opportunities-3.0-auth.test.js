@@ -5790,10 +5790,19 @@ test('every completed projection shape uses the standard invoice mode', async ()
     }
   }
 
-  const ended = bridge.window.Opp30.invoiceProjectContext(card, {
+  // A terminated row bills work done before the end (JP 2026-10-26); only a
+  // canceled row stays unbillable.
+  const terminated = bridge.window.Opp30.invoiceProjectContext(card, {
     id: 746,
     status: 'completed',
     lifecycle_state: 'terminated',
+    final_invoice: final,
+  })
+  assert.equal(terminated.invoiceMode, 'standard')
+  const ended = bridge.window.Opp30.invoiceProjectContext(card, {
+    id: 746,
+    status: 'completed',
+    lifecycle_state: 'canceled',
     final_invoice: final,
   })
   assert.equal(ended.invoiceMode, 'unavailable')
@@ -6296,11 +6305,22 @@ test('an active or completion_requested project keeps the standard invoice route
   }
 })
 
-test('an ended project sends no invoice request', async () => {
+test('a terminated project still bills work done before the end on the standard route', async () => {
   for (const shape of [
-    { status: 'incomplete', lifecycle_state: 'terminated' },
-    { status: 'completed', lifecycle_state: 'terminated' },
-    { status: 'active', lifecycle_state: 'termination_requested' },
+    { sync_origin: 'v3', status: 'incomplete', lifecycle_state: 'terminated' },
+    { sync_origin: 'v3', status: 'completed', lifecycle_state: 'terminated' },
+    { sync_origin: 'v3', status: 'active', lifecycle_state: 'termination_requested' },
+  ]) {
+    const { requests, context } = await submitInvoiceForProject({ id: 675, ...shape })
+    assert.equal(context.invoiceMode, 'standard', JSON.stringify(shape))
+    assert.ok(await waitFor(() => requests.length === 1))
+    assert.match(requests[0].url, /\/invoices\/create\/v3$/)
+    assert.match(requests[0].body.idempotency_key, /^invoice-v3-675-/)
+  }
+})
+
+test('a canceled project sends no invoice request', async () => {
+  for (const shape of [
     { lifecycle_state: 'canceled' },
     { status: 'cancelled' },
   ]) {
