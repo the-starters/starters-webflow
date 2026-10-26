@@ -1962,7 +1962,8 @@
 
   /**
    * The canonical lifecycle_state wins over the legacy dashboard status, so a
-   * terminated V3 row whose status still says completed is ended.
+   * canceled V3 row whose status still says completed is ended. Terminated rows
+   * are not ended: they bill for work done before the end (JP 2026-10-26).
    */
   function invoiceProjectHasEnded(project) {
     if (!project || typeof project !== 'object') return false
