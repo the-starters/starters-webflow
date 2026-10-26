@@ -2800,8 +2800,13 @@ returns full rows, so `payment_status`, `payment_reconciliation_status`,
   `payment_reconciliation_status` `reconciled`, and `data_environment` in
   `PAID_HOLD_CANCEL_OPEN_ENVIRONMENTS` (`['test', 'production']` after the
   #2099 / #263 / #272 P5 server publish). Either
-  participant can then cancel until start. Every other Paid payment state
-  inside 48 h 15 min stays hidden. `cancelFeeText` gives the cancel
+  participant can then cancel until start. A confirmed saved-card row with no
+  hold yet (`paidSavedCardState`) also stays cancellable until start (Gap B,
+  JP 3a 2026-10-23, #2099 P4 window), except a Brand at or within 8 h, which
+  the server refuses because there is no hold to take the fee from. Every
+  other Paid payment state inside 48 h 15 min stays hidden, including a
+  failed hold (`card_or_payment_declined`, `auth_required`; JP 10-04 rule,
+  3c). `cancelFeeText` gives the cancel
   confirmation one line: a Brand on a confirmed Paid call with
   `start - now <= 8 h` (`PAID_LATE_CANCEL_FEE_WINDOW_MS`) sees "This call
   starts within 8 hours. Cancelling now charges the full session fee."; the
