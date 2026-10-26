@@ -1892,10 +1892,11 @@
     'Open Generate Invoice from the project you want to bill, so we know which project to invoice.'
   const INVOICE_PROJECT_ENDED_MESSAGE =
     'This project has ended, so it cannot be invoiced. Contact The Starters if you need help.'
-  // Ended lifecycles that neither invoices/create/v3 (#1691) nor any other
-  // route bills, so the modal refuses them before a request.
+  // Lifecycles no route bills, so the modal refuses them before a request.
+  // A terminated project (or one waiting on termination) still bills work done
+  // before the end through invoices/create/v3 (#1691) (JP 2026-10-26, as in V2).
   const INVOICE_ENDED_LIFECYCLES = new Set([
-    'terminated', 'termination_requested', 'canceled', 'cancelled',
+    'canceled', 'cancelled',
   ])
   const INVOICE_FINAL_PAID_MESSAGE =
     'The final invoice for this project has already been paid. It cannot be billed again.'
@@ -1961,7 +1962,8 @@
 
   /**
    * The canonical lifecycle_state wins over the legacy dashboard status, so a
-   * terminated V3 row whose status still says completed is ended.
+   * canceled V3 row whose status still says completed is ended. Terminated rows
+   * are not ended: they bill for work done before the end (JP 2026-10-26).
    */
   function invoiceProjectHasEnded(project) {
     if (!project || typeof project !== 'object') return false
