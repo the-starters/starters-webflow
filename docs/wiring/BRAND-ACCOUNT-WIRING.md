@@ -117,6 +117,99 @@ input remains under the browser's native validation. Do not add a second form,
 remove the existing Xano handler, or move
 the login-email input outside this form.
 
+## Unpublished trial agreement review
+
+The trial agreement is opt-in on the duplicate `/complete-profile-trial` page.
+`brand-account-controller.js` remains the only Complete Profile submit and
+Memberstack write owner. The original `/complete-profile` has no opt-in and
+keeps its existing behavior.
+
+```html
+<form id="wf-form-Complete-Profile-Form" data-brand-trial-terms-form="true">
+  <!-- Existing profile fields -->
+  <div data-brand-trial-terms data-brand-trial-terms-version="draft-2026-10-26">
+    <label>
+      <input type="checkbox" name="trial-terms-accepted"
+        data-brand-trial-terms-checkbox required>
+      I agree to the <a href="APPROVED_TERMS_URL">Trial Terms</a>.
+    </label>
+  </div>
+  <div data-brand-trial-terms-status aria-live="polite" style="display:none"></div>
+  <!-- Existing ACCESS THE STARTERS submit control -->
+</form>
+```
+
+Keep the agreement visible in Designer for review and place it immediately
+above the existing submit control. The status must be outside the agreement
+wrapper so read errors and their retry button remain visible when the agreement
+is hidden. Hide the empty status block in Designer. The controller explicitly
+shows it for a message or retry and hides it again when cleared. Keep the existing `wf-validate-element="form"` and
+`wf-validate-submit-disable` settings. The controller calls `WfValidate.refresh`
+after changing checkbox visibility, `required`, or `disabled`. The shared
+validator retains the form's other constraints and soft-disabled styling;
+the account controller retains native submit disabling and `aria-busy`.
+
+At runtime the agreement is hidden during the membership read and for a
+confirmed nontrial member. Only a current subscription trial exposes an
+initially unchecked, required checkbox. A read failure, absent role resolver,
+unmapped member, or malformed opt-in prevents completion and exposes a retry
+or refresh action. Unknown state never implies paid nontrial membership.
+
+The current contract reads `member.planConnections` from
+`$memberstackDom.getCurrentMember()`. The canonical route guard's
+`roleResolution` must confirm `brand-paid` for the member and identify each
+current paid Brand connection. Top-level `ACTIVE` and `TRIALING` are current
+states regardless of the unreliable `active` Boolean. Explicit `type: 'FREE'`
+connections cannot identify a subscription trial. Canceled historical trial
+connections do not override a current paid subscription. A current connection
+is trialing only when its top-level status is `TRIALING`. Nested payment status
+does not override the current connection status. With two current paid connections, any current
+trial requires acceptance. Profile incompleteness and member age are never
+trial signals. A current known Brand plan explicitly marked `FREE` is nontrial.
+
+The published SDK [member-plan connection type](https://app.unpkg.com/%40memberstack/dom%401.9.40/files/lib/types/utils/payloads.d.ts)
+documents both status fields and nullable payment data. Memberstack's
+[subscription status guide](https://docs.memberstack.com/hc/en-us/articles/13088732983963-Subscription-Plan-Statuses)
+defines trialing. The project route guard owns the top-level status and plan
+mapping contract.
+
+Submission re-reads membership and requires the same stable member ID that
+the agreement was shown to. It checks native form validity as well as
+acceptance. Each opt-in ordinary-field write attempt and completion write
+attempt rechecks that identity and membership state. The ordinary-fields
+`updateMember` call adds `trial-terms-accepted: 'true'` and
+`trial-terms-version: 'draft-2026-10-26'` for a checked trial. These must be
+registered Memberstack custom-field keys before any real canary. Nontrial saves
+omit these fields and never clear an earlier acceptance. Failure of this save
+prevents the final `completed-brand-profile` marker and permits a same-page
+retry. Existing login-email and password-email behavior remains unchanged.
+
+No browser acceptance timestamp is written. `trial-terms-accepted-at` is a
+proposed server-owned receipt field, not a browser clock or a proven backend
+audit trail. The existing Memberstack webhook remains the only downstream
+writer. This frontend change does not install a backend consent schema,
+server timestamp, legal text, billing enforcement, or a route into the duplicate.
+Those dependencies and real Memberstack field acceptance remain unverified.
+The published Xano endpoint #1513 currently has no mapping for these consent
+fields. No backend, schema, or real member change was applied for this review.
+
+The ignored `local-demos/trial-terms-review/` folder contains a mocked browser
+review and `build-review.js`. Run the builder with an installed esbuild binary
+path to generate `head-embed.html`, `owner-review.min.js`, and source/embed
+SHA-256 metadata. The embed contains the entire minified canonical owner with
+an additional `/complete-profile-trial` path guard. Paste it inline only in the
+unpublished duplicate page head. Its synchronous boot claims the same init guard
+before the existing deferred sitewide owner. The original deferred copy then
+stands down on the duplicate. This requires verifying the actual saved load
+order; do not install a second independent submit handler or use an unreleased
+jsDelivr ref. The review embed is temporary, regenerated after any owner edit,
+and must be removed when a released shared owner replaces it.
+
+The local review mocks all reads and writes and sends no emails. It covers
+trial, incomplete paid, historical canceled trial, read failure with retry,
+consent-save failure, and changed identity. Its approximate layout is for
+behavior review; Designer remains the authority for actual page styling.
+
 ## Install order
 
 Install `brand-account-controller.js` sitewide, before Memberstack form
