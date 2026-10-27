@@ -433,7 +433,6 @@ function trialFixture(options = {}) {
   const form = makeForm('build', { email: 'ada@example.com', ...options.values })
   form.setAttribute('data-brand-trial-terms-form', 'true')
   const agreement = makeElement()
-  agreement.setAttribute('data-brand-trial-terms-version', 'draft-2026-10-26')
   const checkbox = makeElement()
   checkbox.checked = true // A browser-restored check must not count as a new acceptance.
   const status = makeElement()
@@ -476,7 +475,7 @@ test('trial opt-in hides pending, restores unchecked required agreement, and blo
   assert.match(env.form.wrapper.failText.textContent, /accept the trial terms/)
 })
 
-test('checked trial saves versioned consent through ordinary-fields owner before completion and no password email', async () => {
+test('checked trial without a version saves only acceptance before completion and no password email', async () => {
   const refreshes = []
   const env = trialFixture({ validator: { refresh: form => refreshes.push(form) } })
   await settle()
@@ -488,7 +487,7 @@ test('checked trial saves versioned consent through ordinary-fields owner before
   assert.equal(writes.length, 2)
   assert.deepEqual(plain(writes[0].payload.customFields), {
     'free-user': 'Ada', 'last-name': 'Lovelace', company: 'Analytical Engines',
-    'trial-terms-accepted': 'true', 'trial-terms-version': 'draft-2026-10-26',
+    'trial-terms-accepted': 'true',
   })
   assert.deepEqual(plain(writes[1].payload.customFields), { 'completed-brand-profile': 'true' })
   assert.equal(env.calls.some(call => call.method === 'sendMemberResetPasswordEmail'), false)

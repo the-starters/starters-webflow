@@ -426,7 +426,6 @@
       }
       if (trial && trial.kind === 'trial') {
         fields['trial-terms-accepted'] = 'true'
-        fields['trial-terms-version'] = trial.version
       }
       return client.updateMember({
         customFields: fields,
@@ -737,12 +736,11 @@
     var wrapper = form.querySelector('[data-brand-trial-terms]')
     var checkbox = form.querySelector('[data-brand-trial-terms-checkbox]')
     var status = form.querySelector('[data-brand-trial-terms-status]')
-    var version = wrapper && trim(wrapper.getAttribute('data-brand-trial-terms-version'))
     // A malformed opt-in remains gated instead of silently completing onboarding.
     var state = { wrapper: wrapper, checkbox: checkbox, status: status,
-      version: version, kind: 'error', memberId: null, display: wrapper && wrapper.style.display || '' }
+      kind: 'error', memberId: null, display: wrapper && wrapper.style.display || '' }
     trialTermsForms.set(form, state)
-    if (!wrapper || !checkbox || !status || !version) {
+    if (!wrapper || !checkbox || !status) {
       setBusy(form, false)
       setMessage(form, 'error', 'The trial agreement is unavailable. Refresh and try again.')
       return
@@ -792,7 +790,7 @@
       throw error
     }
     if (trialState) {
-      if (!trialState.wrapper || !trialState.checkbox || !trialState.status || !trialState.version) {
+      if (!trialState.wrapper || !trialState.checkbox || !trialState.status) {
         throw trialTermsError('The trial agreement is unavailable. Refresh and try again.')
       }
       try {
@@ -809,7 +807,7 @@
         if (typeof form.reportValidity === 'function') form.reportValidity()
         throw trialTermsError('Complete the required fields before continuing.')
       }
-      trial = { state: trialState, form: form, kind: trialState.kind, version: trialState.version }
+      trial = { state: trialState, form: form, kind: trialState.kind }
     }
 
     // Completion is the last durable member write. A normal onboarding submit
