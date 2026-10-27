@@ -127,7 +127,7 @@ keeps its existing behavior.
 ```html
 <form id="wf-form-Complete-Profile-Form" data-brand-trial-terms-form="true">
   <!-- Existing profile fields -->
-  <div data-brand-trial-terms data-brand-trial-terms-version="draft-2026-10-26">
+  <div data-brand-trial-terms>
     <label>
       <input type="checkbox" name="trial-terms-accepted"
         data-brand-trial-terms-checkbox required>
@@ -177,21 +177,27 @@ Submission re-reads membership and requires the same stable member ID that
 the agreement was shown to. It checks native form validity as well as
 acceptance. Each opt-in ordinary-field write attempt and completion write
 attempt rechecks that identity and membership state. The ordinary-fields
-`updateMember` call adds `trial-terms-accepted: 'true'` and
-`trial-terms-version: 'draft-2026-10-26'` for a checked trial. These must be
-registered Memberstack custom-field keys before any real canary. Nontrial saves
-omit these fields and never clear an earlier acceptance. Failure of this save
+`updateMember` call adds only `trial-terms-accepted: 'true'` for a checked trial.
+This Memberstack custom field is private, hidden from prebuilt profile forms,
+and member-writable. No terms version attribute or saved version field is
+required. Terms content stays managed in Webflow. Nontrial saves
+omit this field and never clear an earlier acceptance. Failure of this save
 prevents the final `completed-brand-profile` marker and permits a same-page
 retry. Existing login-email and password-email behavior remains unchanged.
 
-No browser acceptance timestamp is written. `trial-terms-accepted-at` is a
-proposed server-owned receipt field, not a browser clock or a proven backend
-audit trail. The existing Memberstack webhook remains the only downstream
-writer. This frontend change does not install a backend consent schema,
-server timestamp, legal text, billing enforcement, or a route into the duplicate.
-Those dependencies and real Memberstack field acceptance remain unverified.
-The published Xano endpoint #1513 currently has no mapping for these consent
-fields. No backend, schema, or real member change was applied for this review.
+No browser acceptance timestamp is written. Xano's `trial_terms_accepted_at`
+records the server's first processed acceptance receipt through the existing
+Memberstack webhook. Repeated events and unrelated profile updates must not
+move or clear that timestamp. A missing or false acceptance field cannot create
+a receipt. No version is saved in Memberstack or Xano.
+
+The webhook mapping must be deployed before this receipt can be recorded.
+
+The frontend waits for the Memberstack acceptance save before completing the
+profile; it does not wait for the asynchronous Xano receipt. Real Memberstack
+field persistence, webhook delivery, and server timestamp readback require an
+end-to-end test before rollout. This frontend change does not install legal
+text, billing enforcement, or a route into the duplicate.
 
 The ignored `local-demos/trial-terms-review/` folder contains a mocked browser
 review and `build-review.js`. Run the builder with an installed esbuild binary
