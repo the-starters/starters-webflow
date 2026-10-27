@@ -82,6 +82,7 @@
   var workflowDiagnosticsControllerScript = document.currentScript
   var brandSignupPlanObserver = null
   var pendingBuildPasswordEmails = new WeakMap()
+  var trialTermsForms = new WeakMap()
 
   function boundedWorkflowDiagnostics(promise) {
     return new Promise(function (resolve) {
@@ -412,17 +413,23 @@
     return member
   }
 
-  async function updateOrdinaryFields(client, values) {
+  async function updateOrdinaryFields(client, values, trial, member) {
     if (typeof client.updateMember !== 'function') {
       throw new Error('Memberstack profile updates are unavailable.')
     }
-    return runWithRetry(function () {
+    return runWithRetry(async function () {
+      if (trial) await confirmTrialTerms(client, member, trial)
+      var fields = {
+        'free-user': values.firstName,
+        'last-name': values.lastName,
+        company: values.company,
+      }
+      if (trial && trial.kind === 'trial') {
+        fields['trial-terms-accepted'] = 'true'
+        fields['trial-terms-version'] = trial.version
+      }
       return client.updateMember({
-        customFields: {
-          'free-user': values.firstName,
-          'last-name': values.lastName,
-          company: values.company,
-        },
+        customFields: fields,
       })
     })
   }
@@ -530,8 +537,9 @@
     }
   }
 
-  async function markBuildComplete(client) {
-    return runWithRetry(function () {
+  async function markBuildComplete(client, member, trial) {
+    return runWithRetry(async function () {
+      if (trial) await confirmTrialTerms(client, member, trial)
       return client.updateMember({
         customFields: { 'completed-brand-profile': 'true' },
       })
@@ -597,7 +605,7 @@
   function setBusy(form, busy, submitOnly) {
     form.setAttribute('aria-busy', busy ? 'true' : 'false')
     var submit = form.querySelector('[type="submit"]')
-    if (submit) submit.disabled = !!busy
+    if (submit) submit.disabled = !!busy || trialTermsBlocked(form)
     var loading = submitOnly
       ? submit && typeof submit.closest === 'function'
         ? submit.closest('[data-opp-element="loading-button"]')
@@ -639,6 +647,127 @@
     return trim(error && error.message) || 'Your account could not be updated. Please try again.'
   }
 
+  function trialTermsError(message) {
+    var error = new Error(message || 'We could not confirm your membership. Try again before continuing.')
+    error.code = 'validation'
+    return error
+  }
+
+  function trialMembership(member) {
+    var guard = window.StartersV3RouteGuard
+    if (!guard || typeof guard.roleResolution !== 'function' ||
+        !Array.isArray(member.planConnections) ||
+        guard.roleResolution(member).role !== 'brand-paid') throw trialTermsError()
+    var paid = member.planConnections.filter(function (connection) {
+      return connection && connection.type !== 'FREE' &&
+        (connection.status === 'ACTIVE' || connection.status === 'TRIALING') &&
+        guard.roleResolution({ planConnections: [connection] }).role === 'brand-paid'
+    })
+    if (!paid.length) {
+      // A known Brand plan explicitly marked FREE is not a subscription trial.
+      if (member.planConnections.some(function (connection) {
+        return connection && connection.type === 'FREE' && connection.status === 'ACTIVE' &&
+          guard.roleResolution({ planConnections: [connection] }).role === 'brand-paid'
+      })) return 'nontrial'
+      throw trialTermsError()
+    }
+    return paid.some(function (connection) {
+      return connection.status === 'TRIALING'
+    }) ? 'trial' : 'nontrial'
+  }
+
+  function trialTermsBlocked(form) {
+    var state = trialTermsForms.get(form)
+    return !!state && (state.kind === 'pending' || state.kind === 'error' ||
+      (state.kind === 'trial' && !state.checkbox.checked))
+  }
+
+  function paintTrialTerms(form, state, message) {
+    state.wrapper.style.display = state.kind === 'trial' ? state.display : 'none'
+    state.checkbox.required = state.kind === 'trial'
+    state.checkbox.disabled = state.kind !== 'trial'
+    if (state.status) {
+      state.status.textContent = message || (state.kind === 'pending' ? 'Checking your membership…' : '')
+      state.status.style.display = (state.status.textContent || state.kind === 'error') ? 'block' : 'none'
+      if (state.kind === 'error' && document.createElement) {
+        state.status.textContent += ' '
+        var retry = document.createElement('button')
+        retry.type = 'button'
+        retry.textContent = 'Try again'
+        retry.setAttribute('data-brand-trial-terms-retry', '')
+        retry.addEventListener('click', function () { refreshTrialTerms(form, state) })
+        state.status.appendChild(retry)
+      }
+    }
+    var submit = form.querySelector('[type="submit"]')
+    if (submit) submit.disabled = form.getAttribute('aria-busy') === 'true' || trialTermsBlocked(form)
+    if (window.WfValidate && typeof window.WfValidate.refresh === 'function') {
+      window.WfValidate.refresh(form)
+    }
+  }
+
+  async function readTrialTerms(form, state, member) {
+    if (state.memberId && state.memberId !== member.id) {
+      state.checkbox.checked = false
+      throw memberScopeChangedError()
+    }
+    state.memberId = member.id
+    state.kind = trialMembership(member)
+    paintTrialTerms(form, state)
+    return state
+  }
+
+  async function refreshTrialTerms(form, state) {
+    if (state.reading) return state.reading
+    state.kind = 'pending'
+    paintTrialTerms(form, state)
+    state.reading = Promise.resolve().then(function () {
+      return currentMember(memberstack())
+    }).then(function (member) {
+      return readTrialTerms(form, state, member)
+    }).catch(function (error) {
+      state.kind = 'error'
+      paintTrialTerms(form, state, friendlyError(error))
+    }).finally(function () { state.reading = null })
+    return state.reading
+  }
+
+  function bindTrialTerms(form) {
+    if (form.getAttribute('data-brand-trial-terms-form') !== 'true' || trialTermsForms.has(form)) return
+    var wrapper = form.querySelector('[data-brand-trial-terms]')
+    var checkbox = form.querySelector('[data-brand-trial-terms-checkbox]')
+    var status = form.querySelector('[data-brand-trial-terms-status]')
+    var version = wrapper && trim(wrapper.getAttribute('data-brand-trial-terms-version'))
+    // A malformed opt-in remains gated instead of silently completing onboarding.
+    var state = { wrapper: wrapper, checkbox: checkbox, status: status,
+      version: version, kind: 'error', memberId: null, display: wrapper && wrapper.style.display || '' }
+    trialTermsForms.set(form, state)
+    if (!wrapper || !checkbox || !status || !version) {
+      setBusy(form, false)
+      setMessage(form, 'error', 'The trial agreement is unavailable. Refresh and try again.')
+      return
+    }
+    checkbox.checked = false
+    checkbox.addEventListener('change', function () { paintTrialTerms(form, state) })
+    refreshTrialTerms(form, state)
+  }
+
+  async function confirmTrialTerms(client, member, snapshot) {
+    var state = snapshot.state
+    try {
+      var current = await currentMemberForWrite(client, member)
+      await readTrialTerms(snapshot.form, state, current)
+      if (state.kind !== snapshot.kind) throw trialTermsError('Your membership changed. Review the form and try again.')
+    } catch (error) {
+      state.kind = 'error'
+      paintTrialTerms(snapshot.form, state, friendlyError(error))
+      throw error
+    }
+    if (state.kind === 'trial' && !state.checkbox.checked) {
+      throw trialTermsError('Please accept the trial terms before continuing.')
+    }
+  }
+
   async function submitBuild(form) {
     var values = buildValues(form)
     var invalid = validate(values)
@@ -650,18 +779,49 @@
 
     var client = memberstack()
     diagnosticRequestStarted(form)
-    var member = await currentMember(client)
+    var trial = null
+    var trialState = trialTermsForms.get(form)
+    var member
+    try {
+      member = await currentMember(client)
+    } catch (error) {
+      if (trialState && trialState.wrapper && trialState.checkbox) {
+        trialState.kind = 'error'
+        paintTrialTerms(form, trialState, friendlyError(error))
+      }
+      throw error
+    }
+    if (trialState) {
+      if (!trialState.wrapper || !trialState.checkbox || !trialState.status || !trialState.version) {
+        throw trialTermsError('The trial agreement is unavailable. Refresh and try again.')
+      }
+      try {
+        await readTrialTerms(form, trialState, member)
+      } catch (error) {
+        trialState.kind = 'error'
+        paintTrialTerms(form, trialState, friendlyError(error))
+        throw error
+      }
+      if (trialState.kind === 'trial' && !trialState.checkbox.checked) {
+        throw trialTermsError('Please accept the trial terms before continuing.')
+      }
+      if (typeof form.checkValidity === 'function' && !form.checkValidity()) {
+        if (typeof form.reportValidity === 'function') form.reportValidity()
+        throw trialTermsError('Complete the required fields before continuing.')
+      }
+      trial = { state: trialState, form: form, kind: trialState.kind, version: trialState.version }
+    }
 
     // Completion is the last durable member write. A normal onboarding submit
     // keeps the authenticated login email and sends no password email. A real
     // email change keeps the existing ownership-proof email after completion.
-    await updateOrdinaryFields(client, values)
+    await updateOrdinaryFields(client, values, trial, member)
     // The auth change can succeed before a later completion write fails, and it
     // can land while its own response is lost. Keep the changed target on this
     // form so the safe retry still sends its one ownership-proof message after
     // completion succeeds.
     var emailIntent = await applyBuildLoginEmail(form, client, member, values.email)
-    await markBuildComplete(client)
+    await markBuildComplete(client, member, trial)
     // Only reached once completion is durable. The marker stops the routers
     // from bouncing this member back onto the form during the webhook's
     // catch-up window.
@@ -759,6 +919,10 @@
               request_started: !(error && error.code === 'validation'),
             })
             setMessage(form, 'error', friendlyError(error), receipt)
+            var trialState = trialTermsForms.get(form)
+            if (trialState && trialState.wrapper && trialState.checkbox && trialState.status) {
+              paintTrialTerms(form, trialState, friendlyError(error))
+            }
             trackFailure(error, operation)
           })
           .finally(function () {
@@ -1163,6 +1327,7 @@
     }
     var buildForm = document.querySelector(BUILD_FORM_SELECTOR)
     if (buildForm) {
+      bindTrialTerms(buildForm)
       bound = bindForm(buildForm, 'brand/account/build', submitBuild, true) || bound
     }
 

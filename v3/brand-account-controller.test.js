@@ -40,6 +40,7 @@ function makeElement(value = '') {
     textContent: '',
     disabled: false,
     style: {},
+    children: [],
     attributes: new Map(),
     listeners: new Map(),
     setAttribute(name, next) {
@@ -50,6 +51,9 @@ function makeElement(value = '') {
     },
     addEventListener(name, listener) {
       this.listeners.set(name, listener)
+    },
+    appendChild(child) {
+      this.children.push(child)
     },
   }
 }
@@ -289,6 +293,7 @@ function loadController(options = {}) {
     sessionStorage: options.sessionStorageMissing ? undefined : sessionStorage,
     $memberstackDom: options.memberstackMissing ? undefined : memberstack,
     StartersBrandAccountConfig: options.config || {},
+    WfValidate: options.validator,
     StartersV3RouteGuard: options.routeGuard,
     StartersStarterEditProfile: Object.assign({
       validatePersonalDetails() {
@@ -342,6 +347,7 @@ function loadController(options = {}) {
   if (options.diagnosticsReady) window.__startersWorkflowDiagnosticsReady = options.diagnosticsReady
   const document = {
     readyState: 'complete',
+    createElement: () => makeElement(),
     documentElement: makeElement(),
     querySelector(selector) {
       if (selector === '#wf-form-Complete-Profile-Form') return buildForm
@@ -422,6 +428,262 @@ function loadController(options = {}) {
 }
 
 const MARKER_KEY = 'thestarters:v3-brand-profile-completed'
+
+function trialFixture(options = {}) {
+  const form = makeForm('build', { email: 'ada@example.com', ...options.values })
+  form.setAttribute('data-brand-trial-terms-form', 'true')
+  const agreement = makeElement()
+  agreement.setAttribute('data-brand-trial-terms-version', 'draft-2026-10-26')
+  const checkbox = makeElement()
+  checkbox.checked = true // A browser-restored check must not count as a new acceptance.
+  const status = makeElement()
+  status.style.display = 'none' // Designer collapses its empty native block.
+  form.inputs.set('[data-brand-trial-terms]', agreement)
+  form.inputs.set('[data-brand-trial-terms-checkbox]', checkbox)
+  form.inputs.set('[data-brand-trial-terms-status]', status)
+  const member = { id: 'mem_trial', auth: { email: 'ada@example.com' },
+    planConnections: [{ planId: 'paid', status: 'TRIALING', active: false, type: 'SUBSCRIPTION' }] }
+  const routeGuard = { roleResolution(snapshot) {
+    return { role: snapshot.planConnections.some(plan => plan.planId === 'paid' &&
+      ['ACTIVE', 'TRIALING'].includes(plan.status)) ? 'brand-paid' : null }
+  } }
+  const environment = loadController({ member, routeGuard, ...options, buildForm: form })
+  function check() {
+    checkbox.checked = true
+    checkbox.listeners.get('change')()
+  }
+  return { ...environment, form, agreement, checkbox, status, check }
+}
+
+test('trial opt-in hides pending, restores unchecked required agreement, and blocks submit including Enter', async () => {
+  const pending = deferred()
+  const env = trialFixture({ getCurrentMember: () => pending.promise })
+  assert.equal(env.agreement.style.display, 'none')
+  assert.equal(env.form.submit.disabled, true)
+  assert.equal(env.status.style.display, 'block')
+  pending.resolve({ data: env.member })
+  await settle()
+  assert.equal(env.agreement.style.display, '')
+  assert.equal(env.checkbox.checked, false)
+  assert.equal(env.checkbox.required, true)
+  assert.equal(env.checkbox.disabled, false)
+  assert.equal(env.status.style.display, 'none')
+  env.form.submitEvent()
+  await settle()
+  assert.equal(env.calls.filter(call => call.method === 'updateMember').length, 0)
+  assert.equal(env.form.getAttribute('aria-busy'), 'false')
+  assert.equal(env.form.submit.disabled, true)
+  assert.match(env.form.wrapper.failText.textContent, /accept the trial terms/)
+})
+
+test('checked trial saves versioned consent through ordinary-fields owner before completion and no password email', async () => {
+  const refreshes = []
+  const env = trialFixture({ validator: { refresh: form => refreshes.push(form) } })
+  await settle()
+  env.check()
+  assert.equal(env.form.submit.disabled, false)
+  env.form.submitEvent()
+  await settle(15)
+  const writes = env.calls.filter(call => call.method === 'updateMember')
+  assert.equal(writes.length, 2)
+  assert.deepEqual(plain(writes[0].payload.customFields), {
+    'free-user': 'Ada', 'last-name': 'Lovelace', company: 'Analytical Engines',
+    'trial-terms-accepted': 'true', 'trial-terms-version': 'draft-2026-10-26',
+  })
+  assert.deepEqual(plain(writes[1].payload.customFields), { 'completed-brand-profile': 'true' })
+  assert.equal(env.calls.some(call => call.method === 'sendMemberResetPasswordEmail'), false)
+  assert.equal(refreshes.length > 2, true)
+  assert.deepEqual(env.redirects, ['/brand-dashboard'])
+})
+
+test('incomplete nontrial paid Brand ignores cancelled historical trial and never writes or clears consent', async () => {
+  const env = trialFixture()
+  env.member.planConnections = [
+    { planId: 'paid', status: 'CANCELED', type: 'SUBSCRIPTION', payment: { status: 'TRIALING' } },
+    { planId: 'paid', status: 'ACTIVE', active: false, type: 'SUBSCRIPTION' },
+  ]
+  await settle()
+  assert.equal(env.agreement.style.display, 'none')
+  assert.equal(env.checkbox.required, false)
+  assert.equal(env.checkbox.disabled, true)
+  assert.equal(env.form.submit.disabled, false)
+  env.form.submitEvent()
+  await settle(15)
+  const writes = env.calls.filter(call => call.method === 'updateMember')
+  assert.equal(writes.length, 2)
+  assert.equal(Object.keys(writes[0].payload.customFields).some(key => key.startsWith('trial-terms')), false)
+})
+
+test('free connection marked trial does not trigger subscription consent beside an active paid plan', async () => {
+  const env = trialFixture()
+  env.member.planConnections = [
+    { planId: 'paid', type: 'FREE', status: 'TRIALING' },
+    { planId: 'paid', type: 'SUBSCRIPTION', status: 'ACTIVE' },
+  ]
+  await settle()
+  assert.equal(env.agreement.style.display, 'none')
+  assert.equal(env.form.submit.disabled, false)
+})
+
+test('ACTIVE subscription does not become a trial from nested payment metadata', async () => {
+  const env = trialFixture()
+  env.member.planConnections[0].status = 'ACTIVE'
+  env.member.planConnections[0].payment = { status: 'TRIALING' }
+  await settle()
+  assert.equal(env.checkbox.disabled, true)
+  assert.equal(env.form.submit.disabled, false)
+})
+
+test('trial acceptance cannot bypass an unrelated native form constraint', async () => {
+  const env = trialFixture({ values: { valid: false } })
+  await settle()
+  env.check()
+  env.form.submitEvent()
+  await settle()
+  assert.equal(env.form.validityReports, 1)
+  assert.equal(env.calls.some(call => call.method === 'updateMember'), false)
+})
+
+test('failed membership refresh at submit keeps completion gated until explicit retry', async () => {
+  let env
+  let failRead = false
+  env = trialFixture({ getCurrentMember: () => {
+    if (failRead) throw new Error('Membership could not be read.')
+    return { data: env.member }
+  } })
+  await settle()
+  env.check()
+  failRead = true
+  env.form.submitEvent()
+  await settle()
+  assert.equal(env.form.submit.disabled, true)
+  assert.equal(env.checkbox.disabled, true)
+  assert.equal(env.calls.some(call => call.method === 'updateMember'), false)
+  failRead = false
+  env.status.children.at(-1).listeners.get('click')()
+  await settle()
+  assert.equal(env.form.submit.disabled, false)
+})
+
+test('unknown membership fails closed and offers an explicit retry that recovers', async () => {
+  let failed = true
+  let env
+  env = trialFixture({ getCurrentMember: () => {
+    if (failed) throw new TypeError('Membership unavailable')
+    return { data: env.member }
+  } })
+  await settle(15)
+  assert.equal(env.form.submit.disabled, true)
+  assert.match(env.status.textContent, /Membership unavailable/)
+  assert.equal(env.status.style.display, 'block')
+  assert.equal(env.status.children.at(-1).type, 'button')
+  failed = false
+  env.status.children.at(-1).listeners.get('click')()
+  await settle()
+  assert.equal(env.checkbox.required, true)
+  assert.equal(env.status.style.display, 'none')
+  env.check()
+  assert.equal(env.form.submit.disabled, false)
+})
+
+test('unmapped, malformed, and logged-out membership cannot complete even with a checked box', async () => {
+  for (const member of [{ id: 'other', planConnections: [] }, { id: 'other' }, null]) {
+    const env = trialFixture({ getCurrentMember: () => ({ data: member }) })
+    await settle()
+    env.form.submitEvent()
+    await settle()
+    assert.equal(env.form.submit.disabled, true)
+    assert.equal(env.calls.some(call => call.method === 'updateMember'), false)
+  }
+})
+
+test('membership is reread on submit so a paid member newly in trial must accept first', async () => {
+  const env = trialFixture()
+  env.member.planConnections[0].status = 'ACTIVE'
+  await settle()
+  env.member.planConnections[0].status = 'TRIALING'
+  env.form.submitEvent()
+  await settle()
+  assert.equal(env.checkbox.required, true)
+  assert.equal(env.calls.some(call => call.method === 'updateMember'), false)
+})
+
+test('consent save failure prevents completion and restores busy controls for retry', async () => {
+  let failed = true
+  const env = trialFixture({ updateMember: () => {
+    if (failed) throw Object.assign(new Error('Consent save failed'), { status: 400 })
+    return { data: {} }
+  } })
+  await settle()
+  env.check()
+  env.form.submitEvent()
+  await settle(15)
+  assert.equal(env.form.getAttribute('aria-busy'), 'false')
+  assert.equal(env.form.submit.disabled, false)
+  assert.equal(env.storageWrites.length, 0)
+  assert.match(env.status.textContent, /Consent save failed/)
+  assert.equal(env.calls.some(call => call.payload?.customFields?.['completed-brand-profile']), false)
+  failed = false
+  env.form.submitEvent()
+  await settle(15)
+  assert.deepEqual(env.redirects, ['/brand-dashboard'])
+})
+
+test('account change after display aborts without any writes', async () => {
+  const env = trialFixture()
+  await settle()
+  env.check()
+  env.member.id = 'mem_switched'
+  env.form.submitEvent()
+  await settle()
+  assert.equal(env.checkbox.checked, false)
+  assert.equal(env.calls.some(call => call.method === 'updateMember'), false)
+  assert.match(env.form.wrapper.failText.textContent, /signed-in account changed/)
+})
+
+test('account change between ordinary consent save and completion blocks durable completion', async () => {
+  let env
+  env = trialFixture({ updateMember: () => {
+    env.member.id = 'mem_switched'
+    return { data: {} }
+  } })
+  await settle()
+  env.check()
+  env.form.submitEvent()
+  await settle(15)
+  assert.equal(env.calls.filter(call => call.method === 'updateMember').length, 1)
+  assert.equal(env.storageWrites.length, 0)
+  assert.equal(env.form.getAttribute('aria-busy'), 'false')
+})
+
+test('duplicate boot and duplicate submit retain one owner while checked trial save is pending', async () => {
+  const pending = deferred()
+  const env = trialFixture({ updateMember: () => pending.promise })
+  await settle()
+  env.check()
+  const original = env.form.listeners.get('submit')
+  vm.runInContext(source, env.context)
+  env.api.init()
+  assert.equal(env.form.listeners.get('submit'), original)
+  env.form.submitEvent()
+  env.form.submitEvent()
+  await settle()
+  assert.equal(env.calls.filter(call => call.method === 'updateMember').length, 1)
+  assert.equal(env.form.submit.disabled, true)
+  pending.resolve({ data: env.member })
+  await settle(15)
+  assert.deepEqual(env.redirects, ['/brand-dashboard'])
+})
+
+test('original Complete Profile without opt-in performs no membership hydration or consent writes', async () => {
+  const env = loadController()
+  await settle()
+  assert.deepEqual(env.calls, [])
+  env.buildForm.submitEvent()
+  await settle()
+  assert.equal(env.calls.filter(call => call.method === 'updateMember').length, 2)
+  assert.equal(env.calls.some(call => Object.keys(call.payload?.customFields || {}).some(key => key.startsWith('trial-terms'))), false)
+})
 
 test('Brand signup uses the Test Brand plan on the Webflow staging hostname', () => {
   const signupForm = makeElement()
