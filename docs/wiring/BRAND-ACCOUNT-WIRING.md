@@ -43,14 +43,16 @@ Webflow HTML. Keep their Memberstack signup contracts on the forms themselves:
 ```
 
 Before Memberstack handles signup, `brand-account-controller.js` changes only
-the plan attribute on all matching forms for the active Memberstack data mode:
+the plan attribute on the standard and quiz forms for the active Memberstack data mode:
 
 | Host | `data-ms-plan:add` |
 | --- | --- |
 | `the-starters-3-0.webflow.io` (Test Data) | `pln_dorxata-test-brand-plan-777r02pa` |
 | `thestarters.com`, `www.thestarters.com` (Live Data) | `pln_free-plan-f6kn0dxz` |
 
-The standard and modal forms' live plan remains the Designer-authored fallback.
+The modal form `#wf-form-Signup-Form` keeps its Designer-authored plan on every
+hostname; it is excluded from this override. The standard form's live plan
+remains the Designer-authored fallback.
 The controller does not replace or generate these forms, and it leaves an element
 without `data-ms-form="signup"` untouched. The quiz form must also keep
 `data-quiz-form="signup"`; this limits the broader attribute selector to the
@@ -60,7 +62,7 @@ On `/quiz`, the final signup form can enter the DOM after the controller starts.
 If that quiz form is not present at startup, the controller watches only for the
 quiz signup selector above, applies the hostname-specific plan when the form
 appears, and then disconnects the observer. It does not watch for late forms on
-other paths. The standard and modal Brand signup forms are configured at startup.
+other paths. The standard Brand signup form is configured at startup.
 
 The Build Account form remains native Webflow HTML:
 
@@ -307,7 +309,7 @@ below, including the version-pinned fallback path.
 
 Update this query value for every Brand account controller release, and in the
 same change bump `CONTROLLER_VERSION` in `brand-account-controller.js` to the
-next build identifier (`brand-account-controller-v3` at this release, following
+next build identifier (`brand-account-controller-v4` at this release, following
 the repository's `<controller>-vN` receipt convention rather than the semver
 tag), so the diagnostic receipt and the `brand_account_email_decision` event
 identify which build actually served the member. Then publish Webflow and
@@ -322,7 +324,7 @@ new code. Before the bounded production test, verify the served content:
 
 ```bash
 curl -s "https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/brand-account-controller.js?v=RELEASE" \
-  | grep -c "brand-account-controller-v3"
+  | grep -c "brand-account-controller-v4"
 ```
 
 The released `CONTROLLER_VERSION` must be present in that output. If the served
