@@ -28,3 +28,6 @@ scripts/.learn-reindex-out/
 # commit a browser profile.
 .call-receipt-browser-*/
 .work-experience-browser-*/
+
+# Local agent kanban boards (a worktree of the kanbans branch) — never commit.
+/kanbans/

@@ -1,0 +1,22 @@
+{
+  "repo": "the-starters/starters-webflow",
+  "approvers": ["jericolawrence"],
+  "board": "infra",
+  "maxDev": 1,
+  "maxQA": 1,
+  "qaRounds": 3,
+  "doneRetentionDays": 30,
+  "notion": { "root": null },
+  "local": { "dir": "kanbans", "branch": "kanbans" },
+  "project": {
+    "designDoc": null,
+    "verifySkill": "run",
+    "uiRules": "The app's existing design tokens and components.",
+    "clipScript": null,
+    "workingStyle": null
+  },
+  "boards": {
+    "starters-webflow": { "type": "local", "title": "Starters-webflow Board", "areas": ["starters-webflow"] },
+    "infra": { "type": "local", "title": "Infra Board", "areas": ["infra", "tooling"] }
+  }
+}
