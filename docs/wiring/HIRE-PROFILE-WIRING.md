@@ -816,8 +816,9 @@ The separate `starter-retainer` wf-xano wrapper owns the canonical Retainer
 card. Its public source is `KZf7nFnk:profile/starter/retainer/v3` (endpoint
 `#5899`), which returns one item only when canonical `Retainer_Enabled` is true
 and `Retainer_Rate` is positive. The published wrapper initially points at the
-shared taxonomy source. `hire-profile.js` upgrades only that named instance
-through wf-xano's public `destroy`/`init` API; it does not change endpoint
+shared taxonomy source. `hire-profile.js` repoints only that named instance
+before wf-xano boots, and upgrades an already-booted instance through wf-xano's
+public `destroy`/`init` API; it does not change endpoint
 `#5860` or its unrelated draft. Webflow owns the native wrapper and card
 template. The adapter repaints the rendered title, description, and canonical
 price. On claimed profiles, it adds the existing signup or exact project-service
