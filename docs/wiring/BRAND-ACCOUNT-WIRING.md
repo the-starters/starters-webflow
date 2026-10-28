@@ -13,7 +13,7 @@
 
 ## Native markup contract
 
-The native standard and quiz Brand signup forms remain Designer-authored
+The native standard, modal, and quiz Brand signup forms remain Designer-authored
 Webflow HTML. Keep their Memberstack signup contracts on the forms themselves:
 
 ```html
@@ -27,21 +27,31 @@ Webflow HTML. Keep their Memberstack signup contracts on the forms themselves:
 ```
 
 ```html
+<form
+  id="wf-form-Signup-Form"
+  data-ms-form="signup"
+  data-ms-plan:add="pln_free-plan-f6kn0dxz"
+>
+  <!-- Designer-authored modal signup fields and controls -->
+</form>
+```
+
+```html
 <form data-quiz-form="signup" data-ms-form="signup">
   <!-- Designer-authored quiz signup fields and controls -->
 </form>
 ```
 
 Before Memberstack handles signup, `brand-account-controller.js` changes only
-the plan attribute on both matching forms for the active Memberstack data mode:
+the plan attribute on all matching forms for the active Memberstack data mode:
 
 | Host | `data-ms-plan:add` |
 | --- | --- |
 | `the-starters-3-0.webflow.io` (Test Data) | `pln_dorxata-test-brand-plan-777r02pa` |
 | `thestarters.com`, `www.thestarters.com` (Live Data) | `pln_free-plan-f6kn0dxz` |
 
-The standard form's live plan remains the Designer-authored fallback. The
-controller does not replace or generate either form, and it leaves an element
+The standard and modal forms' live plan remains the Designer-authored fallback.
+The controller does not replace or generate these forms, and it leaves an element
 without `data-ms-form="signup"` untouched. The quiz form must also keep
 `data-quiz-form="signup"`; this limits the broader attribute selector to the
 quiz signup surface.
@@ -50,7 +60,7 @@ On `/quiz`, the final signup form can enter the DOM after the controller starts.
 If that quiz form is not present at startup, the controller watches only for the
 quiz signup selector above, applies the hostname-specific plan when the form
 appears, and then disconnects the observer. It does not watch for late forms on
-other paths, and the standard Brand signup form keeps its startup-only behavior.
+other paths. The standard and modal Brand signup forms are configured at startup.
 
 The Build Account form remains native Webflow HTML:
 

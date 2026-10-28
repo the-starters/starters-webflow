@@ -214,6 +214,7 @@ function loadController(options = {}) {
   const securityForm = options.securityForm || makeForm('security')
   const starterProfileForm = options.starterProfileForm || null
   const signupForm = options.signupForm || null
+  const modalSignupForm = options.modalSignupForm || null
   const quizSignupForm = options.quizSignupForm || null
   const calls = []
   const tracked = []
@@ -357,13 +358,12 @@ function loadController(options = {}) {
       return null
     },
     querySelectorAll(selector) {
-      if (selector === '[data-quiz-form="signup"][data-ms-form="signup"]') {
-        return [quizSignupForm].filter(Boolean)
+      const forms = {
+        '#wf-form-Brand-Signup': signupForm,
+        '#wf-form-Signup-Form': modalSignupForm,
+        '[data-quiz-form="signup"][data-ms-form="signup"]': quizSignupForm,
       }
-      if (selector === '#wf-form-Brand-Signup, [data-quiz-form="signup"][data-ms-form="signup"]') {
-        return [signupForm, quizSignupForm].filter(Boolean)
-      }
-      return []
+      return selector.split(',').map(part => forms[part.trim()]).filter(Boolean)
     },
     addEventListener() {},
   }
@@ -709,6 +709,32 @@ test('Brand signup keeps the live Brand Free plan on production hostnames', () =
   }
 })
 
+for (const [hostname, planId] of [
+  ['the-starters-3-0.webflow.io', 'pln_dorxata-test-brand-plan-777r02pa'],
+  ['thestarters.com', 'pln_free-plan-f6kn0dxz'],
+  ['www.thestarters.com', 'pln_free-plan-f6kn0dxz'],
+]) {
+  test(`Modal Brand signup receives the matching plan on ${hostname}`, () => {
+    const modalSignupForm = makeElement()
+    modalSignupForm.setAttribute('data-ms-form', 'signup')
+    modalSignupForm.setAttribute('data-ms-plan:add', 'designer-authored-value')
+
+    loadController({ buildForm: null, hostname, modalSignupForm })
+
+    assert.equal(modalSignupForm.getAttribute('data-ms-plan:add'), planId)
+  })
+}
+
+test('Modal plan guard leaves a non-signup form untouched', () => {
+  const modalSignupForm = makeElement()
+  modalSignupForm.setAttribute('data-ms-form', 'profile')
+  modalSignupForm.setAttribute('data-ms-plan:add', 'designer-authored-value')
+
+  loadController({ buildForm: null, modalSignupForm })
+
+  assert.equal(modalSignupForm.getAttribute('data-ms-plan:add'), 'designer-authored-value')
+})
+
 test('Quiz email signup receives the live Brand Free plan', () => {
   const quizSignupForm = makeElement()
   quizSignupForm.setAttribute('data-ms-form', 'signup')
@@ -736,14 +762,12 @@ test('Late quiz signup receives Brand Free after a standard signup is configured
 
   const quizSignupForm = makeElement()
   quizSignupForm.setAttribute('data-ms-form', 'signup')
+  const querySelectorAll = environment.document.querySelectorAll
   environment.document.querySelectorAll = (selector) => {
     if (selector === '[data-quiz-form="signup"][data-ms-form="signup"]') {
       return [quizSignupForm]
     }
-    if (selector === '#wf-form-Brand-Signup, [data-quiz-form="signup"][data-ms-form="signup"]') {
-      return [signupForm, quizSignupForm]
-    }
-    return []
+    return querySelectorAll(selector)
   }
 
   assert.deepEqual(plain(environment.mutationObservers[0].observeOptions), {
@@ -760,6 +784,8 @@ test('Late quiz signup receives Brand Free after a standard signup is configured
 test('All Brand signup forms on a page receive the matching plan', () => {
   const signupForm = makeElement()
   signupForm.setAttribute('data-ms-form', 'signup')
+  const modalSignupForm = makeElement()
+  modalSignupForm.setAttribute('data-ms-form', 'signup')
   const quizSignupForm = makeElement()
   quizSignupForm.setAttribute('data-ms-form', 'signup')
 
@@ -767,11 +793,16 @@ test('All Brand signup forms on a page receive the matching plan', () => {
     buildForm: null,
     hostname: 'the-starters-3-0.webflow.io',
     signupForm,
+    modalSignupForm,
     quizSignupForm,
   })
 
   assert.equal(
     signupForm.getAttribute('data-ms-plan:add'),
+    'pln_dorxata-test-brand-plan-777r02pa',
+  )
+  assert.equal(
+    modalSignupForm.getAttribute('data-ms-plan:add'),
     'pln_dorxata-test-brand-plan-777r02pa',
   )
   assert.equal(
