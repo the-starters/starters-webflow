@@ -146,7 +146,8 @@ for (const libraryFirst of [false, true]) for (const profileType of ['Consult', 
     const settledMutations = mutations
     await pause(40)
     assert.equal(mutations, settledMutations, 'observers must stop mutating settled DOM')
-    assert.ok(requests.filter(url => url.endsWith('/profile/starter/calls/v3')).length >= 2)
+    // wf-xano >= 0.33 shares the identical public read of both call lists.
+    assert.ok(requests.filter(url => url.endsWith('/profile/starter/calls/v3')).length >= 1)
     assert.deepEqual(errors, [])
   } finally { observer.disconnect(); w.close() }
 })

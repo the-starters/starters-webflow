@@ -65,6 +65,7 @@
   'use strict';
 
   const headerToutEligibility = new Map();
+  shareXanoTaxonomyRequests();
 
   function ensureBookingModalAvailabilityGuard() {
       const guardId = 'hire-booking-modal-availability-guard';
@@ -3974,6 +3975,39 @@
       });
       reconcileHeaderTouts();
       refreshEmptySectionNav();
+  }
+
+  /* SHARED TAXONOMY READ
+     The Designer wires Tools, Skills and Industries (desktop and mobile
+     copies) to endpoint #5860 with one `kind` each, so each view made about
+     ten taxonomy calls. A call without `kind` already returns all three
+     arrays. Before wf-xano boots, point those wrappers at that one response
+     with `wf-xano-items-path`; wf-xano then sends one shared request for all
+     of them. A cached wf-xano build without that feature keeps the per-kind
+     attributes. The Services Retainer wrapper moves to its canonical endpoint
+     here as well, so it never sends a taxonomy request before the adapter
+     below runs. Wrappers that wf-xano already booted are left unchanged. */
+  function shareXanoTaxonomyRequests() {
+      const taxonomySource = 'KZf7nFnk:profile/starter/taxonomy/v3';
+      const sharedKinds = ['tools', 'skills', 'industries'];
+      const wfx = window.WfXano;
+      const itemsPath = !!(wfx && !Array.isArray(wfx) && wfx.features && wfx.features.itemsPath === true);
+      document.querySelectorAll('[wf-xano-element="wrapper"]').forEach(function (root) {
+          if (root.__wfXano || root.getAttribute('wf-xano-source') !== taxonomySource) return;
+          const kind = String(root.getAttribute('wf-xano-param-kind') || '').trim().toLowerCase();
+          if (itemsPath && sharedKinds.indexOf(kind) !== -1) {
+              root.removeAttribute('wf-xano-param-kind');
+              root.setAttribute('wf-xano-items-path', kind);
+              return;
+          }
+          if (kind === 'retainer' && root.closest('#services') &&
+              root.getAttribute('wf-xano-instance') === 'starter-retainer' &&
+              root.getAttribute('wf-xano-defer') !== 'true') {
+              root.setAttribute('wf-xano-source', 'KZf7nFnk:profile/starter/retainer/v3');
+              root.removeAttribute('wf-xano-param-kind');
+              root.setAttribute('data-retainer-source-upgraded', 'true');
+          }
+      });
   }
 
   /* XANO RETAINER CARD

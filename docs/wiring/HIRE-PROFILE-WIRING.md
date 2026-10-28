@@ -31,6 +31,15 @@ and `clients` kinds now render canonical rows without waiting for Webflow CMS
 projection. `hire-profile.js` only neutralizes unresolved custom-Company links
 that do not yet have a public Company page.
 
+The Tools, Skills and Industries wrappers (desktop and mobile copies) share
+one `#5860` read. Before wf-xano boots, `hire-profile.js` removes their
+`wf-xano-param-kind` and sets `wf-xano-items-path` to the same kind, but only
+when `WfXano.features.itemsPath` is true (wf-xano 0.33.0 or later). wf-xano
+then sends one request without `kind` for all six lists. Work Histories,
+Clients and Services keep their own `kind` request. The Services Retainer
+wrapper moves to endpoint `#5899` at the same time, so it sends no taxonomy
+request. A cached older wf-xano build keeps the authored per-kind requests.
+
 ## Install
 
 The premade-profile claim candidate has a separate, security-sensitive release

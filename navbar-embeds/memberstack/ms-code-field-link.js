@@ -8,7 +8,12 @@
   var MEMBER_ID_PATTERN = /^mem_(?:sb_)?[A-Za-z0-9]+$/
   var MEMBERSTACK_TIMEOUT_MS = 2000
   var MEMBERSTACK_POLL_MS = 100
+  // Poll fast while a new profile is likely to publish soon, then slow down,
+  // and stop after about 10 minutes. A hidden tab never polls.
   var PROFILE_POLL_MS = 10000
+  var PROFILE_POLL_FAST_TRIES = 5
+  var PROFILE_POLL_SLOW_MS = 60000
+  var PROFILE_POLL_MAX_MS = 10 * 60 * 1000
   var PROFILE_PUBLISHING_LABEL = 'View Profile (Publishing)'
   var boundElements = new WeakSet()
 
@@ -105,7 +110,10 @@
     var publishedLabel = element.textContent || 'View Profile'
     var timerPending = false
     var requestPending = false
+    var waitingForVisible = false
     var stopped = false
+    var tries = 0
+    var startedAt = Date.now()
 
     setProfileDisabled(element, PROFILE_PUBLISHING_LABEL)
     element.addEventListener('click', function (event) {
@@ -119,13 +127,34 @@
       return element.isConnected !== false
     }
 
+    function hidden() {
+      return document.hidden === true
+    }
+
+    function watchWhenVisible() {
+      if (waitingForVisible || typeof document.addEventListener !== 'function') return
+      waitingForVisible = true
+      document.addEventListener('visibilitychange', function onVisible() {
+        if (hidden()) return
+        if (typeof document.removeEventListener === 'function') {
+          document.removeEventListener('visibilitychange', onVisible)
+        }
+        waitingForVisible = false
+        watch()
+      })
+    }
+
     function schedule() {
       if (stopped || timerPending || !connected()) return
+      if (Date.now() - startedAt >= PROFILE_POLL_MAX_MS) {
+        stopped = true
+        return
+      }
       timerPending = true
       window.setTimeout(function () {
         timerPending = false
         watch()
-      }, PROFILE_POLL_MS)
+      }, tries < PROFILE_POLL_FAST_TRIES ? PROFILE_POLL_MS : PROFILE_POLL_SLOW_MS)
     }
 
     function finish() {
@@ -135,6 +164,10 @@
 
     function watch() {
       if (stopped || requestPending || !connected()) return
+      if (hidden()) {
+        watchWhenVisible()
+        return
+      }
       requestPending = true
 
       waitForMemberstackReady()
@@ -148,6 +181,7 @@
           var memberId = member && typeof member.id === 'string' ? member.id.trim() : ''
           if (!MEMBER_ID_PATTERN.test(memberId)) return null
 
+          tries += 1
           return fetch(SLUG_RESOLVER_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },

@@ -91,7 +91,7 @@ function load(options) {
   let maxFetchesPending = 0
   const context = {
     URL,
-    Date,
+    Date: options.Date || Date,
     Promise,
     setTimeout(callback, delay) {
       timers.push({ callback, delay })
@@ -99,9 +99,13 @@ function load(options) {
     },
     document: {
       readyState: options.readyState || 'loading',
+      hidden: options.hidden === true,
       documentElement: {},
       addEventListener(type, listener) {
         listeners.set(type, listener)
+      },
+      removeEventListener(type, listener) {
+        if (listeners.get(type) === listener) listeners.delete(type)
       },
       querySelectorAll(selector) {
         assert.equal(selector, '[ms-code-field-link]')
@@ -147,6 +151,7 @@ function load(options) {
   if (context.document.readyState === 'loading') listeners.get('DOMContentLoaded')()
   return {
     context,
+    listeners,
     links,
     requests,
     timers,
@@ -444,4 +449,87 @@ test('View Profile binds when the navbar link is added after startup', async () 
   assert.equal(link.getAttribute('aria-disabled'), 'true')
   await flush()
   assert.equal(result.requests.length, 1)
+})
+
+function fakeClock() {
+  let now = 1_000_000
+  class FakeDate extends Date {
+    static now() {
+      return now
+    }
+  }
+  return {
+    Date: FakeDate,
+    advance(ms) {
+      now += ms
+    },
+  }
+}
+
+async function runTimer(result, clock) {
+  const timer = result.timers.shift()
+  clock.advance(timer.delay)
+  timer.callback()
+  await flush()
+  return timer.delay
+}
+
+test('View Profile backs off to 60 s after five tries and stops after about 10 minutes', async () => {
+  const link = new Link({ href: '#', 'ms-code-field-link': 'freelancer-profile-url' })
+  const clock = fakeClock()
+  const result = load({
+    links: [link],
+    Date: clock.Date,
+    currentMember: { id: 'mem_slow123' },
+    response: { ok: true, json: async () => ({ slug: '' }) },
+  })
+
+  await flush()
+  const delays = []
+  while (result.timers.length) delays.push(await runTimer(result, clock))
+
+  // Five tries 10 s apart, then one try per 60 s.
+  assert.deepEqual(delays.slice(0, 4), [10000, 10000, 10000, 10000])
+  assert.ok(delays.slice(4).every((delay) => delay === 60000))
+  const elapsed = delays.reduce((sum, delay) => sum + delay, 0)
+  assert.ok(elapsed >= 10 * 60 * 1000 && elapsed < 11 * 60 * 1000, 'polling stops after about 10 minutes')
+  assert.equal(result.requests.length, delays.length + 1)
+  assert.ok(result.requests.length <= 15, 'one page view makes at most 15 resolver calls')
+  assert.equal(link.textContent, 'View Profile (Publishing)')
+  assert.equal(link.getAttribute('aria-disabled'), 'true')
+})
+
+test('View Profile does not poll while the tab is hidden and resumes when it is visible', async () => {
+  const link = new Link({ href: '#', 'ms-code-field-link': 'freelancer-profile-url' })
+  const result = load({
+    links: [link],
+    hidden: true,
+    currentMember: { id: 'mem_hidden123' },
+    responses: [
+      { ok: true, json: async () => ({ slug: '' }) },
+      { ok: true, json: async () => ({ slug: 'visible-profile' }) },
+    ],
+  })
+
+  await flush()
+  assert.equal(result.requests.length, 0)
+  assert.equal(result.timers.length, 0)
+  assert.equal(link.textContent, 'View Profile (Publishing)')
+
+  result.context.document.hidden = false
+  result.listeners.get('visibilitychange')()
+  await flush()
+  assert.equal(result.requests.length, 1)
+  assert.equal(result.listeners.has('visibilitychange'), false)
+
+  result.context.document.hidden = true
+  result.timers.shift().callback()
+  await flush()
+  assert.equal(result.requests.length, 1, 'a timer that fires in a hidden tab does not fetch')
+
+  result.context.document.hidden = false
+  result.listeners.get('visibilitychange')()
+  await flush()
+  assert.equal(result.requests.length, 2)
+  assert.equal(link.href, '/hire/visible-profile')
 })
