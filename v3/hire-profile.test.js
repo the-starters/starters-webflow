@@ -1885,8 +1885,10 @@ test('the authored wf-xano Retainer replaces the runtime fallback after a canoni
   assert.equal(retainer.wrapper.getAttribute('wf-xano-source'), 'KZf7nFnk:profile/starter/retainer/v3')
   assert.equal(retainer.wrapper.getAttribute('wf-xano-param-kind'), null)
   assert.equal(retainer.wrapper.getAttribute('data-retainer-source-upgraded'), 'true')
-  assert.equal(wfx.destroyCalls(), 1)
-  assert.equal(wfx.initCalls(), 1)
+  // The source moved before wf-xano booted, so no taxonomy request was sent
+  // and the instance needs no destroy/init cycle.
+  assert.equal(wfx.destroyCalls(), 0)
+  assert.equal(wfx.initCalls(), 0)
 
   wfx.emit({
     items: [{
@@ -11036,3 +11038,94 @@ test('a claimed Starter never shows a not-available paid price, even when one is
   assert.equal(xano.paid.root.getAttribute('data-call-display-only'), null)
   assert.notEqual(xano.paid.price.getAttribute('data-millify'), '500')
 })
+
+test('an already-booted Retainer wrapper is still upgraded through destroy/init', async () => {
+  const page = makePage()
+  const retainer = addXanoRetainerFixture(page)
+  retainer.wrapper.__wfXano = {}
+  const wfx = makeRetainerWfXanoFixture(retainer.wrapper)
+  const context = makeContext({
+    page,
+    record: { rate: 0, 'retainer-rate': '10000', 'retainer-enabled': true },
+    wfXano: wfx.api,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(retainer.wrapper.getAttribute('wf-xano-source'), 'KZf7nFnk:profile/starter/retainer/v3')
+  assert.equal(retainer.wrapper.getAttribute('wf-xano-param-kind'), null)
+  assert.equal(wfx.destroyCalls(), 1)
+  assert.equal(wfx.initCalls(), 1)
+})
+
+function addTaxonomyWrappers(page) {
+  const kinds = ['tools', 'skills', 'industries', 'tools', 'skills', 'industries', 'work_histories', 'clients', 'services']
+  return kinds.map((kind) => {
+    const wrapper = makeElement('div', {
+      'wf-xano-element': 'wrapper',
+      'wf-xano-instance': 'starter-' + kind.replace('_', '-'),
+      'wf-xano-source': 'KZf7nFnk:profile/starter/taxonomy/v3',
+      'wf-xano-method': 'GET',
+      'wf-xano-auth': 'none',
+      'wf-xano-param-starter_id': '424',
+      'wf-xano-param-kind': kind,
+    })
+    page.root.appendChild(wrapper)
+    return { kind, wrapper }
+  })
+}
+
+test('Tools, Skills and Industries share one taxonomy response when wf-xano supports items-path', async () => {
+  const page = makePage()
+  const wrappers = addTaxonomyWrappers(page)
+  const context = makeContext({
+    page,
+    record: {},
+    wfXano: { features: { sharedGet: true, itemsPath: true }, push() {}, get: () => null },
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  wrappers.forEach(({ kind, wrapper }) => {
+    if (['tools', 'skills', 'industries'].includes(kind)) {
+      assert.equal(wrapper.getAttribute('wf-xano-param-kind'), null, kind + ' drops its per-kind param')
+      assert.equal(wrapper.getAttribute('wf-xano-items-path'), kind)
+    } else {
+      assert.equal(wrapper.getAttribute('wf-xano-param-kind'), kind, kind + ' keeps its own request')
+      assert.equal(wrapper.getAttribute('wf-xano-items-path'), null)
+    }
+    assert.equal(wrapper.getAttribute('wf-xano-param-starter_id'), '424')
+  })
+})
+
+test('taxonomy wrappers keep per-kind requests with a cached wf-xano build or after boot', async () => {
+  for (const wfXano of [[], { push() {}, get: () => null }]) {
+    const page = makePage()
+    const wrappers = addTaxonomyWrappers(page)
+    const context = makeContext({ page, record: {}, wfXano })
+    vm.createContext(context)
+    vm.runInContext(source, context)
+    await settle()
+    wrappers.forEach(({ kind, wrapper }) => {
+      assert.equal(wrapper.getAttribute('wf-xano-param-kind'), kind)
+      assert.equal(wrapper.getAttribute('wf-xano-items-path'), null)
+    })
+  }
+
+  const page = makePage()
+  const wrappers = addTaxonomyWrappers(page)
+  wrappers[0].wrapper.__wfXano = {}
+  const context = makeContext({
+    page,
+    record: {},
+    wfXano: { features: { itemsPath: true }, push() {}, get: () => null },
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+  assert.equal(wrappers[0].wrapper.getAttribute('wf-xano-param-kind'), 'tools', 'a booted wrapper is not rewritten')
+  assert.equal(wrappers[3].wrapper.getAttribute('wf-xano-items-path'), 'tools')
+})
+

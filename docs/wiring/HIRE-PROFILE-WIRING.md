@@ -31,6 +31,15 @@ and `clients` kinds now render canonical rows without waiting for Webflow CMS
 projection. `hire-profile.js` only neutralizes unresolved custom-Company links
 that do not yet have a public Company page.
 
+The Tools, Skills and Industries wrappers (desktop and mobile copies) share
+one `#5860` read. Before wf-xano boots, `hire-profile.js` removes their
+`wf-xano-param-kind` and sets `wf-xano-items-path` to the same kind, but only
+when `WfXano.features.itemsPath` is true (wf-xano 0.33.0 or later). wf-xano
+then sends one request without `kind` for all six lists. Work Histories,
+Clients and Services keep their own `kind` request. The Services Retainer
+wrapper moves to endpoint `#5899` at the same time, so it sends no taxonomy
+request. A cached older wf-xano build keeps the authored per-kind requests.
+
 ## Install
 
 The premade-profile claim candidate has a separate, security-sensitive release
@@ -807,8 +816,9 @@ The separate `starter-retainer` wf-xano wrapper owns the canonical Retainer
 card. Its public source is `KZf7nFnk:profile/starter/retainer/v3` (endpoint
 `#5899`), which returns one item only when canonical `Retainer_Enabled` is true
 and `Retainer_Rate` is positive. The published wrapper initially points at the
-shared taxonomy source. `hire-profile.js` upgrades only that named instance
-through wf-xano's public `destroy`/`init` API; it does not change endpoint
+shared taxonomy source. `hire-profile.js` repoints only that named instance
+before wf-xano boots, and upgrades an already-booted instance through wf-xano's
+public `destroy`/`init` API; it does not change endpoint
 `#5860` or its unrelated draft. Webflow owns the native wrapper and card
 template. The adapter repaints the rendered title, description, and canonical
 price. On claimed profiles, it adds the existing signup or exact project-service
