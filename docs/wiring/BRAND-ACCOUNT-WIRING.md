@@ -307,7 +307,7 @@ below, including the version-pinned fallback path.
 
 Update this query value for every Brand account controller release, and in the
 same change bump `CONTROLLER_VERSION` in `brand-account-controller.js` to the
-next build identifier (`brand-account-controller-v2` at this release, following
+next build identifier (`brand-account-controller-v3` at this release, following
 the repository's `<controller>-vN` receipt convention rather than the semver
 tag), so the diagnostic receipt and the `brand_account_email_decision` event
 identify which build actually served the member. Then publish Webflow and
@@ -322,7 +322,7 @@ new code. Before the bounded production test, verify the served content:
 
 ```bash
 curl -s "https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/brand-account-controller.js?v=RELEASE" \
-  | grep -c "brand-account-controller-v2"
+  | grep -c "brand-account-controller-v3"
 ```
 
 The released `CONTROLLER_VERSION` must be present in that output. If the served
