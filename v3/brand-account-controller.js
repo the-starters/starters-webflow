@@ -62,6 +62,7 @@
   var QUIZ_SIGNUP_FORM_SELECTOR = '[data-quiz-form="signup"][data-ms-form="signup"]'
   var BRAND_SIGNUP_FORM_SELECTOR = [
     '#wf-form-Brand-Signup',
+    '#wf-form-Signup-Form',
     QUIZ_SIGNUP_FORM_SELECTOR,
   ].join(', ')
   var LIVE_BRAND_PLAN_ID = 'pln_free-plan-f6kn0dxz'
