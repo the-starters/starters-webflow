@@ -709,31 +709,21 @@ test('Brand signup keeps the live Brand Free plan on production hostnames', () =
   }
 })
 
-for (const [hostname, planId] of [
-  ['the-starters-3-0.webflow.io', 'pln_dorxata-test-brand-plan-777r02pa'],
-  ['thestarters.com', 'pln_free-plan-f6kn0dxz'],
-  ['www.thestarters.com', 'pln_free-plan-f6kn0dxz'],
+for (const hostname of [
+  'the-starters-3-0.webflow.io',
+  'thestarters.com',
+  'www.thestarters.com',
 ]) {
-  test(`Modal Brand signup receives the matching plan on ${hostname}`, () => {
+  test(`Modal Brand signup keeps its authored plan on ${hostname}`, () => {
     const modalSignupForm = makeElement()
     modalSignupForm.setAttribute('data-ms-form', 'signup')
     modalSignupForm.setAttribute('data-ms-plan:add', 'designer-authored-value')
 
     loadController({ buildForm: null, hostname, modalSignupForm })
 
-    assert.equal(modalSignupForm.getAttribute('data-ms-plan:add'), planId)
+    assert.equal(modalSignupForm.getAttribute('data-ms-plan:add'), 'designer-authored-value')
   })
 }
-
-test('Modal plan guard leaves a non-signup form untouched', () => {
-  const modalSignupForm = makeElement()
-  modalSignupForm.setAttribute('data-ms-form', 'profile')
-  modalSignupForm.setAttribute('data-ms-plan:add', 'designer-authored-value')
-
-  loadController({ buildForm: null, modalSignupForm })
-
-  assert.equal(modalSignupForm.getAttribute('data-ms-plan:add'), 'designer-authored-value')
-})
 
 test('Quiz email signup receives the live Brand Free plan', () => {
   const quizSignupForm = makeElement()
@@ -781,11 +771,12 @@ test('Late quiz signup receives Brand Free after a standard signup is configured
   assert.equal(environment.mutationObservers[0].connected, false)
 })
 
-test('All Brand signup forms on a page receive the matching plan', () => {
+test('Standard and quiz plans change while the modal keeps its authored plan', () => {
   const signupForm = makeElement()
   signupForm.setAttribute('data-ms-form', 'signup')
   const modalSignupForm = makeElement()
   modalSignupForm.setAttribute('data-ms-form', 'signup')
+  modalSignupForm.setAttribute('data-ms-plan:add', 'pln_free-plan-f6kn0dxz')
   const quizSignupForm = makeElement()
   quizSignupForm.setAttribute('data-ms-form', 'signup')
 
@@ -803,7 +794,7 @@ test('All Brand signup forms on a page receive the matching plan', () => {
   )
   assert.equal(
     modalSignupForm.getAttribute('data-ms-plan:add'),
-    'pln_dorxata-test-brand-plan-777r02pa',
+    'pln_free-plan-f6kn0dxz',
   )
   assert.equal(
     quizSignupForm.getAttribute('data-ms-plan:add'),
@@ -910,7 +901,7 @@ test('Build Account success records a privacy-safe console receipt without page 
 
   const receipt = buildForm.__startersAccountDiagnostic
   assert.equal(receipt.workflow, 'brand_account_build')
-  assert.equal(receipt.controller_version, 'brand-account-controller-v3')
+  assert.equal(receipt.controller_version, 'brand-account-controller-v4')
   assert.equal(receipt.result, 'success')
   assert.equal(receipt.request_started, true)
   assert.equal(Object.hasOwn(receipt, 'email'), false)
@@ -923,7 +914,7 @@ test('Build Account success records a privacy-safe console receipt without page 
     [{
       name: 'brand_account_email_decision',
       payload: {
-        controller_version: 'brand-account-controller-v3',
+        controller_version: 'brand-account-controller-v4',
         email_change_required: false,
         security_email_attempted: false,
       },
@@ -952,7 +943,7 @@ test('Build Account changed-email success keeps the receipt free of identity fie
   )
   const receipt = buildForm.__startersAccountDiagnostic
   assert.equal(receipt.workflow, 'brand_account_build')
-  assert.equal(receipt.controller_version, 'brand-account-controller-v3')
+  assert.equal(receipt.controller_version, 'brand-account-controller-v4')
   assert.equal(receipt.result, 'success')
   assert.equal(receipt.request_started, true)
   assert.equal(Object.hasOwn(receipt, 'email'), false)
@@ -1307,7 +1298,7 @@ test('Build Account sends one security email only after changing login email', a
     [{
       name: 'brand_account_email_decision',
       payload: {
-        controller_version: 'brand-account-controller-v3',
+        controller_version: 'brand-account-controller-v4',
         email_change_required: true,
         security_email_attempted: true,
       },
@@ -1397,7 +1388,7 @@ test('Build Account with an unreadable login email writes no auth email and send
     [{
       name: 'brand_account_email_decision',
       payload: {
-        controller_version: 'brand-account-controller-v3',
+        controller_version: 'brand-account-controller-v4',
         email_change_required: false,
         security_email_attempted: false,
       },
@@ -1477,7 +1468,7 @@ test('changed-email reset failure keeps durable completion and provides recovery
     [{
       name: 'brand_account_email_decision',
       payload: {
-        controller_version: 'brand-account-controller-v3',
+        controller_version: 'brand-account-controller-v4',
         email_change_required: true,
         security_email_attempted: true,
       },

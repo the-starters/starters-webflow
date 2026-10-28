@@ -1,6 +1,6 @@
 /**
  * Brand signup plan, Build Account, and guarded identity email controller.
- * @release v1.59.726
+ * @release v1.59.727
  *
  * Authority contract:
  *   - Memberstack owns identity, login email, custom fields, and profile image.
@@ -62,7 +62,6 @@
   var QUIZ_SIGNUP_FORM_SELECTOR = '[data-quiz-form="signup"][data-ms-form="signup"]'
   var BRAND_SIGNUP_FORM_SELECTOR = [
     '#wf-form-Brand-Signup',
-    '#wf-form-Signup-Form',
     QUIZ_SIGNUP_FORM_SELECTOR,
   ].join(', ')
   var LIVE_BRAND_PLAN_ID = 'pln_free-plan-f6kn0dxz'
@@ -76,7 +75,7 @@
   // by which time the Memberstack webhook has stamped brands_v3 for real.
   var BRAND_PROFILE_MARKER_KEY = 'thestarters:v3-brand-profile-completed'
   var BRAND_PROFILE_MARKER_VALUE = '1'
-  var CONTROLLER_VERSION = 'brand-account-controller-v3'
+  var CONTROLLER_VERSION = 'brand-account-controller-v4'
   var WORKFLOW_DIAGNOSTICS_TIMEOUT_MS = 2000
   var NATIVE_FORM_DIAGNOSTICS_SCRIPT = 'native-form-diagnostics.js'
   var passwordEmailAttempts = new WeakMap()
