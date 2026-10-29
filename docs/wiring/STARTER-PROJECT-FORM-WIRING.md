@@ -169,7 +169,10 @@ The controller binds these existing elements:
   controller enables only this Confirm control while the form is `ready` or
   after a retryable submit failure. It keeps Confirm disabled while the form is
   idle, loading, blocked, submitting, or successful, and after validation,
-  authorization, conflict, or session failures. The controller also reasserts
+  authorization, conflict, or session failures. After a local validation
+  failure or a `400`, `409`, or `422` reply, the next `input` or `change` in
+  the form re-enables Confirm; authorization and session failures stay
+  disabled. The controller also reasserts
   that state if a delayed Turnstile update changes the authored control;
 - the controller adds `data-starters-turnstile-fix="true"` to that native form
   during boot so the sitewide Turnstile repair targets the form, not a visual
