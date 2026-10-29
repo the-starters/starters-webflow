@@ -1025,6 +1025,7 @@
   function renderEarningsTiles(tiles, view, reason, retry) {
     const primary = tiles.primary || tiles.ready || tiles.disconnected
     const state = heroTileState(view, reason, retry)
+    tiles.popupRetry = Boolean(view === 'error' && retry && retry.popupBlocked)
 
     tiles.all.forEach(function (element) {
       show(element, false)
@@ -1282,6 +1283,7 @@
         if (!navigateStripeTab(stripeTab, destination)) {
           throw new Error('Unable to open the connected Stripe account')
         }
+        if (earningsTiles.popupRetry) renderEarningsTiles(earningsTiles, 'ready')
         emit('starterStripeConnectDashboard', { mode: result.mode || '' })
         return true
       } catch (error) {

@@ -2581,6 +2581,60 @@ test('a blocked Earnings popup leaves one retry tile visible (A8)', async () => 
   }
 })
 
+test('a successful retry after a blocked popup restores the Earnings tile (A8)', async () => {
+  const previous = {
+    fetch: global.fetch,
+    getXanoAuthToken: global.getXanoAuthToken,
+    memberstack: global.$memberstackDom,
+    open: global.open,
+  }
+  const { root } = stripeRoot()
+  const connect = new FakeElement()
+  const history = new FakeElement('A')
+  const title = new FakeElement()
+  const description = new FakeElement()
+  history.children.set('.dash-hero_button-title', title)
+  history.children.set('.dash-hero_button-description', description)
+  const earningsTiles = api.resolveEarningsTiles([connect, history])
+  const runExclusive = api.createExclusiveRunner()
+  api.renderEarningsTiles(earningsTiles, 'ready')
+  global.getXanoAuthToken = async () => 'xano-token'
+  global.$memberstackDom = {
+    getCurrentMember: async () => ({ data: { id: 'member-123' } }),
+  }
+  global.fetch = async () =>
+    response({
+      connected: true,
+      account_id: 'acct_test123',
+      mode: 'express',
+      url: 'https://connect.stripe.com/express/acct_test123/login/test',
+    })
+  global.open = () => null
+
+  try {
+    assert.equal(
+      await api.openDashboardInNewTab(runExclusive, history, [root], 'member-123', earningsTiles),
+      false,
+    )
+    assert.equal(title.textContent, 'Try Again')
+
+    global.open = () => ({ closed: false, location: { replace: () => {} } })
+    assert.equal(
+      await api.openDashboardInNewTab(runExclusive, history, [root], 'member-123', earningsTiles),
+      true,
+    )
+    assert.equal(title.textContent, 'Earnings')
+    assert.equal(description.textContent, 'Payment history & payouts')
+    assert.equal(history.getAttribute('aria-disabled'), 'false')
+    assert.equal(history.getAttribute('data-stripe-connect-hero-action'), 'dashboard')
+  } finally {
+    global.fetch = previous.fetch
+    global.getXanoAuthToken = previous.getXanoAuthToken
+    global.$memberstackDom = previous.memberstack
+    global.open = previous.open
+  }
+})
+
 test('staging query flags do not bypass authenticated Dashboard access', async () => {
   const previous = {
     fetch: global.fetch,
