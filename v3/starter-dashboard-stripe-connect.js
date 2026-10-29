@@ -955,10 +955,9 @@
   // hidden. A blocked pop-up sent no request, so the tile itself becomes the retry.
   // Request failures stay fail-closed, with copy that points to a reload.
   function heroTileState(view, reason, retry) {
-    if (view === 'error' && retry && retry.popupBlocked &&
-      (retry.action === 'dashboard' || retry.action === 'start')) {
+    if (view === 'error' && retry && retry.popupBlocked && retry.action === 'dashboard') {
       return {
-        action: retry.action,
+        action: 'dashboard',
         description: 'Allow pop-ups for this site, then click',
         enabled: true,
         title: 'Try Again',

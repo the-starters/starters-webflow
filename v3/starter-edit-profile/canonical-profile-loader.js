@@ -29,35 +29,62 @@
     var PROFILE_LOAD_TIMEOUT_MS = 30000;
     var PROFILE_LOAD_ERROR_TEXT = 'Your profile could not load. Reload the page to try again.';
 
-    // Shows a notice above the loader. An authored [data-profile-load-error] element wins;
-    // otherwise a fixed banner is added. Runs once per page.
-    function showProfileLoadError() {
-        if (typeof document === 'undefined' || !document.body) return null;
-        var authored = document.querySelector('[data-profile-load-error]');
-        if (authored) {
-            authored.textContent = PROFILE_LOAD_ERROR_TEXT;
-            authored.setAttribute('role', 'alert');
-            authored.style.display = '';
-            return authored;
-        }
-        var existing = document.querySelector('[data-profile-load-error-banner]');
-        if (existing) return existing;
-        var banner = document.createElement('div');
-        banner.setAttribute('data-profile-load-error-banner', '');
-        banner.setAttribute('role', 'alert');
-        banner.style.cssText = 'position:fixed;left:16px;right:16px;top:16px;z-index:2147483000;padding:16px;border-radius:8px;background:#fff;color:#111;box-shadow:0 4px 24px rgba(0,0,0,.2);font:16px/1.4 sans-serif;text-align:center';
-        var text = document.createElement('p');
-        text.style.margin = '0 0 12px';
-        text.textContent = PROFILE_LOAD_ERROR_TEXT;
+    var profileLoadErrorNotice = null;
+
+    function reloadProfilePage(event) {
+        if (event && typeof event.preventDefault === 'function') event.preventDefault();
+        window.location.reload();
+    }
+
+    function createProfileReloadButton() {
         var button = document.createElement('button');
         button.type = 'button';
         button.textContent = 'Reload';
         button.style.cssText = 'padding:8px 20px;border:0;border-radius:6px;background:#111;color:#fff;font:inherit;cursor:pointer';
-        button.addEventListener('click', function () { window.location.reload(); });
-        banner.appendChild(text);
-        banner.appendChild(button);
-        document.body.appendChild(banner);
-        return banner;
+        return button;
+    }
+
+    // Shows a notice above the loader. An authored [data-profile-load-error] element wins;
+    // otherwise a fixed banner is added. Runs once per page.
+    function showProfileLoadError() {
+        if (profileLoadErrorNotice) return profileLoadErrorNotice;
+        if (typeof document === 'undefined' || !document.body) return null;
+        var notice = document.querySelector('[data-profile-load-error]');
+        var reload = null;
+        if (notice) {
+            var message = notice.querySelector('[data-profile-load-error-message]');
+            if (message) {
+                message.textContent = PROFILE_LOAD_ERROR_TEXT;
+                reload = notice.querySelector('[data-profile-load-error-reload]');
+            } else {
+                notice.textContent = PROFILE_LOAD_ERROR_TEXT;
+            }
+            if (!reload) reload = notice.appendChild(createProfileReloadButton());
+            notice.style.display = 'block';
+        } else {
+            notice = document.createElement('div');
+            notice.setAttribute('data-profile-load-error-banner', '');
+            notice.style.cssText = 'position:fixed;left:16px;right:16px;top:16px;z-index:2147483000;padding:16px;border-radius:8px;background:#fff;color:#111;box-shadow:0 4px 24px rgba(0,0,0,.2);font:16px/1.4 sans-serif;text-align:center';
+            var text = document.createElement('p');
+            text.style.margin = '0 0 12px';
+            text.textContent = PROFILE_LOAD_ERROR_TEXT;
+            notice.appendChild(text);
+            reload = notice.appendChild(createProfileReloadButton());
+            document.body.appendChild(notice);
+        }
+        reload.addEventListener('click', reloadProfilePage);
+        notice.setAttribute('role', 'alert');
+        profileLoadErrorNotice = notice;
+        return notice;
+    }
+
+    // A read that outlives the watchdog but then succeeds must not leave the notice up.
+    function hideProfileLoadError() {
+        var notice = profileLoadErrorNotice;
+        if (!notice) return;
+        profileLoadErrorNotice = null;
+        if (notice.hasAttribute('data-profile-load-error-banner')) notice.remove();
+        else notice.style.display = 'none';
     }
 
     // The Free and Paid Call Settings controllers own these five controls from
@@ -266,6 +293,7 @@
                             profileDirtyState.finishHydration();
                             profileHydrated = true;
                             clearTimeout(profileLoadWatchdog);
+                            hideProfileLoadError();
 
                             setTimeout(() => {
                                 setLoader(false);
