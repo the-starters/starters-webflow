@@ -4255,7 +4255,12 @@ action change with canonical status: `Checking Stripe` while loading, `Get Paid
 onboarding` while incomplete, a disabled `Under Review / Stripe is reviewing
 your account` state while under review, `Earnings / Payment history & payouts`
 while ready, and a disabled `Stripe Unavailable / Use Try Again above` state on
-an error. A verified account-owner conflict keeps that hero disabled with
+an error. Because the Action Item stays hidden for a connected Starter, the
+Earnings dashboard action handles its own failures on the tile: a blocked
+pop-up (no request sent) makes the tile an enabled `Try Again / Allow pop-ups
+for this site, then click` that re-runs the dashboard action and returns to
+`Earnings` once the dashboard opens, while a failed dashboard request leaves it
+disabled as `Stripe Unavailable / Reload the page to try again`. A verified account-owner conflict keeps that hero disabled with
 `Stripe Unavailable / Use Connect a different account above` while the error
 card exposes the matching `Connect a different account` recovery action. The
 disconnected and incomplete states start the same guarded OAuth/onboarding flow

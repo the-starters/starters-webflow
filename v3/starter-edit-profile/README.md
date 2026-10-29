@@ -172,6 +172,20 @@ with its label; picker validity follows the group contracts below. The loader
 writes only matching named fields inside their owning step and dispatches the
 same native hydration events as other restored controls.
 
+### Profile load failure
+
+When the canonical profile read fails, returns no profile, or has not hydrated
+within 30 seconds, `canonical-profile-loader.js` keeps the full-page loader up,
+because an empty form must not be saveable over the real profile, and shows
+`Your profile could not load. Reload the page to try again.` with a Reload
+control. An optional authored `[data-profile-load-error]` element is used when
+present: the controller sets `display: block`, writes the text into a
+`[data-profile-load-error-message]` child (or replaces the element's text when
+there is none), and reuses an authored `[data-profile-load-error-reload]` or
+appends a Reload button. Without an authored element it adds a fixed
+`[data-profile-load-error-banner]`. A read that succeeds after the 30-second
+notice hides the authored element or removes the banner.
+
 ### Unsaved-change warning
 
 `canonical-profile-loader.js` owns one page-level dirty-state controller. Canonical

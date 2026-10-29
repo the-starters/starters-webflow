@@ -1483,6 +1483,29 @@ test('Confirm stays disabled for non-retryable errors', async () => {
   }
 })
 
+test('an edit after a fixable submit error turns Confirm back on (A7)', async () => {
+  const brand = [{ counterparty_id: 31, company_name: 'Brand', hiring_manager_name: 'Brand Member' }]
+  const cases = [
+    { name: 'validation', load: { counterparties: brand, validationError: () => 'Invalid details' }, enabled: true },
+    { name: '422 reply', load: { counterparties: brand, projectDirectSubmit: async () => { throw Object.assign(new Error('bad'), { status: 422 }) } }, enabled: true },
+    { name: '409 reply', load: { counterparties: brand, projectDirectSubmit: async () => { throw Object.assign(new Error('dup'), { status: 409 }) } }, enabled: true },
+    { name: '401 reply', load: { counterparties: brand, projectDirectSubmit: async () => { throw Object.assign(new Error('expired'), { status: 401 }) } }, enabled: false },
+  ]
+  for (const scenario of cases) {
+    const fixture = formFixture()
+    const confirm = attachConfirm(fixture.form)
+    const loaded = load({ fixture, ...scenario.load })
+    await loaded.api.loadOptions(loaded.form, loaded.window)
+    assert.equal(await loaded.api.submit(loaded.form, loaded.window, loaded.document), false, scenario.name)
+    assert.equal(loaded.form.getAttribute('data-starter-project-status'), 'error', scenario.name)
+    assert.equal(confirm.disabled, true, scenario.name + ' before the edit')
+    loaded.form.fields.select.value = '31'
+    loaded.form.fields.select.dispatchEvent(new loaded.window.Event('input', { bubbles: true }))
+    assert.equal(confirm.disabled, !scenario.enabled, scenario.name + ' after the edit')
+    assert.equal(confirm.getAttribute('aria-disabled'), scenario.enabled ? 'false' : 'true', scenario.name)
+  }
+})
+
 test('Review Edit fee change refreshes preview controls and preserves authored disabled fields', async () => {
   const loaded = load({
     counterparties: [{ counterparty_id: 31, company_name: 'Brand', hiring_manager_name: 'Brand Member' }],

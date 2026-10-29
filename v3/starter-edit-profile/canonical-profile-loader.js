@@ -26,6 +26,67 @@
         };
     }
 
+    var PROFILE_LOAD_TIMEOUT_MS = 30000;
+    var PROFILE_LOAD_ERROR_TEXT = 'Your profile could not load. Reload the page to try again.';
+
+    var profileLoadErrorNotice = null;
+
+    function reloadProfilePage(event) {
+        if (event && typeof event.preventDefault === 'function') event.preventDefault();
+        window.location.reload();
+    }
+
+    function createProfileReloadButton() {
+        var button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = 'Reload';
+        button.style.cssText = 'padding:8px 20px;border:0;border-radius:6px;background:#111;color:#fff;font:inherit;cursor:pointer';
+        return button;
+    }
+
+    // Shows a notice above the loader. An authored [data-profile-load-error] element wins;
+    // otherwise a fixed banner is added. Runs once per page.
+    function showProfileLoadError() {
+        if (profileLoadErrorNotice) return profileLoadErrorNotice;
+        if (typeof document === 'undefined' || !document.body) return null;
+        var notice = document.querySelector('[data-profile-load-error]');
+        var reload = null;
+        if (notice) {
+            var message = notice.querySelector('[data-profile-load-error-message]');
+            if (message) {
+                message.textContent = PROFILE_LOAD_ERROR_TEXT;
+                reload = notice.querySelector('[data-profile-load-error-reload]');
+            } else {
+                notice.textContent = PROFILE_LOAD_ERROR_TEXT;
+            }
+            if (!reload) reload = notice.appendChild(createProfileReloadButton());
+            notice.style.display = 'block';
+        } else {
+            notice = document.createElement('div');
+            notice.setAttribute('data-profile-load-error-banner', '');
+            notice.style.cssText = 'position:fixed;left:16px;right:16px;top:16px;z-index:2147483000;padding:16px;border-radius:8px;background:#fff;color:#111;box-shadow:0 4px 24px rgba(0,0,0,.2);font:16px/1.4 sans-serif;text-align:center';
+            var text = document.createElement('p');
+            text.style.margin = '0 0 12px';
+            text.textContent = PROFILE_LOAD_ERROR_TEXT;
+            notice.appendChild(text);
+            reload = notice.appendChild(createProfileReloadButton());
+            document.body.appendChild(notice);
+        }
+        reload.addEventListener('click', reloadProfilePage);
+        notice.setAttribute('role', 'alert');
+        profileLoadErrorNotice = notice;
+        return notice;
+    }
+
+    // A read that outlives the watchdog but then succeeds must not leave the notice up.
+    function hideProfileLoadError() {
+        var notice = profileLoadErrorNotice;
+        if (!notice) return;
+        profileLoadErrorNotice = null;
+        if (notice.hasAttribute('data-profile-load-error-banner')) notice.remove();
+        else notice.style.display = 'none';
+    }
+
     // The Free and Paid Call Settings controllers own these five controls from
     // canonical call state and any unconsumed Build Profile receipt. The legacy
     // profile row no longer writes them, so restoring it must not repaint them.
@@ -192,6 +253,13 @@
 
             // `var activeProfile` and `function createEmptyProfile()` - are in global page codes
 
+            // A6 (2026-10-29): a failed or hung profile read showed an endless loader with no message.
+            // The loader stays up (an empty form must not be saveable), and a visible notice asks for a reload.
+            let profileHydrated = false;
+            const profileLoadWatchdog = setTimeout(() => {
+                if (!profileHydrated) showProfileLoadError();
+            }, PROFILE_LOAD_TIMEOUT_MS);
+
             initProfileDraft();
 
             async function initProfileDraft() {
@@ -199,6 +267,7 @@
                     const xanoRawProfile = await getXanoProfileSafe();
                     if (!xanoRawProfile) {
                         console.error('XANO profile not found for member:', MEMBER.id);
+                        showProfileLoadError();
                         return;
                     }
 
@@ -222,6 +291,9 @@
                             restoreFieldsData(activeProfile);
                             updateCounterFields();
                             profileDirtyState.finishHydration();
+                            profileHydrated = true;
+                            clearTimeout(profileLoadWatchdog);
+                            hideProfileLoadError();
 
                             setTimeout(() => {
                                 setLoader(false);
@@ -230,6 +302,7 @@
                     }, 25);
                 } catch (error) {
                     console.error('Profile draft init error:', error);
+                    showProfileLoadError();
                 }
             }
 

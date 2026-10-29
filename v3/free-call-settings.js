@@ -19,6 +19,7 @@
   const FOREIGN_CARD_SELECTOR =
     '[data-call-settings-element="panel"], [data-availability-element="call-form-wrapper"], [data-call-settings-service], [data-availability-element="call-free-form"], [data-availability-element="call-paid-form"]'
   const STATUS_ATTRIBUTE = 'data-free-call-settings'
+  const BLOCKER_ATTRIBUTE = 'data-free-call-blocker'
   const FIXED_DURATION_MINUTES = 30
   const ROOT_WAIT_TIMEOUT_MS = 10000
   const SITE_MEMBER_READY_WAIT_MS = 2000
@@ -550,9 +551,42 @@
     )
   }
 
+  // A9 (2026-10-29), same as the Paid card B14 fix: with no active service, Update
+  // stays disabled until Calendar and Availability are ready, so the Starter saw a
+  // grey button with no reason. Paint the reason into the authored native message box.
+  function setupBlocker(value) {
+    if (editProfileMode || !value || canSubmitSettings(value)) return null
+    return {
+      reason: 'calendar',
+      message: 'To turn on free calls, first connect your calendar and set your availability.',
+    }
+  }
+
+  function paintSetupBlocker() {
+    const nativeError = findNativeError()
+    if (!nativeError) return
+    const blocker = busy ? null : setupBlocker(settings)
+    if (!blocker) {
+      if (nativeError.getAttribute(BLOCKER_ATTRIBUTE)) hideNativeError()
+      return
+    }
+    nativeErrorContent(nativeError).textContent = blocker.message
+    ensureBusyStyles()
+    nativeError.setAttribute(BLOCKER_ATTRIBUTE, blocker.reason)
+    nativeError.setAttribute('data-call-settings-error-box', '')
+    if (nativeError.parentElement) {
+      nativeError.parentElement.setAttribute('data-call-settings-error-container', 'true')
+    }
+    nativeError.setAttribute('data-call-settings-error-visible', 'true')
+    nativeError.style.display = 'block'
+    nativeError.setAttribute('aria-hidden', 'false')
+    nativeError.setAttribute('role', 'status')
+  }
+
   function hideNativeError() {
     const nativeError = findNativeError()
     if (!nativeError) return
+    if (nativeError.getAttribute(BLOCKER_ATTRIBUTE)) nativeError.setAttribute(BLOCKER_ATTRIBUTE, '')
     nativeErrorContent(nativeError).textContent = ''
     if (nativeError.parentElement) {
       nativeError.parentElement.setAttribute('data-call-settings-error-container', 'false')
@@ -721,12 +755,16 @@
         : qs('button, input', button)
       if (nativeButton) nativeButton.disabled = nextBusy
     })
-    if (!nextBusy && settings) setActionEnabled(action('save'), canSubmitSettings(settings))
+    if (!nextBusy && settings) {
+      setActionEnabled(action('save'), canSubmitSettings(settings))
+      if (document.documentElement.getAttribute(STATUS_ATTRIBUTE) !== 'error') paintSetupBlocker()
+    }
   }
 
   function refreshSubmitEnabled() {
     if (busy || !settings) return
     setActionEnabled(action('save'), canSubmitSettings(settings))
+    paintSetupBlocker()
   }
 
   function clearRenderedState(message) {
@@ -930,6 +968,7 @@
           : 'Connect your calendar and set availability before you turn on free calls.',
     )
     setStatus('ready')
+    paintSetupBlocker()
     emit('starterFreeCallSettingsChanged', {
       active: active,
       bookable: bookable,

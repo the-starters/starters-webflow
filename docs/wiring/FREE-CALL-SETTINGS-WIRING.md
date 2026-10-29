@@ -162,6 +162,12 @@ block also has the site's `.hide` class, the controller marks the block with
 shared Free/Paid style can restore the block's width, height, and overflow while the error is
 visible.
 
+With no active service, Update stays disabled until Calendar and Availability read ready. Outside
+Edit Profile, the controller then paints `To turn on free calls, first connect your calendar and set
+your availability.` into the same native block, with `data-free-call-blocker="calendar"` and
+`role="status"`, so a grey Update control always shows its reason. The block clears when the
+prerequisites become ready or a service is active; a request error message takes precedence.
+
 `starterSchedulingConnectionStateChanged` triggers a non-destructive canonical re-read after the
 Calendar connection state has settled. The transient `loading` event is ignored so the page does not
 repeat the same canonical GET before final availability. It never clears the session or resets an
