@@ -9347,6 +9347,59 @@ test('cancel submits without feedback and never posts a review', async () => {
   assert.equal(reviewCount, 0, 'a cancellation must never post a review')
 })
 
+test('expired-contract project offers Cancel Project and sends cancel', async () => {
+  const dom = endProjectDom({ reason: '' })
+  let actionBody = null
+  let reviewCount = 0
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/brand/projects/mine')) {
+        return response({
+          items: [{
+            id: 675,
+            status: 'incomplete',
+            lifecycle_state: 'contract_expired',
+            contract_status: 'expired',
+            lifecycle_version: 7,
+            has_review: false,
+            starter_name: 'JP Test',
+          }],
+        })
+      }
+      if (url.includes('/projects/action/v3')) {
+        actionBody = JSON.parse(init.body)
+        return response({
+          project: { id: 675, lifecycle_state: 'canceled', lifecycle_version: 8 },
+        })
+      }
+      if (url.includes('/brand/reviews/submit')) {
+        reviewCount += 1
+        return response({ review_id: 42 })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    endProjectBridgeOptions(dom, paidBrandMember, '/brand-dashboard'),
+  )
+  assert.ok(await waitFor(() => dom.end.getAttribute('data-project-action') === 'end'))
+  assert.ok(await waitFor(() => dom.label.textContent === 'Cancel Project'))
+
+  bridge.dispatchDocument('click', clickEvent(dom.end).event)
+  assert.ok(await waitFor(() => dom.title.textContent === 'Cancel Project'))
+  assert.equal(dom.reviewGroup.style.display, 'none')
+
+  bridge.dispatchDocument('submit', {
+    target: dom.form,
+    preventDefault() {},
+    stopPropagation() {},
+  })
+  assert.ok(await waitFor(() => actionBody !== null))
+  assert.equal(actionBody.action, 'cancel')
+  assert.equal(actionBody.expected_version, 7)
+  assert.equal(reviewCount, 0, 'an expired-contract cancel must never post a review')
+})
+
 test('Starter cancel ignores hidden feedback and never posts a review', async () => {
   const dom = endProjectDom({ reason: 'stale hidden note' })
   let actionBody = null
