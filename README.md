@@ -1154,9 +1154,11 @@ The primary control's label and mutation follow canonical lifecycle state,
 except that canonical `status=pending` takes precedence over a more specific
 `lifecycle_state` and always exposes one authorized cancel action. A started
 project's End Project action always means completion for both roles; there is no
-early-end mode and no end reason is sent. Pre-activation projects cancel through
-a compact confirmation without feedback.
-The optional reason is empty; Xano records `canceled_before_activation`.
+early-end mode and no end reason is sent. Pre-activation projects (pending, or
+`lifecycle_state=contract_expired` after the contract expired unsigned) show
+Cancel Project and cancel through a compact confirmation without feedback.
+The optional reason is empty; Xano records `canceled_before_activation` for a
+pending project and `contract_expired` for an expired contract.
 Cancellation does not create a review or change ranking points. Xano #1679
 finalizes the project on the first action by either party. Kaeser changed this
 behavior on 2026-09-01 to match V2. No counterparty confirmation is required.
