@@ -26,7 +26,8 @@ versions together.
 
 It is not a sibling of [route-guard.js](../../v3/route-guard.js) and does not replace it.
 The route guard answers "may this role open this page" from Memberstack plans;
-this module answers "has this Talent already finished" from the Xano record.
+this module answers "is this Talent on the onboarding step" from the Xano
+funnel status.
 Both can run on the page; the guard runs sitewide and first.
 
 ## What it does
@@ -34,17 +35,33 @@ Both can run on the page; the guard runs sitewide and first.
 | Situation | Action |
 | --- | --- |
 | The page loads and the status check starts | Show `[data-page-spinner]`, covering the page for the length of the read |
-| `onboarding_done === true` on the member's Xano freelancer record | `location.replace('/starter-dashboard')`, leaving the spinner up through the navigation |
-| `onboarding_done` false, absent, or the envelope is empty | Hide the spinner and render the page as authored |
+| `build_profile_done === true` and `onboarding_done === true` | `location.replace('/starter-dashboard')`, leaving the spinner up through the navigation |
+| `build_profile_done === false` (Build profile not finished) | `location.replace('/build-profile/select-profile')`, leaving the spinner up through the navigation |
+| `build_profile_done === true`, `onboarding_done` not `true` | Hide the spinner and render the page as authored |
+| `build_profile_done` absent or not a boolean, or a malformed body | Hide the spinner and render the page as authored |
 | Logged out, Memberstack absent, trade failed, HTTP error, timeout | Hide the spinner and render the page as authored |
 | No `[data-page-spinner]` element on the page | Nothing; the check and the decision are unchanged |
 | Any other path, or an unapproved host | Do nothing at all (no Memberstack lookup, no spinner, no redirect) |
 
 The one endpoint it touches, on `api:KZf7nFnk` and bearer-authorized:
 
-- Read: `GET /starters_onboarding/get_freelancers` — no params, answers
-  `{"freelancer": [ <one record> ]}`, and an empty envelope for a member with no
-  row yet.
+- Read: `GET /starters_onboarding/get_build_profile_status` (#1672) — no params,
+  answers `{has_record, build_profile_done, onboarding_done, profile_type,
+  platform_status}`. This is the same read and the same strict parse as
+  [auth-route.js](AUTH-ROUTE-WIRING.md) and `v3/build-profile-redirect.js`, so
+  the three pages cannot route one member in a loop. Until 2026-10-30 this
+  module read `get_freelancers` and checked only `onboarding_done`.
+
+### Build-profile leg (2026-10-30, B71)
+
+A Starter who had not built a profile opened this page from the stage 3
+onboarding reminder email (`complete_onboarding` link), submitted the form, and
+the completion `PATCH` in
+[patch-onboarding-status.js](ONBOARDING-PATCH-STATUS-WIRING.md) failed with
+`STARTER_ONBOARDING_PROJECTION_IDENTITY_MISSING`: only the Build-profile submit
+writes the canonical slug that endpoint needs. A literal
+`build_profile_done === false` now sends the member to
+`/build-profile/select-profile` before the form can be filled.
 
 Auth is the same trade-token flow the sibling v3 modules use: the Memberstack
 JWT from `getMemberCookie()` is traded at
@@ -61,8 +78,9 @@ replaying a token Xano just rejected.
 Every failure mode leaves the page exactly as authored, spinner back down:
 logged out, Memberstack never loading, `getMemberCookie()` rejecting, a failed
 or empty token trade, a non-2xx read, a malformed envelope, a request that hangs
-past the 8-second budget. Only a literal `onboarding_done === true` redirects —
-a string `"true"`, a `1`, or a missing field does not. No DOM failure around the
+past the 8-second budget. Only a literal `build_profile_done` boolean can
+redirect, and only a literal `onboarding_done === true` sends a member to the
+dashboard — a string `"true"`, a `1`, or a missing field does not. No DOM failure around the
 spinner can delay or prevent that decision: the lookup is wrapped, a page with
 no spinner element decides identically, and a `querySelector` that throws is
 swallowed.

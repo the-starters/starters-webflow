@@ -7,11 +7,14 @@ const source = fs.readFileSync(require.resolve('./onboarding-done-redirect.js'),
 
 const XANO = 'https://x08a-5ko8-jj1r.n7c.xano.io'
 const TRADE_URL = XANO + '/api:g1vmSLWh/auth/trade-token/v3'
-const GET_URL = XANO + '/api:KZf7nFnk/starters_onboarding/get_freelancers'
+const GET_URL = XANO + '/api:KZf7nFnk/starters_onboarding/get_build_profile_status'
 const DASHBOARD = '/starter-dashboard'
+const BUILD_PROFILE = '/build-profile/select-profile'
 const LOADER_SELECTOR = '[data-page-spinner]'
-const DONE_ENVELOPE = { freelancer: [{ id: 12, onboarding_done: true }] }
-const NOT_DONE_ENVELOPE = { freelancer: [{ id: 12, onboarding_done: false }] }
+const DONE_ENVELOPE = { has_record: true, build_profile_done: true, onboarding_done: true }
+const NOT_DONE_ENVELOPE = { has_record: true, build_profile_done: true, onboarding_done: false }
+// B71 (2026-10-30): a member who reached the page before Build profile.
+const NOT_BUILT_ENVELOPE = { has_record: true, build_profile_done: false, onboarding_done: false }
 
 function flush() {
   return new Promise((resolve) => setImmediate(resolve))
@@ -280,17 +283,20 @@ test('host gate covers production, staging, local, and dev tunnels but not looka
   }
 })
 
-test('only a literal true in the freelancer envelope counts as done', () => {
+test('the funnel reading is strict in both directions', () => {
   const { api } = loadModule({ pathname: '/other' })
-  assert.equal(api.onboardingDone(DONE_ENVELOPE), true)
-  assert.equal(api.onboardingDone(NOT_DONE_ENVELOPE), false)
-  assert.equal(api.onboardingDone({ freelancer: [] }), false)
-  assert.equal(api.onboardingDone({ freelancer: [{}] }), false)
-  assert.equal(api.onboardingDone({ freelancer: [{ onboarding_done: 'true' }] }), false)
-  assert.equal(api.onboardingDone({ freelancer: [{ onboarding_done: 1 }] }), false)
-  assert.equal(api.onboardingDone({ freelancer: null }), false)
-  assert.equal(api.onboardingDone({}), false)
-  assert.equal(api.onboardingDone(null), false)
+  assert.equal(api.funnelStateFrom(DONE_ENVELOPE), 'done')
+  assert.equal(api.funnelStateFrom(NOT_DONE_ENVELOPE), 'onboarding')
+  assert.equal(api.funnelStateFrom(NOT_BUILT_ENVELOPE), 'build-profile')
+  // Only a literal false means "still building"; only a literal true is onboarded.
+  assert.equal(api.funnelStateFrom({ build_profile_done: null }), 'unknown')
+  assert.equal(api.funnelStateFrom({ build_profile_done: 'false' }), 'unknown')
+  assert.equal(api.funnelStateFrom({ build_profile_done: 0 }), 'unknown')
+  assert.equal(api.funnelStateFrom({ build_profile_done: true, onboarding_done: 'true' }), 'onboarding')
+  assert.equal(api.funnelStateFrom({ build_profile_done: true, onboarding_done: 1 }), 'onboarding')
+  assert.equal(api.funnelStateFrom({}), 'unknown')
+  assert.equal(api.funnelStateFrom(null), 'unknown')
+  assert.equal(api.funnelStateFrom('done'), 'unknown')
 })
 
 // --- Redirect on visit --------------------------------------------------------
@@ -308,6 +314,26 @@ test('a completed member is replaced to the dashboard with a bearer-authorized r
 
 test('an unfinished member stays on the page', async () => {
   const { location } = loadModule({ envelope: NOT_DONE_ENVELOPE })
+  await flush()
+  assert.equal(location.replaced, undefined)
+})
+
+test('a member who has not built a profile is replaced to Build profile', async () => {
+  const { location, fetchCalls } = loadModule({ envelope: NOT_BUILT_ENVELOPE })
+  await flush()
+  assert.equal(location.replaced, BUILD_PROFILE)
+  assert.equal(callsTo(fetchCalls, GET_URL).length, 1)
+})
+
+test('the spinner stays up while the Build profile redirect navigates', async () => {
+  const loader = loaderElement()
+  loadModule({ loader, envelope: NOT_BUILT_ENVELOPE })
+  await flush()
+  assert.equal(loader.style.display, 'block')
+})
+
+test('an unreadable build_profile_done stays on the page', async () => {
+  const { location } = loadModule({ envelope: { has_record: true, onboarding_done: true } })
   await flush()
   assert.equal(location.replaced, undefined)
 })
@@ -605,15 +631,17 @@ test('the exposed console surface is the read half only', () => {
   const { api } = loadModule({ pathname: '/other' })
   assert.deepEqual(Object.keys(api).sort(), [
     'allowedHost',
+    'buildProfilePath',
     'dashboardPath',
     'diagnosticsEnabled',
+    'funnelStateFrom',
     'isOnboardingPath',
     'loaderSelector',
-    'onboardingDone',
     'redirectIfDone',
     'stagingHost',
   ])
   assert.equal(api.dashboardPath, DASHBOARD)
+  assert.equal(api.buildProfilePath, BUILD_PROFILE)
   assert.equal(api.loaderSelector, LOADER_SELECTOR)
 })
 
