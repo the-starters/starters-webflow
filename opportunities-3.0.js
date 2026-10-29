@@ -3893,7 +3893,7 @@
     return {
       waitingOn: '',
       blocked: false,
-      label: lifecycleState(project) === 'pending' ? 'Cancel Project' : 'End Project',
+      label: projectCancelsBeforeStart(project) ? 'Cancel Project' : 'End Project',
     }
   }
 
@@ -3927,8 +3927,16 @@
     }
   }
 
+  // A project that never started ends by cancel: still pending, or its
+  // contract expired unsigned (#1679 cancels both; complete would queue a final
+  // invoice and a review for work that never began).
+  function projectCancelsBeforeStart(project) {
+    const state = lifecycleState(project)
+    return state === 'pending' || state === 'contract_expired'
+  }
+
   function endProjectStep(project) {
-    return lifecycleState(project) === 'pending' ? 'cancel' : 'choose'
+    return projectCancelsBeforeStart(project) ? 'cancel' : 'choose'
   }
 
   // Ending a started project always completes it. A Brand can save an optional
