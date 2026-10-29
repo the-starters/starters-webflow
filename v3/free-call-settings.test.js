@@ -3820,3 +3820,27 @@ test('a ready service with a stale receipt is never re-activated', async () => {
   assert.equal(result.dom.title.value, 'Newer text')
   assert.equal(result.memberJsonWrites.length, 1)
 })
+
+test('A9: names the calendar step when Update is disabled with no service', async () => {
+  const result = load({ initial: canonical({ readiness: GATED_FREE_READINESS }) })
+  await settle()
+
+  assert.equal(result.dom.nativeError.getAttribute('data-free-call-blocker'), 'calendar')
+  assert.equal(result.dom.nativeError.style.display, 'block')
+  assert.match(result.dom.nativeErrorMessage.textContent, /connect your calendar/)
+})
+
+test('A9: paints no blocker when Calendar and Availability are ready', async () => {
+  const result = load({ initial: canonical() })
+  await settle()
+
+  assert.notEqual(result.dom.nativeError.getAttribute('data-free-call-blocker'), 'calendar')
+  assert.equal(result.dom.nativeError.style.display, 'none')
+})
+
+test('A9: paints no blocker when an active service can still be saved', async () => {
+  const result = load({ initial: canonical({ readiness: GATED_FREE_READINESS, services: [service()] }) })
+  await settle()
+
+  assert.notEqual(result.dom.nativeError.getAttribute('data-free-call-blocker'), 'calendar')
+})

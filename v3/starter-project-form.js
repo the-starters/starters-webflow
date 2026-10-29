@@ -727,6 +727,16 @@
     })
   }
 
+  // A7 (2026-10-29): after a validation error or a 400/409/422 reply, an edit turns
+  // Confirm back on, so "Try again" works without a close and reopen of the modal.
+  function rearmSubmitAfterEdit(form) {
+    var current = formState(form)
+    if (current.submitStatus !== 'error' || !current.submitErrorEditable) return
+    if (current.submitRequest || current.submitRetryable) return
+    current.submitRetryable = true
+    syncSubmitControls(form)
+  }
+
   function installSubmitControlOwner(form) {
     var current = formState(form)
     if (current.submitObserver || typeof global.MutationObserver !== 'function') return
@@ -741,6 +751,7 @@
     var current = formState(form)
     current.submitStatus = status
     current.submitRetryable = status === 'error' && retryableSubmit === true
+    current.submitErrorEditable = false
     installSubmitControlOwner(form)
     form.setAttribute('data-starter-project-status', status)
     form.setAttribute('aria-busy', status === 'submitting' ? 'true' : 'false')
@@ -992,6 +1003,12 @@
     return 'The project could not be created. Try again.'
   }
 
+  // Errors the Starter can fix by editing the form (bad or duplicate details).
+  function editableSubmitError(error) {
+    var status = Number(error && error.status)
+    return status === 400 || status === 409 || status === 422
+  }
+
   function retryableSubmitError(error) {
     var status = Number(error && error.status)
     return !status || status === 408 || status === 425 || status === 429 || status >= 500
@@ -1005,12 +1022,14 @@
     var shared = sharedFormApi(globalObject)
     if (shared && typeof shared.reportActiveValidity === 'function' && !shared.reportActiveValidity(form)) {
       setStatus(form, 'error', 'Review the required project details and try again.')
+      current.submitErrorEditable = true
       return Promise.resolve(false)
     }
     var serialized = starterPayload(form, documentObject, globalObject)
     var error = validationError(form, serialized, globalObject)
     if (error) {
       setStatus(form, 'error', error)
+      current.submitErrorEditable = true
       return Promise.resolve(false)
     }
     var signature = payloadSignature(serialized.payload)
@@ -1052,6 +1071,7 @@
         debugLog(globalObject, 'submit_error', { status: Number(requestError && requestError.status) || null })
         if (Number(requestError && requestError.status) === 403) invalidateOptions(form)
         setStatus(form, 'error', safeError(requestError), retryableSubmitError(requestError))
+        current.submitErrorEditable = editableSubmitError(requestError)
         return false
       })
       .finally(function () {
@@ -1137,12 +1157,17 @@
       var current = formState(form)
       current.key = ''
       current.keyPayload = ''
+      rearmSubmitAfterEdit(form)
       if (event.target.matches && event.target.matches(BRAND_SELECT_SELECTOR)) {
         var id = positiveId(event.target.value)
         var option = current.options.find(function (item) { return item.id === id })
         if (option) selectBrand(form, option)
         else clearSelectedBrand(form)
       }
+    })
+    documentObject.addEventListener('change', function (event) {
+      var form = formFromTarget(event.target)
+      if (form) rearmSubmitAfterEdit(form)
     })
     documentObject.addEventListener('submit', function (event) {
       var form = formFromTarget(event.target)

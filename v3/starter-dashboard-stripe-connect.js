@@ -951,7 +951,27 @@
     tile.setAttribute('aria-label', title + '. ' + description)
   }
 
-  function heroTileState(view, reason) {
+  // A8 (2026-10-29): for a connected Starter the Action Item (with its Try Again) stays
+  // hidden. A blocked pop-up sent no request, so the tile itself becomes the retry.
+  // Request failures stay fail-closed, with copy that points to a reload.
+  function heroTileState(view, reason, retry) {
+    if (view === 'error' && retry && retry.popupBlocked &&
+      (retry.action === 'dashboard' || retry.action === 'start')) {
+      return {
+        action: retry.action,
+        description: 'Allow pop-ups for this site, then click',
+        enabled: true,
+        title: 'Try Again',
+      }
+    }
+    if (view === 'error' && retry && retry.reload) {
+      return {
+        action: 'none',
+        description: 'Reload the page to try again',
+        enabled: false,
+        title: 'Stripe Unavailable',
+      }
+    }
     if (view === 'disconnected') {
       return {
         action: 'start',
@@ -1003,9 +1023,9 @@
     }
   }
 
-  function renderEarningsTiles(tiles, view, reason) {
+  function renderEarningsTiles(tiles, view, reason, retry) {
     const primary = tiles.primary || tiles.ready || tiles.disconnected
-    const state = heroTileState(view, reason)
+    const state = heroTileState(view, reason, retry)
 
     tiles.all.forEach(function (element) {
       show(element, false)
@@ -1226,7 +1246,7 @@
       const stripeTab = reserveStripeTab()
       if (!stripeTab) {
         renderRoots(roots, 'error')
-        renderEarningsTiles(earningsTiles, 'error')
+        renderEarningsTiles(earningsTiles, 'error', '', { action: 'dashboard', popupBlocked: true })
         emit('starterStripeConnectError', {
           action: 'dashboard',
           message: 'Browser blocked the Stripe Dashboard tab',
@@ -1278,7 +1298,7 @@
         if (!shouldRetainDashboardKey(error)) clearDashboardAttemptKey()
         closeStripeTab(stripeTab)
         renderRoots(roots, 'error')
-        renderEarningsTiles(earningsTiles, 'error')
+        renderEarningsTiles(earningsTiles, 'error', '', { reload: true })
         emit('starterStripeConnectError', {
           action: 'dashboard',
           message: error.message || 'Stripe Dashboard access failed',
@@ -1290,7 +1310,7 @@
         return false
       } finally {
         setActionPending(button, false)
-        if (failed) renderEarningsTiles(earningsTiles, 'error')
+        if (failed) renderEarningsTiles(earningsTiles, 'error', '', { reload: true })
       }
     })
   }

@@ -26,6 +26,40 @@
         };
     }
 
+    var PROFILE_LOAD_TIMEOUT_MS = 30000;
+    var PROFILE_LOAD_ERROR_TEXT = 'Your profile could not load. Reload the page to try again.';
+
+    // Shows a notice above the loader. An authored [data-profile-load-error] element wins;
+    // otherwise a fixed banner is added. Runs once per page.
+    function showProfileLoadError() {
+        if (typeof document === 'undefined' || !document.body) return null;
+        var authored = document.querySelector('[data-profile-load-error]');
+        if (authored) {
+            authored.textContent = PROFILE_LOAD_ERROR_TEXT;
+            authored.setAttribute('role', 'alert');
+            authored.style.display = '';
+            return authored;
+        }
+        var existing = document.querySelector('[data-profile-load-error-banner]');
+        if (existing) return existing;
+        var banner = document.createElement('div');
+        banner.setAttribute('data-profile-load-error-banner', '');
+        banner.setAttribute('role', 'alert');
+        banner.style.cssText = 'position:fixed;left:16px;right:16px;top:16px;z-index:2147483000;padding:16px;border-radius:8px;background:#fff;color:#111;box-shadow:0 4px 24px rgba(0,0,0,.2);font:16px/1.4 sans-serif;text-align:center';
+        var text = document.createElement('p');
+        text.style.margin = '0 0 12px';
+        text.textContent = PROFILE_LOAD_ERROR_TEXT;
+        var button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = 'Reload';
+        button.style.cssText = 'padding:8px 20px;border:0;border-radius:6px;background:#111;color:#fff;font:inherit;cursor:pointer';
+        button.addEventListener('click', function () { window.location.reload(); });
+        banner.appendChild(text);
+        banner.appendChild(button);
+        document.body.appendChild(banner);
+        return banner;
+    }
+
     // The Free and Paid Call Settings controllers own these five controls from
     // canonical call state and any unconsumed Build Profile receipt. The legacy
     // profile row no longer writes them, so restoring it must not repaint them.
@@ -192,6 +226,13 @@
 
             // `var activeProfile` and `function createEmptyProfile()` - are in global page codes
 
+            // A6 (2026-10-29): a failed or hung profile read showed an endless loader with no message.
+            // The loader stays up (an empty form must not be saveable), and a visible notice asks for a reload.
+            let profileHydrated = false;
+            const profileLoadWatchdog = setTimeout(() => {
+                if (!profileHydrated) showProfileLoadError();
+            }, PROFILE_LOAD_TIMEOUT_MS);
+
             initProfileDraft();
 
             async function initProfileDraft() {
@@ -199,6 +240,7 @@
                     const xanoRawProfile = await getXanoProfileSafe();
                     if (!xanoRawProfile) {
                         console.error('XANO profile not found for member:', MEMBER.id);
+                        showProfileLoadError();
                         return;
                     }
 
@@ -222,6 +264,8 @@
                             restoreFieldsData(activeProfile);
                             updateCounterFields();
                             profileDirtyState.finishHydration();
+                            profileHydrated = true;
+                            clearTimeout(profileLoadWatchdog);
 
                             setTimeout(() => {
                                 setLoader(false);
@@ -230,6 +274,7 @@
                     }, 25);
                 } catch (error) {
                     console.error('Profile draft init error:', error);
+                    showProfileLoadError();
                 }
             }
 
