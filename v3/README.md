@@ -2152,6 +2152,36 @@ Warnings remain available on every route where the scripts install, including
 production: token acquisition failures, unclassified scheduling routes, and
 unparseable scheduler booking identity still warn when encountered.
 
+After a reviewed scheduling request reaches its final HTTP or network failure,
+the shared auth owner calls `StartersTrack.track('bridge_error', properties)`.
+The properties are `path` (reviewed route only), `status` (`0` for a network
+failure), `method` (known HTTP method or `OTHER`), `flow` (`calls_and_booking`),
+`source` (`scheduling-auth`), `source_environment` (`staging` or `production`),
+`source_release`, `instrumentation_version` (`1`), and `failure_kind` (`http`
+or `network`). The shared tracker adds `platform`. Only an immutable semver
+from the exact jsDelivr `scheduling-auth.js` or `scheduling-bridge.js` URL supplies `source_release`;
+`@latest`, module loading without a current script, or an unknown URL records
+`unknown`. Host classification does not identify Test members on production.
+
+The bridge does not report a 401 that succeeds after token refresh. Shared
+read consumers produce one event per underlying failed request. Explicit
+aborts and stale member-session results produce no event. Pass-through
+requests, initial token-trade failures, and legacy unauthenticated fallback
+requests are outside this event contract. Queries, credentials, request and
+response bodies, member IDs, and exception text are excluded. Missing or
+failing analytics does not change request behavior; emission is an attempt,
+not confirmation that PostHog received the event.
+
+The existing neutral-path `scheduling-bridge.js` alias implements the same
+telemetry contract for Edit Profile. Its older auth implementation is retained;
+it does not include the main owner's newer shared-read features. Network
+telemetry waits for pending auth reconciliation in contained background work,
+so a deferred cookie read cannot delay the original transport rejection.
+
+Edit Profile currently pins the alias to `v1.59.593`. Releasing `@latest` does
+not update that immutable loader. Exposing the corrected alias needs the
+separate guarded Webflow loader and publication workflow.
+
 ## Scheduling V3 stage adapter
 
 `scheduling-v3-stage.js` is the compatibility layer for the existing Webflow
