@@ -3,13 +3,15 @@
 Status: Shipped — live on staging `/starter-onboarding` as a pinned tag; split
 into a pair with `patch-onboarding-status.js` as of v1.59.47, and changed twice
 since, both unreleased: the write half now redirects its own member (so the
-`sessionStorage` handshake this file used to perform is gone), and this file now
+`sessionStorage` handshake this file used to perform is gone), this file now
 raises the shared `[data-page-spinner]` over the page for the length of its
-status read. The next tag carries both.
+status read, and it now reads the funnel status and also routes a member
+without a built profile to Build profile. The next tag carries all of them.
 
 `v3/onboarding-done-redirect.js` is a **page-scoped** module for
-`/starter-onboarding`. It does one thing: it keeps a member who has already
-finished onboarding out of the onboarding flow. It is the **read half** of a
+`/starter-onboarding`. It does one thing: it keeps a member who is not on the
+onboarding step — already finished, or not yet through Build profile — out of
+the onboarding flow. It is the **read half** of a
 pair — it reads status, decides, and redirects, and it never writes anything to
 Xano. The only markup it touches is the shared spinner it raises while deciding.
 
@@ -26,7 +28,8 @@ versions together.
 
 It is not a sibling of [route-guard.js](../../v3/route-guard.js) and does not replace it.
 The route guard answers "may this role open this page" from Memberstack plans;
-this module answers "has this Talent already finished" from the Xano record.
+this module answers "is this Talent on the onboarding step" from the Xano
+funnel status.
 Both can run on the page; the guard runs sitewide and first.
 
 ## What it does
@@ -34,17 +37,29 @@ Both can run on the page; the guard runs sitewide and first.
 | Situation | Action |
 | --- | --- |
 | The page loads and the status check starts | Show `[data-page-spinner]`, covering the page for the length of the read |
-| `onboarding_done === true` on the member's Xano freelancer record | `location.replace('/starter-dashboard')`, leaving the spinner up through the navigation |
-| `onboarding_done` false, absent, or the envelope is empty | Hide the spinner and render the page as authored |
+| `build_profile_done === true` and `onboarding_done === true` | `location.replace('/starter-dashboard')`, leaving the spinner up through the navigation |
+| `build_profile_done === false` (Build profile not finished) | `location.replace('/build-profile/select-profile')`, leaving the spinner up through the navigation |
+| `build_profile_done === true`, `onboarding_done` not `true` | Hide the spinner and render the page as authored |
+| `build_profile_done` absent or not a boolean, or a malformed body | Hide the spinner and render the page as authored |
 | Logged out, Memberstack absent, trade failed, HTTP error, timeout | Hide the spinner and render the page as authored |
 | No `[data-page-spinner]` element on the page | Nothing; the check and the decision are unchanged |
 | Any other path, or an unapproved host | Do nothing at all (no Memberstack lookup, no spinner, no redirect) |
 
 The one endpoint it touches, on `api:KZf7nFnk` and bearer-authorized:
 
-- Read: `GET /starters_onboarding/get_freelancers` — no params, answers
-  `{"freelancer": [ <one record> ]}`, and an empty envelope for a member with no
-  row yet.
+- Read: `GET /starters_onboarding/get_build_profile_status` (#1672) — no params,
+  answers `{has_record, build_profile_done, onboarding_done, profile_type,
+  platform_status}`. This is the same read and the same strict parse as
+  [auth-route.js](AUTH-ROUTE-WIRING.md) and `v3/build-profile-redirect.js`, so
+  the three pages cannot route one member in a loop, and legacy grandfathering
+  stays decided in Xano rather than in the browser.
+
+The Build-profile leg exists because the completion `PATCH` in
+[patch-onboarding-status.js](ONBOARDING-PATCH-STATUS-WIRING.md) needs the
+canonical slug that only the Build-profile submit writes; without it the write
+fails with `STARTER_ONBOARDING_PROJECTION_IDENTITY_MISSING`. A member who
+arrives early — for example from the onboarding reminder email — is sent to
+`/build-profile/select-profile` before the form can be filled.
 
 Auth is the same trade-token flow the sibling v3 modules use: the Memberstack
 JWT from `getMemberCookie()` is traded at
@@ -61,8 +76,9 @@ replaying a token Xano just rejected.
 Every failure mode leaves the page exactly as authored, spinner back down:
 logged out, Memberstack never loading, `getMemberCookie()` rejecting, a failed
 or empty token trade, a non-2xx read, a malformed envelope, a request that hangs
-past the 8-second budget. Only a literal `onboarding_done === true` redirects —
-a string `"true"`, a `1`, or a missing field does not. No DOM failure around the
+past the 8-second budget. Only a literal `build_profile_done` boolean can
+redirect, and only a literal `onboarding_done === true` sends a member to the
+dashboard — a string `"true"`, a `1`, or a missing field does not. No DOM failure around the
 spinner can delay or prevent that decision: the lookup is wrapped, a page with
 no spinner element decides identically, and a `querySelector` that throws is
 swallowed.
@@ -88,10 +104,10 @@ for its `PATCH`, and redirects the member to `/starter-dashboard` itself — see
 post-submit beat left for this module to sit out. The marker is gone from both
 files, and this one no longer touches storage at all.
 
-What remains is the plain case, and the only one this file was ever really for:
-a member who finished onboarding earlier and comes back to the page from a
-bookmark, the back button, or a stale link. Every load runs the check, and a
-record carrying `onboarding_done === true` is replaced away to the dashboard.
+What remains is the plain case: a member on another step who reaches the page
+from a bookmark, the back button, or a stale email link. Every load runs the
+check; a finished member is replaced away to the dashboard, and a member
+without a built profile to `/build-profile/select-profile`.
 
 ### The shared page spinner
 
@@ -182,16 +198,19 @@ chatty, production is silent.
    That wait is the documented trade-off, not a bug.
 2. **Fresh Talent, not yet done.** Log in, open the page. The spinner appears
    over the page, comes down when the read answers, and the page renders. The
-   console notes "onboarding not marked done".
+   console notes "funnel state onboarding".
 3. **A member whose record is already done.** Open the page: the spinner appears
    and **stays up** while the redirect fires to `/starter-dashboard`, via
    `replace()`, so Back does not bounce you into a loop. You should never see the
    onboarding page paint. The console prefix `[starters onboarding-done]` is what
    tells this redirect apart from the write half's post-submit one.
-4. **Offline / blocked-Xano check.** With the Network tab throttled to offline
+4. **A member whose Build profile is not done.** Open the page: the spinner
+   stays up and the page is replaced with `/build-profile/select-profile`, and
+   that page keeps the member there rather than bouncing them back.
+5. **Offline / blocked-Xano check.** With the Network tab throttled to offline
    (or the Xano origin blocked), reload the page: it must render normally within
    a couple of seconds, spinner down, never a blank or stuck state.
-5. **Production silence.** After publishing, confirm the console prints nothing
+6. **Production silence.** After publishing, confirm the console prints nothing
    from `[starters onboarding-done]` on `thestarters.com`.
 
 The full pair walk — submit a form, watch the loader come up and the form go
@@ -206,9 +225,10 @@ that one before shipping either file.
 | Never redirects, console silent | The tag is not on the page, or the hostname is not approved. Check `window.StartersOnboardingDoneRedirect` exists in the console. |
 | Pasted a copy of the file (console or a second embed) and nothing happens | The boot guard, working as designed: a copy already loaded by the page's CDN tag set `window.__startersOnboardingDoneRedirectBooted`, so every later copy exits immediately. To hand-exercise the module, call `window.StartersOnboardingDoneRedirect.redirectIfDone()` on staging instead of re-running the file. |
 | Never redirects, console says "could not read onboarding status" | The trade-token or read call failed. The message carries the status; check the member has a `user_v3` row (trade-token 404s without one). |
-| Never redirects, console says "onboarding not marked done" | The read succeeded and Xano says false. The write half never landed, or it wrote a different row — see [patch-onboarding-status.js](ONBOARDING-PATCH-STATUS-WIRING.md). |
+| Never redirects, console says "funnel state onboarding" | The read succeeded and Xano says Build profile is done but onboarding is not. The write half never landed, or it wrote a different row — see [patch-onboarding-status.js](ONBOARDING-PATCH-STATUS-WIRING.md). |
 | A member submitted a form and was never sent to the dashboard | Not this module — the post-submit redirect belongs to the write half now. See the "never redirected" and "loader" rows in [patch-onboarding-status.js](ONBOARDING-PATCH-STATUS-WIRING.md). |
-| Redirect loops between the two pages | Not this module — check `v3/route-guard.js` and the `/starter-dashboard` page controllers. This one only ever replaces *away* from the onboarding page. |
+| Never redirects, console says "funnel state unknown" | `get_build_profile_status` answered a body without a boolean `build_profile_done`; the page fails open by design. Check the endpoint in Xano. |
+| Redirect loops between pages | Not this module — check `v3/route-guard.js`, the `/starter-dashboard` page controllers, and that `v3/build-profile-redirect.js` reads the same status endpoint. This one only ever replaces *away* from the onboarding page. |
 | Spinner stays up and the page never renders | The check never settled. Expected for up to 8 seconds when Memberstack is missing or slow; past that, look for a `[starters onboarding-done]` warning. A spinner still up with `onboarding already done` in the console is correct — the redirect is navigating. |
 | Spinner never appears on load | No element matching `[data-page-spinner]` on the page (the staging console notes it by name), or it sits inside a `.w-form` wrapper. Everything else behaves identically without it. |
 | The onboarding page flashes before the redirect | The spinner is missing, or it is not covering the page — check its z-index and positioning in the Designer. The module only toggles `display`; how much it hides is a styling question. |
@@ -216,8 +236,11 @@ that one before shipping either file.
 ## Diagnostics
 
 `window.StartersOnboardingDoneRedirect` exposes `allowedHost`, `stagingHost`,
-`isOnboardingPath`, `diagnosticsEnabled`, `onboardingDone`, `redirectIfDone`,
-`dashboardPath`, and `loaderSelector` for console checks. `redirectIfDone()` is
+`isOnboardingPath`, `diagnosticsEnabled`, `funnelStateFrom`, `redirectIfDone`,
+`dashboardPath`, `buildProfilePath`, and `loaderSelector` for console checks.
+`funnelStateFrom(body)` returns `build-profile`, `onboarding`, `done`, or
+`unknown` for a status body, matching the parser of the same name in
+[auth-route.js](AUTH-ROUTE-WIRING.md). `redirectIfDone()` is
 callable by hand on staging to exercise the read and the decision without
 waiting for a page load, and it deliberately leaves the spinner alone — only the
 boot path raises and lowers it. `loaderSelector` reads the same

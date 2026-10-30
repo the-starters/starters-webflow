@@ -143,7 +143,7 @@ for the full Memberstack wait (8s, matching the Brand twin) before it lowers.
 | Login hop | `/auth-route` | `auth-route.js` Talent branch | unfinished → funnel |
 | Inbound (this spec) | the six lock pages | `starter-profile-redirect.js` | unfinished → funnel |
 | Outbound, Build-profile | `/build-profile/*` | `build-profile-redirect.js` (live @v1.59.84) | past that step → onboarding or dashboard |
-| Outbound, onboarding | `/starter-onboarding` | `onboarding-done-redirect.js` + `patch-onboarding-status.js` (@v1.59.47) | finished → dashboard |
+| Outbound, onboarding | `/starter-onboarding` | `onboarding-done-redirect.js` + `patch-onboarding-status.js` (@v1.59.47) | finished → dashboard; Build profile not done → `/build-profile/select-profile` |
 
 Every half reads the **same** signal (`get_build_profile_status`). Opposite
 flag directions, both fail-open → no loop.

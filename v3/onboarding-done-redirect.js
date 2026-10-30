@@ -1,10 +1,26 @@
 /**
  * /starter-onboarding — completion redirect.
  *
- * ONE job: a member whose Xano freelancer record already carries
- * `onboarding_done === true` is sent to /starter-dashboard with
- * `location.replace()`, so a finished member cannot land back inside the
- * onboarding flow from a bookmark, the back button, or a stale link.
+ * ONE job: keep a member on /starter-onboarding only when this is the step
+ * they are actually on. The funnel is Apply → Build profile → Login →
+ * Onboarding → Dashboard, and the same lean status read v3/auth-route.js and
+ * v3/build-profile-redirect.js use answers where the member is:
+ *
+ *   GET api:KZf7nFnk/starters_onboarding/get_build_profile_status
+ *   → {has_record, build_profile_done, onboarding_done, profile_type,
+ *      platform_status}
+ *
+ *   - build_profile_done false → /build-profile/select-profile
+ *   - done and onboarded       → /starter-dashboard
+ *   - done, not onboarded      → STAY. This is exactly who the page is for.
+ *   - anything this module does not understand → STAY (fail open).
+ *
+ * Both redirects use `location.replace()`, so a bookmark, the back button, or a
+ * stale link cannot put a member on the wrong step. The Build-profile leg was
+ * added 2026-10-30 (B71): a Starter who had not built a profile opened this page
+ * from the stage 3 onboarding reminder email, submitted the form, and the
+ * completion PATCH failed with STARTER_ONBOARDING_PROJECTION_IDENTITY_MISSING
+ * because only the Build-profile submit writes the canonical slug.
  *
  * That answer costs a round trip, and until it lands the onboarding page is
  * fully visible — so an already-done member used to watch the page render and
@@ -18,9 +34,10 @@
  * PAIRED WITH v3/patch-onboarding-status.js, which owns the writing half: when
  * one of this page's Webflow forms reaches its success state, that module hides
  * the form, PATCHes Xano, and redirects the member itself. The post-submit
- * journey is entirely its business, so this module's job is only to keep an
- * already-done member from re-entering the page on a later visit — a bookmark,
- * the back button, a stale link. It runs once per load and never touches the
+ * journey is entirely its business, so this module's job is only to keep a
+ * member who is on another step (already done, or not yet built a profile) off
+ * the page on a visit — a bookmark, the back button, a stale email link. It
+ * runs once per load and never touches the
  * forms. The two files install together as a pair of deferred tags on
  * /starter-onboarding; either one alone is a broken half of the flow.
  *
@@ -58,10 +75,16 @@
   var XANO_AUTH_BASE = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:g1vmSLWh'
   var XANO_ONBOARDING_BASE = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk'
   var TRADE_TOKEN_PATH = '/auth/trade-token/v3'
-  var GET_FREELANCERS_PATH = '/starters_onboarding/get_freelancers'
+  var BUILD_PROFILE_STATUS_PATH = '/starters_onboarding/get_build_profile_status'
 
   var ONBOARDING_PATHS = ['/starter-onboarding', '/starter-onboarding/']
   var DASHBOARD_PATH = '/starter-dashboard'
+  var BUILD_PROFILE_PATH = '/build-profile/select-profile'
+
+  var FUNNEL_UNKNOWN = 'unknown'
+  var FUNNEL_BUILD_PROFILE = 'build-profile'
+  var FUNNEL_ONBOARDING = 'onboarding'
+  var FUNNEL_DONE = 'done'
   // Same production allowlist as v3/route-guard.js, plus the local/dev-tunnel
   // hosts the ./dev-tunnel.sh loop serves from — without those the module would
   // be dead on staging exactly when it needs QA.
@@ -310,41 +333,42 @@
   /* ---------------------------- redirect on visit ---------------------------- */
 
   /**
-   * `{"freelancer": [ <one record> ]}`, and an empty envelope for a member with
-   * no row yet. Only a literal `true` redirects: anything else — missing key,
-   * empty array, absent field, a string, a malformed body — is read as "not
-   * done" so the failure mode is always "the page renders".
+   * `{has_record, build_profile_done, onboarding_done, profile_type,
+   * platform_status}` → a funnel position, with the same strict reading as
+   * v3/auth-route.js and v3/build-profile-redirect.js so the three pages can
+   * never route one member in a loop:
+   *
+   *   - only a literal `false` on `build_profile_done` means "still building".
+   *     Anything else non-`true` (missing, null, a string) is a body this module
+   *     does not understand, so it reads UNKNOWN and the page renders.
+   *   - only a literal `true` on `onboarding_done` counts as onboarded.
    */
-  function onboardingDone(payload) {
-    var records = payload && payload.freelancer
-    if (!Array.isArray(records) || records.length === 0) {
-      note('freelancer record: none — onboarding_done unknown, treated as not done.')
-      return false
-    }
-    var record = records[0]
-    note('freelancer record found; onboarding_done = ' + (record ? JSON.stringify(record.onboarding_done) : 'unreadable record'))
-    return !!record && record.onboarding_done === true
+  function funnelStateFrom(payload) {
+    if (!payload || typeof payload !== 'object') return FUNNEL_UNKNOWN
+    if (payload.build_profile_done === false) return FUNNEL_BUILD_PROFILE
+    if (payload.build_profile_done !== true) return FUNNEL_UNKNOWN
+    return payload.onboarding_done === true ? FUNNEL_DONE : FUNNEL_ONBOARDING
   }
 
-  async function fetchOnboardingDone() {
+  async function fetchFunnelState() {
     var token = await xanoToken()
-    var response = await fetchWithTimeout(XANO_ONBOARDING_BASE + GET_FREELANCERS_PATH, {
+    var response = await fetchWithTimeout(XANO_ONBOARDING_BASE + BUILD_PROFILE_STATUS_PATH, {
       headers: authHeaders(token),
     })
     if (!response.ok) {
       forgetXanoToken()
-      throw new Error('get_freelancers responded ' + response.status)
+      throw new Error('get_build_profile_status responded ' + response.status)
     }
     var data = await response.json().catch(function () {
       return null
     })
-    return onboardingDone(data)
+    return funnelStateFrom(data)
   }
 
   async function redirectIfDone() {
-    var done
+    var state
     try {
-      done = await fetchOnboardingDone()
+      state = await fetchFunnelState()
     } catch (error) {
       if (error && error.code === 'logged-out') {
         note('no member session; leaving the onboarding page alone.')
@@ -354,14 +378,20 @@
       return false
     }
 
-    if (!done) {
-      note('onboarding not marked done; rendering the page.')
-      return false
+    if (state === FUNNEL_DONE) {
+      note('onboarding already done; replacing with ' + DASHBOARD_PATH + '.')
+      window.location.replace(DASHBOARD_PATH)
+      return true
     }
 
-    note('onboarding already done; replacing with ' + DASHBOARD_PATH + '.')
-    window.location.replace(DASHBOARD_PATH)
-    return true
+    if (state === FUNNEL_BUILD_PROFILE) {
+      note('build profile not done; replacing with ' + BUILD_PROFILE_PATH + '.')
+      window.location.replace(BUILD_PROFILE_PATH)
+      return true
+    }
+
+    note('funnel state ' + state + '; rendering the page.')
+    return false
   }
 
   /* ---------------------------------- boot ---------------------------------- */
@@ -391,9 +421,10 @@
     stagingHost: stagingHost,
     isOnboardingPath: isOnboardingPath,
     diagnosticsEnabled: diagnosticsEnabled,
-    onboardingDone: onboardingDone,
+    funnelStateFrom: funnelStateFrom,
     redirectIfDone: redirectIfDone,
     dashboardPath: DASHBOARD_PATH,
+    buildProfilePath: BUILD_PROFILE_PATH,
     loaderSelector: LOADER_SELECTOR,
   }
 

@@ -1850,10 +1850,12 @@ node --test v3/onboarding-profile-preview.test.js
 `onboarding-done-redirect.js` is the **read half** of the `/starter-onboarding`
 completion pair: on load it raises the shared `[data-page-spinner]`, trades the
 Memberstack JWT for a Xano token, reads
-`starters_onboarding/get_freelancers`, and replaces to `/starter-dashboard`
-only on a literal `onboarding_done === true` — keeping an already-finished
-member out of the onboarding flow when they arrive via bookmark, back button,
-or stale link. Everything inconclusive fails open and renders the page as
+`starters_onboarding/get_build_profile_status` (#1672, the same funnel read as
+`auth-route.js`), and replaces to `/starter-dashboard` when Build profile and
+onboarding are both done, or to `/build-profile/select-profile` on a literal
+`build_profile_done === false` — keeping a member on another step out of the
+onboarding flow when they arrive via bookmark, back button, or stale email
+link. Everything inconclusive fails open and renders the page as
 authored, because the redirect is a UX courtesy and never a security boundary.
 It never writes to Xano; the post-submit journey belongs entirely to its
 pinned pair, `patch-onboarding-status.js` (below) — never ship one half
