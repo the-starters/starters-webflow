@@ -192,6 +192,9 @@ function load(options = {}) {
     starterQuizAlgoliaConfig: options.starterQuizAlgoliaConfig,
     __startersV3AlgoliaEnvironment: options.requestedEnvironment,
   }
+  if (Object.prototype.hasOwnProperty.call(options, 'offline')) {
+    window.__siteStagingAlgolia = options.offline
+  }
 
   vm.runInNewContext(source, { document, window })
   return {
@@ -644,4 +647,143 @@ test('unmanaged Algolia sections are not changed', () => {
     runtime.api.getSharedSearchConfig('learnContent').searchKey,
     'test-public-search-key',
   )
+})
+
+function offline(overrides = {}) {
+  return {
+    appId: 'OFFLINEAPP',
+    searchKey: 'offline-search-key',
+    ...overrides,
+  }
+}
+
+for (const hostname of ['localhost', '127.0.0.1']) {
+  test(`${hostname} selects the offline responder with production indexes`, () => {
+    const runtime = load({ hostname, offline: offline() })
+    assert.equal(runtime.window.__startersV3AlgoliaEnvironment, 'offline')
+    assert.equal(runtime.client.getAttribute('data-app-id'), 'OFFLINEAPP')
+    assert.equal(runtime.client.getAttribute('data-search-key'), 'offline-search-key')
+    assert.equal(runtime.client.getAttribute('data-starters-v3-algolia-environment'), 'offline')
+    assert.equal(runtime.starters.getAttribute('wf-algolia-index'), 'Freelancers3.0-production')
+    assert.equal(runtime.opportunities.getAttribute('wf-algolia-index'), 'opportunities_v3_production')
+    assert.deepEqual(runtime.sortItems.map((item) => item.getAttribute('wf-algolia-sort-index')), [
+      '',
+      'Freelancers3.0-production__name-AtoZ',
+      'Freelancers3.0-production__rate_asc',
+      'Freelancers3.0-production__rate_desc',
+      'Freelancers3.0-production__published_asc',
+      'Freelancers3.0-production__published_desc',
+    ])
+    assert.equal(runtime.unmanaged.getAttribute('wf-algolia-index'), 'LearnContent')
+    assert.equal(runtime.root.getAttribute('data-v3-algolia-status'), 'ready')
+    assert.equal(runtime.root.getAttribute('data-v3-algolia-environment'), 'offline')
+    assert.equal(runtime.events.at(-1).name, 'starters:algolia-environment-ready')
+    assert.equal(runtime.events.at(-1).detail.appId, 'OFFLINEAPP')
+    assert.equal(runtime.events.at(-1).detail.searchKey, undefined)
+    assert.deepEqual({ ...runtime.api.getManagedSearchConfig('starters') }, {
+      appId: 'OFFLINEAPP',
+      searchKey: 'offline-search-key',
+      indexName: 'Freelancers3.0-production',
+      environment: 'offline',
+    })
+    assert.deepEqual({ ...runtime.api.getSharedSearchConfig('learnContent') }, {
+      appId: 'OFFLINEAPP',
+      searchKey: 'offline-search-key',
+      indexName: 'LearnContent',
+      environment: 'offline',
+    })
+  })
+}
+
+test('offline never uses the public configuration credentials', () => {
+  const runtime = load({ hostname: 'localhost', offline: offline() })
+  assert.notEqual(runtime.client.getAttribute('data-app-id'), 'PRODAPP')
+  assert.notEqual(runtime.client.getAttribute('data-search-key'), 'production-public-search-key')
+  assert.notEqual(runtime.client.getAttribute('data-search-key'), 'test-public-search-key')
+})
+
+test('offline does not need the public configuration', () => {
+  const runtime = load({ hostname: 'localhost', config: undefined, offline: offline() })
+  assert.equal(runtime.root.getAttribute('data-v3-algolia-status'), 'ready')
+  assert.equal(runtime.starters.getAttribute('wf-algolia-index'), 'Freelancers3.0-production')
+})
+
+test('offline Sort Replicas stay on the production Starter prefix', () => {
+  const runtime = load({
+    hostname: '127.0.0.1',
+    offline: offline(),
+    staticList: { sort: 'published_desc' },
+  })
+  assert.equal(
+    runtime.staticList.getAttribute('wf-algolia-index'),
+    'Freelancers3.0-production__published_desc',
+  )
+})
+
+for (const [label, value, reason] of [
+  ['an absent responder', undefined, 'missing_offline_appId'],
+  ['a responder with no app ID', offline({ appId: '' }), 'missing_offline_appId'],
+  ['a blank app ID', offline({ appId: '   ' }), 'missing_offline_appId'],
+  ['a responder with no search key', offline({ searchKey: '' }), 'missing_offline_searchKey'],
+  ['a non-object responder value', 'OFFLINEAPP', 'missing_offline_appId'],
+]) {
+  test(`offline fails closed with ${label}`, () => {
+    const runtime = load({ hostname: 'localhost', offline: value })
+    assert.equal(runtime.window.__startersV3AlgoliaEnvironment, '')
+    assert.equal(runtime.client.getAttribute('data-app-id'), null)
+    assert.equal(runtime.client.getAttribute('data-search-key'), null)
+    assert.equal(runtime.starters.getAttribute('wf-algolia-index'), null)
+    assert.equal(runtime.opportunities.getAttribute('wf-algolia-index'), null)
+    assert.equal(runtime.root.getAttribute('data-v3-algolia-status'), 'blocked')
+    assert.equal(runtime.root.getAttribute('data-v3-algolia-block-reason'), reason)
+    assert.equal(runtime.events.at(-1).name, 'starters:algolia-environment-blocked')
+    assert.equal(runtime.events.at(-1).detail.environment, 'offline')
+    assert.equal(runtime.api.getManagedSearchConfig('starters'), null)
+  })
+}
+
+test('offline fails closed when the global is absent from the window', () => {
+  const runtime = load({ hostname: 'localhost' })
+  assert.equal(runtime.root.getAttribute('data-v3-algolia-block-reason'), 'missing_offline_appId')
+  assert.equal(runtime.client.getAttribute('data-app-id'), null)
+})
+
+for (const hostname of ['the-starters-3-0.webflow.io', 'thestarters.com', 'www.thestarters.com']) {
+  test(`the offline responder cannot change ${hostname}`, () => {
+    const runtime = load({ hostname, offline: offline() })
+    const expected = hostname === 'the-starters-3-0.webflow.io'
+      ? { environment: 'test', appId: 'TESTAPP', index: 'Freelancers3.0-staging-test' }
+      : { environment: 'production', appId: 'PRODAPP', index: 'Freelancers3.0-production' }
+    assert.equal(runtime.window.__startersV3AlgoliaEnvironment, expected.environment)
+    assert.equal(runtime.client.getAttribute('data-app-id'), expected.appId)
+    assert.equal(runtime.starters.getAttribute('wf-algolia-index'), expected.index)
+  })
+}
+
+test('only the exact local hosts select offline', () => {
+  const runtime = load({ offline: offline() })
+  assert.equal(runtime.api.environmentForHost('localhost'), 'offline')
+  assert.equal(runtime.api.environmentForHost('127.0.0.1'), 'offline')
+  for (const hostname of [
+    'localhost.thestarters.com',
+    'thestarters.com.localhost',
+    'app.localhost',
+    '127.0.0.2',
+    '0.0.0.0',
+    '[::1]',
+    'localhost:4400',
+  ]) {
+    assert.equal(runtime.api.environmentForHost(hostname), '', hostname)
+    const blocked = load({ hostname, offline: offline() })
+    assert.equal(blocked.root.getAttribute('data-v3-algolia-block-reason'), 'unknown_host', hostname)
+    assert.equal(blocked.client.getAttribute('data-app-id'), null, hostname)
+  }
+})
+
+test('resolve ignores offline values on approved remote hosts', () => {
+  const runtime = load()
+  const resolution = runtime.api.resolve('thestarters.com', config(), offline())
+  assert.equal(resolution.environment, 'production')
+  assert.equal(resolution.settings.appId, 'PRODAPP')
+  assert.equal(runtime.api.resolve('localhost', undefined, offline()).settings.appId, 'OFFLINEAPP')
 })
