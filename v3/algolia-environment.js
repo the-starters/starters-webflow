@@ -23,14 +23,23 @@
  * Unknown hosts, missing configuration, shared search keys, shared indexes,
  * legacy dev names in configuration, and legacy near matches fail closed
  * before wf-algolia can start.
+ *
+ * localhost and 127.0.0.1 resolve to the offline environment used by the
+ * local starters-site-staging replica. It ignores the public configuration,
+ * uses the production index names, and takes appId and searchKey from
+ * window.__siteStagingAlgolia, which the replica's offline Algolia responder
+ * sets before this script runs. Without both values it fails closed.
  */
 ;(function () {
   'use strict'
 
+  var OFFLINE_ENVIRONMENT = 'offline'
   var HOST_ENVIRONMENTS = {
     'the-starters-3-0.webflow.io': 'test',
     'thestarters.com': 'production',
     'www.thestarters.com': 'production',
+    'localhost': OFFLINE_ENVIRONMENT,
+    '127.0.0.1': OFFLINE_ENVIRONMENT,
   }
   var CLIENT_SELECTOR = 'script[data-starters-v3-algolia-client]'
   var CREDENTIAL_CLIENT_SELECTOR = 'script[data-app-id], script[data-search-key]'
@@ -83,6 +92,15 @@
       searchKey: clean(source && source.searchKey),
       startersIndex: clean(source && source.startersIndex),
       opportunitiesIndex: clean(source && source.opportunitiesIndex),
+    }
+  }
+
+  function offlineSettings(source) {
+    return {
+      appId: clean(source && source.appId),
+      searchKey: clean(source && source.searchKey),
+      startersIndex: EXPECTED_INDEXES.production.startersIndex,
+      opportunitiesIndex: EXPECTED_INDEXES.production.opportunitiesIndex,
     }
   }
 
@@ -152,9 +170,19 @@
     return { ok: true, test: test, production: production }
   }
 
-  function resolve(hostname, config) {
+  function resolve(hostname, config, offline) {
     var environment = environmentForHost(hostname)
     if (!environment) return { ok: false, reason: 'unknown_host', environment: '' }
+    if (environment === OFFLINE_ENVIRONMENT) {
+      var settings = offlineSettings(offline)
+      if (!settings.appId) {
+        return { ok: false, reason: 'missing_offline_appId', environment: environment }
+      }
+      if (!settings.searchKey) {
+        return { ok: false, reason: 'missing_offline_searchKey', environment: environment }
+      }
+      return { ok: true, environment: environment, settings: settings }
+    }
     var validation = validateConfig(config)
     if (!validation.ok) {
       return { ok: false, reason: validation.reason, environment: environment }
@@ -412,7 +440,11 @@
   }
 
   function boot(config) {
-    var resolution = resolve(window.location && window.location.hostname, config)
+    var resolution = resolve(
+      window.location && window.location.hostname,
+      config,
+      window.__siteStagingAlgolia,
+    )
     if (!resolution.ok) {
       block(document, resolution.reason)
       dispatch(BLOCKED_EVENT, {

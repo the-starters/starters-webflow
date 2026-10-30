@@ -17,6 +17,7 @@ responses.
 | `the-starters-3-0.webflow.io` | `test` | `Freelancers3.0-staging-test` | `Freelancers3.0-staging-test__` | `opportunities_v3_test` |
 | `thestarters.com` | `production` | `Freelancers3.0-production` | `Freelancers3.0-production__` | `opportunities_v3_production` |
 | `www.thestarters.com` | `production` | `Freelancers3.0-production` | `Freelancers3.0-production__` | `opportunities_v3_production` |
+| `localhost`, `127.0.0.1` | `offline` | `Freelancers3.0-production` | `Freelancers3.0-production__` | `opportunities_v3_production` |
 
 The TEST and production search keys must differ. Each key must have search-only
 access to its two environment primary indexes, the five matching Starter sort
@@ -34,6 +35,29 @@ The current site also uses these public, non-member-data indexes through shared
 components. Both restricted browser keys must include search-only access to
 them: `LearnContent`, `cancelled-consult-1`, `cancelled-consult-2`, and
 `cancelled-hire-1`.
+
+## Offline environment contract
+
+`localhost` and `127.0.0.1` (exact hostnames, any port) are reserved for the
+local starters-site-staging replica, whose offline Algolia responder answers
+searches from its own index files. The `offline` environment ignores
+`window.__startersV3AlgoliaConfig`, uses the production index names and Starter
+replica prefix from the table above, and takes both credentials from a global
+the responder sets before the resolver runs:
+
+```html
+<script data-site-staging>
+  window.__siteStagingAlgolia = {
+    appId: '<offline app ID the responder answers for>',
+    searchKey: '<any non-empty placeholder key>',
+  }
+</script>
+```
+
+wf-algolia refuses an empty `data-search-key`, so both values are required.
+A missing or blank `appId` blocks with `missing_offline_appId`; a missing or
+blank `searchKey` blocks with `missing_offline_searchKey`. On every other host
+the resolver never reads this global.
 
 ## Public configuration contract
 
