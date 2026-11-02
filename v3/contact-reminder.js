@@ -88,14 +88,17 @@
     ),
   ]
   const ALLOWED_LINKS = /\S*(thestarters\.com|hirethestarters\.com)\S*/gi
-  // Figures that would otherwise pass for a phone number: amounts and reach
-  // next to a currency or unit ("15000000 IDR", "120 000 000 impressions"),
-  // and order, invoice and reference numbers.
+  // Figures that would otherwise pass for a phone number: amounts next to a
+  // currency or unit ("15000000 IDR", "120 000 000 impressions"), and order,
+  // invoice and reference numbers. A figure only counts when it stands alone,
+  // so a phone number written beside it is never stripped with it.
   const CURRENCY = 'IDR|PHP|AED|USD|EUR|GBP'
+  const STANDS_ALONE = '(?![\\s.,-]?\\d)'
+  const AMOUNT = '(?:\\d{1,3}(?:\\s\\d{3})+|\\d+(?:[.,]\\d+)*)' + STANDS_ALONE
   const NOT_PHONES = new RegExp(
-    '\\b(?:' + CURRENCY + ')\\s*\\d+(?:[\\s.,-]\\d+)*' +
-      '|\\d+(?:[\\s.,-]\\d+)*\\s*(?:' + CURRENCY + '|impressions|followers|views|reach)\\b' +
-      '|(?:\\b(?:order|invoice|ref)\\b\\.?\\s*(?:no\\.?|number)?\\s*[#:]?|#)\\s*\\d[\\d-]*',
+    '\\b(?:' + CURRENCY + ')\\s*' + AMOUNT +
+      '|(^|[^\\d\\s.,+-])(\\s*)' + AMOUNT + '\\s*(?:' + CURRENCY + '|impressions|followers|views)\\b' +
+      '|(?:\\b(?:order|invoice|ref)\\b\\.?\\s*(?:no\\.?|number)?\\s*[#:]?|#)\\s*\\d[\\d-]*' + STANDS_ALONE,
     'gi',
   )
 
@@ -125,7 +128,7 @@
   let dialogSupport = null
 
   function hasContactInfo(text) {
-    const cleaned = String(text || '').replace(ALLOWED_LINKS, '').replace(NOT_PHONES, '')
+    const cleaned = String(text || '').replace(ALLOWED_LINKS, '').replace(NOT_PHONES, '$1$2')
     return CONTACT_RULES.some(function matchesRule(rule) {
       return rule.test(cleaned)
     })
