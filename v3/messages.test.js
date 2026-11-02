@@ -1739,3 +1739,79 @@ test('a reserved tab the member closed is not replaced behind their back', async
   assert.deepEqual(loaded.calls.opens, [['', '_blank']], 'nothing re-opened')
   assert.deepEqual(loaded.calls.handles[0].hrefs, [], 'and nothing steered into a closed tab')
 })
+
+// Contact sharing reminder (v3/contact-reminder.js) opt-in after mount.
+const TALENT_PLAN = { planId: 'pln_dorxata-test-free-plan-dvcg0k8o', active: true, status: 'ACTIVE' }
+const PAID_BRAND_PLAN = { planId: 'pln_new-paid-plan-463h04ph', active: true, status: 'ACTIVE' }
+
+function withPlans(plans) {
+  const viewer = member()
+  viewer.planConnections = plans
+  return viewer
+}
+
+function spyContactReminder(loaded) {
+  const attached = []
+  loaded.window.attachContactReminder = (ui, role) => {
+    attached.push({ ui, role })
+  }
+  return attached
+}
+
+test('a mounted inbox opts a Talent member in to the Starter contact reminder', async () => {
+  const loaded = loadMessages({ member: withPlans([TALENT_PLAN]), search: '' })
+  const attached = spyContactReminder(loaded)
+  await settle()
+
+  assert.equal(attached.length, 1)
+  assert.equal(attached[0].role, 'starter')
+  assert.equal(typeof attached[0].ui.mount, 'function')
+  assert.equal(typeof attached[0].ui.select, 'function')
+})
+
+test('Brand, unmapped and conflicting plans all get the Brand contact reminder', async () => {
+  for (const plans of [[PAID_BRAND_PLAN], [], [PAID_BRAND_PLAN, TALENT_PLAN]]) {
+    const loaded = loadMessages({ member: withPlans(plans), search: '' })
+    const attached = spyContactReminder(loaded)
+    await settle()
+    assert.deepEqual(attached.map((entry) => entry.role), ['brand'])
+  }
+})
+
+test('the inbox mounts as before when the contact reminder is not on the page', async () => {
+  const loaded = loadMessages({ search: '' })
+  loaded.window.attachContactReminder = 'not a function'
+  await settle()
+
+  assert.equal(loaded.calls.mounted.length, 1)
+  assert.deepEqual(loaded.errors, [])
+})
+
+test('a reconnected inbox opts in again, and a stale mount never does', async () => {
+  let releaseFirstMount
+  let mountAttempt = 0
+  const firstMount = new Promise((resolve) => {
+    releaseFirstMount = resolve
+  })
+  const loaded = loadMessages({
+    member: withPlans([TALENT_PLAN]),
+    search: '',
+    onMount: () => {
+      mountAttempt += 1
+      return mountAttempt === 1 ? firstMount : Promise.resolve()
+    },
+  })
+  const attached = spyContactReminder(loaded)
+  await settle(2)
+
+  const firstLifecycle = loaded.calls.authSessions[0]
+  firstLifecycle.onInvalidate()
+  await firstLifecycle.onReconnect()
+  await settle(2)
+  assert.equal(attached.length, 1)
+
+  releaseFirstMount()
+  await settle()
+  assert.equal(attached.length, 1)
+  assert.equal(attached[0].role, 'starter')
+})

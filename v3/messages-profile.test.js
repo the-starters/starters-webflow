@@ -1302,3 +1302,95 @@ test('production is silent', async () => {
   assert.deepEqual(warnings, [])
   assert.equal(element.hidden, true, 'still hidden, just quietly')
 })
+
+// Contact sharing reminder (v3/contact-reminder.js) opt-in after mount.
+function spyContactReminder(loaded) {
+  const attached = []
+  loaded.window.attachContactReminder = (ui, role) => {
+    attached.push({ ui, role })
+  }
+  return attached
+}
+
+test('a mounted profile chatbox opts a Brand viewer in to the Brand contact reminder', async () => {
+  const loaded = load({
+    triggers: [starterTrigger()],
+    member: {
+      id: VIEWER_ID,
+      customFields: { 'free-user': 'Brand' },
+      planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', active: true, status: 'ACTIVE' }],
+    },
+    role: 'brand-paid',
+  })
+  const attached = spyContactReminder(loaded)
+  await settle()
+  loaded.openModal()
+  await settle()
+
+  assert.equal(attached.length, 1)
+  assert.equal(attached[0].role, 'brand')
+  assert.equal(typeof attached[0].ui.mount, 'function')
+})
+
+test('a Talent viewer gets the Starter contact reminder in the profile chatbox', async () => {
+  const loaded = load({
+    triggers: [starterTrigger()],
+    member: {
+      id: VIEWER_ID,
+      customFields: {},
+      planConnections: [
+        { planId: 'pln_dorxata-test-free-plan-dvcg0k8o', active: true, status: 'ACTIVE' },
+      ],
+    },
+    role: 'brand-paid',
+  })
+  const attached = spyContactReminder(loaded)
+  await settle()
+  loaded.openModal()
+  await settle()
+
+  assert.deepEqual(attached.map((entry) => entry.role), ['starter'])
+})
+
+test('the profile chatbox mounts as before without the contact reminder', async () => {
+  const loaded = load({
+    triggers: [starterTrigger()],
+    member: { id: VIEWER_ID, customFields: { 'free-user': 'Brand' } },
+    role: 'brand-paid',
+  })
+  await settle()
+  loaded.openModal()
+  await settle()
+
+  assert.equal(loaded.calls.mounted.length, 1)
+  assert.equal(loaded.window.attachContactReminder, undefined)
+})
+
+test('a superseded profile mount does not opt in; the reconnected one does', async () => {
+  let releaseFirstMount
+  let mountAttempts = 0
+  const firstMount = new Promise((resolve) => {
+    releaseFirstMount = resolve
+  })
+  const loaded = load({
+    triggers: [starterTrigger()],
+    member: { id: VIEWER_ID, customFields: { 'free-user': 'Brand' } },
+    role: 'brand-paid',
+    mountChatbox: async () => {
+      mountAttempts += 1
+      if (mountAttempts === 1) await firstMount
+    },
+  })
+  const attached = spyContactReminder(loaded)
+  await settle()
+
+  loaded.openModal()
+  await settle(5)
+  loaded.calls.authSessions[0].onReconnect()
+  releaseFirstMount()
+  await settle()
+
+  assert.equal(loaded.calls.mounted.length, 2)
+  assert.equal(attached.length, 1)
+  assert.equal(attached[0].role, 'brand')
+})

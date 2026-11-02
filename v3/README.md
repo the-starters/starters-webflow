@@ -1325,6 +1325,59 @@ Run its focused tests with:
 node --test v3/messages-profile.test.js v3/messages.test.js
 ```
 
+## Contact sharing reminder
+
+`contact-reminder.js` warns a member before a chat message with contact details
+reaches the other participant: an email address, a phone number, an outside
+meeting link (Calendly, Zoom, Google Meet, Teams, cal.com, Whereby), a `wa.me`
+or `t.me` link, or a messaging app named with contact intent ("add me on
+WhatsApp", "my Telegram", "whatsapp me"). App names in work talk ("WhatsApp
+Business campaigns", "our Telegram channel") and retina asset names
+(`logo@2x.png`) are not flagged. Links and addresses on `thestarters.com` and
+`hirethestarters.com` are ignored, but other details in the same message still
+count.
+
+Install it once in Site settings -> Custom code -> Head code:
+
+```html
+<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@<tag>/v3/contact-reminder.js"></script>
+```
+
+`messages.js` and `messages-profile.js` call
+`window.attachContactReminder(inboxOrChatbox, role)` after mount, with
+`'starter'` for the talent plan family and `'brand'` otherwise. The call is
+skipped when this file is absent, so the controllers can ship first and the
+reminder switches on when the Head tag is published.
+
+Behaviour:
+
+- A flagged send is always cancelled at once. TalkJS stops waiting on an async
+  override after a few seconds, so holding the message until the member decides
+  would send it anyway.
+- Edit message (or Escape) closes the popup and puts the text back in the
+  message field.
+- Send anyway puts the text back; pressing Send again delivers that exact text
+  once, in that conversation only, tagged `custom.contactFlag = "true"`.
+- The popup is a native `<dialog>` opened with `showModal()`. The profile
+  chatbox sits inside a lumos modal that is also a top-layer modal dialog, and
+  only another modal dialog can render above it and stay clickable.
+
+- Where the browser has no `<dialog>` (iOS Safari before 15.4) the send is not
+  cancelled: it goes through tagged `contactFlag`, because a cancelled message
+  with no visible warning would leave the member stuck.
+- On phones the buttons stack with Edit message on top, short screens (phones
+  in landscape) get a compact layout so both buttons stay visible without
+  scrolling, and the chat field is only refocused after a choice so the
+  keyboard never opens behind the popup.
+- The file guards on `window.StartersContactReminder`, so a stale inline copy
+  left in Webflow custom code is replaced rather than kept.
+
+Not covered, by design of the TalkJS hooks available: editing an already sent
+message (the Chat Themes allow message editing and edits do not fire
+`onSendMessage`), replies sent from TalkJS email notifications, and text
+disguised letter by letter or numbers written as words. TalkJS content
+suppression and the AI monitoring scenario are the backstop for those.
+
 ## Direct-hire project form
 
 `project-form.js` is the authenticated V3 direct-hire adapter for the
