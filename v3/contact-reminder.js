@@ -90,11 +90,11 @@
   const ALLOWED_LINKS = /\S*(thestarters\.com|hirethestarters\.com)\S*/gi
   // Figures that would otherwise pass for a phone number: amounts next to a
   // currency or unit ("15000000 IDR", "120 000 000 impressions"), and order,
-  // invoice and reference numbers. A figure only counts when it stands alone,
-  // so a phone number written beside it is never stripped with it.
+  // invoice and reference numbers. A figure only counts when it stands alone
+  // and does not start with 0, so a phone number is never stripped as one.
   const CURRENCY = 'IDR|PHP|AED|USD|EUR|GBP'
   const STANDS_ALONE = '(?![\\s.,-]?\\d)'
-  const AMOUNT = '(?:\\d{1,3}(?:\\s\\d{3})+|\\d+(?:[.,]\\d+)*)' + STANDS_ALONE
+  const AMOUNT = '(?:[1-9]\\d{0,2}(?:\\s\\d{3})+|[1-9]\\d*(?:[.,]\\d+)*)' + STANDS_ALONE
   const NOT_PHONES = new RegExp(
     '\\b(?:' + CURRENCY + ')\\s*' + AMOUNT +
       '|(^|[^\\d\\s.,+-])(\\s*)' + AMOUNT + '\\s*(?:' + CURRENCY + '|impressions|followers|views)\\b' +
