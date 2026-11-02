@@ -1,5 +1,6 @@
 /**
  * Contact sharing reminder for TalkJS chat.
+ * @release v1.59.732
  *
  * Warns a member before a chat message that contains contact details (email,
  * phone number, outside meeting link, messaging app handle) reaches the other
