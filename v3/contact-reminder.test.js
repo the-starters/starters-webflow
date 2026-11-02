@@ -243,6 +243,43 @@ test('messaging apps and country-code phones with contact intent are caught', ()
   }
 })
 
+test('words ending in "at", large figures and "signal me" are not contact sharing', () => {
+  const { window } = load()
+  const has = window.StartersContactReminder.hasContactInfo
+  for (const text of [
+    'Check what Nike dot com is doing',
+    'Can you send me the format at a later date dot com',
+    'Budget is 15000000 IDR',
+    'Budget is IDR 15000000',
+    'Our reach was 120 000 000 impressions',
+    'We hit 12 345 678 views and 1 234 567 followers',
+    'Fee is 25000000 PHP or 1 500 000 USD',
+    'Order 12345678 shipped',
+    'Invoice no. 12345678 is attached',
+    'See ref 123-456-7890 and #12345678',
+    'Signal me when ready',
+    'signal us when done',
+  ]) {
+    assert.equal(has(text), false, text)
+  }
+  for (const text of [
+    'name at gmail dot com',
+    'name (at) gmail (dot) com',
+    'name(at)gmail(dot)com',
+    '+971 50 123 4567',
+    '050 123 4567',
+    '(415) 555-0172',
+    '+971501234567',
+    '+44 20 7946 0958',
+    'Order 12345678 shipped, call me on 050 123 4567',
+    'Budget is 5000 AED, my number 050 123 4567',
+    'my Signal is below',
+    'reach me via Signal',
+  ]) {
+    assert.equal(has(text), true, text)
+  }
+})
+
 test('without <dialog> support a flagged message is sent tagged, never silently cancelled', () => {
   const loaded = load({ noDialog: true })
   const ui = chatUi()

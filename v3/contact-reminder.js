@@ -57,12 +57,15 @@
   // Messaging apps only count with contact intent ("add me on WhatsApp",
   // "my Telegram", "whatsapp me"): this is a marketing marketplace, and
   // "WhatsApp Business campaigns" or "our Telegram channel" are normal work talk.
-  const MESSAGING_APP = '(?:whats\\s*app|telegram|skype|viber|wechat|signal|imessage)'
+  // "Signal me when ready" is ordinary English, so Signal only counts as an app
+  // after "my" or "on/via", never as "<app> me".
+  const APP_VERBS = 'whats\\s*app|telegram|skype|viber|wechat|imessage'
+  const MESSAGING_APP = '(?:' + APP_VERBS + '|signal)'
   const CONTACT_RULES = [
     // Email. Skips retina asset names such as logo@2x.png.
     /[\w.+-]+@(?!\d+x\.)[\w-]+(\.[\w-]+)*\.[a-z]{2,}/i,
     // Spelled-out email: "name at gmail dot com", "name (at) gmail (dot) com".
-    /\b[\w.+-]+\s*[([]?\s*at\s*[)\]]?\s*(?!(?:the|a|an|this|that|these|those|my|our|your|their|his|her|its)\b)[\w-]+\s*[([]?\s*dot\s*[)\]]?\s*(com|net|org|io|co|ae)\b/i,
+    /\b[\w.+-]+(?:\s+at\s+|\s*[([]\s*at\s*[)\]]\s*)(?!(?:the|a|an|this|that|these|those|my|our|your|their|his|her|its)\b)[\w-]+(?:\s+dot\s+|\s*[([]\s*dot\s*[)\]]\s*)(com|net|org|io|co|ae)\b/i,
     // Phone, local or international: 050 123 4567, +971 50 123 4567, (415) 555-0172.
     /(?:^|[^\w/])(?:\+\d{1,3}[\s.-]?)?\(?\d{2,4}\)?[\s.-]?\d{3}[\s.-]?\d{3,4}(?!\d)/i,
     // Phone with a country code in other groupings: +44 20 7946 0958.
@@ -72,7 +75,7 @@
     /\b(calendly|zoom)\s*(dot|\.)\s*(com|us)\b/i,
     // Messaging app links, then messaging apps with contact intent.
     /\b(wa\.me|t\.me)\/\S+/i,
-    new RegExp('\\b' + MESSAGING_APP + '\\s+(me|us)\\b', 'i'),
+    new RegExp('\\b(?:' + APP_VERBS + ')\\s+(me|us)\\b', 'i'),
     new RegExp(
       '\\bmy\\s+' + MESSAGING_APP +
         '\\b(?!\\s+(?:channels?|campaigns?|groups?|business|strategy|ads|marketing|community|bots?)\\b)',
@@ -85,6 +88,16 @@
     ),
   ]
   const ALLOWED_LINKS = /\S*(thestarters\.com|hirethestarters\.com)\S*/gi
+  // Figures that would otherwise pass for a phone number: amounts and reach
+  // next to a currency or unit ("15000000 IDR", "120 000 000 impressions"),
+  // and order, invoice and reference numbers.
+  const CURRENCY = 'IDR|PHP|AED|USD|EUR|GBP'
+  const NOT_PHONES = new RegExp(
+    '\\b(?:' + CURRENCY + ')\\s*\\d+(?:[\\s.,-]\\d+)*' +
+      '|\\d+(?:[\\s.,-]\\d+)*\\s*(?:' + CURRENCY + '|impressions|followers|views|reach)\\b' +
+      '|(?:\\b(?:order|invoice|ref)\\b\\.?\\s*(?:no\\.?|number)?\\s*[#:]?|#)\\s*\\d[\\d-]*',
+    'gi',
+  )
 
   const STYLE_ID = 'starters-contact-reminder-style'
   const STYLES = [
@@ -112,7 +125,7 @@
   let dialogSupport = null
 
   function hasContactInfo(text) {
-    const cleaned = String(text || '').replace(ALLOWED_LINKS, '')
+    const cleaned = String(text || '').replace(ALLOWED_LINKS, '').replace(NOT_PHONES, '')
     return CONTACT_RULES.some(function matchesRule(rule) {
       return rule.test(cleaned)
     })
