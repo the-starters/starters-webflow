@@ -1073,6 +1073,11 @@
       if (messagesGeneration !== openingGeneration) return
       clearTalkJsRecoveryReload()
 
+      // Contact sharing reminder (v3/contact-reminder.js, loaded from Webflow Head code). Optional: no-op when absent.
+      if (typeof window.attachContactReminder === 'function') {
+        window.attachContactReminder(inbox, roleFamily(member) === 'talent' ? 'starter' : 'brand')
+      }
+
 
       // Deliberately after mount and deliberately not awaited: the inbox is already
       // usable, so a deep-link failure degrades to "your normal inbox" instead of

@@ -708,6 +708,11 @@
       await chatbox.mount(container)
       if (openingGeneration !== chatGeneration) return
       chatMounted = true
+
+      // Contact sharing reminder (v3/contact-reminder.js, loaded from Webflow Head code). Optional: no-op when absent.
+      if (typeof window.attachContactReminder === 'function') {
+        window.attachContactReminder(chatbox, roleFamily(state.member) === 'talent' ? 'starter' : 'brand')
+      }
     } catch (error) {
       warn('could not mount the chat: ' + (error && error.message))
       if (openingGeneration === chatGeneration) {
