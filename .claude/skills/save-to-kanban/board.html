@@ -1,0 +1,177 @@
+<title>__BOARD_NAME__</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lato:wght@300;400;700&family=JetBrains+Mono:wght@400&display=swap">
+<style>
+/* Read-only page for an old claude.ai artifact board. Layout: moved banner, header with counts, then five
+   status lanes that scroll sideways on phones. Cards come from the artifact's db (cards, or tasks on
+   workplan boards) and cannot be added, moved or edited here. Republish over each old board with its
+   title in place of the BOARD_NAME token. */
+:root {
+  --bg: #F4F5F8; --surface: #FFFFFF; --raised: #EEF0F5; --line: rgba(16,24,48,0.1);
+  --fg: #0F1118; --muted: rgba(16,24,48,0.64); --faint: rgba(16,24,48,0.42);
+  --accent: #1034A6; --blue: #1F5E9C; --ok: #2E7D50; --warn: #9A6211; --danger: #B23B3B;
+  --moved-bg: #FFF4DE; --moved-line: #E3B65C; --moved-fg: #4A3203;
+  --display: "Lato", "Helvetica Neue", Arial, sans-serif; --mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0F1118; --surface: #12161F; --raised: #1B1F2A; --line: rgba(255,255,255,0.08);
+  --fg: #FFFFFF; --muted: rgba(235,235,245,0.62); --faint: rgba(235,235,245,0.38);
+  --accent: #A9CCF5; --blue: #6FA8E0; --ok: #6FBF8F; --warn: #E3A857; --danger: #E06A6A;
+  --moved-bg: #33260C; --moved-line: #8A6420; --moved-fg: #F6DFAE;
+  color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #0F1118; --surface: #12161F; --raised: #1B1F2A; --line: rgba(255,255,255,0.08);
+  --fg: #FFFFFF; --muted: rgba(235,235,245,0.62); --faint: rgba(235,235,245,0.38);
+  --accent: #A9CCF5; --blue: #6FA8E0; --ok: #6FBF8F; --warn: #E3A857; --danger: #E06A6A;
+  --moved-bg: #33260C; --moved-line: #8A6420; --moved-fg: #F6DFAE;
+  color-scheme: dark; }
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font-family: var(--display); font-size: 15px; line-height: 1.4; }
+.wrap { padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 20px 32px; max-width: 1480px; margin: 0 auto; display: flex; flex-direction: column; gap: 18px; }
+.moved { display: flex; flex-direction: column; gap: 6px; padding: 14px 16px; border-radius: 14px; background: var(--moved-bg); border: 1px solid var(--moved-line); color: var(--moved-fg); }
+.moved strong { font-size: 17px; font-weight: 700; text-wrap: balance; }
+.moved p { margin: 0; max-width: 72ch; }
+.moved code { font-family: var(--mono); font-size: 13px; overflow-wrap: anywhere; }
+header { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px; }
+h1 { margin: 0; font-size: 28px; font-weight: 300; text-wrap: balance; }
+.sub { margin: 4px 0 0; color: var(--muted); max-width: 66ch; }
+.meta { display: flex; gap: 8px; flex-wrap: wrap; }
+.pill { font-size: 13px; padding: 5px 10px; border-radius: 999px; background: var(--surface); border: 1px solid var(--line); color: var(--muted); font-variant-numeric: tabular-nums; }
+.pill strong { color: var(--fg); font-weight: 700; }
+.status-line { font-size: 13px; color: var(--faint); min-height: 18px; }
+.lanes-scroll { overflow-x: auto; margin-inline: -16px; padding-inline: 16px; padding-bottom: 6px; }
+.lanes { display: grid; grid-template-columns: repeat(5, minmax(250px, 1fr)); gap: 12px; min-width: 1310px; }
+@media (min-width: 1400px) { .lanes { min-width: 0; } }
+.lane { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; display: flex; flex-direction: column; min-width: 0; }
+.lane-head { display: flex; align-items: center; gap: 8px; padding: 12px 14px 8px; }
+.lane-head h2 { margin: 0; font-size: 13px; font-weight: 700; color: var(--muted); }
+.lane-head .count { margin-left: auto; font-size: 13px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.swatch { width: 8px; height: 8px; border-radius: 2px; }
+.cards { display: flex; flex-direction: column; gap: 8px; padding: 0 10px 12px; min-height: 60px; }
+.card { background: var(--raised); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.card img { display: block; width: 100%; max-height: 120px; object-fit: cover; object-position: center top; border-radius: 8px; border: 1px solid var(--line); }
+.card .title { font-weight: 700; overflow-wrap: anywhere; }
+.card .detail { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; white-space: pre-line; }
+.tags { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.tag { font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+.tag.id { font-family: var(--mono); }
+.progress { font-size: 12px; color: var(--fg); background: color-mix(in srgb, var(--blue) 14%, transparent); border-radius: 8px; padding: 6px 8px; overflow-wrap: anywhere; }
+.progress.blocker { background: color-mix(in srgb, var(--danger) 14%, transparent); }
+.links { display: flex; flex-wrap: wrap; gap: 10px; font-size: 13px; }
+.links a { color: var(--accent); }
+.links a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.empty { color: var(--faint); font-size: 13px; padding: 8px 4px; }
+.when { font-family: var(--mono); font-size: 11px; color: var(--faint); }
+</style>
+
+<div class="wrap">
+  <section class="moved" role="note" aria-labelledby="movedTitle">
+    <strong id="movedTitle">This board moved to <code id="movedKey">kanbans/</code> in this repo</strong>
+    <p>This board is now a local board: a folder in <code>kanbans/</code> on the repo's <code>kanbans</code> branch, written by <code>kanban.sh</code>. Add, move and edit cards there, and open <code>kanbans/.view/index.html</code> to see them. This page is read-only and shows the cards as they were before the move.</p>
+  </section>
+
+  <header>
+    <div>
+      <h1>__BOARD_NAME__</h1>
+      <p class="sub">Archived board. Nothing here changes any more.</p>
+    </div>
+    <div class="meta" id="meta" aria-live="polite"></div>
+  </header>
+  <div class="status-line" id="statusLine" role="status">Loading the archived cards…</div>
+
+  <div class="lanes-scroll">
+    <div class="lanes" id="lanes"></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  const LANES = [
+    { id: "backlog", name: "Your list", color: "var(--accent)" },
+    { id: "next", name: "Up next", color: "var(--faint)" },
+    { id: "doing", name: "In progress", color: "var(--blue)" },
+    { id: "review", name: "In review", color: "var(--warn)" },
+    { id: "done", name: "Done", color: "var(--ok)" }
+  ];
+  const LANE_OF = { ready: "next" };
+  const $ = (id) => document.getElementById(id);
+  const sources = { cards: [], tasks: [] };
+
+  function laneOf(c) {
+    const s = LANE_OF[c.status] || c.status;
+    return LANES.some((l) => l.id === s) ? s : "backlog";
+  }
+  function fmt(ts) {
+    if (!ts) return "";
+    try { return new Date(ts).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }); } catch (e) { return ""; }
+  }
+  function safeUrl(u) { return typeof u === "string" && /^https:\/\//.test(u) ? u : null; }
+  function tag(text, cls) { const t = document.createElement("span"); t.className = "tag" + (cls ? " " + cls : ""); t.textContent = text; return t; }
+  function boardKey(feature) { return String(feature).trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""); }
+
+  function cardEl(c) {
+    const a = document.createElement("article"); a.className = "card";
+    if (c.imageId) { const im = document.createElement("img"); im.src = "/_blob/" + c.imageId; im.alt = "Screenshot for " + (c.title || "this card"); im.loading = "lazy"; a.appendChild(im); }
+    const t = document.createElement("span"); t.className = "title"; t.textContent = c.title || "Untitled"; a.appendChild(t);
+    if (c.detail) { const d = document.createElement("span"); d.className = "detail"; d.textContent = c.detail; a.appendChild(d); }
+    const note = c.blocker ? "Was waiting on: " + c.blocker : (c.progress || c.merged || "");
+    if (note) { const p = document.createElement("span"); p.className = "progress" + (c.blocker ? " blocker" : ""); p.textContent = note; a.appendChild(p); }
+    const links = document.createElement("span"); links.className = "links";
+    for (const [label, u] of [["Spec", c.spec], ["PR", c.pr]]) {
+      const href = safeUrl(u); if (!href) continue;
+      const l = document.createElement("a"); l.href = href; l.target = "_blank"; l.rel = "noopener"; l.textContent = label; links.appendChild(l);
+    }
+    if (links.childNodes.length) a.appendChild(links);
+    const tags = document.createElement("span"); tags.className = "tags";
+    tags.appendChild(tag(c.id, "id"));
+    if (c.area || c.epic) tags.appendChild(tag(c.area || c.epic));
+    if (c.addedBy) tags.appendChild(tag(c.addedBy === "claude" ? "From Claude" : "Yours"));
+    const w = document.createElement("span"); w.className = "when"; w.textContent = fmt(c.updatedAt || c.createdAt); tags.appendChild(w);
+    a.appendChild(tags);
+    return a;
+  }
+
+  function render() {
+    const cards = sources.cards.concat(sources.tasks);
+    const lanesEl = $("lanes"); lanesEl.textContent = "";
+    for (const lane of LANES) {
+      const items = cards.filter((c) => laneOf(c) === lane.id)
+        .sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || String(a.createdAt).localeCompare(String(b.createdAt)));
+      const sec = document.createElement("section"); sec.className = "lane"; sec.setAttribute("aria-label", lane.name);
+      const head = document.createElement("div"); head.className = "lane-head";
+      const sw = document.createElement("span"); sw.className = "swatch"; sw.style.background = lane.color; sw.setAttribute("aria-hidden", "true");
+      const h = document.createElement("h2"); h.textContent = lane.name;
+      const n = document.createElement("span"); n.className = "count"; n.textContent = String(items.length);
+      head.append(sw, h, n);
+      const list = document.createElement("div"); list.className = "cards";
+      if (!items.length) { const e = document.createElement("div"); e.className = "empty"; e.textContent = "No cards."; list.appendChild(e); }
+      for (const c of items) list.appendChild(cardEl(c));
+      sec.append(head, list); lanesEl.appendChild(sec);
+    }
+    const meta = $("meta"); meta.textContent = "";
+    for (const [label, val] of [["cards", cards.length], ["done", cards.filter((c) => laneOf(c) === "done").length]]) {
+      const p = document.createElement("span"); p.className = "pill";
+      const s = document.createElement("strong"); s.textContent = String(val);
+      p.append(s, document.createTextNode(" " + label)); meta.appendChild(p);
+    }
+  }
+
+  render();
+  (async () => {
+    const db = window.claude && window.claude.use ? await window.claude.use("db") : null;
+    if (!db) { $("statusLine").textContent = "Open this page on claude.ai to see the archived cards."; return; }
+    $("statusLine").textContent = "";
+    db.doc("meta/readonly").onSnapshot((snap) => {
+      const f = snap.exists ? snap.data().feature : "";
+      if (f) $("movedKey").textContent = "kanbans/" + boardKey(f);
+    }, () => {});
+    for (const name of Object.keys(sources)) {
+      db.collection(name).onSnapshot((snap) => {
+        sources[name] = snap.docs.map((d) => Object.assign({}, d.data(), { id: d.id }));
+        render();
+      }, () => { $("statusLine").textContent = "Couldn't load the archived cards. Reload to try again."; });
+    }
+  })();
+})();
+</script>

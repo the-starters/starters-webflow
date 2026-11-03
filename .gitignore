@@ -28,3 +28,6 @@ scripts/.learn-reindex-out/
 # commit a browser profile.
 .call-receipt-browser-*/
 .work-experience-browser-*/
+
+# Agent kanban worktree (kanbans branch)
+/kanbans/

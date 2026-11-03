@@ -1,0 +1,54 @@
+{
+  "repo": "the-starters/starters-webflow",
+  "approvers": [
+    "jericolawrence"
+  ],
+  "board": "infra",
+  "maxDev": 1,
+  "maxQA": 1,
+  "qaRounds": 3,
+  "doneRetentionDays": 30,
+  "notion": {
+    "root": null
+  },
+  "local": {
+    "dir": "kanbans",
+    "branch": "kanbans"
+  },
+  "view": {
+    "kind": "artifact",
+    "url": "https://claude.ai/artifact/NL55B4FAX6SS8eZpomDYH5"
+  },
+  "project": {
+    "name": "Jerico @ The Starters Tasks",
+    "designDoc": null,
+    "verifySkill": "run",
+    "uiRules": "The app's existing design tokens and components.",
+    "checks": [
+      "npm --prefix code-components run test",
+      "npm --prefix code-components run typecheck",
+      "npm --prefix code-components run build"
+    ],
+    "clipScript": null,
+    "workingStyle": null
+  },
+  "boards": {
+    "starters-webflow": {
+      "type": "local",
+      "title": "Starters-webflow Board",
+      "owner": "jericolawrence",
+      "areas": [
+        "starters-webflow"
+      ]
+    },
+    "infra": {
+      "type": "local",
+      "title": "Infra Board",
+      "owner": "jericolawrence",
+      "areas": [
+        "infra",
+        "tooling"
+      ]
+    }
+  }
+}

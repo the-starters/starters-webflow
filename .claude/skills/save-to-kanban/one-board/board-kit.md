@@ -1,0 +1,575 @@
+# Board viewer kit
+
+A single-file HTML page that shows work cards from any number of boards as one inbox. It has a sidebar of views, types and boards, sections for what needs you, what is running, what is next, the backlog and recent done work, and a details drawer. It needs no framework, no build tool and no server. Light and dark themes, phone layout and keyboard use are built in.
+
+Use it as is, or hand this file to an agent with the prompt at the end.
+
+## Quick start
+
+Pick one of two ways. Don't mix them.
+
+**By hand (a few cards, no build step).**
+
+1. Copy the HTML from **The page** below into `board.html`.
+2. Edit the `board-config` block: your title, brand, boards and card types.
+3. Replace the sample cards in the `board-data` block with yours.
+4. Open `board.html` in a browser, or host it anywhere static files are served.
+
+**With a build (cards come from a tracker or files).**
+
+1. Copy the HTML into `board.html` and leave it untouched. It is the template.
+2. Save your config as `board.config.json`, the same JSON as the `board-config` block. It replaces the whole block, so include every key you need.
+3. Export your work items to `cards.json` (an array) or a folder of one-card `.json` files.
+4. Run `build_board.py` (below). The output page is what you publish.
+
+## Data contract
+
+The page reads two JSON blocks. Nothing else in the page needs to change.
+
+### Config (`<script id="board-config">`)
+
+| Key | Type | Meaning |
+|---|---|---|
+| `title` | string | Browser tab title. |
+| `brand` | string | Name at the top of the sidebar. Falls back to `title`. |
+| `storageKey` | string | Prefix for the saved board and type filters in `localStorage`. Use a different one per board page on the same domain. |
+| `issueUrl` | string | Optional link template for numeric issues, such as `https://github.com/OWNER/REPO/issues/{id}`. Empty means issues show as plain text. |
+| `doneDays` | number | Hide done cards whose `updatedAt` is older than this many days, measured when the page opens. `0` or missing shows every done card. |
+| `types` | object | Card types, `{ "key": { "label": "Name", "accent": true } }`. The first key is the default for cards with no or unknown type. One type hides the type filter. `accent` tints the tag. |
+| `boards` | object | Boards, `{ "key": { "label": "Name", "hue": 0-359 } }`. The hue is an OKLCH hue, not HSL: 30 reads red, 70 orange, 100 yellow, 150 green, 215 blue, 300 purple. Avoid roughly 20 to 50, which sits next to the Needs you colour. A card on a board missing here still shows, labelled by its key, with a stable hue made from the key. |
+
+### Card (`<script id="board-data">`, an array)
+
+| Field | Required | Meaning |
+|---|---|---|
+| `id` | yes | Unique card id, such as `WEB-12`. Cards without one are dropped. |
+| `title` | no | One line. Falls back to the id. |
+| `status` | no | `backlog`, `next`, `doing`, `review` or `done`. Anything else counts as `backlog`. |
+| `board` | no | A key from `boards`. Falls back to `general`. |
+| `type` | no | A key from `types`. |
+| `blocker` | no | A question or decision someone must make. Moves the card to **Needs you** while set, whatever its status, except `done`, where it is ignored. Keep the card's real status (often `next` or `doing`); that is where it lands once the blocker clears. |
+| `owner` | no | Who claimed it. Hidden on Up next and Backlog cards. |
+| `agent` | no | Free text about the agent or session running it. |
+| `progress` | no | Free text, such as `2 of 3 screens`. |
+| `area` | no | Sub-area within the board. |
+| `branch` | no | Git branch name. |
+| `pr` | no | Full pull request URL. A `/pull/<n>` URL shows as `#n`. |
+| `issue` | no | Issue number (linked through `issueUrl`) or a full URL. |
+| `detail` | no | Plain text description. Line breaks are kept. |
+| `createdAt`, `updatedAt` | no | `YYYY-MM-DD`, optionally followed by `T` or a space and `HH:MM`, such as `2026-01-31T14:05`. Shown as written, with no time zone conversion, so export them in the zone your team reads. Newest `updatedAt` sorts first and shows as "Updated" in the header. |
+
+Keys are exact and case-sensitive: `status`, `type` and `board` values must match the config. Normalise case in your exporter. An unknown `status` counts as `backlog` and an unknown `type` as the first type, and each one logs a `console.warn` once, so check the console after a new export.
+
+All text is escaped before it reaches the page, and only `http` and `https` links are rendered as links.
+
+### Sections
+
+A card's section comes from its status: `review` and any card with a `blocker` go to **Needs you**, `doing` to **Running now**, `next` to **Up next**, then **Backlog** and **Done recently**. To rename, reorder or change how many rows a section shows before "Show all", edit the `SECTIONS` table in the script. To add a status, add a row to `STATUS` that points at a section key.
+
+## Theming
+
+All colour, font and size choices are CSS custom properties on `:root`, with dark values in two places (the `prefers-color-scheme` block and `[data-theme="dark"]`). Set `data-theme="light"` or `"dark"` on `<html>` to force a theme.
+
+| Token | Use |
+|---|---|
+| `--bg`, `--surface`, `--line`, `--fg`, `--muted` | Page, panels, borders, text |
+| `--need`, `--run`, `--ok`, `--accent` | Needs you, Running, Done, accented type tag |
+| `--chip-l`, `--chip-c` | OKLCH lightness and chroma of board colour chips; the hue comes from each board |
+| `--sans`, `--mono` | Fonts. Remove the Google Fonts `<link>` to use system fonts only |
+| `--side-w`, `--max-w` | Sidebar width and page max width |
+
+## Scaling notes
+
+- Any number of boards and types. Boards with open or backlog cards list in the sidebar (and as chips on phones), most Needs you cards first, then most open cards, then by name. Boards with none collapse into one "Quiet" line.
+- Filter counts (boards, types, All) count open plus backlog cards. Section headers count their own section.
+- Thousands of cards. Each section renders only its first rows until "Show all", and card lookups use a map.
+- New boards need no page change. A card on an unknown board still shows.
+- Several pages on one domain stay apart through `storageKey`.
+- Done work stays bounded with `doneDays`.
+- Data refresh is a rebuild. Rerun `build_board.py`, or swap the `board-data` block from any language, and republish.
+
+## The page
+
+```html
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Team Board</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: sidebar (views, types, boards) beside the inbox list; card details open in a drawer. */
+:root {
+  --bg: #f6f6f4; --surface: #ffffff; --line: #e3e3de; --fg: #1d1f1c; --muted: #6c6f68;
+  --need: #c2410c; --run: #1d6fd1; --ok: #2f7d4f; --accent: #8a3fc7;
+  --chip-l: 0.66; --chip-c: 0.14;
+  --sans: "Instrument Sans", -apple-system, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+  --side-w: 232px; --max-w: 1176px;
+  --z-scrim: 100; --z-drawer: 110;
+  --ease-out: cubic-bezier(0.32, 0.72, 0, 1); --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #141513; --surface: #1c1d1b; --line: #2e302c; --fg: #ecece8; --muted: #9a9d95;
+  --need: #f2884f; --run: #6aa8f0; --ok: #6cc08e; --accent: #c39af2; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #141513; --surface: #1c1d1b; --line: #2e302c; --fg: #ecece8; --muted: #9a9d95;
+  --need: #f2884f; --run: #6aa8f0; --ok: #6cc08e; --accent: #c39af2; color-scheme: dark }
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 var(--sans); -webkit-font-smoothing: antialiased; }
+.wrap { max-width: var(--max-w); margin: 0 auto; padding-block: calc(28px + env(safe-area-inset-top, 0px)) calc(48px + env(safe-area-inset-bottom, 0px));
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+h1, h2, h3 { text-wrap: balance; }
+:focus-visible { outline: 2px solid color-mix(in srgb, var(--fg) 45%, transparent); outline-offset: 2px; }
+
+.label { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0; }
+
+.ib { display: grid; grid-template-columns: var(--side-w) minmax(0, 1fr); gap: 32px; align-items: start; }
+.main { min-width: 0; display: flex; flex-direction: column; gap: 28px; container-type: inline-size; }
+
+.main-head { display: flex; flex-direction: column; gap: 2px; }
+.main-head h1 { font-size: 22px; line-height: 28px; font-weight: 600; letter-spacing: -0.015em; margin: 0; overflow-wrap: anywhere; }
+.main-head p { margin: 0; color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+
+/* Sidebar */
+.side { position: sticky; top: calc(16px + env(safe-area-inset-top, 0px)); display: flex; flex-direction: column;
+  max-height: calc(100vh - 32px - env(safe-area-inset-top, 0px)); overflow-y: auto; padding: 0 2px 2px; }
+.brand { font-size: 22px; line-height: 28px; font-weight: 600; letter-spacing: -0.015em; margin: 0 8px 24px; overflow-wrap: anywhere; }
+.side .label { margin: 20px 8px 6px; }
+.side .brand + .label { margin-top: 0; }
+.sbtn { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 40px; padding: 7px 8px; border: 0; border-radius: 6px;
+  background: none; color: var(--fg); font: 500 13px/1.2 var(--sans); cursor: pointer; text-align: left;
+  transition-property: background-color, box-shadow; transition-duration: 150ms; transition-timing-function: ease-out; }
+.sbtn:active { background: color-mix(in srgb, var(--fg) 9%, transparent); }
+.sbtn[aria-pressed="true"] { background: var(--surface); box-shadow: 0 0 0 1px var(--line); }
+.sbtn .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.sbtn .chip { font-size: 13px; color: var(--fg); }
+.sbtn .n { font: 600 11px/1 var(--sans); font-variant-numeric: tabular-nums; color: var(--need); background: color-mix(in srgb, var(--need) 12%, transparent); padding: 3px 6px; border-radius: 999px; }
+.sbtn .o { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; min-width: 18px; text-align: right; }
+.sbtn .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--run); flex-shrink: 0; }
+.sbtn .sw { width: 8px; height: 8px; border-radius: 2px; background: var(--h); flex-shrink: 0; }
+.brand-m { display: none; }
+@media (max-width: 760px) { .brand-m { display: inline; } }
+.quietf { font-size: 12px; color: var(--muted); padding: 8px; margin: 0; }
+
+/* Phone filter chips (the sidebar is hidden there) */
+.filters { display: none; gap: 6px; }
+.fbtn { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; min-height: 40px; padding: 0 12px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--surface); color: var(--muted); font: 500 12px/1 var(--sans); cursor: pointer;
+  transition-property: color, border-color, transform; transition-duration: 150ms; transition-timing-function: ease-out; }
+.fbtn:active { transform: scale(0.96); }
+.fbtn[aria-pressed="true"] { color: var(--fg); border-color: var(--fg); }
+.fbtn .c { font-variant-numeric: tabular-nums; }
+@media (pointer: coarse) { .fbtn { min-height: 44px; } }
+
+.chip { display: inline-flex; align-items: center; gap: 5px; font: 500 11px/1 var(--sans); color: var(--muted); white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.chip::before { content: ""; flex-shrink: 0; width: 8px; height: 8px; border-radius: 2px; background: var(--h); }
+.id { font: 400 11px/1 var(--mono); color: var(--muted); }
+.tag { font: 500 10px/1 var(--sans); letter-spacing: .02em; padding: 3px 6px; border-radius: 4px; white-space: nowrap; color: var(--muted); box-shadow: inset 0 0 0 1px var(--line); }
+.tag.accent { color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); box-shadow: none; }
+.lead .meta { display: inline-flex; align-items: center; gap: 6px; }
+.pill { font: 500 11px/1 var(--sans); padding: 3px 7px; border-radius: 999px; white-space: nowrap; color: var(--need); background: color-mix(in srgb, var(--need) 12%, transparent); }
+
+/* Inbox list */
+.sec { scroll-margin-top: calc(16px + env(safe-area-inset-top, 0px)); }
+.sec h2 { display: flex; gap: 8px; align-items: baseline; margin-bottom: 10px; }
+.sec h2 .c { color: var(--muted); font-weight: 500; font-variant-numeric: tabular-nums; }
+.sec h2.need { color: var(--need); } .sec h2.run { color: var(--run); }
+.rows { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); overflow: hidden; }
+.row { display: grid; grid-template-columns: 116px minmax(0, 1fr) auto; gap: 12px; padding: 12px; align-items: start;
+  width: 100%; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer;
+  transition: background-color 150ms ease-out; }
+.row + .row, .row + .more { border-top: 1px solid var(--line); }
+.row:active { background: color-mix(in srgb, var(--fg) 8%, transparent); }
+.row:focus-visible { outline-offset: -2px; }
+.row[aria-current="true"] { background: color-mix(in srgb, var(--fg) 6%, transparent); box-shadow: inset 2px 0 0 var(--fg); }
+.row .lead { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; padding-top: 2px; min-width: 0; }
+.row .t { min-width: 0; overflow-wrap: anywhere; display: flex; flex-direction: column; gap: 2px; font-weight: 500; }
+.row .why { font-size: 12px; font-weight: 400; color: var(--muted); }
+.row .end { display: flex; align-items: center; gap: 10px; padding-top: 2px; }
+.caret { width: 7px; height: 7px; border-right: 1.5px solid var(--muted); border-top: 1.5px solid var(--muted); transform: rotate(45deg); margin: 4px 3px 0 0; }
+.empty { padding: 12px; margin: 0; color: var(--muted); }
+.more { min-height: 40px; padding: 9px 12px; border: 0; background: none; color: var(--muted); font: inherit; font-size: 12px; text-align: left; cursor: pointer; transition: color 150ms ease-out; }
+
+@media (hover: hover) and (pointer: fine) {
+  .sbtn:hover { background: color-mix(in srgb, var(--fg) 6%, transparent); }
+  .row:hover { background: color-mix(in srgb, var(--fg) 4%, transparent); }
+  .fbtn:hover, .more:hover { color: var(--fg); }
+}
+
+/* Rows follow the list's own width, so a narrow list never crushes the title. */
+@container (max-width: 520px) {
+  .row { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  .row .lead { flex-direction: row; align-items: center; gap: 8px; }
+  .row .end { justify-content: space-between; }
+  .row .end:not(:has(.pill)) { display: none; }
+}
+@media (max-width: 760px) {
+  .ib { grid-template-columns: minmax(0, 1fr); }
+  .side { display: none; }
+  .filters { display: flex; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin-inline: -16px; padding-inline: 16px; }
+  .filters::-webkit-scrollbar { display: none; }
+  .main { gap: 20px; }
+  .filters + .filters { margin-top: -12px; }
+}
+
+/* Details drawer: slides in from the right over a scrim with the same timing. Transitions, so it reverses cleanly mid-move. */
+.scrim { position: fixed; inset: 0; z-index: var(--z-scrim); background: rgba(10, 10, 10, 0.32); opacity: 0; visibility: hidden;
+  transition: opacity 180ms var(--ease-exit), visibility 0s linear 180ms; }
+.drawer { position: fixed; top: 0; right: 0; bottom: 0; z-index: var(--z-drawer); width: min(480px, 100vw); display: flex; flex-direction: column;
+  background: var(--surface); border-left: 1px solid var(--line); box-shadow: -12px 0 32px rgba(0, 0, 0, 0.12);
+  transform: translateX(100%); visibility: hidden; outline: none;
+  transition: transform 180ms var(--ease-exit), visibility 0s linear 180ms; }
+html[data-drawer] { overflow: hidden; }
+html[data-drawer] .scrim { opacity: 1; visibility: visible; transition: opacity 260ms var(--ease-out), visibility 0s; }
+html[data-drawer] .drawer { transform: none; visibility: visible; transition: transform 260ms var(--ease-out), visibility 0s; }
+.dw-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: calc(12px + env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) 12px 20px; border-bottom: 1px solid var(--line); }
+.dw-head .lead { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.dw-nav { display: flex; gap: 4px; }
+.icon-btn { width: 40px; height: 40px; display: grid; place-items: center; border: 0; border-radius: 8px; background: none; color: var(--muted); cursor: pointer;
+  transition-property: background-color, color, transform; transition-duration: 150ms; transition-timing-function: ease-out; }
+.icon-btn:active:not(:disabled) { transform: scale(0.96); }
+.icon-btn:disabled { opacity: .35; cursor: default; }
+.icon-btn:focus-visible { outline-offset: 1px; }
+.icon-btn svg { width: 18px; height: 18px; }
+@media (hover: hover) and (pointer: fine) { .icon-btn:hover:not(:disabled) { color: var(--fg); background: color-mix(in srgb, var(--fg) 6%, transparent); } }
+.dw-body { flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 20px max(16px, env(safe-area-inset-right, 0px)) calc(28px + env(safe-area-inset-bottom, 0px)) 20px; display: flex; flex-direction: column; gap: 18px; }
+.dw-body h2 { margin: 0; font-size: 18px; line-height: 1.3; font-weight: 600; letter-spacing: -0.01em; overflow-wrap: anywhere; }
+.dw-need { font-size: 13px; color: var(--need); background: color-mix(in srgb, var(--need) 10%, transparent); padding: 10px 12px; border-radius: 8px; }
+.dw-body p { margin: 0; white-space: pre-line; overflow-wrap: anywhere; line-height: 1.6; }
+.dw-body p.none { color: var(--muted); }
+.dw-body dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 8px 16px; margin: 0; font-size: 13px; padding-top: 16px; border-top: 1px solid var(--line); }
+.dw-body dt { color: var(--muted); }
+.dw-body dd { margin: 0; overflow-wrap: anywhere; }
+.dw-body a { color: var(--run); }
+.dw-body code { font: 12px/1.4 var(--mono); }
+@media (max-width: 560px) {
+  .drawer { border-left: 0; }
+  .dw-head, .dw-body { padding-left: max(16px, env(safe-area-inset-left, 0px)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scrim, .drawer, html[data-drawer] .scrim, html[data-drawer] .drawer { transition: none; }
+  .fbtn:active, .icon-btn:active:not(:disabled) { transform: none; }
+}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <main id="stage"></main>
+</div>
+
+<div class="scrim" data-close></div>
+<aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-labelledby="dw-title" tabindex="-1">
+  <div class="dw-head">
+    <span class="lead" id="dw-lead"></span>
+    <span class="dw-nav">
+      <button class="icon-btn" id="dw-prev" aria-label="Previous card"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m18 15-6-6-6 6"/></svg></button>
+      <button class="icon-btn" id="dw-next" aria-label="Next card"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
+      <button class="icon-btn" data-close aria-label="Close details"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+    </span>
+  </div>
+  <div class="dw-body" id="dw-body"></div>
+</aside>
+
+<!-- Config: the only place to name your team, boards and card types. -->
+<script id="board-config" type="application/json">
+{
+  "title": "Team Board",
+  "brand": "Team",
+  "storageKey": "team-board",
+  "issueUrl": "",
+  "doneDays": 0,
+  "types": { "dev": { "label": "Dev" }, "design": { "label": "Design", "accent": true } },
+  "boards": {
+    "web": { "label": "Web App", "hue": 215 },
+    "mobile": { "label": "Mobile", "hue": 155 }
+  }
+}
+</script>
+<!-- Data: an array of cards. A build step replaces this block; nothing else in the page changes. -->
+<script id="board-data" type="application/json">
+[
+  { "id": "WEB-1", "title": "Sign-in page", "status": "review", "board": "web", "type": "dev", "pr": "https://github.com/OWNER/REPO/pull/12", "updatedAt": "2026-01-02T10:00" },
+  { "id": "WEB-2", "title": "Settings layout", "status": "doing", "board": "web", "type": "design", "owner": "Sam", "progress": "2 of 3 screens", "updatedAt": "2026-01-02T09:00" },
+  { "id": "MOB-1", "title": "Push notifications", "status": "next", "board": "mobile", "updatedAt": "2026-01-01T12:00" },
+  { "id": "MOB-2", "title": "Offline mode", "status": "backlog", "board": "mobile", "detail": "Cache the last 50 items.", "updatedAt": "2026-01-01T08:00" }
+]
+</script>
+<script>
+const readJSON = (id, fallback) => { try { return JSON.parse(document.getElementById(id).textContent); } catch (e) { console.error(`#${id} is not valid JSON`, e); return fallback; } };
+const CONFIG = readJSON('board-config', {});
+const RAW = readJSON('board-data', []);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const own = (o, k) => o != null && Object.hasOwn(o, k);
+
+// Lanes: a card's status picks its section. Edit this table to rename, reorder or resize sections.
+const SECTIONS = [
+  { key: 'need', label: 'Needs you', cls: 'need', limit: 6, open: true, mark: '<span class="sw" style="--h:var(--need)"></span>' },
+  { key: 'run', label: 'Running now', nav: 'Running', cls: 'run', limit: 20, open: true, mark: '<span class="dot"></span>' },
+  { key: 'next', label: 'Up next', cls: '', limit: 6, open: true, mark: '<span class="sw" style="--h:var(--muted)"></span>' },
+  { key: 'backlog', label: 'Backlog', cls: '', limit: 5, open: false, mark: '<span class="sw" style="--h:color-mix(in srgb, var(--muted) 45%, transparent)"></span>' },
+  { key: 'done', label: 'Done recently', cls: '', limit: 5, open: false, mark: '<span class="sw" style="--h:var(--ok)"></span>' },
+];
+const STATUS = {
+  backlog: { label: 'Backlog', section: 'backlog' },
+  next: { label: 'Up next', section: 'next' },
+  doing: { label: 'Doing', section: 'run' },
+  review: { label: 'In review', section: 'need' },
+  done: { label: 'Done', section: 'done' },
+};
+const OPEN = SECTIONS.filter(s => s.open).map(s => s.key);
+
+const TYPE = own(CONFIG, 'types') && Object.keys(CONFIG.types).length ? CONFIG.types : { task: { label: 'Task' } };
+const DEFAULT_TYPE = Object.keys(TYPE)[0];
+const BOARD = { ...(CONFIG.boards || {}) };
+const hash = s => [...String(s)].reduce((h, ch) => (h * 31 + ch.codePointAt(0)) >>> 0, 7);
+
+// Parse once at the boundary; everything below trusts these fields.
+const warned = new Set();
+const warn = (what, v) => { const k = what + v; if (!warned.has(k)) { warned.add(k); console.warn(`Unknown ${what} "${v}"`); } };
+const DONE_MS = Number(CONFIG.doneDays) > 0 ? Number(CONFIG.doneDays) * 864e5 : 0;
+const CARDS = (Array.isArray(RAW) ? RAW : []).filter(c => c && c.id != null).map(c => {
+  if (c.status != null && !own(STATUS, c.status)) warn('status', c.status);
+  if (c.type != null && !own(TYPE, c.type)) warn('type', c.type);
+  const status = own(STATUS, c.status) ? c.status : 'backlog';
+  const board = String(c.board || 'general');
+  const pr = String(c.pr || '');
+  const card = {
+    id: String(c.id), title: String(c.title || c.id), status, board, area: String(c.area || ''),
+    type: own(TYPE, c.type) ? c.type : DEFAULT_TYPE,
+    owner: String(c.owner || ''), agent: String(c.agent || ''), blocker: String(c.blocker || ''), progress: String(c.progress || ''),
+    branch: String(c.branch || ''), pr, prNum: (pr.match(/\/pull\/(\d+)/) || [])[1] || '', issue: String(c.issue || ''),
+    detail: String(c.detail || ''), createdAt: String(c.createdAt || ''), updatedAt: String(c.updatedAt || ''),
+  };
+  card.section = (status === 'review' || card.blocker) && status !== 'done' ? 'need' : STATUS[status].section;
+  if (card.section === 'next' || card.section === 'backlog') card.owner = '';
+  return card;
+}).filter(c => !(DONE_MS && c.status === 'done' && Date.now() - new Date(c.updatedAt.replace(' ', 'T')) > DONE_MS))
+  .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+const BY_ID = new Map(CARDS.map(c => [c.id, c]));
+
+// A board missing from the config still shows, under its own key and a stable hue, so new boards never hide cards.
+for (const c of CARDS) if (!own(BOARD, c.board)) BOARD[c.board] = { label: c.board };
+for (const [k, b] of Object.entries(BOARD)) { b.label = String(b.label || k); if (typeof b.hue !== 'number') b.hue = hash(k) % 360; }
+
+document.title = CONFIG.title || 'Board';
+const STORE = String(CONFIG.storageKey || 'board');
+const label = k => BOARD[k]?.label ?? k;
+const typeTag = c => `<span class="tag${TYPE[c.type].accent ? ' accent' : ''}">${esc(TYPE[c.type].label || c.type)}</span>`;
+const chip = f => `<span class="chip" style="--h:oklch(var(--chip-l) var(--chip-c) ${BOARD[f]?.hue ?? 0})">${esc(label(f))}</span>`;
+const sel = id => `[data-card="${CSS.escape(id)}"]`;
+const why = c => c.blocker ? esc(c.blocker) : c.status === 'review' ? (c.prNum ? `PR #${c.prNum} waiting for your review` : 'Waiting for your sign-off') : '';
+const runMeta = c => [c.owner && `Claimed by ${esc(c.owner)}`, c.progress && esc(c.progress), c.agent && esc(c.agent), c.prNum && `PR #${c.prNum}`].filter(Boolean).join(' · ') || 'No progress noted yet';
+const fmtDate = s => { const d = new Date(s.slice(0, 10) + 'T12:00:00'); return isNaN(d) ? '' : d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' }); };
+const latest = CARDS[0]?.updatedAt || '';
+const updated = latest ? `Updated ${fmtDate(latest)}${latest.length > 11 ? ', ' + latest.slice(11, 16) : ''}` : 'No cards yet';
+
+const load = (k, ok) => { try { const v = localStorage.getItem(`${STORE}-${k}`); return v && ok(v) ? v : null; } catch (e) { return null; } };
+const save = (k, v) => { try { v ? localStorage.setItem(`${STORE}-${k}`, v) : localStorage.removeItem(`${STORE}-${k}`); } catch (e) {} };
+let filter = load('board', v => own(BOARD, v));
+let typeF = load('type', v => own(TYPE, v));
+const setFilter = f => { filter = own(BOARD, f) ? f : null; save('board', filter); render(); };
+const setType = t => { typeF = own(TYPE, t) ? t : null; save('type', typeF); render(); };
+const typed = () => CARDS.filter(c => !typeF || c.type === typeF);
+const visible = () => typed().filter(c => !filter || c.board === filter);
+const typeOptions = () => [['', 'All types'], ...Object.entries(TYPE).map(([k, t]) => [k, t.label || k])];
+const expanded = {};
+
+function boardCounts() {
+  const per = Object.create(null);
+  for (const c of typed()) {
+    const p = per[c.board] ||= { need: 0, run: 0, open: 0, back: 0 };
+    if (c.section === 'need') p.need++;
+    if (c.section === 'run') p.run++;
+    if (OPEN.includes(c.section)) p.open++; else if (c.section === 'backlog') p.back++;
+  }
+  return per;
+}
+const listed = per => Object.keys(BOARD).filter(f => per[f]?.open || per[f]?.back)
+  .sort((a, b) => per[b].need - per[a].need || per[b].open - per[a].open || label(a).localeCompare(label(b)));
+const counted = c => OPEN.includes(c.section) || c.section === 'backlog';
+
+function sidebar(v) {
+  const cnt = k => v.filter(c => c.section === k).length;
+  const per = boardCounts();
+  const live = listed(per);
+  const quiet = Object.keys(BOARD).filter(f => !per[f]?.open && !per[f]?.back);
+  const multiType = Object.keys(TYPE).length > 1;
+  return `<nav class="side" aria-label="Views and boards"><p class="brand">${esc(CONFIG.brand || CONFIG.title || 'Board')}</p><h2 class="label">Views</h2>` +
+    SECTIONS.map(s => `<button class="sbtn" data-jump="${s.key}">${s.mark}<span class="grow">${esc(s.nav || s.label)}</span><span class="o">${cnt(s.key)}</span></button>`).join('') +
+    (multiType ? `<h2 class="label">Type</h2>` + typeOptions().map(([t, l]) => `<button class="sbtn" data-t="${esc(t)}" aria-pressed="${(typeF || '') === t}"><span class="grow">${esc(l)}</span><span class="o">${CARDS.filter(c => counted(c) && (!filter || c.board === filter) && (!t || c.type === t)).length}</span></button>`).join('') : '') +
+    `<h2 class="label">Boards</h2><button class="sbtn" data-f="" aria-pressed="${!filter}"><span class="grow">All boards</span><span class="o">${typed().filter(counted).length}</span></button>` +
+    live.map(f => `<button class="sbtn" data-f="${esc(f)}" aria-pressed="${filter === f}"><span class="grow">${chip(f)}</span>${per[f].run ? '<span class="dot" title="Work running"></span>' : ''}${per[f].need ? `<span class="n">${per[f].need}</span>` : ''}<span class="o" title="Open and backlog cards">${per[f].open + per[f].back}</span></button>`).join('') +
+    (quiet.length ? `<p class="quietf">Quiet: ${quiet.map(f => esc(label(f))).join(', ')}</p>` : '') + '</nav>';
+}
+
+function phoneFilters() {
+  const per = boardCounts();
+  const live = listed(per);
+  const types = Object.keys(TYPE).length > 1 ? `<div class="filters" role="group" aria-label="Filter by type">` + typeOptions().map(([t, l]) => `<button class="fbtn" aria-pressed="${(typeF || '') === t}" data-t="${esc(t)}">${esc(l)}</button>`).join('') + '</div>' : '';
+  return types + `<div class="filters" role="group" aria-label="Filter by board"><button class="fbtn" aria-pressed="${!filter}" data-f="">All</button>` +
+    live.map(f => `<button class="fbtn" aria-pressed="${filter === f}" data-f="${esc(f)}">${chip(f)}<span class="c">${per[f].open + per[f].back}</span></button>`).join('') + '</div>';
+}
+
+function row(c, k) {
+  return `<button class="row" data-card="${esc(c.id)}" aria-haspopup="dialog"${c.id === openId ? ' aria-current="true"' : ''}>` +
+    `<span class="lead">${chip(c.board)}<span class="meta"><span class="id">${esc(c.id)}</span>${typeTag(c)}</span></span>` +
+    `<span class="t">${esc(c.title)}${k === 'need' ? `<span class="why">${why(c)}</span>` : k === 'run' ? `<span class="why">${runMeta(c)}</span>` : ''}</span>` +
+    `<span class="end">${k === 'need' ? `<span class="pill">${c.blocker ? 'Decide' : 'Review'}</span>` : ''}<span class="caret" aria-hidden="true"></span></span></button>`;
+}
+
+function section(v, s) {
+  const list = v.filter(c => c.section === s.key);
+  const head = `<h2 class="label ${s.cls}">${esc(s.label)}<span class="c">${list.length}</span></h2>`;
+  if (!list.length) return s.key !== 'need' ? '' : `<section class="sec" id="sec-need">${head}<div class="rows"><p class="empty">Nothing is waiting on you${filter ? ' in ' + esc(label(filter)) : ''}${typeF ? ` on ${esc(TYPE[typeF].label || typeF)} cards` : ''}. Cards land here when they need a review or a decision.</p></div></section>`;
+  const shown = expanded[s.key] ? list : list.slice(0, s.limit);
+  return `<section class="sec" id="sec-${s.key}">${head}<div class="rows">` + shown.map(c => row(c, s.key)).join('') +
+    (list.length > s.limit ? `<button class="more" data-more="${s.key}">${expanded[s.key] ? 'Show less' : `Show all ${list.length}`}</button>` : '') + '</div></section>';
+}
+
+const stage = document.getElementById('stage');
+function render() {
+  const v = visible();
+  stage.innerHTML = `<div class="ib">${sidebar(v)}<div class="main">` +
+    `<header class="main-head"><h1>${filter ? esc(label(filter)) : 'Inbox'}</h1><p><span class="brand-m">${esc(CONFIG.brand || CONFIG.title || 'Board')} · </span>${filter ? 'One board' : 'All boards'}${typeF ? ` · ${esc(TYPE[typeF].label || typeF)} cards` : ''} · ${updated}</p></header>` +
+    phoneFilters() + SECTIONS.map(s => section(v, s)).join('') + '</div></div>';
+}
+
+// Details drawer. Opening and closing animate; stepping between cards swaps content instantly.
+const safeUrl = u => /^https?:\/\//i.test(u) ? u : '';
+const link = (href, text) => safeUrl(href) ? `<a href="${esc(href)}" target="_blank" rel="noopener">${esc(text)}</a>` : esc(text);
+const issueLink = i => /^https?:\/\//i.test(i) ? link(i, '#' + ((i.match(/(\d+)\/?$/) || [])[1] || 'link')) : CONFIG.issueUrl ? link(CONFIG.issueUrl.replace('{id}', encodeURIComponent(i)), `#${i}`) : `#${esc(i)}`;
+function detail(c) {
+  const rows = [
+    ['Status', esc(STATUS[c.status].label)],
+    ['Type', esc(TYPE[c.type].label || c.type)],
+    ['Board', esc(label(c.board)) + (c.area ? ` · ${esc(c.area)}` : '')],
+    ['Claimed by', c.owner && esc(c.owner)],
+    ['Progress', c.progress && esc(c.progress)],
+    ['Agent', c.agent && esc(c.agent)],
+    ['Branch', c.branch && `<code>${esc(c.branch)}</code>`],
+    ['PR', c.pr && link(c.pr, c.prNum ? `#${c.prNum}` : 'Open')],
+    ['Issue', c.issue && issueLink(c.issue)],
+    ['Dates', [c.createdAt && `Added ${fmtDate(c.createdAt)}`, c.updatedAt && `updated ${fmtDate(c.updatedAt)}`].filter(Boolean).join(', ')],
+  ].filter(r => r[1]);
+  return `<h2 id="dw-title">${esc(c.title)}</h2>${c.section === 'need' ? `<div class="dw-need">${why(c)}</div>` : ''}` +
+    (c.detail ? `<p>${esc(c.detail)}</p>` : '<p class="none">No description on this card.</p>') +
+    `<dl>${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>`;
+}
+const root = document.documentElement;
+const drawer = document.getElementById('drawer'), dwBody = document.getElementById('dw-body'), dwLead = document.getElementById('dw-lead');
+const dwPrev = document.getElementById('dw-prev'), dwNext = document.getElementById('dw-next');
+let openId = null, returnTo = null;
+const rowIds = () => [...stage.querySelectorAll('[data-card]')].map(b => b.dataset.card);
+const markRow = () => stage.querySelectorAll('[data-card]').forEach(b => b.dataset.card === openId ? b.setAttribute('aria-current', 'true') : b.removeAttribute('aria-current'));
+function fill(id) {
+  const c = BY_ID.get(id); if (!c) return;
+  openId = id;
+  dwLead.innerHTML = `${chip(c.board)}<span class="id">${esc(c.id)}</span>${typeTag(c)}`;
+  dwBody.innerHTML = detail(c); dwBody.scrollTop = 0;
+  const ids = rowIds(), i = ids.indexOf(id);
+  dwPrev.disabled = i <= 0; dwNext.disabled = i < 0 || i >= ids.length - 1;
+  markRow();
+}
+function openDrawer(id, from) {
+  const wasOpen = root.hasAttribute('data-drawer');
+  if (!wasOpen) returnTo = from;
+  fill(id);
+  root.setAttribute('data-drawer', '');
+  if (!wasOpen) drawer.querySelector('[data-close]').focus({ preventScroll: true });
+}
+function closeDrawer() {
+  if (!root.hasAttribute('data-drawer')) return;
+  const id = openId;
+  root.removeAttribute('data-drawer');
+  openId = null; markRow();
+  (stage.querySelector(sel(id)) || returnTo)?.focus({ preventScroll: true });
+}
+function step(d) { const ids = rowIds(), i = ids.indexOf(openId); if (ids[i + d]) { fill(ids[i + d]); stage.querySelector(sel(openId))?.scrollIntoView({ block: 'nearest' }); } }
+document.querySelectorAll('[data-close]').forEach(el => el.addEventListener('click', closeDrawer));
+dwPrev.addEventListener('click', () => step(-1));
+dwNext.addEventListener('click', () => step(1));
+drawer.addEventListener('keydown', e => {
+  if (e.key === 'Escape') { e.stopPropagation(); closeDrawer(); return; }
+  if (e.key === 'ArrowDown' || e.key === 'j') { e.preventDefault(); step(1); return; }
+  if (e.key === 'ArrowUp' || e.key === 'k') { e.preventDefault(); step(-1); return; }
+  if (e.key !== 'Tab') return;
+  const f = [...drawer.querySelectorAll('button:not(:disabled), a[href]')]; if (!f.length) return;
+  if (e.shiftKey && document.activeElement === f[0]) { e.preventDefault(); f.at(-1).focus(); }
+  else if (!e.shiftKey && document.activeElement === f.at(-1)) { e.preventDefault(); f[0].focus(); }
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDrawer(); });
+
+stage.addEventListener('click', e => {
+  const m = e.target.closest('[data-more]'); if (m) { expanded[m.dataset.more] = !expanded[m.dataset.more]; render(); return; }
+  const r = e.target.closest('[data-card]'); if (r) { openDrawer(r.dataset.card, r); return; }
+  const f = e.target.closest('[data-f]'); if (f) { setFilter(f.dataset.f); return; }
+  const t = e.target.closest('[data-t]'); if (t) { setType(t.dataset.t); return; }
+  const j = e.target.closest('[data-jump]'); if (j) document.getElementById('sec-' + j.dataset.jump)?.scrollIntoView({ block: 'start' });
+});
+render();
+</script>
+</body>
+</html>
+```
+
+## Build script (optional)
+
+Save this as `build_board.py`. It fills the two JSON blocks from a cards file or a folder of one-card JSON files, and creates the output folder if needed. Python 3, standard library only. Without `--config`, the template's own config block is kept.
+
+```python
+"""Fill board.html with your config and cards.
+
+Usage:
+  python3 build_board.py <board.html> <out.html> --cards <cards.json | folder of card .json files> [--config config.json]
+
+Only the contents of <script id="board-config"> and <script id="board-data"> change.
+"""
+import argparse, glob, json, os, re, sys
+
+p = argparse.ArgumentParser()
+p.add_argument('template'); p.add_argument('out')
+p.add_argument('--cards', required=True); p.add_argument('--config')
+a = p.parse_args()
+
+if os.path.isdir(a.cards):
+    cards = [json.load(open(f, encoding='utf-8')) for f in sorted(glob.glob(os.path.join(a.cards, '**', '*.json'), recursive=True))]
+else:
+    cards = json.load(open(a.cards, encoding='utf-8'))
+if not isinstance(cards, list):
+    sys.exit('cards must be a JSON array or a folder of card objects')
+
+def safe(obj):
+    return json.dumps(obj, ensure_ascii=False, indent=None).replace('</', '<\\/')
+
+def put(html, block_id, obj):
+    pat = re.compile(r'(<script id="%s" type="application/json">)(.*?)(</script>)' % block_id, re.S)
+    if not pat.search(html):
+        sys.exit(f'#{block_id} block not found in template')
+    return pat.sub(lambda m: m.group(1) + '\n' + safe(obj) + '\n' + m.group(3), html, count=1)
+
+html = open(a.template, encoding='utf-8').read()
+html = put(html, 'board-data', cards)
+if a.config:
+    html = put(html, 'board-config', json.load(open(a.config, encoding='utf-8')))
+os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
+open(a.out, 'w', encoding='utf-8').write(html)
+print(f'{len(cards)} cards -> {a.out}')
+```
+
+```bash
+python3 build_board.py board.html dist/index.html --cards cards.json --config board.config.json
+```
+
+To map your own tracker, write its export into the card fields above. Any language works, as long as `</` inside the JSON is written as `<\/`.
+
+## Prompt for an agent
+
+> Set up the board viewer from `board-kit.md` in this project. Copy **The page** into `board.html` and keep it as the template. Write `board.config.json` with this project's name, its boards (pick distinct hues) and its card types. Write a small exporter that turns our work items into the card fields in the **Data contract**, and use `build_board.py` (or the same two-block replace) to produce the final page. Do not change the CSS or script unless I ask; theme through the `:root` tokens. Open the result and check: every board with open or backlog cards has its own sidebar row (boards with none appear in the Quiet line), the console shows no warnings about unknown status or type, a card with `status: "review"` shows under Needs you, clicking a row opens the drawer, Escape closes it, and at 375px wide there is no horizontal scroll.
