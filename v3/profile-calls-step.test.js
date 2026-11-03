@@ -56,6 +56,7 @@ class FakeElement {
     this.listeners = {}
     this.textContent = ''
     this.hidden = false
+    this.style = {}
     this.value = attrs.value || ''
     children.forEach((child) => this.appendChild(child))
   }
@@ -92,6 +93,7 @@ class FakeElement {
   }
   addEventListener(type, listener) { (this.listeners[type] ||= []).push(listener) }
   click() {
+    if (this.disabled) return
     const event = { target: this, preventDefault() {}, stopImmediatePropagation() {} }
     for (let node = this; node; node = node.parentElement) (node.listeners.click || []).forEach((l) => l(event))
   }
@@ -140,6 +142,28 @@ test('added window starts in a free slot after the existing one', () => {
   addButton.click()
   assert.equal(api.validate(), '')
   assert.equal(windows.children.length, 3)
+})
+
+test('remove buttons stay visible and only disable when one window remains', () => {
+  const { windows, addButton } = build()
+  const buttons = () => windows.querySelectorAll('[data-calls-step-action="remove-window"]')
+  const [first] = buttons()
+  assert.equal(first.hidden, false)
+  assert.equal(first.disabled, true)
+  assert.equal(first.style.cursor, 'not-allowed')
+  first.click()
+  assert.equal(buttons().length, 1)
+
+  addButton.click()
+  const [original, added] = buttons()
+  assert.equal(original.disabled, false)
+  assert.equal(original.style.cursor, '')
+  assert.equal(added.disabled, false)
+  original.click()
+  assert.deepEqual(buttons(), [added])
+  assert.equal(added.hidden, false)
+  assert.equal(added.disabled, true)
+  assert.equal(added.style.cursor, 'not-allowed')
 })
 
 test('added window reports an error when no room remains', () => {
