@@ -53,7 +53,7 @@
     const paid = services.find((service) => service.getAttribute('data-call-settings-service') === 'paid')
     const paidToggle = paid?.querySelector(enabledSelector)
     const price = paid?.querySelector('[data-call-settings-input="price"]')
-    const paidDescription = paid?.querySelector('[data-call-settings-input="description"]')
+    const paidDescription = paid?.querySelector('[data-call-settings-input="title"]')
     let continueError
     const status = { calendar: 'disconnected', email: '', stripe: 'disconnected', hoursSaved: false }
     const calendarBody = get('output', 'calendar-body')
@@ -101,6 +101,30 @@
     for (const [field, fallback] of timeFields) fillTimes(field, fallback)
     const template = source.cloneNode(true)
     for (const field of template.querySelectorAll('[id]')) field.removeAttribute('id')
+    const endChoices = new Set([...template.querySelector(selector('input', 'window-end')).options]
+      .map((option) => option.value))
+    const timeChoices = [...template.querySelector(selector('input', 'window-start')).options]
+      .map((option) => option.value)
+      .filter((value) => endChoices.has(value))
+      .sort((a, b) => minutes(a) - minutes(b))
+
+    function addWindow() {
+      const occupied = read().windows.map(({ start, end }) => [minutes(start), minutes(end)])
+      const latestEnd = Math.max(...occupied.map(([, end]) => end))
+      const choices = timeChoices.map((start, index) => [start, timeChoices[index + 1]])
+        .filter(([start, end]) => end && occupied.every(([from, to]) =>
+          minutes(end) <= from || minutes(start) >= to))
+      const next = choices.find(([start]) => minutes(start) >= latestEnd) || choices[0]
+      if (!next) {
+        error.textContent = 'No room for another window. Adjust an existing window first.'
+        return false
+      }
+      const row = template.cloneNode(true)
+      row.querySelector(selector('input', 'window-start')).value = next[0]
+      row.querySelector(selector('input', 'window-end')).value = next[1]
+      windows.appendChild(row)
+      return true
+    }
     const detected = Intl.DateTimeFormat().resolvedOptions().timeZone
     const authored = timezone.value
     const zones = new Set([detected, 'UTC', ...(Intl.supportedValuesOf?.('timeZone') || [])])
@@ -235,7 +259,10 @@
       } else {
         const action = event.target.closest('[data-calls-step-action]')
         switch (action?.getAttribute('data-calls-step-action')) {
-          case 'add-window': windows.appendChild(template.cloneNode(true)); break
+          case 'add-window':
+            event.preventDefault()
+            if (!addWindow()) return
+            break
           case 'remove-window':
             if (rows().length > 1) action.closest(rowSelector)?.remove()
             break
