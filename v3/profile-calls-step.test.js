@@ -39,6 +39,7 @@ test('additional hours require days and validate their own window', () => {
 const { mount } = require('./profile-calls-step')
 
 function matchesSelector(el, selector) {
+  if (/^[a-z]+$/.test(selector)) return el.tagName === selector.toUpperCase()
   const parts = [...selector.matchAll(/\[([\w-]+)(?:="([^"]*)")?\]/g)]
   return parts.length > 0 && parts.every(([, name, expected]) => {
     const actual = el.getAttribute(name)
@@ -117,12 +118,13 @@ function build(pathname = '/starter-edit-profile-test') {
     el('span', { 'data-calls-step-output': 'timezone-now' }),
     el('div', { 'data-call-settings-service': 'paid' }, [title]),
   ])
+  const form = pathname === '/build-profile-form-test' ? el('form', {}, [root]) : null
   root.ownerDocument = {
     defaultView: { location: { pathname } },
     createElement: (tag) => el(tag),
   }
   root.querySelector('[data-calls-step-element="extra"]').hidden = true
-  return { root, windows, error, addButton, title, api: mount(root) }
+  return { root, form, windows, error, addButton, title, api: mount(root) }
 }
 
 const windowTimes = (windows) => windows.children.map((row) => [
@@ -153,4 +155,13 @@ test('added window reports an error when no room remains', () => {
 test('paid call description allows 80 characters on Edit only', () => {
   assert.equal(build().title.maxLength, 80)
   assert.equal(build('/build-profile/consult-test').api, null)
+})
+
+test('standalone staging markup mounts without a step wrapper and blocks submit', () => {
+  const { form, api } = build('/build-profile-form-test')
+  assert.ok(api)
+  const calls = []
+  const event = { preventDefault: () => calls.push('prevent'), stopImmediatePropagation: () => calls.push('stop') }
+  form.listeners.submit.forEach((listener) => listener(event))
+  assert.deepEqual(calls, ['prevent', 'stop'])
 })
