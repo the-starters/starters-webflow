@@ -1,0 +1,9 @@
+{
+  "title": "Infra Board",
+  "prefix": "INF",
+  "areas": [
+    "infra",
+    "tooling"
+  ],
+  "nextId": 1
+}
