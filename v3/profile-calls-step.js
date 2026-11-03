@@ -4,7 +4,8 @@
   const selector = (kind, value) => '[data-calls-step-' + kind + '="' + value + '"]'
   const rootSelector = '[data-calls-step="root"]'
   const stagingOrigin = 'https://the-starters-3-0.webflow.io'
-  const routes = new Set(['/build-profile/full-profile-test', '/build-profile/consult-test', '/starter-edit-profile-test'])
+  const standalonePath = '/build-profile-form-test'
+  const routes = new Set(['/build-profile/full-profile-test', '/build-profile/consult-test', '/starter-edit-profile-test', standalonePath])
 
   function minutes(value) {
     const match = /^(\d{1,2}):(\d{2}) (AM|PM)$/.exec(value)
@@ -45,10 +46,17 @@
     const path = root.ownerDocument.defaultView?.location.pathname.replace(/\/$/, '')
     const step = root.closest('[data-form="step"][data-index="6"]')
     const edit = path === '/starter-edit-profile-test'
-    if (edit ? root.getAttribute('data-calls-step-context') !== 'edit' : !step) return null
+    const standalone = path === standalonePath
+    if (edit ? root.getAttribute('data-calls-step-context') !== 'edit' : !step && !standalone) return null
     if (!days || !extraDays || !source || !extra || !timezone || !clock || !error) return null
 
     const doc = root.ownerDocument
+    if (standalone) {
+      root.closest('form')?.addEventListener('submit', (event) => {
+        event.preventDefault()
+        event.stopImmediatePropagation()
+      }, true)
+    }
     const consult = path === '/build-profile/consult-test'
     const paid = services.find((service) => service.getAttribute('data-call-settings-service') === 'paid')
     const paidToggle = paid?.querySelector(enabledSelector)
