@@ -1,0 +1,8 @@
+{
+  "title": "Design Board",
+  "prefix": "DES",
+  "areas": [
+    "design"
+  ],
+  "nextId": 1
+}
