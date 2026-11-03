@@ -78,6 +78,15 @@
           const freeEnabled = enabled(formData['free-consulting-calls']);
           const description = freeEnabled ? String(formData['free-call-description'] || '').trim() : '';
           if (freeEnabled) {
+            // B76: the /hire field allows 140 characters and #5674 refuses more.
+            // A refused Build intent would leave Free calls off with no message.
+            if (description.length > 140) {
+              fieldError(
+                qs('[name="free-call-description"]', form),
+                'Use a free-call description of 140 characters or fewer.',
+                'FREE_CALL_DESCRIPTION_TOO_LONG',
+              );
+            }
             intent.free = {
               enabled: true,
               description,
@@ -162,6 +171,7 @@
         field?.addEventListener('input', clearChangedPriceFeedback);
         field?.addEventListener('change', clearChangedPriceFeedback);
       });
+      qs('[name="free-call-description"]', form)?.setAttribute('maxlength', '140');
 
       function paintErrorMessage(message) {
         if (errorMessage) errorMessage.textContent = message || authoredErrorMessage;

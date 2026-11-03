@@ -21,6 +21,10 @@
   const STATUS_ATTRIBUTE = 'data-free-call-settings'
   const BLOCKER_ATTRIBUTE = 'data-free-call-blocker'
   const FIXED_DURATION_MINUTES = 30
+  // The /hire CMS field free-call-description allows 140 characters; #5674
+  // refuses longer text (B76). Mirror it so the form never offers more.
+  const DESCRIPTION_MAX_LENGTH = 140
+  const DESCRIPTION_TOO_LONG_MESSAGE = 'Free call description must be 140 characters or fewer.'
   const ROOT_WAIT_TIMEOUT_MS = 10000
   const SITE_MEMBER_READY_WAIT_MS = 2000
   const AUTH_BRIDGE_WAIT_INTERVAL_MS = 100
@@ -1066,6 +1070,7 @@
       const description = options && typeof options.description === 'string'
         ? options.description.trim()
         : String((descriptionInput && descriptionInput.value) || '').trim()
+      if (description.length > DESCRIPTION_MAX_LENGTH) throw new Error(DESCRIPTION_TOO_LONG_MESSAGE)
       await xanoRequest('/starter/free-call-settings/upsert/v3', 'POST', {
         config_id: service ? service.config_id : null,
         description: description,
@@ -1524,6 +1529,7 @@
     }
     const descriptionInput = field('description')
     if (descriptionInput) {
+      descriptionInput.setAttribute('maxlength', String(DESCRIPTION_MAX_LENGTH))
       descriptionInput.addEventListener('input', function () {
         if (applyingCanonicalRender) return
         markEditProfileDirty()

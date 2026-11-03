@@ -419,6 +419,31 @@ test('a hidden long free-call description never blocks a Free off choice', async
   assert.equal(Object.hasOwn(result.memberJSON(), 'starter_call_settings_intent_v3'), false)
 })
 
+// B76 (JP 2a, 2026-11-03): #5674 refuses more than 140 characters, and a refused
+// Build intent would leave Free calls off with no message.
+test('Build Profile refuses an enabled free-call description over 140 characters', async () => {
+  const result = load({
+    'free-consulting-calls': 'yes',
+    'free-call-description': 'x'.repeat(141),
+  })
+  await result.submit.click()
+  assert.equal(result.requests.length, 0)
+  assert.equal(result.memberJsonWrites.length, 0)
+  assert.equal(result.success.style.display, 'none')
+  assert.match(result.inputs['[name="free-call-description"]'].validationMessage, /140 characters or fewer/)
+  assert.equal(result.inputs['[name="free-call-description"]'].reportValidityCount, 1)
+})
+
+test('Build Profile accepts a 140-character free-call description and sets maxlength', async () => {
+  const result = load({
+    'free-consulting-calls': 'yes',
+    'free-call-description': 'x'.repeat(140),
+  })
+  assert.equal(result.inputs['[name="free-call-description"]'].attrs.get('maxlength'), '140')
+  await result.submit.click()
+  assert.equal(result.requests.length, 1)
+})
+
 test('Build Profile blocks combined success when enabled Paid intent is invalid', async () => {
   const result = load({
     'paid-consulting-calls': 'yes',

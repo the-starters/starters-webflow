@@ -2523,6 +2523,41 @@ test('Free description longer than 60 characters is sent unchanged', async () =>
   assert.notEqual(result.dom.status.textContent, 'Free-call description must be 60 characters or fewer.')
 })
 
+// B76 (JP 2a, 2026-11-03): the /hire field allows 140 characters; #5674 refuses more.
+test('Free description input carries maxlength 140', async () => {
+  const result = load({ initial: canonical() })
+  await settle()
+  assert.equal(result.dom.title.attributes.maxlength, '140')
+})
+
+test('Free description of 141 characters is refused before any upsert', async () => {
+  const result = load({ initial: canonical() })
+  await settle()
+  result.dom.title.value = 'x'.repeat(141)
+  result.dom.yes.checked = true
+  result.dom.no.checked = false
+  await result.dom.save.dispatch('click')
+  await settle()
+
+  assert.equal(result.calls.find((call) => call.path === '/starter/free-call-settings/upsert/v3'), undefined)
+  assert.equal(result.dom.status.textContent, 'Free call description must be 140 characters or fewer.')
+})
+
+test('Free description of exactly 140 characters is sent unchanged', async () => {
+  const result = load({ initial: canonical() })
+  await settle()
+  const description = 'x'.repeat(140)
+  result.dom.title.value = description
+  result.dom.yes.checked = true
+  result.dom.no.checked = false
+  await result.dom.save.dispatch('click')
+  await settle()
+
+  const upsert = result.calls.find((call) => call.path === '/starter/free-call-settings/upsert/v3')
+  assert.ok(upsert, 'the upsert request is sent')
+  assert.equal(upsert.body.description, description)
+})
+
 test('No plus Update sends the guarded disable payload and verifies canonical absence', async () => {
   const result = load({
     initial: canonical({ services: [service()], readiness: { free_call_enabled: true, bookable: true } }),
