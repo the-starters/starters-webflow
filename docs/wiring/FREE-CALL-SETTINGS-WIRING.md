@@ -13,7 +13,9 @@ payload.
 - The browser mutation payload contains the public `description` plus `config_id`,
   `expected_revision`, and `idempotency_key`. Xano still fixes the provider title, duration,
   and price.
-- The browser trims the public description. It has no length limit, and Xano applies none.
+- The browser trims the public description and caps it at 140 characters, the limit of the
+  `/hire` CMS field. The input gets `maxlength=140`, and longer text is refused before the upsert;
+  `starter/free-call-settings/upsert/v3` refuses it too.
   Xano returns it as `public_description` and projects the same value to the public Webflow profile
   and Algolia record.
 - Initial and terminal UI state always comes from
