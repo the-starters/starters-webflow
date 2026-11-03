@@ -6,7 +6,7 @@ const vm = require('node:vm')
 const staging = 'https://the-starters-3-0.webflow.io'
 const scripts = [
   ['profile-calls-step', 'StarterProfileCallsStep', [
-    '/build-profile/full-profile-test', '/build-profile/consult-test', '/starter-edit-profile-test',
+    '/build-profile/full-profile-test', '/build-profile/consult-test', '/starter-edit-profile-test', '/build-profile-form-test',
   ]],
   ['onboarding-stripe-view', 'StarterOnboardingStripeView', ['/starter-onboarding-test']],
   ['starter-setup-gate-view', 'StarterSetupGateView', ['/all-modals']],
