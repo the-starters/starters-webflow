@@ -1,0 +1,8 @@
+{
+  "title": "Ads Board",
+  "prefix": "ADS",
+  "areas": [
+    "ads"
+  ],
+  "nextId": 1
+}
