@@ -197,6 +197,8 @@ test('pointer-style inventory entries retain an owner-document link', () => {
 const NON_BROWSER_SCRIPTS = new Set([
   // Node tooling and test harnesses: never served to a browser.
   'build-profile-wiring-audit.js',
+  // Vendored kanban kit board viewer: served by the kit, never installed on Webflow.
+  '.claude/skills/save-to-kanban/viewer/viewer.js',
   'step-flow-test-dom.js',
   'v3/starter-edit-profile/published-form-contract.js',
   // Synthetic data/controllers for the local Hire call-card browser harness;
