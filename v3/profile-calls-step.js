@@ -223,7 +223,9 @@
         row.querySelector(selector('input', 'window-start')).setAttribute('aria-label', 'Window ' + (index + 1) + ' starts')
         row.querySelector(selector('input', 'window-end')).setAttribute('aria-label', 'Window ' + (index + 1) + ' ends')
         const remove = row.querySelector(selector('action', 'remove-window'))
-        remove.hidden = list.length === 1
+        remove.hidden = false
+        remove.disabled = list.length === 1
+        remove.style.cursor = remove.disabled ? 'not-allowed' : ''
         remove.setAttribute('aria-label', 'Remove window ' + (index + 1))
       })
       const addExtra = get('action', 'add-extra')
