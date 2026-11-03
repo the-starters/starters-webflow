@@ -25,7 +25,7 @@ Build final submit reads the authored checkbox directly because FormData omits u
 
 The 22 October booking QA captured Xano refusing a Brand booking with “Select a call more than 24 hours from now” (commit `6442c3b5`). The Paid provider configuration is also server-owned, as documented in the scheduling section of `v3/README.md`. An 8-hour frontend cutoff requires confirmation that the deployed booking endpoint and existing provider configurations accept it.
 
-The hours editor uses the authored `data-day` buttons, including their native disabled and aria-pressed states. It clones the existing window and day markup, and its read operation returns timezone, weekly days, windows and optional additional days. It reports validation before the route's persistence adapter handles Continue.
+The hours editor uses the authored `data-day` buttons, including their native disabled and aria-pressed states. It clones the existing window and day markup, and its read operation returns timezone, weekly days, windows and optional additional days. Each weekly window has a visible native remove button. The sole remaining window’s button is disabled and uses the not-allowed cursor. It reports validation before the route's persistence adapter handles Continue.
 
 Frontend state is supplied through `StarterProfileCallsStep.editorFor(root).setStatus({ calendar, email, stripe, hoursSaved })`. Calendar takes `disconnected`, `connecting` or `connected`. Stripe takes `disconnected`, `opened`, `pending` or `ready`. Values can be updated independently. A weekly-hours change clears the local saved indicator until the caller confirms the write. The editor never initiates network requests.
 
