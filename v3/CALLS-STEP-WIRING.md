@@ -29,4 +29,4 @@ The hours editor uses the authored `data-day` buttons, including their native di
 
 Frontend state is supplied through `StarterProfileCallsStep.editorFor(root).setStatus({ calendar, email, stripe, hoursSaved })`. Calendar takes `disconnected`, `connecting` or `connected`. Stripe takes `disconnected`, `opened`, `pending` or `ready`. Values can be updated independently. A weekly-hours change clears the local saved indicator until the caller confirms the write. The editor never initiates network requests.
 
-The standalone staging page `/build-profile-form-test` mounts the same Calls component without a multi-step wrapper. It uses a page-local loader and prevents form submission during frontend QA.
+The standalone staging page `/build-profile-form-test` mounts the same Calls component without a multi-step wrapper. It uses a page-local loader and prevents form submission during frontend QA. The block is a capture listener on the root's closest `<form>`, so the root must sit inside one. The loader and TO alignment CSS stay page-local, and the Webflow page is not republished. The live toggle and submit-block check is pending republication.
