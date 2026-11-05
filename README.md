@@ -1339,10 +1339,9 @@ Payment Link):
   invoiced. Contact The Starters if you need help.` before any request.
   `invoices/create/v3` rejects these states too.
 
-There is one invoice flow. The browser has no `invoices/final-create/v3` call:
-the unused `final` and `final_closed` branches were removed on 2026-11-05
-(Jai, JP 1a). Existing final rows still display as before and still cancel
-through `invoices/final-cancel/v3`.
+There is one invoice flow, and the browser never calls
+`invoices/final-create/v3`. Existing final rows still display as before and
+still cancel through `invoices/final-cancel/v3`.
 
 Before opening on the Starter dashboard, the controller resolves the selected
 id against the canonical project-list row, waiting for the current list load when
@@ -1381,8 +1380,9 @@ existing trimmed, unvalidated description.
 A valid submit posts `project_id`, `amount`, `description`, and
 `idempotency_key` through the same authenticated Memberstack-to-Xano bridge as
 the rest of the file. `standard` mode posts to Xano `POST invoices/create/v3`
-with an `invoice-v3-<project_id>-<uuid>` idempotency key. The key is stored on the form, so a retry
-after a failure reuses it and is cleared once an invoice is created. The
+with an `invoice-v3-<project_id>-<uuid>` idempotency key. The key is stored on
+the form, so a retry after a failure reuses it and is cleared once an invoice is
+created. The
 resolved submit control is disabled while the request is in flight, by the same
 design-system convention `form-validation.js` uses: the wrapper takes
 `aria-disabled="true"`; when it already has a `data-button-theme`, that theme is
