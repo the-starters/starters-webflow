@@ -498,16 +498,13 @@ test('invoiceCancel sends the authenticated cancellation contract to Xano', asyn
   assert.deepEqual(JSON.parse(requests[1].init.body), payload)
 })
 
-test('final invoice wrappers preserve the ordinary routes and use isolated final routes', async () => {
+test('final invoice cancel keeps its isolated route and no final-create wrapper remains', async () => {
   const requests = []
   const bridge = await loadBridge(
     async (input, init = {}) => {
       const url = String(input)
       requests.push({ url, init })
       if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
-      if (url.includes('/invoices/final-create/v3')) {
-        return response({ invoice_id: 961, invoice_link: 'https://invoice.stripe.com/i/test' })
-      }
       if (url.includes('/invoices/final-cancel/v3')) {
         return response({ invoice_id: 961, status: 'void' })
       }
@@ -515,16 +512,15 @@ test('final invoice wrappers preserve the ordinary routes and use isolated final
     },
     { member: talentMember },
   )
-  const create = { project_id: 746, amount: 250, description: 'Final services', idempotency_key: 'final-create-test' }
   const cancel = { invoice_id: 961, expected_status: 'unpaid', idempotency_key: 'final-cancel-test', dry_run: false }
 
-  await bridge.API.invoiceFinalCreate(create)
+  // Jai 2026-11-05 / JP 1a: one invoice flow; the dead final-create path is gone.
+  assert.equal(bridge.API.invoiceFinalCreate, undefined)
+  assert.equal(bridge.window.Opp30.normalizeFinalInvoiceAmount, undefined)
   await bridge.API.invoiceFinalCancel(cancel)
 
-  assert.match(requests[1].url, /\/invoices\/final-create\/v3$/)
-  assert.deepEqual(JSON.parse(requests[1].init.body), create)
-  assert.match(requests[2].url, /\/invoices\/final-cancel\/v3$/)
-  assert.deepEqual(JSON.parse(requests[2].init.body), cancel)
+  assert.match(requests[1].url, /\/invoices\/final-cancel\/v3$/)
+  assert.deepEqual(JSON.parse(requests[1].init.body), cancel)
 })
 
 test('mutation diagnostics retain only safe invoice lifecycle fields', async () => {
@@ -5604,10 +5600,10 @@ test('the invoiced amount is rounded to cents and never below the Stripe Payment
 
 test('invoice amounts accept a dollar sign and correct thousands commas', async () => {
   const bridge = await loadBridge(async () => response({}))
-  const { normalizeInvoiceAmount, normalizeFinalInvoiceAmount } = bridge.window.Opp30
+  const { normalizeInvoiceAmount } = bridge.window.Opp30
 
   // Tim Chard 2026-10-15: "6,380.10" was refused as out of range.
-  for (const normalize of [normalizeInvoiceAmount, normalizeFinalInvoiceAmount]) {
+  for (const normalize of [normalizeInvoiceAmount]) {
     assert.equal(normalize('6,380.10'), 6380.1)
     assert.equal(normalize('$6,380.10'), 6380.1)
     assert.equal(normalize(' $ 6380.10 '), 6380.1)
@@ -5620,7 +5616,6 @@ test('invoice amounts accept a dollar sign and correct thousands commas', async 
     assert.equal(normalize(',100'), null)
     assert.equal(normalize('$'), null)
   }
-  assert.equal(normalizeFinalInvoiceAmount('6,380.101'), null)
   assert.equal(normalizeInvoiceAmount(125.25), 125.25)
 })
 
@@ -5892,56 +5887,8 @@ test('a final placeholder never prefills amount or description in the standard m
     bridge.window.Opp30.prepareInvoiceModal(dom.modal, context)
     assert.equal(dom.amount.value, '', String(recoveryReady))
     assert.equal(dom.description.value, '', String(recoveryReady))
-    assert.equal(dom.amount.readOnly, false)
-    assert.equal(dom.description.readOnly, false)
-  }
-})
-
-test('final invoice description enforces the trimmed 1..500 character endpoint contract', async () => {
-  const bridge = await loadBridge(async () => response({}))
-  const normalize = bridge.window.Opp30.normalizeFinalInvoiceDescription
-
-  assert.equal(normalize(''), null)
-  assert.equal(normalize('   '), null)
-  assert.equal(normalize(' x '), 'x')
-  assert.equal(normalize('a'.repeat(500)), 'a'.repeat(500))
-  assert.equal(normalize('a'.repeat(501)), null)
-})
-
-test('final invoice submit blocks an invalid description before any request', async () => {
-  for (const invalidDescription of ['', '   ', 'a'.repeat(501)]) {
-    const dom = invoiceSubmitDom()
-    dom.description.value = invalidDescription
-    const requests = []
-    const document = documentWith(dom.modal)
-    const bridge = await loadBridge(
-      async (input) => {
-        requests.push(String(input))
-        return response({})
-      },
-      {
-        member: talentMember,
-        querySelector: document.querySelector,
-        querySelectorAll: document.querySelectorAll,
-      },
-    )
-    bridge.window.Opp30.prepareInvoiceModal(dom.modal, {
-      projectId: 746,
-      title: 'Completed campaign',
-      brand: 'Acme Co',
-      invoiceMode: 'final',
-      finalInvoiceId: 961,
-    })
-
-    bridge.dispatchDocument('submit', {
-      target: dom.form,
-      preventDefault() {},
-      stopPropagation() {},
-    })
-
-    await new Promise((resolve) => setTimeout(resolve, 0))
-    assert.deepEqual(requests, [])
-    assert.match(dom.modal.querySelector('.w-form-fail').textContent, /between 1 and 500/)
+    assert.notEqual(dom.amount.readOnly, true)
+    assert.notEqual(dom.description.readOnly, true)
   }
 })
 
@@ -6101,101 +6048,6 @@ test('a final invoice row that is a Payment Link cancels through the final route
   assert.match(promptText, /payment link will stop working/i)
   assert.doesNotMatch(promptText, /hosted invoice/i)
   assert.match(requests[0].idempotency_key, /^final-invoice-cancel-ui:961:/)
-})
-
-test('completed-project invoice submit uses final-create and accepts invoice_link', async () => {
-  const dom = invoiceSubmitDom()
-  const requests = []
-  const document = documentWith(dom.modal)
-  const bridge = await loadBridge(
-    async (input, init = {}) => {
-      const url = String(input)
-      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
-      if (url.includes('/invoices/final-create/v3')) {
-        requests.push({ url, body: JSON.parse(init.body) })
-        return response({
-          invoice_id: 961,
-          status: 'unpaid',
-          invoice_link: 'https://invoice.stripe.com/i/final-test',
-        })
-      }
-      throw new Error(`Unexpected request: ${url}`)
-    },
-    {
-      member: talentMember,
-      querySelector: document.querySelector,
-      querySelectorAll: document.querySelectorAll,
-    },
-  )
-  bridge.window.Opp30.prepareInvoiceModal(dom.modal, {
-    projectId: 746,
-    title: 'Completed campaign',
-    brand: 'Acme Co',
-    invoiceMode: 'final',
-    finalInvoiceId: 961,
-  })
-
-  bridge.dispatchDocument('submit', {
-    target: dom.form,
-    preventDefault() {},
-    stopPropagation() {},
-  })
-
-  assert.ok(await waitFor(() => requests.length === 1))
-  assert.match(requests[0].body.idempotency_key, /^final-invoice-v3-746-/)
-  assert.equal(requests[0].body.description, 'August retainer')
-  const link = dom.modal.querySelector('[data-wf-invoice="payment-link"]')
-  assert.ok(await waitFor(() =>
-    link.href === 'https://invoice.stripe.com/i/final-test'))
-})
-
-test('recoverable final invoice prefills its canonical amount and sends no provider identity', async () => {
-  const dom = invoiceSubmitDom()
-  const requests = []
-  const document = documentWith(dom.modal)
-  const bridge = await loadBridge(
-    async (input, init = {}) => {
-      const url = String(input)
-      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
-      if (url.includes('/invoices/final-create/v3')) {
-        requests.push(JSON.parse(init.body))
-        return response({
-          invoice_id: 961,
-          status: 'unpaid',
-          invoice_link: 'https://invoice.stripe.com/i/recovered-test',
-        })
-      }
-      throw new Error(`Unexpected request: ${url}`)
-    },
-    {
-      member: talentMember,
-      querySelector: document.querySelector,
-      querySelectorAll: document.querySelectorAll,
-    },
-  )
-  bridge.window.Opp30.prepareInvoiceModal(dom.modal, {
-    projectId: 746,
-    title: 'Completed campaign',
-    brand: 'Acme Co',
-    invoiceMode: 'final',
-    finalInvoiceId: 961,
-    finalInvoiceAmount: 125.25,
-    finalInvoiceDescription: 'Original final work',
-  })
-  assert.equal(dom.amount.value, '125.25')
-  assert.equal(dom.description.value, 'Original final work')
-
-  bridge.dispatchDocument('submit', {
-    target: dom.form,
-    preventDefault() {},
-    stopPropagation() {},
-  })
-
-  assert.ok(await waitFor(() => requests.length === 1))
-  assert.equal(requests[0].amount, 125.25)
-  assert.equal(requests[0].description, 'Original final work')
-  assert.equal('stripe_ref' in requests[0], false)
-  assert.doesNotMatch(JSON.stringify(requests[0]), /in_[A-Za-z0-9]/)
 })
 
 // JP decision 1a (2026-10-02): every billable project bills through the
@@ -9570,8 +9422,8 @@ test('a recovery-ready final placeholder no longer locks fields; typed values go
       recovery_ready: true, amount: 125.29, description: 'Original final work' },
   })
   bridge.window.Opp30.prepareInvoiceModal(dom.modal, context)
-  assert.equal(dom.amount.readOnly, false)
-  assert.equal(dom.description.readOnly, false)
+  assert.notEqual(dom.amount.readOnly, true)
+  assert.notEqual(dom.description.readOnly, true)
   dom.amount.value = '200'
   dom.description.value = 'Typed by the Starter'
   bridge.dispatchDocument('submit', { target: dom.form, preventDefault() {}, stopPropagation() {} })
@@ -9579,25 +9431,6 @@ test('a recovery-ready final placeholder no longer locks fields; typed values go
   assert.equal(requests[0].amount, 200)
   assert.equal(requests[0].description, 'Typed by the Starter')
   assert.ok(await waitFor(() => dom.modal.querySelector('.w-form-done').style.display === 'block'))
-})
-
-test('final invoices reject extra decimal places before any request', async () => {
-  for (const value of ['1.001', '1.999', '125.290']) {
-    const dom = invoiceSubmitDom()
-    dom.modal.querySelector('.w-form-fail').textContent = 'Oops! Something went wrong while submitting the form.'
-    const requests = []
-    const document = documentWith(dom.modal)
-    const bridge = await loadBridge(async input => { requests.push(String(input)); return response({}) }, {
-      member: talentMember, workflowDiagnostics: true, querySelector: document.querySelector, querySelectorAll: document.querySelectorAll,
-    })
-    bridge.window.Opp30.prepareInvoiceModal(dom.modal, { projectId: 746, invoiceMode: 'final', finalInvoiceId: 961 })
-    dom.amount.value = value
-    dom.description.value = 'Final work'
-    bridge.dispatchDocument('submit', { target: dom.form, preventDefault() {}, stopPropagation() {} })
-    await new Promise(resolve => setTimeout(resolve, 0))
-    assert.deepEqual(requests, [])
-    assert.match(dom.modal.querySelector('.w-form-fail').textContent, /two decimal places/)
-  }
 })
 
 function ratingGroupFixture(modalId, feedbackText = '') {

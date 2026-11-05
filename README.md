@@ -1339,10 +1339,10 @@ Payment Link):
   invoiced. Contact The Starters if you need help.` before any request.
   `invoices/create/v3` rejects these states too.
 
-New invoices never post to `invoices/final-create/v3`. The `final` and
-`final_closed` submit branches described below are unreachable from the
-canonical row and are kept only so a rollback is one line; existing final rows
-still display as before and still cancel through `invoices/final-cancel/v3`.
+There is one invoice flow. The browser has no `invoices/final-create/v3` call:
+the unused `final` and `final_closed` branches were removed on 2026-11-05
+(Jai, JP 1a). Existing final rows still display as before and still cancel
+through `invoices/final-cancel/v3`.
 
 Before opening on the Starter dashboard, the controller resolves the selected
 id against the canonical project-list row, waiting for the current list load when
@@ -1376,15 +1376,12 @@ nothing is sent. A submit from a modal that was opened without a project card
 fails closed with `Open Generate Invoice from the project you want to bill, so
 we know which project to invoice.`. An `unavailable` submit fails closed with
 that mode's message above, before any request. `standard` mode keeps its
-existing trimmed, unvalidated description. The dormant `final` rollback branch
-keeps the old stricter amount and 1..500-character description guards alongside
-its `final_closed` message, but canonical rows no longer reach those modes.
+existing trimmed, unvalidated description.
 
 A valid submit posts `project_id`, `amount`, `description`, and
 `idempotency_key` through the same authenticated Memberstack-to-Xano bridge as
 the rest of the file. `standard` mode posts to Xano `POST invoices/create/v3`
-with an `invoice-v3-<project_id>-<uuid>` idempotency key; new submits do not
-call `POST invoices/final-create/v3`. The key is stored on the form, so a retry
+with an `invoice-v3-<project_id>-<uuid>` idempotency key. The key is stored on the form, so a retry
 after a failure reuses it and is cleared once an invoice is created. The
 resolved submit control is disabled while the request is in flight, by the same
 design-system convention `form-validation.js` uses: the wrapper takes
