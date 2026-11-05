@@ -106,8 +106,21 @@
     )
   }
 
-  function bindV3Profile(element) {
-    var publishedLabel = element.textContent || 'View Profile'
+  // The navbar has desktop and mobile copies of the View Profile link. All
+  // copies share one resolver loop per page: one request, one poll budget and
+  // one result.
+  var profileLinks = []
+  var profileWatcher = null
+
+  function connectedProfileLinks() {
+    profileLinks = profileLinks.filter(function (link) {
+      return link.element.isConnected !== false
+    })
+    return profileLinks
+  }
+
+  function createProfileWatcher() {
+    var watcher = { slug: '', watch: watch }
     var timerPending = false
     var requestPending = false
     var waitingForVisible = false
@@ -115,16 +128,8 @@
     var tries = 0
     var startedAt = Date.now()
 
-    setProfileDisabled(element, PROFILE_PUBLISHING_LABEL)
-    element.addEventListener('click', function (event) {
-      if (element.getAttribute('aria-disabled') !== 'true') return
-      event.preventDefault()
-      event.stopPropagation()
-    })
-    if (typeof fetch !== 'function') return
-
     function connected() {
-      return element.isConnected !== false
+      return connectedProfileLinks().length > 0
     }
 
     function hidden() {
@@ -163,7 +168,7 @@
     }
 
     function watch() {
-      if (stopped || requestPending || !connected()) return
+      if (stopped || requestPending || timerPending || !connected()) return
       if (hidden()) {
         watchWhenVisible()
         return
@@ -196,15 +201,37 @@
           var slug = typeof data.slug === 'string' ? data.slug.trim() : ''
           if (slug) {
             stopped = true
-            setProfilePublished(element, slug, publishedLabel)
-            return
+            watcher.slug = slug
           }
-          setProfileDisabled(element, PROFILE_PUBLISHING_LABEL)
+          connectedProfileLinks().forEach(function (link) {
+            if (slug) setProfilePublished(link.element, slug, link.label)
+            else setProfileDisabled(link.element, PROFILE_PUBLISHING_LABEL)
+          })
         })
         .then(finish, finish)
     }
 
-    watch()
+    return watcher
+  }
+
+  function bindV3Profile(element) {
+    var publishedLabel = element.textContent || 'View Profile'
+
+    setProfileDisabled(element, PROFILE_PUBLISHING_LABEL)
+    element.addEventListener('click', function (event) {
+      if (element.getAttribute('aria-disabled') !== 'true') return
+      event.preventDefault()
+      event.stopPropagation()
+    })
+    if (typeof fetch !== 'function') return
+
+    if (!profileWatcher) profileWatcher = createProfileWatcher()
+    if (profileWatcher.slug) {
+      setProfilePublished(element, profileWatcher.slug, publishedLabel)
+      return
+    }
+    profileLinks.push({ element: element, label: publishedLabel })
+    profileWatcher.watch()
   }
 
   function bindFieldLinks(root) {
