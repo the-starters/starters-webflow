@@ -355,7 +355,6 @@
     'brand/call-reviews/submit/v3': { workflow: 'call_review', resource_type: 'review' },
     'invoices/create/v3': { workflow: 'generate_invoice', resource_type: 'invoice' },
     'invoices/cancel/v3': { workflow: 'cancel_invoice', resource_type: 'invoice' },
-    'invoices/final-create/v3': { workflow: 'generate_invoice', resource_type: 'invoice' },
     'invoices/final-cancel/v3': { workflow: 'cancel_invoice', resource_type: 'invoice' },
   }
   const responseDiagnostics = new WeakMap()
@@ -597,7 +596,6 @@
       call('brand/call-reviews/submit/v3', { body: payload, base: XANO_V3_BASE }),
     invoiceCreate: (payload) => call('invoices/create/v3', { body: payload }),
     invoiceCancel: (payload) => call('invoices/cancel/v3', { body: payload }),
-    invoiceFinalCreate: (payload) => call('invoices/final-create/v3', { body: payload }),
     invoiceFinalCancel: (payload) => call('invoices/final-cancel/v3', { body: payload }),
     // starter / talent
     starterProfile: () => call('starter/profile/me', { body: {} }),
@@ -1884,10 +1882,6 @@
   const INVOICE_MIN_AMOUNT = 0.5
   const INVOICE_MAX_AMOUNT = 1000000
   const INVOICE_AMOUNT_MESSAGE = 'Enter an amount between $0.50 and $1,000,000.'
-  const INVOICE_FINAL_AMOUNT_MESSAGE = 'Enter a final invoice amount between $0.50 and $1,000,000, with no more than two decimal places.'
-  const INVOICE_FINAL_DESCRIPTION_MAX_LENGTH = 500
-  const INVOICE_FINAL_DESCRIPTION_MESSAGE =
-    'Enter a final invoice description between 1 and 500 characters.'
   const INVOICE_NO_PROJECT_MESSAGE =
     'Open Generate Invoice from the project you want to bill, so we know which project to invoice.'
   const INVOICE_PROJECT_ENDED_MESSAGE =
@@ -1898,66 +1892,20 @@
   const INVOICE_ENDED_LIFECYCLES = new Set([
     'canceled', 'cancelled',
   ])
-  const INVOICE_FINAL_PAID_MESSAGE =
-    'The final invoice for this project has already been paid. It cannot be billed again.'
-  const INVOICE_FINAL_VOID_MESSAGE =
-    'The final invoice for this project was cancelled. It cannot be billed again.'
-  const FINAL_INVOICE_OPEN_STATUSES = ['unknown', 'unpaid']
-  const FINAL_INVOICE_TERMINAL_STATUSES = ['paid', 'void']
   let activeInvoiceProject = null
   let invoiceWorkflowBinding = null
 
   /**
-   * A projection may carry the canonical `lifecycle_state`, the legacy dashboard
-   * `status`, or both. This now only gates legacy final-row recognition; completed
-   * projects still bill through the ordinary Payment Link path.
-   */
-  function projectIsCompleted(project) {
-    if (!project || typeof project !== 'object') return false
-    return (
-      String(project.lifecycle_state || '').trim().toLowerCase() === 'completed' ||
-      String(project.status || '').trim().toLowerCase() === 'completed'
-    )
-  }
-
-  /**
-   * The identity of a canonical final-invoice row, normalized identically on the
-   * create and the cancel path so a padded enum value cannot split the two.
-   * Identity is the handoff type only: a final row is a legacy Stripe Invoice or,
-   * since 2026-09-26, a Payment Link, and both cancel through final-cancel.
+   * The identity of an existing final-invoice row, so a padded enum value still
+   * cancels through final-cancel (#5969). Identity is the handoff type only: a
+   * final row is a legacy Stripe Invoice or, from 2026-09-26, a Payment Link.
+   * New final rows are no longer created (JP 1a 2026-10-02, 2026-11-05).
    */
   function isFinalInvoiceRow(invoice) {
     return Boolean(
       invoice &&
       String(invoice.handoff_type || '').trim().toLowerCase() === 'final',
     )
-  }
-
-  /**
-   * A completed project's historical final-invoice handoff, retained for
-   * rollback data and final-row cancellation. It no longer decides whether the
-   * Generate Invoice modal can create a new Payment Link.
-   * @returns {{state: string, invoice: object|null}}
-   */
-  function finalInvoiceState(project) {
-    const absent = { state: 'none', invoice: null }
-    if (!projectIsCompleted(project)) return absent
-    const invoice = project.final_invoice
-    if (
-      !isFinalInvoiceRow(invoice) ||
-      String(invoice.sync_origin || '').trim().toLowerCase() !== 'v3'
-    ) return absent
-    const status = String(invoice.status || '').trim().toLowerCase()
-    if (FINAL_INVOICE_OPEN_STATUSES.includes(status)) return { state: 'open', invoice }
-    if (FINAL_INVOICE_TERMINAL_STATUSES.includes(status)) return { state: 'terminal', invoice }
-    return absent
-  }
-
-  /** Dormant rollback copy for the unreachable `final_closed` submit branch. */
-  function finalInvoiceClosedMessage(status) {
-    return String(status || '').trim().toLowerCase() === 'paid'
-      ? INVOICE_FINAL_PAID_MESSAGE
-      : INVOICE_FINAL_VOID_MESSAGE
   }
 
   /**
@@ -1977,11 +1925,6 @@
     const projectId = parseInt(card.getAttribute('data-wf-xano-id') || '', 10)
     if (!(projectId > 0)) return null
     const project = authoritativeProject || projectWorkflowItems.get(projectId) || {}
-    const finalState = finalInvoiceState(project)
-    const finalPlaceholder = finalState.state === 'open' ? finalState.invoice : null
-    // Stored placeholder values may only be reused once the projection marks the
-    // placeholder recoverable, so a stale amount cannot leak into a new submit.
-    const recoveryReady = Boolean(finalPlaceholder && finalPlaceholder.recovery_ready === true)
     // Prefer a bound brand/company field — on the authored V3 project card that
     // field is wf-xano-bind="company_name". The "Title | Brand" heading split is
     // only a fallback, and a title containing a pipe makes the last segment the
@@ -2005,21 +1948,10 @@
         cardFieldText(card, 'hiring_manager_name') ||
         cardFieldText(card, 'party') ||
         cardFieldText(card, 'contact_name'),
-      // JP decision 1a (2026-10-02): every billable project, completed ones
-      // included, uses the ordinary Generate Invoice route (#1691). New invoices
-      // never go to final-create (#5970); the 'final' and 'final_closed' submit
-      // branches below are unreachable and kept only for a quick rollback.
-      // Existing final rows still cancel through final-cancel (#5969).
+      // JP decision 1a (2026-10-02, dead code removed 2026-11-05): every
+      // billable project, completed ones included, uses the one Generate Invoice
+      // route (#1691). Existing final rows still cancel through final-cancel (#5969).
       invoiceMode: invoiceProjectHasEnded(project) ? 'unavailable' : 'standard',
-      finalInvoiceId: Number(finalPlaceholder && finalPlaceholder.id) || null,
-      finalInvoiceRecoveryReady: recoveryReady,
-      finalInvoiceStatus: finalState.state === 'terminal'
-        ? String(finalState.invoice.status || '').trim().toLowerCase()
-        : '',
-      finalInvoiceAmount: recoveryReady ? normalizeInvoiceAmount(finalPlaceholder.amount) : null,
-      finalInvoiceDescription: recoveryReady
-        ? (normalizeFinalInvoiceDescription(finalPlaceholder.description) || '')
-        : '',
     }
   }
 
@@ -2047,13 +1979,6 @@
     return amount
   }
 
-  // Final invoices must preserve the entered cents, never silently round them.
-  function normalizeFinalInvoiceAmount(value) {
-    const text = invoiceAmountText(value)
-    if (!/^(?:\d+(?:\.\d{0,2})?|\.\d{1,2})$/.test(text)) return null
-    return normalizeInvoiceAmount(text)
-  }
-
   /**
    * The single payable-link contract shared by the success screen and the card
    * rows: only an absolute https provider link may become a live pay target.
@@ -2062,13 +1987,6 @@
   function payableInvoiceLink(source) {
     const link = String(source && (source.payment_link || source.invoice_link) || '').trim()
     return /^https:\/\/[^\s]+$/i.test(link) ? link : ''
-  }
-
-  /** A final invoice requires the same trimmed 1..500 character contract as Xano. */
-  function normalizeFinalInvoiceDescription(value) {
-    const description = String(value == null ? '' : value).trim()
-    if (!description || description.length > INVOICE_FINAL_DESCRIPTION_MAX_LENGTH) return null
-    return description
   }
 
   function invoiceBind(modal, field, value) {
@@ -2175,14 +2093,13 @@
     if (fail) fail.style.display = ''
   }
 
-  function invoiceIdempotencyKey(form, projectId, mode = 'standard') {
+  function invoiceIdempotencyKey(form, projectId) {
     if (form.dataset.invoiceIdempotencyKey) return form.dataset.invoiceIdempotencyKey
     const uuid =
       window.crypto && typeof window.crypto.randomUUID === 'function'
         ? window.crypto.randomUUID()
         : Date.now().toString(36) + '-' + Math.random().toString(36).slice(2)
-    const prefix = mode === 'final' ? 'final-invoice-v3-' : 'invoice-v3-'
-    form.dataset.invoiceIdempotencyKey = prefix + projectId + '-' + uuid
+    form.dataset.invoiceIdempotencyKey = 'invoice-v3-' + projectId + '-' + uuid
     return form.dataset.invoiceIdempotencyKey
   }
 
@@ -2196,23 +2113,6 @@
     const done = $('.w-form-done', modal)
     if (form) {
       form.reset()
-      const recoveryAmount = context && context.invoiceMode === 'final'
-        ? normalizeInvoiceAmount(context.finalInvoiceAmount)
-        : null
-      const amountInput = typeof form.querySelector === 'function'
-        ? ($('#Amount', form) || $('[name="Amount"]', form))
-        : null
-      const recovering = Boolean(context && context.invoiceMode === 'final' && context.finalInvoiceRecoveryReady)
-      if (amountInput) amountInput.readOnly = recovering
-      if (amountInput && recoveryAmount !== null) amountInput.value = String(recoveryAmount)
-      const recoveryDescription = context && context.invoiceMode === 'final'
-        ? normalizeFinalInvoiceDescription(context.finalInvoiceDescription)
-        : null
-      const descriptionInput = typeof form.querySelector === 'function'
-        ? ($('#Description', form) || $('[name="Description"]', form))
-        : null
-      if (descriptionInput) descriptionInput.readOnly = recovering
-      if (descriptionInput && recoveryDescription !== null) descriptionInput.value = recoveryDescription
       form.style.display = ''
       delete form.dataset.invoiceIdempotencyKey
     }
@@ -2520,14 +2420,6 @@
         )
         return
       }
-      if (context.invoiceMode === 'final_closed') {
-        invoiceError(
-          modal,
-          finalInvoiceClosedMessage(context.finalInvoiceStatus),
-          validationDiagnostic('generate_invoice', 'invoice', 'FINAL_INVOICE_CLOSED'),
-        )
-        return
-      }
       if (context.invoiceMode === 'unavailable') {
         invoiceError(
           modal,
@@ -2539,33 +2431,16 @@
 
       const amountInput = $('#Amount', form) || $('[name="Amount"]', form)
       const descriptionInput = $('#Description', form) || $('[name="Description"]', form)
-      const recovering = context.invoiceMode === 'final' && context.finalInvoiceRecoveryReady
-      const rawAmount = recovering ? context.finalInvoiceAmount : amountInput && amountInput.value
-      const amount = context.invoiceMode === 'final'
-        ? normalizeFinalInvoiceAmount(rawAmount)
-        : normalizeInvoiceAmount(rawAmount)
+      const amount = normalizeInvoiceAmount(amountInput && amountInput.value)
       if (amount === null) {
         invoiceError(
           modal,
-          context.invoiceMode === 'final' ? INVOICE_FINAL_AMOUNT_MESSAGE : INVOICE_AMOUNT_MESSAGE,
+          INVOICE_AMOUNT_MESSAGE,
           validationDiagnostic('generate_invoice', 'invoice', 'INVALID_AMOUNT'),
         )
         return
       }
-      const rawDescription = recovering
-        ? context.finalInvoiceDescription
-        : (descriptionInput ? descriptionInput.value : '')
-      const description = context.invoiceMode === 'final'
-        ? normalizeFinalInvoiceDescription(rawDescription)
-        : String(rawDescription || '').trim()
-      if (context.invoiceMode === 'final' && description === null) {
-        invoiceError(
-          modal,
-          INVOICE_FINAL_DESCRIPTION_MESSAGE,
-          validationDiagnostic('generate_invoice', 'invoice', 'INVALID_FINAL_DESCRIPTION'),
-        )
-        return
-      }
+      const description = String(descriptionInput ? descriptionInput.value : '').trim()
 
       clearInvoiceError(modal)
       binding.submitting = true
@@ -2573,14 +2448,11 @@
       binding.submitControl = submit
       setInvoiceSubmitDisabled(submit, true)
       try {
-        const createInvoice = context.invoiceMode === 'final'
-          ? API.invoiceFinalCreate
-          : API.invoiceCreate
-        const result = await createInvoice({
+        const result = await API.invoiceCreate({
           project_id: context.projectId,
           amount,
           description,
-          idempotency_key: invoiceIdempotencyKey(form, context.projectId, context.invoiceMode),
+          idempotency_key: invoiceIdempotencyKey(form, context.projectId),
         })
         if (!invoiceWorkflowBindingCurrent(binding)) return
         paintInvoiceSuccess(modal, result, context, amount)
@@ -7265,8 +7137,6 @@
     invoiceErrorMessage,
     formatInvoiceAmount,
     normalizeInvoiceAmount,
-    normalizeFinalInvoiceAmount,
-    normalizeFinalInvoiceDescription,
     openInvoiceModal,
     prepareInvoiceModal,
     paintInvoiceSuccess,
