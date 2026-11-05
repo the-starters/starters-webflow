@@ -3366,25 +3366,6 @@ function addClickClass() {
 }
 $(_0x191e96(0x1b7))["on"](_0x191e96(0x246), addClickClass);
 
-function updateCounter(_0x4f2cd2) {
-  const _0x5d7555 = _0x191e96;
-  var _0x783b89 = new Date(),
-    _0x213abd = _0x783b89["getMonth"](),
-    _0x7465c2 = btoa(_0x5d7555(0x10b)),
-    _0x49f8f4 = btoa(_0x213abd[_0x5d7555(0x189)]()),
-    _0x38313c = getCookie(_0x7465c2);
-  !_0x38313c || _0x38313c !== _0x49f8f4
-    ? $[_0x5d7555(0x1a8)](_0x5d7555(0x160), function () {
-        const _0x4883cf = _0x5d7555;
-        console["log"](_0x4883cf(0x22c)),
-          (document[_0x4883cf(0x1de)] = _0x7465c2 + "=" + _0x49f8f4);
-      })["fail"](function (_0x47e251, _0x5522e4, _0x189342) {
-        const _0x491011 = _0x5d7555;
-        console[_0x491011(0x240)](_0x491011(0x1ff), _0x189342);
-      })
-    : console[_0x5d7555(0x1ed)](_0x5d7555(0x128));
-}
-
 function getCookie(_0x509b52) {
   const _0x53eeaf = _0x191e96;
   var _0x2cccbe = null;
@@ -3405,7 +3386,7 @@ function getCookie(_0x509b52) {
   }
   return _0x2cccbe;
 }
-updateCounter(), scrollTop(), cloneRemove(), cloneRemoveInput();
+scrollTop(), cloneRemove(), cloneRemoveInput();
 const formlyUrlParams = new URLSearchParams(window[_0x191e96(0x224)]["search"]),
   formlySupportParam = formlyUrlParams["get"](_0x191e96(0x206)),
   showButton = formlySupportParam === _0x191e96(0x18a),
