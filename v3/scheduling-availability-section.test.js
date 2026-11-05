@@ -2312,6 +2312,7 @@ test('an added window normalizes hour-only timepicker values before the availabi
   form.querySelector('[name=start-time]').value = '10'
   form.querySelector('[name=end-time]').value = '14'
 
+  form.querySelector('[name=avail-replace]').checked = true // replace General hours on these days
   formWrapper.children[0].children[1].children[1].click()
   await settle()
 
@@ -2381,6 +2382,7 @@ test('an override may cover the last general day without sending an empty window
   form.children[4].children[1].checked = true
   form.querySelector('[name=start-time]').value = '10:00'
   form.querySelector('[name=end-time]').value = '14:00'
+  form.querySelector('[name=avail-replace]').checked = true // replace General hours on these days
   formWrapper.children[0].children[1].children[1].click()
   await settle()
 
@@ -2437,6 +2439,199 @@ test('editing an override restores its previous default day', async () => {
   )
 })
 
+function splitDaySection(items) {
+  return loadSection({
+    serverState: {
+      grantId: 'grant-1',
+      grantEmail: 'starter@example.com',
+      calendarId: 'primary',
+      availability: { items: items, manager: 'calendar' },
+      configs: [{ config_id: 'cfg-free', grant_id: 'grant-1', duration: 30, is_paid: false, active: true }],
+    },
+  })
+}
+
+function openDraftForm(dom, savedIds) {
+  dom.createBtn.click()
+  const draftCard = dom.list.children.find(
+    (el) => el.getAttribute('data-availability-element') === 'item-card' && !savedIds.includes(el.dataset.id),
+  )
+  const formWrapper = draftCard.children[2]
+  const form = formWrapper.querySelector('[data-availability-element="availability-form"]')
+  return { draftCard, formWrapper, form }
+}
+
+function fillItemForm(form, days, start, end) {
+  form.querySelectorAll('[name=avail-day]').forEach((day, i) => {
+    day.checked = days.includes(i)
+  })
+  form.querySelector('[name=start-time]').value = start
+  form.querySelector('[name=end-time]').value = end
+}
+
+const MORNING_GENERAL = { days: [1, 2, 3, 4, 5], start: '09:00', end: '12:00', defaultDays: [1, 2, 3, 4, 5] }
+
+test('a new window adds an afternoon block on General days and keeps the morning block', async () => {
+  const { dom, calls } = splitDaySection({ general: { ...MORNING_GENERAL } })
+  await settle()
+
+  const { form, formWrapper } = openDraftForm(dom, ['general'])
+  const toggle = form.querySelector('[name=avail-replace]')
+  assert.ok(toggle)
+  assert.equal(toggle.checked, false)
+  assert.equal(form.querySelectorAll('[name=avail-day]').some((day) => day.disabled), false)
+  fillItemForm(form, [1, 2, 3, 4, 5], '13:00', '17:00')
+  formWrapper.children[0].children[1].children[1].click()
+  await settle()
+
+  const update = calls.find((call) => call.path === '/starter/update_availability/v3')
+  assert.ok(update)
+  const items = update.body.availability.items
+  assert.deepEqual(items.general, MORNING_GENERAL)
+  const added = Object.entries(items).find(([key]) => key !== 'general')[1]
+  assert.deepEqual(added, { days: [1, 2, 3, 4, 5], start: '13:00', end: '17:00', mode: 'add' })
+  const configUpdate = calls.find((call) => call.path === '/scheduler/configurations/update/v3')
+  assert.deepEqual(configUpdate.body.in_availability.availability_rules.default_open_hours, [
+    { days: [1, 2, 3, 4, 5], start: '09:00', end: '12:00' },
+    { days: [1, 2, 3, 4, 5], start: '13:00', end: '17:00' },
+  ])
+  const addedCard = dom.list.children.find((el) => el.dataset.id && el.dataset.id !== 'general')
+  assert.match(addedCard.querySelector('[data-availability-element="item-title"]').textContent, /\(extra hours\)$/)
+})
+
+test('a window that touches another window on the same day saves', async () => {
+  const { dom, calls } = splitDaySection({ general: { ...MORNING_GENERAL } })
+  await settle()
+
+  const { form, formWrapper } = openDraftForm(dom, ['general'])
+  fillItemForm(form, [1], '12:00', '15:00')
+  formWrapper.children[0].children[1].children[1].click()
+  await settle()
+
+  assert.ok(calls.find((call) => call.path === '/starter/update_availability/v3'))
+})
+
+test('a window that overlaps another window on the same day is blocked before any request', async () => {
+  const { dom, calls } = splitDaySection({ general: { ...MORNING_GENERAL } })
+  await settle()
+
+  const { form, formWrapper, draftCard } = openDraftForm(dom, ['general'])
+  fillItemForm(form, [1], '11:00', '13:00')
+  formWrapper.children[0].children[1].children[1].click()
+  await settle()
+
+  assert.equal(calls.some((call) => call.path === '/starter/update_availability/v3'), false)
+  assert.equal(calls.some((call) => call.path === '/scheduler/configurations/update/v3'), false)
+  assert.match(dom.notif.errorText.textContent, /overlaps another window on Monday \(09:00 - 12:00\)/)
+  assert.ok(dom.list.children.includes(draftCard))
+})
+
+test('a General edit that overlaps an extra-hours window is blocked', async () => {
+  const { dom, calls } = splitDaySection({
+    general: { ...MORNING_GENERAL },
+    pm: { days: [1, 2, 3, 4, 5], start: '13:00', end: '17:00', mode: 'add' },
+  })
+  await settle()
+
+  const card = dom.list.children.find((el) => el.dataset.id === 'general')
+  card.children[0].children[2].children[0].click()
+  const formWrapper = card.children[2]
+  const form = formWrapper.querySelector('[data-availability-element="availability-form"]')
+  assert.equal(form.querySelector('[name=avail-replace]'), null)
+  assert.equal(form.querySelectorAll('[name=avail-day]').some((day) => day.disabled), false)
+  fillItemForm(form, [1, 2, 3, 4, 5], '09:00', '14:00')
+  formWrapper.children[0].children[1].children[1].click()
+  await settle()
+
+  assert.equal(calls.some((call) => call.path === '/starter/update_availability/v3'), false)
+  assert.match(dom.notif.errorText.textContent, /overlaps another window on Monday \(13:00 - 17:00\)/)
+})
+
+test('moving a replacing window names the two other windows that would overlap', async () => {
+  const { dom, calls } = splitDaySection({
+    general: { days: [2, 3, 4, 5], start: '09:00', end: '12:00', defaultDays: [1, 2, 3, 4, 5] },
+    mon: { days: [1], start: '07:00', end: '10:00' },
+    monpm: { days: [1], start: '11:00', end: '14:00', mode: 'add' },
+  })
+  await settle()
+
+  const card = dom.list.children.find((el) => el.dataset.id === 'mon')
+  card.children[0].children[2].children[0].click()
+  const formWrapper = card.children[2]
+  const form = formWrapper.querySelector('[data-availability-element="availability-form"]')
+  assert.equal(form.querySelector('[name=avail-replace]').checked, true)
+  fillItemForm(form, [2], '07:00', '10:00')
+  formWrapper.children[0].children[1].children[1].click()
+  await settle()
+
+  assert.equal(calls.some((call) => call.path === '/starter/update_availability/v3'), false)
+  assert.equal(
+    dom.notif.errorText.textContent,
+    'This change makes two windows overlap on Monday (09:00 - 12:00 and 11:00 - 14:00). Change the time or the days, then try again.',
+  )
+})
+
+test('a saved window without mode keeps replace behavior when edited', async () => {
+  const { dom, calls } = splitDaySection({
+    general: { days: [1, 2, 4, 5], start: '09:00', end: '17:00', defaultDays: [1, 2, 3, 4, 5] },
+    wed: { days: [3], start: '10:00', end: '14:00' },
+  })
+  await settle()
+
+  const generalCard = dom.list.children.find((el) => el.dataset.id === 'general')
+  generalCard.children[0].children[2].children[0].click()
+  const generalForm = generalCard.children[2].querySelector('[data-availability-element="availability-form"]')
+  // General still cannot take a day that a replacing window owns.
+  assert.equal(generalForm.querySelectorAll('[name=avail-day]')[3].disabled, true)
+
+  const card = dom.list.children.find((el) => el.dataset.id === 'wed')
+  card.children[0].children[2].children[0].click()
+  const formWrapper = card.children[2]
+  const form = formWrapper.querySelector('[data-availability-element="availability-form"]')
+  assert.equal(form.querySelector('[name=avail-replace]').checked, true)
+  fillItemForm(form, [3], '11:00', '15:00')
+  formWrapper.children[0].children[1].children[1].click()
+  await settle()
+
+  const update = calls.find((call) => call.path === '/starter/update_availability/v3')
+  assert.deepEqual(update.body.availability.items.wed, { days: [3], start: '11:00', end: '15:00' })
+  assert.deepEqual(update.body.availability.items.general.days, [1, 2, 4, 5])
+})
+
+test('removing a replacing window that would overlap an extra-hours window is blocked', async () => {
+  const { dom, calls } = splitDaySection({
+    general: { days: [1, 2, 4, 5], start: '09:00', end: '17:00', defaultDays: [1, 2, 3, 4, 5] },
+    wed: { days: [3], start: '10:00', end: '12:00' },
+    wedpm: { days: [3], start: '13:00', end: '15:00', mode: 'add' },
+  })
+  await settle()
+
+  const card = dom.list.children.find((el) => el.dataset.id === 'wed')
+  card.children[0].children[2].children[1].click()
+  dom.notif.itemRemoveBtn.click()
+  await settle()
+
+  assert.equal(calls.some((call) => call.path === '/starter/update_availability/v3'), false)
+  assert.ok(dom.list.children.find((el) => el.dataset.id === 'wed'))
+  assert.match(dom.notif.errorText.textContent, /gives Wednesday back to General Availability/)
+})
+
+test('removing an extra-hours window keeps General days unchanged', async () => {
+  const { dom, calls } = splitDaySection({
+    general: { ...MORNING_GENERAL },
+    pm: { days: [1, 2, 3, 4, 5], start: '13:00', end: '17:00', mode: 'add' },
+  })
+  await settle()
+
+  const card = dom.list.children.find((el) => el.dataset.id === 'pm')
+  card.children[0].children[2].children[1].click()
+  dom.notif.itemRemoveBtn.click()
+  await settle()
+
+  const update = calls.find((call) => call.path === '/starter/update_availability/v3')
+  assert.deepEqual(update.body.availability.items, { general: MORNING_GENERAL })
+})
+
 test('a failed canonical override save restores the pre-submit availability model and cards', async () => {
   const baseline = {
     items: {
@@ -2464,6 +2659,7 @@ test('a failed canonical override save restores the pre-submit availability mode
   form.children[4].children[1].checked = true
   form.querySelector('[name=start-time]').value = '10:00'
   form.querySelector('[name=end-time]').value = '14:00'
+  form.querySelector('[name=avail-replace]').checked = true // replace General hours on these days
   formWrapper.children[0].children[1].children[1].click()
   await settle()
 

@@ -658,7 +658,9 @@
       if (!Object.prototype.hasOwnProperty.call(avails, id)) continue
       const avail = avails[id]
 
-      if (id !== 'general') {
+      // Extra-hours windows (`mode: 'add'`, created by the dashboard section)
+      // share days with General, so they do not block or claim any day here.
+      if (id !== 'general' && avail.mode !== 'add') {
         avail.days.forEach(function (day) {
           if (overrides.indexOf(day) === -1) overrides.push(day)
         })
@@ -719,6 +721,7 @@
     const claimed = []
     for (const id in availability.items) {
       if (!Object.prototype.hasOwnProperty.call(availability.items, id) || id === 'general') continue
+      if (availability.items[id].mode === 'add') continue
       availability.items[id].days.forEach(function (day) {
         if (claimed.indexOf(day) === -1) claimed.push(day)
       })
@@ -1331,6 +1334,8 @@
 
       if (availId === 'general') {
         avail.defaultDays = avail.days
+      } else if (availability.items[availId] && availability.items[availId].mode === 'add') {
+        avail.mode = 'add'
       }
 
       availability.items[availId] = avail
