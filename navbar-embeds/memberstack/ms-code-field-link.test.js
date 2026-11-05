@@ -533,3 +533,85 @@ test('View Profile does not poll while the tab is hidden and resumes when it is 
   assert.equal(result.requests.length, 2)
   assert.equal(link.href, '/hire/visible-profile')
 })
+
+test('desktop and mobile View Profile links share one resolver request', async () => {
+  const desktop = new Link({ href: '#', 'ms-code-field-link': 'freelancer-profile-url' })
+  const mobile = new Link({
+    href: '#',
+    'ms-code-field-link': 'freelancer-profile-url',
+    textContent: 'My Profile',
+  })
+  const result = load({ links: [desktop, mobile], currentMember: { id: 'mem_twocopies123' } })
+
+  await flush()
+  assert.equal(result.requests.length, 1)
+  assert.equal(desktop.href, '/hire/jp-dionisio')
+  assert.equal(desktop.textContent, 'View Profile')
+  assert.equal(mobile.href, '/hire/jp-dionisio')
+  assert.equal(mobile.textContent, 'My Profile')
+  assert.equal(result.timers.length, 0)
+})
+
+test('duplicate View Profile links share one poll loop and one poll budget', async () => {
+  const links = [1, 2, 3, 4].map(
+    () => new Link({ href: '#', 'ms-code-field-link': 'freelancer-profile-url' }),
+  )
+  const clock = fakeClock()
+  const result = load({
+    links,
+    Date: clock.Date,
+    currentMember: { id: 'mem_fourcopies123' },
+    response: { ok: true, json: async () => ({ slug: '' }) },
+  })
+
+  await flush()
+  assert.equal(result.requests.length, 1)
+  assert.equal(result.timers.length, 1)
+  while (result.timers.length) await runTimer(result, clock)
+
+  assert.ok(result.requests.length <= 15, 'four link copies still make at most 15 resolver calls')
+  assert.equal(result.maxFetchesPending(), 1)
+  links.forEach((link) => assert.equal(link.textContent, 'View Profile (Publishing)'))
+})
+
+test('a link added while polling joins the loop without its own request', async () => {
+  const first = new Link({ href: '#', 'ms-code-field-link': 'freelancer-profile-url' })
+  const result = load({
+    links: [first],
+    readyState: 'complete',
+    currentMember: { id: 'mem_joinloop123' },
+    responses: [
+      { ok: true, json: async () => ({ slug: '' }) },
+      { ok: true, json: async () => ({ slug: 'joined-profile' }) },
+    ],
+  })
+
+  await flush()
+  assert.equal(result.requests.length, 1)
+  const late = new Link({ href: '#', 'ms-code-field-link': 'freelancer-profile-url' })
+  result.addLink(late)
+  await flush()
+  assert.equal(result.requests.length, 1, 'the late link waits for the shared timer')
+  assert.equal(late.textContent, 'View Profile (Publishing)')
+
+  result.timers.shift().callback()
+  await flush()
+  assert.equal(result.requests.length, 2)
+  assert.equal(first.href, '/hire/joined-profile')
+  assert.equal(late.href, '/hire/joined-profile')
+})
+
+test('a link added after the slug resolves is published without a new request', async () => {
+  const first = new Link({ href: '#', 'ms-code-field-link': 'freelancer-profile-url' })
+  const result = load({ links: [first], readyState: 'complete', currentMember: { id: 'mem_after123' } })
+
+  await flush()
+  assert.equal(result.requests.length, 1)
+  const late = new Link({ href: '#', 'ms-code-field-link': 'freelancer-profile-url' })
+  result.addLink(late)
+  await flush()
+
+  assert.equal(result.requests.length, 1)
+  assert.equal(late.href, '/hire/jp-dionisio')
+  assert.equal(late.getAttribute('aria-disabled'), null)
+})
