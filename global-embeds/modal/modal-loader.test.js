@@ -39,7 +39,7 @@ function sourceDialog(key = 'marketing-expert', children = []) {
   }, children)
 }
 
-function environment({ hostname = host, dialogs = [sourceDialog()], css = 'load', fetcher, bootModal = true } = {}) {
+function environment({ hostname = host, dialogs = [sourceDialog()], css = 'load', fetcher, bootModal = true, readyState = 'complete', now = Date.now } = {}) {
   const head = element('head')
   const body = element('body')
   const root = element('html', {}, [head, body])
@@ -53,7 +53,7 @@ function environment({ hostname = host, dialogs = [sourceDialog()], css = 'load'
   const warnings = []
   const location = new URL(`https://${hostname}/home`)
   const document = {
-    head, body, activeElement: body,
+    head, body, activeElement: body, readyState,
     querySelectorAll: (s) => root.querySelectorAll(s),
     querySelector: (s) => root.querySelector(s),
     getElementById: () => null,
@@ -77,6 +77,7 @@ function environment({ hostname = host, dialogs = [sourceDialog()], css = 'load'
   const window = { document, location, dispatchEvent: (event) => events.push(event) }
   const context = vm.createContext({
     window, document, location, URL, URLSearchParams, AbortController, setTimeout, clearTimeout,
+    Date: { now },
     CustomEvent: class { constructor(type, init) { this.type = type; this.detail = init.detail } },
     console: { warn: (...args) => warnings.push(args), info() {}, error() {} },
     DOMParser: class {
@@ -278,4 +279,17 @@ test('two source keys share CSS and a failed call preserves the successful call 
   assert.equal(env.body.children.length, 1)
   assert.equal(env.head.children.length, 1)
   assert.equal(env.window.lumos.modal.list.second, undefined)
+})
+
+test('install deadline starts at DOMContentLoaded even when parsing takes over 4000ms', async () => {
+  let time = 0
+  const env = environment({ bootModal: false, readyState: 'loading', now: () => time })
+  time = 4500
+  await new Promise((resolve) => setTimeout(resolve, 60))
+  env.document.readyState = 'interactive'
+  env.startModal()
+  await new Promise((resolve) => setTimeout(resolve, 60))
+  assert.equal(time, 4500)
+  assert.equal(typeof env.window.lumos.modal.load, 'function')
+  assert.equal(typeof env.window.lumos.modal.open, 'function')
 })

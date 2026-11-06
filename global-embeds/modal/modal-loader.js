@@ -185,9 +185,13 @@
     }
   }
 
-  const started = Date.now();
-  (function install() {
-    if (typeof system()?.init === 'function') system().load = load;
-    else if (Date.now() - started < DEFAULT_TIMEOUT) setTimeout(install, 50);
-  })();
+  function startInstall() {
+    const started = Date.now();
+    (function install() {
+      if (typeof system()?.init === 'function') system().load = load;
+      else if (Date.now() - started < DEFAULT_TIMEOUT) setTimeout(install, 50);
+    })();
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', startInstall, { once: true });
+  else startInstall();
 })();
