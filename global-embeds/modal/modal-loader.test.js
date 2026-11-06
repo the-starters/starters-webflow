@@ -102,6 +102,82 @@ function environment({ hostname = host, dialogs = [sourceDialog()], css = 'load'
   return { window, document, head, body, calls, events, warnings, startModal, reload: () => vm.runInContext(loader, context) }
 }
 
+test('source calls share one promise-backed fetch and the same parsed Document', async () => {
+  const env = environment()
+  const [a, b] = await Promise.all([
+    env.window.lumos.modal.source('/modals'),
+    env.window.lumos.modal.source(`https://${host}/modals`),
+  ])
+  assert.ok(a)
+  assert.equal(a, b)
+  assert.equal(env.calls.length, 1)
+  assert.equal(env.calls[0].options.redirect, 'error')
+  assert.equal(env.head.children.length, 0)
+  assert.equal(env.body.children.length, 0)
+})
+
+test('source and load reuse the parsed source without mutating it', async () => {
+  const env = environment()
+  const doc = await env.window.lumos.modal.source('/modals')
+  const entry = await env.window.lumos.modal.load('/modals', 'marketing-expert', { open: true })
+  assert.ok(entry)
+  assert.equal(entry.el.open, true)
+  assert.equal(env.calls.length, 1)
+  assert.equal(doc.querySelectorAll('dialog')[0].getAttribute('data-modal-target'), 'shared-old-key')
+  assert.equal(doc.querySelectorAll('dialog')[0].hasAttribute('data-preview'), true)
+  assert.equal(await env.window.lumos.modal.source('/modals'), doc)
+})
+
+test('failed source requests are removed from the cache and can retry', async () => {
+  let attempts = 0
+  const env = environment({ fetcher: async (url) => {
+    attempts += 1
+    if (attempts === 1) throw new Error('Network unavailable')
+    return { ok: true, url: String(url), text: async () => '<source>' }
+  } })
+  assert.equal(await env.window.lumos.modal.source('/modals'), null)
+  assert.ok(await env.window.lumos.modal.source('/modals'))
+  assert.equal(env.calls.length, 2)
+})
+
+test('source rejects cross-origin and malformed URLs without fetching', async () => {
+  const env = environment()
+  for (const url of ['https://example.com/modals', 'https://[invalid']) {
+    assert.equal(await env.window.lumos.modal.source(url), null)
+  }
+  assert.equal(env.calls.length, 0)
+})
+
+test('source keeps failures uncached for HTTP errors and cross-origin responses', async () => {
+  for (const response of [{ ok: false }, { ok: true, url: 'https://example.com/modals' }]) {
+    const env = environment({ fetcher: async () => response })
+    assert.equal(await env.window.lumos.modal.source('/modals'), null)
+    assert.equal(await env.window.lumos.modal.source('/modals'), null)
+    assert.equal(env.calls.length, 2)
+  }
+})
+
+test('source caches each absolute URL independently and is inert on production', async () => {
+  const env = environment()
+  await env.window.lumos.modal.source('/one')
+  await env.window.lumos.modal.source('/two')
+  await env.window.lumos.modal.source('/one')
+  assert.equal(env.calls.length, 2)
+  for (const hostname of ['www.thestarters.com', 'thestarters.com']) {
+    const prod = environment({ hostname })
+    assert.equal(await prod.window.lumos.modal.source('/modals'), null)
+    assert.equal(prod.calls.length, 0)
+  }
+})
+
+test('source times out at the default deadline and aborts even when fetch ignores it', async () => {
+  const env = environment({ fetcher: () => new Promise(() => {}) })
+  assert.equal(await env.window.lumos.modal.source('/modals'), null)
+  assert.equal(env.calls[0].options.signal.aborted, true)
+  assert.equal(env.body.children.length, 0)
+  assert.equal(env.head.children.length, 0)
+})
+
 test('loads, registers and opens the keyed dialog and imports page CSS once', async () => {
   const env = environment()
   const entry = await env.window.lumos.modal.load('/modals', 'marketing-expert', { open: true })
