@@ -14,7 +14,7 @@
     /(^|\.)webflow\.io$/.test(window.location.hostname) ||
     /(^|\.)trycloudflare\.com$/.test(window.location.hostname);
 
-  function source(sourceUrl, options = {}) {
+  function source(sourceUrl) {
     if (!enabled()) return Promise.resolve(null);
     let url;
     try {
@@ -24,8 +24,7 @@
       return Promise.resolve(null);
     }
     if (sources.has(url.href)) return sources.get(url.href);
-    const controller = options.controller || new AbortController();
-    const timeoutMs = options.timeoutMs || DEFAULT_TIMEOUT;
+    const controller = new AbortController();
     const task = (async () => {
       let timer;
       const check = () => {
@@ -35,7 +34,7 @@
         timer = setTimeout(() => {
           controller.abort();
           reject(new Error('Modal source timed out'));
-        }, timeoutMs);
+        }, DEFAULT_TIMEOUT);
       });
       try {
         const operation = (async () => {
@@ -136,7 +135,7 @@
           await new Promise((resolve) => setTimeout(resolve, Math.min(50, timeoutMs)));
         }
         check();
-        const doc = await source(sourceUrl.href, { controller, timeoutMs });
+        const doc = await source(sourceUrl.href);
         check();
         if (!doc) throw new Error('Modal source unavailable');
         const matches = Array.from(doc.querySelectorAll('.modal_dialog[data-popup-source]'))

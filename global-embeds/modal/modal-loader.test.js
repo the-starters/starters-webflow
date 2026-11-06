@@ -219,7 +219,6 @@ test('cross-origin URLs never fetch', async () => {
 test('fetch timeout aborts and leaves nothing behind even if fetch ignores abort', async () => {
   const env = environment({ fetcher: () => new Promise(() => {}) })
   assert.equal(await env.window.lumos.modal.load('/modals', 'marketing-expert', { timeoutMs: 15 }), null)
-  assert.equal(env.calls[0].options.signal.aborted, true)
   assert.equal(env.body.children.length, 0)
   assert.equal(env.head.children.length, 0)
 })
@@ -368,4 +367,30 @@ test('install deadline starts at DOMContentLoaded even when parsing takes over 4
   assert.equal(time, 4500)
   assert.equal(typeof env.window.lumos.modal.load, 'function')
   assert.equal(typeof env.window.lumos.modal.open, 'function')
+})
+
+test('a load that times out does not fail a concurrent source request', async () => {
+  let release
+  const env = environment({ fetcher: () => new Promise((resolve) => {
+    release = () => resolve({ ok: true, url: `https://${host}/modals`, text: async () => '<source>' })
+  }) })
+  const shared = env.window.lumos.modal.source('/modals')
+  assert.equal(await env.window.lumos.modal.load('/modals', 'marketing-expert', { timeoutMs: 100 }), null)
+  assert.equal(env.calls[0].options.signal.aborted, false)
+  release()
+  assert.ok(await shared)
+  assert.equal(env.calls.length, 1)
+})
+
+test('a later source call gets the Document from the single fetch after a load timeout', async () => {
+  let release
+  const env = environment({ fetcher: () => new Promise((resolve) => {
+    release = () => resolve({ ok: true, url: `https://${host}/modals`, text: async () => '<source>' })
+  }) })
+  assert.equal(await env.window.lumos.modal.load('/modals', 'marketing-expert', { timeoutMs: 100 }), null)
+  release()
+  const doc = await env.window.lumos.modal.source('/modals')
+  assert.ok(doc)
+  assert.equal(await env.window.lumos.modal.source('/modals'), doc)
+  assert.equal(env.calls.length, 1)
 })
