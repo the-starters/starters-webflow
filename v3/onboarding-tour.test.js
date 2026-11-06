@@ -531,6 +531,25 @@ test('memberMarkSeen merges shared JSON and safely persists special tour ids', a
   assert.equal(Object.keys(update.json.tours).includes('__proto__'), true)
 })
 
+test('a member with null JSON saves only the new tour history without a data key', async () => {
+  let update
+  const { run } = loadModule({
+    memberstack: {
+      getCurrentMember: async () => ({ data: { id: 'member-1', planConnections: [] } }),
+      getMemberJSON: async () => ({ data: null }),
+      updateMemberJSON: async (value) => { update = value },
+    },
+    driver: { js: { driver: () => ({ drive() {} }) } },
+    nodes: [fakeElement({ 'data-tour-step': 'welcome:1' })],
+  })
+  await run()
+  const shownAt = update.json.tours.welcome
+  assert.equal(typeof shownAt, 'string')
+  assert.equal(new Date(shownAt).toISOString(), shownAt)
+  assert.deepEqual(plain(update.json), { tours: { welcome: shownAt } })
+  assert.equal(Object.hasOwn(update.json, 'data'), false)
+})
+
 test('tour persistence waits for the shared member JSON writer and cannot resurrect a consumed call branch', async () => {
   let json = {
     keep: 'private',
