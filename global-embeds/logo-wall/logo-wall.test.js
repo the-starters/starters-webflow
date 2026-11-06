@@ -191,6 +191,10 @@ class El {
   querySelector(selector) {
     return this.querySelectorAll(selector)[0] || null
   }
+
+  contains(el) {
+    return this.walk().includes(el)
+  }
 }
 
 /* ------------------------------ fixtures ------------------------------ */
@@ -356,6 +360,9 @@ function load(page, options) {
   const warnings = []
   const listeners = {}
   const observers = []
+  const intersectionObservers = []
+  const intersectionEntries = []
+  let intersectionVisible = o.intersectionVisible === true
   const timers = new Map()
   let nextTimer = 1
 
@@ -395,12 +402,30 @@ function load(page, options) {
       observers.push(this)
     }
   }
+  if (o.intersectionObserver) {
+    sandbox.IntersectionObserver = function IntersectionObserver(callback) {
+      this.targets = new Set()
+      this.observeCalls = []
+      this.unobserveCalls = []
+      this.observe = (el) => {
+        this.targets.add(el)
+        this.observeCalls.push(el)
+        intersectionEntries.push({ observer: this, target: el, isIntersecting: intersectionVisible })
+      }
+      this.unobserve = (el) => {
+        this.targets.delete(el)
+        this.unobserveCalls.push(el)
+      }
+      this.deliver = (entry) => callback([entry])
+      intersectionObservers.push(this)
+    }
+  }
   sandbox.window.addEventListener = (type, fn) => {
     ;(listeners[type] = listeners[type] || []).push(fn)
   }
   const motionHandlers = []
   sandbox.window.matchMedia = () => ({
-    matches: false,
+    matches: o.reduceMotion === true,
     addEventListener(type, fn) {
       motionHandlers.push(fn)
     },
@@ -444,7 +469,22 @@ function load(page, options) {
     window: sandbox.window,
     listeners,
     timelines,
+    intersectionObservers,
     flush,
+    modalOpen: (modal) => {
+      ;(listeners['modal-open'] || []).forEach((fn) => fn({ detail: { modal } }))
+    },
+    // Change the geometry without delivering an IO entry, as a dialog can do
+    // when the browser retains the initial entry from its closed state.
+    setIntersectionVisible: (visible) => {
+      intersectionVisible = visible
+    },
+    flushIntersections: () => {
+      const pending = intersectionEntries.splice(0)
+      pending.forEach((entry) => {
+        if (entry.observer.targets.has(entry.target)) entry.observer.deliver(entry)
+      })
+    },
     /** How many timers are still scheduled — 0 means nothing is waiting. */
     pendingTimers: () => timers.size,
     /** Every element handed to ResizeObserver.observe(). */
@@ -864,6 +904,104 @@ test('a re-arm kills the old timelines and builds them the same way round', () =
   assert.equal(rebuilt.length, 2, 'and rebuilt one per track')
   assert.equal(rebuilt[0].reversed(), true)
   assert.equal(rebuilt[1].reversed(), false)
+})
+
+test('opening a modal refreshes a stale hidden intersection and resumes the same tracks', () => {
+  const page = animatedPage()
+  const modal = new El('dialog')
+  page.body.appendChild(modal)
+  modal.appendChild(page.section)
+  const run = load(page, { gsap: true, intersectionObserver: true })
+  run.flushIntersections()
+  const originalTracks = tracksOf(page.wrapper)
+  const originalTimelines = run.timelines.slice()
+  originalTimelines.forEach((tl) => assert.equal(tl.paused(), true, 'closed modal is off-screen'))
+
+  run.setIntersectionVisible(true)
+  run.modalOpen(modal)
+  originalTimelines.forEach((tl) => assert.equal(tl.paused(), true, 'waits for the fresh intersection'))
+  run.flushIntersections()
+
+  originalTimelines.forEach((tl) => {
+    assert.equal(tl.paused(), false, 'visible modal resumes its timeline')
+    assert.equal(tl.killed, undefined, 'the original timeline survives')
+  })
+  assert.equal(originalTimelines[0].reversed(), true, 'the even track retains its direction')
+  assert.deepEqual(run.timelines, originalTimelines, 'no timelines are rebuilt')
+  assert.deepEqual(tracksOf(page.wrapper), originalTracks, 'no tracks are rebuilt')
+
+  run.modalOpen(modal)
+  run.flushIntersections()
+  assert.deepEqual(run.timelines, originalTimelines, 'a repeated open creates no timelines')
+  assert.deepEqual(tracksOf(page.wrapper), originalTracks, 'a repeated open creates no tracks')
+})
+
+test('an unrelated modal does not refresh a wall outside it', () => {
+  const page = animatedPage()
+  const run = load(page, { gsap: true, intersectionObserver: true })
+  run.flushIntersections()
+  const io = run.intersectionObservers[0]
+
+  run.setIntersectionVisible(true)
+  run.modalOpen(new El('dialog'))
+  run.flushIntersections()
+
+  assert.equal(io.observeCalls.length, 1, 'only the initial registration')
+  assert.equal(io.unobserveCalls.length, 0, 'the unrelated modal does not reset it')
+  run.timelines.forEach((tl) => assert.equal(tl.paused(), true, 'the outside wall stays paused'))
+})
+
+test('a refreshed modal intersection keeps hover and off-screen playback gates', () => {
+  const page = animatedPage()
+  const modal = new El('dialog')
+  page.body.appendChild(modal)
+  modal.appendChild(page.section)
+  const run = load(page, { gsap: true, intersectionObserver: true })
+  run.flushIntersections()
+  const tracks = tracksOf(page.wrapper)
+  tracks[0].dispatch('mouseenter')
+
+  run.setIntersectionVisible(true)
+  run.modalOpen(modal)
+  run.flushIntersections()
+  assert.equal(run.timelines[0].paused(), true, 'the hovered track stays paused')
+  assert.equal(run.timelines[1].paused(), false, 'the other visible track resumes')
+
+  run.setIntersectionVisible(false)
+  run.modalOpen(modal)
+  run.flushIntersections()
+  run.timelines.forEach((tl) => assert.equal(tl.paused(), true, 'an off-screen modal stays paused'))
+  tracks[0].dispatch('mouseleave')
+  run.timelines.forEach((tl) => assert.equal(tl.paused(), true, 'hover leave cannot bypass off-screen pause'))
+})
+
+test('a refreshed modal intersection keeps reduced-motion walls static', () => {
+  const page = animatedPage()
+  const modal = new El('dialog')
+  page.body.appendChild(modal)
+  modal.appendChild(page.section)
+  const run = load(page, { gsap: true, intersectionObserver: true, reduceMotion: true })
+  run.flushIntersections()
+
+  run.setIntersectionVisible(true)
+  run.modalOpen(modal)
+  run.flushIntersections()
+
+  assert.equal(run.intersectionObservers[0].observeCalls.length, 2, 'the modal registration refreshed')
+  assert.equal(run.timelines.length, 0, 'the reduced-motion wall never animates')
+  assert.equal(tracksOf(page.wrapper).length, 2, 'the static tracks remain')
+})
+
+test('a modal already open at startup uses its initial visible intersection', () => {
+  const page = animatedPage()
+  const modal = new El('dialog').setAttribute('open', '')
+  page.body.appendChild(modal)
+  modal.appendChild(page.section)
+  const run = load(page, { gsap: true, intersectionObserver: true, intersectionVisible: true })
+  run.flushIntersections()
+
+  run.timelines.forEach((tl) => assert.equal(tl.paused(), false, 'the visible wall starts'))
+  assert.equal(run.intersectionObservers[0].observeCalls.length, 1, 'no missed open event is needed')
 })
 
 /* ------------------------------ image readiness -------------------------- */
