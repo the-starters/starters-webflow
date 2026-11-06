@@ -666,7 +666,6 @@
     ts ? new Date(ts).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : ''
 
   const CATEGORY_SET_EVENT = 'opp30:set-category-values'
-  const MAX_CATEGORY_SELECTIONS = 3
   const EST_HOURS_FIELD_NAME = 'Estimated-Hours'
   const BUDGET_FIELD_BY_PROJECT_TYPE = {
     'One Time': 'One-Time-Budget',
@@ -741,29 +740,13 @@
       const emptyState = $('[ms-code-select="empty-state"]', wrapper)
       let selected = parseStoredCategories(input)
         .filter((value) => options.includes(value))
-        .slice(0, MAX_CATEGORY_SELECTIONS)
       let query = ''
       let highlightedIndex = -1
       let focused = false
 
-      const warning = () => {
-        let el = $('#ms-limit-error', wrapper)
-        if (!el) {
-          el = document.createElement('div')
-          el.id = 'ms-limit-error'
-          el.style.cssText =
-            'color:#e11d48;font-size:0.75rem;font-weight:400;line-height:1.2;margin-top:4px;position:relative;z-index:0;'
-          el.textContent = `You can only select up to ${MAX_CATEGORY_SELECTIONS} options.`
-          list.insertAdjacentElement('afterend', el)
-        }
-        el.style.display = ''
-      }
-
-      const hideWarning = () => {
-        const el = $('#ms-limit-error', wrapper)
-        if (el) el.style.display = 'none'
-      }
-
+      // No selection cap (Jai 2026-11-06): a Brand can tag every category
+      // that fits. The Starter alert fan-out still sends one email per
+      // opportunity and Starter, so more categories never mean more emails.
       const store = () => {
         input.setAttribute('data-opp30-selected-values', JSON.stringify(selected))
         input.setCustomValidity(selected.length ? '' : CATEGORY_REQUIRED_MESSAGE)
@@ -783,7 +766,6 @@
             selected = selected.filter((item) => item !== value)
             render()
             input.dispatchEvent(new Event('change', { bubbles: true }))
-            hideWarning()
           })
         }
         return tag
@@ -796,23 +778,11 @@
         option.addEventListener('mousedown', (event) => event.preventDefault())
         option.addEventListener('click', () => {
           if (selected.includes(value)) return
-          if (selected.length >= MAX_CATEGORY_SELECTIONS) {
-            warning()
-            return
-          }
           selected.push(value)
           query = ''
           input.value = ''
-          if (selected.length >= MAX_CATEGORY_SELECTIONS) {
-            // Max reached: auto-collapse the dropdown instead of keeping it open.
-            focused = false
-            list.style.display = 'none'
-            render()
-            input.blur()
-          } else {
-            render()
-            input.focus()
-          }
+          render()
+          input.focus()
           input.dispatchEvent(new Event('change', { bubbles: true }))
         })
         list.appendChild(option)
@@ -843,8 +813,6 @@
           const value = option.getAttribute('data-opp30-category-value') || ''
           const show = !selected.includes(value) && value.toLowerCase().includes(needle)
           option.style.display = show ? '' : 'none'
-          option.style.opacity = selected.length >= MAX_CATEGORY_SELECTIONS ? '0.4' : ''
-          option.style.cursor = selected.length >= MAX_CATEGORY_SELECTIONS ? 'not-allowed' : ''
           if (show) visibleCount += 1
         })
         if (emptyState) emptyState.style.display = visibleCount === 0 && needle ? '' : 'none'
@@ -889,7 +857,7 @@
         // Prefill (e.g. the opp's saved category_names) may differ from the
         // option labels only in case/whitespace. Map each incoming value to the
         // canonical option label so it still selects — mirroring an option
-        // click, which pushes the exact option label. Dedupe + cap like manual
+        // click, which pushes the exact option label. Dedupe like manual
         // selection does. render() then draws the tags AND stores the JSON.
         const byLower = new Map(options.map((opt) => [opt.toLowerCase(), opt]))
         const seen = new Set()
@@ -902,7 +870,6 @@
             seen.add(value)
             return true
           })
-          .slice(0, MAX_CATEGORY_SELECTIONS)
         render()
         input.dispatchEvent(new Event('change', { bubbles: true }))
       })
