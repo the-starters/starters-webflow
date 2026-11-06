@@ -6,6 +6,70 @@ Memberstack member in the browser and renders into Designer-authored elements
 through a custom attribute contract; none of it holds a secret or performs a
 billing mutation, which stays behind Xano.
 
+## Membership controls
+
+`membership-status.js` replaces the Account Settings component's **Member Status /
+Project Status - JS** inline script. Replace that embed's code with one deferred
+script tag pointing at the reviewed repository ref. Do not leave both controllers
+installed. A published release can use `@latest`; an unpublished draft must stay
+pinned to its reviewed commit until publication is approved.
+
+The controller reuses `data-project-status="complete|incomplete"`,
+`data-member-status="active|paused"`, `data-members-status="paused"` and the
+existing `data-panel-nav-target` navigation. Existing project, paid-member and
+paused-member behavior remains owned by this controller.
+
+Add `data-member-status="pause-option"` to the Manage Membership Pause
+description wrapper. Trial members see neither the Pause controls nor their
+explanation; the Manage Membership heading stays visible.
+
+For a recognized membership connection, `TRIALING` on the connection or its
+`payment.status` hides the Manage Membership Pause button, cancellation's
+**Pause My Membership Instead** and **Confirm pause** controls, and standalone
+Pause progression. Inactive historical trials and trials for another product do
+not block the current membership. Cancellation remains available. A trial member
+who selects **Too busy right now** skips its Pause-only retention offer and goes
+to the existing cancellation confirmation through
+`window.lumos.formFlow.list['cancel-membership'].goTo('step-3')`.
+
+Members without a recognized membership connection, signed-out visitors and
+failed reads keep Pause blocked. Current membership connections must have a
+recognized `ACTIVE` or `PAUSED` lifecycle status before Pause can be offered.
+Missing or unrecognized statuses keep Pause blocked even if `payment.status`
+is active. Inactive unknown history does not block a recognized current paid
+connection. Cancellation and the existing price-label rules remain unchanged.
+An unknown status does not imply a paused membership; an explicit paused field
+still shows the existing paused state.
+Members with unresolved Pause eligibility also skip the Pause-only **Too busy
+right now** offer and can use Back to return to the cancellation reasons.
+The generated
+`data-membership-pause-blocked="true"` attribute and `inert` keep blocked controls
+hidden and out of keyboard interaction. Capture listeners also reject blocked
+Pause clicks and Pause-form submissions. Login/logout, page restoration, focus
+and inserted controls refresh the display. `window.StartersMembershipStatus.refresh()`
+performs a new read after an in-page subscription change.
+
+This is browser UI gating. It changes no subscription, price, entitlement or
+payment. The receiving backend must enforce trial Pause eligibility separately.
+
+### Subscription price in cancellation
+
+Add `data-member-price="recurring"` to the cancellation retention price text.
+Keep its Designer text as `Included`, the fallback while the member is loading,
+signed out, or has an unknown or ambiguous subscription. The controller reads
+the single current recognized membership connection's `payment.priceId` or
+`priceId`. It never uses the account creation date or the latest charge amount,
+which may be the $1 trial fee.
+
+The current monthly price displays `$495/mo`; legacy monthly displays
+`$295/mo`. Annual prices display their billing totals, `$3,540/yr` for the new
+annual price and `$2,340/yr` for legacy annual. A trial appends `after your trial`
+to the recurring rate. The staging-only 24-hour test price displays `$495/mo`,
+with `after your trial` added while trialing. These are plan rates, before
+member-specific discounts or tax.
+Unrecognized legacy prices retain `Included` until their IDs and rates are
+confirmed. Adding a price to this display map does not enable checkout for it.
+
 ## Memberstack plan dates
 
 `plan-dates.js` prints a member's plan and billing dates into the page, formatted
@@ -281,11 +345,11 @@ Run its focused test with:
 node --test account-settings/plan-dates.test.js
 ```
 
-### One attribute prefix for this folder
+### Attribute prefixes
 
-Every script here speaks the `ms-form-*` dialect — `ms-form-pause-*` for plan dates,
-`ms-form-cancel-state-*` for the cancel success state. Match it if a third arrives;
-the repo rule is to reuse the owning vocabulary rather than invent a parallel one.
+Plan dates use `ms-form-pause-*`; the cancel success state uses
+`ms-form-cancel-state-*`. Membership controls use the `data-*` attributes
+described in [Membership controls](#membership-controls).
 
 ## Cancel-flow success state
 
