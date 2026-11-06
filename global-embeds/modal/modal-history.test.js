@@ -310,3 +310,11 @@ test('popup writes share the tour write queue and preserve concurrent history', 
   assert.equal(Object.hasOwn(store.json.popups, '__proto__'), true)
   assert.equal(store.json.popups.__proto__.ctaAt, firstTime)
 })
+
+test('member with no JSON yet is written as exactly popups without a data key', async () => {
+  const store = memberStore()
+  store.sdk.getMemberJSON = async () => ({ data: null })
+  const env = environment({ memberstack: store.sdk })
+  assert.equal(await env.history.record('k', 'shown'), true)
+  assert.deepEqual(store.json, { popups: { k: { shownAt: firstTime, dismissedAt: null, ctaAt: null } } })
+})

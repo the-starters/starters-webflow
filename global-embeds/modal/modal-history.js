@@ -41,8 +41,9 @@
   }
 
   function memberJson(response) {
-    if (response && isMap(response.data)) return response.data;
-    return isMap(response) ? response : {};
+    if (!isMap(response)) return {};
+    if ('data' in response) return isMap(response.data) ? response.data : {};
+    return response;
   }
 
   function queueMemberJsonWrite(task) {
