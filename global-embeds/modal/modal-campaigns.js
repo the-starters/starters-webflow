@@ -59,8 +59,22 @@
     return { key, priority, start, end };
   }
 
-  function wireHistory(modal, entry, key) {
+  function wireHistory(modal, entry, key, audience, path) {
+    const reported = new Set();
     async function record(event) {
+      if (!reported.has(event)) {
+        reported.add(event);
+        try {
+          window.dispatchEvent(new CustomEvent('modal-campaign', {
+            detail: { key, event, audience, path, at: new Date().toISOString() },
+          }));
+        } catch (_) {}
+        try {
+          if (Array.isArray(window.dataLayer)) {
+            window.dataLayer.push({ event: 'modal_campaign', modal_key: key, modal_event: event, audience });
+          }
+        } catch (_) {}
+      }
       try { return await modal.history.record(key, event); }
       catch (_) { return false; }
     }
@@ -68,6 +82,7 @@
       if (event.detail?.modal === entry.el) record('dismissed');
     });
     entry.el.addEventListener('click', (event) => {
+      if (event.target?.closest?.('[data-modal-close]')) return;
       const control = event.target?.closest?.('a, button');
       if (control && entry.el.contains(control)) record('cta');
     });
@@ -96,7 +111,7 @@
       if (!entry || blocked() || currentPath() !== path || selected.start > Date.now() || selected.end < Date.now()) return null;
       entry.open();
       if (entry.el.open !== true) return null;
-      await wireHistory(modal, entry, selected.key);
+      await wireHistory(modal, entry, selected.key, audience, path);
       return entry;
     } catch (_) {
       return null;

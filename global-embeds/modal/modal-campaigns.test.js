@@ -19,7 +19,7 @@ function campaign(key, values = {}) {
   return h('div', { class: 'w-dyn-item', ...Object.fromEntries(Object.entries(rules).map(([name, value]) => ['data-popup-' + name, value])) })
 }
 
-function environment({ hostname = 'the-starters-3-0.webflow.io', pathname = '/', rows = [campaign('one')], audience = 'signed-out', seen = {}, now = today, open = false, sourceFn, audienceFn, loadFn, shownFn, recordFn, openFn, readyState = 'complete', modalReady = true } = {}) {
+function environment({ hostname = 'the-starters-3-0.webflow.io', pathname = '/', rows = [campaign('one')], audience = 'signed-out', seen = {}, now = today, open = false, sourceFn, audienceFn, loadFn, shownFn, recordFn, openFn, readyState = 'complete', modalReady = true, dataLayer } = {}) {
   const body = h('body')
   const sourceRoot = h('html', {}, rows)
   const loads = []
@@ -28,13 +28,16 @@ function environment({ hostname = 'the-starters-3-0.webflow.io', pathname = '/',
   const listeners = new Map()
   const domListeners = new Map()
   const logs = []
+  const events = []
   let sourceCalls = 0
   let audienceCalls = 0
   let opens = 0
   const location = new URL(`https://${hostname}${pathname}`)
   const window = { location,
     addEventListener(type, fn) { const list = listeners.get(type) || []; list.push(fn); listeners.set(type, list) },
+    dispatchEvent(event) { events.push(event); for (const fn of listeners.get(event.type) || []) fn(event); return true },
   }
+  if (dataLayer !== undefined) window.dataLayer = dataLayer
   const document = { body, readyState,
     querySelector: selector => body.querySelector(selector),
     addEventListener(type, fn) { domListeners.set(type, fn) },
@@ -67,17 +70,19 @@ function environment({ hostname = 'the-starters-3-0.webflow.io', pathname = '/',
     static now() { return now }
   }
   const context = vm.createContext({ window, document, Date: ClockDate, setTimeout, clearTimeout,
+    CustomEvent: class { constructor(type, options) { this.type = type; this.detail = options.detail } },
     console: { warn: (...args) => logs.push(args), error: (...args) => logs.push(args), log: (...args) => logs.push(args) },
   })
   const source = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : ''
   vm.runInContext(source, context)
-  return { window, body, modal, loads, records, checks, logs,
+  return { window, body, modal, loads, records, checks, logs, events,
     get run() { return window.lumos?.modal?.campaigns?.run },
     get counts() { return { source: sourceCalls, audience: audienceCalls, opens } },
     emit(type, detail) { for (const fn of listeners.get(type) || []) fn({ type, detail }) },
     click(el, target) { for (const fn of el._listeners.get('click') || []) fn({ target }) },
     domReady() { document.readyState = 'interactive'; domListeners.get('DOMContentLoaded')?.() },
     reload() { vm.runInContext(source, context) },
+    advance(ms) { now += ms },
   }
 }
 
@@ -259,4 +264,91 @@ test('production hosts install nothing; installation waits for the existing moda
   const run = env.run
   env.reload()
   assert.equal(env.run, run)
+})
+
+test('shown, dismissed and CTA dispatch exact reporting details once per state', async () => {
+  const env = environment({ pathname: '/offers', audience: 'brand-paid', rows: [campaign('launch', {
+    destinations: '/offers', 'aud-brand-paid': 'true',
+  })] })
+  const received = []
+  env.window.addEventListener('modal-campaign', event => received.push(event.detail))
+  const { el } = await env.run()
+  env.advance(1000)
+  env.emit('modal-close', { modal: el })
+  env.advance(1000)
+  env.click(el, el.querySelector('span'))
+  env.advance(1000)
+  env.emit('modal-close', { modal: el })
+  env.click(el, el.querySelector('button'))
+  env.reload()
+  await env.run()
+  assert.deepEqual(JSON.parse(JSON.stringify(received)), ['shown', 'dismissed', 'cta'].map((event, index) => ({
+    key: 'launch', event, audience: 'brand-paid', path: '/offers', at: new Date(today + index * 1000).toISOString(),
+  })))
+  assert.deepEqual(env.events.map(event => event.type), ['modal-campaign', 'modal-campaign', 'modal-campaign'])
+  assert.equal(env.window.dataLayer, undefined)
+  assert.equal(Object.hasOwn(env.window, 'dataLayer'), false)
+})
+
+test('an existing dataLayer receives exact reporting objects without duplicates', async () => {
+  const dataLayer = [{ event: 'existing' }]
+  const env = environment({ dataLayer })
+  const { el } = await env.run()
+  env.emit('modal-close', { modal: el })
+  env.emit('modal-close', { modal: el })
+  env.click(el, el.querySelector('button'))
+  env.click(el, el.querySelector('span'))
+  assert.equal(env.window.dataLayer, dataLayer)
+  assert.deepEqual(JSON.parse(JSON.stringify(dataLayer)), [{ event: 'existing' },
+    ...['shown', 'dismissed', 'cta'].map(modal_event => ({
+      event: 'modal_campaign', modal_key: 'one', modal_event, audience: 'signed-out',
+    })),
+  ])
+})
+
+test('close controls and their descendants never record or report CTA', async () => {
+  for (const tag of ['a', 'button', 'div']) {
+    const env = environment({ dataLayer: [] })
+    const { el } = await env.run()
+    const label = h('span')
+    const closer = tag === 'div'
+      ? h('div', { 'data-modal-close': '' }, [h('button', {}, [label])])
+      : h(tag, { 'data-modal-close': '' }, [label])
+    el.append(closer)
+    env.click(el, closer)
+    env.click(el, label)
+    assert.deepEqual(env.records, [['one', 'shown']], tag)
+    assert.deepEqual(env.events.map(event => event.detail.event), ['shown'], tag)
+    assert.deepEqual(env.window.dataLayer.map(event => event.modal_event), ['shown'], tag)
+    env.click(el, el.querySelector('a'))
+    assert.deepEqual(env.records, [['one', 'shown'], ['one', 'cta']], tag)
+    assert.deepEqual(env.events.map(event => event.detail.event), ['shown', 'cta'], tag)
+  }
+})
+
+test('reporting survives history failures without creating or replacing non-array dataLayer values', async () => {
+  for (const dataLayer of [undefined, null, { push() { throw new Error('Not an array') } }]) {
+    const env = environment({ dataLayer, recordFn: async () => { throw new Error('History unavailable') } })
+    const { el } = await env.run()
+    env.emit('modal-close', { modal: el })
+    env.click(el, el.querySelector('button'))
+    assert.deepEqual(env.events.map(event => event.detail.event), ['shown', 'dismissed', 'cta'])
+    assert.equal(env.window.dataLayer, dataLayer)
+    assert.deepEqual(env.logs, [])
+  }
+})
+
+test('reporting failures cannot block history or the other reporting channel', async () => {
+  for (const broken of ['dataLayer', 'dispatch']) {
+    const dataLayer = broken === 'dataLayer' ? Object.freeze([]) : []
+    const env = environment({ dataLayer })
+    if (broken === 'dispatch') env.window.dispatchEvent = () => { throw new Error('Listener failed') }
+    const { el } = await env.run()
+    assert.equal(el.open, true)
+    env.emit('modal-close', { modal: el })
+    env.click(el, el.querySelector('button'))
+    assert.deepEqual(env.records, [['one', 'shown'], ['one', 'dismissed'], ['one', 'cta']])
+    assert.equal(broken === 'dataLayer' ? env.events.length : dataLayer.length, 3)
+    assert.deepEqual(env.logs, [])
+  }
 })
