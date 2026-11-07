@@ -482,10 +482,9 @@
   }
 
   function memberJson(response) {
-    if (response && response.data && typeof response.data === 'object') {
-      return response.data
-    }
-    return response && typeof response === 'object' ? response : {}
+    if (!response || typeof response !== 'object' || Array.isArray(response)) return {}
+    if ('data' in response) return response.data && typeof response.data === 'object' && !Array.isArray(response.data) ? response.data : {}
+    return response
   }
 
   function queueMemberJsonWrite(task) {
