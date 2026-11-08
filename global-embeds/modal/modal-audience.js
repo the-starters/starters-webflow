@@ -81,11 +81,14 @@
 
   async function availability(signal) {
     const starter = await scheduling('/starter/get_by_memberstack/v3', 'POST', { member_id: member.id }, signal);
-    if (!starter?.nylas_grant_id) return null;
+    if (!starter || typeof starter !== 'object' || Array.isArray(starter) || !starter.id) return null;
+    if (starter.nylas_grant_id === undefined || starter.nylas_grant_id === null || starter.nylas_grant_id === '') return true;
+    if (typeof starter.nylas_grant_id !== 'string' || !starter.nylas_grant_id.trim()) return null;
     const configs = await scheduling('/nylas_configurations/get_all/v3', 'POST', { grant_id: starter.nylas_grant_id }, signal);
-    if (!Array.isArray(configs)) return null;
+    if (!Array.isArray(configs) || configs.some((config) => !config || typeof config.active !== 'boolean')) return null;
     const active = configs.filter((config) => config?.active === true);
-    if (!active.length || active.some((config) => typeof config.config_id !== 'string' || !config.config_id)) return null;
+    if (!active.length) return true;
+    if (active.some((config) => typeof config.config_id !== 'string' || !config.config_id.trim())) return null;
     // Match the dashboard's 14-day slots preview, without its error-to-empty fallback.
     const start = Math.floor(Date.now() / 1000);
     const end = start + 14 * 86400;

@@ -397,7 +397,7 @@ test('renewal day boundaries require paid brand, a known date and empty cancella
 test('availability and Stripe rules require their specific known matching signals', async () => {
   for (const [attribute, field, values] of [
     ['no-availability', 'availabilityEmpty', [[true, true], [false, false], [null, false]]],
-    ['no-stripe', 'stripeState', [['disconnected', true], ['incomplete', false], ['ready', false], [null, false]]],
+    ['no-stripe', 'stripeState', [['disconnected', true], ['incomplete', true], ['ready', false], [null, false], ['unknown', false], [{ connected: true }, false]]],
   ]) {
     for (const [value, matches] of values) {
       const env = environment({ audience: 'talent', rows: [campaign('starter', { ...talentRules, [attribute]: 'true' })], signals: { [field]: value } })

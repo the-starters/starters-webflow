@@ -122,7 +122,7 @@
         if (!signal) return attribute;
       } else {
         if (!['disconnected', 'ready', 'incomplete'].includes(signal)) return 'signal-unknown';
-        if (signal !== 'disconnected') return attribute;
+        if (signal === 'ready') return attribute;
       }
     }
     return null;
