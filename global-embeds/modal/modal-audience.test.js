@@ -177,7 +177,7 @@ const response = data => ({ ok: true, async json() { return data } })
 const flush = async () => { for (let i = 0; i < 25; i += 1) await Promise.resolve() }
 function starterRoutes(slots = [], status = { connected: false, charges_enabled: false }) {
   return async url => {
-    if (url.includes('/starter/get_by_memberstack/v3')) return response({ nylas_grant_id: 'grant-fixture' })
+    if (url.includes('/starter/get_by_memberstack/v3')) return response({ id: 1, nylas_grant_id: 'grant-fixture' })
     if (url.includes('/nylas_configurations/get_all/v3')) return response([{ active: true, config_id: 'config-fixture' }])
     if (url.includes('/scheduler/get_availability/v3')) return response({ time_slots: slots })
     if (url.includes('/stripe_connect/status/v3')) return response(status)
@@ -260,6 +260,59 @@ test('malformed, missing, and failed remote signals stay unknown', async () => {
   }
 })
 
+
+test('a found Starter with no calendar has no availability without configuration or slot reads', async () => {
+  for (const grant of [undefined, null, '']) {
+    const env = environment({ response: { data: member(talentPlan) }, http: async () => response({ id: 1, nylas_grant_id: grant }) })
+    assert.equal((await env.signals({ availability: true })).availabilityEmpty, true)
+    assert.equal(env.requests.length, 1)
+  }
+})
+
+test('a granted Starter with zero active configurations has no availability without slot reads', async () => {
+  for (const configs of [[], [{ active: false }]]) {
+    const env = environment({ response: { data: member(talentPlan) }, http: async url =>
+      response(url.includes('/starter/get_by_memberstack/') ? { id: 1, nylas_grant_id: 'grant-fixture' } : configs) })
+    assert.equal((await env.signals({ availability: true })).availabilityEmpty, true)
+    assert.equal(env.requests.length, 2)
+  }
+})
+
+test('missing or malformed Starter records never count as a clean unconnected calendar', async () => {
+  for (const starter of [null, {}, [], false, { nylas_grant_id: 'grant-fixture' }, { id: 1, nylas_grant_id: 123 }]) {
+    const env = environment({ response: { data: member(talentPlan) }, http: async () => response(starter) })
+    assert.equal((await env.signals({ availability: true })).availabilityEmpty, null)
+    assert.equal(env.requests.length, 1)
+  }
+})
+
+test('a failed Starter lookup keeps availability unknown', async () => {
+  for (const http of [async () => { throw new Error('Offline') }, async () => ({ ok: false })]) {
+    const env = environment({ response: { data: member(talentPlan) }, http })
+    assert.equal((await env.signals({ availability: true })).availabilityEmpty, null)
+    assert.equal(env.requests.length, 1)
+  }
+})
+
+test('malformed configuration responses and active configurations keep availability unknown', async () => {
+  for (const configs of [null, {}, [null], [{}], [{ active: 'false' }], [{ active: true }], [{ active: true, config_id: ' ' }]]) {
+    const env = environment({ response: { data: member(talentPlan) }, http: async url =>
+      response(url.includes('/starter/get_by_memberstack/') ? { id: 1, nylas_grant_id: 'grant-fixture' } : configs) })
+    assert.equal((await env.signals({ availability: true })).availabilityEmpty, null)
+    assert.equal(env.requests.length, 2)
+  }
+})
+
+test('a failed availability read never counts as empty slots', async () => {
+  const routes = starterRoutes()
+  const env = environment({ response: { data: member(talentPlan) }, http: async (url, options) => {
+    if (url.includes('/scheduler/get_availability/')) throw new Error('Unavailable')
+    return routes(url, options)
+  } })
+  assert.equal((await env.signals({ availability: true })).availabilityEmpty, null)
+  assert.equal(env.requests.length, 3)
+})
+
 test('each remote signal times out at 3 seconds without dropping a known other signal', async () => {
   const routes = starterRoutes()
   const env = environment({ response: { data: member(talentPlan) }, http: (url, opts) =>
@@ -293,7 +346,7 @@ test('a late metadata response after timeout cannot start more Xano requests', a
   await flush()
   env.advance(3000)
   assert.equal((await pending).availabilityEmpty, null)
-  finish(response({ nylas_grant_id: 'grant-fixture' }))
+  finish(response({ id: 1, nylas_grant_id: 'grant-fixture' }))
   await flush()
   assert.equal(env.requests.length, 1)
 })
