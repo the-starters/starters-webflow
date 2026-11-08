@@ -77,6 +77,10 @@
       if (!Number.isInteger(Number(raw)) || Number(raw) < 0) return name;
       if (audience === 'signed-out' || (name === 'renew-days' && audience !== 'brand-paid')) return 'audience';
     }
+    for (const name of ['no-availability', 'no-stripe']) {
+      const raw = candidate.value(name);
+      if (raw !== null && !['', 'true', 'false'].includes(raw)) return 'rules';
+    }
     if (audience !== 'talent' && ['no-availability', 'no-stripe'].some((name) => candidate.value(name) === 'true')) return 'audience';
     return null;
   }

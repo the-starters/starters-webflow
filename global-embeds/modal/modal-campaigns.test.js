@@ -530,3 +530,13 @@ test('QA helpers remain inert if a future rollout enables the picker on producti
   assert.equal(env.logs.length, 0)
   assert.equal(env.signalCalls.length, 1)
 })
+
+
+test('malformed switch rules fail closed instead of silently removing the requirement', async () => {
+  for (const attribute of ['no-availability', 'no-stripe']) {
+    const env = environment({ audience: 'talent', rows: [campaign('bad', { ...talentRules, [attribute]: 'On' })] })
+    assert.equal(await env.run(), null)
+    assert.equal(env.signalCalls.length, 0)
+    assert.equal(env.records.length, 0)
+  }
+})

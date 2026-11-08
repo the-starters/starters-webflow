@@ -284,3 +284,16 @@ test('off-staging installs no signal API and makes no requests', () => {
     assert.equal(env.requests.length, 0)
   }
 })
+
+
+test('a late metadata response after timeout cannot start more Xano requests', async () => {
+  let finish
+  const env = environment({ response: { data: member(talentPlan) }, http: () => new Promise(resolve => { finish = resolve }) })
+  const pending = env.signals({ availability: true })
+  await flush()
+  env.advance(3000)
+  assert.equal((await pending).availabilityEmpty, null)
+  finish(response({ nylas_grant_id: 'grant-fixture' }))
+  await flush()
+  assert.equal(env.requests.length, 1)
+})
