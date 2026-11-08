@@ -141,6 +141,21 @@
     async entries() {
       return readEntries(await store());
     },
+    // QA reset: forget guest history and, when signed in, only the member JSON `popups` key.
+    async reset() {
+      try { window.localStorage.removeItem(STORAGE_KEY); } catch (_) {}
+      const memberstack = window.$memberstackDom;
+      const member = await lookupMember(memberstack);
+      if (member === null) return false;
+      if (member === false) return true;
+      return queueMemberJsonWrite(async () => {
+        const json = memberJson(await memberstack.getMemberJSON());
+        if (!Object.hasOwn(json, 'popups')) return true;
+        const { popups, ...rest } = json;
+        await memberstack.updateMemberJSON({ json: rest });
+        return true;
+      }).catch(() => false);
+    },
   };
 
   function startInstall() {
