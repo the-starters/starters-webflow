@@ -4,7 +4,7 @@
   if (window.__startersModalCampaignsInit) return;
   window.__startersModalCampaignsInit = true;
 
-  const params = new URLSearchParams(window.location.search);
+  const params = new URLSearchParams(window.location.hostname === 'the-starters-3-0.webflow.io' ? window.location.search : '');
   const overrides = params.has('popup-as') ? new Set(params.get('popup-as').split(',').map((value) => value.trim())) : null;
   if (params.get('popup-reset') === '1') {
     try { window.localStorage.removeItem('thestarters:modal-popups'); } catch (_) {}

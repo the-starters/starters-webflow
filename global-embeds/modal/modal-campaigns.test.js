@@ -19,7 +19,7 @@ function campaign(key, values = {}) {
   return h('div', { class: 'w-dyn-item', ...Object.fromEntries(Object.entries(rules).map(([name, value]) => ['data-popup-' + name, value])) })
 }
 
-function environment({ hostname = 'the-starters-3-0.webflow.io', pathname = '/', rows = [campaign('one')], audience = 'signed-out', seen = {}, now = today, open = false, sourceFn, audienceFn, loadFn, shownFn, recordFn, openFn, readyState = 'complete', modalReady = true, dataLayer, signals = {}, signalsFn, storage = new Map(), realMember } = {}) {
+function environment({ hostname = 'the-starters-3-0.webflow.io', pathname = '/', rows = [campaign('one')], audience = 'signed-out', seen = {}, now = today, open = false, sourceFn, audienceFn, loadFn, shownFn, recordFn, openFn, readyState = 'complete', modalReady = true, dataLayer, signals = {}, signalsFn, storage = new Map(), realMember, enableHost = false } = {}) {
   const body = h('body')
   const sourceRoot = h('html', {}, rows)
   const signalCalls = []
@@ -83,7 +83,8 @@ function environment({ hostname = 'the-starters-3-0.webflow.io', pathname = '/',
       vm.runInContext(fs.readFileSync(path.join(__dirname, '../..', dependency), 'utf8'), context)
     }
   }
-  const source = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : ''
+  let source = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : ''
+  if (enableHost) source = source.replace("const ENABLED_HOSTS = ['the-starters-3-0.webflow.io'];", 'const ENABLED_HOSTS = [' + JSON.stringify(hostname) + '];')
   vm.runInContext(source, context)
   return { window, body, modal, loads, records, checks, logs, events, signalCalls, storage, memberReads,
     get run() { return window.lumos?.modal?.campaigns?.run },
@@ -516,4 +517,16 @@ test('the real audience, plan-date and picker modules share one member lookup', 
   assert.equal(values.nextBillingDate, today + 7 * day)
   assert.equal(values.cancelAt, null)
   assert.equal(env.memberReads.length, before + 1)
+})
+
+
+test('QA helpers remain inert if a future rollout enables the picker on production', async () => {
+  const storage = new Map([['thestarters:modal-popups', 'keep']])
+  const env = environment({ hostname: 'www.thestarters.com', enableHost: true,
+    pathname: '/?popup-reset=1&popup-debug=1&popup-as=new', storage,
+    audience: 'brand-paid', rows: [campaign('old-member', { ...brandRules, 'new-days': '14' })], signals: { createdAt: today - 100 * day } })
+  assert.equal(await env.run(), null)
+  assert.equal(storage.get('thestarters:modal-popups'), 'keep')
+  assert.equal(env.logs.length, 0)
+  assert.equal(env.signalCalls.length, 1)
 })
