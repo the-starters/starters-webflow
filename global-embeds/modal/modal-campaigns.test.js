@@ -19,7 +19,7 @@ function campaign(key, values = {}) {
   return h('div', { class: 'w-dyn-item', ...Object.fromEntries(Object.entries(rules).map(([name, value]) => ['data-popup-' + name, value])) })
 }
 
-function environment({ hostname = 'the-starters-3-0.webflow.io', pathname = '/', rows = [campaign('one')], audience = 'signed-out', seen = {}, now = today, open = false, sourceFn, audienceFn, loadFn, shownFn, recordFn, openFn, readyState = 'complete', modalReady = true, dataLayer, signals = {}, signalsFn, storage = new Map() } = {}) {
+function environment({ hostname = 'the-starters-3-0.webflow.io', pathname = '/', rows = [campaign('one')], audience = 'signed-out', seen = {}, now = today, open = false, sourceFn, audienceFn, loadFn, shownFn, recordFn, openFn, readyState = 'complete', modalReady = true, dataLayer, signals = {}, signalsFn, storage = new Map(), realMember } = {}) {
   const body = h('body')
   const sourceRoot = h('html', {}, rows)
   const signalCalls = []
@@ -76,9 +76,16 @@ function environment({ hostname = 'the-starters-3-0.webflow.io', pathname = '/',
     CustomEvent: class { constructor(type, options) { this.type = type; this.detail = options.detail } },
     console: { warn: (...args) => logs.push(args), error: (...args) => logs.push(args), log: (...args) => logs.push(args) },
   })
+  const memberReads = []
+  if (realMember !== undefined) {
+    window.$memberstackDom = { async getCurrentMember() { memberReads.push(true); return { data: realMember } } }
+    for (const dependency of ['v3/route-guard.js', 'account-settings/plan-dates.js', 'global-embeds/modal/modal-audience.js']) {
+      vm.runInContext(fs.readFileSync(path.join(__dirname, '../..', dependency), 'utf8'), context)
+    }
+  }
   const source = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : ''
   vm.runInContext(source, context)
-  return { window, body, modal, loads, records, checks, logs, events, signalCalls, storage,
+  return { window, body, modal, loads, records, checks, logs, events, signalCalls, storage, memberReads,
     get run() { return window.lumos?.modal?.campaigns?.run },
     get counts() { return { source: sourceCalls, audience: audienceCalls, opens } },
     emit(type, detail) { for (const fn of listeners.get(type) || []) fn({ type, detail }) },
@@ -489,4 +496,24 @@ test('a signup aging beyond the boundary during loading does not open or record 
     signals: { createdAt: today - 14 * day }, loadFn() { env.advance(1); return { el: h('dialog'), open() { throw new Error('Must stay closed') } } } })
   assert.equal(await env.run(), null)
   assert.equal(env.records.length, 0)
+})
+
+
+test('the real audience, plan-date and picker modules share one member lookup', async () => {
+  const matrix = fs.readFileSync(path.join(__dirname, '../../v3/ACCESS-MATRIX.md'), 'utf8')
+  const planId = matrix.match(/^\| `(pln_[^`]+)` \| `brand-paid` \|/m)[1]
+  const realMember = { id: 'member-fixture', createdAt: new Date(today - day).toISOString(),
+    planConnections: [{ active: true, status: 'ACTIVE', planId, payment: { nextBillingDate: (today + 7 * day) / 1000 } }] }
+  const env = environment({ realMember, rows: [campaign('real', { ...brandRules, 'new-days': '14', 'renew-days': '7' })] })
+  for (let i = 0; i < 10; i += 1) await Promise.resolve()
+  const before = env.memberReads.length
+  const entry = await env.run()
+  assert.equal(entry.el.getAttribute('data-popup-loaded'), 'real')
+  assert.equal(env.memberReads.length, before + 1)
+  assert.deepEqual(env.records, [['real', 'shown']])
+  const values = await env.modal.signals()
+  assert.equal(values.createdAt, today - day)
+  assert.equal(values.nextBillingDate, today + 7 * day)
+  assert.equal(values.cancelAt, null)
+  assert.equal(env.memberReads.length, before + 1)
 })
