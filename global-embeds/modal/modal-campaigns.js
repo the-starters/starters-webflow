@@ -6,7 +6,8 @@
 
   const params = new URLSearchParams(window.location.hostname === 'the-starters-3-0.webflow.io' ? window.location.search : '');
   const overrides = params.has('popup-as') ? new Set(params.get('popup-as').split(',').map((value) => value.trim())) : null;
-  if (params.get('popup-reset') === '1') {
+  const resetRequested = params.get('popup-reset') === '1';
+  if (resetRequested) {
     try { window.localStorage.removeItem('thestarters:modal-popups'); } catch (_) {}
   }
   const debug = (key, reason) => {
@@ -161,6 +162,9 @@
     try {
       if (blocked()) return null;
       const modal = window.lumos.modal;
+      if (resetRequested && typeof modal.history?.reset === 'function') {
+        try { await modal.history.reset(); } catch (_) {}
+      }
       const audience = await modal.audience();
       if (!Object.hasOwn(AUDIENCES, audience) || blocked()) return null;
       const doc = await modal.source(sourceUrl);

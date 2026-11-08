@@ -26,6 +26,7 @@ function environment({ hostname = 'the-starters-3-0.webflow.io', raw, blocked = 
       if (blocked) throw new Error('Storage disabled')
       return {
         getItem(key) { assert.equal(key, storageKey); reads += 1; return stored ?? null },
+        removeItem(key) { assert.equal(key, storageKey); stored = undefined },
         setItem(key, value) {
           assert.equal(key, storageKey)
           if (writeBlocked) throw new Error('Storage quota exceeded')
@@ -317,4 +318,22 @@ test('member with no JSON yet is written as exactly popups without a data key', 
   const env = environment({ memberstack: store.sdk })
   assert.equal(await env.history.record('k', 'shown'), true)
   assert.deepEqual(store.json, { popups: { k: { shownAt: firstTime, dismissedAt: null, ctaAt: null } } })
+})
+
+test('reset clears guest history and only the member popups key', async () => {
+  const guest = environment({ raw: JSON.stringify({ k: { shownAt: firstTime } }) })
+  assert.equal(await guest.history.reset(), true)
+  assert.equal(guest.stored, undefined)
+  assert.equal(await guest.history.hasShown('k'), false)
+
+  const store = memberStore({ tours: { welcome: firstTime }, popups: { k: { shownAt: firstTime } } })
+  const env = environment({ memberstack: store.sdk })
+  assert.equal(await env.history.reset(), true)
+  assert.deepEqual(store.json, { tours: { welcome: firstTime } })
+  assert.equal(await env.history.hasShown('k'), false)
+
+  const empty = memberStore({ tours: { welcome: firstTime } })
+  const quiet = environment({ memberstack: empty.sdk })
+  assert.equal(await quiet.history.reset(), true)
+  assert.equal(empty.writes, 0)
 })

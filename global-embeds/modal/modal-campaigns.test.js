@@ -455,6 +455,19 @@ test('listed staging behavior overrides match and unlisted ones fail without req
   }
 })
 
+test('reset also asks history to clear signed-in popup history before choosing', async () => {
+  let resets = 0
+  const env = environment({ pathname: '/?popup-reset=1' })
+  env.window.lumos.modal.history.reset = async () => { resets += 1; return true }
+  assert.ok(await env.run())
+  assert.equal(resets, 1)
+  const plain = environment({ pathname: '/' })
+  let plainResets = 0
+  plain.window.lumos.modal.history.reset = async () => { plainResets += 1; return true }
+  await plain.run()
+  assert.equal(plainResets, 0)
+})
+
 test('reset clears only guest popup history and normal selection still runs', async () => {
   const storage = new Map([['thestarters:modal-popups', 'fixture'], ['keep', 'untouched']])
   const env = environment({ pathname: '/?popup-reset=1', storage })
