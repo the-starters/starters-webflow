@@ -19,9 +19,10 @@ function campaign(key, values = {}) {
   return h('div', { class: 'w-dyn-item', ...Object.fromEntries(Object.entries(rules).map(([name, value]) => ['data-popup-' + name, value])) })
 }
 
-function environment({ hostname = 'the-starters-3-0.webflow.io', pathname = '/', rows = [campaign('one')], audience = 'signed-out', seen = {}, now = today, open = false, sourceFn, audienceFn, loadFn, shownFn, recordFn, openFn, readyState = 'complete', modalReady = true, dataLayer } = {}) {
+function environment({ hostname = 'the-starters-3-0.webflow.io', pathname = '/', rows = [campaign('one')], audience = 'signed-out', seen = {}, now = today, open = false, sourceFn, audienceFn, loadFn, shownFn, recordFn, openFn, readyState = 'complete', modalReady = true, dataLayer, signals = {}, signalsFn, storage = new Map() } = {}) {
   const body = h('body')
   const sourceRoot = h('html', {}, rows)
+  const signalCalls = []
   const loads = []
   const records = []
   const checks = []
@@ -34,6 +35,7 @@ function environment({ hostname = 'the-starters-3-0.webflow.io', pathname = '/',
   let opens = 0
   const location = new URL(`https://${hostname}${pathname}`)
   const window = { location,
+    localStorage: { removeItem(key) { storage.delete(key) } },
     addEventListener(type, fn) { const list = listeners.get(type) || []; list.push(fn); listeners.set(type, list) },
     dispatchEvent(event) { events.push(event); for (const fn of listeners.get(event.type) || []) fn(event); return true },
   }
@@ -43,6 +45,7 @@ function environment({ hostname = 'the-starters-3-0.webflow.io', pathname = '/',
     addEventListener(type, fn) { domListeners.set(type, fn) },
   }
   const modal = { init() {},
+    async signals(needs) { signalCalls.push(needs); return signalsFn ? signalsFn(needs) : signals },
     async source(url) { sourceCalls += 1; return sourceFn ? sourceFn(url) : sourceRoot },
     async audience() { audienceCalls += 1; return audienceFn ? audienceFn() : audience },
     history: {
@@ -69,13 +72,13 @@ function environment({ hostname = 'the-starters-3-0.webflow.io', pathname = '/',
     constructor(...args) { super(...(args.length ? args : [now])) }
     static now() { return now }
   }
-  const context = vm.createContext({ window, document, Date: ClockDate, setTimeout, clearTimeout,
+  const context = vm.createContext({ window, document, Date: ClockDate, setTimeout, clearTimeout, URLSearchParams,
     CustomEvent: class { constructor(type, options) { this.type = type; this.detail = options.detail } },
     console: { warn: (...args) => logs.push(args), error: (...args) => logs.push(args), log: (...args) => logs.push(args) },
   })
   const source = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : ''
   vm.runInContext(source, context)
-  return { window, body, modal, loads, records, checks, logs, events,
+  return { window, body, modal, loads, records, checks, logs, events, signalCalls, storage,
     get run() { return window.lumos?.modal?.campaigns?.run },
     get counts() { return { source: sourceCalls, audience: audienceCalls, opens } },
     emit(type, detail) { for (const fn of listeners.get(type) || []) fn({ type, detail }) },
@@ -351,4 +354,139 @@ test('reporting failures cannot block history or the other reporting channel', a
     assert.equal(broken === 'dataLayer' ? env.events.length : dataLayer.length, 3)
     assert.deepEqual(env.logs, [])
   }
+})
+
+const day = 86400000
+const brandRules = { 'aud-signed-out': 'false', 'aud-brand-paid': 'true' }
+const talentRules = { 'aud-signed-out': 'false', 'aud-starter': 'true' }
+
+test('Destinations accept two lines, commas, mixed lists and published br separators', async () => {
+  for (const destinations of ['/other\n/', '/other,/', ' , /other\r\n /, ', '/other<br>/', '/other<BR />/']) {
+    const env = environment({ rows: [campaign('paths', { destinations })] })
+    assert.equal((await env.run()).el.getAttribute('data-popup-loaded'), 'paths', destinations)
+  }
+})
+
+test('new-member day boundaries are inclusive and reject old, future or unknown signup', async () => {
+  for (const [createdAt, matches] of [[today, true], [today - 14 * day, true], [today - 14 * day - 1, false], [today + 1, false], [null, false]]) {
+    const env = environment({ audience: 'brand-paid', rows: [campaign('new', { ...brandRules, 'new-days': '14' })], signals: { createdAt } })
+    assert.equal(!!await env.run(), matches, String(createdAt))
+    assert.equal(env.records.length, matches ? 1 : 0)
+  }
+})
+
+test('renewal day boundaries require paid brand, a known date and empty cancellation', async () => {
+  for (const [nextBillingDate, cancelAt, matches] of [
+    [today, null, true], [today + 7 * day, null, true], [today + 7 * day + 1, null, false],
+    [today - 1, null, false], [today, today + day, false], [null, null, false], [today, undefined, false],
+  ]) {
+    const env = environment({ audience: 'brand-paid', rows: [campaign('renew', { ...brandRules, 'renew-days': '7' })], signals: { nextBillingDate, cancelAt } })
+    assert.equal(!!await env.run(), matches)
+    assert.equal(env.records.length, matches ? 1 : 0)
+  }
+})
+
+test('availability and Stripe rules require their specific known matching signals', async () => {
+  for (const [attribute, field, values] of [
+    ['no-availability', 'availabilityEmpty', [[true, true], [false, false], [null, false]]],
+    ['no-stripe', 'stripeState', [['disconnected', true], ['incomplete', false], ['ready', false], [null, false]]],
+  ]) {
+    for (const [value, matches] of values) {
+      const env = environment({ audience: 'talent', rows: [campaign('starter', { ...talentRules, [attribute]: 'true' })], signals: { [field]: value } })
+      assert.equal(!!await env.run(), matches)
+      assert.equal(env.signalCalls.length, 1)
+      assert.equal(env.records.length, matches ? 1 : 0)
+    }
+  }
+})
+
+test('all new rules combine with AND and preserve the highest-priority fallback on unknown', async () => {
+  const rows = [campaign('plain', { ...talentRules, priority: '1' }), campaign('both', { ...talentRules, priority: '20', 'no-stripe': 'true', 'no-availability': 'true' })]
+  const env = environment({ audience: 'talent', rows, signals: { stripeState: 'disconnected', availabilityEmpty: null } })
+  assert.equal((await env.run()).el.getAttribute('data-popup-loaded'), 'plain')
+  assert.deepEqual(env.records, [['plain', 'shown']])
+  assert.deepEqual(JSON.parse(JSON.stringify(env.signalCalls)), [{ availability: true, stripe: true }])
+})
+
+test('empty fields and ineligible or already-seen behavior rows never request signals', async () => {
+  const rows = [
+    campaign('plain', { 'new-days': '', 'renew-days': '', 'no-stripe': 'false', 'no-availability': 'false' }),
+    campaign('other-page', { 'no-stripe': 'true', destinations: '/elsewhere' }),
+    campaign('seen', { 'no-availability': 'true' }),
+  ]
+  const env = environment({ rows, seen: { seen: true } })
+  assert.ok(await env.run())
+  assert.equal(env.signalCalls.length, 0)
+})
+
+test('behavior overrides never bypass audiences or existing destinations, dates and history', async () => {
+  const params = '/?popup-as=new,no-availability,no-stripe,renewing'
+  for (const [audience, rules] of [
+    ['signed-out', { 'new-days': '14' }],
+    ['brand-paid', { ...brandRules, 'no-stripe': 'true' }],
+    ['talent', { ...talentRules, 'renew-days': '7' }],
+    ['talent', { ...talentRules, 'no-stripe': 'true', destinations: '/elsewhere' }],
+    ['talent', { ...talentRules, 'no-stripe': 'true', end: 'November 1, 2026' }],
+  ]) {
+    const env = environment({ pathname: params, audience, rows: [campaign('no', rules)] })
+    assert.equal(await env.run(), null)
+    assert.equal(env.signalCalls.length, 0)
+  }
+  const seen = environment({ pathname: params, audience: 'talent', rows: [campaign('seen', { ...talentRules, 'no-stripe': 'true' })], seen: { seen: true } })
+  assert.equal(await seen.run(), null)
+})
+
+test('listed staging behavior overrides match and unlisted ones fail without requests', async () => {
+  for (const [list, matches] of [['no-stripe,no-availability', true], ['no-stripe', false], ['', false]]) {
+    const env = environment({ pathname: '/?popup-as=' + list, audience: 'talent', rows: [campaign('both', { ...talentRules, 'no-stripe': 'true', 'no-availability': 'true' })] })
+    assert.equal(!!await env.run(), matches)
+    assert.equal(env.signalCalls.length, 0)
+  }
+  for (const [audience, rules, list] of [['brand-paid', { ...brandRules, 'new-days': '14' }, 'new'], ['brand-paid', { ...brandRules, 'renew-days': '7' }, 'renewing']]) {
+    assert.ok(await environment({ pathname: '/?popup-as=' + list, audience, rows: [campaign('yes', rules)] }).run())
+  }
+})
+
+test('reset clears only guest popup history and normal selection still runs', async () => {
+  const storage = new Map([['thestarters:modal-popups', 'fixture'], ['keep', 'untouched']])
+  const env = environment({ pathname: '/?popup-reset=1', storage })
+  assert.equal(storage.has('thestarters:modal-popups'), false)
+  assert.equal(storage.get('keep'), 'untouched')
+  assert.ok(await env.run())
+})
+
+test('debug reports one matched/skipped reason per row', async () => {
+  const env = environment({ pathname: '/?popup-debug=1', rows: [campaign('yes'), campaign('seen'), campaign('away', { destinations: '/elsewhere' }), campaign('wrong', { 'aud-signed-out': 'false' }), campaign('old', { end: 'November 1, 2026' }), campaign('signal', { ...brandRules, 'new-days': '14', 'aud-signed-out': 'true' })], seen: { seen: true } })
+  await env.run()
+  const logs = env.logs.map(args => args[0])
+  assert.equal(logs.length, 6)
+  for (const line of ['[popups] yes → matched', '[popups] seen → skipped: seen', '[popups] away → skipped: destination', '[popups] wrong → skipped: audience', '[popups] old → skipped: dates', '[popups] signal → skipped: audience']) assert.ok(logs.includes(line), line)
+})
+
+test('all QA helpers are inert on production and lookalike hosts', () => {
+  for (const hostname of ['www.thestarters.com', 'thestarters.com', 'the-starters-3-0.webflow.io.evil.test']) {
+    const storage = new Map([['thestarters:modal-popups', 'keep']])
+    const env = environment({ hostname, pathname: '/?popup-reset=1&popup-debug=1&popup-as=new,no-stripe', storage })
+    assert.equal(env.run, undefined)
+    assert.equal(storage.get('thestarters:modal-popups'), 'keep')
+    assert.equal(env.logs.length, 0)
+    assert.equal(env.signalCalls.length, 0)
+  }
+})
+
+
+test('impossible behavior combinations do not request remote signals', async () => {
+  for (const extra of [{ 'renew-days': '7' }, { 'new-days': '-1' }, { 'new-days': '1.5' }]) {
+    const env = environment({ audience: 'talent', rows: [campaign('impossible', { ...talentRules, 'no-stripe': 'true', ...extra })] })
+    assert.equal(await env.run(), null)
+    assert.equal(env.signalCalls.length, 0)
+  }
+})
+
+test('a signup aging beyond the boundary during loading does not open or record history', async () => {
+  let env
+  env = environment({ audience: 'brand-paid', rows: [campaign('edge', { ...brandRules, 'new-days': '14' })],
+    signals: { createdAt: today - 14 * day }, loadFn() { env.advance(1); return { el: h('dialog'), open() { throw new Error('Must stay closed') } } } })
+  assert.equal(await env.run(), null)
+  assert.equal(env.records.length, 0)
 })
