@@ -24,11 +24,15 @@ function makeEnv({ statuses = [{ connected: false, charges_enabled: false }], st
   const listeners = {}
   const docListeners = []
   const startButtons = [{ handlers: [], addEventListener(type, fn) { this.handlers.push(fn) } }]
+  const finish = { hidden: true }
+  const primaryStart = { hidden: false, closest: () => null }
+  const retryStart = { hidden: false, closest: (sel) => (sel === '[data-onboarding-stripe-element="card"]' ? {} : null) }
   const root = {
     attrs: {},
     setAttribute(k, v) { this.attrs[k] = v },
     removeAttribute(k) { delete this.attrs[k] },
     querySelector: (sel) => (sel === '[data-onboarding-stripe-action="start"]' ? startButtons[0] : null),
+    querySelectorAll: (sel) => (sel === '[data-onboarding-stripe-element="finish"]' ? [finish] : sel === '[data-onboarding-stripe-action="start"]' ? [retryStart, primaryStart] : []),
   }
   const tab = { closed: false, opener: {}, url: null, location: { replace(url) { tab.url = url } }, close() { tab.closed = true } }
   let statusIndex = 0
@@ -75,7 +79,7 @@ function makeEnv({ statuses = [{ connected: false, charges_enabled: false }], st
     canContinue: () => canContinue,
   }
   return {
-    win, view, calls, rendered, listeners, docListeners, root, tab, startButtons, intervals, channels, warnings,
+    win, view, calls, rendered, listeners, docListeners, root, tab, startButtons, intervals, channels, warnings, finish, primaryStart, retryStart,
     statusReads: () => statusIndex,
     setCanContinue(value) { canContinue = value },
   }
@@ -296,4 +300,44 @@ test('start error: cleared by a status read other than none, kept by none', asyn
   opened.root.attrs['data-onboarding-stripe-error'] = 'start'
   await createController(opened.win, opened.view).refresh()
   assert.equal('data-onboarding-stripe-error' in opened.root.attrs, false)
+})
+
+test('footer: Finish shows and primary start hides once Stripe is started; retry is untouched', async () => {
+  const env = makeEnv({
+    statuses: [{ connected: false, charges_enabled: false }],
+    startResult: { mode: 'onboarding', url: 'https://connect.stripe.com/oauth/v2/authorize?x=1' },
+  })
+  const controller = createController(env.win, env.view)
+  await controller.mount()
+  assert.equal(env.finish.hidden, true)
+  assert.equal(env.primaryStart.hidden, false)
+  await controller.start({ preventDefault() {} })
+  assert.equal(env.rendered.at(-1), 'opened')
+  assert.equal(env.finish.hidden, false)
+  assert.equal(env.primaryStart.hidden, true)
+  assert.equal(env.retryStart.hidden, false)
+})
+
+test('footer: a ready account on load shows Finish', async () => {
+  const env = makeEnv({ statuses: [{ connected: true, charges_enabled: true, requires_onboarding: false }] })
+  await createController(env.win, env.view).mount()
+  assert.equal(env.finish.hidden, false)
+  assert.equal(env.primaryStart.hidden, true)
+})
+
+test('footer: tab closed with nothing connected goes back to Connect Stripe', async () => {
+  const env = makeEnv({
+    statuses: [{ connected: false, charges_enabled: false }],
+    startResult: { mode: 'onboarding', url: 'https://connect.stripe.com/oauth/v2/authorize?x=1' },
+  })
+  const controller = createController(env.win, env.view)
+  await controller.mount()
+  await controller.start({ preventDefault() {} })
+  assert.equal(env.finish.hidden, false)
+  env.tab.closed = true
+  env.intervals[0].fn()
+  await settle()
+  assert.equal(env.rendered.at(-1), 'none')
+  assert.equal(env.finish.hidden, true)
+  assert.equal(env.primaryStart.hidden, false)
 })
