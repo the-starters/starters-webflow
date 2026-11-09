@@ -4311,3 +4311,244 @@ test('writer.js installs normally when the new section root is absent (e.g. --av
   assert.equal(typeof withoutSection.StarterSchedulingAvailabilityWriter.initialize, 'function')
   assert.equal(withoutSection.__tsSchedulingAvailabilityWriter, true)
 })
+
+test('a same-day window keeps its kind on edit and never takes days from the general window', async () => {
+  const baseline = {
+    items: {
+      general: { days: [1, 2], start: '09:00', end: '12:00', defaultDays: [1, 2] },
+      'window-2': { days: [1, 2], start: '13:00', end: '17:00', kind: 'window' },
+    },
+    manager: 'platform',
+  }
+  const { dom, calls } = loadSection({
+    serverState: {
+      grantId: 'grant-1',
+      grantEmail: 'starter@example.com',
+      calendarId: 'primary',
+      availability: baseline,
+      configs: [{ config_id: 'cfg-free', grant_id: 'grant-1', duration: 30, is_paid: false, active: true }],
+    },
+  })
+  await settle()
+
+  const card = dom.list.children.find((el) => el.dataset.id === 'window-2')
+  card.children[0].children[2].children[0].click()
+  const formWrapper = card.children[2]
+  formWrapper.querySelector('[name=start-time]').value = '14:00'
+  formWrapper.querySelector('[name=end-time]').value = '18:00'
+  formWrapper.children[0].children[1].children[1].click()
+  await settle()
+
+  const update = calls.find((call) => call.path === '/starter/update_availability/v3')
+  assert.deepEqual(update.body.availability.items.general.days, [1, 2])
+  assert.equal(update.body.availability.items['window-2'].kind, 'window')
+  assert.equal(update.body.availability.items['window-2'].start, '14:00')
+  const configUpdate = calls.find((call) => call.path === '/scheduler/configurations/update/v3')
+  assert.deepEqual(
+    configUpdate.body.in_availability.availability_rules.default_open_hours.map((w) => [w.days, w.start, w.end]),
+    [[[1, 2], '09:00', '12:00'], [[1, 2], '14:00', '18:00']],
+  )
+})
+
+const ONBOARDING_GOOGLE_REQUEST = 'starters-onboarding-google-request'
+const onboardingPlatformState = () => ({
+  grantId: 'virtual-1',
+  grantEmail: 'member-a',
+  calendarId: 'virtual-cal',
+  availability: {
+    items: { general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] } },
+    manager: 'platform',
+  },
+  configs: [{ config_id: 'cfg-free', grant_id: 'virtual-1', duration: 30, is_paid: false, active: true }],
+})
+
+function onboardingRequest(memberId, ageMs) {
+  return { [ONBOARDING_GOOGLE_REQUEST]: JSON.stringify({ memberId, createdAt: Date.now() - ageMs }) }
+}
+
+test('the onboarding Google link starts OAuth once when the platform calendar exists', async () => {
+  const replaced = []
+  const result = loadSection({
+    search: '?onboarding_calendar=connect-google',
+    localStorage: onboardingRequest('member-a', 1000),
+    serverState: {
+      grantId: 'virtual-1',
+      grantEmail: 'member-a',
+      calendarId: 'virtual-cal',
+      availability: {
+        items: { general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] } },
+        manager: 'platform',
+      },
+      configs: [{ config_id: 'cfg-free', grant_id: 'virtual-1', duration: 30, is_paid: false, active: true }],
+    },
+  })
+  result.window.history.replaceState = (_state, _title, url) => replaced.push(url)
+  await settle()
+  await settle()
+  assert.equal(result.calls.filter((c) => c.path === '/grants/oauth/v3').length, 1)
+  assert.ok(result.assigned.some((url) => url.includes('nylas.example/oauth')))
+  assert.equal(result.window.localStorage.getItem(ONBOARDING_GOOGLE_REQUEST), null)
+})
+
+for (const [name, localStorage] of [
+  ['no onboarding request', {}],
+  ['a stale onboarding request', onboardingRequest('member-a', 6 * 60 * 1000)],
+  ["another member's onboarding request", onboardingRequest('member-b', 1000)],
+  ['an unreadable onboarding request', { [ONBOARDING_GOOGLE_REQUEST]: '{not json' }],
+]) {
+  test(`the onboarding Google link with ${name} never starts OAuth and consumes the request`, async () => {
+    const result = loadSection({
+      search: '?onboarding_calendar=connect-google',
+      localStorage,
+      serverState: onboardingPlatformState(),
+    })
+    await settle()
+    await settle()
+    assert.equal(result.calls.filter((c) => c.path === '/grants/oauth/v3').length, 0)
+    assert.equal(result.calls.some((c) => c.path === '/grants/delete/v3'), false)
+    assert.equal(result.assigned.length, 0)
+    assert.equal(result.window.localStorage.getItem(ONBOARDING_GOOGLE_REQUEST), null)
+  })
+}
+
+test('an onboarding request starts OAuth only once', async () => {
+  const localStorage = onboardingRequest('member-a', 1000)
+  const first = loadSection({ search: '?onboarding_calendar=connect-google', localStorage, serverState: onboardingPlatformState() })
+  await settle()
+  await settle()
+  assert.equal(first.calls.filter((c) => c.path === '/grants/oauth/v3').length, 1)
+  const second = loadSection({
+    search: '?onboarding_calendar=connect-google',
+    localStorage: Object.fromEntries(first.window.localStorage._map),
+    serverState: onboardingPlatformState(),
+  })
+  await settle()
+  await settle()
+  assert.equal(second.calls.filter((c) => c.path === '/grants/oauth/v3').length, 0)
+})
+
+function sameDayWindowState(windowDays) {
+  return {
+    grantId: 'grant-1',
+    grantEmail: 'starter@example.com',
+    calendarId: 'primary',
+    availability: {
+      items: {
+        general: { days: [1, 2, 3, 4, 5], start: '09:00', end: '12:00', defaultDays: [1, 2, 3, 4, 5] },
+        'window-2': { days: windowDays, start: '13:00', end: '17:00', defaultDays: windowDays, kind: 'window' },
+      },
+      manager: 'platform',
+    },
+    configs: [{ config_id: 'cfg-free', grant_id: 'grant-1', duration: 30, is_paid: false, active: true }],
+  }
+}
+
+async function addMondayOverride(dom) {
+  const before = new Set(dom.list.children.map((el) => el.dataset.id))
+  dom.createBtn.click()
+  await settle()
+  const draftCard = dom.list.children.find(
+    (el) => el.getAttribute('data-availability-element') === 'item-card' && !before.has(el.dataset.id),
+  )
+  const formWrapper = draftCard.children[2]
+  const form = formWrapper.querySelector('[data-availability-element="availability-form"]')
+  form.children[1].children[1].checked = true // Monday
+  form.querySelector('[name=start-time]').value = '10:00'
+  form.querySelector('[name=end-time]').value = '15:00'
+  formWrapper.children[0].children[1].children[1].click()
+  await settle()
+  return draftCard.dataset.id
+}
+
+async function removeItem(dom, id) {
+  const card = dom.list.children.find((el) => el.dataset.id === id)
+  card.children[0].children[2].children[1].click()
+  dom.notif.itemRemoveBtn.click()
+  await settle()
+}
+
+const lastAvailabilityItems = (calls) =>
+  calls.filter((c) => c.path === '/starter/update_availability/v3').at(-1).body.availability.items
+
+test('a day override replaces the whole day: it takes the day from general and same-day windows until removed', async () => {
+  const { dom, calls } = loadSection({ serverState: sameDayWindowState([1, 2, 3, 4, 5]) })
+  await settle()
+
+  const overrideId = await addMondayOverride(dom)
+  let items = lastAvailabilityItems(calls)
+  assert.deepEqual(items.general.days, [2, 3, 4, 5])
+  assert.deepEqual(items['window-2'].days, [2, 3, 4, 5])
+  assert.equal(items['window-2'].kind, 'window')
+  assert.deepEqual(items[overrideId].days, [1])
+  const openHours = () =>
+    calls
+      .filter((c) => c.path === '/scheduler/configurations/update/v3')
+      .at(-1)
+      .body.in_availability.availability_rules.default_open_hours.map((w) => [w.days, w.start, w.end])
+  assert.deepEqual(openHours(), [
+    [[2, 3, 4, 5], '09:00', '12:00'],
+    [[2, 3, 4, 5], '13:00', '17:00'],
+    [[1], '10:00', '15:00'],
+  ])
+
+  await removeItem(dom, overrideId)
+  items = lastAvailabilityItems(calls)
+  assert.deepEqual(items.general.days, [1, 2, 3, 4, 5])
+  assert.deepEqual(items['window-2'].days, [1, 2, 3, 4, 5])
+  assert.equal(items[overrideId], undefined)
+})
+
+test('a same-day window fully covered by overrides is not sent, and returns when the override is removed', async () => {
+  const sent = []
+  const result = loadSection({
+    serverState: sameDayWindowState([1]),
+    postRoutes: {
+      '/starter/update_availability/v3': (body) => {
+        sent.push(JSON.parse(JSON.stringify(body.availability.items)))
+        result.state.availability = body.availability
+        return { status: 200, body: { id: 1 } }
+      },
+    },
+  })
+  const { dom, calls } = result
+  await settle()
+
+  const overrideId = await addMondayOverride(dom)
+  assert.equal(sent.at(-1)['window-2'], undefined)
+  assert.deepEqual(sent.at(-1).general.days, [2, 3, 4, 5])
+  assert.equal(dom.list.children.some((el) => el.dataset.id === 'window-2'), false)
+
+  await removeItem(dom, overrideId)
+  const items = lastAvailabilityItems(calls)
+  assert.deepEqual(items['window-2'], { days: [1], start: '13:00', end: '17:00', defaultDays: [1], kind: 'window' })
+  assert.ok(dom.list.children.some((el) => el.dataset.id === 'window-2'))
+})
+
+test('the onboarding Google link does nothing without a platform calendar', async () => {
+  const result = loadSection({
+    search: '?onboarding_calendar=connect-google',
+    serverState: { availability: null },
+  })
+  await settle()
+  await settle()
+  assert.equal(result.calls.filter((c) => c.path === '/grants/oauth/v3').length, 0)
+  assert.equal(result.assigned.length, 0)
+})
+
+test('a plain dashboard visit never starts Google OAuth', async () => {
+  const result = loadSection({
+    serverState: {
+      grantId: 'virtual-1',
+      grantEmail: 'member-a',
+      calendarId: 'virtual-cal',
+      availability: {
+        items: { general: { days: [1], start: '09:00', end: '17:00', defaultDays: [1] } },
+        manager: 'platform',
+      },
+      configs: [{ config_id: 'cfg-free', grant_id: 'virtual-1', duration: 30, is_paid: false, active: true }],
+    },
+  })
+  await settle()
+  await settle()
+  assert.equal(result.calls.filter((c) => c.path === '/grants/oauth/v3').length, 0)
+})

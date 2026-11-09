@@ -14,6 +14,7 @@ const guardSrc = 'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@044e
 const scripts = [
   ['profile-calls-step', 'StarterProfileCallsStep', [
     '/build-profile/full-profile-test', '/build-profile/consult-test', '/starter-edit-profile-test', '/build-profile-form-test',
+    '/starter-onboarding-v2', '/starter-onboarding-v2-wip',
   ], true],
   ['onboarding-stripe-view', 'StarterOnboardingStripeView', ['/starter-onboarding-test', '/starter-onboarding-v2'], true],
   ['starter-setup-gate-view', 'StarterSetupGateView', ['/all-modals'], false],
