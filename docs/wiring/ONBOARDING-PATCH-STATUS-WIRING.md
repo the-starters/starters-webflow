@@ -160,7 +160,9 @@ onboarding page renders again.
 ## Webflow install
 
 Two deferred tags, in **Page Settings → Custom Code → Before `</body>`** on
-`/starter-onboarding` only. Do not install them sitewide.
+`/starter-onboarding` only. Do not install them sitewide. The staff-only
+`/starter-onboarding-v2` also runs both, loaded in its head; see
+[Onboarding v2 Stripe step](ONBOARDING-V2-STRIPE-WIRING.md).
 
 ```html
 <script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/onboarding-done-redirect.js" defer></script>

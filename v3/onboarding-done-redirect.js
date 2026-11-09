@@ -77,7 +77,14 @@
   var TRADE_TOKEN_PATH = '/auth/trade-token/v3'
   var BUILD_PROFILE_STATUS_PATH = '/starters_onboarding/get_build_profile_status'
 
-  var ONBOARDING_PATHS = ['/starter-onboarding', '/starter-onboarding/']
+  // /starter-onboarding-v2 = staff-gated preview of the calendar + Stripe onboarding
+  // (JP 2026-11-09); the page itself loads v3/staff-preview-guard.js.
+  var ONBOARDING_PATHS = [
+    '/starter-onboarding',
+    '/starter-onboarding/',
+    '/starter-onboarding-v2',
+    '/starter-onboarding-v2/',
+  ]
   var DASHBOARD_PATH = '/starter-dashboard'
   var BUILD_PROFILE_PATH = '/build-profile/select-profile'
 

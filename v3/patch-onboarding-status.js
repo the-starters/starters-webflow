@@ -52,7 +52,14 @@
   var TRADE_TOKEN_PATH = '/auth/trade-token/v3'
   var SET_STATUS_PATH = '/starters_onboarding/set_onboarding_status'
 
-  var ONBOARDING_PATHS = ['/starter-onboarding', '/starter-onboarding/']
+  // /starter-onboarding-v2 = staff-gated preview of the calendar + Stripe onboarding
+  // (JP 2026-11-09); the page itself loads v3/staff-preview-guard.js.
+  var ONBOARDING_PATHS = [
+    '/starter-onboarding',
+    '/starter-onboarding/',
+    '/starter-onboarding-v2',
+    '/starter-onboarding-v2/',
+  ]
   var DASHBOARD_PATH = '/starter-dashboard'
   // Same production allowlist as v3/route-guard.js, plus the local/dev-tunnel
   // hosts the ./dev-tunnel.sh loop serves from — without those the module would
