@@ -127,6 +127,9 @@ tighter predicate that `STARTERS_DEBUG` cannot unlock, and says so where it live
 - `v3/profile-form/incremental-dropdowns.js` — shared incremental dropdown controller extracted from the authenticated Build/Edit Profile routes
 - `v3/build-profile/draft-state.js` — Build Profile local/member draft precedence and one-way draft synchronization controller; blank member-bound draft fields hydrate from the signed-in member while non-empty draft edits keep precedence
 - `v3/build-profile/submit-writer.js` — Build Profile native-form submit writer and normalized payload controller; it never sends call fields to the profile endpoint and instead stores the visible Free and Paid choices as a private member-bound Call Settings intent receipt that Dashboard and Edit Profile materialize
+- `v3/profile-calls-step.js` — Build and Edit Calls frontend controls and status rendering ([wiring](v3/CALLS-STEP-WIRING.md))
+- `v3/onboarding-stripe-view.js` — Onboarding step 5 payout card and confirmation state ([wiring](v3/ONBOARDING-STRIPE-WIRING.md))
+- `v3/starter-setup-gate-view.js` — Starter setup gate step order, optional Calendar and keyboard close ([wiring](v3/SETUP-GATE-WIRING.md))
 - `v3/build-profile/locations-consult.js` — Consult Build Profile country, state, and city controller
 - `v3/build-profile/locations-full-profile.js` — Full Profile country, state, and city controller
 - `v3/build-profile/profile-photo.js` — provenance-locked Build Profile photo controller
