@@ -251,10 +251,14 @@ const callsTo = (calls, url) => calls.filter((call) => call.url === url)
 
 // --- Pure helpers -------------------------------------------------------------
 
-test('only the two /starter-onboarding path forms are in scope', () => {
+test('only the /starter-onboarding and staff /starter-onboarding-v2 path forms are in scope', () => {
   const { api } = loadModule({ pathname: '/other' })
   assert.equal(api.isOnboardingPath('/starter-onboarding'), true)
   assert.equal(api.isOnboardingPath('/starter-onboarding/'), true)
+  assert.equal(api.isOnboardingPath('/starter-onboarding-v2'), true)
+  assert.equal(api.isOnboardingPath('/starter-onboarding-v2/'), true)
+  assert.equal(api.isOnboardingPath('/starter-onboarding-v3'), false)
+  assert.equal(api.isOnboardingPath('/starter-onboarding-test'), false)
   assert.equal(api.isOnboardingPath('/starter-onboarding/step-2'), false)
   assert.equal(api.isOnboardingPath('/starter-dashboard'), false)
   assert.equal(api.isOnboardingPath('/'), false)
