@@ -9,14 +9,14 @@
  *             calendar is connected, the hours, and the Free scheduler config
  *             (same as the dashboard's own connect paths). Then the click goes
  *             through to the form flow.
- *   Google    "Connect Google" saves first (the dashboard only switches an
- *             existing platform calendar to Google), then sends a tab reserved
- *             in the click to /starter-dashboard?onboarding_calendar=connect-google,
- *             after writing a one-time request for this member (the dashboard
- *             ignores the link without it). The dashboard runs its own OAuth
- *             flow and posts on the BroadcastChannel below; this tab re-reads
- *             the calendar (also on focus and when the tab closes, one watcher
- *             per step).
+ *   Google    "Connect Google" saves first, then sends a pop-up reserved in
+ *             the click to Google through v3/calendar-google-connect.js. Google
+ *             returns the pop-up to THIS page (JP 2026-11-09: sign-in returns
+ *             where it started); the shared module finishes the connection
+ *             there and posts on the BroadcastChannel below. This tab re-reads
+ *             the calendar (also on focus and when the pop-up closes, one
+ *             watcher per step). Load calendar-google-connect.js before this
+ *             file.
  *
  * Hours format (Jai 2026-11-09: several windows in one day):
  *   window 1        -> items.general {days, start, end, defaultDays}
@@ -38,12 +38,12 @@
   const ENSURE_PATH = '/onboarding/calendar/ensure-default/v3'
   const STARTER_PATH = '/starter/get_by_memberstack/v3'
   const RETURN_CHANNEL = 'starters-calendar-connect-return'
-  const GOOGLE_REQUEST_KEY = 'starters-onboarding-google-request'
   const ROUTES = new Set(['/starter-onboarding-v2', '/starter-onboarding-v2-wip'])
   const ROOT = '[data-calls-step="root"][data-calls-step-context="onboarding"]'
   const CONNECT = '[data-calls-step-action="connect-google"]'
   const REQUEST_TIMEOUT_MS = 20000
   const SAVE_ERROR = 'We couldn’t save your availability. Please try again.'
+  const GOOGLE_ERROR = 'We couldn’t connect your Google Calendar. Please try again.'
 
   function bootAllowed(win) {
     const location = win.location
@@ -85,6 +85,7 @@
 
   function createController(win) {
     let tokenPromise = null
+    let googleConnect = null
 
     function withTimeout(promise) {
       return new Promise(function (resolve, reject) {
@@ -202,7 +203,8 @@
           const problem = editor.validate()
           if (problem) return showError(root, problem)
           if (stopWatching) { stopWatching(); stopWatching = null }
-          const tab = typeof win.open === 'function' ? win.open('about:blank', '_blank') : null
+          if (!googleConnect) return showError(root, SAVE_ERROR)
+          const tab = typeof win.open === 'function' ? win.open('about:blank', 'starters-google-connect', 'popup,width=520,height=720') : null
           if (!tab) return showError(root, 'Allow pop-ups for this site, then try again.')
           try { tab.opener = null } catch (_error) { /* ignore */ }
           busy = true
@@ -211,9 +213,9 @@
             await save(editor)
             editor.setStatus({ hoursSaved: true })
             const id = await memberId()
-            win.localStorage.setItem(GOOGLE_REQUEST_KEY, JSON.stringify({ memberId: id, createdAt: Date.now() }))
-            tab.location.replace(win.location.origin + '/starter-dashboard?onboarding_calendar=connect-google')
-            stopWatching = watchReturn(tab, id, editor)
+            const url = await googleConnect.start()
+            tab.location.replace(url)
+            stopWatching = watchReturn(tab, id, editor, root)
           } catch (error) {
             tab.close()
             editor.setStatus({ calendar: 'disconnected' })
@@ -227,7 +229,7 @@
       return true
     }
 
-    function watchReturn(tab, id, editor) {
+    function watchReturn(tab, id, editor, root) {
       let channel = null
       let timer = null
       const stop = function () {
@@ -253,7 +255,13 @@
           channel = new win.BroadcastChannel(RETURN_CHANNEL)
           channel.onmessage = function (event) {
             const data = event && event.data
-            if (data && data.type === 'calendar-connected' && data.memberId === id) finish()
+            if (!data || data.memberId !== id) return
+            if (data.type === 'calendar-connected') finish()
+            if (data.type === 'calendar-connect-failed') {
+              stop()
+              refreshStatus(editor)
+              showError(root, GOOGLE_ERROR)
+            }
           }
         } catch (_error) {
           channel = null
@@ -267,6 +275,15 @@
     }
 
     function mount() {
+      const shared = win.StartersCalendarGoogleConnect
+      if (shared) {
+        googleConnect = shared.createGoogleConnect(win, { post, memberId, callback: shared.pendingCallback || null })
+        // This page is the pop-up Google sent back: finish the connection here.
+        if (googleConnect.returnPending()) {
+          googleConnect.completeReturn()
+          return 0
+        }
+      }
       const api = win.StarterProfileCallsStep
       if (!api) return 0
       let count = 0
