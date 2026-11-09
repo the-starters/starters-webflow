@@ -16,6 +16,8 @@
  *      closing, then re-reads status a few times. Tab focus re-reads once and
  *      keeps watching; while watching, a 'none' read keeps the card 'opened'.
  *      A failed start sets data-onboarding-stripe-error="start" on every root.
+ *   2b. Footer: started (not none) shows the authored Finish button and hides
+ *      the primary start button; none shows start and hides Finish.
  *   3. Submit gate: a form that holds a Stripe root does not submit until
  *      StarterOnboardingStripeView.canContinue(root) is true (Stripe started
  *      and the confirmation checkbox ticked). Webflow's own required checks
@@ -119,7 +121,25 @@
       if (!state) return
       if (stopWatch && state === 'none') return
       lastState = state
-      roots().forEach(function (root) { view.render(root, state) })
+      roots().forEach(function (root) {
+        view.render(root, state)
+        swapFooter(root, state)
+      })
+    }
+
+    // Footer swap (found in the 2026-11-09 prod click test): the authored
+    // Finish button ([data-onboarding-stripe-element="finish"], hidden in the
+    // markup) replaces the primary "Connect Stripe" start button once Stripe is
+    // started. The retry link inside the card is not touched.
+    function swapFooter(root, state) {
+      const started = state !== 'none'
+      root.querySelectorAll('[data-onboarding-stripe-element="finish"]').forEach(function (finish) {
+        finish.hidden = !started
+      })
+      root.querySelectorAll(START).forEach(function (button) {
+        if (button.closest('[data-onboarding-stripe-element="card"]')) return
+        button.hidden = started
+      })
     }
 
     async function refresh() {
