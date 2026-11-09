@@ -45,7 +45,7 @@ function environment({ hostname = 'the-starters-3-0.webflow.io', pathname = '/',
     addEventListener(type, fn) { domListeners.set(type, fn) },
   }
   const modal = { init() {},
-    async signals(needs) { signalCalls.push(needs); return signalsFn ? signalsFn(needs) : signals },
+    async signals(...args) { signalCalls.push(args); return signalsFn ? signalsFn(...args) : signals },
     async source(url) { sourceCalls += 1; return sourceFn ? sourceFn(url) : sourceRoot },
     async audience() { audienceCalls += 1; return audienceFn ? audienceFn() : audience },
     history: {
@@ -394,59 +394,44 @@ test('renewal day boundaries require paid brand, a known date and empty cancella
   }
 })
 
-test('availability and Stripe rules require their specific known matching signals', async () => {
-  for (const [attribute, field, values] of [
-    ['no-availability', 'availabilityEmpty', [[true, true], [false, false], [null, false]]],
-    ['no-stripe', 'stripeState', [['disconnected', true], ['incomplete', true], ['ready', false], [null, false], ['unknown', false], [{ connected: true }, false]]],
-  ]) {
-    for (const [value, matches] of values) {
-      const env = environment({ audience: 'talent', rows: [campaign('starter', { ...talentRules, [attribute]: 'true' })], signals: { [field]: value } })
-      assert.equal(!!await env.run(), matches)
-      assert.equal(env.signalCalls.length, 1)
-      assert.equal(env.records.length, matches ? 1 : 0)
-    }
-  }
-})
-
-test('all new rules combine with AND and preserve the highest-priority fallback on unknown', async () => {
-  const rows = [campaign('plain', { ...talentRules, priority: '1' }), campaign('both', { ...talentRules, priority: '20', 'no-stripe': 'true', 'no-availability': 'true' })]
-  const env = environment({ audience: 'talent', rows, signals: { stripeState: 'disconnected', availabilityEmpty: null } })
+test('both date rules combine with AND and preserve the highest-priority fallback on unknown', async () => {
+  const rows = [campaign('plain', { ...brandRules, priority: '1' }), campaign('both', { ...brandRules, priority: '20', 'new-days': '14', 'renew-days': '7' })]
+  const env = environment({ audience: 'brand-paid', rows, signals: { createdAt: today - day, nextBillingDate: null, cancelAt: null } })
   assert.equal((await env.run()).el.getAttribute('data-popup-loaded'), 'plain')
   assert.deepEqual(env.records, [['plain', 'shown']])
-  assert.deepEqual(JSON.parse(JSON.stringify(env.signalCalls)), [{ availability: true, stripe: true }])
+  assert.deepEqual(env.signalCalls, [[]])
 })
 
 test('empty fields and ineligible or already-seen behavior rows never request signals', async () => {
   const rows = [
-    campaign('plain', { 'new-days': '', 'renew-days': '', 'no-stripe': 'false', 'no-availability': 'false' }),
-    campaign('other-page', { 'no-stripe': 'true', destinations: '/elsewhere' }),
-    campaign('seen', { 'no-availability': 'true' }),
+    campaign('plain', { ...brandRules, 'new-days': '', 'renew-days': '' }),
+    campaign('other-page', { ...brandRules, 'new-days': '14', destinations: '/elsewhere' }),
+    campaign('seen', { ...brandRules, 'renew-days': '7' }),
   ]
-  const env = environment({ rows, seen: { seen: true } })
+  const env = environment({ rows, audience: 'brand-paid', seen: { seen: true } })
   assert.ok(await env.run())
   assert.equal(env.signalCalls.length, 0)
 })
 
 test('behavior overrides never bypass audiences or existing destinations, dates and history', async () => {
-  const params = '/?popup-as=new,no-availability,no-stripe,renewing'
+  const params = '/?popup-as=new,renewing'
   for (const [audience, rules] of [
     ['signed-out', { 'new-days': '14' }],
-    ['brand-paid', { ...brandRules, 'no-stripe': 'true' }],
     ['talent', { ...talentRules, 'renew-days': '7' }],
-    ['talent', { ...talentRules, 'no-stripe': 'true', destinations: '/elsewhere' }],
-    ['talent', { ...talentRules, 'no-stripe': 'true', end: 'November 1, 2026' }],
+    ['talent', { ...talentRules, 'new-days': '14', destinations: '/elsewhere' }],
+    ['talent', { ...talentRules, 'new-days': '14', end: 'November 1, 2026' }],
   ]) {
     const env = environment({ pathname: params, audience, rows: [campaign('no', rules)] })
     assert.equal(await env.run(), null)
     assert.equal(env.signalCalls.length, 0)
   }
-  const seen = environment({ pathname: params, audience: 'talent', rows: [campaign('seen', { ...talentRules, 'no-stripe': 'true' })], seen: { seen: true } })
+  const seen = environment({ pathname: params, audience: 'talent', rows: [campaign('seen', { ...talentRules, 'new-days': '14' })], seen: { seen: true } })
   assert.equal(await seen.run(), null)
 })
 
 test('listed staging behavior overrides match and unlisted ones fail without requests', async () => {
-  for (const [list, matches] of [['no-stripe,no-availability', true], ['no-stripe', false], ['', false]]) {
-    const env = environment({ pathname: '/?popup-as=' + list, audience: 'talent', rows: [campaign('both', { ...talentRules, 'no-stripe': 'true', 'no-availability': 'true' })] })
+  for (const [list, matches] of [['new,renewing', true], ['new', false], ['renewing', false], ['', false]]) {
+    const env = environment({ pathname: '/?popup-as=' + list, audience: 'brand-paid', rows: [campaign('both', { ...brandRules, 'new-days': '14', 'renew-days': '7' })] })
     assert.equal(!!await env.run(), matches)
     assert.equal(env.signalCalls.length, 0)
   }
@@ -487,7 +472,7 @@ test('debug reports one matched/skipped reason per row', async () => {
 test('all QA helpers are inert on production and lookalike hosts', () => {
   for (const hostname of ['www.thestarters.com', 'thestarters.com', 'the-starters-3-0.webflow.io.evil.test']) {
     const storage = new Map([['thestarters:modal-popups', 'keep']])
-    const env = environment({ hostname, pathname: '/?popup-reset=1&popup-debug=1&popup-as=new,no-stripe', storage })
+    const env = environment({ hostname, pathname: '/?popup-reset=1&popup-debug=1&popup-as=new,renewing', storage })
     assert.equal(env.run, undefined)
     assert.equal(storage.get('thestarters:modal-popups'), 'keep')
     assert.equal(env.logs.length, 0)
@@ -496,9 +481,9 @@ test('all QA helpers are inert on production and lookalike hosts', () => {
 })
 
 
-test('impossible behavior combinations do not request remote signals', async () => {
+test('impossible behavior combinations do not read date signals', async () => {
   for (const extra of [{ 'renew-days': '7' }, { 'new-days': '-1' }, { 'new-days': '1.5' }]) {
-    const env = environment({ audience: 'talent', rows: [campaign('impossible', { ...talentRules, 'no-stripe': 'true', ...extra })] })
+    const env = environment({ audience: 'talent', rows: [campaign('impossible', { ...talentRules, ...extra })] })
     assert.equal(await env.run(), null)
     assert.equal(env.signalCalls.length, 0)
   }
@@ -542,14 +527,4 @@ test('QA helpers remain inert if a future rollout enables the picker on producti
   assert.equal(storage.get('thestarters:modal-popups'), 'keep')
   assert.equal(env.logs.length, 0)
   assert.equal(env.signalCalls.length, 1)
-})
-
-
-test('malformed switch rules fail closed instead of silently removing the requirement', async () => {
-  for (const attribute of ['no-availability', 'no-stripe']) {
-    const env = environment({ audience: 'talent', rows: [campaign('bad', { ...talentRules, [attribute]: 'On' })] })
-    assert.equal(await env.run(), null)
-    assert.equal(env.signalCalls.length, 0)
-    assert.equal(env.records.length, 0)
-  }
 })

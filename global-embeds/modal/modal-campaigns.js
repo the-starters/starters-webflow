@@ -78,11 +78,6 @@
       if (!Number.isInteger(Number(raw)) || Number(raw) < 0) return name;
       if (audience === 'signed-out' || (name === 'renew-days' && audience !== 'brand-paid')) return 'audience';
     }
-    for (const name of ['no-availability', 'no-stripe']) {
-      const raw = candidate.value(name);
-      if (raw !== null && !['', 'true', 'false'].includes(raw)) return 'rules';
-    }
-    if (audience !== 'talent' && ['no-availability', 'no-stripe'].some((name) => candidate.value(name) === 'true')) return 'audience';
     return null;
   }
 
@@ -108,21 +103,6 @@
       if (attribute === 'renew-days') {
         if (signals.cancelAt === undefined) return 'signal-unknown';
         if (signals.cancelAt !== null || time < now || time > now + days * 86400000) return attribute;
-      }
-    }
-    for (const [attribute, field] of [['no-availability', 'availabilityEmpty'], ['no-stripe', 'stripeState']]) {
-      if (value(attribute) !== 'true') continue;
-      if (overrides) {
-        if (!overrides.has(attribute)) return attribute;
-        continue;
-      }
-      const signal = signals?.[field];
-      if (attribute === 'no-availability') {
-        if (typeof signal !== 'boolean') return 'signal-unknown';
-        if (!signal) return attribute;
-      } else {
-        if (!['disconnected', 'ready', 'incomplete'].includes(signal)) return 'signal-unknown';
-        if (signal === 'ready') return attribute;
       }
     }
     return null;
@@ -184,16 +164,12 @@
         }
         if (blocked() || currentPath() !== path) return null;
       }
-      const needs = {
-        availability: candidates.some((entry) => entry.value('no-availability') === 'true'),
-        stripe: candidates.some((entry) => entry.value('no-stripe') === 'true'),
-      };
       const requiresSignals = candidates.some((entry) => ['new-days', 'renew-days'].some((name) => {
         const value = entry.value(name); return value !== null && value !== '';
-      })) || needs.availability || needs.stripe;
+      }));
       let signals;
       if (requiresSignals && !overrides) {
-        try { signals = await modal.signals(needs); } catch (_) {}
+        try { signals = await modal.signals(); } catch (_) {}
       }
       const unseen = candidates.filter((entry) => {
         const reason = behaviour(entry, audience, signals);

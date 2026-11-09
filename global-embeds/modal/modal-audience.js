@@ -52,82 +52,9 @@
     return result;
   }
 
-  const XANO_ORIGIN = 'https://x08a-5ko8-jj1r.n7c.xano.io';
-  const SCHEDULING_BASE = XANO_ORIGIN + '/api:tCpV3oqd';
-  const STRIPE_STATUS = XANO_ORIGIN + '/api:KZf7nFnk/stripe_connect/status/v3';
-
-  function bounded(operation) {
-    const controller = new AbortController();
-    let timer;
-    const deadline = new Promise((resolve) => {
-      timer = setTimeout(() => { controller.abort(); resolve(null); }, 3000);
-    });
-    return Promise.race([Promise.resolve().then(() => operation(controller.signal)).catch(() => null), deadline])
-      .finally(() => clearTimeout(timer));
-  }
-
-  async function scheduling(path, method, data, signal) {
-    if (signal.aborted) throw new Error('Signal timed out');
-    const fetch = window.__tsSchedulingAuthFetch || window.xanoAuthFetch;
-    if (typeof fetch !== 'function') throw new Error('Shared scheduling auth unavailable');
-    const query = method === 'GET' ? '?' + new URLSearchParams(data) : '';
-    const response = await fetch(SCHEDULING_BASE + path + query, {
-      method, signal, headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      ...(method === 'POST' ? { body: JSON.stringify(data) } : {}),
-    });
-    if (!response.ok || signal.aborted) throw new Error('Scheduling signal unavailable');
-    return response.json();
-  }
-
-  async function availability(signal) {
-    const starter = await scheduling('/starter/get_by_memberstack/v3', 'POST', { member_id: member.id }, signal);
-    if (!starter || typeof starter !== 'object' || Array.isArray(starter) || !starter.id) return null;
-    if (starter.nylas_grant_id === undefined || starter.nylas_grant_id === null || starter.nylas_grant_id === '') return true;
-    if (typeof starter.nylas_grant_id !== 'string' || !starter.nylas_grant_id.trim()) return null;
-    const configs = await scheduling('/nylas_configurations/get_all/v3', 'POST', { grant_id: starter.nylas_grant_id }, signal);
-    if (!Array.isArray(configs) || configs.some((config) => !config || typeof config.active !== 'boolean')) return null;
-    const active = configs.filter((config) => config?.active === true);
-    if (!active.length) return true;
-    if (active.some((config) => typeof config.config_id !== 'string' || !config.config_id.trim())) return null;
-    // Match the dashboard's 14-day slots preview, without its error-to-empty fallback.
-    const start = Math.floor(Date.now() / 1000);
-    const end = start + 14 * 86400;
-    const results = await Promise.all(active.map(async (config) => {
-      try {
-        const response = await scheduling('/scheduler/get_availability/v3', 'GET', {
-          grant_id: starter.nylas_grant_id, configuration_id: config.config_id,
-          start_time: String(start), end_time: String(end), region: 'us',
-        }, signal);
-        if (!Array.isArray(response?.time_slots)) return null;
-        if (response.time_slots.some((slot) => !Number.isFinite(slot?.start_time) ||
-          !Number.isFinite(slot?.end_time) || slot.end_time <= slot.start_time)) return null;
-        return !response.time_slots.some((slot) => slot.start_time >= start && slot.start_time < end);
-      } catch (_) { return null; }
-    }));
-    if (results.includes(false)) return false;
-    return results.includes(null) ? null : true;
-  }
-
-  async function stripe(signal) {
-    if (typeof window.getXanoAuthToken !== 'function') return null;
-    // The Stripe Connect controller uses this same shared token and status endpoint.
-    const token = await window.getXanoAuthToken();
-    if (!token || signal.aborted) return null;
-    const response = await window.fetch(STRIPE_STATUS, {
-      method: 'POST', signal,
-      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
-      body: '{}',
-    });
-    if (!response.ok || signal.aborted) return null;
-    const status = await response.json();
-    if (typeof status?.connected !== 'boolean' || typeof status?.charges_enabled !== 'boolean' ||
-      (!status.connected && status.charges_enabled)) return null;
-    return !status.connected ? 'disconnected' : status.charges_enabled ? 'ready' : 'incomplete';
-  }
-
-  async function resolveSignals(needs) {
+  async function resolveSignals() {
     const role = await audience();
-    const out = { createdAt: null, nextBillingDate: null, cancelAt: undefined, availabilityEmpty: null, stripeState: null };
+    const out = { createdAt: null, nextBillingDate: null, cancelAt: undefined };
     if (!member || !role || role === 'signed-out') return out;
     const dates = window.StartersPlanDates;
     if (typeof dates?.toDate === 'function' && typeof dates?.pickConnection === 'function') {
@@ -140,19 +67,11 @@
         out.cancelAt = cancel === undefined || cancel === null || cancel === '' ? null : time(cancel) ?? undefined;
       }
     }
-    if (role === 'talent') {
-      const [empty, state] = await Promise.all([
-        needs.availability ? bounded(availability) : null,
-        needs.stripe ? bounded(stripe) : null,
-      ]);
-      out.availabilityEmpty = empty;
-      out.stripeState = state;
-    }
     return out;
   }
 
-  function signals(needs = {}) {
-    if (!signalResult) signalResult = resolveSignals(needs);
+  function signals() {
+    if (!signalResult) signalResult = resolveSignals();
     return signalResult;
   }
 
