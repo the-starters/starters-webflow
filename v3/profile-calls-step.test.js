@@ -99,7 +99,7 @@ class FakeElement {
   }
 }
 
-function build(pathname = '/starter-edit-profile-test') {
+function build(pathname = '/starter-edit-profile-test', context = 'edit') {
   const el = (tag, attrs, children) => new FakeElement(tag, attrs, children)
   const select = (kind, value) => el('select', { 'data-calls-step-input': kind, value })
   const row = (start, end) => el('div', { 'data-calls-step-element': 'window' }, [
@@ -111,7 +111,7 @@ function build(pathname = '/starter-edit-profile-test') {
   const windows = el('div', { 'data-calls-step-element': 'windows' }, [row('9:00 AM', '6:00 PM')])
   const error = el('p', { 'data-calls-step-element': 'error' })
   const addButton = el('button', { 'data-calls-step-action': 'add-window' })
-  const root = el('div', { 'data-calls-step': 'root', 'data-calls-step-context': 'edit' }, [
+  const root = el('div', { 'data-calls-step': 'root', 'data-calls-step-context': context }, [
     el('div', { 'data-calls-step-element': 'days' }, [day(1), day(2)]),
     el('div', { 'data-calls-step-element': 'extra-days' }),
     windows, addButton, error,
@@ -188,4 +188,19 @@ test('standalone staging markup mounts without a step wrapper and blocks submit'
   const event = { preventDefault: () => calls.push('prevent'), stopImmediatePropagation: () => calls.push('stop') }
   form.listeners.submit.forEach((listener) => listener(event))
   assert.deepEqual(calls, ['prevent', 'stop'])
+})
+
+test('onboarding context mounts on the onboarding v2 pages and hides call choices', () => {
+  for (const path of ['/starter-onboarding-v2', '/starter-onboarding-v2-wip']) {
+    const { root, api } = build(path, 'onboarding')
+    assert.ok(api, path)
+    assert.equal(root.querySelector('[data-call-settings-service="paid"]').hidden, true)
+    assert.equal(api.validate(), '')
+  }
+})
+
+test('onboarding context needs both the onboarding path and the onboarding marker', () => {
+  assert.equal(build('/starter-onboarding-v2', 'edit').api, null)
+  assert.equal(build('/starter-onboarding', 'onboarding').api, null)
+  assert.equal(build('/starter-dashboard', 'onboarding').api, null)
 })

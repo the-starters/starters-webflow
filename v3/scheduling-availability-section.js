@@ -40,6 +40,12 @@
   const OAUTH_INTENT_PREFIX = 'starter-scheduling-oauth-intent:'
   const OAUTH_CALLBACK_KEY = 'starter-scheduling-oauth-callback'
   const OAUTH_INTENT_MAX_AGE = 15 * 60 * 1000
+  const SAME_DAY_WINDOW_KIND = 'window'
+  // Onboarding v2 (staff preview): the calendar step opens this page in a new
+  // tab with ?onboarding_calendar=connect-google to run the Google flow here,
+  // then hears back on this channel when the OAuth return completes.
+  const ONBOARDING_CALENDAR_PARAM = 'onboarding_calendar'
+  const CALENDAR_RETURN_CHANNEL = 'starters-calendar-connect-return'
 
   const EL = 'data-availability-element'
   const ACTION = 'data-availability-action'
@@ -767,6 +773,11 @@
     for (const key in avails) {
       if (!Object.prototype.hasOwnProperty.call(avails, key)) continue
       if (key === 'general' || key === excludeId) continue
+      // A same-day window (kind "window", Jai 2026-11-09: several windows in
+      // one day) adds hours to the days it lists; it is not a day override,
+      // so it never takes days away from the general window. #1463 already
+      // accepts several separated windows on one weekday.
+      if (avails[key] && avails[key].kind === SAME_DAY_WINDOW_KIND) continue
       avails[key].days.forEach(function (day) {
         if (claimed.indexOf(day) === -1) claimed.push(day)
       })
@@ -807,6 +818,45 @@
     window.STARTER_AVAILABILITY = availability
     writeAvailabilityCache()
     return updated
+  }
+
+  function signalCalendarConnected(memberId) {
+    if (typeof window.BroadcastChannel !== 'function' || !memberId) return false
+    let channel = null
+    try {
+      channel = new window.BroadcastChannel(CALENDAR_RETURN_CHANNEL)
+      channel.postMessage({ type: 'calendar-connected', memberId: String(memberId) })
+      return true
+    } catch (_error) {
+      return false
+    } finally {
+      if (channel && typeof channel.close === 'function') channel.close()
+    }
+  }
+
+  // Runs once after the section is ready. Removes the parameter first, so a
+  // reload or the OAuth return can never start a second Google flow.
+  function startOnboardingGoogleConnect() {
+    const location = window.location || {}
+    const params = new URLSearchParams(location.search || '')
+    if (params.get(ONBOARDING_CALENDAR_PARAM) !== 'connect-google') return false
+    params.delete(ONBOARDING_CALENDAR_PARAM)
+    const rest = params.toString()
+    try {
+      window.history.replaceState(
+        window.history.state,
+        '',
+        (location.pathname || '') + (rest ? '?' + rest : '') + (location.hash || ''),
+      )
+    } catch (_error) {
+      /* history unavailable: the flag is still consumed for this load */
+    }
+    if (!googleConnectAvailable()) return false
+    switchNotification('oauth-redirect')
+    activateGoogleManager().then(function (ok) {
+      if (ok === false) showNotificationError(calendarTransitionErrorCopy(ERROR_TEXT_CONNECT_GOOGLE))
+    })
+    return true
   }
 
   async function readStarterRecord() {
@@ -1503,6 +1553,7 @@
       await refreshCanonicalConnectionState()
       clearOAuthIntent(memberId)
       clearOAuthCallback()
+      signalCalendarConnected(memberId)
       console.log('[scheduling-section] Google Calendar connected via OAuth')
     } catch (error) {
       let recovered = false
@@ -2243,6 +2294,8 @@
 
     const availId = form.dataset.availabilityId || id || 'general'
     const avail = { days: selectedDays, start: startTime, end: endTime }
+    const existingItem = availability.items[availId]
+    if (existingItem && existingItem.kind === SAME_DAY_WINDOW_KIND) avail.kind = SAME_DAY_WINDOW_KIND
     const previousAvailability = JSON.parse(JSON.stringify(availability))
     let canonicalSaved = false
 
@@ -3154,6 +3207,7 @@
       revealSection(state)
       setStatus('ready')
       emit('starterSchedulingSectionReady', { memberId: sessionMemberId })
+      startOnboardingGoogleConnect()
       return 'ready'
     } catch (error) {
       publishCalendarConnectionError()

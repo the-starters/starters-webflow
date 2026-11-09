@@ -4,7 +4,9 @@
   const selector = (kind, value) => '[data-calls-step-' + kind + '="' + value + '"]'
   const rootSelector = '[data-calls-step="root"]'
   const standalonePath = '/build-profile-form-test'
-  const routes = new Set(['/build-profile/full-profile-test', '/build-profile/consult-test', '/starter-edit-profile-test', standalonePath])
+  // Onboarding v2 (JP 2026-11-09): the calendar step on the staff-only onboarding page.
+  const onboardingPaths = new Set(['/starter-onboarding-v2', '/starter-onboarding-v2-wip'])
+  const routes = new Set(['/build-profile/full-profile-test', '/build-profile/consult-test', '/starter-edit-profile-test', standalonePath, ...onboardingPaths])
 
   // Staff-only on production until launch (JP 2026-11-09): a production host
   // boots only when the page also loads the fail-closed staff preview guard
@@ -58,7 +60,8 @@
     const step = root.closest('[data-form="step"][data-index="6"]')
     const edit = path === '/starter-edit-profile-test'
     const standalone = path === standalonePath
-    if (edit ? root.getAttribute('data-calls-step-context') !== 'edit' : !step && !standalone) return null
+    const onboarding = onboardingPaths.has(path) && root.getAttribute('data-calls-step-context') === 'onboarding'
+    if (!onboarding && (edit ? root.getAttribute('data-calls-step-context') !== 'edit' : !step && !standalone)) return null
     if (!days || !extraDays || !source || !extra || !timezone || !clock || !error) return null
 
     const doc = root.ownerDocument
@@ -211,6 +214,12 @@
       let anyEnabled = false
       let paidEnabled = false
       for (const service of services) {
+        // Onboarding asks for hours and calendar only: Build Profile already
+        // recorded the call choices, and Stripe has its own onboarding step.
+        if (onboarding) {
+          service.hidden = true
+          continue
+        }
         const enabled = service.querySelector(enabledSelector)
         const panel = service.querySelector('[data-call-settings-element="panel"]')
         if (!enabled || !panel) continue
@@ -222,9 +231,9 @@
         anyEnabled ||= enabled.checked
         if (service.getAttribute('data-call-settings-service') === 'paid') paidEnabled = enabled.checked
       }
-      if (availability) availability.hidden = !anyEnabled
-      if (calendar) calendar.hidden = !anyEnabled
-      if (stripe) stripe.hidden = !paidEnabled
+      if (availability) availability.hidden = !(anyEnabled || onboarding)
+      if (calendar) calendar.hidden = !(anyEnabled || onboarding)
+      if (stripe) stripe.hidden = onboarding || !paidEnabled
       const taken = new Set(selected(days))
       for (const day of extraDays.querySelectorAll('[data-day]')) {
         day.disabled = taken.has(Number(day.dataset.day))
@@ -247,6 +256,7 @@
     }
 
     function validateContinue() {
+      if (onboarding) return validateHours(read())
       if (!services.some((service) => service.querySelector(enabledSelector)?.checked)) {
         return 'Turn on at least one call type to continue.'
       }

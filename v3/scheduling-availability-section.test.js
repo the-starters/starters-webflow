@@ -4311,3 +4311,92 @@ test('writer.js installs normally when the new section root is absent (e.g. --av
   assert.equal(typeof withoutSection.StarterSchedulingAvailabilityWriter.initialize, 'function')
   assert.equal(withoutSection.__tsSchedulingAvailabilityWriter, true)
 })
+
+test('a same-day window keeps its kind on edit and never takes days from the general window', async () => {
+  const baseline = {
+    items: {
+      general: { days: [1, 2], start: '09:00', end: '12:00', defaultDays: [1, 2] },
+      'window-2': { days: [1, 2], start: '13:00', end: '17:00', kind: 'window' },
+    },
+    manager: 'platform',
+  }
+  const { dom, calls } = loadSection({
+    serverState: {
+      grantId: 'grant-1',
+      grantEmail: 'starter@example.com',
+      calendarId: 'primary',
+      availability: baseline,
+      configs: [{ config_id: 'cfg-free', grant_id: 'grant-1', duration: 30, is_paid: false, active: true }],
+    },
+  })
+  await settle()
+
+  const card = dom.list.children.find((el) => el.dataset.id === 'window-2')
+  card.children[0].children[2].children[0].click()
+  const formWrapper = card.children[2]
+  formWrapper.querySelector('[name=start-time]').value = '14:00'
+  formWrapper.querySelector('[name=end-time]').value = '18:00'
+  formWrapper.children[0].children[1].children[1].click()
+  await settle()
+
+  const update = calls.find((call) => call.path === '/starter/update_availability/v3')
+  assert.deepEqual(update.body.availability.items.general.days, [1, 2])
+  assert.equal(update.body.availability.items['window-2'].kind, 'window')
+  assert.equal(update.body.availability.items['window-2'].start, '14:00')
+  const configUpdate = calls.find((call) => call.path === '/scheduler/configurations/update/v3')
+  assert.deepEqual(
+    configUpdate.body.in_availability.availability_rules.default_open_hours.map((w) => [w.days, w.start, w.end]),
+    [[[1, 2], '09:00', '12:00'], [[1, 2], '14:00', '18:00']],
+  )
+})
+
+test('the onboarding Google link starts OAuth once when the platform calendar exists', async () => {
+  const replaced = []
+  const result = loadSection({
+    search: '?onboarding_calendar=connect-google',
+    serverState: {
+      grantId: 'virtual-1',
+      grantEmail: 'member-a',
+      calendarId: 'virtual-cal',
+      availability: {
+        items: { general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] } },
+        manager: 'platform',
+      },
+      configs: [{ config_id: 'cfg-free', grant_id: 'virtual-1', duration: 30, is_paid: false, active: true }],
+    },
+  })
+  result.window.history.replaceState = (_state, _title, url) => replaced.push(url)
+  await settle()
+  await settle()
+  assert.equal(result.calls.filter((c) => c.path === '/grants/oauth/v3').length, 1)
+  assert.ok(result.assigned.some((url) => url.includes('nylas.example/oauth')))
+})
+
+test('the onboarding Google link does nothing without a platform calendar', async () => {
+  const result = loadSection({
+    search: '?onboarding_calendar=connect-google',
+    serverState: { availability: null },
+  })
+  await settle()
+  await settle()
+  assert.equal(result.calls.filter((c) => c.path === '/grants/oauth/v3').length, 0)
+  assert.equal(result.assigned.length, 0)
+})
+
+test('a plain dashboard visit never starts Google OAuth', async () => {
+  const result = loadSection({
+    serverState: {
+      grantId: 'virtual-1',
+      grantEmail: 'member-a',
+      calendarId: 'virtual-cal',
+      availability: {
+        items: { general: { days: [1], start: '09:00', end: '17:00', defaultDays: [1] } },
+        manager: 'platform',
+      },
+      configs: [{ config_id: 'cfg-free', grant_id: 'virtual-1', duration: 30, is_paid: false, active: true }],
+    },
+  })
+  await settle()
+  await settle()
+  assert.equal(result.calls.filter((c) => c.path === '/grants/oauth/v3').length, 0)
+})
