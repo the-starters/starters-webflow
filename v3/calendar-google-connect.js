@@ -21,9 +21,11 @@
  *               3. grants/add/v3 (#1457) with the code and the same
  *                  redirect_uri,
  *               4. onboarding/calendar/ensure-default/v3 (#12047) with the same
- *                  hours: manager "calendar" for a Google grant, Free config.
- *             If 3 or 4 fails after 2, #12047 runs again to put the platform
- *             calendar back. A cancel at Google changes nothing.
+ *                  hours and timezone: manager "calendar" for a Google grant, Free config.
+ *             If 3 fails after 2, #12047 runs again to put the platform
+ *             calendar back. If only 4 fails, it is tried once more and a
+ *             success there counts as connected. A cancel at Google changes
+ *             nothing.
  *             Result: BroadcastChannel 'starters-calendar-connect-return'
  *             {type: 'calendar-connected' | 'calendar-connect-failed',
  *             memberId}, then the popup closes (or says it can be closed).
@@ -101,7 +103,8 @@
       showOverlay('working')
       let id = null
       let deleted = false
-      let items = null
+      let added = false
+      let defaults = null
       try {
         id = await memberId()
         const intent = readIntent()
@@ -114,7 +117,12 @@
         if (callback.hasError || !callback.code) throw new Error('cancelled at Google')
 
         const starter = await post('/starter/get_by_memberstack/v3', { member_id: id })
-        items = (starter && starter.availability && starter.availability.items) || {}
+        defaults = {
+          member_id: id,
+          availability: { items: (starter && starter.availability && starter.availability.items) || {} },
+          in_timezone: (starter && starter.timezone) || '',
+          offer_intro_call: true,
+        }
         if (starter && starter.nylas_grant_id) {
           const removed = await post('/grants/delete/v3', { in_grant_id: starter.nylas_grant_id })
           if (!removed || removed.connected !== false) throw new Error('grants/delete returned no disconnected state')
@@ -127,21 +135,21 @@
           in_state: callback.state,
         })
         if (!grant || !grant.grant_id) throw new Error('grants/add returned no grant')
-        await post('/onboarding/calendar/ensure-default/v3', {
-          member_id: id,
-          availability: { items },
-          in_timezone: '',
-          offer_intro_call: true,
-        })
-        signal('calendar-connected', id)
-        showOverlay('done')
-        closeSoon()
-        return true
+        added = true
+        await post('/onboarding/calendar/ensure-default/v3', defaults)
+        return connected(id)
       } catch (error) {
         warn('google return failed', error && error.message)
-        if (deleted) {
+        if (added) {
           try {
-            await post('/onboarding/calendar/ensure-default/v3', { member_id: id, availability: { items }, in_timezone: '', offer_intro_call: true })
+            await post('/onboarding/calendar/ensure-default/v3', defaults)
+            return connected(id)
+          } catch (retryError) {
+            warn('google defaults retry failed', retryError && retryError.message)
+          }
+        } else if (deleted) {
+          try {
+            await post('/onboarding/calendar/ensure-default/v3', defaults)
           } catch (restoreError) {
             warn('platform restore failed', restoreError && restoreError.message)
           }
@@ -150,6 +158,13 @@
         showOverlay('failed')
         return false
       }
+    }
+
+    function connected(id) {
+      signal('calendar-connected', id)
+      showOverlay('done')
+      closeSoon()
+      return true
     }
 
     function signal(type, id) {

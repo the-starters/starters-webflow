@@ -39,11 +39,14 @@ function makeWin({ search = '', path = '/starter-onboarding-v2', intent, now = D
   return { win, storage, messages, replaced, body, now }
 }
 
-function makeBackend({ starter = { nylas_grant_id: 'v-1', nylas_grant_email: MEMBER, availability: { manager: 'platform', items: { general: { days: [1], start: '09:00', end: '12:00' } } } }, fail = {} } = {}) {
+function makeBackend({ starter = { nylas_grant_id: 'v-1', nylas_grant_email: MEMBER, timezone: 'Europe/Amsterdam', availability: { manager: 'platform', items: { general: { days: [1], start: '09:00', end: '12:00' } } } }, fail = {} } = {}) {
   const calls = []
   async function post(path, body) {
     calls.push({ path, body })
-    if (fail[path]) throw new Error(path + ' failed')
+    if (fail[path] === true || fail[path] > 0) {
+      if (fail[path] !== true) fail[path] -= 1
+      throw new Error(path + ' failed')
+    }
     if (path === '/grants/oauth/v3') return { response: { result: { data: { url: 'https://api.us.nylas.com/v3/connect/auth?x=1' } } } }
     if (path === '/starter/get_by_memberstack/v3') return starter
     if (path === '/grants/delete/v3') return { connected: false }
@@ -102,7 +105,12 @@ test('return: delete the platform grant, add the Google grant, then re-save hour
   assert.deepEqual(backend.paths(), ['/starter/get_by_memberstack/v3', '/grants/delete/v3', '/grants/add/v3', '/onboarding/calendar/ensure-default/v3'])
   assert.deepEqual(backend.calls[1].body, { in_grant_id: 'v-1' })
   assert.deepEqual(backend.calls[2].body, { code: 'abc', member_id: MEMBER, in_redirect_uri: PAGE, in_state: MEMBER })
-  assert.deepEqual(backend.calls[3].body.availability, { items: { general: { days: [1], start: '09:00', end: '12:00' } } })
+  assert.deepEqual(backend.calls[3].body, {
+    member_id: MEMBER,
+    availability: { items: { general: { days: [1], start: '09:00', end: '12:00' } } },
+    in_timezone: 'Europe/Amsterdam',
+    offer_intro_call: true,
+  })
   assert.deepEqual(page.messages, [{ channel: 'starters-calendar-connect-return', type: 'calendar-connected', memberId: MEMBER }])
   assert.equal(page.storage.has(INTENT_KEY), false)
   assert.equal(page.win.document.documentElement.attrs['data-google-connect-return'], 'done')
@@ -144,7 +152,39 @@ test('if the Google grant cannot be added after the delete, the platform calenda
   assert.equal(ok, false)
   assert.deepEqual(backend.paths(), ['/starter/get_by_memberstack/v3', '/grants/delete/v3', '/grants/add/v3', '/onboarding/calendar/ensure-default/v3'])
   assert.deepEqual(backend.calls[3].body.availability.items.general, { days: [1], start: '09:00', end: '12:00' })
+  assert.equal(backend.calls[3].body.in_timezone, 'Europe/Amsterdam')
   assert.equal(page.messages[0].type, 'calendar-connect-failed')
+})
+
+test('a starter without a stored timezone sends an empty one', async () => {
+  const page = makeWin({ intent: goodIntent() })
+  const backend = makeBackend({ starter: { nylas_grant_id: null, availability: { items: {} } } })
+  await createGoogleConnect(page.win, { post: backend.post, memberId, callback: { code: 'abc', state: MEMBER, hasError: false } }).completeReturn()
+  assert.equal(backend.calls[2].body.in_timezone, '')
+})
+
+test('if only the defaults fail after the Google grant is added, a successful retry counts as connected', async () => {
+  const page = makeWin({ intent: goodIntent() })
+  const backend = makeBackend({ fail: { '/onboarding/calendar/ensure-default/v3': 1 } })
+  const ok = await createGoogleConnect(page.win, { post: backend.post, memberId, callback: { code: 'abc', state: MEMBER, hasError: false } }).completeReturn()
+  assert.equal(ok, true)
+  assert.deepEqual(backend.paths(), ['/starter/get_by_memberstack/v3', '/grants/delete/v3', '/grants/add/v3', '/onboarding/calendar/ensure-default/v3', '/onboarding/calendar/ensure-default/v3'])
+  assert.deepEqual(backend.calls[4].body, backend.calls[3].body)
+  assert.deepEqual(page.messages, [{ channel: 'starters-calendar-connect-return', type: 'calendar-connected', memberId: MEMBER }])
+  assert.equal(page.win.document.documentElement.attrs['data-google-connect-return'], 'done')
+  page.win.timers.forEach((fn) => fn())
+  assert.equal(page.win.closed, true)
+})
+
+test('if the defaults retry also fails after the Google grant is added, it fails without a platform restore', async () => {
+  const page = makeWin({ intent: goodIntent() })
+  const backend = makeBackend({ fail: { '/onboarding/calendar/ensure-default/v3': true } })
+  const ok = await createGoogleConnect(page.win, { post: backend.post, memberId, callback: { code: 'abc', state: MEMBER, hasError: false } }).completeReturn()
+  assert.equal(ok, false)
+  assert.deepEqual(backend.paths(), ['/starter/get_by_memberstack/v3', '/grants/delete/v3', '/grants/add/v3', '/onboarding/calendar/ensure-default/v3', '/onboarding/calendar/ensure-default/v3'])
+  assert.deepEqual(page.messages, [{ channel: 'starters-calendar-connect-return', type: 'calendar-connect-failed', memberId: MEMBER }])
+  assert.equal(page.win.document.documentElement.attrs['data-google-connect-return'], 'failed')
+  assert.equal(page.win.closed, false)
 })
 
 test('a failed delete does not add the Google grant or restore anything', async () => {
