@@ -37,6 +37,7 @@ function boot(opts = {}) {
   const replaced = []
   let now = 0
   const intervals = new Map()
+  const timeouts = new Map()
   let seq = 0
 
   const scriptEl = {
@@ -61,8 +62,12 @@ function boot(opts = {}) {
       replace: (url) => replaced.push(url),
     },
     console,
-    setTimeout: (fn) => ++seq,
-    clearTimeout: () => {},
+    setTimeout: (fn, ms) => {
+      const id = ++seq
+      timeouts.set(id, { fn, at: now + ms })
+      return id
+    },
+    clearTimeout: (id) => timeouts.delete(id),
     setInterval: (fn, ms) => {
       const id = ++seq
       intervals.set(id, fn)
@@ -73,6 +78,9 @@ function boot(opts = {}) {
       calls.push({ url, options })
       if (url.startsWith(TRADE_URL)) {
         return opts.tradeReject ? Promise.reject(new Error('net')) : Promise.resolve(opts.trade || response(200, { authToken: 'xano-tok' }))
+      }
+      if (url === STAFF_URL && opts.staffBodyStalls) {
+        return Promise.resolve({ ok: true, status: 200, json: () => new Promise(() => {}) })
       }
       if (url === STAFF_URL) return Promise.resolve(opts.staff || response(200, { email: 'jp+onb01@thestarters.com' }))
       return Promise.reject(new Error('unexpected ' + url))
@@ -94,6 +102,12 @@ function boot(opts = {}) {
     tick(ms) {
       now += ms
       for (const fn of [...intervals.values()]) fn()
+      for (const [id, t] of [...timeouts]) {
+        if (t.at <= now) {
+          timeouts.delete(id)
+          t.fn()
+        }
+      }
     },
   }
 }
@@ -163,6 +177,28 @@ test('Memberstack never loads: fallback after 8 seconds', async () => {
   env.tick(8000)
   await settle()
   assert.deepEqual(env.replaced, ['/starter-onboarding'])
+})
+
+test('stalled response body: fallback at the 20 second deadline', async () => {
+  const env = boot({ staffBodyStalls: true })
+  await settle()
+  env.tick(19999)
+  await settle()
+  assert.deepEqual(env.replaced, [])
+  assert.notEqual(env.attrs['data-staff-preview'], 'allowed')
+  env.tick(1)
+  await settle()
+  assert.deepEqual(env.replaced, ['/starter-onboarding'])
+  assert.equal(env.attrs['data-staff-preview'], 'denied')
+})
+
+test('verified staff: the deadline does not redirect later', async () => {
+  const env = boot()
+  await settle()
+  env.tick(20000)
+  await settle()
+  assert.equal(env.attrs['data-staff-preview'], 'allowed')
+  assert.deepEqual(env.replaced, [])
 })
 
 test('unsafe or missing data-fallback uses /starter-dashboard', async () => {

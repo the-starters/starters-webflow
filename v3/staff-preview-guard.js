@@ -23,8 +23,8 @@
  *                                /starter-dashboard).
  *
  * FAIL-CLOSED, EVERYWHERE. If Memberstack is missing, the trade fails, the
- * request times out, or the answer is malformed, the visitor goes to the
- * fallback. The page never shows without a 200 from Xano.
+ * request times out, the whole check takes more than 20 s, or the answer is
+ * malformed, the visitor goes to the fallback. The page never shows without a 200 from Xano.
  *
  * This is a front-end gate for a page that is not launched. It hides UI. It is
  * not a data boundary: any new Xano endpoint the page writes to must call
@@ -45,6 +45,7 @@
   var MEMBERSTACK_TIMEOUT_MS = 8000
   var MEMBERSTACK_POLL_MS = 50
   var REQUEST_TIMEOUT_MS = 8000
+  var OVERALL_DEADLINE_MS = 20000
   var ALLOWED_ATTR = 'data-staff-preview'
   var STYLE_ID = 'staff-preview-guard-hide'
 
@@ -176,9 +177,10 @@
   }
 
   hidePage()
+  window.setTimeout(function () {
+    leave(fallback, 'deadline')
+  }, OVERALL_DEADLINE_MS)
   run().catch(function (error) {
     leave(fallback, 'error: ' + (error && error.message))
   })
-
-  window.__startersStaffPreviewGuard = { safePath: safePath }
 })()
