@@ -22,7 +22,8 @@ Their boot flags make the head copies win, because deferred head scripts run fir
 | --- | --- |
 | Status | `POST api:KZf7nFnk/stripe_connect/status/v3`: disconnected -> `none`, incomplete -> `opened`, review -> `pending`, ready -> `ready` |
 | Start | `[data-onboarding-stripe-action="start"]` reserves a tab in the click, `POST stripe_connect/start/v3` with `return_url = <origin>/starter-dashboard` (the only value the server accepts), sends the tab to `connect.stripe.com` |
-| Return | Callback page BroadcastChannel `starters-stripe-connect-return`, window focus, or tab close -> status re-read (0, 1.5, 4, 8 s) |
+| Return | Callback page BroadcastChannel `starters-stripe-connect-return` `connected` message or tab close -> watch ends, status re-read (0, 1.5, 4, 8 s). Window focus re-reads status once and keeps watching. While watching, a `none` read does not replace `opened`. |
+| Start error | Any start failure (blocked popup, token trade, start POST, timeout, non-Stripe URL) sets `data-onboarding-stripe-error="start"` on every Stripe root and logs a `console.warn`. A later successful start, or a status read other than `none`, removes it. No visible copy yet: this attribute is the hook for future error copy. |
 | Submit | A form with a Stripe root does not submit until `StarterOnboardingStripeView.canContinue(root)` (Stripe started + confirmation ticked). Sets `data-onboarding-stripe-required="true"` on the root. |
 | Done | `patch-onboarding-status.js` and `onboarding-done-redirect.js` also run on `/starter-onboarding-v2` |
 

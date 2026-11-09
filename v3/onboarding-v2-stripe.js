@@ -12,8 +12,10 @@
  *      click (popup blockers), POST stripe_connect/start/v3, send the tab to
  *      connect.stripe.com. The server allows only /starter-dashboard as
  *      return_url, so the Stripe tab ends on the dashboard; this tab learns the
- *      result from the callback page's BroadcastChannel message, tab focus, or
- *      the tab closing, then re-reads status a few times.
+ *      result from the callback page's BroadcastChannel message or the tab
+ *      closing, then re-reads status a few times. Tab focus re-reads once and
+ *      keeps watching; while watching, a 'none' read keeps the card 'opened'.
+ *      A failed start sets data-onboarding-stripe-error="start" on every root.
  *   3. Submit gate: a form that holds a Stripe root does not submit until
  *      StarterOnboardingStripeView.canContinue(root) is true (Stripe started
  *      and the confirmation checkbox ticked). Webflow's own required checks
@@ -66,6 +68,7 @@
     let tokenPromise = null
     let busy = false
     let lastState = null
+    let stopWatch = null
 
     function withTimeout(promise) {
       return new Promise(function (resolve, reject) {
@@ -114,13 +117,16 @@
 
     function render(state) {
       if (!state) return
+      if (stopWatch && state === 'none') return
       lastState = state
       roots().forEach(function (root) { view.render(root, state) })
     }
 
     async function refresh() {
       try {
-        render(viewState(await post(STATUS_PATH, {})))
+        const state = viewState(await post(STATUS_PATH, {}))
+        if (state && state !== 'none') setStartError(false)
+        render(state)
       } catch (error) {
         log('status read failed', error && error.message)
       }
@@ -141,18 +147,24 @@
     }
 
     function watchReturn(stripeTab) {
-      let done = false
+      if (stopWatch) stopWatch()
       let channel = null
       let closedTimer = null
-      const finish = function () {
-        if (done) return
-        done = true
-        win.removeEventListener('focus', finish)
+      const onFocus = function () { refresh() }
+      const stop = function () {
+        if (stopWatch !== stop) return
+        stopWatch = null
+        win.removeEventListener('focus', onFocus)
         if (closedTimer !== null) win.clearInterval(closedTimer)
         if (channel) { channel.onmessage = null; channel.close() }
+      }
+      const finish = function () {
+        if (stopWatch !== stop) return
+        stop()
         settleAfterReturn()
       }
-      win.addEventListener('focus', finish)
+      stopWatch = stop
+      win.addEventListener('focus', onFocus)
       closedTimer = win.setInterval(function () { if (stripeTab.closed) finish() }, 1000)
       if (typeof win.BroadcastChannel === 'function') {
         try {
@@ -184,7 +196,7 @@
       if (busy) return false
       const stripeTab = reserveTab()
       if (!stripeTab) {
-        log('browser blocked the Stripe tab')
+        startFailed('browser blocked the Stripe tab')
         return false
       }
       busy = true
@@ -197,17 +209,19 @@
         })
         if (result.mode === 'connected' || result.mode === 'reconciliation_required') {
           stripeTab.close()
+          setStartError(false)
           await refresh()
           return true
         }
         if (!isStripeUrl(result.url)) throw new Error('start returned a non-Stripe URL')
         stripeTab.location.replace(result.url)
+        setStartError(false)
         render('opened')
         watchReturn(stripeTab)
         return true
       } catch (error) {
         stripeTab.close()
-        log('start failed', error && error.message)
+        startFailed('start failed', error && error.message)
         return false
       } finally {
         busy = false
@@ -224,6 +238,18 @@
       root.setAttribute('data-onboarding-stripe-required', 'true')
       const button = root.querySelector(START)
       if (button && typeof button.scrollIntoView === 'function') button.scrollIntoView({ block: 'center' })
+    }
+
+    function setStartError(on) {
+      roots().forEach(function (root) {
+        if (on) root.setAttribute('data-onboarding-stripe-error', 'start')
+        else root.removeAttribute('data-onboarding-stripe-error')
+      })
+    }
+
+    function startFailed() {
+      setStartError(true)
+      if (win.console) win.console.warn.apply(win.console, ['[onboarding-v2-stripe]'].concat(Array.prototype.slice.call(arguments)))
     }
 
     function log() {

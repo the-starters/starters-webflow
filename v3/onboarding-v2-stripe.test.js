@@ -27,18 +27,28 @@ function makeEnv({ statuses = [{ connected: false, charges_enabled: false }], st
   const root = {
     attrs: {},
     setAttribute(k, v) { this.attrs[k] = v },
+    removeAttribute(k) { delete this.attrs[k] },
     querySelector: (sel) => (sel === '[data-onboarding-stripe-action="start"]' ? startButtons[0] : null),
   }
   const tab = { closed: false, opener: {}, url: null, location: { replace(url) { tab.url = url } }, close() { tab.closed = true } }
   let statusIndex = 0
+  const intervals = []
+  const channels = []
+  const warnings = []
+  class FakeChannel {
+    constructor(name) { this.name = name; this.closed = false; this.onmessage = null; channels.push(this) }
+    close() { this.closed = true }
+  }
   const win = {
     location: { origin, pathname: path, hostname: new URL(origin).hostname },
     $memberstackDom: { getMemberCookie: () => Promise.resolve('ms-token') },
     crypto: { randomUUID: () => 'uuid-1' },
     setTimeout: (fn, ms) => (ms === 15000 ? 0 : setImmediate(fn)),
     clearTimeout() {},
-    setInterval: () => 1,
-    clearInterval() {},
+    setInterval: (fn) => { intervals.push({ fn, cleared: false }); return intervals.length - 1 },
+    clearInterval(id) { if (intervals[id]) intervals[id].cleared = true },
+    BroadcastChannel: FakeChannel,
+    console: { log() {}, warn: (...args) => warnings.push(args) },
     addEventListener(type, fn) { (listeners[type] = listeners[type] || []).push(fn) },
     removeEventListener(type, fn) { listeners[type] = (listeners[type] || []).filter((f) => f !== fn) },
     open: () => (popup ? tab : null),
@@ -65,7 +75,8 @@ function makeEnv({ statuses = [{ connected: false, charges_enabled: false }], st
     canContinue: () => canContinue,
   }
   return {
-    win, view, calls, rendered, listeners, docListeners, root, tab, startButtons,
+    win, view, calls, rendered, listeners, docListeners, root, tab, startButtons, intervals, channels, warnings,
+    statusReads: () => statusIndex,
     setCanContinue(value) { canContinue = value },
   }
 }
@@ -188,4 +199,101 @@ test('unreadable status leaves the card as authored', async () => {
   const env = makeEnv({ statuses: [{ unexpected: true }] })
   await createController(env.win, env.view).mount()
   assert.deepEqual(env.rendered, [])
+})
+
+const NONE = { connected: false, charges_enabled: false }
+const OPENED = { connected: true, charges_enabled: false, requires_onboarding: true }
+const READY = { connected: true, charges_enabled: true, requires_onboarding: false }
+const ONBOARDING = { mode: 'onboarding', url: 'https://connect.stripe.com/setup/e/acct_1/x' }
+
+async function startedEnv(statuses) {
+  const env = makeEnv({ statuses, startResult: ONBOARDING })
+  const controller = createController(env.win, env.view)
+  await controller.mount()
+  await controller.start({ preventDefault() {} })
+  return { env, controller }
+}
+
+test('return watch: focus re-reads once, keeps watching, and a none read keeps opened', async () => {
+  const { env } = await startedEnv([NONE, NONE, NONE, READY])
+  const before = env.statusReads()
+  env.listeners.focus.forEach((fn) => fn())
+  await settle()
+  assert.equal(env.statusReads(), before + 1)
+  assert.deepEqual(env.rendered, ['none', 'opened'])
+  assert.equal(env.listeners.focus.length, 1)
+  assert.equal(env.channels[0].closed, false)
+  assert.equal(env.intervals[0].cleared, false)
+
+  env.channels[0].onmessage({ data: { type: 'connected' } })
+  await settle()
+  assert.equal(env.rendered.at(-1), 'ready')
+  assert.equal(env.channels[0].closed, true)
+  assert.equal(env.intervals[0].cleared, true)
+  assert.equal(env.listeners.focus.length, 0)
+})
+
+test('return watch: non-connected channel messages do not end the watch', async () => {
+  const { env } = await startedEnv([NONE])
+  env.channels[0].onmessage({ data: { type: 'other' } })
+  await settle()
+  assert.equal(env.channels[0].closed, false)
+  assert.equal(env.intervals[0].cleared, false)
+})
+
+test('return watch: tab close ends the watch, then a none read is shown', async () => {
+  const { env } = await startedEnv([NONE])
+  env.intervals[0].fn()
+  assert.equal(env.intervals[0].cleared, false)
+  env.tab.closed = true
+  env.intervals[0].fn()
+  await settle()
+  assert.equal(env.intervals[0].cleared, true)
+  assert.equal(env.channels[0].closed, true)
+  assert.equal(env.rendered.at(-1), 'none')
+})
+
+test('return watch: a second start replaces the first watch', async () => {
+  const { env, controller } = await startedEnv([NONE])
+  await controller.start({ preventDefault() {} })
+  assert.equal(env.channels.length, 2)
+  assert.equal(env.channels[0].closed, true)
+  assert.equal(env.channels[1].closed, false)
+  assert.equal(env.listeners.focus.length, 1)
+})
+
+test('start error: failures mark every root and always warn', async () => {
+  const blocked = makeEnv({ popup: false, origin: 'https://www.thestarters.com' })
+  assert.equal(await createController(blocked.win, blocked.view).start({ preventDefault() {} }), false)
+  assert.equal(blocked.root.attrs['data-onboarding-stripe-error'], 'start')
+  assert.equal(blocked.warnings.length, 1)
+
+  const server = makeEnv({ startStatus: 500, startResult: { message: 'x' } })
+  await createController(server.win, server.view).start({ preventDefault() {} })
+  assert.equal(server.root.attrs['data-onboarding-stripe-error'], 'start')
+  assert.equal(server.warnings.length, 1)
+
+  const bad = makeEnv({ startResult: { mode: 'onboarding', url: 'https://evil.example/x' } })
+  await createController(bad.win, bad.view).start({ preventDefault() {} })
+  assert.equal(bad.root.attrs['data-onboarding-stripe-error'], 'start')
+})
+
+test('start error: cleared by a successful start', async () => {
+  const env = makeEnv({ statuses: [NONE], startResult: ONBOARDING })
+  const controller = createController(env.win, env.view)
+  env.root.attrs['data-onboarding-stripe-error'] = 'start'
+  await controller.start({ preventDefault() {} })
+  assert.equal('data-onboarding-stripe-error' in env.root.attrs, false)
+})
+
+test('start error: cleared by a status read other than none, kept by none', async () => {
+  const none = makeEnv({ statuses: [NONE] })
+  none.root.attrs['data-onboarding-stripe-error'] = 'start'
+  await createController(none.win, none.view).refresh()
+  assert.equal(none.root.attrs['data-onboarding-stripe-error'], 'start')
+
+  const opened = makeEnv({ statuses: [OPENED] })
+  opened.root.attrs['data-onboarding-stripe-error'] = 'start'
+  await createController(opened.win, opened.view).refresh()
+  assert.equal('data-onboarding-stripe-error' in opened.root.attrs, false)
 })
