@@ -5,6 +5,9 @@ const { bootAllowed, to24h, toItems, createController } = require('./onboarding-
 const XANO = 'https://x08a-5ko8-jj1r.n7c.xano.io'
 const ENSURE = XANO + '/api:tCpV3oqd/onboarding/calendar/ensure-default/v3'
 const STARTER = XANO + '/api:tCpV3oqd/starter/get_by_memberstack/v3'
+const OAUTH = XANO + '/api:tCpV3oqd/grants/oauth/v3'
+const GOOGLE_URL = 'https://api.us.nylas.com/v3/connect/auth?client_id=c&state=mem_onb03'
+const shared = require('./calendar-google-connect.js')
 
 function flush() { return new Promise((resolve) => setImmediate(resolve)) }
 async function settle() { for (let i = 0; i < 20; i++) await flush() }
@@ -65,7 +68,7 @@ function makePage({ hours, starter = { availability: { manager: 'platform', item
   // the form flow's own bubbling listener stands in for lumos
   group.addEventListener('click', (e) => flowClicks.push(e.target === nextBtn ? 'next' : 'back'))
   const tab = { closed: false, opener: {}, url: null, requestAtNavigation: null,
-    location: { replace(u) { tab.url = u; tab.requestAtNavigation = storage.get('starters-onboarding-google-request') || null } },
+    location: { replace(u) { tab.url = u; tab.requestAtNavigation = storage.get('starters-google-connect-intent') || null } },
     close() { tab.closed = true } }
   const editor = {
     validate: () => (hours === null ? 'Pick at least one day.' : ''),
@@ -96,6 +99,7 @@ function makePage({ hours, starter = { availability: { manager: 'platform', item
       if (url.startsWith(XANO + '/api:g1vmSLWh/auth/trade-token/v3')) return Promise.resolve(response(200, { authToken: 't' }))
       if (url === ENSURE) return Promise.resolve(response(ensureStatus, { steps_done: ['update_availability'] }))
       if (url === STARTER) return Promise.resolve(response(200, starter))
+      if (url === OAUTH) return Promise.resolve(response(200, { response: { result: { data: { url: GOOGLE_URL } } } }))
       return Promise.reject(new Error('unexpected ' + url))
     },
     document: {
@@ -103,6 +107,7 @@ function makePage({ hours, starter = { availability: { manager: 'platform', item
       querySelectorAll: (sel) => (sel === '[data-calls-step="root"][data-calls-step-context="onboarding"]' ? [root] : []),
     },
     StarterProfileCallsStep: { editorFor: () => editor },
+    StartersCalendarGoogleConnect: { ...shared, pendingCallback: null },
   }
   return { win, calls, flowClicks, statuses, error, connect, nextBtn, backBtn, tab, listeners, storage, intervals, channels }
 }
@@ -187,7 +192,7 @@ test('Back is never intercepted', async () => {
   assert.equal(page.calls.some((c) => c.url === ENSURE), false)
 })
 
-test('Connect Google saves first, then sends the reserved tab to the dashboard Google link', async () => {
+test('Connect Google saves first, then sends the reserved pop-up to Google with this page as the return', async () => {
   const page = makePage()
   createController(page.win).mount()
   await settle()
@@ -195,7 +200,10 @@ test('Connect Google saves first, then sends the reserved tab to the dashboard G
   await settle()
   assert.ok(page.calls.some((c) => c.url === ENSURE))
   assert.equal(page.tab.opener, null)
-  assert.equal(page.tab.url, 'https://www.thestarters.com/starter-dashboard?onboarding_calendar=connect-google')
+  assert.equal(page.tab.url, GOOGLE_URL)
+  const oauth = page.calls.find((c) => c.url === OAUTH)
+  assert.deepEqual(oauth.body, { in_provider: 'google', in_redirect_uri: 'https://www.thestarters.com/starter-onboarding-v2' })
+  assert.ok(page.calls.findIndex((c) => c.url === ENSURE) < page.calls.findIndex((c) => c.url === OAUTH))
   assert.ok(page.statuses.some((s) => s.calendar === 'connecting'))
 })
 
@@ -220,7 +228,7 @@ test('status shows Google connected only when the manager is calendar', async ()
   assert.deepEqual(platform.statuses.at(-1), { calendar: 'disconnected', email: '' })
 })
 
-test('Connect Google writes a one-time request for this member before the tab reaches the dashboard', async () => {
+test('Connect Google stores a one-time intent for this member and page before the pop-up reaches Google', async () => {
   const page = makePage()
   const before = Date.now()
   createController(page.win).mount()
@@ -229,6 +237,7 @@ test('Connect Google writes a one-time request for this member before the tab re
   await settle()
   const request = JSON.parse(page.tab.requestAtNavigation)
   assert.equal(request.memberId, 'mem_onb03')
+  assert.equal(request.redirectUri, 'https://www.thestarters.com/starter-onboarding-v2')
   assert.ok(request.createdAt >= before && request.createdAt <= Date.now())
 })
 
@@ -265,4 +274,31 @@ test('the return signal is ignored unless it names this Starter', async () => {
   await settle()
   assert.equal(reads(), before + 1)
   assert.equal(channel.closed, true)
+})
+
+test('a failed-connection signal for this Starter shows the Google error and stops watching', async () => {
+  const page = makePage()
+  createController(page.win).mount()
+  await settle()
+  page.connect.click()
+  await settle()
+  const channel = page.channels.find((c) => c.name === 'starters-calendar-connect-return')
+  channel.onmessage({ data: { type: 'calendar-connect-failed', memberId: 'mem_onb03' } })
+  await settle()
+  assert.equal(page.error.textContent, 'We couldn’t connect your Google Calendar. Please try again.')
+  assert.equal(channel.closed, true)
+})
+
+test('on the pop-up return the page finishes the connection and does not wire the step', async () => {
+  const page = makePage()
+  let completed = 0
+  page.win.StartersCalendarGoogleConnect = {
+    pendingCallback: { code: 'c', state: 'mem_onb03', hasError: false },
+    createGoogleConnect: () => ({ returnPending: () => true, completeReturn: () => { completed++ }, start() {} }),
+  }
+  assert.equal(createController(page.win).mount(), 0)
+  assert.equal(completed, 1)
+  page.connect.click()
+  await settle()
+  assert.equal(page.calls.some((c) => c.url === ENSURE), false)
 })
