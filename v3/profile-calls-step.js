@@ -3,9 +3,20 @@
 
   const selector = (kind, value) => '[data-calls-step-' + kind + '="' + value + '"]'
   const rootSelector = '[data-calls-step="root"]'
-  const stagingOrigin = 'https://the-starters-3-0.webflow.io'
   const standalonePath = '/build-profile-form-test'
   const routes = new Set(['/build-profile/full-profile-test', '/build-profile/consult-test', '/starter-edit-profile-test', standalonePath])
+
+  // Staff-only on production until launch (JP 2026-11-09): a production host
+  // boots only when the page also loads the fail-closed staff preview guard
+  // (docs/wiring/STAFF-PREVIEW-GUARD-WIRING.md). Staging keeps its exact routes.
+  function bootAllowed(global, paths) {
+    const location = global.location
+    if (!paths.has(location.pathname.replace(/\/$/, ''))) return false
+    if (location.origin === 'https://the-starters-3-0.webflow.io') return true
+    if (location.origin !== 'https://www.thestarters.com' && location.origin !== 'https://thestarters.com') return false
+    const query = global.document && global.document.querySelector
+    return Boolean(query && global.document.querySelector('script[src*="/v3/staff-preview-guard.js"]'))
+  }
 
   function minutes(value) {
     const match = /^(\d{1,2}):(\d{2}) (AM|PM)$/.exec(value)
@@ -310,7 +321,7 @@
     module.exports = { validateHours, mount }
     return
   }
-  if (global.location.origin !== stagingOrigin || !routes.has(global.location.pathname.replace(/\/$/, '')) || global.StarterProfileCallsStep) return
+  if (!bootAllowed(global, routes) || global.StarterProfileCallsStep) return
 
   const editors = new WeakMap()
   global.StarterProfileCallsStep = {

@@ -24,6 +24,21 @@
     },
   }
 
+  // /starter-onboarding-test was renamed /starter-onboarding-v2 on 2026-11-09.
+  const routes = new Set(['/starter-onboarding-test', '/starter-onboarding-v2'])
+
+  // Staff-only on production until launch (JP 2026-11-09): a production host
+  // boots only when the page also loads the fail-closed staff preview guard
+  // (docs/wiring/STAFF-PREVIEW-GUARD-WIRING.md). Staging keeps its exact routes.
+  function bootAllowed(global, paths) {
+    const location = global.location
+    if (!paths.has(location.pathname.replace(/\/$/, ''))) return false
+    if (location.origin === 'https://the-starters-3-0.webflow.io') return true
+    if (location.origin !== 'https://www.thestarters.com' && location.origin !== 'https://thestarters.com') return false
+    const query = global.document && global.document.querySelector
+    return Boolean(query && global.document.querySelector('script[src*="/v3/staff-preview-guard.js"]'))
+  }
+
   function render(root, state) {
     if (state !== 'none' && !Object.hasOwn(states, state)) return false
     const card = root.querySelector('[data-onboarding-stripe-element="card"]')
@@ -55,11 +70,7 @@
 
   const api = { render, canContinue }
   if (typeof module !== 'undefined' && module.exports) module.exports = api
-  else if (
-    global.location.origin === 'https://the-starters-3-0.webflow.io' &&
-    global.location.pathname.replace(/\/$/, '') === '/starter-onboarding-test' &&
-    !global.StarterOnboardingStripeView
-  ) {
+  else if (bootAllowed(global, routes) && !global.StarterOnboardingStripeView) {
     global.StarterOnboardingStripeView = api
   }
 })(typeof window === 'undefined' ? globalThis : window)
