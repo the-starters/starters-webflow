@@ -1,6 +1,6 @@
 # Calls step wiring
 
-The browser script activates on the exact staging origin `https://the-starters-3-0.webflow.io` and the paths listed below. On `thestarters.com` and `www.thestarters.com` it activates on the same paths only when the page also loads `v3/staff-preview-guard.js` (staff-only until launch, JP 2026-11-09).
+The browser script activates on the exact staging origin `https://the-starters-3-0.webflow.io` and the paths listed below. On `thestarters.com` and `www.thestarters.com` it activates on the same paths only when the page also loads `v3/staff-preview-guard.js` (staff-only until launch).
 
 Build mounts on `/build-profile/full-profile-test` and `/build-profile/consult-test` when the form has a `[data-calls-step="root"]` inside `[data-form="step"][data-index="6"]`. Edit mounts on `/starter-edit-profile-test` with `data-calls-step-context="edit"` on that root. The Edit pane carries no form index. Build owns its Continue preflight on the existing `[data-form="next-btn"]`. Edit saves calls independently of Services.
 
