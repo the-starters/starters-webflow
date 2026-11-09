@@ -46,6 +46,10 @@
   // then hears back on this channel when the OAuth return completes.
   const ONBOARDING_CALENDAR_PARAM = 'onboarding_calendar'
   const CALENDAR_RETURN_CHANNEL = 'starters-calendar-connect-return'
+  // Written by the onboarding tab in the Connect Google click; the link only
+  // starts OAuth for that member within a few minutes, and only once.
+  const ONBOARDING_GOOGLE_REQUEST_KEY = 'starters-onboarding-google-request'
+  const ONBOARDING_GOOGLE_REQUEST_MAX_AGE = 5 * 60 * 1000
 
   const EL = 'data-availability-element'
   const ACTION = 'data-availability-action'
@@ -740,7 +744,7 @@
       // `general` is retained canonically when overrides cover every base day
       // so an override removal can restore its original schedule. Nylas open
       // hours cannot contain an empty window, so omit only that special item.
-      if (id === 'general' && avail.days.length === 0) continue
+      if ((id === 'general' || isSameDayWindow(avail)) && avail.days.length === 0) continue
       availabilityArray.push({
         days: avail.days,
         start: avail.start,
@@ -764,6 +768,17 @@
     return true
   }
 
+  function isSameDayWindow(item) {
+    return Boolean(item) && item.kind === SAME_DAY_WINDOW_KIND
+  }
+
+  // A same-day window whose days are all claimed by overrides stays in memory
+  // (so removing the override brings it back) but is never sent: #1463
+  // rejects an empty non-general window.
+  function isHiddenWindow(item) {
+    return isSameDayWindow(item) && item.days.length === 0
+  }
+
   // Days already claimed by OTHER override items (never `general`, never
   // `excludeId`) — used to block a day from being double-assigned to two
   // custom windows at once.
@@ -777,7 +792,7 @@
       // one day) adds hours to the days it lists; it is not a day override,
       // so it never takes days away from the general window. #1463 already
       // accepts several separated windows on one weekday.
-      if (avails[key] && avails[key].kind === SAME_DAY_WINDOW_KIND) continue
+      if (isSameDayWindow(avails[key])) continue
       avails[key].days.forEach(function (day) {
         if (claimed.indexOf(day) === -1) claimed.push(day)
       })
@@ -785,14 +800,29 @@
     return claimed
   }
 
-  function reconcileGeneralDays() {
-    const general = availability.items.general
-    if (!general) return
-    const baseDays = Array.isArray(general.defaultDays) ? general.defaultDays : general.days
+  // An override replaces the whole day: it takes its days from `general` and
+  // from every same-day window, which get them back once it is removed.
+  function reconcileBaseDays() {
     const claimed = computeOverrides()
-    general.days = baseDays.filter(function (day) {
-      return claimed.indexOf(day) === -1
-    })
+    const avails = availability.items
+    for (const key in avails) {
+      if (!Object.prototype.hasOwnProperty.call(avails, key)) continue
+      const item = avails[key]
+      if (key !== 'general' && !isSameDayWindow(item)) continue
+      const baseDays = Array.isArray(item.defaultDays) ? item.defaultDays : item.days
+      item.days = baseDays.filter(function (day) {
+        return claimed.indexOf(day) === -1
+      })
+    }
+  }
+
+  function savedAvailability() {
+    const items = {}
+    for (const key in availability.items) {
+      if (!Object.prototype.hasOwnProperty.call(availability.items, key)) continue
+      if (!isHiddenWindow(availability.items[key])) items[key] = availability.items[key]
+    }
+    return Object.assign({}, availability, { items: items })
   }
 
   function writeAvailabilityCache() {
@@ -811,7 +841,7 @@
     const memberId = await writeMemberId()
     const updated = await xanoPost('/starter/update_availability/v3', {
       member_id: memberId,
-      availability: availability,
+      availability: savedAvailability(),
       in_timezone: timezone || '',
     })
     if (!updated) throw new Error('starter/update_availability/v3 returned no record')
@@ -834,6 +864,24 @@
     }
   }
 
+  function consumeOnboardingGoogleRequest() {
+    let request = null
+    try {
+      const raw = window.localStorage.getItem(ONBOARDING_GOOGLE_REQUEST_KEY)
+      window.localStorage.removeItem(ONBOARDING_GOOGLE_REQUEST_KEY)
+      request = JSON.parse(raw || 'null')
+    } catch (_error) {
+      return false
+    }
+    const age = request ? Date.now() - Number(request.createdAt) : NaN
+    return (
+      Boolean(request && sessionMemberId) &&
+      request.memberId === sessionMemberId &&
+      age >= 0 &&
+      age <= ONBOARDING_GOOGLE_REQUEST_MAX_AGE
+    )
+  }
+
   // Runs once after the section is ready. Removes the parameter first, so a
   // reload or the OAuth return can never start a second Google flow.
   function startOnboardingGoogleConnect() {
@@ -851,6 +899,7 @@
     } catch (_error) {
       /* history unavailable: the flag is still consumed for this load */
     }
+    if (!consumeOnboardingGoogleRequest()) return false
     if (!googleConnectAvailable()) return false
     switchNotification('oauth-redirect')
     activateGoogleManager().then(function (ok) {
@@ -923,6 +972,12 @@
       grantEmail = (starter && starter.nylas_grant_email) || null
       grantCalendarId = (starter && starter.nylas_calendar_id) || null
       configs = nextConfigs
+      if (availability) {
+        for (const key in availability.items) {
+          const item = availability.items[key]
+          if (isHiddenWindow(item) && !canonicalAvailability.items[key]) canonicalAvailability.items[key] = item
+        }
+      }
       availability = canonicalAvailability
       window.STARTER_AVAILABILITY = canonicalAvailability
       writeAvailabilityCache()
@@ -2098,6 +2153,7 @@
     for (const id in avails) {
       if (!Object.prototype.hasOwnProperty.call(avails, id)) continue
       const avail = avails[id]
+      if (isHiddenWindow(avail)) continue
 
       const card = template.cloneNode(true)
       card.removeAttribute('hidden')
@@ -2295,18 +2351,18 @@
     const availId = form.dataset.availabilityId || id || 'general'
     const avail = { days: selectedDays, start: startTime, end: endTime }
     const existingItem = availability.items[availId]
-    if (existingItem && existingItem.kind === SAME_DAY_WINDOW_KIND) avail.kind = SAME_DAY_WINDOW_KIND
+    if (isSameDayWindow(existingItem)) avail.kind = SAME_DAY_WINDOW_KIND
     const previousAvailability = JSON.parse(JSON.stringify(availability))
     let canonicalSaved = false
 
     setRequestBusy(true)
     try {
-      if (availId === 'general') {
+      if (availId === 'general' || isSameDayWindow(avail)) {
         avail.defaultDays = avail.days
       }
 
       availability.items[availId] = avail
-      if (availId !== 'general') reconcileGeneralDays()
+      if (availId !== 'general') reconcileBaseDays()
       await updateAvail()
       canonicalSaved = true
 
@@ -2350,7 +2406,7 @@
     const previousAvailability = JSON.parse(JSON.stringify(availability))
     let canonicalSaved = false
     delete availability.items[id]
-    reconcileGeneralDays()
+    reconcileBaseDays()
 
     setRequestBusy(true)
     try {

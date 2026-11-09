@@ -11,16 +11,20 @@
  *             through to the form flow.
  *   Google    "Connect Google" saves first (the dashboard only switches an
  *             existing platform calendar to Google), then sends a tab reserved
- *             in the click to /starter-dashboard?onboarding_calendar=connect-google.
- *             The dashboard runs its own OAuth flow and posts on the
- *             BroadcastChannel below; this tab re-reads the calendar.
+ *             in the click to /starter-dashboard?onboarding_calendar=connect-google,
+ *             after writing a one-time request for this member (the dashboard
+ *             ignores the link without it). The dashboard runs its own OAuth
+ *             flow and posts on the BroadcastChannel below; this tab re-reads
+ *             the calendar (also on focus and when the tab closes, one watcher
+ *             per step).
  *
  * Hours format (Jai 2026-11-09: several windows in one day):
  *   window 1        -> items.general {days, start, end, defaultDays}
- *   window 2..n     -> items['window-<n>'] {days, start, end, kind: 'window'}
+ *   window 2..n     -> items['window-<n>'] {days, start, end, defaultDays, kind: 'window'}
  *   additional days -> items['override-onboarding'] {days, start, end}
  * #1463 accepts separated windows on one weekday; the dashboard treats
- * kind 'window' items as added hours, not day overrides.
+ * kind 'window' items as added hours, not day overrides; a later dashboard day
+ * override takes its days from them like from general.
  *
  * Boot: staging origin, or thestarters.com / www.thestarters.com only when the
  * page also loads v3/staff-preview-guard.js. Load profile-calls-step.js first.
@@ -34,6 +38,7 @@
   const ENSURE_PATH = '/onboarding/calendar/ensure-default/v3'
   const STARTER_PATH = '/starter/get_by_memberstack/v3'
   const RETURN_CHANNEL = 'starters-calendar-connect-return'
+  const GOOGLE_REQUEST_KEY = 'starters-onboarding-google-request'
   const ROUTES = new Set(['/starter-onboarding-v2', '/starter-onboarding-v2-wip'])
   const ROOT = '[data-calls-step="root"][data-calls-step-context="onboarding"]'
   const CONNECT = '[data-calls-step-action="connect-google"]'
@@ -60,9 +65,8 @@
     const days = hours.days.slice().sort(function (a, b) { return a - b })
     const items = {}
     hours.windows.forEach(function (window, index) {
-      const item = { days: days.slice(), start: to24h(window.start), end: to24h(window.end) }
+      const item = { days: days.slice(), start: to24h(window.start), end: to24h(window.end), defaultDays: days.slice() }
       if (index === 0) {
-        item.defaultDays = days.slice()
         items.general = item
       } else {
         item.kind = 'window'
@@ -166,6 +170,7 @@
       if (!stepEl) return false
       let passThrough = false
       let busy = false
+      let stopWatching = null
 
       stepEl.addEventListener('click', async function (event) {
         if (passThrough) return
@@ -196,6 +201,7 @@
           if (busy) return
           const problem = editor.validate()
           if (problem) return showError(root, problem)
+          if (stopWatching) { stopWatching(); stopWatching = null }
           const tab = typeof win.open === 'function' ? win.open('about:blank', '_blank') : null
           if (!tab) return showError(root, 'Allow pop-ups for this site, then try again.')
           try { tab.opener = null } catch (_error) { /* ignore */ }
@@ -204,8 +210,10 @@
           try {
             await save(editor)
             editor.setStatus({ hoursSaved: true })
+            const id = await memberId()
+            win.localStorage.setItem(GOOGLE_REQUEST_KEY, JSON.stringify({ memberId: id, createdAt: Date.now() }))
             tab.location.replace(win.location.origin + '/starter-dashboard?onboarding_calendar=connect-google')
-            watchReturn(tab, root, editor)
+            stopWatching = watchReturn(tab, id, editor)
           } catch (error) {
             tab.close()
             editor.setStatus({ calendar: 'disconnected' })
@@ -219,7 +227,7 @@
       return true
     }
 
-    function watchReturn(tab, root, editor) {
+    function watchReturn(tab, id, editor) {
       let channel = null
       let timer = null
       const stop = function () {
@@ -244,12 +252,14 @@
         try {
           channel = new win.BroadcastChannel(RETURN_CHANNEL)
           channel.onmessage = function (event) {
-            if (event && event.data && event.data.type === 'calendar-connected') finish()
+            const data = event && event.data
+            if (data && data.type === 'calendar-connected' && data.memberId === id) finish()
           }
         } catch (_error) {
           channel = null
         }
       }
+      return stop
     }
 
     function warn() {

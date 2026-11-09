@@ -49,6 +49,10 @@ function makePage({ hours, starter = { availability: { manager: 'platform', item
   const flowClicks = []
   const statuses = []
   const listeners = {}
+  const storage = new Map()
+  const intervals = new Set()
+  const channels = []
+  let nextInterval = 1
   const error = new Node({ 'data-calls-step-element': 'error' })
   const connect = new Node({ 'data-calls-step-action': 'connect-google', tag: 'button' })
   const root = new Node({ 'data-calls-step': 'root', 'data-calls-step-context': 'onboarding' }, [error, connect])
@@ -60,7 +64,9 @@ function makePage({ hours, starter = { availability: { manager: 'platform', item
   const step = new Node({ 'data-form-flow-element': 'step-5' }, [root, group])
   // the form flow's own bubbling listener stands in for lumos
   group.addEventListener('click', (e) => flowClicks.push(e.target === nextBtn ? 'next' : 'back'))
-  const tab = { closed: false, opener: {}, url: null, location: { replace(u) { tab.url = u } }, close() { tab.closed = true } }
+  const tab = { closed: false, opener: {}, url: null, requestAtNavigation: null,
+    location: { replace(u) { tab.url = u; tab.requestAtNavigation = storage.get('starters-onboarding-google-request') || null } },
+    close() { tab.closed = true } }
   const editor = {
     validate: () => (hours === null ? 'Pick at least one day.' : ''),
     read: () => hours || { timezone: 'Asia/Manila', days: [1, 2], windows: [{ start: '9:00 AM', end: '12:00 PM' }], extra: null },
@@ -73,7 +79,14 @@ function makePage({ hours, starter = { availability: { manager: 'platform', item
       getCurrentMember: () => Promise.resolve({ data: { id: 'mem_onb03' } }),
     },
     setTimeout: (fn, ms) => (ms === 20000 ? 0 : setImmediate(fn)),
-    clearTimeout() {}, setInterval: () => 1, clearInterval() {},
+    clearTimeout() {},
+    setInterval() { const id = nextInterval++; intervals.add(id); return id },
+    clearInterval(id) { intervals.delete(id) },
+    localStorage: { getItem: (k) => (storage.has(k) ? storage.get(k) : null), setItem: (k, v) => storage.set(k, String(v)), removeItem: (k) => storage.delete(k) },
+    BroadcastChannel: class {
+      constructor(name) { this.name = name; this.onmessage = null; this.closed = false; channels.push(this) }
+      close() { this.closed = true }
+    },
     addEventListener(t, f) { (listeners[t] = listeners[t] || []).push(f) },
     removeEventListener(t, f) { listeners[t] = (listeners[t] || []).filter((x) => x !== f) },
     open: () => (popup ? tab : null),
@@ -91,7 +104,7 @@ function makePage({ hours, starter = { availability: { manager: 'platform', item
     },
     StarterProfileCallsStep: { editorFor: () => editor },
   }
-  return { win, calls, flowClicks, statuses, error, connect, nextBtn, backBtn, tab, listeners }
+  return { win, calls, flowClicks, statuses, error, connect, nextBtn, backBtn, tab, listeners, storage, intervals, channels }
 }
 
 test('boot: onboarding v2 routes; production needs the staff guard script', () => {
@@ -120,8 +133,8 @@ test('several windows in one day: window 1 is general, the rest are same-day win
   })
   assert.deepEqual(items, {
     general: { days: [1, 2, 3], start: '09:00', end: '12:00', defaultDays: [1, 2, 3] },
-    'window-2': { days: [1, 2, 3], start: '13:00', end: '17:00', kind: 'window' },
-    'window-3': { days: [1, 2, 3], start: '18:00', end: '20:00', kind: 'window' },
+    'window-2': { days: [1, 2, 3], start: '13:00', end: '17:00', defaultDays: [1, 2, 3], kind: 'window' },
+    'window-3': { days: [1, 2, 3], start: '18:00', end: '20:00', defaultDays: [1, 2, 3], kind: 'window' },
     'override-onboarding': { days: [6], start: '10:00', end: '14:00' },
   })
 })
@@ -205,4 +218,51 @@ test('status shows Google connected only when the manager is calendar', async ()
   createController(platform.win).mount()
   await settle()
   assert.deepEqual(platform.statuses.at(-1), { calendar: 'disconnected', email: '' })
+})
+
+test('Connect Google writes a one-time request for this member before the tab reaches the dashboard', async () => {
+  const page = makePage()
+  const before = Date.now()
+  createController(page.win).mount()
+  await settle()
+  page.connect.click()
+  await settle()
+  const request = JSON.parse(page.tab.requestAtNavigation)
+  assert.equal(request.memberId, 'mem_onb03')
+  assert.ok(request.createdAt >= before && request.createdAt <= Date.now())
+})
+
+test('a second Connect Google click stops the previous watcher, so only one is active', async () => {
+  const page = makePage()
+  createController(page.win).mount()
+  await settle()
+  page.connect.click()
+  await settle()
+  page.connect.click()
+  await settle()
+  assert.equal((page.listeners.focus || []).length, 1)
+  assert.equal(page.intervals.size, 1)
+  const returnChannels = page.channels.filter((c) => c.name === 'starters-calendar-connect-return')
+  assert.equal(returnChannels.length, 2)
+  assert.equal(returnChannels[0].closed, true)
+  assert.equal(returnChannels[1].closed, false)
+})
+
+test('the return signal is ignored unless it names this Starter', async () => {
+  const page = makePage({ starter: { availability: { manager: 'calendar', items: {} }, nylas_grant_id: 'g-1', nylas_grant_email: 'me@gmail.example' } })
+  createController(page.win).mount()
+  await settle()
+  page.connect.click()
+  await settle()
+  const channel = page.channels.find((c) => c.name === 'starters-calendar-connect-return')
+  const reads = () => page.calls.filter((c) => c.url === STARTER).length
+  const before = reads()
+  channel.onmessage({ data: { type: 'calendar-connected', memberId: 'mem_other' } })
+  await settle()
+  assert.equal(reads(), before)
+  assert.equal(channel.closed, false)
+  channel.onmessage({ data: { type: 'calendar-connected', memberId: 'mem_onb03' } })
+  await settle()
+  assert.equal(reads(), before + 1)
+  assert.equal(channel.closed, true)
 })
