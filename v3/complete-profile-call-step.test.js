@@ -15,15 +15,18 @@ const READY = { booking: { row_id: '1', booking_id: 'booking-fixture' } }
 const flush = () => new Promise(resolve => setImmediate(resolve))
 
 class Element extends EventTarget {
-  constructor(tagName) {
+  constructor(tagName, ownerDocument) {
     super()
     this.tagName = tagName
+    this.ownerDocument = ownerDocument
     this.attributes = new Map()
     this.children = []
     this.style = {}
     this.hidden = false
     this.disabled = false
     this.classList = new Set()
+    const addClass = this.classList.add.bind(this.classList)
+    this.classList.add = (...names) => names.forEach(addClass)
     this.classList.remove = this.classList.delete.bind(this.classList)
     this.value = ''
     this.text = ''
@@ -38,6 +41,9 @@ class Element extends EventTarget {
   get textContent() {
     return this.text + this.children.map(child => child.textContent).join('')
   }
+
+  get className() { return [...this.classList].join(' ') }
+  set className(value) { this.classList.clear(); this.classList.add(...value.split(/\s+/)) }
 
   get isConnected() {
     return this.tagName === 'html' || Boolean(this.parentElement?.isConnected)
@@ -90,7 +96,7 @@ class Element extends EventTarget {
   before(node) { this.parentElement.insert(node, this) }
   after(node) { this.parentElement.insert(node, this.parentElement.children[this.parentElement.children.indexOf(this) + 1]) }
   click() { if (!this.disabled) this.dispatchEvent(new Event('click', { cancelable: true })) }
-  focus() { this.focused = true }
+  focus() { this.ownerDocument.activeElement = this }
 }
 
 function response(status, data) {
@@ -109,7 +115,7 @@ function fixture(options = {}) {
   const body = html.appendChild(new Element('body'))
   const document = {
     readyState: 'complete', head,
-    createElement: tag => new Element(tag),
+    createElement: tag => new Element(tag, document),
     getElementById: id => html.querySelector('[id="' + id + '"]'),
     querySelector: selector => html.querySelector(selector),
   }
@@ -133,7 +139,9 @@ function fixture(options = {}) {
   const calendar = authored('div', step, 'call-calendar')
   calendar.setAttribute('data-booking-confirm-class', 'book-primary')
   const footer = authored('div', step, 'call-footer')
-  const skip = authored('button', footer, 'call-continue')
+  const bookingActions = options.sharedFooter ? authored('div', footer, 'call-booking-actions') : footer
+  const successActions = options.sharedFooter ? authored('div', footer, 'call-success-actions') : null
+  const skip = authored('button', bookingActions, 'call-continue')
   const unavailable = authored('section', step, 'call-unavailable')
   unavailable.style.display = 'none'
   const success = authored('section', step, 'call-success')
@@ -143,7 +151,7 @@ function fixture(options = {}) {
   const contextWrap = el('div', success, { 'booking-element-wrap': '' })
   el('span', contextWrap, { 'booking-element': 'context' })
   const successText = el('p', success, { 'booking-success-text': '' })
-  const done = authored('button', success, 'call-done')
+  const done = authored('button', successActions || success, 'call-done')
 
   const hostname = options.hostname ?? 'the-starters-3-0.webflow.io'
   const pathname = options.pathname ?? '/complete-profile'
@@ -198,19 +206,39 @@ function fixture(options = {}) {
     }
   }
   const pickers = new WeakMap()
+  const monthNumber = date => date.getFullYear() * 12 + date.getMonth()
+  function drawPicker(node, picker) {
+    node.textContent = ''
+    for (const [direction, offset, edge] of [
+      ['prev', -1, picker.month > monthNumber(picker.options.minDate)],
+      ['next', 1, picker.month < monthNumber(picker.options.maxDate)],
+    ]) {
+      const arrow = el('a', node, edge ? { 'data-handler': direction } : {})
+      arrow.className = 'ui-datepicker-' + direction + (edge ? '' : ' ui-state-disabled')
+      if (edge) arrow.addEventListener('click', () => {
+        picker.month += offset
+        drawPicker(node, picker)
+      })
+    }
+    picker.options.onUpdateDatepicker?.()
+  }
   const $ = node => ({
     datepicker(command, key, value) {
       if (typeof command === 'object') {
-        pickers.set(node, { options: command, date: command.defaultDate })
+        const picker = { options: command, date: command.defaultDate, month: monthNumber(command.defaultDate) }
+        pickers.set(node, picker)
+        drawPicker(node, picker)
         return
       }
       const picker = pickers.get(node)
       if (command === 'destroy') { pickers.delete(node); return }
       if (command === 'getDate') return picker.date
+      if (command === 'isDisabled') return Boolean(picker.options.disabled)
       assert.equal(command, 'option')
-      if (typeof key === 'object') { Object.assign(picker.options, key); return }
-      if (value !== undefined) { picker.options[key] = value; return }
-      return picker.options[key]
+      if (typeof key === 'object') Object.assign(picker.options, key)
+      else if (value !== undefined) picker.options[key] = value
+      else return picker.options[key]
+      drawPicker(node, picker)
     },
   })
   $.fn = { datepicker: true }
@@ -288,6 +316,7 @@ function fixture(options = {}) {
     if (date < picker.options.minDate || date > picker.options.maxDate || !picker.options.beforeShowDay(date)[0]) return false
     picker.date = date
     picker.options.onSelect(value)
+    drawPicker(part('month'), picker)
     return true
   }
   async function open() {
@@ -297,7 +326,7 @@ function fixture(options = {}) {
   }
 
   return {
-    window, calendar, step, details, back, heading, doneHeading, footer, skip, unavailable,
+    window, document, calendar, step, details, back, heading, doneHeading, footer, skip, unavailable,
     success, receipt, contextWrap, successText, done, part, select, chooseDate, book, open, handoff, load,
     advance, navigations, scrolls, warnings, statusReads, lookups, requests, inputs, configSelections,
     finishAuth: () => { window.xanoAuthFetch = xanoAuthFetch },
@@ -347,8 +376,15 @@ test('auth may arrive after init, and the staging calendar uses the free test fi
   assert.equal(page.step.classList.has('hide'), false)
   assert.deepEqual(page.scrolls, [[0, 0]])
   assert.equal(page.calendar.getAttribute('data-paid-calendar-state'), 'loading')
-  assert.match(page.calendar.textContent, /Loading Jai's available times/)
+  const loader = page.part('loading').querySelector('[data-loader="1000"]')
+  assert.equal(loader.classList.has('experts-list_loader'), true)
+  assert.equal(loader.classList.has('is-complete-profile'), true)
+  assert.equal(loader.getAttribute('aria-hidden'), 'true')
+  assert.equal(page.part('loading-text').textContent, "Loading Jai's available times…")
+  assert.equal(page.part('loading-text').getAttribute('role'), 'status')
+  assert.equal(page.part('shell'), null)
   assert.equal(page.part('confirm').disabled, true)
+  assert.equal(page.skip.disabled, false)
   assert.deepEqual(page.lookups.slice(0, 2), [
     ['starter/get_booking_profile/v3', 'POST', { member_id: 'mem_sb_cmqhuaxn80d270sseeo74fn7i' }],
     ['nylas_configurations/get_bookable/v3', 'POST', { grant_id: 'grant-fixture' }],
@@ -359,6 +395,9 @@ test('auth may arrive after init, and the staging calendar uses the free test fi
   pending.resolve(response(200, { time_slots: [] }))
   await flush()
   assert.equal(page.calendar.getAttribute('data-paid-calendar-state'), 'empty')
+  assert.equal(page.part('loading'), null)
+  assert.equal(page.part('status').parentElement, page.calendar)
+  assert.match(page.part('status').textContent, /No available times/)
   assert.equal(page.part('confirm').disabled, true)
   assert.equal(page.skip.disabled, false)
   page.skip.click()
@@ -387,13 +426,66 @@ test('an empty date disables booking and points to the next available date', asy
   assert.equal(page.part('confirm').disabled, false)
 })
 
+test('native month buttons preserve the calendar bounds and focus across redraws', async () => {
+  const pending = deferred()
+  const page = fixture({ datepicker: true, onBook: () => pending.promise,
+    now: Date.parse('2026-04-25T12:00:00Z'), availability: response(200, { time_slots: [
+      { start_time: Date.parse('2026-04-29T12:00:00Z') / 1000 },
+      { start_time: Date.parse('2026-05-02T12:00:00Z') / 1000 },
+    ] }),
+  })
+  await page.open()
+  const arrow = direction => page.calendar.querySelector('[data-complete-profile-call-month-nav="' + direction + '"]')
+  const next = arrow('next')
+  assert.equal(next.tagName, 'button')
+  assert.equal(next.type, 'button')
+  assert.equal(next.getAttribute('aria-label'), 'Next month')
+  assert.equal(next.getAttribute('aria-disabled'), 'false')
+  assert.equal(arrow('previous').getAttribute('aria-disabled'), 'true')
+  assert.equal(arrow('previous').disabled, false, 'the boundary arrow stays in the Tab order')
+  arrow('previous').click()
+  assert.equal(next.isConnected, true, 'a boundary arrow does not redraw the calendar')
+  next.focus()
+  next.click()
+  assert.equal(next.isConnected, false)
+  assert.equal(arrow('next').getAttribute('aria-disabled'), 'true')
+  assert.equal(arrow('next').disabled, false)
+  assert.equal(arrow('previous').getAttribute('aria-label'), 'Previous month')
+  assert.equal(page.document.activeElement, arrow('previous'))
+  arrow('previous').click()
+  assert.equal(page.document.activeElement, arrow('next'))
+  page.select()
+  page.book()
+  await flush()
+  assert.equal(arrow('next').disabled, true, 'calendar navigation is blocked while booking')
+  assert.equal(arrow('next').getAttribute('aria-disabled'), 'true')
+  pending.resolve(response(422, {}))
+  await flush()
+  assert.equal(arrow('next').disabled, false, 'navigation returns after a definite rejection')
+})
+
+test('a legacy receipt keeps its authored dashboard button in the shared footer', async () => {
+  const page = fixture()
+  await page.open()
+  page.select()
+  page.book()
+  await flush()
+  assert.equal(page.success.querySelector('[data-complete-profile-call-done]'), null)
+  assert.equal(page.footer.querySelector('[data-complete-profile-call-done]'), page.done)
+  page.done.click()
+  assert.deepEqual(page.navigations, [DASHBOARD])
+})
+
 test('a saved profile can book once using the fresh email and go to the dashboard from its receipt', async () => {
   const pending = deferred()
-  const page = fixture({ hostname: 'www.thestarters.com', onBook: () => pending.promise })
+  const page = fixture({ hostname: 'www.thestarters.com', sharedFooter: true, onBook: () => pending.promise })
   await page.open()
   assert.deepEqual(page.lookups[0], ['starter/get_booking_profile/v3', 'POST', { member_id: 'mem_production_fixture' }])
-  assert.equal(page.part('confirm').parentElement, page.footer)
-  assert.equal(page.footer.children[1], page.part('confirm'))
+  const bookingActions = page.footer.querySelector('[data-complete-profile-call-booking-actions]')
+  const successActions = page.footer.querySelector('[data-complete-profile-call-success-actions]')
+  assert.equal(page.part('confirm').parentElement, bookingActions)
+  assert.equal(bookingActions.children[1], page.part('confirm'))
+  assert.equal(successActions.hidden, true)
   assert.equal(page.footer.parentElement.children[page.footer.parentElement.children.indexOf(page.footer) - 1], page.part('status'))
   page.setEmail('updated@example.test')
   page.select()
@@ -401,6 +493,9 @@ test('a saved profile can book once using the fresh email and go to the dashboar
   page.book()
   await flush()
   assert.equal(page.skip.disabled, true)
+  assert.match(page.part('status').textContent, /Sending your request/)
+  assert.equal(page.part('status').getAttribute('data-paid-calendar-status'), 'progress')
+  assert.equal(page.part('status').getAttribute('role'), 'status')
   page.skip.click()
   assert.deepEqual(page.navigations, [])
   assert.equal(page.requests.length, 1)
@@ -421,7 +516,11 @@ test('a saved profile can book once using the fresh email and go to the dashboar
   assert.equal(page.success.hidden, false)
   assert.equal(page.success.style.display, '')
   assert.equal(page.calendar.hidden, true)
-  assert.equal(page.footer.hidden, true)
+  assert.equal(page.footer.hidden, false)
+  assert.equal(bookingActions.hidden, true)
+  assert.equal(successActions.hidden, false)
+  assert.equal(page.done.parentElement, successActions)
+  assert.equal(page.document.activeElement, page.done)
   assert.equal(page.heading.hidden, true)
   assert.equal(page.doneHeading.style.display, '')
   assert.equal(page.contextWrap.hidden, true)
@@ -535,6 +634,7 @@ test('calendar and booking errors leave a working Continue action', async t => {
       assert.equal(page.calendar.hidden, true)
       assert.equal(page.unavailable.style.display, '')
       assert.ok(!page.part('confirm') || page.part('confirm').hidden)
+      assert.equal(page.footer.hidden, false)
       assert.equal(page.skip.disabled, false)
       page.skip.click()
       assert.deepEqual(page.navigations, [DASHBOARD])
@@ -549,7 +649,7 @@ test('missing receipt markup still shows Call Requested and a dashboard exit', a
   page.book()
   await flush()
   assert.match(page.calendar.textContent, /Call Requested/)
-  page.calendar.querySelector('[data-complete-profile-call-done]').click()
+  page.footer.querySelector('[data-complete-profile-call-done]').click()
   assert.deepEqual(page.navigations, [DASHBOARD])
 })
 
