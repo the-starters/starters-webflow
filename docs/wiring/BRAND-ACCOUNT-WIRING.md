@@ -83,6 +83,14 @@ compatibility, but the controller writes its value explicitly as the final
 durable member write, before any non-retried password-email attempt. Build
 Account only attempts that email when the login email changed.
 
+After a successful Build Account save and success message, the form dispatches
+the bubbling, cancelable `starters:brand-profile-completed` event with
+`detail.operation` set to `brand/account/build` and `detail.memberId` set to
+the completed member's ID. The
+[Complete Profile call step](COMPLETE-PROFILE-CALL-STEP-WIRING.md) can cancel
+the event to open in place. Keep `redirect="/brand-dashboard"` as the fallback
+when the event goes unclaimed, including on `/complete-profile-trial`.
+
 The upload link stays outside any Memberstack profile-form contract and is
 bound by `complete-profile-photo.js` to:
 
@@ -471,8 +479,8 @@ projection.
   loader ([`docs/wiring/COMPLETE-PROFILE-LOADER-WIRING.md`](COMPLETE-PROFILE-LOADER-WIRING.md))
   watches that attribute and depends on this.
 - The latch is scoped to the path that called `location.assign()`. A successful
-  submit with no redirect URL resolved, and every error, release the form as
-  before. An `assign()` that throws also releases it.
+  submit with no redirect URL or a handoff to the call step releases the form
+  and loader. Errors and an `assign()` that throws also release it.
 - Accepted consequence: if the navigation is cancelled rather than completed
   (Stop pressed, a declined `beforeunload` prompt, a destination that does not
   navigate), the form stays locked and the submit button stays disabled until

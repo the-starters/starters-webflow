@@ -39,6 +39,7 @@ explain how source changes reach Webflow.
 
 - [Brand profile redirect](BRAND-PROFILE-REDIRECT-WIRING.md) — incomplete paid Brands entering protected pages.
 - [Complete-profile redirect](COMPLETE-PROFILE-REDIRECT-WIRING.md) — role routing and completed Brand exit.
+- [Complete Profile call step](COMPLETE-PROFILE-CALL-STEP-WIRING.md) — optional welcome call after a paid Brand saves the form.
 - [Complete-profile back button](COMPLETE-PROFILE-BACK-WIRING.md) — referrer-based escape link.
 - [Complete-profile loader](COMPLETE-PROFILE-LOADER-WIRING.md) — submit spinner and form dimming.
 - [Build-profile redirect](BUILD-PROFILE-REDIRECT-WIRING.md) — Talent funnel position on profile-building pages.

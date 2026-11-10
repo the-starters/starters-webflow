@@ -1,6 +1,6 @@
 /**
  * Brand signup plan, Build Account, and guarded identity email controller.
- * @release v1.59.727
+ * @release v1.59.738
  *
  * Authority contract:
  *   - Memberstack owns identity, login email, custom fields, and profile image.
@@ -889,7 +889,7 @@
             diagnosticStart(form, operation)
             return submitter(form)
           })
-          .then(function () {
+          .then(function (submitResult) {
             var receipt = diagnosticComplete(form, {
               result: 'success',
               stage: 'response',
@@ -897,6 +897,18 @@
               request_started: true,
             })
             setMessage(form, 'success', '', receipt)
+            if (operation === 'brand/account/build') {
+              try {
+                var handoff = new CustomEvent('starters:brand-profile-completed', {
+                  bubbles: true,
+                  cancelable: true,
+                  detail: { operation: operation, memberId: submitResult && submitResult.memberId },
+                })
+                if (form.dispatchEvent(handoff) === false) return
+              } catch (error) {
+                // Completion succeeded. Keep the form's redirect if the hand-off fails.
+              }
+            }
             if (redirectOnSuccess) {
               var redirect = form.getAttribute('redirect') || form.getAttribute('data-redirect')
               if (redirect) {

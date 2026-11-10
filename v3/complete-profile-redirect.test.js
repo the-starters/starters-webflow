@@ -243,16 +243,16 @@ function loadModule(options = {}) {
 
   const aborted = []
 
+  const windowEvents = new EventTarget()
+  const documentEvents = new EventTarget()
+  const formEvents = new EventTarget()
+
   const window = {
-    CustomEvent: class CustomEvent {
-      constructor(name, init) {
-        this.name = name
-        this.detail = init && init.detail
-      }
-    },
+    CustomEvent,
     URL,
     URLSearchParams,
-    dispatchEvent() {},
+    addEventListener: windowEvents.addEventListener.bind(windowEvents),
+    dispatchEvent: windowEvents.dispatchEvent.bind(windowEvents),
     location,
     fetch: activeFetch,
     sessionStorage: options.storageFailure === 'missing' ? undefined : sessionStorage,
@@ -303,6 +303,12 @@ function loadModule(options = {}) {
 
   const guardAttributes = {}
   const document = {
+    addEventListener: documentEvents.addEventListener.bind(documentEvents),
+    querySelector(selector) {
+      return selector === 'form' || selector === '#wf-form-Complete-Profile-Form'
+        ? formEvents
+        : null
+    },
     documentElement: {
       setAttribute(name, value) {
         guardAttributes[name] = value
@@ -378,6 +384,14 @@ function loadModule(options = {}) {
     aborted,
     clock,
     fetches,
+    dispatchFormEvent(event) {
+      formEvents.dispatchEvent(event)
+      if (event.bubbles) {
+        documentEvents.dispatchEvent(event)
+        windowEvents.dispatchEvent(event)
+      }
+      return !event.defaultPrevented
+    },
     guard: window.StartersV3RouteGuard,
     guardAttributes,
     location,
@@ -619,6 +633,28 @@ test('a paid Brand whose Xano status is done goes to the brand dashboard', async
   assert.equal(read.init.headers.Authorization, 'Bearer xano-token-abc')
   assert.equal(read.init.method, undefined)
   assert.equal(read.init.body, undefined)
+})
+
+test('the load redirect leaves a later profile completion hand-off alone', async () => {
+  const member = brandPaid()
+  const page = loadModule({ member, xano: { statusBody: BRAND_NOT_DONE } })
+  await flush()
+  assert.equal(page.location.replaced, undefined)
+  assert.equal(page.lookups.length, 1)
+  assert.equal(page.fetches.length, 2)
+
+  page.storage.set(MARKER_KEY, '1')
+  const completion = new CustomEvent('starters:brand-profile-completed', {
+    bubbles: true,
+    cancelable: true,
+    detail: { operation: 'brand/account/build', memberId: member.id },
+  })
+  assert.equal(page.dispatchFormEvent(completion), true)
+  await flush()
+
+  assert.equal(page.location.replaced, undefined)
+  assert.equal(page.lookups.length, 1)
+  assert.equal(page.fetches.length, 2)
 })
 
 test('runs on both slash forms of the page', async () => {
