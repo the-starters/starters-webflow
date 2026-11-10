@@ -1,0 +1,443 @@
+<!-- Jai call trial pilot: staging host only -->
+<script>
+;(async function () {
+  if (location.hostname !== 'the-starters-3-0.webflow.io' || !/^\/complete-profile-trial\/?$/.test(location.pathname)) return
+  if (document.readyState === 'loading') {
+    await new Promise(resolve => document.addEventListener('DOMContentLoaded', resolve, { once: true }))
+  }
+  const form = document.querySelector('form[data-brand-trial-terms-form="true"]')
+  const details = form?.closest('section')
+  if (!details) throw new Error('Trial form section was not found')
+  if (document.querySelector('[data-complete-profile-call-step]')) return
+
+  const primary = form.querySelector('button[type="submit"]')?.closest('[data-button-theme]')
+  const primaryText = primary?.querySelector('.button_main-text')
+  if (!primaryText) throw new Error('The existing profile submit Button component was not found')
+  primaryText.textContent = 'Continue'
+  primary.querySelector('button[type="submit"]').setAttribute('aria-label', 'Continue')
+  details.setAttribute('data-jai-trial-first-step', '')
+
+  const native = {}
+  for (const [key, label, variant] of [
+    ['skip', 'Continue to dashboard', 'tertiary'],
+    ['book', 'Book a free call', 'primary'],
+    ['done', 'Go to dashboard', 'primary'],
+  ]) {
+    const holder = document.querySelector('[data-jai-trial-native-button="' + key + '"]')
+    const wrap = holder?.querySelector('[data-button-theme][data-button-style]')
+    const labelNode = wrap?.querySelector('.button_main-text')
+    let button = wrap?.querySelector('button.clickable_btn')
+    if (!button) {
+      const link = wrap?.querySelector('a.clickable_btn')
+      if (link) {
+        button = document.createElement('button')
+        button.className = link.className
+        link.replaceWith(button)
+      }
+    }
+    if (!holder || !wrap || !labelNode || !button) throw new Error('Missing native trial Button: ' + key)
+    button.type = 'button'
+    button.classList.remove('w-form-loading')
+    button.removeAttribute('disabled')
+    button.removeAttribute('aria-disabled')
+    button.parentElement.removeAttribute('aria-disabled')
+    holder.removeAttribute('aria-disabled')
+    wrap.removeAttribute('aria-disabled')
+    button.setAttribute('aria-label', label)
+    labelNode.textContent = label
+    wrap.setAttribute('data-button-theme', 'black')
+    wrap.setAttribute('data-button-style', variant)
+    wrap.querySelectorAll('.button_main-element > :not(.button_main-text):not(.button_main-line)').forEach(node => { node.hidden = true; node.style.display = 'none' })
+    native[key] = { holder, wrap, labelNode, button }
+  }
+
+  const syncTheme = (component, disabled) => component.wrap.setAttribute('data-button-theme', disabled ? 'disabled' : 'black')
+  let engineConfirm
+  let engineObserver
+  native.book.button.addEventListener('click', () => {
+    if (!engineConfirm || engineConfirm.disabled) return
+    const step = engineConfirm.closest('[data-complete-profile-call-step]')
+    if (matchMedia('(max-width:47.9375rem)').matches) for (const [name, selector] of [
+      ['body', '[data-complete-profile-call-calendar]'],
+      ['footer', '[data-complete-profile-call-footer]'],
+      ['heading', '[data-jai-trial-greeting]'],
+    ]) {
+      const panel = step?.querySelector(selector)
+      if (panel) step.style.setProperty('--jai-booking-' + name, panel.getBoundingClientRect().height + 'px')
+    }
+    engineConfirm.click()
+  })
+  const nativeTrialConfirm = (confirm, skip) => {
+    if (engineObserver) engineObserver.disconnect()
+    engineConfirm = confirm
+    confirm.hidden = true
+    confirm.tabIndex = -1
+    confirm.setAttribute('aria-hidden', 'true')
+    const sync = () => {
+      const label = confirm.textContent || 'Book a free call'
+      native.book.labelNode.textContent = label
+      native.book.button.setAttribute('aria-label', label)
+      native.book.button.disabled = confirm.disabled
+      native.book.button.setAttribute('aria-disabled', confirm.disabled ? 'true' : 'false')
+      syncTheme(native.book, confirm.disabled)
+    }
+    engineObserver = new MutationObserver(sync)
+    engineObserver.observe(confirm, { attributes: true, attributeFilter: ['disabled'], childList: true, characterData: true, subtree: true })
+    native.skip.holder.after(native.book.holder, confirm)
+    sync()
+  }
+  new MutationObserver(() => syncTheme(native.skip, native.skip.button.disabled))
+    .observe(native.skip.button, { attributes: true, attributeFilter: ['disabled'] })
+
+  function loadScript(src) {
+    return new Promise((resolve, reject) => {
+      const script = document.createElement('script')
+      script.src = src
+      script.onload = resolve
+      script.onerror = () => reject(new Error('Unable to load ' + src.split('/').pop()))
+      document.head.append(script)
+    })
+  }
+  const base = 'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v1.59.737/v3/'
+  if (typeof window.xanoAuthFetch !== 'function' || typeof window.getXanoAuthToken !== 'function') {
+    await loadScript(base + 'scheduling-auth.js')
+  }
+  await loadScript(base + 'paid-call-brand-payment.js')
+  await loadScript(base + 'free-call-booking.js')
+  if (!window.jQuery?.fn?.datepicker) await loadScript('https://code.jquery.com/ui/1.14.1/jquery-ui.min.js')
+
+  const layout = document.createElement('template')
+  layout.innerHTML = `
+<style>
+  [data-complete-profile-call-step][hidden], [data-complete-profile-call-step] [hidden] { display:none !important; }
+  [data-jai-trial-first-step], [data-complete-profile-call-step] { --jai-small:3.75rem; --jai-headroom:8.3125rem; --jai-space:1.5rem; color:#1e211e; }
+  [data-jai-trial-first-step] > .padding-global, [data-complete-profile-call-step] > .padding-global { padding-block-start:calc(var(--jai-headroom) + var(--jai-small)); padding-block-end:var(--jai-small); }
+  [data-jai-trial-first-step] .complete-profile_layout { align-items:flex-start; }
+  [data-complete-profile-call-step] { position:relative; overflow:hidden; min-block-size:100svh; background:linear-gradient(111.6258deg,#caded9 25.117%,#77a2ab 100.36%); }
+  [data-complete-profile-call-step] [data-jai-trial-layout] { display:grid; min-block-size:0; grid-template-columns:minmax(0,28.5rem) minmax(0,51.25rem); justify-content:space-between; align-items:start; gap:var(--jai-space) 2.5rem; }
+  [data-complete-profile-call-step] [data-jai-trial-content] { position:relative; }
+  [data-jai-trial-greeting] { grid-column:1; grid-row:1; display:grid; gap:1.25rem; }
+  [data-jai-trial-greeting] > div { display:grid; gap:1.25rem; }
+  [data-jai-trial-greeting] h1 { margin:0; font-size:3.875rem; line-height:1.2; letter-spacing:-.11625rem; }
+  [data-jai-trial-greeting] p { margin:0; font-size:1.125rem; line-height:1.7; }
+  [data-jai-trial-card] { grid-column:2; grid-row:1 / span 2; position:relative; min-inline-size:0; inline-size:100%; max-inline-size:none; border-radius:.25rem; background:#fff; overflow:hidden; }
+  [data-jai-trial-card] > .complete-profile_form { inline-size:100%; max-inline-size:none; row-gap:0; }
+  [data-jai-trial-quote] { position:relative; grid-column:1; grid-row:2; align-self:start; margin:0; padding-block-start:.3125rem; inline-size:18.125rem; min-inline-size:0; }
+  [data-jai-trial-quote] blockquote { border:0; margin:0 0 2.25rem; padding:0; font-size:1.75rem; line-height:1.2; letter-spacing:-.0525rem; }
+  [data-jai-trial-quote] figcaption { display:grid; justify-items:start; text-align:start; gap:.6875rem; font-size:1.125rem; line-height:1.7; }
+  [data-jai-trial-quote] strong { font-weight:600; line-height:1; }
+  [data-jai-trial-portrait-frame] { display:contents; }
+  [data-jai-trial-portrait] { position:absolute; inset-inline-start:-12.1875rem; inline-size:31.5625rem; block-size:38.1875rem; object-fit:contain; pointer-events:none; }
+  [data-jai-trial-card] [data-complete-profile-call-unavailable] { padding:2.5rem; }
+  [data-jai-trial-card] [data-complete-profile-call-success] { min-block-size:30.875rem; }
+  [data-jai-trial-card] [data-complete-profile-call-success] .call-details_layout { display:grid; gap:2.5rem; padding:2.5rem; }
+  [data-jai-trial-card] [data-complete-profile-call-success] .call-details_headline-wrapper { display:grid; gap:.75rem; }
+  [data-jai-trial-card] [data-complete-profile-call-success] .call-details_heading-wrapper { display:flex; align-items:center; gap:.75rem; color:#1f4664; }
+  [data-jai-trial-card] [data-complete-profile-call-success] .icon-36 { display:flex; inline-size:2.25rem; block-size:2.25rem; flex:none; }
+  [data-jai-trial-card] [data-complete-profile-call-success] .heading-style-h1 { margin:0; font-family:Baskervville,Georgia,serif; font-size:2.25rem; font-weight:500; line-height:1.2; letter-spacing:-.0675rem; }
+  [data-jai-trial-card] [data-complete-profile-call-success] [booking-success-text] { max-inline-size:31.25rem; margin:0; color:#434b43; font-size:1rem; line-height:1.7; }
+  [data-jai-trial-card] [data-complete-profile-call-success] .call-details_table-details { display:grid; gap:.125rem; overflow:hidden; border:.125rem solid #eee; border-radius:.25rem; background:#eee; }
+  [data-jai-trial-card] [data-complete-profile-call-success] .call-details_table-item { background:#fff; }
+  [data-jai-trial-card] [data-complete-profile-call-success] .call-details_table-item.is-first { display:grid; grid-template-columns:minmax(0,18.0625rem) minmax(0,1fr) 6.25rem; align-items:center; min-block-size:7.5rem; padding:.5rem; box-sizing:border-box; }
+  [data-jai-trial-card] [data-complete-profile-call-success] .call-details_table-title { min-inline-size:0; padding-inline:1rem; }
+  [data-jai-trial-card] [data-complete-profile-call-success] [booking-element="paid-meeting"] { margin:0; color:#1e211e; font-size:1rem; font-weight:500; }
+  [data-jai-trial-card] [data-complete-profile-call-success] .call-details_table-item.is-date-time-mobile { display:none; }
+  [data-jai-trial-card] [data-complete-profile-call-success] .two-type-label_component { display:inline-flex; gap:.0625rem; flex-wrap:wrap; max-inline-size:100%; }
+  [data-jai-trial-card] [data-complete-profile-call-success] .two-type-label_item { display:flex; align-items:center; min-block-size:2rem; padding-inline:.5rem; border-radius:0 .25rem .25rem 0; background:#eee; }
+  [data-jai-trial-card] [data-complete-profile-call-success] .two-type-label_item.is-first { border-radius:.25rem 0 0 .25rem; }
+  [data-jai-trial-card] [data-complete-profile-call-success] .two-type-label_text { margin:0; font-size:.8125rem; font-weight:500; white-space:nowrap; }
+  [data-jai-trial-card] [data-complete-profile-call-success] .two-type-label_text.is-bold { font-weight:700; }
+  [data-jai-trial-card] [data-complete-profile-call-success] .table-price_layout.is-consult { display:grid; place-content:center; gap:.5rem; inline-size:6.25rem; block-size:6.25rem; border-radius:.25rem; background:#1f4664; color:#fff; text-align:center; }
+  [data-jai-trial-card] [data-complete-profile-call-success] .table-price_layout p { margin:0; font-size:.75rem; line-height:1; }
+  [data-jai-trial-card] [data-complete-profile-call-success] .table-price_layout [booking-element="price"] { font-size:1.125rem; font-weight:600; }
+  [data-complete-profile-call-step] [data-jai-trial-card] [data-complete-profile-call-footer] { display:flex; align-items:center; justify-content:flex-end; block-size:6.125rem; padding:1.625rem 2rem; box-sizing:border-box; border-block-start:.0625rem solid #eee; background:#fff; }
+  [data-complete-profile-call-step] [data-jai-trial-card] :is([data-complete-profile-call-booking-actions],[data-complete-profile-call-success-actions]) { display:flex; align-items:center; justify-content:flex-end; gap:.5rem; }
+  [data-complete-profile-call-step] [data-paid-calendar-element="confirm"][hidden],
+  [data-complete-profile-call-step="unavailable"] [data-jai-trial-native-button="book"] { display:none; }
+  [data-complete-profile-call-step] [data-jai-trial-native-button] .clickable_wrap { z-index:1; }
+  [data-jai-trial-native-button="done"] button[data-complete-profile-call-done] { background:transparent; padding:0; }
+  [data-complete-profile-call-step] [data-jai-trial-native-button] .button_main-wrap:has(.clickable_btn:focus-visible) { outline:2px solid #1f4664; outline-offset:3px; box-shadow:0 0 0 3px #fff; }
+  [data-complete-profile-call-step] [data-jai-trial-card] [data-paid-calendar-element="status"] { position:absolute; inset:0 0 auto; z-index:2; margin:0; padding:16px 32px; background:#1e211e; color:#fff; font-size:16px; line-height:18px; }
+  [data-complete-profile-call-step] [data-jai-trial-card] [data-paid-calendar-element="status"][data-paid-calendar-status="error"] { background:#d55; color:#fff; }
+  [data-complete-profile-call-step] [data-jai-trial-card] [data-paid-calendar-element="status"]:empty { display:none; }
+  [data-complete-profile-call-step] [data-jai-trial-card] [data-paid-calendar-element="loading"] { position:relative; display:grid; place-items:center; min-block-size:30.875rem; }
+  [data-complete-profile-call-step] [data-jai-trial-card] [data-paid-calendar-element="loading"] .experts-list_loader.is-complete-profile { position:static; display:block; margin:0; transform:none; }
+  [data-complete-profile-call-step] [data-jai-trial-card] [data-paid-calendar-element="loading-text"] { position:absolute; inline-size:1px; block-size:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
+  [data-complete-profile-call-step] [data-complete-profile-call-calendar] [data-paid-calendar-element="month"] .ui-datepicker { inline-size:100%; max-inline-size:none; box-sizing:border-box; border:0; border-radius:.5rem; background:#eee; box-shadow:0 0 0 2px #eee, 0 4px 8px rgba(0,0,0,.1); }
+  [data-complete-profile-call-step] [data-complete-profile-call-calendar] [data-paid-calendar-element="month"] .ui-datepicker-calendar { overflow:hidden; border-radius:.5rem; background:#fff; }
+  [data-complete-profile-call-step] [data-complete-profile-call-calendar] [data-complete-profile-call-month-nav]:focus-visible { outline:2px solid #1f4664; outline-offset:2px; }
+  [data-complete-profile-call-step] [data-paid-calendar-element="timezone-control"] { position:relative; }
+  [data-complete-profile-call-step] [data-paid-calendar-element="timezone-control"]::before,
+  [data-complete-profile-call-step] [data-paid-calendar-element="timezone-control"]::after { position:absolute; content:""; inset-block-start:50%; transform:translateY(-50%); pointer-events:none; background-position:center; background-repeat:no-repeat; background-size:contain; }
+  [data-complete-profile-call-step] [data-paid-calendar-element="timezone-control"]::before { inset-inline-start:.875rem; inline-size:1.25rem; block-size:1.25rem; background-image:url("https://cdn.prod.website-files.com/69c573f20f82bd0f3384032c/6af32e23e16e653acd5d293d_complete-profile-globe.svg"); }
+  [data-complete-profile-call-step] [data-paid-calendar-element="timezone-control"]::after { inset-inline-end:1rem; inline-size:.875rem; block-size:.875rem; background-image:url("https://cdn.prod.website-files.com/69c573f20f82bd0f3384032c/6af32e2479484b73828422eb_complete-profile-down.svg"); }
+  [data-complete-profile-call-step] [data-paid-calendar-element="timezone-control"] [data-paid-calendar-element="timezone"] { appearance:none; padding-inline:2.75rem; font-weight:400; }
+  [data-complete-profile-call-step] [data-complete-profile-call-calendar] [data-paid-calendar-element="month"] .ui-datepicker-header :is(.ui-datepicker-prev,.ui-datepicker-next)::after { transform:none; inline-size:1.25rem; block-size:1.25rem; border:0; background-position:center; background-size:contain; background-repeat:no-repeat; }
+  [data-complete-profile-call-step] [data-complete-profile-call-calendar] [data-paid-calendar-element="month"] .ui-datepicker-prev::after { background-image:url("https://cdn.prod.website-files.com/69c573f20f82bd0f3384032c/6af32e2586ca023172754ce8_complete-profile-previous.svg"); }
+  [data-complete-profile-call-step] [data-complete-profile-call-calendar] [data-paid-calendar-element="month"] .ui-datepicker-next::after { background-image:url("https://cdn.prod.website-files.com/69c573f20f82bd0f3384032c/6af32e261502cc49dc8c1a3d_complete-profile-next.svg"); }
+  @media (min-width:48rem) {
+    [data-complete-profile-call-step] {
+      --jai-headroom:5rem;
+      --jai-desktop-frame:max(100svh,62.5rem);
+      --jai-art-top:calc(var(--jai-desktop-frame) - 23.6875rem - var(--jai-headroom) - var(--jai-small));
+      min-block-size:var(--jai-desktop-frame);
+    }
+    [data-complete-profile-call-step] [data-jai-trial-layout] { position:static; }
+    [data-complete-profile-call-step] [data-jai-trial-quote] {
+      position:absolute; grid-column:auto; grid-row:auto;
+      inset-block-start:calc(var(--jai-art-top) + 1.9375rem); inset-inline-start:13.8125rem;
+    }
+    [data-complete-profile-call-step] [data-jai-trial-portrait] { inset-block-start:var(--jai-art-top); }
+    [data-complete-profile-call-step] [data-complete-profile-call-calendar] [data-paid-calendar-element="month"] .ui-datepicker-header { block-size:2.8125rem; }
+    [data-complete-profile-call-step] [data-jai-trial-card] [data-paid-calendar-element="shell"] { min-block-size:30.875rem; }
+  }
+  @media (max-width:61.9375rem) {
+    [data-jai-trial-first-step] { --jai-headroom:5.75rem; --jai-small:2rem; }
+    [data-jai-trial-first-step] > .padding-global { padding-inline:1rem; }
+  }
+  @media (max-width:47.9375rem) {
+    [data-complete-profile-call-step] { min-block-size:0; background:linear-gradient(93.0101deg,#caded9 25.117%,#77a2ab 100.36%); }
+    [data-complete-profile-call-step] > .padding-global { padding:117px 16px 0; }
+    [data-jai-trial-content] { max-inline-size:none; }
+    [data-complete-profile-call-step] [data-jai-trial-layout] { grid-template-columns:minmax(0,1fr); gap:24px; }
+    [data-jai-trial-greeting], [data-jai-trial-greeting] > div { gap:12px; }
+    [data-jai-trial-greeting] h1 { font-size:40px; letter-spacing:-1.2px; }
+    [data-jai-trial-greeting] p { font-size:16px; }
+    [data-jai-trial-card] { grid-column:1; grid-row:2; }
+    [data-jai-trial-quote] { grid-column:1; grid-row:3; inset-block-start:auto; padding:0; margin:0; inline-size:100%; }
+    [data-jai-trial-quote] blockquote { margin-block-end:36px; font-size:24px; letter-spacing:-.72px; }
+    [data-jai-trial-quote] figcaption { gap:11px; font-size:18px; }
+    [data-jai-trial-portrait-frame] { display:block; block-size:290px; overflow:hidden; margin:24px -16px 0; }
+    [data-jai-trial-portrait] { display:block; position:static; inline-size:402px; block-size:485px; max-inline-size:none; margin-inline-start:-13px; }
+    [data-complete-profile-call-step] [data-jai-trial-card] [data-complete-profile-call-footer] { flex-direction:column; align-items:stretch; justify-content:center; block-size:133px; min-block-size:133px; padding:16px; }
+    [data-complete-profile-call-booking-actions] .button_main-element { display:flex; align-items:center; justify-content:center; block-size:46px; min-block-size:46px; padding-block:0; }
+    [data-complete-profile-call-booking-actions] .button_main-text { font-size:14px; }
+    [data-complete-profile-call-step] [data-jai-trial-card] :is([data-complete-profile-call-booking-actions],[data-complete-profile-call-success-actions]) { flex-direction:column-reverse; align-items:stretch; gap:8px; }
+    [data-complete-profile-call-step] [data-jai-trial-card] [data-paid-calendar-element="loading"] { min-block-size:22rem; }
+    [data-complete-profile-call-step] [data-jai-trial-native-button],
+    [data-complete-profile-call-step] [data-jai-trial-native-button] .button_main-wrap,
+    [data-complete-profile-call-step] [data-jai-trial-native-button] .button_main-element { inline-size:100%; }
+    [data-jai-trial-card] [data-complete-profile-call-unavailable],
+    [data-jai-trial-card] [data-complete-profile-call-success] .call-details_layout { padding:1.5rem 1rem; }
+    [data-jai-trial-card] [data-complete-profile-call-success] .call-details_layout { gap:1.5rem; }
+    [data-jai-trial-card] [data-complete-profile-call-success] { min-block-size:var(--jai-booking-body,734px); }
+    [data-jai-trial-card] [data-complete-profile-call-footer]:has(> [data-complete-profile-call-success-actions]:not([hidden])) { min-block-size:var(--jai-booking-footer,133px); justify-content:center; }
+    [data-jai-trial-greeting]:has(> [data-complete-profile-call-heading-done]:not([hidden])) { min-block-size:var(--jai-booking-heading,0px); align-content:start; }
+    [data-jai-trial-card] [data-complete-profile-call-success] .call-details_table-item.is-first { grid-template-columns:minmax(0,1fr) 6.25rem; }
+    [data-jai-trial-card] [data-complete-profile-call-success] .call-details_table-label.is-date-time { display:none; }
+    [data-jai-trial-card] [data-complete-profile-call-success] .call-details_table-item.is-date-time-mobile { display:block; padding:.75rem; }
+  }
+</style>
+<section class="section_complete-profile" data-complete-profile-call-step hidden>
+  <div class="padding-global padding-section-small">
+    <div class="container-large" data-jai-trial-content>
+      <div class="complete-profile_layout" data-jai-trial-layout>
+        <div class="complete-profile_heading-wrapper" data-jai-trial-greeting>
+          <div data-complete-profile-call-heading>
+            <h1 class="heading-style-title">Before you dive in, book a free call with Jai</h1>
+            <p>Get personalized talent recommendations and guidance on how to make the most out of The Starters.</p>
+          </div>
+          <div data-complete-profile-call-heading-done hidden>
+            <h1 class="heading-style-title">You're all set. Talk soon.</h1>
+            <p>In the meantime, explore vetted talent and start building your team.</p>
+          </div>
+        </div>
+        <div class="complete-profile_form-block" data-jai-trial-card>
+          <div class="complete-profile_form">
+            <div data-complete-profile-call-calendar></div>
+            <div data-complete-profile-call-unavailable hidden>
+              <h2>Jai's calendar isn't loading right now</h2>
+              <p>You can still dive in. Book a free call with Jai any time from his profile.</p>
+            </div>
+            <div data-complete-profile-call-success hidden>
+              <div class="call-details_layout height-auto">
+              <div class="call-details_headline-wrapper">
+              <div class="call-details_heading-wrapper">
+              <div class="icon-36" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 36 36" fill="none" class="svg-icon">
+                <path d="M7.96162 32.25C7.20387 32.25 6.5625 31.9875 6.0375 31.4625C5.5125 30.9375 5.25 30.2961 5.25 29.5384V9.46162C5.25 8.70387 5.5125 8.06249 6.0375 7.53749C6.5625 7.01249 7.20387 6.74999 7.96162 6.74999H10.0384V4.73062C10.0384 4.40187 10.1485 4.12737 10.3687 3.90712C10.589 3.68712 10.8635 3.57712 11.1922 3.57712C11.5212 3.57712 11.7958 3.68712 12.0158 3.90712C12.236 4.12737 12.3461 4.40187 12.3461 4.73062V6.74999H23.7116V4.70212C23.7116 4.38287 23.8192 4.11549 24.0345 3.89999C24.25 3.68474 24.5174 3.57712 24.8366 3.57712C25.1559 3.57712 25.4231 3.68474 25.6384 3.89999C25.8539 4.11549 25.9616 4.38287 25.9616 4.70212V6.74999H28.0384C28.7961 6.74999 29.4375 7.01249 29.9625 7.53749C30.4875 8.06249 30.75 8.70387 30.75 9.46162V19.1827C30.75 19.502 30.6422 19.7692 30.4267 19.9845C30.2115 20.2 29.9442 20.3077 29.625 20.3077C29.3057 20.3077 29.0385 20.2 28.8232 19.9845C28.6077 19.7692 28.5 19.502 28.5 19.1827V15.4616H7.5V29.5384C7.5 29.6539 7.54813 29.7596 7.64438 29.8556C7.74038 29.9519 7.84612 30 7.96162 30H17.1116C17.4309 30 17.6942 30.1077 17.9017 30.3232C18.1095 30.5385 18.2134 30.8057 18.2134 31.125C18.2134 31.4442 18.1057 31.7115 17.8905 31.9267C17.675 32.1422 17.4076 32.25 17.0884 32.25H7.96162ZM24.7444 29.8297L30.1845 24.3896C30.4077 24.1664 30.6689 24.0524 30.9679 24.0476C31.2669 24.0429 31.5327 24.1569 31.7655 24.3896C31.998 24.6221 32.1142 24.8894 32.1142 25.1914C32.1142 25.4934 31.998 25.7606 31.7655 25.9931L25.7164 32.0509C25.4451 32.3221 25.1249 32.4577 24.7556 32.4577C24.3864 32.4577 24.0662 32.3221 23.7952 32.0509L20.8384 29.1086C20.6059 28.8856 20.4896 28.6207 20.4896 28.314C20.4896 28.0072 20.6059 27.7375 20.8384 27.5047C21.0711 27.272 21.3385 27.1556 21.6405 27.1556C21.9422 27.1556 22.2095 27.272 22.4422 27.5047L24.7444 29.8297Z" fill="currentColor"></path></svg></div>
+                <p class="heading-style-h1" role="heading" aria-level="2">Call <em>Requested</em></p></div>
+              <div class="mw-500">
+                <p booking-success-text="" class="text-size-medium">We'll share your call request with Jai and reach out when it's been confirmed, typically within 24 hours</p></div></div>
+              <div class="call-details_table-details">
+              <div class="call-details_table-item is-first">
+              <div class="call-details_table-title">
+                <p booking-element="paid-meeting">Free</p></div>
+              <div class="call-details_table-label is-date-time">
+              <div class="call-details_table-label-wrapper">
+              <div display-flex="" booking-element-wrap="" data-wf--two-type-label--variant="base" class="two-type-label_component">
+              <div class="two-type-label_item is-first">
+                <p booking-element="start-date" class="two-type-label_text is-bold"></p></div>
+              <div class="two-type-label_item">
+                <p booking-element="start-time" class="two-type-label_text"></p></div></div></div></div>
+              <div booking-element-wrap="" class="call-details_table-price">
+              <div class="table-price_layout is-consult">
+                <p class="text-size-small line-height-100">Payment</p>
+                <p booking-element="price" class="text-size-large text-weight-bold line-height-100">$0</p></div></div></div>
+              <div class="call-details_table-item is-date-time-mobile">
+              <div class="call-details_table-label is-date-time-mobile">
+              <div display-flex="" booking-element-wrap="" data-wf--two-type-label--variant="base" class="two-type-label_component">
+              <div class="two-type-label_item is-first">
+                <p booking-element="start-date" class="two-type-label_text is-bold"></p></div>
+              <div class="two-type-label_item">
+                <p booking-element="start-time" class="two-type-label_text"></p></div></div></div></div>
+              <div display-flex="" booking-element-wrap="" class="call-details_table-item" hidden>
+              <div class="call-details_table-title">
+              <div class="w-embed">
+                <p>Message for <span booking-element="starter-name">Jai</span></p></div></div>
+              <div class="call-details_table-label">
+                <p booking-element="context" class="text-size-regular"></p></div></div></div></div>
+            </div>
+            <div class="complete-profile_button-wrapper" data-complete-profile-call-footer>
+              <div data-complete-profile-call-booking-actions></div>
+              <div data-complete-profile-call-success-actions hidden></div>
+            </div>
+          </div>
+        </div>
+        <figure data-jai-trial-quote>
+          <blockquote class="heading-style-h3">We exist to help e-commerce brands build elite teams at a fraction of the cost</blockquote>
+          <figcaption><strong>Jai Dolwani</strong><span>Founder of the Starters</span></figcaption>
+        </figure>
+      </div>
+      <div data-jai-trial-portrait-frame>
+        <img data-jai-trial-portrait src="https://cdn.prod.website-files.com/69c573f20f82bd0f3384032c/6af32d53d578507a40ac31e0_jai-dolwani-complete-profile.png" width="848" height="1024" alt="Jai Dolwani">
+      </div>
+    </div>
+  </div>
+</section>`
+  const newStep = layout.content.querySelector('[data-complete-profile-call-step]')
+  native.skip.button.setAttribute('data-complete-profile-call-continue', '')
+  native.done.button.setAttribute('data-complete-profile-call-done', '')
+  new MutationObserver(() => {
+    const unavailable = newStep.getAttribute('data-complete-profile-call-step') === 'unavailable'
+    native.skip.wrap.setAttribute('data-button-style', unavailable ? 'primary' : 'tertiary')
+  }).observe(newStep, { attributes: true, attributeFilter: ['data-complete-profile-call-step'] })
+  newStep.querySelector('[data-complete-profile-call-booking-actions]').append(native.skip.holder, native.book.holder)
+  newStep.querySelector('[data-complete-profile-call-success-actions]').append(native.done.holder)
+  details.setAttribute('data-complete-profile-details', '')
+  details.after(layout.content)
+  ;
+(function(){"use strict";const de="v1.59.738",J="the-starters-3-0.webflow.io",q=window.location.hostname;if(![J,"thestarters.com","www.thestarters.com"].includes(q)||!(q===J&&/^\/complete-profile-trial\/?$/.test(window.location.pathname))||window.__startersCompleteProfileCallStepInit)return;window.__startersCompleteProfileCallStepInit=!0,window.StartersCompleteProfileCallStep=Object.freeze({release:de});const ue="starters:brand-profile-completed",me="/brand-dashboard",fe="/api:KZf7nFnk/starters_onboarding/get_brand_profile_status",Y="We're still setting up your account. Try again in a moment.",Q="We'll share your call request with Jai and reach out when it's been confirmed, typically within 24 hours",pe="Jai's calendar isn't loading right now. You can still dive in. Book a free call with Jai any time from his profile.",H="Book a free call",he="This time is no longer available. Please choose another time.",ge=1e3,be=1e4,we=6e4,ee=1440*60*1e3,ye=15e3,t="[data-complete-profile-call-step]",z="[data-complete-profile-call-footer]",M="data-complete-profile-call-booking-actions",j="data-complete-profile-call-success-actions",K="[data-complete-profile-call-done]";function o(e){return'[data-paid-calendar-element="'+e+'"]'}function ke(){return window.STARTERS_DEBUG===!0||q==="localhost"||q==="127.0.0.1"||/(^|\.)webflow\.io$|(^|\.)trycloudflare\.com$/.test(q)}function C(e){ke()&&console.warn("[starters complete-profile-call-step] "+e)}function D(e){e&&(e.hidden=!1,e.classList.remove("hide"),e.style.display==="none"&&(e.style.display=""),e.removeAttribute("aria-hidden"))}function $(e){e&&(e.hidden=!0,e.style.display="none",e.setAttribute("aria-hidden","true"))}function te(){window.location.assign(me)}async function ne(){const e=await window.$memberstackDom.getCurrentMember();return e&&e.data}function Se(){const e=document.createElement("style");e.id="starters-complete-profile-call-layout",e.textContent=`
+${t} [data-complete-profile-call-calendar] {
+  width: 100%; max-width: 51.25rem; color: #1e211e;
+  font-family: Inter, sans-serif; font-size: 1rem; font-weight: 500;
+}
+${t} ${o("shell")} {
+  display: grid; grid-template-areas: "month" "timezone" "times"; gap: 1rem;
+  grid-template-columns: minmax(0, 1fr); padding: 1rem; box-sizing: border-box;
+}
+${t} ${o("month")} { grid-area: month; min-width: 0; }
+${t} ${o("timezone-control")} { grid-area: timezone; display: block; width: 100%; min-width: 0; }
+${t} ${o("timezone-caption")} { display: none; }
+${t} ${o("timezone")} {
+  width: 100%; min-height: 3rem; padding: 0.5rem 0.75rem; border: 0.0625rem solid #eee;
+  border-radius: 0.25rem; background: white; color: inherit; font: inherit;
+}
+${t} ${o("times")} {
+  grid-area: times; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-content: start; gap: 0.5rem; max-height: 13.5rem; min-width: 0; overflow: auto;
+}
+${t} [data-paid-calendar-slot] {
+  min-width: 0; height: 3rem; padding: 0 0.25rem; border: 0; border-radius: 0.25rem;
+  background: #eee; color: #1e211e; font: inherit; line-height: 1; white-space: nowrap; cursor: pointer;
+}
+${t} [data-paid-calendar-slot][aria-pressed="true"] { background: #434b43; color: white; }
+${t} [data-paid-calendar-slot]:disabled,
+${t} ${o("confirm")}:disabled { opacity: .5; cursor: default; }
+${t} ${z} {
+  display: flex; justify-content: flex-end; align-items: center; background: white;
+  min-height: 6.125rem; padding: 1.625rem 2rem; border-top: 0.0625rem solid #eee; box-sizing: border-box;
+}
+${t} :is([${M}], [${j}]) {
+  display: flex; justify-content: flex-end; align-items: center; gap: 0.5rem;
+}
+${t}[data-complete-profile-call-step="unavailable"] [data-complete-profile-call-continue],
+${t} [data-complete-profile-call-done] {
+  background: #1e211e; color: white; border-radius: 0.25rem; padding: 1rem 1.5rem;
+}
+${t}:has(> ${z}), ${t} :has(> ${z}) { position: relative; }
+${t} ${o("status")} { margin: 0; padding: 1rem 2rem; font-size: 0.875rem; line-height: 1.125rem; }
+${t} ${o("status")}[data-paid-calendar-status]:not(:empty) {
+  position: absolute; inset: 0 0 auto; z-index: 2; background: #1e211e; color: white;
+}
+${t} ${o("status")}[data-paid-calendar-status="error"]:not(:empty) { background: #d55; }
+${t} ${o("status")}:empty { display: none; }
+${t} ${o("loading")} { display: grid; place-items: center; min-height: 20rem; }
+${t} ${o("loading")} > [data-loader] { display: flex; position: static; }
+${t} ${o("loading-text")} {
+  position: absolute; width: 0.0625rem; height: 0.0625rem; padding: 0; margin: -0.0625rem; overflow: hidden;
+  clip-path: inset(50%); white-space: nowrap; border: 0;
+}
+${t} [data-paid-calendar-element="empty-day"] {
+  grid-column: 1 / -1; display: grid; gap: 0.5rem; padding: 2rem 1.5rem; border-radius: 0.25rem; background: #eee;
+}
+${t} [data-paid-calendar-element="empty-day"] p { margin: 0; }
+${t} [data-paid-calendar-element="empty-day"] p + p { color: #434b43; font-weight: 400; }
+${t} [data-complete-profile-call-calendar] .ui-datepicker {
+  overflow: hidden; border: 0; border-radius: 0.5rem; background: #eee;
+  box-shadow: 0 0 0 0.125rem #eee, 0 0.25rem 0.5rem rgba(0, 0, 0, .10);
+}
+${t} .ui-datepicker-header {
+  position: relative; display: grid; place-items: center; height: 2.75rem;
+}
+${t} .ui-datepicker-prev, ${t} .ui-datepicker-next {
+  position: absolute; top: 0.375rem; display: grid; place-items: center;
+  width: 2rem; height: 2rem; padding: 0; border: 0; background: transparent;
+  cursor: pointer; color: inherit;
+}
+${t} [data-complete-profile-call-month-nav][aria-disabled="true"] { cursor: default; }
+${t} :is([data-complete-profile-call-month-nav], [data-complete-profile-call-continue],
+  ${K}, ${o("confirm")}):focus-visible {
+  outline: 0.125rem solid #1e211e; outline-offset: 0.1875rem; box-shadow: 0 0 0 0.1875rem white;
+}
+${t} .ui-datepicker-prev { left: 0.3125rem; }
+${t} .ui-datepicker-next { right: 0.3125rem; }
+${t} .ui-datepicker-header .ui-icon { position: absolute; width: 0.0625rem; height: 0.0625rem; overflow: hidden; clip-path: inset(50%); }
+${t} .ui-datepicker-prev::after, ${t} .ui-datepicker-next::after {
+  content: ""; width: 0.5625rem; height: 0.5625rem; border-top: 0.0625rem solid; border-right: 0.0625rem solid;
+  transform: rotate(45deg);
+}
+${t} .ui-datepicker-prev::after { transform: rotate(-135deg); }
+${t} .ui-datepicker-calendar {
+  width: 100%; table-layout: fixed; border-spacing: 0; border-radius: 0.5rem; background: white;
+}
+${t} .ui-datepicker-calendar :is(th, td) {
+  height: 3.5625rem; padding: 0; text-align: center; font-weight: inherit;
+}
+${t} .ui-datepicker-calendar th { border-bottom: 0.0625rem solid #eee; }
+${t} .ui-datepicker-calendar td :is(a, span) {
+  display: grid; height: 100%; place-items: center; border-radius: 0.25rem; color: #434b43; text-decoration: none;
+}
+${t} .ui-datepicker-calendar :is(.ui-state-disabled, .ui-datepicker-other-month) span,
+${t} .ui-datepicker-header .ui-state-disabled { opacity: .5; }
+${t} .ui-datepicker-calendar td a.ui-state-active { background: #1e211e; color: white; }
+@media (min-width:48rem) {
+  ${t} ${o("loading")} { min-height: 30.875rem; }
+  ${t} ${o("shell")} {
+    grid-template-columns: minmax(0, 420fr) 0.0625rem minmax(0, 399fr);
+    grid-template-areas: "month divider timezone" "month divider times";
+    grid-template-rows: auto minmax(0, 1fr); gap: 0; padding: 0; height: 30.875rem;
+  }
+  ${t} ${o("shell")}::before { content: ""; grid-area: divider; background: #eee; }
+  ${t} ${o("month")} { margin: 1.5rem; }
+  ${t} ${o("timezone-control")} { width: auto; margin: 1.5rem 1.5rem 1rem; }
+  ${t} ${o("times")} { max-height: 25.25rem; margin: 0 1.5rem; }
+}
+@media (max-width:47.9375rem) {
+  ${t} [data-complete-profile-call-calendar]{font-size:16px}
+  ${t} ${o("shell")}{padding:0;gap:0}
+  ${t} ${o("month")}{padding:16px;border-bottom:1px solid #eee}
+  ${t} .ui-datepicker-header{height:45px}
+  ${t} .ui-datepicker-calendar :is(th,td){height:57px}
+  ${t} ${o("timezone-control")}{width:auto;margin:16px 16px 0}
+  ${t} ${o("timezone")}{min-height:50px}
+  ${t} ${o("times")}{margin:16px;gap:8px;max-height:216px}
+  ${t} [data-paid-calendar-slot]{height:48px}
+  ${t} ${z} { padding:16px; }
+  ${t} :is([${M}], [${j}]) { width: 100%; flex-direction: column-reverse; }
+  ${t} :is([data-complete-profile-call-continue], [data-complete-profile-call-done], ${o("confirm")}) { width: 100%; }
+}
+`,document.head.appendChild(e)}function ie(e){const n=document.createElement("button");n.type="button",n.setAttribute("data-paid-calendar-element","confirm"),n.textContent=H,n.disabled=!0;const u=(e.getAttribute("data-booking-confirm-class")||"").trim();return u&&n.classList.add(...u.split(/\s+/)),n}function $e(e){const n=document.createElement("div"),u=document.createElement("div"),l=document.createElement("p");e.setAttribute("data-paid-calendar-state","loading"),n.setAttribute("data-paid-calendar-element","loading"),u.setAttribute("data-loader","1000"),u.classList.add("experts-list_loader","is-complete-profile"),u.setAttribute("aria-hidden","true"),l.setAttribute("data-paid-calendar-element","loading-text"),l.setAttribute("role","status"),l.textContent="Loading Jai's available times\u2026",n.append(u,l),e.appendChild(n)}function ve(e){return[e.getFullYear(),String(e.getMonth()+1).padStart(2,"0"),String(e.getDate()).padStart(2,"0")].join("-")}function oe(e){return'[data-complete-profile-call-month-nav="'+e+'"]'}function Ae(e,n){const u=n.datepicker("isDisabled");[{direction:"previous",handler:"prev",label:"Previous month"},{direction:"next",handler:"next",label:"Next month"}].forEach(function({direction:m,handler:w,label:p}){const r=e.querySelector(".ui-datepicker-"+w);if(!r||r.hasAttribute("data-complete-profile-call-month-nav"))return;const s=document.createElement("button");s.type="button",s.className=r.className;const S=u||!r.hasAttribute("data-handler");s.disabled=u,s.setAttribute("aria-disabled",String(S)),s.setAttribute("aria-label",p),s.setAttribute("data-complete-profile-call-month-nav",m),s.addEventListener("click",function(){if(S)return;const y=document.activeElement===s;if(r.click(),!y)return;const c=e.querySelector(oe(m)),h=e.querySelector(oe(m==="next"?"previous":"next")),d=c&&c.getAttribute("aria-disabled")==="false"?c:h;d&&!d.disabled&&d.focus({preventScroll:!0})}),r.before(s),r.remove()})}function xe(e,n){const u=e.querySelector(o("month")),l=e.querySelector(o("timezone")),m=e.querySelector(o("times")),w=window.jQuery;if(!u||!l||!m||!w||!w.fn||!w.fn.datepicker)return;function p(){const r=w(u),s=r.datepicker("option","beforeShowDay"),S=r.datepicker("option","onSelect");if(!s||!S)return;const y=new Intl.DateTimeFormat("en-US",{weekday:"long",month:"long",day:"numeric"});r.datepicker("option",{onUpdateDatepicker:function(){Ae(u,r)},beforeShowDay:function(c){const h=s(c);return h[0]?h:[!0,"","No available times"]},onSelect:function(c){const h=r.datepicker("getDate");if(h&&ve(h)===c&&!s(h)[0]){n.clearSelection();const d=document.createElement("div");d.setAttribute("data-paid-calendar-element","empty-day"),d.setAttribute("role","status");const g=document.createElement("p"),b=document.createElement("p");g.textContent="No times left on "+y.format(h),b.textContent="Pick another date.";const B=r.datepicker("option","maxDate"),v=new Date(h);for(v.setDate(v.getDate()+1);v<=B;){if(s(v)[0]){b.textContent+=" Jai's next opening is "+y.format(v)+".";break}v.setDate(v.getDate()+1)}d.append(g,b),m.textContent="",m.appendChild(d);return}S(c)}})}p(),l.addEventListener("change",p)}function Ce(e,n,u){let l=!1,m=!1,w=function(){};function p(){if(l||m||!n())return;m=!0;const r=new AbortController;let s;const S=window.setTimeout(y,be);w=y;function y(){m=!1,window.clearTimeout(s),window.clearTimeout(S),r.abort()}async function c(){const h=Date.now();try{const d=await window.getXanoAuthToken();if(!n()||r.signal.aborted)return;const g=await window.xanoAuthFetch(e,{method:"GET",headers:{Authorization:"Bearer "+d},signal:r.signal});if(!n()||r.signal.aborted)return;if(g.status===403||g.status===404){u("brand status returned "+g.status);return}if(g.ok){const b=await g.json();if(!r.signal.aborted&&b&&b.has_record===!0){l=!0,y();return}}}catch{r.signal.aborted||C("Could not read Brand profile status")}n()&&!r.signal.aborted&&(s=window.setTimeout(c,Math.max(0,ge-(Date.now()-h))))}c()}return{start:p,ready:function(){return l},stop:function(){w()}}}function re(){const e=document.querySelector(t),n=e&&e.querySelector("[data-complete-profile-call-calendar]"),u=document.querySelector("[data-complete-profile-details]"),l=u&&u.querySelector("form"),m=e&&e.querySelector(z),w=m&&m.querySelector("[data-complete-profile-call-continue]");if(!n||!l||!w){C("Call step, calendar, profile form or Continue button is missing");return}let p,r=!1;ne().then(function(s){p=s}).catch(function(){C("Could not read the current member")}),l.addEventListener(ue,function(s){const S=s.detail||{};if(r||s.target!==l||S.operation!=="brand/account/build")return;const y=window.StartersPaidCallBrandPayment,c=window.StartersFreeCallBooking,h=window.StartersBookingSurfaceLifecycle,d=window.StartersV3RouteGuard;if(!y||!["mountPaidCalendar","createBookingAttempt","bookingRequestFingerprint","slotMeetsBookingNotice","getPaidAvailability"].every(function(g){return typeof y[g]=="function"}))return C("Calendar engine is unavailable");if(!c||!["authenticatedRequest","selectBookableConfigurations","formatWithTimezone","canonicalBookingId"].every(function(g){return typeof c[g]=="function"})||!h||typeof h.runBooking!="function")return C("Free booking helpers are unavailable");if(typeof window.xanoAuthFetch!="function"||typeof window.getXanoAuthToken!="function")return C("Scheduling auth is unavailable");if(!S.memberId||!p||p.id!==S.memberId)return C("Completed member is not in the member cache");if(!d||typeof d.memberRole!="function"||d.memberRole(p)!=="brand-paid")return C("Current member is not a paid Brand");s.preventDefault(),r=!0,Promise.resolve().then(function(){return Ee({step:e,calendar:n,details:u,footer:m,skip:w,paid:y,free:c,lifecycle:h,memberId:S.memberId})}).catch(te)})}function Ee({step:e,calendar:n,details:u,footer:l,skip:m,paid:w,free:p,lifecycle:r,memberId:s}){const S=Date.now(),y=q===J?{memberId:"mem_sb_cmqhuaxn80d270sseeo74fn7i",slug:"jp-dionisio"}:{memberId:e.getAttribute("data-call-host-member"),slug:e.getAttribute("data-call-host-slug")},c=e.querySelector("[data-complete-profile-call-success]"),h=e.querySelector("[data-complete-profile-call-unavailable]"),d=l.querySelector("["+j+"]")||document.createElement("div");let g=l.querySelector("["+M+"]"),b=!0,B=!1,v=!1,A,k,O,I,F,W,U;const ae=function(){return b},N=Ce(new URL(fe,p.XANO_BASE).href,ae,P);function X(){b=!1,N.stop(),window.clearTimeout(W),U&&U.disconnect()}function Z(){X(),te()}function Te(){g||(g=document.createElement("div"),g.setAttribute(M,""),Array.from(l.children).forEach(function(i){i!==d&&g.appendChild(i)}),l.appendChild(g)),d.setAttribute(j,""),d.parentElement||l.appendChild(d),$(d)}function P(i){if(b)if(C(i),X(),e.setAttribute("data-complete-profile-call-step","unavailable"),$(n),$(A),$(k),m.disabled=!1,h)D(h);else{const a=document.createElement("p");a.textContent=pe,l.before(a)}}function se(){const i=c&&c.querySelector(K);let a=d.querySelector(K);a?$(i):(a=i||document.createElement("button"),i||(a.type="button",a.textContent="Go to dashboard",a.setAttribute("data-complete-profile-call-done","")),d.appendChild(a)),a.addEventListener("click",Z),$(g),D(d),a.focus()}function le(){n.removeAttribute("data-paid-calendar-state"),n.textContent="";const i=document.createElement("h2"),a=document.createElement("p");i.textContent="Call Requested",a.textContent=Q,n.append(i,a),D(n)}function _e(i){if($(n),$(k),$(e.querySelector("[data-complete-profile-call-heading]")),D(e.querySelector("[data-complete-profile-call-heading-done]")),c){const a=p.formatWithTimezone(i.start,{month:"long",day:"numeric",year:"numeric",timeZone:i.timezone}).list,f={"start-date":a.month+" "+a.day+", "+a.year,"start-time":a.hour+":"+a.minute+" "+a.dayPeriod+" "+a.timeZoneName,price:"$0","paid-meeting":"Free","starter-name":"Jai"};Object.keys(f).forEach(function(T){c.querySelectorAll('[booking-element="'+T+'"]').forEach(function(L){L.textContent=f[T]})}),c.querySelectorAll('[booking-element="context"]').forEach(function(T){$(T.closest("[booking-element-wrap]")||T)});const _=c.querySelector("[booking-success-text]");_&&(_.textContent=Q),D(c)}else le();se()}function ce(){return N.start(),Object.assign(new Error(Y),{status:422,data:{code:"ERROR_CODE_INPUT_ERROR",message:Y}})}async function qe(i){if(!b||B)return;B=!0,m.disabled=!0,k.setAttribute("data-paid-calendar-status","progress");let a=!1;try{if(!N.ready())throw ce();const f=await ne();if(!b)return;if(!f||f.id!==s||!f.auth||!f.auth.email){P("Completed member is no longer available");return}const _={starter_slug:y.slug,config_id:F.config_id,start:i.start,end:i.end,timezone:i.timezone,topic:"New Brand welcome call",context:"",guest_emails:[],brand_email:f.auth.email,starter_email:I.nylas_grant_email},T=w.bookingRequestFingerprint(_);a=!0;const L=await r.runBooking(n,T,function(){const E=w.createBookingAttempt(_),G=E.run;let R=!1;return E.run=async function(){if(!R&&(!w.slotMeetsBookingNotice(i)||i.start<=Date.now()+ee))throw O&&O.clearSelection&&O.clearSelection(),Object.assign(new Error(he),{bookingNotSubmitted:!0,retrySameBooking:!1,staleSlot:!0});return R=!0,G()},E.isDefinitiveRejection=function(x,Pe){return x.status===400&&x.data&&x.data.message==="This booking request previously failed; use a new idempotency key"?!0:!Pe&&[400,401,403,404,422].includes(x.status)},E},function(E){if(!p.canonicalBookingId(E))throw new Error("The canonical booking response is incomplete")});if(b){X();try{_e(_)}catch{C("Could not paint the call card"),$(c),le(),se()}}return L}catch(f){if(!b)return;if(!a&&v&&(f=Object.assign(new Error("The previous request still needs to be checked"),{retrySameBooking:!0})),v=f.retrySameBooking===!0,!v&&f.status===403){P("Booking is unavailable in this environment");return}if(!v&&f.status===404)if(f.data&&f.data.message==="Bookable service was not found"&&(!N.ready()||Date.now()-S<we))f=ce();else{P("Bookable service was not found");return}throw k.setAttribute("data-paid-calendar-status","error"),f.staleSlot||(A.textContent="Try again"),f}finally{B=!1,m.disabled=!1}}function De(){if(A&&A.remove(),k&&k.remove(),A=n.querySelector(o("confirm")),k=n.querySelector(o("status")),!k)throw new Error("Calendar status is missing");if(k.style.color="",k.style.fontSize="",k.style.margin="",k.setAttribute("role","status"),k.setAttribute("aria-atomic","true"),n.getAttribute("data-paid-calendar-state")!=="empty"&&l.before(k),!A){if(n.getAttribute("data-paid-calendar-state")!=="empty")throw new Error("Calendar confirm is missing");A=ie(n)}nativeTrialConfirm(A)}function V(){n.querySelectorAll("[data-paid-calendar-slot]").forEach(function(i){i.style.cssText=""})}async function Be(){if(!y.memberId||!y.slug)throw new Error("Call host is missing");if(I=await p.authenticatedRequest(p.STARTER_PATH,"POST",{member_id:y.memberId}),!b)return;if(!I||!I.nylas_grant_id)throw new Error("Call host has no connected calendar");const i=I.nylas_grant_id,a=await p.authenticatedRequest(p.CONFIGS_PATH,"POST",{grant_id:i});if(!b)return;if(F=p.selectBookableConfigurations(a,q).find(function(x){return x.is_paid===!1}),!F)throw new Error("Call host has no bookable free configuration");const f=Object.assign({},F,{grant_id:i,duration:30,price_cents:0}),_=await w.getPaidAvailability(f);if(!b)return;const T=Date.now()+ee;if(O=await w.mountPaidCalendar({container:n,config:f,slots:_.filter(function(x){return x.start>T}),confirmText:H,isCurrent:ae,onSelectionChange:function(){A&&(A.textContent=H),k&&k.removeAttribute("data-paid-calendar-status"),Promise.resolve().then(V)},onConfirm:qe}),!b)return;De(),V(),U=new MutationObserver(V),U.observe(n,{childList:!0,subtree:!0});const L=n.querySelector(o("shell"));L&&(L.style.gap="");const E=n.querySelector(o("times")),G=n.querySelector(o("timezone-control"));E&&(E.style.gridTemplateColumns=""),G&&(G.style.cssText="");const R=n.querySelector(o("timezone"));R&&(R.style.cssText="",Array.from(R.options).forEach(function(x){x.textContent=x.value.replace(/_/g," ").split("/").join(" / ")})),xe(n,O)}return Promise.resolve().then(function(){m.addEventListener("click",function(){B||Z()}),Se(),Te(),$(u),$(document.querySelector("[data-complete-profile-back]")),D(e),window.scrollTo(0,0);const i=e.querySelector("[data-complete-profile-call-heading]");return i&&(i.setAttribute("tabindex","-1"),i.focus({preventScroll:!0})),$e(n),A=ie(n),nativeTrialConfirm(A),N.start(),W=window.setTimeout(function(){P("Calendar load timed out")},ye),Be().finally(function(){window.clearTimeout(W)})}).catch(function(i){b&&(e.hidden||e.style.display==="none"||!m.isConnected?Z():P(i&&i.message?i.message:"Calendar could not load"))})}document.readyState==="loading"?document.addEventListener("DOMContentLoaded",re,{once:!0}):re()})();
+})().catch(function (error) {
+  console.warn('[starters trial call pilot]', error.message)
+})
+</script>
