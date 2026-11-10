@@ -750,6 +750,8 @@
 
 @media (max-width: 47.9375rem) {
   [data-complete-profile-call-step] {
+    --jai-mobile-booking-body-min: 734px;
+    --jai-mobile-footer-height: 133px;
     min-block-size: 0;
     background: linear-gradient(93.0101deg,#caded9 25.117%,#77a2ab 100.36%);
   }
@@ -826,9 +828,16 @@
     flex-direction: column;
     align-items: stretch;
     justify-content: center;
-    block-size: 133px;
-    min-block-size: 133px;
+    block-size: var(--jai-mobile-footer-height);
+    min-block-size: var(--jai-mobile-footer-height);
     padding: 16px;
+  }
+
+  /* Overlay just above the fixed-size footer: no layout shift, and clear of
+     the month heading and arrows. Taps fall through to the calendar below. */
+  [data-complete-profile-call-step] [data-jai-trial-card] [data-complete-profile-call-status] {
+    inset: auto 0 var(--jai-mobile-footer-height);
+    pointer-events: none;
   }
 
   :where([data-complete-profile-call-step]) [data-complete-profile-call-booking-actions] .button_main-element {
@@ -855,6 +864,10 @@
     min-block-size: 22rem;
   }
 
+  :where(body:has([data-jai-trial-first-step])) [data-complete-profile-call-step] [data-jai-trial-card] :is([data-paid-calendar-element="loading"], [data-complete-profile-call-calendar]) {
+    min-block-size: var(--jai-mobile-booking-body-min);
+  }
+
   [data-complete-profile-call-step] [data-jai-trial-native-button],
   [data-complete-profile-call-step] [data-jai-trial-native-button] .button_main-wrap,
   [data-complete-profile-call-step] [data-jai-trial-native-button] .button_main-element {
@@ -871,11 +884,11 @@
   }
 
   :where([data-complete-profile-call-step]) [data-jai-trial-card] [data-complete-profile-call-success] {
-    min-block-size: var(--jai-booking-body,734px);
+    min-block-size: var(--jai-booking-body, var(--jai-mobile-booking-body-min));
   }
 
   :where([data-complete-profile-call-step]) [data-jai-trial-card] [data-complete-profile-call-footer]:has(> [data-complete-profile-call-success-actions]:not([hidden])) {
-    min-block-size: var(--jai-booking-footer,133px);
+    min-block-size: var(--jai-booking-footer,var(--jai-mobile-footer-height));
     justify-content: center;
   }
 

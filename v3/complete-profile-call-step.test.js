@@ -46,7 +46,10 @@ class Element extends EventTarget {
   }
 
   get options() { return this.children }
-  getBoundingClientRect() { return { height: this.mockHeight || 0 } }
+  getBoundingClientRect() {
+    const height = this.mockHeight || 0
+    return this.mockRect || { top: 0, bottom: height, height }
+  }
 
   get textContent() {
     return this.text + this.children.map(child => child.textContent).join('')
@@ -176,6 +179,21 @@ function fixture(options = {}) {
     notifyMutation(node, type, attribute) {
       observers.forEach(observer => observer.notify(node, type, attribute))
     },
+    createTreeWalker(root, filter) {
+      assert.equal(filter, 4)
+      function * textNodes(element) {
+        if (element.text) yield {
+          get textContent() { return element.text },
+          set textContent(value) {
+            element.text = String(value)
+            document.notifyMutation(element, 'characterData')
+          },
+        }
+        for (const child of element.children) yield * textNodes(child)
+      }
+      const walker = textNodes(root)
+      return { nextNode: () => walker.next().value ?? null }
+    },
     getElementById: id => html.querySelector('[id="' + id + '"]'),
     querySelector: selector => html.querySelector(selector),
   }
@@ -220,8 +238,9 @@ function fixture(options = {}) {
   function native(group, name) {
     const holder = el('div', group, { 'data-jai-trial-native-button': name })
     const wrapper = el('div', holder, { 'data-button-theme': 'black', 'data-button-style': name === 'skip' ? 'tertiary' : 'primary' })
+    if (name === 'book' && options.bookDecoy) el('span', wrapper).textContent = 'Book a free call'
     const label = el('span', wrapper)
-    label.textContent = { skip: 'Continue to dashboard', book: 'Book a free call', done: 'Go to dashboard' }[name]
+    label.textContent = { skip: 'Continue to dashboard', book: options.bookLabelText ?? 'Book a free call', done: 'Go to dashboard' }[name]
     if (name !== 'book' || !options.bookLabelMissing) label.setAttribute('data-complete-profile-call-button-label', '')
     const button = el('button', wrapper, { type: 'button' })
     button.type = 'button'
@@ -252,6 +271,7 @@ function fixture(options = {}) {
   const timers = new Map()
   const navigations = []
   const scrolls = []
+  const relativeScrolls = []
   const warnings = []
   const statusReads = []
   const lookups = []
@@ -344,13 +364,18 @@ function fixture(options = {}) {
         return memberReads === 1 && options.memberRead ? options.memberRead : Promise.resolve({ data: currentMember })
       },
     },
-    matchMedia: () => ({ matches: options.phone ?? false }),
+    matchMedia: query => ({
+      matches: query === '(prefers-reduced-motion: reduce)' ? Boolean(options.reducedMotion) : Boolean(options.phone),
+    }),
+    innerHeight: 812,
+    visualViewport: options.visualViewport,
     scrollTo: (...args) => scrolls.push(args),
+    scrollBy: ({ top, behavior }) => relativeScrolls.push({ top, behavior }),
     setTimeout: (fn, delay) => { timers.set(++timerId, { fn, at: now + delay }); return timerId },
     clearTimeout: id => timers.delete(id),
   }
   const context = vm.createContext({
-    window, document, AbortController, URL, URLSearchParams, queueMicrotask,
+    window, document, AbortController, URL, URLSearchParams, queueMicrotask, NodeFilter: { SHOW_TEXT: 4 },
     Date: class extends Date { static now() { return now } },
     MutationObserver: Observer,
     console: { warn: (...args) => warnings.push(args.join(' ')), error() {}, info() {} },
@@ -423,7 +448,7 @@ function fixture(options = {}) {
     success, receipt, contextWrap, successText, done, part, select, chooseDate, book, open, handoff, load,
     submit, submitLabel, form, bookingActions, successActions, bookAction, skipAction, doneAction,
     banner, loading, created,
-    advance, navigations, scrolls, warnings, statusReads, lookups, requests, inputs, configSelections,
+    advance, navigations, scrolls, relativeScrolls, warnings, statusReads, lookups, requests, inputs, configSelections,
     finishAuth: () => { window.xanoAuthFetch = xanoAuthFetch },
     setEmail: email => { currentMember = { ...initialMember, auth: { email } } },
     ready: () => { recordReady = true },
@@ -546,19 +571,202 @@ test('a phone confirmation keeps the measured booking layout using the existing 
   assert.equal(page.doneAction.holder.parentElement, page.successActions)
 })
 
-test('a retry keeps the authored label as the accessible name when no label hook is available', async () => {
-  const page = fixture({ bookLabelMissing: true, onBook: () => Promise.reject(new TypeError('network')) })
+const PAGES = ['/complete-profile-trial', '/complete-profile']
+
+test('a phone scrolls only when a changed booking message or its action area is offscreen', async t => {
+  for (const pathname of PAGES) await t.test(pathname, async () => {
+    const pending = deferred()
+    const page = fixture({ pathname, phone: true, onBook: () => pending.promise })
+    await page.open()
+    page.select()
+    await flush()
+    // The overlay sits directly above the footer, so the pair is one block.
+    page.banner.mockRect = { top: 744, bottom: 780 }
+    page.footer.mockRect = { top: 780, bottom: 913 }
+    page.bookAction.button.mockRect = { top: 796, bottom: 842 }
+    page.book()
+    await flush()
+    assert.match(page.banner.textContent, /Sending your request/)
+    assert.deepEqual(page.relativeScrolls, [{ top: 101, behavior: 'smooth' }])
+
+    // An unrelated control mutation leaves the existing message in place.
+    page.part('confirm').setAttribute('disabled', '')
+    await flush()
+    assert.equal(page.relativeScrolls.length, 1)
+    page.banner.mockRect = { top: 643, bottom: 679 }
+    page.footer.mockRect = { top: 679, bottom: 812 }
+    pending.resolve(response(400, { code: 'ERROR_CODE_INPUT_ERROR', message: 'Please try another time.' }))
+    await flush()
+    assert.equal(page.banner.getAttribute('data-paid-calendar-status'), 'error')
+    assert.equal(page.relativeScrolls.length, 1, 'a pair already in view never scrolls')
+  })
+})
+
+test('a banner above the viewport scrolls up by the smallest distance, never centring', async () => {
+  const pending = deferred()
+  const page = fixture({ pathname: '/complete-profile-trial', phone: true, onBook: () => pending.promise })
   await page.open()
   page.select()
   await flush()
+  page.banner.mockRect = { top: -60, bottom: -24 }
+  page.footer.mockRect = { top: -24, bottom: 109 }
   page.book()
   await flush()
+  assert.deepEqual(page.relativeScrolls, [{ top: -60, behavior: 'smooth' }])
+})
+
+test('a phone error scrolls without animation for reduced motion and respects the viewport offset', async t => {
+  for (const pathname of PAGES) await t.test(pathname, async () => {
+    const pending = deferred()
+    const page = fixture({
+      pathname, phone: true, reducedMotion: true, onBook: () => pending.promise,
+      visualViewport: { offsetTop: 100, height: 400 },
+    })
+    await page.open()
+    page.select()
+    await flush()
+    page.banner.mockRect = { top: 200, bottom: 235 }
+    page.footer.mockRect = { top: 235, bottom: 368 }
+    page.book()
+    await flush()
+    assert.deepEqual(page.relativeScrolls, [])
+    page.banner.mockRect = { top: 470, bottom: 540 }
+    page.footer.mockRect = { top: 540, bottom: 680 }
+    pending.resolve(response(400, { code: 'ERROR_CODE_INPUT_ERROR', message: 'Please try another time.' }))
+    await flush()
+    assert.equal(page.banner.getAttribute('data-paid-calendar-status'), 'error')
+    assert.deepEqual(page.relativeScrolls, [{ top: 180, behavior: 'instant' }])
+  })
+})
+
+test('when the viewport cannot fit the pair the Book button stays whole and the banner stays near it', async () => {
+  const pending = deferred()
+  const page = fixture({
+    pathname: '/complete-profile-trial', phone: true, onBook: () => pending.promise,
+    visualViewport: { offsetTop: 0, height: 150 },
+  })
+  await page.open()
+  page.select()
+  await flush()
+  page.banner.mockRect = { top: 344, bottom: 400 }
+  page.footer.mockRect = { top: 400, bottom: 533 }
+  page.bookAction.button.mockRect = { top: 420, bottom: 466 }
+  page.book()
+  await flush()
+  // Banner top meets the viewport top while the button (76-122) stays whole.
+  assert.deepEqual(page.relativeScrolls, [{ top: 344, behavior: 'smooth' }])
+
+  page.banner.mockRect = { top: 100, bottom: 156 }
+  page.footer.mockRect = { top: 156, bottom: 289 }
+  page.bookAction.button.mockRect = { top: 176, bottom: 222 }
+  pending.resolve(response(400, { code: 'ERROR_CODE_INPUT_ERROR', message: 'Please try another time.' }))
+  await flush()
+  // Banner top is 100px down; the button (176-222) stays whole at 76-122 after the scroll.
+  assert.deepEqual(page.relativeScrolls[1], { top: 100, behavior: 'smooth' })
+})
+
+test('an offscreen desktop status never scrolls the page', async t => {
+  for (const pathname of PAGES) await t.test(pathname, async () => {
+    const page = fixture({
+      pathname,
+      onBook: () => response(400, { code: 'ERROR_CODE_INPUT_ERROR', message: 'Please try another time.' }),
+    })
+    await page.open()
+    page.select()
+    await flush()
+    page.banner.mockRect = { top: -110, bottom: -40 }
+    page.book()
+    await flush()
+    assert.equal(page.banner.getAttribute('data-paid-calendar-status'), 'error')
+    assert.deepEqual(page.relativeScrolls, [])
+  })
+})
+
+test('a finished step never scrolls for a late banner update', async () => {
+  const pending = deferred()
+  const page = fixture({ pathname: '/complete-profile', phone: true, onBook: () => pending.promise })
+  await page.open()
+  page.select()
+  await flush()
+  page.banner.mockRect = { top: -60, bottom: -24 }
+  page.book()
+  await flush()
+  const scrolls = page.relativeScrolls.length
+  pending.resolve(response(200, READY))
+  await flush()
+  page.banner.mockRect = { top: -200, bottom: -160 }
+  page.part('status').textContent = 'Too late'
+  await flush()
+  assert.equal(page.relativeScrolls.length, scrolls)
+})
+
+test('trial native Book text and accessible name change together after failure and a new slot', async () => {
+  const page = fixture({
+    pathname: '/complete-profile-trial', bookLabelMissing: true,
+    availability: response(200, { time_slots: [FIRST_SLOT, FIRST_SLOT + 1800000].map(start => ({
+      start_time: start / 1000, end_time: (start + 1800000) / 1000,
+    })) }),
+    onBook: () => response(400, { code: 'ERROR_CODE_INPUT_ERROR', message: 'Please try another time.' }),
+  })
+  await page.open()
+  const [first, second] = page.calendar.querySelectorAll('[data-paid-calendar-slot]')
+  first.click()
+  await flush()
+  page.book()
+  await flush()
+  assert.equal(page.bookAction.label.textContent, 'Try again')
+  assert.equal(page.bookAction.button.getAttribute('aria-label'), 'Try again')
+  assert.equal(page.bookAction.button.disabled, false)
+  second.click()
+  await flush()
+  assert.equal(second.getAttribute('aria-pressed'), 'true')
   assert.equal(page.bookAction.label.textContent, 'Book a free call')
   assert.equal(page.bookAction.button.getAttribute('aria-label'), 'Book a free call')
-  assert.equal(page.bookAction.button.disabled, false)
-  assert.equal(page.bookAction.wrapper.getAttribute('data-button-theme'), 'black')
-  assert.equal(page.banner.getAttribute('data-paid-calendar-status'), 'error')
-  assert.match(page.banner.textContent, /Retry to check the same request/)
+})
+
+test('a retry updates the exact-text Book label on both pages when no label hook is available', async t => {
+  for (const pathname of PAGES) await t.test(pathname, async () => {
+    const page = fixture({ pathname, bookLabelMissing: true, onBook: () => Promise.reject(new TypeError('network')) })
+    await page.open()
+    page.select()
+    await flush()
+    page.book()
+    await flush()
+    assert.equal(page.bookAction.label.textContent, 'Try again')
+    assert.equal(page.bookAction.button.getAttribute('aria-label'), 'Try again')
+    assert.equal(page.bookAction.button.disabled, false)
+    assert.equal(page.bookAction.wrapper.getAttribute('data-button-theme'), 'black')
+    assert.equal(page.banner.getAttribute('data-paid-calendar-status'), 'error')
+    assert.match(page.banner.textContent, /Retry to check the same request/)
+  })
+})
+
+test('the authored label hook wins over an exact-text match, and only exact text is a fallback', async t => {
+  for (const pathname of PAGES) {
+    await t.test(pathname + ' authored hook', async () => {
+      const page = fixture({ pathname, bookDecoy: true, bookLabelText: 'Reserve', onBook: () => Promise.reject(new TypeError('network')) })
+      await page.open()
+      page.select()
+      await flush()
+      assert.equal(page.bookAction.label.textContent, 'Book a free call')
+      page.book()
+      await flush()
+      assert.equal(page.bookAction.label.textContent, 'Try again')
+      const decoy = page.bookAction.wrapper.children[0]
+      assert.equal(decoy.textContent, 'Book a free call', 'the unmarked text is left alone')
+    })
+    await t.test(pathname + ' non-exact text', async () => {
+      const page = fixture({ pathname, bookLabelMissing: true, bookLabelText: 'Book a free call now',
+        onBook: () => Promise.reject(new TypeError('network')) })
+      await page.open()
+      page.select()
+      await flush()
+      page.book()
+      await flush()
+      assert.equal(page.bookAction.label.textContent, 'Book a free call now')
+      assert.equal(page.bookAction.button.getAttribute('aria-label'), 'Book a free call')
+    })
+  }
 })
 
 test('auth may arrive after init, and the staging calendar uses the free test fixture', async () => {

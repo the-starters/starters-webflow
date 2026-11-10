@@ -21,6 +21,7 @@
   const SETTING_UP = "We're still setting up your account. Try again in a moment."
   const SUCCESS = "We'll share your call request with Jai and reach out when it's been confirmed, typically within 24 hours"
   const BOOK = 'Book a free call'
+  const PHONE_QUERY = '(max-width: 767px)'
   const STALE = 'This time is no longer available. Please choose another time.'
   const POLL_MS = 1000
   const POLL_BUDGET_MS = 10000
@@ -73,7 +74,17 @@
     const wrapper = holder && (holder.matches(theme) ? holder : holder.querySelector(theme))
     const button = wrapper && wrapper.querySelector('button[type="button"]')
     if (!button) return null
-    return { holder, wrapper, button, hook, label: wrapper.querySelector('[data-complete-profile-call-button-label]') }
+    let label = wrapper.querySelector('[data-complete-profile-call-button-label]')
+    if (!label && name === 'book') {
+      // The native Button renders its visible label beside the actual button.
+      const textNodes = document.createTreeWalker(wrapper, NodeFilter.SHOW_TEXT)
+      for (let text = textNodes.nextNode(); text; text = textNodes.nextNode()) {
+        if (text.textContent.trim() !== BOOK) continue
+        label = text
+        break
+      }
+    }
+    return { holder, wrapper, button, hook, label }
   }
 
   function setActionLabel(action, label) {
@@ -356,6 +367,35 @@
       hide(banner)
     }
 
+    function revealBannerOnPhone() {
+      if (!active || !window.matchMedia(PHONE_QUERY).matches) return
+      // The overlay sits just above the footer, so the banner and the action
+      // area are one block. Scroll the least distance that shows both.
+      const message = banner.getBoundingClientRect()
+      const area = footer.getBoundingClientRect()
+      let action = book.button.getBoundingClientRect()
+      if (!(action.bottom > action.top)) action = area
+      const viewTop = window.visualViewport?.offsetTop ?? 0
+      const viewBottom = viewTop + (window.visualViewport?.height ?? window.innerHeight)
+      const pairTop = Math.min(message.top, area.top)
+      const pairBottom = Math.max(message.bottom, area.bottom)
+      let delta = 0
+      if (pairBottom - pairTop <= viewBottom - viewTop) {
+        if (pairTop < viewTop) delta = pairTop - viewTop
+        else if (pairBottom > viewBottom) delta = pairBottom - viewBottom
+      } else {
+        // The pair cannot fit: keep the Book button whole, banner as close as possible.
+        const low = action.bottom - viewBottom
+        const high = action.top - viewTop
+        delta = low > high ? high : Math.min(Math.max(pairTop - viewTop, low), high)
+      }
+      if (!delta) return
+      window.scrollBy({
+        top: delta,
+        behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth',
+      })
+    }
+
     function fallback(reason) {
       if (!active) return
       warn(reason)
@@ -525,9 +565,11 @@
       setActionDisabled(book, confirm.disabled)
       const message = engineStatus.textContent.trim()
       if (!message) clearBanner()
-      else {
+      else if (banner.textContent !== message) {
         banner.textContent = message
         show(banner)
+        const state = banner.getAttribute('data-paid-calendar-status')
+        if (state === 'progress' || state === 'error') revealBannerOnPhone()
       }
     }
 
