@@ -364,6 +364,33 @@ function installSettings(bookingApi) {
   }
 }
 
+test('the owner Starter lookup reads the self-only route, not the Brand-only booking profile', async () => {
+  const calls = []
+  await withGlobals({
+    xanoAuthFetch: async (url, options) => {
+      calls.push({ url, options })
+      return response({ id: 82, nylas_grant_id: 'grant_owner' })
+    },
+  }, async () => {
+    const starter = await api.getOwnStarterByMemberId('mem_owner')
+    assert.equal(starter.nylas_grant_id, 'grant_owner')
+  })
+
+  assert.equal(api.OWNER_STARTER_PATH, '/starter/get_by_memberstack/v3')
+  assert.equal(calls.length, 1)
+  assert.equal(new URL(calls[0].url).pathname.endsWith(api.OWNER_STARTER_PATH), true)
+  assert.equal(calls[0].options.method, 'POST')
+  assert.deepEqual(JSON.parse(calls[0].options.body), { member_id: 'mem_owner' })
+})
+
+test('the owner Starter lookup resolves null when Xano refuses it', async () => {
+  await withGlobals({
+    xanoAuthFetch: async () => response({ message: 'Access denied' }, 403),
+  }, async () => {
+    assert.equal(await api.getOwnStarterByMemberId('mem_owner'), null)
+  })
+})
+
 test('canonical Free reads use one authenticated request and exact V3 routes', async () => {
   const calls = []
   const now = Date.UTC(2026, 7, 20, 0, 0, 0)

@@ -2256,7 +2256,13 @@ On valid Hire paths, the two public booking-discovery helpers use
 Brand-safe contracts instead of Talent-owner contracts. Both the unversioned
 and `/v3` forms of `starter/get_by_memberstack` are remapped to
 `starter/get_booking_profile/v3`, which returns only the Starter row ID and
-calendar grant. Both forms of `nylas_configurations/get_all` are remapped to
+calendar grant. The one exception is the profile owner reading their own
+record: when the request's `member_id` is the signed-in member, both forms go
+to the self-only `starter/get_by_memberstack/v3`, because the booking profile
+answers 403 to every non-Brand member. `hire-profile.js` makes that owner read
+through `getOwnStarterByMemberId()` in `free-call-booking.js`, and a Starter
+viewing someone else's profile makes no Starter read at all. Both forms of
+`nylas_configurations/get_all` are remapped to
 `nylas_configurations/get_bookable/v3`, which returns the bookable configuration
 metadata. Every other installed surface uses the self-only
 `starter/get_by_memberstack/v3` and grant-owner-only

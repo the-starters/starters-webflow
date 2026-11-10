@@ -400,13 +400,33 @@
     return ownerOnlyResponse()
   }
 
+  // On Hire paths the Starter reader is remapped to the Brand-safe booking
+  // profile so a Brand's discovery never asks for another member's private
+  // record. That endpoint refuses every non-Brand member, so the profile
+  // owner reading their own record keeps the self-only route instead.
+  const HIRE_OWNER_SELF_READS = new Set([
+    'starter/get_by_memberstack',
+    'starter/get_by_memberstack/v3',
+  ])
+
+  async function routeTarget(request, route) {
+    const target = activeRouteMap[route]
+    if (!target || !isHireBookingPath || !HIRE_OWNER_SELF_READS.has(route)) return target
+    const requested = await requestedMemberId(request)
+    if (!requested) return target
+    const authenticated = await authenticatedMemberstackId()
+    return authenticated && authenticated === requested
+      ? V3_PATHS['starter/get_by_memberstack']
+      : target
+  }
+
   async function stageFetch(input, init) {
     const signalHint = callerHasAbortSignal(init)
     const request = new Request(input, init)
     const scheduling = schedulingRoute(request)
     if (!scheduling || PASSTHROUGH_ROUTES.has(scheduling.route)) return originalFetch(request)
 
-    const target = activeRouteMap[scheduling.route]
+    const target = await routeTarget(request, scheduling.route)
     if (target) {
       if (!originalXanoAuthFetch) {
         setStatus('auth-unavailable')
@@ -446,7 +466,7 @@
       return originalXanoAuthFetch(request, undefined, expectedScope, signalHint)
     }
 
-    const target = activeRouteMap[scheduling.route]
+    const target = await routeTarget(request, scheduling.route)
     if (target) {
       const ownerOnly = await nonOwnerStarterRead(request, scheduling.route)
       if (ownerOnly) return ownerOnly
