@@ -4117,6 +4117,8 @@
                         'review_count',
                         'review_average',
                         'categories',
+                        'is-agency',
+                        'agency-name',
                         'archived',
                         'draft',
                         'objectID',
@@ -4549,6 +4551,21 @@
         return selectedFreelancers
     }
 
+    /**
+     * Drafts one category's recommendations, skipping Starters already shown
+     * anywhere on the page, and records the new picks as shown.
+     *
+     * @param {object[][]} pools Ordered subcategory candidate pools.
+     * @param {number} limit Maximum candidates for this category.
+     * @param {Set<string>} shownObjectIds Object IDs already shown; updated.
+     * @returns {object[]} This category's recommendations.
+     */
+    function draftUnshownRecommendations(pools, limit, shownObjectIds) {
+        const picks = draftRoundRobin(pools, limit, shownObjectIds)
+        picks.forEach((freelancer) => shownObjectIds.add(freelancer.objectID))
+        return picks
+    }
+
     function selectFeaturedFreelancers(categoryCandidatePools, limit) {
         // Each pool is already ordered best-first by getTopRecommendedFreelancers.
         return draftRoundRobin(
@@ -4653,11 +4670,23 @@
         }
 
         const hourlyRateText = formatRateValue(freelancer.hourlyRate)
-        if (hourlyRateText) {
+        // Agencies have no hourly rate (Jai, 2026-08-28); they get a monthly line.
+        if (hourlyRateText && freelancer['is-agency'] !== true) {
             const hourlyRateElement = document.createElement('p')
             hourlyRateElement.className = 'quiz-result-freelancer-hourly-rate'
             hourlyRateElement.textContent = 'Hourly rate: ' + hourlyRateText
             cardElement.appendChild(hourlyRateElement)
+        }
+
+        const agencyMonthlyText =
+            freelancer['is-agency'] === true
+                ? formatRateValue(getAgencyMonthlyRate(freelancer), '/mo')
+                : ''
+        if (agencyMonthlyText) {
+            const monthlyRateElement = document.createElement('p')
+            monthlyRateElement.className = 'quiz-result-freelancer-monthly-rate'
+            monthlyRateElement.textContent = 'Monthly rate: ' + agencyMonthlyText
+            cardElement.appendChild(monthlyRateElement)
         }
 
         const projectRateText = formatRateValue(freelancer.projectRate)
@@ -4824,7 +4853,9 @@
             case 'paid-call-rate':
                 return freelancer.paidCallRate ?? freelancer['paid-call-rate']
             case 'retainer-rate':
-                return freelancer.retainerRate ?? freelancer['retainer-rate']
+                return freelancer['is-agency'] === true
+                    ? getAgencyMonthlyRate(freelancer)
+                    : freelancer.retainerRate ?? freelancer['retainer-rate']
             case 'average-project-size':
             case 'project-rate':
                 return freelancer.projectRate
@@ -4871,6 +4902,24 @@
             default:
                 return freelancer[field]
         }
+    }
+
+    /**
+     * Returns the monthly price shown on an agency card.
+     *
+     * Agencies have no hourly rate (Jai, 2026-08-28): the card template shows
+     * the retainer as "/mo" in its agency branch. The retainer wins; when it is
+     * empty, the shared `rate` field (which agencies fill with their monthly
+     * figure) is the fallback.
+     *
+     * @param {object} freelancer Normalized freelancer recommendation.
+     * @returns {unknown} Monthly price, or null when neither field has a value.
+     */
+    function getAgencyMonthlyRate(freelancer) {
+        const retainer = freelancer.retainerRate ?? freelancer['retainer-rate']
+        if (!isEmptyCardValue(retainer)) return retainer
+        const shared = freelancer.hourlyRate ?? freelancer.rate
+        return isEmptyCardValue(shared) ? null : shared
     }
 
     /**
@@ -5744,14 +5793,18 @@
         const featuredObjectIds = new Set(
             featuredFreelancers.map((freelancer) => freelancer.objectID),
         )
+        // One card per person (Jai, 2026-11-10): every Starter shown so far,
+        // featured or in an earlier category, is skipped by later categories
+        // and by the category fallbacks below.
+        const shownObjectIds = new Set(featuredObjectIds)
         const recommendationGroups = categoryCandidatePools.map((pool) => ({
             category: pool.category,
             query: pool.query,
             queries: pool.queries,
-            recommendations: draftRoundRobin(
+            recommendations: draftUnshownRecommendations(
                 pool.subcategoryPools,
                 categoryFreelancerLimit,
-                featuredObjectIds,
+                shownObjectIds,
             ),
         }))
         const fallbackSearchResults = strictQueryMode
@@ -5783,16 +5836,15 @@
                         matchedQuery: fallbackQuery,
                         matchedQueryTier: 'fallback',
                     }))
-                    const excludedObjectIds = new Set([
-                        ...featuredObjectIds,
-                        ...group.recommendations.map(
-                            (freelancer) => freelancer.objectID,
-                        ),
-                    ])
+                    // Read and update shownObjectIds with no await in between,
+                    // so parallel fallbacks cannot pick the same Starter.
                     const fallbackRecommendations = getTopRecommendedFreelancers(
                         getUniqueRecommendedFreelancerCandidates(candidates),
                         categoryFreelancerLimit - group.recommendations.length,
-                        excludedObjectIds,
+                        new Set(shownObjectIds),
+                    )
+                    fallbackRecommendations.forEach((freelancer) =>
+                        shownObjectIds.add(freelancer.objectID),
                     )
 
                     group.queries.push({
