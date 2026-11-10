@@ -5030,6 +5030,56 @@
         return true
     }
 
+    /**
+     * Shows an agency's monthly price on the quiz category card's hourly line.
+     *
+     * The published quiz card binds only `rate` next to fixed "/hr" text and
+     * has no is-agency branch. Agencies have no hourly rate (Jai, 2026-08-28),
+     * so for them the rate slot gets the monthly price and the "/hr" sibling
+     * reads "/mo". The original suffix is kept in data-quiz-rate-suffix so a
+     * reused or cloned card restores "/hr" for the next non-agency Starter.
+     *
+     * @param {HTMLElement} cardElement Card element being bound.
+     * @param {object} freelancer Normalized freelancer recommendation.
+     * @returns {void}
+     */
+    function bindAgencyRateLabel(cardElement, freelancer) {
+        const isAgency = freelancer['is-agency'] === true
+
+        cardElement
+            .querySelectorAll('[data-quiz-text="rate"], [wf-algolia-text="rate"]')
+            .forEach((rateElement) => {
+                const suffixes = Array.from(
+                    rateElement.parentElement?.children || [],
+                ).filter((sibling) => {
+                    if (sibling === rateElement) return false
+                    const original =
+                        sibling.getAttribute('data-quiz-rate-suffix') ||
+                        normalize(sibling.textContent)
+                    return original === '/hr'
+                })
+                if (!suffixes.length) return
+
+                suffixes.forEach((suffix) => {
+                    suffix.setAttribute('data-quiz-rate-suffix', '/hr')
+                    suffix.textContent = isAgency ? '/mo' : '/hr'
+                })
+
+                if (!isAgency) return
+                const format =
+                    rateElement.getAttribute('data-quiz-format') ||
+                    rateElement.getAttribute('wf-algolia-format') ||
+                    ''
+                const monthly = getAgencyMonthlyRate(freelancer)
+                setCardText(
+                    rateElement,
+                    isEmptyCardValue(monthly)
+                        ? ''
+                        : formatCardValue(monthly, format),
+                )
+            })
+    }
+
     const cardConditionOperators = ['===', '!==', '>=', '<=', '>', '<']
 
     /**
@@ -5215,6 +5265,8 @@
 
             setCardText(element, formatCardValue(value, format))
         })
+
+        bindAgencyRateLabel(cardElement, freelancer)
 
         // Indexed list item bindings (e.g. roles[0], roles[1], roles[2]).
         cardElement.querySelectorAll('[data-quiz-list]').forEach((element) => {

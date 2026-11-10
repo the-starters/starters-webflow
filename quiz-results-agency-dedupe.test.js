@@ -204,3 +204,114 @@ test('category fallbacks assign a shared Starter to the earliest category, whate
     assert.deepEqual([...shown].sort(), ['a', 'b', 'featured-1', 'scott'])
     assert.equal(issues.length, 0)
 })
+
+// Live finding, 2026-11-10: the published quiz category card binds only
+// `rate` next to a fixed "/hr" (no is-agency branch), so Scott Bauer (314)
+// still rendered "$5000/hr". The controller must rewrite that line.
+function fakeElement(attributes = {}, text = '', children = []) {
+    const classes = new Set()
+    const element = {
+        attributes: { ...attributes },
+        textContent: text,
+        children,
+        parentElement: null,
+        classList: {
+            add: (name) => classes.add(name),
+            remove: (name) => classes.delete(name),
+            contains: (name) => classes.has(name),
+        },
+        getAttribute: (name) => (name in element.attributes ? element.attributes[name] : null),
+        setAttribute: (name, value) => {
+            element.attributes[name] = String(value)
+        },
+        querySelectorAll(selector) {
+            const wanted = selector.split(',').map((part) => {
+                const match = part.trim().match(/^\[([\w-]+)="([^"]*)"\]$/)
+                return { name: match[1], value: match[2] }
+            })
+            const found = []
+            const walk = (node) => {
+                node.children.forEach((child) => {
+                    if (wanted.some((w) => child.attributes[w.name] === w.value)) found.push(child)
+                    walk(child)
+                })
+            }
+            walk(element)
+            return found
+        },
+    }
+    children.forEach((child) => {
+        child.parentElement = element
+    })
+    return element
+}
+
+// Mirrors the price lines inside [data-quiz-card] on the published /quiz-results.
+function quizCard() {
+    const rate = fakeElement({ 'wf-algolia-text': 'rate' }, '750')
+    const suffix = fakeElement({}, '/hr')
+    const consultRate = fakeElement({ 'wf-algolia-text': 'rate' }, '750')
+    const consultSuffix = fakeElement({}, '/Session')
+    const card = fakeElement({}, '', [
+        fakeElement({ 'wf-algolia-if': "profile-type === 'Consult'" }, '', [
+            fakeElement({}, 'From'),
+            fakeElement({}, '', [fakeElement({}, '$'), consultRate]),
+            consultSuffix,
+        ]),
+        fakeElement({ 'wf-algolia-if': "profile-type !== 'Consult'" }, '', [
+            fakeElement({}, '$'),
+            rate,
+            suffix,
+        ]),
+    ])
+    return { card, rate, suffix, consultRate, consultSuffix }
+}
+
+const labelContext = {}
+vm.createContext(labelContext)
+vm.runInContext(
+    [
+        'normalize',
+        'stripHtml',
+        'getRankingPoints',
+        'getLockedDisplayName',
+        'isEmptyCardValue',
+        'getAgencyMonthlyRate',
+        'formatCardValue',
+        'setCardText',
+        'bindAgencyRateLabel',
+    ]
+        .map(extractFunction)
+        .concat('this.bindAgencyRateLabel = bindAgencyRateLabel')
+        .join('\n'),
+    labelContext,
+)
+
+test('an agency quiz card shows its monthly price with /mo instead of the rate with /hr', () => {
+    const { card, rate, suffix, consultRate, consultSuffix } = quizCard()
+    rate.textContent = '5000'
+    labelContext.bindAgencyRateLabel(card, scott)
+
+    assert.equal(rate.textContent, '3500')
+    assert.equal(suffix.textContent, '/mo')
+    assert.equal(consultRate.textContent, '750')
+    assert.equal(consultSuffix.textContent, '/Session')
+})
+
+test('a reused agency card goes back to /hr for a non-agency Starter', () => {
+    const { card, rate, suffix } = quizCard()
+    labelContext.bindAgencyRateLabel(card, scott)
+    rate.textContent = '150'
+    labelContext.bindAgencyRateLabel(card, { ...scott, 'is-agency': false, hourlyRate: 150 })
+
+    assert.equal(rate.textContent, '150')
+    assert.equal(suffix.textContent, '/hr')
+})
+
+test('an agency with no retainer shows the shared rate as its monthly price', () => {
+    const { card, rate, suffix } = quizCard()
+    labelContext.bindAgencyRateLabel(card, { ...scott, retainerRate: null })
+
+    assert.equal(rate.textContent, '5000')
+    assert.equal(suffix.textContent, '/mo')
+})
