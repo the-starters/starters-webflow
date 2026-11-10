@@ -2579,8 +2579,17 @@
               // Owner settings are independent of Brand booking discovery.
               // Start them before the Starter lookup settles so a slow or
               // failed lookup cannot strand both authored cards in loading.
+              // The booking-profile lookup is Brand-only (Xano answers 403 to
+              // every other member), so the owner reads their own record
+              // through the owner-scoped lookup, and a Starter on someone
+              // else's profile has no record here to read at all.
               const starterPromise = Promise.resolve().then(function () {
-                  return freeCallBooking.getStarterByMemberId(FREELANCER_ID);
+                  if (!isProfileOwner(MEMBER)) return null;
+                  if (typeof freeCallBooking.getOwnStarterByMemberId !== 'function') {
+                      console.warn('[hire-profile] the owner Starter lookup is unavailable');
+                      return null;
+                  }
+                  return freeCallBooking.getOwnStarterByMemberId(FREELANCER_ID);
               }).catch(function (error) {
                   console.warn('[hire-profile] the Starter lookup failed:', error);
                   return null;

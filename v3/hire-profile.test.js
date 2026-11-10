@@ -489,6 +489,7 @@ function makeContext({
   starterId = 383,
   member = {},
   getStarterByMemberId = () => Promise.resolve(null),
+  getOwnStarterByMemberId = () => Promise.resolve(null),
   getConfigs,
   getNearestSlot,
   initBookingComponents,
@@ -547,6 +548,7 @@ function makeContext({
     typeof initBookingComponents === 'function'
   ) ? {
       getStarterByMemberId,
+      getOwnStarterByMemberId,
       getConfigs,
       getNearestSlot,
       installFreeBookingController: typeof initBookingComponents === 'function'
@@ -2084,7 +2086,10 @@ test('a signed-in Starter refreshes empty navigation after owner cards are revea
       // 2026-09-21 and never reaches the owner-card reveal this test covers.
       planConnections: [{ planId: 'pln_dorxata-test-free-plan-dvcg0k8o', status: 'ACTIVE' }],
     },
-    getStarterByMemberId: () => starterReady,
+    getOwnStarterByMemberId: () => starterReady,
+    // The viewer is the profile owner: only the owner's own lookup can return
+    // a grant to a non-Brand member.
+    starterMemberId: 'owner_member',
   })
   vm.createContext(context)
   vm.runInContext(source, context)
@@ -4695,7 +4700,7 @@ test('owner settings settle independently when the Starter lookup fails', async 
       services: [],
     }),
   })
-  controller.getStarterByMemberId = async () => { throw new Error('starter lookup unavailable') }
+  controller.getOwnStarterByMemberId = async () => { throw new Error('starter lookup unavailable') }
   const context = ownerContext(page, controller, { wfXano: wfx.api })
   vm.createContext(context)
   vm.runInContext(source, context)
@@ -6512,6 +6517,13 @@ function ownerController({
     requests,
     calls,
     getStarterByMemberId: async () => ({
+      nylas_grant_id: grantId,
+      nylas_grant_email: 'owner@example.com',
+    }),
+    // The owner's own record. On their own profile the owner reads this
+    // self-only lookup, never the Brand-only booking profile above.
+    getOwnStarterByMemberId: async () => ({
+      id: 383,
       nylas_grant_id: grantId,
       nylas_grant_email: 'owner@example.com',
     }),
@@ -11127,5 +11139,72 @@ test('taxonomy wrappers keep per-kind requests with a cached wf-xano build or af
   await settle()
   assert.equal(wrappers[0].wrapper.getAttribute('wf-xano-param-kind'), 'tools', 'a booted wrapper is not rewritten')
   assert.equal(wrappers[3].wrapper.getAttribute('wf-xano-items-path'), 'tools')
+})
+
+// Regression (bug-hunt 2026-11-10): the owner branch used the Brand-only
+// booking-profile lookup, which Xano answers 403 for every non-Brand, so a
+// Starter with a connected calendar saw their own call cards hidden. The owner
+// must read their own record through the owner-scoped lookup instead.
+function ownerLookupController({ ownGrantId = 'grant_owner' } = {}) {
+  const controller = ownerController()
+  controller.brandLookups = 0
+  controller.ownLookups = []
+  controller.getStarterByMemberId = async () => {
+    controller.brandLookups += 1
+    return null // what a 403 from starter/get_booking_profile/v3 resolves to
+  }
+  controller.getOwnStarterByMemberId = async (memberId) => {
+    controller.ownLookups.push(memberId)
+    return { id: 383, nylas_grant_id: ownGrantId }
+  }
+  return controller
+}
+
+const OWNER_LOOKUP_RECORD = {
+  rate: 0,
+  'retainer-enabled': false,
+  'profile-type': 'Consult',
+  'free-consulting-calls-t-f': true,
+}
+
+test('owner lookup: the profile owner reads their own calendar grant and keeps their connected call card', async () => {
+  const page = makePage()
+  const controller = ownerLookupController()
+  const context = ownerContext(page, controller, { record: OWNER_LOOKUP_RECORD })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(controller.brandLookups, 0, 'the owner must never call the Brand-only booking lookup')
+  assert.deepEqual(controller.ownLookups, ['mem_canary'])
+  const freeCard = page.servicesList.querySelector('[has-connection="free"]')
+  assert.equal(freeCard.style.display, 'block', 'a connected owner keeps their Free Call card')
+  assert.equal(freeCard.getAttribute('data-canonical-call-unavailable'), null)
+})
+
+test('owner lookup: an owner with no calendar still gets the not-connected state', async () => {
+  const page = makePage()
+  const controller = ownerLookupController({ ownGrantId: null })
+  const context = ownerContext(page, controller, { record: OWNER_LOOKUP_RECORD })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(controller.brandLookups, 0)
+  assert.deepEqual(controller.ownLookups, ['mem_canary'])
+  const freeCard = page.servicesList.querySelector('[has-connection="free"]')
+  assert.notEqual(freeCard.style.display, 'block', 'no grant means no connected Free Call card')
+})
+
+test('owner lookup: a Starter on someone else\'s profile makes no Starter lookup at all', async () => {
+  const page = makePage()
+  const controller = ownerLookupController()
+  const context = ownerContext(page, controller, { member: OTHER_TALENT_MEMBER })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(controller.brandLookups, 0, 'a non-Brand viewer must not call the Brand-only lookup')
+  assert.deepEqual(controller.ownLookups, [], 'and has no own record on this page to read')
 })
 

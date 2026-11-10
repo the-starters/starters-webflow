@@ -683,6 +683,56 @@ test('uses Brand-safe discovery reads only on the approved real Hire canary', as
   )
 })
 
+test('keeps the self-only Starter reader for the profile owner on a Hire page', async () => {
+  for (const viaAuthHelper of [false, true]) {
+    const hire = loadStage({
+      hostname: 'www.thestarters.com',
+      pathname: '/hire/jp-testiz-d',
+      member: { id: 'mem_owner' },
+    })
+    const send = viaAuthHelper ? hire.window.xanoAuthFetch : hire.window.fetch
+    for (const route of ['starter/get_by_memberstack', 'starter/get_by_memberstack/v3']) {
+      await send(`${API_BASE}${route}`, {
+        method: 'POST',
+        body: JSON.stringify({ member_id: 'mem_owner' }),
+      })
+    }
+    // A Brand, or any other member, reading the same profile still gets the
+    // Brand-safe booking profile.
+    await send(`${API_BASE}starter/get_by_memberstack/v3`, {
+      method: 'POST',
+      body: JSON.stringify({ member_id: 'mem_someone_else' }),
+    })
+
+    assert.deepEqual(
+      hire.authenticatedRequests.map((request) => new URL(request.url).pathname),
+      [
+        '/api:tCpV3oqd/starter/get_by_memberstack/v3',
+        '/api:tCpV3oqd/starter/get_by_memberstack/v3',
+        '/api:tCpV3oqd/starter/get_booking_profile/v3',
+      ],
+    )
+  }
+})
+
+test('keeps the Brand-safe Starter reader on Hire when the member is unknown or logged out', async () => {
+  for (const member of [undefined, {}]) {
+    const hire = loadStage({
+      hostname: 'www.thestarters.com',
+      pathname: '/hire/jp-testiz-d',
+      member,
+    })
+    await hire.window.fetch(`${API_BASE}starter/get_by_memberstack/v3`, {
+      method: 'POST',
+      body: JSON.stringify({ member_id: 'mem_owner' }),
+    })
+    assert.deepEqual(
+      hire.authenticatedRequests.map((request) => new URL(request.url).pathname),
+      ['/api:tCpV3oqd/starter/get_booking_profile/v3'],
+    )
+  }
+})
+
 test('remaps the versioned Hire helpers that call xanoAuthFetch directly', async () => {
   const hire = loadStage({ pathname: '/hire/jp-dionisio' })
 

@@ -14,6 +14,10 @@
     typeof module !== 'undefined' && typeof module.exports !== 'undefined'
   const XANO_BASE = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:tCpV3oqd'
   const STARTER_PATH = '/starter/get_booking_profile/v3'
+  // Self-only Starter reader: Xano returns the record only when member_id is
+  // the authenticated member. The profile owner uses it instead of the
+  // Brand-only STARTER_PATH, which refuses every non-Brand member.
+  const OWNER_STARTER_PATH = '/starter/get_by_memberstack/v3'
   const CONFIGS_PATH = '/nylas_configurations/get_bookable/v3'
   const AVAILABILITY_PATH = '/scheduler/get_availability/v3'
   const BOOKING_PATH = '/brand/booking/request/v3'
@@ -266,6 +270,18 @@
       return result && result.id ? result : null
     } catch (error) {
       console.error('[free-call-booking] Starter lookup failed:', error)
+      return null
+    }
+  }
+
+  async function getOwnStarterByMemberId(memberId) {
+    const id = clean(memberId)
+    if (!id) throw new Error('A Starter member ID is required')
+    try {
+      const result = await authenticatedRequest(OWNER_STARTER_PATH, 'POST', { member_id: id })
+      return result && result.id ? result : null
+    } catch (error) {
+      console.error('[free-call-booking] owner Starter lookup failed:', error)
       return null
     }
   }
@@ -873,8 +889,10 @@
     formatWithTimezone,
     getConfigs,
     getNearestSlot,
+    getOwnStarterByMemberId,
     getStarterByMemberId,
     installFreeBookingController,
+    OWNER_STARTER_PATH,
     minimumBookingNoticeMinutes,
     nextSlotText,
   }
