@@ -30,7 +30,8 @@
  * seamless-loops them. Even Tracks run LTR (logos travel toward the right);
  * odd Tracks run RTL.
  * Hover pauses that Track. Off-screen wrappers pause. prefers-reduced-motion
- * freezes the bands.
+ * freezes the bands. Opening a shared modal refreshes its walls' visibility
+ * observations without rebuilding their tracks or timelines.
  *
  * IMAGES: every logo is forced loading="eager" before arming, and arming does
  * not wait forever — see forceEagerImages and whenImagesReady for why.
@@ -509,6 +510,14 @@
     });
     io.observe(state.wrapper);
     state.io = io;
+    window.addEventListener('modal-open', function onModalOpen(event) {
+      var modal = event.detail && event.detail.modal;
+      if (!modal || !modal.contains(state.wrapper)) return;
+      // A dialog can retain its initial hidden entry after showModal(). Renew
+      // the observation so playback follows its current visibility.
+      io.unobserve(state.wrapper);
+      io.observe(state.wrapper);
+    });
   }
 
   /**
