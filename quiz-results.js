@@ -4117,6 +4117,8 @@
                         'review_count',
                         'review_average',
                         'categories',
+                        'is-agency',
+                        'agency-name',
                         'archived',
                         'draft',
                         'objectID',
@@ -4549,6 +4551,21 @@
         return selectedFreelancers
     }
 
+    /**
+     * Drafts one category's recommendations, skipping Starters already shown
+     * anywhere on the page, and records the new picks as shown.
+     *
+     * @param {object[][]} pools Ordered subcategory candidate pools.
+     * @param {number} limit Maximum candidates for this category.
+     * @param {Set<string>} shownObjectIds Object IDs already shown; updated.
+     * @returns {object[]} This category's recommendations.
+     */
+    function draftUnshownRecommendations(pools, limit, shownObjectIds) {
+        const picks = draftRoundRobin(pools, limit, shownObjectIds)
+        picks.forEach((freelancer) => shownObjectIds.add(freelancer.objectID))
+        return picks
+    }
+
     function selectFeaturedFreelancers(categoryCandidatePools, limit) {
         // Each pool is already ordered best-first by getTopRecommendedFreelancers.
         return draftRoundRobin(
@@ -4653,11 +4670,23 @@
         }
 
         const hourlyRateText = formatRateValue(freelancer.hourlyRate)
-        if (hourlyRateText) {
+        // Agencies have no hourly rate (Jai, 2026-08-28); they get a monthly line.
+        if (hourlyRateText && freelancer['is-agency'] !== true) {
             const hourlyRateElement = document.createElement('p')
             hourlyRateElement.className = 'quiz-result-freelancer-hourly-rate'
             hourlyRateElement.textContent = 'Hourly rate: ' + hourlyRateText
             cardElement.appendChild(hourlyRateElement)
+        }
+
+        const agencyMonthlyText =
+            freelancer['is-agency'] === true
+                ? formatRateValue(getAgencyMonthlyRate(freelancer), '/mo')
+                : ''
+        if (agencyMonthlyText) {
+            const monthlyRateElement = document.createElement('p')
+            monthlyRateElement.className = 'quiz-result-freelancer-monthly-rate'
+            monthlyRateElement.textContent = 'Monthly rate: ' + agencyMonthlyText
+            cardElement.appendChild(monthlyRateElement)
         }
 
         const projectRateText = formatRateValue(freelancer.projectRate)
@@ -4824,7 +4853,9 @@
             case 'paid-call-rate':
                 return freelancer.paidCallRate ?? freelancer['paid-call-rate']
             case 'retainer-rate':
-                return freelancer.retainerRate ?? freelancer['retainer-rate']
+                return freelancer['is-agency'] === true
+                    ? getAgencyMonthlyRate(freelancer)
+                    : freelancer.retainerRate ?? freelancer['retainer-rate']
             case 'average-project-size':
             case 'project-rate':
                 return freelancer.projectRate
@@ -4871,6 +4902,24 @@
             default:
                 return freelancer[field]
         }
+    }
+
+    /**
+     * Returns the monthly price shown on an agency card.
+     *
+     * Agencies have no hourly rate (Jai, 2026-08-28): the card template shows
+     * the retainer as "/mo" in its agency branch. The retainer wins; when it is
+     * empty, the shared `rate` field (which agencies fill with their monthly
+     * figure) is the fallback.
+     *
+     * @param {object} freelancer Normalized freelancer recommendation.
+     * @returns {unknown} Monthly price, or null when neither field has a value.
+     */
+    function getAgencyMonthlyRate(freelancer) {
+        const retainer = freelancer.retainerRate ?? freelancer['retainer-rate']
+        if (!isEmptyCardValue(retainer)) return retainer
+        const shared = freelancer.hourlyRate ?? freelancer.rate
+        return isEmptyCardValue(shared) ? null : shared
     }
 
     /**
@@ -4979,6 +5028,56 @@
         element.textContent = value
         element.classList.remove('hide')
         return true
+    }
+
+    /**
+     * Shows an agency's monthly price on the quiz category card's hourly line.
+     *
+     * The published quiz card binds only `rate` next to fixed "/hr" text and
+     * has no is-agency branch. Agencies have no hourly rate (Jai, 2026-08-28),
+     * so for them the rate slot gets the monthly price and the "/hr" sibling
+     * reads "/mo". The original suffix is kept in data-quiz-rate-suffix so a
+     * reused or cloned card restores "/hr" for the next non-agency Starter.
+     *
+     * @param {HTMLElement} cardElement Card element being bound.
+     * @param {object} freelancer Normalized freelancer recommendation.
+     * @returns {void}
+     */
+    function bindAgencyRateLabel(cardElement, freelancer) {
+        const isAgency = freelancer['is-agency'] === true
+
+        cardElement
+            .querySelectorAll('[data-quiz-text="rate"], [wf-algolia-text="rate"]')
+            .forEach((rateElement) => {
+                const suffixes = Array.from(
+                    rateElement.parentElement?.children || [],
+                ).filter((sibling) => {
+                    if (sibling === rateElement) return false
+                    const original =
+                        sibling.getAttribute('data-quiz-rate-suffix') ||
+                        normalize(sibling.textContent)
+                    return original === '/hr'
+                })
+                if (!suffixes.length) return
+
+                suffixes.forEach((suffix) => {
+                    suffix.setAttribute('data-quiz-rate-suffix', '/hr')
+                    suffix.textContent = isAgency ? '/mo' : '/hr'
+                })
+
+                if (!isAgency) return
+                const format =
+                    rateElement.getAttribute('data-quiz-format') ||
+                    rateElement.getAttribute('wf-algolia-format') ||
+                    ''
+                const monthly = getAgencyMonthlyRate(freelancer)
+                setCardText(
+                    rateElement,
+                    isEmptyCardValue(monthly)
+                        ? ''
+                        : formatCardValue(monthly, format),
+                )
+            })
     }
 
     const cardConditionOperators = ['===', '!==', '>=', '<=', '>', '<']
@@ -5166,6 +5265,8 @@
 
             setCardText(element, formatCardValue(value, format))
         })
+
+        bindAgencyRateLabel(cardElement, freelancer)
 
         // Indexed list item bindings (e.g. roles[0], roles[1], roles[2]).
         cardElement.querySelectorAll('[data-quiz-list]').forEach((element) => {
@@ -5564,6 +5665,141 @@
     }
 
     /**
+     * Tops up thin category groups from a broad category fallback search.
+     *
+     * The searches run in parallel, but picks are assigned afterwards in
+     * group order, so a Starter found by several fallbacks always lands in
+     * the earliest category and never in more than one (one card per person).
+     *
+     * @param {object[]} recommendationGroups Category groups, in page order; updated.
+     * @param {Set<string>} shownObjectIds Object IDs already shown; updated.
+     * @param {object[]} recommendationIssues Issue list; updated.
+     * @returns {Promise<(object | null)[]>} One fallback search result per group.
+     */
+    async function addCategoryFallbackRecommendations(
+        recommendationGroups,
+        shownObjectIds,
+        recommendationIssues,
+    ) {
+        const searches = await Promise.all(
+            recommendationGroups.map(async (group) => {
+                if (group.recommendations.length >= categoryFreelancerLimit) {
+                    return null
+                }
+
+                const fallbackQuery = getCategoryRecommendationQuery(group.category)
+                if (!fallbackQuery) return { fallbackQuery, hits: [], error: null }
+
+                try {
+                    const hits = await searchRecommendedFreelancers(fallbackQuery)
+                    return { fallbackQuery, hits, error: null }
+                } catch (error) {
+                    return { fallbackQuery, hits: [], error }
+                }
+            }),
+        )
+
+        return recommendationGroups.map((group, index) => {
+            const search = searches[index]
+            if (!search) return null
+
+            const { fallbackQuery } = search
+            const fallbackSearchPlan = {
+                category: group.category,
+                subcategory: null,
+                query: fallbackQuery,
+                queryType: 'category_fallback',
+            }
+
+            if (!fallbackQuery) return fallbackSearchPlan
+
+            let { hits, error } = search
+            let candidates = []
+            let fallbackRecommendations = []
+            if (!error) {
+                try {
+                    candidates = getRecommendedFreelancerCandidates(
+                        hits,
+                        group.category,
+                        null,
+                    ).map((candidate) => ({
+                        ...candidate,
+                        matchedQuery: fallbackQuery,
+                        matchedQueryTier: 'fallback',
+                    }))
+                    fallbackRecommendations = getTopRecommendedFreelancers(
+                        getUniqueRecommendedFreelancerCandidates(candidates),
+                        categoryFreelancerLimit - group.recommendations.length,
+                        shownObjectIds,
+                    )
+                } catch (candidateError) {
+                    error = candidateError
+                    hits = []
+                    candidates = []
+                    fallbackRecommendations = []
+                }
+            }
+            fallbackRecommendations.forEach((freelancer) =>
+                shownObjectIds.add(freelancer.objectID),
+            )
+
+            const errorMessage = error ? error.message || String(error) : null
+            group.queries.push({
+                subcategory: null,
+                query: fallbackQuery,
+                queryType: 'category_fallback',
+                hitCount: hits.length,
+                candidateCount: candidates.length,
+                addedCount: fallbackRecommendations.length,
+                errorMessage,
+            })
+            group.query = group.queries
+                .map((queryInfo) => queryInfo.query)
+                .join(' | ')
+            group.recommendations.push(...fallbackRecommendations)
+
+            if (error) {
+                recommendationIssues.push(
+                    createRecommendationIssue(
+                        'category_fallback_search_error',
+                        'Main category fallback search failed for ' +
+                            (group.category.label || group.category.id) +
+                            '.',
+                        {
+                            category: group.category,
+                            query: fallbackQuery,
+                            errorMessage,
+                        },
+                    ),
+                )
+            } else if (!fallbackRecommendations.length) {
+                recommendationIssues.push(
+                    createRecommendationIssue(
+                        'no_category_fallback_recommendations',
+                        'Main category fallback did not add recommendations for ' +
+                            (group.category.label || group.category.id) +
+                            '.',
+                        {
+                            category: group.category,
+                            query: fallbackQuery,
+                            hitCount: hits.length,
+                            candidateCount: candidates.length,
+                        },
+                    ),
+                )
+            }
+
+            return {
+                ...fallbackSearchPlan,
+                hits,
+                candidates,
+                addedRecommendations: fallbackRecommendations,
+                error,
+            }
+        })
+    }
+
+    /**
      * Loads top freelancer recommendations for the completed quiz.
      *
      * @param {object} pendingQuiz Pending quiz payload.
@@ -5744,132 +5980,27 @@
         const featuredObjectIds = new Set(
             featuredFreelancers.map((freelancer) => freelancer.objectID),
         )
+        // One card per person (Jai, 2026-11-10): every Starter shown so far,
+        // featured or in an earlier category, is skipped by later categories
+        // and by the category fallbacks below.
+        const shownObjectIds = new Set(featuredObjectIds)
         const recommendationGroups = categoryCandidatePools.map((pool) => ({
             category: pool.category,
             query: pool.query,
             queries: pool.queries,
-            recommendations: draftRoundRobin(
+            recommendations: draftUnshownRecommendations(
                 pool.subcategoryPools,
                 categoryFreelancerLimit,
-                featuredObjectIds,
+                shownObjectIds,
             ),
         }))
         const fallbackSearchResults = strictQueryMode
             ? []
-            : await Promise.all(
-            recommendationGroups.map(async (group) => {
-                if (group.recommendations.length >= categoryFreelancerLimit) {
-                    return null
-                }
-
-                const fallbackQuery = getCategoryRecommendationQuery(group.category)
-                const fallbackSearchPlan = {
-                    category: group.category,
-                    subcategory: null,
-                    query: fallbackQuery,
-                    queryType: 'category_fallback',
-                }
-
-                if (!fallbackQuery) return fallbackSearchPlan
-
-                try {
-                    const hits = await searchRecommendedFreelancers(fallbackQuery)
-                    const candidates = getRecommendedFreelancerCandidates(
-                        hits,
-                        group.category,
-                        null,
-                    ).map((candidate) => ({
-                        ...candidate,
-                        matchedQuery: fallbackQuery,
-                        matchedQueryTier: 'fallback',
-                    }))
-                    const excludedObjectIds = new Set([
-                        ...featuredObjectIds,
-                        ...group.recommendations.map(
-                            (freelancer) => freelancer.objectID,
-                        ),
-                    ])
-                    const fallbackRecommendations = getTopRecommendedFreelancers(
-                        getUniqueRecommendedFreelancerCandidates(candidates),
-                        categoryFreelancerLimit - group.recommendations.length,
-                        excludedObjectIds,
-                    )
-
-                    group.queries.push({
-                        subcategory: null,
-                        query: fallbackQuery,
-                        queryType: 'category_fallback',
-                        hitCount: hits.length,
-                        candidateCount: candidates.length,
-                        addedCount: fallbackRecommendations.length,
-                        errorMessage: null,
-                    })
-                    group.query = group.queries
-                        .map((queryInfo) => queryInfo.query)
-                        .join(' | ')
-                    group.recommendations.push(...fallbackRecommendations)
-
-                    if (!fallbackRecommendations.length) {
-                        recommendationIssues.push(
-                            createRecommendationIssue(
-                                'no_category_fallback_recommendations',
-                                'Main category fallback did not add recommendations for ' +
-                                    (group.category.label || group.category.id) +
-                                    '.',
-                                {
-                                    category: group.category,
-                                    query: fallbackQuery,
-                                    hitCount: hits.length,
-                                    candidateCount: candidates.length,
-                                },
-                            ),
-                        )
-                    }
-
-                    return {
-                        ...fallbackSearchPlan,
-                        hits,
-                        candidates,
-                        addedRecommendations: fallbackRecommendations,
-                        error: null,
-                    }
-                } catch (error) {
-                    group.queries.push({
-                        subcategory: null,
-                        query: fallbackQuery,
-                        queryType: 'category_fallback',
-                        hitCount: 0,
-                        candidateCount: 0,
-                        addedCount: 0,
-                        errorMessage: error?.message || String(error),
-                    })
-                    group.query = group.queries
-                        .map((queryInfo) => queryInfo.query)
-                        .join(' | ')
-                    recommendationIssues.push(
-                        createRecommendationIssue(
-                            'category_fallback_search_error',
-                            'Main category fallback search failed for ' +
-                                (group.category.label || group.category.id) +
-                                '.',
-                            {
-                                category: group.category,
-                                query: fallbackQuery,
-                                errorMessage: error?.message || String(error),
-                            },
-                        ),
-                    )
-
-                    return {
-                        ...fallbackSearchPlan,
-                        hits: [],
-                        candidates: [],
-                        addedRecommendations: [],
-                        error,
-                    }
-                }
-            }),
-        )
+            : await addCategoryFallbackRecommendations(
+                  recommendationGroups,
+                  shownObjectIds,
+                  recommendationIssues,
+              )
         // Prefer the total lvl0 matching pool; fall back to the unique displayed
         // candidate count when the count query is unavailable.
         const starterCount =
