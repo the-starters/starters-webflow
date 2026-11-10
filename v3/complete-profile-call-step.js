@@ -7,8 +7,10 @@
   const release = 'v1.59.738'
   const staging = 'the-starters-3-0.webflow.io'
   const hostname = window.location.hostname
+  const path = window.location.pathname.replace(/\/$/, '')
+  const isTrial = path === '/complete-profile-trial'
   if (![staging, 'thestarters.com', 'www.thestarters.com'].includes(hostname) ||
-      !['/complete-profile', '/complete-profile/'].includes(window.location.pathname) ||
+      (path !== '/complete-profile' && !isTrial) ||
       window.__startersCompleteProfileCallStepInit) return
   window.__startersCompleteProfileCallStepInit = true
   window.StartersCompleteProfileCallStep = Object.freeze({ release })
@@ -18,18 +20,15 @@
   const STATUS_PATH = '/api:KZf7nFnk/starters_onboarding/get_brand_profile_status'
   const SETTING_UP = "We're still setting up your account. Try again in a moment."
   const SUCCESS = "We'll share your call request with Jai and reach out when it's been confirmed, typically within 24 hours"
-  const UNAVAILABLE = "Jai's calendar isn't loading right now. You can still dive in. Book a free call with Jai any time from his profile."
   const BOOK = 'Book a free call'
   const STALE = 'This time is no longer available. Please choose another time.'
   const POLL_MS = 1000
   const POLL_BUDGET_MS = 10000
   const STATUS_GRACE_MS = 60000
   const CALENDAR_BUDGET_MS = 15000
+  const TRIAL_NOTICE_MS = 24 * 60 * 60 * 1000
+  const enforceTrialNotice = hostname === staging && isTrial
   const section = '[data-complete-profile-call-step]'
-  const footerSelector = '[data-complete-profile-call-footer]'
-  const bookingActionsAttribute = 'data-complete-profile-call-booking-actions'
-  const successActionsAttribute = 'data-complete-profile-call-success-actions'
-  const doneSelector = '[data-complete-profile-call-done]'
 
   function calendarPart(name) {
     return '[data-paid-calendar-element="' + name + '"]'
@@ -68,149 +67,46 @@
     return response && response.data
   }
 
-  function installLayout() {
-    const style = document.createElement('style')
-    style.id = 'starters-complete-profile-call-layout'
-    style.textContent = `
-${section} [data-complete-profile-call-calendar] {
-  width: 100%; max-width: 820px; color: #1e211e;
-  font-family: Inter, sans-serif; font-size: 16px; font-weight: 500;
-}
-${section} ${calendarPart('shell')} {
-  display: grid; grid-template-areas: "month" "timezone" "times"; gap: 16px;
-  grid-template-columns: minmax(0, 1fr); padding: 16px; box-sizing: border-box;
-}
-${section} ${calendarPart('month')} { grid-area: month; min-width: 0; }
-${section} ${calendarPart('timezone-control')} { grid-area: timezone; display: block; width: 100%; min-width: 0; }
-${section} ${calendarPart('timezone-caption')} { display: none; }
-${section} ${calendarPart('timezone')} {
-  width: 100%; min-height: 48px; padding: 8px 12px; border: 1px solid #eee;
-  border-radius: 4px; background: white; color: inherit; font: inherit;
-}
-${section} ${calendarPart('times')} {
-  grid-area: times; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
-  align-content: start; gap: 8px; max-height: 216px; min-width: 0; overflow: auto;
-}
-${section} [data-paid-calendar-slot] {
-  min-width: 0; height: 48px; padding: 0 4px; border: 0; border-radius: 4px;
-  background: #eee; color: #1e211e; font: inherit; line-height: 1; white-space: nowrap; cursor: pointer;
-}
-${section} [data-paid-calendar-slot][aria-pressed="true"] { background: #434b43; color: white; }
-${section} [data-paid-calendar-slot]:disabled,
-${section} ${calendarPart('confirm')}:disabled { opacity: .5; cursor: default; }
-${section} ${footerSelector} {
-  display: flex; justify-content: flex-end; align-items: center; background: white;
-  min-height: 98px; padding: 26px 32px; border-top: 1px solid #eee; box-sizing: border-box;
-}
-${section} :is([${bookingActionsAttribute}], [${successActionsAttribute}]) {
-  display: flex; justify-content: flex-end; align-items: center; gap: 8px;
-}
-${section}[data-complete-profile-call-step="unavailable"] [data-complete-profile-call-continue],
-${section} [data-complete-profile-call-done] {
-  background: #1e211e; color: white; border-radius: 4px; padding: 16px 24px;
-}
-${section}:has(> ${footerSelector}), ${section} :has(> ${footerSelector}) { position: relative; }
-${section} ${calendarPart('status')} { margin: 0; padding: 16px 32px; font-size: 14px; line-height: 18px; }
-${section} ${calendarPart('status')}[data-paid-calendar-status]:not(:empty) {
-  position: absolute; inset: 0 0 auto; z-index: 2; background: #1e211e; color: white;
-}
-${section} ${calendarPart('status')}[data-paid-calendar-status="error"]:not(:empty) { background: #d55; }
-${section} ${calendarPart('status')}:empty { display: none; }
-${section} ${calendarPart('loading')} { display: grid; place-items: center; min-height: 320px; }
-${section} ${calendarPart('loading')} > [data-loader] { display: flex; position: static; }
-${section} ${calendarPart('loading-text')} {
-  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
-  clip-path: inset(50%); white-space: nowrap; border: 0;
-}
-${section} [data-paid-calendar-element="empty-day"] {
-  grid-column: 1 / -1; display: grid; gap: 8px; padding: 32px 24px; border-radius: 4px; background: #eee;
-}
-${section} [data-paid-calendar-element="empty-day"] p { margin: 0; }
-${section} [data-paid-calendar-element="empty-day"] p + p { color: #434b43; font-weight: 400; }
-${section} [data-complete-profile-call-calendar] .ui-datepicker {
-  overflow: hidden; border: 0; border-radius: 8px; background: #eee;
-  box-shadow: 0 0 0 2px #eee, 0 4px 8px rgba(0, 0, 0, .10);
-}
-${section} .ui-datepicker-header {
-  position: relative; display: grid; place-items: center; height: 44px;
-}
-${section} .ui-datepicker-prev, ${section} .ui-datepicker-next {
-  position: absolute; top: 6px; display: grid; place-items: center;
-  width: 32px; height: 32px; padding: 0; border: 0; background: transparent;
-  cursor: pointer; color: inherit;
-}
-${section} [data-complete-profile-call-month-nav][aria-disabled="true"] { cursor: default; }
-${section} :is([data-complete-profile-call-month-nav], [data-complete-profile-call-continue],
-  ${doneSelector}, ${calendarPart('confirm')}):focus-visible {
-  outline: 2px solid #1e211e; outline-offset: 3px; box-shadow: 0 0 0 3px white;
-}
-${section} .ui-datepicker-prev { left: 5px; }
-${section} .ui-datepicker-next { right: 5px; }
-${section} .ui-datepicker-header .ui-icon { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
-${section} .ui-datepicker-prev::after, ${section} .ui-datepicker-next::after {
-  content: ""; width: 9px; height: 9px; border-top: 1px solid; border-right: 1px solid;
-  transform: rotate(45deg);
-}
-${section} .ui-datepicker-prev::after { transform: rotate(-135deg); }
-${section} .ui-datepicker-calendar {
-  width: 100%; table-layout: fixed; border-spacing: 0; border-radius: 8px; background: white;
-}
-${section} .ui-datepicker-calendar :is(th, td) {
-  height: 57px; padding: 0; text-align: center; font-weight: inherit;
-}
-${section} .ui-datepicker-calendar th { border-bottom: 1px solid #eee; }
-${section} .ui-datepicker-calendar td :is(a, span) {
-  display: grid; height: 100%; place-items: center; border-radius: 4px; color: #434b43; text-decoration: none;
-}
-${section} .ui-datepicker-calendar :is(.ui-state-disabled, .ui-datepicker-other-month) span,
-${section} .ui-datepicker-header .ui-state-disabled { opacity: .5; }
-${section} .ui-datepicker-calendar td a.ui-state-active { background: #1e211e; color: white; }
-@media (min-width: 992px) {
-  ${section} ${calendarPart('loading')} { min-height: 494px; }
-  ${section} ${calendarPart('shell')} {
-    grid-template-columns: minmax(0, 420fr) 1px minmax(0, 399fr);
-    grid-template-areas: "month divider timezone" "month divider times";
-    grid-template-rows: auto minmax(0, 1fr); gap: 0; padding: 0; height: 494px;
-  }
-  ${section} ${calendarPart('shell')}::before { content: ""; grid-area: divider; background: #eee; }
-  ${section} ${calendarPart('month')} { margin: 24px; }
-  ${section} ${calendarPart('timezone-control')} { width: auto; margin: 24px 24px 16px; }
-  ${section} ${calendarPart('times')} { max-height: 400px; margin: 0 24px 24px; }
-}
-@media (max-width: 991px) {
-  ${section} ${footerSelector} { padding: 16px; }
-  ${section} :is([${bookingActionsAttribute}], [${successActionsAttribute}]) { width: 100%; flex-direction: column-reverse; }
-  ${section} :is([data-complete-profile-call-continue], [data-complete-profile-call-done], ${calendarPart('confirm')}) { width: 100%; }
-}
-`
-    document.head.appendChild(style)
+  function nativeAction(group, name, hook) {
+    const holder = group && group.querySelector('[data-jai-trial-native-button="' + name + '"]')
+    const theme = '[data-button-theme][data-button-style]'
+    const wrapper = holder && (holder.matches(theme) ? holder : holder.querySelector(theme))
+    const button = wrapper && wrapper.querySelector('button[type="button"]')
+    if (!button) return null
+    return { holder, wrapper, button, hook, label: wrapper.querySelector('[data-complete-profile-call-button-label]') }
   }
 
-  function disabledConfirm(calendar) {
-    const button = document.createElement('button')
-    button.type = 'button'
-    button.setAttribute('data-paid-calendar-element', 'confirm')
-    button.textContent = BOOK
-    button.disabled = true
-    const classes = (calendar.getAttribute('data-booking-confirm-class') || '').trim()
-    if (classes) button.classList.add(...classes.split(/\s+/))
-    return button
+  function setActionLabel(action, label) {
+    if (action.label) action.label.textContent = label
+    action.button.setAttribute('aria-label', label)
   }
 
-  function showLoading(calendar) {
-    const loading = document.createElement('div')
-    const spinner = document.createElement('div')
-    const caption = document.createElement('p')
-    calendar.setAttribute('data-paid-calendar-state', 'loading')
-    loading.setAttribute('data-paid-calendar-element', 'loading')
-    spinner.setAttribute('data-loader', '1000')
-    spinner.classList.add('experts-list_loader', 'is-complete-profile')
-    spinner.setAttribute('aria-hidden', 'true')
-    caption.setAttribute('data-paid-calendar-element', 'loading-text')
-    caption.setAttribute('role', 'status')
-    caption.textContent = "Loading Jai's available times…"
-    loading.append(spinner, caption)
-    calendar.appendChild(loading)
+  function setActionDisabled(action, disabled) {
+    action.button.disabled = disabled
+    action.button.setAttribute('aria-disabled', String(disabled))
+    action.wrapper.setAttribute('data-button-theme', disabled ? 'disabled' : 'black')
+  }
+
+  function authoredStep(step) {
+    const details = document.querySelector('[data-complete-profile-details]')
+    const form = details && details.querySelector('form')
+    const footer = step.querySelector('[data-complete-profile-call-footer]')
+    const bookingActions = footer && footer.querySelector('[data-complete-profile-call-booking-actions]')
+    const successActions = footer && footer.querySelector('[data-complete-profile-call-success-actions]')
+    const calendar = step.querySelector('[data-complete-profile-call-calendar]')
+    const loading = step.querySelector(calendarPart('loading'))
+    const banner = step.querySelector('[data-complete-profile-call-status]')
+    const success = step.querySelector('[data-complete-profile-call-success]')
+    const unavailable = step.querySelector('[data-complete-profile-call-unavailable]')
+    const heading = step.querySelector('[data-complete-profile-call-heading]')
+    const doneHeading = step.querySelector('[data-complete-profile-call-heading-done]')
+    const book = nativeAction(bookingActions, 'book', 'data-complete-profile-call-book')
+    const skip = nativeAction(bookingActions, 'skip', 'data-complete-profile-call-continue')
+    const done = nativeAction(successActions, 'done', 'data-complete-profile-call-done')
+    if (!form || !calendar || !loading || !banner || !success || !unavailable ||
+        !heading || !doneHeading || !book || !skip || !done) return null
+    return { step, details, form, footer, bookingActions, successActions, calendar,
+      loading, banner, success, unavailable, heading, doneHeading, book, skip, done }
   }
 
   function dateKey(date) {
@@ -374,14 +270,20 @@ ${section} .ui-datepicker-calendar td a.ui-state-active { background: #1e211e; c
 
   function init() {
     const step = document.querySelector(section)
-    const calendar = step && step.querySelector('[data-complete-profile-call-calendar]')
-    const details = document.querySelector('[data-complete-profile-details]')
-    const form = details && details.querySelector('form')
-    const footer = step && step.querySelector(footerSelector)
-    const skip = footer && footer.querySelector('[data-complete-profile-call-continue]')
-    if (!calendar || !form || !skip) {
-      warn('Call step, calendar, profile form or Continue button is missing')
+    if (!step) return
+    const view = authoredStep(step)
+    if (!view) {
+      warn('Call step markup is incomplete')
       return
+    }
+    const form = view.form
+    if (isTrial) {
+      const label = form.querySelector('[data-complete-profile-call-submit-label]')
+      const submit = form.querySelector('[type="submit"]')
+      if (label && submit) {
+        label.textContent = 'Continue'
+        submit.setAttribute('aria-label', 'Continue')
+      }
     }
 
     let cachedMember
@@ -398,41 +300,41 @@ ${section} .ui-datepicker-calendar td a.ui-state-active { background: #1e211e; c
       const lifecycle = window.StartersBookingSurfaceLifecycle
       const guard = window.StartersV3RouteGuard
       if (!paid || !['mountPaidCalendar', 'createBookingAttempt', 'bookingRequestFingerprint', 'slotMeetsBookingNotice']
-        .every(function (method) { return typeof paid[method] === 'function' })) return warn('Calendar engine is unavailable')
+        .every(function (method) { return typeof paid[method] === 'function' }) ||
+        (enforceTrialNotice && typeof paid.getPaidAvailability !== 'function')) return warn('Calendar engine is unavailable')
       if (!free || !['authenticatedRequest', 'selectBookableConfigurations', 'formatWithTimezone', 'canonicalBookingId']
         .every(function (method) { return typeof free[method] === 'function' }) ||
         !lifecycle || typeof lifecycle.runBooking !== 'function') return warn('Free booking helpers are unavailable')
       if (typeof window.xanoAuthFetch !== 'function' || typeof window.getXanoAuthToken !== 'function') return warn('Scheduling auth is unavailable')
+      if (typeof MutationObserver !== 'function') return warn('Calendar control sync is unavailable')
       if (!detail.memberId || !cachedMember || cachedMember.id !== detail.memberId) return warn('Completed member is not in the member cache')
       if (!guard || typeof guard.memberRole !== 'function' || guard.memberRole(cachedMember) !== 'brand-paid') return warn('Current member is not a paid Brand')
 
       event.preventDefault()
       claimed = true
       Promise.resolve().then(function () {
-        return showStep({ step, calendar, details, footer, skip, paid, free, lifecycle, memberId: detail.memberId })
+        return showStep(view, { paid, free, lifecycle, memberId: detail.memberId })
       }).catch(dashboard)
     })
   }
 
-  function showStep({ step, calendar, details, footer, skip, paid, free, lifecycle, memberId }) {
+  function showStep(view, { paid, free, lifecycle, memberId }) {
+    const { step, details, footer, calendar, loading, banner, success, unavailable,
+      heading, doneHeading, bookingActions, successActions, book, skip, done } = view
     const completedAt = Date.now()
     const host = hostname === staging
       ? { memberId: 'mem_sb_cmqhuaxn80d270sseeo74fn7i', slug: 'jp-dionisio' }
       : { memberId: step.getAttribute('data-call-host-member'), slug: step.getAttribute('data-call-host-slug') }
-    const success = step.querySelector('[data-complete-profile-call-success]')
-    const unavailable = step.querySelector('[data-complete-profile-call-unavailable]')
-    const successActions = footer.querySelector('[' + successActionsAttribute + ']') || document.createElement('div')
-    let bookingActions = footer.querySelector('[' + bookingActionsAttribute + ']')
     let active = true
     let locked = false
     let retryPending = false
     let confirm
-    let status
+    let engineStatus
     let mounted
     let starter
     let config
     let mountDeadline
-    let chipObserver
+    let calendarObserver
     const isCurrent = function () { return active }
     const profile = bookingStatusPoll(new URL(STATUS_PATH, free.XANO_BASE).href, isCurrent, fallback)
 
@@ -440,7 +342,7 @@ ${section} .ui-datepicker-calendar td a.ui-state-active { background: #1e211e; c
       active = false
       profile.stop()
       window.clearTimeout(mountDeadline)
-      if (chipObserver) chipObserver.disconnect()
+      if (calendarObserver) calendarObserver.disconnect()
     }
 
     function go() {
@@ -448,18 +350,10 @@ ${section} .ui-datepicker-calendar td a.ui-state-active { background: #1e211e; c
       dashboard()
     }
 
-    function setupFooter() {
-      if (!bookingActions) {
-        bookingActions = document.createElement('div')
-        bookingActions.setAttribute(bookingActionsAttribute, '')
-        Array.from(footer.children).forEach(function (child) {
-          if (child !== successActions) bookingActions.appendChild(child)
-        })
-        footer.appendChild(bookingActions)
-      }
-      successActions.setAttribute(successActionsAttribute, '')
-      if (!successActions.parentElement) footer.appendChild(successActions)
-      hide(successActions)
+    function clearBanner() {
+      banner.textContent = ''
+      banner.removeAttribute('data-paid-calendar-status')
+      hide(banner)
     }
 
     function fallback(reason) {
@@ -467,77 +361,58 @@ ${section} .ui-datepicker-calendar td a.ui-state-active { background: #1e211e; c
       warn(reason)
       finish()
       step.setAttribute('data-complete-profile-call-step', 'unavailable')
+      hide(loading)
       hide(calendar)
-      hide(confirm)
-      hide(status)
-      skip.disabled = false
-      if (unavailable) show(unavailable)
-      else {
-        const message = document.createElement('p')
-        message.textContent = UNAVAILABLE
-        footer.before(message)
-      }
-    }
-
-    function showSuccessActions() {
-      const legacyDone = success && success.querySelector(doneSelector)
-      let done = successActions.querySelector(doneSelector)
-      if (done) hide(legacyDone)
-      else {
-        done = legacyDone || document.createElement('button')
-        if (!legacyDone) {
-          done.type = 'button'
-          done.textContent = 'Go to dashboard'
-          done.setAttribute('data-complete-profile-call-done', '')
-        }
-        successActions.appendChild(done)
-      }
-      done.addEventListener('click', go)
-      hide(bookingActions)
-      show(successActions)
-      done.focus()
-    }
-
-    function renderPlainSuccess() {
-      calendar.removeAttribute('data-paid-calendar-state')
-      calendar.textContent = ''
-      const title = document.createElement('h2')
-      const text = document.createElement('p')
-      title.textContent = 'Call Requested'
-      text.textContent = SUCCESS
-      calendar.append(title, text)
-      show(calendar)
+      hide(book.holder)
+      clearBanner()
+      setActionDisabled(skip, false)
+      skip.wrapper.setAttribute('data-button-style', 'primary')
+      show(unavailable)
     }
 
     function renderSuccess(input) {
-      hide(calendar)
-      hide(status)
-      hide(step.querySelector('[data-complete-profile-call-heading]'))
-      show(step.querySelector('[data-complete-profile-call-heading-done]'))
-      if (success) {
-        const date = free.formatWithTimezone(input.start, {
+      let date = {}
+      try {
+        date = free.formatWithTimezone(input.start, {
           month: 'long', day: 'numeric', year: 'numeric', timeZone: input.timezone,
         }).list
-        const fields = {
-          'start-date': date.month + ' ' + date.day + ', ' + date.year,
-          'start-time': date.hour + ':' + date.minute + ' ' + date.dayPeriod + ' ' + date.timeZoneName,
-          price: '$0',
-          'paid-meeting': 'Free',
-          'starter-name': 'Jai',
-        }
-        Object.keys(fields).forEach(function (name) {
-          success.querySelectorAll('[booking-element="' + name + '"]').forEach(function (node) {
-            node.textContent = fields[name]
-          })
+      } catch (error) {
+        warn('Could not format the call receipt date')
+      }
+      const fields = {
+        'start-date': date.month ? date.month + ' ' + date.day + ', ' + date.year : '',
+        'start-time': date.hour ? date.hour + ':' + date.minute + ' ' + date.dayPeriod + ' ' + date.timeZoneName : '',
+        price: '$0',
+        'paid-meeting': 'Free',
+        'starter-name': 'Jai',
+      }
+      Object.keys(fields).forEach(function (name) {
+        success.querySelectorAll('[booking-element="' + name + '"]').forEach(function (node) {
+          node.textContent = fields[name]
         })
-        success.querySelectorAll('[booking-element="context"]').forEach(function (node) {
-          hide(node.closest('[booking-element-wrap]') || node)
-        })
-        const text = success.querySelector('[booking-success-text]')
-        if (text) text.textContent = SUCCESS
-        show(success)
-      } else renderPlainSuccess()
-      showSuccessActions()
+      })
+      success.querySelectorAll('[booking-element="context"]').forEach(function (node) {
+        hide(node.closest('[booking-element-wrap]') || node)
+      })
+      const text = success.querySelector('[booking-success-text]')
+      if (text) text.textContent = SUCCESS
+      step.setAttribute('data-complete-profile-call-step', 'success')
+      hide(calendar)
+      clearBanner()
+      hide(heading)
+      show(doneHeading)
+      hide(bookingActions)
+      show(success)
+      show(successActions)
+      done.button.focus()
+    }
+
+    function rememberPhoneLayout() {
+      if (!window.matchMedia('(max-width:47.9375rem)').matches) return
+      const greeting = step.querySelector('[data-jai-trial-greeting]')
+      for (const [name, panel] of [['body', calendar], ['footer', footer], ['heading', greeting]]) {
+        if (panel) step.style.setProperty('--jai-booking-' + name, panel.getBoundingClientRect().height + 'px')
+      }
     }
 
     function setupError() {
@@ -551,8 +426,10 @@ ${section} .ui-datepicker-calendar td a.ui-state-active { background: #1e211e; c
     async function onConfirm(slot) {
       if (!active || locked) return
       locked = true
-      skip.disabled = true
-      status.setAttribute('data-paid-calendar-status', 'progress')
+      setActionDisabled(book, true)
+      setActionDisabled(skip, true)
+      book.button.setAttribute('aria-busy', 'true')
+      banner.setAttribute('data-paid-calendar-status', 'progress')
       let submittedToLifecycle = false
       try {
         if (!profile.ready()) throw setupError()
@@ -582,7 +459,8 @@ ${section} .ui-datepicker-calendar td a.ui-state-active { background: #1e211e; c
           let started = false
           attempt.run = async function () {
             // A replay checks the original request even if the slot has aged out.
-            if (!started && !paid.slotMeetsBookingNotice(slot)) {
+            if (!started && (!paid.slotMeetsBookingNotice(slot) ||
+                (enforceTrialNotice && slot.start <= Date.now() + TRIAL_NOTICE_MS))) {
               if (mounted && mounted.clearSelection) mounted.clearSelection()
               throw Object.assign(new Error(STALE), {
                 bookingNotSubmitted: true, retrySameBooking: false, staleSlot: true,
@@ -602,14 +480,7 @@ ${section} .ui-datepicker-calendar td a.ui-state-active { background: #1e211e; c
         })
         if (active) {
           finish()
-          try {
-            renderSuccess(input)
-          } catch (error) {
-            warn('Could not paint the call card')
-            hide(success)
-            renderPlainSuccess()
-            showSuccessActions()
-          }
+          renderSuccess(input)
         }
         return result
       } catch (error) {
@@ -631,38 +502,47 @@ ${section} .ui-datepicker-calendar td a.ui-state-active { background: #1e211e; c
             return
           }
         }
-        status.setAttribute('data-paid-calendar-status', 'error')
+        banner.setAttribute('data-paid-calendar-status', 'error')
         if (!error.staleSlot) confirm.textContent = 'Try again'
         throw error
       } finally {
         locked = false
-        skip.disabled = false
+        book.button.removeAttribute('aria-busy')
+        setActionDisabled(skip, false)
       }
-    }
-
-    function moveControls() {
-      if (confirm) confirm.remove()
-      if (status) status.remove()
-      confirm = calendar.querySelector(calendarPart('confirm'))
-      status = calendar.querySelector(calendarPart('status'))
-      if (!status) throw new Error('Calendar status is missing')
-      status.style.color = ''
-      status.style.fontSize = ''
-      status.style.margin = ''
-      status.setAttribute('role', 'status')
-      status.setAttribute('aria-atomic', 'true')
-      if (calendar.getAttribute('data-paid-calendar-state') !== 'empty') footer.before(status)
-      if (!confirm) {
-        if (calendar.getAttribute('data-paid-calendar-state') !== 'empty') throw new Error('Calendar confirm is missing')
-        confirm = disabledConfirm(calendar)
-      }
-      bookingActions.appendChild(confirm)
     }
 
     function styleChips() {
       calendar.querySelectorAll('[data-paid-calendar-slot]').forEach(function (chip) {
         chip.style.cssText = ''
       })
+    }
+
+    function syncCalendarControls() {
+      if (!active) return
+      styleChips()
+      setActionLabel(book, book.label && confirm.textContent ? confirm.textContent : BOOK)
+      setActionDisabled(book, confirm.disabled)
+      const message = engineStatus.textContent.trim()
+      if (!message) clearBanner()
+      else {
+        banner.textContent = message
+        show(banner)
+      }
+    }
+
+    function bindCalendarControls() {
+      if (calendar.getAttribute('data-paid-calendar-state') === 'empty') return
+      confirm = calendar.querySelector(calendarPart('confirm'))
+      engineStatus = calendar.querySelector(calendarPart('status'))
+      if (!confirm || !engineStatus) throw new Error('Calendar controls are missing')
+      hide(confirm)
+      confirm.tabIndex = -1
+      hide(engineStatus)
+      calendarObserver = new MutationObserver(syncCalendarControls)
+      calendarObserver.observe(calendar, { childList: true, characterData: true, subtree: true })
+      calendarObserver.observe(confirm, { attributes: true, attributeFilter: ['disabled'] })
+      syncCalendarControls()
     }
 
     async function mount() {
@@ -675,23 +555,29 @@ ${section} .ui-datepicker-calendar td a.ui-state-active { background: #1e211e; c
       if (!active) return
       config = free.selectBookableConfigurations(records, hostname).find(function (record) { return record.is_paid === false })
       if (!config) throw new Error('Call host has no bookable free configuration')
+      const calendarConfig = Object.assign({}, config, { grant_id: grantId, duration: 30, price_cents: 0 })
+      let slots
+      if (enforceTrialNotice) {
+        const available = await paid.getPaidAvailability(calendarConfig)
+        if (!active) return
+        const earliest = Date.now() + TRIAL_NOTICE_MS
+        slots = available.filter(function (slot) { return slot.start > earliest })
+      }
       mounted = await paid.mountPaidCalendar({
         container: calendar,
-        config: Object.assign({}, config, { grant_id: grantId, duration: 30, price_cents: 0 }),
+        config: calendarConfig,
+        slots,
         confirmText: BOOK,
         isCurrent,
         onSelectionChange: function () {
           if (confirm) confirm.textContent = BOOK
-          if (status) status.removeAttribute('data-paid-calendar-status')
+          clearBanner()
           Promise.resolve().then(styleChips)
         },
         onConfirm,
       })
       if (!active) return
-      moveControls()
-      styleChips()
-      chipObserver = new MutationObserver(styleChips)
-      chipObserver.observe(calendar, { childList: true, subtree: true })
+      bindCalendarControls()
       const shell = calendar.querySelector(calendarPart('shell'))
       if (shell) shell.style.gap = ''
       const times = calendar.querySelector(calendarPart('times'))
@@ -699,32 +585,48 @@ ${section} .ui-datepicker-calendar td a.ui-state-active { background: #1e211e; c
       if (times) times.style.gridTemplateColumns = ''
       if (timezone) timezone.style.cssText = ''
       const select = calendar.querySelector(calendarPart('timezone'))
-      if (select) select.style.cssText = ''
+      if (select) {
+        select.style.cssText = ''
+        if (isTrial) Array.from(select.options).forEach(function (option) {
+          option.textContent = option.value.replace(/_/g, ' ').split('/').join(' / ')
+        })
+      }
       adaptDatepicker(calendar, mounted)
+      hide(loading)
+      show(calendar)
     }
 
     return Promise.resolve().then(function () {
-      skip.addEventListener('click', function () { if (!locked) go() })
-      installLayout()
-      setupFooter()
+      book.button.addEventListener('click', function () {
+        if (!active || locked || !confirm || confirm.disabled) return
+        rememberPhoneLayout()
+        confirm.click()
+      })
+      skip.button.addEventListener('click', function () { if (!locked) go() })
+      done.button.addEventListener('click', go)
+      for (const action of [book, skip, done]) action.button.setAttribute(action.hook, '')
+      setActionLabel(book, BOOK)
+      setActionLabel(skip, 'Continue to dashboard')
+      setActionLabel(done, 'Go to dashboard')
+      setActionDisabled(book, true)
+      setActionDisabled(skip, false)
+      setActionDisabled(done, false)
+      clearBanner()
+      hide(calendar)
+      calendar.setAttribute('data-paid-calendar-state', 'loading')
+      show(loading)
       hide(details)
       hide(document.querySelector('[data-complete-profile-back]'))
       show(step)
       window.scrollTo(0, 0)
-      const heading = step.querySelector('[data-complete-profile-call-heading]')
-      if (heading) {
-        heading.setAttribute('tabindex', '-1')
-        heading.focus({ preventScroll: true })
-      }
-      showLoading(calendar)
-      confirm = disabledConfirm(calendar)
-      bookingActions.appendChild(confirm)
+      heading.setAttribute('tabindex', '-1')
+      heading.focus({ preventScroll: true })
       profile.start()
       mountDeadline = window.setTimeout(function () { fallback('Calendar load timed out') }, CALENDAR_BUDGET_MS)
       return mount().finally(function () { window.clearTimeout(mountDeadline) })
     }).catch(function (error) {
       if (!active) return
-      if (step.hidden || step.style.display === 'none' || !skip.isConnected) go()
+      if (step.hidden || step.style.display === 'none' || !skip.button.isConnected) go()
       else fallback(error && error.message ? error.message : 'Calendar could not load')
     })
   }

@@ -1,119 +1,139 @@
 # Complete Profile call step
 
 After a paid Brand saves Complete Profile, they can request a free 30-minute
-welcome call with Jai or continue to the Brand dashboard. The step replaces the
-form on the same page. Reloading after the save goes to the dashboard through
-the existing [page-load redirect](COMPLETE-PROFILE-REDIRECT-WIRING.md).
-`/complete-profile-trial` keeps its direct dashboard redirect.
+welcome call with Jai or continue to the Brand dashboard. The form and call
+step share one page. The form's `redirect="/brand-dashboard"` stays in place
+for pages where the call step is absent or cannot start.
+
+This installation is for `/complete-profile-trial` on staging. The module also
+recognizes `/complete-profile` on the approved hosts when its markup is present.
+That page keeps its existing [page-load redirect](COMPLETE-PROFILE-REDIRECT-WIRING.md)
+and does not receive this installation.
 
 ## Webflow markup
 
-In Designer, wire this only on `/complete-profile`. Keep the form's
-`redirect="/brand-dashboard"` as the fallback if the step cannot start. Wrap
-the full Webflow Form Block in the details column so the form and its Webflow
-success message disappear together.
+Build the new section in Designer after the existing trial form section. Use
+the existing form, Button components, spinner, and booking popup success card.
+Custom code loads the styles and scripts. The module uses the authored
+elements and mounts the shared calendar into the empty calendar container.
 
 | Element | Custom attributes | Authoring notes |
 | --- | --- | --- |
-| Existing details column | `data-complete-profile-details` | Contains the existing form and its Webflow success and error states. |
-| Call step section | `data-complete-profile-call-step`, `data-call-host-member="mem_clxzbkxqi02ya0sreedez9c8f"`, `data-call-host-slug="jai"` | Author hidden. Includes the headlines, quote, photo and card. |
-| Calendar mount | `data-complete-profile-call-calendar`, `data-booking-confirm-class="…"` | Leave empty. Supply the Webflow primary button classes that style a bare `<button>`. |
-| Calendar card footer | `data-complete-profile-call-footer` | Place outside the calendar mount. Right-align the actions in a 98 px row on desktop. The script moves the generated booking button after Continue. |
-| Continue to dashboard button | `data-complete-profile-call-continue` | Inside the footer. Use a native `<button type="button">`. |
-| Request sent block | `data-complete-profile-call-success` | Author hidden, outside the calendar mount and its footer. Copy the existing Webflow call card from the booking popup's `[schedule-step="success"]`. Keep `booking-element="start-date"`, `"start-time"`, `"price"`, `"paid-meeting"`, `"context"`, `booking-element-wrap` and `booking-success-text`. |
-| Go to dashboard button | `data-complete-profile-call-done` | Inside the success block. Use a native `<button type="button">`. |
-| Booking headline and subcopy | `data-complete-profile-call-heading` | “Before you dive in, book a free call with Jai” and its subcopy. |
-| Success headline and subcopy | `data-complete-profile-call-heading-done` | Author hidden. “You're all set. Talk soon.” and “In the meantime, explore vetted talent and start building your team.” |
-| Calendar unavailable block | `data-complete-profile-call-unavailable` | Author hidden, outside the calendar mount. “Jai's calendar isn't loading right now” and “You can still dive in. Book a free call with Jai any time from his profile.” Continue stays available and becomes the primary action. |
+| Existing trial form section | `data-jai-trial-first-step`, `data-complete-profile-details` | Include the entire Webflow Form Block and its success and error states. Preserve the form's redirect, terms fields, and validation. |
+| Existing submit Button | Optional `data-complete-profile-call-submit-label` | Set the Button instance label to **Continue** and keep the native `button[type="submit"]`. If the visible label can carry an attribute, the module also supports the label hook. |
+| Call step section | `data-complete-profile-call-step`, `data-call-host-member="mem_clxzbkxqi02ya0sreedez9c8f"`, `data-call-host-slug="jai"` | Author hidden. Use the existing `section_complete-profile` class. |
+| Section padding and content | `data-jai-trial-content` | Keep the native `padding-global padding-section-small` wrapper as the section's direct child. Put the attribute on its `container-large` child. |
+| Two-column layout | `data-jai-trial-layout` | Add to the `complete-profile_layout` inside the content container. The greeting, card, and quote are its children. |
+| Headline wrapper and states | `data-jai-trial-greeting`, `data-complete-profile-call-heading`, `data-complete-profile-call-heading-done` | Place the latter two on sibling blocks inside the greeting wrapper. Author the done block hidden. |
+| Card and inner panel | `data-jai-trial-card` | Add to `complete-profile_form-block`. The `complete-profile_form` inside it holds the loading body, calendar, unavailable body, success body, banner, and footer as siblings. |
+| Loading body | `data-paid-calendar-element="loading"` | Author hidden. Inside it reuse the `experts-list_loader is-complete-profile` spinner with `data-loader="1000"` and `aria-hidden="true"`. Add visually hidden text with `data-paid-calendar-element="loading-text"` and `role="status"`: “Loading Jai's available times…” |
+| Calendar mount | `data-complete-profile-call-calendar` | Leave empty. The engine adds the month, timezone, and available times. |
+| Calendar unavailable body | `data-complete-profile-call-unavailable` | Author hidden. Use “Jai's calendar isn't loading right now” and “You can still dive in. Book a free call with Jai any time from his profile.” |
+| Request sent body | `data-complete-profile-call-success` | Author hidden. Copy the booking popup's **Call Requested** card content. |
+| Status banner | `data-complete-profile-call-status`, `data-paid-calendar-element="status"` | Use an empty paragraph before the footer with `role="status"` and `aria-atomic="true"`. |
+| Shared footer | `data-complete-profile-call-footer` | Add to `complete-profile_button-wrapper`. Keep it outside the calendar and success bodies. |
+| Footer action groups | `data-complete-profile-call-booking-actions`, `data-complete-profile-call-success-actions` | Add to two siblings inside the shared footer. Start with booking actions visible and success actions hidden. |
+| Continue, Book, and Done holders | `data-jai-trial-native-button="skip"`, `data-jai-trial-native-button="book"`, `data-jai-trial-native-button="done"` | Put Continue then Book in the booking actions. Put Done in the success actions. Use the existing tertiary Button for Continue and primary Button for Book and Done. |
+| Clickable native Buttons | Optional `data-complete-profile-call-button-label` | Set visible copy through the instance properties and use `button[type="button"]` controls. Keep `data-button-theme` and `data-button-style` on the component wrappers. If the Book label accepts attributes, the optional hook allows it to change to **Try again**. |
+| Quote and attribution | `data-jai-trial-quote` | Use a figure with a blockquote and figcaption inside the layout. |
+| Portrait frame and image | `data-jai-trial-portrait-frame`, `data-jai-trial-portrait` | Place the frame after the layout, inside the content container. Use `jai-dolwani-complete-profile.png` with alt text “Jai Dolwani”. |
 
-Use the existing `hide` utility, `hidden` attribute, or inline
-`display: none` for hidden step elements so the script can reveal them. Bind
-the step through the attributes above. Keep it outside any `data-ms-form`
-contract and omit the booking popup's `data-modal-target` attribute.
+The module adds the `data-complete-profile-call-continue`,
+`data-complete-profile-call-book`, and `data-complete-profile-call-done` hooks
+to the native buttons once it finds their holders. A retry is announced in the
+status banner even when the Button component uses a fixed label.
 
-The copied call card title is “Call Requested”. It displays the selected date
-and time in the slot's timezone, “Free”, “$0”, and “We'll share your call
-request with Jai and reach out when it's been confirmed, typically within 24
-hours”. The script hides the context row because this flow sends no message.
+Use `hidden` for elements that start hidden. The existing `hide` utility and
+inline `display: none` are also supported. Keep the call step outside any
+`data-ms-form` contract.
 
-Use the [desktop design](https://www.figma.com/design/QPZC8rJROId5dr19xKosjq/The-Starters-3.0?node-id=10676-9565)
+Copy the **Call Requested** card from the booking popup's
+`[schedule-step="success"]` state. Keep its inner card, including
+`call-details_layout` and `table-price_layout is-consult`. Leave the popup
+shell and its actions behind. Preserve both desktop and phone date/time rows
+and the `booking-element` hooks for `start-date`, `start-time`, `price`,
+`paid-meeting`, `starter-name` and `context`, with `booking-element-wrap`
+and `booking-success-text`. The copied card shows the selected time, “Free”,
+and “$0”. The module hides the unused context row and places **Go to dashboard**
+in the shared footer.
+
+See the [desktop design](https://www.figma.com/design/QPZC8rJROId5dr19xKosjq/The-Starters-3.0?node-id=10676-9565),
+[phone design](https://www.figma.com/design/QPZC8rJROId5dr19xKosjq/The-Starters-3.0?node-id=10729-1216)
 and [state designs](https://www.figma.com/design/QPZC8rJROId5dr19xKosjq/The-Starters-3.0?node-id=10725-924).
-On mobile, place the headline first, then the card, then the quote and photo.
-The card shows the month, timezone, three columns of time choices, a full-width
-**Book a free call** button, and **Continue to dashboard**.
+At 768 px and wider, the greeting and card sit side by side, and the card splits
+the month and times into two panels. On phones, the greeting, card, quote, and
+cropped portrait stack. The phone calendar shows up to twelve times before
+scrolling. The successful request retains the measured booking card height on
+phones, so the quote and portrait stay in place.
 
-## Script order
+## Pinned page code
 
-In the page head, after the sitewide Memberstack and route guard installs and
-before the existing controller embeds, add the following tags. Replace
-`vX.Y.Z` with the approved release tag and use that release for the existing
-Brand Account controller, which dispatches the completion event.
+In the trial page head, after the sitewide Memberstack and route guard installs
+and before the existing controller embeds, add these tags in order. Use the
+same ref for the stylesheet and all four scripts. `REF` is the full pushed
+commit SHA for staging review or the released `vX.Y.Z` tag after release.
+Production installations use release tags.
 
 ```html
-<script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@vX.Y.Z/v3/scheduling-auth.js"></script>
-<script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@vX.Y.Z/v3/paid-call-brand-payment.js"></script>
-<script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@vX.Y.Z/v3/free-call-booking.js"></script>
-<script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@vX.Y.Z/v3/complete-profile-call-step.js" defer></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@REF/v3/complete-profile-call-step.css">
+<script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@REF/v3/scheduling-auth.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@REF/v3/paid-call-brand-payment.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@REF/v3/free-call-booking.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@REF/v3/complete-profile-call-step.js" defer></script>
 ```
 
-Load the first three scripts synchronously. In **Before `</body>`** code,
-load jQuery UI after Webflow's jQuery so the calendar can render its month
-grid.
+The existing Brand Account controller must include the completion event.
+Update its existing pin as needed and keep one controller installation.
+Load the first three scheduling scripts synchronously.
+
+In **Before `</body>`** code, load jQuery UI after Webflow's jQuery. The
+call step stylesheet supplies the datepicker styling.
 
 ```html
 <script src="https://code.jquery.com/ui/1.14.1/jquery-ui.min.js"></script>
 ```
 
-The step styles the datepicker. Leave out the jQuery UI theme CSS. The inline
-calendar and free request use the shared booking code without Stripe. Confirm
-in the staging console and Network panel that this install has no missing
-dependencies.
+Keep the prior pilot in place until the Designer markup and pinned assets
+have been verified together. Then remove the pilot template, inline script,
+and inline styles and publish only the trial page on staging. Verify the
+pinned URLs return HTTP 200 and the served module has the expected
+`@release` marker.
 
 ## Handoff and diagnostics
 
-On successful Build Account submit, the controller dispatches the cancelable
-`starters:brand-profile-completed` event after saving the completion marker.
-The step claims it only when its required markup and scheduling helpers are
-ready and the current paid Brand matches the completed member. Otherwise the
-form redirects using its authored fallback. If the calendar fails after the
-step opens, the member can still continue to the dashboard.
+After a successful Build Account save, the controller dispatches the
+cancelable `starters:brand-profile-completed` event. The step claims it when
+the authored elements and dependencies are ready and the current paid Brand
+matches the completed member. If the calendar fails after the handoff, the
+member can still continue to the dashboard.
 
-The step resolves an active, ready free configuration at runtime. Staging uses
-the test Starter `jp-dionisio` on `the-starters-3-0.webflow.io`. The custom
-domains use the Starter specified in the step's attributes. The Xano
-environment and origin checks require the actual staging hostname for booking
-QA.
+The step resolves the available free configuration at runtime. Staging uses
+`jp-dionisio` on `the-starters-3-0.webflow.io`. The custom domains use the
+Starter specified in the authored host attributes.
 
 The Brand row can take a few seconds to appear after the form saves. The step
-reuses the scheduling bridge's token to read the onboarding status endpoint
-before booking. If the row is still missing, the step asks the member to try
-again. A submitted request stays pending until the Starter accepts it.
+reads the onboarding status with the scheduling bridge's token before booking
+and asks the member to retry if their account is still being set up. A
+submitted request stays pending until the Starter accepts it.
 
-Check `window.StartersCompleteProfileCallStep.release` and use the
-`[starters complete-profile-call-step]` console messages to identify a failed readiness
-check or unavailable calendar. Logging follows the shared
+Check `window.StartersCompleteProfileCallStep.release` and
+`[starters complete-profile-call-step]` console messages for failed readiness
+checks or unavailable calendar data. Logging follows the shared
 [staging diagnostics gate](../../README.md#staging-only-console-diagnostics).
 
-## Staging QA after review
+## Staging QA
 
-Use the workspace's `staging-qa/` session as a fresh unfinished `brand-paid`
-member on `the-starters-3-0.webflow.io`.
+Run the workspace's `staging-qa/checks/complete-profile-trial-round2.mjs`
+against the published trial page. From `staging-qa/`, run
+`node --env-file=.env checks/complete-profile-trial-round2.mjs`. Use the
+`brand-paid` sandbox session, the published SHA pins, and mocked booking
+responses. No draft substitution or real booking is needed.
 
-1. Submit Complete Profile. Verify the marker is set, the spinner clears, and
-   the form and back button give way to the call step without navigation.
-2. Compare the month grid, timezone and time choices with Figma at desktop
-   widths 1600 and 1280 and mobile width 375. Change the timezone and confirm
-   times update. Staging slots require at least five minutes' notice.
-3. Request one call and verify one booking request, the **Call Requested**
-   card, and a pending call in the staging dashboard. Check that a double
-   click sends one request and that retry after an ambiguous network response
-   reuses its idempotency key.
-4. With fresh fixtures, check that **Continue to dashboard** creates no booking,
-   reloading exits the step, and blocking the step script keeps the form's
-   dashboard fallback. Verify Talent and free Brands still leave on page load.
-5. Exercise the loading, no-times, setup retry and calendar unavailable states.
-   Check that Continue remains available except while a booking is in flight.
-
-After release, production checks are read-only. Verify the scheduling bridge
-installs on `/complete-profile` and the free call is still offered on
-`/hire/jai`. Leave production forms unsubmitted.
+Check the **Continue** submit label and trial terms, then verify loading,
+ready, unavailable, no-times, and error states. Check the Book Button's
+disabled state and keyboard focus, shared footer, timezone changes, and that
+Continue remains available except during a request. Verify a mocked successful
+request displays the existing success card and its single dashboard action.
+Confirm tablet split layout, phone stacking, portrait crop, and unchanged
+quote position when booking succeeds on a phone. Confirm the authored form
+redirect still works when the call step cannot start.

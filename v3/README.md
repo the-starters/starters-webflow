@@ -444,14 +444,16 @@ see
 ## Complete-profile call step
 
 `complete-profile-call-step.js` offers paid Brands a free call with Jai after
-they save `/complete-profile`. When the step is ready, it claims the Brand
-Account controller's completion event and opens the calendar on the same page.
-The form's `redirect="/brand-dashboard"` stays as the fallback. Members can skip
-to the dashboard, and a reload after completion goes there through the page-load
-redirect.
+they save Complete Profile. When its Designer markup and scheduling dependencies
+are ready, it claims the Brand Account controller's completion event and opens
+the calendar on the same page. The form's `redirect="/brand-dashboard"` stays
+as the fallback. The stylesheet `complete-profile-call-step.css` owns the trial
+form and call step layout.
 
-See the [Complete Profile call step wiring guide](../docs/wiring/COMPLETE-PROFILE-CALL-STEP-WIRING.md)
-for the Designer attributes, script order and staging checks.
+The staging install is on `/complete-profile-trial`. Pin the stylesheet and
+scripts to the same full commit SHA for review, then use the release tag. See
+the [Complete Profile call step wiring guide](../docs/wiring/COMPLETE-PROFILE-CALL-STEP-WIRING.md)
+for Designer attributes, script order, and staging checks.
 
 ## Complete-profile back button
 
@@ -2091,7 +2093,7 @@ that head is corrected; that recovery contract is owned by
 
 On `/complete-profile`, load the bridge and shared booking scripts synchronously
 in the page head, as shown in the
-[call step wiring guide](../docs/wiring/COMPLETE-PROFILE-CALL-STEP-WIRING.md#script-order).
+[call step wiring guide](../docs/wiring/COMPLETE-PROFILE-CALL-STEP-WIRING.md#pinned-page-code).
 
 Current safety boundary:
 
