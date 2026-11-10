@@ -5613,6 +5613,141 @@
     }
 
     /**
+     * Tops up thin category groups from a broad category fallback search.
+     *
+     * The searches run in parallel, but picks are assigned afterwards in
+     * group order, so a Starter found by several fallbacks always lands in
+     * the earliest category and never in more than one (one card per person).
+     *
+     * @param {object[]} recommendationGroups Category groups, in page order; updated.
+     * @param {Set<string>} shownObjectIds Object IDs already shown; updated.
+     * @param {object[]} recommendationIssues Issue list; updated.
+     * @returns {Promise<(object | null)[]>} One fallback search result per group.
+     */
+    async function addCategoryFallbackRecommendations(
+        recommendationGroups,
+        shownObjectIds,
+        recommendationIssues,
+    ) {
+        const searches = await Promise.all(
+            recommendationGroups.map(async (group) => {
+                if (group.recommendations.length >= categoryFreelancerLimit) {
+                    return null
+                }
+
+                const fallbackQuery = getCategoryRecommendationQuery(group.category)
+                if (!fallbackQuery) return { fallbackQuery, hits: [], error: null }
+
+                try {
+                    const hits = await searchRecommendedFreelancers(fallbackQuery)
+                    return { fallbackQuery, hits, error: null }
+                } catch (error) {
+                    return { fallbackQuery, hits: [], error }
+                }
+            }),
+        )
+
+        return recommendationGroups.map((group, index) => {
+            const search = searches[index]
+            if (!search) return null
+
+            const { fallbackQuery } = search
+            const fallbackSearchPlan = {
+                category: group.category,
+                subcategory: null,
+                query: fallbackQuery,
+                queryType: 'category_fallback',
+            }
+
+            if (!fallbackQuery) return fallbackSearchPlan
+
+            let { hits, error } = search
+            let candidates = []
+            let fallbackRecommendations = []
+            if (!error) {
+                try {
+                    candidates = getRecommendedFreelancerCandidates(
+                        hits,
+                        group.category,
+                        null,
+                    ).map((candidate) => ({
+                        ...candidate,
+                        matchedQuery: fallbackQuery,
+                        matchedQueryTier: 'fallback',
+                    }))
+                    fallbackRecommendations = getTopRecommendedFreelancers(
+                        getUniqueRecommendedFreelancerCandidates(candidates),
+                        categoryFreelancerLimit - group.recommendations.length,
+                        shownObjectIds,
+                    )
+                } catch (candidateError) {
+                    error = candidateError
+                    hits = []
+                    candidates = []
+                    fallbackRecommendations = []
+                }
+            }
+            fallbackRecommendations.forEach((freelancer) =>
+                shownObjectIds.add(freelancer.objectID),
+            )
+
+            const errorMessage = error ? error.message || String(error) : null
+            group.queries.push({
+                subcategory: null,
+                query: fallbackQuery,
+                queryType: 'category_fallback',
+                hitCount: hits.length,
+                candidateCount: candidates.length,
+                addedCount: fallbackRecommendations.length,
+                errorMessage,
+            })
+            group.query = group.queries
+                .map((queryInfo) => queryInfo.query)
+                .join(' | ')
+            group.recommendations.push(...fallbackRecommendations)
+
+            if (error) {
+                recommendationIssues.push(
+                    createRecommendationIssue(
+                        'category_fallback_search_error',
+                        'Main category fallback search failed for ' +
+                            (group.category.label || group.category.id) +
+                            '.',
+                        {
+                            category: group.category,
+                            query: fallbackQuery,
+                            errorMessage,
+                        },
+                    ),
+                )
+            } else if (!fallbackRecommendations.length) {
+                recommendationIssues.push(
+                    createRecommendationIssue(
+                        'no_category_fallback_recommendations',
+                        'Main category fallback did not add recommendations for ' +
+                            (group.category.label || group.category.id) +
+                            '.',
+                        {
+                            category: group.category,
+                            query: fallbackQuery,
+                            hitCount: hits.length,
+                            candidateCount: candidates.length,
+                        },
+                    ),
+                )
+            }
+
+            return {
+                ...fallbackSearchPlan,
+                hits,
+                candidates,
+                addedRecommendations: fallbackRecommendations,
+                error,
+            }
+        })
+    }
+
+    /**
      * Loads top freelancer recommendations for the completed quiz.
      *
      * @param {object} pendingQuiz Pending quiz payload.
@@ -5809,119 +5944,11 @@
         }))
         const fallbackSearchResults = strictQueryMode
             ? []
-            : await Promise.all(
-            recommendationGroups.map(async (group) => {
-                if (group.recommendations.length >= categoryFreelancerLimit) {
-                    return null
-                }
-
-                const fallbackQuery = getCategoryRecommendationQuery(group.category)
-                const fallbackSearchPlan = {
-                    category: group.category,
-                    subcategory: null,
-                    query: fallbackQuery,
-                    queryType: 'category_fallback',
-                }
-
-                if (!fallbackQuery) return fallbackSearchPlan
-
-                try {
-                    const hits = await searchRecommendedFreelancers(fallbackQuery)
-                    const candidates = getRecommendedFreelancerCandidates(
-                        hits,
-                        group.category,
-                        null,
-                    ).map((candidate) => ({
-                        ...candidate,
-                        matchedQuery: fallbackQuery,
-                        matchedQueryTier: 'fallback',
-                    }))
-                    // Read and update shownObjectIds with no await in between,
-                    // so parallel fallbacks cannot pick the same Starter.
-                    const fallbackRecommendations = getTopRecommendedFreelancers(
-                        getUniqueRecommendedFreelancerCandidates(candidates),
-                        categoryFreelancerLimit - group.recommendations.length,
-                        new Set(shownObjectIds),
-                    )
-                    fallbackRecommendations.forEach((freelancer) =>
-                        shownObjectIds.add(freelancer.objectID),
-                    )
-
-                    group.queries.push({
-                        subcategory: null,
-                        query: fallbackQuery,
-                        queryType: 'category_fallback',
-                        hitCount: hits.length,
-                        candidateCount: candidates.length,
-                        addedCount: fallbackRecommendations.length,
-                        errorMessage: null,
-                    })
-                    group.query = group.queries
-                        .map((queryInfo) => queryInfo.query)
-                        .join(' | ')
-                    group.recommendations.push(...fallbackRecommendations)
-
-                    if (!fallbackRecommendations.length) {
-                        recommendationIssues.push(
-                            createRecommendationIssue(
-                                'no_category_fallback_recommendations',
-                                'Main category fallback did not add recommendations for ' +
-                                    (group.category.label || group.category.id) +
-                                    '.',
-                                {
-                                    category: group.category,
-                                    query: fallbackQuery,
-                                    hitCount: hits.length,
-                                    candidateCount: candidates.length,
-                                },
-                            ),
-                        )
-                    }
-
-                    return {
-                        ...fallbackSearchPlan,
-                        hits,
-                        candidates,
-                        addedRecommendations: fallbackRecommendations,
-                        error: null,
-                    }
-                } catch (error) {
-                    group.queries.push({
-                        subcategory: null,
-                        query: fallbackQuery,
-                        queryType: 'category_fallback',
-                        hitCount: 0,
-                        candidateCount: 0,
-                        addedCount: 0,
-                        errorMessage: error?.message || String(error),
-                    })
-                    group.query = group.queries
-                        .map((queryInfo) => queryInfo.query)
-                        .join(' | ')
-                    recommendationIssues.push(
-                        createRecommendationIssue(
-                            'category_fallback_search_error',
-                            'Main category fallback search failed for ' +
-                                (group.category.label || group.category.id) +
-                                '.',
-                            {
-                                category: group.category,
-                                query: fallbackQuery,
-                                errorMessage: error?.message || String(error),
-                            },
-                        ),
-                    )
-
-                    return {
-                        ...fallbackSearchPlan,
-                        hits: [],
-                        candidates: [],
-                        addedRecommendations: [],
-                        error,
-                    }
-                }
-            }),
-        )
+            : await addCategoryFallbackRecommendations(
+                  recommendationGroups,
+                  shownObjectIds,
+                  recommendationIssues,
+              )
         // Prefer the total lvl0 matching pool; fall back to the unique displayed
         // candidate count when the count query is unavailable.
         const starterCount =

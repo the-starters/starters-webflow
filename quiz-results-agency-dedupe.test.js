@@ -19,24 +19,12 @@ function extractFunction(name) {
     let depth = 0
     for (let i = open; i < source.length; i++) {
         if (source[i] === '{') depth++
-        else if (source[i] === '}' && --depth === 0) return source.slice(start, i + 1)
+        else if (source[i] === '}' && --depth === 0) {
+            const isAsync = source.slice(start - 6, start) === 'async '
+            return source.slice(isAsync ? start - 6 : start, i + 1)
+        }
     }
     throw new Error(`unbalanced function: ${name}`)
-}
-
-/**
- * Evaluates the `attributesToRetrieve` array of the Starter recommendation
- * search (the request contract the card template depends on).
- *
- * @returns {string[]} Requested Algolia attributes.
- */
-function readRecommendationAttributes() {
-    const anchor = "attributesToRetrieve: [\n                        'name',"
-    const start = source.indexOf(anchor)
-    assert.notEqual(start, -1, 'missing recommendation attributesToRetrieve')
-    const open = source.indexOf('[', start)
-    const close = source.indexOf(']', open)
-    return vm.runInNewContext(source.slice(open, close + 1))
 }
 
 const context = { result: null }
@@ -127,9 +115,92 @@ test('a non-agency card keeps its own retainer value and hourly rate', () => {
     assert.equal(getCardFieldValue(freelancer, 'rate'), 150)
 })
 
-test('the recommendation search requests the agency fields the card template binds', () => {
-    const attributes = readRecommendationAttributes()
+
+test('the recommendation search requests the agency fields the card template binds', async () => {
+    const requests = []
+    const sandbox = {
+        recommendedFreelancerCandidateLimit: 100,
+        window: {
+            StartersV3AlgoliaEnvironment: {
+                getManagedSearchConfig: () => ({
+                    appId: 'APP',
+                    searchKey: 'KEY',
+                    indexName: 'starters',
+                }),
+            },
+        },
+        fetch: async (url, init) => {
+            requests.push({ url, body: JSON.parse(init.body) })
+            return { ok: true, json: async () => ({ hits: [{ objectID: '314' }] }) }
+        },
+    }
+    vm.createContext(sandbox)
+    vm.runInContext(
+        ['normalize', 'getAlgoliaSearchConfig', 'searchRecommendedFreelancers']
+            .map(extractFunction)
+            .concat('this.search = searchRecommendedFreelancers')
+            .join('\n'),
+        sandbox,
+    )
+
+    const hits = await sandbox.search('paid media')
+
+    assert.equal(hits.length, 1)
+    assert.equal(requests.length, 1)
+    const attributes = requests[0].body.attributesToRetrieve
     assert.ok(attributes.includes('is-agency'), 'is-agency drives the agency branch')
     assert.ok(attributes.includes('agency-name'), 'agency-name is shown on agency cards')
-    assert.ok(attributes.includes('retainer-rate'))
+    assert.ok(attributes.includes('retainer-rate'), 'retainer-rate is the agency monthly price')
+})
+
+// Fallback searches run in parallel; whichever resolves first must not decide
+// where a shared Starter lands. The earliest category always gets them.
+test('category fallbacks assign a shared Starter to the earliest category, whatever order the searches resolve', async () => {
+    const resolvers = {}
+    const sandbox = {
+        categoryFreelancerLimit: 2,
+        getCategoryRecommendationQuery: (category) => category.id,
+        searchRecommendedFreelancers: (query) =>
+            new Promise((resolve) => {
+                resolvers[query] = resolve
+            }),
+        getRecommendedFreelancerCandidates: (hits) => hits,
+        getUniqueRecommendedFreelancerCandidates: (candidates) => candidates,
+        orderRecommendedFreelancerCandidates: (candidates) =>
+            [...candidates].sort((a, b) => b.rankingPoints - a.rankingPoints),
+        createRecommendationIssue: (code, message, details) => ({ code, message, details }),
+    }
+    vm.createContext(sandbox)
+    vm.runInContext(
+        ['getTopRecommendedFreelancers', 'addCategoryFallbackRecommendations']
+            .map(extractFunction)
+            .concat('this.addFallbacks = addCategoryFallbackRecommendations')
+            .join('\n'),
+        sandbox,
+    )
+
+    const group = (id, recommendations = []) => ({
+        category: { id, label: id },
+        query: id,
+        queries: [],
+        recommendations,
+    })
+    const groups = [group('paid-media'), group('brand'), group('full', [candidate('x'), candidate('y')])]
+    const shown = new Set(['featured-1'])
+    const issues = []
+    const pending = sandbox.addFallbacks(groups, shown, issues)
+
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.deepEqual(Object.keys(resolvers).sort(), ['brand', 'paid-media'])
+    resolvers.brand([candidate('scott', 90), candidate('b', 40), candidate('featured-1', 99)])
+    await new Promise((resolve) => setImmediate(resolve))
+    resolvers['paid-media']([candidate('scott', 90), candidate('a', 50)])
+    const results = await pending
+
+    assert.deepEqual(groups[0].recommendations.map((x) => x.objectID), ['scott', 'a'])
+    assert.deepEqual(groups[1].recommendations.map((x) => x.objectID), ['b'])
+    assert.deepEqual(groups[2].recommendations.map((x) => x.objectID), ['x', 'y'])
+    assert.equal(results[2], null)
+    assert.deepEqual([...shown].sort(), ['a', 'b', 'featured-1', 'scott'])
+    assert.equal(issues.length, 0)
 })
