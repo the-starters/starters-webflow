@@ -1,5 +1,6 @@
 // Local browser integration with the real wf-xano binder (v0.28.0).
-// NODE_PATH=<playwright>/node_modules WF_XANO_SOURCE=<wf-xano.js> node --test v3/hire-profile-taxonomy.test.cjs
+// node --test v3/hire-profile-taxonomy.test.cjs
+// The pinned wf-xano build is downloaded unless WF_XANO_SOURCE=<wf-xano.js> is set.
 // Optional TAXONOMY_EVIDENCE_DIR saves screenshots; TAXONOMY_CSS_SOURCE supports a pre-fix control.
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -10,7 +11,18 @@ const { chromium } = require('playwright');
 const groups = ['Tools & Platforms', 'Skills', 'Industry Experience'];
 const labels = ['Figma', 'Product strategy', 'Healthcare'];
 const css = fs.readFileSync(process.env.TAXONOMY_CSS_SOURCE || require.resolve('./hire-profile-taxonomy.css'), 'utf8');
-const binder = fs.readFileSync(process.env.WF_XANO_SOURCE, 'utf8');
+// The binder lives in the-starters/wf-xano, not in this repo. Without
+// WF_XANO_SOURCE, load the same pinned release the Webflow pages use.
+const WF_XANO_PINNED_URL = 'https://cdn.jsdelivr.net/gh/the-starters/wf-xano@v0.28.0/wf-xano.js';
+async function loadBinder() {
+  if (process.env.WF_XANO_SOURCE) return fs.readFileSync(process.env.WF_XANO_SOURCE, 'utf8');
+  const response = await fetch(WF_XANO_PINNED_URL);
+  if (!response.ok) {
+    throw new Error(`Could not download the wf-xano binder (${response.status}) from ${WF_XANO_PINNED_URL}. ` +
+      'Set WF_XANO_SOURCE to a local wf-xano.js to run offline.');
+  }
+  return response.text();
+}
 const fixture = `<!doctype html><html><head><meta charset="utf-8"><title>Hire profile taxonomy fixture</title>
 <style>body{font:16px system-ui;color:#203d32;background:#f5f7f4;margin:0;padding:32px}main{max-width:760px;margin:auto;background:white;border:1px solid #d8e3dc;border-radius:16px;padding:24px}h1{margin-top:0}h2{font-size:18px}section{margin:24px 0}.profile-content_artifacts{gap:12px;flex-direction:column;border-bottom:1px solid #ddd;padding-bottom:20px}[wf-xano-element=list]{display:flex;gap:8px}[wf-xano-item]{border-radius:20px;background:#e7eee8;padding:8px 16px}[wf-xano-element=template]{display:none}footer{color:#687a70;font-size:13px}</style>
 <link rel="stylesheet" href="/taxonomy.css"><script>window.WfXanoConfig={xanoBase:location.origin,preAuth:false};</script><script defer src="/wf-xano.js"></script></head><body><main>
@@ -21,6 +33,7 @@ ${groups.map((name, i) => `<section class="profile-content_artifacts" xwf-empty-
 <footer>Local hire-profile fixture · real wf-xano binder · controlled responses</footer></main></body></html>`;
 
 test('taxonomy groups hide independently while real wf-xano initializes, fetches and refreshes', async () => {
+  const binder = await loadBinder();
   const browser = await chromium.launch({ channel: 'chrome', headless: true });
   try {
     for (const width of [1280, 390]) {
