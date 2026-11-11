@@ -3,6 +3,13 @@ const fs = require('node:fs')
 const test = require('node:test')
 const vm = require('node:vm')
 
+// The Memberstack DOM SDK rejects with its response body: a plain
+// `{ code, message }` object with no HTTP status. Fixtures must use this shape;
+// a fake `status: 409` hid that the controller never recognized a conflict.
+function memberstackError(code, message) {
+  return { code, message }
+}
+
 const source = fs.readFileSync(
   require.resolve('./brand-account-controller.js'),
   'utf8',
@@ -901,7 +908,7 @@ test('Build Account success records a privacy-safe console receipt without page 
 
   const receipt = buildForm.__startersAccountDiagnostic
   assert.equal(receipt.workflow, 'brand_account_build')
-  assert.equal(receipt.controller_version, 'brand-account-controller-v4')
+  assert.equal(receipt.controller_version, 'brand-account-controller-v5')
   assert.equal(receipt.result, 'success')
   assert.equal(receipt.request_started, true)
   assert.equal(Object.hasOwn(receipt, 'email'), false)
@@ -914,7 +921,7 @@ test('Build Account success records a privacy-safe console receipt without page 
     [{
       name: 'brand_account_email_decision',
       payload: {
-        controller_version: 'brand-account-controller-v4',
+        controller_version: 'brand-account-controller-v5',
         email_change_required: false,
         security_email_attempted: false,
       },
@@ -943,7 +950,7 @@ test('Build Account changed-email success keeps the receipt free of identity fie
   )
   const receipt = buildForm.__startersAccountDiagnostic
   assert.equal(receipt.workflow, 'brand_account_build')
-  assert.equal(receipt.controller_version, 'brand-account-controller-v4')
+  assert.equal(receipt.controller_version, 'brand-account-controller-v5')
   assert.equal(receipt.result, 'success')
   assert.equal(receipt.request_started, true)
   assert.equal(Object.hasOwn(receipt, 'email'), false)
@@ -1175,8 +1182,7 @@ test('invalid input performs no Memberstack mutation and exposes the authored er
 
 test('email collision leaves completion unset and reports a stable user-facing error', async () => {
   const buildForm = makeForm('build', { email: 'used@example.com' })
-  const conflict = new Error('raw provider conflict')
-  conflict.status = 409
+  const conflict = memberstackError('email-already-in-use', 'raw provider conflict')
   const environment = loadController({
     buildForm,
     updateMemberAuth: async () => {
@@ -1204,8 +1210,111 @@ test('email collision leaves completion unset and reports a stable user-facing e
   )
   assert.equal(environment.redirects.length, 0)
   assert.deepEqual(plain(environment.tracked), [
-    { name: 'bridge_error', payload: { path: 'brand/account/build', status: 409 } },
+    { name: 'bridge_error', payload: { path: 'brand/account/build', status: 0 } },
   ])
+})
+
+// Regression (2026-11-10 production): browser autofill replaced the prefilled
+// login email on Build Account, and Memberstack refused the login-email change
+// with HTTP 400 `email-already-in-use`. The SDK rejection carries no status, so
+// the controller logged ACCOUNT_UPDATE_FAILED with no reason and showed the raw
+// provider text instead of the conflict copy.
+test('a real Memberstack email-already-in-use rejection on Build shows the conflict copy and records EMAIL_IN_USE', async () => {
+  const buildForm = makeForm('build', { email: 'autofilled@example.com' })
+  let authAttempts = 0
+  const environment = loadController({
+    buildForm,
+    currentEmail: 'login@example.com',
+    diagnostics: true,
+    updateMemberAuth: async () => {
+      authAttempts += 1
+      throw memberstackError('email-already-in-use', 'This email is already in use.')
+    },
+  })
+
+  buildForm.submitEvent()
+  await settle(12)
+
+  assert.equal(authAttempts, 1)
+  assert.equal(
+    environment.calls.filter(
+      (call) => call.method === 'updateMember' && call.payload.customFields['completed-brand-profile'],
+    ).length,
+    0,
+  )
+  assert.equal(buildForm.wrapper.failText.textContent, 'That email is already in use. Choose another email address.')
+  const receipt = buildForm.__startersAccountDiagnostic
+  assert.equal(receipt.result, 'failed')
+  assert.equal(receipt.error_code, 'EMAIL_IN_USE')
+  assert.equal(environment.redirects.length, 0)
+})
+
+test('an expired Memberstack session on Build asks the member to log in again', async () => {
+  for (const code of ['login-required', 'client/invalid-token']) {
+    const buildForm = makeForm('build', { email: 'next@example.com' })
+    loadController({
+      buildForm,
+      currentEmail: 'login@example.com',
+      diagnostics: true,
+      updateMemberAuth: async () => {
+        throw memberstackError(code, 'raw provider session text')
+      },
+    })
+
+    buildForm.submitEvent()
+    await settle(12)
+
+    assert.equal(
+      buildForm.wrapper.failText.textContent,
+      'Your session has expired. Log in again to update your account.',
+    )
+    assert.equal(buildForm.__startersAccountDiagnostic.error_code, 'SESSION_EXPIRED')
+  }
+})
+
+test('a Memberstack network-error rejection is retried', async () => {
+  const buildForm = makeForm('build', { email: 'next@example.com' })
+  let authAttempts = 0
+  const environment = loadController({
+    buildForm,
+    currentEmail: 'login@example.com',
+    updateMemberAuth: async () => {
+      authAttempts += 1
+      if (authAttempts === 1) throw memberstackError('network-error', 'Network error')
+      return {}
+    },
+  })
+
+  buildForm.submitEvent()
+  await settle(16)
+
+  assert.equal(authAttempts, 2)
+  assert.deepEqual(environment.redirects, ['/brand-dashboard'])
+})
+
+test('an unrecognized Memberstack code is recorded in the diagnostic error code', async () => {
+  const buildForm = makeForm('build', { email: 'next@example.com' })
+  loadController({
+    buildForm,
+    currentEmail: 'login@example.com',
+    diagnostics: true,
+    updateMemberAuth: async () => {
+      throw memberstackError('invalid-email', 'Invalid email.')
+    },
+  })
+
+  buildForm.submitEvent()
+  await settle(12)
+
+  assert.equal(buildForm.__startersAccountDiagnostic.error_code, 'MEMBERSTACK_INVALID_EMAIL')
+  assert.equal(buildForm.wrapper.failText.textContent, 'Invalid email.')
+})
+
+test('Build Account opts the login email field out of browser autofill', () => {
+  const buildForm = makeForm('build')
+  loadController({ buildForm })
+
+  assert.equal(buildForm.inputs.get('[name="Email-Address"]').getAttribute('autocomplete'), 'off')
 })
 
 test('one transient ordinary-field failure retries without duplicating completion', async () => {
@@ -1298,7 +1407,7 @@ test('Build Account sends one security email only after changing login email', a
     [{
       name: 'brand_account_email_decision',
       payload: {
-        controller_version: 'brand-account-controller-v4',
+        controller_version: 'brand-account-controller-v5',
         email_change_required: true,
         security_email_attempted: true,
       },
@@ -1388,7 +1497,7 @@ test('Build Account with an unreadable login email writes no auth email and send
     [{
       name: 'brand_account_email_decision',
       payload: {
-        controller_version: 'brand-account-controller-v4',
+        controller_version: 'brand-account-controller-v5',
         email_change_required: false,
         security_email_attempted: false,
       },
@@ -1468,7 +1577,7 @@ test('changed-email reset failure keeps durable completion and provides recovery
     [{
       name: 'brand_account_email_decision',
       payload: {
-        controller_version: 'brand-account-controller-v4',
+        controller_version: 'brand-account-controller-v5',
         email_change_required: true,
         security_email_attempted: true,
       },
@@ -1511,8 +1620,7 @@ test('a landed auth write answered with 409 completes on the same submit', async
     updateMemberAuth: async (payload) => {
       authAttempts += 1
       member.auth.email = payload.email
-      const conflict = new Error('That email is already in use.')
-      conflict.status = 409
+      const conflict = memberstackError('email-already-in-use', 'That email is already in use.')
       throw conflict
     },
   })
@@ -1543,8 +1651,7 @@ test('a 409 from an address this member does not own keeps the conflict', async 
     buildForm,
     member,
     updateMemberAuth: async () => {
-      const conflict = new Error('raw provider conflict')
-      conflict.status = 409
+      const conflict = memberstackError('email-already-in-use', 'raw provider conflict')
       throw conflict
     },
   })
@@ -1584,8 +1691,7 @@ test('a 409 after the signed-in member changed reports the account-scope change'
     },
     updateMemberAuth: async (payload) => {
       member.auth.email = payload.email
-      const conflict = new Error('That email is already in use.')
-      conflict.status = 409
+      const conflict = memberstackError('email-already-in-use', 'That email is already in use.')
       throw conflict
     },
   })
@@ -1629,8 +1735,7 @@ test('a failed reconciliation read keeps the conflict without retrying the read'
       return { data: member }
     },
     updateMemberAuth: async () => {
-      const conflict = new Error('raw provider conflict')
-      conflict.status = 409
+      const conflict = memberstackError('email-already-in-use', 'raw provider conflict')
       throw conflict
     },
   })
@@ -1715,8 +1820,7 @@ test('a reconciled ambiguous auth write sends no second security email', async (
     member,
     updateMemberAuth: async (payload) => {
       member.auth.email = payload.email
-      const conflict = new Error('That email is already in use.')
-      conflict.status = 409
+      const conflict = memberstackError('email-already-in-use', 'That email is already in use.')
       throw conflict
     },
     sendMemberResetPasswordEmail: async () => {
@@ -2214,8 +2318,7 @@ test('valid Starter profile click does not save profile fields when the email ch
   const starterProfileForm = makeForm('starter-profile', {
     email: 'talent-old@example.com',
   })
-  const failure = new Error('email update failed')
-  failure.status = 409
+  const failure = memberstackError('email-already-in-use', 'email update failed')
   const environment = loadController({
     buildForm: null,
     starterProfileForm,
@@ -3045,7 +3148,7 @@ test('Account Security shows an auth failure in the authored error state and cle
     config: { guardSecurityForm: 'identity' },
     routeGuard: { memberRole: () => 'brand-paid' },
     updateMemberAuth: async () => {
-      if (fails) throw Object.assign(new Error('Email already exists'), { status: 409 })
+      if (fails) throw memberstackError('email-already-in-use', 'Email already exists')
       return {}
     },
   })
