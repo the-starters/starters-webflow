@@ -57,6 +57,14 @@
   const CTA_RULES = {
     // same-origin link pathnames (a trailing slash is ignored)
     paths: ['/quiz', '/sign-up', '/signup', '/get-started', '/checkout'],
+    // same-origin path prefixes for the page's content CTAs (talent cards and
+    // "Hire <name>", "Explore Hire/consult", learn cards, subcategory pills).
+    // A prefix ending in "/" needs something after it, so bare /learn (the nav
+    // "Intelligence" hub) is not matched; "/all-starters" matches itself and
+    // anything under it. Never applied inside prefixExcludedIn.
+    pathPrefixes: ['/hire/', '/all-starters', '/learn/', '/subcategories/'],
+    // the navbar root and the footer keep their links (tags/roles only)
+    prefixExcludedIn: '[role="banner"], footer',
     // same-origin link fragments, on any page
     hashes: ['#join-starters-cta'],
     // link hosts, subdomains included
@@ -109,7 +117,15 @@
     if (url.origin !== window.location.origin) return false;
     if (url.hash && CTA_RULES.hashes.includes(url.hash)) return true;
     const path = url.pathname.length > 1 ? url.pathname.replace(/\/+$/, '') : url.pathname;
-    return CTA_RULES.paths.includes(path.toLowerCase());
+    const lower = path.toLowerCase();
+    if (CTA_RULES.paths.includes(lower)) return true;
+    return CTA_RULES.pathPrefixes.some((prefix) => prefixMatches(lower, prefix)) &&
+      !link.closest(CTA_RULES.prefixExcludedIn);
+  }
+
+  function prefixMatches(path, prefix) {
+    if (prefix.endsWith('/')) return path.startsWith(prefix) && path.length > prefix.length;
+    return path === prefix || path.startsWith(prefix + '/');
   }
 
   function controlMatches(control) {

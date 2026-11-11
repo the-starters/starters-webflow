@@ -254,10 +254,15 @@ test('non-CTA links and controls keep their normal behaviour', () => {
   const cases = [
     () => link('/login'),
     () => link('/why-us'),
-    () => link('/learn/how-to-hire'),
+    () => link('/learn'),
+    () => link('/learn/'),
+    () => link('/learning/how-to-hire'),
     () => link('/become-a-starter'),
-    () => link('/all-starters'),
-    () => link('/hire/jane-doe'),
+    () => link('/case-studies'),
+    () => link('/all-starters-archive'),
+    () => link('/hire'),
+    () => link('/subcategories'),
+    () => link('https://evil.example/hire/jane-doe'),
     () => link('/quizzes'),
     () => link('/privacy-policy'),
     () => link('https://twitter.com/thestarters'),
@@ -537,5 +542,60 @@ test('the hero quiz "Get Started" button (no href) is taken over, its topic chip
   const otherCalls = env.competitors(elsewhere)
   env.dispatch(elsewhere)
   assert.ok(otherCalls.includes('element'), 'a plain button outside a quiz form is left alone')
+  assert.equal(env.takeovers.length, 1)
+})
+
+test('content CTAs in the page body are taken over by path prefix', () => {
+  const cases = [
+    '/hire/jane-doe',
+    '/hire/jane-doe?tab=consult',
+    '/all-starters',
+    '/all-starters/',
+    '/all-starters?mode=consult',
+    '/all-starters/marketing',
+    '/learn/sessions/partnerships-playbook',
+    '/learn/playbooks-frameworks/the-landing-page-toolkit',
+    '/subcategories/paid-media',
+    'https://www.hirethestarters.com/hire/rose',
+  ]
+  for (const href of cases) {
+    const env = makeEnv()
+    const section = env.body.append(h('section', { 'data-section': 'talent' }))
+    const card = section.append(link(href))
+    const calls = env.competitors(card)
+
+    const event = env.dispatch(card.append(h('div', { class: 'card_title' })))
+
+    assert.equal(event.defaultPrevented, true, `${href}: default prevented`)
+    assert.deepEqual(calls, [], `${href}: other handlers stopped`)
+    assert.deepEqual(env.opened, ['book-a-call'], `${href}: book-a-call opened`)
+    assert.equal(env.takeovers[0].trigger, card)
+  }
+})
+
+test('prefix rules never apply inside the navbar or footer, exact CTAs still do', () => {
+  for (const make of [() => h('div', { role: 'banner', 'data-wf--navbar-main--variant': 'base' }), () => h('footer')]) {
+    const env = makeEnv()
+    const region = env.body.append(make())
+    for (const href of ['/hire/jane-doe', '/all-starters', '/learn/sessions/x', '/subcategories/paid-media']) {
+      const el = region.append(link(href))
+      const calls = env.competitors(el)
+      const event = env.dispatch(el)
+      assert.equal(event.defaultPrevented, false, `${region.tagName} ${href}: navigates`)
+      assert.equal(calls.length, 5, `${region.tagName} ${href}: handlers ran`)
+    }
+    assert.equal(env.takeovers.length, 0)
+
+    const getStarted = region.append(link('/quiz'))
+    env.dispatch(getStarted)
+    assert.equal(env.takeovers.length, 1, `${region.tagName}: /quiz is still taken over`)
+  }
+})
+
+test('data-modal-cta="cta" still forces a nav or footer link', () => {
+  const env = makeEnv()
+  const nav = env.body.append(h('div', { role: 'banner' }))
+  const forced = nav.append(link('/all-starters', { 'data-modal-cta': 'cta' }))
+  env.dispatch(forced)
   assert.equal(env.takeovers.length, 1)
 })
