@@ -33,8 +33,9 @@
 //      clicked element or an ancestor decides: "skip" never intercepts, "cta"
 //      always does. A "cta" inside a "skip" region is intercepted, and the
 //      reverse is not.
-//   3. Otherwise CTA_RULES below is checked against the closest
-//      a / button / [data-modal-trigger] around the click.
+//   3. Otherwise CTA_RULES.scoped is tried (a control inside a scope, e.g. any
+//      button in form[data-quiz-form]), then the rest of CTA_RULES is checked
+//      against the closest a / button / [data-modal-trigger] around the click.
 //
 // OUTPUT
 //   window event "modal-cta-takeover" with detail {modalId, trigger} on every
@@ -62,6 +63,13 @@
     hosts: ['calendly.com'],
     // data-modal-trigger values (lumos modals the CTA would otherwise open)
     modalTriggers: ['join-membership-signup', 'signup-modal', 'start-project'],
+    // controls with no link to match: the closest `control` is taken over when it
+    // sits inside `scope`. The hero quiz "Get Started" is a <button type="button">
+    // that quiz-home.js sends to /quiz (the topic chips are checkboxes, so they
+    // are not matched).
+    scoped: [
+      { scope: 'form[data-quiz-form]', control: 'button, input[type="submit"], [role="button"]' },
+    ],
   };
 
   const diagnostics = () => window.STARTERS_DEBUG === true ||
@@ -116,6 +124,11 @@
     if (dialog.contains(target)) return null;
     const marker = target.closest(MARKER_SELECTOR);
     if (marker) return marker.getAttribute('data-modal-cta') === 'cta' ? marker : null;
+    for (let i = 0; i < CTA_RULES.scoped.length; i += 1) {
+      const rule = CTA_RULES.scoped[i];
+      const scoped = target.closest(rule.control);
+      if (scoped && scoped.closest(rule.scope)) return scoped;
+    }
     const control = target.closest(CONTROL_SELECTOR);
     return control && controlMatches(control) ? control : null;
   }

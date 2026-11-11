@@ -510,3 +510,32 @@ test('the @release header is the release the page reads back', () => {
   const env = makeEnv({ lumos: false })
   assert.equal(env.window.startersModalCtaTakeover.release, declared[1])
 })
+
+test('the hero quiz "Get Started" button (no href) is taken over, its topic chips are not', () => {
+  const env = makeEnv()
+  const form = env.body.append(h('form', { 'data-quiz-form': 'home', 'data-name': 'home-quiz' }))
+  const chip = form.append(h('label', { class: 'w-checkbox form_selection-field' }))
+  const checkbox = chip.append(h('input', { type: 'checkbox', id: 'creative' }))
+  const getStarted = form.append(h('button', { type: 'button', class: 'clickable_btn' }))
+  const label = getStarted.append(h('div', { class: 'button_label' }))
+  const quizHome = env.competitors(getStarted)
+
+  const event = env.dispatch(label)
+
+  assert.equal(event.defaultPrevented, true)
+  assert.deepEqual(quizHome, [], 'quiz-home.js never saw the click, so no /quiz redirect')
+  assert.deepEqual(env.opened, ['book-a-call'])
+  assert.equal(env.takeovers[0].trigger, getStarted)
+
+  const chipCalls = env.competitors(checkbox)
+  const chipEvent = env.dispatch(checkbox)
+  assert.equal(chipEvent.defaultPrevented, false, 'a topic chip still toggles')
+  assert.ok(chipCalls.includes('element'), 'the chip keeps its own handlers')
+  assert.equal(env.takeovers.length, 1)
+
+  const elsewhere = env.body.append(h('button', { type: 'button' }))
+  const otherCalls = env.competitors(elsewhere)
+  env.dispatch(elsewhere)
+  assert.ok(otherCalls.includes('element'), 'a plain button outside a quiz form is left alone')
+  assert.equal(env.takeovers.length, 1)
+})
