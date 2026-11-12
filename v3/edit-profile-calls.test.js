@@ -380,6 +380,16 @@ test('hours autosave: one debounced #12047 save for several quick changes, keepi
   assert.equal(page.root.getAttribute('data-edit-calls-hours'), 'saved')
 })
 
+test('hours autosave: unticking the overridden weekday drops the dashboard override', async () => {
+  const page = await ready()
+  page.days.querySelector('[data-day="2"]').click()
+  await page.tick()
+  const items = page.writesTo(ENSURE)[0].body.availability.items
+  assert.equal(items['override-1700'], undefined)
+  assert.deepEqual(items.general, { days: [1, 3], start: '09:00', end: '12:00', defaultDays: [1, 3] })
+  assert.deepEqual(items['window-2'], { days: [1, 3], start: '13:00', end: '17:00', defaultDays: [1, 3], kind: 'window' })
+})
+
 test('hours autosave: invalid hours do not save; offer_intro_call follows the Free switch', async () => {
   const page = await ready()
   for (const d of [1, 2, 3]) page.days.querySelector('[data-day="' + d + '"]').click()

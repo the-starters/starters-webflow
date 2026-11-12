@@ -475,7 +475,7 @@ test('a dashboard day override loads as the full weekly hours and round-trips un
   const { hours, rest } = fromItems(structuredClone(DASHBOARD))
   assert.deepEqual(hours, { days: [1, 2, 3, 4, 5], windows: [{ start: '09:00', end: '17:00' }], extra: null })
   assert.deepEqual(rest, { '3f2a9c1e-uuid': DASHBOARD['3f2a9c1e-uuid'] })
-  assert.deepEqual(toItems(asEditor(hours), rest), DASHBOARD)
+  assert.deepEqual(toItems(asEditor(hours), rest, hours.days), DASHBOARD)
 })
 
 test('changing hours keeps the dashboard override and keeps its day out of general and windows', () => {
@@ -483,10 +483,38 @@ test('changing hours keeps the dashboard override and keeps its day out of gener
   const edited = asEditor(hours)
   edited.days = [1, 2, 3, 4]
   edited.windows = [{ start: '8:00 AM', end: '12:00 PM' }, { start: '1:00 PM', end: '4:00 PM' }]
-  assert.deepEqual(toItems(edited, rest), {
+  assert.deepEqual(toItems(edited, rest, hours.days), {
     '3f2a9c1e-uuid': { days: [3], start: '10:00', end: '12:00' },
     general: { days: [1, 2, 4], start: '08:00', end: '12:00', defaultDays: [1, 2, 3, 4] },
     'window-2': { days: [1, 2, 4], start: '13:00', end: '16:00', defaultDays: [1, 2, 3, 4], kind: 'window' },
+  })
+})
+
+test('unticking a weekly day drops a dashboard override on only that day, so the day is not bookable', () => {
+  const { hours, rest } = fromItems(structuredClone(DASHBOARD))
+  const edited = asEditor(hours)
+  edited.days = [1, 2, 4, 5]
+  const items = toItems(edited, rest, hours.days)
+  assert.deepEqual(items, {
+    general: { days: [1, 2, 4, 5], start: '09:00', end: '17:00', defaultDays: [1, 2, 4, 5] },
+  })
+  assert.ok(Object.values(items).every((item) => !item.days.includes(3)))
+})
+
+test('an override on Wed and Sat keeps only Wed when Sat is unticked; overrides off the weekly days stay', () => {
+  const saved = {
+    general: { days: [1, 2, 4, 5], start: '09:00', end: '17:00', defaultDays: [1, 2, 3, 4, 5, 6] },
+    'override-1731': { days: [3, 6], start: '10:00', end: '12:00', note: 'kept' },
+    'sunday-uuid': { days: [0], start: '11:00', end: '13:00' },
+  }
+  const { hours, rest } = fromItems(structuredClone(saved))
+  assert.deepEqual(toItems(asEditor(hours), rest, hours.days), saved)
+  const edited = asEditor(hours)
+  edited.days = [1, 2, 3, 4, 5]
+  assert.deepEqual(toItems(edited, rest, hours.days), {
+    'override-1731': { days: [3], start: '10:00', end: '12:00', note: 'kept' },
+    'sunday-uuid': { days: [0], start: '11:00', end: '13:00' },
+    general: { days: [1, 2, 4, 5], start: '09:00', end: '17:00', defaultDays: [1, 2, 3, 4, 5] },
   })
 })
 
@@ -498,7 +526,7 @@ test('a dashboard same-day window round-trips with its defaultDays', () => {
   }
   const { hours, rest } = fromItems(structuredClone(saved))
   assert.equal(hours.extra, null)
-  assert.deepEqual(toItems(asEditor(hours), rest), {
+  assert.deepEqual(toItems(asEditor(hours), rest, hours.days), {
     'override-1731': saved['override-1731'],
     general: saved.general,
     'window-2': saved['window-2'],
@@ -525,7 +553,7 @@ test('controller options: save keeps base items under the editor items and runs 
   const page = makePage()
   const order = []
   const controller = createController(page.win, {
-    baseItems: () => ({ 'override-1700': { days: [1], start: '13:00', end: '14:00' }, general: { stale: true } }),
+    baseItems: () => ({ items: { 'override-1700': { days: [1], start: '13:00', end: '14:00' }, general: { stale: true } }, days: [1] }),
     beforeSave: () => order.push('beforeSave'),
   })
   await controller.save({ read: () => { order.push('read'); return { timezone: 'UTC', days: [1], windows: [{ start: '9:00 AM', end: '10:00 AM' }], extra: null } } })

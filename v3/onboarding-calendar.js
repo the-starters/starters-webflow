@@ -81,17 +81,27 @@
   }
 
   // preserved: saved dashboard overrides the editor does not show (Edit
-  // Profile v2). They are sent back unchanged and, like the dashboard's
-  // reconcileBaseDays(), take their days out of general and the windows, whose
-  // defaultDays keep the full weekly days. A window left with no days is not
-  // sent (#1463 rejects an empty non-general window).
-  function toItems(hours, preserved) {
-    const kept = preserved || {}
+  // Profile v2), with savedDays the weekly days they were loaded with. An
+  // override loses the weekly days the Starter removed and is dropped when none
+  // remain; otherwise it is sent back unchanged. Like the dashboard's
+  // reconcileBaseDays(), the remaining overrides take their days out of general
+  // and the windows, whose defaultDays keep the full weekly days. A window left
+  // with no days is not sent (#1463 rejects an empty non-general window).
+  function toItems(hours, preserved, savedDays) {
+    const weekly = hours.days.map(Number)
+    const removed = (savedDays || []).map(Number).filter(function (day) { return weekly.indexOf(day) === -1 })
+    const kept = {}
     const claimed = new Set()
-    Object.keys(kept).forEach(function (key) {
-      const item = kept[key]
-      if (key === 'general' || !item || item.kind === 'window' || !Array.isArray(item.days)) return
-      item.days.forEach(function (day) { claimed.add(Number(day)) })
+    Object.keys(preserved || {}).forEach(function (key) {
+      const item = preserved[key]
+      if (key === 'general' || !item || item.kind === 'window' || !Array.isArray(item.days)) {
+        kept[key] = item
+        return
+      }
+      const left = item.days.filter(function (day) { return removed.indexOf(Number(day)) === -1 })
+      if (!left.length) return
+      kept[key] = left.length === item.days.length ? item : Object.assign({}, item, { days: left })
+      left.forEach(function (day) { claimed.add(Number(day)) })
     })
     const days = hours.days.slice().sort(function (a, b) { return a - b })
     const open = days.filter(function (day) { return !claimed.has(day) })
@@ -158,8 +168,9 @@
 
   // options (all optional; Edit Profile v2 uses them, onboarding and Build
   // Profile pass none):
-  //   baseItems()          saved items the editor cannot show (dashboard day
-  //                        overrides); save() sends them back via toItems.
+  //   baseItems()          {items, days}: saved items the editor cannot show
+  //                        (dashboard day overrides) and the weekly days they
+  //                        were loaded with; save() sends them via toItems.
   //   beforeSave()         runs at the start of every save (cancel a queued autosave).
   //   onCalendarStatus(g)  runs after each calendar status read (true/false).
   //   connectSelector      the connect buttons (default connect-google).
@@ -220,10 +231,10 @@
     async function save(editor) {
       if (typeof settings.beforeSave === 'function') settings.beforeSave()
       const hours = editor.read()
-      const base = typeof settings.baseItems === 'function' ? settings.baseItems() : null
+      const base = (typeof settings.baseItems === 'function' && settings.baseItems()) || {}
       return post(ENSURE_PATH, {
         member_id: await memberId(),
-        availability: { items: toItems(hours, base) },
+        availability: { items: toItems(hours, base.items, base.days) },
         in_timezone: hours.timezone || '',
         offer_intro_call: offerIntroCall(editor),
       })
