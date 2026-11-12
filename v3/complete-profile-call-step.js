@@ -369,8 +369,7 @@
 
     function revealBannerOnPhone() {
       if (!active || !window.matchMedia(PHONE_QUERY).matches) return
-      // The overlay sits just above the footer, so the banner and the action
-      // area are one block. Scroll the least distance that shows both.
+      // The banner sits just above the footer. Scroll the least distance that shows both.
       const message = banner.getBoundingClientRect()
       const area = footer.getBoundingClientRect()
       let action = book.button.getBoundingClientRect()
@@ -447,12 +446,10 @@
       done.button.focus()
     }
 
-    function rememberPhoneLayout() {
-      if (!window.matchMedia('(max-width:47.9375rem)').matches) return
+    function rememberPhoneHeading() {
+      if (!window.matchMedia(PHONE_QUERY).matches) return
       const greeting = step.querySelector('[data-jai-trial-greeting]')
-      for (const [name, panel] of [['body', calendar], ['footer', footer], ['heading', greeting]]) {
-        if (panel) step.style.setProperty('--jai-booking-' + name, panel.getBoundingClientRect().height + 'px')
-      }
+      if (greeting) step.style.setProperty('--jai-booking-heading', greeting.getBoundingClientRect().height + 'px')
     }
 
     function setupError() {
@@ -641,7 +638,7 @@
     return Promise.resolve().then(function () {
       book.button.addEventListener('click', function () {
         if (!active || locked || !confirm || confirm.disabled) return
-        rememberPhoneLayout()
+        rememberPhoneHeading()
         confirm.click()
       })
       skip.button.addEventListener('click', function () { if (!locked) go() })

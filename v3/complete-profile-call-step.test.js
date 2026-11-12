@@ -1,5 +1,9 @@
 const assert = require('node:assert/strict')
+const { execFileSync } = require('node:child_process')
 const fs = require('node:fs')
+const os = require('node:os')
+const path = require('node:path')
+const { pathToFileURL } = require('node:url')
 const test = require('node:test')
 const vm = require('node:vm')
 
@@ -229,9 +233,7 @@ function fixture(options = {}) {
   const banner = el('p', step, { 'data-complete-profile-call-status': '', 'data-paid-calendar-element': 'status', role: 'status' })
   banner.hidden = true
   const calendar = authored('div', step, 'call-calendar')
-  calendar.mockHeight = 735
   const footer = authored('div', step, 'call-footer')
-  footer.mockHeight = 132
   const bookingActions = authored('div', footer, 'call-booking-actions')
   const successActions = authored('div', footer, 'call-success-actions')
   successActions.hidden = true
@@ -540,13 +542,12 @@ test('production trial preserves the engine notice and uses the authored Jai ide
   assert.equal(page.requests[0].starter_slug, 'jai')
 })
 
-test('a phone confirmation keeps the measured booking layout using the existing page nodes', async () => {
+test('a phone confirmation shows the receipt and focuses the existing dashboard button', async () => {
   const pending = deferred()
   const page = fixture({ pathname: '/complete-profile-trial', phone: true, bookLabelMissing: true,
     onBook: () => pending.promise })
   await page.open()
   assert.equal(page.bookAction.button.hasAttribute('data-complete-profile-call-book'), true)
-  assert.equal(page.step.style['--jai-booking-body'], undefined)
   page.select()
   await flush()
   page.book()
@@ -555,8 +556,6 @@ test('a phone confirmation keeps the measured booking layout using the existing 
   assert.equal(page.bookAction.button.disabled, true)
   assert.equal(page.bookAction.wrapper.getAttribute('data-button-theme'), 'disabled')
   assert.equal(page.skipAction.wrapper.getAttribute('data-button-theme'), 'disabled')
-  assert.equal(page.step.style['--jai-booking-body'], '735px')
-  assert.equal(page.step.style['--jai-booking-footer'], '132px')
   assert.equal(page.step.style['--jai-booking-heading'], '170px')
   const engineStatus = page.calendar.querySelector('[data-paid-calendar-element="status"]')
   assert.equal(engineStatus.hidden, true)
@@ -565,6 +564,8 @@ test('a phone confirmation keeps the measured booking layout using the existing 
   pending.resolve(response(200, READY))
   await flush()
   assert.equal(page.step.getAttribute('data-complete-profile-call-step'), 'success')
+  assert.equal(page.calendar.hidden, true)
+  assert.equal(page.success.hidden, false)
   assert.equal(page.bookAction.button.hasAttribute('aria-busy'), false)
   assert.equal(page.banner.hidden, true)
   assert.equal(page.document.activeElement, page.done)
@@ -922,7 +923,6 @@ test('a saved profile can book once using the fresh email and go to the dashboar
   assert.equal(page.success.style.display, '')
   assert.equal(page.calendar.hidden, true)
   assert.equal(page.footer.hidden, false)
-  assert.equal(page.step.style['--jai-booking-body'], undefined, 'desktop geometry stays CSS-owned')
   assert.equal(bookingActions.hidden, true)
   assert.equal(successActions.hidden, false)
   assert.equal(page.doneAction.holder.parentElement, successActions)
@@ -1062,4 +1062,103 @@ test('the browser release matches the published script header', () => {
   const header = /@release (v\d+\.\d+\.\d+)/.exec(STEP_SOURCE)
   assert.ok(header, 'the published script carries a release marker')
   assert.equal(page.window.StartersCompleteProfileCallStep.release, header[1])
+})
+
+const chrome = process.env.CHROME_BIN
+
+test('the booking card reserves room for status and fits the success receipt', {
+  skip: !chrome && 'Set CHROME_BIN to run the rendered layout check',
+}, t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'call-step-layout-'))
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
+  fs.copyFileSync(path.join(__dirname, 'complete-profile-call-step.css'), path.join(dir, 'step.css'))
+  const fixtureMarkup = `<!doctype html>
+    <meta http-equiv="Content-Security-Policy" content="img-src 'none'; connect-src 'none'">
+    <style>body { margin: 0 } .complete-profile_form { display: flex; flex-direction: column }</style>
+    <link rel="stylesheet" href="step.css">
+    <section data-complete-profile-call-step>
+      <div data-jai-trial-card><div class="complete-profile_form">
+        <div data-paid-calendar-element="loading"></div>
+        <div data-complete-profile-call-calendar hidden>
+          <div data-paid-calendar-element="shell">
+            <div data-paid-calendar-element="month">
+              <div class="ui-datepicker-header"><button class="ui-datepicker-next">Next</button></div>
+              <table class="ui-datepicker-calendar">${'<tr><td>1</td></tr>'.repeat(6)}</table>
+            </div>
+            <div data-paid-calendar-element="timezone-control"><select data-paid-calendar-element="timezone"></select></div>
+            <div data-paid-calendar-element="times">${'<button data-paid-calendar-slot>9:00 AM</button>'.repeat(12)}</div>
+          </div>
+        </div>
+        <div data-complete-profile-call-success hidden><div class="call-details_layout">Call Requested</div></div>
+        <p data-complete-profile-call-status hidden></p>
+        <div data-complete-profile-call-footer><button>Go to dashboard</button></div>
+      </div></div>
+    </section>`
+  function check(frame, width) {
+    const doc = frame.contentDocument
+    const get = selector => doc.querySelector(selector)
+    const rect = node => node.getBoundingClientRect()
+    const card = get('[data-jai-trial-card]')
+    const step = get('[data-complete-profile-call-step]')
+    const loading = get('[data-paid-calendar-element="loading"]')
+    const calendar = get('[data-complete-profile-call-calendar]')
+    const times = get('[data-paid-calendar-element="times"]')
+    const banner = get('[data-complete-profile-call-status]')
+    const success = get('[data-complete-profile-call-success]')
+    const details = success.firstElementChild
+    const footer = get('[data-complete-profile-call-footer]')
+    const loadingHeight = rect(card).height
+    loading.hidden = true
+    calendar.hidden = false
+    const bookingHeight = rect(card).height
+    const footerTop = rect(footer).top
+    banner.textContent = 'Your request could not be sent. Please try again in a moment.'
+    banner.hidden = false
+    const hit = node => {
+      const { left, width, top, height } = rect(node)
+      return node.contains(doc.elementFromPoint(left + width / 2, top + height / 2))
+    }
+    const result = width === 375 ? {
+      loadingHeight,
+      bookingHeight,
+      footerStaysPut: rect(footer).top === footerTop,
+      bannerTakesTaps: hit(banner),
+      slotsEndAboveBanner: rect(times).bottom <= rect(banner).top,
+      monthNavigationWorks: hit(get('.ui-datepicker-next')),
+    } : width === 768 ? {
+      monthNavigationWorks: hit(get('.ui-datepicker-next')),
+      bannerAboveMonth: rect(banner).bottom <= rect(get('.ui-datepicker-header')).top,
+    } : {}
+    if (width === 375) {
+      times.scrollTop = times.scrollHeight
+      result.lastSlotCanBeTapped = hit(times.lastElementChild)
+    }
+    step.setAttribute('data-complete-profile-call-step', 'success')
+    banner.hidden = true
+    calendar.hidden = true
+    success.hidden = false
+    result.receiptHasNoGap = rect(details).bottom === rect(footer).top &&
+      rect(card).height === rect(details).height + rect(footer).height
+    frame.dataset.result = JSON.stringify(result)
+  }
+  const cases = [[PAGES[0], 375], [PAGES[1], 375], [PAGES[0], 768], [PAGES[0], 1600]]
+  const file = path.join(dir, 'layout.html')
+  fs.writeFileSync(file, `<!doctype html><script>${check.toString()}</script>` +
+    cases.map(([page, width]) => {
+      const markup = page.endsWith('-trial')
+        ? fixtureMarkup.replace('<section data-complete-profile-call-step>', '<div data-jai-trial-first-step></div>$&')
+        : fixtureMarkup
+      return `<iframe width="${width}" height="1000" srcdoc="${markup.replaceAll('&', '&amp;').replaceAll('"', '&quot;')}" onload="check(this, ${width})"></iframe>`
+    }).join(''))
+  const output = execFileSync(chrome, ['--headless', '--disable-background-networking',
+    '--no-first-run', '--no-default-browser-check',
+    '--user-data-dir=' + path.join(dir, 'chrome'), '--dump-dom', pathToFileURL(file).href],
+  { encoding: 'utf8', timeout: 20000, stdio: ['ignore', 'pipe', 'pipe'] })
+  const results = [...output.matchAll(/data-result="([^"]+)"/g)].map(match =>
+    JSON.parse(match[1].replaceAll('&quot;', '"')))
+  const phone = { loadingHeight: 867, bookingHeight: 867, footerStaysPut: true, bannerTakesTaps: true,
+    slotsEndAboveBanner: true, monthNavigationWorks: true, lastSlotCanBeTapped: true, receiptHasNoGap: true }
+  assert.deepEqual(results, [phone, phone,
+    { monthNavigationWorks: true, bannerAboveMonth: true, receiptHasNoGap: true },
+    { receiptHasNoGap: true }])
 })

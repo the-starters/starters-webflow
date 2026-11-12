@@ -411,10 +411,6 @@
   padding: 2.5rem;
 }
 
-:where([data-complete-profile-call-step]) [data-jai-trial-card] [data-complete-profile-call-success] {
-  min-block-size: 30.875rem;
-}
-
 :where([data-complete-profile-call-step]) [data-jai-trial-card] [data-complete-profile-call-success] .call-details_layout {
   display: grid;
   gap: 2.5rem;
@@ -748,6 +744,13 @@
   }
 }
 
+@media (min-width: 48rem) and (max-width: 61.9375rem) {
+  [data-complete-profile-call-step] [data-jai-trial-card] [data-complete-profile-call-status] {
+    position: static;
+    order: -1;
+  }
+}
+
 @media (max-width: 47.9375rem) {
   [data-complete-profile-call-step] {
     --jai-mobile-booking-body-min: 734px;
@@ -833,11 +836,16 @@
     padding: 16px;
   }
 
-  /* Overlay just above the fixed-size footer: no layout shift, and clear of
-     the month heading and arrows. Taps fall through to the calendar below. */
+  /* Make room for the message in the slot viewport instead of covering slots. */
+  [data-complete-profile-call-step] [data-jai-trial-card] :has(> [data-complete-profile-call-status]:not([hidden], :empty)) {
+    display: grid;
+    grid-template-rows: minmax(0, 1fr) auto auto;
+    block-size: calc(var(--jai-mobile-booking-body-min) + var(--jai-mobile-footer-height));
+  }
+
   [data-complete-profile-call-step] [data-jai-trial-card] [data-complete-profile-call-status] {
-    inset: auto 0 var(--jai-mobile-footer-height);
-    pointer-events: none;
+    position: static;
+    pointer-events: auto;
   }
 
   :where([data-complete-profile-call-step]) [data-complete-profile-call-booking-actions] .button_main-element {
@@ -864,8 +872,18 @@
     min-block-size: 22rem;
   }
 
-  :where(body:has([data-jai-trial-first-step])) [data-complete-profile-call-step] [data-jai-trial-card] :is([data-paid-calendar-element="loading"], [data-complete-profile-call-calendar]) {
+  [data-complete-profile-call-step] [data-jai-trial-card] :is([data-paid-calendar-element="loading"], [data-complete-profile-call-calendar]) {
     min-block-size: var(--jai-mobile-booking-body-min);
+  }
+
+  [data-complete-profile-call-step] [data-jai-trial-card] :has(> [data-complete-profile-call-status]:not([hidden], :empty)) > [data-complete-profile-call-calendar] {
+    min-block-size: 0;
+    overflow: auto;
+  }
+
+  [data-complete-profile-call-step] [data-jai-trial-card] :has(> [data-complete-profile-call-status]:not([hidden], :empty)) [data-paid-calendar-element="shell"] {
+    block-size: 100%;
+    grid-template-rows: auto auto minmax(5rem, 1fr);
   }
 
   [data-complete-profile-call-step] [data-jai-trial-native-button],
@@ -881,15 +899,6 @@
 
   :where([data-complete-profile-call-step]) [data-jai-trial-card] [data-complete-profile-call-success] .call-details_layout {
     gap: 1.5rem;
-  }
-
-  :where([data-complete-profile-call-step]) [data-jai-trial-card] [data-complete-profile-call-success] {
-    min-block-size: var(--jai-booking-body, var(--jai-mobile-booking-body-min));
-  }
-
-  :where([data-complete-profile-call-step]) [data-jai-trial-card] [data-complete-profile-call-footer]:has(> [data-complete-profile-call-success-actions]:not([hidden])) {
-    min-block-size: var(--jai-booking-footer,var(--jai-mobile-footer-height));
-    justify-content: center;
   }
 
   :where([data-complete-profile-call-step]) [data-jai-trial-greeting]:has(> [data-complete-profile-call-heading-done]:not([hidden])) {
@@ -909,6 +918,11 @@
     display: block;
     padding: .75rem;
   }
+}
+
+[data-complete-profile-call-step="success"] [data-jai-trial-card] [data-complete-profile-call-footer] {
+  block-size: auto;
+  min-block-size: 0;
 }
 
 [data-complete-profile-call-step] [data-paid-calendar-state="empty"] > [data-paid-calendar-element="status"] {
