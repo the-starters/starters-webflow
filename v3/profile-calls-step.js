@@ -226,6 +226,10 @@
         // recorded the call choices, and Stripe has its own onboarding step.
         if (onboarding || (buildProfile && service === paid)) {
           service.hidden = true
+          if (buildProfile) {
+            if (paidToggle) paidToggle.checked = false
+            for (const field of ['input', 'select', 'textarea'].flatMap((tag) => [...service.querySelectorAll(tag)])) field.disabled = true
+          }
           continue
         }
         const enabled = service.querySelector(enabledSelector)

@@ -206,7 +206,7 @@ test('onboarding context needs both the onboarding path and the onboarding marke
 })
 
 // Build Profile step (Jai 2026-11-12, JP 1a): hours + Google + Free call; no Paid, no Stripe.
-function buildProfileStep(pathname, { freeOn = true, wrapped = true } = {}) {
+function buildProfileStep(pathname, { freeOn = true, paidOn = false, wrapped = true } = {}) {
   const el = (tag, attrs, children) => new FakeElement(tag, attrs, children)
   const select = (kind, value) => el('select', { 'data-calls-step-input': kind, value })
   const service = (name) => {
@@ -215,8 +215,12 @@ function buildProfileStep(pathname, { freeOn = true, wrapped = true } = {}) {
   }
   const free = service('free')
   const paid = service('paid')
+  paid.row.appendChild(el('input', { 'data-call-settings-input': 'title' }))
+  paid.row.appendChild(el('input', { 'data-call-settings-input': 'price' }))
+  paid.row.appendChild(el('select', { name: 'paid-call-duration' }))
+  paid.row.appendChild(el('textarea', { name: 'paid-call-notes' }))
   free.toggle.checked = freeOn
-  paid.toggle.checked = false
+  paid.toggle.checked = paidOn
   const availability = el('div', { 'data-calls-step-element': 'availability' })
   const calendar = el('div', { 'data-calls-step-element': 'calendar' })
   const stripe = el('div', { 'data-stripe-connect-element': 'root' })
@@ -248,6 +252,19 @@ test('Build Profile context mounts on the four Build Profile pages, hides Paid a
     assert.equal(page.availability.hidden, false, path)
     assert.equal(page.calendar.hidden, false, path)
     assert.equal(page.paid.toggle.checked, false, path)
+  }
+})
+
+test('Build Profile turns off and disables a Paid switch that starts checked so no paid call is submitted', () => {
+  for (const path of ['/build-profile/consult-test', '/build-profile/full-profile-test']) {
+    const page = buildProfileStep(path, { paidOn: true })
+    assert.ok(page.api, path)
+    assert.equal(page.paid.toggle.checked, false, path)
+    const fields = ['input', 'select', 'textarea'].flatMap((tag) => page.paid.row.querySelectorAll(tag))
+    assert.equal(fields.length, 5, path)
+    for (const field of fields) assert.equal(field.disabled, true, path)
+    assert.equal(page.free.toggle.disabled, undefined, path)
+    assert.equal(page.api.validate(), '', path)
   }
 })
 
