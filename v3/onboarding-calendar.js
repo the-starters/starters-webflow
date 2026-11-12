@@ -172,6 +172,7 @@
   //                        (dashboard day overrides) and the weekly days they
   //                        were loaded with; save() sends them via toItems.
   //   beforeSave()         runs at the start of every save (cancel a queued autosave).
+  //   onSaved(items)       runs after a successful save with the items it sent.
   //   onCalendarStatus(g)  runs after each calendar status read (true/false).
   //   connectSelector      the connect buttons (default connect-google).
   function createController(win, options) {
@@ -232,12 +233,15 @@
       if (typeof settings.beforeSave === 'function') settings.beforeSave()
       const hours = editor.read()
       const base = (typeof settings.baseItems === 'function' && settings.baseItems()) || {}
-      return post(ENSURE_PATH, {
+      const items = toItems(hours, base.items, base.days)
+      const result = await post(ENSURE_PATH, {
         member_id: await memberId(),
-        availability: { items: toItems(hours, base.items, base.days) },
+        availability: { items },
         in_timezone: hours.timezone || '',
         offer_intro_call: offerIntroCall(editor),
       })
+      if (typeof settings.onSaved === 'function') settings.onSaved(items)
+      return result
     }
 
     async function refreshStatus(editor) {

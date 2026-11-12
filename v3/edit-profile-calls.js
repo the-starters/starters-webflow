@@ -156,6 +156,12 @@
     let free = null
     let paid = null
     let hoursTimer = null
+
+    function remember(items) {
+      const parsed = deps.calendar.fromItems(items)
+      saved = { items: parsed.rest, days: parsed.hours ? parsed.hours.days : [] }
+      return parsed
+    }
     let hoursVersion = 0
     const textTimers = {}
     const lanes = {}
@@ -234,8 +240,7 @@
         free = results[1]
         paid = results[2]
         const availability = starter.availability || {}
-        const parsed = deps.calendar.fromItems(availability.items)
-        saved = { items: parsed.rest, days: parsed.hours ? parsed.hours.days : [] }
+        const parsed = remember(availability.items)
         const freeService = activeService(free, 'free-call')
         const paidService = activeService(paid, 'paid-call')
         const state = {
@@ -498,6 +503,7 @@
     async function mount() {
       controller = deps.calendar.createController(win, {
         baseItems: function () { return saved },
+        onSaved: remember,
         beforeSave: cancelHoursTimer,
         onCalendarStatus: function () { retryBlocked() },
         connectSelector: CONNECT,
