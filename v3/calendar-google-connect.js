@@ -12,17 +12,19 @@
  *             member and page, then returns the Google URL. The caller opens
  *             it in a popup reserved in the click, so the first tab keeps its
  *             form state.
- *   return    Google sends the popup back to the same page with ?code&state.
+ *   return    Google sends the popup back to the same page with ?code&state,
+ *             or (hosted auth) ?grant_id&success=true&state.
  *             The params are taken off the URL at load. completeReturn()
  *             checks state == member and the stored intent (same member, same
  *             redirect_uri, max 15 min), then:
  *               1. reads the Starter row (hours + current grant),
  *               2. grants/delete/v3 (#1660) for the current grant, if any
  *                  (#1457 refuses to bind over an existing grant),
- *               3. grants/add/v3 (#1457) with the code and the same
- *                  redirect_uri,
+ *               3. grants/add/v3 (#1457) with the code (or the hosted
+ *                  grant_id as in_grant_id) and the same redirect_uri,
  *               4. onboarding/calendar/ensure-default/v3 (#12047) with the same
  *                  hours and timezone: manager "calendar" for a Google grant, Free config.
+ *             A hosted return of the Starter's current grant skips 2 and 3.
  *             If 3 fails after 2, #12047 runs again to put the platform
  *             calendar back. If only 4 fails, it is tried once more and a
  *             success there counts as connected. A cancel at Google changes
