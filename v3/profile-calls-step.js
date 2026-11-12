@@ -6,7 +6,12 @@
   const standalonePath = '/build-profile-form-test'
   // Onboarding v2 (JP 2026-11-09): the calendar step on the staff-only onboarding page.
   const onboardingPaths = new Set(['/starter-onboarding-v2', '/starter-onboarding-v2-wip'])
-  const routes = new Set(['/build-profile/full-profile-test', '/build-profile/consult-test', '/starter-edit-profile-test', standalonePath, ...onboardingPaths])
+  // Build Profile (Jai 2026-11-12: availability is set in Build Profile, not
+  // onboarding; JP 1a): a root marked data-calls-step-context="build-profile"
+  // asks for hours, Google and the Free call. The Paid row and the Stripe card
+  // stay hidden, because Stripe is set up later in onboarding.
+  const buildProfilePaths = new Set(['/build-profile/full-profile-test', '/build-profile/consult-test', '/build-profile/full-profile', '/build-profile/consult'])
+  const routes = new Set(['/starter-edit-profile-test', standalonePath, ...buildProfilePaths, ...onboardingPaths])
 
   // Staff-only on production until launch (JP 2026-11-09): a production host
   // boots only when the page also loads the fail-closed staff preview guard
@@ -57,11 +62,14 @@
     const rowSelector = selector('element', 'window')
     const source = windows?.querySelector(rowSelector)
     const path = root.ownerDocument.defaultView?.location.pathname.replace(/\/$/, '')
-    const step = root.closest('[data-form="step"][data-index="6"]')
+    const context = root.getAttribute('data-calls-step-context')
+    const buildProfile = buildProfilePaths.has(path) && context === 'build-profile'
+    const step = buildProfile ? root.closest('[data-form="step"]') : root.closest('[data-form="step"][data-index="6"]')
     const edit = path === '/starter-edit-profile-test'
     const standalone = path === standalonePath
-    const onboarding = onboardingPaths.has(path) && root.getAttribute('data-calls-step-context') === 'onboarding'
-    if (!onboarding && (edit ? root.getAttribute('data-calls-step-context') !== 'edit' : !step && !standalone)) return null
+    const onboarding = onboardingPaths.has(path) && context === 'onboarding'
+    if (context === 'build-profile' && (!buildProfile || !step)) return null
+    if (!onboarding && !buildProfile && (edit ? context !== 'edit' : !step && !standalone)) return null
     if (!days || !extraDays || !source || !extra || !timezone || !clock || !error) return null
 
     const doc = root.ownerDocument
@@ -216,14 +224,14 @@
       for (const service of services) {
         // Onboarding asks for hours and calendar only: Build Profile already
         // recorded the call choices, and Stripe has its own onboarding step.
-        if (onboarding) {
+        if (onboarding || (buildProfile && service === paid)) {
           service.hidden = true
           continue
         }
         const enabled = service.querySelector(enabledSelector)
         const panel = service.querySelector('[data-call-settings-element="panel"]')
         if (!enabled || !panel) continue
-        if (consult && enabled === paidToggle) {
+        if (consult && !buildProfile && enabled === paidToggle) {
           enabled.checked = true
           enabled.disabled = true
         }
@@ -231,9 +239,12 @@
         anyEnabled ||= enabled.checked
         if (service.getAttribute('data-call-settings-service') === 'paid') paidEnabled = enabled.checked
       }
-      if (availability) availability.hidden = !(anyEnabled || onboarding)
-      if (calendar) calendar.hidden = !(anyEnabled || onboarding)
-      if (stripe) stripe.hidden = onboarding || !paidEnabled
+      // Hours and calendar are required in onboarding and Build Profile, so they
+      // show even when no call type is on.
+      const hoursRequired = onboarding || buildProfile
+      if (availability) availability.hidden = !(anyEnabled || hoursRequired)
+      if (calendar) calendar.hidden = !(anyEnabled || hoursRequired)
+      if (stripe) stripe.hidden = hoursRequired || !paidEnabled
       const taken = new Set(selected(days))
       for (const day of extraDays.querySelectorAll('[data-day]')) {
         day.disabled = taken.has(Number(day.dataset.day))
@@ -256,7 +267,7 @@
     }
 
     function validateContinue() {
-      if (onboarding) return validateHours(read())
+      if (onboarding || buildProfile) return validateHours(read())
       if (!services.some((service) => service.querySelector(enabledSelector)?.checked)) {
         return 'Turn on at least one call type to continue.'
       }
@@ -317,9 +328,14 @@
       if (event.target === price && continueError) continueError.textContent = ''
     })
     refresh()
+    const freeToggle = services.find((service) => service.getAttribute('data-call-settings-service') === 'free')
+      ?.querySelector(enabledSelector)
     return {
       read,
       validate: () => validateHours(read()),
+      // The Free call follows its switch where the step shows one; onboarding
+      // has no switch and always offers it.
+      offerIntroCall: () => (onboarding || !freeToggle ? true : Boolean(freeToggle.checked)),
       setStatus(next) {
         Object.assign(status, next)
         renderStatus()

@@ -26,6 +26,14 @@
  * kind 'window' items as added hours, not day overrides; a later dashboard day
  * override takes its days from them like from general.
  *
+ * Contexts (one module, root marker decides):
+ *   onboarding     /starter-onboarding-v2(-wip), Lumos form flow, Free call on.
+ *   build-profile  /build-profile/{consult,full-profile}(-test) step with
+ *                  [data-calls-step-context="build-profile"] (Jai 2026-11-12:
+ *                  availability belongs in Build Profile). Next is the
+ *                  multistep [data-form="next-btn"]; the Free call follows
+ *                  its switch (editor.offerIntroCall()).
+ *
  * Boot: staging origin, or thestarters.com / www.thestarters.com only when the
  * page also loads v3/staff-preview-guard.js. Load profile-calls-step.js first.
  */
@@ -38,8 +46,15 @@
   const ENSURE_PATH = '/onboarding/calendar/ensure-default/v3'
   const STARTER_PATH = '/starter/get_by_memberstack/v3'
   const RETURN_CHANNEL = 'starters-calendar-connect-return'
-  const ROUTES = new Set(['/starter-onboarding-v2', '/starter-onboarding-v2-wip'])
-  const ROOT = '[data-calls-step="root"][data-calls-step-context="onboarding"]'
+  const ONBOARDING_ROUTES = new Set(['/starter-onboarding-v2', '/starter-onboarding-v2-wip'])
+  // Build Profile step 6 (Jai 2026-11-12: availability belongs in Build Profile).
+  const BUILD_PROFILE_ROUTES = new Set(['/build-profile/consult-test', '/build-profile/full-profile-test', '/build-profile/consult', '/build-profile/full-profile'])
+  const ROUTES = new Set([...ONBOARDING_ROUTES, ...BUILD_PROFILE_ROUTES])
+  const ROOT_BY_ROUTE = function (path) {
+    return BUILD_PROFILE_ROUTES.has(path)
+      ? '[data-calls-step="root"][data-calls-step-context="build-profile"]'
+      : '[data-calls-step="root"][data-calls-step-context="onboarding"]'
+  }
   const CONNECT = '[data-calls-step-action="connect-google"]'
   const REQUEST_TIMEOUT_MS = 20000
   const SAVE_ERROR = 'We couldn’t save your availability. Please try again.'
@@ -127,13 +142,17 @@
       return data
     }
 
+    function offerIntroCall(editor) {
+      return typeof editor.offerIntroCall === 'function' ? editor.offerIntroCall() !== false : true
+    }
+
     async function save(editor) {
       const hours = editor.read()
       return post(ENSURE_PATH, {
         member_id: await memberId(),
         availability: { items: toItems(hours) },
         in_timezone: hours.timezone || '',
-        offer_intro_call: true,
+        offer_intro_call: offerIntroCall(editor),
       })
     }
 
@@ -157,6 +176,11 @@
     function isNextClick(event, stepEl) {
       const target = event.target
       if (!target || typeof target.closest !== 'function') return null
+      // Build Profile multistep form: Next is [data-form="next-btn"] in the step.
+      if (stepEl.getAttribute('data-form') === 'step') {
+        const buildNext = target.closest('[data-form="next-btn"]')
+        return buildNext && stepEl.contains(buildNext) ? buildNext : null
+      }
       const group = target.closest('[data-form-flow-button-group]')
       if (!group || !stepEl.contains(group)) return null
       const explicit = target.closest('[data-form-flow-action]')
@@ -167,7 +191,7 @@
     }
 
     function wireStep(root, editor) {
-      const stepEl = root.closest('[data-form-flow-element]')
+      const stepEl = root.closest('[data-form-flow-element]') || root.closest('[data-form="step"]')
       if (!stepEl) return false
       let passThrough = false
       let busy = false
@@ -213,7 +237,7 @@
             await save(editor)
             editor.setStatus({ hoursSaved: true })
             const id = await memberId()
-            const url = await googleConnect.start()
+            const url = await googleConnect.start({ offerIntroCall: offerIntroCall(editor) })
             tab.location.replace(url)
             stopWatching = watchReturn(tab, id, editor, root)
           } catch (error) {
@@ -287,7 +311,7 @@
       const api = win.StarterProfileCallsStep
       if (!api) return 0
       let count = 0
-      win.document.querySelectorAll(ROOT).forEach(function (root) {
+      win.document.querySelectorAll(ROOT_BY_ROUTE(win.location.pathname.replace(/\/$/, ''))).forEach(function (root) {
         const editor = api.editorFor(root)
         if (!editor) return
         if (wireStep(root, editor)) {

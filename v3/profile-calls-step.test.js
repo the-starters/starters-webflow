@@ -204,3 +204,71 @@ test('onboarding context needs both the onboarding path and the onboarding marke
   assert.equal(build('/starter-onboarding', 'onboarding').api, null)
   assert.equal(build('/starter-dashboard', 'onboarding').api, null)
 })
+
+// Build Profile step (Jai 2026-11-12, JP 1a): hours + Google + Free call; no Paid, no Stripe.
+function buildProfileStep(pathname, { freeOn = true, wrapped = true } = {}) {
+  const el = (tag, attrs, children) => new FakeElement(tag, attrs, children)
+  const select = (kind, value) => el('select', { 'data-calls-step-input': kind, value })
+  const service = (name) => {
+    const toggle = el('input', { 'data-call-settings-input': 'enabled' })
+    return { toggle, row: el('div', { 'data-call-settings-service': name }, [toggle, el('div', { 'data-call-settings-element': 'panel' })]) }
+  }
+  const free = service('free')
+  const paid = service('paid')
+  free.toggle.checked = freeOn
+  paid.toggle.checked = false
+  const availability = el('div', { 'data-calls-step-element': 'availability' })
+  const calendar = el('div', { 'data-calls-step-element': 'calendar' })
+  const stripe = el('div', { 'data-stripe-connect-element': 'root' })
+  const root = el('div', { 'data-calls-step': 'root', 'data-calls-step-context': 'build-profile' }, [
+    free.row, paid.row, availability, calendar, stripe,
+    el('div', { 'data-calls-step-element': 'days' }, [el('button', { 'data-day': '1', 'aria-pressed': 'true' })]),
+    el('div', { 'data-calls-step-element': 'extra-days' }),
+    el('div', { 'data-calls-step-element': 'windows' }, [el('div', { 'data-calls-step-element': 'window' }, [
+      select('window-start', '9:00 AM'), select('window-end', '6:00 PM'), el('button', { 'data-calls-step-action': 'remove-window' }),
+    ])]),
+    el('p', { 'data-calls-step-element': 'error' }),
+    el('div', { 'data-calls-step-element': 'extra', hidden: '' }, [select('extra-start', ''), select('extra-end', '')]),
+    select('timezone', ''),
+    el('span', { 'data-calls-step-output': 'timezone-now' }),
+  ])
+  if (wrapped) el('div', { 'data-form': 'step', 'data-index': '6' }, [root])
+  root.ownerDocument = { defaultView: { location: { pathname } }, createElement: (tag) => el(tag) }
+  root.querySelector('[data-calls-step-element="extra"]').hidden = true
+  return { root, free, paid, availability, calendar, stripe, api: mount(root) }
+}
+
+test('Build Profile context mounts on the four Build Profile pages, hides Paid and Stripe, keeps hours and calendar', () => {
+  for (const path of ['/build-profile/consult-test', '/build-profile/full-profile-test', '/build-profile/consult', '/build-profile/full-profile']) {
+    const page = buildProfileStep(path, { freeOn: false })
+    assert.ok(page.api, path)
+    assert.equal(page.paid.row.hidden, true, path)
+    assert.equal(page.stripe.hidden, true, path)
+    assert.equal(page.free.row.hidden, false, path)
+    assert.equal(page.availability.hidden, false, path)
+    assert.equal(page.calendar.hidden, false, path)
+    assert.equal(page.paid.toggle.checked, false, path)
+  }
+})
+
+test('Build Profile Next needs valid hours only, not a call type', () => {
+  const page = buildProfileStep('/build-profile/consult-test', { freeOn: false })
+  assert.equal(page.api.validate(), '')
+  const step = page.root.parentElement
+  let blocked = false
+  const next = new FakeElement('a', { 'data-form': 'next-btn' })
+  step.appendChild(next)
+  step.listeners.click.forEach((listener) => listener({ target: next, preventDefault() { blocked = true }, stopImmediatePropagation() {} }))
+  assert.equal(blocked, false)
+})
+
+test('Build Profile Free call choice follows its switch', () => {
+  assert.equal(buildProfileStep('/build-profile/full-profile-test', { freeOn: true }).api.offerIntroCall(), true)
+  assert.equal(buildProfileStep('/build-profile/full-profile-test', { freeOn: false }).api.offerIntroCall(), false)
+})
+
+test('Build Profile context needs a Build Profile path, the marker and a form step', () => {
+  assert.equal(buildProfileStep('/starter-dashboard').api, null)
+  assert.equal(buildProfileStep('/build-profile/select-profile').api, null)
+  assert.equal(buildProfileStep('/build-profile/consult-test', { wrapped: false }).api, null)
+})

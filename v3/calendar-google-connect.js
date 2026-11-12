@@ -2,8 +2,9 @@
  * Shared Google Calendar connect for Starter pages other than the dashboard
  * (JP 2026-11-09: Google sign-in returns to the page that started it).
  *
- * Pages: /starter-onboarding-v2 (onboarding calendar step) now; Edit Profile
- * later. The dashboard keeps its own flow in scheduling-availability-section.js
+ * Pages: Build Profile step 6 (/build-profile/{consult,full-profile}(-test),
+ * Jai 2026-11-12), /starter-onboarding-v2 (rollback only); Edit Profile later.
+ * Each page path must be on the #1456/#1457 redirect allowlist. The dashboard keeps its own flow in scheduling-availability-section.js
  * and is not changed by this module.
  *
  *   start()   POST grants/oauth/v3 (#1456) with redirect_uri = this page
@@ -84,13 +85,16 @@
       try { win.localStorage.removeItem(INTENT_KEY) } catch (_error) { /* storage unavailable */ }
     }
 
-    async function start() {
+    // options.offerIntroCall: the Free call choice on the page that started the
+    // connection (Build Profile has a switch; onboarding always offers it).
+    async function start(options) {
       const id = await memberId()
       const redirectUri = pageRedirectUri(win)
+      const offerIntroCall = !(options && options.offerIntroCall === false)
       const data = await post('/grants/oauth/v3', { in_provider: 'google', in_redirect_uri: redirectUri })
       const url = data && data.response && data.response.result && data.response.result.data && data.response.result.data.url
       if (!url || !/^https:\/\//.test(url)) throw new Error('grants/oauth returned no URL')
-      win.localStorage.setItem(INTENT_KEY, JSON.stringify({ memberId: id, redirectUri, createdAt: Date.now() }))
+      win.localStorage.setItem(INTENT_KEY, JSON.stringify({ memberId: id, redirectUri, offerIntroCall, createdAt: Date.now() }))
       return url
     }
 
@@ -121,7 +125,7 @@
           member_id: id,
           availability: { items: (starter && starter.availability && starter.availability.items) || {} },
           in_timezone: (starter && starter.timezone) || '',
-          offer_intro_call: true,
+          offer_intro_call: intent.offerIntroCall !== false,
         }
         if (starter && starter.nylas_grant_id) {
           const removed = await post('/grants/delete/v3', { in_grant_id: starter.nylas_grant_id })

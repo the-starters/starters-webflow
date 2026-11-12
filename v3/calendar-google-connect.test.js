@@ -203,3 +203,25 @@ test('the intent is one-time: a second return with the same code is refused', as
   assert.equal(await createGoogleConnect(page.win, { post: second.post, memberId, callback }).completeReturn(), false)
   assert.deepEqual(second.paths(), [])
 })
+
+test('Build Profile with the Free call off: the intent keeps the choice and the return does not offer the Free call', async () => {
+  const bp = 'https://www.thestarters.com/build-profile/consult-test'
+  const start = makeWin({ path: '/build-profile/consult-test' })
+  await createGoogleConnect(start.win, { post: makeBackend().post, memberId, callback: null }).start({ offerIntroCall: false })
+  const intent = JSON.parse(start.storage.get(INTENT_KEY))
+  assert.equal(intent.redirectUri, bp)
+  assert.equal(intent.offerIntroCall, false)
+
+  const page = makeWin({ path: '/build-profile/consult-test', intent })
+  const backend = makeBackend()
+  assert.equal(await createGoogleConnect(page.win, { post: backend.post, memberId, callback: { code: 'abc', state: MEMBER, hasError: false } }).completeReturn(), true)
+  const ensure = backend.calls.find((c) => c.path === '/onboarding/calendar/ensure-default/v3')
+  assert.equal(ensure.body.offer_intro_call, false)
+  assert.equal(backend.calls.find((c) => c.path === '/grants/add/v3').body.in_redirect_uri, bp)
+})
+
+test('start without options keeps offering the Free call (onboarding behaviour)', async () => {
+  const { win, storage } = makeWin()
+  await createGoogleConnect(win, { post: makeBackend().post, memberId, callback: null }).start()
+  assert.equal(JSON.parse(storage.get(INTENT_KEY)).offerIntroCall, true)
+})
