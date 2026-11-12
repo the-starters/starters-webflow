@@ -9,8 +9,11 @@
 - Pages: `/build-profile/consult-test`, `/build-profile/full-profile-test` (staff test, staff guard pinned);
   `/build-profile/consult`, `/build-profile/full-profile` only after Jai/Kaeser review (live switch also needs
   the staff-guard boot rule and the #12047 staff gate removed).
-- Markup: the calls root inside the Build Profile multistep step gets
-  `data-calls-step-context="build-profile"`. Next is the step's `[data-form="next-btn"]`.
+- Markup: any calls root inside a Build Profile multistep step (`[data-form="step"]`) with no
+  `data-calls-step-context`, or with `data-calls-step-context="build-profile"`. No marker is needed: on
+  2026-11-12 a new attribute written through the Webflow Data API read back but never reached the published
+  page, and full-profile uses the shared "Build Profile Calls Form" component. Next is the step's
+  `[data-form="next-btn"]`.
 - Calls editor: hours + Google + Free call switch. The Paid row and the Stripe card stay hidden (Stripe is set
   up later in onboarding); the Paid switch is unchecked and every Paid field disabled, so final submit sends no
   paid call fields. Next needs valid hours only; no call type is required.

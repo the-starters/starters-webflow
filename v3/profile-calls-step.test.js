@@ -206,7 +206,7 @@ test('onboarding context needs both the onboarding path and the onboarding marke
 })
 
 // Build Profile step (Jai 2026-11-12, JP 1a): hours + Google + Free call; no Paid, no Stripe.
-function buildProfileStep(pathname, { freeOn = true, paidOn = false, wrapped = true } = {}) {
+function buildProfileStep(pathname, { freeOn = true, paidOn = false, wrapped = true, context = 'build-profile' } = {}) {
   const el = (tag, attrs, children) => new FakeElement(tag, attrs, children)
   const select = (kind, value) => el('select', { 'data-calls-step-input': kind, value })
   const service = (name) => {
@@ -224,7 +224,7 @@ function buildProfileStep(pathname, { freeOn = true, paidOn = false, wrapped = t
   const availability = el('div', { 'data-calls-step-element': 'availability' })
   const calendar = el('div', { 'data-calls-step-element': 'calendar' })
   const stripe = el('div', { 'data-stripe-connect-element': 'root' })
-  const root = el('div', { 'data-calls-step': 'root', 'data-calls-step-context': 'build-profile' }, [
+  const root = el('div', { 'data-calls-step': 'root', ...(context === null ? {} : { 'data-calls-step-context': context }) }, [
     free.row, paid.row, availability, calendar, stripe,
     el('div', { 'data-calls-step-element': 'days' }, [el('button', { 'data-day': '1', 'aria-pressed': 'true' })]),
     el('div', { 'data-calls-step-element': 'extra-days' }),
@@ -288,4 +288,27 @@ test('Build Profile context needs a Build Profile path, the marker and a form st
   assert.equal(buildProfileStep('/starter-dashboard').api, null)
   assert.equal(buildProfileStep('/build-profile/select-profile').api, null)
   assert.equal(buildProfileStep('/build-profile/consult-test', { wrapped: false }).api, null)
+})
+
+// 2026-11-12: a new attribute written through the Webflow Data API is not published, and full-profile
+// uses the shared Calls Form component, so Build Profile mode must work without the marker.
+test('an unmarked calls root inside a Build Profile step runs Build Profile mode', () => {
+  for (const path of ['/build-profile/consult-test', '/build-profile/full-profile-test', '/build-profile/consult', '/build-profile/full-profile']) {
+    const page = buildProfileStep(path, { context: null, freeOn: false, paidOn: true })
+    assert.ok(page.api, path)
+    assert.equal(page.paid.row.hidden, true, path)
+    assert.equal(page.paid.toggle.checked, false, path)
+    assert.equal(page.stripe.hidden, true, path)
+    assert.equal(page.availability.hidden, false, path)
+    assert.equal(page.api.validate(), '', path)
+    assert.equal(page.api.offerIntroCall(), false, path)
+  }
+})
+
+test('an unmarked root outside a Build Profile step, or on another page, does not run Build Profile mode', () => {
+  assert.equal(buildProfileStep('/build-profile/consult-test', { context: null, wrapped: false }).api, null)
+  // Another page keeps the previous step-6 behaviour (boot is gated by route): Paid stays visible.
+  assert.equal(buildProfileStep('/build-profile/select-profile', { context: null }).paid.row.hidden, false)
+  const edit = buildProfileStep('/build-profile/consult-test', { context: 'edit' })
+  assert.equal(edit.paid.row.hidden, false)
 })

@@ -304,7 +304,7 @@ test('on the pop-up return the page finishes the connection and does not wire th
 })
 
 // Build Profile step 6 (Jai 2026-11-12): same save, multistep Next button.
-const BUILD_ROOT = '[data-calls-step="root"][data-calls-step-context="build-profile"]'
+const BUILD_ROOT = '[data-calls-step="root"]:not([data-calls-step-context]), [data-calls-step="root"][data-calls-step-context="build-profile"]'
 function makeBuildPage({ offerIntroCall = true, path = '/build-profile/consult-test', hours } = {}) {
   const page = makePage({ path, hours })
   const error = new Node({ 'data-calls-step-element': 'error' })

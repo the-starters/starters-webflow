@@ -50,9 +50,13 @@
   // Build Profile step 6 (Jai 2026-11-12: availability belongs in Build Profile).
   const BUILD_PROFILE_ROUTES = new Set(['/build-profile/consult-test', '/build-profile/full-profile-test', '/build-profile/consult', '/build-profile/full-profile'])
   const ROUTES = new Set([...ONBOARDING_ROUTES, ...BUILD_PROFILE_ROUTES])
+  // Build Profile roots need no marker (a new Data API attribute does not
+  // publish; full-profile uses the shared component): any calls root with no
+  // context or context "build-profile". profile-calls-step.js decides whether
+  // it is really the Build Profile step (inside [data-form="step"]).
   const ROOT_BY_ROUTE = function (path) {
     return BUILD_PROFILE_ROUTES.has(path)
-      ? '[data-calls-step="root"][data-calls-step-context="build-profile"]'
+      ? '[data-calls-step="root"]:not([data-calls-step-context]), [data-calls-step="root"][data-calls-step-context="build-profile"]'
       : '[data-calls-step="root"][data-calls-step-context="onboarding"]'
   }
   const CONNECT = '[data-calls-step-action="connect-google"]'

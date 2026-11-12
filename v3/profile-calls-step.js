@@ -7,8 +7,8 @@
   // Onboarding v2 (JP 2026-11-09): the calendar step on the staff-only onboarding page.
   const onboardingPaths = new Set(['/starter-onboarding-v2', '/starter-onboarding-v2-wip'])
   // Build Profile (Jai 2026-11-12: availability is set in Build Profile, not
-  // onboarding; JP 1a): a root marked data-calls-step-context="build-profile"
-  // asks for hours, Google and the Free call. The Paid row and the Stripe card
+  // onboarding; JP 1a): the calls root inside a Build Profile form step (no
+  // context, or context "build-profile") asks for hours, Google and the Free call. The Paid row and the Stripe card
   // stay hidden, because Stripe is set up later in onboarding.
   const buildProfilePaths = new Set(['/build-profile/full-profile-test', '/build-profile/consult-test', '/build-profile/full-profile', '/build-profile/consult'])
   const routes = new Set(['/starter-edit-profile-test', standalonePath, ...buildProfilePaths, ...onboardingPaths])
@@ -63,7 +63,13 @@
     const source = windows?.querySelector(rowSelector)
     const path = root.ownerDocument.defaultView?.location.pathname.replace(/\/$/, '')
     const context = root.getAttribute('data-calls-step-context')
-    const buildProfile = buildProfilePaths.has(path) && context === 'build-profile'
+    // Build Profile mode needs no marker (2026-11-12: a NEW attribute written
+    // through the Webflow Data API does not reach the published page, and on
+    // full-profile the root sits inside the shared Calls Form component). On a
+    // Build Profile page, a root with no context (or the build-profile marker)
+    // inside a multistep [data-form="step"] is the Build Profile step.
+    const buildProfile = buildProfilePaths.has(path) && (context === 'build-profile' || context === null)
+      && Boolean(root.closest('[data-form="step"]'))
     const step = buildProfile ? root.closest('[data-form="step"]') : root.closest('[data-form="step"][data-index="6"]')
     const edit = path === '/starter-edit-profile-test'
     const standalone = path === standalonePath
