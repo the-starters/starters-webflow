@@ -3,7 +3,9 @@
  * (JP 2026-11-09: Google sign-in returns to the page that started it).
  *
  * Pages: Build Profile step 6 (/build-profile/{consult,full-profile}(-test),
- * Jai 2026-11-12), /starter-onboarding-v2 (rollback only); Edit Profile later.
+ * Jai 2026-11-12), /starter-onboarding-v2 (rollback only), and the Edit
+ * Profile v2 Calls tab on the staff-only /starter-edit-profile-test
+ * (v3/edit-profile-calls.js, JP 2026-11-12; connect and switch calendar).
  * Each page path must be on the #1456/#1457 redirect allowlist. The dashboard keeps its own flow in scheduling-availability-section.js
  * and is not changed by this module.
  *

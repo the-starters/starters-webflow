@@ -341,3 +341,45 @@ test('footer: tab closed with nothing connected goes back to Connect Stripe', as
   assert.equal(env.finish.hidden, true)
   assert.equal(env.primaryStart.hidden, false)
 })
+
+// Edit Profile v2 (JP 2026-11-12): the Calls tab Stripe card on /starter-edit-profile-test.
+const EDIT = '/starter-edit-profile-test'
+
+function withEvents(env) {
+  const events = []
+  env.win.CustomEvent = class { constructor(type, init) { this.type = type; this.detail = init.detail } }
+  env.win.document.dispatchEvent = (event) => events.push(event)
+  return events
+}
+
+test('edit route: boots on staging and on production only with the staff guard; the live edit page does not boot', () => {
+  const env = (o) => makeEnv({ path: EDIT, ...o }).win
+  assert.equal(bootAllowed(env({ origin: 'https://the-starters-3-0.webflow.io', guard: false })), true)
+  assert.equal(bootAllowed(env({})), true)
+  assert.equal(bootAllowed(env({ guard: false })), false)
+  assert.equal(bootAllowed(env({ path: '/starter-edit-profile' })), false)
+})
+
+test('edit route: no submit gate, start keeps the dashboard return_url and uses the edit idempotency prefix', async () => {
+  const env = makeEnv({ path: EDIT, startResult: { mode: 'onboarding', url: 'https://connect.stripe.com/setup/e/acct_1/x' } })
+  const controller = createController(env.win, env.view)
+  await controller.mount()
+  assert.equal(env.docListeners.some((l) => l.type === 'submit'), false)
+  await controller.start({ preventDefault() {} })
+  const body = JSON.parse(env.calls.find((c) => c.url === START).options.body)
+  assert.equal(body.return_url, 'https://www.thestarters.com/starter-dashboard')
+  assert.match(body.idempotency_key, /^edit-profile-start-/)
+})
+
+test('every render announces the state on document for the Calls tab', async () => {
+  const env = makeEnv({ path: EDIT, statuses: [{ connected: true, charges_enabled: true, requires_onboarding: false }] })
+  const events = withEvents(env)
+  await createController(env.win, env.view).mount()
+  assert.deepEqual(events.map((e) => [e.type, e.detail.state]), [['starters:stripe-connect-state', 'ready']])
+})
+
+test('the announcement is skipped safely where the document cannot dispatch', async () => {
+  const env = makeEnv({ statuses: [{ connected: true, charges_enabled: true, requires_onboarding: false }] })
+  await createController(env.win, env.view).mount()
+  assert.deepEqual(env.rendered, ['ready'])
+})

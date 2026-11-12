@@ -422,3 +422,156 @@ test('an onboarding-marked root on a Build Profile page is not wired', async () 
   const page = makePage({ path: '/build-profile/consult-test' })
   assert.equal(createController(page.win).mount(), 0)
 })
+
+// Edit Profile v2 (JP 2026-11-12): saved items back to editor hours.
+const { fromItems } = require('./onboarding-calendar.js')
+
+test('fromItems is the reverse of toItems for every shape the editor writes', () => {
+  const hours = {
+    days: [1, 3, 5],
+    windows: [{ start: '9:00 AM', end: '12:00 PM' }, { start: '1:00 PM', end: '5:30 PM' }, { start: '6:00 PM', end: '7:00 PM' }],
+    extra: { days: [6], start: '10:00 AM', end: '2:00 PM' },
+  }
+  const back = fromItems(toItems(hours))
+  assert.deepEqual(back.rest, {})
+  assert.deepEqual(back.hours, {
+    days: [1, 3, 5],
+    windows: [{ start: '09:00', end: '12:00' }, { start: '13:00', end: '17:30' }, { start: '18:00', end: '19:00' }],
+    extra: { days: [6], start: '10:00', end: '14:00' },
+  })
+})
+
+test('fromItems orders window-10 after window-2 and keeps dashboard overrides in rest', () => {
+  const items = {
+    general: { days: [5], start: '09:00', end: '10:00', defaultDays: [1, 5] },
+    'window-10': { days: [5], start: '15:00', end: '16:00', defaultDays: [1, 5], kind: 'window' },
+    'window-2': { days: [5], start: '11:00', end: '12:00', defaultDays: [1, 5], kind: 'window' },
+    'override-1700': { days: [1], start: '13:00', end: '14:00' },
+    'override-a': { days: [0], start: '08:00', end: '09:00' },
+    'override-onboarding': { days: [6], start: '10:00', end: '11:00' },
+  }
+  const { hours, rest } = fromItems(items)
+  assert.deepEqual(hours.days, [1, 5])
+  assert.deepEqual(hours.windows.map((w) => w.start), ['09:00', '11:00', '15:00'])
+  assert.deepEqual(hours.extra, { days: [6], start: '10:00', end: '11:00' })
+  assert.deepEqual(Object.keys(rest).sort(), ['override-1700', 'override-a'])
+})
+
+const to12h = (value) => {
+  const [hour, minute] = value.split(':').map(Number)
+  return ((hour + 11) % 12 + 1) + ':' + String(minute).padStart(2, '0') + (hour < 12 ? ' AM' : ' PM')
+}
+const asEditor = (hours) => ({
+  ...hours,
+  windows: hours.windows.map((w) => ({ start: to12h(w.start), end: to12h(w.end) })),
+  extra: hours.extra && { ...hours.extra, start: to12h(hours.extra.start), end: to12h(hours.extra.end) },
+})
+const DASHBOARD = {
+  general: { days: [1, 2, 4, 5], start: '09:00', end: '17:00', defaultDays: [1, 2, 3, 4, 5] },
+  '3f2a9c1e-uuid': { days: [3], start: '10:00', end: '12:00' },
+}
+
+test('a dashboard day override loads as the full weekly hours and round-trips unchanged', () => {
+  const { hours, rest } = fromItems(structuredClone(DASHBOARD))
+  assert.deepEqual(hours, { days: [1, 2, 3, 4, 5], windows: [{ start: '09:00', end: '17:00' }], extra: null })
+  assert.deepEqual(rest, { '3f2a9c1e-uuid': DASHBOARD['3f2a9c1e-uuid'] })
+  assert.deepEqual(toItems(asEditor(hours), rest, hours.days), DASHBOARD)
+})
+
+test('changing hours keeps the dashboard override and keeps its day out of general and windows', () => {
+  const { hours, rest } = fromItems(structuredClone(DASHBOARD))
+  const edited = asEditor(hours)
+  edited.days = [1, 2, 3, 4]
+  edited.windows = [{ start: '8:00 AM', end: '12:00 PM' }, { start: '1:00 PM', end: '4:00 PM' }]
+  assert.deepEqual(toItems(edited, rest, hours.days), {
+    '3f2a9c1e-uuid': { days: [3], start: '10:00', end: '12:00' },
+    general: { days: [1, 2, 4], start: '08:00', end: '12:00', defaultDays: [1, 2, 3, 4] },
+    'window-2': { days: [1, 2, 4], start: '13:00', end: '16:00', defaultDays: [1, 2, 3, 4], kind: 'window' },
+  })
+})
+
+test('unticking a weekly day drops a dashboard override on only that day, so the day is not bookable', () => {
+  const { hours, rest } = fromItems(structuredClone(DASHBOARD))
+  const edited = asEditor(hours)
+  edited.days = [1, 2, 4, 5]
+  const items = toItems(edited, rest, hours.days)
+  assert.deepEqual(items, {
+    general: { days: [1, 2, 4, 5], start: '09:00', end: '17:00', defaultDays: [1, 2, 4, 5] },
+  })
+  assert.ok(Object.values(items).every((item) => !item.days.includes(3)))
+})
+
+test('an override on Wed and Sat keeps only Wed when Sat is unticked; overrides off the weekly days stay', () => {
+  const saved = {
+    general: { days: [1, 2, 4, 5], start: '09:00', end: '17:00', defaultDays: [1, 2, 3, 4, 5, 6] },
+    'override-1731': { days: [3, 6], start: '10:00', end: '12:00', note: 'kept' },
+    'sunday-uuid': { days: [0], start: '11:00', end: '13:00' },
+  }
+  const { hours, rest } = fromItems(structuredClone(saved))
+  assert.deepEqual(toItems(asEditor(hours), rest, hours.days), saved)
+  const edited = asEditor(hours)
+  edited.days = [1, 2, 3, 4, 5]
+  assert.deepEqual(toItems(edited, rest, hours.days), {
+    'override-1731': { days: [3], start: '10:00', end: '12:00', note: 'kept' },
+    'sunday-uuid': { days: [0], start: '11:00', end: '13:00' },
+    general: { days: [1, 2, 4, 5], start: '09:00', end: '17:00', defaultDays: [1, 2, 3, 4, 5] },
+  })
+})
+
+test('a dashboard same-day window round-trips with its defaultDays', () => {
+  const saved = {
+    general: { days: [1, 2, 4, 5], start: '09:00', end: '12:00', defaultDays: [1, 2, 3, 4, 5] },
+    'window-2': { days: [1, 2, 4, 5], start: '13:00', end: '17:00', defaultDays: [1, 2, 3, 4, 5], kind: 'window' },
+    'override-1731': { days: [3], start: '10:00', end: '11:00' },
+  }
+  const { hours, rest } = fromItems(structuredClone(saved))
+  assert.equal(hours.extra, null)
+  assert.deepEqual(toItems(asEditor(hours), rest, hours.days), {
+    'override-1731': saved['override-1731'],
+    general: saved.general,
+    'window-2': saved['window-2'],
+  })
+})
+
+test('toItems without preserved items is unchanged for onboarding and Build Profile', () => {
+  const hours = { days: [5, 1], windows: [{ start: '9:00 AM', end: '12:00 PM' }, { start: '1:00 PM', end: '5:00 PM' }], extra: { days: [6], start: '10:00 AM', end: '2:00 PM' } }
+  assert.equal(JSON.stringify(toItems(hours)), JSON.stringify({
+    general: { days: [1, 5], start: '09:00', end: '12:00', defaultDays: [1, 5] },
+    'window-2': { days: [1, 5], start: '13:00', end: '17:00', defaultDays: [1, 5], kind: 'window' },
+    'override-onboarding': { days: [6], start: '10:00', end: '14:00' },
+  }))
+})
+
+test('fromItems with no usable general returns no hours and keeps every item', () => {
+  assert.deepEqual(fromItems(null), { hours: null, rest: {} })
+  assert.deepEqual(fromItems({}), { hours: null, rest: {} })
+  const odd = { general: { days: [], start: '09:00', end: '10:00' }, x: { days: [1] } }
+  assert.deepEqual(fromItems(odd), { hours: null, rest: odd })
+})
+
+test('controller options: save keeps base items under the editor items and runs beforeSave first', async () => {
+  const page = makePage()
+  const order = []
+  const controller = createController(page.win, {
+    baseItems: () => ({ items: { 'override-1700': { days: [1], start: '13:00', end: '14:00' }, general: { stale: true } }, days: [1] }),
+    beforeSave: () => order.push('beforeSave'),
+  })
+  await controller.save({ read: () => { order.push('read'); return { timezone: 'UTC', days: [1], windows: [{ start: '9:00 AM', end: '10:00 AM' }], extra: null } } })
+  assert.deepEqual(order, ['beforeSave', 'read'])
+  const body = page.calls.find((c) => c.url === ENSURE).body
+  assert.deepEqual(body.availability.items, {
+    'override-1700': { days: [1], start: '13:00', end: '14:00' },
+    general: { days: [], start: '09:00', end: '10:00', defaultDays: [1] },
+  })
+})
+
+test('controller options: onCalendarStatus hears each calendar read; get sends a bodyless GET', async () => {
+  const page = makePage({ starter: { availability: { manager: 'calendar' }, nylas_grant_id: 'g1', nylas_grant_email: 'a@b.c' } })
+  const heard = []
+  const controller = createController(page.win, { onCalendarStatus: (google) => heard.push(google) })
+  assert.equal(await controller.refreshStatus({ setStatus() {} }), true)
+  assert.deepEqual(heard, [true])
+  assert.equal(typeof controller.get, 'function')
+  assert.equal(typeof controller.wireConnect, 'function')
+  assert.equal(typeof controller.setupGoogle, 'function')
+})

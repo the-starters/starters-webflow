@@ -312,3 +312,105 @@ test('an unmarked root outside a Build Profile step, or on another page, does no
   const edit = buildProfileStep('/build-profile/consult-test', { context: 'edit' })
   assert.equal(edit.paid.row.hidden, false)
 })
+
+// load(state): fill the editor from saved data (Edit Profile v2, JP 2026-11-12).
+const { to12h } = require('./profile-calls-step')
+
+function editPage(pathname = '/starter-edit-profile-test', context = 'edit') {
+  const el = (tag, attrs, children) => new FakeElement(tag, attrs, children)
+  const select = (kind, value) => el('select', { 'data-calls-step-input': kind, value })
+  const service = (name, fields) => {
+    const toggle = el('input', { 'data-call-settings-input': 'enabled' })
+    const panel = el('div', { 'data-call-settings-element': 'panel' }, fields)
+    return { toggle, panel, row: el('div', { 'data-call-settings-service': name }, [toggle, panel]) }
+  }
+  const description = el('input', { 'data-call-settings-input': 'description' })
+  const title = el('input', { 'data-call-settings-input': 'title' })
+  const price = el('input', { 'data-call-settings-input': 'price' })
+  const free = service('free', [description])
+  const paid = service('paid', [title, price])
+  const day = (n) => el('button', { 'data-day': String(n), 'aria-pressed': n === 1 ? 'true' : 'false' })
+  const windows = el('div', { 'data-calls-step-element': 'windows' }, [el('div', { 'data-calls-step-element': 'window' }, [
+    select('window-start', '9:00 AM'), select('window-end', '6:00 PM'), el('button', { 'data-calls-step-action': 'remove-window' }),
+  ])])
+  const extra = el('div', { 'data-calls-step-element': 'extra' }, [select('extra-start', ''), select('extra-end', '')])
+  const timezone = select('timezone', '')
+  const root = el('div', { 'data-calls-step': 'root', 'data-calls-step-context': context }, [
+    free.row, paid.row,
+    el('div', { 'data-calls-step-element': 'days' }, [1, 2, 3, 4, 5, 6, 0].map(day)),
+    el('div', { 'data-calls-step-element': 'extra-days' }),
+    windows, extra, timezone,
+    el('p', { 'data-calls-step-element': 'error' }),
+    el('span', { 'data-calls-step-output': 'timezone-now' }),
+  ])
+  root.ownerDocument = { defaultView: { location: { pathname } }, createElement: (tag) => el(tag) }
+  extra.hidden = true
+  return { root, free, paid, description, title, price, windows, extra, timezone, api: mount(root) }
+}
+
+test('to12h turns saved 24 h times into editor times and passes editor times through', () => {
+  assert.equal(to12h('09:00'), '9:00 AM')
+  assert.equal(to12h('00:30'), '12:30 AM')
+  assert.equal(to12h('12:00'), '12:00 PM')
+  assert.equal(to12h('18:30'), '6:30 PM')
+  assert.equal(to12h('9:00 AM'), '9:00 AM')
+  assert.equal(to12h('24:00'), '')
+  assert.equal(to12h(''), '')
+  assert.equal(to12h(null), '')
+})
+
+test('load fills timezone, days, every window, extra days and both call rows, then reads back the same hours', () => {
+  const page = editPage()
+  page.api.load({
+    timezone: 'Asia/Manila',
+    days: [1, 3, 5],
+    windows: [{ start: '09:00', end: '12:00' }, { start: '13:00', end: '17:30' }],
+    extra: { days: [6], start: '10:00', end: '14:00' },
+    free: { enabled: true, description: 'Intro chat' },
+    paid: { enabled: true, title: 'Strategy call', price: 150 },
+  })
+  assert.deepEqual(page.api.read(), {
+    timezone: 'Asia/Manila',
+    days: [1, 3, 5],
+    windows: [{ start: '9:00 AM', end: '12:00 PM' }, { start: '1:00 PM', end: '5:30 PM' }],
+    extra: { days: [6], start: '10:00 AM', end: '2:00 PM' },
+  })
+  assert.equal(page.api.validate(), '')
+  assert.equal(page.free.toggle.checked, true)
+  assert.equal(page.description.value, 'Intro chat')
+  assert.equal(page.free.panel.hidden, false)
+  assert.equal(page.paid.toggle.checked, true)
+  assert.equal(page.title.value, 'Strategy call')
+  assert.equal(page.price.value, '150')
+  assert.equal(page.paid.panel.hidden, false)
+  // Loaded rows keep the editor behaviour: a second remove button is enabled.
+  const removes = page.windows.querySelectorAll('[data-calls-step-action="remove-window"]')
+  assert.equal(removes.length, 2)
+  assert.equal(removes[0].disabled, false)
+})
+
+test('load keeps authored hours when the state has none and hides extra hours when there are none', () => {
+  const page = editPage()
+  page.api.load({ extra: null, free: { enabled: false }, paid: { enabled: false } })
+  assert.deepEqual(page.api.read().windows, [{ start: '9:00 AM', end: '6:00 PM' }])
+  assert.deepEqual(page.api.read().days, [1])
+  assert.equal(page.extra.hidden, true)
+  assert.equal(page.api.read().extra, null)
+  assert.equal(page.free.panel.hidden, true)
+  assert.equal(page.paid.panel.hidden, true)
+  assert.equal(page.api.offerIntroCall(), false)
+})
+
+test('load adds an off-grid saved time and an unknown timezone as options instead of dropping them', () => {
+  const page = editPage()
+  page.api.load({ timezone: 'Etc/GMT+12', days: [2], windows: [{ start: '09:15', end: '17:45' }] })
+  assert.equal(page.timezone.value, 'Etc/GMT+12')
+  assert.deepEqual(page.api.read().windows, [{ start: '9:15 AM', end: '5:45 PM' }])
+})
+
+test('load leaves the Paid row alone in Build Profile', () => {
+  const page = buildProfileStep('/build-profile/consult-test')
+  page.api.load({ paid: { enabled: true, title: 'x', price: 5 }, free: { enabled: false } })
+  assert.equal(page.paid.toggle.checked, false)
+  assert.equal(page.free.toggle.checked, false)
+})

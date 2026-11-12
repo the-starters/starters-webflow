@@ -25,7 +25,9 @@
   }
 
   // /starter-onboarding-test was renamed /starter-onboarding-v2 on 2026-11-09.
-  const routes = new Set(['/starter-onboarding-test', '/starter-onboarding-v2'])
+  // /starter-edit-profile-test: the Calls tab Stripe card (Edit Profile v2,
+  // JP 2026-11-12); its card has no confirm checkbox and nothing gates on it.
+  const routes = new Set(['/starter-onboarding-test', '/starter-onboarding-v2', '/starter-edit-profile-test'])
 
   // Staff-only on production until launch (JP 2026-11-09): a production host
   // boots only when the page also loads the fail-closed staff preview guard

@@ -32,6 +32,17 @@
     return (+match[1] % 12 + (match[3] === 'PM' ? 12 : 0)) * 60 + +match[2]
   }
 
+  // Saved hours use 24 h "HH:MM" (onboarding-calendar.js toItems); the editor
+  // shows "9:00 AM". Returns '' for anything else; an editor value passes through.
+  function to12h(value) {
+    const text = String(value || '').trim()
+    if (minutes(text) >= 0) return text
+    const match = /^(\d{1,2}):(\d{2})$/.exec(text)
+    if (!match || +match[1] > 23 || +match[2] > 59) return ''
+    const hour = +match[1]
+    return (hour % 12 || 12) + ':' + match[2] + (hour < 12 ? ' AM' : ' PM')
+  }
+
   function validateHours(hours) {
     if (!hours.days.length || (hours.extra && !hours.extra.days.length)) return 'Pick at least one day.'
     const windows = hours.windows.map(({ start, end }) => [minutes(start), minutes(end)])
@@ -339,9 +350,67 @@
       if (event.target === price && continueError) continueError.textContent = ''
     })
     refresh()
-    const freeToggle = services.find((service) => service.getAttribute('data-call-settings-service') === 'free')
-      ?.querySelector(enabledSelector)
+    const free = services.find((service) => service.getAttribute('data-call-settings-service') === 'free')
+    const freeToggle = free?.querySelector(enabledSelector)
+    const freeDescription = free?.querySelector('[data-call-settings-input="description"]')
+
+    function setTime(select, time) {
+      const shown = to12h(time)
+      if (!select || !shown) return
+      if (![...select.options].some((option) => option.value === shown)) addOption(select, shown)
+      select.value = shown
+    }
+
+    function pressDays(group, list) {
+      const wanted = new Set((list || []).map(Number))
+      for (const day of group.querySelectorAll('[data-day]')) {
+        day.setAttribute('aria-pressed', String(wanted.has(Number(day.dataset.day))))
+      }
+    }
+
+    // Fill the editor from saved data (all contexts). Hours fields are set only
+    // when `state` has them, so a Starter with no saved hours keeps the authored
+    // defaults. Times may be "HH:MM" (saved) or "9:00 AM". Sets no hoursSaved
+    // flag: the caller sends it with setStatus() after it knows the save state.
+    function load(state) {
+      const next = state || {}
+      if (next.timezone) {
+        if (![...timezone.options].some((option) => option.value === next.timezone)) addOption(timezone, next.timezone)
+        timezone.value = next.timezone
+      }
+      if (Array.isArray(next.days)) pressDays(days, next.days)
+      if (Array.isArray(next.windows) && next.windows.length) {
+        for (const row of rows()) row.remove()
+        for (const window of next.windows) {
+          const row = template.cloneNode(true)
+          windows.appendChild(row)
+          setTime(row.querySelector(selector('input', 'window-start')), window.start)
+          setTime(row.querySelector(selector('input', 'window-end')), window.end)
+        }
+      }
+      if (next.extra !== undefined) {
+        const on = Boolean(next.extra && Array.isArray(next.extra.days) && next.extra.days.length)
+        extra.hidden = !on
+        pressDays(extraDays, on ? next.extra.days : [])
+        if (on) {
+          setTime(get('input', 'extra-start'), next.extra.start)
+          setTime(get('input', 'extra-end'), next.extra.end)
+        }
+      }
+      if (next.free) {
+        if (freeToggle) freeToggle.checked = Boolean(next.free.enabled)
+        if (freeDescription && typeof next.free.description === 'string') freeDescription.value = next.free.description
+      }
+      if (next.paid && !onboarding && !buildProfile) {
+        if (paidToggle) paidToggle.checked = Boolean(next.paid.enabled)
+        if (paidDescription && typeof next.paid.title === 'string') paidDescription.value = next.paid.title
+        if (price && next.paid.price !== undefined && next.paid.price !== null) price.value = String(next.paid.price)
+      }
+      refresh()
+    }
+
     return {
+      load,
       read,
       validate: () => validateHours(read()),
       // The Free call follows its switch where the step shows one; onboarding
@@ -355,7 +424,7 @@
   }
 
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { validateHours, mount }
+    module.exports = { validateHours, to12h, mount }
     return
   }
   if (!bootAllowed(global, routes) || global.StarterProfileCallsStep) return

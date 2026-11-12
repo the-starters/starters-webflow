@@ -31,6 +31,7 @@ explain how source changes reach Webflow.
 - [Route guard](ROUTE-GUARD-WIRING.md) — sitewide access and role routing.
 - [Staff preview guard](STAFF-PREVIEW-GUARD-WIRING.md) — page-scoped, fail-closed staff-only gate for pages not launched yet.
 - [Onboarding v2 Stripe step](ONBOARDING-V2-STRIPE-WIRING.md) — Stripe status, start and submit gate on the staff-only `/starter-onboarding-v2`.
+- [Edit Profile v2 Calls tab](EDIT-PROFILE-CALLS-WIRING.md) — load and autosave of hours, Free and Paid calls, Google and Stripe connect on the staff-only `/starter-edit-profile-test`.
 - [Onboarding v2 calendar step](ONBOARDING-CALENDAR-WIRING.md) — hours, platform-calendar default and Google connect on the staff-only `/starter-onboarding-v2`.
 - [Membership checkout authority](MEMBERSHIP-CHECKOUT-AUTHORITY-WIRING.md) — checkout handoff and membership authority.
 - [Brand account and Starter email](BRAND-ACCOUNT-WIRING.md) — identity, signup, account forms, and email ownership.

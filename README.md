@@ -131,6 +131,7 @@ tighter predicate that `STARTERS_DEBUG` cannot unlock, and says so where it live
 - `v3/onboarding-stripe-view.js` — Onboarding step 5 payout card and confirmation state ([wiring](v3/ONBOARDING-STRIPE-WIRING.md))
 - `v3/onboarding-v2-stripe.js` — Onboarding v2 Stripe status, start and submit gate for the staff-only `/starter-onboarding-v2` ([wiring](docs/wiring/ONBOARDING-V2-STRIPE-WIRING.md))
 - `v3/onboarding-calendar.js` — availability step: hours save, platform-calendar default and Google connect for the Build Profile calls step (staff-only test drafts first) and the rollback-only `/starter-onboarding-v2` context ([wiring](docs/wiring/ONBOARDING-CALENDAR-WIRING.md))
+- `v3/edit-profile-calls.js` — Edit Profile v2 Calls tab on the staff-only `/starter-edit-profile-test`: loads saved hours, Free and Paid call settings into the calls editor and autosaves each change through the shared calendar, Free/Paid settings and Stripe modules ([wiring](docs/wiring/EDIT-PROFILE-CALLS-WIRING.md))
 - `v3/calendar-google-connect.js` — shared Google Calendar connect that returns the OAuth pop-up to the page that started it; used by the availability step, loaded before `v3/onboarding-calendar.js` ([wiring](docs/wiring/ONBOARDING-CALENDAR-WIRING.md))
 - `v3/starter-setup-gate.js` — staff-only (flag-mode guard) `/starter-dashboard` setup dialog for Starters missing availability/calendar or Stripe ([wiring](v3/SETUP-GATE-WIRING.md))
 - `v3/starter-setup-gate-view.js` — Starter setup gate step order, optional Calendar and keyboard close ([wiring](v3/SETUP-GATE-WIRING.md))
