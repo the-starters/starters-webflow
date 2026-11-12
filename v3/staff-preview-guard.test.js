@@ -41,7 +41,8 @@ function boot(opts = {}) {
   let seq = 0
 
   const scriptEl = {
-    getAttribute: (name) => (name === 'data-fallback' ? opts.fallback ?? '/starter-onboarding' : null),
+    getAttribute: (name) =>
+      name === 'data-fallback' ? opts.fallback ?? '/starter-onboarding' : name === 'data-mode' ? opts.mode ?? null : null,
   }
   const document = {
     currentScript: scriptEl,
@@ -213,4 +214,55 @@ test('boots only once per page', () => {
   const env = boot({ noMemberstack: true })
   vm.runInNewContext(source, { window: env.window, document: { currentScript: null } })
   assert.equal(env.headChildren.length, 1)
+})
+
+// Flag mode (2026-11-12): one staff-only element on a live page that real users see.
+test('flag mode: never hides the page', () => {
+  const env = boot({ mode: 'flag', noMemberstack: true })
+  assert.equal(env.headChildren.length, 0)
+})
+
+test('flag mode: verified staff resolves the promise to true', async () => {
+  const env = boot({ mode: 'flag' })
+  await settle()
+  assert.equal(env.attrs['data-staff-preview'], 'allowed')
+  assert.equal(await env.window.StartersStaffPreview, true)
+  assert.deepEqual(env.replaced, [])
+})
+
+test('flag mode: non-staff, logged out, failures and the deadline never redirect', async () => {
+  const cases = [
+    { staff: response(403, {}) },
+    { cookie: null },
+    { trade: response(500, {}) },
+    { tradeReject: true },
+    { staff: response(200, {}) },
+  ]
+  for (const o of cases) {
+    const env = boot({ mode: 'flag', ...o })
+    await settle()
+    env.tick(20000)
+    await settle()
+    assert.deepEqual(env.replaced, [], JSON.stringify(o))
+    assert.equal(env.attrs['data-staff-preview'], 'denied', JSON.stringify(o))
+    assert.equal(await env.window.StartersStaffPreview, false, JSON.stringify(o))
+  }
+})
+
+test('flag mode: Memberstack never loads resolves false without a redirect', async () => {
+  const env = boot({ mode: 'flag', noMemberstack: true })
+  env.tick(8000)
+  await settle()
+  assert.deepEqual(env.replaced, [])
+  assert.equal(await env.window.StartersStaffPreview, false)
+})
+
+test('page mode also publishes the result', async () => {
+  const staff = boot()
+  await settle()
+  assert.equal(await staff.window.StartersStaffPreview, true)
+  const denied = boot({ staff: response(403, {}) })
+  await settle()
+  assert.equal(await denied.window.StartersStaffPreview, false)
+  assert.deepEqual(denied.replaced, ['/starter-onboarding'])
 })

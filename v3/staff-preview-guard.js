@@ -51,6 +51,25 @@
 
   var script = document.currentScript
   var fallback = safePath(script && script.getAttribute('data-fallback')) || DEFAULT_FALLBACK
+  // Flag mode (data-mode="flag", 2026-11-12): for a LIVE page that real users
+  // also see (e.g. /starter-dashboard). It never hides the page and never
+  // redirects; it only sets html[data-staff-preview] to allowed/denied and
+  // resolves window.StartersStaffPreview (Promise<boolean>) + fires the
+  // 'starters:staff-preview' event, so one staff-only element can wait for it.
+  var flagMode = Boolean(script && script.getAttribute('data-mode') === 'flag')
+  var settle
+  window.StartersStaffPreview = new Promise(function (resolve) {
+    settle = resolve
+  })
+
+  function publish(allowed) {
+    settle(allowed)
+    try {
+      window.dispatchEvent(new CustomEvent('starters:staff-preview', { detail: { allowed: allowed } }))
+    } catch (_error) {
+      /* old browsers: the promise and the html attribute still carry the result */
+    }
+  }
 
   function debugEnabled() {
     var host = window.location.hostname || ''
@@ -93,12 +112,18 @@
     decided = true
     document.documentElement.setAttribute(ALLOWED_ATTR, 'allowed')
     log('allowed', email)
+    publish(true)
   }
 
   function leave(destination, reason) {
     if (decided) return
     decided = true
     document.documentElement.setAttribute(ALLOWED_ATTR, 'denied')
+    publish(false)
+    if (flagMode) {
+      log('denied (flag mode, no redirect):', reason)
+      return
+    }
     log('denied:', reason, '->', destination)
     window.location.replace(destination)
   }
@@ -176,7 +201,7 @@
     return allow(session.email)
   }
 
-  hidePage()
+  if (!flagMode) hidePage()
   window.setTimeout(function () {
     leave(fallback, 'deadline')
   }, OVERALL_DEADLINE_MS)

@@ -31,6 +31,21 @@ In the page head, as a normal script (not `defer`, not `async`), pinned to a tag
 - `data-fallback`: where non-staff go. Same-site path only. Default `/starter-dashboard`.
 - Also set the page to noindex and do not link it from any page.
 
+### Flag mode (one staff-only element on a live page, 2026-11-12)
+
+For a page that real users also see (for example `/starter-dashboard`), add `data-mode="flag"`:
+
+```html
+<script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@<sha>/v3/staff-preview-guard.js"
+        data-mode="flag"></script>
+```
+
+Flag mode runs the same check but never hides the body and never redirects. It sets
+`html[data-staff-preview]` to `allowed` or `denied`, resolves `window.StartersStaffPreview`
+(`Promise<boolean>`, also set in page mode) and fires `starters:staff-preview` with `{ allowed }`.
+A staff-only module must wait for `StartersStaffPreview === true`; presence of the script alone is
+not enough on a live page. First user: `v3/starter-setup-gate.js`.
+
 ## Outcomes
 
 | Visitor | Result |
