@@ -47,7 +47,7 @@
   const STARTER_PATH = '/starter/get_by_memberstack/v3'
   const RETURN_CHANNEL = 'starters-calendar-connect-return'
   const ONBOARDING_ROUTES = new Set(['/starter-onboarding-v2', '/starter-onboarding-v2-wip'])
-  // Build Profile step 6 (Jai 2026-11-12: availability belongs in Build Profile).
+  // Build Profile calls step (Jai 2026-11-12: availability belongs in Build Profile).
   const BUILD_PROFILE_ROUTES = new Set(['/build-profile/consult-test', '/build-profile/full-profile-test', '/build-profile/consult', '/build-profile/full-profile'])
   const ROUTES = new Set([...ONBOARDING_ROUTES, ...BUILD_PROFILE_ROUTES])
   // Build Profile roots need no marker (a new Data API attribute does not

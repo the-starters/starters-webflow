@@ -8,8 +8,9 @@
   const onboardingPaths = new Set(['/starter-onboarding-v2', '/starter-onboarding-v2-wip'])
   // Build Profile (Jai 2026-11-12: availability is set in Build Profile, not
   // onboarding; JP 1a): the calls root inside a Build Profile form step (no
-  // context, or context "build-profile") asks for hours, Google and the Free call. The Paid row and the Stripe card
-  // stay hidden, because Stripe is set up later in onboarding.
+  // context, or context "build-profile") asks for hours, Google and the Free
+  // call. The Paid row and the Stripe card stay hidden, because Stripe is set
+  // up later in onboarding.
   const buildProfilePaths = new Set(['/build-profile/full-profile-test', '/build-profile/consult-test', '/build-profile/full-profile', '/build-profile/consult'])
   const routes = new Set(['/starter-edit-profile-test', standalonePath, ...buildProfilePaths, ...onboardingPaths])
 
