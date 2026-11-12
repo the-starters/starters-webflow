@@ -27,5 +27,9 @@ Their boot flags make the head copies win, because deferred head scripts run fir
 | Footer | Started (not `none`): the authored `[data-onboarding-stripe-element="finish"]` button shows and the primary start button (outside the card) hides. `none`: the reverse. The retry link inside the card is untouched. |
 | Submit | A form with a Stripe root does not submit until `StarterOnboardingStripeView.canContinue(root)` (Stripe started + confirmation ticked). Sets `data-onboarding-stripe-required="true"` on the root. |
 | Done | `patch-onboarding-status.js` and `onboarding-done-redirect.js` also run on `/starter-onboarding-v2` |
+| State event | Every render fires `starters:stripe-connect-state` on `document` with `detail: { state }` (`none`, `opened`, `pending`, `ready`) |
 
 Boot: staging origin, or production hosts only when the page loads `v3/staff-preview-guard.js`.
+
+The module also boots on the staff-only `/starter-edit-profile-test` for the Calls tab Stripe card. There the
+Submit gate does not run; see [Edit Profile v2 Calls tab](EDIT-PROFILE-CALLS-WIRING.md).

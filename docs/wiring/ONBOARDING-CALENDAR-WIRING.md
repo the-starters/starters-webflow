@@ -68,3 +68,7 @@ Do not pin `v3/calendar-google-connect.js` until the Xano allowlist for `grants/
 `kind: 'window'` items as added hours: they never take days from `general`, and an edit keeps the marker. A day
 override replaces the whole day: it takes its days from `general` and every window (both return to `defaultDays`
 when it is removed). A window with no days left is kept in memory but not saved, since #1463 rejects an empty window.
+
+The module also exposes `window.StartersOnboardingCalendar` (`toItems`, `fromItems`, `createController`) without
+booting. Edit Profile v2 uses it to read these items back and keep dashboard overrides
+([wiring](EDIT-PROFILE-CALLS-WIRING.md)).
