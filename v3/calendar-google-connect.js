@@ -138,6 +138,11 @@
           in_timezone: (starter && starter.timezone) || '',
           offer_intro_call: intent.offerIntroCall !== false,
         }
+        if (!callback.code && starter && starter.nylas_grant_id === callback.grantId) {
+          added = true
+          await post('/onboarding/calendar/ensure-default/v3', defaults)
+          return connected(id)
+        }
         if (starter && starter.nylas_grant_id) {
           const removed = await post('/grants/delete/v3', { in_grant_id: starter.nylas_grant_id })
           if (!removed || removed.connected !== false) throw new Error('grants/delete returned no disconnected state')

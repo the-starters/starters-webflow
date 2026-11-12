@@ -254,3 +254,13 @@ test('a hosted-auth return without success=true writes nothing', async () => {
   assert.deepEqual(backend.paths(), [])
   assert.deepEqual(page.messages, [{ channel: 'starters-calendar-connect-return', type: 'calendar-connect-failed', memberId: MEMBER }])
 })
+
+test('a hosted-auth return of the grant already stored (same Google account) keeps it and only re-saves hours', async () => {
+  const page = makeWin({ intent: goodIntent() })
+  const backend = makeBackend({ starter: { nylas_grant_id: 'g-hosted', timezone: 'Europe/Amsterdam', availability: { items: {} } } })
+  const callback = { code: '', grantId: 'g-hosted', success: 'true', state: MEMBER, hasError: false }
+  assert.equal(await createGoogleConnect(page.win, { post: backend.post, memberId, callback }).completeReturn(), true)
+  assert.deepEqual(backend.paths(), ['/starter/get_by_memberstack/v3', '/onboarding/calendar/ensure-default/v3'])
+  assert.deepEqual(backend.calls[1].body, { member_id: MEMBER, availability: { items: {} }, in_timezone: 'Europe/Amsterdam', offer_intro_call: true })
+  assert.deepEqual(page.messages, [{ channel: 'starters-calendar-connect-return', type: 'calendar-connected', memberId: MEMBER }])
+})
