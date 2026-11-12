@@ -25,10 +25,21 @@ class Node {
     children.forEach((c) => { c.parent = this; this.children.push(c) })
   }
   getAttribute(n) { return n in this.attrs ? this.attrs[n] : null }
-  matches(sel) {
-    if (sel === 'button, a') return this.attrs.tag === 'button' || this.attrs.tag === 'a'
-    const parts = [...sel.matchAll(/\[([\w-]+)(?:="([^"]*)")?\]/g)]
-    return parts.length > 0 && parts.every(([, n, v]) => n in this.attrs && (v === undefined || this.attrs[n] === v))
+  matches(sel) { return sel.split(',').some((compound) => this.matchesCompound(compound.trim())) }
+  matchesCompound(compound) {
+    const token = /^(?:([a-z]+)|\[([\w-]+)(?:="([^"]*)")?\]|:not\(\[([\w-]+)(?:="([^"]*)")?\]\))/
+    const has = (n, v) => n in this.attrs && (v === undefined || this.attrs[n] === v)
+    let rest = compound
+    let ok = true
+    while (rest) {
+      const m = rest.match(token)
+      if (!m) throw new Error('fake DOM cannot parse selector: ' + compound)
+      if (m[1]) ok = ok && this.attrs.tag === m[1]
+      else if (m[2]) ok = ok && has(m[2], m[3])
+      else ok = ok && !has(m[4], m[5])
+      rest = rest.slice(m[0].length)
+    }
+    return compound.length > 0 && ok
   }
   closest(sel) { for (let n = this; n; n = n.parent) if (n.matches(sel)) return n; return null }
   contains(o) { for (let n = o; n; n = n.parent) if (n === this) return true; return false }
@@ -65,6 +76,7 @@ function makePage({ hours, starter = { availability: { manager: 'platform', item
   const next = new Node({ 'data-button-style': 'primary' }, [nextBtn])
   const group = new Node({ 'data-form-flow-button-group': 'step-5' }, [back, next])
   const step = new Node({ 'data-form-flow-element': 'step-5' }, [root, group])
+  const body = new Node({}, [step])
   // the form flow's own bubbling listener stands in for lumos
   group.addEventListener('click', (e) => flowClicks.push(e.target === nextBtn ? 'next' : 'back'))
   const tab = { closed: false, opener: {}, url: null, requestAtNavigation: null,
@@ -104,12 +116,12 @@ function makePage({ hours, starter = { availability: { manager: 'platform', item
     },
     document: {
       querySelector: (sel) => (guard && sel === 'script[src*="/v3/staff-preview-guard.js"]' ? {} : null),
-      querySelectorAll: (sel) => (sel === '[data-calls-step="root"][data-calls-step-context="onboarding"]' ? [root] : []),
+      querySelectorAll: (sel) => body.querySelectorAll(sel),
     },
     StarterProfileCallsStep: { editorFor: () => editor },
     StartersCalendarGoogleConnect: { ...shared, pendingCallback: null },
   }
-  return { win, calls, flowClicks, statuses, error, connect, nextBtn, backBtn, tab, listeners, storage, intervals, channels }
+  return { win, body, calls, flowClicks, statuses, error, connect, nextBtn, backBtn, tab, listeners, storage, intervals, channels }
 }
 
 test('boot: onboarding v2 routes; production needs the staff guard script', () => {
@@ -304,12 +316,13 @@ test('on the pop-up return the page finishes the connection and does not wire th
 })
 
 // Build Profile step 6 (Jai 2026-11-12): same save, multistep Next button.
-const BUILD_ROOT = '[data-calls-step="root"]:not([data-calls-step-context]), [data-calls-step="root"][data-calls-step-context="build-profile"]'
-function makeBuildPage({ offerIntroCall = true, path = '/build-profile/consult-test', hours } = {}) {
+function makeBuildPage({ offerIntroCall = true, path = '/build-profile/consult-test', hours, context = 'build-profile' } = {}) {
   const page = makePage({ path, hours })
   const error = new Node({ 'data-calls-step-element': 'error' })
   const connect = new Node({ 'data-calls-step-action': 'connect-google', tag: 'button' })
-  const root = new Node({ 'data-calls-step': 'root', 'data-calls-step-context': 'build-profile' }, [error, connect])
+  const rootAttrs = { 'data-calls-step': 'root' }
+  if (context !== null) rootAttrs['data-calls-step-context'] = context
+  const root = new Node(rootAttrs, [error, connect])
   const backBtn = new Node({ 'data-form': 'back-btn', tag: 'a' })
   const nextBtn = new Node({ 'data-form': 'next-btn', tag: 'a' })
   const step = new Node({ 'data-form': 'step', 'data-index': '6' }, [root, backBtn, nextBtn])
@@ -317,7 +330,8 @@ function makeBuildPage({ offerIntroCall = true, path = '/build-profile/consult-t
   const formClicks = []
   // the multistep form's own bubbling listener
   form.addEventListener('click', (e) => formClicks.push(e.target === nextBtn ? 'next' : 'back'))
-  page.win.document.querySelectorAll = (sel) => (sel === BUILD_ROOT ? [root] : [])
+  const body = new Node({}, [form])
+  page.win.document.querySelectorAll = (sel) => body.querySelectorAll(sel)
   page.win.StarterProfileCallsStep.editorFor().offerIntroCall = () => offerIntroCall
   return { ...page, error, connect, nextBtn, backBtn, formClicks }
 }
@@ -377,6 +391,31 @@ test('Build Profile Connect Google returns to the Build Profile page and keeps t
   assert.equal(oauth.body.in_redirect_uri, 'https://www.thestarters.com/build-profile/consult-test')
   assert.equal(JSON.parse(page.tab.requestAtNavigation).offerIntroCall, false)
   assert.equal(page.calls.find((c) => c.url === ENSURE).body.offer_intro_call, false)
+})
+
+test('an unmarked root in a Build Profile step is wired: Next saves the hours and the form advances', async () => {
+  const page = makeBuildPage({ context: null })
+  assert.equal(createController(page.win).mount(), 1)
+  await settle()
+  page.nextBtn.click()
+  await settle()
+  assert.equal(page.calls.filter((c) => c.url === ENSURE).length, 1)
+  assert.deepEqual(page.formClicks, ['next'])
+})
+
+test('a build-profile-marked root in a Build Profile step is wired', () => {
+  assert.equal(createController(makeBuildPage().win).mount(), 1)
+})
+
+test('edit- and onboarding-marked roots in a Build Profile step are not wired', async () => {
+  for (const context of ['edit', 'onboarding']) {
+    const page = makeBuildPage({ context })
+    assert.equal(createController(page.win).mount(), 0, context)
+    page.nextBtn.click()
+    await settle()
+    assert.equal(page.calls.some((c) => c.url === ENSURE), false, context)
+    assert.deepEqual(page.formClicks, ['next'], context)
+  }
 })
 
 test('an onboarding-marked root on a Build Profile page is not wired', async () => {
