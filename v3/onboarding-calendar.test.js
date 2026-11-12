@@ -302,3 +302,84 @@ test('on the pop-up return the page finishes the connection and does not wire th
   await settle()
   assert.equal(page.calls.some((c) => c.url === ENSURE), false)
 })
+
+// Build Profile step 6 (Jai 2026-11-12): same save, multistep Next button.
+const BUILD_ROOT = '[data-calls-step="root"][data-calls-step-context="build-profile"]'
+function makeBuildPage({ offerIntroCall = true, path = '/build-profile/consult-test', hours } = {}) {
+  const page = makePage({ path, hours })
+  const error = new Node({ 'data-calls-step-element': 'error' })
+  const connect = new Node({ 'data-calls-step-action': 'connect-google', tag: 'button' })
+  const root = new Node({ 'data-calls-step': 'root', 'data-calls-step-context': 'build-profile' }, [error, connect])
+  const backBtn = new Node({ 'data-form': 'back-btn', tag: 'a' })
+  const nextBtn = new Node({ 'data-form': 'next-btn', tag: 'a' })
+  const step = new Node({ 'data-form': 'step', 'data-index': '6' }, [root, backBtn, nextBtn])
+  const form = new Node({ 'data-form': 'multistep' }, [step])
+  const formClicks = []
+  // the multistep form's own bubbling listener
+  form.addEventListener('click', (e) => formClicks.push(e.target === nextBtn ? 'next' : 'back'))
+  page.win.document.querySelectorAll = (sel) => (sel === BUILD_ROOT ? [root] : [])
+  page.win.StarterProfileCallsStep.editorFor().offerIntroCall = () => offerIntroCall
+  return { ...page, error, connect, nextBtn, backBtn, formClicks }
+}
+
+test('boot: the four Build Profile paths; production still needs the staff guard script', () => {
+  for (const path of ['/build-profile/consult-test', '/build-profile/full-profile-test', '/build-profile/consult', '/build-profile/full-profile']) {
+    assert.equal(bootAllowed(makePage({ path }).win), true, path)
+    assert.equal(bootAllowed(makePage({ path, guard: false }).win), false, path)
+  }
+  assert.equal(bootAllowed(makePage({ path: '/build-profile/select-profile' }).win), false)
+})
+
+test('Build Profile Next saves the hours with the Free call switch, then lets the multistep form advance', async () => {
+  const page = makeBuildPage({ offerIntroCall: false })
+  createController(page.win).mount()
+  await settle()
+  page.nextBtn.click()
+  await settle()
+  const ensure = page.calls.find((c) => c.url === ENSURE)
+  assert.deepEqual(ensure.body, {
+    member_id: 'mem_onb03',
+    availability: { items: { general: { days: [1, 2], start: '09:00', end: '12:00', defaultDays: [1, 2] } } },
+    in_timezone: 'Asia/Manila',
+    offer_intro_call: false,
+  })
+  assert.deepEqual(page.formClicks, ['next'])
+})
+
+test('Build Profile Next with invalid hours saves nothing and does not advance', async () => {
+  const page = makeBuildPage({ hours: null })
+  createController(page.win).mount()
+  await settle()
+  page.nextBtn.click()
+  await settle()
+  assert.equal(page.error.textContent, 'Pick at least one day.')
+  assert.equal(page.calls.some((c) => c.url === ENSURE), false)
+  assert.deepEqual(page.formClicks, [])
+})
+
+test('Build Profile Back is never intercepted', async () => {
+  const page = makeBuildPage()
+  createController(page.win).mount()
+  await settle()
+  page.backBtn.click()
+  await settle()
+  assert.deepEqual(page.formClicks, ['back'])
+  assert.equal(page.calls.some((c) => c.url === ENSURE), false)
+})
+
+test('Build Profile Connect Google returns to the Build Profile page and keeps the Free call choice', async () => {
+  const page = makeBuildPage({ offerIntroCall: false })
+  createController(page.win).mount()
+  await settle()
+  page.connect.click()
+  await settle()
+  const oauth = page.calls.find((c) => c.url === OAUTH)
+  assert.equal(oauth.body.in_redirect_uri, 'https://www.thestarters.com/build-profile/consult-test')
+  assert.equal(JSON.parse(page.tab.requestAtNavigation).offerIntroCall, false)
+  assert.equal(page.calls.find((c) => c.url === ENSURE).body.offer_intro_call, false)
+})
+
+test('an onboarding-marked root on a Build Profile page is not wired', async () => {
+  const page = makePage({ path: '/build-profile/consult-test' })
+  assert.equal(createController(page.win).mount(), 0)
+})

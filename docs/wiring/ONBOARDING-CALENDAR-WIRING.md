@@ -1,6 +1,30 @@
 # Onboarding v2 calendar step wiring
 
-Staff-only preview on `/starter-onboarding-v2` (JP 2026-11-09). Step 5 "Set your availability" sits before
+> **2026-11-12: availability moved to Build Profile** (Jai: availability is set during Build Profile, not
+> onboarding). Jerico removed the calendar step from `/starter-onboarding-v2`; its Stripe step is now step 5.
+> The onboarding context below stays in the code for rollback only. See "Build Profile context".
+
+## Build Profile context (JP 2026-11-12: 1a + 2a)
+
+- Pages: `/build-profile/consult-test`, `/build-profile/full-profile-test` (staff test, staff guard pinned);
+  `/build-profile/consult`, `/build-profile/full-profile` only after Jai/Kaeser review (live switch also needs
+  the staff-guard boot rule and the #12047 staff gate removed).
+- Markup: the calls root inside the Build Profile multistep step gets
+  `data-calls-step-context="build-profile"`. Next is the step's `[data-form="next-btn"]`.
+- Calls editor: hours + Google + Free call switch. The Paid row and the Stripe card stay hidden (Stripe is set
+  up later in onboarding); the Paid switch is unchecked and every Paid field disabled, so final submit sends no
+  paid call fields. Next needs valid hours only; no call type is required.
+- Next: same #12047 save as onboarding, with `offer_intro_call` = the Free switch. Then the click reaches the
+  multistep form.
+- Connect Google: same pop-up flow; `redirect_uri` = the Build Profile page, and the intent stores
+  `offerIntroCall` so the return keeps the Free choice. The Build Profile paths must be on the #1456/#1457
+  allowlist and the Nylas callback URIs before `calendar-google-connect.js` is pinned there.
+- Scripts (page head, pinned, after the staff guard): `v3/profile-calls-step.js`,
+  `v3/calendar-google-connect.js`, `v3/onboarding-calendar.js`.
+
+## Onboarding context (rollback only)
+
+Staff-only preview on `/starter-onboarding-v2` (JP 2026-11-09). Step 5 "Set your availability" sat before
 step 6 "Get paid" in both forms (Full and Consult).
 
 ## Markup (Webflow)
