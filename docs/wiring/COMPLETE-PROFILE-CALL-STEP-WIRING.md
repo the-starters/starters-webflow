@@ -63,8 +63,9 @@ and [state designs](https://www.figma.com/design/QPZC8rJROId5dr19xKosjq/The-Star
 At 768 px and wider, the greeting and card sit side by side, and the card splits
 the month and times into two panels. On phones, the greeting, card, quote, and
 cropped portrait stack. The phone calendar shows up to twelve times before
-scrolling. The successful request retains the measured booking card height on
-phones, so the quote and portrait stay in place.
+scrolling. On phones, status messages sit above the footer and take space from
+the time list instead of covering it. The card fits the successful request at
+all sizes. On tablets, the status appears at the top of the card.
 
 ## Pinned page code
 
@@ -134,6 +135,6 @@ ready, unavailable, no-times, and error states. Check the Book Button's
 disabled state and keyboard focus, shared footer, timezone changes, and that
 Continue remains available except during a request. Verify a mocked successful
 request displays the existing success card and its single dashboard action.
-Confirm tablet split layout, phone stacking, portrait crop, and unchanged
-quote position when booking succeeds on a phone. Confirm the authored form
+Confirm tablet split layout, phone stacking, portrait crop, and that status
+messages stay tappable and clear of the time list on phones. Confirm the authored form
 redirect still works when the call step cannot start.
