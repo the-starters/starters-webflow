@@ -31,7 +31,25 @@ In the page head, as a normal script (not `defer`, not `async`), pinned to a tag
 - `data-fallback`: where non-staff go. Same-site path only. Default `/starter-dashboard`.
 - Also set the page to noindex and do not link it from any page.
 
-## Outcomes
+### Flag mode (one staff-only element on a live page, 2026-11-12)
+
+For a page that real users also see (for example `/starter-dashboard`), add `data-mode="flag"`:
+
+```html
+<script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@<sha>/v3/staff-preview-guard.js"
+        data-mode="flag"></script>
+```
+
+Flag mode runs the same check but never hides the body and never redirects. It sets
+`html[data-staff-preview]` to `allowed` or `denied` and resolves `window.StartersStaffPreview`
+(`Promise<boolean>`, flag mode only; page mode does not create it). Before any network call it reads
+the Memberstack member (`getCurrentMember`): logged out, or an email domain other than exactly
+`thestarters.com` or `hirethestarters.com`, resolves `false` with no trade-token or staff/session
+request. This is a UI shortcut only; Xano (fn 5796/5797) stays the authority for those two domains.
+A staff-only module must wait for `StartersStaffPreview === true`; presence of the script alone is
+not enough on a live page. First user: `v3/starter-setup-gate.js`.
+
+## Outcomes (page mode)
 
 | Visitor | Result |
 | --- | --- |
@@ -44,7 +62,7 @@ In the page head, as a normal script (not `defer`, not `async`), pinned to a tag
 
 - This hides UI. It is not a data boundary. A new Xano endpoint used only by the
   preview page must call fn 5797 `require_staff_v1` until launch.
-- The body stays hidden until the check ends (2 network calls, at most 20 s).
+- Page mode: the body stays hidden until the check ends (2 network calls, at most 20 s).
 - Login does not bring the tester back. `/login` only honors `next` paths in the
   `v3/auth-route.js` `ROLE_DESTINATIONS` list, and `/starter-onboarding-v2` is not
   in it, so after login the tester lands on their role home. Log in first, then
