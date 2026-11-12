@@ -23,6 +23,13 @@
  *      and the confirmation checkbox ticked). Webflow's own required checks
  *      still run after this one.
  *
+ * Edit route (Edit Profile v2, JP 2026-11-12): /starter-edit-profile-test
+ * runs steps 1, 2 and 2b for the Calls tab Stripe card. Step 3 (the submit
+ * gate) is onboarding-only: the Calls tab autosaves and has no confirm box.
+ * Every render also fires 'starters:stripe-connect-state' on document with
+ * detail {state} ('none' | 'opened' | 'pending' | 'ready'), so
+ * v3/edit-profile-calls.js can re-check the Paid call. Nothing else listens.
+ *
  * Boot: the same rule as the view — staging origin, or thestarters.com /
  * www.thestarters.com only when the page also loads v3/staff-preview-guard.js.
  * Load v3/onboarding-stripe-view.js before this file.
@@ -35,7 +42,9 @@
   const STATUS_PATH = '/stripe_connect/status/v3'
   const START_PATH = '/stripe_connect/start/v3'
   const RETURN_CHANNEL_NAME = 'starters-stripe-connect-return'
-  const ROUTES = new Set(['/starter-onboarding-v2'])
+  const EDIT_ROUTE = '/starter-edit-profile-test'
+  const ROUTES = new Set(['/starter-onboarding-v2', EDIT_ROUTE])
+  const STATE_EVENT = 'starters:stripe-connect-state'
   const ROOT = '[data-onboarding-stripe="root"]'
   const START = '[data-onboarding-stripe-action="start"]'
   const RETURN_POLL_DELAYS_MS = [0, 1500, 4000, 8000]
@@ -71,6 +80,7 @@
     let busy = false
     let lastState = null
     let stopWatch = null
+    const editRoute = String(win.location.pathname || '').replace(/\/$/, '') === EDIT_ROUTE
 
     function withTimeout(promise) {
       return new Promise(function (resolve, reject) {
@@ -125,6 +135,15 @@
         view.render(root, state)
         swapFooter(root, state)
       })
+      announce(state)
+    }
+
+    function announce(state) {
+      const doc = win.document
+      if (!doc || typeof doc.dispatchEvent !== 'function' || typeof win.CustomEvent !== 'function') return
+      try {
+        doc.dispatchEvent(new win.CustomEvent(STATE_EVENT, { detail: { state } }))
+      } catch (_error) { /* listeners must not break the card */ }
     }
 
     // Footer swap (found in the 2026-11-09 prod click test): the authored
@@ -225,7 +244,7 @@
         const result = await post(START_PATH, {
           return_url: origin + '/starter-dashboard',
           callback_url: origin + '/stripe-connect-callback',
-          idempotency_key: 'onboarding-v2-start-' + (win.crypto && win.crypto.randomUUID ? win.crypto.randomUUID() : Date.now().toString(36)),
+          idempotency_key: (editRoute ? 'edit-profile-start-' : 'onboarding-v2-start-') + (win.crypto && win.crypto.randomUUID ? win.crypto.randomUUID() : Date.now().toString(36)),
         })
         if (result.mode === 'connected' || result.mode === 'reconciliation_required') {
           stripeTab.close()
@@ -282,14 +301,14 @@
       win.document.querySelectorAll(START).forEach(function (button) {
         button.addEventListener('click', start)
       })
-      win.document.addEventListener('submit', gateSubmit, true)
+      if (!editRoute) win.document.addEventListener('submit', gateSubmit, true)
       return refresh()
     }
 
     return { mount, refresh, start, gateSubmit }
   }
 
-  const api = { bootAllowed, viewState, isStripeUrl, createController }
+  const api = { bootAllowed, viewState, isStripeUrl, createController, STATE_EVENT }
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = api
     return

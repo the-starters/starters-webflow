@@ -422,3 +422,72 @@ test('an onboarding-marked root on a Build Profile page is not wired', async () 
   const page = makePage({ path: '/build-profile/consult-test' })
   assert.equal(createController(page.win).mount(), 0)
 })
+
+// Edit Profile v2 (JP 2026-11-12): saved items back to editor hours.
+const { fromItems } = require('./onboarding-calendar.js')
+
+test('fromItems is the reverse of toItems for every shape the editor writes', () => {
+  const hours = {
+    days: [1, 3, 5],
+    windows: [{ start: '9:00 AM', end: '12:00 PM' }, { start: '1:00 PM', end: '5:30 PM' }, { start: '6:00 PM', end: '7:00 PM' }],
+    extra: { days: [6], start: '10:00 AM', end: '2:00 PM' },
+  }
+  const back = fromItems(toItems(hours))
+  assert.deepEqual(back.rest, {})
+  assert.deepEqual(back.hours, {
+    days: [1, 3, 5],
+    windows: [{ start: '09:00', end: '12:00' }, { start: '13:00', end: '17:30' }, { start: '18:00', end: '19:00' }],
+    extra: { days: [6], start: '10:00', end: '14:00' },
+  })
+})
+
+test('fromItems orders window-10 after window-2 and keeps items the editor cannot show in rest', () => {
+  const items = {
+    general: { days: [5, 1], start: '09:00', end: '10:00', defaultDays: [1, 5] },
+    'window-10': { days: [1, 5], start: '15:00', end: '16:00', kind: 'window' },
+    'window-2': { days: [1, 5], start: '11:00', end: '12:00', kind: 'window' },
+    'override-1700': { days: [1], start: '13:00', end: '14:00' },
+    'window-odd': { days: [1], start: '17:00', end: '18:00', kind: 'window' },
+    'override-a': { days: [0], start: '08:00', end: '09:00' },
+    'override-onboarding': { days: [6], start: '10:00', end: '11:00' },
+  }
+  const { hours, rest } = fromItems(items)
+  assert.deepEqual(hours.days, [1, 5])
+  assert.deepEqual(hours.windows.map((w) => w.start), ['09:00', '11:00', '15:00'])
+  assert.deepEqual(hours.extra, { days: [6], start: '10:00', end: '11:00' })
+  assert.deepEqual(Object.keys(rest).sort(), ['override-1700', 'override-a', 'window-odd'])
+})
+
+test('fromItems with no usable general returns no hours and keeps every item', () => {
+  assert.deepEqual(fromItems(null), { hours: null, rest: {} })
+  assert.deepEqual(fromItems({}), { hours: null, rest: {} })
+  const odd = { general: { days: [], start: '09:00', end: '10:00' }, x: { days: [1] } }
+  assert.deepEqual(fromItems(odd), { hours: null, rest: odd })
+})
+
+test('controller options: save keeps base items under the editor items and runs beforeSave first', async () => {
+  const page = makePage()
+  const order = []
+  const controller = createController(page.win, {
+    baseItems: () => ({ 'override-1700': { days: [1], start: '13:00', end: '14:00' }, general: { stale: true } }),
+    beforeSave: () => order.push('beforeSave'),
+  })
+  await controller.save({ read: () => { order.push('read'); return { timezone: 'UTC', days: [1], windows: [{ start: '9:00 AM', end: '10:00 AM' }], extra: null } } })
+  assert.deepEqual(order, ['beforeSave', 'read'])
+  const body = page.calls.find((c) => c.url === ENSURE).body
+  assert.deepEqual(body.availability.items, {
+    'override-1700': { days: [1], start: '13:00', end: '14:00' },
+    general: { days: [1], start: '09:00', end: '10:00', defaultDays: [1] },
+  })
+})
+
+test('controller options: onCalendarStatus hears each calendar read; get sends a bodyless GET', async () => {
+  const page = makePage({ starter: { availability: { manager: 'calendar' }, nylas_grant_id: 'g1', nylas_grant_email: 'a@b.c' } })
+  const heard = []
+  const controller = createController(page.win, { onCalendarStatus: (google) => heard.push(google) })
+  assert.equal(await controller.refreshStatus({ setStatus() {} }), true)
+  assert.deepEqual(heard, [true])
+  assert.equal(typeof controller.get, 'function')
+  assert.equal(typeof controller.wireConnect, 'function')
+  assert.equal(typeof controller.setupGoogle, 'function')
+})

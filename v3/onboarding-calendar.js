@@ -102,9 +102,71 @@
     return items
   }
 
-  function createController(win) {
+  // Saved items -> editor hours (the reverse of toItems, Edit Profile v2).
+  //   general                                  -> days + window 1
+  //   kind 'window' items with general's days  -> windows 2..n (key order)
+  //   one item on days general does not use    -> extra (override-onboarding first)
+  // Everything else (a dashboard override that replaces a general day, an item
+  // with other days or no days) goes to `rest`, so save() can keep it.
+  // With no usable general item, hours is null and every item is in rest.
+  function fromItems(items) {
+    const source = items && typeof items === 'object' && !Array.isArray(items) ? items : {}
+    const keys = Object.keys(source)
+    const general = source.general
+    const numbers = function (list) {
+      return Array.isArray(list) ? list.map(Number).filter(function (day) { return day >= 0 && day <= 6 }).sort(function (a, b) { return a - b }) : []
+    }
+    const days = numbers(general && general.days)
+    if (!general || !days.length || !general.start || !general.end) {
+      return { hours: null, rest: Object.assign({}, source) }
+    }
+    const same = function (list) {
+      const sorted = numbers(list)
+      return sorted.length === days.length && sorted.every(function (day, index) { return day === days[index] })
+    }
+    const order = function (a, b) { return a.localeCompare(b, 'en', { numeric: true }) }
+    const used = new Set(['general'])
+    const windows = [{ start: general.start, end: general.end }]
+    keys.filter(function (key) {
+      const item = source[key]
+      return key !== 'general' && item && item.kind === 'window' && item.start && item.end && same(item.days)
+    }).sort(order).forEach(function (key) {
+      used.add(key)
+      windows.push({ start: source[key].start, end: source[key].end })
+    })
+    const extraKeys = keys.filter(function (key) {
+      const item = source[key]
+      const itemDays = numbers(item && item.days)
+      return !used.has(key) && item && item.kind !== 'window' && item.start && item.end && itemDays.length &&
+        itemDays.every(function (day) { return days.indexOf(day) === -1 })
+    }).sort(function (a, b) {
+      if (a === 'override-onboarding') return -1
+      if (b === 'override-onboarding') return 1
+      return order(a, b)
+    })
+    let extra = null
+    if (extraKeys.length) {
+      const item = source[extraKeys[0]]
+      used.add(extraKeys[0])
+      extra = { days: numbers(item.days), start: item.start, end: item.end }
+    }
+    const rest = {}
+    keys.forEach(function (key) { if (!used.has(key)) rest[key] = source[key] })
+    return { hours: { days, windows, extra }, rest }
+  }
+
+  // options (all optional; Edit Profile v2 uses them, onboarding and Build
+  // Profile pass none):
+  //   baseItems()          saved items the editor cannot show (dashboard day
+  //                        overrides); save() keeps them under the editor's items.
+  //   beforeSave()         runs at the start of every save (cancel a queued autosave).
+  //   onCalendarStatus(g)  runs after each calendar status read (true/false).
+  //   connectSelector      the connect buttons (default connect-google).
+  function createController(win, options) {
+    const settings = options || {}
     let tokenPromise = null
     let googleConnect = null
+    const stepState = new WeakMap()
 
     function withTimeout(promise) {
       return new Promise(function (resolve, reject) {
@@ -133,28 +195,34 @@
       return token
     }
 
-    async function post(path, body) {
+    async function request(method, path, body) {
       if (!tokenPromise) tokenPromise = trade().catch(function (error) { tokenPromise = null; throw error })
-      const response = await withTimeout(win.fetch(SCHEDULING + path, {
-        method: 'POST',
+      const init = {
+        method,
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (await tokenPromise) },
-        body: JSON.stringify(body),
-      }))
+      }
+      if (body !== undefined) init.body = JSON.stringify(body)
+      const response = await withTimeout(win.fetch(SCHEDULING + path, init))
       if (response.status === 401) tokenPromise = null
       const data = await response.json().catch(function () { return null })
       if (!response.ok) throw Object.assign(new Error(path + ' failed (' + response.status + ')'), { status: response.status, data })
       return data
     }
 
+    function post(path, body) { return request('POST', path, body) }
+    function get(path) { return request('GET', path) }
+
     function offerIntroCall(editor) {
       return typeof editor.offerIntroCall === 'function' ? editor.offerIntroCall() !== false : true
     }
 
     async function save(editor) {
+      if (typeof settings.beforeSave === 'function') settings.beforeSave()
       const hours = editor.read()
+      const base = typeof settings.baseItems === 'function' ? settings.baseItems() : null
       return post(ENSURE_PATH, {
         member_id: await memberId(),
-        availability: { items: toItems(hours) },
+        availability: { items: Object.assign({}, base || {}, toItems(hours)) },
         in_timezone: hours.timezone || '',
         offer_intro_call: offerIntroCall(editor),
       })
@@ -165,6 +233,7 @@
         const starter = await post(STARTER_PATH, { member_id: await memberId() })
         const google = Boolean(starter && starter.availability && starter.availability.manager === 'calendar' && starter.nylas_grant_id)
         editor.setStatus({ calendar: google ? 'connected' : 'disconnected', email: google ? (starter.nylas_grant_email || '') : '' })
+        if (typeof settings.onCalendarStatus === 'function') settings.onCalendarStatus(google)
         return google
       } catch (error) {
         warn('calendar status read failed', error && error.message)
@@ -198,8 +267,7 @@
       const stepEl = root.closest('[data-form-flow-element]') || root.closest('[data-form="step"]')
       if (!stepEl) return false
       let passThrough = false
-      let busy = false
-      let stopWatching = null
+      const state = rootState(root)
 
       stepEl.addEventListener('click', async function (event) {
         if (passThrough) return
@@ -207,10 +275,10 @@
         if (!nextEl) return
         event.preventDefault()
         event.stopImmediatePropagation()
-        if (busy) return
+        if (state.busy) return
         const problem = editor.validate()
         if (problem) return showError(root, problem)
-        busy = true
+        state.busy = true
         try {
           await save(editor)
           editor.setStatus({ hoursSaved: true })
@@ -220,22 +288,37 @@
           warn('save failed', error && error.message)
           showError(root, SAVE_ERROR)
         } finally {
-          busy = false
+          state.busy = false
         }
       }, true)
 
-      root.querySelectorAll(CONNECT).forEach(function (connect) {
+      wireConnect(root, editor)
+      return true
+    }
+
+    function rootState(root) {
+      if (!stepState.has(root)) stepState.set(root, { busy: false, stopWatching: null, connectWired: false })
+      return stepState.get(root)
+    }
+
+    // Connect Google (also "switch calendar" on Edit Profile): save the hours,
+    // then send a pop-up reserved in the click to Google. One handler per root.
+    function wireConnect(root, editor) {
+      const state = rootState(root)
+      if (state.connectWired) return
+      state.connectWired = true
+      root.querySelectorAll(settings.connectSelector || CONNECT).forEach(function (connect) {
         connect.addEventListener('click', async function (event) {
           event.preventDefault()
-          if (busy) return
+          if (state.busy) return
           const problem = editor.validate()
           if (problem) return showError(root, problem)
-          if (stopWatching) { stopWatching(); stopWatching = null }
+          if (state.stopWatching) { state.stopWatching(); state.stopWatching = null }
           if (!googleConnect) return showError(root, SAVE_ERROR)
           const tab = typeof win.open === 'function' ? win.open('about:blank', 'starters-google-connect', 'popup,width=520,height=720') : null
           if (!tab) return showError(root, 'Allow pop-ups for this site, then try again.')
           try { tab.opener = null } catch (_error) { /* ignore */ }
-          busy = true
+          state.busy = true
           editor.setStatus({ calendar: 'connecting' })
           try {
             await save(editor)
@@ -243,18 +326,17 @@
             const id = await memberId()
             const url = await googleConnect.start({ offerIntroCall: offerIntroCall(editor) })
             tab.location.replace(url)
-            stopWatching = watchReturn(tab, id, editor, root)
+            state.stopWatching = watchReturn(tab, id, editor, root)
           } catch (error) {
             tab.close()
             editor.setStatus({ calendar: 'disconnected' })
             warn('connect google failed', error && error.message)
             showError(root, SAVE_ERROR)
           } finally {
-            busy = false
+            state.busy = false
           }
         })
       })
-      return true
     }
 
     function watchReturn(tab, id, editor, root) {
@@ -302,16 +384,19 @@
       if (win.console) win.console.warn.apply(win.console, ['[onboarding-calendar]'].concat(Array.prototype.slice.call(arguments)))
     }
 
-    function mount() {
+    // Create the shared Google connect. Returns true when this page is the
+    // pop-up Google sent back; the connection is then finished here.
+    function setupGoogle() {
       const shared = win.StartersCalendarGoogleConnect
-      if (shared) {
-        googleConnect = shared.createGoogleConnect(win, { post, memberId, callback: shared.pendingCallback || null })
-        // This page is the pop-up Google sent back: finish the connection here.
-        if (googleConnect.returnPending()) {
-          googleConnect.completeReturn()
-          return 0
-        }
-      }
+      if (!shared || googleConnect) return false
+      googleConnect = shared.createGoogleConnect(win, { post, memberId, callback: shared.pendingCallback || null })
+      if (!googleConnect.returnPending()) return false
+      googleConnect.completeReturn()
+      return true
+    }
+
+    function mount() {
+      if (setupGoogle()) return 0
       const api = win.StarterProfileCallsStep
       if (!api) return 0
       let count = 0
@@ -326,14 +411,17 @@
       return count
     }
 
-    return { mount, save, refreshStatus, wireStep }
+    return { mount, save, refreshStatus, wireStep, wireConnect, setupGoogle, request, post, get, memberId }
   }
 
-  const exported = { bootAllowed, to24h, toItems, createController }
+  const exported = { bootAllowed, to24h, toItems, fromItems, createController }
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = exported
     return
   }
+  // Shared with v3/edit-profile-calls.js (Edit Profile v2), which loads this
+  // file but boots on its own route. Exposing it starts nothing.
+  if (!global.StartersOnboardingCalendar) global.StartersOnboardingCalendar = exported
   if (global.__startersOnboardingCalendarBooted || !bootAllowed(global)) return
   global.__startersOnboardingCalendarBooted = true
 
