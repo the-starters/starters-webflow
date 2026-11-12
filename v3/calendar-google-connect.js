@@ -52,9 +52,19 @@
     let params
     try { params = new URLSearchParams(win.location.search) } catch (_error) { return null }
     const code = params.get('code')
+    // The live Nylas app uses hosted auth: Google comes back with grant_id +
+    // success=true and no code (seen 2026-11-12). Accept both shapes, like the
+    // dashboard (scheduling-availability-section.js).
+    const grantId = params.get('grant_id')
     const hasError = Boolean(params.get('error') || params.get('error_code'))
-    if (!code && !hasError) return null
-    const callback = { code: code || '', state: params.get('state') || '', hasError }
+    if (!code && !grantId && !hasError) return null
+    const callback = {
+      code: code || '',
+      grantId: grantId || '',
+      success: params.get('success') || '',
+      state: params.get('state') || '',
+      hasError,
+    }
     CALLBACK_KEYS.forEach(function (key) { params.delete(key) })
     const rest = params.toString()
     try {
@@ -118,7 +128,8 @@
           throw new Error('return was not started on this page')
         }
         if (callback.state !== id) throw new Error('state does not match the member')
-        if (callback.hasError || !callback.code) throw new Error('cancelled at Google')
+        if (callback.hasError || !(callback.code || callback.grantId)) throw new Error('cancelled at Google')
+        if (!callback.code && callback.success !== 'true') throw new Error('hosted auth did not report success')
 
         const starter = await post('/starter/get_by_memberstack/v3', { member_id: id })
         defaults = {
@@ -132,12 +143,14 @@
           if (!removed || removed.connected !== false) throw new Error('grants/delete returned no disconnected state')
           deleted = true
         }
-        const grant = await post('/grants/add/v3', {
-          code: callback.code,
+        const grantPayload = {
           member_id: id,
           in_redirect_uri: intent.redirectUri,
           in_state: callback.state,
-        })
+        }
+        if (callback.code) grantPayload.code = callback.code
+        else grantPayload.in_grant_id = callback.grantId
+        const grant = await post('/grants/add/v3', grantPayload)
         if (!grant || !grant.grant_id) throw new Error('grants/add returned no grant')
         added = true
         await post('/onboarding/calendar/ensure-default/v3', defaults)

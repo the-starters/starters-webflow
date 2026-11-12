@@ -63,7 +63,7 @@ const goodIntent = () => ({ memberId: MEMBER, redirectUri: PAGE, createdAt: Date
 test('the return params are taken off the URL at load; other params stay', () => {
   const { win, replaced } = makeWin({ search: '?code=abc&state=' + MEMBER + '&ref=x' })
   const callback = captureCallback(win)
-  assert.deepEqual(callback, { code: 'abc', state: MEMBER, hasError: false })
+  assert.deepEqual(callback, { code: 'abc', grantId: '', success: '', state: MEMBER, hasError: false })
   assert.deepEqual(replaced, ['/starter-onboarding-v2?ref=x'])
 })
 
@@ -224,4 +224,33 @@ test('start without options keeps offering the Free call (onboarding behaviour)'
   const { win, storage } = makeWin()
   await createGoogleConnect(win, { post: makeBackend().post, memberId, callback: null }).start()
   assert.equal(JSON.parse(storage.get(INTENT_KEY)).offerIntroCall, true)
+})
+
+// Regression 2026-11-12: the live Nylas app uses hosted auth. Google came back to
+// /build-profile/consult-test with grant_id + success=true and no code, and the
+// return never ran (jp+onb04 stayed on the platform calendar).
+test('a hosted-auth return (grant_id + success, no code) is captured and the URL is cleaned', () => {
+  const { win, replaced } = makeWin({ search: '?email=x%40gmail.com&grant_id=g-hosted&provider=google&state=' + MEMBER + '&success=true&ref=x' })
+  const callback = captureCallback(win)
+  assert.deepEqual(callback, { code: '', grantId: 'g-hosted', success: 'true', state: MEMBER, hasError: false })
+  assert.deepEqual(replaced, ['/starter-onboarding-v2?ref=x'])
+})
+
+test('a hosted-auth return connects through grants/add with in_grant_id', async () => {
+  const page = makeWin({ intent: goodIntent() })
+  const backend = makeBackend()
+  const callback = { code: '', grantId: 'g-hosted', success: 'true', state: MEMBER, hasError: false }
+  assert.equal(await createGoogleConnect(page.win, { post: backend.post, memberId, callback }).completeReturn(), true)
+  assert.deepEqual(backend.paths(), ['/starter/get_by_memberstack/v3', '/grants/delete/v3', '/grants/add/v3', '/onboarding/calendar/ensure-default/v3'])
+  assert.deepEqual(backend.calls[2].body, { member_id: MEMBER, in_redirect_uri: PAGE, in_state: MEMBER, in_grant_id: 'g-hosted' })
+  assert.deepEqual(page.messages, [{ channel: 'starters-calendar-connect-return', type: 'calendar-connected', memberId: MEMBER }])
+})
+
+test('a hosted-auth return without success=true writes nothing', async () => {
+  const page = makeWin({ intent: goodIntent() })
+  const backend = makeBackend()
+  const callback = { code: '', grantId: 'g-hosted', success: '', state: MEMBER, hasError: false }
+  assert.equal(await createGoogleConnect(page.win, { post: backend.post, memberId, callback }).completeReturn(), false)
+  assert.deepEqual(backend.paths(), [])
+  assert.deepEqual(page.messages, [{ channel: 'starters-calendar-connect-return', type: 'calendar-connect-failed', memberId: MEMBER }])
 })

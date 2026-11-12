@@ -20,7 +20,11 @@
   multistep form.
 - Connect Google: same pop-up flow; `redirect_uri` = the Build Profile page, and the intent stores
   `offerIntroCall` so the return keeps the Free choice. The Build Profile paths must be on the #1456/#1457
-  allowlist and the Nylas callback URIs before `calendar-google-connect.js` is pinned there.
+  allowlist and the Nylas callback URIs before `calendar-google-connect.js` is pinned there (done
+  2026-11-12).
+- Google return shapes: the live Nylas app uses hosted auth and returns `grant_id` + `success=true` (no
+  `code`); the module sends that to `grants/add/v3` (#1457) as `in_grant_id`, and a classic `code` return as
+  `code`, like the dashboard. A `grant_id` return without `success=true` writes nothing.
 - Scripts (page head, pinned, after the staff guard): `v3/profile-calls-step.js`,
   `v3/calendar-google-connect.js`, `v3/onboarding-calendar.js`.
 
