@@ -115,8 +115,8 @@ function makePage(options = {}) {
       availability: {
         manager: 'platform',
         items: {
-          general: { days: [1, 2, 3], start: '09:00', end: '12:00', defaultDays: [1, 2, 3] },
-          'window-2': { days: [1, 2, 3], start: '13:00', end: '17:00', defaultDays: [1, 2, 3], kind: 'window' },
+          general: { days: [1, 3], start: '09:00', end: '12:00', defaultDays: [1, 2, 3] },
+          'window-2': { days: [1, 3], start: '13:00', end: '17:00', defaultDays: [1, 2, 3], kind: 'window' },
           'override-1700': { days: [2], start: '10:00', end: '11:00' },
         },
       },
@@ -374,8 +374,8 @@ test('hours autosave: one debounced #12047 save for several quick changes, keepi
   assert.equal(body.member_id, 'mem_edit1')
   assert.equal(body.in_timezone, 'Asia/Manila')
   assert.equal(body.offer_intro_call, true)
-  assert.deepEqual(body.availability.items.general.days, [1, 2, 3, 4, 5])
-  assert.deepEqual(body.availability.items['window-2'], { days: [1, 2, 3, 4, 5], start: '13:00', end: '17:00', defaultDays: [1, 2, 3, 4, 5], kind: 'window' })
+  assert.deepEqual(body.availability.items.general, { days: [1, 3, 4, 5], start: '09:00', end: '12:00', defaultDays: [1, 2, 3, 4, 5] })
+  assert.deepEqual(body.availability.items['window-2'], { days: [1, 3, 4, 5], start: '13:00', end: '17:00', defaultDays: [1, 2, 3, 4, 5], kind: 'window' })
   assert.deepEqual(body.availability.items['override-1700'], { days: [2], start: '10:00', end: '11:00' })
   assert.equal(page.root.getAttribute('data-edit-calls-hours'), 'saved')
 })
@@ -415,7 +415,7 @@ test('hours autosave: a change made during a save runs exactly one more save aft
   await page.tick()
   const saves = page.writesTo(ENSURE)
   assert.equal(saves.length, 2)
-  assert.deepEqual(saves[1].body.availability.items.general.days, [1, 2, 3, 4, 5, 6])
+  assert.deepEqual(saves[1].body.availability.items.general.defaultDays, [1, 2, 3, 4, 5, 6])
 })
 
 // ---- Free call ----

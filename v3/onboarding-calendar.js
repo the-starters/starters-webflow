@@ -80,14 +80,27 @@
     return String(hour).padStart(2, '0') + ':' + match[2]
   }
 
-  function toItems(hours) {
+  // preserved: saved dashboard overrides the editor does not show (Edit
+  // Profile v2). They are sent back unchanged and, like the dashboard's
+  // reconcileBaseDays(), take their days out of general and the windows, whose
+  // defaultDays keep the full weekly days. A window left with no days is not
+  // sent (#1463 rejects an empty non-general window).
+  function toItems(hours, preserved) {
+    const kept = preserved || {}
+    const claimed = new Set()
+    Object.keys(kept).forEach(function (key) {
+      const item = kept[key]
+      if (key === 'general' || !item || item.kind === 'window' || !Array.isArray(item.days)) return
+      item.days.forEach(function (day) { claimed.add(Number(day)) })
+    })
     const days = hours.days.slice().sort(function (a, b) { return a - b })
-    const items = {}
+    const open = days.filter(function (day) { return !claimed.has(day) })
+    const items = Object.assign({}, kept)
     hours.windows.forEach(function (window, index) {
-      const item = { days: days.slice(), start: to24h(window.start), end: to24h(window.end), defaultDays: days.slice() }
+      const item = { days: open.slice(), start: to24h(window.start), end: to24h(window.end), defaultDays: days.slice() }
       if (index === 0) {
         items.general = item
-      } else {
+      } else if (open.length) {
         item.kind = 'window'
         items['window-' + (index + 1)] = item
       }
@@ -103,11 +116,11 @@
   }
 
   // Saved items -> editor hours (the reverse of toItems, Edit Profile v2).
-  //   general                                  -> days + window 1
-  //   kind 'window' items with general's days  -> windows 2..n (key order)
-  //   one item on days general does not use    -> extra (override-onboarding first)
-  // Everything else (a dashboard override that replaces a general day, an item
-  // with other days or no days) goes to `rest`, so save() can keep it.
+  //   general                    -> weekly days (defaultDays, else days) + window 1
+  //   kind 'window' items        -> windows 2..n (key order)
+  //   override-onboarding        -> extra
+  // Every other item (a dashboard day override under a uuid or override-<ts>
+  // key) goes to `rest`; save() sends it back unchanged via toItems.
   // With no usable general item, hours is null and every item is in rest.
   function fromItems(items) {
     const source = items && typeof items === 'object' && !Array.isArray(items) ? items : {}
@@ -116,39 +129,27 @@
     const numbers = function (list) {
       return Array.isArray(list) ? list.map(Number).filter(function (day) { return day >= 0 && day <= 6 }).sort(function (a, b) { return a - b }) : []
     }
-    const days = numbers(general && general.days)
+    const weekly = numbers(general && general.defaultDays)
+    const days = weekly.length ? weekly : numbers(general && general.days)
     if (!general || !days.length || !general.start || !general.end) {
       return { hours: null, rest: Object.assign({}, source) }
-    }
-    const same = function (list) {
-      const sorted = numbers(list)
-      return sorted.length === days.length && sorted.every(function (day, index) { return day === days[index] })
     }
     const order = function (a, b) { return a.localeCompare(b, 'en', { numeric: true }) }
     const used = new Set(['general'])
     const windows = [{ start: general.start, end: general.end }]
     keys.filter(function (key) {
       const item = source[key]
-      return key !== 'general' && item && item.kind === 'window' && item.start && item.end && same(item.days)
+      return key !== 'general' && item && item.kind === 'window' && item.start && item.end
     }).sort(order).forEach(function (key) {
       used.add(key)
       windows.push({ start: source[key].start, end: source[key].end })
     })
-    const extraKeys = keys.filter(function (key) {
-      const item = source[key]
-      const itemDays = numbers(item && item.days)
-      return !used.has(key) && item && item.kind !== 'window' && item.start && item.end && itemDays.length &&
-        itemDays.every(function (day) { return days.indexOf(day) === -1 })
-    }).sort(function (a, b) {
-      if (a === 'override-onboarding') return -1
-      if (b === 'override-onboarding') return 1
-      return order(a, b)
-    })
     let extra = null
-    if (extraKeys.length) {
-      const item = source[extraKeys[0]]
-      used.add(extraKeys[0])
-      extra = { days: numbers(item.days), start: item.start, end: item.end }
+    const onboarding = source['override-onboarding']
+    const extraDays = numbers(onboarding && onboarding.days)
+    if (onboarding && onboarding.start && onboarding.end && extraDays.length) {
+      used.add('override-onboarding')
+      extra = { days: extraDays, start: onboarding.start, end: onboarding.end }
     }
     const rest = {}
     keys.forEach(function (key) { if (!used.has(key)) rest[key] = source[key] })
@@ -158,7 +159,7 @@
   // options (all optional; Edit Profile v2 uses them, onboarding and Build
   // Profile pass none):
   //   baseItems()          saved items the editor cannot show (dashboard day
-  //                        overrides); save() keeps them under the editor's items.
+  //                        overrides); save() sends them back via toItems.
   //   beforeSave()         runs at the start of every save (cancel a queued autosave).
   //   onCalendarStatus(g)  runs after each calendar status read (true/false).
   //   connectSelector      the connect buttons (default connect-google).
@@ -222,7 +223,7 @@
       const base = typeof settings.baseItems === 'function' ? settings.baseItems() : null
       return post(ENSURE_PATH, {
         member_id: await memberId(),
-        availability: { items: Object.assign({}, base || {}, toItems(hours)) },
+        availability: { items: toItems(hours, base) },
         in_timezone: hours.timezone || '',
         offer_intro_call: offerIntroCall(editor),
       })

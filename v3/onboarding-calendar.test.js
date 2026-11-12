@@ -441,13 +441,12 @@ test('fromItems is the reverse of toItems for every shape the editor writes', ()
   })
 })
 
-test('fromItems orders window-10 after window-2 and keeps items the editor cannot show in rest', () => {
+test('fromItems orders window-10 after window-2 and keeps dashboard overrides in rest', () => {
   const items = {
-    general: { days: [5, 1], start: '09:00', end: '10:00', defaultDays: [1, 5] },
-    'window-10': { days: [1, 5], start: '15:00', end: '16:00', kind: 'window' },
-    'window-2': { days: [1, 5], start: '11:00', end: '12:00', kind: 'window' },
+    general: { days: [5], start: '09:00', end: '10:00', defaultDays: [1, 5] },
+    'window-10': { days: [5], start: '15:00', end: '16:00', defaultDays: [1, 5], kind: 'window' },
+    'window-2': { days: [5], start: '11:00', end: '12:00', defaultDays: [1, 5], kind: 'window' },
     'override-1700': { days: [1], start: '13:00', end: '14:00' },
-    'window-odd': { days: [1], start: '17:00', end: '18:00', kind: 'window' },
     'override-a': { days: [0], start: '08:00', end: '09:00' },
     'override-onboarding': { days: [6], start: '10:00', end: '11:00' },
   }
@@ -455,7 +454,64 @@ test('fromItems orders window-10 after window-2 and keeps items the editor canno
   assert.deepEqual(hours.days, [1, 5])
   assert.deepEqual(hours.windows.map((w) => w.start), ['09:00', '11:00', '15:00'])
   assert.deepEqual(hours.extra, { days: [6], start: '10:00', end: '11:00' })
-  assert.deepEqual(Object.keys(rest).sort(), ['override-1700', 'override-a', 'window-odd'])
+  assert.deepEqual(Object.keys(rest).sort(), ['override-1700', 'override-a'])
+})
+
+const to12h = (value) => {
+  const [hour, minute] = value.split(':').map(Number)
+  return ((hour + 11) % 12 + 1) + ':' + String(minute).padStart(2, '0') + (hour < 12 ? ' AM' : ' PM')
+}
+const asEditor = (hours) => ({
+  ...hours,
+  windows: hours.windows.map((w) => ({ start: to12h(w.start), end: to12h(w.end) })),
+  extra: hours.extra && { ...hours.extra, start: to12h(hours.extra.start), end: to12h(hours.extra.end) },
+})
+const DASHBOARD = {
+  general: { days: [1, 2, 4, 5], start: '09:00', end: '17:00', defaultDays: [1, 2, 3, 4, 5] },
+  '3f2a9c1e-uuid': { days: [3], start: '10:00', end: '12:00' },
+}
+
+test('a dashboard day override loads as the full weekly hours and round-trips unchanged', () => {
+  const { hours, rest } = fromItems(structuredClone(DASHBOARD))
+  assert.deepEqual(hours, { days: [1, 2, 3, 4, 5], windows: [{ start: '09:00', end: '17:00' }], extra: null })
+  assert.deepEqual(rest, { '3f2a9c1e-uuid': DASHBOARD['3f2a9c1e-uuid'] })
+  assert.deepEqual(toItems(asEditor(hours), rest), DASHBOARD)
+})
+
+test('changing hours keeps the dashboard override and keeps its day out of general and windows', () => {
+  const { hours, rest } = fromItems(structuredClone(DASHBOARD))
+  const edited = asEditor(hours)
+  edited.days = [1, 2, 3, 4]
+  edited.windows = [{ start: '8:00 AM', end: '12:00 PM' }, { start: '1:00 PM', end: '4:00 PM' }]
+  assert.deepEqual(toItems(edited, rest), {
+    '3f2a9c1e-uuid': { days: [3], start: '10:00', end: '12:00' },
+    general: { days: [1, 2, 4], start: '08:00', end: '12:00', defaultDays: [1, 2, 3, 4] },
+    'window-2': { days: [1, 2, 4], start: '13:00', end: '16:00', defaultDays: [1, 2, 3, 4], kind: 'window' },
+  })
+})
+
+test('a dashboard same-day window round-trips with its defaultDays', () => {
+  const saved = {
+    general: { days: [1, 2, 4, 5], start: '09:00', end: '12:00', defaultDays: [1, 2, 3, 4, 5] },
+    'window-2': { days: [1, 2, 4, 5], start: '13:00', end: '17:00', defaultDays: [1, 2, 3, 4, 5], kind: 'window' },
+    'override-1731': { days: [3], start: '10:00', end: '11:00' },
+  }
+  const { hours, rest } = fromItems(structuredClone(saved))
+  assert.equal(hours.extra, null)
+  assert.deepEqual(toItems(asEditor(hours), rest), {
+    'override-1731': saved['override-1731'],
+    general: saved.general,
+    'window-2': saved['window-2'],
+  })
+})
+
+test('toItems without preserved items is unchanged for onboarding and Build Profile', () => {
+  const hours = { days: [5, 1], windows: [{ start: '9:00 AM', end: '12:00 PM' }, { start: '1:00 PM', end: '5:00 PM' }], extra: { days: [6], start: '10:00 AM', end: '2:00 PM' } }
+  assert.equal(JSON.stringify(toItems(hours)), JSON.stringify({
+    general: { days: [1, 5], start: '09:00', end: '12:00', defaultDays: [1, 5] },
+    'window-2': { days: [1, 5], start: '13:00', end: '17:00', defaultDays: [1, 5], kind: 'window' },
+    'override-onboarding': { days: [6], start: '10:00', end: '14:00' },
+  }))
 })
 
 test('fromItems with no usable general returns no hours and keeps every item', () => {
@@ -477,7 +533,7 @@ test('controller options: save keeps base items under the editor items and runs 
   const body = page.calls.find((c) => c.url === ENSURE).body
   assert.deepEqual(body.availability.items, {
     'override-1700': { days: [1], start: '13:00', end: '14:00' },
-    general: { days: [1], start: '09:00', end: '10:00', defaultDays: [1] },
+    general: { days: [], start: '09:00', end: '10:00', defaultDays: [1] },
   })
 })
 
