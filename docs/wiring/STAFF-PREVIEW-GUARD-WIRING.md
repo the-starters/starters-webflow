@@ -41,8 +41,11 @@ For a page that real users also see (for example `/starter-dashboard`), add `dat
 ```
 
 Flag mode runs the same check but never hides the body and never redirects. It sets
-`html[data-staff-preview]` to `allowed` or `denied`, resolves `window.StartersStaffPreview`
-(`Promise<boolean>`, also set in page mode) and fires `starters:staff-preview` with `{ allowed }`.
+`html[data-staff-preview]` to `allowed` or `denied` and resolves `window.StartersStaffPreview`
+(`Promise<boolean>`, flag mode only; page mode does not create it). Before any network call it reads
+the Memberstack member (`getCurrentMember`): logged out, or an email domain other than exactly
+`thestarters.com` or `hirethestarters.com`, resolves `false` with no trade-token or staff/session
+request. This is a UI shortcut only; Xano (fn 5796/5797) stays the authority for those two domains.
 A staff-only module must wait for `StartersStaffPreview === true`; presence of the script alone is
 not enough on a live page. First user: `v3/starter-setup-gate.js`.
 

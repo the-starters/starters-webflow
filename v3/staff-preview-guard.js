@@ -54,21 +54,16 @@
   // Flag mode (data-mode="flag", 2026-11-12): for a LIVE page that real users
   // also see (e.g. /starter-dashboard). It never hides the page and never
   // redirects; it only sets html[data-staff-preview] to allowed/denied and
-  // resolves window.StartersStaffPreview (Promise<boolean>) + fires the
-  // 'starters:staff-preview' event, so one staff-only element can wait for it.
+  // resolves window.StartersStaffPreview (Promise<boolean>), so one staff-only
+  // element can wait for it. Members whose Memberstack email is not on a staff
+  // domain resolve false with no network call; Xano stays the authority.
   var flagMode = Boolean(script && script.getAttribute('data-mode') === 'flag')
-  var settle
-  window.StartersStaffPreview = new Promise(function (resolve) {
-    settle = resolve
-  })
-
-  function publish(allowed) {
-    settle(allowed)
-    try {
-      window.dispatchEvent(new CustomEvent('starters:staff-preview', { detail: { allowed: allowed } }))
-    } catch (_error) {
-      /* old browsers: the promise and the html attribute still carry the result */
-    }
+  var STAFF_DOMAINS = ['thestarters.com', 'hirethestarters.com']
+  var settle = function () {}
+  if (flagMode) {
+    window.StartersStaffPreview = new Promise(function (resolve) {
+      settle = resolve
+    })
   }
 
   function debugEnabled() {
@@ -112,15 +107,15 @@
     decided = true
     document.documentElement.setAttribute(ALLOWED_ATTR, 'allowed')
     log('allowed', email)
-    publish(true)
+    settle(true)
   }
 
   function leave(destination, reason) {
     if (decided) return
     decided = true
     document.documentElement.setAttribute(ALLOWED_ATTR, 'denied')
-    publish(false)
     if (flagMode) {
+      settle(false)
       log('denied (flag mode, no redirect):', reason)
       return
     }
@@ -170,9 +165,28 @@
     })
   }
 
+  async function currentMemberEmail(memberstack) {
+    if (typeof memberstack.getCurrentMember !== 'function') return ''
+    var result = await memberstack.getCurrentMember()
+    var member = result && result.data
+    var email = member && member.auth && member.auth.email
+    return typeof email === 'string' ? email : ''
+  }
+
+  function hasStaffDomain(email) {
+    var domain = email.slice(email.lastIndexOf('@') + 1).trim().toLowerCase()
+    return email.indexOf('@') > 0 && STAFF_DOMAINS.indexOf(domain) !== -1
+  }
+
   async function run() {
     var memberstack = await waitForMemberstack()
     if (!memberstack) return leave(fallback, 'memberstack-unavailable')
+
+    if (flagMode) {
+      var email = await currentMemberEmail(memberstack)
+      if (!email) return leave(fallback, 'logged-out')
+      if (!hasStaffDomain(email)) return leave(fallback, 'not-staff-domain')
+    }
 
     var memberstackToken = await memberstack.getMemberCookie()
     if (!memberstackToken) return leave(loginUrl(), 'logged-out')

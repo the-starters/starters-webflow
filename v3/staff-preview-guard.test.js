@@ -90,6 +90,10 @@ function boot(opts = {}) {
   if (!opts.noMemberstack) {
     window.$memberstackDom = {
       getMemberCookie: () => Promise.resolve(opts.cookie === undefined ? 'ms-tok' : opts.cookie),
+      getCurrentMember: () => {
+        const email = opts.memberEmail === undefined ? 'jp+onb01@thestarters.com' : opts.memberEmail
+        return Promise.resolve({ data: email === null ? null : { id: 'mem_1', auth: { email } } })
+      },
     }
   }
   const DateShim = { now: () => now }
@@ -233,7 +237,7 @@ test('flag mode: verified staff resolves the promise to true', async () => {
 test('flag mode: non-staff, logged out, failures and the deadline never redirect', async () => {
   const cases = [
     { staff: response(403, {}) },
-    { cookie: null },
+    { cookie: null, memberEmail: null },
     { trade: response(500, {}) },
     { tradeReject: true },
     { staff: response(200, {}) },
@@ -257,12 +261,62 @@ test('flag mode: Memberstack never loads resolves false without a redirect', asy
   assert.equal(await env.window.StartersStaffPreview, false)
 })
 
-test('page mode also publishes the result', async () => {
+test('page mode creates no StartersStaffPreview global', async () => {
   const staff = boot()
   await settle()
-  assert.equal(await staff.window.StartersStaffPreview, true)
+  assert.equal(staff.attrs['data-staff-preview'], 'allowed')
+  assert.equal('StartersStaffPreview' in staff.window, false)
   const denied = boot({ staff: response(403, {}) })
   await settle()
-  assert.equal(await denied.window.StartersStaffPreview, false)
+  assert.equal('StartersStaffPreview' in denied.window, false)
   assert.deepEqual(denied.replaced, ['/starter-onboarding'])
+})
+
+test('flag mode: non-staff email domain resolves false with no fetch at all', async () => {
+  for (const memberEmail of [
+    'starter@gmail.com',
+    'x@thestarters.com.evil.com',
+    'x@mail.thestarters.com',
+    'x@notthestarters.com',
+    '@thestarters.com',
+  ]) {
+    const env = boot({ mode: 'flag', memberEmail })
+    await settle()
+    assert.equal(env.calls.length, 0, memberEmail)
+    assert.equal(env.attrs['data-staff-preview'], 'denied', memberEmail)
+    assert.equal(await env.window.StartersStaffPreview, false, memberEmail)
+    assert.deepEqual(env.replaced, [], memberEmail)
+  }
+})
+
+test('flag mode: logged out resolves false with no fetch at all', async () => {
+  const env = boot({ mode: 'flag', memberEmail: null })
+  await settle()
+  assert.equal(env.calls.length, 0)
+  assert.equal(await env.window.StartersStaffPreview, false)
+  assert.deepEqual(env.replaced, [])
+})
+
+test('flag mode: staff domains run the Xano check', async () => {
+  for (const memberEmail of ['jp+onb01@thestarters.com', 'ops@HireTheStarters.com']) {
+    const allowed = boot({ mode: 'flag', memberEmail })
+    await settle()
+    assert.deepEqual(
+      allowed.calls.map((c) => c.url),
+      [TRADE_URL + '?token=ms-tok', STAFF_URL],
+      memberEmail,
+    )
+    assert.equal(await allowed.window.StartersStaffPreview, true, memberEmail)
+  }
+  const rejected = boot({ mode: 'flag', memberEmail: 'jp@thestarters.com', staff: response(403, {}) })
+  await settle()
+  assert.equal(rejected.calls.some((c) => c.url === STAFF_URL), true)
+  assert.equal(await rejected.window.StartersStaffPreview, false)
+})
+
+test('page mode: ignores the member email and still asks Xano', async () => {
+  const env = boot({ memberEmail: 'starter@gmail.com', staff: response(403, {}) })
+  await settle()
+  assert.equal(env.calls.some((c) => c.url === STAFF_URL), true)
+  assert.deepEqual(env.replaced, ['/starter-onboarding'])
 })
