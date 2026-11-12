@@ -49,7 +49,7 @@ request. This is a UI shortcut only; Xano (fn 5796/5797) stays the authority for
 A staff-only module must wait for `StartersStaffPreview === true`; presence of the script alone is
 not enough on a live page. First user: `v3/starter-setup-gate.js`.
 
-## Outcomes
+## Outcomes (page mode)
 
 | Visitor | Result |
 | --- | --- |
@@ -62,7 +62,7 @@ not enough on a live page. First user: `v3/starter-setup-gate.js`.
 
 - This hides UI. It is not a data boundary. A new Xano endpoint used only by the
   preview page must call fn 5797 `require_staff_v1` until launch.
-- The body stays hidden until the check ends (2 network calls, at most 20 s).
+- Page mode: the body stays hidden until the check ends (2 network calls, at most 20 s).
 - Login does not bring the tester back. `/login` only honors `next` paths in the
   `v3/auth-route.js` `ROLE_DESTINATIONS` list, and `/starter-onboarding-v2` is not
   in it, so after login the tester lands on their role home. Log in first, then
