@@ -130,8 +130,8 @@ tighter predicate that `STARTERS_DEBUG` cannot unlock, and says so where it live
 - `v3/profile-calls-step.js` — Build and Edit Calls frontend controls and status rendering ([wiring](v3/CALLS-STEP-WIRING.md))
 - `v3/onboarding-stripe-view.js` — Onboarding step 5 payout card and confirmation state ([wiring](v3/ONBOARDING-STRIPE-WIRING.md))
 - `v3/onboarding-v2-stripe.js` — Onboarding v2 Stripe status, start and submit gate for the staff-only `/starter-onboarding-v2` ([wiring](docs/wiring/ONBOARDING-V2-STRIPE-WIRING.md))
-- `v3/onboarding-calendar.js` — Onboarding v2 calendar step: hours save, platform-calendar default and Google connect for the staff-only `/starter-onboarding-v2` ([wiring](docs/wiring/ONBOARDING-CALENDAR-WIRING.md))
-- `v3/calendar-google-connect.js` — shared Google Calendar connect that returns the OAuth pop-up to the page that started it; used by the onboarding calendar step, loaded before `v3/onboarding-calendar.js` ([wiring](docs/wiring/ONBOARDING-CALENDAR-WIRING.md))
+- `v3/onboarding-calendar.js` — availability step: hours save, platform-calendar default and Google connect for the Build Profile calls step (staff-only test drafts first) and the rollback-only `/starter-onboarding-v2` context ([wiring](docs/wiring/ONBOARDING-CALENDAR-WIRING.md))
+- `v3/calendar-google-connect.js` — shared Google Calendar connect that returns the OAuth pop-up to the page that started it; used by the availability step, loaded before `v3/onboarding-calendar.js` ([wiring](docs/wiring/ONBOARDING-CALENDAR-WIRING.md))
 - `v3/starter-setup-gate-view.js` — Starter setup gate step order, optional Calendar and keyboard close ([wiring](v3/SETUP-GATE-WIRING.md))
 - `v3/build-profile/locations-consult.js` — Consult Build Profile country, state, and city controller
 - `v3/build-profile/locations-full-profile.js` — Full Profile country, state, and city controller
