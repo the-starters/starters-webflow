@@ -229,6 +229,20 @@ test('installs on valid Hire profiles, canonical dashboards, and Edit Profile ac
   }
 })
 
+test('installs on production Complete Profile but not its trial sibling', () => {
+  const nativeFetch = async () => response({})
+  for (const hostname of ['thestarters.com', 'www.thestarters.com']) {
+    for (const pathname of ['/complete-profile', '/complete-profile/']) {
+      const { window } = loadBridge(nativeFetch, { hostname, pathname })
+      assert.equal(window.__tsSchedulingAuthBridgeOwner, 'scheduling-auth')
+      assert.equal(typeof window.xanoAuthFetch, 'function')
+    }
+    const { window } = loadBridge(nativeFetch, { hostname, pathname: '/complete-profile-trial' })
+    assert.equal(window.xanoAuthFetch, undefined)
+    assert.equal(window.fetch, nativeFetch)
+  }
+})
+
 test('installs on the V2 production Messages page only, for the signed TalkJS session', () => {
   for (const hostname of ['hirethestarters.com', 'www.hirethestarters.com']) {
     const nativeFetch = async () => response({})

@@ -441,6 +441,21 @@ see
 [BRAND-ACCOUNT-WIRING.md](../docs/wiring/BRAND-ACCOUNT-WIRING.md) and
 [COMPLETE-PROFILE-REDIRECT-WIRING.md](../docs/wiring/COMPLETE-PROFILE-REDIRECT-WIRING.md).
 
+## Complete-profile call step
+
+`complete-profile-call-step.js` offers paid Brands a free call with Jai after
+they save Complete Profile. When its Designer markup and scheduling dependencies
+are ready, it claims the Brand Account controller's completion event and opens
+the calendar on the same page. The form's `redirect="/brand-dashboard"` stays
+as the fallback. The stylesheet `complete-profile-call-step.css` owns the trial
+form and call step layout.
+
+The production install is on `/complete-profile`. Pin the stylesheet and
+scripts to the same release tag. Use `/complete-profile-trial` on staging for
+review builds pinned to a full commit SHA. See the
+[Complete Profile call step wiring guide](../docs/wiring/COMPLETE-PROFILE-CALL-STEP-WIRING.md)
+for Designer attributes, script order, and staging checks.
+
 ## Complete-profile back button
 
 `complete-profile-back.js` turns the authored, hidden "Go back to [Name]" button on
@@ -515,7 +530,8 @@ across the navigation; `location.assign()` only queues a redirect, so the old
 code released the form while the browser was still fetching the destination. The
 reasoning and the accepted cancelled-navigation consequence live under Failure
 semantics in [BRAND-ACCOUNT-WIRING.md](../docs/wiring/BRAND-ACCOUNT-WIRING.md). Busy therefore
-clears on an error, and on a success that resolved no redirect URL.
+clears on an error, on a success that resolved no redirect URL, and when the
+call step claims the successful submit.
 
 Show and hide are inline `display` writes, because Webflow's Display:None
 compiles to a class rule that a stylesheet write would lose to. Minimum display
@@ -2063,7 +2079,7 @@ TalkJS session owner (`talkjs-auth-session.js`) can obtain a signed user token
 when the future V2 signing client is installed. No other V2 path installs the
 bridge, and this change does not otherwise alter V2 Messages behavior.
 
-The live `detail_hire` template is the timing exception. Install
+The live `detail_hire` template loads its booking scripts synchronously. Install
 [`scheduling-v3-hire-template-head.html`](scheduling-v3-hire-template-head.html)
 in its Page Settings head so `scheduling-auth.js`, `scheduling-v3-stage.js`, and
 `free-call-booking.js` execute synchronously before the shared scheduling
@@ -2076,11 +2092,15 @@ older saved head still omits it, so Free and Paid discovery keeps working before
 that head is corrected; that recovery contract is owned by
 [`HIRE-PROFILE-WIRING.md`](../docs/wiring/HIRE-PROFILE-WIRING.md#install).
 
+On `/complete-profile`, load the bridge and shared booking scripts synchronously
+in the page head, as shown in the
+[call step wiring guide](../docs/wiring/COMPLETE-PROFILE-CALL-STEP-WIRING.md#pinned-page-code).
+
 Current safety boundary:
 
 - Runs across `the-starters-3-0.webflow.io`.
 - On the V3 custom domains, runs on valid single-segment `/hire/<slug>` paths,
-  `/starter-dashboard`, `/brand-dashboard`, `/messages`, and
+  `/starter-dashboard`, `/brand-dashboard`, `/complete-profile`, `/messages`, and
   `/starter-edit-profile`. Production `/hire/jp-dionisio` remains explicitly
   blocked. `/starter-edit-profile` is on this list because step 6 of Edit Profile
   reads and writes the same canonical Free and Paid call settings the Starter

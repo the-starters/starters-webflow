@@ -1,0 +1,953 @@
+/* Complete Profile and the optional call step.
+ * @release v1.59.741
+ */
+
+/* The booking engine supplies the calendar. Keep these overrides inside the step. */
+[data-complete-profile-call-step] [data-complete-profile-call-calendar] {
+  width: 100%;
+  max-width: 51.25rem;
+  color: #1e211e;
+  font-family: Inter, sans-serif;
+  font-size: 1rem;
+  font-weight: 500;
+}
+
+[data-complete-profile-call-step] [data-paid-calendar-element="shell"] {
+  display: grid;
+  grid-template-areas: "month" "timezone" "times";
+  gap: 1rem;
+  grid-template-columns: minmax(0, 1fr);
+  padding: 1rem;
+  box-sizing: border-box;
+}
+
+[data-complete-profile-call-step] [data-paid-calendar-element="month"] {
+  grid-area: month;
+  min-width: 0;
+}
+
+[data-complete-profile-call-step] [data-paid-calendar-element="timezone-control"] {
+  grid-area: timezone;
+  display: block;
+  width: 100%;
+  min-width: 0;
+}
+
+[data-complete-profile-call-step] [data-paid-calendar-element="timezone-caption"] {
+  display: none;
+}
+
+[data-complete-profile-call-step] [data-paid-calendar-element="timezone"] {
+  width: 100%;
+  min-height: 3rem;
+  padding: 0.5rem 0.75rem;
+  border: 0.0625rem solid #eee;
+  border-radius: 0.25rem;
+  background: white;
+  color: inherit;
+  font: inherit;
+}
+
+[data-complete-profile-call-step] [data-paid-calendar-element="times"] {
+  grid-area: times;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-content: start;
+  gap: 0.5rem;
+  max-height: 13.5rem;
+  min-width: 0;
+  overflow: auto;
+}
+
+[data-complete-profile-call-step] [data-paid-calendar-slot] {
+  min-width: 0;
+  height: 3rem;
+  padding: 0 0.25rem;
+  border: 0;
+  border-radius: 0.25rem;
+  background: #eee;
+  color: #1e211e;
+  font: inherit;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+[data-complete-profile-call-step] [data-paid-calendar-slot][aria-pressed="true"] {
+  background: #434b43;
+  color: white;
+}
+
+[data-complete-profile-call-step] [data-paid-calendar-slot]:disabled,
+[data-complete-profile-call-step] [data-paid-calendar-element="confirm"]:disabled {
+  opacity: .5;
+  cursor: default;
+}
+
+[data-complete-profile-call-step] [data-paid-calendar-element="empty-day"] {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 0.5rem;
+  padding: 2rem 1.5rem;
+  border-radius: 0.25rem;
+  background: #eee;
+}
+
+[data-complete-profile-call-step] [data-paid-calendar-element="empty-day"] p {
+  margin: 0;
+}
+
+[data-complete-profile-call-step] [data-paid-calendar-element="empty-day"] p + p {
+  color: #434b43;
+  font-weight: 400;
+}
+
+[data-complete-profile-call-step] .ui-datepicker-header {
+  position: relative;
+  display: grid;
+  place-items: center;
+  height: 2.75rem;
+}
+
+[data-complete-profile-call-step] .ui-datepicker-prev,
+[data-complete-profile-call-step] .ui-datepicker-next {
+  position: absolute;
+  top: 0.375rem;
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  color: inherit;
+}
+
+[data-complete-profile-call-step] [data-complete-profile-call-month-nav][aria-disabled="true"] {
+  cursor: default;
+}
+
+[data-complete-profile-call-step] :is([data-complete-profile-call-month-nav], [data-complete-profile-call-continue],
+  [data-complete-profile-call-done], [data-paid-calendar-element="confirm"]):focus-visible {
+  outline: 0.125rem solid #1e211e;
+  outline-offset: 0.1875rem;
+  box-shadow: 0 0 0 0.1875rem white;
+}
+
+[data-complete-profile-call-step] .ui-datepicker-prev {
+  left: 0.3125rem;
+}
+
+[data-complete-profile-call-step] .ui-datepicker-next {
+  right: 0.3125rem;
+}
+
+[data-complete-profile-call-step] .ui-datepicker-header .ui-icon {
+  position: absolute;
+  width: 0.0625rem;
+  height: 0.0625rem;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
+[data-complete-profile-call-step] .ui-datepicker-prev::after,
+[data-complete-profile-call-step] .ui-datepicker-next::after {
+  content: "";
+}
+
+[data-complete-profile-call-step] .ui-datepicker-calendar {
+  width: 100%;
+  table-layout: fixed;
+  border-spacing: 0;
+  border-radius: 0.5rem;
+  background: white;
+}
+
+[data-complete-profile-call-step] .ui-datepicker-calendar :is(th, td) {
+  height: 3.5625rem;
+  padding: 0;
+  text-align: center;
+  font-weight: inherit;
+}
+
+[data-complete-profile-call-step] .ui-datepicker-calendar th {
+  border-bottom: 0.0625rem solid #eee;
+}
+
+[data-complete-profile-call-step] .ui-datepicker-calendar td :is(a, span) {
+  display: grid;
+  height: 100%;
+  place-items: center;
+  border-radius: 0.25rem;
+  color: #434b43;
+  text-decoration: none;
+}
+
+[data-complete-profile-call-step] .ui-datepicker-calendar :is(.ui-state-disabled, .ui-datepicker-other-month) span,
+[data-complete-profile-call-step] .ui-datepicker-header .ui-state-disabled {
+  opacity: .5;
+}
+
+[data-complete-profile-call-step] .ui-datepicker-calendar td a.ui-state-active {
+  background: #1e211e;
+  color: white;
+}
+
+@media (min-width: 48rem) {
+  [data-complete-profile-call-step] [data-paid-calendar-element="shell"] {
+    grid-template-columns: minmax(0, 420fr) 0.0625rem minmax(0, 399fr);
+    grid-template-areas: "month divider timezone" "month divider times";
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: 0;
+    padding: 0;
+    height: 30.875rem;
+  }
+
+  [data-complete-profile-call-step] [data-paid-calendar-element="shell"]::before {
+    content: "";
+    grid-area: divider;
+    background: #eee;
+  }
+
+  [data-complete-profile-call-step] [data-paid-calendar-element="month"] {
+    margin: 1.5rem;
+  }
+
+  [data-complete-profile-call-step] [data-paid-calendar-element="timezone-control"] {
+    width: auto;
+    margin: 1.5rem 1.5rem 1rem;
+  }
+
+  [data-complete-profile-call-step] [data-paid-calendar-element="times"] {
+    max-height: 25.25rem;
+    margin: 0 1.5rem;
+  }
+}
+
+@media (max-width: 47.9375rem) {
+  [data-complete-profile-call-step] [data-complete-profile-call-calendar] {
+    font-size: 16px;
+  }
+
+  [data-complete-profile-call-step] [data-paid-calendar-element="shell"] {
+    padding: 0;
+    gap: 0;
+  }
+
+  [data-complete-profile-call-step] [data-paid-calendar-element="month"] {
+    padding: 16px;
+    border-bottom: 1px solid #eee;
+  }
+
+  [data-complete-profile-call-step] .ui-datepicker-header {
+    height: 45px;
+  }
+
+  [data-complete-profile-call-step] .ui-datepicker-calendar :is(th,td) {
+    height: 57px;
+  }
+
+  [data-complete-profile-call-step] [data-paid-calendar-element="timezone-control"] {
+    width: auto;
+    margin: 16px 16px 0;
+  }
+
+  [data-complete-profile-call-step] [data-paid-calendar-element="timezone"] {
+    min-height: 50px;
+  }
+
+  [data-complete-profile-call-step] [data-paid-calendar-element="times"] {
+    margin: 16px;
+    gap: 8px;
+    max-height: 216px;
+  }
+
+  [data-complete-profile-call-step] [data-paid-calendar-slot] {
+    height: 48px;
+  }
+
+  [data-complete-profile-call-step] :is([data-complete-profile-call-continue], [data-complete-profile-call-done], [data-paid-calendar-element="confirm"]) {
+    width: 100%;
+  }
+}
+
+/* Native Webflow layout and controls. Explicit component display declarations
+   can override the browser's [hidden] rule, so preserve the authored state. */
+[data-complete-profile-call-step][hidden],
+[data-complete-profile-call-step] [hidden] {
+  display: none !important;
+}
+
+:where(body:has([data-complete-profile-call-step])) [data-jai-trial-first-step],
+[data-complete-profile-call-step] {
+  --jai-small: 3.75rem;
+  --jai-headroom: 5rem;
+  --jai-space: 1.5rem;
+  color: #1e211e;
+}
+
+:where(body:has([data-complete-profile-call-step])) [data-jai-trial-first-step] > .padding-global,
+[data-complete-profile-call-step] > .padding-global {
+  padding-block-start: calc(var(--jai-headroom) + var(--jai-small));
+  padding-block-end: var(--jai-small);
+}
+
+:where(body:has([data-complete-profile-call-step])) [data-jai-trial-first-step] .complete-profile_layout {
+  align-items: flex-start;
+}
+
+[data-complete-profile-call-step] {
+  position: relative;
+  overflow: hidden;
+  min-block-size: 100svh;
+  background: linear-gradient(111.6258deg,#caded9 25.117%,#77a2ab 100.36%);
+}
+
+[data-complete-profile-call-step] [data-jai-trial-layout] {
+  display: grid;
+  min-block-size: 0;
+  grid-template-columns: minmax(0,28.5rem) minmax(0,51.25rem);
+  justify-content: space-between;
+  align-items: start;
+  gap: var(--jai-space) 2.5rem;
+}
+
+[data-complete-profile-call-step] [data-jai-trial-content] {
+  position: relative;
+}
+
+:where([data-complete-profile-call-step]) [data-jai-trial-greeting] {
+  grid-column: 1;
+  grid-row: 1;
+  display: grid;
+  gap: 1.25rem;
+}
+
+:where([data-complete-profile-call-step]) [data-jai-trial-greeting] > div {
+  display: grid;
+  gap: 1.25rem;
+}
+
+:where([data-complete-profile-call-step]) [data-jai-trial-greeting] h1 {
+  margin: 0;
+  font-size: 3.875rem;
+  line-height: 1.2;
+  letter-spacing: -.11625rem;
+}
+
+:where([data-complete-profile-call-step]) [data-jai-trial-greeting] p {
+  margin: 0;
+  font-size: 1.125rem;
+  line-height: 1.7;
+}
+
+:where([data-complete-profile-call-step]) [data-jai-trial-card] {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  position: relative;
+  min-inline-size: 0;
+  inline-size: 100%;
+  max-inline-size: none;
+  border-radius: .25rem;
+  background: #fff;
+  overflow: hidden;
+}
+
+:where([data-complete-profile-call-step]) [data-jai-trial-card] > .complete-profile_form {
+  inline-size: 100%;
+  max-inline-size: none;
+  row-gap: 0;
+}
+
+:where([data-complete-profile-call-step]) [data-jai-trial-quote] {
+  position: relative;
+  grid-column: 1;
+  grid-row: 2;
+  align-self: start;
+  margin: 0;
+  padding-block-start: .3125rem;
+  inline-size: 18.125rem;
+  min-inline-size: 0;
+}
+
+:where([data-complete-profile-call-step]) [data-jai-trial-quote] blockquote {
+  border: 0;
+  margin: 0 0 2.25rem;
+  padding: 0;
+  font-size: 1.75rem;
+  line-height: 1.2;
+  letter-spacing: -.0525rem;
+}
+
+:where([data-complete-profile-call-step]) [data-jai-trial-quote] figcaption {
+  display: grid;
+  justify-items: start;
+  text-align: start;
+  gap: .6875rem;
+  font-size: 1.125rem;
+  line-height: 1.7;
+}
+
+:where([data-complete-profile-call-step]) [data-jai-trial-quote] strong {
+  font-weight: 600;
+  line-height: 1;
+}
+
+:where([data-complete-profile-call-step]) [data-jai-trial-portrait-frame] {
+  display: contents;
+}
+
+:where([data-complete-profile-call-step]) [data-jai-trial-portrait] {
+  position: absolute;
+  inset-inline-start: -12.1875rem;
+  inline-size: 31.5625rem;
+  block-size: 38.1875rem;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+:where([data-complete-profile-call-step]) [data-jai-trial-card] [data-complete-profile-call-unavailable] {
+  padding: 2.5rem;
+}
+
+:where([data-complete-profile-call-step]) [data-jai-trial-card] [data-complete-profile-call-success] .call-details_layout {
+  display: grid;
+  gap: 2.5rem;
+  padding: 2.5rem;
+}
+
+:where([data-complete-profile-call-step]) [data-jai-trial-card] [data-complete-profile-call-success] .call-details_headline-wrapper {
+  display: grid;
+  gap: .75rem;
+}
+
+:where([data-complete-profile-call-step]) [data-jai-trial-card] [data-complete-profile-call-success] .call-details_heading-wrapper {
+  display: flex;
+  align-items: center;
+  gap: .75rem;
+  color: #1f4664;
+}
+
+:where([data-complete-profile-call-step]) [data-jai-trial-card] [data-complete-profile-call-success] .icon-36 {
+  display: flex;
+  inline-size: 2.25rem;
+  block-size: 2.25rem;
+  flex: none;
+}
+
+:where([data-complete-profile-call-step]) [data-jai-trial-card] [data-complete-profile-call-success] .heading-style-h1 {
+  margin: 0;
+  font-family: Baskervville,Georgia,serif;
+  font-size: 2.25rem;
+  font-weight: 500;
+  line-height: 1.2;
+  letter-spacing: -.0675rem;
+}
+
+:where([data-complete-profile-call-step]) [data-jai-trial-card] [data-complete-profile-call-success] [booking-success-text] {
+  max-inline-size: 31.25rem;
+  margin: 0;
+  color: #434b43;
+  font-size: 1rem;
+  line-height: 1.7;
+}
+
+:where([data-complete-profile-call-step]) [data-jai-trial-card] [data-complete-profile-call-success] .call-details_table-details {
+  display: grid;
+  gap: .125rem;
+  overflow: hidden;
+  border: .125rem solid #eee;
+  border-radius: .25rem;
+  background: #eee;
+}
+
+:where([data-complete-profile-call-step]) [data-jai-trial-card] [data-complete-profile-call-success] .call-details_table-item {
+  background: #fff;
+}
+
+:where([data-complete-profile-call-step]) [data-jai-trial-card] [data-complete-profile-call-success] .call-details_table-item.is-first {
+  display: grid;
+  grid-template-columns: minmax(0,18.0625rem) minmax(0,1fr) 6.25rem;
+  align-items: center;
+  min-block-size: 7.5rem;
+  padding: .5rem;
+  box-sizing: border-box;
+}
+
+:where([data-complete-profile-call-step]) [data-jai-trial-card] [data-complete-profile-call-success] .call-details_table-title {
+  min-inline-size: 0;
+  padding-inline: 1rem;
+}
+
+:where([data-complete-profile-call-step]) [data-jai-trial-card] [data-complete-profile-call-success] [booking-element="paid-meeting"] {
+  margin: 0;
+  color: #1e211e;
+  font-size: 1rem;
+  font-weight: 500;
+}
+
+:where([data-complete-profile-call-step]) [data-jai-trial-card] [data-complete-profile-call-success] .call-details_table-item.is-date-time-mobile {
+  display: none;
+}
+
+:where([data-complete-profile-call-step]) [data-jai-trial-card] [data-complete-profile-call-success] .two-type-label_component {
+  display: inline-flex;
+  gap: .0625rem;
+  flex-wrap: wrap;
+  max-inline-size: 100%;
+}
+
+:where([data-complete-profile-call-step]) [data-jai-trial-card] [data-complete-profile-call-success] .two-type-label_item {
+  display: flex;
+  align-items: center;
+  min-block-size: 2rem;
+  padding-inline: .5rem;
+  border-radius: 0 .25rem .25rem 0;
+  background: #eee;
+}
+
+:where([data-complete-profile-call-step]) [data-jai-trial-card] [data-complete-profile-call-success] .two-type-label_item.is-first {
+  border-radius: .25rem 0 0 .25rem;
+}
+
+:where([data-complete-profile-call-step]) [data-jai-trial-card] [data-complete-profile-call-success] .two-type-label_text {
+  margin: 0;
+  font-size: .8125rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+:where([data-complete-profile-call-step]) [data-jai-trial-card] [data-complete-profile-call-success] .two-type-label_text.is-bold {
+  font-weight: 700;
+}
+
+:where([data-complete-profile-call-step]) [data-jai-trial-card] [data-complete-profile-call-success] .table-price_layout.is-consult {
+  display: grid;
+  place-content: center;
+  gap: .5rem;
+  inline-size: 6.25rem;
+  block-size: 6.25rem;
+  border-radius: .25rem;
+  background: #1f4664;
+  color: #fff;
+  text-align: center;
+}
+
+:where([data-complete-profile-call-step]) [data-jai-trial-card] [data-complete-profile-call-success] .table-price_layout p {
+  margin: 0;
+  font-size: .75rem;
+  line-height: 1;
+}
+
+:where([data-complete-profile-call-step]) [data-jai-trial-card] [data-complete-profile-call-success] .table-price_layout [booking-element="price"] {
+  font-size: 1.125rem;
+  font-weight: 600;
+}
+
+[data-complete-profile-call-step] [data-jai-trial-card] [data-complete-profile-call-footer] {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  block-size: 6.125rem;
+  padding: 1.625rem 2rem;
+  box-sizing: border-box;
+  border-block-start: .0625rem solid #eee;
+  background: #fff;
+}
+
+[data-complete-profile-call-step] [data-jai-trial-card] :is([data-complete-profile-call-booking-actions],[data-complete-profile-call-success-actions]) {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: .5rem;
+}
+
+[data-complete-profile-call-step] [data-paid-calendar-element="confirm"][hidden],
+[data-complete-profile-call-step="unavailable"] [data-jai-trial-native-button="book"] {
+  display: none;
+}
+
+[data-complete-profile-call-step] [data-jai-trial-native-button] .clickable_wrap {
+  z-index: 1;
+}
+
+[data-complete-profile-call-step] [data-jai-trial-native-button] .button_main-wrap:has(.clickable_btn:focus-visible) {
+  outline: 2px solid #1f4664;
+  outline-offset: 3px;
+  box-shadow: 0 0 0 3px #fff;
+}
+
+[data-complete-profile-call-step] [data-jai-trial-card] [data-complete-profile-call-status] {
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 2;
+  margin: 0;
+  padding: 16px 32px;
+  background: #1e211e;
+  color: #fff;
+  font-size: 16px;
+  line-height: 18px;
+}
+
+[data-complete-profile-call-step] [data-jai-trial-card] [data-complete-profile-call-status][data-paid-calendar-status="error"] {
+  background: #d55;
+  color: #fff;
+}
+
+[data-complete-profile-call-step] [data-jai-trial-card] [data-complete-profile-call-status]:empty {
+  display: none;
+}
+
+[data-complete-profile-call-step] [data-jai-trial-card] [data-paid-calendar-element="loading"] {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-block-size: 30.875rem;
+}
+
+[data-complete-profile-call-step] [data-jai-trial-card] [data-paid-calendar-element="loading"] .experts-list_loader.is-complete-profile {
+  position: static;
+  display: block;
+  margin: 0;
+  transform: none;
+}
+
+[data-complete-profile-call-step] [data-jai-trial-card] [data-paid-calendar-element="loading-text"] {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+[data-complete-profile-call-step] [data-complete-profile-call-calendar] [data-paid-calendar-element="month"] .ui-datepicker {
+  inline-size: 100%;
+  max-inline-size: none;
+  box-sizing: border-box;
+  border: 0;
+  border-radius: .5rem;
+  background: #eee;
+  box-shadow: 0 0 0 2px #eee, 0 4px 8px rgba(0,0,0,.1);
+  overflow: hidden;
+}
+
+[data-complete-profile-call-step] [data-complete-profile-call-calendar] [data-paid-calendar-element="month"] .ui-datepicker-calendar {
+  overflow: hidden;
+  border-radius: .5rem;
+  background: #fff;
+}
+
+[data-complete-profile-call-step] [data-complete-profile-call-calendar] [data-complete-profile-call-month-nav]:focus-visible {
+  outline: 2px solid #1f4664;
+  outline-offset: 2px;
+}
+
+[data-complete-profile-call-step] [data-paid-calendar-element="timezone-control"] {
+  position: relative;
+}
+
+[data-complete-profile-call-step] [data-paid-calendar-element="timezone-control"]::before,
+[data-complete-profile-call-step] [data-paid-calendar-element="timezone-control"]::after {
+  position: absolute;
+  content: "";
+  inset-block-start: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: contain;
+}
+
+[data-complete-profile-call-step] [data-paid-calendar-element="timezone-control"]::before {
+  inset-inline-start: .875rem;
+  inline-size: 1.25rem;
+  block-size: 1.25rem;
+  background-image: url("https://cdn.prod.website-files.com/69c573f20f82bd0f3384032c/6af32e23e16e653acd5d293d_complete-profile-globe.svg");
+}
+
+[data-complete-profile-call-step] [data-paid-calendar-element="timezone-control"]::after {
+  inset-inline-end: 1rem;
+  inline-size: .875rem;
+  block-size: .875rem;
+  background-image: url("https://cdn.prod.website-files.com/69c573f20f82bd0f3384032c/6af32e2479484b73828422eb_complete-profile-down.svg");
+}
+
+[data-complete-profile-call-step] [data-paid-calendar-element="timezone-control"] [data-paid-calendar-element="timezone"] {
+  appearance: none;
+  padding-inline: 2.75rem;
+  font-weight: 400;
+}
+
+[data-complete-profile-call-step] [data-complete-profile-call-calendar] [data-paid-calendar-element="month"] .ui-datepicker-header :is(.ui-datepicker-prev,.ui-datepicker-next)::after {
+  transform: none;
+  inline-size: 1.25rem;
+  block-size: 1.25rem;
+  border: 0;
+  background-position: center;
+  background-size: contain;
+  background-repeat: no-repeat;
+}
+
+[data-complete-profile-call-step] [data-complete-profile-call-calendar] [data-paid-calendar-element="month"] .ui-datepicker-prev::after {
+  background-image: url("https://cdn.prod.website-files.com/69c573f20f82bd0f3384032c/6af32e2586ca023172754ce8_complete-profile-previous.svg");
+}
+
+[data-complete-profile-call-step] [data-complete-profile-call-calendar] [data-paid-calendar-element="month"] .ui-datepicker-next::after {
+  background-image: url("https://cdn.prod.website-files.com/69c573f20f82bd0f3384032c/6af32e261502cc49dc8c1a3d_complete-profile-next.svg");
+}
+
+@media (min-width: 48rem) {
+  [data-complete-profile-call-step] {
+    --jai-headroom: 5rem;
+    --jai-desktop-frame: max(100svh,62.5rem);
+    --jai-art-top: calc(var(--jai-desktop-frame) - 23.6875rem - var(--jai-headroom) - var(--jai-small));
+    min-block-size: var(--jai-desktop-frame);
+  }
+
+  [data-complete-profile-call-step] [data-jai-trial-layout] {
+    position: static;
+  }
+
+  [data-complete-profile-call-step] [data-jai-trial-quote] {
+    position: absolute;
+    grid-column: auto;
+    grid-row: auto;
+    inset-block-start: calc(var(--jai-art-top) + 1.9375rem);
+    inset-inline-start: 13.8125rem;
+  }
+
+  [data-complete-profile-call-step] [data-jai-trial-portrait] {
+    inset-block-start: var(--jai-art-top);
+  }
+
+  [data-complete-profile-call-step] [data-complete-profile-call-calendar] [data-paid-calendar-element="month"] .ui-datepicker-header {
+    block-size: 2.8125rem;
+  }
+
+  [data-complete-profile-call-step] [data-jai-trial-card] [data-paid-calendar-element="shell"] {
+    min-block-size: 30.875rem;
+  }
+}
+
+@media (max-width: 61.9375rem) {
+  :where(body:has([data-complete-profile-call-step])) [data-jai-trial-first-step] {
+    --jai-headroom: 5.75rem;
+    --jai-small: 2rem;
+  }
+
+  :where(body:has([data-complete-profile-call-step])) [data-jai-trial-first-step] > .padding-global {
+    padding-inline: 1rem;
+  }
+}
+
+@media (min-width: 48rem) and (max-width: 61.9375rem) {
+  [data-complete-profile-call-step] [data-jai-trial-card] [data-complete-profile-call-status] {
+    position: static;
+    order: -1;
+  }
+}
+
+@media (max-width: 47.9375rem) {
+  [data-complete-profile-call-step] {
+    --jai-mobile-booking-body-min: 734px;
+    --jai-mobile-footer-height: 133px;
+    min-block-size: 0;
+    background: linear-gradient(93.0101deg,#caded9 25.117%,#77a2ab 100.36%);
+  }
+
+  [data-complete-profile-call-step] > .padding-global {
+    padding: 117px 16px 0;
+  }
+
+  :where([data-complete-profile-call-step]) [data-jai-trial-content] {
+    max-inline-size: none;
+  }
+
+  [data-complete-profile-call-step] [data-jai-trial-layout] {
+    grid-template-columns: minmax(0,1fr);
+    gap: 24px;
+  }
+
+  :where([data-complete-profile-call-step]) [data-jai-trial-greeting],
+  :where([data-complete-profile-call-step]) [data-jai-trial-greeting] > div {
+    gap: 12px;
+  }
+
+  :where([data-complete-profile-call-step]) [data-jai-trial-greeting] h1 {
+    font-size: 40px;
+    letter-spacing: -1.2px;
+  }
+
+  :where([data-complete-profile-call-step]) [data-jai-trial-greeting] p {
+    font-size: 16px;
+  }
+
+  :where([data-complete-profile-call-step]) [data-jai-trial-card] {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  :where([data-complete-profile-call-step]) [data-jai-trial-quote] {
+    grid-column: 1;
+    grid-row: 3;
+    inset-block-start: auto;
+    padding: 0;
+    margin: 0;
+    inline-size: 100%;
+  }
+
+  :where([data-complete-profile-call-step]) [data-jai-trial-quote] blockquote {
+    margin-block-end: 36px;
+    font-size: 24px;
+    letter-spacing: -.72px;
+  }
+
+  :where([data-complete-profile-call-step]) [data-jai-trial-quote] figcaption {
+    gap: 11px;
+    font-size: 18px;
+  }
+
+  :where([data-complete-profile-call-step]) [data-jai-trial-portrait-frame] {
+    display: block;
+    block-size: 290px;
+    overflow: hidden;
+    margin: 24px -16px 0;
+  }
+
+  :where([data-complete-profile-call-step]) [data-jai-trial-portrait] {
+    display: block;
+    position: static;
+    inline-size: 402px;
+    block-size: 485px;
+    max-inline-size: none;
+    margin-inline-start: -13px;
+  }
+
+  [data-complete-profile-call-step] [data-jai-trial-card] [data-complete-profile-call-footer] {
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: center;
+    block-size: var(--jai-mobile-footer-height);
+    min-block-size: var(--jai-mobile-footer-height);
+    padding: 16px;
+  }
+
+  /* Make room for the message in the slot viewport instead of covering slots. */
+  [data-complete-profile-call-step] [data-jai-trial-card] :has(> [data-complete-profile-call-status]:not([hidden], :empty)) {
+    display: grid;
+    grid-template-rows: minmax(0, 1fr) auto auto;
+    block-size: calc(var(--jai-mobile-booking-body-min) + var(--jai-mobile-footer-height));
+  }
+
+  [data-complete-profile-call-step] [data-jai-trial-card] [data-complete-profile-call-status] {
+    position: static;
+    pointer-events: auto;
+  }
+
+  :where([data-complete-profile-call-step]) [data-complete-profile-call-booking-actions] .button_main-element {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    block-size: 46px;
+    min-block-size: 46px;
+    padding-block: 0;
+  }
+
+  :where([data-complete-profile-call-step]) [data-complete-profile-call-booking-actions] .button_main-text {
+    font-size: 14px;
+  }
+
+  [data-complete-profile-call-step] [data-jai-trial-card] :is([data-complete-profile-call-booking-actions],[data-complete-profile-call-success-actions]) {
+    flex-direction: column-reverse;
+    align-items: stretch;
+    gap: 8px;
+    width: 100%;
+  }
+
+  [data-complete-profile-call-step] [data-jai-trial-card] [data-paid-calendar-element="loading"] {
+    min-block-size: 22rem;
+  }
+
+  [data-complete-profile-call-step] [data-jai-trial-card] :is([data-paid-calendar-element="loading"], [data-complete-profile-call-calendar]) {
+    min-block-size: var(--jai-mobile-booking-body-min);
+  }
+
+  [data-complete-profile-call-step] [data-jai-trial-card] :has(> [data-complete-profile-call-status]:not([hidden], :empty)) > [data-complete-profile-call-calendar] {
+    min-block-size: 0;
+    overflow: auto;
+  }
+
+  [data-complete-profile-call-step] [data-jai-trial-card] :has(> [data-complete-profile-call-status]:not([hidden], :empty)) [data-paid-calendar-element="shell"] {
+    block-size: 100%;
+    grid-template-rows: auto auto minmax(5rem, 1fr);
+  }
+
+  [data-complete-profile-call-step] [data-jai-trial-native-button],
+  [data-complete-profile-call-step] [data-jai-trial-native-button] .button_main-wrap,
+  [data-complete-profile-call-step] [data-jai-trial-native-button] .button_main-element {
+    inline-size: 100%;
+  }
+
+  :where([data-complete-profile-call-step]) [data-jai-trial-card] [data-complete-profile-call-unavailable],
+  :where([data-complete-profile-call-step]) [data-jai-trial-card] [data-complete-profile-call-success] .call-details_layout {
+    padding: 1.5rem 1rem;
+  }
+
+  :where([data-complete-profile-call-step]) [data-jai-trial-card] [data-complete-profile-call-success] .call-details_layout {
+    gap: 1.5rem;
+  }
+
+  :where([data-complete-profile-call-step]) [data-jai-trial-greeting]:has(> [data-complete-profile-call-heading-done]:not([hidden])) {
+    min-block-size: var(--jai-booking-heading,0px);
+    align-content: start;
+  }
+
+  :where([data-complete-profile-call-step]) [data-jai-trial-card] [data-complete-profile-call-success] .call-details_table-item.is-first {
+    grid-template-columns: minmax(0,1fr) 6.25rem;
+  }
+
+  :where([data-complete-profile-call-step]) [data-jai-trial-card] [data-complete-profile-call-success] .call-details_table-label.is-date-time {
+    display: none;
+  }
+
+  :where([data-complete-profile-call-step]) [data-jai-trial-card] [data-complete-profile-call-success] .call-details_table-item.is-date-time-mobile {
+    display: block;
+    padding: .75rem;
+  }
+}
+
+[data-complete-profile-call-step="success"] [data-jai-trial-card] [data-complete-profile-call-footer] {
+  block-size: auto;
+  min-block-size: 0;
+}
+
+[data-complete-profile-call-step] [data-paid-calendar-state="empty"] > [data-paid-calendar-element="status"] {
+  margin: 0;
+  padding: 1rem 2rem;
+}
+
+@media (min-width: 62rem) {
+  :where(body:has([data-complete-profile-call-step])) [data-jai-trial-first-step] .complete-profile_layout {
+    align-items: center;
+    justify-content: space-between;
+    min-block-size: 0;
+  }
+
+  :where(body:has([data-complete-profile-call-step])) [data-jai-trial-first-step] .complete-profile_heading-wrapper {
+    flex: 0 1 31.25rem;
+    inline-size: 100%;
+    min-inline-size: 0;
+    max-inline-size: 31.25rem;
+  }
+
+  :where(body:has([data-complete-profile-call-step])) [data-jai-trial-first-step] .complete-profile_form-block {
+    flex: 0 1 37.5rem;
+    inline-size: 100%;
+    min-inline-size: 0;
+    max-inline-size: 37.5rem;
+  }
+}

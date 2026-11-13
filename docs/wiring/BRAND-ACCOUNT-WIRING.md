@@ -97,6 +97,14 @@ records `EMAIL_IN_USE`, `SESSION_EXPIRED`, `NETWORK_ERROR`, or
 `MEMBERSTACK_<CODE>` for any other code. Test fixtures must use the same
 `{ code, message }` shape.
 
+After a successful Build Account save and success message, the form dispatches
+the bubbling, cancelable `starters:brand-profile-completed` event with
+`detail.operation` set to `brand/account/build` and `detail.memberId` set to
+the completed member's ID. The
+[Complete Profile call step](COMPLETE-PROFILE-CALL-STEP-WIRING.md) can cancel
+the event to open in place. Keep `redirect="/brand-dashboard"` as the fallback
+when the event goes unclaimed, including on `/complete-profile-trial`.
+
 The upload link stays outside any Memberstack profile-form contract and is
 bound by `complete-profile-photo.js` to:
 
@@ -145,9 +153,10 @@ the login-email input outside this form.
 
 ## Unpublished trial agreement review
 
-The trial agreement is opt-in on the duplicate `/complete-profile-trial` page.
+The trial agreement is opt-in through the form attribute. Both
+`/complete-profile` and `/complete-profile-trial` currently carry the opt-in.
 `brand-account-controller.js` remains the only Complete Profile submit and
-Memberstack write owner. The original `/complete-profile` has no opt-in and
+Memberstack write owner. A form without the opt-in
 keeps its existing behavior.
 
 ```html
@@ -266,13 +275,12 @@ controller tag. Never leave a second, un-versioned
 boots first makes the freshly requested copy a no-op and the release only looks
 published.
 
-On `/complete-profile`, after the sitewide Memberstack and route-guard installs,
-keep the photo and redirect scripts after that sitewide controller:
-
-```html
-<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/complete-profile-photo.js"></script>
-<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/complete-profile-redirect.js"></script>
-```
+On `/complete-profile`, the page's Brand Account Controller HTML Embed owns
+controller delivery after the sitewide Memberstack and route-guard installs.
+Omit the shared controller tag for that page and preserve its photo and
+page-load redirect installs. See the
+[Complete Profile call step wiring guide](COMPLETE-PROFILE-CALL-STEP-WIRING.md#pinned-page-code)
+for the exact pin and load order.
 
 The endpoint #1513 backend replay prerequisite below has passed. Keep the
 frontend install unpublished until the remaining Build inbox and token-
@@ -323,7 +331,7 @@ below, including the version-pinned fallback path.
 
 Update this query value for every Brand account controller release, and in the
 same change bump `CONTROLLER_VERSION` in `brand-account-controller.js` to the
-next build identifier (`brand-account-controller-v5` at this release, following
+next build identifier (`brand-account-controller-v6` at this release, following
 the repository's `<controller>-vN` receipt convention rather than the semver
 tag), so the diagnostic receipt and the `brand_account_email_decision` event
 identify which build actually served the member. Then publish Webflow and
@@ -338,7 +346,7 @@ new code. Before the bounded production test, verify the served content:
 
 ```bash
 curl -s "https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/brand-account-controller.js?v=RELEASE" \
-  | grep -c "brand-account-controller-v5"
+  | grep -c "brand-account-controller-v6"
 ```
 
 The released `CONTROLLER_VERSION` must be present in that output. If the served
@@ -485,8 +493,8 @@ projection.
   loader ([`docs/wiring/COMPLETE-PROFILE-LOADER-WIRING.md`](COMPLETE-PROFILE-LOADER-WIRING.md))
   watches that attribute and depends on this.
 - The latch is scoped to the path that called `location.assign()`. A successful
-  submit with no redirect URL resolved, and every error, release the form as
-  before. An `assign()` that throws also releases it.
+  submit with no redirect URL or a handoff to the call step releases the form
+  and loader. Errors and an `assign()` that throws also release it.
 - Accepted consequence: if the navigation is cancelled rather than completed
   (Stop pressed, a declined `beforeunload` prompt, a destination that does not
   navigate), the form stays locked and the submit button stays disabled until

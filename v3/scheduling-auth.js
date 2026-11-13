@@ -1,3 +1,4 @@
+/** @release v1.59.741 */
 ;(function () {
   'use strict'
 
@@ -6,6 +7,7 @@
   const PRODUCTION_PATHS = new Set([
     '/starter-dashboard',
     '/brand-dashboard',
+    '/complete-profile',
     '/messages',
     '/starter-edit-profile',
   ])

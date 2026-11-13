@@ -19,6 +19,15 @@ const diagnosticSource = fs.readFileSync(
   'utf8',
 )
 
+const COMPLETION_EVENT = 'starters:brand-profile-completed'
+
+class FakeCustomEvent extends Event {
+  constructor(type, options) {
+    super(type, options)
+    this.detail = options.detail
+  }
+}
+
 function flush() {
   return new Promise((resolve) => setImmediate(resolve))
 }
@@ -135,6 +144,12 @@ function makeForm(kind = 'build', values = {}) {
     },
     addEventListener(type, listener, capture) {
       listeners.set(type, { listener, capture })
+    },
+    dispatchEvent(event) {
+      // A direct call lets the fixture exercise both cancellation and a failing dispatch.
+      const record = listeners.get(event.type)
+      if (record) record.listener(event)
+      return !event.defaultPrevented
     },
     checkValidity() {
       return values.valid !== false
@@ -395,6 +410,7 @@ function loadController(options = {}) {
   const context = vm.createContext({
     window,
     document,
+    CustomEvent: FakeCustomEvent,
     Promise,
     Error,
     Number,
@@ -908,7 +924,7 @@ test('Build Account success records a privacy-safe console receipt without page 
 
   const receipt = buildForm.__startersAccountDiagnostic
   assert.equal(receipt.workflow, 'brand_account_build')
-  assert.equal(receipt.controller_version, 'brand-account-controller-v5')
+  assert.equal(receipt.controller_version, 'brand-account-controller-v6')
   assert.equal(receipt.result, 'success')
   assert.equal(receipt.request_started, true)
   assert.equal(Object.hasOwn(receipt, 'email'), false)
@@ -921,7 +937,7 @@ test('Build Account success records a privacy-safe console receipt without page 
     [{
       name: 'brand_account_email_decision',
       payload: {
-        controller_version: 'brand-account-controller-v5',
+        controller_version: 'brand-account-controller-v6',
         email_change_required: false,
         security_email_attempted: false,
       },
@@ -950,7 +966,7 @@ test('Build Account changed-email success keeps the receipt free of identity fie
   )
   const receipt = buildForm.__startersAccountDiagnostic
   assert.equal(receipt.workflow, 'brand_account_build')
-  assert.equal(receipt.controller_version, 'brand-account-controller-v5')
+  assert.equal(receipt.controller_version, 'brand-account-controller-v6')
   assert.equal(receipt.result, 'success')
   assert.equal(receipt.request_started, true)
   assert.equal(Object.hasOwn(receipt, 'email'), false)
@@ -1019,11 +1035,11 @@ test('a helper loaded after diagnostics timeout does not fabricate a receipt', a
 
 // --- The redirect busy latch --------------------------------------------------
 //
-// Rationale lives at the `redirecting` flag in bindForm(). These three tests pin
-// its boundary: latched on the path that called assign, released on the two that
-// leave the member here. v3/complete-profile-loader.js watches this attribute.
+// Only a successful Build Account submit offers the cancelable hand-off. If
+// nobody claims it, keep the original redirect and busy state through unload.
+// v3/complete-profile-loader.js watches aria-busy.
 
-test('a successful submit that initiated a redirect stays busy until the page unloads', async () => {
+test('a successful submit with no completion listener redirects and stays busy until unload', async () => {
   const environment = loadController({ currentEmail: 'old@example.com' })
 
   environment.buildForm.submitEvent()
@@ -1037,6 +1053,55 @@ test('a successful submit that initiated a redirect stays busy until the page un
     environment.buildForm.loading.getAttribute('data-opp-loading'),
     'true',
   )
+})
+
+test('a completion listener can stay on the page and release the form', async () => {
+  const environment = loadController()
+  const { buildForm, member, storage } = environment
+  const completions = []
+  buildForm.addEventListener(COMPLETION_EVENT, (event) => {
+    completions.push({
+      bubbles: event.bubbles,
+      cancelable: event.cancelable,
+      detail: plain(event.detail),
+      marker: storage.get('thestarters:v3-brand-profile-completed'),
+      message: buildForm.wrapper.done.style.display,
+    })
+    event.preventDefault()
+  })
+
+  buildForm.submitEvent()
+  await settle()
+
+  assert.deepEqual(completions, [{
+    bubbles: true,
+    cancelable: true,
+    detail: { operation: 'brand/account/build', memberId: member.id },
+    marker: '1',
+    message: 'block',
+  }])
+  assert.deepEqual(environment.redirects, [])
+  assert.equal(buildForm.getAttribute('aria-busy'), 'false')
+  assert.equal(buildForm.submit.disabled, false)
+  assert.equal(buildForm.loading.getAttribute('data-opp-loading'), 'false')
+})
+
+test('a completion listener failure preserves the successful submit redirect', async () => {
+  const environment = loadController()
+  const { buildForm } = environment
+  let calls = 0
+  buildForm.addEventListener(COMPLETION_EVENT, () => {
+    calls += 1
+    throw new Error('call step unavailable')
+  })
+
+  buildForm.submitEvent()
+  await settle()
+
+  assert.equal(calls, 1)
+  assert.deepEqual(environment.redirects, ['/brand-dashboard'])
+  assert.equal(buildForm.getAttribute('aria-busy'), 'true')
+  assert.equal(buildForm.wrapper.done.style.display, 'block')
 })
 
 test('a successful submit with no redirect URL still releases the form', async () => {
@@ -1407,7 +1472,7 @@ test('Build Account sends one security email only after changing login email', a
     [{
       name: 'brand_account_email_decision',
       payload: {
-        controller_version: 'brand-account-controller-v5',
+        controller_version: 'brand-account-controller-v6',
         email_change_required: true,
         security_email_attempted: true,
       },
@@ -1497,7 +1562,7 @@ test('Build Account with an unreadable login email writes no auth email and send
     [{
       name: 'brand_account_email_decision',
       payload: {
-        controller_version: 'brand-account-controller-v5',
+        controller_version: 'brand-account-controller-v6',
         email_change_required: false,
         security_email_attempted: false,
       },
@@ -1577,7 +1642,7 @@ test('changed-email reset failure keeps durable completion and provides recovery
     [{
       name: 'brand_account_email_decision',
       payload: {
-        controller_version: 'brand-account-controller-v5',
+        controller_version: 'brand-account-controller-v6',
         email_change_required: true,
         security_email_attempted: true,
       },
@@ -1845,8 +1910,10 @@ test('Account Security interception remains off until explicitly configured', ()
   assert.equal(environment.securityForm.listeners.has('submit'), false)
 })
 
-test('Brand Account Security owns the submit and skips an unchanged email', async () => {
+test('Brand Account Security owns the submit, skips an unchanged email, and emits no profile completion', async () => {
   const securityForm = makeForm('security', { email: 'ada@example.com' })
+  let completions = 0
+  securityForm.addEventListener(COMPLETION_EVENT, () => { completions += 1 })
   const environment = loadController({
     buildForm: null,
     securityForm,
@@ -1865,6 +1932,7 @@ test('Brand Account Security owns the submit and skips an unchanged email', asyn
     ['getCurrentMember'],
   )
   assert.equal(securityForm.wrapper.done.style.display, 'block')
+  assert.equal(completions, 0)
 })
 
 test('Brand Account Security changes email without sending a password email', async () => {
