@@ -1690,7 +1690,9 @@ route's profile identity while preserving the member-scoped draft's captured
 - `/build-profile/consult`: `type: consult`, `type_id: ca6ff4250b7d01b49e83433432af3686`
 - `/build-profile/full-profile`: `type: full`, `type_id: a52dcf2c568fa40bf96cd67e4f8c6186`
 
-Routes outside this pair do not create or rewrite a Build Profile draft.
+The staff-only drafts `/build-profile/consult-test` and
+`/build-profile/full-profile-test` use the consult and full identities
+respectively. Routes outside these four do not create or rewrite a Build Profile draft.
 
 ```js
 waitForMember(function (member) {
