@@ -41,6 +41,15 @@
       type: 'full',
       typeId: 'a52dcf2c568fa40bf96cd67e4f8c6186',
     }),
+    // Staff-only Build Profile drafts: same profile types as the live pages.
+    '/build-profile/consult-test': Object.freeze({
+      type: 'consult',
+      typeId: 'ca6ff4250b7d01b49e83433432af3686',
+    }),
+    '/build-profile/full-profile-test': Object.freeze({
+      type: 'full',
+      typeId: 'a52dcf2c568fa40bf96cd67e4f8c6186',
+    }),
   })
 
   if (!StorageConstructor || !localStorage) return

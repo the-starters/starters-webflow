@@ -117,8 +117,8 @@
   },
   "candidateAssets": {
     "v3/profile-form/shared-foundation.js": {
-      "candidateCharacters": 25578,
-      "candidateSha256": "9a7d541a134a9aa30a14cab62c3c3d44af0a692b0098295130e7f13025b80828",
+      "candidateCharacters": 25642,
+      "candidateSha256": "731310b4e90c1c785c3e1edf09ceea36434924c6853066fd5291c18b5c023134",
       "transformation": {
         "kind": "whitespace_plus_idempotency_guard_plus_behavior_change",
         "liveCaptureAsset": "v3/profile-form/shared-foundation-published.capture.txt",
@@ -170,8 +170,8 @@
       }
     },
     "v3/build-profile/submit-writer.js": {
-      "candidateCharacters": 24795,
-      "candidateSha256": "680be822f7a2f55420fc46281d8fe61f7842101205cda968543b491a4f637340",
+      "candidateCharacters": 24870,
+      "candidateSha256": "a85e0c36eb64176e4cea3bf3d8b9fbff9a5c4c554dff33a6e62a277a7dfc684c",
       "transformation": {
         "kind": "whitespace_plus_idempotency_guard_plus_behavior_change",
         "guardKey": "buildProfileSubmitWriter",

@@ -375,7 +375,7 @@
           "reviewer-3": normalizeReviewer(parseJson(formData["reviewer-3"])),
         };
 
-        const isConsultProfile = String(window.location?.pathname || "").replace(/\/+$/, "") === "/build-profile/consult";
+        const isConsultProfile = ["/build-profile/consult", "/build-profile/consult-test"].includes(String(window.location?.pathname || "").replace(/\/+$/, "")); // -test = staff-only Consult draft
 
         const fullProfile = !isConsultProfile;
         const HOURLY_PRICE = {

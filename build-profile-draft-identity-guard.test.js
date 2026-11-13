@@ -558,3 +558,16 @@ test('waitForMember completes anonymous sessions with a null member and no draft
   assert.equal(seenMember, null)
   assert.equal(restored, null)
 })
+
+test('treats the staff-only -test Build Profile drafts as the same profile types', async () => {
+  for (const [pathname, type, typeId] of [
+    ['/build-profile/consult-test', 'consult', 'ca6ff4250b7d01b49e83433432af3686'],
+    ['/build-profile/full-profile-test', 'full', 'a52dcf2c568fa40bf96cd67e4f8c6186'],
+  ]) {
+    const environment = createEnvironment({ memberId: 'mem_staff_test', pathname })
+    await environment.guard.whenReady()
+    const draft = JSON.parse(environment.localStorage.getItem('build_profile'))
+    assert.equal(draft.type, type)
+    assert.equal(draft.type_id, typeId)
+  }
+})

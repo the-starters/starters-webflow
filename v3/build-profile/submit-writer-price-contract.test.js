@@ -128,7 +128,7 @@ function load(overrides = {}, pathname = '/build-profile/full', {
     window,
     document: { addEventListener: (name, callback) => { if (name === 'DOMContentLoaded') domReady.push(callback) } },
     MEMBER,
-    activeProfile: { type: pathname.endsWith('/consult') ? 'consult' : 'full', type_id: 1 },
+    activeProfile: { type: /\/consult(-test)?$/.test(pathname) ? 'consult' : 'full', type_id: 1 },
     waitForMember: (callback) => callback(MEMBER),
     qs,
     FormData,
@@ -312,6 +312,17 @@ test('disabled and non-owned blank rates preserve compatibility zero without acc
   assert.equal(consult.requests.length, 1)
   assert.equal(consult.requests[0].body.hourly_rate, 0)
   assert.equal(consult.requests[0].body.retainer_rate, 0)
+})
+
+test('the staff-only Consult draft page saves with Consult rules, and its Full twin with Full rules', async () => {
+  const consultDraft = load({ rate: '' }, '/build-profile/consult-test')
+  await consultDraft.submit.click()
+  assert.equal(consultDraft.requests.length, 1)
+  assert.equal(consultDraft.requests[0].body.hourly_rate, 0)
+
+  const fullDraft = load({ rate: '' }, '/build-profile/full-profile-test')
+  await fullDraft.submit.click()
+  assert.equal(fullDraft.requests.length, 0)
 })
 
 test('Build Profile keeps provider call fields out of the profile payload and saves private pending intent', async () => {

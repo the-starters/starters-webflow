@@ -7,7 +7,8 @@
   if (window.StartersBuildProfileCanonicalHydrator || window.__tsCanonicalProfileHydratorLoading) {
     return
   }
-  var buildProfilePaths = ['/build-profile/full-profile', '/build-profile/consult']
+  // The -test paths are the staff-only Build Profile drafts (same wizard, same contract).
+  var buildProfilePaths = ['/build-profile/full-profile', '/build-profile/consult', '/build-profile/full-profile-test', '/build-profile/consult-test']
   var isBuildProfile = buildProfilePaths.includes(String(window.location && window.location.pathname || ''))
   var originalWaitForProfile = window.waitProfileData
   var waitingForCanonical = []
@@ -52,7 +53,7 @@
 
       const MAX_SIZE = 4 * 1024 * 1024; // 4MB
       const SOURCE_MUTATION_ID_PATTERN = /^[A-Za-z0-9_-]{20,128}$/;
-      const BUILD_PROFILE_PATHS = ['/build-profile/full-profile', '/build-profile/consult'];
+      const BUILD_PROFILE_PATHS = ['/build-profile/full-profile', '/build-profile/consult', '/build-profile/full-profile-test', '/build-profile/consult-test'];
       const isBuildProfile = BUILD_PROFILE_PATHS.includes(String(window.location?.pathname || ''));
       const SYNC_RETRY_BUDGET_MS = 180000;
       const MAX_SYNC_RETRIES = 12;

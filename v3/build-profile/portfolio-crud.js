@@ -7,7 +7,7 @@
   // Manages portfolio CRUD, media uploads, previews, and edit/remove modals.
   document.addEventListener('DOMContentLoaded', async function () {
     const pathname = String(window.location && window.location.pathname || '').replace(/\/+$/, '') || '/';
-    if (!['/build-profile/consult', '/build-profile/full-profile'].includes(pathname)) return;
+    if (!['/build-profile/consult', '/build-profile/full-profile', '/build-profile/consult-test', '/build-profile/full-profile-test'].includes(pathname)) return;
 
     waitForMember(async () => {
       if (!MEMBER.id) return;

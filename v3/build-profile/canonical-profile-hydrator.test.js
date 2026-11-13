@@ -411,54 +411,56 @@ test('select hydration falls back from canonical display text to the authored op
   assert.deepEqual(events, ['input', 'change'])
 })
 
-test('hydrates once after stable member and canonical identity readback', async () => {
-  const canonical = {
-    memberstack_id: 'mem_owned',
-    Profile_Type: 'Full',
-    Profile_Type_ID: 'type-id',
-    First_Name: 'Owned',
-    Email: 'owned@example.test',
-  }
-  const calls = []
-  const window = {
-    location: { pathname: '/build-profile/full-profile' },
-    MEMBER: { id: 'mem_owned' },
-    activeProfile: { type: 'full', type_id: 'type-id', last_update: 1, data: { step_1: {} } },
-    waitForMember(callback) { callback() },
-    fetch: async (url, options) => {
-      calls.push({ url, options })
-      return { ok: true, status: 200, json: async () => canonical }
-    },
-    setInterval,
-    clearInterval,
-  }
-  const document = {
-    readyState: 'complete',
-    querySelector() { return null },
-    querySelectorAll() { return [] },
-  }
-  const context = {
-    window,
-    document,
-    console: { info() {}, warn() {} },
-    Event: class Event {},
-    CSS: { escape: String },
-    Set,
-    Date,
-    Promise,
-    JSON,
-    Array,
-  }
-  vm.runInNewContext(source, context)
-  await new Promise((resolve) => setTimeout(resolve, 100))
+for (const pathname of ['/build-profile/full-profile', '/build-profile/consult-test', '/build-profile/full-profile-test']) {
+  test(`hydrates once after stable member and canonical identity readback on ${pathname}`, async () => {
+    const canonical = {
+      memberstack_id: 'mem_owned',
+      Profile_Type: 'Full',
+      Profile_Type_ID: 'type-id',
+      First_Name: 'Owned',
+      Email: 'owned@example.test',
+    }
+    const calls = []
+    const window = {
+      location: { pathname },
+      MEMBER: { id: 'mem_owned' },
+      activeProfile: { type: 'full', type_id: 'type-id', last_update: 1, data: { step_1: {} } },
+      waitForMember(callback) { callback() },
+      fetch: async (url, options) => {
+        calls.push({ url, options })
+        return { ok: true, status: 200, json: async () => canonical }
+      },
+      setInterval,
+      clearInterval,
+    }
+    const document = {
+      readyState: 'complete',
+      querySelector() { return null },
+      querySelectorAll() { return [] },
+    }
+    const context = {
+      window,
+      document,
+      console: { info() {}, warn() {} },
+      Event: class Event {},
+      CSS: { escape: String },
+      Set,
+      Date,
+      Promise,
+      JSON,
+      Array,
+    }
+    vm.runInNewContext(source, context)
+    await new Promise((resolve) => setTimeout(resolve, 100))
 
-  assert.equal(calls.length, 1)
-  assert.equal(JSON.parse(calls[0].options.body).member_id, 'mem_owned')
-  assert.equal(window.activeProfile.data.step_1['first-name'], 'Owned')
-  assert.equal(window.__tsBuildProfileCanonicalHydrated, true)
-  await window.StartersBuildProfileCanonicalHydrator.hydrate()
-  assert.equal(calls.length, 1)
-})
+    assert.equal(calls.length, 1)
+    assert.equal(JSON.parse(calls[0].options.body).member_id, 'mem_owned')
+    assert.equal(window.activeProfile.data.step_1['first-name'], 'Owned')
+    assert.equal(window.__tsBuildProfileCanonicalHydrated, true)
+    await window.StartersBuildProfileCanonicalHydrator.hydrate()
+    assert.equal(calls.length, 1)
+  })
+}
 
 test('refuses a canonical row for a different stable member id', async () => {
   const apiWindow = {
