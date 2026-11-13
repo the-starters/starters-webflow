@@ -34,6 +34,7 @@ function boot({
   ctaHref = '/starter-onboarding',
   hostname = 'the-starters-3-0.webflow.io',
   debug = undefined,
+  pathname = '/build-profile/consult',
 } = {}) {
   const form = new Element({ 'build-profile-form': '' })
   const trigger = new Element({ 'form-submit': '' })
@@ -83,7 +84,7 @@ function boot({
   // navigation regression fails a test instead of silently passing one.
   const location = {
     hostname,
-    pathname: '/build-profile/consult',
+    pathname,
     replace: (url) => redirects.push(url),
     assign: (url) => redirects.push(url),
     set href(url) { redirects.push(url) },
@@ -498,4 +499,15 @@ test('observer leaves the authored click transparent and does not inspect fields
   }))
   await tick()
   assert.equal(page.window.StartersWorkflowDiagnostics.latest('build_profile_submit').result, 'started')
+})
+
+test('the staff-only -test Build Profile drafts record the same terminal receipt', async () => {
+  for (const pathname of ['/build-profile/consult-test', '/build-profile/full-profile-test']) {
+    const page = boot({ pathname })
+    page.trigger.dispatch('click')
+    await tick()
+    page.success.style.display = 'block'
+    page.observers[0].callback()
+    assert.equal(page.window.StartersWorkflowDiagnostics.latest('build_profile_submit').result, 'success', pathname)
+  }
 })

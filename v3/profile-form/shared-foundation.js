@@ -6,7 +6,7 @@
   // Do not change field values, business limits, visibility, or final-save rules.
   (function bindLegacyBuildNumericValidity() {
     const route = String(window.location?.pathname || '').replace(/\/+$/, '');
-    if (route !== '/build-profile/consult' && route !== '/build-profile/full-profile') return;
+    if (!['/build-profile/consult', '/build-profile/full-profile', '/build-profile/consult-test', '/build-profile/full-profile-test'].includes(route)) return;
     if (window.__tsLegacyBuildNumericValidity) return;
     window.__tsLegacyBuildNumericValidity = true;
     document.addEventListener('click', function (event) {

@@ -28,7 +28,7 @@ function element(properties = {}) {
   };
 }
 
-function createFixture({ dropdown = false, staleAfterCreate = false } = {}) {
+function createFixture({ dropdown = false, staleAfterCreate = false, pathname = '/build-profile/full-profile' } = {}) {
   const template = element();
   const portfolios = [];
   const cards = [];
@@ -68,7 +68,7 @@ function createFixture({ dropdown = false, staleAfterCreate = false } = {}) {
   const document = element({
     querySelector(selector) { return nodes.get(selector) || null; },
   });
-  const window = element({ location: { pathname: '/build-profile/full-profile' } });
+  const window = element({ location: { pathname } });
   const errors = [];
   let boot;
   let created = 0;
@@ -240,4 +240,15 @@ test('Build Profile does not scroll before the new highlight box appears', async
   assert.equal(fixture.created, 1);
   assert.equal(fixture.cards.length, 0);
   assert.deepEqual(fixture.scrollCalls, []);
+});
+
+test('the staff-only -test Build Profile drafts save highlights like the live pages', async () => {
+  for (const pathname of ['/build-profile/consult-test', '/build-profile/full-profile-test']) {
+    const fixture = createFixture({ pathname });
+    await fixture.boot();
+    await fixture.selectImage();
+    await fixture.save();
+    assert.equal(fixture.created, 1, pathname);
+    assert.deepEqual(fixture.errors, []);
+  }
 });

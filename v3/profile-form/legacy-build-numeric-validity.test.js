@@ -53,7 +53,7 @@ function mount(route = '/build-profile/consult') {
   return { add, click, step, button, target, context, source, listeners }
 }
 
-for (const route of ['/build-profile/consult', '/build-profile/full-profile/']) {
+for (const route of ['/build-profile/consult', '/build-profile/full-profile/', '/build-profile/consult-test', '/build-profile/full-profile-test/']) {
   for (const [value, valid] of [['', false], ['-1', false], ['0', false], ['1001', false], ['1.5', false], ['1', true], ['1000', true]]) {
     test(`${route}: native validity ${value || 'empty'} gates legacy Continue before draft/engine`, () => {
       const page = mount(route)

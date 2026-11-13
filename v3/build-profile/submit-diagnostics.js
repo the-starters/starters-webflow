@@ -47,7 +47,13 @@
     'thestarters.com',
     'www.thestarters.com',
   ]
-  var ALLOWED_PATHS = ['/build-profile/consult', '/build-profile/full-profile']
+  // The -test paths are the staff-only Build Profile drafts (same wizard, same contract).
+  var ALLOWED_PATHS = [
+    '/build-profile/consult',
+    '/build-profile/full-profile',
+    '/build-profile/consult-test',
+    '/build-profile/full-profile-test',
+  ]
   var CONTROLLER_VERSION = 'build-profile-submit-outcome-v3'
   var RELEASE = 'v1.59.250'
   var HELPER_TIMEOUT_MS = 2000

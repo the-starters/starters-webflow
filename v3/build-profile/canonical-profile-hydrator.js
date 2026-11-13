@@ -18,7 +18,13 @@
 ;(function initCanonicalProfileHydrator(globalObject) {
   'use strict'
 
-  var BUILD_PROFILE_PATHS = ['/build-profile/full-profile', '/build-profile/consult']
+  // The -test paths are the staff-only Build Profile drafts (same wizard, same contract).
+  var BUILD_PROFILE_PATHS = [
+    '/build-profile/full-profile',
+    '/build-profile/consult',
+    '/build-profile/full-profile-test',
+    '/build-profile/consult-test',
+  ]
   var CANONICAL_PROFILE_URL =
     'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/starter/get'
   var PROFILE_READY_TIMEOUT_MS = 10000

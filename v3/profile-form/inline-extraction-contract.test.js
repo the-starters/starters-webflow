@@ -76,7 +76,7 @@ const EXPECTED_LIVE_CAPTURES = Object.freeze({
 
 const EXPECTED_CANDIDATE_ASSETS = Object.freeze({
   'v3/profile-form/shared-foundation.js': Object.freeze({
-    characters: 25578, sha256: '9a7d541a134a9aa30a14cab62c3c3d44af0a692b0098295130e7f13025b80828',
+    characters: 25642, sha256: '731310b4e90c1c785c3e1edf09ceea36434924c6853066fd5291c18b5c023134',
     liveCaptureAsset: 'v3/profile-form/shared-foundation-published.capture.txt',
     restoreTrailingWhitespace: Object.freeze({ 3: '  ', 81: ' ', 239: '      ' }), terminalNewlinesRemoved: 0,
   }),
@@ -104,7 +104,7 @@ const EXPECTED_CANDIDATE_ASSETS = Object.freeze({
     restoreTrailingWhitespace: Object.freeze({}), terminalNewlinesRemoved: 1,
   }),
   'v3/build-profile/submit-writer.js': Object.freeze({
-    characters: 24795, sha256: '680be822f7a2f55420fc46281d8fe61f7842101205cda968543b491a4f637340',
+    characters: 24870, sha256: 'a85e0c36eb64176e4cea3bf3d8b9fbff9a5c4c554dff33a6e62a277a7dfc684c',
     guardKey: 'buildProfileSubmitWriter',
     liveCaptureAsset: 'v3/profile-form/build-submit-writer-published.capture.txt',
     restoreTrailingWhitespace: Object.freeze({ 535: '          ' }), terminalNewlinesRemoved: 0,

@@ -424,7 +424,7 @@ async function run() {
 
   const busyResponse = () => new Response(JSON.stringify({ message: 'PROFILE_IMAGE_CAS_RETRY_EXHAUSTED' }), { status: 500 });
   const successResponse = () => new Response(JSON.stringify({ starter_image: 'https://example.invalid/retried.jpg', starter_image_small: 'https://example.invalid/retried-small.jpg' }), { status: 200 });
-  for (const pathname of ['/starter-edit-profile', '/build-profile/full-profile', '/build-profile/consult']) {
+  for (const pathname of ['/starter-edit-profile', '/build-profile/full-profile', '/build-profile/consult', '/build-profile/consult-test']) {
     let now = 0;
     const retried = createHarness({ pathname, clock: { now: () => now }, retryTimer(callback, delay) { now += delay; callback(); }, uploadResponder: index => index < 14 ? busyResponse() : successResponse() });
     retried.input.files = [firstFile];
@@ -471,7 +471,7 @@ async function run() {
     assert.equal(cancelled.uploadError.style.display, 'none');
   }
 
-  for (const pathname of ['/build-profile/full-profile', '/build-profile/consult']) {
+  for (const pathname of ['/build-profile/full-profile', '/build-profile/consult', '/build-profile/full-profile-test', '/build-profile/consult-test']) {
     for (const replace of [false, true]) {
       const timers = [];
       const cancelled = createHarness({

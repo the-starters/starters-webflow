@@ -25,7 +25,9 @@ The files below are source-controlled controllers extracted from the earlier inl
 | 14 | `grouped-selects.js` | `e80bb01f28a43ebcb5b28e8ea733bac273985ddfa3235179cdfc6a9a5168ae84` | Grouped multi-select options |
 
 `portfolio-crud.js` and `portfolio-list.js` own only the exact
-`/build-profile/consult` and `/build-profile/full-profile` routes. They accept an
+`/build-profile/consult` and `/build-profile/full-profile` routes and their
+staff-only drafts `/build-profile/consult-test` and
+`/build-profile/full-profile-test`. They accept an
 optional trailing slash and fail closed on every other path before member
 resolution, selector reads, controller event binding, network reads, uploads, or
 writes. The scripts still register their initial `DOMContentLoaded` listener.
@@ -107,7 +109,8 @@ mouse click or an `Enter`/`Space` keypress to the hidden file input. A native
 never be opened twice by one activation.
 
 `profile-photo.js` creates a secure opaque `source_mutation_id` for each file
-selection or drop. On Full Profile and Consult, selection prepares the upload but
+selection or drop. On Full Profile and Consult (including the staff-only
+`-test` drafts), selection prepares the upload but
 does not send it. The submit writer first saves the authored profile payload and
 then commits the pending photo with only the mutation ID and image in the upload
 body. Starter Edit Profile keeps its immediate upload behavior.
