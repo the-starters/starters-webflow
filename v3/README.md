@@ -450,9 +450,10 @@ the calendar on the same page. The form's `redirect="/brand-dashboard"` stays
 as the fallback. The stylesheet `complete-profile-call-step.css` owns the trial
 form and call step layout.
 
-The staging install is on `/complete-profile-trial`. Pin the stylesheet and
-scripts to the same full commit SHA for review, then use the release tag. See
-the [Complete Profile call step wiring guide](../docs/wiring/COMPLETE-PROFILE-CALL-STEP-WIRING.md)
+The production install is on `/complete-profile`. Pin the stylesheet and
+scripts to the same release tag. Use `/complete-profile-trial` on staging for
+review builds pinned to a full commit SHA. See the
+[Complete Profile call step wiring guide](../docs/wiring/COMPLETE-PROFILE-CALL-STEP-WIRING.md)
 for Designer attributes, script order, and staging checks.
 
 ## Complete-profile back button

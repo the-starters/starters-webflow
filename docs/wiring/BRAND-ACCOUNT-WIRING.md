@@ -153,9 +153,10 @@ the login-email input outside this form.
 
 ## Unpublished trial agreement review
 
-The trial agreement is opt-in on the duplicate `/complete-profile-trial` page.
+The trial agreement is opt-in through the form attribute. Both
+`/complete-profile` and `/complete-profile-trial` currently carry the opt-in.
 `brand-account-controller.js` remains the only Complete Profile submit and
-Memberstack write owner. The original `/complete-profile` has no opt-in and
+Memberstack write owner. A form without the opt-in
 keeps its existing behavior.
 
 ```html
@@ -274,13 +275,12 @@ controller tag. Never leave a second, un-versioned
 boots first makes the freshly requested copy a no-op and the release only looks
 published.
 
-On `/complete-profile`, after the sitewide Memberstack and route-guard installs,
-keep the photo and redirect scripts after that sitewide controller:
-
-```html
-<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/complete-profile-photo.js"></script>
-<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/complete-profile-redirect.js"></script>
-```
+On `/complete-profile`, the page's Brand Account Controller HTML Embed owns
+controller delivery after the sitewide Memberstack and route-guard installs.
+Omit the shared controller tag for that page and preserve its photo and
+page-load redirect installs. See the
+[Complete Profile call step wiring guide](COMPLETE-PROFILE-CALL-STEP-WIRING.md#pinned-page-code)
+for the exact pin and load order.
 
 The endpoint #1513 backend replay prerequisite below has passed. Keep the
 frontend install unpublished until the remaining Build inbox and token-
@@ -331,7 +331,7 @@ below, including the version-pinned fallback path.
 
 Update this query value for every Brand account controller release, and in the
 same change bump `CONTROLLER_VERSION` in `brand-account-controller.js` to the
-next build identifier (`brand-account-controller-v5` at this release, following
+next build identifier (`brand-account-controller-v6` at this release, following
 the repository's `<controller>-vN` receipt convention rather than the semver
 tag), so the diagnostic receipt and the `brand_account_email_decision` event
 identify which build actually served the member. Then publish Webflow and
@@ -346,7 +346,7 @@ new code. Before the bounded production test, verify the served content:
 
 ```bash
 curl -s "https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/brand-account-controller.js?v=RELEASE" \
-  | grep -c "brand-account-controller-v5"
+  | grep -c "brand-account-controller-v6"
 ```
 
 The released `CONTROLLER_VERSION` must be present in that output. If the served

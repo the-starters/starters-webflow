@@ -924,7 +924,7 @@ test('Build Account success records a privacy-safe console receipt without page 
 
   const receipt = buildForm.__startersAccountDiagnostic
   assert.equal(receipt.workflow, 'brand_account_build')
-  assert.equal(receipt.controller_version, 'brand-account-controller-v5')
+  assert.equal(receipt.controller_version, 'brand-account-controller-v6')
   assert.equal(receipt.result, 'success')
   assert.equal(receipt.request_started, true)
   assert.equal(Object.hasOwn(receipt, 'email'), false)
@@ -937,7 +937,7 @@ test('Build Account success records a privacy-safe console receipt without page 
     [{
       name: 'brand_account_email_decision',
       payload: {
-        controller_version: 'brand-account-controller-v5',
+        controller_version: 'brand-account-controller-v6',
         email_change_required: false,
         security_email_attempted: false,
       },
@@ -966,7 +966,7 @@ test('Build Account changed-email success keeps the receipt free of identity fie
   )
   const receipt = buildForm.__startersAccountDiagnostic
   assert.equal(receipt.workflow, 'brand_account_build')
-  assert.equal(receipt.controller_version, 'brand-account-controller-v5')
+  assert.equal(receipt.controller_version, 'brand-account-controller-v6')
   assert.equal(receipt.result, 'success')
   assert.equal(receipt.request_started, true)
   assert.equal(Object.hasOwn(receipt, 'email'), false)
@@ -1472,7 +1472,7 @@ test('Build Account sends one security email only after changing login email', a
     [{
       name: 'brand_account_email_decision',
       payload: {
-        controller_version: 'brand-account-controller-v5',
+        controller_version: 'brand-account-controller-v6',
         email_change_required: true,
         security_email_attempted: true,
       },
@@ -1562,7 +1562,7 @@ test('Build Account with an unreadable login email writes no auth email and send
     [{
       name: 'brand_account_email_decision',
       payload: {
-        controller_version: 'brand-account-controller-v5',
+        controller_version: 'brand-account-controller-v6',
         email_change_required: false,
         security_email_attempted: false,
       },
@@ -1642,7 +1642,7 @@ test('changed-email reset failure keeps durable completion and provides recovery
     [{
       name: 'brand_account_email_decision',
       payload: {
-        controller_version: 'brand-account-controller-v5',
+        controller_version: 'brand-account-controller-v6',
         email_change_required: true,
         security_email_attempted: true,
       },

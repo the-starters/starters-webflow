@@ -13,14 +13,14 @@ Use `/complete-profile-trial` on staging to review the trial flow.
 ## Webflow markup
 
 In Designer, copy the call step section from the staging review page and place
-it after the existing production form section. Use
-the existing form, Button components, spinner, and booking popup success card.
+it after the existing production form section. Use the existing form, Button
+components, spinner, and booking popup success card.
 Custom code loads the styles and scripts. The module uses the authored
 elements and mounts the shared calendar into the empty calendar container.
 
 | Element | Custom attributes | Authoring notes |
 | --- | --- | --- |
-| Existing form section | `data-jai-trial-first-step`, `data-complete-profile-details` | Include the entire Webflow Form Block and its success and error states. Preserve the form's redirect and validation. Trial terms fields belong to the staging review page. |
+| Existing form section | `data-jai-trial-first-step`, `data-complete-profile-details` | Include the entire Webflow Form Block and its success and error states. Preserve the form's redirect, validation, and existing trial terms fields. |
 | Existing submit Button | Optional `data-complete-profile-call-submit-label` | Set the Button instance label to **Continue** and keep the native `button[type="submit"]`. If the visible label can carry an attribute, the module also supports the label hook. |
 | Call step section | `data-complete-profile-call-step`, `data-call-host-member="mem_clxzbkxqi02ya0sreedez9c8f"`, `data-call-host-slug="jai"` | Author hidden. Use the existing `section_complete-profile` class. |
 | Section padding and content | `data-jai-trial-content` | Keep the native `padding-global padding-section-small` wrapper as the section's direct child. Put the attribute on its `container-large` child. |
@@ -71,7 +71,7 @@ all sizes. On tablets, the status appears at the top of the card.
 ## Pinned page code
 
 In the `/complete-profile` page head, after the sitewide Memberstack and route
-guard installs and before the existing controller embed, add these tags in
+guard installs and before the Brand Account Controller HTML Embed, add these tags in
 order. Use the release tag for all five assets. The staging review page can
 use a full pushed commit SHA for review builds.
 
@@ -83,9 +83,21 @@ use a full pushed commit SHA for review builds.
 <script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v1.59.741/v3/complete-profile-call-step.js" defer></script>
 ```
 
-The existing Brand Account controller must include the completion event.
-Update its existing pin to `v1.59.741` and keep one controller installation.
-Load the first three scheduling scripts synchronously.
+Load the first three scheduling scripts synchronously. Place the Brand Account
+Controller HTML Embed before the main content on `/complete-profile`.
+
+```html
+<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v1.59.741/v3/brand-account-controller.js"></script>
+```
+
+The shared Site Settings loader currently emits the older controller. Keep its
+configuration and pin for other pages. Omit its controller tag on
+`/complete-profile` and `/complete-profile/` so the HTML Embed supplies the
+only controller on that page. The first controller to boot owns the form,
+so leaving the older deferred tag on the page prevents the handoff event.
+Verify the pinned controller URL before applying the exclusion. Save the
+page install and shared loader change together. Webflow requires a full-site
+publish to the staging subdomain to apply the Site Settings change.
 
 In **Before `</body>`** code, load jQuery UI after Webflow's jQuery. The
 call step stylesheet supplies the datepicker styling.
@@ -94,12 +106,12 @@ call step stylesheet supplies the datepicker styling.
 <script src="https://code.jquery.com/ui/1.14.1/jquery-ui.min.js"></script>
 ```
 
-Copy the authored call step section only. The pilot template, inline script
-and styles, trial terms fields, and owner-review embed stay out of the
-production installation. Publish `/complete-profile` to the Webflow staging
-subdomain first. Verify the pinned URLs return HTTP 200 and the served module
-has the expected `@release` marker. Publish to the custom domains after
-release approval.
+Copy only the authored call step section. Leave the trial page's pilot
+template, inline script and styles, and owner-review embed on the trial page.
+Keep the target form's existing trial terms. Verify the pinned URLs return
+HTTP 200 and the changed assets carry the expected `@release` marker. Publish
+to the Webflow staging subdomain first and verify the form handoff. Publish
+to the custom domains after release approval.
 
 ## Handoff and diagnostics
 

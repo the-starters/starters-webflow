@@ -75,7 +75,7 @@
   // by which time the Memberstack webhook has stamped brands_v3 for real.
   var BRAND_PROFILE_MARKER_KEY = 'thestarters:v3-brand-profile-completed'
   var BRAND_PROFILE_MARKER_VALUE = '1'
-  var CONTROLLER_VERSION = 'brand-account-controller-v5'
+  var CONTROLLER_VERSION = 'brand-account-controller-v6'
   var WORKFLOW_DIAGNOSTICS_TIMEOUT_MS = 2000
   var NATIVE_FORM_DIAGNOSTICS_SCRIPT = 'native-form-diagnostics.js'
   var passwordEmailAttempts = new WeakMap()
