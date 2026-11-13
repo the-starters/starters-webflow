@@ -6,7 +6,13 @@
   const standalonePath = '/build-profile-form-test'
   // Onboarding v2 (JP 2026-11-09): the calendar step on the staff-only onboarding page.
   const onboardingPaths = new Set(['/starter-onboarding-v2', '/starter-onboarding-v2-wip'])
-  const routes = new Set(['/build-profile/full-profile-test', '/build-profile/consult-test', '/starter-edit-profile-test', standalonePath, ...onboardingPaths])
+  // Build Profile (Jai 2026-11-12: availability is set in Build Profile, not
+  // onboarding; JP 1a): the calls root inside a Build Profile form step (no
+  // context, or context "build-profile") asks for hours, Google and the Free
+  // call. The Paid row and the Stripe card stay hidden, because Stripe is set
+  // up later in onboarding.
+  const buildProfilePaths = new Set(['/build-profile/full-profile-test', '/build-profile/consult-test', '/build-profile/full-profile', '/build-profile/consult'])
+  const routes = new Set(['/starter-edit-profile-test', standalonePath, ...buildProfilePaths, ...onboardingPaths])
 
   // Staff-only on production until launch (JP 2026-11-09): a production host
   // boots only when the page also loads the fail-closed staff preview guard
@@ -24,6 +30,17 @@
     const match = /^(\d{1,2}):(\d{2}) (AM|PM)$/.exec(value)
     if (!match || +match[1] < 1 || +match[1] > 12 || +match[2] > 59) return NaN
     return (+match[1] % 12 + (match[3] === 'PM' ? 12 : 0)) * 60 + +match[2]
+  }
+
+  // Saved hours use 24 h "HH:MM" (onboarding-calendar.js toItems); the editor
+  // shows "9:00 AM". Returns '' for anything else; an editor value passes through.
+  function to12h(value) {
+    const text = String(value || '').trim()
+    if (minutes(text) >= 0) return text
+    const match = /^(\d{1,2}):(\d{2})$/.exec(text)
+    if (!match || +match[1] > 23 || +match[2] > 59) return ''
+    const hour = +match[1]
+    return (hour % 12 || 12) + ':' + match[2] + (hour < 12 ? ' AM' : ' PM')
   }
 
   function validateHours(hours) {
@@ -57,11 +74,20 @@
     const rowSelector = selector('element', 'window')
     const source = windows?.querySelector(rowSelector)
     const path = root.ownerDocument.defaultView?.location.pathname.replace(/\/$/, '')
-    const step = root.closest('[data-form="step"][data-index="6"]')
+    const context = root.getAttribute('data-calls-step-context')
+    // Build Profile mode needs no marker (2026-11-12: a NEW attribute written
+    // through the Webflow Data API does not reach the published page, and on
+    // full-profile the root sits inside the shared Calls Form component). On a
+    // Build Profile page, a root with no context (or the build-profile marker)
+    // inside a multistep [data-form="step"] is the Build Profile step.
+    const buildProfile = buildProfilePaths.has(path) && (context === 'build-profile' || context === null)
+      && Boolean(root.closest('[data-form="step"]'))
+    const step = buildProfile ? root.closest('[data-form="step"]') : root.closest('[data-form="step"][data-index="6"]')
     const edit = path === '/starter-edit-profile-test'
     const standalone = path === standalonePath
-    const onboarding = onboardingPaths.has(path) && root.getAttribute('data-calls-step-context') === 'onboarding'
-    if (!onboarding && (edit ? root.getAttribute('data-calls-step-context') !== 'edit' : !step && !standalone)) return null
+    const onboarding = onboardingPaths.has(path) && context === 'onboarding'
+    if (context === 'build-profile' && (!buildProfile || !step)) return null
+    if (!onboarding && !buildProfile && (edit ? context !== 'edit' : !step && !standalone)) return null
     if (!days || !extraDays || !source || !extra || !timezone || !clock || !error) return null
 
     const doc = root.ownerDocument
@@ -216,14 +242,18 @@
       for (const service of services) {
         // Onboarding asks for hours and calendar only: Build Profile already
         // recorded the call choices, and Stripe has its own onboarding step.
-        if (onboarding) {
+        if (onboarding || (buildProfile && service === paid)) {
           service.hidden = true
+          if (buildProfile) {
+            if (paidToggle) paidToggle.checked = false
+            for (const field of ['input', 'select', 'textarea'].flatMap((tag) => [...service.querySelectorAll(tag)])) field.disabled = true
+          }
           continue
         }
         const enabled = service.querySelector(enabledSelector)
         const panel = service.querySelector('[data-call-settings-element="panel"]')
         if (!enabled || !panel) continue
-        if (consult && enabled === paidToggle) {
+        if (consult && !buildProfile && enabled === paidToggle) {
           enabled.checked = true
           enabled.disabled = true
         }
@@ -231,9 +261,12 @@
         anyEnabled ||= enabled.checked
         if (service.getAttribute('data-call-settings-service') === 'paid') paidEnabled = enabled.checked
       }
-      if (availability) availability.hidden = !(anyEnabled || onboarding)
-      if (calendar) calendar.hidden = !(anyEnabled || onboarding)
-      if (stripe) stripe.hidden = onboarding || !paidEnabled
+      // Hours and calendar are required in onboarding and Build Profile, so they
+      // show even when no call type is on.
+      const hoursRequired = onboarding || buildProfile
+      if (availability) availability.hidden = !(anyEnabled || hoursRequired)
+      if (calendar) calendar.hidden = !(anyEnabled || hoursRequired)
+      if (stripe) stripe.hidden = hoursRequired || !paidEnabled
       const taken = new Set(selected(days))
       for (const day of extraDays.querySelectorAll('[data-day]')) {
         day.disabled = taken.has(Number(day.dataset.day))
@@ -256,7 +289,7 @@
     }
 
     function validateContinue() {
-      if (onboarding) return validateHours(read())
+      if (onboarding || buildProfile) return validateHours(read())
       if (!services.some((service) => service.querySelector(enabledSelector)?.checked)) {
         return 'Turn on at least one call type to continue.'
       }
@@ -317,9 +350,72 @@
       if (event.target === price && continueError) continueError.textContent = ''
     })
     refresh()
+    const free = services.find((service) => service.getAttribute('data-call-settings-service') === 'free')
+    const freeToggle = free?.querySelector(enabledSelector)
+    const freeDescription = free?.querySelector('[data-call-settings-input="description"]')
+
+    function setTime(select, time) {
+      const shown = to12h(time)
+      if (!select || !shown) return
+      if (![...select.options].some((option) => option.value === shown)) addOption(select, shown)
+      select.value = shown
+    }
+
+    function pressDays(group, list) {
+      const wanted = new Set((list || []).map(Number))
+      for (const day of group.querySelectorAll('[data-day]')) {
+        day.setAttribute('aria-pressed', String(wanted.has(Number(day.dataset.day))))
+      }
+    }
+
+    // Fill the editor from saved data (all contexts). Hours fields are set only
+    // when `state` has them, so a Starter with no saved hours keeps the authored
+    // defaults. Times may be "HH:MM" (saved) or "9:00 AM". Sets no hoursSaved
+    // flag: the caller sends it with setStatus() after it knows the save state.
+    function load(state) {
+      const next = state || {}
+      if (next.timezone) {
+        if (![...timezone.options].some((option) => option.value === next.timezone)) addOption(timezone, next.timezone)
+        timezone.value = next.timezone
+      }
+      if (Array.isArray(next.days)) pressDays(days, next.days)
+      if (Array.isArray(next.windows) && next.windows.length) {
+        for (const row of rows()) row.remove()
+        for (const window of next.windows) {
+          const row = template.cloneNode(true)
+          windows.appendChild(row)
+          setTime(row.querySelector(selector('input', 'window-start')), window.start)
+          setTime(row.querySelector(selector('input', 'window-end')), window.end)
+        }
+      }
+      if (next.extra !== undefined) {
+        const on = Boolean(next.extra && Array.isArray(next.extra.days) && next.extra.days.length)
+        extra.hidden = !on
+        pressDays(extraDays, on ? next.extra.days : [])
+        if (on) {
+          setTime(get('input', 'extra-start'), next.extra.start)
+          setTime(get('input', 'extra-end'), next.extra.end)
+        }
+      }
+      if (next.free) {
+        if (freeToggle) freeToggle.checked = Boolean(next.free.enabled)
+        if (freeDescription && typeof next.free.description === 'string') freeDescription.value = next.free.description
+      }
+      if (next.paid && !onboarding && !buildProfile) {
+        if (paidToggle) paidToggle.checked = Boolean(next.paid.enabled)
+        if (paidDescription && typeof next.paid.title === 'string') paidDescription.value = next.paid.title
+        if (price && next.paid.price !== undefined && next.paid.price !== null) price.value = String(next.paid.price)
+      }
+      refresh()
+    }
+
     return {
+      load,
       read,
       validate: () => validateHours(read()),
+      // The Free call follows its switch where the step shows one; onboarding
+      // has no switch and always offers it.
+      offerIntroCall: () => (onboarding || !freeToggle ? true : Boolean(freeToggle.checked)),
       setStatus(next) {
         Object.assign(status, next)
         renderStatus()
@@ -328,7 +424,7 @@
   }
 
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { validateHours, mount }
+    module.exports = { validateHours, to12h, mount }
     return
   }
   if (!bootAllowed(global, routes) || global.StarterProfileCallsStep) return

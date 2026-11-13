@@ -1,10 +1,10 @@
 /** Optional free welcome call after the paid Brand profile is saved.
- * @release v1.59.738
+ * @release v1.59.741
  */
 ;(function () {
   'use strict'
 
-  const release = 'v1.59.738'
+  const release = 'v1.59.741'
   const staging = 'the-starters-3-0.webflow.io'
   const hostname = window.location.hostname
   const path = window.location.pathname.replace(/\/$/, '')

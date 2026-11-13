@@ -83,6 +83,20 @@ compatibility, but the controller writes its value explicitly as the final
 durable member write, before any non-retried password-email attempt. Build
 Account only attempts that email when the login email changed.
 
+The controller sets `autocomplete="off"` on the Build Account `Email-Address`
+field. That field is prefilled with the login email, and browser address
+autofill has replaced it with a different saved address, which turns a profile
+save into a login-email change.
+
+The Memberstack DOM SDK rejects a refused write with its response body,
+`{ code, message }`, and no HTTP status. The controller classifies those
+rejections by `code`: `email-already-in-use` shows the conflict copy and runs
+the Build reconciliation read; `login-required` and `client/invalid-token` ask
+the member to log in again; `network-error` is retried. The diagnostic receipt
+records `EMAIL_IN_USE`, `SESSION_EXPIRED`, `NETWORK_ERROR`, or
+`MEMBERSTACK_<CODE>` for any other code. Test fixtures must use the same
+`{ code, message }` shape.
+
 After a successful Build Account save and success message, the form dispatches
 the bubbling, cancelable `starters:brand-profile-completed` event with
 `detail.operation` set to `brand/account/build` and `detail.memberId` set to
@@ -317,7 +331,7 @@ below, including the version-pinned fallback path.
 
 Update this query value for every Brand account controller release, and in the
 same change bump `CONTROLLER_VERSION` in `brand-account-controller.js` to the
-next build identifier (`brand-account-controller-v4` at this release, following
+next build identifier (`brand-account-controller-v5` at this release, following
 the repository's `<controller>-vN` receipt convention rather than the semver
 tag), so the diagnostic receipt and the `brand_account_email_decision` event
 identify which build actually served the member. Then publish Webflow and
@@ -332,7 +346,7 @@ new code. Before the bounded production test, verify the served content:
 
 ```bash
 curl -s "https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/brand-account-controller.js?v=RELEASE" \
-  | grep -c "brand-account-controller-v4"
+  | grep -c "brand-account-controller-v5"
 ```
 
 The released `CONTROLLER_VERSION` must be present in that output. If the served

@@ -5,21 +5,22 @@ welcome call with Jai or continue to the Brand dashboard. The form and call
 step share one page. The form's `redirect="/brand-dashboard"` stays in place
 for pages where the call step is absent or cannot start.
 
-This installation is for `/complete-profile-trial` on staging. The module also
-recognizes `/complete-profile` on the approved hosts when its markup is present.
-That page keeps its existing [page-load redirect](COMPLETE-PROFILE-REDIRECT-WIRING.md)
-and does not receive this installation.
+The production installation is `/complete-profile` on `thestarters.com`,
+pinned to `v1.59.741`. The page keeps its existing
+[page-load redirect](COMPLETE-PROFILE-REDIRECT-WIRING.md).
+Use `/complete-profile-trial` on staging to review the trial flow.
 
 ## Webflow markup
 
-Build the new section in Designer after the existing trial form section. Use
+In Designer, copy the call step section from the staging review page and place
+it after the existing production form section. Use
 the existing form, Button components, spinner, and booking popup success card.
 Custom code loads the styles and scripts. The module uses the authored
 elements and mounts the shared calendar into the empty calendar container.
 
 | Element | Custom attributes | Authoring notes |
 | --- | --- | --- |
-| Existing trial form section | `data-jai-trial-first-step`, `data-complete-profile-details` | Include the entire Webflow Form Block and its success and error states. Preserve the form's redirect, terms fields, and validation. |
+| Existing form section | `data-jai-trial-first-step`, `data-complete-profile-details` | Include the entire Webflow Form Block and its success and error states. Preserve the form's redirect and validation. Trial terms fields belong to the staging review page. |
 | Existing submit Button | Optional `data-complete-profile-call-submit-label` | Set the Button instance label to **Continue** and keep the native `button[type="submit"]`. If the visible label can carry an attribute, the module also supports the label hook. |
 | Call step section | `data-complete-profile-call-step`, `data-call-host-member="mem_clxzbkxqi02ya0sreedez9c8f"`, `data-call-host-slug="jai"` | Author hidden. Use the existing `section_complete-profile` class. |
 | Section padding and content | `data-jai-trial-content` | Keep the native `padding-global padding-section-small` wrapper as the section's direct child. Put the attribute on its `container-large` child. |
@@ -69,22 +70,21 @@ all sizes. On tablets, the status appears at the top of the card.
 
 ## Pinned page code
 
-In the trial page head, after the sitewide Memberstack and route guard installs
-and before the existing controller embeds, add these tags in order. Use the
-same ref for the stylesheet and all four scripts. `REF` is the full pushed
-commit SHA for staging review or the released `vX.Y.Z` tag after release.
-Production installations use release tags.
+In the `/complete-profile` page head, after the sitewide Memberstack and route
+guard installs and before the existing controller embed, add these tags in
+order. Use the release tag for all five assets. The staging review page can
+use a full pushed commit SHA for review builds.
 
 ```html
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@REF/v3/complete-profile-call-step.css">
-<script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@REF/v3/scheduling-auth.js"></script>
-<script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@REF/v3/paid-call-brand-payment.js"></script>
-<script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@REF/v3/free-call-booking.js"></script>
-<script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@REF/v3/complete-profile-call-step.js" defer></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v1.59.741/v3/complete-profile-call-step.css">
+<script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v1.59.741/v3/scheduling-auth.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v1.59.741/v3/paid-call-brand-payment.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v1.59.741/v3/free-call-booking.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v1.59.741/v3/complete-profile-call-step.js" defer></script>
 ```
 
 The existing Brand Account controller must include the completion event.
-Update its existing pin as needed and keep one controller installation.
+Update its existing pin to `v1.59.741` and keep one controller installation.
 Load the first three scheduling scripts synchronously.
 
 In **Before `</body>`** code, load jQuery UI after Webflow's jQuery. The
@@ -94,11 +94,12 @@ call step stylesheet supplies the datepicker styling.
 <script src="https://code.jquery.com/ui/1.14.1/jquery-ui.min.js"></script>
 ```
 
-Keep the prior pilot in place until the Designer markup and pinned assets
-have been verified together. Then remove the pilot template, inline script,
-and inline styles and publish only the trial page on staging. Verify the
-pinned URLs return HTTP 200 and the served module has the expected
-`@release` marker.
+Copy the authored call step section only. The pilot template, inline script
+and styles, trial terms fields, and owner-review embed stay out of the
+production installation. Publish `/complete-profile` to the Webflow staging
+subdomain first. Verify the pinned URLs return HTTP 200 and the served module
+has the expected `@release` marker. Publish to the custom domains after
+release approval.
 
 ## Handoff and diagnostics
 

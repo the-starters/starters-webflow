@@ -1,6 +1,6 @@
 /**
  * Brand signup plan, Build Account, and guarded identity email controller.
- * @release v1.59.738
+ * @release v1.59.741
  *
  * Authority contract:
  *   - Memberstack owns identity, login email, custom fields, and profile image.
@@ -75,7 +75,7 @@
   // by which time the Memberstack webhook has stamped brands_v3 for real.
   var BRAND_PROFILE_MARKER_KEY = 'thestarters:v3-brand-profile-completed'
   var BRAND_PROFILE_MARKER_VALUE = '1'
-  var CONTROLLER_VERSION = 'brand-account-controller-v4'
+  var CONTROLLER_VERSION = 'brand-account-controller-v5'
   var WORKFLOW_DIAGNOSTICS_TIMEOUT_MS = 2000
   var NATIVE_FORM_DIAGNOSTICS_SCRIPT = 'native-form-diagnostics.js'
   var passwordEmailAttempts = new WeakMap()
@@ -205,9 +205,14 @@
   function diagnosticErrorCode(error) {
     if (error && error.code === 'validation') return 'FORM_VALIDATION'
     if (error && error.passwordEmailAttempted) return 'PASSWORD_EMAIL_FAILED'
+    var code = memberstackCode(error)
+    if (code === 'email-already-in-use') return 'EMAIL_IN_USE'
+    if (sessionExpired(error)) return 'SESSION_EXPIRED'
+    if (code === 'network-error') return 'NETWORK_ERROR'
     var status = statusOf(error)
     if (status === 408) return 'REQUEST_TIMEOUT'
     if (status) return 'HTTP_ERROR'
+    if (code) return ('MEMBERSTACK_' + code.toUpperCase().replace(/[^A-Z0-9]+/g, '_')).slice(0, 64)
     return 'ACCOUNT_UPDATE_FAILED'
   }
 
@@ -299,15 +304,32 @@
     return Number.isFinite(value) ? value : 0
   }
 
+  // The Memberstack DOM SDK rejects with its response body, `{ code, message }`,
+  // and no HTTP status, so a refused write must be classified by `code`.
+  // Codes are lowercase slugs such as `email-already-in-use` or
+  // `client/invalid-token`; this controller's own codes are not.
+  var MEMBERSTACK_SESSION_CODES = ['login-required', 'client/invalid-token']
+
+  function memberstackCode(error) {
+    var code = error && typeof error.code === 'string' ? error.code : ''
+    if (code === 'validation') return ''
+    return /^[a-z][a-z0-9-]*(\/[a-z0-9-]+)?$/.test(code) ? code : ''
+  }
+
   function emailConflict(error) {
     var status = statusOf(error)
-    return status === 409 || status === 422
+    return status === 409 || status === 422 || memberstackCode(error) === 'email-already-in-use'
+  }
+
+  function sessionExpired(error) {
+    return MEMBERSTACK_SESSION_CODES.indexOf(memberstackCode(error)) !== -1
   }
 
   function retryable(error) {
     var status = statusOf(error)
     return (
       (error && error.name === 'TypeError') ||
+      memberstackCode(error) === 'network-error' ||
       status === 408 ||
       status === 429 ||
       status >= 500
@@ -642,6 +664,9 @@
     }
     if (emailConflict(error)) {
       return 'That email is already in use. Choose another email address.'
+    }
+    if (sessionExpired(error)) {
+      return 'Your session has expired. Log in again to update your account.'
     }
     return trim(error && error.message) || 'Your account could not be updated. Please try again.'
   }
@@ -1320,6 +1345,19 @@
     return true
   }
 
+  /**
+   * Build Account's email field is prefilled with the member's login email, and
+   * a submit with any other value changes that login. Browser address autofill
+   * fills the whole form at once and has replaced the prefilled login email with
+   * a saved address, which then turns an ordinary profile save into a login
+   * email change. Opting the field out of autofill keeps the prefilled value
+   * unless the member edits it.
+   */
+  function guardBuildEmailAutofill(form) {
+    var input = form.querySelector('[name="Email-Address"]')
+    if (input) input.setAttribute('autocomplete', 'off')
+  }
+
   function init() {
     var location = window.location || {}
     if (!allowedHost(location.hostname || '')) return false
@@ -1337,6 +1375,7 @@
     }
     var buildForm = document.querySelector(BUILD_FORM_SELECTOR)
     if (buildForm) {
+      guardBuildEmailAutofill(buildForm)
       bindTrialTerms(buildForm)
       bound = bindForm(buildForm, 'brand/account/build', submitBuild, true) || bound
     }

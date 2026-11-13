@@ -26,6 +26,14 @@
  * kind 'window' items as added hours, not day overrides; a later dashboard day
  * override takes its days from them like from general.
  *
+ * Contexts (one module, root marker decides):
+ *   onboarding     /starter-onboarding-v2(-wip), Lumos form flow, Free call on.
+ *   build-profile  /build-profile/{consult,full-profile}(-test) step with
+ *                  [data-calls-step-context="build-profile"] (Jai 2026-11-12:
+ *                  availability belongs in Build Profile). Next is the
+ *                  multistep [data-form="next-btn"]; the Free call follows
+ *                  its switch (editor.offerIntroCall()).
+ *
  * Boot: staging origin, or thestarters.com / www.thestarters.com only when the
  * page also loads v3/staff-preview-guard.js. Load profile-calls-step.js first.
  */
@@ -38,8 +46,19 @@
   const ENSURE_PATH = '/onboarding/calendar/ensure-default/v3'
   const STARTER_PATH = '/starter/get_by_memberstack/v3'
   const RETURN_CHANNEL = 'starters-calendar-connect-return'
-  const ROUTES = new Set(['/starter-onboarding-v2', '/starter-onboarding-v2-wip'])
-  const ROOT = '[data-calls-step="root"][data-calls-step-context="onboarding"]'
+  const ONBOARDING_ROUTES = new Set(['/starter-onboarding-v2', '/starter-onboarding-v2-wip'])
+  // Build Profile calls step (Jai 2026-11-12: availability belongs in Build Profile).
+  const BUILD_PROFILE_ROUTES = new Set(['/build-profile/consult-test', '/build-profile/full-profile-test', '/build-profile/consult', '/build-profile/full-profile'])
+  const ROUTES = new Set([...ONBOARDING_ROUTES, ...BUILD_PROFILE_ROUTES])
+  // Build Profile roots need no marker (a new Data API attribute does not
+  // publish; full-profile uses the shared component): any calls root with no
+  // context or context "build-profile". profile-calls-step.js decides whether
+  // it is really the Build Profile step (inside [data-form="step"]).
+  const ROOT_BY_ROUTE = function (path) {
+    return BUILD_PROFILE_ROUTES.has(path)
+      ? '[data-calls-step="root"]:not([data-calls-step-context]), [data-calls-step="root"][data-calls-step-context="build-profile"]'
+      : '[data-calls-step="root"][data-calls-step-context="onboarding"]'
+  }
   const CONNECT = '[data-calls-step-action="connect-google"]'
   const REQUEST_TIMEOUT_MS = 20000
   const SAVE_ERROR = 'We couldn’t save your availability. Please try again.'
@@ -61,14 +80,37 @@
     return String(hour).padStart(2, '0') + ':' + match[2]
   }
 
-  function toItems(hours) {
+  // preserved: saved dashboard overrides the editor does not show (Edit
+  // Profile v2), with savedDays the weekly days they were loaded with. An
+  // override loses the weekly days the Starter removed and is dropped when none
+  // remain; otherwise it is sent back unchanged. Like the dashboard's
+  // reconcileBaseDays(), the remaining overrides take their days out of general
+  // and the windows, whose defaultDays keep the full weekly days. A window left
+  // with no days is not sent (#1463 rejects an empty non-general window).
+  function toItems(hours, preserved, savedDays) {
+    const weekly = hours.days.map(Number)
+    const removed = (savedDays || []).map(Number).filter(function (day) { return weekly.indexOf(day) === -1 })
+    const kept = {}
+    const claimed = new Set()
+    Object.keys(preserved || {}).forEach(function (key) {
+      const item = preserved[key]
+      if (key === 'general' || !item || item.kind === 'window' || !Array.isArray(item.days)) {
+        kept[key] = item
+        return
+      }
+      const left = item.days.filter(function (day) { return removed.indexOf(Number(day)) === -1 })
+      if (!left.length) return
+      kept[key] = left.length === item.days.length ? item : Object.assign({}, item, { days: left })
+      left.forEach(function (day) { claimed.add(Number(day)) })
+    })
     const days = hours.days.slice().sort(function (a, b) { return a - b })
-    const items = {}
+    const open = days.filter(function (day) { return !claimed.has(day) })
+    const items = Object.assign({}, kept)
     hours.windows.forEach(function (window, index) {
-      const item = { days: days.slice(), start: to24h(window.start), end: to24h(window.end), defaultDays: days.slice() }
+      const item = { days: open.slice(), start: to24h(window.start), end: to24h(window.end), defaultDays: days.slice() }
       if (index === 0) {
         items.general = item
-      } else {
+      } else if (open.length) {
         item.kind = 'window'
         items['window-' + (index + 1)] = item
       }
@@ -83,9 +125,61 @@
     return items
   }
 
-  function createController(win) {
+  // Saved items -> editor hours (the reverse of toItems, Edit Profile v2).
+  //   general                    -> weekly days (defaultDays, else days) + window 1
+  //   kind 'window' items        -> windows 2..n (key order)
+  //   override-onboarding        -> extra
+  // Every other item (a dashboard day override under a uuid or override-<ts>
+  // key) goes to `rest`; save() sends it back unchanged via toItems.
+  // With no usable general item, hours is null and every item is in rest.
+  function fromItems(items) {
+    const source = items && typeof items === 'object' && !Array.isArray(items) ? items : {}
+    const keys = Object.keys(source)
+    const general = source.general
+    const numbers = function (list) {
+      return Array.isArray(list) ? list.map(Number).filter(function (day) { return day >= 0 && day <= 6 }).sort(function (a, b) { return a - b }) : []
+    }
+    const weekly = numbers(general && general.defaultDays)
+    const days = weekly.length ? weekly : numbers(general && general.days)
+    if (!general || !days.length || !general.start || !general.end) {
+      return { hours: null, rest: Object.assign({}, source) }
+    }
+    const order = function (a, b) { return a.localeCompare(b, 'en', { numeric: true }) }
+    const used = new Set(['general'])
+    const windows = [{ start: general.start, end: general.end }]
+    keys.filter(function (key) {
+      const item = source[key]
+      return key !== 'general' && item && item.kind === 'window' && item.start && item.end
+    }).sort(order).forEach(function (key) {
+      used.add(key)
+      windows.push({ start: source[key].start, end: source[key].end })
+    })
+    let extra = null
+    const onboarding = source['override-onboarding']
+    const extraDays = numbers(onboarding && onboarding.days)
+    if (onboarding && onboarding.start && onboarding.end && extraDays.length) {
+      used.add('override-onboarding')
+      extra = { days: extraDays, start: onboarding.start, end: onboarding.end }
+    }
+    const rest = {}
+    keys.forEach(function (key) { if (!used.has(key)) rest[key] = source[key] })
+    return { hours: { days, windows, extra }, rest }
+  }
+
+  // options (all optional; Edit Profile v2 uses them, onboarding and Build
+  // Profile pass none):
+  //   baseItems()          {items, days}: saved items the editor cannot show
+  //                        (dashboard day overrides) and the weekly days they
+  //                        were loaded with; save() sends them via toItems.
+  //   beforeSave()         runs at the start of every save (cancel a queued autosave).
+  //   onSaved(items)       runs after a successful save with the items it sent.
+  //   onCalendarStatus(g)  runs after each calendar status read (true/false).
+  //   connectSelector      the connect buttons (default connect-google).
+  function createController(win, options) {
+    const settings = options || {}
     let tokenPromise = null
     let googleConnect = null
+    const stepState = new WeakMap()
 
     function withTimeout(promise) {
       return new Promise(function (resolve, reject) {
@@ -114,27 +208,40 @@
       return token
     }
 
-    async function post(path, body) {
+    async function request(method, path, body) {
       if (!tokenPromise) tokenPromise = trade().catch(function (error) { tokenPromise = null; throw error })
-      const response = await withTimeout(win.fetch(SCHEDULING + path, {
-        method: 'POST',
+      const init = {
+        method,
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (await tokenPromise) },
-        body: JSON.stringify(body),
-      }))
+      }
+      if (body !== undefined) init.body = JSON.stringify(body)
+      const response = await withTimeout(win.fetch(SCHEDULING + path, init))
       if (response.status === 401) tokenPromise = null
       const data = await response.json().catch(function () { return null })
       if (!response.ok) throw Object.assign(new Error(path + ' failed (' + response.status + ')'), { status: response.status, data })
       return data
     }
 
+    function post(path, body) { return request('POST', path, body) }
+    function get(path) { return request('GET', path) }
+
+    function offerIntroCall(editor) {
+      return typeof editor.offerIntroCall === 'function' ? editor.offerIntroCall() !== false : true
+    }
+
     async function save(editor) {
+      if (typeof settings.beforeSave === 'function') settings.beforeSave()
       const hours = editor.read()
-      return post(ENSURE_PATH, {
+      const base = (typeof settings.baseItems === 'function' && settings.baseItems()) || {}
+      const items = toItems(hours, base.items, base.days)
+      const result = await post(ENSURE_PATH, {
         member_id: await memberId(),
-        availability: { items: toItems(hours) },
+        availability: { items },
         in_timezone: hours.timezone || '',
-        offer_intro_call: true,
+        offer_intro_call: offerIntroCall(editor),
       })
+      if (typeof settings.onSaved === 'function') settings.onSaved(items)
+      return result
     }
 
     async function refreshStatus(editor) {
@@ -142,6 +249,7 @@
         const starter = await post(STARTER_PATH, { member_id: await memberId() })
         const google = Boolean(starter && starter.availability && starter.availability.manager === 'calendar' && starter.nylas_grant_id)
         editor.setStatus({ calendar: google ? 'connected' : 'disconnected', email: google ? (starter.nylas_grant_email || '') : '' })
+        if (typeof settings.onCalendarStatus === 'function') settings.onCalendarStatus(google)
         return google
       } catch (error) {
         warn('calendar status read failed', error && error.message)
@@ -157,6 +265,11 @@
     function isNextClick(event, stepEl) {
       const target = event.target
       if (!target || typeof target.closest !== 'function') return null
+      // Build Profile multistep form: Next is [data-form="next-btn"] in the step.
+      if (stepEl.getAttribute('data-form') === 'step') {
+        const buildNext = target.closest('[data-form="next-btn"]')
+        return buildNext && stepEl.contains(buildNext) ? buildNext : null
+      }
       const group = target.closest('[data-form-flow-button-group]')
       if (!group || !stepEl.contains(group)) return null
       const explicit = target.closest('[data-form-flow-action]')
@@ -167,11 +280,10 @@
     }
 
     function wireStep(root, editor) {
-      const stepEl = root.closest('[data-form-flow-element]')
+      const stepEl = root.closest('[data-form-flow-element]') || root.closest('[data-form="step"]')
       if (!stepEl) return false
       let passThrough = false
-      let busy = false
-      let stopWatching = null
+      const state = rootState(root)
 
       stepEl.addEventListener('click', async function (event) {
         if (passThrough) return
@@ -179,10 +291,10 @@
         if (!nextEl) return
         event.preventDefault()
         event.stopImmediatePropagation()
-        if (busy) return
+        if (state.busy) return
         const problem = editor.validate()
         if (problem) return showError(root, problem)
-        busy = true
+        state.busy = true
         try {
           await save(editor)
           editor.setStatus({ hoursSaved: true })
@@ -192,41 +304,55 @@
           warn('save failed', error && error.message)
           showError(root, SAVE_ERROR)
         } finally {
-          busy = false
+          state.busy = false
         }
       }, true)
 
-      root.querySelectorAll(CONNECT).forEach(function (connect) {
+      wireConnect(root, editor)
+      return true
+    }
+
+    function rootState(root) {
+      if (!stepState.has(root)) stepState.set(root, { busy: false, stopWatching: null, connectWired: false })
+      return stepState.get(root)
+    }
+
+    // Connect Google (also "switch calendar" on Edit Profile): save the hours,
+    // then send a pop-up reserved in the click to Google. One handler per root.
+    function wireConnect(root, editor) {
+      const state = rootState(root)
+      if (state.connectWired) return
+      state.connectWired = true
+      root.querySelectorAll(settings.connectSelector || CONNECT).forEach(function (connect) {
         connect.addEventListener('click', async function (event) {
           event.preventDefault()
-          if (busy) return
+          if (state.busy) return
           const problem = editor.validate()
           if (problem) return showError(root, problem)
-          if (stopWatching) { stopWatching(); stopWatching = null }
+          if (state.stopWatching) { state.stopWatching(); state.stopWatching = null }
           if (!googleConnect) return showError(root, SAVE_ERROR)
           const tab = typeof win.open === 'function' ? win.open('about:blank', 'starters-google-connect', 'popup,width=520,height=720') : null
           if (!tab) return showError(root, 'Allow pop-ups for this site, then try again.')
           try { tab.opener = null } catch (_error) { /* ignore */ }
-          busy = true
+          state.busy = true
           editor.setStatus({ calendar: 'connecting' })
           try {
             await save(editor)
             editor.setStatus({ hoursSaved: true })
             const id = await memberId()
-            const url = await googleConnect.start()
+            const url = await googleConnect.start({ offerIntroCall: offerIntroCall(editor) })
             tab.location.replace(url)
-            stopWatching = watchReturn(tab, id, editor, root)
+            state.stopWatching = watchReturn(tab, id, editor, root)
           } catch (error) {
             tab.close()
             editor.setStatus({ calendar: 'disconnected' })
             warn('connect google failed', error && error.message)
             showError(root, SAVE_ERROR)
           } finally {
-            busy = false
+            state.busy = false
           }
         })
       })
-      return true
     }
 
     function watchReturn(tab, id, editor, root) {
@@ -274,20 +400,23 @@
       if (win.console) win.console.warn.apply(win.console, ['[onboarding-calendar]'].concat(Array.prototype.slice.call(arguments)))
     }
 
-    function mount() {
+    // Create the shared Google connect. Returns true when this page is the
+    // pop-up Google sent back; the connection is then finished here.
+    function setupGoogle() {
       const shared = win.StartersCalendarGoogleConnect
-      if (shared) {
-        googleConnect = shared.createGoogleConnect(win, { post, memberId, callback: shared.pendingCallback || null })
-        // This page is the pop-up Google sent back: finish the connection here.
-        if (googleConnect.returnPending()) {
-          googleConnect.completeReturn()
-          return 0
-        }
-      }
+      if (!shared || googleConnect) return false
+      googleConnect = shared.createGoogleConnect(win, { post, memberId, callback: shared.pendingCallback || null })
+      if (!googleConnect.returnPending()) return false
+      googleConnect.completeReturn()
+      return true
+    }
+
+    function mount() {
+      if (setupGoogle()) return 0
       const api = win.StarterProfileCallsStep
       if (!api) return 0
       let count = 0
-      win.document.querySelectorAll(ROOT).forEach(function (root) {
+      win.document.querySelectorAll(ROOT_BY_ROUTE(win.location.pathname.replace(/\/$/, ''))).forEach(function (root) {
         const editor = api.editorFor(root)
         if (!editor) return
         if (wireStep(root, editor)) {
@@ -298,14 +427,17 @@
       return count
     }
 
-    return { mount, save, refreshStatus, wireStep }
+    return { mount, save, refreshStatus, wireStep, wireConnect, setupGoogle, request, post, get, memberId }
   }
 
-  const exported = { bootAllowed, to24h, toItems, createController }
+  const exported = { bootAllowed, to24h, toItems, fromItems, createController }
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = exported
     return
   }
+  // Shared with v3/edit-profile-calls.js (Edit Profile v2), which loads this
+  // file but boots on its own route. Exposing it starts nothing.
+  if (!global.StartersOnboardingCalendar) global.StartersOnboardingCalendar = exported
   if (global.__startersOnboardingCalendarBooted || !bootAllowed(global)) return
   global.__startersOnboardingCalendarBooted = true
 

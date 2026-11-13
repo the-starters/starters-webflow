@@ -49,3 +49,26 @@ test('Onboarding reveals confirmation after starting and preserves the retry but
   assert.equal(render(root, 'loading'), false)
   assert.equal(tag.textContent, 'Connected')
 })
+
+// Edit Profile v2 (JP 2026-11-12): the view also serves the Calls tab Stripe card.
+const fs = require('node:fs')
+const vm = require('node:vm')
+const VIEW_SOURCE = fs.readFileSync(require.resolve('./onboarding-stripe-view.js'), 'utf8')
+
+function bootView(pathname, { origin = 'https://www.thestarters.com', guard = true } = {}) {
+  const window = {
+    location: { origin, pathname },
+    document: { querySelector: (sel) => (guard && sel === 'script[src*="/v3/staff-preview-guard.js"]' ? {} : null) },
+  }
+  vm.runInNewContext(VIEW_SOURCE, { window })
+  return window.StarterOnboardingStripeView
+}
+
+test('the view boots on the Edit Profile v2 draft and the onboarding pages only', () => {
+  assert.ok(bootView('/starter-edit-profile-test'))
+  assert.ok(bootView('/starter-edit-profile-test', { origin: 'https://the-starters-3-0.webflow.io', guard: false }))
+  assert.ok(bootView('/starter-onboarding-v2'))
+  assert.equal(bootView('/starter-edit-profile-test', { guard: false }), undefined)
+  assert.equal(bootView('/starter-edit-profile'), undefined)
+  assert.equal(bootView('/starter-dashboard'), undefined)
+})

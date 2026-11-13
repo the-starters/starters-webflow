@@ -41,7 +41,8 @@ function boot(opts = {}) {
   let seq = 0
 
   const scriptEl = {
-    getAttribute: (name) => (name === 'data-fallback' ? opts.fallback ?? '/starter-onboarding' : null),
+    getAttribute: (name) =>
+      name === 'data-fallback' ? opts.fallback ?? '/starter-onboarding' : name === 'data-mode' ? opts.mode ?? null : null,
   }
   const document = {
     currentScript: scriptEl,
@@ -89,6 +90,10 @@ function boot(opts = {}) {
   if (!opts.noMemberstack) {
     window.$memberstackDom = {
       getMemberCookie: () => Promise.resolve(opts.cookie === undefined ? 'ms-tok' : opts.cookie),
+      getCurrentMember: () => {
+        const email = opts.memberEmail === undefined ? 'jp+onb01@thestarters.com' : opts.memberEmail
+        return Promise.resolve({ data: email === null ? null : { id: 'mem_1', auth: { email } } })
+      },
     }
   }
   const DateShim = { now: () => now }
@@ -213,4 +218,105 @@ test('boots only once per page', () => {
   const env = boot({ noMemberstack: true })
   vm.runInNewContext(source, { window: env.window, document: { currentScript: null } })
   assert.equal(env.headChildren.length, 1)
+})
+
+// Flag mode (2026-11-12): one staff-only element on a live page that real users see.
+test('flag mode: never hides the page', () => {
+  const env = boot({ mode: 'flag', noMemberstack: true })
+  assert.equal(env.headChildren.length, 0)
+})
+
+test('flag mode: verified staff resolves the promise to true', async () => {
+  const env = boot({ mode: 'flag' })
+  await settle()
+  assert.equal(env.attrs['data-staff-preview'], 'allowed')
+  assert.equal(await env.window.StartersStaffPreview, true)
+  assert.deepEqual(env.replaced, [])
+})
+
+test('flag mode: non-staff, logged out, failures and the deadline never redirect', async () => {
+  const cases = [
+    { staff: response(403, {}) },
+    { cookie: null, memberEmail: null },
+    { trade: response(500, {}) },
+    { tradeReject: true },
+    { staff: response(200, {}) },
+  ]
+  for (const o of cases) {
+    const env = boot({ mode: 'flag', ...o })
+    await settle()
+    env.tick(20000)
+    await settle()
+    assert.deepEqual(env.replaced, [], JSON.stringify(o))
+    assert.equal(env.attrs['data-staff-preview'], 'denied', JSON.stringify(o))
+    assert.equal(await env.window.StartersStaffPreview, false, JSON.stringify(o))
+  }
+})
+
+test('flag mode: Memberstack never loads resolves false without a redirect', async () => {
+  const env = boot({ mode: 'flag', noMemberstack: true })
+  env.tick(8000)
+  await settle()
+  assert.deepEqual(env.replaced, [])
+  assert.equal(await env.window.StartersStaffPreview, false)
+})
+
+test('page mode creates no StartersStaffPreview global', async () => {
+  const staff = boot()
+  await settle()
+  assert.equal(staff.attrs['data-staff-preview'], 'allowed')
+  assert.equal('StartersStaffPreview' in staff.window, false)
+  const denied = boot({ staff: response(403, {}) })
+  await settle()
+  assert.equal('StartersStaffPreview' in denied.window, false)
+  assert.deepEqual(denied.replaced, ['/starter-onboarding'])
+})
+
+test('flag mode: non-staff email domain resolves false with no fetch at all', async () => {
+  for (const memberEmail of [
+    'starter@gmail.com',
+    'x@thestarters.com.evil.com',
+    'x@mail.thestarters.com',
+    'x@notthestarters.com',
+    '@thestarters.com',
+  ]) {
+    const env = boot({ mode: 'flag', memberEmail })
+    await settle()
+    assert.equal(env.calls.length, 0, memberEmail)
+    assert.equal(env.attrs['data-staff-preview'], 'denied', memberEmail)
+    assert.equal(await env.window.StartersStaffPreview, false, memberEmail)
+    assert.deepEqual(env.replaced, [], memberEmail)
+  }
+})
+
+test('flag mode: logged out resolves false with no fetch at all', async () => {
+  const env = boot({ mode: 'flag', memberEmail: null })
+  await settle()
+  assert.equal(env.calls.length, 0)
+  assert.equal(await env.window.StartersStaffPreview, false)
+  assert.deepEqual(env.replaced, [])
+})
+
+test('flag mode: staff domains run the Xano check', async () => {
+  for (const memberEmail of ['jp+onb01@thestarters.com', 'ops@HireTheStarters.com']) {
+    const allowed = boot({ mode: 'flag', memberEmail })
+    await settle()
+    assert.deepEqual(
+      allowed.calls.map((c) => c.url),
+      [TRADE_URL + '?token=ms-tok', STAFF_URL],
+      memberEmail,
+    )
+    assert.equal(await allowed.window.StartersStaffPreview, true, memberEmail)
+  }
+  const rejected = boot({ mode: 'flag', memberEmail: 'jp@thestarters.com', staff: response(403, {}) })
+  await settle()
+  assert.equal(rejected.calls.some((c) => c.url === STAFF_URL), true)
+  assert.equal(await rejected.window.StartersStaffPreview, false)
+})
+
+test('page mode: ignores the member email and still asks Xano', async () => {
+  const env = boot({ memberEmail: 'starter@gmail.com', staff: response(403, {}) })
+  await settle()
+  assert.equal(env.calls.some((c) => c.url === STAFF_URL), true)
+  assert.deepEqual(env.replaced, ['/starter-onboarding'])
 })

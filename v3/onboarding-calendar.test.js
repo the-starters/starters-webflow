@@ -25,10 +25,21 @@ class Node {
     children.forEach((c) => { c.parent = this; this.children.push(c) })
   }
   getAttribute(n) { return n in this.attrs ? this.attrs[n] : null }
-  matches(sel) {
-    if (sel === 'button, a') return this.attrs.tag === 'button' || this.attrs.tag === 'a'
-    const parts = [...sel.matchAll(/\[([\w-]+)(?:="([^"]*)")?\]/g)]
-    return parts.length > 0 && parts.every(([, n, v]) => n in this.attrs && (v === undefined || this.attrs[n] === v))
+  matches(sel) { return sel.split(',').some((compound) => this.matchesCompound(compound.trim())) }
+  matchesCompound(compound) {
+    const token = /^(?:([a-z]+)|\[([\w-]+)(?:="([^"]*)")?\]|:not\(\[([\w-]+)(?:="([^"]*)")?\]\))/
+    const has = (n, v) => n in this.attrs && (v === undefined || this.attrs[n] === v)
+    let rest = compound
+    let ok = true
+    while (rest) {
+      const m = rest.match(token)
+      if (!m) throw new Error('fake DOM cannot parse selector: ' + compound)
+      if (m[1]) ok = ok && this.attrs.tag === m[1]
+      else if (m[2]) ok = ok && has(m[2], m[3])
+      else ok = ok && !has(m[4], m[5])
+      rest = rest.slice(m[0].length)
+    }
+    return compound.length > 0 && ok
   }
   closest(sel) { for (let n = this; n; n = n.parent) if (n.matches(sel)) return n; return null }
   contains(o) { for (let n = o; n; n = n.parent) if (n === this) return true; return false }
@@ -65,6 +76,7 @@ function makePage({ hours, starter = { availability: { manager: 'platform', item
   const next = new Node({ 'data-button-style': 'primary' }, [nextBtn])
   const group = new Node({ 'data-form-flow-button-group': 'step-5' }, [back, next])
   const step = new Node({ 'data-form-flow-element': 'step-5' }, [root, group])
+  const body = new Node({}, [step])
   // the form flow's own bubbling listener stands in for lumos
   group.addEventListener('click', (e) => flowClicks.push(e.target === nextBtn ? 'next' : 'back'))
   const tab = { closed: false, opener: {}, url: null, requestAtNavigation: null,
@@ -104,12 +116,12 @@ function makePage({ hours, starter = { availability: { manager: 'platform', item
     },
     document: {
       querySelector: (sel) => (guard && sel === 'script[src*="/v3/staff-preview-guard.js"]' ? {} : null),
-      querySelectorAll: (sel) => (sel === '[data-calls-step="root"][data-calls-step-context="onboarding"]' ? [root] : []),
+      querySelectorAll: (sel) => body.querySelectorAll(sel),
     },
     StarterProfileCallsStep: { editorFor: () => editor },
     StartersCalendarGoogleConnect: { ...shared, pendingCallback: null },
   }
-  return { win, calls, flowClicks, statuses, error, connect, nextBtn, backBtn, tab, listeners, storage, intervals, channels }
+  return { win, body, calls, flowClicks, statuses, error, connect, nextBtn, backBtn, tab, listeners, storage, intervals, channels }
 }
 
 test('boot: onboarding v2 routes; production needs the staff guard script', () => {
@@ -301,4 +313,265 @@ test('on the pop-up return the page finishes the connection and does not wire th
   page.connect.click()
   await settle()
   assert.equal(page.calls.some((c) => c.url === ENSURE), false)
+})
+
+// Build Profile step 6 (Jai 2026-11-12): same save, multistep Next button.
+function makeBuildPage({ offerIntroCall = true, path = '/build-profile/consult-test', hours, context = 'build-profile' } = {}) {
+  const page = makePage({ path, hours })
+  const error = new Node({ 'data-calls-step-element': 'error' })
+  const connect = new Node({ 'data-calls-step-action': 'connect-google', tag: 'button' })
+  const rootAttrs = { 'data-calls-step': 'root' }
+  if (context !== null) rootAttrs['data-calls-step-context'] = context
+  const root = new Node(rootAttrs, [error, connect])
+  const backBtn = new Node({ 'data-form': 'back-btn', tag: 'a' })
+  const nextBtn = new Node({ 'data-form': 'next-btn', tag: 'a' })
+  const step = new Node({ 'data-form': 'step', 'data-index': '6' }, [root, backBtn, nextBtn])
+  const form = new Node({ 'data-form': 'multistep' }, [step])
+  const formClicks = []
+  // the multistep form's own bubbling listener
+  form.addEventListener('click', (e) => formClicks.push(e.target === nextBtn ? 'next' : 'back'))
+  const body = new Node({}, [form])
+  page.win.document.querySelectorAll = (sel) => body.querySelectorAll(sel)
+  page.win.StarterProfileCallsStep.editorFor().offerIntroCall = () => offerIntroCall
+  return { ...page, error, connect, nextBtn, backBtn, formClicks }
+}
+
+test('boot: the four Build Profile paths; production still needs the staff guard script', () => {
+  for (const path of ['/build-profile/consult-test', '/build-profile/full-profile-test', '/build-profile/consult', '/build-profile/full-profile']) {
+    assert.equal(bootAllowed(makePage({ path }).win), true, path)
+    assert.equal(bootAllowed(makePage({ path, guard: false }).win), false, path)
+  }
+  assert.equal(bootAllowed(makePage({ path: '/build-profile/select-profile' }).win), false)
+})
+
+test('Build Profile Next saves the hours with the Free call switch, then lets the multistep form advance', async () => {
+  const page = makeBuildPage({ offerIntroCall: false })
+  createController(page.win).mount()
+  await settle()
+  page.nextBtn.click()
+  await settle()
+  const ensure = page.calls.find((c) => c.url === ENSURE)
+  assert.deepEqual(ensure.body, {
+    member_id: 'mem_onb03',
+    availability: { items: { general: { days: [1, 2], start: '09:00', end: '12:00', defaultDays: [1, 2] } } },
+    in_timezone: 'Asia/Manila',
+    offer_intro_call: false,
+  })
+  assert.deepEqual(page.formClicks, ['next'])
+})
+
+test('Build Profile Next with invalid hours saves nothing and does not advance', async () => {
+  const page = makeBuildPage({ hours: null })
+  createController(page.win).mount()
+  await settle()
+  page.nextBtn.click()
+  await settle()
+  assert.equal(page.error.textContent, 'Pick at least one day.')
+  assert.equal(page.calls.some((c) => c.url === ENSURE), false)
+  assert.deepEqual(page.formClicks, [])
+})
+
+test('Build Profile Back is never intercepted', async () => {
+  const page = makeBuildPage()
+  createController(page.win).mount()
+  await settle()
+  page.backBtn.click()
+  await settle()
+  assert.deepEqual(page.formClicks, ['back'])
+  assert.equal(page.calls.some((c) => c.url === ENSURE), false)
+})
+
+test('Build Profile Connect Google returns to the Build Profile page and keeps the Free call choice', async () => {
+  const page = makeBuildPage({ offerIntroCall: false })
+  createController(page.win).mount()
+  await settle()
+  page.connect.click()
+  await settle()
+  const oauth = page.calls.find((c) => c.url === OAUTH)
+  assert.equal(oauth.body.in_redirect_uri, 'https://www.thestarters.com/build-profile/consult-test')
+  assert.equal(JSON.parse(page.tab.requestAtNavigation).offerIntroCall, false)
+  assert.equal(page.calls.find((c) => c.url === ENSURE).body.offer_intro_call, false)
+})
+
+test('an unmarked root in a Build Profile step is wired: Next saves the hours and the form advances', async () => {
+  const page = makeBuildPage({ context: null })
+  assert.equal(createController(page.win).mount(), 1)
+  await settle()
+  page.nextBtn.click()
+  await settle()
+  assert.equal(page.calls.filter((c) => c.url === ENSURE).length, 1)
+  assert.deepEqual(page.formClicks, ['next'])
+})
+
+test('a build-profile-marked root in a Build Profile step is wired', () => {
+  assert.equal(createController(makeBuildPage().win).mount(), 1)
+})
+
+test('edit- and onboarding-marked roots in a Build Profile step are not wired', async () => {
+  for (const context of ['edit', 'onboarding']) {
+    const page = makeBuildPage({ context })
+    assert.equal(createController(page.win).mount(), 0, context)
+    page.nextBtn.click()
+    await settle()
+    assert.equal(page.calls.some((c) => c.url === ENSURE), false, context)
+    assert.deepEqual(page.formClicks, ['next'], context)
+  }
+})
+
+test('an onboarding-marked root on a Build Profile page is not wired', async () => {
+  const page = makePage({ path: '/build-profile/consult-test' })
+  assert.equal(createController(page.win).mount(), 0)
+})
+
+// Edit Profile v2 (JP 2026-11-12): saved items back to editor hours.
+const { fromItems } = require('./onboarding-calendar.js')
+
+test('fromItems is the reverse of toItems for every shape the editor writes', () => {
+  const hours = {
+    days: [1, 3, 5],
+    windows: [{ start: '9:00 AM', end: '12:00 PM' }, { start: '1:00 PM', end: '5:30 PM' }, { start: '6:00 PM', end: '7:00 PM' }],
+    extra: { days: [6], start: '10:00 AM', end: '2:00 PM' },
+  }
+  const back = fromItems(toItems(hours))
+  assert.deepEqual(back.rest, {})
+  assert.deepEqual(back.hours, {
+    days: [1, 3, 5],
+    windows: [{ start: '09:00', end: '12:00' }, { start: '13:00', end: '17:30' }, { start: '18:00', end: '19:00' }],
+    extra: { days: [6], start: '10:00', end: '14:00' },
+  })
+})
+
+test('fromItems orders window-10 after window-2 and keeps dashboard overrides in rest', () => {
+  const items = {
+    general: { days: [5], start: '09:00', end: '10:00', defaultDays: [1, 5] },
+    'window-10': { days: [5], start: '15:00', end: '16:00', defaultDays: [1, 5], kind: 'window' },
+    'window-2': { days: [5], start: '11:00', end: '12:00', defaultDays: [1, 5], kind: 'window' },
+    'override-1700': { days: [1], start: '13:00', end: '14:00' },
+    'override-a': { days: [0], start: '08:00', end: '09:00' },
+    'override-onboarding': { days: [6], start: '10:00', end: '11:00' },
+  }
+  const { hours, rest } = fromItems(items)
+  assert.deepEqual(hours.days, [1, 5])
+  assert.deepEqual(hours.windows.map((w) => w.start), ['09:00', '11:00', '15:00'])
+  assert.deepEqual(hours.extra, { days: [6], start: '10:00', end: '11:00' })
+  assert.deepEqual(Object.keys(rest).sort(), ['override-1700', 'override-a'])
+})
+
+const to12h = (value) => {
+  const [hour, minute] = value.split(':').map(Number)
+  return ((hour + 11) % 12 + 1) + ':' + String(minute).padStart(2, '0') + (hour < 12 ? ' AM' : ' PM')
+}
+const asEditor = (hours) => ({
+  ...hours,
+  windows: hours.windows.map((w) => ({ start: to12h(w.start), end: to12h(w.end) })),
+  extra: hours.extra && { ...hours.extra, start: to12h(hours.extra.start), end: to12h(hours.extra.end) },
+})
+const DASHBOARD = {
+  general: { days: [1, 2, 4, 5], start: '09:00', end: '17:00', defaultDays: [1, 2, 3, 4, 5] },
+  '3f2a9c1e-uuid': { days: [3], start: '10:00', end: '12:00' },
+}
+
+test('a dashboard day override loads as the full weekly hours and round-trips unchanged', () => {
+  const { hours, rest } = fromItems(structuredClone(DASHBOARD))
+  assert.deepEqual(hours, { days: [1, 2, 3, 4, 5], windows: [{ start: '09:00', end: '17:00' }], extra: null })
+  assert.deepEqual(rest, { '3f2a9c1e-uuid': DASHBOARD['3f2a9c1e-uuid'] })
+  assert.deepEqual(toItems(asEditor(hours), rest, hours.days), DASHBOARD)
+})
+
+test('changing hours keeps the dashboard override and keeps its day out of general and windows', () => {
+  const { hours, rest } = fromItems(structuredClone(DASHBOARD))
+  const edited = asEditor(hours)
+  edited.days = [1, 2, 3, 4]
+  edited.windows = [{ start: '8:00 AM', end: '12:00 PM' }, { start: '1:00 PM', end: '4:00 PM' }]
+  assert.deepEqual(toItems(edited, rest, hours.days), {
+    '3f2a9c1e-uuid': { days: [3], start: '10:00', end: '12:00' },
+    general: { days: [1, 2, 4], start: '08:00', end: '12:00', defaultDays: [1, 2, 3, 4] },
+    'window-2': { days: [1, 2, 4], start: '13:00', end: '16:00', defaultDays: [1, 2, 3, 4], kind: 'window' },
+  })
+})
+
+test('unticking a weekly day drops a dashboard override on only that day, so the day is not bookable', () => {
+  const { hours, rest } = fromItems(structuredClone(DASHBOARD))
+  const edited = asEditor(hours)
+  edited.days = [1, 2, 4, 5]
+  const items = toItems(edited, rest, hours.days)
+  assert.deepEqual(items, {
+    general: { days: [1, 2, 4, 5], start: '09:00', end: '17:00', defaultDays: [1, 2, 4, 5] },
+  })
+  assert.ok(Object.values(items).every((item) => !item.days.includes(3)))
+})
+
+test('an override on Wed and Sat keeps only Wed when Sat is unticked; overrides off the weekly days stay', () => {
+  const saved = {
+    general: { days: [1, 2, 4, 5], start: '09:00', end: '17:00', defaultDays: [1, 2, 3, 4, 5, 6] },
+    'override-1731': { days: [3, 6], start: '10:00', end: '12:00', note: 'kept' },
+    'sunday-uuid': { days: [0], start: '11:00', end: '13:00' },
+  }
+  const { hours, rest } = fromItems(structuredClone(saved))
+  assert.deepEqual(toItems(asEditor(hours), rest, hours.days), saved)
+  const edited = asEditor(hours)
+  edited.days = [1, 2, 3, 4, 5]
+  assert.deepEqual(toItems(edited, rest, hours.days), {
+    'override-1731': { days: [3], start: '10:00', end: '12:00', note: 'kept' },
+    'sunday-uuid': { days: [0], start: '11:00', end: '13:00' },
+    general: { days: [1, 2, 4, 5], start: '09:00', end: '17:00', defaultDays: [1, 2, 3, 4, 5] },
+  })
+})
+
+test('a dashboard same-day window round-trips with its defaultDays', () => {
+  const saved = {
+    general: { days: [1, 2, 4, 5], start: '09:00', end: '12:00', defaultDays: [1, 2, 3, 4, 5] },
+    'window-2': { days: [1, 2, 4, 5], start: '13:00', end: '17:00', defaultDays: [1, 2, 3, 4, 5], kind: 'window' },
+    'override-1731': { days: [3], start: '10:00', end: '11:00' },
+  }
+  const { hours, rest } = fromItems(structuredClone(saved))
+  assert.equal(hours.extra, null)
+  assert.deepEqual(toItems(asEditor(hours), rest, hours.days), {
+    'override-1731': saved['override-1731'],
+    general: saved.general,
+    'window-2': saved['window-2'],
+  })
+})
+
+test('toItems without preserved items is unchanged for onboarding and Build Profile', () => {
+  const hours = { days: [5, 1], windows: [{ start: '9:00 AM', end: '12:00 PM' }, { start: '1:00 PM', end: '5:00 PM' }], extra: { days: [6], start: '10:00 AM', end: '2:00 PM' } }
+  assert.equal(JSON.stringify(toItems(hours)), JSON.stringify({
+    general: { days: [1, 5], start: '09:00', end: '12:00', defaultDays: [1, 5] },
+    'window-2': { days: [1, 5], start: '13:00', end: '17:00', defaultDays: [1, 5], kind: 'window' },
+    'override-onboarding': { days: [6], start: '10:00', end: '14:00' },
+  }))
+})
+
+test('fromItems with no usable general returns no hours and keeps every item', () => {
+  assert.deepEqual(fromItems(null), { hours: null, rest: {} })
+  assert.deepEqual(fromItems({}), { hours: null, rest: {} })
+  const odd = { general: { days: [], start: '09:00', end: '10:00' }, x: { days: [1] } }
+  assert.deepEqual(fromItems(odd), { hours: null, rest: odd })
+})
+
+test('controller options: save keeps base items under the editor items and runs beforeSave first', async () => {
+  const page = makePage()
+  const order = []
+  const controller = createController(page.win, {
+    baseItems: () => ({ items: { 'override-1700': { days: [1], start: '13:00', end: '14:00' }, general: { stale: true } }, days: [1] }),
+    beforeSave: () => order.push('beforeSave'),
+  })
+  await controller.save({ read: () => { order.push('read'); return { timezone: 'UTC', days: [1], windows: [{ start: '9:00 AM', end: '10:00 AM' }], extra: null } } })
+  assert.deepEqual(order, ['beforeSave', 'read'])
+  const body = page.calls.find((c) => c.url === ENSURE).body
+  assert.deepEqual(body.availability.items, {
+    'override-1700': { days: [1], start: '13:00', end: '14:00' },
+    general: { days: [], start: '09:00', end: '10:00', defaultDays: [1] },
+  })
+})
+
+test('controller options: onCalendarStatus hears each calendar read; get sends a bodyless GET', async () => {
+  const page = makePage({ starter: { availability: { manager: 'calendar' }, nylas_grant_id: 'g1', nylas_grant_email: 'a@b.c' } })
+  const heard = []
+  const controller = createController(page.win, { onCalendarStatus: (google) => heard.push(google) })
+  assert.equal(await controller.refreshStatus({ setStatus() {} }), true)
+  assert.deepEqual(heard, [true])
+  assert.equal(typeof controller.get, 'function')
+  assert.equal(typeof controller.wireConnect, 'function')
+  assert.equal(typeof controller.setupGoogle, 'function')
 })

@@ -46,10 +46,21 @@ test('owner primary and sticky calls remain discoverable on mobile without self-
           return {
             calls: [...document.querySelectorAll('[data-profile-book-call]')].map(visible),
             contacts: [...document.querySelectorAll('[data-signup-trigger-element="hire"], [data-signup-trigger-element="message"]')].map(visible),
+            hirePreviews: [...document.querySelectorAll('[data-owner-preview-action="hire"]')].map(el => ({
+              visible: visible(el),
+              disabled: el.getAttribute('aria-disabled'),
+              tabindex: el.getAttribute('tabindex'),
+              modal: el.getAttribute('data-modal-trigger'),
+            })),
           };
         });
         assert.deepEqual(state.calls, [owner || width > 767, owner || width > 767], `owner=${owner}, width=${width}`);
+        // Owners keep Hire as a visible, inert preview (v1.59.610); its signup
+        // selector is removed, so `contacts` only sees the hidden Message action.
         assert(state.contacts.every(value => value === (!owner && width > 767)));
+        assert.deepEqual(state.hirePreviews, owner
+          ? [0, 1].map(() => ({ visible: true, disabled: 'true', tabindex: '0', modal: null }))
+          : []);
         if (owner) {
           const calls = page.locator('[data-profile-book-call]');
           for (let i = 0; i < 2; i++) {
@@ -73,20 +84,27 @@ test('owner primary and sticky calls remain discoverable on mobile without self-
             await calls.nth(i).evaluate(el => el.blur());
           }
           await page.mouse.move(width - 1, 800);
+          // Tab order per group: Hire preview, Book Call, its settings link.
+          const hires = page.locator('[data-owner-preview-action="hire"]');
+          const isActive = locator => locator.evaluate(el => el === document.activeElement);
           await page.locator('#before').click();
           await page.keyboard.press('Tab');
-          assert(await calls.nth(0).evaluate(el => el === document.activeElement));
+          assert(await isActive(hires.nth(0)), 'first Tab reaches the Hire preview');
+          await page.keyboard.press('Tab');
+          assert(await isActive(calls.nth(0)));
           await page.keyboard.press('Tab');
           const firstSettings = page.locator('[data-call-availability-hint]').nth(0).locator('a');
-          assert(await firstSettings.evaluate(el => el === document.activeElement));
+          assert(await isActive(firstSettings));
           await page.keyboard.press('Shift+Tab');
-          assert(await calls.nth(0).evaluate(el => el === document.activeElement));
+          assert(await isActive(calls.nth(0)));
           await page.keyboard.press('Tab');
           await page.keyboard.press('Tab');
-          assert(await calls.nth(1).evaluate(el => el === document.activeElement));
+          assert(await isActive(hires.nth(1)));
+          await page.keyboard.press('Tab');
+          assert(await isActive(calls.nth(1)));
           await page.keyboard.press('Tab');
           await page.keyboard.press('Tab');
-          assert(await page.locator('#after').evaluate(el => el === document.activeElement));
+          assert(await isActive(page.locator('#after')));
           await page.locator('#before').click();
           for (let i = 0; i < 2; i++) {
             const bounds = await calls.nth(i).boundingBox();

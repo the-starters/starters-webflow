@@ -49,9 +49,9 @@ sitting on a form they can neither fill in nor submit. The bias for the paid Bra
 is still deliberately toward staying: re-showing a completed form is a harmless
 annoyance, sending a member away from a form they still have to fill in is not.
 
-This redirect runs on page load. A successful form submit can open the
-[Complete Profile call step](COMPLETE-PROFILE-CALL-STEP-WIRING.md) on the same
-page through the account controller's completion event. Keep
+This redirect runs on page load. On `/complete-profile`, a successful form
+submit can open the [Complete Profile call step](COMPLETE-PROFILE-CALL-STEP-WIRING.md)
+through the account controller's completion event. Keep
 `redirect="/brand-dashboard"` on the form as the fallback. Reloading after
 completion still exits through this module.
 
