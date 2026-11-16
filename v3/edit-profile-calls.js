@@ -500,6 +500,24 @@
       if (state === 'ready' || state === 'pending') retryBlocked()
     }
 
+    // The dashboard setup gate links here with #calls. Webflow Tabs ignore the hash, so
+    // select the tab that holds the Calls block: its pane and its link share data-w-tab.
+    function openCallsTab() {
+      if (!win.location || win.location.hash !== '#calls') return
+      const pane = root.closest('[data-w-tab]')
+      if (!pane) return
+      const name = pane.getAttribute('data-w-tab')
+      const link = Array.prototype.find.call(win.document.querySelectorAll('[data-w-tab]'), function (el) {
+        return el !== pane && el.getAttribute('data-w-tab') === name && !el.contains(root)
+      })
+      if (!link || typeof link.click !== 'function') return
+      if (link.getAttribute('aria-selected') === 'true') return
+      // Webflow binds tab clicks on its own ready; queue behind it when it is present.
+      const select = function () { link.click() }
+      if (win.Webflow && typeof win.Webflow.push === 'function') win.Webflow.push(select)
+      else select()
+    }
+
     async function mount() {
       controller = deps.calendar.createController(win, {
         baseItems: function () { return saved },
@@ -514,6 +532,7 @@
       if (!root) return 'no-root'
       editor = deps.editorFor(root)
       if (!editor || typeof editor.load !== 'function') return 'no-editor'
+      openCallsTab()
       root.addEventListener('click', onClick)
       root.addEventListener('change', onChange)
       root.addEventListener('input', onInput)

@@ -110,6 +110,9 @@ function makePage(options = {}) {
     path = '/starter-edit-profile-test',
     origin = 'https://www.thestarters.com',
     guard = true,
+    hash = '',
+    tabs = false,
+    webflow = null,
     starter = {
       timezone: 'Asia/Manila',
       availability: {
@@ -167,7 +170,13 @@ function makePage(options = {}) {
     el('div', { 'data-calls-step-element': 'calendar-connected' }, [switchCalendar, disconnect]),
   ])
   const root = el('div', { 'data-calls-step': 'root', 'data-calls-step-context': 'edit' }, [freeRow, paidRow, availability, calendarEl, error])
-  const body = el('body', {}, [root])
+  // Webflow Tabs: links and panes share data-w-tab; the Calls block sits in its pane.
+  const tabLinks = tabs ? ['Personal Details', 'Calls'].map((name) => el('a', { 'data-w-tab': name, 'aria-selected': name === 'Personal Details' ? 'true' : 'false' })) : []
+  const tabClicks = []
+  tabLinks.forEach((link) => link.addEventListener('click', () => tabClicks.push(link.getAttribute('data-w-tab'))))
+  const body = tabs
+    ? el('body', {}, [el('div', {}, tabLinks), el('div', { 'data-w-tab': 'Personal Details' }), el('div', { 'data-w-tab': 'Calls' }, [root])])
+    : el('body', {}, [root])
   extra.hidden = true
   const storage = new Map()
   const tab = { closed: false, opener: {}, url: null, location: { replace(u) { tab.url = u } }, close() { tab.closed = true } }
@@ -201,7 +210,8 @@ function makePage(options = {}) {
   }
 
   const win = {
-    location: { origin, pathname: path, assign: (u) => assigned.push(u) },
+    location: { origin, pathname: path, hash, assign: (u) => assigned.push(u) },
+    Webflow: webflow,
     $memberstackDom: {
       getMemberCookie: () => Promise.resolve('ms'),
       getCurrentMember: () => Promise.resolve({ data: { id: 'mem_edit1' } }),
@@ -252,7 +262,7 @@ function makePage(options = {}) {
   const stripe = (state) => (docListeners['starters:stripe-connect-state'] || []).forEach((fn) => fn({ detail: { state } }))
   return {
     win, server, calls, warnings, root, error, freeToggle, description, paidToggle, title, price, freeRow, paidRow, freeStatus, paidStatus,
-    days, windows, addWindow, addExtra, connect, switchCalendar, disconnect, tab, assigned, timers, storage,
+    days, windows, addWindow, addExtra, connect, switchCalendar, disconnect, tab, assigned, timers, storage, tabClicks,
     controller, editor: () => editorFor(root), tick, writes, writesTo, stripe,
   }
 }
@@ -679,4 +689,26 @@ test('Stripe state events update the editor status', async () => {
   page.stripe('pending')
   page.stripe('bogus')
   assert.deepEqual(statuses, [{ stripe: 'pending' }])
+})
+
+// ---- #calls deep link (dashboard setup gate) ----
+
+test('#calls selects the Webflow tab that holds the Calls block', async () => {
+  const page = await ready({ hash: '#calls', tabs: true })
+  assert.deepEqual(page.tabClicks, ['Calls'])
+})
+
+test('#calls waits for Webflow ready when Webflow is on the page', async () => {
+  const queued = []
+  const page = await ready({ hash: '#calls', tabs: true, webflow: { push: (fn) => queued.push(fn) } })
+  assert.deepEqual(page.tabClicks, [])
+  queued.forEach((fn) => fn())
+  assert.deepEqual(page.tabClicks, ['Calls'])
+})
+
+test('no hash, another hash, or no tabs: no tab is clicked and the page still mounts', async () => {
+  assert.deepEqual((await ready({ tabs: true })).tabClicks, [])
+  assert.deepEqual((await ready({ hash: '#services', tabs: true })).tabClicks, [])
+  assert.deepEqual((await ready({ hash: '#CALLS', tabs: true })).tabClicks, [])
+  assert.deepEqual((await ready({ hash: '#calls' })).tabClicks, [])
 })
