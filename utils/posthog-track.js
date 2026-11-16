@@ -446,7 +446,80 @@
     )
   }
 
+  // Profile and form scripts copy values into hidden mirror fields (class `hide`
+  // or type="hidden") and fire synthetic `change` events there, often once per
+  // keystroke (for example the bio editor's plain and HTML mirrors). Autocapture
+  // records each one, so one member editing a profile sends thousands of events
+  // that are not user actions. Drop only `change` autocapture on hidden fields;
+  // clicks, submits and changes on visible fields are kept.
+  function firstChainElement(chain) {
+    const head = safeString(chain).split(';')[0]
+    const selector = head.split(':')[0]
+    const parts = selector.split('.')
+    const element = { tag_name: parts[0], classes: parts.slice(1) }
+    const attrPattern = /(?:^|[:"])(attr__(?:type|id|name))="([^"]*)"/g
+    let match
+    while ((match = attrPattern.exec(head))) element[match[1]] = match[2]
+    return element
+  }
+
+  // posthog-js does not record the `type` attribute of form fields, so look the
+  // target up in the page by its recorded id or name and read its real type.
+  // before_send runs synchronously while the change event is dispatched, so the
+  // element is still in the document.
+  function isHiddenInputInPage(target) {
+    const doc = window.document
+    if (!doc) return false
+    const id = safeString(target.attr__id)
+    const name = safeString(target.attr__name)
+    let el = null
+    if (id && typeof doc.getElementById === 'function') el = doc.getElementById(id)
+    if (!el && name && typeof doc.getElementsByName === 'function') el = doc.getElementsByName(name)[0]
+    return !!el && safeString(el.tagName).toLowerCase() === 'input' && safeString(el.type).toLowerCase() === 'hidden'
+  }
+
+  function isHiddenFieldChange(event) {
+    try {
+      const props = event && event.properties
+      if (!event || event.event !== '$autocapture' || !props || props.$event_type !== 'change') return false
+      const target = Array.isArray(props.$elements) && props.$elements[0]
+        ? props.$elements[0]
+        : props.$elements_chain ? firstChainElement(props.$elements_chain) : null
+      if (!target) return false
+      const classes = Array.isArray(target.classes)
+        ? target.classes.map(safeString)
+        : safeString(target.attr__class).split(/\s+/)
+      if (classes.includes('hide') || safeString(target.attr__type).toLowerCase() === 'hidden') return true
+      return safeString(target.tag_name).toLowerCase() === 'input' && isHiddenInputInPage(target)
+    } catch (e) {
+      return false
+    }
+  }
+
+  function wireAutocaptureFilter() {
+    if (window.__startersAutocaptureFilterWired) return
+    window.__startersAutocaptureFilterWired = true
+    const dropHiddenChange = (event) => (isHiddenFieldChange(event) ? null : event)
+    const install = (posthog) => {
+      if (!posthog || !posthog.config || typeof posthog.set_config !== 'function') return false
+      const previous = posthog.config.before_send
+      const hooks = Array.isArray(previous) ? previous : previous ? [previous] : []
+      if (!hooks.includes(dropHiddenChange)) posthog.set_config({ before_send: [...hooks, dropHiddenChange] })
+      return true
+    }
+    try {
+      const posthog = window.posthog
+      if (!posthog) return
+      // Before the SDK loads, window.posthog is the snippet queue. The SDK runs
+      // queued functions with the initialized instance as `this`.
+      if (!install(posthog) && typeof posthog.push === 'function') posthog.push(function () { install(this) })
+    } catch (e) {
+      /* analytics must never break the page */
+    }
+  }
+
   window.StartersTrack = window.StartersTrack || { track }
   wireErrorCapture()
   wireFormCapture()
+  wireAutocaptureFilter()
 })()
