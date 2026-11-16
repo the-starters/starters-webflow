@@ -709,5 +709,6 @@ test('#calls waits for Webflow ready when Webflow is on the page', async () => {
 test('no hash, another hash, or no tabs: no tab is clicked and the page still mounts', async () => {
   assert.deepEqual((await ready({ tabs: true })).tabClicks, [])
   assert.deepEqual((await ready({ hash: '#services', tabs: true })).tabClicks, [])
+  assert.deepEqual((await ready({ hash: '#CALLS', tabs: true })).tabClicks, [])
   assert.deepEqual((await ready({ hash: '#calls' })).tabClicks, [])
 })
