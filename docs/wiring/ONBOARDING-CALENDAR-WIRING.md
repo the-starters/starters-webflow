@@ -13,9 +13,9 @@
   `data-calls-step-context`, or with `data-calls-step-context="build-profile"`. No marker is needed: a new
   attribute written through the Webflow Data API does not reach the published page, and full-profile uses the
   shared "Build Profile Calls Form" component. Next is the step's `[data-form="next-btn"]`.
-- Calls editor: hours + Google + Free call switch. The Paid row and the Stripe card stay hidden (Stripe is set
-  up later in onboarding); the Paid switch is unchecked and every Paid field disabled, so final submit sends no
-  paid call fields. Next needs valid hours only; no call type is required.
+- Calls editor: hours + Google + Free call switch. Superseded by JP 2026-11-16: the Paid row and the required
+  Stripe card now show in Build Profile; see [Calls step wiring](../../v3/CALLS-STEP-WIRING.md) for the current
+  Next rule. Until 2026-11-16 the Paid row and the Stripe card were hidden and Next needed valid hours only.
 - Next: same #12047 save as onboarding, with `offer_intro_call` = the Free switch. Then the click reaches the
   multistep form.
 - Connect Google: same pop-up flow; `redirect_uri` = the Build Profile page, and the intent stores
@@ -28,7 +28,8 @@
   `grant_id` equals the Starter's current `nylas_grant_id` (same Google account reconnected) skips
   `grants/delete/v3` and `grants/add/v3` and only re-runs #12047.
 - Scripts (page head, pinned, after the staff guard): `v3/profile-calls-step.js`,
-  `v3/calendar-google-connect.js`, `v3/onboarding-calendar.js`.
+  `v3/calendar-google-connect.js`, `v3/onboarding-calendar.js`, `v3/onboarding-v2-stripe.js` (after
+  `profile-calls-step.js`).
 
 ## Onboarding context (rollback only)
 

@@ -383,3 +383,72 @@ test('the announcement is skipped safely where the document cannot dispatch', as
   await createController(env.win, env.view).mount()
   assert.deepEqual(env.rendered, ['ready'])
 })
+
+// Build Profile (JP 2026-11-16): Stripe moved from onboarding to the Build Profile Calls step.
+const BUILD = '/build-profile/full-profile-test'
+
+function buildEnv(o = {}) {
+  const env = makeEnv({ path: BUILD, ...o })
+  const statuses = []
+  const callsRoot = { name: 'calls-root' }
+  const card = { attrs: {}, closest: (sel) => (sel === '[data-calls-step="root"]' ? callsRoot : null),
+    setAttribute(k, v) { this.attrs[k] = v }, removeAttribute(k) { delete this.attrs[k] } }
+  const button = { handlers: [], addEventListener(type, fn) { this.handlers.push(fn) } }
+  env.win.document.querySelectorAll = (sel) => (
+    sel === '[data-calls-step="root"] [data-stripe-connect-element="root"]' ? [card]
+      : sel === '[data-calls-step="root"] [data-stripe-connect-action="start"]' ? [button] : [])
+  env.win.StarterProfileCallsStep = { editorFor: (root) => (root === callsRoot ? { setStatus: (s) => statuses.push(s) } : null) }
+  return { env, card, button, statuses }
+}
+
+test('build route: boots on the Build Profile test pages on staging, and on production only with the staff guard', () => {
+  for (const path of ['/build-profile/full-profile-test', '/build-profile/consult-test']) {
+    assert.equal(bootAllowed(makeEnv({ path, origin: 'https://the-starters-3-0.webflow.io', guard: false }).win), true, path)
+    assert.equal(bootAllowed(makeEnv({ path }).win), true, path)
+    assert.equal(bootAllowed(makeEnv({ path, guard: false }).win), false, path)
+  }
+  assert.equal(bootAllowed(makeEnv({ path: '/build-profile/select-profile' }).win), false)
+})
+
+test('build route: status goes to the Calls step, with none sent as disconnected; no view, footer or submit gate', async () => {
+  const none = buildEnv({ statuses: [NONE] })
+  await createController(none.env.win, null).mount()
+  assert.deepEqual(none.statuses, [{ stripe: 'disconnected' }])
+  assert.equal(none.env.docListeners.some((l) => l.type === 'submit'), false)
+  assert.equal(none.button.handlers.length, 1)
+
+  const pending = buildEnv({ statuses: [{ connected: true, charges_enabled: false, requires_onboarding: false }] })
+  await createController(pending.env.win, null).mount()
+  assert.deepEqual(pending.statuses, [{ stripe: 'pending' }])
+})
+
+test('build route: start opens Stripe in a new tab with the dashboard return_url and the Build Profile prefix', async () => {
+  const { env, button, statuses } = buildEnv({ statuses: [NONE, READY], startResult: ONBOARDING })
+  await createController(env.win, null).mount()
+  let prevented = false
+  await button.handlers[0]({ preventDefault() { prevented = true } })
+  assert.equal(prevented, true)
+  const body = JSON.parse(env.calls.find((c) => c.url === START).options.body)
+  assert.equal(body.return_url, 'https://www.thestarters.com/starter-dashboard')
+  assert.match(body.idempotency_key, /^build-profile-start-/)
+  assert.equal(env.tab.url, ONBOARDING.url)
+  assert.deepEqual(statuses.at(-1), { stripe: 'opened' })
+  env.channels[0].onmessage({ data: { type: 'connected' } })
+  await settle()
+  assert.deepEqual(statuses.at(-1), { stripe: 'ready' })
+})
+
+test('build route: a failed start marks the card and leaves the Calls step status unchanged', async () => {
+  const { env, card, statuses } = buildEnv({ statuses: [NONE], startStatus: 500, startResult: { message: 'x' } })
+  const controller = createController(env.win, null)
+  await controller.mount()
+  assert.equal(await controller.start({ preventDefault() {} }), false)
+  assert.equal(card.attrs['data-onboarding-stripe-error'], 'start')
+  assert.deepEqual(statuses, [{ stripe: 'disconnected' }])
+})
+
+test('build route: no Calls step script on the page is safe', async () => {
+  const { env } = buildEnv({ statuses: [READY] })
+  delete env.win.StarterProfileCallsStep
+  await createController(env.win, null).mount()
+})
