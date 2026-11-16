@@ -10,6 +10,7 @@ function load({
   queued = false,
   storageThrows = false,
   hostname = 'www.thestarters.com',
+  pageElements = [],
 } = {}) {
   const listeners = {}
   const captured = []
@@ -25,7 +26,11 @@ function load({
         reloads += 1
       },
     },
-    document: { addEventListener() {} },
+    document: {
+      addEventListener() {},
+      getElementById: (id) => pageElements.find((el) => el.id === id) || null,
+      getElementsByName: (name) => pageElements.filter((el) => el.name === name),
+    },
     MutationObserver: function () {},
     getComputedStyle: () => ({}),
     sessionStorage: {
@@ -693,7 +698,10 @@ test('queued snippet installs the hook before replaying captured errors', () => 
   app.flush()
   assert.equal(app.captured[0].properties.$exception_list[0].mechanism.handled, false)
   app.listeners.error({ error: new Error('later failure') })
-  assert.equal(app.sdk.config.before_send.length, 1)
+  // The error hook and the hidden-field autocapture filter, each installed once.
+  const hooks = app.sdk.config.before_send
+  assert.equal(hooks.length, 2)
+  assert.equal(new Set(hooks).size, hooks.length)
 })
 
 test('existing privacy hooks and event drops are preserved', () => {
@@ -725,4 +733,97 @@ test('manual captures, unrelated events and handled causes keep their metadata',
   assert.equal(event.properties.$exception_list[0].mechanism.handled, false)
   assert.equal(event.properties.$exception_list[0].mechanism.synthetic, false)
   assert.equal(event.properties.$exception_list[1], cause)
+})
+
+function runBeforeSend(sdk, event) {
+  const hooks = sdk.config.before_send
+  for (const hook of Array.isArray(hooks) ? hooks : hooks ? [hooks] : []) {
+    event = hook(event)
+    if (event == null) return null
+  }
+  return event
+}
+
+function autocapture(type, element, extra = {}) {
+  return { event: '$autocapture', properties: { $event_type: type, $elements: element ? [element] : undefined, ...extra } }
+}
+
+test('synthetic change events on hidden mirror fields are dropped', () => {
+  const { sdk } = load()
+  const bioMirror = { tag_name: 'textarea', classes: ['with-count', 'hide', 'w-input', 'initialized'], attr__id: 'bio-plain' }
+  const hiddenInput = { tag_name: 'input', attr__class: 'form_input', attr__type: 'hidden' }
+  assert.equal(runBeforeSend(sdk, autocapture('change', bioMirror)), null)
+  assert.equal(runBeforeSend(sdk, autocapture('change', hiddenInput)), null)
+  assert.equal(runBeforeSend(sdk, autocapture('change', null, {
+    $elements_chain: 'input.hide:attr__class="hide"attr__id="skills-required";div.form_field',
+  })), null)
+  assert.equal(runBeforeSend(sdk, autocapture('change', null, {
+    $elements_chain: 'input:attr__id="skills"attr__name="skills"attr__type="hidden"nth-child="1"nth-of-type="1";div.form_field',
+  })), null)
+  const visibleChain = {
+    $elements_chain: 'input.form_input:attr__class="form_input"attr__id="name"attr__type="text"nth-child="1";div.form_field',
+  }
+  const visibleEvent = autocapture('change', null, visibleChain)
+  assert.deepEqual(runBeforeSend(sdk, visibleEvent), visibleEvent)
+})
+
+test('clicks, submits, visible-field changes and other events are kept', () => {
+  const { sdk } = load()
+  const hidden = { tag_name: 'input', classes: ['hide'] }
+  const visible = { tag_name: 'input', classes: ['form_input', 'w-input'], attr__type: 'text' }
+  const lookAlike = { tag_name: 'input', classes: ['hide-on-mobile', 'w-input'] }
+  for (const event of [
+    autocapture('click', hidden),
+    autocapture('submit', hidden),
+    autocapture('change', visible),
+    autocapture('change', lookAlike),
+    autocapture('change', null),
+    { event: '$pageview', properties: { $event_type: 'change', $elements: [hidden] } },
+  ]) {
+    assert.deepEqual(runBeforeSend(sdk, event), event)
+  }
+})
+
+test('the filter keeps existing before_send hooks and error capture still works', () => {
+  const seen = []
+  const { sdk, listeners, captured } = load({ beforeSend: (event) => { seen.push(event.event); return event } })
+  assert.equal(runBeforeSend(sdk, autocapture('change', { tag_name: 'textarea', classes: ['hide'] })), null)
+  assert.deepEqual(seen, ['$autocapture'])
+  listeners.error({ error: new Error('boom'), filename: 'https://www.thestarters.com/x.js', lineno: 1, colno: 2, message: 'boom' })
+  assert.equal(captured.length, 1)
+  assert.equal(captured[0].properties.$exception_list[0].mechanism.handled, false)
+  assert.equal(runBeforeSend(sdk, autocapture('change', { tag_name: 'textarea', classes: ['hide'] })), null)
+})
+
+test('the filter installs once the SDK replaces the snippet queue', () => {
+  const loaded = load({ queued: true })
+  assert.equal(loaded.sdk.config.before_send, undefined)
+  loaded.flush()
+  assert.equal(runBeforeSend(loaded.sdk, autocapture('change', { tag_name: 'input', classes: ['hide'] })), null)
+  const visible = autocapture('change', { tag_name: 'input', classes: ['w-input'] })
+  assert.deepEqual(runBeforeSend(loaded.sdk, visible), visible)
+})
+
+test('change events on type=hidden inputs are dropped when the SDK omits attr__type', () => {
+  // posthog-js records only name, id, class and aria-label on form fields, so the
+  // hidden type has to come from the element on the page.
+  const pageElements = [
+    { tagName: 'INPUT', type: 'hidden', id: 'skills', name: 'skills' },
+    { tagName: 'INPUT', type: 'hidden', id: 'tools-required', name: 'tools-required' },
+    { tagName: 'INPUT', type: 'hidden', id: '', name: 'function' },
+    { tagName: 'INPUT', type: 'text', id: 'first-name', name: 'first-name' },
+  ]
+  const { sdk } = load({ pageElements })
+  assert.equal(runBeforeSend(sdk, autocapture('change', { tag_name: 'input', attr__id: 'skills', attr__name: 'skills' })), null)
+  assert.equal(runBeforeSend(sdk, autocapture('change', { tag_name: 'input', attr__name: 'function' })), null)
+  assert.equal(runBeforeSend(sdk, autocapture('change', null, {
+    $elements_chain: 'input:attr__id="tools-required"attr__name="tools-required"nth-child="9"nth-of-type="9";form#profile',
+  })), null)
+  for (const event of [
+    autocapture('change', { tag_name: 'input', attr__id: 'first-name', attr__name: 'first-name' }),
+    autocapture('change', { tag_name: 'input', attr__id: 'missing' }),
+    autocapture('click', { tag_name: 'input', attr__id: 'skills' }),
+  ]) {
+    assert.deepEqual(runBeforeSend(sdk, event), event)
+  }
 })
