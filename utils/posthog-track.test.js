@@ -752,6 +752,14 @@ test('synthetic change events on hidden mirror fields are dropped', () => {
   assert.equal(runBeforeSend(sdk, autocapture('change', null, {
     $elements_chain: 'input.hide:attr__class="hide"attr__id="skills-required";div.form_field',
   })), null)
+  assert.equal(runBeforeSend(sdk, autocapture('change', null, {
+    $elements_chain: 'input:attr__id="skills"attr__name="skills"attr__type="hidden"nth-child="1"nth-of-type="1";div.form_field',
+  })), null)
+  const visibleChain = {
+    $elements_chain: 'input.form_input:attr__class="form_input"attr__id="name"attr__type="text"nth-child="1";div.form_field',
+  }
+  const visibleEvent = autocapture('change', null, visibleChain)
+  assert.deepEqual(runBeforeSend(sdk, visibleEvent), visibleEvent)
 })
 
 test('clicks, submits, visible-field changes and other events are kept', () => {

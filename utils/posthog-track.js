@@ -456,7 +456,7 @@
     const head = safeString(chain).split(';')[0]
     const selector = head.split(':')[0]
     const parts = selector.split('.')
-    const typeMatch = /(?:^|:)attr__type="([^"]*)"/.exec(head)
+    const typeMatch = /(?:^|[:"])attr__type="([^"]*)"/.exec(head)
     return { tag_name: parts[0], classes: parts.slice(1), attr__type: typeMatch ? typeMatch[1] : '' }
   }
 
