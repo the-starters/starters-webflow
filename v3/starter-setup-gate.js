@@ -46,8 +46,9 @@
   const EDIT_PROFILE_CALLS = '/starter-edit-profile-test#calls'
   const STRIPE_CARD = '[data-stripe-connect-element="root"]'
   const STRIPE_START = '[data-stripe-connect-action="start"]'
-  // The shared modal fades out for 300 ms and holds the page scroll until then.
-  const AFTER_CLOSE_MS = 350
+  // The shared modal fades out for 300 ms, holds the page scroll until then and
+  // fires window "modal-close"; the timer only covers a missing event.
+  const CLOSE_FALLBACK_MS = 1000
   const REQUEST_TIMEOUT_MS = 15000
   const MODAL_WAIT_MS = 10000
 
@@ -140,7 +141,7 @@
 
     // Scroll to the dashboard Stripe card and focus its visible start control.
     function scrollToStripe() {
-      const card = win.document.querySelector(STRIPE_CARD)
+      const card = Array.prototype.find.call(win.document.querySelectorAll(STRIPE_CARD), visible)
       if (!card) return false
       if (typeof card.scrollIntoView === 'function') card.scrollIntoView({ behavior: 'smooth', block: 'center' })
       const start = Array.prototype.find.call(card.querySelectorAll(STRIPE_START), visible)
@@ -151,6 +152,24 @@
     function close(system) {
       const entry = system.list && system.list[MODAL_ID]
       if (entry && typeof entry.close === 'function') entry.close()
+    }
+
+    function closeThenScroll(dialog, system) {
+      let done = false
+      let timer = null
+      function onClose(event) {
+        if (event && event.detail && event.detail.modal === dialog) finish()
+      }
+      function finish() {
+        if (done) return
+        done = true
+        win.removeEventListener('modal-close', onClose)
+        if (timer !== null) win.clearTimeout(timer)
+        scrollToStripe()
+      }
+      win.addEventListener('modal-close', onClose)
+      close(system)
+      if (!done) timer = win.setTimeout(finish, CLOSE_FALLBACK_MS)
     }
 
     function bind(dialog, system, missing) {
@@ -164,8 +183,7 @@
         const name = action.getAttribute('data-setup-action')
         if (name === 'go-stripe') {
           event.preventDefault()
-          close(system)
-          win.setTimeout(scrollToStripe, AFTER_CLOSE_MS)
+          closeThenScroll(dialog, system)
         } else if (name === 'skip') {
           event.preventDefault()
           index++
@@ -203,7 +221,7 @@
       if (win.console) win.console.warn.apply(win.console, ['[starter-setup-gate]'].concat(Array.prototype.slice.call(arguments)))
     }
 
-    return { run, missingFrom, scrollToStripe }
+    return { run, missingFrom }
   }
 
   const exported = { bootAllowed, missingFrom, createGate, EDIT_PROFILE_CALLS, MODAL_ID }

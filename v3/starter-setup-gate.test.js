@@ -18,7 +18,7 @@ function readiness(over = {}) {
 class El {
   constructor(attrs = {}, tag = 'DIV', children = []) {
     this.attrs = { ...attrs }; this.tagName = tag; this.hidden = false; this.children = children; this.parent = null
-    this.listeners = {}; this.focused = false; this.scrolled = null
+    this.listeners = {}; this.focused = false; this.scrolled = null; this.scrolls = 0
     for (const c of children) c.parent = this
   }
   getAttribute(n) { return n in this.attrs ? this.attrs[n] : null }
@@ -40,7 +40,7 @@ class El {
     return event
   }
   focus() { this.focused = true }
-  scrollIntoView(options) { this.scrolled = options }
+  scrollIntoView(options) { this.scrolled = options; this.scrolls++ }
   getClientRects() { return this.hidden ? [] : [{}] }
 }
 
@@ -58,7 +58,10 @@ function makePage({ staff = true, flag = true, dialog = true, ready = readiness(
   const startVisible = new El({ 'data-stripe-connect-action': 'start', 'data-stripe-connect-element': 'disconnected' })
   const stripeCard = new El({ 'data-stripe-connect-element': 'root' }, 'DIV', [startHidden, startVisible])
   const body = new El({}, 'BODY', [stripeCard])
+  const windowListeners = {}
   const win = {
+    addEventListener(type, fn) { (windowListeners[type] = windowListeners[type] || []).push(fn) },
+    removeEventListener(type, fn) { windowListeners[type] = (windowListeners[type] || []).filter((f) => f !== fn) },
     location: { origin: 'https://www.thestarters.com', pathname: path },
     setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length },
     clearTimeout() {},
@@ -79,11 +82,14 @@ function makePage({ staff = true, flag = true, dialog = true, ready = readiness(
     },
     document: {
       querySelector: (sel) => (sel.startsWith('dialog') ? (dialog ? dlg : null) : body.querySelector(sel)),
+      querySelectorAll: (sel) => body.querySelectorAll(sel),
     },
     lumos: modal ? { modal: { list: { [MODAL_ID]: { close: () => closed.push(MODAL_ID) } }, open: (id) => opened.push(id) } } : undefined,
   }
   if (flag) win.StartersStaffPreview = Promise.resolve(staff)
-  return { win, opened, closed, calls, timers, dlg, avail, stripe, go, stripeCard, startVisible, startHidden }
+  // What global-embeds/modal/modal.js fires once a dialog has finished closing.
+  const modalClosed = (modalEl) => { for (const fn of [...(windowListeners['modal-close'] || [])]) fn({ detail: { modal: modalEl } }) }
+  return { win, body, opened, closed, calls, timers, dlg, avail, stripe, go, stripeCard, startVisible, startHidden, modalClosed, windowListeners }
 }
 
 // The dashboard dialog built from the All Modals design: one screen per item.
@@ -187,20 +193,65 @@ test('screens: Skip for now moves to the Stripe screen, then a second skip close
   assert.deepEqual(page.closed, [MODAL_ID])
 })
 
-test('screens: only Stripe missing opens on the Stripe screen; its button closes and then scrolls to the visible Stripe start control', async () => {
+test('screens: only Stripe missing opens on the Stripe screen; its button closes and scrolls to the visible Stripe start control once the modal has closed', async () => {
   const page = withScreens(makePage({ ready: readiness({ stripe_connect_linked: false }) }))
   await createGate(page.win).run()
   assert.equal(page.screens.availability.hidden, true)
   assert.equal(page.screens.stripe.hidden, false)
   assert.equal(page.goStripe.click().defaultPrevented, true)
   assert.deepEqual(page.closed, [MODAL_ID])
-  assert.equal(page.stripeCard.scrolled, null)
-  const later = page.timers.find((t) => t.ms >= 300 && t.ms < 1000)
-  assert.ok(later, 'scroll waits for the modal fade-out')
-  later.fn()
+  for (const t of page.timers.filter((t) => t.ms < 1000)) t.fn()
+  assert.equal(page.stripeCard.scrolled, null, 'no scroll while the modal still holds the page')
+  page.modalClosed(new El())
+  assert.equal(page.stripeCard.scrolled, null, 'another dialog closing does not trigger the scroll')
+  page.modalClosed(page.dlg)
   assert.deepEqual(page.stripeCard.scrolled, { behavior: 'smooth', block: 'center' })
   assert.equal(page.startVisible.focused, true)
   assert.equal(page.startHidden.focused, false)
+  for (const t of page.timers) t.fn()
+  page.modalClosed(page.dlg)
+  assert.equal(page.stripeCard.scrolls, 1, 'never scrolls twice')
+})
+
+test('screens: go-stripe still scrolls after a fallback wait when the modal-close event never fires', async () => {
+  const page = withScreens(makePage({ ready: readiness({ stripe_connect_linked: false }) }))
+  await createGate(page.win).run()
+  const before = page.timers.length
+  page.goStripe.click()
+  const queued = page.timers.slice(before)
+  assert.equal(queued.length, 1, 'a fallback timer is queued')
+  assert.ok(queued[0].ms >= 1000, 'the fallback leaves the 300 ms fade-out plenty of room')
+  queued[0].fn()
+  assert.equal(page.stripeCard.scrolls, 1)
+  assert.equal(page.startVisible.focused, true)
+  page.modalClosed(page.dlg)
+  assert.equal(page.stripeCard.scrolls, 1, 'a late modal-close does not scroll again')
+})
+
+test('screens: a modal that closes at once (no fade) still scrolls once', async () => {
+  const page = withScreens(makePage({ ready: readiness({ stripe_connect_linked: false }) }))
+  page.win.lumos.modal.list[MODAL_ID].close = () => { page.closed.push(MODAL_ID); page.modalClosed(page.dlg) }
+  await createGate(page.win).run()
+  page.goStripe.click()
+  assert.equal(page.stripeCard.scrolls, 1)
+  for (const t of page.timers) t.fn()
+  assert.equal(page.stripeCard.scrolls, 1)
+})
+
+test('screens: go-stripe scrolls to the first visible Stripe card, skipping a hidden one', async () => {
+  const page = withScreens(makePage({ ready: readiness({ stripe_connect_linked: false }) }))
+  const hiddenStart = new El({ 'data-stripe-connect-action': 'start' })
+  const hiddenCard = new El({ 'data-stripe-connect-element': 'root' }, 'DIV', [hiddenStart])
+  hiddenCard.hidden = true
+  page.body.children.unshift(hiddenCard)
+  hiddenCard.parent = page.body
+  await createGate(page.win).run()
+  page.goStripe.click()
+  page.modalClosed(page.dlg)
+  assert.equal(hiddenCard.scrolled, null)
+  assert.equal(hiddenStart.focused, false)
+  assert.deepEqual(page.stripeCard.scrolled, { behavior: 'smooth', block: 'center' })
+  assert.equal(page.startVisible.focused, true)
 })
 
 test('screens: the Edit Profile link is a real navigation (not prevented) and does not close through the gate', async () => {
@@ -212,10 +263,11 @@ test('screens: the Edit Profile link is a real navigation (not prevented) and do
 
 test('screens: a dashboard without the Stripe card closes cleanly with no error', async () => {
   const page = withScreens(makePage({ ready: readiness({ stripe_connect_linked: false }) }))
-  page.win.document.querySelector = (sel) => (sel.startsWith('dialog') ? page.dlg : null)
-  const gate = createGate(page.win)
-  await gate.run()
+  page.body.children = []
+  await createGate(page.win).run()
   page.goStripe.click()
-  assert.equal(gate.scrollToStripe(), false)
+  assert.doesNotThrow(() => page.modalClosed(page.dlg))
+  assert.doesNotThrow(() => { for (const t of page.timers) t.fn() })
   assert.deepEqual(page.closed, [MODAL_ID])
+  assert.deepEqual(page.windowListeners['modal-close'], [])
 })
