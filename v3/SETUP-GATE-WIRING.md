@@ -1,21 +1,28 @@
 # Setup gate frontend
 
-## Dashboard gate (`v3/starter-setup-gate.js`, JP 2026-11-12 decision 1a)
+## Dashboard gate (`v3/starter-setup-gate.js`, JP 2026-11-12 decision 1a, 2026-11-16 link-out per screen)
 
 On `/starter-dashboard`, a Starter missing availability/calendar or Stripe sees the setup dialog on every visit
-until both are done. The dialog lists what is missing and sends them to Edit Profile v2 › Calls
-(`/starter-edit-profile-test#calls`). "Later" (any authored `[data-modal-close]`) closes it for this visit only.
+until both are done. The dialog uses the All Modals "Finish setting up your account" design and shows one
+screen per missing item, availability first, then Stripe:
 
+| Screen | Main button | Result |
+| --- | --- | --- |
+| `[data-setup-step="availability"]` | `a[data-setup-action="go-calendar"]` | Link to Edit Profile v2 › Calls (`/starter-edit-profile-test#calls`); the module sets the `href` |
+| `[data-setup-step="stripe"]` | `[data-setup-action="go-stripe"]` | Closes the dialog, waits for the 300 ms fade-out, scrolls to the dashboard Stripe card `[data-stripe-connect-element="root"]` and focuses its visible `[data-stripe-connect-action="start"]` (Jai 2026-11-14: Stripe stays on the dashboard) |
+
+- `[data-setup-action="skip"]` ("Skip for now") shows the next missing screen, or closes after the last one.
+- Any `[data-modal-close]` closes the dialog for this visit only. Other `[data-setup-step]` screens (calendar,
+  done) stay hidden.
+- Legacy list markup still works: `[data-setup-missing="availability|stripe"]` items and `a[data-setup-action="go"]`.
 - **Staff-only until launch:** load `v3/staff-preview-guard.js` with `data-mode="flag"` in the dashboard head
   (normal script tag, before this module). Flag mode never hides or redirects; this module runs only when
   `window.StartersStaffPreview` resolves `true`. Without the flag guard it does nothing.
 - **Status:** `GET api:tCpV3oqd/starter/paid-call-settings/get/v3` → `readiness`. `availability` is missing when
   `availability_configured` or `calendar_connected` is not true; `stripe` when `stripe_connect_linked` is not true.
   Google Calendar is optional and never opens the gate. A failed read opens nothing.
-- **Markup:** the shared modal dialog `dialog.modal_dialog[data-modal-target="starter-setup-required"][data-setup-gate]`
-  on the dashboard, with `[data-setup-missing="availability"]`, `[data-setup-missing="stripe"]`,
-  `a[data-setup-action="go"]` (href set by the module) and a `[data-modal-close]` "Later". Opened with
-  `lumos.modal.open('starter-setup-required')` (`global-embeds/modal/modal.js`, live on all pages).
+- **Dialog:** `dialog.modal_dialog[data-modal-target="starter-setup-required"][data-setup-gate]` on the dashboard,
+  opened with `lumos.modal.open('starter-setup-required')` (`global-embeds/modal/modal.js`, live on all pages).
 
 ## Step view (`v3/starter-setup-gate-view.js`, staging `/all-modals`)
 

@@ -1,10 +1,15 @@
 /**
- * Starter setup gate (JP 2026-11-12, decision 1a).
+ * Starter setup gate (JP 2026-11-12 decision 1a; 2026-11-16 link-out per step).
  *
  * On /starter-dashboard, a Starter who is missing their availability/calendar
  * or Stripe sees the setup dialog every visit until both are done. The dialog
- * lists what is missing and sends them to Edit Profile v2 > Calls to fix it.
- * "Later" (any authored [data-modal-close]) closes it for this visit only.
+ * shows one screen per missing item, in order (availability, then Stripe):
+ *   availability: the main button links to Edit Profile v2 > Calls
+ *   stripe:       the main button closes the dialog and scrolls to the
+ *                 dashboard Stripe card (Jai 2026-11-14: Stripe stays on the
+ *                 dashboard)
+ * "Skip for now" shows the next missing screen, or closes after the last one.
+ * Any authored [data-modal-close] closes it for this visit only.
  *
  * Staff-only until launch: it runs only after the staff preview guard in FLAG
  * mode says "allowed" (window.StartersStaffPreview resolves true). The flag
@@ -18,10 +23,15 @@
  *
  * Markup (Webflow, dashboard): the shared modal dialog
  *   <dialog class="modal_dialog" data-modal-target="starter-setup-required" data-setup-gate>
- *     [data-setup-missing="availability"]   shown when hours/calendar are missing
- *     [data-setup-missing="stripe"]         shown when Stripe is not started
- *     a[data-setup-action="go"]             CTA; href is set to Edit Profile v2 > Calls
- *     [data-modal-close]                    "Later"
+ *     [data-setup-step="availability"]      screen shown when hours/calendar are missing
+ *       a[data-setup-action="go-calendar"]  href is set to Edit Profile v2 > Calls
+ *     [data-setup-step="stripe"]            screen shown when Stripe is not started
+ *       [data-setup-action="go-stripe"]     closes and scrolls to [data-stripe-connect-element="root"]
+ *     [data-setup-action="skip"]            next missing screen, or close
+ *     [data-modal-close]                    close for this visit
+ *   Other [data-setup-step] screens (calendar, done) stay hidden.
+ *   Legacy list markup still works: [data-setup-missing="..."] items and
+ *   a[data-setup-action="go"] (href = Edit Profile v2 > Calls).
  * Wiring: v3/SETUP-GATE-WIRING.md.
  */
 ;(function (global) {
@@ -34,6 +44,10 @@
   const MODAL_ID = 'starter-setup-required'
   const DIALOG = 'dialog[data-setup-gate][data-modal-target="' + MODAL_ID + '"]'
   const EDIT_PROFILE_CALLS = '/starter-edit-profile-test#calls'
+  const STRIPE_CARD = '[data-stripe-connect-element="root"]'
+  const STRIPE_START = '[data-stripe-connect-action="start"]'
+  // The shared modal fades out for 300 ms and holds the page scroll until then.
+  const AFTER_CLOSE_MS = 350
   const REQUEST_TIMEOUT_MS = 15000
   const MODAL_WAIT_MS = 10000
 
@@ -103,13 +117,62 @@
       })
     }
 
+    function showStep(dialog, step) {
+      for (const screen of dialog.querySelectorAll('[data-setup-step]')) {
+        screen.hidden = screen.getAttribute('data-setup-step') !== step
+      }
+    }
+
     function fill(dialog, missing) {
       for (const item of dialog.querySelectorAll('[data-setup-missing]')) {
         item.hidden = !missing.includes(item.getAttribute('data-setup-missing'))
       }
-      for (const go of dialog.querySelectorAll('[data-setup-action="go"]')) {
+      for (const go of dialog.querySelectorAll('[data-setup-action="go"], [data-setup-action="go-calendar"]')) {
         if (go.tagName === 'A') go.setAttribute('href', EDIT_PROFILE_CALLS)
       }
+      showStep(dialog, missing[0])
+    }
+
+    function visible(element) {
+      if (!element || element.hidden) return false
+      return typeof element.getClientRects !== 'function' || element.getClientRects().length > 0
+    }
+
+    // Scroll to the dashboard Stripe card and focus its visible start control.
+    function scrollToStripe() {
+      const card = win.document.querySelector(STRIPE_CARD)
+      if (!card) return false
+      if (typeof card.scrollIntoView === 'function') card.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      const start = Array.prototype.find.call(card.querySelectorAll(STRIPE_START), visible)
+      if (start && typeof start.focus === 'function') start.focus({ preventScroll: true })
+      return true
+    }
+
+    function close(system) {
+      const entry = system.list && system.list[MODAL_ID]
+      if (entry && typeof entry.close === 'function') entry.close()
+    }
+
+    function bind(dialog, system, missing) {
+      let index = 0
+      if (dialog.__setupGateBound) return
+      dialog.__setupGateBound = true
+      dialog.addEventListener('click', function (event) {
+        const target = event.target
+        const action = target && typeof target.closest === 'function' ? target.closest('[data-setup-action]') : null
+        if (!action) return
+        const name = action.getAttribute('data-setup-action')
+        if (name === 'go-stripe') {
+          event.preventDefault()
+          close(system)
+          win.setTimeout(scrollToStripe, AFTER_CLOSE_MS)
+        } else if (name === 'skip') {
+          event.preventDefault()
+          index++
+          if (index < missing.length) showStep(dialog, missing[index])
+          else close(system)
+        }
+      })
     }
 
     // Returns 'opened' | 'complete' | 'skipped:<reason>'.
@@ -131,6 +194,7 @@
       const system = await waitForModal()
       if (!system) return 'skipped:no-modal-system'
       fill(dialog, missing)
+      bind(dialog, system, missing)
       system.open(MODAL_ID)
       return 'opened'
     }
@@ -139,7 +203,7 @@
       if (win.console) win.console.warn.apply(win.console, ['[starter-setup-gate]'].concat(Array.prototype.slice.call(arguments)))
     }
 
-    return { run, missingFrom }
+    return { run, missingFrom, scrollToStripe }
   }
 
   const exported = { bootAllowed, missingFrom, createGate, EDIT_PROFILE_CALLS, MODAL_ID }
