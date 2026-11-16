@@ -7,10 +7,12 @@
   // Onboarding v2 (JP 2026-11-09): the calendar step on the staff-only onboarding page.
   const onboardingPaths = new Set(['/starter-onboarding-v2', '/starter-onboarding-v2-wip'])
   // Build Profile (Jai 2026-11-12: availability is set in Build Profile, not
-  // onboarding; JP 1a): the calls root inside a Build Profile form step (no
-  // context, or context "build-profile") asks for hours, Google and the Free
-  // call. The Paid row and the Stripe card stay hidden, because Stripe is set
-  // up later in onboarding.
+  // onboarding): the calls root inside a Build Profile form step (no context,
+  // or context "build-profile") asks for hours, Google, the call switches and
+  // Stripe. JP 2026-11-16: Stripe moved from onboarding to Build Profile and is
+  // required for every Starter (Paid on or off); Continue needs Stripe started
+  // and submitted ('pending' or 'ready'). v3/onboarding-v2-stripe.js drives the
+  // card and reports through setStatus({ stripe }).
   const buildProfilePaths = new Set(['/build-profile/full-profile-test', '/build-profile/consult-test', '/build-profile/full-profile', '/build-profile/consult'])
   const routes = new Set(['/starter-edit-profile-test', standalonePath, ...buildProfilePaths, ...onboardingPaths])
 
@@ -241,13 +243,9 @@
       let paidEnabled = false
       for (const service of services) {
         // Onboarding asks for hours and calendar only: Build Profile already
-        // recorded the call choices, and Stripe has its own onboarding step.
-        if (onboarding || (buildProfile && service === paid)) {
+        // recorded the call choices.
+        if (onboarding) {
           service.hidden = true
-          if (buildProfile) {
-            if (paidToggle) paidToggle.checked = false
-            for (const field of ['input', 'select', 'textarea'].flatMap((tag) => [...service.querySelectorAll(tag)])) field.disabled = true
-          }
           continue
         }
         const enabled = service.querySelector(enabledSelector)
@@ -266,7 +264,8 @@
       const hoursRequired = onboarding || buildProfile
       if (availability) availability.hidden = !(anyEnabled || hoursRequired)
       if (calendar) calendar.hidden = !(anyEnabled || hoursRequired)
-      if (stripe) stripe.hidden = hoursRequired || !paidEnabled
+      // Build Profile always shows Stripe (required); onboarding never does.
+      if (stripe) stripe.hidden = buildProfile ? false : onboarding || !paidEnabled
       const taken = new Set(selected(days))
       for (const day of extraDays.querySelectorAll('[data-day]')) {
         day.disabled = taken.has(Number(day.dataset.day))
@@ -288,16 +287,28 @@
       renderStatus()
     }
 
-    function validateContinue() {
-      if (onboarding || buildProfile) return validateHours(read())
-      if (!services.some((service) => service.querySelector(enabledSelector)?.checked)) {
-        return 'Turn on at least one call type to continue.'
-      }
+    function paidPriceError() {
       if (paidToggle?.checked && (!/^\d+$/.test(price?.value.trim() || '') ||
           Number(price.value) < 1 || Number(price.value) > 1000)) {
         return 'Add a price for the consulting call.'
       }
-      return validateHours(read())
+      return ''
+    }
+
+    const stripeMessages = ['Connect Stripe to continue.', 'Finish setting up Stripe to continue.']
+
+    function stripeError() {
+      if (status.stripe === 'pending' || status.stripe === 'ready') return ''
+      return status.stripe === 'opened' ? stripeMessages[1] : stripeMessages[0]
+    }
+
+    function validateContinue() {
+      if (onboarding) return validateHours(read())
+      if (buildProfile) return validateHours(read()) || paidPriceError() || stripeError()
+      if (!services.some((service) => service.querySelector(enabledSelector)?.checked)) {
+        return 'Turn on at least one call type to continue.'
+      }
+      return paidPriceError() || validateHours(read())
     }
 
     if (step && !edit) {
@@ -401,7 +412,7 @@
         if (freeToggle) freeToggle.checked = Boolean(next.free.enabled)
         if (freeDescription && typeof next.free.description === 'string') freeDescription.value = next.free.description
       }
-      if (next.paid && !onboarding && !buildProfile) {
+      if (next.paid && !onboarding) {
         if (paidToggle) paidToggle.checked = Boolean(next.paid.enabled)
         if (paidDescription && typeof next.paid.title === 'string') paidDescription.value = next.paid.title
         if (price && next.paid.price !== undefined && next.paid.price !== null) price.value = String(next.paid.price)
@@ -418,6 +429,8 @@
       offerIntroCall: () => (onboarding || !freeToggle ? true : Boolean(freeToggle.checked)),
       setStatus(next) {
         Object.assign(status, next)
+        if (continueError && next.stripe && !stripeError() &&
+            stripeMessages.includes(continueError.textContent)) continueError.textContent = ''
         renderStatus()
       },
     }

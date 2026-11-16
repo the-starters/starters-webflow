@@ -33,3 +33,11 @@ Boot: staging origin, or production hosts only when the page loads `v3/staff-pre
 
 The module also boots on the staff-only `/starter-edit-profile-test` for the Calls tab Stripe card. There the
 Submit gate does not run; see [Edit Profile v2 Calls tab](EDIT-PROFILE-CALLS-WIRING.md).
+
+The module also boots on the four Build Profile paths (`/build-profile/full-profile-test`,
+`/build-profile/consult-test`, `/build-profile/full-profile`, `/build-profile/consult`). There Start is
+`[data-stripe-connect-action="start"]` inside `[data-calls-step="root"]`, the idempotency prefix is
+`build-profile-start-`, and each state goes to the Calls step through
+`StarterProfileCallsStep.editorFor(root).setStatus({ stripe })` (`none` is sent as `disconnected`). No Footer
+swap and no Submit gate run, and `onboarding-stripe-view.js` is not needed; see
+[Calls step wiring](../../v3/CALLS-STEP-WIRING.md).

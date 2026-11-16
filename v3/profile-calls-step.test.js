@@ -205,7 +205,7 @@ test('onboarding context needs both the onboarding path and the onboarding marke
   assert.equal(build('/starter-dashboard', 'onboarding').api, null)
 })
 
-// Build Profile step (Jai 2026-11-12, JP 1a): hours + Google + Free call; no Paid, no Stripe.
+// Build Profile step (Jai 2026-11-12; JP 2026-11-16: Stripe moved here and is required for everyone).
 function buildProfileStep(pathname, { freeOn = true, paidOn = false, wrapped = true, context = 'build-profile' } = {}) {
   const el = (tag, attrs, children) => new FakeElement(tag, attrs, children)
   const select = (kind, value) => el('select', { 'data-calls-step-input': kind, value })
@@ -239,44 +239,98 @@ function buildProfileStep(pathname, { freeOn = true, paidOn = false, wrapped = t
   if (wrapped) el('div', { 'data-form': 'step', 'data-index': '6' }, [root])
   root.ownerDocument = { defaultView: { location: { pathname } }, createElement: (tag) => el(tag) }
   root.querySelector('[data-calls-step-element="extra"]').hidden = true
-  return { root, free, paid, availability, calendar, stripe, api: mount(root) }
+  const priceInput = paid.row.querySelector('[data-call-settings-input="price"]')
+  return { root, free, paid, priceInput, availability, calendar, stripe, api: mount(root) }
 }
 
-test('Build Profile context mounts on the four Build Profile pages, hides Paid and Stripe, keeps hours and calendar', () => {
-  for (const path of ['/build-profile/consult-test', '/build-profile/full-profile-test', '/build-profile/consult', '/build-profile/full-profile']) {
-    const page = buildProfileStep(path, { freeOn: false })
-    assert.ok(page.api, path)
-    assert.equal(page.paid.row.hidden, true, path)
-    assert.equal(page.stripe.hidden, true, path)
-    assert.equal(page.free.row.hidden, false, path)
-    assert.equal(page.availability.hidden, false, path)
-    assert.equal(page.calendar.hidden, false, path)
-    assert.equal(page.paid.toggle.checked, false, path)
-  }
-})
 
-test('Build Profile turns off and disables a Paid switch that starts checked so no paid call is submitted', () => {
-  for (const path of ['/build-profile/consult-test', '/build-profile/full-profile-test']) {
-    const page = buildProfileStep(path, { paidOn: true })
-    assert.ok(page.api, path)
-    assert.equal(page.paid.toggle.checked, false, path)
-    const fields = ['input', 'select', 'textarea'].flatMap((tag) => page.paid.row.querySelectorAll(tag))
-    assert.equal(fields.length, 5, path)
-    for (const field of fields) assert.equal(field.disabled, true, path)
-    assert.equal(page.free.toggle.disabled, undefined, path)
-    assert.equal(page.api.validate(), '', path)
-  }
-})
-
-test('Build Profile Next needs valid hours only, not a call type', () => {
-  const page = buildProfileStep('/build-profile/consult-test', { freeOn: false })
-  assert.equal(page.api.validate(), '')
+function pressNext(page) {
   const step = page.root.parentElement
   let blocked = false
   const next = new FakeElement('a', { 'data-form': 'next-btn' })
   step.appendChild(next)
   step.listeners.click.forEach((listener) => listener({ target: next, preventDefault() { blocked = true }, stopImmediatePropagation() {} }))
-  assert.equal(blocked, false)
+  const alert = page.root.querySelectorAll('p').find((node) => node.getAttribute('role') === 'alert')
+  return { blocked, message: alert ? alert.textContent : '' }
+}
+
+test('Build Profile context mounts on the four Build Profile pages and shows Paid, Stripe, hours and calendar', () => {
+  for (const path of ['/build-profile/consult-test', '/build-profile/full-profile-test', '/build-profile/consult', '/build-profile/full-profile']) {
+    const page = buildProfileStep(path, { freeOn: false })
+    assert.ok(page.api, path)
+    assert.equal(page.paid.row.hidden, false, path)
+    assert.equal(page.stripe.hidden, false, path)
+    assert.equal(page.free.row.hidden, false, path)
+    assert.equal(page.availability.hidden, false, path)
+    assert.equal(page.calendar.hidden, false, path)
+  }
+})
+
+test('Build Profile keeps a checked Paid switch on and its fields enabled so the paid call is submitted', () => {
+  for (const path of ['/build-profile/consult-test', '/build-profile/full-profile-test']) {
+    const page = buildProfileStep(path, { paidOn: true })
+    assert.equal(page.paid.toggle.checked, true, path)
+    assert.notEqual(page.paid.toggle.disabled, true, path)
+    const fields = ['input', 'select', 'textarea'].flatMap((tag) => page.paid.row.querySelectorAll(tag))
+    for (const field of fields) assert.notEqual(field.disabled, true, path)
+  }
+})
+
+test('Build Profile Next is blocked until Stripe is submitted, for every Starter', () => {
+  const page = buildProfileStep('/build-profile/full-profile-test', { freeOn: true, paidOn: false })
+  assert.deepEqual(pressNext(page), { blocked: true, message: 'Connect Stripe to continue.' })
+  page.api.setStatus({ stripe: 'opened' })
+  assert.deepEqual(pressNext(page), { blocked: true, message: 'Finish setting up Stripe to continue.' })
+  page.api.setStatus({ stripe: 'pending' })
+  assert.equal(pressNext(page).blocked, false)
+  page.api.setStatus({ stripe: 'ready' })
+  assert.equal(pressNext(page).blocked, false)
+  page.api.setStatus({ stripe: 'disconnected' })
+  assert.equal(pressNext(page).blocked, true)
+})
+
+test('Build Profile Stripe becoming ready clears the Stripe message', () => {
+  const page = buildProfileStep('/build-profile/consult-test')
+  assert.equal(pressNext(page).message, 'Connect Stripe to continue.')
+  page.api.setStatus({ stripe: 'ready' })
+  const alert = page.root.querySelectorAll('p').find((node) => node.getAttribute('role') === 'alert')
+  assert.equal(alert.textContent, '')
+})
+
+test('Build Profile Stripe status change keeps a price or hours message', () => {
+  const page = buildProfileStep('/build-profile/full-profile-test', { paidOn: true })
+  page.api.setStatus({ stripe: 'opened' })
+  page.priceInput.value = ''
+  assert.equal(pressNext(page).message, 'Add a price for the consulting call.')
+  page.api.setStatus({ stripe: 'pending' })
+  const alert = page.root.querySelectorAll('p').find((node) => node.getAttribute('role') === 'alert')
+  assert.equal(alert.textContent, 'Add a price for the consulting call.')
+  page.priceInput.value = '150'
+  page.root.querySelector('[data-day="1"]').setAttribute('aria-pressed', 'false')
+  assert.equal(pressNext(page).message, 'Pick at least one day.')
+  page.api.setStatus({ stripe: 'ready' })
+  assert.equal(alert.textContent, 'Pick at least one day.')
+})
+
+test('Build Profile Next checks hours first, then the paid price, then Stripe', () => {
+  const page = buildProfileStep('/build-profile/full-profile-test', { paidOn: true })
+  page.api.setStatus({ stripe: 'ready' })
+  page.priceInput.value = ''
+  assert.equal(pressNext(page).message, 'Add a price for the consulting call.')
+  page.priceInput.value = '150'
+  assert.equal(pressNext(page).blocked, false)
+  page.api.setStatus({ stripe: 'disconnected' })
+  page.priceInput.value = 'abc'
+  assert.equal(pressNext(page).message, 'Add a price for the consulting call.')
+  page.root.querySelector('[data-day="1"]').setAttribute('aria-pressed', 'false')
+  assert.equal(pressNext(page).message, 'Pick at least one day.')
+})
+
+test('Build Profile does not need a call type turned on', () => {
+  const page = buildProfileStep('/build-profile/consult-test', { freeOn: false, paidOn: false })
+  page.api.setStatus({ stripe: 'pending' })
+  assert.equal(pressNext(page).blocked, false)
+  assert.equal(page.api.validate(), '')
 })
 
 test('Build Profile Free call choice follows its switch', () => {
@@ -296,9 +350,9 @@ test('an unmarked calls root inside a Build Profile step runs Build Profile mode
   for (const path of ['/build-profile/consult-test', '/build-profile/full-profile-test', '/build-profile/consult', '/build-profile/full-profile']) {
     const page = buildProfileStep(path, { context: null, freeOn: false, paidOn: true })
     assert.ok(page.api, path)
-    assert.equal(page.paid.row.hidden, true, path)
-    assert.equal(page.paid.toggle.checked, false, path)
-    assert.equal(page.stripe.hidden, true, path)
+    assert.equal(page.paid.row.hidden, false, path)
+    assert.equal(page.paid.toggle.checked, true, path)
+    assert.equal(page.stripe.hidden, false, path)
     assert.equal(page.availability.hidden, false, path)
     assert.equal(page.api.validate(), '', path)
     assert.equal(page.api.offerIntroCall(), false, path)
@@ -408,9 +462,10 @@ test('load adds an off-grid saved time and an unknown timezone as options instea
   assert.deepEqual(page.api.read().windows, [{ start: '9:15 AM', end: '5:45 PM' }])
 })
 
-test('load leaves the Paid row alone in Build Profile', () => {
+test('load fills the Paid row in Build Profile', () => {
   const page = buildProfileStep('/build-profile/consult-test')
   page.api.load({ paid: { enabled: true, title: 'x', price: 5 }, free: { enabled: false } })
-  assert.equal(page.paid.toggle.checked, false)
+  assert.equal(page.paid.toggle.checked, true)
+  assert.equal(page.priceInput.value, '5')
   assert.equal(page.free.toggle.checked, false)
 })

@@ -30,6 +30,17 @@
  * detail {state} ('none' | 'opened' | 'pending' | 'ready'), so
  * v3/edit-profile-calls.js can re-check the Paid call. Nothing else listens.
  *
+ * Build Profile route (JP 2026-11-16: Stripe moved from onboarding to Build
+ * Profile, required for every Starter): on the four Build Profile paths the
+ * card is the Calls step's [data-stripe-connect-element="root"] with its
+ * [data-stripe-connect-action="start"] button (Jerico's Build Profile Calls
+ * Form component). Steps 1 and 2 run the same way (new tab, dashboard
+ * return_url, status re-reads); each state goes to the Calls step through
+ * StarterProfileCallsStep.editorFor(root).setStatus({ stripe }) ('none' is
+ * sent as 'disconnected'), and v3/profile-calls-step.js blocks Next until
+ * Stripe is 'pending' or 'ready'. No footer swap and no submit gate here.
+ * This route does not need onboarding-stripe-view.js.
+ *
  * Boot: the same rule as the view — staging origin, or thestarters.com /
  * www.thestarters.com only when the page also loads v3/staff-preview-guard.js.
  * Load v3/onboarding-stripe-view.js before this file.
@@ -43,7 +54,11 @@
   const START_PATH = '/stripe_connect/start/v3'
   const RETURN_CHANNEL_NAME = 'starters-stripe-connect-return'
   const EDIT_ROUTE = '/starter-edit-profile-test'
-  const ROUTES = new Set(['/starter-onboarding-v2', EDIT_ROUTE])
+  const BUILD_ROUTES = new Set(['/build-profile/full-profile-test', '/build-profile/consult-test', '/build-profile/full-profile', '/build-profile/consult'])
+  const ROUTES = new Set(['/starter-onboarding-v2', EDIT_ROUTE, ...BUILD_ROUTES])
+  const CALLS_ROOT = '[data-calls-step="root"]'
+  const BUILD_CARD = CALLS_ROOT + ' [data-stripe-connect-element="root"]'
+  const BUILD_START = CALLS_ROOT + ' [data-stripe-connect-action="start"]'
   const STATE_EVENT = 'starters:stripe-connect-state'
   const ROOT = '[data-onboarding-stripe="root"]'
   const START = '[data-onboarding-stripe-action="start"]'
@@ -80,7 +95,10 @@
     let busy = false
     let lastState = null
     let stopWatch = null
-    const editRoute = String(win.location.pathname || '').replace(/\/$/, '') === EDIT_ROUTE
+    const path = String(win.location.pathname || '').replace(/\/$/, '')
+    const editRoute = path === EDIT_ROUTE
+    const buildRoute = BUILD_ROUTES.has(path)
+    const startSelector = buildRoute ? BUILD_START : START
 
     function withTimeout(promise) {
       return new Promise(function (resolve, reject) {
@@ -124,7 +142,7 @@
     }
 
     function roots() {
-      return Array.prototype.slice.call(win.document.querySelectorAll(ROOT))
+      return Array.prototype.slice.call(win.document.querySelectorAll(buildRoute ? BUILD_CARD : ROOT))
     }
 
     function render(state) {
@@ -132,10 +150,21 @@
       if (stopWatch && state === 'none') return
       lastState = state
       roots().forEach(function (root) {
+        if (buildRoute) {
+          reportToCallsStep(root, state)
+          return
+        }
         view.render(root, state)
         swapFooter(root, state)
       })
       announce(state)
+    }
+
+    function reportToCallsStep(card, state) {
+      const callsRoot = typeof card.closest === 'function' ? card.closest(CALLS_ROOT) : null
+      const steps = win.StarterProfileCallsStep
+      const editor = callsRoot && steps && typeof steps.editorFor === 'function' ? steps.editorFor(callsRoot) : null
+      if (editor && typeof editor.setStatus === 'function') editor.setStatus({ stripe: state === 'none' ? 'disconnected' : state })
     }
 
     function announce(state) {
@@ -244,7 +273,7 @@
         const result = await post(START_PATH, {
           return_url: origin + '/starter-dashboard',
           callback_url: origin + '/stripe-connect-callback',
-          idempotency_key: (editRoute ? 'edit-profile-start-' : 'onboarding-v2-start-') + (win.crypto && win.crypto.randomUUID ? win.crypto.randomUUID() : Date.now().toString(36)),
+          idempotency_key: (buildRoute ? 'build-profile-start-' : editRoute ? 'edit-profile-start-' : 'onboarding-v2-start-') + (win.crypto && win.crypto.randomUUID ? win.crypto.randomUUID() : Date.now().toString(36)),
         })
         if (result.mode === 'connected' || result.mode === 'reconciliation_required') {
           stripeTab.close()
@@ -298,10 +327,10 @@
     }
 
     function mount() {
-      win.document.querySelectorAll(START).forEach(function (button) {
+      win.document.querySelectorAll(startSelector).forEach(function (button) {
         button.addEventListener('click', start)
       })
-      if (!editRoute) win.document.addEventListener('submit', gateSubmit, true)
+      if (!editRoute && !buildRoute) win.document.addEventListener('submit', gateSubmit, true)
       return refresh()
     }
 
@@ -317,9 +346,10 @@
   global.__startersOnboardingV2StripeBooted = true
 
   function boot() {
+    const buildRoute = BUILD_ROUTES.has(String(global.location.pathname || '').replace(/\/$/, ''))
     const view = global.StarterOnboardingStripeView
-    if (!view) return
-    createController(global, view).mount()
+    if (!view && !buildRoute) return
+    createController(global, view || null).mount()
   }
   if (global.document.readyState === 'loading') global.document.addEventListener('DOMContentLoaded', boot, { once: true })
   else boot()
