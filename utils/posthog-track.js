@@ -456,8 +456,26 @@
     const head = safeString(chain).split(';')[0]
     const selector = head.split(':')[0]
     const parts = selector.split('.')
-    const typeMatch = /(?:^|[:"])attr__type="([^"]*)"/.exec(head)
-    return { tag_name: parts[0], classes: parts.slice(1), attr__type: typeMatch ? typeMatch[1] : '' }
+    const element = { tag_name: parts[0], classes: parts.slice(1) }
+    const attrPattern = /(?:^|[:"])(attr__(?:type|id|name))="([^"]*)"/g
+    let match
+    while ((match = attrPattern.exec(head))) element[match[1]] = match[2]
+    return element
+  }
+
+  // posthog-js does not record the `type` attribute of form fields, so look the
+  // target up in the page by its recorded id or name and read its real type.
+  // before_send runs synchronously while the change event is dispatched, so the
+  // element is still in the document.
+  function isHiddenInputInPage(target) {
+    const doc = window.document
+    if (!doc) return false
+    const id = safeString(target.attr__id)
+    const name = safeString(target.attr__name)
+    let el = null
+    if (id && typeof doc.getElementById === 'function') el = doc.getElementById(id)
+    if (!el && name && typeof doc.getElementsByName === 'function') el = doc.getElementsByName(name)[0]
+    return !!el && safeString(el.tagName).toLowerCase() === 'input' && safeString(el.type).toLowerCase() === 'hidden'
   }
 
   function isHiddenFieldChange(event) {
@@ -471,7 +489,8 @@
       const classes = Array.isArray(target.classes)
         ? target.classes.map(safeString)
         : safeString(target.attr__class).split(/\s+/)
-      return classes.includes('hide') || safeString(target.attr__type).toLowerCase() === 'hidden'
+      if (classes.includes('hide') || safeString(target.attr__type).toLowerCase() === 'hidden') return true
+      return safeString(target.tag_name).toLowerCase() === 'input' && isHiddenInputInPage(target)
     } catch (e) {
       return false
     }

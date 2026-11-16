@@ -10,6 +10,7 @@ function load({
   queued = false,
   storageThrows = false,
   hostname = 'www.thestarters.com',
+  pageElements = [],
 } = {}) {
   const listeners = {}
   const captured = []
@@ -25,7 +26,11 @@ function load({
         reloads += 1
       },
     },
-    document: { addEventListener() {} },
+    document: {
+      addEventListener() {},
+      getElementById: (id) => pageElements.find((el) => el.id === id) || null,
+      getElementsByName: (name) => pageElements.filter((el) => el.name === name),
+    },
     MutationObserver: function () {},
     getComputedStyle: () => ({}),
     sessionStorage: {
@@ -797,4 +802,28 @@ test('the filter installs once the SDK replaces the snippet queue', () => {
   assert.equal(runBeforeSend(loaded.sdk, autocapture('change', { tag_name: 'input', classes: ['hide'] })), null)
   const visible = autocapture('change', { tag_name: 'input', classes: ['w-input'] })
   assert.deepEqual(runBeforeSend(loaded.sdk, visible), visible)
+})
+
+test('change events on type=hidden inputs are dropped when the SDK omits attr__type', () => {
+  // posthog-js records only name, id, class and aria-label on form fields, so the
+  // hidden type has to come from the element on the page.
+  const pageElements = [
+    { tagName: 'INPUT', type: 'hidden', id: 'skills', name: 'skills' },
+    { tagName: 'INPUT', type: 'hidden', id: 'tools-required', name: 'tools-required' },
+    { tagName: 'INPUT', type: 'hidden', id: '', name: 'function' },
+    { tagName: 'INPUT', type: 'text', id: 'first-name', name: 'first-name' },
+  ]
+  const { sdk } = load({ pageElements })
+  assert.equal(runBeforeSend(sdk, autocapture('change', { tag_name: 'input', attr__id: 'skills', attr__name: 'skills' })), null)
+  assert.equal(runBeforeSend(sdk, autocapture('change', { tag_name: 'input', attr__name: 'function' })), null)
+  assert.equal(runBeforeSend(sdk, autocapture('change', null, {
+    $elements_chain: 'input:attr__id="tools-required"attr__name="tools-required"nth-child="9"nth-of-type="9";form#profile',
+  })), null)
+  for (const event of [
+    autocapture('change', { tag_name: 'input', attr__id: 'first-name', attr__name: 'first-name' }),
+    autocapture('change', { tag_name: 'input', attr__id: 'missing' }),
+    autocapture('click', { tag_name: 'input', attr__id: 'skills' }),
+  ]) {
+    assert.deepEqual(runBeforeSend(sdk, event), event)
+  }
 })
