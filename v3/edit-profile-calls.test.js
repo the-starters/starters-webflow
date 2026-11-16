@@ -113,6 +113,7 @@ function makePage(options = {}) {
     hash = '',
     tabs = false,
     webflow = null,
+    readyState = 'complete',
     starter = {
       timezone: 'Asia/Manila',
       availability: {
@@ -173,6 +174,7 @@ function makePage(options = {}) {
   // Webflow Tabs: links and panes share data-w-tab; the Calls block sits in its pane.
   const tabLinks = tabs ? ['Personal Details', 'Calls'].map((name) => el('a', { 'data-w-tab': name, 'aria-selected': name === 'Personal Details' ? 'true' : 'false' })) : []
   const tabClicks = []
+  const winListeners = {}
   tabLinks.forEach((link) => link.addEventListener('click', () => tabClicks.push(link.getAttribute('data-w-tab'))))
   const body = tabs
     ? el('body', {}, [el('div', {}, tabLinks), el('div', { 'data-w-tab': 'Personal Details' }), el('div', { 'data-w-tab': 'Calls' }, [root])])
@@ -226,7 +228,7 @@ function makePage(options = {}) {
     clearTimeout(id) { timers.delete(id) },
     setInterval() { return 0 },
     clearInterval() {},
-    addEventListener() {},
+    addEventListener(type, fn) { (winListeners[type] ||= []).push(fn) },
     removeEventListener() {},
     localStorage: { getItem: (k) => (storage.has(k) ? storage.get(k) : null), setItem: (k, v) => storage.set(k, String(v)), removeItem: (k) => storage.delete(k) },
     open: () => tab,
@@ -240,6 +242,7 @@ function makePage(options = {}) {
       querySelector: (sel) => (sel === 'script[src*="/v3/staff-preview-guard.js"]' ? (guard ? {} : null) : body.querySelector(sel)),
       querySelectorAll: (sel) => body.querySelectorAll(sel),
       addEventListener: (type, fn) => { (docListeners[type] ||= []).push(fn) },
+      readyState,
     },
     StartersCalendarGoogleConnect: { ...shared, pendingCallback: callback },
   }
@@ -263,6 +266,7 @@ function makePage(options = {}) {
   return {
     win, server, calls, warnings, root, error, freeToggle, description, paidToggle, title, price, freeRow, paidRow, freeStatus, paidStatus,
     days, windows, addWindow, addExtra, connect, switchCalendar, disconnect, tab, assigned, timers, storage, tabClicks,
+    fireLoad: () => (winListeners.load || []).forEach((fn) => fn()),
     controller, editor: () => editorFor(root), tick, writes, writesTo, stripe,
   }
 }
@@ -711,4 +715,11 @@ test('no hash, another hash, or no tabs: no tab is clicked and the page still mo
   assert.deepEqual((await ready({ hash: '#services', tabs: true })).tabClicks, [])
   assert.deepEqual((await ready({ hash: '#CALLS', tabs: true })).tabClicks, [])
   assert.deepEqual((await ready({ hash: '#calls' })).tabClicks, [])
+})
+
+test('#calls while the page is still loading: the tab is selected only after window load', async () => {
+  const page = await ready({ hash: '#calls', tabs: true, readyState: 'interactive' })
+  assert.deepEqual(page.tabClicks, [])
+  page.fireLoad()
+  assert.deepEqual(page.tabClicks, ['Calls'])
 })

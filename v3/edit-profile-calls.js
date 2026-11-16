@@ -512,10 +512,17 @@
       })
       if (!link || typeof link.click !== 'function') return
       if (link.getAttribute('aria-selected') === 'true') return
-      // Webflow binds tab clicks on its own ready; queue behind it when it is present.
-      const select = function () { link.click() }
-      if (win.Webflow && typeof win.Webflow.push === 'function') win.Webflow.push(select)
-      else select()
+      // Webflow sets up its Tabs after the page has loaded (live canary 2026-11-16: a click
+      // during mount was undone). Click after window load, queued behind Webflow when present.
+      const select = function () {
+        if (link.getAttribute('aria-selected') !== 'true') link.click()
+      }
+      const queue = function () {
+        if (win.Webflow && typeof win.Webflow.push === 'function') win.Webflow.push(select)
+        else select()
+      }
+      if (win.document.readyState === 'complete') queue()
+      else if (typeof win.addEventListener === 'function') win.addEventListener('load', queue, { once: true })
     }
 
     async function mount() {
