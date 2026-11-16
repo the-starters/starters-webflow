@@ -139,13 +139,25 @@
       return typeof element.getClientRects !== 'function' || element.getClientRects().length > 0
     }
 
-    // Scroll to the dashboard Stripe card and focus its visible start control.
+    // Native buttons and links, and anything with tabindex >= 0, can take keyboard focus.
+    function focusable(element) {
+      return Boolean(element) && typeof element.focus === 'function' && typeof element.tabIndex === 'number' && element.tabIndex >= 0
+    }
+
+    // Scroll to the dashboard Stripe card and focus its visible start control. The dashboard
+    // start control is an authored div (live 2026-11-16) that cannot take focus; then focus the
+    // card itself, made focusable by script only (tabindex -1 adds no Tab stop).
     function scrollToStripe() {
       const card = Array.prototype.find.call(win.document.querySelectorAll(STRIPE_CARD), visible)
       if (!card) return false
       if (typeof card.scrollIntoView === 'function') card.scrollIntoView({ behavior: 'smooth', block: 'center' })
       const start = Array.prototype.find.call(card.querySelectorAll(STRIPE_START), visible)
-      if (start && typeof start.focus === 'function') start.focus({ preventScroll: true })
+      if (focusable(start)) {
+        start.focus({ preventScroll: true })
+      } else if (typeof card.focus === 'function') {
+        if (card.getAttribute('tabindex') === null) card.setAttribute('tabindex', '-1')
+        card.focus({ preventScroll: true })
+      }
       return true
     }
 

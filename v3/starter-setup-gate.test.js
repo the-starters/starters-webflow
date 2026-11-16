@@ -56,6 +56,7 @@ function makePage({ staff = true, flag = true, dialog = true, ready = readiness(
   const startHidden = new El({ 'data-stripe-connect-action': 'start', 'data-stripe-connect-element': 'incomplete' })
   startHidden.hidden = true
   const startVisible = new El({ 'data-stripe-connect-action': 'start', 'data-stripe-connect-element': 'disconnected' })
+  startVisible.tabIndex = 0 // a focusable control (button, link or tabindex 0)
   const stripeCard = new El({ 'data-stripe-connect-element': 'root' }, 'DIV', [startHidden, startVisible])
   const body = new El({}, 'BODY', [stripeCard])
   const windowListeners = {}
@@ -270,4 +271,26 @@ test('screens: a dashboard without the Stripe card closes cleanly with no error'
   assert.doesNotThrow(() => { for (const t of page.timers) t.fn() })
   assert.deepEqual(page.closed, [MODAL_ID])
   assert.deepEqual(page.windowListeners['modal-close'], [])
+})
+
+test('screens: when the Stripe start control cannot take focus, the Stripe card is focused instead (script-only tabindex)', async () => {
+  const page = withScreens(makePage({ ready: readiness({ stripe_connect_linked: false }) }))
+  page.startVisible.tabIndex = -1 // authored div on the live dashboard
+  await createGate(page.win).run()
+  page.goStripe.click()
+  page.modalClosed(page.dlg)
+  assert.equal(page.startVisible.focused, false)
+  assert.equal(page.stripeCard.focused, true)
+  assert.equal(page.stripeCard.getAttribute('tabindex'), '-1')
+})
+
+test('screens: an authored tabindex on the Stripe card is kept', async () => {
+  const page = withScreens(makePage({ ready: readiness({ stripe_connect_linked: false }) }))
+  page.startVisible.tabIndex = -1
+  page.stripeCard.setAttribute('tabindex', '0')
+  await createGate(page.win).run()
+  page.goStripe.click()
+  page.modalClosed(page.dlg)
+  assert.equal(page.stripeCard.focused, true)
+  assert.equal(page.stripeCard.getAttribute('tabindex'), '0')
 })
