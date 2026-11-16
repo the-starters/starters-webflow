@@ -280,7 +280,7 @@ test('Build Profile Next is blocked until Stripe is submitted, for every Starter
   const page = buildProfileStep('/build-profile/full-profile-test', { freeOn: true, paidOn: false })
   assert.deepEqual(pressNext(page), { blocked: true, message: 'Connect Stripe to continue.' })
   page.api.setStatus({ stripe: 'opened' })
-  assert.deepEqual(pressNext(page), { blocked: true, message: 'Finish setting up Stripe in the Stripe tab to continue.' })
+  assert.deepEqual(pressNext(page), { blocked: true, message: 'Finish setting up Stripe to continue.' })
   page.api.setStatus({ stripe: 'pending' })
   assert.equal(pressNext(page).blocked, false)
   page.api.setStatus({ stripe: 'ready' })
@@ -295,6 +295,21 @@ test('Build Profile Stripe becoming ready clears the Stripe message', () => {
   page.api.setStatus({ stripe: 'ready' })
   const alert = page.root.querySelectorAll('p').find((node) => node.getAttribute('role') === 'alert')
   assert.equal(alert.textContent, '')
+})
+
+test('Build Profile Stripe status change keeps a price or hours message', () => {
+  const page = buildProfileStep('/build-profile/full-profile-test', { paidOn: true })
+  page.api.setStatus({ stripe: 'opened' })
+  page.priceInput.value = ''
+  assert.equal(pressNext(page).message, 'Add a price for the consulting call.')
+  page.api.setStatus({ stripe: 'pending' })
+  const alert = page.root.querySelectorAll('p').find((node) => node.getAttribute('role') === 'alert')
+  assert.equal(alert.textContent, 'Add a price for the consulting call.')
+  page.priceInput.value = '150'
+  page.root.querySelector('[data-day="1"]').setAttribute('aria-pressed', 'false')
+  assert.equal(pressNext(page).message, 'Pick at least one day.')
+  page.api.setStatus({ stripe: 'ready' })
+  assert.equal(alert.textContent, 'Pick at least one day.')
 })
 
 test('Build Profile Next checks hours first, then the paid price, then Stripe', () => {

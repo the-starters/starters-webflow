@@ -295,11 +295,11 @@
       return ''
     }
 
+    const stripeMessages = ['Connect Stripe to continue.', 'Finish setting up Stripe to continue.']
+
     function stripeError() {
       if (status.stripe === 'pending' || status.stripe === 'ready') return ''
-      return status.stripe === 'opened'
-        ? 'Finish setting up Stripe in the Stripe tab to continue.'
-        : 'Connect Stripe to continue.'
+      return status.stripe === 'opened' ? stripeMessages[1] : stripeMessages[0]
     }
 
     function validateContinue() {
@@ -429,7 +429,8 @@
       offerIntroCall: () => (onboarding || !freeToggle ? true : Boolean(freeToggle.checked)),
       setStatus(next) {
         Object.assign(status, next)
-        if (continueError && next.stripe && !stripeError()) continueError.textContent = ''
+        if (continueError && next.stripe && !stripeError() &&
+            stripeMessages.includes(continueError.textContent)) continueError.textContent = ''
         renderStatus()
       },
     }
