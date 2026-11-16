@@ -48,6 +48,10 @@ Do not pin `calendar-google-connect.js` here until the return URIs below are in 
 
 Root: `[data-calls-step="root"][data-calls-step-context="edit"]`. The module uses the first root on the page.
 
+Deep link: when the URL hash is exactly `#calls` (the dashboard setup gate uses
+`/starter-edit-profile-test#calls`), the module opens the Webflow tab that holds the root. Keep the root inside
+a Webflow Tabs pane; the module clicks the tab link with the same `data-w-tab` value as that pane.
+
 Already authored:
 
 | Element | Attribute |
