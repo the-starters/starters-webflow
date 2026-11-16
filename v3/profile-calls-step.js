@@ -13,6 +13,7 @@
   // required for every Starter (Paid on or off); Continue needs Stripe started
   // and submitted ('pending' or 'ready'). v3/onboarding-v2-stripe.js drives the
   // card and reports through setStatus({ stripe }).
+  const consultPaths = new Set(['/build-profile/consult-test', '/build-profile/consult'])
   const buildProfilePaths = new Set(['/build-profile/full-profile-test', '/build-profile/consult-test', '/build-profile/full-profile', '/build-profile/consult'])
   const routes = new Set(['/starter-edit-profile-test', standalonePath, ...buildProfilePaths, ...onboardingPaths])
 
@@ -104,6 +105,20 @@
     const paidToggle = paid?.querySelector(enabledSelector)
     const price = paid?.querySelector('[data-call-settings-input="price"]')
     const paidDescription = paid?.querySelector('[data-call-settings-input="title"]')
+    // Consult (Figma 30 Oct "Consult = paid call required, intro optional"; JP
+    // 2026-11-16 "require it"): the Consult instance of the Calls Form shows the
+    // paid row with a Required tag and no switch. With no switch the form sends
+    // no paid-consulting-calls value, so the submit writer would drop the paid
+    // call. Add that value here and require a valid price on Next.
+    const paidRequired = buildProfile && consultPaths.has(path) && Boolean(paid) && !paidToggle
+    if (paidRequired && !paid.querySelector('[name="paid-consulting-calls"]')) {
+      const choice = doc.createElement('input')
+      choice.setAttribute('type', 'hidden')
+      choice.setAttribute('name', 'paid-consulting-calls')
+      choice.setAttribute('value', 'yes')
+      choice.value = 'yes'
+      paid.appendChild(choice)
+    }
     let continueError
     const status = { calendar: 'disconnected', email: '', stripe: 'disconnected', hoursSaved: false }
     const calendarBody = get('output', 'calendar-body')
@@ -288,7 +303,7 @@
     }
 
     function paidPriceError() {
-      if (paidToggle?.checked && (!/^\d+$/.test(price?.value.trim() || '') ||
+      if ((paidToggle?.checked || paidRequired) && (!/^\d+$/.test(price?.value.trim() || '') ||
           Number(price.value) < 1 || Number(price.value) > 1000)) {
         return 'Add a price for the consulting call.'
       }

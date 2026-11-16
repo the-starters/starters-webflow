@@ -206,15 +206,16 @@ test('onboarding context needs both the onboarding path and the onboarding marke
 })
 
 // Build Profile step (Jai 2026-11-12; JP 2026-11-16: Stripe moved here and is required for everyone).
-function buildProfileStep(pathname, { freeOn = true, paidOn = false, wrapped = true, context = 'build-profile' } = {}) {
+function buildProfileStep(pathname, { freeOn = true, paidOn = false, wrapped = true, context = 'build-profile', paidSwitch = true } = {}) {
   const el = (tag, attrs, children) => new FakeElement(tag, attrs, children)
   const select = (kind, value) => el('select', { 'data-calls-step-input': kind, value })
-  const service = (name) => {
+  const service = (name, withSwitch = true) => {
     const toggle = el('input', { 'data-call-settings-input': 'enabled' })
-    return { toggle, row: el('div', { 'data-call-settings-service': name }, [toggle, el('div', { 'data-call-settings-element': 'panel' })]) }
+    const panel = el('div', { 'data-call-settings-element': 'panel' })
+    return { toggle, row: el('div', { 'data-call-settings-service': name }, withSwitch ? [toggle, panel] : [panel]) }
   }
   const free = service('free')
-  const paid = service('paid')
+  const paid = service('paid', paidSwitch)
   paid.row.appendChild(el('input', { 'data-call-settings-input': 'title' }))
   paid.row.appendChild(el('input', { 'data-call-settings-input': 'price' }))
   paid.row.appendChild(el('select', { name: 'paid-call-duration' }))
@@ -468,4 +469,50 @@ test('load fills the Paid row in Build Profile', () => {
   assert.equal(page.paid.toggle.checked, true)
   assert.equal(page.priceInput.value, '5')
   assert.equal(page.free.toggle.checked, false)
+})
+
+// Consult (Figma 30 Oct, JP 2026-11-16): the Consult Calls Form has a Required paid row and no switch.
+test('Build Profile Consult without a paid switch sends paid-consulting-calls=yes and requires a price', () => {
+  for (const path of ['/build-profile/consult-test', '/build-profile/consult']) {
+    const page = buildProfileStep(path, { paidSwitch: false })
+    const choices = page.paid.row.querySelectorAll('[name="paid-consulting-calls"]')
+    assert.equal(choices.length, 1, path)
+    assert.equal(choices[0].getAttribute('type'), 'hidden', path)
+    assert.equal(choices[0].value, 'yes', path)
+    page.api.setStatus({ stripe: 'ready' })
+    page.priceInput.value = ''
+    assert.equal(pressNext(page).message, 'Add a price for the consulting call.', path)
+    page.priceInput.value = '0'
+    assert.equal(pressNext(page).message, 'Add a price for the consulting call.', path)
+    page.priceInput.value = '150'
+    assert.equal(pressNext(page).blocked, false, path)
+  }
+})
+
+test('Build Profile Consult without a paid switch still needs Stripe after the price', () => {
+  const page = buildProfileStep('/build-profile/consult-test', { paidSwitch: false })
+  page.priceInput.value = '150'
+  assert.equal(pressNext(page).message, 'Connect Stripe to continue.')
+})
+
+test('Full Profile without a paid switch does not require a price or add a paid choice', () => {
+  const page = buildProfileStep('/build-profile/full-profile-test', { paidSwitch: false })
+  assert.equal(page.paid.row.querySelectorAll('[name="paid-consulting-calls"]').length, 0)
+  page.api.setStatus({ stripe: 'ready' })
+  page.priceInput.value = ''
+  assert.equal(pressNext(page).blocked, false)
+})
+
+test('Consult with a paid switch keeps the switch and adds no hidden choice', () => {
+  const page = buildProfileStep('/build-profile/consult-test', { paidOn: false })
+  assert.equal(page.paid.row.querySelectorAll('[name="paid-consulting-calls"]').length, 0)
+  page.api.setStatus({ stripe: 'ready' })
+  page.priceInput.value = ''
+  assert.equal(pressNext(page).blocked, false)
+})
+
+test('a second mount on the same Consult root adds only one paid choice', () => {
+  const page = buildProfileStep('/build-profile/consult-test', { paidSwitch: false })
+  mount(page.root)
+  assert.equal(page.paid.row.querySelectorAll('[name="paid-consulting-calls"]').length, 1)
 })
