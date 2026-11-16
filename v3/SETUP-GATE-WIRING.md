@@ -9,7 +9,7 @@ screen per missing item, availability first, then Stripe:
 | Screen | Main button | Result |
 | --- | --- | --- |
 | `[data-setup-step="availability"]` | `a[data-setup-action="go-calendar"]` | Link to Edit Profile v2 › Calls (`/starter-edit-profile-test#calls`); the module sets the `href` |
-| `[data-setup-step="stripe"]` | `[data-setup-action="go-stripe"]` | Closes the dialog, waits for the shared modal's `modal-close` event after the 300 ms fade-out (1 s fallback), scrolls to the first visible dashboard Stripe card `[data-stripe-connect-element="root"]` and focuses its visible `[data-stripe-connect-action="start"]` (Jai 2026-11-14: Stripe stays on the dashboard) |
+| `[data-setup-step="stripe"]` | `[data-setup-action="go-stripe"]` | Closes the dialog, waits for the shared modal's `modal-close` event after the 300 ms fade-out (1 s fallback), scrolls to the first visible dashboard Stripe card `[data-stripe-connect-element="root"]` and focuses its visible `[data-stripe-connect-action="start"]` when that control can take focus (native button/link or `tabindex="0"`); otherwise it focuses the card root, adding `tabindex="-1"` only when the card has no authored `tabindex` (Jai 2026-11-14: Stripe stays on the dashboard) |
 
 - `[data-setup-action="skip"]` ("Skip for now") shows the next missing screen, or closes after the last one.
 - Any `[data-modal-close]` closes the dialog for this visit only. Other `[data-setup-step]` screens (calendar,
