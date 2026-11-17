@@ -301,6 +301,19 @@ test('a failed-connection signal for this Starter shows the Google error and sto
   assert.equal(channel.closed, true)
 })
 
+test('a failed-connection signal with reason taken says the Google account belongs to another Starter', async () => {
+  const page = makePage()
+  createController(page.win).mount()
+  await settle()
+  page.connect.click()
+  await settle()
+  const channel = page.channels.find((c) => c.name === 'starters-calendar-connect-return')
+  channel.onmessage({ data: { type: 'calendar-connect-failed', memberId: 'mem_onb03', reason: 'taken' } })
+  await settle()
+  assert.equal(page.error.textContent, 'This Google account is already connected to another Starter. Use a different Google account.')
+  assert.equal(channel.closed, true)
+})
+
 test('on the pop-up return the page finishes the connection and does not wire the step', async () => {
   const page = makePage()
   let completed = 0

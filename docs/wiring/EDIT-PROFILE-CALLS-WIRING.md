@@ -81,7 +81,7 @@ Already authored:
    `/starter-dashboard` (the dashboard calendar section owns disconnect). If it is an `<a>` with an `href`, the
    authored link is kept.
 8. `[data-call-settings-output="status"]` — one short text element in each of the Free and Paid rows. It
-   shows "Saved.", the blocker reason (for example "connect Stripe first") or the error.
+   shows "Saved.", the blocker reason (for example "connect Stripe on your dashboard first") or the error.
 9. Stripe block (below). Optional: `[data-calls-step-output="stripe-tag"]` inside the calls root mirrors the
    Stripe state ("Not connected", "Waiting for Stripe", "Verifying", "Connected").
 
@@ -125,9 +125,9 @@ re-reads the status when the Stripe tab reports back or closes, and on window fo
 | Hours | Any day, window, extra or timezone change, after 0.8 s and only when the hours are valid: `POST onboarding/calendar/ensure-default/v3` (#12047) `{member_id, availability: {items}, in_timezone, offer_intro_call}` with `offer_intro_call` = the Free switch. Items use the `toItems()` format. Saved dashboard day overrides (uuid or `override-<timestamp>` keys) are sent back unchanged, except that an override loses any weekly day the Starter unticks and is dropped when none remain; as on the dashboard, `general` and window `defaultDays` hold the full weekly days and their `days` leave out the days those overrides claim. |
 | Free on | `free-call-settings/upsert/v3` `{config_id, description, expected_revision, idempotency_key}`, then a readback (active, 30 min, $0, same description). With no calendar or hours yet, the hours save first (this sets the platform calendar). Description typing saves after 1 s while the switch is on. |
 | Free off | `free-call-settings/disable/v3` `{config_id, expected_revision, idempotency_key}`, then a readback (no active service). |
-| Paid on | Title and price check, then (with no active service) the readiness check: calendar and hours, Stripe linked, charges enabled, status fresh. Then `paid-call-settings/upsert/v3` `{config_id, title, price_cents, duration_minutes: 60, expected_revision, idempotency_key}` and a readback. A blocked switch stays on and saves when the calendar or Stripe changes. |
+| Paid on | With no active service, the readiness check first: calendar and hours, Stripe linked, charges enabled, status fresh (the Stripe reason points to the dashboard, Jai 2026-11-14 "A"). Then the title and price check. Then `paid-call-settings/upsert/v3` `{config_id, title, price_cents, duration_minutes: 60, expected_revision, idempotency_key}` and a readback. A blocked switch stays on and saves when the calendar or Stripe changes. |
 | Paid off | `paid-call-settings/disable/v3`, then a readback. |
-| Google | `grants/oauth/v3` (#1456) with `redirect_uri` = this page; the pop-up returns here and `calendar-google-connect.js` finishes it (`grants/delete/v3`, `grants/add/v3` (#1457), #12047). |
+| Google | `grants/oauth/v3` (#1456) with `redirect_uri` = this page; the pop-up returns here and `calendar-google-connect.js` finishes it: `grants/add/v3` (#1457) first; only its "replace" refusal removes the current grant (`grants/delete/v3`) and adds again; then #12047. A Google account used by another Starter (403) changes nothing and shows that reason. |
 | Stripe | `api:KZf7nFnk` `stripe_connect/status/v3` and `start/v3` through `onboarding-v2-stripe.js`; it fires `starters:stripe-connect-state` on `document`, which this module reads. |
 
 One writer per action: hours, Free and Paid each run one request at a time. A change made during a save runs
