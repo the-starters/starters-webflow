@@ -81,7 +81,7 @@ Already authored:
    `/starter-dashboard` (the dashboard calendar section owns disconnect). If it is an `<a>` with an `href`, the
    authored link is kept.
 8. `[data-call-settings-output="status"]` — one short text element in each of the Free and Paid rows. It
-   shows "Saved.", the blocker reason (for example "connect Stripe first") or the error.
+   shows "Saved.", the blocker reason (for example "connect Stripe on your dashboard first") or the error.
 9. Stripe block (below). Optional: `[data-calls-step-output="stripe-tag"]` inside the calls root mirrors the
    Stripe state ("Not connected", "Waiting for Stripe", "Verifying", "Connected").
 
