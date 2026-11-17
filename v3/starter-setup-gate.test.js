@@ -44,7 +44,7 @@ class El {
   getClientRects() { return this.hidden ? [] : [{}] }
 }
 
-function makePage({ staff = true, flag = true, dialog = true, ready = readiness(), readyStatus = 200, modal = true, path = '/starter-dashboard' } = {}) {
+function makePage({ staff = true, flag = true, dialog = true, ready = readiness(), readyStatus = 200, modal = true, path = '/starter-dashboard', hash = '' } = {}) {
   const opened = []
   const closed = []
   const calls = []
@@ -63,7 +63,8 @@ function makePage({ staff = true, flag = true, dialog = true, ready = readiness(
   const win = {
     addEventListener(type, fn) { (windowListeners[type] = windowListeners[type] || []).push(fn) },
     removeEventListener(type, fn) { windowListeners[type] = (windowListeners[type] || []).filter((f) => f !== fn) },
-    location: { origin: 'https://www.thestarters.com', pathname: path },
+    location: { origin: 'https://www.thestarters.com', pathname: path, search: '', hash },
+    history: { state: null, replaced: [], replaceState(state, title, url) { this.replaced.push(url); win.location.hash = '' } },
     setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length },
     clearTimeout() {},
     setInterval(fn) {
@@ -293,4 +294,43 @@ test('screens: an authored tabindex on the Stripe card is kept', async () => {
   page.modalClosed(page.dlg)
   assert.equal(page.stripeCard.focused, true)
   assert.equal(page.stripeCard.getAttribute('tabindex'), '0')
+})
+
+test('#stripe (Edit Profile paid link): staff land on the Stripe card, the dialog stays closed and the hash is removed', async () => {
+  const page = withScreens(makePage({ hash: '#stripe', ready: readiness({ availability_configured: false, stripe_connect_linked: false }) }))
+  const result = await createGate(page.win).run()
+  assert.equal(result, 'stripe-link')
+  assert.deepEqual(page.opened, [], 'no setup dialog on this visit')
+  assert.equal(page.calls.length, 0, 'no readiness read needed')
+  assert.deepEqual(page.stripeCard.scrolled, { behavior: 'smooth', block: 'center' })
+  assert.equal(page.startVisible.focused, true)
+  assert.deepEqual(page.win.history.replaced, ['/starter-dashboard'])
+})
+
+test('#stripe: waits for the Stripe card to finish loading before it scrolls', async () => {
+  const page = makePage({ hash: '#stripe' })
+  const loading = new El({ 'data-stripe-connect-element': 'loading' })
+  page.stripeCard.children.push(loading)
+  loading.parent = page.stripeCard
+  const running = createGate(page.win).run()
+  await new Promise((r) => setImmediate(r))
+  await new Promise((r) => setImmediate(r))
+  assert.equal(page.stripeCard.scrolls, 0, 'no scroll while the card is loading')
+  loading.hidden = true
+  assert.equal(await running, 'stripe-link')
+  assert.equal(page.stripeCard.scrolls, 1)
+})
+
+test('#stripe for a non-staff visitor does nothing', async () => {
+  const page = makePage({ hash: '#stripe', staff: false })
+  assert.equal(await createGate(page.win).run(), 'skipped:not-staff')
+  assert.equal(page.stripeCard.scrolls, 0)
+  assert.deepEqual(page.win.history.replaced, [])
+})
+
+test('another hash still opens the setup dialog as usual', async () => {
+  const page = withScreens(makePage({ hash: '#calls', ready: readiness({ stripe_connect_linked: false }) }))
+  assert.equal(await createGate(page.win).run(), 'opened')
+  assert.deepEqual(page.opened, [MODAL_ID])
+  assert.equal(page.stripeCard.scrolls, 0)
 })

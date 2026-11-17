@@ -82,32 +82,14 @@ Already authored:
    authored link is kept.
 8. `[data-call-settings-output="status"]` — one short text element in each of the Free and Paid rows. It
    shows "Saved.", the blocker reason (for example "connect Stripe on your dashboard first") or the error.
-9. Stripe block (below). Optional: `[data-calls-step-output="stripe-tag"]` inside the calls root mirrors the
-   Stripe state ("Not connected", "Waiting for Stripe", "Verifying", "Connected").
+   A Stripe reason (not linked, or charges off) also gets a script-made link
+   `a[data-call-settings-output="stripe-link"]` "Go to Stripe setup" to `/starter-dashboard#stripe`; the
+   dashboard setup gate scrolls staff to the Stripe card on that hash (JP 2026-11-17).
+9. Optional: `[data-calls-step-output="stripe-tag"]` inside the calls root mirrors the Stripe state
+   ("Not connected", "Waiting for Stripe", "Verifying", "Connected").
 
-### Stripe block (reuses `onboarding-stripe-view.js`)
-
-Put it in the Paid row, outside the Paid panel, so a Starter sent by the dashboard modal sees it with Paid
-off. Add `data-stripe-connect-element="root"` to the same element only if it must hide while Paid is off
-(the calls editor hides that attribute when the Paid switch is off).
-
-```
-[data-onboarding-stripe="root"]
-  [data-onboarding-stripe-action="start"]            primary "Connect Stripe" button (hides once started)
-  [data-onboarding-stripe-element="card"]            hidden in markup; shown once Stripe is started
-    [data-onboarding-stripe-output="tag"]
-    [data-onboarding-stripe-output="body"]
-    [data-onboarding-stripe-output="status-text"]
-    [data-onboarding-stripe-element="retry"]
-      [data-onboarding-stripe-output="retry-lead"]
-      [data-onboarding-stripe-action="start"]        retry link
-        [data-onboarding-stripe-output="retry-label"]
-```
-
-Do not add `[data-onboarding-stripe-element="confirm"]` or `[data-onboarding-stripe-element="finish"]` on this
-page: they are onboarding-only. A failed start sets `data-onboarding-stripe-error="start"` on the root (style
-hook). The Stripe tab ends on `/starter-dashboard`, because the server accepts only that `return_url`; this tab
-re-reads the status when the Stripe tab reports back or closes, and on window focus.
+No Stripe block on this page (Jai 2026-11-14 "A"). Starters set up Stripe on the dashboard Stripe card; the
+Paid row's Stripe reason links there through `/starter-dashboard#stripe` (item 8).
 
 ### State attributes (style hooks)
 

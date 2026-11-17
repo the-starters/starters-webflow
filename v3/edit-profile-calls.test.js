@@ -624,7 +624,8 @@ test('Paid on without Stripe shows the reason, then saves when Stripe reports re
   page.paidToggle.dispatch('change')
   await page.tick()
   assert.equal(page.paidRow.getAttribute('data-edit-calls-state'), 'blocked')
-  assert.equal(page.paidStatus.textContent, 'To turn on paid calls, connect Stripe on your dashboard first. Stripe sends call payments to you.')
+  assert.equal(page.paidStatus.textContent, 'To turn on paid calls, connect Stripe on your dashboard first. Stripe sends call payments to you. ')
+  assertStripeLink(page)
   assert.equal(page.writesTo(PAID_UPSERT).length, 0)
   page.stripe('opened')
   await page.tick()
@@ -644,8 +645,54 @@ test('Paid on without Stripe shows the Stripe reason before any title or price e
   page.paidToggle.dispatch('change')
   await page.tick()
   assert.equal(page.paidRow.getAttribute('data-edit-calls-state'), 'blocked')
-  assert.equal(page.paidStatus.textContent, 'To turn on paid calls, connect Stripe on your dashboard first. Stripe sends call payments to you.')
+  assert.equal(page.paidStatus.textContent, 'To turn on paid calls, connect Stripe on your dashboard first. Stripe sends call payments to you. ')
+  assertStripeLink(page)
   assert.equal(page.writesTo(PAID_UPSERT).length, 0)
+})
+
+function stripeLinks(page) {
+  return page.paidStatus.children.filter((c) => c.getAttribute('data-call-settings-output') === 'stripe-link')
+}
+
+function assertStripeLink(page) {
+  const links = stripeLinks(page)
+  assert.equal(links.length, 1, 'one link to the dashboard Stripe card')
+  assert.equal(links[0].tagName, 'A')
+  assert.equal(links[0].getAttribute('href'), '/starter-dashboard#stripe')
+  assert.equal(links[0].textContent, 'Go to Stripe setup')
+}
+
+test('Paid on with Stripe linked but charges off links to the dashboard Stripe card (JP 2026-11-17)', async () => {
+  const page = await ready({ paid: { services: [], readiness: { ...READY, stripe_charges_enabled: false } } })
+  page.title.value = 'Strategy session'
+  page.price.value = '200'
+  page.paidToggle.checked = true
+  page.paidToggle.dispatch('change')
+  await page.tick()
+  assert.equal(page.paidStatus.textContent, 'To turn on paid calls, finish your Stripe setup on your dashboard first. Stripe must be able to accept payments. ')
+  assertStripeLink(page)
+  assert.equal(page.writesTo(PAID_UPSERT).length, 0)
+})
+
+test('the Stripe link goes away with the Stripe reason; other reasons have no link', async () => {
+  const page = await ready({ paid: { services: [], readiness: { ...READY, stripe_connect_linked: false, stripe_charges_enabled: false } } })
+  page.title.value = 'Strategy session'
+  page.price.value = '200'
+  page.paidToggle.checked = true
+  page.paidToggle.dispatch('change')
+  await page.tick()
+  assert.equal(stripeLinks(page).length, 1)
+  page.paidToggle.checked = false
+  page.paidToggle.dispatch('change')
+  await page.tick()
+  assert.equal(page.paidStatus.textContent, 'Paid calls are off.')
+  assert.equal(stripeLinks(page).length, 0)
+  const calendar = await ready({ paid: { services: [], readiness: { ...READY, calendar_connected: false } } })
+  calendar.paidToggle.checked = true
+  calendar.paidToggle.dispatch('change')
+  await calendar.tick()
+  assert.equal(calendar.paidStatus.textContent, 'To turn on paid calls, first connect your calendar and set your availability.')
+  assert.equal(stripeLinks(calendar).length, 0)
 })
 
 test('Paid off disables the active service; an unchanged service is not written again', async () => {
