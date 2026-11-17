@@ -509,6 +509,28 @@ test('Free on with no calendar yet saves the hours first, then upserts', async (
   assert.equal(page.writesTo(ENSURE)[0].body.offer_intro_call, true)
 })
 
+test('Free on while the first hours save runs: the row shows saving, not the old "off" text (Kaeser 2026-11-16)', async () => {
+  const page = await ready({ free: { services: [], readiness: { calendar_connected: false, availability_configured: false }, public_description: '' } })
+  page.freeToggle.checked = false
+  page.freeToggle.dispatch('change')
+  await page.tick()
+  assert.equal(page.freeStatus.textContent, 'Free calls are off.')
+  const fetch = page.win.fetch
+  let release
+  const held = new Promise((resolve) => { release = resolve })
+  page.win.fetch = (url, init) => (url === ENSURE ? held.then(() => fetch(url, init)) : fetch(url, init))
+  page.freeToggle.checked = true
+  page.freeToggle.dispatch('change')
+  await page.tick()
+  assert.equal(page.writesTo(ENSURE).length, 0, 'the hours save is still in flight')
+  assert.equal(page.freeRow.getAttribute('data-edit-calls-state'), 'saving')
+  assert.equal(page.freeStatus.textContent, '')
+  release()
+  await page.tick()
+  assert.equal(page.writesTo(FREE_UPSERT).length, 1)
+  assert.equal(page.freeStatus.textContent, 'Saved.')
+})
+
 test('Free on with invalid hours and no calendar shows the reason and writes nothing', async () => {
   const page = await ready({ free: { services: [], readiness: { calendar_connected: false, availability_configured: false }, public_description: '' } })
   for (const d of [1, 2, 3]) page.days.querySelector('[data-day="' + d + '"]').click()
@@ -602,7 +624,7 @@ test('Paid on without Stripe shows the reason, then saves when Stripe reports re
   page.paidToggle.dispatch('change')
   await page.tick()
   assert.equal(page.paidRow.getAttribute('data-edit-calls-state'), 'blocked')
-  assert.equal(page.paidStatus.textContent, 'To turn on paid calls, connect Stripe first. Stripe sends call payments to you.')
+  assert.equal(page.paidStatus.textContent, 'To turn on paid calls, connect Stripe on your dashboard first. Stripe sends call payments to you.')
   assert.equal(page.writesTo(PAID_UPSERT).length, 0)
   page.stripe('opened')
   await page.tick()
@@ -612,6 +634,18 @@ test('Paid on without Stripe shows the reason, then saves when Stripe reports re
   await page.tick()
   assert.equal(page.writesTo(PAID_UPSERT).length, 1)
   assert.equal(page.root.querySelector('[data-calls-step-output="stripe-tag"]'), null)
+})
+
+test('Paid on without Stripe shows the Stripe reason before any title or price error (Kaeser 2026-11-16)', async () => {
+  const page = await ready({ paid: { services: [], readiness: { ...READY, stripe_connect_linked: false, stripe_charges_enabled: false } } })
+  page.title.value = ''
+  page.price.value = ''
+  page.paidToggle.checked = true
+  page.paidToggle.dispatch('change')
+  await page.tick()
+  assert.equal(page.paidRow.getAttribute('data-edit-calls-state'), 'blocked')
+  assert.equal(page.paidStatus.textContent, 'To turn on paid calls, connect Stripe on your dashboard first. Stripe sends call payments to you.')
+  assert.equal(page.writesTo(PAID_UPSERT).length, 0)
 })
 
 test('Paid off disables the active service; an unchanged service is not written again', async () => {

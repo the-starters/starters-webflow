@@ -63,6 +63,7 @@
   const REQUEST_TIMEOUT_MS = 20000
   const SAVE_ERROR = 'We couldn’t save your availability. Please try again.'
   const GOOGLE_ERROR = 'We couldn’t connect your Google Calendar. Please try again.'
+  const GOOGLE_TAKEN = 'This Google account is already connected to another Starter. Use a different Google account.'
 
   function bootAllowed(win) {
     const location = win.location
@@ -386,7 +387,7 @@
             if (data.type === 'calendar-connect-failed') {
               stop()
               refreshStatus(editor)
-              showError(root, GOOGLE_ERROR)
+              showError(root, data.reason === 'taken' ? GOOGLE_TAKEN : GOOGLE_ERROR)
             }
           }
         } catch (_error) {

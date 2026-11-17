@@ -83,8 +83,8 @@
     title: 'Use a title between 3 and 80 characters.',
     price: 'Use a whole-dollar rate from $1 to $1,000.',
     calendar: 'To turn on paid calls, first connect your calendar and set your availability.',
-    stripe: 'To turn on paid calls, connect Stripe first. Stripe sends call payments to you.',
-    charges: 'To turn on paid calls, finish your Stripe setup first. Stripe must be able to accept payments.',
+    stripe: 'To turn on paid calls, connect Stripe on your dashboard first. Stripe sends call payments to you.',
+    charges: 'To turn on paid calls, finish your Stripe setup on your dashboard first. Stripe must be able to accept payments.',
     fresh: 'Your Stripe status is updating. Try again in a minute.',
     saved: 'Saved.',
     freeOff: 'Free calls are off.',
@@ -325,6 +325,10 @@
             free = canonical
             return setRow('free', 'saved', COPY.freeOff)
           }
+          // Show progress at once: the first save can create the platform
+          // calendar (2-3 s), and the old "Free calls are off." must not stay
+          // next to a switch that is on (Kaeser 2026-11-16).
+          setRow('free', 'saving')
           const input = field('free', 'description')
           const description = String((input && input.value) || '').trim()
           if (description.length > FREE_DESCRIPTION_MAX) return setRow('free', 'invalid', COPY.freeTooLong)
@@ -385,12 +389,15 @@
           }
           const titleInput = field('paid', 'title')
           const priceInput = field('paid', 'price')
-          const intent = paidIntent(titleInput && titleInput.value, priceInput && priceInput.value)
-          if (intent.error) return setRow('paid', 'invalid', intent.error)
+          // Stripe and calendar come first: without them no title or price can
+          // be saved, so their reason shows before any field error (Kaeser
+          // 2026-11-16). Stripe is set up on the dashboard (Jai 2026-11-14 "A").
           if (!current) {
             const blocker = paidBlocker(paid)
             if (blocker) return setRow('paid', 'blocked', blocker)
           }
+          const intent = paidIntent(titleInput && titleInput.value, priceInput && priceInput.value)
+          if (intent.error) return setRow('paid', 'invalid', intent.error)
           if (current && current.title === intent.title && Number(current.price_cents) === intent.price_cents &&
               minutesOf(current) === intent.duration_minutes) {
             return setRow('paid', 'saved', COPY.saved)

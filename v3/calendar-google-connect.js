@@ -20,20 +20,24 @@
  *             checks state == member and the stored intent (same member, same
  *             redirect_uri, max 15 min), then:
  *               1. reads the Starter row (hours + current grant),
- *               2. grants/delete/v3 (#1660) for the current grant, if any
- *                  (#1457 refuses to bind over an existing grant),
- *               3. grants/add/v3 (#1457) with the code (or the hosted
- *                  grant_id as in_grant_id) and the same redirect_uri,
+ *               2. grants/add/v3 (#1457) with the hosted grant_id as
+ *                  in_grant_id and the same redirect_uri. If the Google
+ *                  account belongs to another Starter (403) it stops here and
+ *                  the current calendar stays. If #1457 refuses to bind over
+ *                  the current grant, grants/delete/v3 (#1660) removes that
+ *                  grant and grants/add/v3 runs once more.
+ *                  With an OAuth code (single-use) the order is delete, then
+ *                  add, as before.
  *               4. onboarding/calendar/ensure-default/v3 (#12047) with the same
  *                  hours and timezone: manager "calendar" for a Google grant, Free config.
- *             A hosted return of the Starter's current grant skips 2 and 3.
- *             If 3 fails after 2, #12047 runs again to put the platform
+ *             A hosted return of the Starter's current grant skips 2.
+ *             If the add fails after a delete, #12047 runs again to put the platform
  *             calendar back. If only 4 fails, it is tried once more and a
  *             success there counts as connected. A cancel at Google changes
  *             nothing.
  *             Result: BroadcastChannel 'starters-calendar-connect-return'
  *             {type: 'calendar-connected' | 'calendar-connect-failed',
- *             memberId}, then the popup closes (or says it can be closed).
+ *             memberId, reason?: 'taken'}, then the popup closes (or says it can be closed).
  */
 ;(function (global) {
   'use strict'
@@ -49,6 +53,14 @@
     working: 'Connecting your Google Calendar…',
     done: 'Google Calendar connected. You can close this tab.',
     failed: 'We couldn’t connect your Google Calendar. Close this tab and try again.',
+    taken: 'This Google account is already connected to another Starter. Close this tab and use a different Google account.',
+  }
+  const TAKEN_MESSAGE = 'Google calendar is already connected to another Starter'
+
+  // grants/add/v3 (#1457) refuses a Google account that another Starter uses (403).
+  function isTaken(error) {
+    const message = error && error.data && (error.data.message || error.data.error)
+    return Boolean(error && error.status === 403 && typeof message === 'string' && message.indexOf(TAKEN_MESSAGE) !== -1)
   }
 
   // Taken once at load so the code never stays in the address bar or history.
@@ -147,11 +159,6 @@
           await post('/onboarding/calendar/ensure-default/v3', defaults)
           return connected(id)
         }
-        if (starter && starter.nylas_grant_id) {
-          const removed = await post('/grants/delete/v3', { in_grant_id: starter.nylas_grant_id })
-          if (!removed || removed.connected !== false) throw new Error('grants/delete returned no disconnected state')
-          deleted = true
-        }
         const grantPayload = {
           member_id: id,
           in_redirect_uri: intent.redirectUri,
@@ -159,7 +166,30 @@
         }
         if (callback.code) grantPayload.code = callback.code
         else grantPayload.in_grant_id = callback.grantId
-        const grant = await post('/grants/add/v3', grantPayload)
+        const removeCurrent = async function () {
+          const removed = await post('/grants/delete/v3', { in_grant_id: starter.nylas_grant_id })
+          if (!removed || removed.connected !== false) throw new Error('grants/delete returned no disconnected state')
+          deleted = true
+        }
+        let grant = null
+        if (starter && starter.nylas_grant_id && !callback.code) {
+          // Hosted grant: try it first. #1457 checks "used by another Starter"
+          // before it refuses to bind over the current grant, so a refused
+          // Google account never removes the Starter's calendar (Kaeser
+          // 2026-11-16: two refused connects removed the platform calendar and
+          // its Free call). Only the "replace" refusal removes and retries.
+          try {
+            grant = await post('/grants/add/v3', grantPayload)
+          } catch (error) {
+            if (isTaken(error)) throw error
+            await removeCurrent()
+            grant = await post('/grants/add/v3', grantPayload)
+          }
+        } else {
+          // An OAuth code is single-use, so it gets one grants/add/v3 call.
+          if (starter && starter.nylas_grant_id) await removeCurrent()
+          grant = await post('/grants/add/v3', grantPayload)
+        }
         if (!grant || !grant.grant_id) throw new Error('grants/add returned no grant')
         added = true
         await post('/onboarding/calendar/ensure-default/v3', defaults)
@@ -180,8 +210,9 @@
             warn('platform restore failed', restoreError && restoreError.message)
           }
         }
-        if (id) signal('calendar-connect-failed', id)
-        showOverlay('failed')
+        const taken = isTaken(error)
+        if (id) signal('calendar-connect-failed', id, taken ? 'taken' : undefined)
+        showOverlay(taken ? 'taken' : 'failed')
         return false
       }
     }
@@ -193,11 +224,11 @@
       return true
     }
 
-    function signal(type, id) {
+    function signal(type, id, reason) {
       if (typeof win.BroadcastChannel !== 'function') return
       try {
         const channel = new win.BroadcastChannel(RETURN_CHANNEL)
-        channel.postMessage({ type, memberId: id })
+        channel.postMessage(reason ? { type, memberId: id, reason } : { type, memberId: id })
         channel.close()
       } catch (_error) { /* the first tab also re-reads on focus */ }
     }

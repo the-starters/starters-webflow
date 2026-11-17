@@ -39,8 +39,16 @@ function makeWin({ search = '', path = '/starter-onboarding-v2', intent, now = D
   return { win, storage, messages, replaced, body, now }
 }
 
-function makeBackend({ starter = { nylas_grant_id: 'v-1', nylas_grant_email: MEMBER, timezone: 'Europe/Amsterdam', availability: { manager: 'platform', items: { general: { days: [1], start: '09:00', end: '12:00' } } } }, fail = {} } = {}) {
+// Like the onboarding-calendar request helper: a non-2xx answer throws with status + data.
+function xanoError(path, status, message) {
+  return Object.assign(new Error(path + ' failed (' + status + ')'), { status, data: { code: 'ERROR', message } })
+}
+
+// grants/add/v3 (#1457) refuses a Google account used by another Starter (403) before
+// it refuses to bind over the Starter's current grant (500), as on the live endpoint.
+function makeBackend({ starter = { nylas_grant_id: 'v-1', nylas_grant_email: MEMBER, timezone: 'Europe/Amsterdam', availability: { manager: 'platform', items: { general: { days: [1], start: '09:00', end: '12:00' } } } }, fail = {}, taken = false } = {}) {
   const calls = []
+  let currentGrant = starter && starter.nylas_grant_id
   async function post(path, body) {
     calls.push({ path, body })
     if (fail[path] === true || fail[path] > 0) {
@@ -49,8 +57,13 @@ function makeBackend({ starter = { nylas_grant_id: 'v-1', nylas_grant_email: MEM
     }
     if (path === '/grants/oauth/v3') return { response: { result: { data: { url: 'https://api.us.nylas.com/v3/connect/auth?x=1' } } } }
     if (path === '/starter/get_by_memberstack/v3') return starter
-    if (path === '/grants/delete/v3') return { connected: false }
-    if (path === '/grants/add/v3') return { grant_id: 'g-google' }
+    if (path === '/grants/delete/v3') { currentGrant = null; return { connected: false } }
+    if (path === '/grants/add/v3') {
+      if (taken) throw xanoError(path, 403, 'Google calendar is already connected to another Starter')
+      if (currentGrant && body.in_grant_id && currentGrant !== body.in_grant_id) throw xanoError(path, 500, 'Calendar replacement requires preservation mode')
+      currentGrant = 'g-google'
+      return { grant_id: 'g-google' }
+    }
     if (path === '/onboarding/calendar/ensure-default/v3') return { manager: 'calendar' }
     throw new Error('unexpected ' + path)
   }
@@ -241,9 +254,29 @@ test('a hosted-auth return connects through grants/add with in_grant_id', async 
   const backend = makeBackend()
   const callback = { code: '', grantId: 'g-hosted', success: 'true', state: MEMBER, hasError: false }
   assert.equal(await createGoogleConnect(page.win, { post: backend.post, memberId, callback }).completeReturn(), true)
-  assert.deepEqual(backend.paths(), ['/starter/get_by_memberstack/v3', '/grants/delete/v3', '/grants/add/v3', '/onboarding/calendar/ensure-default/v3'])
-  assert.deepEqual(backend.calls[2].body, { member_id: MEMBER, in_redirect_uri: PAGE, in_state: MEMBER, in_grant_id: 'g-hosted' })
+  // The add runs first; the "replace" refusal removes the platform grant and retries once.
+  assert.deepEqual(backend.paths(), ['/starter/get_by_memberstack/v3', '/grants/add/v3', '/grants/delete/v3', '/grants/add/v3', '/onboarding/calendar/ensure-default/v3'])
+  assert.deepEqual(backend.calls[3].body, { member_id: MEMBER, in_redirect_uri: PAGE, in_state: MEMBER, in_grant_id: 'g-hosted' })
   assert.deepEqual(page.messages, [{ channel: 'starters-calendar-connect-return', type: 'calendar-connected', memberId: MEMBER }])
+})
+
+test('a hosted Google account used by another Starter keeps the current calendar and says why (Kaeser 2026-11-16)', async () => {
+  const page = makeWin({ intent: goodIntent() })
+  const backend = makeBackend({ taken: true })
+  const callback = { code: '', grantId: 'g-hosted', success: 'true', state: MEMBER, hasError: false }
+  assert.equal(await createGoogleConnect(page.win, { post: backend.post, memberId, callback }).completeReturn(), false)
+  assert.deepEqual(backend.paths(), ['/starter/get_by_memberstack/v3', '/grants/add/v3'], 'no delete and no platform rebuild')
+  assert.deepEqual(page.messages, [{ channel: 'starters-calendar-connect-return', type: 'calendar-connect-failed', memberId: MEMBER, reason: 'taken' }])
+  assert.equal(page.body.children[0].textContent, 'This Google account is already connected to another Starter. Close this tab and use a different Google account.')
+})
+
+test('a hosted Google account used by another Starter, with no calendar yet, also says why', async () => {
+  const page = makeWin({ intent: goodIntent() })
+  const backend = makeBackend({ taken: true, starter: { nylas_grant_id: '', timezone: 'Europe/Amsterdam', availability: { items: {} } } })
+  const callback = { code: '', grantId: 'g-hosted', success: 'true', state: MEMBER, hasError: false }
+  assert.equal(await createGoogleConnect(page.win, { post: backend.post, memberId, callback }).completeReturn(), false)
+  assert.deepEqual(backend.paths(), ['/starter/get_by_memberstack/v3', '/grants/add/v3'])
+  assert.equal(page.messages[0].reason, 'taken')
 })
 
 test('a hosted-auth return without success=true writes nothing', async () => {
