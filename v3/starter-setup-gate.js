@@ -11,6 +11,10 @@
  * "Skip for now" shows the next missing screen, or closes after the last one.
  * Any authored [data-modal-close] closes it for this visit only.
  *
+ * /starter-dashboard#stripe (the Edit Profile v2 paid-call Stripe link, JP
+ * 2026-11-17): the dialog stays closed; the page scrolls to the Stripe card
+ * once it has loaded, and the hash is removed so a reload works as usual.
+ *
  * Staff-only until launch: it runs only after the staff preview guard in FLAG
  * mode says "allowed" (window.StartersStaffPreview resolves true). The flag
  * guard never hides or redirects, so real Starters see nothing. Without the
@@ -46,6 +50,8 @@
   const EDIT_PROFILE_CALLS = '/starter-edit-profile-test#calls'
   const STRIPE_CARD = '[data-stripe-connect-element="root"]'
   const STRIPE_START = '[data-stripe-connect-action="start"]'
+  const STRIPE_LOADING = '[data-stripe-connect-element="loading"]'
+  const STRIPE_HASH = '#stripe'
   // The shared modal fades out for 300 ms, holds the page scroll until then and
   // fires window "modal-close"; the timer only covers a missing event.
   const CLOSE_FALLBACK_MS = 1000
@@ -205,11 +211,43 @@
       })
     }
 
-    // Returns 'opened' | 'complete' | 'skipped:<reason>'.
+    function dropHash() {
+      const location = win.location
+      const history = win.history
+      if (!history || typeof history.replaceState !== 'function') return
+      try { history.replaceState(history.state, '', location.pathname + (location.search || '')) } catch (_e) {}
+    }
+
+    // Wait until a visible Stripe card has finished loading its state, then scroll.
+    // After MODAL_WAIT_MS it scrolls to whatever card is there.
+    function scrollToStripeWhenReady() {
+      const loaded = function () {
+        const card = Array.prototype.find.call(win.document.querySelectorAll(STRIPE_CARD), visible)
+        return Boolean(card) && !Array.prototype.some.call(card.querySelectorAll(STRIPE_LOADING), visible)
+      }
+      return new Promise(function (resolve) {
+        if (loaded()) return resolve(scrollToStripe())
+        let attempts = 0
+        const timer = win.setInterval(function () {
+          attempts++
+          if (loaded() || attempts >= MODAL_WAIT_MS / 100) {
+            win.clearInterval(timer)
+            resolve(scrollToStripe())
+          }
+        }, 100)
+      })
+    }
+
+    // Returns 'opened' | 'complete' | 'stripe-link' | 'skipped:<reason>'.
     async function run() {
       const staff = win.StartersStaffPreview
       if (!staff || typeof staff.then !== 'function') return 'skipped:no-staff-flag'
       if ((await staff) !== true) return 'skipped:not-staff'
+      if (win.location.hash === STRIPE_HASH) {
+        dropHash()
+        await scrollToStripeWhenReady()
+        return 'stripe-link'
+      }
       const dialog = win.document.querySelector(DIALOG)
       if (!dialog) return 'skipped:no-dialog'
       let value = null

@@ -82,6 +82,9 @@ Already authored:
    authored link is kept.
 8. `[data-call-settings-output="status"]` — one short text element in each of the Free and Paid rows. It
    shows "Saved.", the blocker reason (for example "connect Stripe on your dashboard first") or the error.
+   A Stripe reason (not linked, or charges off) also gets a script-made link
+   `a[data-call-settings-output="stripe-link"]` "Go to Stripe setup" to `/starter-dashboard#stripe`; the
+   dashboard setup gate scrolls staff to the Stripe card on that hash (JP 2026-11-17).
 9. Stripe block (below). Optional: `[data-calls-step-output="stripe-tag"]` inside the calls root mirrors the
    Stripe state ("Not connected", "Waiting for Stripe", "Verifying", "Connected").
 

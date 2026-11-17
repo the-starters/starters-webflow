@@ -66,6 +66,8 @@
   const HOURS_ACTIONS = ['add-window', 'remove-window', 'add-extra', 'remove-extra']
   const STRIPE_EVENT = 'starters:stripe-connect-state'
   const DASHBOARD_CALENDAR_URL = '/starter-dashboard'
+  // The dashboard setup gate scrolls to its Stripe card on this hash (staff only).
+  const DASHBOARD_STRIPE_URL = '/starter-dashboard#stripe'
   const HOURS_DELAY_MS = 800
   const TEXT_DELAY_MS = 1000
   const FREE_DURATION_MINUTES = 30
@@ -86,6 +88,7 @@
     stripe: 'To turn on paid calls, connect Stripe on your dashboard first. Stripe sends call payments to you.',
     charges: 'To turn on paid calls, finish your Stripe setup on your dashboard first. Stripe must be able to accept payments.',
     fresh: 'Your Stripe status is updating. Try again in a minute.',
+    stripeLink: 'Go to Stripe setup',
     saved: 'Saved.',
     freeOff: 'Free calls are off.',
     paidOff: 'Paid calls are off.',
@@ -204,12 +207,24 @@
       return lane.running
     }
 
+    // A Stripe reason also gets a link to the dashboard Stripe card (JP 2026-11-17 1a).
     function setRow(name, state, message) {
       const row = service(name)
       if (!row) return
       row.setAttribute('data-edit-calls-state', state)
       const output = row.querySelector('[data-call-settings-output="status"]')
-      if (output) output.textContent = message || ''
+      if (!output) return
+      if (typeof output.replaceChildren === 'function') output.replaceChildren()
+      output.textContent = message || ''
+      if (message !== COPY.stripe && message !== COPY.charges) return
+      const doc = output.ownerDocument || root.ownerDocument
+      if (!doc || typeof doc.createElement !== 'function') return
+      const link = doc.createElement('a')
+      link.setAttribute('href', DASHBOARD_STRIPE_URL)
+      link.setAttribute('data-call-settings-output', 'stripe-link')
+      link.textContent = COPY.stripeLink
+      output.textContent = message + ' '
+      output.appendChild(link)
     }
 
     function showError(message) {
