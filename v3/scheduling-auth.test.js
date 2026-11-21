@@ -4,6 +4,7 @@ const test = require('node:test')
 const vm = require('node:vm')
 
 const source = fs.readFileSync(require.resolve('./scheduling-auth.js'), 'utf8')
+const aliasSource = fs.readFileSync(require.resolve('./scheduling-bridge.js'), 'utf8')
 const XANO_ORIGIN = 'https://x08a-5ko8-jj1r.n7c.xano.io'
 const SCHEDULING_URL = `${XANO_ORIGIN}/api:tCpV3oqd/scheduler/configurations/update/v3`
 const V3_STARTER_URL = `${XANO_ORIGIN}/api:tCpV3oqd/starter/get_by_memberstack/v3`
@@ -111,6 +112,10 @@ function loadBridge(nativeFetch, options = {}) {
     setTimeout: options.setTimeout || function () {},
     clearTimeout: options.clearTimeout === null ? undefined : options.clearTimeout || function () {},
   }
+  if (options.tracker !== undefined) window.StartersTrack = options.tracker
+  if (options.scriptSrc !== undefined) {
+    window.document = { currentScript: { src: options.scriptSrc } }
+  }
   if (options.AbortController) window.AbortController = options.AbortController
   if (options.withoutMemberstack !== true) window.$memberstackDom = memberstack
   if (options.legacyBridge) {
@@ -128,7 +133,7 @@ function loadBridge(nativeFetch, options = {}) {
     console: options.console || { info() {}, warn() {} },
     window,
   })
-  vm.runInContext(source, context)
+  vm.runInContext(options.asset === 'scheduling-bridge' ? aliasSource : source, context)
   return {
     authChange: (member) => (authChange || memberstack.listener)(member),
     memberstack,
@@ -139,6 +144,290 @@ function loadBridge(nativeFetch, options = {}) {
     window,
   }
 }
+
+function telemetryFixture(dispatch, options = {}) {
+  const events = []
+  const tracker = {
+    track(name, properties) {
+      events.push({ name, properties: JSON.parse(JSON.stringify(properties)) })
+    },
+  }
+  let trades = 0
+  let requests = 0
+  const bridge = loadBridge(async (request) => {
+    if (requestUrl(request).includes('/auth/trade-token/v3')) {
+      trades += 1
+      return options.tradeFailure && trades > 1
+        ? response({}, 503)
+        : response({ authToken: 'fixture-xano-token' })
+    }
+    requests += 1
+    return dispatch(request, requests)
+  }, { tracker, ...options })
+  return { ...bridge, events, counts: () => ({ trades, requests }) }
+}
+
+test('scheduling failure telemetry reports safe terminal HTTP metadata without consuming the response', async (t) => {
+  for (const status of [400, 403, 500]) {
+    await t.test(String(status), async () => {
+      const fixture = telemetryFixture(() => response({ message: 'private-response' }, status), {
+        hostname: 'www.thestarters.com',
+        pathname: '/starter-dashboard',
+        scriptSrc: 'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v1.2.3/v3/scheduling-auth.js?private-script-query#private-fragment',
+      })
+      const result = await fixture.window.__tsSchedulingAuthFetch(
+        `${FREE_CALL_SETTINGS_URLS[1]}?token=private-query#private-fragment`,
+        { method: 'POST', headers: { 'X-Private': 'private-header' }, body: 'private-body' },
+      )
+      assert.equal(result.status, status)
+      assert.deepEqual(await result.json(), { message: 'private-response' })
+      assert.deepEqual(fixture.events, [{ name: 'bridge_error', properties: {
+        path: 'starter/free-call-settings/upsert/v3',
+        status,
+        method: 'POST',
+        flow: 'calls_and_booking',
+        source: 'scheduling-auth',
+        source_environment: 'production',
+        source_release: 'v1.2.3',
+        instrumentation_version: 1,
+        failure_kind: 'http',
+      } }])
+      assert.doesNotMatch(JSON.stringify(fixture.events), /private-|fixture-xano-token|memberstack-a/)
+    })
+  }
+})
+
+test('scheduling failure telemetry observes only the final 401 refresh outcome', async (t) => {
+  for (const finalStatus of [200, 401, 503]) {
+    await t.test(String(finalStatus), async () => {
+      const fixture = telemetryFixture((request, attempt) => response({}, attempt === 1 ? 401 : finalStatus))
+      const result = await fixture.window.__tsSchedulingAuthFetch(PAID_CALL_SETTINGS_URLS[1])
+      assert.equal(result.status, finalStatus)
+      assert.deepEqual(fixture.counts(), { trades: 2, requests: 2 })
+      assert.equal(fixture.events.length, finalStatus === 200 ? 0 : 1)
+      if (fixture.events.length) assert.equal(fixture.events[0].properties.status, finalStatus)
+    })
+  }
+  const refreshFailed = telemetryFixture(() => response({}, 401), { tradeFailure: true })
+  assert.equal((await refreshFailed.window.__tsSchedulingAuthFetch(SCHEDULING_URL)).status, 401)
+  assert.deepEqual(refreshFailed.counts(), { trades: 2, requests: 1 })
+  assert.equal(refreshFailed.events.length, 1)
+  assert.equal(refreshFailed.events[0].properties.status, 401)
+})
+
+test('scheduling failure telemetry reports one shared-read failure and keeps both caller responses usable', async () => {
+  const waiting = deferred()
+  const fixture = telemetryFixture(async () => {
+    await waiting.promise
+    return response({ result: 'fixture-result' }, 503)
+  })
+  const first = fixture.window.__tsSchedulingAuthFetch(FREE_CALL_SETTINGS_URLS[0])
+  const second = fixture.window.__tsSchedulingAuthFetch(FREE_CALL_SETTINGS_URLS[0])
+  waiting.resolve()
+  const results = await Promise.all([first, second])
+  assert.deepEqual(fixture.counts(), { trades: 1, requests: 1 })
+  assert.equal(fixture.events.length, 1)
+  assert.deepEqual(await results[0].json(), { result: 'fixture-result' })
+  assert.deepEqual(await results[1].json(), { result: 'fixture-result' })
+})
+
+test('scheduling failure telemetry reports network failure without copying its error or changing rejection identity', async () => {
+  const originalError = new TypeError('private-network-error?token=private-token')
+  const fixture = telemetryFixture(() => { throw originalError })
+  await assert.rejects(fixture.window.__tsSchedulingAuthFetch(SCHEDULING_URL), (error) => error === originalError)
+  assert.equal(fixture.events.length, 1)
+  assert.equal(fixture.events[0].properties.status, 0)
+  assert.equal(fixture.events[0].properties.failure_kind, 'network')
+  assert.equal(fixture.events[0].properties.source_environment, 'staging')
+  assert.equal(fixture.events[0].properties.source_release, 'unknown')
+  assert.doesNotMatch(JSON.stringify(fixture.events), /private-|fixture-xano-token|memberstack-a/)
+})
+
+test('scheduling failure telemetry ignores explicit aborts and stale member-session outcomes', async (t) => {
+  await t.test('AbortError', async () => {
+    const originalError = new DOMException('fixture cancel', 'AbortError')
+    const fixture = telemetryFixture(() => { throw originalError })
+    await assert.rejects(fixture.window.__tsSchedulingAuthFetch(SCHEDULING_URL), (error) => error === originalError)
+    assert.deepEqual(fixture.events, [])
+  })
+  await t.test('aborted request', async () => {
+    const controller = new AbortController()
+    const originalError = new TypeError('fixture aborted transport')
+    const fixture = telemetryFixture(() => {
+      controller.abort()
+      throw originalError
+    })
+    await assert.rejects(fixture.window.__tsSchedulingAuthFetch(SCHEDULING_URL, { signal: controller.signal }), (error) => error === originalError)
+    assert.deepEqual(fixture.events, [])
+  })
+  await t.test('member changes before failure response', async () => {
+    let cookie = 'fixture-member-a'
+    let fixture
+    fixture = telemetryFixture(async () => {
+      cookie = 'fixture-member-b'
+      await fixture.authChange({ id: 'fixture-b' })
+      return response({}, 503)
+    }, { memberstack: { getMemberCookie: async () => cookie, onAuthChange(listener) { this.listener = listener } } })
+    await assert.rejects(fixture.window.__tsSchedulingAuthFetch(SCHEDULING_URL), { code: 'MEMBER_SCOPE_CHANGED' })
+    assert.deepEqual(fixture.events, [])
+  })
+  await t.test('member changes before transport rejection', async () => {
+    let cookie = 'fixture-member-a'
+    let fixture
+    const originalError = new TypeError('fixture stale transport')
+    fixture = telemetryFixture(async () => {
+      cookie = 'fixture-member-b'
+      await fixture.authChange({ id: 'fixture-b' })
+      throw originalError
+    }, { memberstack: { getMemberCookie: async () => cookie, onAuthChange(listener) { this.listener = listener } } })
+    await assert.rejects(fixture.window.__tsSchedulingAuthFetch(SCHEDULING_URL), (error) => error === originalError)
+    assert.deepEqual(fixture.events, [])
+  })
+})
+
+test('scheduling failure telemetry is contained when analytics is absent or throws', async (t) => {
+  for (const tracker of [null, { track() { throw new Error('fixture analytics failure') } }]) {
+    await t.test(tracker ? 'throwing' : 'absent', async () => {
+      const fixture = telemetryFixture(() => response({ fixture: true }, 500), { tracker })
+      assert.deepEqual(await (await fixture.window.__tsSchedulingAuthFetch(SCHEDULING_URL)).json(), { fixture: true })
+      const originalError = new TypeError('fixture network failure')
+      const network = telemetryFixture(() => { throw originalError }, { tracker })
+      await assert.rejects(network.window.__tsSchedulingAuthFetch(SCHEDULING_URL), (error) => error === originalError)
+    })
+  }
+})
+
+test('scheduling failure telemetry excludes pass-through requests and successful scheduling requests', async () => {
+  const fixture = telemetryFixture(() => response({}, 500))
+  await fixture.window.__tsSchedulingAuthFetch('https://example.test/unrelated')
+  await fixture.window.__tsSchedulingAuthFetch(`${XANO_ORIGIN}/api:tCpV3oqd/unreviewed/v3`)
+  await fixture.window.__tsSchedulingAuthFetch(SCHEDULING_URL, { headers: { Authorization: 'Bearer fixture-owned-token' } })
+  assert.deepEqual(fixture.events, [])
+  const successful = telemetryFixture(() => response({}, 200))
+  await successful.window.__tsSchedulingAuthFetch(SCHEDULING_URL)
+  assert.deepEqual(successful.events, [])
+})
+
+test('scheduling failure telemetry also covers the global authenticated fetch owner', async () => {
+  const fixture = telemetryFixture(() => response({}, 503))
+  assert.equal((await fixture.window.fetch(SCHEDULING_URL)).status, 503)
+  assert.equal(fixture.events.length, 1)
+})
+
+test('scheduling failure telemetry normalizes custom methods rather than copying arbitrary text', async () => {
+  const fixture = telemetryFixture(() => response({}, 500))
+  await fixture.window.__tsSchedulingAuthFetch(SCHEDULING_URL, { method: 'PRIVATE-FIXTURE-METHOD' })
+  assert.equal(fixture.events[0].properties.method, 'OTHER')
+  assert.doesNotMatch(JSON.stringify(fixture.events), /PRIVATE-FIXTURE/)
+})
+
+test('scheduling failure telemetry accepts only a pinned release from the exact script owner', async (t) => {
+  for (const scriptSrc of [
+    'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/scheduling-auth.js',
+    'https://other.example/gh/the-starters/starters-webflow@v1.2.3/v3/scheduling-auth.js',
+    'https://cdn.jsdelivr.net/gh/the-starters/other@v1.2.3/v3/scheduling-auth.js',
+  ]) {
+    await t.test(scriptSrc, async () => {
+      const fixture = telemetryFixture(() => response({}, 500), { scriptSrc })
+      await fixture.window.__tsSchedulingAuthFetch(SCHEDULING_URL)
+      assert.equal(fixture.events[0].properties.source_release, 'unknown')
+    })
+  }
+})
+
+test('both scheduling assets report safe final failures on Edit Profile', async (t) => {
+  for (const asset of ['scheduling-auth', 'scheduling-bridge']) {
+    await t.test(asset, async () => {
+      const options = {
+        asset,
+        hostname: 'www.thestarters.com',
+        pathname: '/starter-edit-profile',
+        scriptSrc: `https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v1.2.3/v3/${asset}.js?private-query`,
+      }
+      const fixture = telemetryFixture(() => response({ message: 'private-response' }, 503), options)
+      const result = await fixture.window.__tsSchedulingAuthFetch(
+        `${FREE_CALL_SETTINGS_URLS[0]}?token=private-query`,
+      )
+      assert.equal(result.status, 503)
+      assert.deepEqual(await result.json(), { message: 'private-response' })
+      assert.deepEqual(fixture.events, [{ name: 'bridge_error', properties: {
+        path: 'starter/free-call-settings/get/v3',
+        status: 503,
+        method: 'GET',
+        flow: 'calls_and_booking',
+        source: 'scheduling-auth',
+        source_environment: 'production',
+        source_release: 'v1.2.3',
+        instrumentation_version: 1,
+        failure_kind: 'http',
+      } }])
+      assert.doesNotMatch(JSON.stringify(fixture.events), /private-|fixture-xano-token|memberstack-a/)
+
+      const recovered = telemetryFixture((request, attempt) => response({}, attempt === 1 ? 401 : 200), options)
+      assert.equal((await recovered.window.__tsSchedulingAuthFetch(FREE_CALL_SETTINGS_URLS[0])).status, 200)
+      assert.deepEqual(recovered.events, [])
+
+      const originalError = new TypeError('private-network-failure')
+      const network = telemetryFixture(() => { throw originalError }, options)
+      await assert.rejects(network.window.__tsSchedulingAuthFetch(FREE_CALL_SETTINGS_URLS[0]), (error) => error === originalError)
+      await new Promise(setImmediate)
+      assert.equal(network.events.length, 1)
+      assert.equal(network.events[0].properties.failure_kind, 'network')
+      assert.equal(network.events[0].properties.status, 0)
+      assert.doesNotMatch(JSON.stringify(network.events), /private-|fixture-xano-token|memberstack-a/)
+    })
+  }
+})
+
+test('network telemetry waits for auth reconciliation without delaying the original rejection', async (t) => {
+  for (const asset of ['scheduling-auth', 'scheduling-bridge']) {
+    for (const sessionChanges of [true, false]) {
+      await t.test(`${asset}: ${sessionChanges ? 'new' : 'same'} session`, async () => {
+        const started = deferred()
+        const cookieRead = deferred()
+        let cookieGate = null
+        let rejectTransport
+        const originalError = new TypeError('private-deferred-network-failure')
+        const transport = new Promise((resolve, reject) => { rejectTransport = reject })
+        const memberstack = {
+          getMemberCookie() {
+            if (!cookieGate) return Promise.resolve('fixture-member-a')
+            cookieRead.resolve()
+            return cookieGate.promise
+          },
+          onAuthChange(listener) { this.listener = listener },
+        }
+        const fixture = telemetryFixture(() => {
+          started.resolve()
+          return transport
+        }, { asset, memberstack })
+        let observedError
+        const request = fixture.window.__tsSchedulingAuthFetch(SCHEDULING_URL).catch((error) => {
+          observedError = error
+        })
+        await started.promise
+        cookieGate = deferred()
+        const reconciliation = fixture.authChange({ id: 'fixture-member' })
+        await cookieRead.promise
+        rejectTransport(originalError)
+        await new Promise(setImmediate)
+        // A never-settling cookie read must not hold the original rejection.
+        assert.equal(observedError, originalError)
+        assert.deepEqual(fixture.events, [])
+        cookieGate.resolve(sessionChanges ? 'fixture-member-b' : 'fixture-member-a')
+        await reconciliation
+        await new Promise(setImmediate)
+        await request
+        assert.equal(observedError, originalError)
+        assert.equal(fixture.events.length, sessionChanges ? 0 : 1)
+        if (!sessionChanges) {
+          assert.equal(fixture.events[0].properties.failure_kind, 'network')
+          assert.doesNotMatch(JSON.stringify(fixture.events), /private-|fixture-member|fixture-xano-token/)
+        }
+      })
+    }
+  }
+})
 
 test('installation logs stay on staging while production still initializes', () => {
   for (const hostname of ['the-starters-3-0.webflow.io', 'thestarters.com', 'www.thestarters.com']) {
