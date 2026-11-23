@@ -46,7 +46,7 @@ function xanoError(path, status, message) {
 
 // grants/add/v3 (#1457) refuses a Google account used by another Starter (403) before
 // it refuses to bind over the Starter's current grant (500), as on the live endpoint.
-function makeBackend({ starter = { nylas_grant_id: 'v-1', nylas_grant_email: MEMBER, timezone: 'Europe/Amsterdam', availability: { manager: 'platform', items: { general: { days: [1], start: '09:00', end: '12:00' } } } }, fail = {}, taken = false } = {}) {
+function makeBackend({ starter = { nylas_grant_id: 'v-1', nylas_grant_email: MEMBER, timezone: 'Europe/Amsterdam', availability: { manager: 'platform', items: { general: { days: [1], start: '09:00', end: '12:00' } } } }, fail = {}, taken = false, activeCalls = '' } = {}) {
   const calls = []
   let currentGrant = starter && starter.nylas_grant_id
   async function post(path, body) {
@@ -57,7 +57,12 @@ function makeBackend({ starter = { nylas_grant_id: 'v-1', nylas_grant_email: MEM
     }
     if (path === '/grants/oauth/v3') return { response: { result: { data: { url: 'https://api.us.nylas.com/v3/connect/auth?x=1' } } } }
     if (path === '/starter/get_by_memberstack/v3') return starter
-    if (path === '/grants/delete/v3') { currentGrant = null; return { connected: false } }
+    if (path === '/grants/delete/v3') {
+      // grants/delete/v3 (#1660, fn 4066) refuses while the current calendar has active calls.
+      if (activeCalls) throw xanoError(path, 400, activeCalls)
+      currentGrant = null
+      return { connected: false }
+    }
     if (path === '/grants/add/v3') {
       if (taken) throw xanoError(path, 403, 'Google calendar is already connected to another Starter')
       if (currentGrant && body.in_grant_id && currentGrant !== body.in_grant_id) throw xanoError(path, 500, 'Calendar replacement requires preservation mode')
@@ -277,6 +282,44 @@ test('a hosted Google account used by another Starter, with no calendar yet, als
   assert.equal(await createGoogleConnect(page.win, { post: backend.post, memberId, callback }).completeReturn(), false)
   assert.deepEqual(backend.paths(), ['/starter/get_by_memberstack/v3', '/grants/add/v3'])
   assert.equal(page.messages[0].reason, 'taken')
+})
+
+const ACTIVE_CALLS_CURRENT = 'Resolve pending and upcoming calls before disconnecting the calendar. You can still edit settings or switch calendars.'
+const ACTIVE_CALLS_TAB_COPY = 'You have Requested or Confirmed calls on your current calendar. Decline or cancel them, or wait until they end, then connect Google again. You can close this tab.'
+
+test('a hosted return refused because the current calendar has active calls keeps it and names the calls', async () => {
+  const page = makeWin({ intent: goodIntent() })
+  const backend = makeBackend({ activeCalls: ACTIVE_CALLS_CURRENT })
+  const callback = { code: '', grantId: 'g-hosted', success: 'true', state: MEMBER, hasError: false }
+  assert.equal(await createGoogleConnect(page.win, { post: backend.post, memberId, callback }).completeReturn(), false)
+  assert.deepEqual(backend.paths(), ['/starter/get_by_memberstack/v3', '/grants/add/v3', '/grants/delete/v3'], 'no second add and no platform rebuild')
+  assert.deepEqual(page.messages, [{ channel: 'starters-calendar-connect-return', type: 'calendar-connect-failed', memberId: MEMBER, reason: 'active-calls' }])
+  assert.equal(page.body.children[0].textContent, ACTIVE_CALLS_TAB_COPY)
+})
+
+test('a code return refused for active calls (older wording) also names the calls', async () => {
+  const page = makeWin({ intent: goodIntent() })
+  const backend = makeBackend({ activeCalls: 'Resolve active bookings before disconnecting the calendar' })
+  const callback = { code: 'c-1', grantId: '', success: '', state: MEMBER, hasError: false }
+  assert.equal(await createGoogleConnect(page.win, { post: backend.post, memberId, callback }).completeReturn(), false)
+  assert.deepEqual(backend.paths(), ['/starter/get_by_memberstack/v3', '/grants/delete/v3'], 'the single-use code is not spent')
+  assert.equal(page.messages[0].reason, 'active-calls')
+  assert.equal(page.body.children[0].textContent, ACTIVE_CALLS_TAB_COPY)
+})
+
+test('a 400 with other wording, or the active-calls wording on another status, keeps the generic failure', async () => {
+  for (const [status, message] of [[400, 'Calendar provider grant deletion failed'], [500, ACTIVE_CALLS_CURRENT]]) {
+    const page = makeWin({ intent: goodIntent() })
+    const backend = makeBackend()
+    const post = async (path, body) => {
+      if (path === '/grants/delete/v3') throw xanoError(path, status, message)
+      return backend.post(path, body)
+    }
+    const callback = { code: 'c-1', grantId: '', success: '', state: MEMBER, hasError: false }
+    assert.equal(await createGoogleConnect(page.win, { post, memberId, callback }).completeReturn(), false)
+    assert.deepEqual(page.messages, [{ channel: 'starters-calendar-connect-return', type: 'calendar-connect-failed', memberId: MEMBER }], status + ' ' + message)
+    assert.equal(page.body.children[0].textContent, 'We couldn’t connect your Google Calendar. Close this tab and try again.')
+  }
 })
 
 test('a hosted-auth return without success=true writes nothing', async () => {

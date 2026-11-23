@@ -64,6 +64,8 @@
   const SAVE_ERROR = 'We couldn’t save your availability. Please try again.'
   const GOOGLE_ERROR = 'We couldn’t connect your Google Calendar. Please try again.'
   const GOOGLE_TAKEN = 'This Google account is already connected to another Starter. Use a different Google account.'
+  const GOOGLE_ACTIVE_CALLS =
+    'You have Requested or Confirmed calls on your current calendar. Decline or cancel them, or wait until they end, then connect Google again.'
 
   function bootAllowed(win) {
     const location = win.location
@@ -393,7 +395,7 @@
             if (data.type === 'calendar-connect-failed') {
               stop()
               refreshStatus(editor)
-              showError(root, data.reason === 'taken' ? GOOGLE_TAKEN : GOOGLE_ERROR)
+              showError(root, data.reason === 'taken' ? GOOGLE_TAKEN : data.reason === 'active-calls' ? GOOGLE_ACTIVE_CALLS : GOOGLE_ERROR)
             }
           }
         } catch (_error) {

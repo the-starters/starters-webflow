@@ -314,6 +314,19 @@ test('a failed-connection signal with reason taken says the Google account belon
   assert.equal(channel.closed, true)
 })
 
+test('a failed-connection signal with reason active-calls names the calls on the current calendar', async () => {
+  const page = makePage()
+  createController(page.win).mount()
+  await settle()
+  page.connect.click()
+  await settle()
+  const channel = page.channels.find((c) => c.name === 'starters-calendar-connect-return')
+  channel.onmessage({ data: { type: 'calendar-connect-failed', memberId: 'mem_onb03', reason: 'active-calls' } })
+  await settle()
+  assert.equal(page.error.textContent, 'You have Requested or Confirmed calls on your current calendar. Decline or cancel them, or wait until they end, then connect Google again.')
+  assert.equal(channel.closed, true)
+})
+
 test('on the pop-up return the page finishes the connection and does not wire the step', async () => {
   const page = makePage()
   let completed = 0
