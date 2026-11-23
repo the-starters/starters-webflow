@@ -332,6 +332,19 @@
     const isInAppAutofill = (event) =>
       IN_APP_AUTOFILL.test(safeString(field(event, 'message'))) ||
       IN_APP_AUTOFILL.test(safeString(field(field(event, 'error'), 'message')))
+    // The same in-app browsers inject a logging bridge (logLoginFormFocused,
+    // logSubmitButtonClicked) that rejects with InvalidAccessError inside
+    // sendPostMessage -> dispatchToBridge. Those frames carry the page URL as
+    // their filename, so each page opens its own issue. Group the family by the
+    // two bridge function names in the stack, never by the generic message.
+    const isMetaInAppBridge = (error) => {
+      const stack = safeString(field(error, 'stack'))
+      return /\bdispatchToBridge\b/.test(stack) && /\bsendPostMessage\b/.test(stack)
+    }
+    const META_BRIDGE_PROPS = {
+      starters_error_kind: 'in-app-browser',
+      $exception_fingerprint: 'starters-in-app-meta-bridge',
+    }
     const chunkProps = (failure) => failure ? {
       starters_error_kind: 'chunk-load',
       starters_chunk_vendor: failure.vendor,
@@ -352,6 +365,8 @@
       if (isInAppAutofill(e)) {
         props.starters_error_kind = 'in-app-browser'
         props.$exception_fingerprint = 'starters-in-app-autofill'
+      } else if (isMetaInAppBridge(e.error)) {
+        Object.assign(props, META_BRIDGE_PROPS)
       }
       const failure = chunkFailure(e)
       Object.assign(props, chunkProps(failure))
@@ -368,6 +383,8 @@
       } else if (isAlgoliaUnreachable(reason)) {
         props.starters_error_kind = 'network'
         props.$exception_fingerprint = 'starters-algolia-unreachable-hosts'
+      } else if (isMetaInAppBridge(reason)) {
+        Object.assign(props, META_BRIDGE_PROPS)
       }
       const failure = chunkFailure({ error: reason })
       Object.assign(props, chunkProps(failure))
