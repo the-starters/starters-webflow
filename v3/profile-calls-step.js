@@ -119,6 +119,26 @@
       choice.value = 'yes'
       paid.appendChild(choice)
     }
+    // Kaeser 2026-11-18: a Webflow custom switch draws on/off only from
+    // `w--redirected-checked` on its sibling `.w-checkbox-input`, and Webflow
+    // flips that class on each change event without reading `checked`. A
+    // script that sets `checked` must set the class too, or the switch looks
+    // the opposite of its state and the next click inverts the setting.
+    function setSwitch(input, on) {
+      if (!input) return
+      input.checked = Boolean(on)
+      const visual = input.closest('label')?.querySelector('.w-checkbox-input')
+      if (visual) visual.classList.toggle('w--redirected-checked', Boolean(on))
+    }
+
+    // Kaeser 2026-11-18: step 6 scrolls inside a fixed-height card with no
+    // visible scrollbar, so content that appears below the fold looks lost.
+    function reveal(target) {
+      if (target && typeof target.scrollIntoView === 'function') {
+        target.scrollIntoView({ block: 'center', behavior: 'smooth' })
+      }
+    }
+
     let continueError
     const status = { calendar: 'disconnected', email: '', stripe: 'disconnected', hoursSaved: false }
     const calendarBody = get('output', 'calendar-body')
@@ -267,7 +287,7 @@
         const panel = service.querySelector('[data-call-settings-element="panel"]')
         if (!enabled || !panel) continue
         if (consult && !buildProfile && enabled === paidToggle) {
-          enabled.checked = true
+          if (!enabled.checked) setSwitch(enabled, true)
           enabled.disabled = true
         }
         panel.hidden = !enabled.checked
@@ -336,9 +356,19 @@
         if (!continueError) {
           continueError = doc.createElement('p')
           continueError.setAttribute('role', 'alert')
-          root.appendChild(continueError)
+          continueError.setAttribute('data-calls-step-output', 'continue-error')
         }
+        // Kaeser 2026-11-18 ("Continue does nothing"): the message used to be
+        // appended after the Stripe card, below the visible part of the step.
+        // Put it in the section that blocks and scroll that section into view.
+        const host = stripeMessages.includes(message) && stripe
+          ? stripe
+          : message === paidPriceError() && price
+            ? price.parentElement || root
+            : error.parentElement || root
+        if (continueError.parentElement !== host) host.appendChild(continueError)
         continueError.textContent = message
+        reveal(continueError)
       }, true)
     }
 
@@ -371,6 +401,12 @@
     root.addEventListener('change', (event) => {
       if (availability?.contains(event.target)) status.hoursSaved = false
       refresh()
+      // Kaeser 2026-11-18 ("the fields disappear"): turning the paid call on
+      // opens its price fields and pushes hours, calendar and Stripe below the
+      // fold. Show the fields that just opened.
+      if (event.target === paidToggle && paidToggle.checked) {
+        reveal(paid?.querySelector('[data-call-settings-element="panel"]'))
+      }
     })
     root.addEventListener('input', (event) => {
       if (event.target === price && continueError) continueError.textContent = ''
@@ -424,11 +460,11 @@
         }
       }
       if (next.free) {
-        if (freeToggle) freeToggle.checked = Boolean(next.free.enabled)
+        setSwitch(freeToggle, next.free.enabled)
         if (freeDescription && typeof next.free.description === 'string') freeDescription.value = next.free.description
       }
       if (next.paid && !onboarding) {
-        if (paidToggle) paidToggle.checked = Boolean(next.paid.enabled)
+        setSwitch(paidToggle, next.paid.enabled)
         if (paidDescription && typeof next.paid.title === 'string') paidDescription.value = next.paid.title
         if (price && next.paid.price !== undefined && next.paid.price !== null) price.value = String(next.paid.price)
       }

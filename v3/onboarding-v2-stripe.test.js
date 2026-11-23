@@ -452,3 +452,46 @@ test('build route: no Calls step script on the page is safe', async () => {
   delete env.win.StarterProfileCallsStep
   await createController(env.win, null).mount()
 })
+
+// Kaeser 2026-11-18: the Stripe tab ended on the Starter Dashboard. Build
+// Profile now leaves a short-lived origin marker that the callback page reads.
+function memoryStorage() {
+  const items = new Map()
+  return {
+    items,
+    getItem: (k) => (items.has(k) ? items.get(k) : null),
+    setItem: (k, v) => items.set(k, String(v)),
+    removeItem: (k) => items.delete(k),
+  }
+}
+
+test('build route: starting Stripe leaves a short-lived Build Profile origin marker for the callback page', async () => {
+  const { env } = buildEnv({ statuses: [NONE], startResult: { mode: 'onboarding', url: 'https://connect.stripe.com/setup/e/acct_1/x' } })
+  env.win.localStorage = memoryStorage()
+  const controller = createController(env.win, null)
+  await controller.mount()
+  const before = Date.now()
+  assert.equal(await controller.start({ preventDefault() {} }), true)
+  const marker = JSON.parse(env.win.localStorage.getItem('starters:stripe-connect-origin:v1'))
+  assert.equal(marker.path, BUILD)
+  assert.ok(marker.exp > before && marker.exp <= Date.now() + 30 * 60 * 1000)
+})
+
+test('onboarding route: starting Stripe leaves no origin marker, so the callback keeps its dashboard redirect', async () => {
+  const env = makeEnv({ startResult: { mode: 'onboarding', url: 'https://connect.stripe.com/setup/e/acct_1/x' } })
+  env.win.localStorage = memoryStorage()
+  const controller = createController(env.win, env.view)
+  await controller.mount()
+  assert.equal(await controller.start({ preventDefault() {} }), true)
+  assert.equal(env.win.localStorage.items.size, 0)
+})
+
+test('onboarding route: starting Stripe after an abandoned Build Profile start clears the leftover origin marker', async () => {
+  const env = makeEnv({ startResult: { mode: 'onboarding', url: 'https://connect.stripe.com/setup/e/acct_1/x' } })
+  env.win.localStorage = memoryStorage()
+  env.win.localStorage.setItem('starters:stripe-connect-origin:v1', JSON.stringify({ path: BUILD, exp: Date.now() + 60000 }))
+  const controller = createController(env.win, env.view)
+  await controller.mount()
+  assert.equal(await controller.start({ preventDefault() {} }), true)
+  assert.equal(env.win.localStorage.getItem('starters:stripe-connect-origin:v1'), null)
+})

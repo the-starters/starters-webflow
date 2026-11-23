@@ -4476,6 +4476,15 @@ and `restart_required` without automatically replaying the one-time code. When
 through a member-matched channel. The callback tab then redirects to the
 matching `/starter-dashboard?stripe_connect=<mode>` URL, where the dashboard
 re-reads canonical status. The callback never reflects the reason into the URL.
+The one exception is a start from Build Profile: `v3/onboarding-v2-stripe.js`
+writes a 30-minute `localStorage` marker `starters:stripe-connect-origin:v1`
+(`{path, exp}`) there, and every other start (dashboard, setup dialog,
+onboarding, Edit Profile v2) and every failed exchange removes it. A callback that gets an
+exchange result reads and removes the marker; when it is unexpired and its path is one
+of the four `/build-profile/*` paths, the callback calls `window.close()` so the
+Starter is back on the still-open Build Profile tab, and after 500 ms assigns
+that Build Profile path with the same `stripe_connect=<mode>` query in case the
+browser keeps the tab open.
 Before redirecting, a `reconciliation_required` result with the exact
 allowlisted `account_owner_conflict` reason attempts to store the one-time
 receipt in same-origin `sessionStorage`. If storage is unavailable, the callback

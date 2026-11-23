@@ -40,4 +40,6 @@ The module also boots on the four Build Profile paths (`/build-profile/full-prof
 `build-profile-start-`, and each state goes to the Calls step through
 `StarterProfileCallsStep.editorFor(root).setStatus({ stripe })` (`none` is sent as `disconnected`). No Footer
 swap and no Submit gate run, and `onboarding-stripe-view.js` is not needed; see
-[Calls step wiring](../../v3/CALLS-STEP-WIRING.md).
+[Calls step wiring](../../v3/CALLS-STEP-WIRING.md). A Build Profile start also writes the Stripe origin marker
+that makes the callback tab close instead of redirecting to the dashboard; starts on other paths remove it. The
+marker contract is in [`v3/README.md`](../../v3/README.md#starter-dashboard-stripe-connect).

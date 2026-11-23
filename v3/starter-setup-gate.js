@@ -5,8 +5,10 @@
  * or Stripe sees the setup dialog every visit until both are done. The dialog
  * shows one screen per missing item, in order (availability, then Stripe):
  *   availability: the main button links to Edit Profile v2 > Calls
- *   stripe:       the main button closes the dialog and scrolls to the
- *                 dashboard Stripe card (Jai 2026-11-14: Stripe stays on the
+ *   stripe:       the main button starts Stripe from the dashboard Stripe
+ *                 card's own start control and closes the dialog (Kaeser
+ *                 2026-11-18); with no visible start control it closes and
+ *                 scrolls to the card (Jai 2026-11-14: Stripe stays on the
  *                 dashboard)
  * "Skip for now" shows the next missing screen, or closes after the last one.
  * Any authored [data-modal-close] closes it for this visit only.
@@ -30,7 +32,8 @@
  *     [data-setup-step="availability"]      screen shown when hours/calendar are missing
  *       a[data-setup-action="go-calendar"]  href is set to Edit Profile v2 > Calls
  *     [data-setup-step="stripe"]            screen shown when Stripe is not started
- *       [data-setup-action="go-stripe"]     closes and scrolls to [data-stripe-connect-element="root"]
+ *       [data-setup-action="go-stripe"]     clicks the card's visible [data-stripe-connect-action="start"] and closes;
+ *                                           else closes and scrolls to [data-stripe-connect-element="root"]
  *     [data-setup-action="skip"]            next missing screen, or close
  *     [data-modal-close]                    close for this visit
  *   Other [data-setup-step] screens (calendar, done) stay hidden.
@@ -201,7 +204,19 @@
         const name = action.getAttribute('data-setup-action')
         if (name === 'go-stripe') {
           event.preventDefault()
-          closeThenScroll(dialog, system)
+          // Kaeser 2026-11-18: closing and scrolling to the card looked like
+          // nothing happened. Start Stripe from the card's own start control
+          // in this same click, so the browser still allows the Stripe tab.
+          // Fall back to the scroll when the card has no visible start control
+          // (still loading, in review, or an error).
+          const card = Array.prototype.find.call(win.document.querySelectorAll(STRIPE_CARD), visible)
+          const start = card ? Array.prototype.find.call(card.querySelectorAll(STRIPE_START), visible) : null
+          if (start && typeof start.click === 'function') {
+            start.click()
+            close(system)
+          } else {
+            closeThenScroll(dialog, system)
+          }
         } else if (name === 'skip') {
           event.preventDefault()
           index++

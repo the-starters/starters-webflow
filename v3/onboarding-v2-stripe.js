@@ -53,6 +53,9 @@
   const STATUS_PATH = '/stripe_connect/status/v3'
   const START_PATH = '/stripe_connect/start/v3'
   const RETURN_CHANNEL_NAME = 'starters-stripe-connect-return'
+  // Shared with v3/starter-dashboard-stripe-connect.js mountCallback.
+  const ORIGIN_KEY = 'starters:stripe-connect-origin:v1'
+  const ORIGIN_TTL_MS = 30 * 60 * 1000
   const EDIT_ROUTE = '/starter-edit-profile-test'
   const BUILD_ROUTES = new Set(['/build-profile/full-profile-test', '/build-profile/consult-test', '/build-profile/full-profile', '/build-profile/consult'])
   const ROUTES = new Set(['/starter-onboarding-v2', EDIT_ROUTE, ...BUILD_ROUTES])
@@ -246,6 +249,25 @@
       }
     }
 
+    // Kaeser 2026-11-18: the Stripe tab ended on the Starter Dashboard, so
+    // Build Profile looked skipped. The callback page reads this short-lived
+    // marker and closes its tab, which returns the Starter to this tab.
+    function rememberStripeOrigin(originPath) {
+      try {
+        win.localStorage.setItem(ORIGIN_KEY, JSON.stringify({ path: originPath, exp: Date.now() + ORIGIN_TTL_MS }))
+      } catch (_error) {
+        // Storage blocked: the callback keeps its dashboard redirect.
+      }
+    }
+
+    function forgetStripeOrigin() {
+      try {
+        win.localStorage.removeItem(ORIGIN_KEY)
+      } catch (_error) {
+        // Storage blocked: there is no marker to clear.
+      }
+    }
+
     function reserveTab() {
       if (typeof win.open !== 'function') return null
       const tab = win.open('about:blank', '_blank')
@@ -282,6 +304,8 @@
           return true
         }
         if (!isStripeUrl(result.url)) throw new Error('start returned a non-Stripe URL')
+        if (buildRoute) rememberStripeOrigin(path)
+        else forgetStripeOrigin()
         stripeTab.location.replace(result.url)
         setStartError(false)
         render('opened')

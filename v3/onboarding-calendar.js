@@ -260,7 +260,13 @@
 
     function showError(root, message) {
       const error = root.querySelector('[data-calls-step-element="error"]')
-      if (error) error.textContent = message
+      if (!error) return
+      error.textContent = message
+      // Kaeser 2026-11-18: step 6 scrolls inside a card with no visible
+      // scrollbar, so an error above the fold looked like a dead Continue.
+      if (message && typeof error.scrollIntoView === 'function') {
+        error.scrollIntoView({ block: 'center', behavior: 'smooth' })
+      }
     }
 
     function isNextClick(event, stepEl) {
