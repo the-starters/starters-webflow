@@ -1,5 +1,5 @@
 (function () {
-  const ENABLED_HOSTS = ['the-starters-3-0.webflow.io'];
+  const ENABLED_HOSTS = ['the-starters-3-0.webflow.io', 'www.thestarters.com', 'thestarters.com'];
   if (!ENABLED_HOSTS.includes(window.location.hostname)) return;
   if (window.__startersModalAudienceInit) return;
   window.__startersModalAudienceInit = true;

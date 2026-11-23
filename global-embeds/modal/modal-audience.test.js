@@ -149,8 +149,16 @@ test('concurrent and later calls reuse one member lookup', async () => {
   assert.equal(env.calls, 1)
 })
 
-test('production and lookalike hosts install nothing', () => {
-  for (const hostname of ['www.thestarters.com', 'thestarters.com', 'localhost', 'other.webflow.io']) {
+test('both production hosts resolve the audience from one member lookup', async () => {
+  for (const hostname of ['www.thestarters.com', 'thestarters.com']) {
+    const env = environment({ hostname })
+    assert.equal(await env.audience(), 'signed-out')
+    assert.equal(env.calls, 1)
+  }
+})
+
+test('local and lookalike hosts install nothing', () => {
+  for (const hostname of ['localhost', 'other.webflow.io', 'the-starters-3-0.webflow.io.evil.test']) {
     const env = environment({ hostname })
     assert.equal(env.audience, undefined)
     assert.equal(env.calls, 0)
@@ -212,8 +220,16 @@ test('date signals use only member data for signed-out visitors, brands and Star
   }
 })
 
-test('off-staging installs no signal API and makes no requests', () => {
-  for (const hostname of ['www.thestarters.com', 'thestarters.com', 'the-starters-3-0.webflow.io.evil.test']) {
+test('both production hosts return member date signals without external reads', async () => {
+  for (const hostname of ['www.thestarters.com', 'thestarters.com']) {
+    const env = environment({ hostname, response: { data: null } })
+    assert.deepEqual(Object.keys(await env.signals()).sort(), ['cancelAt', 'createdAt', 'nextBillingDate'])
+    assert.equal(env.externalReads, 0)
+  }
+})
+
+test('other hosts install no signal API and make no requests', () => {
+  for (const hostname of ['localhost', 'other.webflow.io', 'the-starters-3-0.webflow.io.evil.test']) {
     const env = environment({ hostname })
     assert.equal(env.signals, undefined)
     assert.equal(env.externalReads, 0)

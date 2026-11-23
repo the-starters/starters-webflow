@@ -19,7 +19,7 @@ function campaign(key, values = {}) {
   return h('div', { class: 'w-dyn-item', ...Object.fromEntries(Object.entries(rules).map(([name, value]) => ['data-popup-' + name, value])) })
 }
 
-function environment({ hostname = 'the-starters-3-0.webflow.io', pathname = '/', rows = [campaign('one')], audience = 'signed-out', seen = {}, now = today, open = false, sourceFn, audienceFn, loadFn, shownFn, recordFn, openFn, readyState = 'complete', modalReady = true, dataLayer, signals = {}, signalsFn, storage = new Map(), realMember, enableHost = false } = {}) {
+function environment({ hostname = 'the-starters-3-0.webflow.io', pathname = '/', rows = [campaign('one')], audience = 'signed-out', seen = {}, now = today, open = false, sourceFn, audienceFn, loadFn, shownFn, recordFn, openFn, readyState = 'complete', modalReady = true, dataLayer, signals = {}, signalsFn, storage = new Map(), realMember } = {}) {
   const body = h('body')
   const sourceRoot = h('html', {}, rows)
   const signalCalls = []
@@ -84,7 +84,6 @@ function environment({ hostname = 'the-starters-3-0.webflow.io', pathname = '/',
     }
   }
   let source = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : ''
-  if (enableHost) source = source.replace("const ENABLED_HOSTS = ['the-starters-3-0.webflow.io'];", 'const ENABLED_HOSTS = [' + JSON.stringify(hostname) + '];')
   vm.runInContext(source, context)
   return { window, body, modal, loads, records, checks, logs, events, signalCalls, storage, memberReads,
     get run() { return window.lumos?.modal?.campaigns?.run },
@@ -261,8 +260,18 @@ test('failures are silent and concurrent runs still select at most one campaign'
   assert.deepEqual(env.records, [['one', 'shown']])
 })
 
-test('production hosts install nothing; installation waits for the existing modal owner', () => {
-  for (const hostname of ['www.thestarters.com', 'thestarters.com', 'localhost']) {
+test('both production hosts open the chosen campaign and record it as shown', async () => {
+  for (const hostname of ['www.thestarters.com', 'thestarters.com']) {
+    const env = environment({ hostname, rows: [campaign('low'), campaign('high', { priority: '10' })] })
+    const entry = await env.run()
+    assert.deepEqual(env.loads, [{ url: '/modals', key: 'high', open: false }])
+    assert.equal(entry.el.open, true)
+    assert.deepEqual(env.records, [['high', 'shown']])
+  }
+})
+
+test('other hosts install nothing; installation waits for the existing modal owner', () => {
+  for (const hostname of ['localhost', 'other.webflow.io', 'the-starters-3-0.webflow.io.evil.test']) {
     const env = environment({ hostname })
     assert.equal(env.run, undefined)
     assert.deepEqual(env.counts, { source: 0, audience: 0, opens: 0 })
@@ -469,15 +478,23 @@ test('debug reports one matched/skipped reason per row', async () => {
   for (const line of ['[popups] yes → matched', '[popups] seen → skipped: seen', '[popups] away → skipped: destination', '[popups] wrong → skipped: audience', '[popups] old → skipped: dates', '[popups] signal → skipped: audience']) assert.ok(logs.includes(line), line)
 })
 
-test('all QA helpers are inert on production and lookalike hosts', () => {
-  for (const hostname of ['www.thestarters.com', 'thestarters.com', 'the-starters-3-0.webflow.io.evil.test']) {
+test('all QA helpers are inert on production and lookalike hosts', async () => {
+  const pathname = '/?popup-reset=1&popup-debug=1&popup-as=new,renewing'
+  for (const hostname of ['www.thestarters.com', 'thestarters.com']) {
     const storage = new Map([['thestarters:modal-popups', 'keep']])
-    const env = environment({ hostname, pathname: '/?popup-reset=1&popup-debug=1&popup-as=new,renewing', storage })
-    assert.equal(env.run, undefined)
+    const env = environment({ hostname, pathname, storage })
+    const entry = await env.run()
+    assert.equal(entry.el.getAttribute('data-popup-loaded'), 'one')
     assert.equal(storage.get('thestarters:modal-popups'), 'keep')
-    assert.equal(env.logs.length, 0)
+    assert.deepEqual(env.logs, [])
     assert.equal(env.signalCalls.length, 0)
   }
+  const storage = new Map([['thestarters:modal-popups', 'keep']])
+  const lookalike = environment({ hostname: 'the-starters-3-0.webflow.io.evil.test', pathname, storage })
+  assert.equal(lookalike.run, undefined)
+  assert.equal(storage.get('thestarters:modal-popups'), 'keep')
+  assert.deepEqual(lookalike.logs, [])
+  assert.equal(lookalike.signalCalls.length, 0)
 })
 
 
@@ -518,9 +535,9 @@ test('the real audience, plan-date and picker modules share one member lookup', 
 })
 
 
-test('QA helpers remain inert if a future rollout enables the picker on production', async () => {
+test('popup-as cannot override date rules on production', async () => {
   const storage = new Map([['thestarters:modal-popups', 'keep']])
-  const env = environment({ hostname: 'www.thestarters.com', enableHost: true,
+  const env = environment({ hostname: 'www.thestarters.com',
     pathname: '/?popup-reset=1&popup-debug=1&popup-as=new', storage,
     audience: 'brand-paid', rows: [campaign('old-member', { ...brandRules, 'new-days': '14' })], signals: { createdAt: today - 100 * day } })
   assert.equal(await env.run(), null)

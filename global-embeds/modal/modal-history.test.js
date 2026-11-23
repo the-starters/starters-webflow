@@ -136,8 +136,18 @@ test('a rejected storage write returns false and leaves earlier history intact',
   assert.equal(await env.history.hasShown('a'), true)
 })
 
-test('both production hosts and lookalike hosts install nothing and never access storage', () => {
-  for (const hostname of ['www.thestarters.com', 'thestarters.com', 'evil.webflow.io', 'localhost']) {
+test('both production hosts record and read guest history', async () => {
+  for (const hostname of ['www.thestarters.com', 'thestarters.com']) {
+    const env = environment({ hostname })
+    assert.equal(await env.history.hasShown('launch'), false)
+    assert.equal(await env.history.record('launch', 'shown'), true)
+    assert.equal(await env.history.hasShown('launch'), true)
+    assert.equal(env.stored, JSON.stringify({ launch: { shownAt: firstTime, dismissedAt: null, ctaAt: null } }))
+  }
+})
+
+test('lookalike and local hosts install nothing and never access storage', () => {
+  for (const hostname of ['evil.webflow.io', 'localhost', 'the-starters-3-0.webflow.io.evil.test']) {
     const env = environment({ hostname })
     assert.equal(env.history, undefined)
     assert.deepEqual(env.counts, { reads: 0, writes: 0, storageAccesses: 0, timers: 0 })
