@@ -40,6 +40,7 @@ const { mount } = require('./profile-calls-step')
 
 function matchesSelector(el, selector) {
   if (/^[a-z]+$/.test(selector)) return el.tagName === selector.toUpperCase()
+  if (/^\.[\w-]+$/.test(selector)) return el.classList.contains(selector.slice(1))
   const parts = [...selector.matchAll(/\[([\w-]+)(?:="([^"]*)")?\]/g)]
   return parts.length > 0 && parts.every(([, name, expected]) => {
     const actual = el.getAttribute(name)
@@ -66,6 +67,18 @@ class FakeElement {
     return out
   }
   get options() { return this.children }
+  get classList() {
+    const names = () => String(this.getAttribute('class') || '').split(/\s+/).filter(Boolean)
+    return {
+      contains: (name) => names().includes(name),
+      toggle: (name, on) => {
+        const rest = names().filter((n) => n !== name)
+        this.setAttribute('class', (on ? [...rest, name] : rest).join(' '))
+        return on
+      },
+    }
+  }
+  scrollIntoView(options) { (this.scrolls ||= []).push(options) }
   getAttribute(name) { return this.attrs.has(name) ? this.attrs.get(name) : null }
   setAttribute(name, value) { this.attrs.set(name, String(value)) }
   removeAttribute(name) { this.attrs.delete(name) }
@@ -515,4 +528,66 @@ test('a second mount on the same Consult root adds only one paid choice', () => 
   const page = buildProfileStep('/build-profile/consult-test', { paidSwitch: false })
   mount(page.root)
   assert.equal(page.paid.row.querySelectorAll('[name="paid-consulting-calls"]').length, 1)
+})
+
+// Kaeser 2026-11-18: Webflow draws a custom switch from `w--redirected-checked`
+// on the sibling `.w-checkbox-input` and flips that class on each change event
+// without reading `checked`. Before the fix, load() set only `checked`, so a
+// saved-off free call drew as on (the authored default) and the next click
+// turned it off while it looked on.
+function webflowSwitch(toggle) {
+  const row = toggle.parentElement
+  const visual = new FakeElement('div', { class: 'w-checkbox-input calls-step_switch-track w--redirected-checked' })
+  const label = new FakeElement('label', { class: 'w-checkbox' }, [visual])
+  row.children = row.children.filter((child) => child !== toggle)
+  label.appendChild(toggle)
+  row.children.unshift(label)
+  label.parentElement = row
+  // What Webflow's form script does on a change event.
+  toggle.flip = () => {
+    toggle.checked = !toggle.checked
+    visual.classList.toggle('w--redirected-checked', !visual.classList.contains('w--redirected-checked'))
+  }
+  return visual
+}
+
+test('load draws each Webflow switch to match the saved state, so the next click flips both together', () => {
+  const page = editPage()
+  const freeVisual = webflowSwitch(page.free.toggle)
+  const paidVisual = webflowSwitch(page.paid.toggle)
+  page.api.load({ free: { enabled: false }, paid: { enabled: false } })
+  assert.equal(page.free.toggle.checked, false)
+  assert.equal(freeVisual.classList.contains('w--redirected-checked'), false, 'a saved-off free call draws as off')
+  assert.equal(paidVisual.classList.contains('w--redirected-checked'), false)
+  page.free.toggle.flip()
+  assert.equal(page.free.toggle.checked, true)
+  assert.equal(freeVisual.classList.contains('w--redirected-checked'), true, 'after a click the look and the state agree')
+  page.api.load({ free: { enabled: true }, paid: { enabled: true } })
+  assert.equal(freeVisual.classList.contains('w--redirected-checked'), true)
+  assert.equal(paidVisual.classList.contains('w--redirected-checked'), true)
+})
+
+test('a blocked Build Profile Next puts the message in the section that blocks and scrolls it into view', () => {
+  const page = buildProfileStep('/build-profile/full-profile-test', { freeOn: true, paidOn: false })
+  assert.equal(pressNext(page).message, 'Connect Stripe to continue.')
+  const alert = page.root.querySelectorAll('p').find((node) => node.getAttribute('role') === 'alert')
+  assert.equal(alert.parentElement, page.stripe, 'the Stripe message sits in the Stripe card')
+  assert.equal(alert.scrolls.length, 1, 'and is scrolled into view')
+  page.paid.toggle.checked = true
+  page.api.setStatus({ stripe: 'ready' })
+  assert.equal(pressNext(page).message, 'Add a price for the consulting call.')
+  assert.equal(alert.parentElement, page.priceInput.parentElement, 'the price message moves next to the price')
+  assert.equal(alert.scrolls.length, 2)
+})
+
+test('turning the paid call on scrolls its new fields into view', () => {
+  const page = buildProfileStep('/build-profile/full-profile-test', { paidOn: false })
+  const panel = page.paid.row.querySelector('[data-call-settings-element="panel"]')
+  page.paid.toggle.checked = true
+  page.root.listeners.change.forEach((listener) => listener({ target: page.paid.toggle }))
+  assert.equal(panel.hidden, false)
+  assert.equal((panel.scrolls || []).length, 1)
+  page.paid.toggle.checked = false
+  page.root.listeners.change.forEach((listener) => listener({ target: page.paid.toggle }))
+  assert.equal((panel.scrolls || []).length, 1, 'turning it off does not scroll')
 })

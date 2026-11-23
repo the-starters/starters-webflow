@@ -195,8 +195,9 @@ test('screens: Skip for now moves to the Stripe screen, then a second skip close
   assert.deepEqual(page.closed, [MODAL_ID])
 })
 
-test('screens: only Stripe missing opens on the Stripe screen; its button closes and scrolls to the visible Stripe start control once the modal has closed', async () => {
+test('screens: only Stripe missing opens on the Stripe screen; with no visible start control its button closes and scrolls to the Stripe card once the modal has closed', async () => {
   const page = withScreens(makePage({ ready: readiness({ stripe_connect_linked: false }) }))
+  page.startVisible.hidden = true // card still loading, in review or in error: no visible start control
   await createGate(page.win).run()
   assert.equal(page.screens.availability.hidden, true)
   assert.equal(page.screens.stripe.hidden, false)
@@ -208,15 +209,15 @@ test('screens: only Stripe missing opens on the Stripe screen; its button closes
   assert.equal(page.stripeCard.scrolled, null, 'another dialog closing does not trigger the scroll')
   page.modalClosed(page.dlg)
   assert.deepEqual(page.stripeCard.scrolled, { behavior: 'smooth', block: 'center' })
-  assert.equal(page.startVisible.focused, true)
-  assert.equal(page.startHidden.focused, false)
+  assert.equal(page.stripeCard.focused, true)
   for (const t of page.timers) t.fn()
   page.modalClosed(page.dlg)
   assert.equal(page.stripeCard.scrolls, 1, 'never scrolls twice')
 })
 
-test('screens: go-stripe still scrolls after a fallback wait when the modal-close event never fires', async () => {
+test('screens: with no visible start control, go-stripe still scrolls after a fallback wait when the modal-close event never fires', async () => {
   const page = withScreens(makePage({ ready: readiness({ stripe_connect_linked: false }) }))
+  page.startVisible.hidden = true // card still loading, in review or in error: no visible start control
   await createGate(page.win).run()
   const before = page.timers.length
   page.goStripe.click()
@@ -225,13 +226,14 @@ test('screens: go-stripe still scrolls after a fallback wait when the modal-clos
   assert.ok(queued[0].ms >= 1000, 'the fallback leaves the 300 ms fade-out plenty of room')
   queued[0].fn()
   assert.equal(page.stripeCard.scrolls, 1)
-  assert.equal(page.startVisible.focused, true)
+  assert.equal(page.stripeCard.focused, true)
   page.modalClosed(page.dlg)
   assert.equal(page.stripeCard.scrolls, 1, 'a late modal-close does not scroll again')
 })
 
-test('screens: a modal that closes at once (no fade) still scrolls once', async () => {
+test('screens: with no visible start control, a modal that closes at once (no fade) still scrolls once', async () => {
   const page = withScreens(makePage({ ready: readiness({ stripe_connect_linked: false }) }))
+  page.startVisible.hidden = true // card still loading, in review or in error: no visible start control
   page.win.lumos.modal.list[MODAL_ID].close = () => { page.closed.push(MODAL_ID); page.modalClosed(page.dlg) }
   await createGate(page.win).run()
   page.goStripe.click()
@@ -240,8 +242,9 @@ test('screens: a modal that closes at once (no fade) still scrolls once', async 
   assert.equal(page.stripeCard.scrolls, 1)
 })
 
-test('screens: go-stripe scrolls to the first visible Stripe card, skipping a hidden one', async () => {
+test('screens: with no visible start control, go-stripe scrolls to the first visible Stripe card, skipping a hidden one', async () => {
   const page = withScreens(makePage({ ready: readiness({ stripe_connect_linked: false }) }))
+  page.startVisible.hidden = true // card still loading, in review or in error: no visible start control
   const hiddenStart = new El({ 'data-stripe-connect-action': 'start' })
   const hiddenCard = new El({ 'data-stripe-connect-element': 'root' }, 'DIV', [hiddenStart])
   hiddenCard.hidden = true
@@ -253,7 +256,21 @@ test('screens: go-stripe scrolls to the first visible Stripe card, skipping a hi
   assert.equal(hiddenCard.scrolled, null)
   assert.equal(hiddenStart.focused, false)
   assert.deepEqual(page.stripeCard.scrolled, { behavior: 'smooth', block: 'center' })
-  assert.equal(page.startVisible.focused, true)
+  assert.equal(page.stripeCard.focused, true)
+})
+
+test('screens: go-stripe starts Stripe from the visible start control in the same click and closes (Kaeser 2026-11-18)', async () => {
+  const page = withScreens(makePage({ ready: readiness({ stripe_connect_linked: false }) }))
+  const started = []
+  page.startVisible.addEventListener('click', (event) => started.push(event.target))
+  page.startHidden.addEventListener('click', (event) => started.push(event.target))
+  await createGate(page.win).run()
+  assert.equal(page.goStripe.click().defaultPrevented, true)
+  assert.deepEqual(started, [page.startVisible], 'only the visible start control is clicked')
+  assert.deepEqual(page.closed, [MODAL_ID])
+  page.modalClosed(page.dlg)
+  for (const t of page.timers) t.fn()
+  assert.equal(page.stripeCard.scrolls, 0, 'no scroll fallback when Stripe was started')
 })
 
 test('screens: the Edit Profile link is a real navigation (not prevented) and does not close through the gate', async () => {
@@ -276,6 +293,7 @@ test('screens: a dashboard without the Stripe card closes cleanly with no error'
 
 test('screens: when the Stripe start control cannot take focus, the Stripe card is focused instead (script-only tabindex)', async () => {
   const page = withScreens(makePage({ ready: readiness({ stripe_connect_linked: false }) }))
+  page.startVisible.hidden = true // card still loading, in review or in error: no visible start control
   page.startVisible.tabIndex = -1 // authored div on the live dashboard
   await createGate(page.win).run()
   page.goStripe.click()
@@ -287,6 +305,7 @@ test('screens: when the Stripe start control cannot take focus, the Stripe card 
 
 test('screens: an authored tabindex on the Stripe card is kept', async () => {
   const page = withScreens(makePage({ ready: readiness({ stripe_connect_linked: false }) }))
+  page.startVisible.hidden = true // card still loading, in review or in error: no visible start control
   page.startVisible.tabIndex = -1
   page.stripeCard.setAttribute('tabindex', '0')
   await createGate(page.win).run()

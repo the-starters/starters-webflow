@@ -36,6 +36,36 @@
   const EXCHANGE_PATH = '/stripe_connect/oauth_exchange/v3'
   const RETURN_CHANNEL_NAME = 'starters-stripe-connect-return'
   const DASHBOARD_PATH = '/starter-dashboard'
+  // Kaeser 2026-11-18: written by v3/onboarding-v2-stripe.js when Build
+  // Profile opens the Stripe tab. The callback then closes that tab so the
+  // Starter is back on Build Profile, instead of landing on the dashboard.
+  const ORIGIN_KEY = 'starters:stripe-connect-origin:v1'
+  const ORIGIN_PATHS = new Set([
+    '/build-profile/full-profile-test',
+    '/build-profile/consult-test',
+    '/build-profile/full-profile',
+    '/build-profile/consult',
+  ])
+
+  /** Reads and clears the Build Profile origin marker; null when absent, expired or not allowed. */
+  function takeStripeOrigin(now) {
+    let raw = null
+    try {
+      raw = global.localStorage.getItem(ORIGIN_KEY)
+      global.localStorage.removeItem(ORIGIN_KEY)
+    } catch (_error) {
+      return null
+    }
+    if (!raw) return null
+    try {
+      const marker = JSON.parse(raw)
+      const at = typeof now === 'number' ? now : Date.now()
+      if (!marker || !ORIGIN_PATHS.has(marker.path) || !(Number(marker.exp) > at)) return null
+      return marker.path
+    } catch (_error) {
+      return null
+    }
+  }
   const CALLBACK_PATH = '/stripe-connect-callback'
   const MEMBERSTACK_TIMEOUT_MS = 10000
   const OAUTH_STATE_MIN_LENGTH = 16
@@ -2034,11 +2064,26 @@
       storeReturnReason(memberId, outcome)
 
       if (mode === 'completed') signalStripeReturn(memberId)
-      const dashboardUrl = new URL(DASHBOARD_PATH, global.location.origin)
+      const originPath = takeStripeOrigin()
+      const dashboardUrl = new URL(originPath || DASHBOARD_PATH, global.location.origin)
       dashboardUrl.searchParams.set(
         'stripe_connect',
         mode === 'completed' ? 'connected' : mode,
       )
+      if (originPath && typeof global.close === 'function') {
+        // The Build Profile tab is still open behind this one and re-reads
+        // Stripe when this tab closes. If the browser refuses to close a tab,
+        // send this one back to Build Profile instead of the dashboard.
+        try {
+          global.close()
+        } catch (_error) {
+          // fall through to the assign below
+        }
+        global.setTimeout(function () {
+          global.location.assign(dashboardUrl.toString())
+        }, 500)
+        return result
+      }
       global.location.assign(dashboardUrl.toString())
       return result
     } catch (error) {
@@ -2129,6 +2174,7 @@
     startInNewTab,
     startConnect,
     storeReturnReason,
+    takeStripeOrigin,
     validOpaqueState,
     watchStripeTabReturn,
   }

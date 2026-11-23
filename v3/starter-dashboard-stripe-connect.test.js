@@ -5211,6 +5211,107 @@ test('callback forwards opaque OAuth state and exchanges for the live member ses
   }
 })
 
+// Kaeser 2026-11-18: a Stripe tab opened from Build Profile ended on the
+// Starter Dashboard, so Build Profile looked skipped. With the Build Profile
+// origin marker the callback closes its tab (the Build Profile tab is still
+// open behind it) and only falls back to Build Profile, never the dashboard.
+test('callback from a Build Profile start closes its tab and falls back to Build Profile', async () => {
+  const previous = {
+    BroadcastChannel: global.BroadcastChannel,
+    document: global.document,
+    fetch: global.fetch,
+    history: global.history,
+    location: global.location,
+    memberstack: global.$memberstackDom,
+    localStorage: Object.getOwnPropertyDescriptor(global, 'localStorage'),
+    close: global.close,
+    setTimeout: global.setTimeout,
+  }
+  const { root } = stripeRoot()
+  const assigned = []
+  const closes = []
+  const timers = []
+  const items = new Map([[
+    'starters:stripe-connect-origin:v1',
+    JSON.stringify({ path: '/build-profile/full-profile-test', exp: Date.now() + 60000 }),
+  ]])
+  global.BroadcastChannel = class { postMessage() {} close() {} }
+  global.document = { title: 'Stripe callback', querySelectorAll: () => [root] }
+  global.history = { replaceState() {} }
+  global.location = {
+    href: 'https://thestarters.com/stripe-connect-callback?code=code-123&state=opaque-state-1234567890',
+    origin: 'https://thestarters.com',
+    assign: (url) => assigned.push(url),
+  }
+  global.$memberstackDom = {
+    getCurrentMember: async () => ({ data: { id: 'mem-live' } }),
+    getMemberCookie: async () => 'ms-cookie',
+    onAuthChange: () => ({ unsubscribe() {} }),
+  }
+  global.fetch = async (url) => {
+    if (String(url).includes('/auth/trade-token/v3')) return response({ authToken: 'x-token' })
+    return response({ connected: true, mode: 'completed', charges_enabled: false })
+  }
+  Object.defineProperty(global, 'localStorage', {
+    configurable: true,
+    value: {
+      getItem: (k) => (items.has(k) ? items.get(k) : null),
+      setItem: (k, v) => items.set(k, String(v)),
+      removeItem: (k) => items.delete(k),
+    },
+  })
+  global.close = () => closes.push(true)
+  try {
+    global.setTimeout = (fn, ms) => { timers.push({ fn, ms }); return timers.length }
+    const result = await api.mountCallback()
+    global.setTimeout = previous.setTimeout
+    assert.equal(result.connected, true)
+    assert.equal(closes.length, 1, 'the Stripe tab closes itself')
+    assert.equal(items.size, 0, 'the marker is used once')
+    assert.deepEqual(assigned, [], 'no dashboard redirect')
+    const fallback = timers.find((t) => t.ms === 500)
+    assert.ok(fallback, 'a fallback runs if the browser keeps the tab open')
+    fallback.fn()
+    assert.deepEqual(assigned, ['https://thestarters.com/build-profile/full-profile-test?stripe_connect=connected'])
+  } finally {
+    global.setTimeout = previous.setTimeout
+    global.BroadcastChannel = previous.BroadcastChannel
+    global.document = previous.document
+    global.fetch = previous.fetch
+    global.history = previous.history
+    global.location = previous.location
+    global.$memberstackDom = previous.memberstack
+    global.close = previous.close
+    if (previous.localStorage) Object.defineProperty(global, 'localStorage', previous.localStorage)
+    else delete global.localStorage
+  }
+})
+
+test('the Build Profile origin marker is ignored when expired or not a Build Profile path', () => {
+  const previous = Object.getOwnPropertyDescriptor(global, 'localStorage')
+  const items = new Map()
+  Object.defineProperty(global, 'localStorage', {
+    configurable: true,
+    value: { getItem: (k) => (items.has(k) ? items.get(k) : null), setItem: (k, v) => items.set(k, v), removeItem: (k) => items.delete(k) },
+  })
+  try {
+    const key = 'starters:stripe-connect-origin:v1'
+    items.set(key, JSON.stringify({ path: '/build-profile/consult-test', exp: 2000 }))
+    assert.equal(api.takeStripeOrigin(1000), '/build-profile/consult-test')
+    assert.equal(items.has(key), false)
+    items.set(key, JSON.stringify({ path: '/build-profile/consult-test', exp: 1000 }))
+    assert.equal(api.takeStripeOrigin(1000), null, 'expired')
+    items.set(key, JSON.stringify({ path: 'https://evil.example/x', exp: 2000 }))
+    assert.equal(api.takeStripeOrigin(1000), null, 'not a Build Profile path')
+    items.set(key, 'not json')
+    assert.equal(api.takeStripeOrigin(1000), null)
+    assert.equal(api.takeStripeOrigin(1000), null, 'no marker')
+  } finally {
+    if (previous) Object.defineProperty(global, 'localStorage', previous)
+    else delete global.localStorage
+  }
+})
+
 test('callback refuses an invalid opaque state without exchanging', async () => {
   const previous = {
     console: global.console,
