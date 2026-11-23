@@ -692,6 +692,69 @@ test('opportunity failures keep diagnostics out of the authored native failure s
   assert.equal(bridge.copiedDiagnostics.length, 0)
 })
 
+// Armghan (removed Starter, 2026-11-17): the apply endpoint answered 403 "Your
+// profile is not active..." but the modal showed only the authored generic copy.
+async function applyFailureFixture() {
+  const message = el('p')
+  message.textContent = 'Something went wrong.'
+  message.addEventListener = () => {}
+  const fail = el('div', { class: 'w-form-fail' }, [message])
+  const button = el('button', { 'data-opp-submit': 'apply' })
+  button.addEventListener = () => {}
+  const modal = el('div', { 'data-modal-target': 'apply-opportunity' }, [fail, button])
+  const bridge = await loadBridge(async () => response({}), {
+    workflowDiagnostics: true,
+    querySelector: (selector) => selectorMatches(modal, selector) ? modal : modal.querySelector(selector),
+    querySelectorAll: (selector) => [modal, ...descendants(modal)].filter((node) => selectorMatches(node, selector)),
+  })
+  return { bridge, button, fail, message }
+}
+
+test('a member-facing 4xx answer replaces the authored failure copy; 401, 5xx and network keep it', async () => {
+  const removed = 'Your profile is not active on The Starters right now, so you can\'t apply. Please contact us.'
+  const cases = [
+    [{ status: 403, data: { message: removed } }, removed],
+    [{ status: 400, data: { message: 'Cover letter is too long.' } }, 'Cover letter is too long.'],
+    [{ status: 409, data: { message: 'You already applied.' } }, 'You already applied.'],
+    [{ status: 401, data: { message: 'Invalid token.' } }, 'Something went wrong.'],
+    [{ status: 500, data: { message: 'Unable to locate var: x' } }, 'Something went wrong.'],
+    [{ status: 403, data: {} }, 'Something went wrong.'],
+    [new Error('network'), 'Something went wrong.'],
+  ]
+  for (const [failure, shown] of cases) {
+    const { bridge, button, fail, message } = await applyFailureFixture()
+    // call() attaches a diagnostic receipt to every failure it throws.
+    failure.workflowDiagnostic = bridge.window.StartersWorkflowDiagnostics.record(
+      bridge.window.StartersWorkflowDiagnostics.create({
+        workflow: 'opportunity_application',
+        result: 'failed',
+        stage: failure.status ? 'response' : 'network',
+        error_code: failure.status ? 'HTTP_ERROR' : 'NETWORK_ERROR',
+        http_status: failure.status || null,
+      }),
+    )
+    const result = await bridge.window.Opp30.guard(button, async () => { throw failure })
+    assert.equal(result, null)
+    assert.equal(fail.style.display, 'block', JSON.stringify(failure.status))
+    assert.equal(message.textContent, shown, JSON.stringify(failure.status || failure.message))
+  }
+})
+
+test('a validation message (cover letter) is shown in place of the authored failure copy', async () => {
+  const { bridge, button, message } = await applyFailureFixture()
+  const receipt = bridge.window.StartersWorkflowDiagnostics.record(
+    bridge.window.StartersWorkflowDiagnostics.create({
+      workflow: 'opportunity_application',
+      result: 'failed',
+      stage: 'validation',
+      error_code: 'MISSING_COVER_LETTER',
+    }),
+  )
+  bridge.window.Opp30.showOpportunityError(button, 'Please write a cover letter', receipt, { memberMessage: true })
+  assert.equal(message.textContent, 'Please write a cover letter')
+  assert.equal(message.getAttribute('data-workflow-diagnostic-copy'), null)
+})
+
 test('withdraw success keeps diagnostics out of the visible authored confirmation state', async () => {
   const message = el('p')
   message.textContent = 'Your application was withdrawn.'
