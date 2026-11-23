@@ -597,14 +597,45 @@
       timestampMs(booking && booking.start),
       timestampMs(booking && booking.start_old),
     ]
+    const lead = Number(settings.leadMs) > 0 ? Number(settings.leadMs) : PENDING_PROPOSE_LEAD_MS
     const last = reference + days * 86400000
     const slots = []
-    let start = Math.floor((reference + PENDING_PROPOSE_LEAD_MS) / step) * step + step
+    let start = Math.floor((reference + lead) / step) * step + step
     for (; start <= last; start += step) {
       if (excluded.indexOf(start) !== -1) continue
       slots.push({ start, end: start + durationMs })
     }
     return slots
+  }
+
+  /**
+   * Jai (2026-11-18): a Starter who reschedules a CONFIRMED call may pick any
+   * time, not only posted hours, because Brand and Starter can agree a time in
+   * messages first. #5756 (confirmed branch) checks only Starter free/busy, so
+   * the picker gets the same step-aligned list as a pending offer. Lead: 8 h
+   * for a Free call; a Paid call keeps the 48 h 15 min saved-card window that
+   * #5756 enforces. The server stays the authority for busy times.
+   * @param {object} booking Canonical booking row.
+   * @param {number} [now] Reference time in ms.
+   * @param {object} [options] `{ stepMinutes, rangeDays }` overrides.
+   * @returns {{start:number,end:number}[]}
+   */
+  function confirmedProposeSlots(booking, now, options) {
+    const lead = freeBooking(booking) ? PENDING_PROPOSE_LEAD_MS : PAID_CONFIRMED_CANCEL_LEAD_MS
+    return pendingProposeSlots(booking, now, Object.assign({}, options || {}, { leadMs: lead }))
+  }
+
+  /**
+   * Which slot list the reschedule picker gets, or null to let the calendar
+   * read posted availability. Pending offers (any proposer) and a Starter's
+   * confirmed-call proposal are not narrowed by posted hours. A Brand's
+   * confirmed-call proposal keeps the Starter's posted hours.
+   */
+  function rescheduleSlotsFor(role, booking, now) {
+    const kind = rescheduleKindFor(role, booking, now)
+    if (kind === 'pending-propose') return pendingProposeSlots(booking, now)
+    if (kind === 'reschedule-propose' && role === 'starter') return confirmedProposeSlots(booking, now)
+    return null
   }
 
   /** Authored label of each relabelled control, so a later booking restores it. */
@@ -2070,11 +2101,10 @@
       return false
     }
     if (!authoredLoader) container.textContent = ''
-    // F08: a pending offer is not limited to posted availability, so the
-    // picker gets every step-aligned start in range instead of the posted slots.
-    const pendingSlots = rescheduleKindFor(role, booking) === 'pending-propose'
-      ? pendingProposeSlots(booking)
-      : null
+    // F08 + Jai 2026-11-18: a pending offer and a Starter's confirmed-call
+    // proposal are not limited to posted availability, so the picker gets
+    // every step-aligned start in range instead of the posted slots.
+    const pendingSlots = rescheduleSlotsFor(role, booking)
     try {
       await calendarModule.mountPaidCalendar({
       container,
@@ -2785,6 +2815,8 @@
     canDeclinePendingOffer,
     pendingProposedStartAllowed,
     pendingProposeSlots,
+    confirmedProposeSlots,
+    rescheduleSlotsFor,
     pendingOfferControlLabel,
     applyPendingOfferControls,
     respondKindFor,
