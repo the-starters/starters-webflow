@@ -3610,7 +3610,8 @@ Deliberately NOT ported from the legacy inline writer:
   current calendar has a pending (Requested), confirmed, or rescheduled call
   whose end time has not passed, that route returns HTTP 400 with a
   `data.message` matching
-  `/resolve active bookings/i` and does not cancel, archive, or delete anything.
+  `/resolve (?:active bookings|pending and upcoming calls)/i` (older and current
+  wording) and does not cancel, archive, or delete anything.
   Both availability controllers map only that status and message to: `You have
   Requested or Confirmed calls on your current calendar. Decline or cancel them,
   or wait until they end, then try again.` Unrelated failures keep the authored
