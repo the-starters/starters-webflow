@@ -6578,12 +6578,11 @@
     if (fail) fail.style.display = 'none'
   }
 
-  // Kaeser/Jerico 2026-11-17 (Armghan, removed Starter): a 403 "Your profile is
-  // not active..." from starter/applications/submit showed only the authored
-  // "Something went wrong" copy, because the authored failure state is kept for
-  // diagnostics (#439). Server messages on these 4xx answers, and our own
-  // validation messages, are written for members, so they replace the authored
-  // copy. 401, 5xx, network and other failures keep it.
+  // The authored failure copy is kept for diagnostics (#439), but server
+  // messages on these 4xx answers (e.g. the removed-Starter 403 from
+  // starter/applications/submit) and our own validation messages are written
+  // for members, so they replace it. 401, 5xx, network and message-less
+  // failures keep the authored copy because their text can be technical.
   const MEMBER_MESSAGE_STATUSES = new Set([400, 403, 409, 422])
   function isMemberFacingFailure(err) {
     const message = err && err.data && err.data.message
