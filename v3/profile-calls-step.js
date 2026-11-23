@@ -370,7 +370,7 @@
         // Put it in the section that blocks and scroll that section into view.
         const host = stripeMessages.includes(message) && stripe
           ? stripe
-          : message === callTypeMessage && services[0]
+          : buildProfile && message === callTypeMessage && services[0]
             ? services[0].parentElement || root
             : message === paidPriceError() && price
               ? price.parentElement || root

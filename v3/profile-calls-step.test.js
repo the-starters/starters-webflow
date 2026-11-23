@@ -239,7 +239,7 @@ function buildProfileStep(pathname, { freeOn = true, paidOn = false, wrapped = t
   const calendar = el('div', { 'data-calls-step-element': 'calendar' })
   const stripe = el('div', { 'data-stripe-connect-element': 'root' })
   const root = el('div', { 'data-calls-step': 'root', ...(context === null ? {} : { 'data-calls-step-context': context }) }, [
-    free.row, paid.row, availability, calendar, stripe,
+    el('div', {}, [free.row, paid.row]), availability, calendar, stripe,
     el('div', { 'data-calls-step-element': 'days' }, [el('button', { 'data-day': '1', 'aria-pressed': 'true' })]),
     el('div', { 'data-calls-step-element': 'extra-days' }),
     el('div', { 'data-calls-step-element': 'windows' }, [el('div', { 'data-calls-step-element': 'window' }, [
@@ -358,6 +358,15 @@ test('Build Profile call type message shows in the call types section', () => {
   pressNext(page)
   const alert = page.root.querySelectorAll('p').find((node) => node.getAttribute('role') === 'alert')
   assert.equal(alert.parentElement, page.free.row.parentElement)
+})
+
+test('non-Build-Profile step 6 keeps the call type message under the hours error', () => {
+  const page = buildProfileStep('/starter-profile-steps-test', { freeOn: false, paidOn: false, context: null })
+  assert.deepEqual(pressNext(page), { blocked: true, message: 'Turn on at least one call type to continue.' })
+  const alert = page.root.querySelectorAll('p').find((node) => node.getAttribute('role') === 'alert')
+  const hoursError = page.root.querySelector('[data-calls-step-element="error"]')
+  assert.equal(alert.parentElement, hoursError.parentElement)
+  assert.notEqual(alert.parentElement, page.free.row.parentElement)
 })
 
 test('Build Profile Free alone or Paid alone is enough to continue', () => {
