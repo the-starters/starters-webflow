@@ -535,8 +535,109 @@
     }
   }
 
+  // PostHog's web vitals report the CLS value but not which element moved, so a
+  // poor score cannot be traced to its cause. Watch layout shifts with the same
+  // session-window rule as CLS (gaps under 1 s, windows up to 5 s, shifts after
+  // recent input excluded). When the page is hidden and the worst window is
+  // above 0.1, send one `cls_attribution` event naming the element behind the
+  // largest shift in that window, how it moved, and when.
+  const CLS_ATTRIBUTION_THRESHOLD = 0.1
+  const CLS_ATTRIBUTE_NAMES = ['wf-xano-element', 'wf-algolia-element', 'data-opp-role', 'data-ms-content']
+
+  function describeNode(node) {
+    try {
+      if (!node || !node.tagName) return ''
+      let out = String(node.tagName).toLowerCase()
+      if (node.id) out += '#' + safeString(node.id).slice(0, 40)
+      const classes = node.classList ? Array.from(node.classList).slice(0, 3) : []
+      if (classes.length) out += '.' + classes.join('.')
+      for (const name of CLS_ATTRIBUTE_NAMES) {
+        const value = typeof node.getAttribute === 'function' ? node.getAttribute(name) : null
+        if (value != null) out += '[' + name + '="' + safeString(value).slice(0, 40) + '"]'
+      }
+      return out.slice(0, 200)
+    } catch (e) {
+      return ''
+    }
+  }
+
+  function wireLayoutShiftAttribution() {
+    if (window.__startersClsAttributionWired) return
+    const Observer = window.PerformanceObserver
+    const doc = window.document
+    if (typeof Observer !== 'function' || !doc || typeof doc.addEventListener !== 'function') return
+    window.__startersClsAttributionWired = true
+    let windowValue = 0
+    let windowStart = 0
+    let windowLast = 0
+    let windowLargest = null
+    let worst = { value: 0, largest: null }
+    let shiftCount = 0
+    let sent = false
+    const onShift = (entry) => {
+      if (!entry || entry.hadRecentInput) return
+      shiftCount += 1
+      const start = Number(entry.startTime) || 0
+      if (windowValue && (start - windowLast >= 1000 || start - windowStart >= 5000)) {
+        windowValue = 0
+        windowLargest = null
+      }
+      if (!windowValue) windowStart = start
+      windowValue += Number(entry.value) || 0
+      windowLast = start
+      if (!windowLargest || entry.value > windowLargest.value) windowLargest = entry
+      if (windowValue > worst.value) worst = { value: windowValue, largest: windowLargest }
+    }
+    const report = () => {
+      if (sent || worst.value <= CLS_ATTRIBUTION_THRESHOLD || !worst.largest) return
+      sent = true
+      try {
+        const entry = worst.largest
+        const sources = Array.isArray(entry.sources) ? entry.sources : Array.from(entry.sources || [])
+        const source = sources.slice().sort((a, b) => {
+          const area = (s) => (s && s.currentRect ? s.currentRect.width * s.currentRect.height : 0)
+          return area(b) - area(a)
+        })[0] || {}
+        const prev = source.previousRect || {}
+        const curr = source.currentRect || {}
+        const posthog = window.posthog
+        if (!posthog || typeof posthog.capture !== 'function') return
+        posthog.capture('cls_attribution', {
+          platform: platform(),
+          cls_value: Math.round(worst.value * 1000) / 1000,
+          largest_shift_value: Math.round((Number(entry.value) || 0) * 1000) / 1000,
+          largest_shift_time_ms: Math.round(Number(entry.startTime) || 0),
+          largest_shift_target: describeNode(source.node),
+          largest_shift_parent: describeNode(source.node && source.node.parentElement),
+          largest_shift_source_count: sources.length,
+          previous_top: Math.round(Number(prev.y) || 0),
+          current_top: Math.round(Number(curr.y) || 0),
+          previous_height: Math.round(Number(prev.height) || 0),
+          current_height: Math.round(Number(curr.height) || 0),
+          shift_count: shiftCount,
+          viewport_height: Number(window.innerHeight) || 0,
+          viewport_width: Number(window.innerWidth) || 0,
+        }, { transport: 'sendBeacon' })
+      } catch (e) {
+        /* analytics must never break the page */
+      }
+    }
+    try {
+      new Observer((list) => {
+        for (const entry of list.getEntries()) onShift(entry)
+      }).observe({ type: 'layout-shift', buffered: true })
+    } catch (e) {
+      return
+    }
+    doc.addEventListener('visibilitychange', () => {
+      if (doc.visibilityState === 'hidden') report()
+    }, true)
+    if (typeof window.addEventListener === 'function') window.addEventListener('pagehide', report, true)
+  }
+
   window.StartersTrack = window.StartersTrack || { track }
   wireErrorCapture()
   wireFormCapture()
   wireAutocaptureFilter()
+  wireLayoutShiftAttribution()
 })()
