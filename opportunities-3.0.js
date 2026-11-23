@@ -6083,9 +6083,14 @@
     if (!form) return
     log('create page form bound', form)
     const status = $('[data-opp-create-status]') // optional inline message element
-    const say = (m, receipt = null) => {
-      if (status && receipt) decorateWorkflowMessage(status, m, receipt)
-      else if (status) status.textContent = m
+    const statusBaseText = status ? status.textContent : ''
+    const say = (m, receipt = null, options = null) => {
+      // Member-facing messages are written even with a receipt (see
+      // isMemberFacingFailure); decorateWorkflowMessage keeps the authored copy.
+      if (status && receipt && !(options && options.memberMessage)) {
+        status.textContent = statusBaseText
+        decorateWorkflowMessage(status, m, receipt)
+      } else if (status) status.textContent = m
       else if (m) console.info('[opp30:create]', m)
     }
     const btn = opportunityFormSubmitControl(form)
@@ -6106,6 +6111,7 @@
           return say(
             validationMessage,
             validationDiagnostic('opportunity_create', 'opportunity', 'INVALID_FORM'),
+            { memberMessage: true },
           )
         }
         submitting = true
@@ -6153,6 +6159,7 @@
           say(
             (err && err.data && err.data.message) || 'Something went wrong. Please try again.',
             diagnosticForError(err),
+            { memberMessage: isMemberFacingFailure(err) },
           )
           submitting = false
           if (btn) setOpportunityActionPending(btn, false)
@@ -6328,6 +6335,7 @@
             pendingBtn,
             validationMessage,
             validationDiagnostic('opportunity_create', 'opportunity', 'INVALID_FORM'),
+            { memberMessage: true },
           )
         }
         await guard(pendingBtn, () => API.brandOppCreate(payload))
@@ -6369,6 +6377,7 @@
             editBtn,
             validationMessage,
             validationDiagnostic('opportunity_edit', 'opportunity', 'INVALID_FORM'),
+            { memberMessage: true },
           )
         }
         const editedOppId = activeOpp
@@ -6452,6 +6461,7 @@
             applyBtn,
             'Please write a cover letter',
             validationDiagnostic('opportunity_application', 'application', 'MISSING_COVER_LETTER'),
+            { memberMessage: true },
           )
         }
         await guard(applyBtn, async () => {
@@ -6476,6 +6486,7 @@
             editAppBtn,
             'Please write a cover letter',
             validationDiagnostic('application_edit', 'application', 'MISSING_COVER_LETTER'),
+            { memberMessage: true },
           )
         }
         await guard(editAppBtn, async () => {
@@ -6540,7 +6551,9 @@
         setOpportunityActionPending(btn, false)
         const baseMessage =
           (err && err.data && err.data.message) || 'Something went wrong. Please try again.'
-        showOpportunityError(btn, baseMessage, diagnosticForError(err))
+        showOpportunityError(btn, baseMessage, diagnosticForError(err), {
+          memberMessage: isMemberFacingFailure(err),
+        })
         return null
       } finally {
         if (guardKey) activeActionGuards.delete(guardKey)
@@ -6565,7 +6578,20 @@
     if (fail) fail.style.display = 'none'
   }
 
-  function showOpportunityError(btn, message, receipt) {
+  // The authored failure copy is kept for diagnostics (#439), but server
+  // messages on these 4xx answers (e.g. the removed-Starter 403 from
+  // starter/applications/submit) and our own validation messages are written
+  // for members, so they replace it. 401, 5xx, network and message-less
+  // failures keep the authored copy because their text can be technical.
+  const MEMBER_MESSAGE_STATUSES = new Set([400, 403, 409, 422])
+  function isMemberFacingFailure(err) {
+    const message = err && err.data && err.data.message
+    return typeof message === 'string' && message.trim() !== '' &&
+      MEMBER_MESSAGE_STATUSES.has(Number(err.status))
+  }
+
+  function showOpportunityError(btn, message, receipt, options) {
+    const memberMessage = Boolean(options && options.memberMessage)
     const fail = opportunityErrorElement(btn)
     if (!fail) {
       alert(message)
@@ -6578,8 +6604,11 @@
     if (target.__startersWorkflowDiagnosticBaseText === undefined) {
       target.__startersWorkflowDiagnosticBaseText = target.textContent || message
     }
-    if (receipt) decorateWorkflowMessage(target, message, receipt)
-    else target.textContent = message
+    if (memberMessage || !receipt) target.textContent = message
+    else {
+      target.textContent = target.__startersWorkflowDiagnosticBaseText
+      decorateWorkflowMessage(target, message, receipt)
+    }
     return true
   }
 
@@ -7130,6 +7159,8 @@
     waitForMemberstackDom,
     showCancelSuccess,
     showOpportunityError,
+    isMemberFacingFailure,
+    guard,
     prepareOpportunityCreateForms: prepareOpportunityForms,
     prepareOpportunityForms,
     promoteDurationGroup,
