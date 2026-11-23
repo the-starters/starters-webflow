@@ -755,6 +755,28 @@ test('a validation message (cover letter) is shown in place of the authored fail
   assert.equal(message.getAttribute('data-workflow-diagnostic-copy'), null)
 })
 
+test('a generic failure after a member-facing message restores the authored failure copy', async () => {
+  const { bridge, button, message } = await applyFailureFixture()
+  const receiptFor = (status) => bridge.window.StartersWorkflowDiagnostics.record(
+    bridge.window.StartersWorkflowDiagnostics.create({
+      workflow: 'opportunity_application',
+      result: 'failed',
+      stage: 'response',
+      error_code: 'HTTP_ERROR',
+      http_status: status,
+    }),
+  )
+  const forbidden = { status: 403, data: { message: 'You already applied.' } }
+  forbidden.workflowDiagnostic = receiptFor(403)
+  await bridge.window.Opp30.guard(button, async () => { throw forbidden })
+  assert.equal(message.textContent, 'You already applied.')
+
+  const serverError = { status: 500, data: { message: 'Unable to locate var: x' } }
+  serverError.workflowDiagnostic = receiptFor(500)
+  await bridge.window.Opp30.guard(button, async () => { throw serverError })
+  assert.equal(message.textContent, 'Something went wrong.')
+})
+
 test('withdraw success keeps diagnostics out of the visible authored confirmation state', async () => {
   const message = el('p')
   message.textContent = 'Your application was withdrawn.'

@@ -6083,11 +6083,14 @@
     if (!form) return
     log('create page form bound', form)
     const status = $('[data-opp-create-status]') // optional inline message element
+    const statusBaseText = status ? status.textContent : ''
     const say = (m, receipt = null, options = null) => {
       // Member-facing messages are written even with a receipt (see
       // isMemberFacingFailure); decorateWorkflowMessage keeps the authored copy.
-      if (status && receipt && !(options && options.memberMessage)) decorateWorkflowMessage(status, m, receipt)
-      else if (status) status.textContent = m
+      if (status && receipt && !(options && options.memberMessage)) {
+        status.textContent = statusBaseText
+        decorateWorkflowMessage(status, m, receipt)
+      } else if (status) status.textContent = m
       else if (m) console.info('[opp30:create]', m)
     }
     const btn = opportunityFormSubmitControl(form)
@@ -6603,7 +6606,10 @@
       target.__startersWorkflowDiagnosticBaseText = target.textContent || message
     }
     if (memberMessage || !receipt) target.textContent = message
-    else decorateWorkflowMessage(target, message, receipt)
+    else {
+      target.textContent = target.__startersWorkflowDiagnosticBaseText
+      decorateWorkflowMessage(target, message, receipt)
+    }
     return true
   }
 
