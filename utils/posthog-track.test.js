@@ -873,3 +873,140 @@ test('InvalidAccessError without both bridge frames, and look-alike names, keep 
     assert.notEqual(properties.starters_error_kind, 'in-app-browser')
   }
 })
+
+function loadWithShifts({ withObserver = true } = {}) {
+  const docListeners = {}
+  const winListeners = {}
+  const captured = []
+  let observerCallback = null
+  const doc = {
+    visibilityState: 'visible',
+    addEventListener(type, fn) { docListeners[type] = fn },
+  }
+  const context = {
+    location: { host: 'www.thestarters.com', hostname: 'www.thestarters.com', pathname: '/opportunities', reload() {} },
+    document: doc,
+    MutationObserver: function () {},
+    getComputedStyle: () => ({}),
+    sessionStorage: { getItem() { return null }, setItem() {} },
+    setTimeout() { return 0 },
+    clearTimeout() {},
+    innerHeight: 707,
+    innerWidth: 1440,
+    Error,
+    URL,
+  }
+  if (withObserver) {
+    context.PerformanceObserver = function (callback) {
+      observerCallback = callback
+      this.observe = (options) => {
+        // Compare fields: the options object comes from the VM realm.
+        if (options.type !== 'layout-shift' || options.buffered !== true) throw new Error('unexpected observe options')
+      }
+    }
+  }
+  context.window = context
+  context.window.posthog = {
+    config: {},
+    set_config(update) { Object.assign(this.config, update) },
+    capture(name, properties, options) { captured.push({ name, properties, options }) },
+  }
+  context.window.addEventListener = (type, fn) => { winListeners[type] = fn }
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  return {
+    captured,
+    emit(entries) { observerCallback({ getEntries: () => entries }) },
+    hide() { doc.visibilityState = 'hidden'; docListeners.visibilitychange() },
+    pagehide() { winListeners.pagehide() },
+    wired: () => observerCallback !== null,
+  }
+}
+
+function fakeNode(tag, classes, attrs = {}, parent = null) {
+  return {
+    tagName: tag.toUpperCase(),
+    id: attrs.id || '',
+    classList: classes,
+    getAttribute: (name) => (name in attrs && name !== 'id' ? attrs[name] : null),
+    parentElement: parent,
+  }
+}
+
+function shift(startTime, value, sources = [], hadRecentInput = false) {
+  return { startTime, value, hadRecentInput, sources }
+}
+
+test('a page whose worst shift window exceeds 0.1 sends one cls_attribution naming the largest shift', () => {
+  const app = loadWithShifts()
+  const parent = fakeNode('div', ['section_opportunities-list'], { 'wf-xano-element': 'wrapper', 'data-opp-role': 'talent' })
+  const big = fakeNode('div', ['opportunities-list_pagination', 'extra', 'more', 'ignored'], { 'wf-xano-element': 'pagination-wrapper' }, parent)
+  const small = fakeNode('span', ['tag'])
+  app.emit([
+    shift(1000, 0.08, [{ node: small, previousRect: { y: 10, height: 5, width: 5 }, currentRect: { y: 20, height: 5, width: 5 } }]),
+    shift(1500, 0.12, [
+      { node: small, previousRect: { y: 10, height: 5, width: 5 }, currentRect: { y: 20, height: 5, width: 5 } },
+      { node: big, previousRect: { y: 595, height: 94, width: 1200 }, currentRect: { y: 300, height: 94, width: 1200 } },
+    ]),
+  ])
+  app.hide()
+  app.pagehide()
+  app.hide()
+  assert.equal(app.captured.length, 1)
+  const { name, properties, options } = app.captured[0]
+  assert.equal(name, 'cls_attribution')
+  assert.equal(options.transport, 'sendBeacon')
+  assert.equal(properties.platform, 'v3')
+  assert.equal(properties.cls_value, 0.2)
+  assert.equal(properties.largest_shift_value, 0.12)
+  assert.equal(properties.largest_shift_time_ms, 1500)
+  assert.equal(properties.largest_shift_target, 'div.opportunities-list_pagination.extra.more[wf-xano-element="pagination-wrapper"]')
+  assert.equal(properties.largest_shift_parent, 'div.section_opportunities-list[wf-xano-element="wrapper"][data-opp-role="talent"]')
+  assert.equal(properties.largest_shift_source_count, 2)
+  assert.equal(properties.previous_top, 595)
+  assert.equal(properties.current_top, 300)
+  assert.equal(properties.previous_height, 94)
+  assert.equal(properties.current_height, 94)
+  assert.equal(properties.shift_count, 2)
+  assert.equal(properties.viewport_height, 707)
+  assert.equal(properties.viewport_width, 1440)
+})
+
+test('shifts after recent input are excluded and pages at or below 0.1 send nothing', () => {
+  const app = loadWithShifts()
+  const node = fakeNode('div', ['card'])
+  app.emit([
+    shift(500, 0.05, [{ node, previousRect: { y: 1, height: 1, width: 1 }, currentRect: { y: 2, height: 1, width: 1 } }]),
+    shift(700, 0.5, [{ node, previousRect: { y: 1, height: 1, width: 1 }, currentRect: { y: 2, height: 1, width: 1 } }], true),
+    shift(900, 0.05, [{ node, previousRect: { y: 1, height: 1, width: 1 }, currentRect: { y: 2, height: 1, width: 1 } }]),
+  ])
+  app.hide()
+  app.pagehide()
+  assert.equal(app.captured.length, 0)
+})
+
+test('separate session windows are not summed, matching the CLS window rule', () => {
+  const app = loadWithShifts()
+  const node = fakeNode('div', ['card'])
+  const s = (t, v) => shift(t, v, [{ node, previousRect: { y: 1, height: 1, width: 1 }, currentRect: { y: 2, height: 1, width: 1 } }])
+  // Window A: 0.09, then a 1.5 s gap starts a new window (sum would be 0.15).
+  app.emit([s(0, 0.06), s(500, 0.03)])
+  // Window B: shifts 0.9 s apart, 0.09 in its first 5 s; the shift at 7400 ms is
+  // more than 5 s after the window start, so it opens window C (sum would be 0.105).
+  app.emit([s(2000, 0.015), s(2900, 0.015), s(3800, 0.015), s(4700, 0.015), s(5600, 0.015), s(6500, 0.015), s(7400, 0.015)])
+  app.pagehide()
+  assert.equal(app.captured.length, 0)
+  // Window C grows past 0.1 and is reported once.
+  app.emit([s(8000, 0.09)])
+  app.pagehide()
+  assert.equal(app.captured.length, 1)
+  assert.equal(app.captured[0].properties.cls_value, 0.105)
+  assert.equal(app.captured[0].properties.largest_shift_value, 0.09)
+  assert.equal(app.captured[0].properties.largest_shift_time_ms, 8000)
+})
+
+test('browsers without PerformanceObserver load the tracker without errors', () => {
+  const app = loadWithShifts({ withObserver: false })
+  assert.equal(app.wired(), false)
+  assert.equal(app.captured.length, 0)
+})
