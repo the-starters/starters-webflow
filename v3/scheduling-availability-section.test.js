@@ -1840,6 +1840,40 @@ test('an active-booking rejection stops Connect Google from Platform before the 
   assert.equal(dom.notif.errorText.textContent, ACTIVE_CALLS_COPY)
 })
 
+test('the current fn 4066 active-calls wording also names the calls on Google disconnect (2026-11-23)', async () => {
+  const { dom, calls, window } = loadSection({
+    serverState: {
+      grantId: 'grant-1',
+      grantEmail: 'g@example.com',
+      calendarId: 'cal-1',
+      availability: {
+        items: { general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] } },
+        manager: 'calendar',
+      },
+    },
+    postRoutes: {
+      '/grants/delete/v3': () => ({
+        status: 400,
+        body: {
+          code: 'ERROR_CODE_INPUT_ERROR',
+          message: 'Resolve pending and upcoming calls before disconnecting the calendar. You can still edit settings or switch calendars.',
+        },
+      }),
+    },
+  })
+  await settle()
+
+  dom.connectBtnWrapper.children[2].click()
+  dom.notif.disconnectGoogleBtn.click()
+  await settle()
+
+  assert.equal(calls.filter((c) => c.path === '/grants/delete/v3').length, 1)
+  assert.equal(calls.filter((c) => c.path === '/grants/create_virtual_account/v3').length, 0)
+  assert.equal(window.STARTER_SCHEDULING_CONNECTION.state, 'error')
+  assert.equal(dom.notif.steps['request-error'].style.display, '')
+  assert.equal(dom.notif.errorText.textContent, ACTIVE_CALLS_COPY)
+})
+
 test('only the exact 400 active-bookings refusal replaces section disconnect copy', async () => {
   const cases = [
     {

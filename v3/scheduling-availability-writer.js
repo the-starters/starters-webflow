@@ -50,7 +50,8 @@
   // instead of showing generic calendar copy.
   const ERROR_TEXT_ACTIVE_CALLS =
     'You have Requested or Confirmed calls on your current calendar. Decline or cancel them, or wait until they end, then try again.'
-  const ACTIVE_CALLS_REFUSAL = /resolve active bookings/i
+  // Older and current retire_grant_v3 (fn 4066) wording; both mean the same refusal.
+  const ACTIVE_CALLS_REFUSAL = /resolve (?:active bookings|pending and upcoming calls)/i
 
   const activePath = window.location.pathname.replace(/\/+$/, '') || '/'
   const activeHostname = String(window.location.hostname || '').trim().toLowerCase()

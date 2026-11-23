@@ -1107,6 +1107,31 @@ test('own-calendar never delegates disconnect ownership to clearGrantData', asyn
   assert.equal(result.calls.filter((c) => c.path === '/grants/delete/v3').length, 1)
 })
 
+test('the current fn 4066 active-calls wording also names the calls on the platform-to-Google switch (2026-11-23)', async () => {
+  const availability = defaultAvailability()
+  const result = loadWriter({
+    availability,
+    storage: TZ_CACHED,
+    routes: {
+      '/grants/delete/v3': () => ({
+        status: 400,
+        body: { message: 'Resolve pending and upcoming calls before disconnecting the calendar. You can still edit settings or switch calendars.' },
+      }),
+    },
+  })
+  await settle()
+
+  result.dom.managers.calendar.click()
+  result.clickAction(result.dom.buttons.managerSubmit)
+  await settle()
+
+  assert.equal(result.calls.filter((c) => c.path === '/grants/delete/v3').length, 1)
+  assert.equal(result.calls.filter((c) => c.path === '/grants/oauth/v3').length, 0)
+  assert.equal(result.window.STARTER_AVAILABILITY.manager, 'platform')
+  assert.equal(result.dom.steps['config-request-error'].style.display, 'block')
+  assert.equal(result.dom.errorText.textContent, ACTIVE_CALLS_COPY)
+})
+
 test('an active-booking rejection stops the platform-to-Google manager switch', async () => {
   const availability = defaultAvailability()
   const result = loadWriter({

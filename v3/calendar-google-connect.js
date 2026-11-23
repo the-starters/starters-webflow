@@ -37,7 +37,7 @@
  *             nothing.
  *             Result: BroadcastChannel 'starters-calendar-connect-return'
  *             {type: 'calendar-connected' | 'calendar-connect-failed',
- *             memberId, reason?: 'taken'}, then the popup closes (or says it can be closed).
+ *             memberId, reason?: 'taken' | 'active-calls'}, then the popup closes (or says it can be closed).
  */
 ;(function (global) {
   'use strict'
@@ -54,8 +54,17 @@
     done: 'Google Calendar connected. You can close this tab.',
     failed: 'We couldn’t connect your Google Calendar. Close this tab and try again.',
     taken: 'This Google account is already connected to another Starter. Close this tab and use a different Google account.',
+    'active-calls': 'You have Requested or Confirmed calls on your current calendar. Decline or cancel them, or wait until they end, then connect Google again. You can close this tab.',
   }
   const TAKEN_MESSAGE = 'Google calendar is already connected to another Starter'
+  // grants/delete/v3 (#1660, fn 4066) refuses to remove the current calendar while it
+  // has pending, rescheduled or upcoming confirmed calls (400). Older and current wording.
+  const ACTIVE_CALLS_REFUSAL = /resolve (?:active bookings|pending and upcoming calls)/i
+
+  function hasActiveCalls(error) {
+    const message = error && error.data && (error.data.message || error.data.error)
+    return Boolean(error && error.status === 400 && typeof message === 'string' && ACTIVE_CALLS_REFUSAL.test(message))
+  }
 
   // grants/add/v3 (#1457) refuses a Google account that another Starter uses (403).
   function isTaken(error) {
@@ -210,9 +219,9 @@
             warn('platform restore failed', restoreError && restoreError.message)
           }
         }
-        const taken = isTaken(error)
-        if (id) signal('calendar-connect-failed', id, taken ? 'taken' : undefined)
-        showOverlay(taken ? 'taken' : 'failed')
+        const reason = isTaken(error) ? 'taken' : hasActiveCalls(error) ? 'active-calls' : undefined
+        if (id) signal('calendar-connect-failed', id, reason)
+        showOverlay(reason || 'failed')
         return false
       }
     }
