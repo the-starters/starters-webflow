@@ -239,7 +239,7 @@ function buildProfileStep(pathname, { freeOn = true, paidOn = false, wrapped = t
   const calendar = el('div', { 'data-calls-step-element': 'calendar' })
   const stripe = el('div', { 'data-stripe-connect-element': 'root' })
   const root = el('div', { 'data-calls-step': 'root', ...(context === null ? {} : { 'data-calls-step-context': context }) }, [
-    free.row, paid.row, availability, calendar, stripe,
+    el('div', {}, [free.row, paid.row]), availability, calendar, stripe,
     el('div', { 'data-calls-step-element': 'days' }, [el('button', { 'data-day': '1', 'aria-pressed': 'true' })]),
     el('div', { 'data-calls-step-element': 'extra-days' }),
     el('div', { 'data-calls-step-element': 'windows' }, [el('div', { 'data-calls-step-element': 'window' }, [
@@ -340,11 +340,71 @@ test('Build Profile Next checks hours first, then the paid price, then Stripe', 
   assert.equal(pressNext(page).message, 'Pick at least one day.')
 })
 
-test('Build Profile does not need a call type turned on', () => {
-  const page = buildProfileStep('/build-profile/consult-test', { freeOn: false, paidOn: false })
-  page.api.setStatus({ stripe: 'pending' })
+// Figma "Calls step · FINAL" F5 (30 Oct) + JP 2026-11-23 "Yes, block it": Build
+// Profile Continue stays blocked until at least one call type is on.
+test('Build Profile blocks Continue when both call types are off', () => {
+  for (const path of ['/build-profile/full-profile-test', '/build-profile/full-profile']) {
+    const page = buildProfileStep(path, { freeOn: false, paidOn: false })
+    page.api.setStatus({ stripe: 'ready' })
+    assert.deepEqual(pressNext(page), { blocked: true, message: 'Turn on at least one call type to continue.' }, path)
+    // validate() stays hours-only: the save writers call it to decide whether hours can be saved.
+    assert.equal(page.api.validate(), '', path)
+  }
+})
+
+test('Build Profile call type message shows in the call types section', () => {
+  const page = buildProfileStep('/build-profile/full-profile-test', { freeOn: false, paidOn: false })
+  page.api.setStatus({ stripe: 'ready' })
+  pressNext(page)
+  const alert = page.root.querySelectorAll('p').find((node) => node.getAttribute('role') === 'alert')
+  assert.equal(alert.parentElement, page.free.row.parentElement)
+})
+
+test('non-Build-Profile step 6 keeps the call type message under the hours error', () => {
+  const page = buildProfileStep('/starter-profile-steps-test', { freeOn: false, paidOn: false, context: null })
+  assert.deepEqual(pressNext(page), { blocked: true, message: 'Turn on at least one call type to continue.' })
+  const alert = page.root.querySelectorAll('p').find((node) => node.getAttribute('role') === 'alert')
+  const hoursError = page.root.querySelector('[data-calls-step-element="error"]')
+  assert.equal(alert.parentElement, hoursError.parentElement)
+  assert.notEqual(alert.parentElement, page.free.row.parentElement)
+})
+
+test('Build Profile Free alone or Paid alone is enough to continue', () => {
+  const freeOnly = buildProfileStep('/build-profile/full-profile-test', { freeOn: true, paidOn: false })
+  freeOnly.api.setStatus({ stripe: 'ready' })
+  assert.equal(pressNext(freeOnly).blocked, false)
+  const paidOnly = buildProfileStep('/build-profile/full-profile-test', { freeOn: false, paidOn: true })
+  paidOnly.api.setStatus({ stripe: 'ready' })
+  paidOnly.priceInput.value = '150'
+  assert.equal(pressNext(paidOnly).blocked, false)
+})
+
+test('Build Profile turning a call type back on clears the block', () => {
+  const page = buildProfileStep('/build-profile/full-profile-test', { freeOn: false, paidOn: false })
+  page.api.setStatus({ stripe: 'ready' })
+  assert.equal(pressNext(page).blocked, true)
+  page.free.toggle.checked = true
   assert.equal(pressNext(page).blocked, false)
-  assert.equal(page.api.validate(), '')
+})
+
+test('Build Profile Consult with the required paid row needs no other call type', () => {
+  const page = buildProfileStep('/build-profile/consult-test', { freeOn: false, paidSwitch: false })
+  page.api.setStatus({ stripe: 'ready' })
+  page.priceInput.value = '150'
+  assert.equal(pressNext(page).blocked, false)
+})
+
+test('Build Profile checks hours, then call type, then price, then Stripe', () => {
+  const page = buildProfileStep('/build-profile/full-profile-test', { freeOn: false, paidOn: false })
+  page.root.querySelector('[data-day="1"]').setAttribute('aria-pressed', 'false')
+  assert.equal(pressNext(page).message, 'Pick at least one day.')
+  page.root.querySelector('[data-day="1"]').setAttribute('aria-pressed', 'true')
+  assert.equal(pressNext(page).message, 'Turn on at least one call type to continue.')
+  page.paid.toggle.checked = true
+  page.priceInput.value = ''
+  assert.equal(pressNext(page).message, 'Add a price for the consulting call.')
+  page.priceInput.value = '150'
+  assert.equal(pressNext(page).message, 'Connect Stripe to continue.')
 })
 
 test('Build Profile Free call choice follows its switch', () => {

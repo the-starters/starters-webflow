@@ -337,13 +337,20 @@
       return status.stripe === 'opened' ? stripeMessages[1] : stripeMessages[0]
     }
 
+    const callTypeMessage = 'Turn on at least one call type to continue.'
+
+    // Figma "Calls step · FINAL" F5 (30 Oct) + JP 2026-11-23: Build Profile also
+    // needs at least one call type on. The Consult paid row has no switch and is
+    // always on (paidRequired), so it counts.
+    function callTypeError() {
+      if (paidRequired) return ''
+      return services.some((service) => service.querySelector(enabledSelector)?.checked) ? '' : callTypeMessage
+    }
+
     function validateContinue() {
       if (onboarding) return validateHours(read())
-      if (buildProfile) return validateHours(read()) || paidPriceError() || stripeError()
-      if (!services.some((service) => service.querySelector(enabledSelector)?.checked)) {
-        return 'Turn on at least one call type to continue.'
-      }
-      return paidPriceError() || validateHours(read())
+      if (buildProfile) return validateHours(read()) || callTypeError() || paidPriceError() || stripeError()
+      return callTypeError() || paidPriceError() || validateHours(read())
     }
 
     if (step && !edit) {
@@ -363,9 +370,11 @@
         // Put it in the section that blocks and scroll that section into view.
         const host = stripeMessages.includes(message) && stripe
           ? stripe
-          : message === paidPriceError() && price
-            ? price.parentElement || root
-            : error.parentElement || root
+          : buildProfile && message === callTypeMessage && services[0]
+            ? services[0].parentElement || root
+            : message === paidPriceError() && price
+              ? price.parentElement || root
+              : error.parentElement || root
         if (continueError.parentElement !== host) host.appendChild(continueError)
         continueError.textContent = message
         reveal(continueError)
