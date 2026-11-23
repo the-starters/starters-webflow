@@ -827,3 +827,49 @@ test('change events on type=hidden inputs are dropped when the SDK omits attr__t
     assert.deepEqual(runBeforeSend(sdk, event), event)
   }
 })
+
+function metaBridgeError(page, extraFrames = '') {
+  const error = Object.assign(new Error('The object does not support the operation or argument.'), { name: 'InvalidAccessError' })
+  error.stack = [
+    `dispatchToBridge@https://www.thestarters.com${page}:1:13300`,
+    `sendPostMessage@https://www.thestarters.com${page}:1:12100`,
+    `logLoginFormFocused@https://www.thestarters.com${page}:1:5393`,
+    extraFrames,
+  ].filter(Boolean).join('\n')
+  return error
+}
+
+test('Meta in-app bridge rejections share one in-app fingerprint across pages and stack variants', () => {
+  const app = load()
+  app.listeners.unhandledrejection({ reason: metaBridgeError('/learn/playbooks-frameworks/the-dtc-go-to-market-playbook') })
+  app.listeners.unhandledrejection({ reason: metaBridgeError('/hire/zachary-g-1154') })
+  // Our synthetic submit runs the injected listener in the same stack, adding our frames.
+  app.listeners.unhandledrejection({ reason: metaBridgeError('/learn/sessions/beyond-the-roas-trap',
+    'triggerSubmit@https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v1.59.516/global-embeds/form-embeds/password-validation/password-validation.js:547:25') })
+  // The same failure surfacing as an uncaught error is grouped the same way.
+  app.listeners.error({ error: metaBridgeError('/quiz'), message: 'InvalidAccessError', filename: 'https://www.thestarters.com/quiz', lineno: 1, colno: 13300 })
+  assert.equal(app.captured.length, 4)
+  for (const { properties } of app.captured) {
+    assert.equal(properties.starters_error_kind, 'in-app-browser')
+    assert.equal(properties.$exception_fingerprint, 'starters-in-app-meta-bridge')
+    assert.equal(properties.$exception_list[0].mechanism.handled, false)
+  }
+  assert.equal(app.reloads, 0)
+})
+
+test('InvalidAccessError without both bridge frames, and look-alike names, keep default grouping', () => {
+  const app = load()
+  const plain = Object.assign(new Error('The object does not support the operation or argument.'), { name: 'InvalidAccessError' })
+  plain.stack = 'run@https://www.thestarters.com/hire/tim:1:20'
+  const onlyOne = Object.assign(new Error('x'), { name: 'InvalidAccessError' })
+  onlyOne.stack = 'sendPostMessage@https://www.thestarters.com/hire/tim:1:20\nother@https://www.thestarters.com/hire/tim:1:40'
+  const lookAlike = new Error('y')
+  lookAlike.stack = 'mydispatchToBridgeHelper@https://www.thestarters.com/a.js:1:1\nsendPostMessages@https://www.thestarters.com/a.js:1:2'
+  for (const reason of [plain, onlyOne, lookAlike]) app.listeners.unhandledrejection({ reason })
+  app.listeners.error({ error: plain, message: 'InvalidAccessError', filename: 'https://www.thestarters.com/hire/tim', lineno: 1, colno: 20 })
+  assert.equal(app.captured.length, 4)
+  for (const { properties } of app.captured) {
+    assert.notEqual(properties.$exception_fingerprint, 'starters-in-app-meta-bridge')
+    assert.notEqual(properties.starters_error_kind, 'in-app-browser')
+  }
+})
