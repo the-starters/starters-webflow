@@ -485,3 +485,13 @@ test('onboarding route: starting Stripe leaves no origin marker, so the callback
   assert.equal(await controller.start({ preventDefault() {} }), true)
   assert.equal(env.win.localStorage.items.size, 0)
 })
+
+test('onboarding route: starting Stripe after an abandoned Build Profile start clears the leftover origin marker', async () => {
+  const env = makeEnv({ startResult: { mode: 'onboarding', url: 'https://connect.stripe.com/setup/e/acct_1/x' } })
+  env.win.localStorage = memoryStorage()
+  env.win.localStorage.setItem('starters:stripe-connect-origin:v1', JSON.stringify({ path: BUILD, exp: Date.now() + 60000 }))
+  const controller = createController(env.win, env.view)
+  await controller.mount()
+  assert.equal(await controller.start({ preventDefault() {} }), true)
+  assert.equal(env.win.localStorage.getItem('starters:stripe-connect-origin:v1'), null)
+})

@@ -260,6 +260,14 @@
       }
     }
 
+    function forgetStripeOrigin() {
+      try {
+        win.localStorage.removeItem(ORIGIN_KEY)
+      } catch (_error) {
+        // Storage blocked: there is no marker to clear.
+      }
+    }
+
     function reserveTab() {
       if (typeof win.open !== 'function') return null
       const tab = win.open('about:blank', '_blank')
@@ -297,6 +305,7 @@
         }
         if (!isStripeUrl(result.url)) throw new Error('start returned a non-Stripe URL')
         if (buildRoute) rememberStripeOrigin(path)
+        else forgetStripeOrigin()
         stripeTab.location.replace(result.url)
         setStartError(false)
         render('opened')

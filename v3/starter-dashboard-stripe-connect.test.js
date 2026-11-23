@@ -5312,6 +5312,121 @@ test('the Build Profile origin marker is ignored when expired or not a Build Pro
   }
 })
 
+test('a dashboard start after an abandoned Build Profile start clears the marker, so its callback redirects to the dashboard', async () => {
+  const previous = {
+    BroadcastChannel: global.BroadcastChannel,
+    document: global.document,
+    fetch: global.fetch,
+    history: global.history,
+    location: global.location,
+    memberstack: global.$memberstackDom,
+    localStorage: Object.getOwnPropertyDescriptor(global, 'localStorage'),
+    close: global.close,
+    open: global.open,
+  }
+  const { root } = stripeRoot()
+  const assigned = []
+  const closes = []
+  const key = 'starters:stripe-connect-origin:v1'
+  const items = new Map([[
+    key,
+    JSON.stringify({ path: '/build-profile/full-profile-test', exp: Date.now() + 60000 }),
+  ]])
+  Object.defineProperty(global, 'localStorage', {
+    configurable: true,
+    value: {
+      getItem: (k) => (items.has(k) ? items.get(k) : null),
+      setItem: (k, v) => items.set(k, String(v)),
+      removeItem: (k) => items.delete(k),
+    },
+  })
+  global.open = () => null
+  global.fetch = async () => response({})
+  global.close = () => closes.push(true)
+  try {
+    const connect = new FakeElement()
+    await api.startInNewTab(api.createExclusiveRunner(), connect, connect, [root], 'member-123')
+    assert.equal(items.has(key), false, 'the dashboard start clears the Build Profile marker')
+
+    global.BroadcastChannel = class { postMessage() {} close() {} }
+    global.document = { title: 'Stripe callback', querySelectorAll: () => [root] }
+    global.history = { replaceState() {} }
+    global.location = {
+      href: 'https://thestarters.com/stripe-connect-callback?code=code-123&state=opaque-state-1234567890',
+      origin: 'https://thestarters.com',
+      assign: (url) => assigned.push(url),
+    }
+    global.$memberstackDom = {
+      getCurrentMember: async () => ({ data: { id: 'mem-live' } }),
+      getMemberCookie: async () => 'ms-cookie',
+      onAuthChange: () => ({ unsubscribe() {} }),
+    }
+    global.fetch = async (url) => {
+      if (String(url).includes('/auth/trade-token/v3')) return response({ authToken: 'token-live' })
+      return response({ connected: true, mode: 'completed', charges_enabled: false })
+    }
+    api.__resetXanoToken()
+    await api.mountCallback()
+    assert.equal(closes.length, 0, 'the Stripe tab is not closed')
+    assert.deepEqual(assigned, ['https://thestarters.com/starter-dashboard?stripe_connect=connected'])
+  } finally {
+    api.__resetXanoToken()
+    global.BroadcastChannel = previous.BroadcastChannel
+    global.document = previous.document
+    global.fetch = previous.fetch
+    global.history = previous.history
+    global.location = previous.location
+    global.$memberstackDom = previous.memberstack
+    global.close = previous.close
+    global.open = previous.open
+    if (previous.localStorage) Object.defineProperty(global, 'localStorage', previous.localStorage)
+    else delete global.localStorage
+  }
+})
+
+test('a failed callback clears the Build Profile origin marker', async () => {
+  const previous = {
+    console: global.console,
+    document: global.document,
+    history: global.history,
+    location: global.location,
+    localStorage: Object.getOwnPropertyDescriptor(global, 'localStorage'),
+  }
+  const { root } = stripeRoot()
+  const key = 'starters:stripe-connect-origin:v1'
+  const items = new Map([[
+    key,
+    JSON.stringify({ path: '/build-profile/full-profile-test', exp: Date.now() + 60000 }),
+  ]])
+  Object.defineProperty(global, 'localStorage', {
+    configurable: true,
+    value: {
+      getItem: (k) => (items.has(k) ? items.get(k) : null),
+      setItem: (k, v) => items.set(k, String(v)),
+      removeItem: (k) => items.delete(k),
+    },
+  })
+  global.console = { ...console, error: () => {} }
+  global.document = { title: 'Stripe callback', querySelectorAll: () => [root] }
+  global.history = { replaceState() {} }
+  global.location = {
+    href: 'https://thestarters.com/stripe-connect-callback?state=opaque-state-1234567890',
+    origin: 'https://thestarters.com',
+    assign() {},
+  }
+  try {
+    assert.equal(await api.mountCallback(), null)
+    assert.equal(items.has(key), false)
+  } finally {
+    global.console = previous.console
+    global.document = previous.document
+    global.history = previous.history
+    global.location = previous.location
+    if (previous.localStorage) Object.defineProperty(global, 'localStorage', previous.localStorage)
+    else delete global.localStorage
+  }
+})
+
 test('callback refuses an invalid opaque state without exchanging', async () => {
   const previous = {
     console: global.console,

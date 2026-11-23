@@ -47,6 +47,14 @@
     '/build-profile/consult',
   ])
 
+  function clearStripeOrigin() {
+    try {
+      global.localStorage.removeItem(ORIGIN_KEY)
+    } catch (_error) {
+      // Storage blocked: there is no marker to clear.
+    }
+  }
+
   /** Reads and clears the Build Profile origin marker; null when absent, expired or not allowed. */
   function takeStripeOrigin(now) {
     let raw = null
@@ -1741,6 +1749,7 @@
     if (ownershipReloadRequired(roots)) return Promise.resolve(false)
     return runExclusive(function () {
       if (ownershipReloadRequired(roots)) return false
+      clearStripeOrigin()
       const stripeTab = reserveStripeTab()
       if (!stripeTab) {
         renderRoots(roots, 'error')
@@ -2101,6 +2110,7 @@
           message: error.message || 'Stripe Connect callback failed',
         })
       }
+      clearStripeOrigin()
       global.console.error('[stripe-connect-callback] Exchange failed', error)
       return null
     } finally {
