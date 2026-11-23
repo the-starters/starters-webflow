@@ -157,7 +157,7 @@ test('source keeps failures uncached for HTTP errors and cross-origin responses'
   }
 })
 
-test('source caches each absolute URL independently and is inert on production', async () => {
+test('source caches each absolute URL independently and runs on production but not other hosts', async () => {
   const env = environment()
   await env.window.lumos.modal.source('/one')
   await env.window.lumos.modal.source('/two')
@@ -165,8 +165,13 @@ test('source caches each absolute URL independently and is inert on production',
   assert.equal(env.calls.length, 2)
   for (const hostname of ['www.thestarters.com', 'thestarters.com']) {
     const prod = environment({ hostname })
-    assert.equal(await prod.window.lumos.modal.source('/modals'), null)
-    assert.equal(prod.calls.length, 0)
+    assert.ok(await prod.window.lumos.modal.source('/modals'))
+    assert.deepEqual(prod.calls.map((call) => call.url), [`https://${hostname}/modals`])
+  }
+  for (const hostname of ['localhost', 'other.webflow.io', 'the-starters-3-0.webflow.io.evil.test']) {
+    const off = environment({ hostname })
+    assert.equal(await off.window.lumos.modal.source('/modals'), null)
+    assert.equal(off.calls.length, 0)
   }
 })
 
@@ -246,8 +251,21 @@ test('rewrites relative href/src, preserves fragment hrefs and strips scripts', 
   assert.equal(el.querySelectorAll('script').length, 0)
 })
 
-test('both production hosts are no-ops even with debug enabled', async () => {
+test('both production hosts load and open the keyed dialog without console output on failure', async () => {
   for (const hostname of ['www.thestarters.com', 'thestarters.com']) {
+    const env = environment({ hostname })
+    const entry = await env.window.lumos.modal.load('/modals', 'marketing-expert', { open: true })
+    assert.equal(entry.el, env.body.children[0])
+    assert.equal(entry.el.open, true)
+    assert.equal(env.calls.length, 1)
+    assert.equal(env.head.children[0].href, `https://${hostname}/css/site.webflow.source-page.hash.css`)
+    assert.equal(await env.window.lumos.modal.load('/modals', 'missing-key'), null)
+    assert.deepEqual(env.warnings, [])
+  }
+})
+
+test('other hosts are no-ops even with debug enabled', async () => {
+  for (const hostname of ['localhost', 'other.webflow.io', 'the-starters-3-0.webflow.io.evil.test']) {
     const env = environment({ hostname })
     env.window.STARTERS_DEBUG = true
     assert.equal(await env.window.lumos.modal.load('/modals', 'marketing-expert', { open: true }), null)
