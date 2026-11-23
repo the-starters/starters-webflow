@@ -3434,3 +3434,63 @@ test('F08: the pending picker gets free-time slots and the offer is committed on
     global.crypto = originalCrypto
   }
 })
+
+// Jai (2026-11-18): a Starter rescheduling a CONFIRMED call could only pick
+// posted hours (the picker read scheduler availability), while a pending
+// offer could pick any time. #5756 checks only free/busy for both.
+async function mountedRescheduleSlots(role, booking) {
+  const originalCalendar = global.StartersPaidCallBrandPayment
+  const container = { textContent: '' }
+  const modal = {
+    getAttribute(name) { return name === 'data-booking-id' ? booking.booking_id : null },
+    setAttribute() {},
+    querySelector(selector) {
+      return selector === '[booking-reschedule-calendar]' ? container : null
+    },
+    querySelectorAll() { return [] },
+  }
+  const document = { querySelectorAll() { return [] } }
+  const mounts = []
+  try {
+    global.StartersPaidCallBrandPayment = {
+      async mountPaidCalendar(options) { mounts.push(options) },
+    }
+    await api.mountRescheduleCalendar(document, modal, booking, role, 'Agreed in messages')
+  } finally {
+    global.StartersPaidCallBrandPayment = originalCalendar
+  }
+  assert.equal(mounts.length, 1, 'the picker mounts once')
+  return mounts[0].slots
+}
+
+test('a Starter rescheduling a confirmed Free call can pick any time, not only posted hours', async () => {
+  const booking = rescheduleBooking({ booking_id: 'confirmed-any-time', start: Date.now() + 72 * 3600000 })
+  assert.equal(api.rescheduleKindFor('starter', booking), 'reschedule-propose')
+  const slots = await mountedRescheduleSlots('starter', booking)
+  assert.ok(Array.isArray(slots) && slots.length > 600, 'every 30-minute start for about 13 days')
+  const now = Date.now()
+  assert.ok(slots.every((slot) => slot.start - 8 * 3600000 > now - 60000), 'the 8 h cutoff stays')
+  assert.ok(slots.some((slot) => slot.start - 9 * 3600000 <= now), 'times soon after the cutoff are offered')
+  assert.ok(slots.every((slot) => slot.end - slot.start === 30 * 60000))
+  assert.ok(slots.every((slot) => slot.start !== booking.start), 'the current time is left out')
+  const hours = new Set(slots.map((slot) => new Date(slot.start).getUTCHours()))
+  assert.equal(hours.size, 24, 'night and weekend hours are offered too')
+})
+
+test('a Brand rescheduling a confirmed call still sees the Starter posted hours', async () => {
+  const booking = rescheduleBooking({ booking_id: 'confirmed-brand', start: Date.now() + 72 * 3600000 })
+  assert.equal(api.rescheduleKindFor('brand', booking), 'reschedule-propose')
+  assert.equal(await mountedRescheduleSlots('brand', booking), undefined)
+})
+
+test('a confirmed Paid proposal keeps the 48 h 15 min saved-card lead', () => {
+  const now = 1_800_000_000_000
+  const paid = rescheduleBooking({ is_paid: true, start: now + 10 * 24 * 3600000, duration: 60 })
+  const slots = api.confirmedProposeSlots(paid, now)
+  assert.ok(slots.length > 0)
+  assert.ok(slots.every((slot) => slot.start > now + 173700000))
+  assert.ok(slots.every((slot) => slot.end - slot.start === 60 * 60000))
+  const free = api.confirmedProposeSlots({ ...paid, is_paid: false }, now)
+  assert.ok(free.some((slot) => slot.start < now + 173700000), 'Free keeps the shorter 8 h lead')
+  assert.ok(free.every((slot) => slot.start - 8 * 3600000 > now))
+})

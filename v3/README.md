@@ -2692,13 +2692,18 @@ retained-booking availability when Free Call is Off. That backend support in
 endpoint #1658 remains a separate draft requiring native runtime tests and
 individual publication; this frontend change does not establish backend or
 production proof.
-Pending-offer calendars are the exception: they pass a caller-supplied `slots`
-list to the calendar engine, so no posted-availability read runs for that
-picker and the server remains the authority for free/busy at submit time.
+Pending-offer calendars and a Starter's confirmed-call proposal are the
+exception: they pass a caller-supplied `slots` list to the calendar engine, so
+no posted-availability read runs for that picker and the server remains the
+authority for free/busy at submit time. A Brand's confirmed-call proposal
+still reads the Starter's posted availability.
 
 A confirmed-call proposal posts `booking/reschedule/propose/v3` with a required
 reason, the selected slot's unchanged timestamps, the selected IANA timezone,
-and a durable `dashboard-reschedule-propose:` key. Counterpart response controls,
+and a durable `dashboard-reschedule-propose:` key. A Starter's confirmed-call picker
+offers the same step-aligned starts as a pending offer (below), from more than
+8 hours out for a Free call or more than 48 hours 15 minutes out for a Paid
+call, excluding the current booking time. Counterpart response controls,
 endpoints, and receipt behavior are owned by the
 [dashboard booking action contract](#dashboard-booking-action-contract).
 A pending-offer proposal or counter posts the same endpoint and fields with a
@@ -2913,8 +2918,9 @@ returns full rows, so `payment_status`, `payment_reconciliation_status`,
   `confirmed`, the saved-card state, `start > now + 48 h 15 min` on the
   canonical clock, and `data_environment` in
   `PAID_RESCHEDULE_OPEN_ENVIRONMENTS`. The proposed slot must also start more
-  than 48 h 15 min out (`paidProposedStartAllowed`). The calendar does not
-  filter slots by that lead, so `proposeReschedule` sends nothing for an early
+  than 48 h 15 min out (`paidProposedStartAllowed`). A Starter's picker only
+  offers slots past that lead; a Brand's posted-availability calendar does not
+  filter by it, so `proposeReschedule` sends nothing for an early
   Paid slot and the calendar confirm shows "Choose a new time more than 48
   hours and 15 minutes from now." (the server refuses it as well).
   `canRespondReschedule` admits the counterpart on a Paid `rescheduled` row in
