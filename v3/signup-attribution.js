@@ -160,15 +160,26 @@
  * is a silent no-op. On a signup page the script records whether the visitor
  * arrived logged out and fires `CompleteRegistration` on the transition. The
  * event carries the `event_id` cookie as its `eventID` so a server-side copy of
- * the same registration deduplicates against it. It fires for every signup,
- * including one with no ad parameters at all. An unreadable starting member
- * state is not treated as logged out: the first definitive auth event only arms
- * the watch, it does not fire.
+ * the same registration deduplicates against it. It fires only when the new
+ * member's email is on a company domain, whether or not any ad parameter was
+ * captured. The email is read off the transition payload (`auth.email`, then
+ * `email`); the domain after the last `@` is matched case-insensitively against
+ * the personal-provider list (`PERSONAL_EMAIL_DOMAINS` exactly, plus
+ * `PERSONAL_EMAIL_PROVIDERS` on any country or TLD version, such as
+ * `yahoo.co.uk`), and everything else is a company email. A personal email, or
+ * one that cannot be read at the transition, sends nothing to Meta. Nothing
+ * else changes for those signups: the signup itself, the signup cookies, the
+ * field save and lead-entry registration all run exactly as for a company
+ * email. An unreadable starting member state is not treated as logged out: the
+ * first definitive auth event only arms the watch, it does not fire.
  *
- * A `sessionStorage` flag makes the fire once-per-session, which is what covers
- * the refresh double-fire: Memberstack replays the authenticated state on the
- * next load, and without the flag that would look like a second registration.
- * The flag is shared by every signup surface, so one session yields one event.
+ * A `sessionStorage` flag makes the decision once-per-session, which is what
+ * covers the refresh double-fire: Memberstack replays the authenticated state on
+ * the next load, and without the flag that would look like a second
+ * registration. The flag is set for a skipped personal or unreadable signup
+ * too, so no later page load in the same session can report that member to
+ * Meta. It is shared by every signup surface, so one session yields at most one
+ * event.
  *
  * Field persistence. `/quiz` needs nothing here: `quiz-results.js` runs right
  * after it and writes the attribution fields alongside the quiz summary. Every
@@ -319,6 +330,40 @@
 
     var COMPLETE_REGISTRATION_EVENT = 'CompleteRegistration'
     var FIRED_FLAG = 'startersCompleteRegistrationFired'
+
+    // Personal email providers. A signup on one of these still completes and
+    // still saves its attribution, but Meta is not told about it: paid social
+    // optimises toward company-email registrations only. Exact domains first,
+    // then providers matched on any country or TLD version (`yahoo.co.uk`,
+    // `outlook.de`): the first label of the domain names the provider.
+    var PERSONAL_EMAIL_DOMAINS = [
+        'gmail.com',
+        'googlemail.com',
+        'ymail.com',
+        'rocketmail.com',
+        'msn.com',
+        'icloud.com',
+        'me.com',
+        'mac.com',
+        'aol.com',
+        'proton.me',
+        'protonmail.com',
+        'protonmail.ch',
+        'pm.me',
+        'mail.com',
+        'hey.com',
+        'fastmail.com',
+        'fastmail.fm',
+    ]
+    var PERSONAL_EMAIL_PROVIDERS = [
+        'yahoo',
+        'hotmail',
+        'outlook',
+        'live',
+        'gmx',
+        'zoho',
+        'yandex',
+    ]
     var PENDING_SAVE_FLAG = 'startersAttributionPendingSave'
     var PENDING_FIELDS_KEY = 'startersAttributionPendingFields'
 
@@ -1693,13 +1738,78 @@
     /* -------------------------- CompleteRegistration ------------------------- */
 
     /**
-     * Sends CompleteRegistration to Meta, once per browser session.
+     * Reads the new member's email off an auth payload or member object.
      *
+     * `auth.email` is where every other onAuthChange consumer in this repo reads
+     * it (route-guard.js, messages.js); a top-level `email` is the fallback the
+     * messaging scripts also accept.
+     *
+     * @param {object | null | undefined} member Unwrapped member data.
+     * @returns {string} Trimmed email, or '' when none can be read.
+     */
+    var memberEmail = function (member) {
+        try {
+            if (!member || typeof member !== 'object') return ''
+            var auth = member.auth && typeof member.auth === 'object' ? member.auth : {}
+            var raw = auth.email || member.email || ''
+            return typeof raw === 'string' ? raw.trim() : ''
+        } catch (error) {
+            return ''
+        }
+    }
+
+    /**
+     * Classifies an email as company, personal, or unreadable.
+     *
+     * The domain is everything after the last `@`, lowercased, with a trailing
+     * dot dropped. Anything not on the personal list is a company email.
+     *
+     * @param {string} email
+     * @returns {'company' | 'personal' | 'unknown'}
+     */
+    var emailKind = function (email) {
+        var at = typeof email === 'string' ? email.lastIndexOf('@') : -1
+        if (at < 1) return 'unknown'
+        var domain = email
+            .slice(at + 1)
+            .trim()
+            .toLowerCase()
+            .replace(/\.$/, '')
+        if (!domain || domain.indexOf('.') < 1) return 'unknown'
+        if (PERSONAL_EMAIL_DOMAINS.indexOf(domain) !== -1) return 'personal'
+        var provider = domain.slice(0, domain.indexOf('.'))
+        if (PERSONAL_EMAIL_PROVIDERS.indexOf(provider) !== -1) return 'personal'
+        return 'company'
+    }
+
+    /**
+     * Sends CompleteRegistration to Meta, once per browser session, and only
+     * for a member whose email is on a company domain.
+     *
+     * A personal or unreadable email sends nothing, but still sets the session
+     * flag: this session's registration has been decided, and no later page
+     * load or auth replay in it may report that member to Meta after all.
+     *
+     * @param {object | null | undefined} member Unwrapped member data from the
+     *     signup transition.
      * @returns {void}
      */
-    var fireCompleteRegistration = function () {
+    var fireCompleteRegistration = function (member) {
         try {
             if (flagIsSet(FIRED_FLAG)) return
+
+            var kind = emailKind(memberEmail(member))
+            if (kind !== 'company') {
+                setFlag(FIRED_FLAG)
+                warn(
+                    'skipped ' +
+                        COMPLETE_REGISTRATION_EVENT +
+                        (kind === 'personal'
+                            ? ': personal email domain'
+                            : ': member email unreadable at signup'),
+                )
+                return
+            }
 
             if (typeof window.fbq !== 'function') {
                 warn(
@@ -2155,7 +2265,7 @@
             try {
                 var loggedIn = isLoggedInMember(getMemberData(payload))
                 if (loggedIn && seenLoggedOut === true) {
-                    fireCompleteRegistration()
+                    fireCompleteRegistration(getMemberData(payload))
                     // Outside the directSave branch on purpose, and before it.
                     // Every armed page owes these two cookies, including the ones
                     // this script does not save fields for: /quiz is directSave

@@ -1799,6 +1799,184 @@ test('two transitions in one session fire once', async () => {
     assert.equal(harness.fbqCalls.length, 1)
 })
 
+/* ------------------- CompleteRegistration: company emails ------------------ */
+
+/**
+ * A transition payload shaped the way other repo consumers read it: the email
+ * on `auth.email`, wrapped in Memberstack's `{ data }` envelope.
+ *
+ * @param {string | undefined} email
+ */
+const memberWithEmail = (email) => ({
+    data: { id: 'mem_456', auth: email === undefined ? {} : { email } },
+})
+
+test('a company email fires CompleteRegistration on both signup pages', async () => {
+    for (const pathname of ['/quiz', '/sign-up']) {
+        for (const email of [
+            'jane@acme.com',
+            'JANE@Acme.CO.UK',
+            'ops@agency.io',
+            // Only the first label names a provider: this is a company domain.
+            'me@mygmail.com',
+        ]) {
+            const harness = boot({
+                cookies: { event_id: 'evt_fixed' },
+                member: null,
+                pathname,
+            })
+            await harness.settle()
+
+            harness.authHandlers[0](memberWithEmail(email))
+
+            assert.deepEqual(
+                plain(harness.fbqCalls),
+                [['track', 'CompleteRegistration', {}, { eventID: 'evt_fixed' }]],
+                `${pathname} ${email}`,
+            )
+            assert.equal(harness.session.get(FIRED_FLAG), 'true')
+        }
+    }
+})
+
+test('a top-level email is read when auth.email is absent', async () => {
+    const harness = boot({ member: null })
+    await harness.settle()
+
+    harness.authHandlers[0]({ data: { id: 'mem_456', email: 'jane@acme.com' } })
+
+    assert.equal(harness.fbqCalls.length, 1)
+})
+
+test('a personal email sends nothing to Meta on every signup page', async () => {
+    const personal = [
+        'jane@gmail.com',
+        'Jane@GMAIL.COM',
+        'jane@googlemail.com',
+        'jane@yahoo.com',
+        'jane@yahoo.co.uk',
+        'jane@ymail.com',
+        'jane@rocketmail.com',
+        'jane@hotmail.com',
+        'jane@hotmail.fr',
+        'jane@outlook.com',
+        'jane@outlook.de',
+        'jane@live.com',
+        'jane@live.co.uk',
+        'jane@msn.com',
+        'jane@icloud.com',
+        'jane@me.com',
+        'jane@mac.com',
+        'jane@aol.com',
+        'jane@proton.me',
+        'jane@protonmail.com',
+        'jane@protonmail.ch',
+        'jane@pm.me',
+        'jane@gmx.de',
+        'jane@gmx.net',
+        'jane@mail.com',
+        'jane@zoho.com',
+        'jane@yandex.ru',
+        'jane@hey.com',
+        'jane@fastmail.com',
+        'jane@fastmail.fm',
+        // The domain is what follows the LAST @.
+        '"a@acme.com"@gmail.com',
+    ]
+    for (const pathname of ['/quiz', '/sign-up']) {
+        for (const email of personal) {
+            const harness = boot({ member: null, pathname })
+            await harness.settle()
+
+            harness.authHandlers[0](memberWithEmail(email))
+
+            assert.deepEqual(harness.fbqCalls, [], `${pathname} ${email}`)
+        }
+    }
+})
+
+test('a missing or unreadable email sends nothing to Meta', async () => {
+    const payloads = [
+        memberWithEmail(undefined),
+        memberWithEmail(''),
+        memberWithEmail('   '),
+        memberWithEmail('not-an-email'),
+        memberWithEmail('jane@'),
+        memberWithEmail('jane@localhost'),
+        { data: { id: 'mem_456', auth: { email: 42 } } },
+        { id: 'mem_456' },
+    ]
+    for (const payload of payloads) {
+        const harness = boot({ member: null })
+        await harness.settle()
+
+        harness.authHandlers[0](payload)
+
+        assert.deepEqual(harness.fbqCalls, [], JSON.stringify(payload))
+    }
+})
+
+test('a skipped personal signup still marks the session as decided', async () => {
+    const harness = boot({ member: null, pathname: '/sign-up' })
+    await harness.settle()
+
+    harness.authHandlers[0](memberWithEmail('jane@gmail.com'))
+    assert.equal(harness.session.get(FIRED_FLAG), 'true')
+
+    // A replay or a later transition in the same session must not report that
+    // member after all.
+    harness.authHandlers[0](null)
+    harness.authHandlers[0](memberWithEmail('jane@gmail.com'))
+    assert.deepEqual(harness.fbqCalls, [])
+
+    // A fresh page load in the same session is blocked by the same flag.
+    const next = boot({
+        member: null,
+        pathname: '/quiz',
+        session: { [FIRED_FLAG]: 'true' },
+    })
+    await next.settle()
+    next.authHandlers[0](memberWithEmail('jane@acme.com'))
+    assert.deepEqual(next.fbqCalls, [])
+})
+
+test('a personal signup still writes cookies, saves fields and keeps lead entry', async () => {
+    const harness = boot({
+        cookies: clickCookies,
+        member: null,
+        pathname: '/sign-up',
+    })
+    await harness.settle()
+
+    harness.authHandlers[0](memberWithEmail('jane@gmail.com'))
+    await harness.settle()
+
+    assert.deepEqual(harness.fbqCalls, [])
+    assert.equal(harness.api.getParams().signup_source, '/sign-up')
+    const saved = harness.savedFields()
+    assert.equal(saved.length, 1)
+    for (const [fieldId, value] of Object.entries(CLICK_FIELDS)) {
+        assert.equal(saved[0][fieldId], value, fieldId)
+    }
+    assert.equal(saved[0]['signup-source'], '/sign-up')
+})
+
+test('the personal-email skip warns only on staging', async () => {
+    const prod = boot({ member: null, hostname: 'thestarters.com' })
+    await prod.settle()
+    prod.authHandlers[0](memberWithEmail('jane@gmail.com'))
+    assert.deepEqual(prod.warnings, [])
+
+    const staging = boot({ member: null })
+    await staging.settle()
+    staging.authHandlers[0](memberWithEmail('jane@gmail.com'))
+    assert.ok(
+        staging.warnings.some((message) => /personal email domain/.test(message)),
+    )
+    // The warning names the rule, never the address.
+    assert.ok(staging.warnings.every((message) => !/jane/.test(message)))
+})
+
 test('an already logged-in visitor is not a registration', async () => {
     const harness = boot({ member: loggedInMember })
     await harness.settle()

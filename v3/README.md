@@ -1076,10 +1076,28 @@ stamps a trigger only when a confirmed logged-out visitor clicks a tagged CTA
 
 On a signup page the script reads whether the visitor arrived logged out and then
 listens for the Memberstack auth change. The event fires as
-`fbq('track', 'CompleteRegistration', {}, { eventID: <event_id> })` and fires for
-every signup, including one with no ad parameters at all. If `fbq` is not a
-function at that moment the event is skipped and nothing is marked as fired, so a
-pixel that loads later in the session can still report the next transition.
+`fbq('track', 'CompleteRegistration', {}, { eventID: <event_id> })` and fires
+only when the new member's email is on a company domain, whether or not any ad
+parameter was captured. If `fbq` is not a function at that moment the event is
+skipped and nothing is marked as fired, so a pixel that loads later in the
+session can still report the next transition.
+
+The email is read off the auth transition payload (`auth.email`, then `email`).
+The domain after the last `@` is compared case-insensitively against this list of
+personal providers; every other domain is a company email:
+
+- Exact domains: `gmail.com`, `googlemail.com`, `ymail.com`, `rocketmail.com`,
+  `msn.com`, `icloud.com`, `me.com`, `mac.com`, `aol.com`, `proton.me`,
+  `protonmail.com`, `protonmail.ch`, `pm.me`, `mail.com`, `hey.com`,
+  `fastmail.com`, `fastmail.fm`.
+- Any country or TLD version of: `yahoo.*` (for example `yahoo.co.uk`),
+  `hotmail.*`, `outlook.*`, `live.*`, `gmx.*`, `zoho.*`, `yandex.*`.
+
+A personal email, or an email that cannot be read at the transition, sends
+nothing to Meta. Signup stays open to everyone: those signups still complete,
+still write the signup cookies, still get the direct field save, and still run
+lead-entry registration exactly as a company signup does. The same rule applies
+on every armed page, `/quiz` included.
 
 An unreadable starting member state is not treated as logged out. The first
 definitive auth event after that only arms the watch: a logged-in replay is
@@ -1090,7 +1108,9 @@ the pixel and start a spurious field save on the next auth replay.
 A `sessionStorage.startersCompleteRegistrationFired` flag limits the event to one
 fire per browser session, and every signup surface shares that one flag. This is
 what covers a refresh: Memberstack replays the authenticated state on the next load,
-and without the flag the replay would look like a second registration.
+and without the flag the replay would look like a second registration. The flag is
+also set when a personal or unreadable email skips the event, so no later page load
+or auth replay in the same session can report that member to Meta.
 
 ### Direct signup field save
 
