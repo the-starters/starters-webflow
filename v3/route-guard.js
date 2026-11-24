@@ -435,6 +435,16 @@
     return response && typeof response === 'object' ? response : {}
   }
 
+  // Memberstack replaces the whole member JSON on every write. Every read-modify-write
+  // pass (Build Profile, call settings, onboarding tour, pop-up history) shares this
+  // queue, so a concurrent writer cannot erase this key or have its own key erased.
+  function queueMemberJsonWrite(task) {
+    var previous = window.__tsMemberJsonWrite || Promise.resolve()
+    var next = previous.then(task, task)
+    window.__tsMemberJsonWrite = next.then(function () {}, function () {})
+    return next
+  }
+
   async function recordBrandAllStartersVisit(memberstack, member) {
     var role = memberRole(member)
     if (
@@ -447,7 +457,7 @@
     ) {
       return false
     }
-    try {
+    return queueMemberJsonWrite(async function () {
       var json = memberJson(await memberstack.getMemberJSON())
       var actionItems = {}
       var existing = json[BRAND_ACTION_ITEMS_JSON_KEY]
@@ -460,9 +470,9 @@
       json[BRAND_ACTION_ITEMS_JSON_KEY] = actionItems
       await memberstack.updateMemberJSON({ json: json })
       return true
-    } catch (error) {
+    }).catch(function () {
       return false
-    }
+    })
   }
 
   async function hasBrandAllStartersVisit(memberstack, member) {

@@ -6723,6 +6723,27 @@
     }
 
     /**
+     * Runs a member JSON read-modify-write on the shared page queue.
+     *
+     * Memberstack replaces the whole member JSON on every write. Build Profile,
+     * call settings, the onboarding tour, the route guard and pop-up history
+     * share window.__tsMemberJsonWrite, so a concurrent writer cannot erase the
+     * starterQuiz key or have its own key erased by this save.
+     *
+     * @param {Function} task Async read-modify-write pass.
+     * @returns {Promise<*>} The task result.
+     */
+    function queueMemberJsonWrite(task) {
+        const previous = window.__tsMemberJsonWrite || Promise.resolve()
+        const next = previous.then(task, task)
+        window.__tsMemberJsonWrite = next.then(
+            () => {},
+            () => {},
+        )
+        return next
+    }
+
+    /**
      * Saves compact quiz state to Memberstack member JSON.
      *
      * Member JSON is shared with other flows such as build_profile, so this
@@ -6738,14 +6759,14 @@
             return null
         }
 
-        const existingJson = await getExistingMemberJson(memberstack)
         const starterQuiz = createMemberstackStarterQuizPayload(pendingQuiz)
-        const updatedJson = {
-            ...existingJson,
-            starterQuiz,
-        }
-
-        await memberstack.updateMemberJSON({ json: updatedJson })
+        const existingJson = await queueMemberJsonWrite(async () => {
+            const json = await getExistingMemberJson(memberstack)
+            await memberstack.updateMemberJSON({
+                json: { ...json, starterQuiz },
+            })
+            return json
+        })
 
         logQuizFlow('saved compact starter quiz to Memberstack member JSON', {
             preservedMemberJsonKeys: Object.keys(existingJson).filter(

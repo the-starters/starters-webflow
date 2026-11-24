@@ -121,7 +121,10 @@ async function runController({
     algoliaHits = null,
     learnSelection = null,
     enableDiagnostics = false,
+    initialMemberJson = {},
+    prepareWindow = null,
 }) {
+    let memberJson = initialMemberJson
     const documentListeners = new Map()
     const fetchCalls = []
     const memberJsonWrites = []
@@ -159,9 +162,10 @@ async function runController({
             return 'memberstack-session'
         },
         async getMemberJSON() {
-            return { data: {} }
+            return { data: memberJson }
         },
         async updateMemberJSON(payload) {
+            memberJson = payload.json
             memberJsonWrites.push(payload)
         },
         async updateMember(payload) {
@@ -252,16 +256,23 @@ async function runController({
     if (enableDiagnostics) {
         vm.runInContext(workflowDiagnosticsSource, context)
     }
+    if (prepareWindow) prepareWindow(window)
     vm.runInContext(source, context)
 
     for (const listener of documentListeners.get('DOMContentLoaded') || []) {
         listener()
     }
 
-    await waitFor(() => waitUntil({ fetchCalls, window }))
+    await waitFor(() => waitUntil({ fetchCalls, memberJsonWrites, window }))
     await new Promise(setImmediate)
 
-    return { fetchCalls, memberJsonWrites, memberUpdates, window }
+    return {
+        fetchCalls,
+        memberJsonWrites,
+        memberUpdates,
+        window,
+        memberJson: () => memberJson,
+    }
 }
 
 function enrollmentCalls(calls) {
@@ -844,6 +855,36 @@ for (const [label, tradeTokenResponse] of [
         )
     })
 }
+
+test('quiz save waits for a queued member JSON writer and keeps its key', async () => {
+    // A pop-up history write already holds the shared member JSON queue: it has
+    // read the member JSON and writes `popups` a few ticks later. The quiz save
+    // must run after it, or one of the two keys is erased.
+    const harness = await runController({
+        storage: createStorage(completedQuiz()),
+        enrollmentResponses: [],
+        initialMemberJson: { preserved: true },
+        prepareWindow(window) {
+            const memberstack = window.$memberstackDom
+            window.__tsMemberJsonWrite = (async () => {
+                const json = (await memberstack.getMemberJSON()).data
+                for (let tick = 0; tick < 3; tick += 1) {
+                    await new Promise(setImmediate)
+                }
+                await memberstack.updateMemberJSON({
+                    json: { ...json, popups: { 'bfcm-2026': { shownAt: 'x' } } },
+                })
+            })()
+        },
+        waitUntil: ({ memberJsonWrites }) => memberJsonWrites.length === 2,
+    })
+    const saved = harness.memberJson()
+
+    assert.equal(saved.preserved, true)
+    assert.equal(saved.popups['bfcm-2026'].shownAt, 'x')
+    assert.ok(saved.starterQuiz)
+    assert.ok(saved.starterQuiz.memberstackSavedAt)
+})
 
 test('failed enrollment is replayed from the saved quiz on refresh', async () => {
     const storage = createStorage(completedQuiz())
