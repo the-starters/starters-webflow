@@ -684,6 +684,58 @@ test('copies every ad parameter in the URL into a 72 hour cookie', () => {
     }
 })
 
+test('utm_term fills the utm_adset cookie when utm_adset is absent', () => {
+    const harness = boot({ search: '?utm_source=facebook&utm_term=Lookalike%20US' })
+
+    assert.equal(harness.api.getParams().utm_adset, 'Lookalike US')
+    assert.equal(harness.writesFor('utm_adset').length, 1)
+    // No new cookie and no new field: utm_term is only a source for utm_adset.
+    assert.deepEqual(harness.writesFor('utm_term'), [])
+    assert.equal('utm_term' in harness.api.getParams(), false)
+})
+
+test('utm_adset wins over utm_term when the URL carries both', () => {
+    for (const search of [
+        '?utm_adset=adset-1&utm_term=term-1',
+        '?utm_term=term-1&utm_adset=adset-1',
+    ]) {
+        const harness = boot({ search })
+
+        assert.equal(harness.api.getParams().utm_adset, 'adset-1', search)
+        assert.equal(harness.writesFor('utm_adset').length, 1, search)
+    }
+})
+
+test('an empty utm_adset falls back to utm_term, an empty utm_term clears nothing', () => {
+    const fallback = boot({ search: '?utm_adset=&utm_term=term-1' })
+    assert.equal(fallback.api.getParams().utm_adset, 'term-1')
+
+    const kept = boot({
+        cookies: { utm_adset: 'adset-old' },
+        search: '?utm_term=%20%20',
+    })
+    assert.equal(kept.api.getParams().utm_adset, 'adset-old')
+    assert.deepEqual(kept.writesFor('utm_adset'), [])
+})
+
+test('a utm_term ad set reaches the utm-adset field on a direct signup', async () => {
+    const harness = boot({
+        cookies: { event_id: 'evt_fixed' },
+        member: null,
+        pathname: '/sign-up',
+        search: '?utm_source=facebook&utm_term=Lookalike%20US',
+    })
+    await harness.settle()
+
+    harness.authHandlers[0](loggedInMember)
+    await harness.settle()
+
+    const saved = harness.savedFields()
+    assert.equal(saved.length, 1)
+    assert.equal(saved[0]['utm-adset'], 'Lookalike US')
+    assert.equal('utm-term' in saved[0], false)
+})
+
 test('a URL with no parameters writes nothing but the event id', () => {
     const existing = {
         utm_source: 'facebook',
@@ -1797,6 +1849,287 @@ test('two transitions in one session fire once', async () => {
     harness.authHandlers[0](loggedInMember)
 
     assert.equal(harness.fbqCalls.length, 1)
+})
+
+/* ------------------- CompleteRegistration: company emails ------------------ */
+
+/**
+ * A transition payload shaped the way other repo consumers read it: the email
+ * on `auth.email`, wrapped in Memberstack's `{ data }` envelope.
+ *
+ * @param {string | undefined} email
+ */
+const memberWithEmail = (email) => ({
+    data: { id: 'mem_456', auth: email === undefined ? {} : { email } },
+})
+
+test('a company email fires CompleteRegistration on both signup pages', async () => {
+    for (const pathname of ['/quiz', '/sign-up']) {
+        for (const email of [
+            'jane@acme.com',
+            'JANE@Acme.CO.UK',
+            'ops@agency.io',
+            // Only the first label names a provider: this is a company domain.
+            'me@mygmail.com',
+        ]) {
+            const harness = boot({
+                cookies: { event_id: 'evt_fixed' },
+                member: null,
+                pathname,
+            })
+            await harness.settle()
+
+            harness.authHandlers[0](memberWithEmail(email))
+
+            assert.deepEqual(
+                plain(harness.fbqCalls),
+                [['track', 'CompleteRegistration', {}, { eventID: 'evt_fixed' }]],
+                `${pathname} ${email}`,
+            )
+            assert.equal(harness.session.get(FIRED_FLAG), 'true')
+        }
+    }
+})
+
+test('a top-level email is read when auth.email is absent', async () => {
+    const harness = boot({ member: null })
+    await harness.settle()
+
+    harness.authHandlers[0]({ data: { id: 'mem_456', email: 'jane@acme.com' } })
+
+    assert.equal(harness.fbqCalls.length, 1)
+})
+
+test('a personal email sends nothing to Meta on every signup page', async () => {
+    const personal = [
+        'jane@gmail.com',
+        'Jane@GMAIL.COM',
+        'jane@googlemail.com',
+        'jane@yahoo.com',
+        'jane@yahoo.co.uk',
+        'jane@ymail.com',
+        'jane@rocketmail.com',
+        'jane@hotmail.com',
+        'jane@hotmail.fr',
+        'jane@outlook.com',
+        'jane@outlook.de',
+        'jane@live.com',
+        'jane@live.co.uk',
+        'jane@msn.com',
+        'jane@icloud.com',
+        'jane@me.com',
+        'jane@mac.com',
+        'jane@aol.com',
+        'jane@proton.me',
+        'jane@protonmail.com',
+        'jane@protonmail.ch',
+        'jane@pm.me',
+        'jane@gmx.de',
+        'jane@gmx.net',
+        'jane@mail.com',
+        'jane@zoho.com',
+        'jane@yandex.ru',
+        'jane@hey.com',
+        'jane@fastmail.com',
+        'jane@fastmail.fm',
+        // The domain is what follows the LAST @.
+        '"a@acme.com"@gmail.com',
+    ]
+    for (const pathname of ['/quiz', '/sign-up']) {
+        for (const email of personal) {
+            const harness = boot({ member: null, pathname })
+            await harness.settle()
+
+            harness.authHandlers[0](memberWithEmail(email))
+
+            assert.deepEqual(harness.fbqCalls, [], `${pathname} ${email}`)
+        }
+    }
+})
+
+test('a missing or unreadable email sends nothing to Meta', async () => {
+    const payloads = [
+        memberWithEmail(undefined),
+        memberWithEmail(''),
+        memberWithEmail('   '),
+        memberWithEmail('not-an-email'),
+        memberWithEmail('jane@'),
+        memberWithEmail('jane@localhost'),
+        { data: { id: 'mem_456', auth: { email: 42 } } },
+        { id: 'mem_456' },
+    ]
+    for (const payload of payloads) {
+        const harness = boot({ member: null })
+        await harness.settle()
+
+        harness.authHandlers[0](payload)
+
+        assert.deepEqual(harness.fbqCalls, [], JSON.stringify(payload))
+    }
+})
+
+test('a payload without email falls back to the current member: company fires once', async () => {
+    const harness = boot({
+        cookies: { event_id: 'evt_fixed' },
+        member: null,
+        memberAfterSignup: { id: 'mem_456', auth: { email: 'jane@acme.com' } },
+    })
+    await harness.settle()
+
+    harness.authHandlers[0](memberWithEmail(undefined))
+    await harness.settle()
+
+    assert.deepEqual(plain(harness.fbqCalls), [
+        ['track', 'CompleteRegistration', {}, { eventID: 'evt_fixed' }],
+    ])
+    assert.equal(harness.session.get(FIRED_FLAG), 'true')
+})
+
+test('a payload without email falls back to the current member: personal skips', async () => {
+    const harness = boot({
+        member: null,
+        memberAfterSignup: { id: 'mem_456', auth: { email: 'jane@gmail.com' } },
+    })
+    await harness.settle()
+
+    harness.authHandlers[0](memberWithEmail(undefined))
+    await harness.settle()
+
+    assert.deepEqual(harness.fbqCalls, [])
+    assert.equal(harness.session.get(FIRED_FLAG), 'true')
+})
+
+test('a fallback read with no email, or one that rejects, skips and sets the flag', async () => {
+    const cases = [
+        { memberAfterSignup: { id: 'mem_456' } },
+        { memberAfterSignup: { id: 'mem_456', auth: { email: '' } } },
+        { laterMemberReadsThrow: true },
+    ]
+    for (const options of cases) {
+        const harness = boot(Object.assign({ member: null }, options))
+        await harness.settle()
+
+        harness.authHandlers[0](memberWithEmail(undefined))
+        await harness.settle()
+
+        assert.deepEqual(harness.fbqCalls, [], JSON.stringify(options))
+        assert.equal(harness.session.get(FIRED_FLAG), 'true', JSON.stringify(options))
+    }
+})
+
+test('a failed fallback read never holds up the cookies or the direct save', async () => {
+    const harness = boot({
+        cookies: clickCookies,
+        member: null,
+        pathname: '/sign-up',
+        laterMemberReadsThrow: true,
+    })
+    await harness.settle()
+
+    harness.authHandlers[0](memberWithEmail(undefined))
+    // Written synchronously in the handler, before any member read settles.
+    assert.equal(harness.api.getParams().signup_source, '/sign-up')
+    await harness.settle()
+
+    assert.deepEqual(harness.fbqCalls, [])
+    const saved = harness.savedFields()
+    assert.equal(saved.length, 1)
+    for (const [fieldId, value] of Object.entries(CLICK_FIELDS)) {
+        assert.equal(saved[0][fieldId], value, fieldId)
+    }
+})
+
+test('two auth events while the fallback read is in flight fire once', async () => {
+    const harness = boot({
+        cookies: { event_id: 'evt_fixed' },
+        member: null,
+        holdSecondMemberRead: true,
+        heldMember: { id: 'mem_456', auth: { email: 'jane@acme.com' } },
+    })
+    await harness.settle()
+
+    harness.authHandlers[0](memberWithEmail(undefined))
+    // A logged-out replay and a second authenticated payload, this one
+    // carrying the email, while the fallback read is still in flight: it must
+    // not start a second decision alongside the read.
+    harness.authHandlers[0](null)
+    harness.authHandlers[0](memberWithEmail('jane@acme.com'))
+    harness.authHandlers[0](null)
+    harness.authHandlers[0](memberWithEmail(undefined))
+    await harness.settle()
+    // The held read is still pending, so nothing has been decided yet.
+    assert.deepEqual(harness.fbqCalls, [])
+    assert.equal(harness.session.get(FIRED_FLAG), undefined)
+
+    harness.releaseMember()
+    await harness.settle()
+    harness.authHandlers[0](memberWithEmail(undefined))
+    await harness.settle()
+
+    assert.deepEqual(plain(harness.fbqCalls), [
+        ['track', 'CompleteRegistration', {}, { eventID: 'evt_fixed' }],
+    ])
+})
+
+test('a skipped personal signup still marks the session as decided', async () => {
+    const harness = boot({ member: null, pathname: '/sign-up' })
+    await harness.settle()
+
+    harness.authHandlers[0](memberWithEmail('jane@gmail.com'))
+    assert.equal(harness.session.get(FIRED_FLAG), 'true')
+
+    // A replay or a later transition in the same session must not report that
+    // member after all.
+    harness.authHandlers[0](null)
+    harness.authHandlers[0](memberWithEmail('jane@gmail.com'))
+    assert.deepEqual(harness.fbqCalls, [])
+
+    // A fresh page load in the same session is blocked by the same flag.
+    const next = boot({
+        member: null,
+        pathname: '/quiz',
+        session: { [FIRED_FLAG]: 'true' },
+    })
+    await next.settle()
+    next.authHandlers[0](memberWithEmail('jane@acme.com'))
+    assert.deepEqual(next.fbqCalls, [])
+})
+
+test('a personal signup still writes cookies, saves fields and keeps lead entry', async () => {
+    const harness = boot({
+        cookies: clickCookies,
+        member: null,
+        pathname: '/sign-up',
+    })
+    await harness.settle()
+
+    harness.authHandlers[0](memberWithEmail('jane@gmail.com'))
+    await harness.settle()
+
+    assert.deepEqual(harness.fbqCalls, [])
+    assert.equal(harness.api.getParams().signup_source, '/sign-up')
+    const saved = harness.savedFields()
+    assert.equal(saved.length, 1)
+    for (const [fieldId, value] of Object.entries(CLICK_FIELDS)) {
+        assert.equal(saved[0][fieldId], value, fieldId)
+    }
+    assert.equal(saved[0]['signup-source'], '/sign-up')
+})
+
+test('the personal-email skip warns only on staging', async () => {
+    const prod = boot({ member: null, hostname: 'thestarters.com' })
+    await prod.settle()
+    prod.authHandlers[0](memberWithEmail('jane@gmail.com'))
+    assert.deepEqual(prod.warnings, [])
+
+    const staging = boot({ member: null })
+    await staging.settle()
+    staging.authHandlers[0](memberWithEmail('jane@gmail.com'))
+    assert.ok(
+        staging.warnings.some((message) => /personal email domain/.test(message)),
+    )
+    // The warning names the rule, never the address.
+    assert.ok(staging.warnings.every((message) => !/jane/.test(message)))
 })
 
 test('an already logged-in visitor is not a registration', async () => {
