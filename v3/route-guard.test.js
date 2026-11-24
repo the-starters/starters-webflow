@@ -1431,6 +1431,34 @@ test('an allowed Brand visit persists completion in authenticated member JSON', 
   }
 })
 
+test('a Brand visit waits for a queued member JSON writer and keeps its key', async () => {
+  const result = loadGuard({
+    pathname: '/test',
+    member: BRAND_PAID,
+    memberJson: { preserved: true },
+  })
+  await flush()
+  const memberstack = result.window.$memberstackDom
+  // A pop-up history write already holds the shared queue: it has read the
+  // member JSON and writes `popups` a few ticks later.
+  result.window.__tsMemberJsonWrite = (async () => {
+    const json = (await memberstack.getMemberJSON()).data
+    for (let tick = 0; tick < 3; tick += 1) await flush()
+    await memberstack.updateMemberJSON({
+      json: { ...json, popups: { 'bfcm-2026': { shownAt: 'x' } } },
+    })
+  })()
+
+  assert.equal(
+    await result.api.recordBrandAllStartersVisit(memberstack, BRAND_PAID),
+    true,
+  )
+  const saved = (await memberstack.getMemberJSON()).data
+  assert.equal(saved.preserved, true)
+  assert.equal(saved.popups['bfcm-2026'].shownAt, 'x')
+  assert.match(saved.brandActionItems.allStartersVisitedAt, /^\d{4}-\d{2}-\d{2}T/)
+})
+
 test('a denied Talent visit does not complete the Brand browse action', async () => {
   const result = loadGuard({ pathname: '/all-starters', member: TALENT })
   await flush()
