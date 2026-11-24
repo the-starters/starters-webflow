@@ -165,11 +165,16 @@
  * the same registration deduplicates against it. It fires only when the new
  * member's email is on a company domain, whether or not any ad parameter was
  * captured. The email is read off the transition payload (`auth.email`, then
- * `email`); the domain after the last `@` is matched case-insensitively against
+ * `email`). When the payload carries no readable email, one
+ * `getCurrentMember()` read is the fallback, classified the same way; it is not
+ * awaited, so the signup cookies, the field save and lead-entry never wait on
+ * it, and a second auth event while it is in flight cannot start a second
+ * decision. The domain after the last `@` is matched case-insensitively against
  * the personal-provider list (`PERSONAL_EMAIL_DOMAINS` exactly, plus
  * `PERSONAL_EMAIL_PROVIDERS` on any country or TLD version, such as
- * `yahoo.co.uk`), and everything else is a company email. A personal email, or
- * one that cannot be read at the transition, sends nothing to Meta. Nothing
+ * `yahoo.co.uk`), and everything else is a company email. A personal email from
+ * either source, or no readable email from both (including a rejected read),
+ * sends nothing to Meta. Nothing
  * else changes for those signups: the signup itself, the signup cookies, the
  * field save and lead-entry registration all run exactly as for a company
  * email. An unreadable starting member state is not treated as logged out: the
@@ -1805,50 +1810,116 @@
         return 'company'
     }
 
+    // True while the transition payload carried no readable email and the
+    // getCurrentMember fallback has not answered yet. A second authenticated
+    // auth event in that window must not start a second decision, or a company
+    // email could reach Meta twice.
+    var registrationDecisionPending = false
+
+    /**
+     * Acts on one classified email: fires for a company email, otherwise
+     * skips. Either way the session flag ends up set (unless the pixel is
+     * missing), because this session's registration has now been decided.
+     *
+     * @param {'company' | 'personal' | 'unknown'} kind
+     * @returns {void}
+     */
+    var decideCompleteRegistration = function (kind) {
+        if (flagIsSet(FIRED_FLAG)) return
+
+        if (kind !== 'company') {
+            setFlag(FIRED_FLAG)
+            warn(
+                'skipped ' +
+                    COMPLETE_REGISTRATION_EVENT +
+                    (kind === 'personal'
+                        ? ': personal email domain'
+                        : ': member email unreadable at signup'),
+            )
+            return
+        }
+
+        if (typeof window.fbq !== 'function') {
+            warn(
+                'Meta Pixel not found, skipped ' +
+                    COMPLETE_REGISTRATION_EVENT +
+                    '. Install the pixel base snippet in site-head custom code.',
+            )
+            return
+        }
+
+        var eventId = ensureEventId()
+        var options = {}
+        if (eventId) options.eventID = eventId
+
+        window.fbq('track', COMPLETE_REGISTRATION_EVENT, {}, options)
+        setFlag(FIRED_FLAG)
+    }
+
+    /**
+     * The fallback for a transition payload with no readable email: one
+     * `getCurrentMember()` read, classified the same way. Deliberately not
+     * awaited by the caller, so the signup cookies, the direct save and
+     * lead-entry never wait on it; a rejected or empty read decides
+     * "unreadable" and skips.
+     *
+     * @param {object} memberstack
+     * @returns {Promise<void>}
+     */
+    var decideFromCurrentMember = async function (memberstack) {
+        registrationDecisionPending = true
+        var kind = 'unknown'
+        try {
+            if (memberstack && typeof memberstack.getCurrentMember === 'function') {
+                var current = await memberstack.getCurrentMember()
+                kind = emailKind(memberEmail(getMemberData(current)))
+            }
+        } catch (error) {
+            kind = 'unknown'
+        }
+        try {
+            decideCompleteRegistration(kind)
+        } catch (error) {
+            warn('failed to fire ' + COMPLETE_REGISTRATION_EVENT)
+        } finally {
+            registrationDecisionPending = false
+        }
+    }
+
     /**
      * Sends CompleteRegistration to Meta, once per browser session, and only
      * for a member whose email is on a company domain.
      *
+     * The email is read off the transition payload first. When the payload
+     * carries none, one `getCurrentMember()` read is the fallback; only when
+     * that also yields no readable email is the signup treated as unreadable.
      * A personal or unreadable email sends nothing, but still sets the session
      * flag: this session's registration has been decided, and no later page
      * load or auth replay in it may report that member to Meta after all.
      *
+     * Returns synchronously in every case, so the caller's next steps run in
+     * the same order they always have.
+     *
      * @param {object | null | undefined} member Unwrapped member data from the
      *     signup transition.
+     * @param {object | null} [memberstack] The Memberstack DOM API, for the
+     *     fallback read.
      * @returns {void}
      */
-    var fireCompleteRegistration = function (member) {
+    var fireCompleteRegistration = function (member, memberstack) {
         try {
             if (flagIsSet(FIRED_FLAG)) return
+            if (registrationDecisionPending) return
 
             var kind = emailKind(memberEmail(member))
-            if (kind !== 'company') {
-                setFlag(FIRED_FLAG)
-                warn(
-                    'skipped ' +
-                        COMPLETE_REGISTRATION_EVENT +
-                        (kind === 'personal'
-                            ? ': personal email domain'
-                            : ': member email unreadable at signup'),
-                )
+            if (kind === 'unknown' && memberstack) {
+                decideFromCurrentMember(memberstack).catch(function () {
+                    registrationDecisionPending = false
+                })
                 return
             }
 
-            if (typeof window.fbq !== 'function') {
-                warn(
-                    'Meta Pixel not found, skipped ' +
-                        COMPLETE_REGISTRATION_EVENT +
-                        '. Install the pixel base snippet in site-head custom code.',
-                )
-                return
-            }
-
-            var eventId = ensureEventId()
-            var options = {}
-            if (eventId) options.eventID = eventId
-
-            window.fbq('track', COMPLETE_REGISTRATION_EVENT, {}, options)
-            setFlag(FIRED_FLAG)
+            decideCompleteRegistration(kind)
         } catch (error) {
             warn('failed to fire ' + COMPLETE_REGISTRATION_EVENT)
         }
@@ -2288,7 +2359,7 @@
             try {
                 var loggedIn = isLoggedInMember(getMemberData(payload))
                 if (loggedIn && seenLoggedOut === true) {
-                    fireCompleteRegistration(getMemberData(payload))
+                    fireCompleteRegistration(getMemberData(payload), memberstack)
                     // Outside the directSave branch on purpose, and before it.
                     // Every armed page owes these two cookies, including the ones
                     // this script does not save fields for: /quiz is directSave

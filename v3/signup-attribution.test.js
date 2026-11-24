@@ -1968,6 +1968,109 @@ test('a missing or unreadable email sends nothing to Meta', async () => {
     }
 })
 
+test('a payload without email falls back to the current member: company fires once', async () => {
+    const harness = boot({
+        cookies: { event_id: 'evt_fixed' },
+        member: null,
+        memberAfterSignup: { id: 'mem_456', auth: { email: 'jane@acme.com' } },
+    })
+    await harness.settle()
+
+    harness.authHandlers[0](memberWithEmail(undefined))
+    await harness.settle()
+
+    assert.deepEqual(plain(harness.fbqCalls), [
+        ['track', 'CompleteRegistration', {}, { eventID: 'evt_fixed' }],
+    ])
+    assert.equal(harness.session.get(FIRED_FLAG), 'true')
+})
+
+test('a payload without email falls back to the current member: personal skips', async () => {
+    const harness = boot({
+        member: null,
+        memberAfterSignup: { id: 'mem_456', auth: { email: 'jane@gmail.com' } },
+    })
+    await harness.settle()
+
+    harness.authHandlers[0](memberWithEmail(undefined))
+    await harness.settle()
+
+    assert.deepEqual(harness.fbqCalls, [])
+    assert.equal(harness.session.get(FIRED_FLAG), 'true')
+})
+
+test('a fallback read with no email, or one that rejects, skips and sets the flag', async () => {
+    const cases = [
+        { memberAfterSignup: { id: 'mem_456' } },
+        { memberAfterSignup: { id: 'mem_456', auth: { email: '' } } },
+        { laterMemberReadsThrow: true },
+    ]
+    for (const options of cases) {
+        const harness = boot(Object.assign({ member: null }, options))
+        await harness.settle()
+
+        harness.authHandlers[0](memberWithEmail(undefined))
+        await harness.settle()
+
+        assert.deepEqual(harness.fbqCalls, [], JSON.stringify(options))
+        assert.equal(harness.session.get(FIRED_FLAG), 'true', JSON.stringify(options))
+    }
+})
+
+test('a failed fallback read never holds up the cookies or the direct save', async () => {
+    const harness = boot({
+        cookies: clickCookies,
+        member: null,
+        pathname: '/sign-up',
+        laterMemberReadsThrow: true,
+    })
+    await harness.settle()
+
+    harness.authHandlers[0](memberWithEmail(undefined))
+    // Written synchronously in the handler, before any member read settles.
+    assert.equal(harness.api.getParams().signup_source, '/sign-up')
+    await harness.settle()
+
+    assert.deepEqual(harness.fbqCalls, [])
+    const saved = harness.savedFields()
+    assert.equal(saved.length, 1)
+    for (const [fieldId, value] of Object.entries(CLICK_FIELDS)) {
+        assert.equal(saved[0][fieldId], value, fieldId)
+    }
+})
+
+test('two auth events while the fallback read is in flight fire once', async () => {
+    const harness = boot({
+        cookies: { event_id: 'evt_fixed' },
+        member: null,
+        holdSecondMemberRead: true,
+        heldMember: { id: 'mem_456', auth: { email: 'jane@acme.com' } },
+    })
+    await harness.settle()
+
+    harness.authHandlers[0](memberWithEmail(undefined))
+    // A logged-out replay and a second authenticated payload, this one
+    // carrying the email, while the fallback read is still in flight: it must
+    // not start a second decision alongside the read.
+    harness.authHandlers[0](null)
+    harness.authHandlers[0](memberWithEmail('jane@acme.com'))
+    harness.authHandlers[0](null)
+    harness.authHandlers[0](memberWithEmail(undefined))
+    await harness.settle()
+    // The held read is still pending, so nothing has been decided yet.
+    assert.deepEqual(harness.fbqCalls, [])
+    assert.equal(harness.session.get(FIRED_FLAG), undefined)
+
+    harness.releaseMember()
+    await harness.settle()
+    harness.authHandlers[0](memberWithEmail(undefined))
+    await harness.settle()
+
+    assert.deepEqual(plain(harness.fbqCalls), [
+        ['track', 'CompleteRegistration', {}, { eventID: 'evt_fixed' }],
+    ])
+})
+
 test('a skipped personal signup still marks the session as decided', async () => {
     const harness = boot({ member: null, pathname: '/sign-up' })
     await harness.settle()

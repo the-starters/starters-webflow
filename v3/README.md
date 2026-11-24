@@ -1083,8 +1083,14 @@ skipped and nothing is marked as fired, so a pixel that loads later in the
 session can still report the next transition.
 
 The email is read off the auth transition payload (`auth.email`, then `email`).
-The domain after the last `@` is compared case-insensitively against this list of
-personal providers; every other domain is a company email:
+When the payload carries no readable email, the script makes one
+`memberstack.getCurrentMember()` read and classifies that email instead. The read
+is not awaited: the signup cookies, the direct field save and lead-entry run in
+their usual order without waiting on it, and a slow or failed read cannot hold
+them up. While it is in flight, a further auth event cannot start a second
+decision, so a company email still fires at most once. The domain after the last
+`@` is compared case-insensitively against this list of personal providers; every
+other domain is a company email:
 
 - Exact domains: `gmail.com`, `googlemail.com`, `ymail.com`, `rocketmail.com`,
   `msn.com`, `icloud.com`, `me.com`, `mac.com`, `aol.com`, `proton.me`,
@@ -1093,8 +1099,8 @@ personal providers; every other domain is a company email:
 - Any country or TLD version of: `yahoo.*` (for example `yahoo.co.uk`),
   `hotmail.*`, `outlook.*`, `live.*`, `gmx.*`, `zoho.*`, `yandex.*`.
 
-A personal email, or an email that cannot be read at the transition, sends
-nothing to Meta. Signup stays open to everyone: those signups still complete,
+A personal email from either source, or no readable email from both (including
+a `getCurrentMember()` read that rejects), sends nothing to Meta. Signup stays open to everyone: those signups still complete,
 still write the signup cookies, still get the direct field save, and still run
 lead-entry registration exactly as a company signup does. The same rule applies
 on every armed page, `/quiz` included.
