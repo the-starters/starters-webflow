@@ -684,6 +684,58 @@ test('copies every ad parameter in the URL into a 72 hour cookie', () => {
     }
 })
 
+test('utm_term fills the utm_adset cookie when utm_adset is absent', () => {
+    const harness = boot({ search: '?utm_source=facebook&utm_term=Lookalike%20US' })
+
+    assert.equal(harness.api.getParams().utm_adset, 'Lookalike US')
+    assert.equal(harness.writesFor('utm_adset').length, 1)
+    // No new cookie and no new field: utm_term is only a source for utm_adset.
+    assert.deepEqual(harness.writesFor('utm_term'), [])
+    assert.equal('utm_term' in harness.api.getParams(), false)
+})
+
+test('utm_adset wins over utm_term when the URL carries both', () => {
+    for (const search of [
+        '?utm_adset=adset-1&utm_term=term-1',
+        '?utm_term=term-1&utm_adset=adset-1',
+    ]) {
+        const harness = boot({ search })
+
+        assert.equal(harness.api.getParams().utm_adset, 'adset-1', search)
+        assert.equal(harness.writesFor('utm_adset').length, 1, search)
+    }
+})
+
+test('an empty utm_adset falls back to utm_term, an empty utm_term clears nothing', () => {
+    const fallback = boot({ search: '?utm_adset=&utm_term=term-1' })
+    assert.equal(fallback.api.getParams().utm_adset, 'term-1')
+
+    const kept = boot({
+        cookies: { utm_adset: 'adset-old' },
+        search: '?utm_term=%20%20',
+    })
+    assert.equal(kept.api.getParams().utm_adset, 'adset-old')
+    assert.deepEqual(kept.writesFor('utm_adset'), [])
+})
+
+test('a utm_term ad set reaches the utm-adset field on a direct signup', async () => {
+    const harness = boot({
+        cookies: { event_id: 'evt_fixed' },
+        member: null,
+        pathname: '/sign-up',
+        search: '?utm_source=facebook&utm_term=Lookalike%20US',
+    })
+    await harness.settle()
+
+    harness.authHandlers[0](loggedInMember)
+    await harness.settle()
+
+    const saved = harness.savedFields()
+    assert.equal(saved.length, 1)
+    assert.equal(saved[0]['utm-adset'], 'Lookalike US')
+    assert.equal('utm-term' in saved[0], false)
+})
+
 test('a URL with no parameters writes nothing but the event id', () => {
     const existing = {
         utm_source: 'facebook',

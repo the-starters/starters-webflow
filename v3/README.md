@@ -754,7 +754,7 @@ TTL on `path=/`:
 | --- | --- |
 | `utm_source` | `?utm_source` |
 | `utm_campaign` | `?utm_campaign` |
-| `utm_adset` | `?utm_adset` |
+| `utm_adset` | `?utm_adset`, else `?utm_term` (the Meta ads pass the ad set name as `utm_term={{adset.name}}`). `utm_adset` wins when the URL carries both |
 | `utm_content` | `?utm_content` |
 | `fbclid` | `?fbclid` |
 | `fbc` | Meta's own `_fbc` cookie, copied when ours is unset |
