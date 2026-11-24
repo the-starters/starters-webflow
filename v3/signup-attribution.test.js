@@ -814,6 +814,139 @@ test('an existing fbc or fbp is never replaced by the pixel value', () => {
     assert.equal(harness.api.getParams().fbp, 'fb.1.1700000000.987654321')
 })
 
+/* ------------------------------ value rules ------------------------------ */
+
+// A modern fbclid: long, opaque, and carrying both `-` and `_`.
+const REAL_FBCLID =
+    'IwZXh0bgNhZW0CMTEAAR2-Qx7b4nKZp_Ly3Ub0mQwL9c7Vh2aEzC4Xr8sT1fJdNkYgPoW' +
+    '_aem_AbCdEfGh-IjKlMnOpQrStUvWxYz0123456789'
+
+test('an over-long UTM value is cut to 300 characters', () => {
+    const long = 'a'.repeat(301) + 'TAIL'
+    const harness = boot({ search: '?utm_campaign=' + long })
+
+    assert.equal(harness.api.getParams().utm_campaign, 'a'.repeat(300))
+})
+
+test('a UTM value containing < or > is not stored and keeps the earlier click', () => {
+    for (const value of ['<script>alert(1)</script>', 'a>b', 'x<y']) {
+        const harness = boot({
+            cookies: { utm_content: 'video-a' },
+            search: '?utm_content=' + encodeURIComponent(value),
+        })
+
+        assert.equal(harness.api.getParams().utm_content, 'video-a', value)
+        assert.deepEqual(harness.writesFor('utm_content'), [], value)
+    }
+})
+
+test('a formula-style UTM value loses its leading character', () => {
+    const cases = [
+        ['=HYPERLINK("x")', 'HYPERLINK("x")'],
+        ['+1+1', '1+1'],
+        ['-2+3', '2+3'],
+        ['@SUM(A1)', 'SUM(A1)'],
+        ['\uFF20SUM(A1)', 'SUM(A1)'],
+        ['= =cmd', 'cmd'],
+    ]
+    for (const [raw, stored] of cases) {
+        const harness = boot({ search: '?utm_source=' + encodeURIComponent(raw) })
+        assert.equal(harness.api.getParams().utm_source, stored, raw)
+    }
+
+    // Nothing left after the strip is the same as no value.
+    const empty = boot({ cookies: { utm_source: 'facebook' }, search: '?utm_source=%3D%3D' })
+    assert.equal(empty.api.getParams().utm_source, 'facebook')
+    assert.deepEqual(empty.writesFor('utm_source'), [])
+})
+
+test('cutting at 300 never leaves half an emoji behind', () => {
+    const harness = boot({
+        search: '?utm_campaign=' + encodeURIComponent('a'.repeat(299) + '\u{1F600}'),
+    })
+
+    assert.equal(harness.api.getParams().utm_campaign, 'a'.repeat(299))
+})
+
+test('normal UTM values and a realistic fbclid are stored unchanged', () => {
+    const harness = boot({
+        search:
+            '?utm_source=facebook&utm_campaign=Spring%20Launch%20-%202026' +
+            '&utm_adset=US%2025-34%20%7C%20Lookalike&utm_content=video_a-1' +
+            '&fbclid=' +
+            REAL_FBCLID,
+    })
+
+    const params = harness.api.getParams()
+    assert.equal(params.utm_source, 'facebook')
+    assert.equal(params.utm_campaign, 'Spring Launch - 2026')
+    assert.equal(params.utm_adset, 'US 25-34 | Lookalike')
+    assert.equal(params.utm_content, 'video_a-1')
+    assert.equal(params.fbclid, REAL_FBCLID)
+})
+
+test('an fbclid is never edited, only kept or dropped', () => {
+    const cases = [
+        // Leading `-` and `_` are legitimate token characters, not formulas.
+        ['-IwAR_123', '-IwAR_123'],
+        ['a'.repeat(500), 'a'.repeat(500)],
+        ['a'.repeat(501), 'old'],
+        ['IwAR<123>', 'old'],
+        ['IwAR 123', 'old'],
+        ['=IwAR123', 'old'],
+    ]
+    for (const [raw, stored] of cases) {
+        const harness = boot({
+            cookies: { fbclid: 'old' },
+            search: '?fbclid=' + encodeURIComponent(raw),
+        })
+        assert.equal(harness.api.getParams().fbclid, stored, raw)
+    }
+})
+
+test('an oversized or malformed _fbc or _fbp is never copied', () => {
+    const harness = boot({
+        cookies: {
+            _fbc: 'fb.1.1700000000.' + 'a'.repeat(500),
+            _fbp: 'fb.1.1700000000.<b>',
+        },
+    })
+
+    assert.equal(harness.api.getParams().fbc, null)
+    assert.equal(harness.api.getParams().fbp, null)
+    assert.deepEqual(harness.writesFor('fbc'), [])
+    assert.deepEqual(harness.writesFor('fbp'), [])
+})
+
+test('only clean values reach the member fields on a direct signup', async () => {
+    const harness = boot({
+        cookies: { event_id: 'evt_fixed' },
+        member: null,
+        pathname: '/sign-up',
+        search:
+            '?utm_source=%3Dcmd&utm_campaign=' +
+            'b'.repeat(400) +
+            '&utm_content=%3Cimg%3E&fbclid=' +
+            REAL_FBCLID,
+    })
+    await harness.settle()
+
+    harness.authHandlers[0](loggedInMember)
+    await harness.settle()
+
+    const saved = harness.savedFields()
+    assert.equal(saved.length, 1)
+    assert.equal(saved[0]['utm-source'], 'cmd')
+    assert.equal(saved[0]['utm-campaign'], 'b'.repeat(300))
+    assert.equal('utm-content' in saved[0], false)
+    assert.equal(saved[0].fbclid, REAL_FBCLID)
+})
+
+test('the header no longer claims a server-side CompleteRegistration sender', () => {
+    assert.doesNotMatch(header, /server-side copy of\s+\*?\s*the same registration deduplicates/)
+    assert.match(header, /No server-side copy of[\s*]+the event is sent today/)
+})
+
 test('ensureEventId generates an evt_ id when absent', () => {
     const harness = boot({ uuid: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' })
 

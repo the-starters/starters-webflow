@@ -34,6 +34,16 @@
  * an earlier one. The `_fbc`/`_fbp` copy is re-checked on every page load
  * because the pixel writes those cookies itself and can load after this script.
  *
+ * Value rules, applied once at capture so every later reader (the field save
+ * here, `quiz-results.js`, lead-entry) sees only clean values. The UTM values
+ * are free text: a leading `=`, `+`, `-` or `@` (ASCII or full-width) is
+ * stripped so a spreadsheet export cannot run it as a formula, a value with `<`
+ * or `>` is not stored at all, and the rest is cut to 300 characters, the same
+ * rule lead-entry applies. `fbclid`, `fbc` and `fbp` are opaque Meta tokens and
+ * are never edited: one longer than 500 characters or carrying anything but
+ * letters, digits, `.`, `_` and `-` is not stored. A value that fails is treated
+ * like an absent one, so it never clears an earlier click.
+ *
  * The three signup cookies are the ones no URL can supply. Source and referrer
  * are derived at the Memberstack auth transition, not during capture, and
  * trigger is derived from the CTA that opened signup. None of them are in
@@ -161,8 +171,10 @@
  * calls `fbq` when it is already a function, so an uninstalled or blocked pixel
  * is a silent no-op. On a signup page the script records whether the visitor
  * arrived logged out and fires `CompleteRegistration` on the transition. The
- * event carries the `event_id` cookie as its `eventID` so a server-side copy of
- * the same registration deduplicates against it. It fires only when the new
+ * event carries the `event_id` cookie as its `eventID`. No server-side copy of
+ * the event is sent today (a search of the Xano backend on 2026-11-24 found no
+ * sender); the id is kept so one could deduplicate against it if it is ever
+ * added. It fires only when the new
  * member's email is on a company domain, whether or not any ad parameter was
  * captured. The email is read off the transition payload (`auth.email`, then
  * `email`). When the payload carries no readable email, one
@@ -258,6 +270,23 @@
         ['fbc', '_fbc'],
         ['fbp', '_fbp'],
     ]
+
+    // Longest URL value stored, in characters. The same 300 that
+    // leadEntryProperties already applies to these values on the Xano path, so a
+    // value that reaches the member record also fits lead-entry unchanged.
+    var URL_VALUE_MAX_LENGTH = 300
+
+    // Free-text values that open with one of these could run as a formula when
+    // the member record is exported to a spreadsheet. `@` is listed in both its
+    // ASCII and full-width forms.
+    var FORMULA_PREFIX = /^[\s=+\-@\uFF20]+/
+
+    // fbclid, fbc and fbp are opaque Meta tokens, so they are never trimmed or
+    // truncated: a shortened token no longer matches the click. Real values are
+    // well under 500 characters and use only letters, digits, `.`, `_` and `-`;
+    // anything longer or carrying another character is not stored at all.
+    var META_TOKEN_MAX_LENGTH = 500
+    var META_TOKEN_PATTERN = /^[A-Za-z0-9._-]+$/
 
     var EVENT_ID_COOKIE = 'event_id'
     var EVENT_ID_PREFIX = 'evt_'
@@ -582,6 +611,41 @@
     /* -------------------------------- capture ------------------------------- */
 
     /**
+     * A Meta token as stored, or null when it is too long or carries a character
+     * no real token has. Never shortened: a truncated token is a wrong token.
+     *
+     * @param {string | null} raw
+     * @returns {string | null}
+     */
+    var safeMetaToken = function (raw) {
+        var value = raw == null ? '' : String(raw).trim()
+        if (!value || value.length > META_TOKEN_MAX_LENGTH) return null
+        return META_TOKEN_PATTERN.test(value) ? value : null
+    }
+
+    /**
+     * The value a URL parameter may store in the named cookie, or null to store
+     * nothing (and so keep whatever an earlier click stored).
+     *
+     * `fbclid` follows the Meta token rule. Every other value is free text: a
+     * leading formula character is stripped, then the same rule lead-entry uses
+     * applies (any `<` or `>` drops the value, otherwise it is cut to 300
+     * characters).
+     *
+     * @param {string} name Cookie the value is headed for.
+     * @param {string} raw
+     * @returns {string | null}
+     */
+    var safeUrlValue = function (name, raw) {
+        if (name === 'fbclid') return safeMetaToken(raw)
+        var text = raw == null ? '' : String(raw).replace(FORMULA_PREFIX, '')
+        var value = safeLeadEntryProperty(text, URL_VALUE_MAX_LENGTH)
+        // Cutting at 300 can split an emoji in half, and a lone half cannot be
+        // percent-encoded into a cookie, so drop it.
+        return value ? value.replace(/[\uD800-\uDBFF]$/, '') || null : null
+    }
+
+    /**
      * Copies the ad parameters this URL carries into their cookies.
      *
      * Absence never clears: only a parameter that is present with a non-empty
@@ -607,7 +671,7 @@
 
         URL_PARAMS.forEach(function (name) {
             try {
-                var value = paramValue(name)
+                var value = safeUrlValue(name, paramValue(name))
                 if (!value) return
                 writeCookie(name, value)
             } catch (error) {
@@ -618,7 +682,7 @@
         URL_PARAM_FALLBACKS.forEach(function (pair) {
             try {
                 if (paramValue(pair[0])) return
-                var value = paramValue(pair[1])
+                var value = safeUrlValue(pair[0], paramValue(pair[1]))
                 if (!value) return
                 writeCookie(pair[0], value)
             } catch (error) {
@@ -631,7 +695,9 @@
      * Copies Meta's own `_fbc` / `_fbp` into our cookies when ours are unset.
      *
      * Runs on every page load, so a pixel that loads after this script still
-     * gets picked up on the next navigation.
+     * gets picked up on the next navigation. The copy follows the same Meta
+     * token rule as `?fbclid`, so an oversized or malformed `_fbc` / `_fbp` is
+     * never copied.
      *
      * @returns {void}
      */
@@ -641,7 +707,7 @@
                 var ours = pair[0]
                 var theirs = pair[1]
                 if (readCookie(ours)) return
-                var value = readCookie(theirs)
+                var value = safeMetaToken(readCookie(theirs))
                 if (!value) return
                 writeCookie(ours, value)
             } catch (error) {

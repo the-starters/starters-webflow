@@ -768,8 +768,25 @@ A parameter only overwrites its cookie when the URL actually carries a non-empty
 value. The freshest click therefore wins, and browsing the rest of the site never
 clears an earlier click. The `_fbc` and `_fbp` copy is re-checked on every page
 load, since the pixel writes those cookies itself and can finish loading after
-this script runs. The event id is reused for the life of the cookie so the
-browser event and any server-side copy of the same registration share one id.
+this script runs. The event id is reused for the life of the cookie and sent as
+the event's `eventID`. No server-side copy of `CompleteRegistration` is sent
+today (a search of the Xano backend on 2026-11-24 found no sender); the id keeps
+deduplication possible if one is added later.
+
+Values are checked once, when they are captured, so every later reader (the
+field save, `quiz-results.js`, lead-entry) only ever sees clean values:
+
+- **UTM values** are free text. A leading `=`, `+`, `-` or `@` (ASCII or
+  full-width) is stripped so a spreadsheet export cannot run the value as a
+  formula. A value containing `<` or `>` is not stored at all. Anything else is
+  cut to 300 characters, the same limit lead-entry uses.
+- **`fbclid`, `fbc` and `fbp`** are opaque Meta tokens and are never edited. A
+  token longer than 500 characters, or carrying anything other than letters,
+  digits, `.`, `_` and `-`, is not stored. This also covers the copy from
+  Meta's `_fbc` and `_fbp` cookies.
+
+A value that fails a check is treated like an absent one: nothing is written and
+an earlier click is kept.
 
 `signup_source`, `signup_referrer`, and `signup_trigger` are the three cookies no
 URL can supply, and they answer different questions. The source is which page the
