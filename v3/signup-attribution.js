@@ -16,9 +16,11 @@
  *
  *   utm_source    from `?utm_source`
  *   utm_campaign  from `?utm_campaign`
- *   utm_adset     from `?utm_adset`, else from `?utm_term` (the Meta ads pass
- *                 the ad set name as `utm_term={{adset.name}}`); `utm_adset`
- *                 wins when the URL carries both
+ *   utm_adset     from `?utm_adset`, else from `?utm_term` when the same URL
+ *                 also carries a non-empty `?fbclid` (the Meta ads pass the ad
+ *                 set name as `utm_term={{adset.name}}`; other links use
+ *                 `utm_term` for keywords and must not touch the ad set);
+ *                 `utm_adset` wins when the URL carries both
  *   utm_content   from `?utm_content`
  *   fbclid        from `?fbclid`
  *   fbc           copied from Meta's own `_fbc` cookie when ours is unset
@@ -259,11 +261,15 @@
         'fbclid',
     ]
 
-    // URL parameter that fills a cookie only when that cookie's own parameter is
-    // absent or empty. The Meta ads pass the ad set name as
-    // `?utm_term={{adset.name}}`, so `utm_term` feeds the existing `utm_adset`
-    // cookie and `utm-adset` field; an explicit `?utm_adset` always wins.
-    var URL_PARAM_FALLBACKS = [['utm_adset', 'utm_term']]
+    // [cookie, fallback parameter, parameter the URL must also carry]. The
+    // fallback fills the cookie only when the cookie's own parameter is absent
+    // or empty AND the required parameter is non-empty. The Meta ads pass the ad
+    // set name as `?utm_term={{adset.name}}`, so `utm_term` feeds the existing
+    // `utm_adset` cookie and `utm-adset` field, but only on a Meta click (one
+    // carrying `fbclid`): Google keyword links, newsletters and affiliates use
+    // `utm_term` for other things and must not overwrite the saved ad set. An
+    // explicit `?utm_adset` always wins, with or without `fbclid`.
+    var URL_PARAM_FALLBACKS = [['utm_adset', 'utm_term', 'fbclid']]
 
     // Our cookie name paired with the Meta-written cookie it falls back to.
     var META_COOKIE_FALLBACKS = [
@@ -682,6 +688,7 @@
         URL_PARAM_FALLBACKS.forEach(function (pair) {
             try {
                 if (paramValue(pair[0])) return
+                if (pair[2] && !paramValue(pair[2])) return
                 var value = safeUrlValue(pair[0], paramValue(pair[1]))
                 if (!value) return
                 writeCookie(pair[0], value)

@@ -684,8 +684,10 @@ test('copies every ad parameter in the URL into a 72 hour cookie', () => {
     }
 })
 
-test('utm_term fills the utm_adset cookie when utm_adset is absent', () => {
-    const harness = boot({ search: '?utm_source=facebook&utm_term=Lookalike%20US' })
+test('utm_term with fbclid fills the utm_adset cookie when utm_adset is absent', () => {
+    const harness = boot({
+        search: '?utm_source=facebook&utm_term=Lookalike%20US&fbclid=IwAR123',
+    })
 
     assert.equal(harness.api.getParams().utm_adset, 'Lookalike US')
     assert.equal(harness.writesFor('utm_adset').length, 1)
@@ -698,6 +700,8 @@ test('utm_adset wins over utm_term when the URL carries both', () => {
     for (const search of [
         '?utm_adset=adset-1&utm_term=term-1',
         '?utm_term=term-1&utm_adset=adset-1',
+        '?utm_adset=adset-1&utm_term=term-1&fbclid=IwAR123',
+        '?fbclid=IwAR123&utm_term=term-1&utm_adset=adset-1',
     ]) {
         const harness = boot({ search })
 
@@ -707,15 +711,42 @@ test('utm_adset wins over utm_term when the URL carries both', () => {
 })
 
 test('an empty utm_adset falls back to utm_term, an empty utm_term clears nothing', () => {
-    const fallback = boot({ search: '?utm_adset=&utm_term=term-1' })
+    const fallback = boot({ search: '?utm_adset=&utm_term=term-1&fbclid=IwAR123' })
     assert.equal(fallback.api.getParams().utm_adset, 'term-1')
 
     const kept = boot({
         cookies: { utm_adset: 'adset-old' },
-        search: '?utm_term=%20%20',
+        search: '?utm_term=%20%20&fbclid=IwAR123',
     })
     assert.equal(kept.api.getParams().utm_adset, 'adset-old')
     assert.deepEqual(kept.writesFor('utm_adset'), [])
+})
+
+test('utm_term without fbclid leaves the ad set alone', () => {
+    for (const search of [
+        '?utm_source=google&utm_term=running%20shoes',
+        '?utm_source=newsletter&utm_term=issue-12&fbclid=',
+        '?utm_term=issue-12&fbclid=%20%20',
+    ]) {
+        const kept = boot({ cookies: { utm_adset: 'adset-old' }, search })
+        assert.equal(kept.api.getParams().utm_adset, 'adset-old', search)
+        assert.deepEqual(kept.writesFor('utm_adset'), [], search)
+
+        const fresh = boot({ search })
+        assert.equal(fresh.api.getParams().utm_adset, null, search)
+        assert.deepEqual(fresh.writesFor('utm_adset'), [], search)
+        assert.deepEqual(fresh.writesFor('utm_term'), [], search)
+    }
+})
+
+test('utm_adset still wins without fbclid', () => {
+    const harness = boot({
+        cookies: { utm_adset: 'adset-old' },
+        search: '?utm_adset=adset-1&utm_term=term-1',
+    })
+
+    assert.equal(harness.api.getParams().utm_adset, 'adset-1')
+    assert.equal(harness.writesFor('utm_adset').length, 1)
 })
 
 test('a utm_term ad set reaches the utm-adset field on a direct signup', async () => {
@@ -723,7 +754,7 @@ test('a utm_term ad set reaches the utm-adset field on a direct signup', async (
         cookies: { event_id: 'evt_fixed' },
         member: null,
         pathname: '/sign-up',
-        search: '?utm_source=facebook&utm_term=Lookalike%20US',
+        search: '?utm_source=facebook&utm_term=Lookalike%20US&fbclid=IwAR123',
     })
     await harness.settle()
 
