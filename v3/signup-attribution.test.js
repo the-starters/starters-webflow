@@ -684,8 +684,10 @@ test('copies every ad parameter in the URL into a 72 hour cookie', () => {
     }
 })
 
-test('utm_term fills the utm_adset cookie when utm_adset is absent', () => {
-    const harness = boot({ search: '?utm_source=facebook&utm_term=Lookalike%20US' })
+test('utm_term with fbclid fills the utm_adset cookie when utm_adset is absent', () => {
+    const harness = boot({
+        search: '?utm_source=facebook&utm_term=Lookalike%20US&fbclid=IwAR123',
+    })
 
     assert.equal(harness.api.getParams().utm_adset, 'Lookalike US')
     assert.equal(harness.writesFor('utm_adset').length, 1)
@@ -698,6 +700,8 @@ test('utm_adset wins over utm_term when the URL carries both', () => {
     for (const search of [
         '?utm_adset=adset-1&utm_term=term-1',
         '?utm_term=term-1&utm_adset=adset-1',
+        '?utm_adset=adset-1&utm_term=term-1&fbclid=IwAR123',
+        '?fbclid=IwAR123&utm_term=term-1&utm_adset=adset-1',
     ]) {
         const harness = boot({ search })
 
@@ -707,15 +711,42 @@ test('utm_adset wins over utm_term when the URL carries both', () => {
 })
 
 test('an empty utm_adset falls back to utm_term, an empty utm_term clears nothing', () => {
-    const fallback = boot({ search: '?utm_adset=&utm_term=term-1' })
+    const fallback = boot({ search: '?utm_adset=&utm_term=term-1&fbclid=IwAR123' })
     assert.equal(fallback.api.getParams().utm_adset, 'term-1')
 
     const kept = boot({
         cookies: { utm_adset: 'adset-old' },
-        search: '?utm_term=%20%20',
+        search: '?utm_term=%20%20&fbclid=IwAR123',
     })
     assert.equal(kept.api.getParams().utm_adset, 'adset-old')
     assert.deepEqual(kept.writesFor('utm_adset'), [])
+})
+
+test('utm_term without fbclid leaves the ad set alone', () => {
+    for (const search of [
+        '?utm_source=google&utm_term=running%20shoes',
+        '?utm_source=newsletter&utm_term=issue-12&fbclid=',
+        '?utm_term=issue-12&fbclid=%20%20',
+    ]) {
+        const kept = boot({ cookies: { utm_adset: 'adset-old' }, search })
+        assert.equal(kept.api.getParams().utm_adset, 'adset-old', search)
+        assert.deepEqual(kept.writesFor('utm_adset'), [], search)
+
+        const fresh = boot({ search })
+        assert.equal(fresh.api.getParams().utm_adset, null, search)
+        assert.deepEqual(fresh.writesFor('utm_adset'), [], search)
+        assert.deepEqual(fresh.writesFor('utm_term'), [], search)
+    }
+})
+
+test('utm_adset still wins without fbclid', () => {
+    const harness = boot({
+        cookies: { utm_adset: 'adset-old' },
+        search: '?utm_adset=adset-1&utm_term=term-1',
+    })
+
+    assert.equal(harness.api.getParams().utm_adset, 'adset-1')
+    assert.equal(harness.writesFor('utm_adset').length, 1)
 })
 
 test('a utm_term ad set reaches the utm-adset field on a direct signup', async () => {
@@ -723,7 +754,7 @@ test('a utm_term ad set reaches the utm-adset field on a direct signup', async (
         cookies: { event_id: 'evt_fixed' },
         member: null,
         pathname: '/sign-up',
-        search: '?utm_source=facebook&utm_term=Lookalike%20US',
+        search: '?utm_source=facebook&utm_term=Lookalike%20US&fbclid=IwAR123',
     })
     await harness.settle()
 
@@ -812,6 +843,142 @@ test('an existing fbc or fbp is never replaced by the pixel value', () => {
     assert.deepEqual(harness.writesFor('fbc'), [])
     // The other half of the pair still gets copied.
     assert.equal(harness.api.getParams().fbp, 'fb.1.1700000000.987654321')
+})
+
+/* ------------------------------ value rules ------------------------------ */
+
+// A modern fbclid: long, opaque, and carrying both `-` and `_`.
+const REAL_FBCLID =
+    'IwZXh0bgNhZW0CMTEAAR2-Qx7b4nKZp_Ly3Ub0mQwL9c7Vh2aEzC4Xr8sT1fJdNkYgPoW' +
+    '_aem_AbCdEfGh-IjKlMnOpQrStUvWxYz0123456789'
+
+test('an over-long UTM value is cut to 300 characters', () => {
+    const long = 'a'.repeat(301) + 'TAIL'
+    const harness = boot({ search: '?utm_campaign=' + long })
+
+    assert.equal(harness.api.getParams().utm_campaign, 'a'.repeat(300))
+})
+
+test('a UTM value containing < or > is not stored and keeps the earlier click', () => {
+    for (const value of ['<script>alert(1)</script>', 'a>b', 'x<y']) {
+        const harness = boot({
+            cookies: { utm_content: 'video-a' },
+            search: '?utm_content=' + encodeURIComponent(value),
+        })
+
+        assert.equal(harness.api.getParams().utm_content, 'video-a', value)
+        assert.deepEqual(harness.writesFor('utm_content'), [], value)
+    }
+})
+
+test('a formula-style UTM value loses its leading character', () => {
+    const cases = [
+        ['=HYPERLINK("x")', 'HYPERLINK("x")'],
+        ['+1+1', '1+1'],
+        ['-2+3', '2+3'],
+        ['@SUM(A1)', 'SUM(A1)'],
+        ['\uFF20SUM(A1)', 'SUM(A1)'],
+        ['\uFF1Dcmd', 'cmd'],
+        ['\uFF0B1', '1'],
+        ['\uFF0D2', '2'],
+        ['= =cmd', 'cmd'],
+    ]
+    for (const [raw, stored] of cases) {
+        const harness = boot({ search: '?utm_source=' + encodeURIComponent(raw) })
+        assert.equal(harness.api.getParams().utm_source, stored, raw)
+    }
+
+    // Nothing left after the strip is the same as no value.
+    const empty = boot({ cookies: { utm_source: 'facebook' }, search: '?utm_source=%3D%3D' })
+    assert.equal(empty.api.getParams().utm_source, 'facebook')
+    assert.deepEqual(empty.writesFor('utm_source'), [])
+})
+
+test('cutting at 300 never leaves half an emoji behind', () => {
+    const harness = boot({
+        search: '?utm_campaign=' + encodeURIComponent('a'.repeat(299) + '\u{1F600}'),
+    })
+
+    assert.equal(harness.api.getParams().utm_campaign, 'a'.repeat(299))
+})
+
+test('normal UTM values and a realistic fbclid are stored unchanged', () => {
+    const harness = boot({
+        search:
+            '?utm_source=facebook&utm_campaign=Spring%20Launch%20-%202026' +
+            '&utm_adset=US%2025-34%20%7C%20Lookalike&utm_content=video_a-1' +
+            '&fbclid=' +
+            REAL_FBCLID,
+    })
+
+    const params = harness.api.getParams()
+    assert.equal(params.utm_source, 'facebook')
+    assert.equal(params.utm_campaign, 'Spring Launch - 2026')
+    assert.equal(params.utm_adset, 'US 25-34 | Lookalike')
+    assert.equal(params.utm_content, 'video_a-1')
+    assert.equal(params.fbclid, REAL_FBCLID)
+})
+
+test('an fbclid is never edited, only kept or dropped', () => {
+    const cases = [
+        // Leading `-` and `_` are legitimate token characters, not formulas.
+        ['-IwAR_123', '-IwAR_123'],
+        ['a'.repeat(500), 'a'.repeat(500)],
+        ['a'.repeat(501), 'old'],
+        ['IwAR<123>', 'old'],
+        ['IwAR 123', 'old'],
+        ['=IwAR123', 'old'],
+    ]
+    for (const [raw, stored] of cases) {
+        const harness = boot({
+            cookies: { fbclid: 'old' },
+            search: '?fbclid=' + encodeURIComponent(raw),
+        })
+        assert.equal(harness.api.getParams().fbclid, stored, raw)
+    }
+})
+
+test('an oversized or malformed _fbc or _fbp is never copied', () => {
+    const harness = boot({
+        cookies: {
+            _fbc: 'fb.1.1700000000.' + 'a'.repeat(500),
+            _fbp: 'fb.1.1700000000.<b>',
+        },
+    })
+
+    assert.equal(harness.api.getParams().fbc, null)
+    assert.equal(harness.api.getParams().fbp, null)
+    assert.deepEqual(harness.writesFor('fbc'), [])
+    assert.deepEqual(harness.writesFor('fbp'), [])
+})
+
+test('only clean values reach the member fields on a direct signup', async () => {
+    const harness = boot({
+        cookies: { event_id: 'evt_fixed' },
+        member: null,
+        pathname: '/sign-up',
+        search:
+            '?utm_source=%3Dcmd&utm_campaign=' +
+            'b'.repeat(400) +
+            '&utm_content=%3Cimg%3E&fbclid=' +
+            REAL_FBCLID,
+    })
+    await harness.settle()
+
+    harness.authHandlers[0](loggedInMember)
+    await harness.settle()
+
+    const saved = harness.savedFields()
+    assert.equal(saved.length, 1)
+    assert.equal(saved[0]['utm-source'], 'cmd')
+    assert.equal(saved[0]['utm-campaign'], 'b'.repeat(300))
+    assert.equal('utm-content' in saved[0], false)
+    assert.equal(saved[0].fbclid, REAL_FBCLID)
+})
+
+test('the header no longer claims a server-side CompleteRegistration sender', () => {
+    assert.doesNotMatch(header, /server-side copy of\s+\*?\s*the same registration deduplicates/)
+    assert.match(header, /No server-side copy of[\s*]+the event is sent today/)
 })
 
 test('ensureEventId generates an evt_ id when absent', () => {
