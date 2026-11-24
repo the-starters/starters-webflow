@@ -878,6 +878,9 @@ test('a formula-style UTM value loses its leading character', () => {
         ['-2+3', '2+3'],
         ['@SUM(A1)', 'SUM(A1)'],
         ['\uFF20SUM(A1)', 'SUM(A1)'],
+        ['\uFF1Dcmd', 'cmd'],
+        ['\uFF0B1', '1'],
+        ['\uFF0D2', '2'],
         ['= =cmd', 'cmd'],
     ]
     for (const [raw, stored] of cases) {

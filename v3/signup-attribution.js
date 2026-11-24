@@ -283,9 +283,9 @@
     var URL_VALUE_MAX_LENGTH = 300
 
     // Free-text values that open with one of these could run as a formula when
-    // the member record is exported to a spreadsheet. `@` is listed in both its
+    // the member record is exported to a spreadsheet. All four are listed in both their
     // ASCII and full-width forms.
-    var FORMULA_PREFIX = /^[\s=+\-@\uFF20]+/
+    var FORMULA_PREFIX = /^[\s=+\-@\uFF1D\uFF0B\uFF0D\uFF20]+/
 
     // fbclid, fbc and fbp are opaque Meta tokens, so they are never trimmed or
     // truncated: a shortened token no longer matches the click. Real values are
