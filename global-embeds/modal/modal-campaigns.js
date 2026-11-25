@@ -71,12 +71,26 @@
     return { key, priority, start, end, value };
   }
 
+  const DATE_RULES = [
+    { attribute: 'new-days', override: 'new', field: 'createdAt',
+      outside: (time, now, days) => time > now || time < now - days * 86400000 },
+    { attribute: 'min-age-days', override: 'established', field: 'createdAt',
+      outside: (time, now, days) => time > now - days * 86400000 },
+    { attribute: 'renew-days', override: 'renewing', field: 'nextBillingDate', audience: 'brand-paid',
+      outside: (time, now, days, signals) => signals.cancelAt === undefined ? 'signal-unknown'
+        : signals.cancelAt !== null || time < now || time > now + days * 86400000 },
+  ];
+  const ruleValue = (candidate, rule) => {
+    const raw = candidate.value(rule.attribute);
+    return raw === null || raw === '' ? null : raw;
+  };
+
   function behaviourProblem(candidate, audience) {
-    for (const name of ['new-days', 'renew-days']) {
-      const raw = candidate.value(name);
-      if (raw === null || raw === '') continue;
-      if (!Number.isInteger(Number(raw)) || Number(raw) < 0) return name;
-      if (audience === 'signed-out' || (name === 'renew-days' && audience !== 'brand-paid')) return 'audience';
+    for (const rule of DATE_RULES) {
+      const raw = ruleValue(candidate, rule);
+      if (raw === null) continue;
+      if (!Number.isInteger(Number(raw)) || Number(raw) < 0) return rule.attribute;
+      if (audience === 'signed-out' || (rule.audience && audience !== rule.audience)) return 'audience';
     }
     return null;
   }
@@ -84,26 +98,18 @@
   function behaviour(candidate, audience, signals) {
     const problem = behaviourProblem(candidate, audience);
     if (problem) return problem;
-    const value = candidate.value;
     const now = Date.now();
-    for (const [attribute, override, field] of [
-      ['new-days', 'new', 'createdAt'],
-      ['renew-days', 'renewing', 'nextBillingDate'],
-    ]) {
-      const raw = value(attribute);
-      if (raw === null || raw === '') continue;
-      const days = Number(raw);
+    for (const rule of DATE_RULES) {
+      const raw = ruleValue(candidate, rule);
+      if (raw === null) continue;
       if (overrides) {
-        if (!overrides.has(override)) return attribute;
+        if (!overrides.has(rule.override)) return rule.attribute;
         continue;
       }
-      const time = signals?.[field];
+      const time = signals?.[rule.field];
       if (!Number.isFinite(time)) return 'signal-unknown';
-      if (attribute === 'new-days' && (time > now || time < now - days * 86400000)) return attribute;
-      if (attribute === 'renew-days') {
-        if (signals.cancelAt === undefined) return 'signal-unknown';
-        if (signals.cancelAt !== null || time < now || time > now + days * 86400000) return attribute;
-      }
+      const outside = rule.outside(time, now, Number(raw), signals);
+      if (outside) return outside === true ? rule.attribute : outside;
     }
     return null;
   }
@@ -164,9 +170,7 @@
         }
         if (blocked() || currentPath() !== path) return null;
       }
-      const requiresSignals = candidates.some((entry) => ['new-days', 'renew-days'].some((name) => {
-        const value = entry.value(name); return value !== null && value !== '';
-      }));
+      const requiresSignals = candidates.some((entry) => DATE_RULES.some((rule) => ruleValue(entry, rule) !== null));
       let signals;
       if (requiresSignals && !overrides) {
         try { signals = await modal.signals(); } catch (_) {}

@@ -545,3 +545,53 @@ test('popup-as cannot override date rules on production', async () => {
   assert.equal(env.logs.length, 0)
   assert.equal(env.signalCalls.length, 1)
 })
+
+test('min-age day boundary is inclusive and rejects young, future or unknown signup', async () => {
+  for (const [createdAt, matches] of [[today - 14 * day, true], [today - 14 * day + 1, false], [today, false], [today + 1, false], [null, false]]) {
+    const env = environment({ audience: 'brand-free', rows: [campaign('established', { 'aud-signed-out': 'false', 'aud-brand-free': 'true', 'min-age-days': '14' })], signals: { createdAt } })
+    assert.equal(!!await env.run(), matches, String(createdAt))
+    assert.equal(env.records.length, matches ? 1 : 0)
+    assert.equal(env.signalCalls.length, 1)
+  }
+})
+
+test('new-days with min-age-days shows only inside the account-age range', async () => {
+  for (const [age, matches] of [[10, true], [3, false], [40, false]]) {
+    const env = environment({ audience: 'brand-paid', rows: [campaign('range', { ...brandRules, 'new-days': '30', 'min-age-days': '7' })], signals: { createdAt: today - age * day } })
+    assert.equal(!!await env.run(), matches, String(age))
+    assert.deepEqual(env.records, matches ? [['range', 'shown']] : [])
+  }
+})
+
+test('invalid or signed-out min-age-days rows are skipped without reading signals', async () => {
+  for (const [audience, rules] of [
+    ['brand-paid', { ...brandRules, 'min-age-days': '-1' }],
+    ['brand-paid', { ...brandRules, 'min-age-days': '1.5' }],
+    ['signed-out', { 'min-age-days': '7' }],
+  ]) {
+    const env = environment({ audience, rows: [campaign('no', rules)], signals: { createdAt: today - 100 * day } })
+    assert.equal(await env.run(), null)
+    assert.equal(env.records.length, 0)
+    assert.equal(env.signalCalls.length, 0)
+  }
+  const debug = environment({ pathname: '/?popup-debug=1', audience: 'brand-paid', rows: [campaign('bad', { ...brandRules, 'min-age-days': '1.5' }), campaign('old', { ...brandRules, 'min-age-days': '7' })], signals: { createdAt: today - 7 * day } })
+  await debug.run()
+  assert.deepEqual(debug.logs.map(args => args[0]).sort(), ['[popups] bad → skipped: min-age-days', '[popups] old → matched'])
+})
+
+test('staging popup-as=established matches min-age rows without signals and new alone does not', async () => {
+  for (const [list, matches] of [['established', true], ['new', false], ['new,renewing', false]]) {
+    const env = environment({ pathname: '/?popup-as=' + list, audience: 'brand-paid', rows: [campaign('established', { ...brandRules, 'min-age-days': '7' })] })
+    assert.equal(!!await env.run(), matches, list)
+    assert.equal(env.records.length, matches ? 1 : 0)
+    assert.equal(env.signalCalls.length, 0)
+  }
+})
+
+test('popup-as=established cannot override min-age on production', async () => {
+  const env = environment({ hostname: 'www.thestarters.com', pathname: '/?popup-as=established',
+    audience: 'brand-paid', rows: [campaign('established', { ...brandRules, 'min-age-days': '7' })], signals: { createdAt: today - day } })
+  assert.equal(await env.run(), null)
+  assert.equal(env.records.length, 0)
+  assert.equal(env.signalCalls.length, 1)
+})
