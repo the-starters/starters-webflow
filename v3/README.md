@@ -1194,6 +1194,80 @@ Run its focused tests with:
 node --test v3/signup-attribution.test.js
 ```
 
+## Affiliate link tracking
+
+`affiliate-ref.js` replaces Rewardful's `rw.js`. It keeps the affiliate token
+from a link, records the visit, and binds the referral to the member at signup.
+The backend is the `aff-api` Supabase edge function in
+`the-starters/marketplace-ops` (`supabase/functions/aff-api/`).
+
+Load it site-wide with `defer`, next to `signup-attribution.js`: a link can
+land on any page and the signup can happen pages later.
+
+```html
+<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@<tag>/v3/affiliate-ref.js"></script>
+```
+
+Production loads a pinned semver tag; staging (`the-starters-3-0.webflow.io`)
+may load `@main`. The script is unreleased until JP approves the L3 release
+(triage playbook): the CDN release, the Webflow site code that loads it, and
+the Memberstack field below are all L3.
+
+### Links and cookie
+
+| Item | Value |
+| --- | --- |
+| URL parameters | `?via=` (Rewardful's, so shared links keep working), `?ref=`, plus any legacy names set before the script runs: `window.STARTERS_AFFILIATE_PARAMS = ['partner']` |
+| Token format | lowercased, `^[a-z0-9-]{1,64}$`; anything else is ignored |
+| Cookie | `ts_aff`, JSON `{t, v, at, d}`: token, visitor ID, first seen (ms), cookie days |
+| Cookie scope | `.thestarters.com` in production, host-only on staging; `SameSite=Lax`, `Secure` on https |
+| Lifetime | the campaign's cookie days from the click reply (Rewardful default 60) |
+| Attribution | first touch: a later link does not replace a live cookie, unless the click reply says the new link's campaign is `last_touch` |
+
+Every landing with a token posts `aff-api/click` with a `text/plain` body (no
+CORS preflight) and `keepalive`. A token the server does not know is removed
+from the cookie.
+
+### Member binding
+
+On the logged-out to logged-in transition, and on load for a logged-in member
+whose `affiliate-ref` field is empty, the script posts `aff-api/lead` with the
+Memberstack member token (`$memberstackDom.getMemberCookie()`). The server
+verifies the member and decides: first binding wins, self-referrals and members
+who already pay are not credited. Only on `bound: true` does the script write
+the write-once custom field:
+
+| Memberstack field ID | Value |
+| --- | --- |
+| `affiliate-ref` | the bound token |
+
+The field must exist in the Memberstack app config before release; Memberstack
+silently drops a write to a field it does not know. `localStorage`
+`startersAffiliateBoundV1` (`<member id>:<token>`) stops repeat calls for the
+same member and token.
+
+Nothing in the script can block the page or the signup; failures only lose one
+visit or binding. Staging hosts log `[starters affiliate]` lines to the console;
+production stays silent.
+
+### Release and rollback
+
+1. JP approves the L3 packet (Memberstack field, CDN release, Webflow site code).
+2. Create the `affiliate-ref` field in Memberstack.
+3. Merge to `main`, tag a new semver release, and set `@release` and `RELEASE`
+   in the file header to that tag.
+4. Add the script tag with the pinned tag to the site-wide head code and publish.
+5. Run the live canary (`npm run test:site` in marketplace-ops with
+   `SITE_URL=https://www.thestarters.com`).
+6. Rollback: point the site code back to the previous tag (or remove the tag)
+   and publish. Record both tags here.
+
+Run its focused tests with:
+
+```sh
+node --test v3/affiliate-ref.test.js
+```
+
 ## Shared TalkJS authentication
 
 `talkjs-auth-session.js` is the single signed-session owner for the V3 Messages
