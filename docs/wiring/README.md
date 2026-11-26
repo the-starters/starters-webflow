@@ -44,6 +44,7 @@ explain how source changes reach Webflow.
 - [Complete-profile back button](COMPLETE-PROFILE-BACK-WIRING.md) — referrer-based escape link.
 - [Complete-profile loader](COMPLETE-PROFILE-LOADER-WIRING.md) — submit spinner and form dimming.
 - [Build-profile redirect](BUILD-PROFILE-REDIRECT-WIRING.md) — Talent funnel position on profile-building pages.
+- [Build Profile select-profile](SELECT-PROFILE-WIRING.md) — profile-type choice, member JSON reset, and navigation on `/build-profile/select-profile`.
 - [Starter profile redirect](STARTER-PROFILE-REDIRECT-WIRING.md) — unfinished Starter entry routing.
 - [Onboarding done redirect](ONBOARDING-DONE-REDIRECT-WIRING.md) — read half of onboarding completion.
 - [Onboarding patch status](ONBOARDING-PATCH-STATUS-WIRING.md) — write half and post-submit redirect.
