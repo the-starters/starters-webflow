@@ -114,6 +114,16 @@
     return null;
   }
 
+  function openOffsiteLinksInNewTab(dialog) {
+    for (const link of dialog.querySelectorAll('a[href]')) {
+      let url;
+      try { url = new URL(link.getAttribute('href'), window.location.href); } catch (_) { continue; }
+      if ((url.protocol !== 'https:' && url.protocol !== 'http:') || ENABLED_HOSTS.includes(url.hostname)) continue;
+      link.setAttribute('target', '_blank');
+      link.setAttribute('rel', 'noopener');
+    }
+  }
+
   function wireHistory(modal, entry, key, audience, path) {
     const reported = new Set();
     async function record(event) {
@@ -185,6 +195,7 @@
       if (!selected || blocked()) return null;
       const entry = await modal.load(sourceUrl, selected.key, { open: false });
       if (!entry || blocked() || currentPath() !== path || selected.start > Date.now() || selected.end < Date.now() || behaviour(selected, audience, signals)) return null;
+      openOffsiteLinksInNewTab(entry.el);
       entry.open();
       if (entry.el.open !== true) return null;
       await wireHistory(modal, entry, selected.key, audience, path);
