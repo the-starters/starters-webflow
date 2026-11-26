@@ -72,7 +72,7 @@ function environment({ hostname = 'the-starters-3-0.webflow.io', pathname = '/',
     constructor(...args) { super(...(args.length ? args : [now])) }
     static now() { return now }
   }
-  const context = vm.createContext({ window, document, Date: ClockDate, setTimeout, clearTimeout, URLSearchParams,
+  const context = vm.createContext({ window, document, Date: ClockDate, setTimeout, clearTimeout, URL, URLSearchParams,
     CustomEvent: class { constructor(type, options) { this.type = type; this.detail = options.detail } },
     console: { warn: (...args) => logs.push(args), error: (...args) => logs.push(args), log: (...args) => logs.push(args) },
   })
@@ -594,4 +594,36 @@ test('popup-as=established cannot override min-age on production', async () => {
   assert.equal(await env.run(), null)
   assert.equal(env.records.length, 0)
   assert.equal(env.signalCalls.length, 1)
+})
+
+test('pop-up links to other sites open in a new tab and site links stay in place', async () => {
+  const links = {
+    calendly: h('a', { href: 'https://calendly.com/jai-dolwani/30-minute-chat' }),
+    noReferrer: h('a', { href: 'https://example.com/', rel: 'noreferrer' }),
+    alreadyProtected: h('a', { href: 'https://example.org/', rel: 'nofollow noopener' }),
+    relative: h('a', { href: '/hire/hudson' }),
+    absolute: h('a', { href: 'https://www.thestarters.com/bfcm-pitcrew' }),
+    apex: h('a', { href: 'https://thestarters.com/why-us' }),
+    anchor: h('a', { href: '#join' }),
+    email: h('a', { href: 'mailto:hello@example.com' }),
+  }
+  const env = environment({
+    loadFn() {
+      const el = h('dialog', {}, Object.values(links))
+      return { el, open() { el.open = true } }
+    },
+  })
+  await env.run()
+  const targets = Object.fromEntries(Object.entries(links).map(([name, link]) =>
+    [name, [link.getAttribute('target'), link.getAttribute('rel')]]))
+  assert.deepEqual(targets, {
+    calendly: ['_blank', 'noopener'],
+    noReferrer: ['_blank', 'noreferrer noopener'],
+    alreadyProtected: ['_blank', 'nofollow noopener'],
+    relative: [null, null],
+    absolute: [null, null],
+    apex: [null, null],
+    anchor: [null, null],
+    email: [null, null],
+  })
 })
