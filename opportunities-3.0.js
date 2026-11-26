@@ -1183,8 +1183,9 @@
     )
     if (authored) return null
     const trigger = $('[data-modal-trigger="apply-opportunity"]')
-    const host = trigger && (trigger.parentNode || trigger.parent)
-    if (!host || typeof host.appendChild !== 'function') return null
+    const anchor = trigger && (trigger.closest('[data-opp-state]') || trigger)
+    const host = anchor && anchor.parentNode
+    if (!host) return null
     const notice = document.createElement('div')
     notice.setAttribute('data-opp-state', 'closed')
     notice.setAttribute('data-opp-closed-notice', '')

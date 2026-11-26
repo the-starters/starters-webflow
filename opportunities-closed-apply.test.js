@@ -92,6 +92,10 @@ class FakeElement {
     return child
   }
 
+  get parentNode() {
+    return this.parent
+  }
+
   getAttribute(name) {
     return this.attrs.get(name) ?? null
   }
@@ -143,14 +147,17 @@ class FakeElement {
 // Talent detail page skeleton, mirroring the published /opportunities/<id>
 // template: the Apply trigger (not-applied) and the applied/edited CTA block.
 // The template has no closed state block (2026-11-26 published source).
-function talentDetailPage({ authoredClosedBlock = false } = {}) {
+function talentDetailPage({ authoredClosedBlock = false, wrappedApply = false } = {}) {
   const documentElement = new FakeElement('html')
   const body = documentElement.append('body')
   const group = body.append('div', { 'data-ms-content': 'freelancer-only' })
-  const apply = group.append('div', {
-    'data-modal-trigger': 'apply-opportunity',
-    'data-opp-state': 'not-applied',
-  })
+  const apply = wrappedApply
+    ? group.append('div', { 'data-opp-state': 'not-applied' })
+    : group.append('div', {
+        'data-modal-trigger': 'apply-opportunity',
+        'data-opp-state': 'not-applied',
+      })
+  if (wrappedApply) apply.append('a', { 'data-modal-trigger': 'apply-opportunity' })
   const applied = group.append('div', { 'data-opp-state': 'applied edited' })
   const authored = authoredClosedBlock ? group.append('div', { 'data-opp-state': 'closed' }) : null
   return { apply, applied, authored, body, documentElement, group }
@@ -250,4 +257,17 @@ test('a Starter who applied before the close also sees the closed notice instead
   assert.equal(apply.style.display, 'none')
   assert.equal(applied.style.display, 'none')
   assert.ok(group.querySelector('[data-opp-closed-notice]'))
+})
+
+test('the closed notice stays visible when the Apply trigger sits inside a not-applied wrapper', async () => {
+  const { apply, group, window } = loadTalentDetail(
+    { opportunity: CLOSED, application: null },
+    { wrappedApply: true },
+  )
+  await window.Opp30.initTalentDetail(member)
+  assert.equal(apply.style.display, 'none')
+  const notice = group.querySelector('[data-opp-closed-notice]')
+  assert.ok(notice, 'closed notice is rendered')
+  assert.equal(notice.parent, group)
+  assert.equal(notice.style.display, '')
 })
