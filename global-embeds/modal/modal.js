@@ -24,18 +24,20 @@
                 let lastFocusedElement;
     
                 if (typeof gsap !== "undefined") {
+                    // Reduced motion keeps the fades and drops the travel.
+                    const still = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
                     gsap.context(() => {
                         let tl = gsap.timeline({ paused: true, onReverseComplete: resetModal });
                         if (variant === "side-panel") {
                             tl.fromTo(".modal_backdrop", { opacity: 0 }, { opacity: 1, duration: 0.3, ease: "power1.out" });
-                            tl.from(".modal_content", { xPercent: 100, duration: 0.3, ease: "power1.out" }, "<");
+                            tl.from(".modal_content", { ...(still ? { opacity: 0 } : { xPercent: 100 }), duration: 0.3, ease: "power1.out" }, "<");
                         } else if (variant === "full-screen") {
                             tl.set(".modal_backdrop", { opacity: 0 });
                             tl.from(".modal_content", { opacity: 0, duration: 0.2, ease: "power1.out" });
-                            tl.from(".modal_slot", { opacity: 0, y: "2rem", duration: 0.2, ease: "power1.out" }, "<0.1");
+                            tl.from(".modal_slot", { opacity: 0, ...(still ? {} : { y: "2rem" }), duration: 0.2, ease: "power1.out" }, "<0.1");
                         } else {
                             tl.fromTo(".modal_backdrop", { opacity: 0 }, { opacity: 1, duration: 0.3, ease: "power1.out" });
-                            tl.from(".modal_content", { opacity: 0, y: "6rem", duration: 0.3, ease: "power1.out" }, "<");
+                            tl.from(".modal_content", { opacity: 0, ...(still ? {} : { y: "6rem" }), duration: 0.3, ease: "power1.out" }, "<");
                         }
                         modal.tl = tl;
                     }, modal);
