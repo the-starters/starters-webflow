@@ -120,7 +120,11 @@
       try { url = new URL(link.getAttribute('href'), window.location.href); } catch (_) { continue; }
       if ((url.protocol !== 'https:' && url.protocol !== 'http:') || ENABLED_HOSTS.includes(url.hostname)) continue;
       link.setAttribute('target', '_blank');
-      link.setAttribute('rel', 'noopener');
+      const relTokens = (link.getAttribute('rel') || '').split(/\s+/).filter(Boolean);
+      if (!relTokens.some(token => token.toLowerCase() === 'noopener')) {
+        relTokens.push('noopener');
+        link.setAttribute('rel', relTokens.join(' '));
+      }
     }
   }
 

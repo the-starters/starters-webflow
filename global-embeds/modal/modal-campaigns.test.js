@@ -599,6 +599,8 @@ test('popup-as=established cannot override min-age on production', async () => {
 test('pop-up links to other sites open in a new tab and site links stay in place', async () => {
   const links = {
     calendly: h('a', { href: 'https://calendly.com/jai-dolwani/30-minute-chat' }),
+    noReferrer: h('a', { href: 'https://example.com/', rel: 'noreferrer' }),
+    alreadyProtected: h('a', { href: 'https://example.org/', rel: 'nofollow noopener' }),
     relative: h('a', { href: '/hire/hudson' }),
     absolute: h('a', { href: 'https://www.thestarters.com/bfcm-pitcrew' }),
     apex: h('a', { href: 'https://thestarters.com/why-us' }),
@@ -616,6 +618,8 @@ test('pop-up links to other sites open in a new tab and site links stay in place
     [name, [link.getAttribute('target'), link.getAttribute('rel')]]))
   assert.deepEqual(targets, {
     calendly: ['_blank', 'noopener'],
+    noReferrer: ['_blank', 'noreferrer noopener'],
+    alreadyProtected: ['_blank', 'nofollow noopener'],
     relative: [null, null],
     absolute: [null, null],
     apex: [null, null],
