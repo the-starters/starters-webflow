@@ -106,6 +106,7 @@ function makeEnv({
   gsap = false,
   clock = 'instant',
   doubleLoad = false,
+  reducedMotion = false,
 } = {}) {
   const windowEvents = []
   const body = h('body')
@@ -183,6 +184,7 @@ function makeEnv({
   const windowListeners = new Map()
   const window = {
     document,
+    matchMedia: (query) => ({ matches: reducedMotion && query === '(prefers-reduced-motion: reduce)' }),
     addEventListener(type, listener) {
       const list = windowListeners.get(type) || []
       list.push(listener)
@@ -965,6 +967,31 @@ test('builds a different entrance for each authored variant', () => {
   assert.deepEqual(plain.calls, [
     ['fromTo', '.modal_backdrop', ['opacity']],
     ['from', '.modal_content', ['opacity', 'y']],
+  ])
+})
+
+test('reduced motion fades every variant in without moving it', () => {
+  const env = makeEnv({
+    ids: ['panel', 'full', 'plain'],
+    gsap: true,
+    reducedMotion: true,
+    variants: { panel: 'side-panel', full: 'full-screen' },
+  })
+  env.boot()
+
+  const [panel, full, plain] = env.gsap.timelines
+  assert.deepEqual(panel.calls, [
+    ['fromTo', '.modal_backdrop', ['opacity']],
+    ['from', '.modal_content', ['opacity']],
+  ])
+  assert.deepEqual(full.calls, [
+    ['set', '.modal_backdrop', ['opacity']],
+    ['from', '.modal_content', ['opacity']],
+    ['from', '.modal_slot', ['opacity']],
+  ])
+  assert.deepEqual(plain.calls, [
+    ['fromTo', '.modal_backdrop', ['opacity']],
+    ['from', '.modal_content', ['opacity']],
   ])
 })
 
