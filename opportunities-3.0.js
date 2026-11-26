@@ -1160,12 +1160,38 @@
   // card showed with zero actions. Falling through keeps the application editable/
   // withdrawable and still yields 'closed'/'edited' correctly when those apply.
   function appState(o, a) {
-    if (!a) return 'not-applied'
+    // A closed opportunity never offers Apply. The backend (ep 5693) refuses
+    // the submit with "Opportunity not available"; on 2026-11-24 a Starter
+    // reached a closed opportunity from the alert email and was refused ten times.
+    if (!a) return o && o.closed_at ? 'closed' : 'not-applied'
     if (a.canceled_at) return 'canceled'
     if (o && o.closed_at) return 'closed'
     if (o && a.seen_opportunity_revision != null && o.revision_number > a.seen_opportunity_revision)
       return 'edited'
     return 'applied'
+  }
+
+  // The published detail template has state blocks for 'not-applied' and
+  // 'applied edited' only, so 'closed' would hide every CTA with no
+  // explanation. Until the Designer adds a [data-opp-state~="closed"] block,
+  // place one plain notice beside the Apply trigger. A Designer-authored
+  // closed block always wins, and the notice is added once per page.
+  const CLOSED_NOTICE_TEXT = 'This opportunity is closed and no longer accepts applications.'
+  function ensureClosedNotice() {
+    const authored = $$('[data-opp-state]').some((el) =>
+      el.getAttribute('data-opp-state').split(/\s+/).includes('closed'),
+    )
+    if (authored) return null
+    const trigger = $('[data-modal-trigger="apply-opportunity"]')
+    const host = trigger && (trigger.parentNode || trigger.parent)
+    if (!host || typeof host.appendChild !== 'function') return null
+    const notice = document.createElement('div')
+    notice.setAttribute('data-opp-state', 'closed')
+    notice.setAttribute('data-opp-closed-notice', '')
+    notice.setAttribute('role', 'status')
+    notice.textContent = CLOSED_NOTICE_TEXT
+    host.appendChild(notice)
+    return notice
   }
 
   // Toggle elements tagged [data-opp-state="applied|edited|..."] under a root.
@@ -5829,6 +5855,7 @@
     setActiveOpp(oppId)
     track('opportunity_viewed', { opportunity_id: oppId, viewer_role: 'freelancer' })
     if (a) setActiveApp(a.id)
+    if (appState(o, a) === 'closed') ensureClosedNotice()
     paintState(document, appState(o, a))
     // mark-seen: flip edited → applied when the member views the updated opportunity
     if (a && appState(o, a) === 'edited') {
@@ -7117,6 +7144,7 @@
     routeGuardConfigured,
     waitForRouteGuardHandoff,
     redirectForeignBrandToFeed,
+    initTalentDetail,
     hasCompletedQuiz,
     brandFreeHome,
     gateOrRedirect,
