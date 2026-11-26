@@ -63,6 +63,7 @@
   const REQUEST_TIMEOUT_MS = 20000
   const SAVE_ERROR = 'We couldn’t save your availability. Please try again.'
   const GOOGLE_ERROR = 'We couldn’t connect your Google Calendar. Please try again.'
+  const HOURS_FIRST = 'Fix your hours above first.'
   const GOOGLE_TAKEN = 'This Google account is already connected to another Starter. Use a different Google account.'
   const GOOGLE_ACTIVE_CALLS =
     'You have Requested or Confirmed calls on your current calendar. Decline or cancel them, or wait until they end, then connect Google again.'
@@ -260,6 +261,27 @@
       }
     }
 
+    // Kaeser 2026-11-26 ("Connect calendar does nothing"): Google messages
+    // went to the hours error, about 230 px above the Connect button, so a
+    // click looked dead. They show in the calendar card, next to the button.
+    // The line is made here (role alert, same class as the hours error) and
+    // reused; an authored [data-calls-step-output="calendar-error"] wins.
+    function showCalendarError(root, message) {
+      const calendar = root.querySelector('[data-calls-step-element="calendar"]')
+      let line = root.querySelector('[data-calls-step-output="calendar-error"]')
+      if (!line && !message) return
+      if (!line) {
+        if (!calendar || !win.document || typeof win.document.createElement !== 'function') return showError(root, message)
+        line = win.document.createElement('p')
+        line.setAttribute('role', 'alert')
+        line.setAttribute('data-calls-step-output', 'calendar-error')
+        line.className = 'calls-step_error'
+        calendar.appendChild(line)
+      }
+      line.textContent = message
+      if (message && typeof line.scrollIntoView === 'function') line.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    }
+
     function showError(root, message) {
       const error = root.querySelector('[data-calls-step-element="error"]')
       if (!error) return
@@ -337,11 +359,16 @@
           event.preventDefault()
           if (state.busy) return
           const problem = editor.validate()
-          if (problem) return showError(root, problem)
+          if (problem) {
+            // The hours are saved before Google opens, so they must be valid.
+            showError(root, problem)
+            return showCalendarError(root, HOURS_FIRST + ' ' + problem)
+          }
+          showCalendarError(root, '')
           if (state.stopWatching) { state.stopWatching(); state.stopWatching = null }
-          if (!googleConnect) return showError(root, SAVE_ERROR)
+          if (!googleConnect) return showCalendarError(root, SAVE_ERROR)
           const tab = typeof win.open === 'function' ? win.open('about:blank', 'starters-google-connect', 'popup,width=520,height=720') : null
-          if (!tab) return showError(root, 'Allow pop-ups for this site, then try again.')
+          if (!tab) return showCalendarError(root, 'Allow pop-ups for this site, then try again.')
           try { tab.opener = null } catch (_error) { /* ignore */ }
           state.busy = true
           editor.setStatus({ calendar: 'connecting' })
@@ -356,7 +383,7 @@
             tab.close()
             editor.setStatus({ calendar: 'disconnected' })
             warn('connect google failed', error && error.message)
-            showError(root, SAVE_ERROR)
+            showCalendarError(root, SAVE_ERROR)
           } finally {
             state.busy = false
           }
@@ -395,7 +422,7 @@
             if (data.type === 'calendar-connect-failed') {
               stop()
               refreshStatus(editor)
-              showError(root, data.reason === 'taken' ? GOOGLE_TAKEN : data.reason === 'active-calls' ? GOOGLE_ACTIVE_CALLS : GOOGLE_ERROR)
+              showCalendarError(root, data.reason === 'taken' ? GOOGLE_TAKEN : data.reason === 'active-calls' ? GOOGLE_ACTIVE_CALLS : GOOGLE_ERROR)
             }
           }
         } catch (_error) {

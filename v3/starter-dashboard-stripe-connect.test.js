@@ -7561,3 +7561,94 @@ test('staging callback uses the persistent exchange and keeps the TEST domain', 
     global.$memberstackDom = previous.memberstack
   }
 })
+
+// Kaeser 2026-11-26: Build Profile went back to "Connect Stripe" with no reason
+// when the Stripe account was already linked to another Starter. The closing
+// tab tells the Build Profile tab; the dashboard keeps its same-tab receipt.
+test('callback tells the Build Profile tab about an owner conflict, and only then', async () => {
+  async function run({ exchange, origin }) {
+    const previous = {
+      BroadcastChannel: global.BroadcastChannel,
+      document: global.document,
+      fetch: global.fetch,
+      history: global.history,
+      location: global.location,
+      memberstack: global.$memberstackDom,
+      localStorage: Object.getOwnPropertyDescriptor(global, 'localStorage'),
+      sessionStorage: Object.getOwnPropertyDescriptor(global, 'sessionStorage'),
+      close: global.close,
+      setTimeout: global.setTimeout,
+    }
+    const { root } = stripeRoot()
+    const posted = []
+    const items = new Map(origin ? [[
+      'starters:stripe-connect-origin:v1',
+      JSON.stringify({ path: origin, exp: Date.now() + 60000 }),
+    ]] : [])
+    const storage = (map) => ({
+      getItem: (k) => (map.has(k) ? map.get(k) : null),
+      setItem: (k, v) => map.set(k, String(v)),
+      removeItem: (k) => map.delete(k),
+    })
+    global.BroadcastChannel = class {
+      constructor(name) { this.name = name }
+      postMessage(data) { posted.push({ name: this.name, data }) }
+      close() {}
+    }
+    global.document = { title: 'Stripe callback', querySelectorAll: () => [root] }
+    global.history = { replaceState() {} }
+    global.location = {
+      href: 'https://thestarters.com/stripe-connect-callback?code=code-123&state=opaque-state-1234567890',
+      origin: 'https://thestarters.com',
+      assign() {},
+    }
+    global.$memberstackDom = {
+      getCurrentMember: async () => ({ data: { id: 'mem-live' } }),
+      getMemberCookie: async () => 'ms-cookie',
+      onAuthChange: () => ({ unsubscribe() {} }),
+    }
+    global.fetch = async (url) => {
+      if (String(url).includes('/auth/trade-token/v3')) return response({ authToken: 'tok' })
+      return response(exchange)
+    }
+    Object.defineProperty(global, 'localStorage', { configurable: true, value: storage(items) })
+    Object.defineProperty(global, 'sessionStorage', { configurable: true, value: storage(new Map()) })
+    global.close = () => {}
+    global.setTimeout = () => 0
+    try {
+      await api.mountCallback()
+      return posted.filter((p) => p.name === 'starters-stripe-connect-return').map((p) => p.data)
+    } finally {
+      global.setTimeout = previous.setTimeout
+      global.BroadcastChannel = previous.BroadcastChannel
+      global.document = previous.document
+      global.fetch = previous.fetch
+      global.history = previous.history
+      global.location = previous.location
+      global.$memberstackDom = previous.memberstack
+      global.close = previous.close
+      for (const key of ['localStorage', 'sessionStorage']) {
+        if (previous[key]) Object.defineProperty(global, key, previous[key])
+        else delete global[key]
+      }
+    }
+  }
+  const conflict = { connected: false, mode: 'reconciliation_required', reason: 'account_owner_conflict' }
+  assert.deepEqual(
+    await run({ exchange: conflict, origin: '/build-profile/full-profile-test' }),
+    [{ memberId: 'mem-live', type: 'owner_conflict' }],
+  )
+  assert.deepEqual(await run({ exchange: conflict, origin: null }), [], 'a dashboard start keeps its same-tab receipt')
+  assert.deepEqual(
+    await run({
+      exchange: { connected: false, mode: 'reconciliation_required', reason: 'oauth_exchange_ambiguous' },
+      origin: '/build-profile/full-profile-test',
+    }),
+    [],
+    'other reasons stay private',
+  )
+  assert.deepEqual(
+    await run({ exchange: { connected: true, mode: 'completed', charges_enabled: false }, origin: '/build-profile/consult-test' }),
+    [{ memberId: 'mem-live', type: 'connected' }],
+  )
+})

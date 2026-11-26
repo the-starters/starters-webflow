@@ -163,11 +163,30 @@
       announce(state)
     }
 
-    function reportToCallsStep(card, state) {
+    function callsEditor(card) {
       const callsRoot = typeof card.closest === 'function' ? card.closest(CALLS_ROOT) : null
       const steps = win.StarterProfileCallsStep
       const editor = callsRoot && steps && typeof steps.editorFor === 'function' ? steps.editorFor(callsRoot) : null
-      if (editor && typeof editor.setStatus === 'function') editor.setStatus({ stripe: state === 'none' ? 'disconnected' : state })
+      return editor && typeof editor.setStatus === 'function' ? editor : null
+    }
+
+    function reportToCallsStep(card, state) {
+      const editor = callsEditor(card)
+      if (!editor) return
+      const next = { stripe: state === 'none' ? 'disconnected' : state }
+      // A started or connected account is not refused: drop an old refusal.
+      if (state !== 'none') next.stripeReason = ''
+      editor.setStatus(next)
+    }
+
+    // Build Profile only: '' clears the reason; 'account_owner_conflict' shows
+    // the refusal in the Stripe card (v3/profile-calls-step.js).
+    function reportReason(reason) {
+      if (!buildRoute) return
+      roots().forEach(function (root) {
+        const editor = callsEditor(root)
+        if (editor) editor.setStatus({ stripeReason: reason })
+      })
     }
 
     function announce(state) {
@@ -241,7 +260,16 @@
         try {
           channel = new win.BroadcastChannel(RETURN_CHANNEL_NAME)
           channel.onmessage = function (event) {
-            if (event && event.data && event.data.type === 'connected') finish()
+            const type = event && event.data && event.data.type
+            if (type === 'owner_conflict') {
+              // Kaeser 2026-11-26: the account is already linked to another
+              // Starter. Say so in the Stripe card; the status re-read below
+              // stays canonical, and a connected status still wins.
+              reportReason('account_owner_conflict')
+              finish()
+            } else if (type === 'connected') {
+              finish()
+            }
           }
         } catch (_error) {
           channel = null
@@ -304,6 +332,7 @@
           return true
         }
         if (!isStripeUrl(result.url)) throw new Error('start returned a non-Stripe URL')
+        reportReason('')
         if (buildRoute) rememberStripeOrigin(path)
         else forgetStripeOrigin()
         stripeTab.location.replace(result.url)

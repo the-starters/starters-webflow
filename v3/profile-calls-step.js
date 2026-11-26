@@ -272,6 +272,33 @@
       setTag('live-tag', live ? 'Live' : 'Not live yet', live ? 'ok' : 'slate')
     }
 
+    // Kaeser 2026-11-26 ("the free call stays on but I can't open it"): the
+    // field wrappers inside each panel still carry the legacy
+    // [free-call-group] / [paid-call-group] attributes. Older page scripts
+    // (starter-edit-profile.js, the Build Profile inline toggle) set
+    // style.display = 'none' on them when the call looked off at their boot and
+    // only show them again on a change event. Saved data loaded later sets the
+    // switch without a change event, so the panel opened with its fields still
+    // hidden. The panel is the one owner of what shows: an open panel always
+    // shows its fields, also when an old script hides them afterwards.
+    const legacyGroupSelectors = ['[free-call-group]', '[paid-call-group]']
+    function showLegacyGroups(panel) {
+      for (const selector of legacyGroupSelectors) {
+        for (const group of panel.querySelectorAll(selector)) {
+          if (group.style.display === 'none') group.style.display = ''
+        }
+      }
+    }
+    const view = root.ownerDocument.defaultView
+    if (view && typeof view.MutationObserver === 'function') {
+      new view.MutationObserver((records) => {
+        for (const record of records) {
+          const panel = record.target.closest?.('[data-call-settings-element="panel"]')
+          if (panel && !panel.hidden && legacyGroupSelectors.some((selector) => record.target.matches?.(selector))) showLegacyGroups(panel)
+        }
+      }).observe(root, { subtree: true, attributes: true, attributeFilter: ['style'] })
+    }
+
     function refresh() {
       if (continueError) continueError.textContent = ''
       let anyEnabled = false
@@ -291,6 +318,7 @@
           enabled.disabled = true
         }
         panel.hidden = !enabled.checked
+        if (enabled.checked) showLegacyGroups(panel)
         anyEnabled ||= enabled.checked
         if (service.getAttribute('data-call-settings-service') === 'paid') paidEnabled = enabled.checked
       }
@@ -330,10 +358,16 @@
       return ''
     }
 
-    const stripeMessages = ['Connect Stripe to continue.', 'Finish setting up Stripe to continue.']
+    // Kaeser 2026-11-26: a Stripe account that is already linked to another
+    // Starter is refused (JP 2026-11-23, one Stripe account per Starter), but
+    // Build Profile only went back to "Connect Stripe". Same copy as the
+    // dashboard card (v3/starter-dashboard-stripe-connect.js).
+    const stripeConflictMessage = 'This Stripe account is already linked to another Starter profile. Use a different Stripe account or contact The Starters.'
+    const stripeMessages = ['Connect Stripe to continue.', 'Finish setting up Stripe to continue.', stripeConflictMessage]
 
     function stripeError() {
       if (status.stripe === 'pending' || status.stripe === 'ready') return ''
+      if (status.stripeReason === 'account_owner_conflict') return stripeConflictMessage
       return status.stripe === 'opened' ? stripeMessages[1] : stripeMessages[0]
     }
 
@@ -360,25 +394,29 @@
         if (!message) return
         event.preventDefault()
         event.stopImmediatePropagation()
-        if (!continueError) {
-          continueError = doc.createElement('p')
-          continueError.setAttribute('role', 'alert')
-          continueError.setAttribute('data-calls-step-output', 'continue-error')
-        }
-        // Kaeser 2026-11-18 ("Continue does nothing"): the message used to be
-        // appended after the Stripe card, below the visible part of the step.
-        // Put it in the section that blocks and scroll that section into view.
-        const host = stripeMessages.includes(message) && stripe
-          ? stripe
-          : buildProfile && message === callTypeMessage && services[0]
-            ? services[0].parentElement || root
-            : message === paidPriceError() && price
-              ? price.parentElement || root
-              : error.parentElement || root
-        if (continueError.parentElement !== host) host.appendChild(continueError)
-        continueError.textContent = message
-        reveal(continueError)
+        showContinueError(message)
       }, true)
+    }
+
+    function showContinueError(message) {
+      if (!continueError) {
+        continueError = doc.createElement('p')
+        continueError.setAttribute('role', 'alert')
+        continueError.setAttribute('data-calls-step-output', 'continue-error')
+      }
+      // Kaeser 2026-11-18 ("Continue does nothing"): the message used to be
+      // appended after the Stripe card, below the visible part of the step.
+      // Put it in the section that blocks and scroll that section into view.
+      const host = stripeMessages.includes(message) && stripe
+        ? stripe
+        : buildProfile && message === callTypeMessage && services[0]
+          ? services[0].parentElement || root
+          : message === paidPriceError() && price
+            ? price.parentElement || root
+            : error.parentElement || root
+      if (continueError.parentElement !== host) host.appendChild(continueError)
+      continueError.textContent = message
+      reveal(continueError)
     }
 
     root.addEventListener('click', (event) => {
@@ -491,6 +529,13 @@
         Object.assign(status, next)
         if (continueError && next.stripe && !stripeError() &&
             stripeMessages.includes(continueError.textContent)) continueError.textContent = ''
+        // The refusal shows at once in the Stripe card, without a Continue click.
+        if (buildProfile && next.stripeReason === 'account_owner_conflict' && stripeError() === stripeConflictMessage) {
+          showContinueError(stripeConflictMessage)
+        }
+        if (continueError && next.stripeReason === '' && continueError.textContent === stripeConflictMessage) {
+          continueError.textContent = ''
+        }
         renderStatus()
       },
     }

@@ -1151,7 +1151,10 @@
     }
   }
 
-  function signalStripeReturn(memberId) {
+  // type 'connected' (dashboard and Build Profile) or 'owner_conflict' (Build
+  // Profile only, Kaeser 2026-11-26): the Build Profile tab cannot read this
+  // tab's one-time conflict receipt, so it gets the public reason here.
+  function signalStripeReturn(memberId, type) {
     if (
       !memberId ||
       typeof global.document === 'undefined' ||
@@ -1162,7 +1165,7 @@
     let channel = null
     try {
       channel = new global.BroadcastChannel(RETURN_CHANNEL_NAME)
-      channel.postMessage({ memberId: String(memberId), type: 'connected' })
+      channel.postMessage({ memberId: String(memberId), type: type || 'connected' })
       return true
     } catch (_error) {
       return false
@@ -2074,6 +2077,13 @@
 
       if (mode === 'completed') signalStripeReturn(memberId)
       const originPath = takeStripeOrigin()
+      if (
+        originPath &&
+        mode === 'reconciliation_required' &&
+        outcome.reason === ACCOUNT_OWNER_CONFLICT_REASON
+      ) {
+        signalStripeReturn(memberId, 'owner_conflict')
+      }
       const dashboardUrl = new URL(originPath || DASHBOARD_PATH, global.location.origin)
       dashboardUrl.searchParams.set(
         'stripe_connect',

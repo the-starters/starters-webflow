@@ -25,6 +25,9 @@ class Node {
     children.forEach((c) => { c.parent = this; this.children.push(c) })
   }
   getAttribute(n) { return n in this.attrs ? this.attrs[n] : null }
+  setAttribute(n, v) { this.attrs[n] = String(v) }
+  appendChild(c) { c.parent = this; this.children.push(c); return c }
+  scrollIntoView(o) { (this.scrolls ||= []).push(o) }
   matches(sel) { return sel.split(',').some((compound) => this.matchesCompound(compound.trim())) }
   matchesCompound(compound) {
     const token = /^(?:([a-z]+)|\[([\w-]+)(?:="([^"]*)")?\]|:not\(\[([\w-]+)(?:="([^"]*)")?\]\))/
@@ -58,7 +61,7 @@ class Node {
   }
 }
 
-function makePage({ hours, starter = { availability: { manager: 'platform', items: {} }, nylas_grant_id: 'v-1' }, ensureStatus = 200, popup = true, guard = true, origin = 'https://www.thestarters.com', path = '/starter-onboarding-v2' } = {}) {
+function makePage({ calendar = false, hours, starter = { availability: { manager: 'platform', items: {} }, nylas_grant_id: 'v-1' }, ensureStatus = 200, popup = true, guard = true, origin = 'https://www.thestarters.com', path = '/starter-onboarding-v2' } = {}) {
   const calls = []
   const flowClicks = []
   const statuses = []
@@ -69,7 +72,8 @@ function makePage({ hours, starter = { availability: { manager: 'platform', item
   let nextInterval = 1
   const error = new Node({ 'data-calls-step-element': 'error' })
   const connect = new Node({ 'data-calls-step-action': 'connect-google', tag: 'button' })
-  const root = new Node({ 'data-calls-step': 'root', 'data-calls-step-context': 'onboarding' }, [error, connect])
+  const calendarCard = calendar ? new Node({ 'data-calls-step-element': 'calendar' }, [connect]) : null
+  const root = new Node({ 'data-calls-step': 'root', 'data-calls-step-context': 'onboarding' }, calendarCard ? [error, calendarCard] : [error, connect])
   const backBtn = new Node({ tag: 'button' })
   const nextBtn = new Node({ tag: 'button' })
   const back = new Node({ 'data-button-style': 'secondary' }, [backBtn])
@@ -117,11 +121,12 @@ function makePage({ hours, starter = { availability: { manager: 'platform', item
     document: {
       querySelector: (sel) => (guard && sel === 'script[src*="/v3/staff-preview-guard.js"]' ? {} : null),
       querySelectorAll: (sel) => body.querySelectorAll(sel),
+      createElement: (tag) => new Node({ tag }),
     },
     StarterProfileCallsStep: { editorFor: () => editor },
     StartersCalendarGoogleConnect: { ...shared, pendingCallback: null },
   }
-  return { win, body, calls, flowClicks, statuses, error, connect, nextBtn, backBtn, tab, listeners, storage, intervals, channels }
+  return { win, body, calls, flowClicks, statuses, error, connect, calendarCard, nextBtn, backBtn, tab, listeners, storage, intervals, channels }
 }
 
 test('boot: onboarding v2 routes; production needs the staff guard script', () => {
@@ -600,4 +605,54 @@ test('controller options: onCalendarStatus hears each calendar read; get sends a
   assert.equal(typeof controller.get, 'function')
   assert.equal(typeof controller.wireConnect, 'function')
   assert.equal(typeof controller.setupGoogle, 'function')
+})
+
+// Kaeser 2026-11-26 ("Connect calendar does nothing"): Google messages went to
+// the hours error, far above the Connect button.
+function calendarLine(page) {
+  return page.calendarCard.querySelector('[data-calls-step-output="calendar-error"]')
+}
+
+test('invalid hours block Connect Google with a message next to the button and the hours error, and open no pop-up', async () => {
+  const page = makePage({ calendar: true, hours: null })
+  let opened = 0
+  const open = page.win.open
+  page.win.open = (...args) => { opened += 1; return open(...args) }
+  createController(page.win).mount()
+  await settle()
+  page.connect.click()
+  await settle()
+  assert.equal(opened, 0)
+  assert.equal(page.error.textContent, 'Pick at least one day.')
+  const line = calendarLine(page)
+  assert.equal(line.textContent, 'Fix your hours above first. Pick at least one day.')
+  assert.equal(line.getAttribute('role'), 'alert')
+  assert.equal(line.className, 'calls-step_error')
+  assert.equal(line.scrolls.length, 1)
+  assert.equal(page.calls.some((c) => c.url === ENSURE), false)
+})
+
+test('a blocked pop-up and a refused Google account show in the calendar card; a new click clears the old line', async () => {
+  const blocked = makePage({ calendar: true, popup: false })
+  createController(blocked.win).mount()
+  await settle()
+  blocked.connect.click()
+  await settle()
+  assert.equal(calendarLine(blocked).textContent, 'Allow pop-ups for this site, then try again.')
+  assert.equal(blocked.error.textContent, '')
+
+  const taken = makePage({ calendar: true })
+  createController(taken.win).mount()
+  await settle()
+  taken.connect.click()
+  await settle()
+  const channel = taken.channels.find((c) => c.name === 'starters-calendar-connect-return')
+  channel.onmessage({ data: { type: 'calendar-connect-failed', memberId: 'mem_onb03', reason: 'taken' } })
+  await settle()
+  assert.equal(calendarLine(taken).textContent, 'This Google account is already connected to another Starter. Use a different Google account.')
+  assert.equal(taken.error.textContent, '')
+  taken.connect.click()
+  await settle()
+  assert.equal(calendarLine(taken).textContent, '')
+  assert.equal(taken.calendarCard.querySelectorAll('[data-calls-step-output="calendar-error"]').length, 1, 'the line is reused')
 })
