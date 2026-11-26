@@ -1022,6 +1022,13 @@ Brand-side application archiving is private bookkeeping and does not add an
 `edited`, so Withdraw and Edit Application remain available; if its opportunity is
 closed, `closed` takes precedence and hides those actions as usual.
 
+A Starter with no application on a closed opportunity also paints as `closed`, so
+the `data-opp-state="not-applied"` Apply block stays hidden. To author the closed
+message, add a `data-opp-state="closed"` block to the detail template. When no such
+block exists, the script adds one `role="status"` notice marked
+`data-opp-state="closed" data-opp-closed-notice` beside the outermost state block
+that wraps the `data-modal-trigger="apply-opportunity"` trigger.
+
 ## Opportunities 3.0 Project Dashboard Actions
 
 `opportunities-3.0.js` binds project actions only on the exact
