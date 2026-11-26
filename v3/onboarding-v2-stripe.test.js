@@ -419,7 +419,7 @@ test('build route: status goes to the Calls step, with none sent as disconnected
 
   const pending = buildEnv({ statuses: [{ connected: true, charges_enabled: false, requires_onboarding: false }] })
   await createController(pending.env.win, null).mount()
-  assert.deepEqual(pending.statuses, [{ stripe: 'pending' }])
+  assert.deepEqual(pending.statuses, [{ stripe: 'pending', stripeReason: '' }])
 })
 
 test('build route: start opens Stripe in a new tab with the dashboard return_url and the Build Profile prefix', async () => {
@@ -432,10 +432,35 @@ test('build route: start opens Stripe in a new tab with the dashboard return_url
   assert.equal(body.return_url, 'https://www.thestarters.com/starter-dashboard')
   assert.match(body.idempotency_key, /^build-profile-start-/)
   assert.equal(env.tab.url, ONBOARDING.url)
-  assert.deepEqual(statuses.at(-1), { stripe: 'opened' })
+  assert.deepEqual(statuses.at(-1), { stripe: 'opened', stripeReason: '' })
   env.channels[0].onmessage({ data: { type: 'connected' } })
   await settle()
-  assert.deepEqual(statuses.at(-1), { stripe: 'ready' })
+  assert.deepEqual(statuses.at(-1), { stripe: 'ready', stripeReason: '' })
+})
+
+// Kaeser 2026-11-26: a Stripe account already linked to another Starter.
+test('build route: an owner_conflict return tells the Calls step the reason, then re-reads status', async () => {
+  const { env, button, statuses } = buildEnv({ statuses: [NONE, NONE, NONE, NONE, NONE], startResult: ONBOARDING })
+  await createController(env.win, null).mount()
+  await button.handlers[0]({ preventDefault() {} })
+  assert.ok(statuses.some((s) => s.stripeReason === '' && !('stripe' in s)), 'a new start clears an old refusal')
+  env.channels[0].onmessage({ data: { type: 'owner_conflict', memberId: 'mem_1' } })
+  await settle()
+  const reasonAt = statuses.findIndex((s) => s.stripeReason === 'account_owner_conflict')
+  assert.notEqual(reasonAt, -1)
+  assert.deepEqual(statuses[reasonAt], { stripeReason: 'account_owner_conflict' })
+  assert.deepEqual(statuses.at(-1), { stripe: 'disconnected' })
+  assert.equal(statuses.slice(reasonAt + 1).some((s) => 'stripeReason' in s), false, 'a disconnected re-read keeps the reason')
+})
+
+test('build route: other channel messages do not end the watch', async () => {
+  const { env, button, statuses } = buildEnv({ statuses: [NONE, READY], startResult: ONBOARDING })
+  await createController(env.win, null).mount()
+  await button.handlers[0]({ preventDefault() {} })
+  const before = statuses.length
+  env.channels[0].onmessage({ data: { type: 'something-else' } })
+  await settle()
+  assert.equal(statuses.length, before)
 })
 
 test('build route: a failed start marks the card and leaves the Calls step status unchanged', async () => {

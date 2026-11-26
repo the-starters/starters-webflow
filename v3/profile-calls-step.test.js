@@ -444,7 +444,7 @@ test('an unmarked root outside a Build Profile step, or on another page, does no
 // load(state): fill the editor from saved data (Edit Profile v2, JP 2026-11-12).
 const { to12h } = require('./profile-calls-step')
 
-function editPage(pathname = '/starter-edit-profile-test', context = 'edit') {
+function editPage(pathname = '/starter-edit-profile-test', context = 'edit', viewExtras = {}) {
   const el = (tag, attrs, children) => new FakeElement(tag, attrs, children)
   const select = (kind, value) => el('select', { 'data-calls-step-input': kind, value })
   const service = (name, fields) => {
@@ -471,7 +471,7 @@ function editPage(pathname = '/starter-edit-profile-test', context = 'edit') {
     el('p', { 'data-calls-step-element': 'error' }),
     el('span', { 'data-calls-step-output': 'timezone-now' }),
   ])
-  root.ownerDocument = { defaultView: { location: { pathname } }, createElement: (tag) => el(tag) }
+  root.ownerDocument = { defaultView: { location: { pathname }, ...viewExtras }, createElement: (tag) => el(tag) }
   extra.hidden = true
   return { root, free, paid, description, title, price, windows, extra, timezone, api: mount(root) }
 }
@@ -650,4 +650,68 @@ test('turning the paid call on scrolls its new fields into view', () => {
   page.paid.toggle.checked = false
   page.root.listeners.change.forEach((listener) => listener({ target: page.paid.toggle }))
   assert.equal((panel.scrolls || []).length, 1, 'turning it off does not scroll')
+})
+
+// Kaeser 2026-11-26 ("the free call stays on but I can't open it"): an older
+// page script hides [free-call-group] / [paid-call-group] wrappers with an
+// inline display none and only shows them again on a change event.
+function legacyGroup(page, service, name) {
+  const group = new FakeElement('div', { [name]: '' })
+  group.style.display = 'none'
+  page[service].panel.appendChild(group)
+  return group
+}
+
+test('loading a saved call on shows the fields an older script hid inside its panel', () => {
+  const page = editPage()
+  const freeGroup = legacyGroup(page, 'free', 'free-call-group')
+  const paidGroup = legacyGroup(page, 'paid', 'paid-call-group')
+  page.api.load({ free: { enabled: true }, paid: { enabled: false } })
+  assert.equal(page.free.panel.hidden, false)
+  assert.equal(freeGroup.style.display, '', 'the open Free panel shows its fields')
+  assert.equal(page.paid.panel.hidden, true)
+  assert.equal(paidGroup.style.display, 'none', 'a closed panel is left as it is')
+})
+
+test('an older script hiding fields inside an open panel later is undone; inside a closed panel it is kept', () => {
+  let observed = null
+  let options = null
+  class FakeObserver {
+    constructor(callback) { observed = callback }
+    observe(target, opts) { options = { target, ...opts } }
+  }
+  const page = editPage('/starter-edit-profile-test', 'edit', { MutationObserver: FakeObserver })
+  assert.equal(options.target, page.root)
+  assert.equal(options.subtree, true)
+  assert.deepEqual(options.attributeFilter, ['style'])
+  page.api.load({ free: { enabled: true }, paid: { enabled: false } })
+  const freeGroup = legacyGroup(page, 'free', 'free-call-group')
+  const paidGroup = legacyGroup(page, 'paid', 'paid-call-group')
+  observed([{ target: freeGroup }, { target: paidGroup }])
+  assert.equal(freeGroup.style.display, '')
+  assert.equal(paidGroup.style.display, 'none')
+})
+
+test('a Stripe account linked to another Starter shows the refusal in the Stripe card at once and blocks Next', () => {
+  const page = buildProfileStep('/build-profile/full-profile-test', { freeOn: true })
+  const conflict = 'This Stripe account is already linked to another Starter profile. Use a different Stripe account or contact The Starters.'
+  page.api.setStatus({ stripeReason: 'account_owner_conflict' })
+  const alert = page.root.querySelectorAll('p').find((node) => node.getAttribute('role') === 'alert')
+  assert.equal(alert.textContent, conflict)
+  assert.equal(alert.parentElement, page.stripe)
+  assert.equal(alert.scrolls.length, 1)
+  page.api.setStatus({ stripe: 'disconnected' })
+  assert.equal(pressNext(page).message, conflict, 'a disconnected re-read keeps the reason')
+  page.api.setStatus({ stripeReason: '' })
+  assert.equal(alert.textContent, '', 'a new Stripe start clears it')
+  assert.equal(pressNext(page).message, 'Connect Stripe to continue.')
+  page.api.setStatus({ stripeReason: 'account_owner_conflict' })
+  page.api.setStatus({ stripe: 'ready' })
+  assert.equal(pressNext(page).blocked, false, 'a connected account wins over an old refusal')
+})
+
+test('the Stripe refusal is not shown on Edit Profile, where Stripe stays on the dashboard', () => {
+  const page = editPage()
+  page.api.setStatus({ stripeReason: 'account_owner_conflict' })
+  assert.equal(page.root.querySelectorAll('p').some((node) => node.getAttribute('role') === 'alert'), false)
 })
