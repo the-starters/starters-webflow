@@ -4516,10 +4516,14 @@ bounded state shape, resolves the current Memberstack member, and posts
 member and request receipt; the browser does not compare the opaque value to a
 Memberstack ID. The callback handles `completed`, `reconciliation_required`,
 and `restart_required` without automatically replaying the one-time code. When
-`BroadcastChannel` is available, only `completed` signals the original dashboard
-through a member-matched channel. The callback tab then redirects to the
-matching `/starter-dashboard?stripe_connect=<mode>` URL, where the dashboard
-re-reads canonical status. The callback never reflects the reason into the URL.
+`BroadcastChannel` is available, `completed` signals the original dashboard
+through a member-matched channel (`{memberId, type: 'connected'}`). A
+`reconciliation_required` result with the allowlisted `account_owner_conflict`
+reason and a Build Profile origin marker (below) also posts
+`{memberId, type: 'owner_conflict'}`; no other reason is broadcast. The
+callback tab then redirects to the matching
+`/starter-dashboard?stripe_connect=<mode>` URL, where the dashboard re-reads
+canonical status. The callback never reflects the reason into the URL.
 The one exception is a start from Build Profile: `v3/onboarding-v2-stripe.js`
 writes a 30-minute `localStorage` marker `starters:stripe-connect-origin:v1`
 (`{path, exp}`) there, and every other start (dashboard, setup dialog,
