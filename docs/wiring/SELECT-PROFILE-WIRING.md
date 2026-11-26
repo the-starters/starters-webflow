@@ -31,7 +31,3 @@ Replace the inline embed with:
 ```
 
 Pin a released tag (`@vX.Y.Z`), not `@latest`, like the other Build Profile scripts. Follow `webflow-custom-code-whole-block-safety` for the page change. The page needs the site head `window.waitForMember` helper, which every V3 page has.
-
-## Background
-
-PostHog report 01a13fe5: `TypeError: Cannot convert undefined or null to object` at `delete memberJSON.data.build_profile` when a returning Starter has no member JSON. 7 sessions from 2026-07-21 to 2026-11-23; none was blocked. Tests: `v3/build-profile/select-profile.test.js`.
