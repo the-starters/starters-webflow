@@ -455,6 +455,10 @@ Containment-era V2 code. Kept for the live V2 pages; not a pattern to copy.
 - `v2/contract.js` — stale, partial earlier migration of legacy contract-form logic; it is not the live authority. The current mirrors and ownership boundary live in [`slater/README.md`](slater/README.md)
 - `v2/footers/freelancer-start-project.js`, `v2/footers/freelancer-edit-form.js`, `v2/footers/quiz-results.js`, `v2/footers/opportunities-apply.js`, `v2/footers/opportunities-applicants.js`, `v2/footers/opportunities-freelancer-view.js` — secure V2 page footer logic, extracted from the sibling `-footer.html` files and CDN-loadable so each page can replace its inline block. Per-page CDN tags and the full contract live in [`v2/footers/README.md`](v2/footers/README.md)
 - `v2/footers/freelancer-start-project-contract.js` — readable GitHub mirror of the Slater contract logic, kept for review but not loaded live; see the migration boundary in [`v2/footers/README.md`](v2/footers/README.md#freelancer-start-project--extra-slater-tag)
+- `lp2/stuck.js` — `/lp2` paid landing page: pain cards ordered by ad, hero swap backstop and flash-guard release, stuck-table highlight; load order and the inline contracts live in [`lp2/README.md`](lp2/README.md)
+- `lp2/page.js` — `/lp2`: FAQ pricing item removal, founder cut-out image sizes, revenue headline break, focusable comparison table; see [`lp2/README.md`](lp2/README.md)
+- `lp2/links.js` — `/lp2`: nav label, link accessible names, ad tags carried onto `/quiz` links, Access brilliance links to `/quiz` for signed-out visitors; see [`lp2/README.md`](lp2/README.md)
+- `lp2/how-it-works.js` — `/lp2`: How it works coded panels, play / pause rings and stepping; see [`lp2/README.md`](lp2/README.md)
 
 ## Not browser code (deliberately outside this inventory)
 
