@@ -458,8 +458,6 @@ Containment-era V2 code. Kept for the live V2 pages; not a pattern to copy.
 - `lp2/stuck.js` — `/lp2` paid landing page: pain cards ordered by ad, hero swap backstop and flash-guard release, stuck-table highlight; load order and the inline contracts live in [`lp2/README.md`](lp2/README.md)
 - `lp2/page.js` — `/lp2`: FAQ pricing item removal, founder cut-out image sizes, revenue headline break, focusable comparison table; see [`lp2/README.md`](lp2/README.md)
 - `lp2/links.js` — `/lp2`: nav label, link accessible names, ad tags carried onto `/quiz` links, Access brilliance links to `/quiz` for signed-out visitors; see [`lp2/README.md`](lp2/README.md)
-- `lp2/size.js` — `/lp2`: "brands your size" revenue tabs, highlight, mix odometer, plan cards and photo preload; see [`lp2/README.md`](lp2/README.md)
-- `lp2/membership.js` — `/lp2`: membership Monthly / Yearly price line, heading word and toggle highlight; see [`lp2/README.md`](lp2/README.md)
 - `lp2/how-it-works.js` — `/lp2`: How it works coded panels, play / pause rings and stepping; see [`lp2/README.md`](lp2/README.md)
 
 ## Not browser code (deliberately outside this inventory)

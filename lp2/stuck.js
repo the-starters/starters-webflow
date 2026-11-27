@@ -1,8 +1,8 @@
 /*
  * /lp2: ad-matched pain order, the hero swap backstop, and the "stuck" table highlight.
  *
- * Runs first of the lp2 files: it lifts the lp-swap flash guard that the inline page script set,
- * so it must not wait for the others. Reads window.__lp2 (hero embed) and window.__lp2Pains (page embed).
+ * Runs first of the lp2 files. The inline hero swap normally removes the lp-swap flash guard; this file
+ * removes it again as a backstop. Reads window.__lp2 (hero embed) and window.__lp2Pains (page embed).
  */
 (function () {
   if (window.__lp2StuckInit) return;
